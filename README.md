@@ -1,0 +1,80 @@
+# Aerospike Rust Client
+
+An Aerospike library for Rust.
+
+This library is compatible with Rust v1.0+ and supports the following operating systems: Linux, Mac OS X (Windows builds are possible, but untested)
+
+Please refer to [`CHANGELOG.md`](CHANGELOG.md) if you encounter breaking changes.
+
+- [Usage](#Usage)
+- [Prerequisites](#Prerequisites)
+- [Installation](#Installation)
+- [Tweaking Performance](#Performance)
+- [Benchmarks](#Benchmarks)
+- [API Documentaion](#API-Documentation)
+- [Tests](#Tests)
+- [Examples](#Examples)
+  - [Tools](#Tools)
+
+
+## Usage:
+
+The following is a very simple example of CRUD operations in an Aerospike database.
+
+```rust
+    let client: Arc<Client> = Arc::new(Client::new("172.16.224.150".to_string(), 3000).unwrap());
+
+    let mut threads = vec![];
+
+    for _ in 0..2 {
+      let client = client.clone();
+      let t = thread::spawn(move || {
+        let policy = ReadPolicy::default();
+
+        let wpolicy = WritePolicy::default();
+        let v = IntValue::new(-1);
+        let key = Key::new("test", "test", &v).unwrap();
+        let wbin = Bin::new("bin999", &v);
+        let bins = vec![&wbin];
+
+        client.put(&wpolicy, &key, &bins).unwrap();
+        let rec = client.get(&policy, &key, None);
+        println!("Record: {}", rec.unwrap());
+
+        client.touch(&wpolicy, &key).unwrap();
+        let rec = client.get(&policy, &key, None);
+        println!("Record: {}", rec.unwrap());
+
+        let rec = client.get_header(&policy, &key);
+        println!("Record Header: {}", rec.unwrap());
+
+        let exists = client.exists(&wpolicy, &key).unwrap();
+        println!("exists: {}", exists);
+
+        let existed = client.delete(&wpolicy, &key).unwrap();
+        println!("existed (sould be true): {}", existed);
+
+        let existed = client.delete(&wpolicy, &key).unwrap();
+        println!("existed (should be false): {}", existed);
+    });
+
+    threads.push(t);
+  }
+
+  for t in threads {
+    t.join();
+  }
+}
+```
+
+More examples illustrating the use of the API are located in the
+[`examples`](examples) directory.
+
+<a name="Tests"></a>
+## Tests
+
+This library is packaged with a number of tests.
+
+To run all the test cases:
+
+`$ RUST_LOG=debug:aerospike RUST_BACKTRACE=1 cargo test -- --nocapture`
