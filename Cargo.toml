@@ -1,0 +1,16 @@
+[package]
+
+name = "aerospike"
+version = "0.0.1"
+authors = ["Khosrow Afroozeh <khosrow@aerospike.com>"]
+
+[dependencies]
+log = "0.3"
+env_logger = "0.3"
+byteorder = "^0.5"
+rust-crypto = "^0.2"
+bytebuffer = "^0.2"
+rustc-serialize = "0.3"
+
+[dev-dependencies]
+env_logger = "0.3"

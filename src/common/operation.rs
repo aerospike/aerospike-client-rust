@@ -1,0 +1,32 @@
+// Copyright 2015-2016 Aerospike, Inc.
+//
+// Portions may be licensed to Aerospike, Inc. under one or more contributor
+// license agreements.
+//
+// Licensed under the Apache License, Version 2.0 (the "License"); you may not
+// use this file except in compliance with the License. You may obtain a copy of
+// the License at http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
+// WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
+// License for the specific language governing permissions and limitations under
+// the License.
+
+#[derive(Debug,Clone)]
+pub struct Operation {
+    pub op: u8,
+}
+
+pub const READ: Operation = Operation { op: 1 };
+pub const READ_HEADER: Operation = Operation { op: 1 };
+
+pub const WRITE: Operation = Operation { op: 2 };
+pub const CDT_READ: Operation = Operation { op: 3 };
+pub const CDT_MODIFY: Operation = Operation { op: 4 };
+pub const MAP_READ: Operation = Operation { op: 3 };
+pub const MAP_MODIFY: Operation = Operation { op: 4 };
+pub const ADD: Operation = Operation { op: 5 };
+pub const APPEND: Operation = Operation { op: 9 };
+pub const PREPEND: Operation = Operation { op: 10 };
+pub const TOUCH: Operation = Operation { op: 11 };
