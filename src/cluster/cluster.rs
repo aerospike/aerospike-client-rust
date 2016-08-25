@@ -125,6 +125,14 @@ impl<'a> Cluster {
                 }
             }
         }
+
+        // close all nodes
+        let nodes = cluster.nodes();
+        for node in nodes {
+            node.close();
+        }
+
+        cluster.set_nodes(vec![]);
     }
 
     fn tend(&'a self) -> AerospikeResult<()> {
@@ -267,7 +275,13 @@ impl<'a> Cluster {
 
     pub fn update_partitions(&self, node: Arc<Node>) -> AerospikeResult<()> {
         let mut conn = try!(node.get_connection(self.client_policy.timeout));
-        let tokens = try!(PartitionTokenizer::new(&mut conn));
+        let tokens = match PartitionTokenizer::new(&mut conn) {
+            Ok(res) => res,
+            Err(e) => {
+                node.invalidate_connection(&mut conn);
+                return Err(e)
+            }
+        };
 
         node.put_connection(conn);
 

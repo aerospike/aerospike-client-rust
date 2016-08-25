@@ -22,14 +22,14 @@ use byteorder::{NetworkEndian, ReadBytesExt, WriteBytesExt, ByteOrder};
 
 use net::Connection;
 use error::{AerospikeError, ResultCode, AerospikeResult};
-use value::{Value, IntValue, StringValue};
+use value::{Value};
 
 use net::Host;
 use cluster::node_validator::NodeValidator;
 use cluster::partition_tokenizer::PartitionTokenizer;
 use cluster::partition::Partition;
 use cluster::{Node, Cluster};
-use common::{Key, Record, Operation, FieldType, ParticleType};
+use common::{Key, Record, OperationType, FieldType, ParticleType};
 use policy::{ClientPolicy, ReadPolicy, Policy, ConsistencyLevel};
 use common::operation;
 use command::command::Command;
@@ -39,7 +39,7 @@ use command::buffer::{Buffer};
 use value::value;
 
 pub struct ReadCommand<'a> {
-    single_command: SingleCommand<'a>,
+    pub single_command: SingleCommand<'a>,
 
     policy: &'a ReadPolicy,
     bin_names: Option<&'a [&'a str]>,
@@ -59,7 +59,7 @@ impl<'a> ReadCommand<'a> {
         })
     }
 
-    fn handle_udf_error(&self, result_code: isize, bins: &HashMap<String, Box<Value>>) -> AerospikeError {
+    fn handle_udf_error(&self, result_code: isize, bins: &HashMap<String, Value>) -> AerospikeError {
         if let Some(ret) = bins.get("FAILURE") {
             return AerospikeError::new(result_code, Some(ret.as_string()));
         }
@@ -67,7 +67,7 @@ impl<'a> ReadCommand<'a> {
     }
 
     fn parse_record(&mut self, conn: &mut Connection, op_count: usize, field_count: usize, generation: u32, expiration: u32) -> AerospikeResult<Arc<Record<'a>>> {
-        let mut bins: HashMap<String, Box<Value>> = HashMap::with_capacity(op_count);
+        let mut bins: HashMap<String, Value> = HashMap::with_capacity(op_count);
         let mut receive_offset: usize = 0;
 
         // There can be fields in the response (setname etc).
@@ -90,24 +90,26 @@ impl<'a> ReadCommand<'a> {
             receive_offset += 4 + 4 + name_size;
 
             let particle_bytes_size = op_size - (4 + name_size);
-            let buffer = &conn.buffer.data_buffer;
-            let value = try!(value::bytes_to_particle(particle_type, &buffer, receive_offset, particle_bytes_size));
+            let buffer = &conn.buffer.data_buffer[receive_offset..receive_offset+particle_bytes_size];
+            let value = try!(value::bytes_to_particle(particle_type, &buffer));
             receive_offset += particle_bytes_size;
 
             // TODO
-            bins.insert(name, value);
+            // if let Some(value) = value {
+            //     bins.insert(name, value);
 
-            // for operate list command results
-            // match bins.get(&name) {
-            //     Some(prev) => match prev {
-            //         Vec(prev) => {
-            //             prev.push(value);
-            //             bins.insert(name, prev);
+            //     // for operate list command results
+            //     match bins.get(&name) {
+            //         Some(prev) => match prev {
+            //             Vec(prev) => {
+            //                 prev.push(value);
+            //                 bins.insert(name, prev);
+            //             },
+            //             Value(prev) => bins.insert(name, vec![prev, value]),
+
             //         },
-            //         Value(prev) => bins.insert(name, vec![prev, value]),
-
-            //     },
-            //     _ => bins.insert(name, value),
+            //         _ => bins.insert(name, value),
+            //     }
             // }
         }
 

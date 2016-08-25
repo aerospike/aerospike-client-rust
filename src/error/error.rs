@@ -51,8 +51,12 @@ impl AerospikeError {
         }
     }
 
-    fn ErrRecordNotFound() -> AerospikeError {
+    pub fn ErrRecordNotFound() -> AerospikeError {
         AerospikeError::new(ResultCode::KEY_NOT_FOUND_ERROR, Some("Record not found.".to_string()))
+    }
+
+    pub fn ErrConnectionPoolEmpty() -> AerospikeError {
+        AerospikeError::new(ResultCode::NO_AVAILABLE_CONNECTIONS_TO_NODE, Some("Connection pool is empty.".to_string()))
     }
 
 }
@@ -113,6 +117,14 @@ impl From<net::AddrParseError> for AerospikeError {
 
 impl From<Utf8Error> for AerospikeError {
     fn from(_: Utf8Error) -> AerospikeError {
+        AerospikeError {
+            err: ErrorType::WithDescription(ResultCode::PARSE_ERROR, "Invalid UTF-8".to_string()),
+        }
+    }
+}
+
+impl From<FromUtf8Error> for AerospikeError {
+    fn from(_: FromUtf8Error) -> AerospikeError {
         AerospikeError {
             err: ErrorType::WithDescription(ResultCode::PARSE_ERROR, "Invalid UTF-8".to_string()),
         }

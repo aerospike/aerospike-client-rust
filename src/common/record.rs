@@ -20,7 +20,7 @@ use std::fmt;
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use value::{Value, IntValue, StringValue};
+use value::{Value};
 use cluster::node::Node;
 use common::key::Key;
 use error::{AerospikeResult, ResultCode, AerospikeError};
@@ -28,14 +28,14 @@ use error::{AerospikeResult, ResultCode, AerospikeError};
 // #[derive(Debug)]
 pub struct Record<'a> {
     pub key: &'a Key<'a>,
-    pub bins: HashMap<String, Box<Value>>,
+    pub bins: HashMap<String, Value>,
     pub generation: u32,
     pub expiration: u32,
 }
 
 impl<'a> Record<'a> {
     pub fn new(key: &'a Key<'a>,
-           bins: HashMap<String, Box<Value>>,
+           bins: HashMap<String, Value>,
            generation: u32,
            expiration: u32)
            -> AerospikeResult<Self> {

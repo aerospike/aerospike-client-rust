@@ -13,6 +13,8 @@
 // License for the specific language governing permissions and limitations under
 // the License.
 
-pub use self::value::{Value, IntValue, StringValue};
+pub use self::value::{Value};
 
+#[macro_use]
+#[macro_export]
 pub mod value;

@@ -48,7 +48,7 @@ pub mod ResultCode {
     // Client serialization error.
     pub const SERIALIZE_ERROR: isize = -1;
 
-    // Operation was successful.
+    // OperationType was successful.
     pub const OK: isize = 0;
 
     // Unknown server failure.
@@ -86,7 +86,7 @@ pub mod ResultCode {
     // Server is not accepting requests.
     pub const SERVER_NOT_AVAILABLE: isize = 11;
 
-    // Operation is not supported with configured bin type (single-bin or
+    // OperationType is not supported with configured bin type (single-bin or
     // multi-bin).
     pub const BIN_TYPE_ERROR: isize = 12;
 
@@ -117,7 +117,7 @@ pub mod ResultCode {
     // Bin name length greater than 14 characters.
     pub const BIN_NAME_TOO_LONG: isize = 21;
 
-    // Operation not allowed at this time.
+    // OperationType not allowed at this time.
     pub const FAIL_FORBIDDEN: isize = 22;
 
     // There are no more records left for query.
@@ -284,7 +284,7 @@ pub mod ResultCode {
             KEY_MISMATCH => "Key mismatch".to_string(),
             INVALID_NAMESPACE => "Namespace not found".to_string(),
             BIN_NAME_TOO_LONG => "Bin name length greater than 14 characters".to_string(),
-            FAIL_FORBIDDEN => "Operation not allowed at this time".to_string(),
+            FAIL_FORBIDDEN => "OperationType not allowed at this time".to_string(),
             QUERY_END => "Query end".to_string(),
             SECURITY_NOT_SUPPORTED => "Security not supported".to_string(),
             SECURITY_NOT_ENABLED => "Security not enabled".to_string(),

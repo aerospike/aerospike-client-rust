@@ -44,14 +44,6 @@ pub struct NodeValidator<'a> {
     pub supports_geo: bool,
 }
 
-fn socket_addr_to_string(s: &SocketAddr) -> String {
-    unsafe {
-        let ptr: *const _ = ::std::mem::transmute(&s.ip());
-        str::from_utf8(CStr::from_ptr(ptr).to_bytes()).unwrap().into()
-    }
-}
-
-
 // Generates a node validator
 impl<'a> NodeValidator<'a> {
     pub fn new(cluster: &'a Cluster, host: &Host) -> AerospikeResult<Self> {
@@ -83,13 +75,12 @@ impl<'a> NodeValidator<'a> {
     fn set_aliases(&mut self, host: &Host) -> AerospikeResult<()> {
         let ip_parsed: Result<IpAddr, _> = FromStr::from_str(&host.name);
         match ip_parsed {
-            Ok(_) => self.aliases = vec![Host::new(host.name.clone(), host.port)],
+            Ok(_) => self.aliases = vec![Host::new(&host.name, host.port)],
             _ => {
-                let sa_parsed: Result<SocketAddr, _> = FromStr::from_str(&host.name);
-                let addrs = try!(sa_parsed);
+                let addrs = try!(format!("{}:{}", host.name, host.port).to_socket_addrs());
                 let mut aliases: Vec<Host> = vec![];
-                for addr in try!(addrs.to_socket_addrs()) {
-                    aliases.push(Host::new(format!("{:?}", socket_addr_to_string(&addr)),
+                for addr in addrs {
+                    aliases.push(Host::new(&format!("{}", addr.ip()),
                                            host.port));
                 }
                 self.aliases = aliases;

@@ -17,6 +17,7 @@ pub use self::bin::Bin;
 pub use self::key::Key;
 pub use self::record::Record;
 pub use self::particle_type::ParticleType;
+pub use self::operation::OperationType;
 pub use self::operation::Operation;
 pub use self::field_type::FieldType;
 

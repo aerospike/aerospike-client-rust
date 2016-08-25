@@ -26,14 +26,14 @@ use byteorder::{NetworkEndian, ReadBytesExt, WriteBytesExt, ByteOrder};
 
 use net::Connection;
 use error::{AerospikeError, ResultCode, AerospikeResult};
-use value::{Value, IntValue, StringValue};
+use value::{Value};
 
 use net::Host;
 use cluster::node_validator::NodeValidator;
 use cluster::partition_tokenizer::PartitionTokenizer;
 use cluster::partition::Partition;
 use cluster::{Node, Cluster};
-use common::{Key, Record, Operation, FieldType, ParticleType};
+use common::{Key, Record, OperationType, FieldType, ParticleType};
 use policy::{ClientPolicy, ReadPolicy, Policy, ConsistencyLevel};
 use common::operation;
 use command::command::{Command};
@@ -147,7 +147,7 @@ impl<'a> SingleCommand<'a> {
             if let Err(err) = cmd.write_buffer(&mut conn) {
                 // IO errors are considered temporary anomalies. Retry.
                 // Close socket to flush out possible garbage. Do not put back in pool.
-                // node.InvalidateConnection(cmd.conn)
+                node.invalidate_connection(&mut conn);
 
                 warn!("Node {}: {}", node, err);
                 continue
@@ -163,7 +163,7 @@ impl<'a> SingleCommand<'a> {
                     // Put connection back in pool.
                     node.put_connection(conn);
                 } else {
-                    // node.InvalidateConnection(cmd.conn);
+                    node.invalidate_connection(&mut conn);
                 }
                 return Err(err)
             }

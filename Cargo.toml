@@ -3,6 +3,12 @@
 name = "aerospike"
 version = "0.0.1"
 authors = ["Khosrow Afroozeh <khosrow@aerospike.com>"]
+#build = "build.rs"
+description = "Aerospike Client for Rust."
+keywords = ["aerospike", "nosql", "distributed", "key-value store"]
+homepage = "http://www.aerospike.com"
+license = "Apache 2"
+readme = "README.md"
 
 [dependencies]
 log = "0.3"

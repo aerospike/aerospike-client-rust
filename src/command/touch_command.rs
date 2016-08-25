@@ -22,14 +22,14 @@ use byteorder::{NetworkEndian, ReadBytesExt, WriteBytesExt, ByteOrder};
 
 use net::Connection;
 use error::{AerospikeError, ResultCode, AerospikeResult};
-use value::{Value, IntValue, StringValue};
+use value::{Value};
 
 use net::Host;
 use cluster::node_validator::NodeValidator;
 use cluster::partition_tokenizer::PartitionTokenizer;
 use cluster::partition::Partition;
 use cluster::{Node, Cluster};
-use common::{Key, Record, Operation, FieldType, ParticleType, Bin};
+use common::{Key, Record, OperationType, FieldType, ParticleType, Bin};
 use policy::{ClientPolicy, WritePolicy, Policy, ConsistencyLevel};
 use common::operation;
 use command::command::Command;

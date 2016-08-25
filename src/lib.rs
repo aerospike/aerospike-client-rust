@@ -13,12 +13,13 @@ extern crate rustc_serialize;
 
 use command::info_command::*;
 
-pub use value::{Value, IntValue, StringValue};
-pub use policy::{Policy, ClientPolicy, ReadPolicy, Priority, ConsistencyLevel, CommitLevel, RecordExistsAction, GenerationPolicy};
+pub use value::{Value};
+pub use policy::{Policy, ClientPolicy, ReadPolicy, WritePolicy, Priority, ConsistencyLevel, CommitLevel, RecordExistsAction, GenerationPolicy};
 pub use net::{Host, Connection};
 pub use cluster::{Node, Cluster};
 pub use error::{AerospikeError, ResultCode, AerospikeResult};
 pub use client::Client;
+pub use common::{Key, Bin, Operation};
 
 mod command;
 

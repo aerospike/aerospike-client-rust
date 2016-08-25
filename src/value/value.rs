@@ -25,12 +25,67 @@ use std::vec::Vec;
 
 use common::ParticleType;
 use error::{AerospikeResult, ResultCode, AerospikeError};
+use command::buffer::Buffer;
 
-pub trait Value {
-    fn estimate_size(&self) -> usize;
-    fn particle_type(&self) -> ParticleType;
-    fn as_bytes(&self) -> AerospikeResult<Vec<u8>>;
-    fn as_string(&self) -> String;
+pub enum Value {
+    Int(i64),
+    Float(f64),
+    String(String),
+}
+
+impl Value {
+    pub fn particle_type(&self) -> ParticleType {
+        match self {
+            &Value::Int(_) => ParticleType::INTEGER,
+            &Value::Float(_) => ParticleType::FLOAT,
+            &Value::String(_) => ParticleType::STRING,
+        }
+    }
+
+    pub fn as_string(&self) -> String {
+        match self {
+            &Value::Int(val) => format!("{}", val),
+            &Value::Float(val) => format!("{}", val),
+            &Value::String(ref val) => format!("{}", val),
+        }
+    }
+
+    pub fn estimate_size(&self) -> usize {
+        match self {
+            &Value::Int(_) => 8,
+            &Value::Float(_) => 8,
+            &Value::String(ref s) => s.len(),
+        }
+    }
+
+    pub fn write_to(&self, buffer: &mut Buffer) -> AerospikeResult<()> {
+        match self {
+            &Value::Int(val) => buffer.write_i64(val),
+            &Value::Float(val) => buffer.write_f64(val),
+            &Value::String(ref val) => buffer.write_str(val),
+        }
+        Ok(())
+    }
+
+    pub fn key_bytes(&self) -> AerospikeResult<Vec<u8>> {
+        match self {
+            &Value::Int(val) => {
+                let mut buf = Vec::with_capacity(8);
+                buf.resize(8, 0);
+                NetworkEndian::write_i64(&mut buf, val);
+                Ok(buf)
+            },
+            &Value::Float(val) => {
+                let mut buf = Vec::with_capacity(8);
+                buf.resize(8, 0);
+                NetworkEndian::write_f64(&mut buf, val);
+                Ok(buf)
+            },
+            &Value::String(ref val) => {
+                Ok(val.as_bytes().to_vec())
+            },
+        }
+    }
 }
 
 impl core::fmt::Display for Value {
@@ -40,203 +95,154 @@ impl core::fmt::Display for Value {
     }
 }
 
+impl From<i8> for Value {
+    fn from(val: i8) -> Value {
+        Value::Int(val as i64)
+    }
+}
 
-pub fn bytes_to_particle(ptype: u8, buf: &[u8], offset: usize, length: usize) -> AerospikeResult<Box<Value>> {
+impl From<u8> for Value {
+    fn from(val: u8) -> Value {
+        Value::Int(val as i64)
+    }
+}
+
+impl From<i16> for Value {
+    fn from(val: i16) -> Value {
+        Value::Int(val as i64)
+    }
+}
+
+impl From<u16> for Value {
+    fn from(val: u16) -> Value {
+        Value::Int(val as i64)
+    }
+}
+
+impl From<i32> for Value {
+    fn from(val: i32) -> Value {
+        Value::Int(val as i64)
+    }
+}
+
+impl From<u32> for Value {
+    fn from(val: u32) -> Value {
+        Value::Int(val as i64)
+    }
+}
+
+impl From<i64> for Value {
+    fn from(val: i64) -> Value {
+        Value::Int(val)
+    }
+}
+
+impl<'a> From<&'a i8> for Value {
+    fn from(val: &'a i8) -> Value {
+        Value::Int(*val as i64)
+    }
+}
+
+impl<'a> From<&'a u8> for Value {
+    fn from(val: &'a u8) -> Value {
+        Value::Int(*val as i64)
+    }
+}
+
+impl<'a> From<&'a i16> for Value {
+    fn from(val: &'a i16) -> Value {
+        Value::Int(*val as i64)
+    }
+}
+
+impl<'a> From<&'a u16> for Value {
+    fn from(val: &'a u16) -> Value {
+        Value::Int(*val as i64)
+    }
+}
+
+impl<'a> From<&'a i32> for Value {
+    fn from(val: &'a i32) -> Value {
+        Value::Int(*val as i64)
+    }
+}
+
+impl<'a> From<&'a u32> for Value {
+    fn from(val: &'a u32) -> Value {
+        Value::Int(*val as i64)
+    }
+}
+
+impl<'a> From<&'a i64> for Value {
+    fn from(val: &'a i64) -> Value {
+        Value::Int(*val)
+    }
+}
+
+impl From<f32> for Value {
+    fn from(val: f32) -> Value {
+        Value::Float(val as f64)
+    }
+}
+
+impl From<f64> for Value {
+    fn from(val: f64) -> Value {
+        Value::Float(val)
+    }
+}
+
+impl<'a> From<&'a f32> for Value {
+    fn from(val: &'a f32) -> Value {
+        Value::Float(*val as f64)
+    }
+}
+
+impl<'a> From<&'a f64> for Value {
+    fn from(val: &'a f64) -> Value {
+        Value::Float(*val)
+    }
+}
+
+
+pub fn bytes_to_particle(ptype: u8, buf: &[u8]) -> AerospikeResult<Option<Value>> {
     match ptype {
         x if x == ParticleType::NULL as u8 => {
-            let val = NullValue::new();
-            Ok(Box::new(val))
+            Ok(None)
         },
         x if x == ParticleType::INTEGER as u8 => {
-            let val = IntValue::new(NetworkEndian::read_i64(&buf[offset..offset+length]));
-            Ok(Box::new(val))
+            let val = NetworkEndian::read_i64(&buf);
+            Ok(Some(Value::Int(val)))
         },
         x if x == ParticleType::FLOAT as u8 => {
-            let val = FloatValue::new(NetworkEndian::read_f64(&buf[offset..offset+length]));
-            Ok(Box::new(val))
+            let val = NetworkEndian::read_f64(&buf);
+            Ok(Some(Value::Float(val)))
         },
         x if x == ParticleType::STRING as u8 => {
-            let val = StringValue::new(&try!(str::from_utf8(&buf[offset..offset+length].to_owned())).to_string());
-            Ok(Box::new(val))
+            let val = try!(String::from_utf8(buf.to_vec()));
+            Ok(Some(Value::String(val)))
         },
         _ => unreachable!(),
     }
 }
 
-// ----------------------------------------------------------------------
-// NullValue
-// ----------------------------------------------------------------------
-// #[derive(Debug,Clone)]
-pub struct NullValue {}
+// #[macro_export]
+// macro_rules! val {
+//     (None) => {{
+//         None
+//     }};
+//     ($x:expr) => {{
+//         let temp_val: &Value = &$x;
+//         Some(Box::new(temp_val))
+//     }}
+// }
 
-impl core::fmt::Display for NullValue {
-    fn fmt(&self, f: &mut core::fmt::Formatter) -> Result<(), core::fmt::Error> {
-        try!("Null".fmt(f));
-        Ok(())
-    }
-}
-
-impl NullValue {
-    pub fn new() -> NullValue {
-        NullValue {}
-    }
-
-    fn unwrap(&self) -> Option<NullValue> {
-        None
-    }
-}
-
-impl Value for NullValue {
-    fn particle_type(&self) -> ParticleType {
-        ParticleType::NULL
-    }
-
-    fn as_bytes(&self) -> AerospikeResult<Vec<u8>> {
-        Ok(vec![])
-    }
-
-    fn estimate_size(&self) -> usize {
-        0
-    }
-
-    fn as_string(&self) -> String {
-        "Null".to_string()
-    }
-}
-
-// ----------------------------------------------------------------------
-// IntValue
-// ----------------------------------------------------------------------
-// #[derive(Debug,Clone)]
-pub struct IntValue {
-    val: i64,
-}
-
-impl core::fmt::Display for IntValue {
-    fn fmt(&self, f: &mut core::fmt::Formatter) -> Result<(), core::fmt::Error> {
-        try!(self.val.fmt(f));
-        Ok(())
-    }
-}
-
-impl IntValue {
-    pub fn new(val: i64) -> IntValue {
-        IntValue { val: val }
-    }
-
-    fn unwrap(&self) -> i64 {
-        self.val
-    }
-}
-
-impl Value for IntValue {
-    fn particle_type(&self) -> ParticleType {
-        ParticleType::INTEGER
-    }
-
-    fn as_bytes(&self) -> AerospikeResult<Vec<u8>> {
-        let mut buf = Vec::with_capacity(8);
-        buf.resize(8, 0);
-        NetworkEndian::write_i64(&mut buf, self.val);
-        Ok(buf)
-    }
-
-    fn estimate_size(&self) -> usize {
-        8
-    }
-
-    fn as_string(&self) -> String {
-        format!("{}", self.val)
-    }
-}
-
-// ----------------------------------------------------------------------
-// FloatValue
-// ----------------------------------------------------------------------
-// #[derive(Debug,Clone)]
-pub struct FloatValue {
-    val: f64,
-}
-
-impl core::fmt::Display for FloatValue {
-    fn fmt(&self, f: &mut core::fmt::Formatter) -> Result<(), core::fmt::Error> {
-        try!(self.val.fmt(f));
-        Ok(())
-    }
-}
-
-impl FloatValue {
-    pub fn new(val: f64) -> FloatValue {
-        FloatValue { val: val }
-    }
-
-    fn unwrap(&self) -> f64 {
-        self.val
-    }
-}
-
-impl Value for FloatValue {
-    fn particle_type(&self) -> ParticleType {
-        ParticleType::FLOAT
-    }
-
-    fn as_bytes(&self) -> AerospikeResult<Vec<u8>> {
-        let mut buf = Vec::with_capacity(8);
-        buf.resize(8, 0);
-        NetworkEndian::write_f64(&mut buf, self.val);
-        Ok(buf)
-    }
-
-    fn estimate_size(&self) -> usize {
-        8
-    }
-
-    fn as_string(&self) -> String {
-        format!("{}", self.val)
-    }
-}
-
-
-// ----------------------------------------------------------------------
-// StringValue
-// ----------------------------------------------------------------------
-// #[derive(Debug,Clone)]
-pub struct StringValue {
-    val: String,
-}
-
-impl core::fmt::Display for StringValue {
-    fn fmt(&self, f: &mut core::fmt::Formatter) -> Result<(), core::fmt::Error> {
-        try!(self.val.fmt(f));
-        Ok(())
-    }
-}
-
-impl StringValue {
-    pub fn new(val: &str) -> StringValue {
-        StringValue { val: val.to_string() }
-    }
-
-
-    fn unwrap(&self) -> &String {
-        &self.val
-    }
-}
-
-impl Value for StringValue {
-    fn particle_type(&self) -> ParticleType {
-        ParticleType::STRING
-    }
-
-    fn as_bytes(&self) -> AerospikeResult<Vec<u8>> {
-        Ok(self.val.as_bytes().to_vec())
-    }
-
-    fn estimate_size(&self) -> usize {
-        self.val.len()
-    }
-
-    fn as_string(&self) -> String {
-        self.val.to_string()
-    }
-}
+// #[macro_export]
+// macro_rules! key_val {
+//     (None) => {{
+//         None
+//     }};
+//     ($x:expr) => {{
+//         let temp_val: &KeyValue = $x;
+//         Some(Box::new(temp_val))
+//     }};
+// }

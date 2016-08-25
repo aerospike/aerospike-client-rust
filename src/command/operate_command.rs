@@ -29,32 +29,31 @@ use cluster::node_validator::NodeValidator;
 use cluster::partition_tokenizer::PartitionTokenizer;
 use cluster::partition::Partition;
 use cluster::{Node, Cluster};
-use common::{Key, Record, OperationType, FieldType, ParticleType, Bin};
+use common::{Key, Record, OperationType, FieldType, ParticleType, Bin, Operation};
 use policy::{ClientPolicy, WritePolicy, Policy, ConsistencyLevel};
 use common::operation;
 use command::command::Command;
 use command::single_command::SingleCommand;
+use command::read_command::ReadCommand;
 use command::buffer;
 use command::buffer::{Buffer};
 use value::value;
 
-pub struct WriteCommand<'a> {
-    single_command: SingleCommand<'a>,
+pub struct OperateCommand<'a> {
+    pub read_command: ReadCommand<'a>,
 
     policy: &'a WritePolicy,
-    bins: &'a [&'a Bin<'a>],
-    operation: OperationType,
+    operations: &'a [Operation<'a>],
 }
 
-impl<'a> WriteCommand<'a> {
+impl<'a> OperateCommand<'a> {
 
-    pub fn new(policy: &'a WritePolicy, cluster: Arc<Cluster>, key: &'a Key<'a>, bins: &'a[&'a Bin], operation: OperationType) -> AerospikeResult<Self> {
-        Ok(WriteCommand {
-            single_command: try!(SingleCommand::new(cluster, key)),
+    pub fn new(policy: &'a WritePolicy, cluster: Arc<Cluster>, key: &'a Key<'a>, operations: &'a [Operation<'a>]) -> AerospikeResult<Self> {
+        Ok(OperateCommand {
+            read_command: try!(ReadCommand::new(&policy.base_policy, cluster, key, None)),
 
-            bins: bins,
             policy: policy,
-            operation: operation,
+            operations: operations,
         })
     }
 
@@ -64,7 +63,7 @@ impl<'a> WriteCommand<'a> {
 
 }
 
-impl<'a> Command for WriteCommand<'a> {
+impl<'a> Command for OperateCommand<'a> {
 
     fn write_timeout(&mut self, conn: &mut Connection, timeout: Option<Duration>) -> AerospikeResult<()> {
         conn.buffer.write_timeout(timeout);
@@ -76,31 +75,14 @@ impl<'a> Command for WriteCommand<'a> {
     }
 
     fn prepare_buffer(&mut self, conn: &mut Connection) -> AerospikeResult<()> {
-        conn.buffer.set_write(self.policy, &self.operation, self.single_command.key, self.bins)
+        conn.buffer.set_operate(self.policy, self.read_command.single_command.key, self.operations)
     }
 
     fn get_node(&self) -> AerospikeResult<Arc<Node>> {
-        self.single_command.get_node()
+        self.read_command.get_node()
     }
 
     fn parse_result(&mut self, conn: &mut Connection) -> AerospikeResult<()> {
-        // Read header.
-        if let Err(err) = conn.read_buffer(buffer::MSG_TOTAL_HEADER_SIZE as usize) {
-            warn!("Parse result error: {}", err);
-            return Err(err);
-        }
-
-        try!(conn.buffer.reset_offset());
-
-        // A number of these are commented out because we just don't care enough to read
-        // that section of the header. If we do care, uncomment and check!
-        let result_code = (try!(conn.buffer.read_u8(Some(13))) & 0xFF) as isize;
-
-        if result_code != 0 {
-            return Err(AerospikeError::new(result_code, None));
-        }
-
-        SingleCommand::empty_socket(conn)
+        self.read_command.parse_result(conn)
     }
-
  }

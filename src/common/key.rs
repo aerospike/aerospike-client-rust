@@ -19,28 +19,28 @@ use std::fmt;
 
 
 use error::{AerospikeResult, ResultCode, AerospikeError};
-use value::{Value, IntValue, StringValue};
+use value::{Value};
 use value;
 use common::ParticleType;
 
 use crypto::ripemd160::Ripemd160;
 use crypto::digest::Digest;
 
-// #[derive(Debug)]
+// #[derive(Debug,Clone)]
 pub struct Key<'a> {
     pub namespace: &'a str,
     pub set_name: &'a str,
     pub digest: Vec<u8>,
-    pub user_key: &'a Value,
+    pub user_key: Option<Value>,
 }
 
 impl<'a> Key<'a> {
-    pub fn new(namespace: &'a str, setname: &'a str, key: &'a Value) -> AerospikeResult<Self> {
+    pub fn new(namespace: &'a str, setname: &'a str, key: Value) -> AerospikeResult<Self> {
         let mut key = Key {
             namespace: namespace,
             set_name: setname,
             digest: Vec::with_capacity(20),
-            user_key: key,
+            user_key: Some(key),
         };
 
         key.digest.resize(20, 0);
@@ -49,23 +49,14 @@ impl<'a> Key<'a> {
     }
 
     fn compute_digest(&mut self) -> AerospikeResult<()> {
-        match self.user_key.particle_type() {
-            ParticleType::NULL => {
-                return Err(AerospikeError::new(ResultCode::PARAMETER_ERROR,
-                                               Some("Invalid Key `null`".to_string())))
-            }
-            ParticleType::MAP => {
-                return Err(AerospikeError::new(ResultCode::PARAMETER_ERROR,
-                                               Some("Invalid Key: maps are not allowed."
-                                                        .to_string())))
-            }
-            _ => (),
-        }
-
         let mut hash = Ripemd160::new();
         hash.input(self.set_name.as_bytes());
-        hash.input(&[self.user_key.particle_type() as u8]);
-        hash.input(&try!(self.user_key.as_bytes()));
+        if let Some(ref user_key) = self.user_key {
+            hash.input(&[user_key.particle_type() as u8]);
+            hash.input(&try!(user_key.key_bytes()));
+        } else {
+            unreachable!()
+        }
         hash.result(&mut self.digest);
 
         Ok(())
@@ -77,4 +68,12 @@ impl<'a> core::fmt::Display for Key<'a> {
         try!(self.namespace.fmt(f));
         Ok(())
     }
+}
+
+
+#[macro_export]
+macro_rules! key {
+    ($ns:expr, $set:expr, $val:expr) => {{
+        Key::new($ns, $set, Value::from($val)).unwrap()
+    }};
 }

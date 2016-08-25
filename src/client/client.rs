@@ -33,7 +33,8 @@ use command::delete_command::{DeleteCommand};
 use command::touch_command::{TouchCommand};
 use command::exists_command::{ExistsCommand};
 use command::read_header_command::{ReadHeaderCommand};
-use value::{Value, IntValue, StringValue};
+use command::operate_command::{OperateCommand};
+use value::{Value};
 
 use policy::{ClientPolicy, ReadPolicy, WritePolicy};
 use error::{AerospikeResult};
@@ -46,13 +47,11 @@ pub struct Client {
 }
 
 impl Client {
-    pub fn new(host_name: String, port: u16) -> AerospikeResult<Self> {
-        let hosts = vec![Host::new(host_name, port)];
-        let policy: ClientPolicy = Default::default();
-        let cluster = try!(Cluster::new(policy, &hosts));
+    pub fn new(policy: &ClientPolicy, hosts: &[Host]) -> AerospikeResult<Self> {
+        let cluster = try!(Cluster::new(policy.clone(), hosts));
 
         Ok(Client {
-        	cluster: cluster,
+            cluster: cluster,
         })
     }
 
@@ -114,7 +113,7 @@ impl Client {
         command.execute()
     }
 
-    pub fn PREPEND<'a, 'b>(&'a self,
+    pub fn prepend<'a, 'b>(&'a self,
                          policy: &'a WritePolicy,
                          key: &'a Key<'a>,
                          bins: &'a [&'b Bin])
@@ -148,68 +147,16 @@ impl Client {
         try!(command.execute());
         Ok(command.exists)
     }
-}
 
-#[test]
-fn connect() {
-    env_logger::init().unwrap();
+    pub fn operate<'a, 'b>(&'a self,
+                         policy: &'a WritePolicy,
+                         key: &'a Key<'a>,
+                         ops: &'a[operation::Operation<'a>])
+                         -> AerospikeResult<Arc<Record>> {
+        let mut command = try!(OperateCommand::new(policy, self.cluster.clone(), key, ops));
+        try!(command.execute());
+        Ok(command.read_command.record.as_ref().unwrap().clone())
+    }
 
-    let client: Arc<Client> = Arc::new(Client::new("172.16.224.150".to_string(), 3000).unwrap());
 
-    let mut threads = vec![];
-    for _ in 0..2 {
-    	let client = client.clone();
-	    let t = thread::spawn(move || {
-		    let policy = ReadPolicy::default();
-
-		    let wpolicy = WritePolicy::default();
-		    let v = IntValue::new(-1);
-		    let key = Key::new("test", "test", &v).unwrap();
-		    let wbin = Bin::new("bin999", &v);
-		    let bins = vec![&wbin];
-
-			client.put(&wpolicy, &key, &bins).unwrap();
-		    let rec = client.get(&policy, &key, None);
-		    println!("@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@ {}", rec.unwrap());
-
-			client.touch(&wpolicy, &key).unwrap();
-		    let rec = client.get(&policy, &key, None);
-		    println!("@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@ {}", rec.unwrap());
-
-		    let rec = client.get_header(&policy, &key);
-		    println!("@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@/// {}", rec.unwrap());
-
-			let exists = client.exists(&wpolicy, &key).unwrap();
-			println!("exists: {}", exists);
-
-			let existed = client.delete(&wpolicy, &key).unwrap();
-			println!("existed: {}", existed);
-
-			let existed = client.delete(&wpolicy, &key).unwrap();
-			println!("existed: {}", existed);
-		});
-		threads.push(t);
-	}
-
-	for t in threads {
-		t.join();
-	}
-
- //    let now = Instant::now();
-
- //    for i in 1..10_000 {
-	//     let v = IntValue::new(i % 10000);
-	//     let key = Key::new("test", "test", &v).unwrap();
-	//     let rec = client.get(&policy, &key, None);
-	//     // println!("@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@ {}", rec.unwrap());
-	// }
-
-	// println!("total time: {:?}", now.elapsed());
-
- //    for _ in 1..100 {
- //        let cluster = client.cluster.clone();
- //        println!("{:?}", cluster.nodes().len());
- //        thread::sleep(Duration::from_millis(1000));
- //    }
- //    assert_eq!(2, 2);
 }

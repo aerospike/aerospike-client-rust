@@ -30,7 +30,6 @@ use command::buffer::Buffer;
 
 #[derive(Debug)]
 pub struct Connection {
-    // node: Arc<Node>,
     timeout: Option<Duration>,
 
     // duration after which connection is considered idle
@@ -51,7 +50,7 @@ impl Connection {
         let cpolicy: ClientPolicy = Default::default();
 
         let mut conn = Connection {
-            // node: node.clone(),
+            // node: None,
             buffer: Buffer::new(),
             timeout: cpolicy.timeout,
             conn: stream,
@@ -77,7 +76,7 @@ impl Connection {
 
         let mut conn = Connection {
             buffer: Buffer::new(),
-            // node: node.clone(),
+            // node: Some(node),
             timeout: cpolicy.timeout,
             conn: stream,
 
@@ -91,6 +90,10 @@ impl Connection {
         conn.refresh();
 
         Ok(conn)
+    }
+
+    pub fn close(&mut self) {
+        self.conn.shutdown(Shutdown::Both);
     }
 
     pub fn flush(&mut self) -> AerospikeResult<()> {
@@ -134,7 +137,6 @@ impl Connection {
         return false;
     }
 
-
     fn refresh(&mut self) {
         self.idle_deadline = None;
         if let Some(idle_to) = self.idle_timeout {
@@ -145,9 +147,10 @@ impl Connection {
 
 // TODO: implement this
 // impl Drop for Connection {
-//     fn drop(&'a mut self) {
-//         let node = self.node.lock().unwrap();
-//         node.dec_connections();
+//     fn drop(&mut self) {
+//         if let Some(node) = self.node {
+//             node.dec_connections();
+//         }
 //         self.conn.shutdown(Shutdown::Both);
 //     }
 // }

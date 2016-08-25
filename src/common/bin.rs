@@ -13,17 +13,17 @@
 // License for the specific language governing permissions and limitations under
 // the License.
 
-use value::{Value, IntValue, StringValue};
+use value::{Value};
 
 // #[derive(Debug)]
 pub struct Bin<'a> {
     pub name: &'a str,
-    pub value: &'a Value,
+    pub value: Option<Value>,
 }
 
 
 impl<'a> Bin<'a> {
-	pub fn new(name: &'a str, val: &'a Value) -> Self {
+	pub fn new(name: &'a str, val: Option<Value>) -> Self {
 		Bin {
 			name: name,
 			value: val,
@@ -31,20 +31,12 @@ impl<'a> Bin<'a> {
 	}
 }
 
-// impl<'a> Bin<'a, IntValue> {
-//     pub fn new(bin_name: &'a str, bin_value: i64) -> Self {
-//         Bin {
-//             name: bin_name,
-//             value: IntValue::new(bin_value),
-//         }
-//     }
-// }
-
-// impl<'a> Bin<'a, StringValue> {
-//     pub fn new(bin_name: &'a str, bin_value: &'a str) -> Self {
-//         Bin {
-//             name: bin_name,
-//             value: StringValue::new(bin_value),
-//         }
-//     }
-// }
+#[macro_export]
+macro_rules! bin {
+    ($bin_name:expr, None) => {{
+        Bin::new($bin_name, None)
+    }};
+    ($bin_name:expr, $val:expr) => {{
+        Bin::new($bin_name, Some(Value::from($val)))
+    }};
+}

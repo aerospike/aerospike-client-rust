@@ -23,3 +23,4 @@ pub mod delete_command;
 pub mod touch_command;
 pub mod exists_command;
 pub mod read_header_command;
+pub mod operate_command;

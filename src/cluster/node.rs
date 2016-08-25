@@ -115,8 +115,12 @@ impl Node {
         self.supports_geo.load(Ordering::Relaxed)
     }
 
-    pub fn dec_connections(&self) {
-        self.connection_count.fetch_sub(1, Ordering::Relaxed);
+    pub fn dec_connections(&self) -> usize {
+        self.connection_count.fetch_sub(1, Ordering::Relaxed)
+    }
+
+    pub fn inc_connections(&self) -> usize {
+        self.connection_count.fetch_add(1, Ordering::Relaxed)
     }
 
     pub fn reference_count(&self) -> usize {
@@ -206,9 +210,9 @@ impl Node {
 
             let alias = match self.client_policy.ip_map {
                 Some(ref ip_map) if ip_map.contains_key(host) => {
-                    Host::new(ip_map.get(host).unwrap().to_string(), port)
+                    Host::new(ip_map.get(host).unwrap(), port)
                 }
-                _ => Host::new(host.to_string(), port),
+                _ => Host::new(host, port),
             };
 
             if current_aliases.contains_key(&alias) {
@@ -254,9 +258,10 @@ impl Node {
         let mut connections = self.connections.write().unwrap();
         loop {
             match connections.pop_front() {
-                Some(conn) => {
+                Some(mut conn) => {
                     {
                         if conn.is_idle() {
+                            self.invalidate_connection(&mut conn);
                             continue;
                         }
                         try!(conn.set_timeout(timeout));
@@ -264,25 +269,49 @@ impl Node {
                     return Ok(conn);
                 }
                 None => {
-                    if self.connection_count.load(Ordering::Relaxed) <
-                       self.client_policy.connection_pool_size {
-                        // let node = Arc::new(Mutex::new(self));
-                        let conn = try!(Connection::new(self));
-                        try!(conn.set_timeout(timeout));
-                        return Ok(conn);
+                    if self.inc_connections() > self.client_policy.connection_pool_size {
+                        // too many connections, undo
+                        self.dec_connections();
+                        return Err(AerospikeError::ErrConnectionPoolEmpty());
                     }
+
+                    let conn = match Connection::new(self) {
+                        Ok(c) => c,
+                        Err(e) => {
+                            self.dec_connections();
+                            return Err(e);
+                        }
+                    };
+
+                    match conn.set_timeout(timeout) {
+                        Err(e) => {
+                            self.dec_connections();
+                            return Err(e);
+                        },
+                        _ => (),
+                    }
+
+                    return Ok(conn);
+
                 }
             }
         }
     }
 
-    pub fn put_connection(&self, conn: Connection) {
+    pub fn put_connection(&self, mut conn: Connection) {
         if self.active.load(Ordering::Relaxed) {
             let mut connections = self.connections.write().unwrap();
             if connections.len() < self.client_policy.connection_pool_size {
                 connections.push_back(conn);
+            } else {
+                self.invalidate_connection(&mut conn);
             }
         }
+    }
+
+    pub fn invalidate_connection(&self, conn: &mut Connection) {
+        self.dec_connections();
+        conn.close();
     }
 
     pub fn failures(&self) -> usize {
@@ -290,11 +319,11 @@ impl Node {
     }
 
     fn reset_failures(&self) {
-        self.failures.store(0, Ordering::Relaxed);
+        self.failures.store(0, Ordering::Relaxed)
     }
 
-    pub fn increase_failures(&self) {
-        self.failures.fetch_add(1, Ordering::Relaxed);
+    pub fn increase_failures(&self) -> usize {
+        self.failures.fetch_add(1, Ordering::Relaxed)
     }
 
     pub fn is_active(&self) -> bool {
@@ -329,7 +358,13 @@ impl Node {
 
     pub fn info(&self, commands: &[&str]) -> AerospikeResult<HashMap<String, String>> {
         let mut conn = try!(self.get_connection(self.client_policy.timeout));
-        Ok(try!(Message::info(&mut conn, commands)))
+        match Message::info(&mut conn, commands) {
+            Ok(res) => Ok(res),
+            Err(e) => {
+                self.invalidate_connection(&mut conn);
+                Err(e)
+            }
+        }
     }
 
     pub fn partition_generation(&self) -> AerospikeResult<isize> {

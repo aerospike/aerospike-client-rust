@@ -28,9 +28,9 @@ pub struct Host {
 
 impl Host {
     // NewHost initializes new host instance.
-    pub fn new(name: String, port: u16) -> Host {
+    pub fn new(name: &str, port: u16) -> Self {
         Host {
-            name: name,
+            name: name.to_string(),
             port: port,
         }
     }
