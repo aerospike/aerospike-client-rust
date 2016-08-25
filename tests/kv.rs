@@ -69,8 +69,8 @@ fn connect() {
 		    let bins = vec![&wbin];
 
 		    let wbin1 = bin!("bin666", -1);
-		    // let wbin2 = Bin::new("bin666", Some(-1));
-		    // let bins2 = vec![&wbin2];
+		    let wbin2 = bin!("bin666", -1);
+		    let bins2 = vec![&wbin2];
 
 			client.put(&wpolicy, &key, &bins).unwrap();
 		    let rec = client.get(&policy, &key, None);
@@ -86,9 +86,9 @@ fn connect() {
 			let exists = client.exists(&wpolicy, &key).unwrap();
 			println!("exists: {}", exists);
 
-			// let ops = &vec![Operation::put(&wbin2), Operation::get()];
-			// let op_rec = client.operate(&wpolicy, &key, ops);
-			// println!("operate: {}", op_rec.unwrap());
+			let ops = &vec![Operation::put(&wbin2), Operation::get()];
+			let op_rec = client.operate(&wpolicy, &key, ops);
+			println!("operate: {}", op_rec.unwrap());
 
 			let existed = client.delete(&wpolicy, &key).unwrap();
 			println!("existed: {}", existed);

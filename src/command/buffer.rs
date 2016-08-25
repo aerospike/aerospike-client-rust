@@ -370,7 +370,7 @@ impl Buffer {
             self.data_offset += bin_name.len();
         }
 
-        if let Some(ref bv) = *operation.bin_value {
+        if let Some(bv) = operation.bin_value {
             self.data_offset += bv.estimate_size();
         }
 
@@ -550,11 +550,11 @@ impl Buffer {
         };
 
         let name_length = bin_name.len();
-        let value_length = if let Some(ref bv) = *operation.bin_value { bv.estimate_size() } else { 0 };
+        let value_length = if let Some(bv) = operation.bin_value { bv.estimate_size() } else { 0 };
 
         self.write_i32((name_length+value_length+4) as i32);
         self.write_u8(operation.op.op);
-        if let Some(ref bv) = *operation.bin_value {
+        if let Some(bv) = operation.bin_value {
             self.write_u8(bv.particle_type() as u8);
         } else {
             self.write_u8(ParticleType::NULL as u8);
@@ -562,7 +562,7 @@ impl Buffer {
         self.write_u8(0);
         self.write_u8(name_length as u8);
         self.write_str(bin_name);
-        if let Some(ref bv) = *operation.bin_value {
+        if let Some(bv) = operation.bin_value {
             try!(bv.write_to(self));
         }
 

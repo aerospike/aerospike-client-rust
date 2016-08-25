@@ -63,8 +63,8 @@ The following is a very simple example of CRUD operations in an Aerospike databa
     for t in threads {
         t.join();
     }
-    println!("total time: {:?}", now.elapsed());
 
+    println!("total time: {:?}", now.elapsed());
 }
 ```
 

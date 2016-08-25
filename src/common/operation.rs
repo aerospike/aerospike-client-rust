@@ -44,82 +44,82 @@ pub struct Operation<'a> {
 	pub bin_name: Option<&'a str>,
 
 	// BinValue (Optional) determines bin value used in operation.
-	pub bin_value: &'a Option<Box<value::Value>>,
+	pub bin_value: Option<&'a value::Value>,
 
 	// will be true ONLY for GetHeader() operation
 	pub header_only: bool,
 }
 
-// impl<'a> Operation<'a> {
-// 	pub fn get() -> Self {
-// 		Operation {
-// 			op: READ,
-// 			bin_name: None,
-// 			bin_value: &None,
-// 			header_only: false,
-// 		}
-// 	}
+impl<'a> Operation<'a> {
+	pub fn get() -> Self {
+		Operation {
+			op: READ,
+			bin_name: None,
+			bin_value: None,
+			header_only: false,
+		}
+	}
 
-// 	pub fn get_header() -> Self {
-// 		Operation {
-// 			op: READ,
-// 			bin_name: None,
-// 			bin_value: &None,
-// 			header_only: true,
-// 		}
-// 	}
+	pub fn get_header() -> Self {
+		Operation {
+			op: READ,
+			bin_name: None,
+			bin_value: None,
+			header_only: true,
+		}
+	}
 
-// 	pub fn get_bin(bin_name: &'a str) -> Self {
-// 		Operation {
-// 			op: READ,
-// 			bin_name: Some(bin_name),
-// 			bin_value: None,
-// 			header_only: false,
-// 		}
-// 	}
+	pub fn get_bin(bin_name: &'a str) -> Self {
+		Operation {
+			op: READ,
+			bin_name: Some(bin_name),
+			bin_value: None,
+			header_only: false,
+		}
+	}
 
-// 	pub fn put(bin: &'a Bin) -> Self {
-// 		Operation {
-// 			op: WRITE,
-// 			bin_name: Some(bin.name),
-// 			bin_value: &bin.value,
-// 			header_only: false,
-// 		}
-// 	}
+	pub fn put(bin: &'a Bin) -> Self {
+		Operation {
+			op: WRITE,
+			bin_name: Some(bin.name),
+			bin_value: bin.value.as_ref(),
+			header_only: false,
+		}
+	}
 
-// 	pub fn append(bin: &'a Bin) -> Self {
-// 		Operation {
-// 			op: APPEND,
-// 			bin_name: Some(bin.name),
-// 			bin_value: &bin.value,
-// 			header_only: false,
-// 		}
-// 	}
+	pub fn append(bin: &'a Bin) -> Self {
+		Operation {
+			op: APPEND,
+			bin_name: Some(bin.name),
+			bin_value: bin.value.as_ref(),
+			header_only: false,
+		}
+	}
 
-// 	pub fn prepend(bin: &'a Bin) -> Self {
-// 		Operation {
-// 			op: PREPEND,
-// 			bin_name: Some(bin.name),
-// 			bin_value: &bin.value,
-// 			header_only: false,
-// 		}
-// 	}
+	pub fn prepend(bin: &'a Bin) -> Self {
+		Operation {
+			op: PREPEND,
+			bin_name: Some(bin.name),
+			bin_value: bin.value.as_ref(),
+			header_only: false,
+		}
+	}
 
-// 	pub fn add(bin: &'a Bin) -> Self {
-// 		Operation {
-// 			op: ADD,
-// 			bin_name: Some(bin.name),
-// 			bin_value: &bin.value,
-// 			header_only: false,
-// 		}
-// 	}
+	pub fn add(bin: &'a Bin) -> Self {
+		Operation {
+			op: ADD,
+			bin_name: Some(bin.name),
+			bin_value: bin.value.as_ref(),
+			header_only: false,
+		}
+	}
 
-// 	pub fn touch() -> Self {
-// 		Operation {
-// 			op: TOUCH,
-// 			bin_name: None,
-// 			bin_value: &None,
-// 			header_only: false,
-// 		}
-// 	}
-// }
+	pub fn touch() -> Self {
+		Operation {
+			op: TOUCH,
+			bin_name: None,
+			bin_value: None,
+			header_only: false,
+		}
+	}
+}
