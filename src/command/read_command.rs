@@ -95,8 +95,8 @@ impl<'a> ReadCommand<'a> {
             receive_offset += particle_bytes_size;
 
             // TODO
-            // if let Some(value) = value {
-            //     bins.insert(name, value);
+            if let Some(value) = value {
+                bins.insert(name, value);
 
             //     // for operate list command results
             //     match bins.get(&name) {
@@ -110,7 +110,7 @@ impl<'a> ReadCommand<'a> {
             //         },
             //         _ => bins.insert(name, value),
             //     }
-            // }
+            }
         }
 
         Ok(Arc::new(try!(Record::new(self.single_command.key, bins, generation, expiration))))

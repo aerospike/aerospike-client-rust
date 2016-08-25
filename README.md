@@ -33,6 +33,7 @@ The following is a very simple example of CRUD operations in an Aerospike databa
 
             let wpolicy = WritePolicy::default();
             let key = key!("test", "test", 1);
+
             let wbin = bin!("bin999", 1);
             let bins = vec![&wbin];
 
@@ -49,6 +50,10 @@ The following is a very simple example of CRUD operations in an Aerospike databa
 
             let exists = client.exists(&wpolicy, &key).unwrap();
             println!("exists: {}", exists);
+
+            let ops = &vec![Operation::put(&wbin), Operation::get()];
+            let op_rec = client.operate(&wpolicy, &key, ops);
+            println!("operate: {}", op_rec.unwrap());
 
             let existed = client.delete(&wpolicy, &key).unwrap();
             println!("existed (sould be true): {}", existed);
