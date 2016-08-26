@@ -31,6 +31,7 @@ pub enum Value {
     Int(i64),
     Float(f64),
     String(String),
+    Blob(Vec<u8>),
 }
 
 impl Value {
@@ -39,6 +40,7 @@ impl Value {
             &Value::Int(_) => ParticleType::INTEGER,
             &Value::Float(_) => ParticleType::FLOAT,
             &Value::String(_) => ParticleType::STRING,
+            &Value::Blob(_) => ParticleType::BLOB,
         }
     }
 
@@ -47,6 +49,7 @@ impl Value {
             &Value::Int(val) => format!("{}", val),
             &Value::Float(val) => format!("{}", val),
             &Value::String(ref val) => format!("{}", val),
+            &Value::Blob(ref val) => format!("{:?}", val),
         }
     }
 
@@ -55,6 +58,7 @@ impl Value {
             &Value::Int(_) => 8,
             &Value::Float(_) => 8,
             &Value::String(ref s) => s.len(),
+            &Value::Blob(ref s) => s.len(),
         }
     }
 
@@ -63,6 +67,7 @@ impl Value {
             &Value::Int(val) => buffer.write_i64(val),
             &Value::Float(val) => buffer.write_f64(val),
             &Value::String(ref val) => buffer.write_str(val),
+            &Value::Blob(ref val) => buffer.write_bytes(val),
         }
         Ok(())
     }
@@ -84,6 +89,7 @@ impl Value {
             &Value::String(ref val) => {
                 Ok(val.as_bytes().to_vec())
             },
+            _ => panic!("Data type is not supported as Key value.")
         }
     }
 }
@@ -134,6 +140,18 @@ impl From<u32> for Value {
 impl From<i64> for Value {
     fn from(val: i64) -> Value {
         Value::Int(val)
+    }
+}
+
+impl From<String> for Value {
+    fn from(val: String) -> Value {
+        Value::String(val)
+    }
+}
+
+impl From<Vec<u8>> for Value {
+    fn from(val: Vec<u8>) -> Value {
+        Value::Blob(val)
     }
 }
 
@@ -203,6 +221,30 @@ impl<'a> From<&'a f64> for Value {
     }
 }
 
+impl<'a> From<&'a String> for Value {
+    fn from(val: &'a String) -> Value {
+        Value::String(val.clone())
+    }
+}
+
+impl<'a> From<&'a str> for Value {
+    fn from(val: &'a str) -> Value {
+        Value::String(val.to_string())
+    }
+}
+
+impl<'a> From<&'a Vec<u8>> for Value {
+    fn from(val: &'a Vec<u8>) -> Value {
+        Value::Blob(val.clone())
+    }
+}
+
+impl<'a> From<&'a [u8]> for Value {
+    fn from(val: &'a [u8]) -> Value {
+        Value::Blob(val.to_vec())
+    }
+}
+
 
 pub fn bytes_to_particle(ptype: u8, buf: &[u8]) -> AerospikeResult<Option<Value>> {
     match ptype {
@@ -220,6 +262,9 @@ pub fn bytes_to_particle(ptype: u8, buf: &[u8]) -> AerospikeResult<Option<Value>
         x if x == ParticleType::STRING as u8 => {
             let val = try!(String::from_utf8(buf.to_vec()));
             Ok(Some(Value::String(val)))
+        },
+        x if x == ParticleType::BLOB as u8 => {
+            Ok(Some(Value::Blob(buf.to_vec())))
         },
         _ => unreachable!(),
     }

@@ -50,10 +50,24 @@ fn connect() {
     let key = key!("ns", "set", &1i8);
     let key = key!("ns", "set", 1u8);
     let key = key!("ns", "set", &1u8);
+    let key = key!("ns", "set", 1i16);
+    let key = key!("ns", "set", &1i16);
+    let key = key!("ns", "set", 1u16);
+    let key = key!("ns", "set", &1u16);
+    let key = key!("ns", "set", 1i32);
+    let key = key!("ns", "set", &1i32);
+    let key = key!("ns", "set", 1u32);
+    let key = key!("ns", "set", &1u32);
+    let key = key!("ns", "set", 1i64);
+    let key = key!("ns", "set", &1i64);
     let key = key!("ns", "set", 1.0f32);
     let key = key!("ns", "set", &1.0f32);
     let key = key!("ns", "set", 1.0f64);
     let key = key!("ns", "set", &1.0f64);
+
+    let key = key!("ns", "set", "haha");
+    let key = key!("ns", "set", "haha".to_string());
+    let key = key!("ns", "set", &"haha".to_string());
 
 
     let mut threads = vec![];
@@ -65,7 +79,7 @@ fn connect() {
 
 		    let wpolicy = WritePolicy::default();
 		    let key = key!("test", "test", -1);
-		    let wbin = bin!("bin999", 1);
+		    let wbin = bin!("bin999", "test string");
 		    let bins = vec![&wbin];
 
 			client.put(&wpolicy, &key, &bins).unwrap();
@@ -113,7 +127,7 @@ fn connect() {
 	    let t = thread::spawn(move || {
 		    let policy = ReadPolicy::default();
 		    let key = key!("test", "test", -1);
-		    for i in 1..10_000 {
+		    for i in 1..1_000 {
 			    let rec = client.get(&policy, &key, None);
 			    // println!("@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@ {}", rec.unwrap());
 			}
