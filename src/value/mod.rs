@@ -13,7 +13,7 @@
 // License for the specific language governing permissions and limitations under
 // the License.
 
-pub use self::value::{Value, IntValue, FloatValue};
+pub use self::value::{Value, FloatValue};
 
 #[macro_use]
 #[macro_export]

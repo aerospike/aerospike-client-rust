@@ -35,55 +35,6 @@ use command::buffer::Buffer;
 use msgpack::encoder::pack_value;
 use msgpack::decoder::*;
 
-#[derive(Debug,Clone, PartialEq, Eq, Hash)]
-pub enum IntValue {
-    I8(i8),
-    U8(u8),
-    I16(i16),
-    U16(u16),
-    I32(i32),
-    U32(u32),
-    I64(i64),
-    U64(u64),
-}
-
-impl From<IntValue> for i64 {
-    fn from(val: IntValue) -> i64 {
-        match val {
-            IntValue::I64(val) => val,
-            IntValue::U64(val) => val as i64,
-            IntValue::I32(val) => val as i64,
-            IntValue::U32(val) => val as i64,
-            IntValue::I16(val) => val as i64,
-            IntValue::U16(val) => val as i64,
-            IntValue::I8(val) => val as i64,
-            IntValue::U8(val) => val as i64,
-        }
-    }
-}
-
-impl<'a> From<&'a IntValue> for i64 {
-    fn from(val: &IntValue) -> i64 {
-        match val {
-            &IntValue::I64(val) => val,
-            &IntValue::U64(val) => val as i64,
-            &IntValue::I32(val) => val as i64,
-            &IntValue::U32(val) => val as i64,
-            &IntValue::I16(val) => val as i64,
-            &IntValue::U16(val) => val as i64,
-            &IntValue::I8(val) => val as i64,
-            &IntValue::U8(val) => val as i64,
-        }
-    }
-}
-
-
-impl core::fmt::Display for IntValue {
-    fn fmt(&self, f: &mut core::fmt::Formatter) -> Result<(), core::fmt::Error> {
-        write!(f, "{}", self)
-    }
-}
-
 ///////////////////////////////////////////////////////////////////////////
 
 #[derive(Debug,Clone,PartialEq,Eq,Hash)]
@@ -171,7 +122,8 @@ impl core::fmt::Display for FloatValue {
 pub enum Value {
     Nil,
     Bool(bool),
-    Int(IntValue),
+    Int(i64),
+    UInt(u64),
     Float(FloatValue),
     String(String),
     Blob(Vec<u8>),
@@ -186,6 +138,7 @@ impl Hash for Value {
             &Value::Nil => { let v :Option<u8> = None; v.hash(state) },
             &Value::Bool(ref val) => val.hash(state),
             &Value::Int(ref val) => val.hash(state),
+            &Value::UInt(ref val) => val.hash(state),
             &Value::Float(ref val) => val.hash(state),
             &Value::String(ref val) => val.hash(state),
             &Value::Blob(ref val) => val.hash(state),
@@ -201,6 +154,7 @@ impl Value {
         match self {
             &Value::Nil => ParticleType::NULL,
             &Value::Int(_) => ParticleType::INTEGER,
+            &Value::UInt(_) => panic!("Aerospike does not support u64 natively on server-side. Use casting to store and retrieve u64 values."),
             &Value::Bool(_) => ParticleType::INTEGER,
             &Value::Float(_) => ParticleType::FLOAT,
             &Value::String(_) => ParticleType::STRING,
@@ -213,11 +167,12 @@ impl Value {
 
     pub fn as_string(&self) -> String {
         match self {
-            &Value::Nil => format!("<null>"),
-            &Value::Int(ref val) => format!("{:?}", i64::from(val)),
+            &Value::Nil => "<null>".to_string(),
+            &Value::Int(ref val) => format!("{:?}", val),
+            &Value::UInt(ref val) => format!("{:?}", val),
             &Value::Bool(ref val) => format!("{:?}", val),
             &Value::Float(ref val) => format!("{:?}", f64::from(val)),
-            &Value::String(ref val) => format!("{}", val),
+            &Value::String(ref val) => format!("{:?}", val),
             &Value::Blob(ref val) => format!("{:?}", val),
             &Value::List(ref val) => format!("{:?}", val),
             &Value::HashMap(ref val) => format!("{:?}", val),
@@ -229,6 +184,7 @@ impl Value {
         match self {
             &Value::Nil => Ok(0),
             &Value::Int(_) => Ok(8),
+            &Value::UInt(_) => panic!("Aerospike does not support u64 natively on server-side. Use casting to store and retrieve u64 values."),
             &Value::Bool(_) => Ok(8),
             &Value::Float(_) => Ok(8),
             &Value::String(ref s) => Ok(s.len()),
@@ -242,7 +198,8 @@ impl Value {
     pub fn write_to(&self, buf: &mut Buffer) -> AerospikeResult<usize> {
         match self {
             &Value::Nil => Ok(0),
-            &Value::Int(ref val) => buf.write_i64(i64::from(val)),
+            &Value::Int(ref val) => buf.write_i64(*val),
+            &Value::UInt(ref val) => panic!("Aerospike does not support u64 natively on server-side. Use casting to store and retrieve u64 values."),
             &Value::Bool(ref val) => buf.write_bool(*val),
             &Value::Float(ref val) => buf.write_f64(f64::from(val)),
             &Value::String(ref val) => buf.write_str(val),
@@ -257,7 +214,7 @@ impl Value {
         match self {
             &Value::Int(ref val) => {
                 let mut buf = [0; 8];
-                NetworkEndian::write_i64(&mut buf, i64::from(val));
+                NetworkEndian::write_i64(&mut buf, *val);
                 h.input(&buf);
                 Ok(())
             },
@@ -282,60 +239,6 @@ impl core::fmt::Display for Value {
     }
 }
 
-impl From<IntValue> for Value {
-    fn from(val: IntValue) -> Value {
-        Value::Int(IntValue::from(val))
-    }
-}
-
-impl From<i8> for IntValue {
-    fn from(val: i8) -> IntValue {
-        IntValue::I8(val)
-    }
-}
-
-impl From<u8> for IntValue {
-    fn from(val: u8) -> IntValue {
-        IntValue::U8(val)
-    }
-}
-
-impl From<i16> for IntValue {
-    fn from(val: i16) -> IntValue {
-        IntValue::I16(val)
-    }
-}
-
-impl From<u16> for IntValue {
-    fn from(val: u16) -> IntValue {
-        IntValue::U16(val)
-    }
-}
-
-impl From<i32> for IntValue {
-    fn from(val: i32) -> IntValue {
-        IntValue::I32(val)
-    }
-}
-
-impl From<u32> for IntValue {
-    fn from(val: u32) -> IntValue {
-        IntValue::U32(val)
-    }
-}
-
-impl From<i64> for IntValue {
-    fn from(val: i64) -> IntValue {
-        IntValue::I64(val)
-    }
-}
-
-impl From<u64> for IntValue {
-    fn from(val: u64) -> IntValue {
-        IntValue::U64(val)
-    }
-}
-
 impl From<String> for Value {
     fn from(val: String) -> Value {
         Value::String(val)
@@ -357,54 +260,6 @@ impl From<Vec<Value>> for Value {
 impl From<HashMap<Value, Value>> for Value {
     fn from(val: HashMap<Value, Value>) -> Value {
         Value::HashMap(val)
-    }
-}
-
-impl<'a> From<&'a i8> for IntValue {
-    fn from(val: &'a i8) -> IntValue {
-        IntValue::I8(*val)
-    }
-}
-
-impl<'a> From<&'a u8> for IntValue {
-    fn from(val: &'a u8) -> IntValue {
-        IntValue::U8(*val)
-    }
-}
-
-impl<'a> From<&'a i16> for IntValue {
-    fn from(val: &'a i16) -> IntValue {
-        IntValue::I16(*val)
-    }
-}
-
-impl<'a> From<&'a u16> for IntValue {
-    fn from(val: &'a u16) -> IntValue {
-        IntValue::U16(*val)
-    }
-}
-
-impl<'a> From<&'a i32> for IntValue {
-    fn from(val: &'a i32) -> IntValue {
-        IntValue::I32(*val)
-    }
-}
-
-impl<'a> From<&'a u32> for IntValue {
-    fn from(val: &'a u32) -> IntValue {
-        IntValue::U32(*val)
-    }
-}
-
-impl<'a> From<&'a i64> for IntValue {
-    fn from(val: &'a i64) -> IntValue {
-        IntValue::I64(*val)
-    }
-}
-
-impl<'a> From<&'a u64> for IntValue {
-    fn from(val: &'a u64) -> IntValue {
-        IntValue::U64(*val)
     }
 }
 
@@ -464,97 +319,97 @@ impl From<bool> for Value {
 
 impl From<i8> for Value {
     fn from(val: i8) -> Value {
-        Value::Int(IntValue::I8(val))
+        Value::Int(val as i64)
     }
 }
 
 impl From<u8> for Value {
     fn from(val: u8) -> Value {
-        Value::Int(IntValue::U8(val))
+        Value::Int(val as i64)
     }
 }
 
 impl From<i16> for Value {
     fn from(val: i16) -> Value {
-        Value::Int(IntValue::I16(val))
+        Value::Int(val as i64)
     }
 }
 
 impl From<u16> for Value {
     fn from(val: u16) -> Value {
-        Value::Int(IntValue::U16(val))
+        Value::Int(val as i64)
     }
 }
 
 impl From<i32> for Value {
     fn from(val: i32) -> Value {
-        Value::Int(IntValue::I32(val))
+        Value::Int(val as i64)
     }
 }
 
 impl From<u32> for Value {
     fn from(val: u32) -> Value {
-        Value::Int(IntValue::U32(val))
+        Value::Int(val as i64)
     }
 }
 
 impl From<i64> for Value {
     fn from(val: i64) -> Value {
-        Value::Int(IntValue::I64(val))
+        Value::Int(val)
     }
 }
 
 impl From<u64> for Value {
     fn from(val: u64) -> Value {
-        Value::Int(IntValue::U64(val))
+        Value::UInt(val)
     }
 }
 
 impl<'a> From<&'a i8> for Value {
     fn from(val: &'a i8) -> Value {
-        Value::Int(IntValue::I8(*val))
+        Value::Int(*val as i64)
      }
 }
 
 impl<'a> From<&'a u8> for Value {
     fn from(val: &'a u8) -> Value {
-        Value::Int(IntValue::U8(*val))
+        Value::Int(*val as i64)
     }
 }
 
 impl<'a> From<&'a i16> for Value {
     fn from(val: &'a i16) -> Value {
-        Value::Int(IntValue::I16(*val))
+        Value::Int(*val as i64)
     }
 }
 
 impl<'a> From<&'a u16> for Value {
     fn from(val: &'a u16) -> Value {
-        Value::Int(IntValue::U16(*val))
+        Value::Int(*val as i64)
     }
 }
 
 impl<'a> From<&'a i32> for Value {
     fn from(val: &'a i32) -> Value {
-        Value::Int(IntValue::I32(*val))
+        Value::Int(*val as i64)
     }
 }
 
 impl<'a> From<&'a u32> for Value {
     fn from(val: &'a u32) -> Value {
-        Value::Int(IntValue::U32(*val))
+        Value::Int(*val as i64)
     }
 }
 
 impl<'a> From<&'a i64> for Value {
     fn from(val: &'a i64) -> Value {
-        Value::Int(IntValue::I64(*val))
+        Value::Int(*val)
     }
 }
 
 impl<'a> From<&'a u64> for Value {
     fn from(val: &'a u64) -> Value {
-        Value::Int(IntValue::U64(*val))
+        Value::UInt(*val)
     }
 }
 
@@ -564,61 +419,14 @@ impl<'a> From<&'a bool> for Value {
     }
 }
 
-pub fn bytes_to_particle(ptype: u8, buf: &[u8]) -> AerospikeResult<Option<Value>> {
-    match ParticleType::from(ptype) {
-        ParticleType::NULL => {
-            Ok(None)
-        },
-        ParticleType::INTEGER => {
-            let val = NetworkEndian::read_i64(&buf);
-            Ok(Some(Value::Int(IntValue::I64(val))))
-        },
-        ParticleType::FLOAT => {
-            let val = NetworkEndian::read_f64(&buf);
-            Ok(Some(Value::Float(FloatValue::from(val))))
-        },
-        ParticleType::STRING => {
-            let val = try!(String::from_utf8(buf.to_vec()));
-            Ok(Some(Value::String(val)))
-        },
-        ParticleType::GEOJSON => {
-            // ignore flags
-            let ncells = NetworkEndian::read_i16(&buf[1..]) as usize;
-            let header_size: usize = 1 + 2 + (ncells * 8);
-
-            let buf = buf[header_size..].to_vec();
-            let val = String::from_utf8_lossy(&buf).to_string();
-            Ok(Some(Value::String(val)))
-
-        },
-        ParticleType::BLOB => {
-            Ok(Some(Value::Blob(buf.to_vec())))
-        },
-        // ParticleType::LIST => {
-        //     let val = try!(unpack_value_list(buf));
-        //     Ok(Some(val))
-        // },
-        _ => unimplemented!(),
-        // ParticleType::MAP => {
-        //     Ok(Some(Value::from("A HASHMAP, NOT IMPLEMENTED YET!")))
-        // },
-        // ParticleType::DIGEST => {
-        //     Ok(Some(Value::from("A DIGEST, NOT IMPLEMENTED YET!")))
-        // },
-        // ParticleType::LDT => {
-        //     Ok(Some(Value::from("A LDT, NOT IMPLEMENTED YET!")))
-        // },
-    }
-}
-
-pub fn bytes_to_particle1(ptype: u8, buf: &mut Buffer, len: usize) -> AerospikeResult<Option<Value>> {
+pub fn bytes_to_particle(ptype: u8, buf: &mut Buffer, len: usize) -> AerospikeResult<Option<Value>> {
     match ParticleType::from(ptype) {
         ParticleType::NULL => {
             Ok(None)
         },
         ParticleType::INTEGER => {
             let val = try!(buf.read_i64(None));
-            Ok(Some(Value::Int(IntValue::I64(val))))
+            Ok(Some(Value::Int(val)))
         },
         ParticleType::FLOAT => {
             let val = try!(buf.read_f64(None));

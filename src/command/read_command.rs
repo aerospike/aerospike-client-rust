@@ -68,7 +68,6 @@ impl<'a> ReadCommand<'a> {
 
     fn parse_record(&mut self, conn: &mut Connection, op_count: usize, field_count: usize, generation: u32, expiration: u32) -> AerospikeResult<Arc<Record<'a>>> {
         let mut bins: HashMap<String, Value> = HashMap::with_capacity(op_count);
-        let mut receive_offset: usize = 0;
 
         // There can be fields in the response (setname etc).
         // But for now, ignore them. Expose them to the API if needed in the future.
@@ -78,12 +77,9 @@ impl<'a> ReadCommand<'a> {
             for _ in 0..field_count {
                 // debug!("Receive Offset: {}", receive_offset);
                 let field_size = try!(conn.buffer.read_u32(None)) as usize;
-                // receive_offset += 4 + field_size;
                 conn.buffer.skip_bytes(4 + field_size);
             }
         }
-
-        // println!(">>>>>>>>>>>>>>>>>>> data_offset: {}, {}", conn.buffer.data_offset, receive_offset);
 
         for _ in 0..op_count {
             let op_size = try!(conn.buffer.read_u32(None)) as usize;
@@ -94,64 +90,7 @@ impl<'a> ReadCommand<'a> {
             let name: String = try!(conn.buffer.read_str(name_size));
 
             let particle_bytes_size = op_size - (4 + name_size);
-            // let buffer = &conn.buffer.data_buffer[receive_offset..receive_offset+particle_bytes_size];
-            let value = try!(value::bytes_to_particle1(particle_type, &mut conn.buffer, particle_bytes_size));
-            // receive_offset += particle_bytes_size;
-            // panic!(">>>>>>>>>>>>>>>>>>> op size: {}, name size: {}, name: {}, size: {}, value: {:?}", op_size, name_size, name, particle_bytes_size, value);
-
-            if let Some(value) = value {
-                // for operate list command results
-                if bins.contains_key(&name) {
-                    let prev = bins.get_mut(&name).unwrap();
-                    match prev {
-                        &mut Value::List(ref mut prev) => {
-                            prev.push(value);
-                        },
-                        _ => {
-                            *prev = Value::from(vec![prev.clone(), value]);
-                        },
-
-                    }
-                } else {
-                    bins.insert(name, value);
-                }
-            }
-        }
-
-        Ok(Arc::new(try!(Record::new(self.single_command.key, bins, generation, expiration))))
-    }
-
-    fn parse_record1(&mut self, conn: &mut Connection, op_count: usize, field_count: usize, generation: u32, expiration: u32) -> AerospikeResult<Arc<Record<'a>>> {
-        let mut bins: HashMap<String, Value> = HashMap::with_capacity(op_count);
-        let mut receive_offset: usize = 0;
-
-        // There can be fields in the response (setname etc).
-        // But for now, ignore them. Expose them to the API if needed in the future.
-        // Logger.Debug("field count: %d, databuffer: %v", field_count, conn.buffer)
-        if field_count > 0 {
-            // Just skip over all the fields
-            for _ in 0..field_count {
-                // debug!("Receive Offset: {}", receive_offset);
-                let field_size = try!(conn.buffer.read_u32(Some(receive_offset))) as usize;
-                receive_offset += 4 + field_size;
-            }
-        }
-
-        println!(">>>>>>>>>>>>>>>>>>> data_offset: {}, {}", conn.buffer.data_offset, receive_offset);
-
-        for _ in 0..op_count {
-            let op_size = try!(conn.buffer.read_u32(Some(receive_offset))) as usize;
-            let particle_type = conn.buffer.data_buffer[receive_offset+5];
-            let name_size = conn.buffer.data_buffer[receive_offset+7] as usize;
-            let name: String = try!(str::from_utf8(&conn.buffer.data_buffer[receive_offset+8..receive_offset+8+name_size])).to_string();
-            receive_offset += 4 + 4 + name_size;
-
-            panic!(">>>>>>>>>>>>>>>>>>> op size: {}, name size: {}, name: {}", op_size, name_size, name);
-
-            let particle_bytes_size = op_size - (4 + name_size);
-            let buffer = &conn.buffer.data_buffer[receive_offset..receive_offset+particle_bytes_size];
-            let value = try!(value::bytes_to_particle(particle_type, &buffer));
-            receive_offset += particle_bytes_size;
+            let value = try!(value::bytes_to_particle(particle_type, &mut conn.buffer, particle_bytes_size));
 
             if let Some(value) = value {
                 // for operate list command results

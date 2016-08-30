@@ -36,7 +36,8 @@ use value::*;
 pub fn pack_value(buf: Option<&mut Buffer>, val: &Value) -> AerospikeResult<usize> {
     match val {
         &Value::Nil => pack_nil(buf),
-        &Value::Int(ref val) => pack_integer(buf, i64::from(val)),
+        &Value::Int(ref val) => pack_integer(buf, *val),
+        &Value::UInt(ref val) => pack_u64(buf, *val),
         &Value::Bool(ref val) => pack_bool(buf, *val),
         &Value::String(ref val) => pack_string(buf, val),
         &Value::Float(ref val) => match val {
@@ -211,6 +212,7 @@ fn pack_integer(buf: Option<&mut Buffer>, val: i64) -> AerospikeResult<usize> {
         val if val >= i16::MAX as i64 && val < i32::MAX as i64 => pack_i32(buf, MSGPACK_MARKER_I32, val as i32),
         val if val >= i32::MAX as i64 => pack_i64(buf, MSGPACK_MARKER_I32, val),
 
+        // Negative values
         val if val >= -32 && val < 0 => pack_half_byte(buf, 0xe0 | (val as u8 + 32)),
         val if val >= i8::MIN as i64 && val < -32 => pack_byte(buf,  MSGPACK_MARKER_NI8, val as u8),
         val if val >= i16::MIN as i64 && val < i8::MIN as i64 => pack_i16(buf, MSGPACK_MARKER_NI16, val as i16),
@@ -240,6 +242,18 @@ fn pack_i64(buf: Option<&mut Buffer>, marker: u8, val: i64) -> AerospikeResult<u
     if let Some(buf) = buf {
         try!(buf.write_u8(marker));
         try!(buf.write_i64(val));
+    }
+    Ok(9)
+}
+
+fn pack_u64(buf: Option<&mut Buffer>, val: u64) -> AerospikeResult<usize> {
+    if val <= i64::MAX as u64 {
+        return pack_integer(buf, val as i64);
+    }
+
+    if let Some(buf) = buf {
+        try!(buf.write_u8(0xcf));
+        try!(buf.write_u64(val));
     }
     Ok(9)
 }
