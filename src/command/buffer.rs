@@ -100,9 +100,6 @@ const MAX_BUFFER_SIZE: usize = 1024 * 1024 + 8; // 1 MB + header
 // Holds data buffer for the command
 #[derive(Debug)]
 pub struct Buffer {
-    // pub node: Arc<Node>,
-    // conn: Option<Arc<Connection>>,
-
     pub data_buffer: Vec<u8>,
     pub data_offset: usize,
 }
@@ -111,8 +108,6 @@ impl Buffer {
 
     pub fn new() -> Self {
         Buffer {
-            // node: node,
-
             data_buffer: vec![],
             data_offset: 0,
         }
@@ -154,7 +149,7 @@ impl Buffer {
 
         // reset data offset
         try!(self.reset_offset());
-        self.write_i64(size);
+        try!(self.write_i64(size));
 
         Ok(())
     }
@@ -296,7 +291,7 @@ impl Buffer {
                         read_attr |= INFO1_READ;
 
                         // Read all bins if no bin is specified.
-                        if operation.bin_name == None {
+                        if operation.bin_name == "" {
                             read_attr |= INFO1_GET_ALL;
                         }
                         read_bin = true;
@@ -356,7 +351,7 @@ impl Buffer {
         if send_key {
             if let Some(ref user_key) = key.user_key {
                 // field header size + key size
-                self.data_offset += user_key.estimate_size() + FIELD_HEADER_SIZE as usize + 1;
+                self.data_offset += try!(user_key.estimate_size()) + FIELD_HEADER_SIZE as usize + 1;
                 field_count += 1;
             }
         }
@@ -366,22 +361,15 @@ impl Buffer {
 
     fn estimate_operation_size_for_operation(&mut self, operation: &Operation) -> AerospikeResult<()> {
         self.data_offset += OPERATION_HEADER_SIZE as usize;
-        if let Some(bin_name) = operation.bin_name {
-            self.data_offset += bin_name.len();
-        }
-
-        if let Some(bv) = operation.bin_value {
-            self.data_offset += bv.estimate_size();
-        }
+        self.data_offset += operation.bin_name.len();
+        self.data_offset += try!(operation.bin_value.estimate_size());
 
         Ok(())
     }
 
     fn estimate_operation_size_for_bin(&mut self, bin: &Bin) -> AerospikeResult<()> {
         self.data_offset += bin.name.len() + OPERATION_HEADER_SIZE as usize;
-        if let Some(ref value) = bin.value {
-            self.data_offset += value.estimate_size();
-        }
+        self.data_offset += try!(bin.value.estimate_size());
         Ok(())
     }
 
@@ -418,8 +406,8 @@ impl Buffer {
         }
 
         self.data_offset = 26;
-        self.write_u16(field_count as u16);
-        self.write_u16(operation_count as u16);
+        try!(self.write_u16(field_count as u16));
+        try!(self.write_u16(operation_count as u16));
 
         self.data_offset = MSG_TOTAL_HEADER_SIZE as usize;
 
@@ -464,24 +452,24 @@ impl Buffer {
 
         // Write all header data except total size which must be written last.
         self.data_offset = 8;
-        self.write_u8(MSG_REMAINING_HEADER_SIZE); // Message header length.
-        self.write_u8(read_attr);
-        self.write_u8(write_attr);
-        self.write_u8(info_attr);
-        self.write_u8(0); // unused
-        self.write_u8(0); // clear the result code
+        try!(self.write_u8(MSG_REMAINING_HEADER_SIZE)); // Message header length.
+        try!(self.write_u8(read_attr));
+        try!(self.write_u8(write_attr));
+        try!(self.write_u8(info_attr));
+        try!(self.write_u8(0)); // unused
+        try!(self.write_u8(0)); // clear the result code
 
-        self.write_u32(generation);
-        self.write_u32(policy.expiration.expiration());
+        try!(self.write_u32(generation));
+        try!(self.write_u32(policy.expiration.expiration()));
 
         // Initialize timeout. It will be written later.
-        self.write_u8(0);
-        self.write_u8(0);
-        self.write_u8(0);
-        self.write_u8(0);
+        try!(self.write_u8(0));
+        try!(self.write_u8(0));
+        try!(self.write_u8(0));
+        try!(self.write_u8(0));
 
-        self.write_u16(field_count);
-        self.write_u16(operation_count);
+        try!(self.write_u16(field_count));
+        try!(self.write_u16(operation_count));
         self.data_offset = MSG_TOTAL_HEADER_SIZE as usize;
 
         Ok(())
@@ -509,22 +497,22 @@ impl Buffer {
     }
 
     fn write_field_header(&mut self, size: usize, ftype: FieldType) -> AerospikeResult<()> {
-        self.write_i32(size as i32 + 1);
-        self.write_u8(ftype as u8);
+        try!(self.write_i32(size as i32 + 1));
+        try!(self.write_u8(ftype as u8));
 
         Ok(())
     }
 
     fn write_field_string(&mut self, field: &str, ftype: FieldType) -> AerospikeResult<()> {
         try!(self.write_field_header(field.len(), ftype));
-        self.write_str(field);
+        try!(self.write_str(field));
 
         Ok(())
     }
 
     fn write_field_bytes(&mut self, bytes: &[u8], ftype: FieldType) -> AerospikeResult<()> {
         try!(self.write_field_header(bytes.len(), ftype));
-        self.write_bytes(bytes);
+        try!(self.write_bytes(bytes));
 
         Ok(())
     }
@@ -533,8 +521,8 @@ impl Buffer {
                                 value: &Value,
                                 ftype: FieldType)
                                 -> AerospikeResult<()> {
-        try!(self.write_field_header(value.estimate_size() + 1, ftype));
-        self.write_u8(value.particle_type() as u8);
+        try!(self.write_field_header(try!(value.estimate_size()) + 1, ftype));
+        try!(self.write_u8(value.particle_type() as u8));
         try!(value.write_to(self));
 
         Ok(())
@@ -544,27 +532,16 @@ impl Buffer {
                                     operation: &Operation)
                                     -> AerospikeResult<()> {
 
-        let bin_name = match operation.bin_name {
-            Some(bn) => bn,
-            _ => "",
-        };
+        let name_length: usize = operation.bin_name.len();
+        let value_length: usize = try!(operation.bin_value.estimate_size());
 
-        let name_length = bin_name.len();
-        let value_length = if let Some(bv) = operation.bin_value { bv.estimate_size() } else { 0 };
-
-        self.write_i32((name_length+value_length+4) as i32);
-        self.write_u8(operation.op.op);
-        if let Some(bv) = operation.bin_value {
-            self.write_u8(bv.particle_type() as u8);
-        } else {
-            self.write_u8(ParticleType::NULL as u8);
-        }
-        self.write_u8(0);
-        self.write_u8(name_length as u8);
-        self.write_str(bin_name);
-        if let Some(bv) = operation.bin_value {
-            try!(bv.write_to(self));
-        }
+        try!(self.write_i32((name_length+value_length+4) as i32));
+        try!(self.write_u8(operation.op.op));
+        try!(self.write_u8(operation.bin_value.particle_type() as u8));
+        try!(self.write_u8(0));
+        try!(self.write_u8(name_length as u8));
+        try!(self.write_str(operation.bin_name));
+        try!(operation.bin_value.write_to(self));
 
         Ok(())
     }
@@ -574,23 +551,16 @@ impl Buffer {
                                     operation: &OperationType)
                                     -> AerospikeResult<()> {
 
-        let name_length = bin.name.len() as usize;
-        let value_length = if let Some(ref value) = bin.value { value.estimate_size() } else { 0 };
+        let name_length = bin.name.len();
+        let value_length = try!(bin.value.estimate_size());
 
-        self.write_i32((name_length+value_length+4) as i32);
-        self.write_u8(operation.op);
-        if let Some(ref value) = bin.value {
-            self.write_u8(value.particle_type() as u8);
-        } else {
-            self.write_u8(ParticleType::NULL as u8);
-        }
-        self.write_u8(0);
-        self.write_u8(name_length as u8);
-        self.write_str(bin.name);
-
-        if let Some(ref value) = bin.value {
-            try!(value.write_to(self));
-        }
+        try!(self.write_i32((name_length+value_length+4) as i32));
+        try!(self.write_u8(operation.op));
+        try!(self.write_u8(bin.value.particle_type() as u8));
+        try!(self.write_u8(0));
+        try!(self.write_u8(name_length as u8));
+        try!(self.write_str(bin.name));
+        try!(bin.value.write_to(self));
 
         Ok(())
     }
@@ -599,12 +569,12 @@ impl Buffer {
                                     name: &str,
                                     operation: &OperationType)
                                     -> AerospikeResult<()> {
-        self.write_i32(name.len() as i32 + 4);
-        self.write_u8(operation.op);
-        self.write_u8(0);
-        self.write_u8(0);
-        self.write_u8(name.len() as u8);
-        self.write_str(name);
+        try!(self.write_i32(name.len() as i32 + 4));
+        try!(self.write_u8(operation.op));
+        try!(self.write_u8(0));
+        try!(self.write_u8(0));
+        try!(self.write_u8(name.len() as u8));
+        try!(self.write_str(name));
 
         Ok(())
     }
@@ -612,37 +582,24 @@ impl Buffer {
     fn write_operation_for_operation_type(&mut self,
                                     operation: &OperationType)
                                     -> AerospikeResult<()> {
-        self.write_i32(4);
-        self.write_u8(operation.op);
-        self.write_u8(0);
-        self.write_u8(0);
-        self.write_u8(0);
+        try!(self.write_i32(4));
+        try!(self.write_u8(operation.op));
+        try!(self.write_u8(0));
+        try!(self.write_u8(0));
+        try!(self.write_u8(0));
 
         Ok(())
     }
 
-
-    // fn check_server_compatibility(&mut self, val: Box<Value>) -> AerospikeResult<()> {
-    //     match val.particle_type() {
-    //         ParticleType::FLOAT if !self.node.supports_float() => {
-    //             Err(AerospikeError::new(ResultCode::TYPE_NOT_SUPPORTED,
-    //                                     Some("This cluster node doesn't support double \
-    //                                           precision floating-point values."
-    //                                              .to_string())))
-    //         }
-    //         ParticleType::GEOJSON if !self.node.supports_geo() => {
-    //             Err(AerospikeError::new(ResultCode::TYPE_NOT_SUPPORTED,
-    //                                     Some("This cluster node doesn't support geo-spatial \
-    //                                           features."
-    //                                              .to_string())))
-    //         }
-    //         _ => Ok(()),
-    //     }
-    // }
-
     //
     // Data buffer implementations
     //
+
+    #[inline(always)]
+    pub fn skip_bytes(&mut self, count: usize) -> AerospikeResult<()> {
+        self.data_offset += count;
+        Err(AerospikeError::ErrSkipMsgPackHeader())
+    }
 
     #[inline(always)]
     pub fn read_u8(&mut self, pos: Option<usize>) -> AerospikeResult<u8> {
@@ -726,8 +683,49 @@ impl Buffer {
     }
 
     #[inline(always)]
+    pub fn read_f32(&mut self, pos: Option<usize>) -> AerospikeResult<f32> {
+        let len = 4;
+        match pos {
+            Some(pos) => Ok(NetworkEndian::read_f32(&mut self.data_buffer[pos..pos + len])),
+            None => {
+                let res = NetworkEndian::read_f32(&mut self.data_buffer[self.data_offset..self.data_offset + len]);
+                self.data_offset += len;
+                Ok(res)
+            },
+        }
+    }
+
+    #[inline(always)]
+    pub fn read_f64(&mut self, pos: Option<usize>) -> AerospikeResult<f64> {
+        let len = 8;
+        match pos {
+            Some(pos) => Ok(NetworkEndian::read_f64(&mut self.data_buffer[pos..pos + len])),
+            None => {
+                let res = NetworkEndian::read_f64(&mut self.data_buffer[self.data_offset..self.data_offset + len]);
+                self.data_offset += len;
+                Ok(res)
+            },
+        }
+    }
+
+
+    #[inline(always)]
+    pub fn read_str(&mut self, len: usize) -> AerospikeResult<String> {
+        let s = try!(String::from_utf8(self.data_buffer[self.data_offset..self.data_offset+len].to_vec()));
+        self.data_offset += len;
+        Ok(s)
+    }
+
+    #[inline(always)]
     pub fn read_bytes(&mut self, pos: usize, count: usize) -> AerospikeResult<&[u8]> {
         Ok(&self.data_buffer[pos..pos+count])
+    }
+
+    #[inline(always)]
+    pub fn read_blob(&mut self, len: usize) -> AerospikeResult<Vec<u8>> {
+        let val = self.data_buffer[self.data_offset..self.data_offset+len].to_vec();
+        self.data_offset += len;
+        Ok(val)
     }
 
     // #[inline(always)]
@@ -736,70 +734,103 @@ impl Buffer {
     // }
 
     #[inline(always)]
-    pub fn write_u8(&mut self, val: u8) {
+    pub fn write_u8(&mut self, val: u8) -> AerospikeResult<usize> {
         self.data_buffer[self.data_offset] = val;
         self.data_offset += 1;
+        Ok(1)
     }
 
     #[inline(always)]
-    pub fn write_i8(&mut self, val: i8) {
+    pub fn write_i8(&mut self, val: i8) -> AerospikeResult<usize> {
         self.data_buffer[self.data_offset] = val as u8;
         self.data_offset += 1;
+        Ok(1)
     }
 
     #[inline(always)]
-    pub fn write_u16(&mut self, val: u16) {
+    pub fn write_u16(&mut self, val: u16) -> AerospikeResult<usize> {
         NetworkEndian::write_u16(&mut self.data_buffer[self.data_offset..self.data_offset + 2],
                                  val);
         self.data_offset += 2;
+        Ok(2)
     }
 
     #[inline(always)]
-    pub fn write_i16(&mut self, val: i16) {
-        self.write_u16(val as u16);
+    pub fn write_i16(&mut self, val: i16) -> AerospikeResult<usize> {
+        self.write_u16(val as u16)
     }
 
     #[inline(always)]
-    pub fn write_u32(&mut self, val: u32) {
+    pub fn write_u32(&mut self, val: u32) -> AerospikeResult<usize> {
         NetworkEndian::write_u32(&mut self.data_buffer[self.data_offset..self.data_offset + 4],
                                  val);
         self.data_offset += 4;
+        Ok(4)
     }
 
     #[inline(always)]
-    pub fn write_i32(&mut self, val: i32) {
-        self.write_u32(val as u32);
+    pub fn write_i32(&mut self, val: i32) -> AerospikeResult<usize> {
+        self.write_u32(val as u32)
     }
 
     #[inline(always)]
-    pub fn write_u64(&mut self, val: u64) {
+    pub fn write_u64(&mut self, val: u64) -> AerospikeResult<usize> {
         NetworkEndian::write_u64(&mut self.data_buffer[self.data_offset..self.data_offset + 8],
                                  val);
         self.data_offset += 8;
+        Ok(8)
     }
 
     #[inline(always)]
-    pub fn write_i64(&mut self, val: i64) {
-        self.write_u64(val as u64);
+    pub fn write_i64(&mut self, val: i64) -> AerospikeResult<usize> {
+        self.write_u64(val as u64)
     }
 
     #[inline(always)]
-    pub fn write_f64(&mut self, val: f64) {
+    pub fn write_bool(&mut self, val: bool) -> AerospikeResult<usize> {
+        let val = match val {
+            true => 1,
+            false => 0,
+        };
+        self.write_i64(val)
+    }
+
+    #[inline(always)]
+    pub fn write_f32(&mut self, val: f32) -> AerospikeResult<usize> {
+        NetworkEndian::write_f32(&mut self.data_buffer[self.data_offset..self.data_offset + 4],
+                                 val);
+        self.data_offset += 4;
+        Ok(4)
+    }
+
+    #[inline(always)]
+    pub fn write_f64(&mut self, val: f64) -> AerospikeResult<usize> {
         NetworkEndian::write_f64(&mut self.data_buffer[self.data_offset..self.data_offset + 8],
                                  val);
         self.data_offset += 8;
+        Ok(8)
     }
 
     #[inline(always)]
-    pub fn write_bytes(&mut self, bytes: &[u8]) {
+    pub fn write_bytes(&mut self, bytes: &[u8]) -> AerospikeResult<usize> {
         for b in bytes {
-            self.write_u8(*b);
+            try!(self.write_u8(*b));
         }
+        Ok(bytes.len())
     }
 
     #[inline(always)]
-    pub fn write_str(&mut self, val: &str) {
-        self.write_bytes(val.as_bytes());
+    pub fn write_str(&mut self, val: &str) -> AerospikeResult<usize> {
+        self.write_bytes(val.as_bytes())
+    }
+
+    #[inline(always)]
+    pub fn write_geo(&mut self, val: &str) -> AerospikeResult<usize> {
+        try!(self.write_u8(0));
+        try!(self.write_u8(0));
+        try!(self.write_u8(0));
+        try!(self.write_bytes(val.as_bytes()));
+        Ok(3 + val.len())
     }
 
     #[inline(always)]

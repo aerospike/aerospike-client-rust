@@ -40,3 +40,35 @@ pub enum ParticleType {
     LDT = 21,
     GEOJSON = 23,
 }
+
+impl From<u8> for ParticleType {
+    fn from(val: u8) -> ParticleType {
+        match val {
+            0 => ParticleType::NULL,
+            1 => ParticleType::INTEGER,
+            2 => ParticleType::FLOAT,
+            3 => ParticleType::STRING,
+            4 => ParticleType::BLOB,
+            // 5 => ParticleType::TIMESTAMP      ,
+            6 => ParticleType::DIGEST,
+            // 7 => ParticleType::JBLOB ,
+            // 8 => ParticleType::CSHARP_BLOB    ,
+            // 9 => ParticleType::PYTHON_BLOB    ,
+            // 10 => ParticleType::RUBY_BLOB      ,
+            // 11 => ParticleType::PHP_BLOB       ,
+            // 12 => ParticleType::ERLANG_BLOB    ,
+            // 13 => ParticleType::SEGMENT_POINTER,
+            // 14 => ParticleType::RTA_LIST       ,
+            // 15 => ParticleType::RTA_DICT       ,
+            // 16 => ParticleType::RTA_APPEND_DICT,
+            // 17 => ParticleType::RTA_APPEND_LIST,
+            // 18 => ParticleType::LUA_BLOB       ,
+            19 => ParticleType::MAP,
+            20 => ParticleType::LIST,
+            21 => ParticleType::LDT,
+            23 => ParticleType::GEOJSON,
+            _ => unreachable!(),
+        }
+    }
+}
+

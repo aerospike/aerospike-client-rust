@@ -30,7 +30,7 @@ use error::AerospikeResult;
 use command::info_command::Message;
 
 // Validates a Database server node
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct NodeValidator<'a> {
     pub name: String,
     pub aliases: Vec<Host>,

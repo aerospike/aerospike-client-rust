@@ -13,7 +13,7 @@
 // License for the specific language governing permissions and limitations under
 // the License.
 
-use value;
+use value::{Value};
 use common::{Bin};
 
 #[derive(Debug,Clone)]
@@ -35,16 +35,18 @@ pub const APPEND: OperationType = OperationType { op: 9 };
 pub const PREPEND: OperationType = OperationType { op: 10 };
 pub const TOUCH: OperationType = OperationType { op: 11 };
 
+const NilValue: &'static Value = &Value::Nil;
+
 // #[derive(Debug,Clone)]
 pub struct Operation<'a> {
 	// OpType determines type of operation.
 	pub op: OperationType,
 
 	// BinName (Optional) determines the name of bin used in operation.
-	pub bin_name: Option<&'a str>,
+	pub bin_name: &'a str,
 
 	// BinValue (Optional) determines bin value used in operation.
-	pub bin_value: Option<&'a value::Value>,
+	pub bin_value: &'a Value,
 
 	// will be true ONLY for GetHeader() operation
 	pub header_only: bool,
@@ -54,8 +56,8 @@ impl<'a> Operation<'a> {
 	pub fn get() -> Self {
 		Operation {
 			op: READ,
-			bin_name: None,
-			bin_value: None,
+			bin_name: "",
+			bin_value: NilValue,
 			header_only: false,
 		}
 	}
@@ -63,8 +65,8 @@ impl<'a> Operation<'a> {
 	pub fn get_header() -> Self {
 		Operation {
 			op: READ,
-			bin_name: None,
-			bin_value: None,
+			bin_name: "",
+			bin_value: NilValue,
 			header_only: true,
 		}
 	}
@@ -72,8 +74,8 @@ impl<'a> Operation<'a> {
 	pub fn get_bin(bin_name: &'a str) -> Self {
 		Operation {
 			op: READ,
-			bin_name: Some(bin_name),
-			bin_value: None,
+			bin_name: bin_name,
+			bin_value: NilValue,
 			header_only: false,
 		}
 	}
@@ -81,8 +83,8 @@ impl<'a> Operation<'a> {
 	pub fn put(bin: &'a Bin) -> Self {
 		Operation {
 			op: WRITE,
-			bin_name: Some(bin.name),
-			bin_value: bin.value.as_ref(),
+			bin_name: bin.name,
+			bin_value: &bin.value,
 			header_only: false,
 		}
 	}
@@ -90,8 +92,8 @@ impl<'a> Operation<'a> {
 	pub fn append(bin: &'a Bin) -> Self {
 		Operation {
 			op: APPEND,
-			bin_name: Some(bin.name),
-			bin_value: bin.value.as_ref(),
+			bin_name: bin.name,
+			bin_value: &bin.value,
 			header_only: false,
 		}
 	}
@@ -99,8 +101,8 @@ impl<'a> Operation<'a> {
 	pub fn prepend(bin: &'a Bin) -> Self {
 		Operation {
 			op: PREPEND,
-			bin_name: Some(bin.name),
-			bin_value: bin.value.as_ref(),
+			bin_name: bin.name,
+			bin_value: &bin.value,
 			header_only: false,
 		}
 	}
@@ -108,8 +110,8 @@ impl<'a> Operation<'a> {
 	pub fn add(bin: &'a Bin) -> Self {
 		Operation {
 			op: ADD,
-			bin_name: Some(bin.name),
-			bin_value: bin.value.as_ref(),
+			bin_name: bin.name,
+			bin_value: &bin.value,
 			header_only: false,
 		}
 	}
@@ -117,8 +119,8 @@ impl<'a> Operation<'a> {
 	pub fn touch() -> Self {
 		Operation {
 			op: TOUCH,
-			bin_name: None,
-			bin_value: None,
+			bin_name: "",
+			bin_value: NilValue,
 			header_only: false,
 		}
 	}

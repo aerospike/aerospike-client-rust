@@ -59,6 +59,14 @@ impl AerospikeError {
         AerospikeError::new(ResultCode::NO_AVAILABLE_CONNECTIONS_TO_NODE, Some("Connection pool is empty.".to_string()))
     }
 
+    pub fn ErrSkipMsgPackHeader() -> AerospikeError {
+        AerospikeError::new(ResultCode::OK, Some("Msgpack header skipped. You should not see this message".to_string()))
+    }
+
+    pub fn ErrSerialize() -> AerospikeError {
+        AerospikeError::new(ResultCode::SERIALIZE_ERROR, Some("Serialization Error".to_string()))
+    }
+
 }
 
 #[derive(Debug)]

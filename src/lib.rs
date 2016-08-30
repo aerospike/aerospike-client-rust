@@ -12,6 +12,7 @@ extern crate bytebuffer;
 extern crate rustc_serialize;
 
 use command::info_command::*;
+use msgpack::encoder::*;
 
 pub use value::{Value};
 pub use policy::{Policy, ClientPolicy, ReadPolicy, WritePolicy, Priority, ConsistencyLevel, CommitLevel, RecordExistsAction, GenerationPolicy};
@@ -22,6 +23,7 @@ pub use client::Client;
 pub use common::{Key, Bin, Operation};
 
 mod command;
+mod msgpack;
 
 pub mod common;
 pub mod value;

@@ -13,30 +13,9 @@
 // License for the specific language governing permissions and limitations under
 // the License.
 
-use value::{Value};
+// pub use self::encoder::{Encoder};
 
-// #[derive(Debug)]
-pub struct Bin<'a> {
-    pub name: &'a str,
-    pub value: Value,
-}
-
-
-impl<'a> Bin<'a> {
-	pub fn new(name: &'a str, val: Value) -> Self {
-		Bin {
-			name: name,
-			value: val,
-		}
-	}
-}
-
+#[macro_use]
 #[macro_export]
-macro_rules! as_bin {
-    ($bin_name:expr, None) => {{
-        Bin::new($bin_name, Value::Nil)
-    }};
-    ($bin_name:expr, $val:expr) => {{
-        Bin::new($bin_name, Value::from($val))
-    }};
-}
+pub mod encoder;
+pub mod decoder;

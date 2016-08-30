@@ -26,11 +26,11 @@ use common::ParticleType;
 use crypto::ripemd160::Ripemd160;
 use crypto::digest::Digest;
 
-// #[derive(Debug,Clone)]
+#[derive(Debug,Clone)]
 pub struct Key<'a> {
     pub namespace: &'a str,
     pub set_name: &'a str,
-    pub digest: Vec<u8>,
+    pub digest: [u8; 20],
     pub user_key: Option<Value>,
 }
 
@@ -39,11 +39,10 @@ impl<'a> Key<'a> {
         let mut key = Key {
             namespace: namespace,
             set_name: setname,
-            digest: Vec::with_capacity(20),
+            digest: [0;20],
             user_key: Some(key),
         };
 
-        key.digest.resize(20, 0);
         try!(key.compute_digest());
         Ok(key)
     }
@@ -53,7 +52,7 @@ impl<'a> Key<'a> {
         hash.input(self.set_name.as_bytes());
         if let Some(ref user_key) = self.user_key {
             hash.input(&[user_key.particle_type() as u8]);
-            hash.input(&try!(user_key.key_bytes()));
+            try!(user_key.write_key_bytes(&mut hash));
         } else {
             unreachable!()
         }
@@ -72,7 +71,7 @@ impl<'a> core::fmt::Display for Key<'a> {
 
 
 #[macro_export]
-macro_rules! key {
+macro_rules! as_key {
     ($ns:expr, $set:expr, $val:expr) => {{
         Key::new($ns, $set, Value::from($val)).unwrap()
     }};
