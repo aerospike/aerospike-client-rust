@@ -22,6 +22,8 @@ use std::vec::Vec;
 use std::thread;
 use std::time::{Instant, Duration};
 
+use rustc_serialize::base64::{ToBase64, FromBase64};
+
 use internal::wait_group::WaitGroup;
 use net::Host;
 use cluster::{Cluster, Node};
@@ -156,6 +158,17 @@ impl Client {
         let mut command = try!(OperateCommand::new(policy, self.cluster.clone(), key, ops));
         try!(command.execute());
         Ok(command.read_command.record.as_ref().unwrap().clone())
+    }
+
+    /////////////////////////////////////////////////////////////////////////////
+
+    pub fn register_udf<'a, 'b>(&'a self,
+                         policy: &'a WritePolicy,
+                         udf_body: &'a str,
+                         server_path: &'a str,
+                         language: UDFLang)
+                         -> AerospikeResult<()> {
+        let udf_body = try!(udf_body.to_base64());
     }
 
 
