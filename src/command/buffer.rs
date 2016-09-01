@@ -34,6 +34,7 @@ use policy::{ClientPolicy, WritePolicy, ReadPolicy, Policy, ConsistencyLevel, Co
 use common::operation::{Operation};
 use common::operation;
 use command::command::{Command};
+use msgpack::{encoder};
 
 // Flags commented out are not supported by cmd client.
 // Contains a read operation.
@@ -332,6 +333,23 @@ impl Buffer {
         self.end()
     }
 
+
+    pub fn set_udf(&mut self, policy: &WritePolicy, key: &Key, package_name: &str, function_name: &str, args: Option<&[Value]>) -> AerospikeResult<()> {
+        try!(self.begin());
+
+        let mut field_count = try!(self.estimate_key_size(key, policy.send_key));
+        field_count += try!(self.estimate_udf_size(package_name, function_name, args)) as u16;
+
+        try!(self.size_buffer());
+
+        try!(self.write_header(&policy.base_policy, 0, INFO2_WRITE, field_count, 0));
+        try!(self.write_key(key, policy.send_key));
+        try!(self.write_field_string(package_name, FieldType::UdfPackageName));
+        try!(self.write_field_string(function_name, FieldType::UdfFunction));
+        try!(self.write_args(args, FieldType::UdfArgList));
+        self.end()
+    }
+
     fn estimate_key_size<'a>(&mut self, key: &Key<'a>, send_key: bool) -> AerospikeResult<u16> {
         let mut field_count: u16 = 0;
 
@@ -357,6 +375,18 @@ impl Buffer {
         }
 
         Ok(field_count)
+    }
+
+    fn estimate_udf_size(&mut self, package_name: &str, function_name: &str, args: Option<&[Value]>) -> AerospikeResult<usize> {
+        self.data_offset += package_name.len() + FIELD_HEADER_SIZE as usize;
+        self.data_offset += function_name.len() + FIELD_HEADER_SIZE as usize;
+        if let Some(args) = args {
+            self.data_offset += try!(encoder::pack_array(None, args)) + FIELD_HEADER_SIZE as usize;
+        } else {
+            self.data_offset += try!(encoder::pack_empty_args_array(None)) + FIELD_HEADER_SIZE as usize;
+        }
+
+        Ok(3)
     }
 
     fn estimate_operation_size_for_operation(&mut self, operation: &Operation) -> AerospikeResult<()> {
@@ -527,6 +557,22 @@ impl Buffer {
 
         Ok(())
     }
+
+    fn write_args(&mut self,
+                                args: Option<&[Value]>,
+                                ftype: FieldType)
+                                -> AerospikeResult<()> {
+        if let Some(args) = args {
+            try!(self.write_field_header(try!(encoder::pack_array(None, args)), ftype));
+            try!(encoder::pack_array(Some(self), args));
+        } else {
+            try!(self.write_field_header(try!(encoder::pack_empty_args_array(None)), ftype));
+            try!(encoder::pack_empty_args_array(Some(self)));
+        }
+
+        Ok(())
+    }
+
 
     fn write_operation_for_operation(&mut self,
                                     operation: &Operation)

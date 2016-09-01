@@ -20,15 +20,19 @@ use std::collections::{HashMap, VecDeque};
 use std::sync::{RwLock, Arc, Mutex};
 use std::vec::Vec;
 use std::thread;
+use std::str;
 use std::time::{Instant, Duration};
+use std::fs::File;
+use std::io::prelude::*;
+use std::path::Path;
 
-use rustc_serialize::base64::{ToBase64, FromBase64};
+use rustc_serialize::base64::{ToBase64, FromBase64, STANDARD};
 
 use internal::wait_group::WaitGroup;
 use net::Host;
 use cluster::{Cluster, Node};
 use common::operation;
-use common::{Key, Record, Bin};
+use common::{Key, Record, Bin, UDFLang};
 use command::read_command::{ReadCommand};
 use command::write_command::{WriteCommand};
 use command::delete_command::{DeleteCommand};
@@ -36,10 +40,11 @@ use command::touch_command::{TouchCommand};
 use command::exists_command::{ExistsCommand};
 use command::read_header_command::{ReadHeaderCommand};
 use command::operate_command::{OperateCommand};
+use command::execute_udf_command::{ExecuteUDFCommand};
 use value::{Value};
 
 use policy::{ClientPolicy, ReadPolicy, WritePolicy};
-use error::{AerospikeResult};
+use error::{AerospikeResult, ResultCode, AerospikeError};
 
 
 // Client encapsulates an Aerospike cluster.
@@ -164,12 +169,95 @@ impl Client {
 
     pub fn register_udf<'a, 'b>(&'a self,
                          policy: &'a WritePolicy,
-                         udf_body: &'a str,
-                         server_path: &'a str,
+                         udf_body: &'a [u8],
+                         udf_name: &'a str,
                          language: UDFLang)
                          -> AerospikeResult<()> {
-        let udf_body = try!(udf_body.to_base64());
+        let udf_body = udf_body.to_base64(STANDARD);
+
+        let cmd = format!("udf-put:filename={};content={};content-len={};udf-type={};",udf_name, udf_body, udf_body.len(), language);
+        let node = try!(self.cluster.get_random_node());
+        let response = try!(node.info(&[&cmd]));
+
+        if let Some(msg) = response.get("error") {
+            let msg = try!(msg.from_base64());
+            let msg = try!(str::from_utf8(&msg));
+            return Err(AerospikeError::new(ResultCode::COMMAND_REJECTED, Some(
+                format!("UDF Registration failed: {}\nFile: {}\nLine: {}\nMessage: {}",
+                    response.get("error").unwrap_or(&"-".to_string()),
+                    response.get("file").unwrap_or(&"-".to_string()),
+                    response.get("line").unwrap_or(&"-".to_string()),
+                    msg
+                )
+            )))
+        }
+
+        Ok(())
     }
 
+    pub fn register_udf_from_file<'a, 'b>(&'a self,
+                         policy: &'a WritePolicy,
+                         client_path: &'a str,
+                         udf_name: &'a str,
+                         language: UDFLang)
+                         -> AerospikeResult<()> {
+
+        let path = Path::new(client_path);
+        let mut file = try!(File::open(&path));
+        let mut udf_body: Vec<u8> = vec![];
+        try!(file.read_to_end(&mut udf_body));
+
+        self.register_udf(policy, &udf_body, udf_name, language)
+    }
+
+    pub fn remove_udf<'a, 'b>(&'a self,
+                         policy: &'a WritePolicy,
+                         udf_name: &'a str,
+                         language: UDFLang)
+                         -> AerospikeResult<()> {
+
+        let cmd = format!("udf-remove:filename={}.{};", udf_name, language);
+        let node = try!(self.cluster.get_random_node());
+        let response = try!(node.info(&[&cmd]));
+
+        if let Some(msg) = response.get("ok") {
+            return Ok(())
+        }
+
+        Err(AerospikeError::new(ResultCode::COMMAND_REJECTED, Some(
+            format!("UDF Remove failed: {:?}",
+                response
+            )
+        )))
+    }
+
+    pub fn execute_udf<'a, 'b>(&'a self,
+                         policy: &'a WritePolicy,
+                         key: &'a Key<'a>,
+                         udf_name: &'a str,
+                         function_name: &'a str,
+                         args: Option<&[Value]>)
+                         -> AerospikeResult<Option<Value>> {
+
+        let mut command = try!(ExecuteUDFCommand::new(policy, self.cluster.clone(), key, udf_name, function_name, args));
+        try!(command.execute());
+
+        let record = command.read_command.record.as_ref().unwrap().clone();
+
+        // User defined functions don't have to return a value.
+        if record.bins.len() == 0 {
+            return Ok(None);
+        }
+
+        for (key, value) in record.bins.iter() {
+            if key.contains("SUCCESS") {
+                return Ok(Some(value.clone()));
+            } else if key.contains("FAILURE") {
+                return Err(AerospikeError::new(ResultCode::SERVER_ERROR, Some(format!("{:?}", value))));
+            }
+        }
+
+        Err(AerospikeError::new(ResultCode::UDF_BAD_RESPONSE, Some("Invalid UDF return value".to_string())))
+    }
 
 }

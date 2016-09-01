@@ -20,6 +20,7 @@ pub use self::particle_type::ParticleType;
 pub use self::operation::OperationType;
 pub use self::operation::Operation;
 pub use self::field_type::FieldType;
+pub use self::udf_lang::UDFLang;
 
 pub mod bin;
 pub mod key;
@@ -28,3 +29,4 @@ pub mod particle_type;
 pub mod operation;
 pub mod field_type;
 pub mod ttl;
+pub mod udf_lang;

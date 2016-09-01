@@ -20,7 +20,7 @@ pub use net::{Host, Connection};
 pub use cluster::{Node, Cluster};
 pub use error::{AerospikeError, ResultCode, AerospikeResult};
 pub use client::Client;
-pub use common::{Key, Bin, Operation};
+pub use common::{Key, Bin, Operation, UDFLang};
 
 mod command;
 mod msgpack;

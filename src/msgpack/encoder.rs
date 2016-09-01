@@ -51,7 +51,18 @@ pub fn pack_value(buf: Option<&mut Buffer>, val: &Value) -> AerospikeResult<usiz
     }
 }
 
-fn pack_array(buf: Option<&mut Buffer>, values: &[Value]) -> AerospikeResult<usize>  {
+pub fn pack_empty_args_array(buf: Option<&mut Buffer>) -> AerospikeResult<usize>  {
+    let mut size = 0;
+    if let Some(buf) = buf {
+        size += try!(pack_array_begin(Some(buf), 0));
+    } else {
+        size += try!(pack_array_begin(None, 0));
+    }
+
+    Ok(size)
+}
+
+pub fn pack_array(buf: Option<&mut Buffer>, values: &[Value]) -> AerospikeResult<usize>  {
     let mut size = 0;
 
     if let Some(buf) = buf {

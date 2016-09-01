@@ -13,15 +13,27 @@
 // License for the specific language governing permissions and limitations under
 // the License.
 
-pub mod info_command;
-pub mod command;
-pub mod buffer;
-pub mod single_command;
-pub mod read_command;
-pub mod write_command;
-pub mod delete_command;
-pub mod touch_command;
-pub mod exists_command;
-pub mod read_header_command;
-pub mod operate_command;
-pub mod execute_udf_command;
+extern crate core;
+
+#[derive(Debug)]
+pub enum UDFLang {
+    Lua,
+}
+
+impl<'a> core::fmt::Display for UDFLang {
+    fn fmt(&self, f: &mut core::fmt::Formatter) -> Result<(), core::fmt::Error> {
+        let s = match self {
+            &UDFLang::Lua => "LUA",
+        };
+
+        write!(f, "{}", s)
+    }
+}
+
+impl<'a> From<UDFLang> for &'a str {
+    fn from(val: UDFLang) -> &'a str {
+        match val {
+            UDFLang::Lua => "LUA",
+        }
+    }
+}

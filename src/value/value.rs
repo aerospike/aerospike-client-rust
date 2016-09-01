@@ -168,15 +168,15 @@ impl Value {
     pub fn as_string(&self) -> String {
         match self {
             &Value::Nil => "<null>".to_string(),
-            &Value::Int(ref val) => format!("{:?}", val),
-            &Value::UInt(ref val) => format!("{:?}", val),
-            &Value::Bool(ref val) => format!("{:?}", val),
-            &Value::Float(ref val) => format!("{:?}", f64::from(val)),
-            &Value::String(ref val) => format!("{:?}", val),
+            &Value::Int(ref val) => format!("{}", val),
+            &Value::UInt(ref val) => format!("{}", val),
+            &Value::Bool(ref val) => format!("{}", val),
+            &Value::Float(ref val) => format!("{}", f64::from(val)),
+            &Value::String(ref val) => format!("{}", val),
             &Value::Blob(ref val) => format!("{:?}", val),
             &Value::List(ref val) => format!("{:?}", val),
             &Value::HashMap(ref val) => format!("{:?}", val),
-            &Value::GeoJSON(ref val) => format!("{:?}", val),
+            &Value::GeoJSON(ref val) => format!("{}", val),
         }
     }
 
