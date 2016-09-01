@@ -27,14 +27,14 @@ use error::{AerospikeResult, ResultCode, AerospikeError};
 
 // #[derive(Debug)]
 pub struct Record<'a> {
-    pub key: &'a Key<'a>,
+    pub key: Option<Key<'a>>,
     pub bins: HashMap<String, Value>,
     pub generation: u32,
     pub expiration: u32,
 }
 
 impl<'a> Record<'a> {
-    pub fn new(key: &'a Key<'a>,
+    pub fn new(key: Option<Key<'a>>,
            bins: HashMap<String, Value>,
            generation: u32,
            expiration: u32)
@@ -52,7 +52,7 @@ impl<'a> Record<'a> {
 impl<'a> core::fmt::Display for Record<'a> {
     fn fmt(&self, f: &mut core::fmt::Formatter) -> Result<(), core::fmt::Error> {
         try!("key: ".fmt(f));
-        try!(self.key.fmt(f));
+        write!(f, "{:?}", self.key);
         try!(", bins: {".fmt(f));
         for (k, v) in &self.bins {
             try!(k.fmt(f));

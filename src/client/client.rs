@@ -78,10 +78,10 @@ impl Client {
                          policy: &'a ReadPolicy,
                          key: &'a Key<'a>,
                          bin_names: Option<&'a [&'b str]>)
-                         -> AerospikeResult<Arc<Record>> {
+                         -> AerospikeResult<Record> {
         let mut command = try!(ReadCommand::new(policy, self.cluster.clone(), key, bin_names));
         try!(command.execute());
-        Ok(command.record.as_ref().unwrap().clone())
+        Ok(command.record.unwrap())
     }
 
     pub fn get_header<'a, 'b>(&'a self,
@@ -159,10 +159,10 @@ impl Client {
                          policy: &'a WritePolicy,
                          key: &'a Key<'a>,
                          ops: &'a[operation::Operation<'a>])
-                         -> AerospikeResult<Arc<Record>> {
+                         -> AerospikeResult<Record> {
         let mut command = try!(OperateCommand::new(policy, self.cluster.clone(), key, ops));
         try!(command.execute());
-        Ok(command.read_command.record.as_ref().unwrap().clone())
+        Ok(command.read_command.record.unwrap())
     }
 
     /////////////////////////////////////////////////////////////////////////////

@@ -94,7 +94,7 @@ impl<'a> Command for ReadHeaderCommand<'a> {
         if result_code == 0 {
             let generation = try!(conn.buffer.read_u32(Some(14)));
             let expiration = try!(conn.buffer.read_u32(Some(18)));
-            self.record = Some(Arc::new(try!(Record::new(self.single_command.key, HashMap::new(), generation, expiration))));
+            self.record = Some(Arc::new(try!(Record::new(None, HashMap::new(), generation, expiration))));
         }
 
         SingleCommand::empty_socket(conn)

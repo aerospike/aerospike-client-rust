@@ -44,7 +44,7 @@ pub struct ReadCommand<'a> {
     policy: &'a ReadPolicy,
     bin_names: Option<&'a [&'a str]>,
 
-    pub record: Option<Arc<Record<'a>>>,
+    pub record: Option<Record<'a>>,
 }
 
 impl<'a> ReadCommand<'a> {
@@ -66,7 +66,7 @@ impl<'a> ReadCommand<'a> {
         return AerospikeError::new(result_code, None);
     }
 
-    fn parse_record(&mut self, conn: &mut Connection, op_count: usize, field_count: usize, generation: u32, expiration: u32) -> AerospikeResult<Arc<Record<'a>>> {
+    fn parse_record(&mut self, conn: &mut Connection, op_count: usize, field_count: usize, generation: u32, expiration: u32) -> AerospikeResult<Record<'a>> {
         let mut bins: HashMap<String, Value> = HashMap::with_capacity(op_count);
 
         // There can be fields in the response (setname etc).
@@ -111,7 +111,7 @@ impl<'a> ReadCommand<'a> {
             }
         }
 
-        Ok(Arc::new(try!(Record::new(self.single_command.key, bins, generation, expiration))))
+        Ok(try!(Record::new(None, bins, generation, expiration)))
     }
 
     pub fn execute(&mut self) -> AerospikeResult<()> {
@@ -180,7 +180,7 @@ impl<'a> Command for ReadCommand<'a> {
 
         if op_count == 0 {
             // data Bin was not returned
-            self.record = Some(Arc::new(try!(Record::new(self.single_command.key, HashMap::new(), generation, expiration))));
+            self.record = Some(try!(Record::new(None, HashMap::new(), generation, expiration)));
             return Ok(())
         }
 
