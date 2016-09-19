@@ -17,3 +17,4 @@ mod kv;
 mod query;
 mod scan;
 mod udf;
+mod geo;

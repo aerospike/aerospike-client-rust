@@ -93,7 +93,7 @@ macro_rules! as_range {
 macro_rules! as_contains {
     ($bin_name:expr, $cit:expr, $val:expr) => {{
         let val = Arc::new(value::Value::from($val));
-        Filter::new($bin_name, $cit, val.particle_type(), val, val).unwrap()
+        Filter::new($bin_name, $cit, val.particle_type(), val.clone(), val.clone()).unwrap()
     }};
 }
 
@@ -103,5 +103,59 @@ macro_rules! as_contains_range {
         let begin = Arc::new(value::Value::from($begin));
         let end = Arc::new(value::Value::from($end));
         Filter::new($bin_name, $cit, begin.particle_type(), begin, end).unwrap()
+    }};
+}
+
+#[macro_export]
+macro_rules! as_within_region {
+    ($bin_name:expr, $region:expr) => {{
+        let region = Arc::new(value::Value::String(String::from($region)));
+        Filter::new($bin_name, common::collection_index_type::CollectionIndexType::Default, ParticleType::GEOJSON, region.clone(), region.clone()).unwrap()
+    }};
+}
+
+#[macro_export]
+macro_rules! as_within_region_in_collection {
+    ($bin_name:expr, $cit:expr, $region:expr) => {{
+        let region = Arc::new(value::Value::String(String::from($region)));
+        Filter::new($bin_name, $cit, common::particle_type::ParticleType::GEOJSON, region.clone(), region.clone()).unwrap()
+    }};
+}
+
+#[macro_export]
+macro_rules! as_regions_containing_point {
+    ($bin_name:expr, $point:expr) => {{
+        let point = Arc::new(value::Value::String(String::from($point)));
+        Filter::new($bin_name, common::collection_index_type::CollectionIndexType::Default, ParticleType::GEOJSON, point.clone(), point.clone()).unwrap()
+    }};
+}
+
+#[macro_export]
+macro_rules! as_regions_containing_point_in_collection {
+    ($bin_name:expr, $cit:expr, $point:expr) => {{
+        let point = Arc::new(value::Value::String(String::from($point)));
+        Filter::new($bin_name, $cit, common::particle_type::ParticleType::GEOJSON, point.clone(), point.clone()).unwrap()
+    }};
+}
+
+#[macro_export]
+macro_rules! as_within_radius {
+    ($bin_name:expr, $lat:expr, $lng:expr, $radius:expr) => {{
+        let lat = Value::from($lat as f64);
+        let lng = Value::from($lng as f64);
+        let radius = Value::from($radius as f64);
+        let geo_json = Arc::new(value::Value::String(format!("{{ \"type\": \"Aeroircle\", \"coordinates\": [[{:.8}, {:.8}], {}] }}", lng, lat, radius)));
+        Filter::new($bin_name, common::collection_index_type::CollectionIndexType::Default, ParticleType::GEOJSON, geo_json.clone(), geo_json.clone()).unwrap()
+    }};
+}
+
+#[macro_export]
+macro_rules! as_within_radius_in_collection {
+    ($bin_name:expr, $cit:expr, $lat:expr, $lng:expr, $radius:expr) => {{
+        let lat = Value::from($lat as f64);
+        let lng = Value::from($lng as f64);
+        let radius = Value::from($radius as f64);
+        let geo_json = Arc::new(value::Value::String(format!("{{ \"type\": \"Aeroircle\", \"coordinates\": [[{:.8}, {:.8}], {}] }}", lng, lat, radius)));
+        Filter::new($bin_name, $cit, ParticleType::GEOJSON, geo_json.clone(), geo_json.clone()).unwrap()
     }};
 }

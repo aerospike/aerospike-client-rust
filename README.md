@@ -2,6 +2,8 @@
 
 An Aerospike library for Rust.
 
+> Notice: This is a work in progress. Use with discretion. Feedback, bug reports and pull requests are welcome!
+
 This library is compatible with Rust v1.0+ and supports the following operating systems: Linux, Mac OS X (Windows builds are possible, but untested)
 
 Please refer to [`CHANGELOG.md`](CHANGELOG.md) if you encounter breaking changes.
