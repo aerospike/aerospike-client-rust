@@ -35,7 +35,7 @@ pub struct ClientPolicy {
     pub idle_timeout: Option<Duration>, // = 14 seconds
 
     // Size of the Connection Queue cache.
-    pub connection_pool_size: usize, // = 256
+    pub connection_pool_size_per_node: usize, // = 256
 
     // Throw exception if host connection fails during addHost().
     pub fail_if_not_connected: bool, // = true
@@ -61,6 +61,8 @@ pub struct ClientPolicy {
     //
     // "services-alternate" is available with Aerospike Server versions >= 3.7.1.
     pub use_services_alternate: bool, // false
+
+    pub thread_pool_size: usize, // 128
 }
 
 impl Default for ClientPolicy {
@@ -70,11 +72,12 @@ impl Default for ClientPolicy {
             password: None,
             timeout: Some(Duration::new(30, 0)),
             idle_timeout: Some(Duration::new(5, 0)),
-            connection_pool_size: 256,
+            connection_pool_size_per_node: 256,
             fail_if_not_connected: true,
             tend_interval: Duration::new(1, 0),
             ip_map: None,
             use_services_alternate: false,
+            thread_pool_size: 128,
         }
     }
 }

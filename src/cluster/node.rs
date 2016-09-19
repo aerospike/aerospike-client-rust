@@ -62,7 +62,7 @@ pub struct Node {
 
 impl Node {
     pub fn new(client_policy: ClientPolicy, nv: Arc<NodeValidator>) -> Self {
-        let pool_size = client_policy.connection_pool_size;
+        let pool_size = client_policy.connection_pool_size_per_node;
         Node {
             client_policy: client_policy,
             name: nv.name.clone(),
@@ -267,7 +267,7 @@ impl Node {
                     return Ok(conn);
                 }
                 None => {
-                    if self.inc_connections() > self.client_policy.connection_pool_size {
+                    if self.inc_connections() > self.client_policy.connection_pool_size_per_node {
                         // too many connections, undo
                         self.dec_connections();
                         return Err(AerospikeError::ErrConnectionPoolEmpty());
@@ -299,7 +299,7 @@ impl Node {
     pub fn put_connection(&self, mut conn: Connection) {
         if self.active.load(Ordering::Relaxed) {
             let mut connections = self.connections.write().unwrap();
-            if connections.len() < self.client_policy.connection_pool_size {
+            if connections.len() < self.client_policy.connection_pool_size_per_node {
                 connections.push_back(conn);
             } else {
                 self.invalidate_connection(&mut conn);

@@ -66,7 +66,7 @@ impl Client {
 
         Ok(Client {
             cluster: cluster,
-            thread_pool: ThreadPool::new(128),
+            thread_pool: ThreadPool::new(policy.thread_pool_size),
         })
     }
 
