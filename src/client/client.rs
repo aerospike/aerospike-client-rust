@@ -443,7 +443,7 @@ impl Client {
                                 index_type: IndexType,
                                 collection_index_type: CollectionIndexType)
                                 -> AerospikeResult<()> {
-        let citStr: String = match collection_index_type {
+        let cit_str: String = match collection_index_type {
             CollectionIndexType::Default => "".to_string(),
             _ => format!("indextype={};", collection_index_type),
         };
@@ -452,7 +452,7 @@ impl Client {
                           namespace,
                           set_name,
                           index_name,
-                          citStr,
+                          cit_str,
                           bin_name,
                           index_type,
                           );
@@ -465,6 +465,41 @@ impl Client {
                 _ if v.to_uppercase() == "OK" => return Ok(()),
                 _ if v.to_uppercase().contains("FAIL:200") => {
                     return Err(AerospikeError::new(ResultCode::INDEX_FOUND, None));
+                }
+                _ => return Err(AerospikeError::new(ResultCode::INDEX_GENERIC, Some(v.to_owned()))),
+            };
+        }
+
+        Err(AerospikeError::new(ResultCode::INDEX_GENERIC, None))
+    }
+
+
+    pub fn drop_index(&self,
+                      policy: &WritePolicy,
+                      namespace: &str,
+                      set_name: &str,
+                      index_name: &str)
+                      -> AerospikeResult<()> {
+
+        let set_name: String = match set_name {
+            "" => "".to_string(),
+            _ => format!("set={};", set_name),
+        };
+
+        let cmd = format!("sindex-delete:ns={};{}indexname={}",
+                          namespace,
+                          set_name,
+                          index_name,
+                          );
+
+        let node = try!(self.cluster.get_random_node());
+        let response = try!(node.info(&[&cmd]));
+
+        for v in response.values() {
+            match v {
+                _ if v.to_uppercase() == "OK" => return Ok(()),
+                _ if v.to_uppercase().contains("FAIL:201") => {
+                    return Err(AerospikeError::new(ResultCode::INDEX_GENERIC, None));
                 }
                 _ => return Err(AerospikeError::new(ResultCode::INDEX_GENERIC, Some(v.to_owned()))),
             };
