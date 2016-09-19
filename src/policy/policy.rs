@@ -30,10 +30,12 @@ pub trait Policy {
 }
 
 pub trait PolicyLike {
-	fn base(&self) -> &BasePolicy;
+    fn base(&self) -> &BasePolicy;
 }
 
-impl<T> Policy for T where T: PolicyLike {
+impl<T> Policy for T
+    where T: PolicyLike
+{
     fn priority(&self) -> &Priority {
         self.base().priority()
     }
@@ -43,7 +45,7 @@ impl<T> Policy for T where T: PolicyLike {
     }
 
     fn deadline(&self) -> Option<Instant> {
-    	self.base().deadline()
+        self.base().deadline()
     }
 
     fn timeout(&self) -> Option<Duration> {
@@ -59,7 +61,7 @@ impl<T> Policy for T where T: PolicyLike {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug,Clone)]
 pub struct BasePolicy {
     // Priority of request relative to other transactions.
     // Currently, only used for scans.
@@ -88,7 +90,6 @@ pub struct BasePolicy {
 }
 
 impl Policy for BasePolicy {
-
     fn priority(&self) -> &Priority {
         &self.priority
     }

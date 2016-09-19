@@ -25,3 +25,6 @@ pub mod exists_command;
 pub mod read_header_command;
 pub mod operate_command;
 pub mod execute_udf_command;
+pub mod stream_command;
+pub mod scan_command;
+pub mod query_command;

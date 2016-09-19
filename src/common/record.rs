@@ -20,25 +20,25 @@ use std::fmt;
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use value::{Value};
+use value::Value;
 use cluster::node::Node;
 use common::key::Key;
 use error::{AerospikeResult, ResultCode, AerospikeError};
 
-// #[derive(Debug)]
-pub struct Record<'a> {
-    pub key: Option<Key<'a>>,
+#[derive(Debug)]
+pub struct Record {
+    pub key: Option<Key>,
     pub bins: HashMap<String, Value>,
     pub generation: u32,
     pub expiration: u32,
 }
 
-impl<'a> Record<'a> {
-    pub fn new(key: Option<Key<'a>>,
-           bins: HashMap<String, Value>,
-           generation: u32,
-           expiration: u32)
-           -> AerospikeResult<Self> {
+impl Record {
+    pub fn new(key: Option<Key>,
+               bins: HashMap<String, Value>,
+               generation: u32,
+               expiration: u32)
+               -> AerospikeResult<Self> {
         Ok(Record {
             key: key,
             bins: bins,
@@ -49,7 +49,7 @@ impl<'a> Record<'a> {
 }
 
 
-impl<'a> core::fmt::Display for Record<'a> {
+impl core::fmt::Display for Record {
     fn fmt(&self, f: &mut core::fmt::Formatter) -> Result<(), core::fmt::Error> {
         try!("key: ".fmt(f));
         write!(f, "{:?}", self.key);

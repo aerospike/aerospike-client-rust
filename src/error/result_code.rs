@@ -21,6 +21,12 @@ pub mod ResultCode {
 
     use error::error::{AerospikeError, ErrorType};
 
+    // Too many filters were set on the statement
+    pub const TOO_MANY_FILTERS_ERROR: isize = -11;
+
+    // Record Queue Full
+    pub const RECORD_QUEUE_FULL_ERROR: isize = -10;
+
     // IO Error
     pub const IO_ERROR: isize = -9;
 
@@ -237,11 +243,13 @@ pub mod ResultCode {
     // Should connection be put back into pool.
     pub fn keep_connection(err: &AerospikeError) -> bool {
         match err.err {
-            ErrorType::WithDescription(result_code, _) => match result_code {
-                KEY_NOT_FOUND_ERROR =>  true,
-                _ => false,
-            },
-        _ => false,
+            ErrorType::WithDescription(result_code, _) => {
+                match result_code {
+                    KEY_NOT_FOUND_ERROR => true,
+                    _ => false,
+                }
+            }
+            _ => false,
         }
     }
 
@@ -249,6 +257,12 @@ pub mod ResultCode {
     // Return result code as a string.
     pub fn to_string(code: isize) -> String {
         match code {
+            TOO_MANY_FILTERS_ERROR => {
+                "Too many filters were set for the statement. Aerospike supports only one filter \
+                 on a statement."
+                    .to_string()
+            }
+            RECORD_QUEUE_FULL_ERROR => "Record Queue Full Error".to_string(),
             IO_ERROR => "IO Error".to_string(),
             NO_AVAILABLE_CONNECTIONS_TO_NODE => {
                 "No available connections to the node. Connection Pool was empty, and limited to \
@@ -332,4 +346,3 @@ pub mod ResultCode {
         }
     }
 }
-

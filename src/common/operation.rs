@@ -13,8 +13,8 @@
 // License for the specific language governing permissions and limitations under
 // the License.
 
-use value::{Value};
-use common::{Bin};
+use value::Value;
+use common::Bin;
 
 #[derive(Debug,Clone)]
 #[derive(PartialEq, Eq)]
@@ -39,89 +39,89 @@ const NilValue: &'static Value = &Value::Nil;
 
 // #[derive(Debug,Clone)]
 pub struct Operation<'a> {
-	// OpType determines type of operation.
-	pub op: OperationType,
+    // OpType determines type of operation.
+    pub op: OperationType,
 
-	// BinName (Optional) determines the name of bin used in operation.
-	pub bin_name: &'a str,
+    // BinName (Optional) determines the name of bin used in operation.
+    pub bin_name: &'a str,
 
-	// BinValue (Optional) determines bin value used in operation.
-	pub bin_value: &'a Value,
+    // BinValue (Optional) determines bin value used in operation.
+    pub bin_value: &'a Value,
 
-	// will be true ONLY for GetHeader() operation
-	pub header_only: bool,
+    // will be true ONLY for GetHeader() operation
+    pub header_only: bool,
 }
 
 impl<'a> Operation<'a> {
-	pub fn get() -> Self {
-		Operation {
-			op: READ,
-			bin_name: "",
-			bin_value: NilValue,
-			header_only: false,
-		}
-	}
+    pub fn get() -> Self {
+        Operation {
+            op: READ,
+            bin_name: "",
+            bin_value: NilValue,
+            header_only: false,
+        }
+    }
 
-	pub fn get_header() -> Self {
-		Operation {
-			op: READ,
-			bin_name: "",
-			bin_value: NilValue,
-			header_only: true,
-		}
-	}
+    pub fn get_header() -> Self {
+        Operation {
+            op: READ,
+            bin_name: "",
+            bin_value: NilValue,
+            header_only: true,
+        }
+    }
 
-	pub fn get_bin(bin_name: &'a str) -> Self {
-		Operation {
-			op: READ,
-			bin_name: bin_name,
-			bin_value: NilValue,
-			header_only: false,
-		}
-	}
+    pub fn get_bin(bin_name: &'a str) -> Self {
+        Operation {
+            op: READ,
+            bin_name: bin_name,
+            bin_value: NilValue,
+            header_only: false,
+        }
+    }
 
-	pub fn put(bin: &'a Bin) -> Self {
-		Operation {
-			op: WRITE,
-			bin_name: bin.name,
-			bin_value: &bin.value,
-			header_only: false,
-		}
-	}
+    pub fn put(bin: &'a Bin) -> Self {
+        Operation {
+            op: WRITE,
+            bin_name: bin.name,
+            bin_value: &bin.value,
+            header_only: false,
+        }
+    }
 
-	pub fn append(bin: &'a Bin) -> Self {
-		Operation {
-			op: APPEND,
-			bin_name: bin.name,
-			bin_value: &bin.value,
-			header_only: false,
-		}
-	}
+    pub fn append(bin: &'a Bin) -> Self {
+        Operation {
+            op: APPEND,
+            bin_name: bin.name,
+            bin_value: &bin.value,
+            header_only: false,
+        }
+    }
 
-	pub fn prepend(bin: &'a Bin) -> Self {
-		Operation {
-			op: PREPEND,
-			bin_name: bin.name,
-			bin_value: &bin.value,
-			header_only: false,
-		}
-	}
+    pub fn prepend(bin: &'a Bin) -> Self {
+        Operation {
+            op: PREPEND,
+            bin_name: bin.name,
+            bin_value: &bin.value,
+            header_only: false,
+        }
+    }
 
-	pub fn add(bin: &'a Bin) -> Self {
-		Operation {
-			op: ADD,
-			bin_name: bin.name,
-			bin_value: &bin.value,
-			header_only: false,
-		}
-	}
+    pub fn add(bin: &'a Bin) -> Self {
+        Operation {
+            op: ADD,
+            bin_name: bin.name,
+            bin_value: &bin.value,
+            header_only: false,
+        }
+    }
 
-	pub fn touch() -> Self {
-		Operation {
-			op: TOUCH,
-			bin_name: "",
-			bin_value: NilValue,
-			header_only: false,
-		}
-	}
+    pub fn touch() -> Self {
+        Operation {
+            op: TOUCH,
+            bin_name: "",
+            bin_value: NilValue,
+            header_only: false,
+        }
+    }
 }

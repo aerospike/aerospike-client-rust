@@ -27,23 +27,26 @@ use std::io::prelude::*;
 use std::path::Path;
 
 use rustc_serialize::base64::{ToBase64, FromBase64, STANDARD};
+use threadpool::ThreadPool;
 
 use internal::wait_group::WaitGroup;
 use net::Host;
 use cluster::{Cluster, Node};
 use common::operation;
-use common::{Key, Record, Bin, UDFLang};
-use command::read_command::{ReadCommand};
-use command::write_command::{WriteCommand};
-use command::delete_command::{DeleteCommand};
-use command::touch_command::{TouchCommand};
-use command::exists_command::{ExistsCommand};
-use command::read_header_command::{ReadHeaderCommand};
-use command::operate_command::{OperateCommand};
-use command::execute_udf_command::{ExecuteUDFCommand};
-use value::{Value};
+use common::{Key, Record, Bin, UDFLang, Recordset, Statement, IndexType, CollectionIndexType};
+use command::read_command::ReadCommand;
+use command::write_command::WriteCommand;
+use command::delete_command::DeleteCommand;
+use command::touch_command::TouchCommand;
+use command::exists_command::ExistsCommand;
+use command::read_header_command::ReadHeaderCommand;
+use command::operate_command::OperateCommand;
+use command::execute_udf_command::ExecuteUDFCommand;
+use command::scan_command::ScanCommand;
+use command::query_command::QueryCommand;
+use value::Value;
 
-use policy::{ClientPolicy, ReadPolicy, WritePolicy};
+use policy::{ClientPolicy, ReadPolicy, WritePolicy, ScanPolicy, QueryPolicy};
 use error::{AerospikeResult, ResultCode, AerospikeError};
 
 
@@ -51,7 +54,11 @@ use error::{AerospikeResult, ResultCode, AerospikeError};
 // All database operations are available against this object.
 pub struct Client {
     pub cluster: Arc<Cluster>,
+    thread_pool: ThreadPool,
 }
+
+unsafe impl Send for Client {}
+unsafe impl Sync for Client {}
 
 impl Client {
     pub fn new(policy: &ClientPolicy, hosts: &[Host]) -> AerospikeResult<Self> {
@@ -59,148 +66,168 @@ impl Client {
 
         Ok(Client {
             cluster: cluster,
+            thread_pool: ThreadPool::new(128),
         })
     }
 
     pub fn close(&self) -> AerospikeResult<()> {
-    	self.cluster.close()
+        self.cluster.close()
     }
 
     pub fn is_connected(&self) -> bool {
-    	self.cluster.is_connected()
+        self.cluster.is_connected()
     }
 
     pub fn nodes(&self) -> AerospikeResult<Vec<Arc<Node>>> {
-    	Ok(self.cluster.nodes())
+        Ok(self.cluster.nodes())
     }
 
     pub fn get<'a, 'b>(&'a self,
-                         policy: &'a ReadPolicy,
-                         key: &'a Key<'a>,
-                         bin_names: Option<&'a [&'b str]>)
-                         -> AerospikeResult<Record> {
+                       policy: &'a ReadPolicy,
+                       key: &'a Key,
+                       bin_names: Option<&'a [&'b str]>)
+                       -> AerospikeResult<Record> {
         let mut command = try!(ReadCommand::new(policy, self.cluster.clone(), key, bin_names));
         try!(command.execute());
         Ok(command.record.unwrap())
     }
 
     pub fn get_header<'a, 'b>(&'a self,
-                         policy: &'a ReadPolicy,
-                         key: &'a Key<'a>)
-                         -> AerospikeResult<Arc<Record>> {
+                              policy: &'a ReadPolicy,
+                              key: &'a Key)
+                              -> AerospikeResult<Arc<Record>> {
         let mut command = try!(ReadHeaderCommand::new(policy, self.cluster.clone(), key));
         try!(command.execute());
         Ok(command.record.as_ref().unwrap().clone())
     }
 
     pub fn put<'a, 'b>(&'a self,
-                         policy: &'a WritePolicy,
-                         key: &'a Key<'a>,
-                         bins: &'a [&'b Bin])
-                         -> AerospikeResult<()> {
-        let mut command = try!(WriteCommand::new(policy, self.cluster.clone(), key, bins, operation::WRITE));
+                       policy: &'a WritePolicy,
+                       key: &'a Key,
+                       bins: &'a [&'b Bin])
+                       -> AerospikeResult<()> {
+        let mut command = try!(WriteCommand::new(policy,
+                                                 self.cluster.clone(),
+                                                 key,
+                                                 bins,
+                                                 operation::WRITE));
         command.execute()
     }
 
     pub fn add<'a, 'b>(&'a self,
-                         policy: &'a WritePolicy,
-                         key: &'a Key<'a>,
-                         bins: &'a [&'b Bin])
-                         -> AerospikeResult<()> {
-        let mut command = try!(WriteCommand::new(policy, self.cluster.clone(), key, bins, operation::ADD));
+                       policy: &'a WritePolicy,
+                       key: &'a Key,
+                       bins: &'a [&'b Bin])
+                       -> AerospikeResult<()> {
+        let mut command = try!(WriteCommand::new(policy,
+                                                 self.cluster.clone(),
+                                                 key,
+                                                 bins,
+                                                 operation::ADD));
         command.execute()
     }
 
     pub fn append<'a, 'b>(&'a self,
-                         policy: &'a WritePolicy,
-                         key: &'a Key<'a>,
-                         bins: &'a [&'b Bin])
-                         -> AerospikeResult<()> {
-        let mut command = try!(WriteCommand::new(policy, self.cluster.clone(), key, bins, operation::APPEND));
+                          policy: &'a WritePolicy,
+                          key: &'a Key,
+                          bins: &'a [&'b Bin])
+                          -> AerospikeResult<()> {
+        let mut command = try!(WriteCommand::new(policy,
+                                                 self.cluster.clone(),
+                                                 key,
+                                                 bins,
+                                                 operation::APPEND));
         command.execute()
     }
 
     pub fn prepend<'a, 'b>(&'a self,
-                         policy: &'a WritePolicy,
-                         key: &'a Key<'a>,
-                         bins: &'a [&'b Bin])
-                         -> AerospikeResult<()> {
-        let mut command = try!(WriteCommand::new(policy, self.cluster.clone(), key, bins, operation::PREPEND));
+                           policy: &'a WritePolicy,
+                           key: &'a Key,
+                           bins: &'a [&'b Bin])
+                           -> AerospikeResult<()> {
+        let mut command = try!(WriteCommand::new(policy,
+                                                 self.cluster.clone(),
+                                                 key,
+                                                 bins,
+                                                 operation::PREPEND));
         command.execute()
     }
 
     pub fn delete<'a, 'b>(&'a self,
-                         policy: &'a WritePolicy,
-                         key: &'a Key<'a>)
-                         -> AerospikeResult<bool> {
+                          policy: &'a WritePolicy,
+                          key: &'a Key)
+                          -> AerospikeResult<bool> {
         let mut command = try!(DeleteCommand::new(policy, self.cluster.clone(), key));
         try!(command.execute());
         Ok(command.existed)
     }
 
-    pub fn touch<'a, 'b>(&'a self,
-                         policy: &'a WritePolicy,
-                         key: &'a Key<'a>)
-                         -> AerospikeResult<()> {
+    pub fn touch<'a, 'b>(&'a self, policy: &'a WritePolicy, key: &'a Key) -> AerospikeResult<()> {
         let mut command = try!(TouchCommand::new(policy, self.cluster.clone(), key));
         command.execute()
     }
 
     pub fn exists<'a, 'b>(&'a self,
-                         policy: &'a WritePolicy,
-                         key: &'a Key<'a>)
-                         -> AerospikeResult<bool> {
+                          policy: &'a WritePolicy,
+                          key: &'a Key)
+                          -> AerospikeResult<bool> {
         let mut command = try!(ExistsCommand::new(policy, self.cluster.clone(), key));
         try!(command.execute());
         Ok(command.exists)
     }
 
     pub fn operate<'a, 'b>(&'a self,
-                         policy: &'a WritePolicy,
-                         key: &'a Key<'a>,
-                         ops: &'a[operation::Operation<'a>])
-                         -> AerospikeResult<Record> {
+                           policy: &'a WritePolicy,
+                           key: &'a Key,
+                           ops: &'a [operation::Operation<'a>])
+                           -> AerospikeResult<Record> {
         let mut command = try!(OperateCommand::new(policy, self.cluster.clone(), key, ops));
         try!(command.execute());
         Ok(command.read_command.record.unwrap())
     }
 
-    /////////////////////////////////////////////////////////////////////////////
+    /// //////////////////////////////////////////////////////////////////////////
 
     pub fn register_udf<'a, 'b>(&'a self,
-                         policy: &'a WritePolicy,
-                         udf_body: &'a [u8],
-                         udf_name: &'a str,
-                         language: UDFLang)
-                         -> AerospikeResult<()> {
+                                policy: &'a WritePolicy,
+                                udf_body: &'a [u8],
+                                udf_name: &'a str,
+                                language: UDFLang)
+                                -> AerospikeResult<()> {
         let udf_body = udf_body.to_base64(STANDARD);
 
-        let cmd = format!("udf-put:filename={};content={};content-len={};udf-type={};",udf_name, udf_body, udf_body.len(), language);
+        let cmd = format!("udf-put:filename={};content={};content-len={};udf-type={};",
+                          udf_name,
+                          udf_body,
+                          udf_body.len(),
+                          language);
         let node = try!(self.cluster.get_random_node());
         let response = try!(node.info(&[&cmd]));
 
         if let Some(msg) = response.get("error") {
             let msg = try!(msg.from_base64());
             let msg = try!(str::from_utf8(&msg));
-            return Err(AerospikeError::new(ResultCode::COMMAND_REJECTED, Some(
-                format!("UDF Registration failed: {}\nFile: {}\nLine: {}\nMessage: {}",
-                    response.get("error").unwrap_or(&"-".to_string()),
-                    response.get("file").unwrap_or(&"-".to_string()),
-                    response.get("line").unwrap_or(&"-".to_string()),
-                    msg
-                )
-            )))
+            return Err(AerospikeError::new(ResultCode::COMMAND_REJECTED,
+                                           Some(format!("UDF Registration failed: {}\nFile: \
+                                                         {}\nLine: {}\nMessage: {}",
+                                                        response.get("error")
+                                                                .unwrap_or(&"-".to_string()),
+                                                        response.get("file")
+                                                                .unwrap_or(&"-".to_string()),
+                                                        response.get("line")
+                                                                .unwrap_or(&"-".to_string()),
+                                                        msg))));
         }
 
         Ok(())
     }
 
     pub fn register_udf_from_file<'a, 'b>(&'a self,
-                         policy: &'a WritePolicy,
-                         client_path: &'a str,
-                         udf_name: &'a str,
-                         language: UDFLang)
-                         -> AerospikeResult<()> {
+                                          policy: &'a WritePolicy,
+                                          client_path: &'a str,
+                                          udf_name: &'a str,
+                                          language: UDFLang)
+                                          -> AerospikeResult<()> {
 
         let path = Path::new(client_path);
         let mut file = try!(File::open(&path));
@@ -211,35 +238,37 @@ impl Client {
     }
 
     pub fn remove_udf<'a, 'b>(&'a self,
-                         policy: &'a WritePolicy,
-                         udf_name: &'a str,
-                         language: UDFLang)
-                         -> AerospikeResult<()> {
+                              policy: &'a WritePolicy,
+                              udf_name: &'a str,
+                              language: UDFLang)
+                              -> AerospikeResult<()> {
 
         let cmd = format!("udf-remove:filename={}.{};", udf_name, language);
         let node = try!(self.cluster.get_random_node());
         let response = try!(node.info(&[&cmd]));
 
         if let Some(msg) = response.get("ok") {
-            return Ok(())
+            return Ok(());
         }
 
-        Err(AerospikeError::new(ResultCode::COMMAND_REJECTED, Some(
-            format!("UDF Remove failed: {:?}",
-                response
-            )
-        )))
+        Err(AerospikeError::new(ResultCode::COMMAND_REJECTED,
+                                Some(format!("UDF Remove failed: {:?}", response))))
     }
 
     pub fn execute_udf<'a, 'b>(&'a self,
-                         policy: &'a WritePolicy,
-                         key: &'a Key<'a>,
-                         udf_name: &'a str,
-                         function_name: &'a str,
-                         args: Option<&[Value]>)
-                         -> AerospikeResult<Option<Value>> {
+                               policy: &'a WritePolicy,
+                               key: &'a Key,
+                               udf_name: &'a str,
+                               function_name: &'a str,
+                               args: Option<&[Value]>)
+                               -> AerospikeResult<Option<Value>> {
 
-        let mut command = try!(ExecuteUDFCommand::new(policy, self.cluster.clone(), key, udf_name, function_name, args));
+        let mut command = try!(ExecuteUDFCommand::new(policy,
+                                                      self.cluster.clone(),
+                                                      key,
+                                                      udf_name,
+                                                      function_name,
+                                                      args));
         try!(command.execute());
 
         let record = command.read_command.record.as_ref().unwrap().clone();
@@ -253,11 +282,194 @@ impl Client {
             if key.contains("SUCCESS") {
                 return Ok(Some(value.clone()));
             } else if key.contains("FAILURE") {
-                return Err(AerospikeError::new(ResultCode::SERVER_ERROR, Some(format!("{:?}", value))));
+                return Err(AerospikeError::new(ResultCode::SERVER_ERROR,
+                                               Some(format!("{:?}", value))));
             }
         }
 
-        Err(AerospikeError::new(ResultCode::UDF_BAD_RESPONSE, Some("Invalid UDF return value".to_string())))
+        Err(AerospikeError::new(ResultCode::UDF_BAD_RESPONSE,
+                                Some("Invalid UDF return value".to_string())))
     }
 
+    pub fn scan<'a, 'b>(&'a self,
+                        policy: &'a ScanPolicy,
+                        namespace: &'a str,
+                        set_name: &'a str,
+                        bin_names: Option<&'a [&'b str]>)
+                        -> AerospikeResult<Arc<Recordset>> {
+
+
+        let bin_names = match bin_names {
+            None => None,
+            Some(bin_names) => {
+                let bin_names: Vec<_> = bin_names.iter().cloned().map(String::from).collect();
+                Some(bin_names)
+            }
+        };
+
+        let nodes = self.cluster.nodes();
+        let mut recordset = Arc::new(try!(Recordset::new(policy.record_queue_size, nodes.len())));
+        for node in nodes {
+            let node = node.clone();
+            let recordset = recordset.clone();
+            let policy = policy.to_owned();
+            let namespace = namespace.to_owned();
+            let set_name = set_name.to_owned();
+            let bin_names = bin_names.to_owned();
+
+            thread::spawn(move || {
+                let mut command = ScanCommand::new(&policy,
+                                                   node,
+                                                   &namespace,
+                                                   &set_name,
+                                                   &bin_names,
+                                                   recordset)
+                                      .unwrap();
+                command.execute().unwrap();
+            });
+
+        }
+        Ok(recordset)
+    }
+
+    pub fn scan_node<'a, 'b>(&'a self,
+                             policy: &'a ScanPolicy,
+                             node: Arc<Node>,
+                             namespace: &'a str,
+                             set_name: &'a str,
+                             bin_names: Option<&'a [&'b str]>)
+                             -> AerospikeResult<Arc<Recordset>> {
+
+
+        let bin_names = match bin_names {
+            None => None,
+            Some(bin_names) => {
+                let bin_names: Vec<_> = bin_names.iter().cloned().map(String::from).collect();
+                Some(bin_names)
+            }
+        };
+
+        let mut recordset = Arc::new(try!(Recordset::new(policy.record_queue_size, 1)));
+        let node = node.clone();
+        let t_recordset = recordset.clone();
+        let policy = policy.to_owned();
+        let namespace = namespace.to_owned();
+        let set_name = set_name.to_owned();
+        let bin_names = bin_names.to_owned();
+
+        self.thread_pool.execute(move || {
+            let mut command = ScanCommand::new(&policy,
+                                               node,
+                                               &namespace,
+                                               &set_name,
+                                               &bin_names,
+                                               t_recordset)
+                                  .unwrap();
+            command.execute().unwrap();
+        });
+
+        Ok(recordset)
+    }
+
+    pub fn query<'a, 'b>(&'a self,
+                         policy: &QueryPolicy,
+                         statement: Arc<Statement>)
+                         -> AerospikeResult<Arc<Recordset>> {
+
+        try!(statement.validate());
+
+        let nodes = self.cluster.nodes();
+        let mut recordset = Arc::new(try!(Recordset::new(policy.record_queue_size, nodes.len())));
+        for node in nodes {
+            let node = node.clone();
+            let t_recordset = recordset.clone();
+            let policy = policy.to_owned();
+            let statement = statement.clone();
+
+            self.thread_pool.execute(move || {
+                let mut command = QueryCommand::new(&policy, node, statement, t_recordset).unwrap();
+                command.execute().unwrap();
+            });
+        }
+        Ok(recordset)
+    }
+
+    pub fn query_node<'a, 'b>(&self,
+                              policy: &QueryPolicy,
+                              node: Arc<Node>,
+                              statement: Arc<Statement>)
+                              -> AerospikeResult<Arc<Recordset>> {
+
+        try!(statement.validate());
+
+        let mut recordset = Arc::new(try!(Recordset::new(policy.record_queue_size, 1)));
+        let node = node.clone();
+        let t_recordset = recordset.clone();
+        let policy = policy.to_owned();
+        let statement = statement.clone();
+
+        self.thread_pool.execute(move || {
+            let mut command = QueryCommand::new(&policy, node, statement, t_recordset).unwrap();
+            command.execute().unwrap();
+        });
+
+        Ok(recordset)
+    }
+
+    pub fn create_index(&self,
+                        policy: &WritePolicy,
+                        namespace: &str,
+                        set_name: &str,
+                        bin_name: &str,
+                        index_name: &str,
+                        index_type: IndexType)
+                        -> AerospikeResult<()> {
+        self.create_complex_index(policy,
+                                  namespace,
+                                  set_name,
+                                  bin_name,
+                                  index_name,
+                                  index_type,
+                                  CollectionIndexType::Default)
+
+    }
+
+    pub fn create_complex_index(&self,
+                                policy: &WritePolicy,
+                                namespace: &str,
+                                set_name: &str,
+                                bin_name: &str,
+                                index_name: &str,
+                                index_type: IndexType,
+                                collection_index_type: CollectionIndexType)
+                                -> AerospikeResult<()> {
+        let citStr: String = match collection_index_type {
+            CollectionIndexType::Default => "".to_string(),
+            _ => format!("indextype={};", collection_index_type),
+        };
+
+        let cmd = format!("sindex-create:ns={};set={};indexname={};numbins=1;{}indexdata={},{};priority=normal",
+                          namespace,
+                          set_name,
+                          index_name,
+                          citStr,
+                          bin_name,
+                          index_type,
+                          );
+
+        let node = try!(self.cluster.get_random_node());
+        let response = try!(node.info(&[&cmd]));
+
+        for v in response.values() {
+            match v {
+                _ if v.to_uppercase() == "OK" => return Ok(()),
+                _ if v.to_uppercase().contains("FAIL:200") => {
+                    return Err(AerospikeError::new(ResultCode::INDEX_FOUND, None));
+                }
+                _ => return Err(AerospikeError::new(ResultCode::INDEX_GENERIC, Some(v.to_owned()))),
+            };
+        }
+
+        Err(AerospikeError::new(ResultCode::INDEX_GENERIC, None))
+    }
 }

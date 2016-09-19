@@ -26,7 +26,7 @@ use net::Host;
 use std::io::Cursor;
 
 use byteorder::{BigEndian, ReadBytesExt};
-use rustc_serialize::base64::{FromBase64};
+use rustc_serialize::base64::FromBase64;
 
 use Cluster;
 use Node;
@@ -75,7 +75,7 @@ impl PartitionTokenizer {
         let part_str = try!(str::from_utf8(&self.buffer));
         let mut parts = part_str.trim_right().split(":");
         loop {
-            match(parts.nth(0), parts.nth(0)) {
+            match (parts.nth(0), parts.nth(0)) {
                 (Some(ns), Some(part)) => {
                     let ns = ns.to_string();
                     let restore_buffer = try!(part.from_base64());
@@ -89,16 +89,19 @@ impl PartitionTokenizer {
                     } else {
                         let mut node_array: &mut Vec<Arc<Node>> = amap.entry(ns).or_insert(vec![]);
                         for i in 0..node::PARTITIONS {
-                            if restore_buffer[i>>3] & (0x80 >> (i & 7) as u8) != 0 {
+                            if restore_buffer[i >> 3] & (0x80 >> (i & 7) as u8) != 0 {
                                 node_array[i] = node.clone();
                             }
                         }
                     }
-                },
+                }
                 (None, None) => break,
-                _ => return Err(AerospikeError::new(ResultCode::PARSE_ERROR,
-                                Some(format!("error while parsing partition info: {:?}",
-                                             part_str))))
+                _ => {
+                    return Err(AerospikeError::new(ResultCode::PARSE_ERROR,
+                                                   Some(format!("error while parsing partition \
+                                                                 info: {:?}",
+                                                                part_str))))
+                }
             }
         }
 

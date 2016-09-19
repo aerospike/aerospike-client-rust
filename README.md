@@ -26,13 +26,13 @@ The following is a very simple example of CRUD operations in an Aerospike databa
 
     let mut threads = vec![];
     let now = Instant::now();
-    for _ in 0..2 {
+    for i in 0..2 {
         let client = client.clone();
         let t = thread::spawn(move || {
             let policy = ReadPolicy::default();
 
             let wpolicy = WritePolicy::default();
-            let key = key!("test", "test", 1);
+            let key = key!("test", "test", i);
 
             let wbin = bin!("bin999", 1);
             let bins = vec![&wbin];
@@ -83,4 +83,4 @@ This library is packaged with a number of tests.
 
 To run all the test cases:
 
-`$ RUST_LOG=debug:aerospike RUST_BACKTRACE=1 cargo test -- --nocapture`
+`$ AEROSPIKE_HOST=host AEROSPIKE_PORT=3000 AEROSPIKE_NAMESPACE=test RUST_LOG=debug:aerospike RUST_BACKTRACE=1 cargo test -- --nocapture`

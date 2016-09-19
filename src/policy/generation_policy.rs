@@ -17,15 +17,15 @@
 // GenerationPolicy determines how to handle record writes based on record generation.
 #[derive(Debug,PartialEq)]
 pub enum GenerationPolicy {
-	// None means: Do not use record generation to restrict writes.
-	None = 0,
+    // None means: Do not use record generation to restrict writes.
+    None = 0,
 
-	// ExpectGenEqual means: Update/Delete record if expected generation is equal to server generation. Otherwise, fail.
-	ExpectGenEqual = 1,
+    // ExpectGenEqual means: Update/Delete record if expected generation is equal to server generation. Otherwise, fail.
+    ExpectGenEqual = 1,
 
-	// ExpectGenGreater means: Update/Delete record if expected generation greater than the server generation. Otherwise, fail.
-	// This is useful for restore after backup.
-	ExpectGenGreater = 2,
+    // ExpectGenGreater means: Update/Delete record if expected generation greater than the server generation. Otherwise, fail.
+    // This is useful for restore after backup.
+    ExpectGenGreater = 2,
 }
 
 impl Default for GenerationPolicy {

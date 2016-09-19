@@ -252,9 +252,7 @@ impl Node {
         Ok(())
     }
 
-    pub fn get_connection(&self,
-                          timeout: Option<Duration>)
-                          -> AerospikeResult<Connection> {
+    pub fn get_connection(&self, timeout: Option<Duration>) -> AerospikeResult<Connection> {
         let mut connections = self.connections.write().unwrap();
         loop {
             match connections.pop_front() {
@@ -287,7 +285,7 @@ impl Node {
                         Err(e) => {
                             self.dec_connections();
                             return Err(e);
-                        },
+                        }
                         _ => (),
                     }
 

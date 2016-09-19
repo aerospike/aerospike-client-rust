@@ -14,7 +14,7 @@
 
 use std::sync::Arc;
 use std::io::Write;
-use std::collections::{HashMap};
+use std::collections::HashMap;
 use std::time::{Instant, Duration};
 use std::str;
 
@@ -22,7 +22,7 @@ use byteorder::{NetworkEndian, ReadBytesExt, WriteBytesExt, ByteOrder};
 
 use net::Connection;
 use error::{AerospikeError, ResultCode, AerospikeResult};
-use value::{Value};
+use value::Value;
 
 use net::Host;
 use cluster::node_validator::NodeValidator;
@@ -36,7 +36,7 @@ use command::command::Command;
 use command::single_command::SingleCommand;
 use command::read_command::ReadCommand;
 use command::buffer;
-use command::buffer::{Buffer};
+use command::buffer::Buffer;
 use value::value;
 
 pub struct OperateCommand<'a> {
@@ -47,8 +47,11 @@ pub struct OperateCommand<'a> {
 }
 
 impl<'a> OperateCommand<'a> {
-
-    pub fn new(policy: &'a WritePolicy, cluster: Arc<Cluster>, key: &'a Key<'a>, operations: &'a [Operation<'a>]) -> AerospikeResult<Self> {
+    pub fn new(policy: &'a WritePolicy,
+               cluster: Arc<Cluster>,
+               key: &'a Key,
+               operations: &'a [Operation<'a>])
+               -> AerospikeResult<Self> {
         Ok(OperateCommand {
             read_command: try!(ReadCommand::new(&policy.base_policy, cluster, key, None)),
 
@@ -60,12 +63,13 @@ impl<'a> OperateCommand<'a> {
     pub fn execute(&mut self) -> AerospikeResult<()> {
         SingleCommand::execute(self.policy, self)
     }
-
 }
 
 impl<'a> Command for OperateCommand<'a> {
-
-    fn write_timeout(&mut self, conn: &mut Connection, timeout: Option<Duration>) -> AerospikeResult<()> {
+    fn write_timeout(&mut self,
+                     conn: &mut Connection,
+                     timeout: Option<Duration>)
+                     -> AerospikeResult<()> {
         conn.buffer.write_timeout(timeout);
         Ok(())
     }
@@ -75,7 +79,9 @@ impl<'a> Command for OperateCommand<'a> {
     }
 
     fn prepare_buffer(&mut self, conn: &mut Connection) -> AerospikeResult<()> {
-        conn.buffer.set_operate(self.policy, self.read_command.single_command.key, self.operations)
+        conn.buffer.set_operate(self.policy,
+                                self.read_command.single_command.key,
+                                self.operations)
     }
 
     fn get_node(&self) -> AerospikeResult<Arc<Node>> {
@@ -85,4 +91,4 @@ impl<'a> Command for OperateCommand<'a> {
     fn parse_result(&mut self, conn: &mut Connection) -> AerospikeResult<()> {
         self.read_command.parse_result(conn)
     }
- }
+}

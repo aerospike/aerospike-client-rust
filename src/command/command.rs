@@ -29,7 +29,10 @@ use command::buffer::Buffer;
 
 // Command interface describes all commands available
 pub trait Command {
-    fn write_timeout(&mut self, conn: &mut Connection, timeout: Option<Duration>) -> AerospikeResult<()>;
+    fn write_timeout(&mut self,
+                     conn: &mut Connection,
+                     timeout: Option<Duration>)
+                     -> AerospikeResult<()>;
     fn prepare_buffer(&mut self, conn: &mut Connection) -> AerospikeResult<()>;
     fn get_node(&self) -> AerospikeResult<Arc<Node>>;
     fn parse_result(&mut self, conn: &mut Connection) -> AerospikeResult<()>;

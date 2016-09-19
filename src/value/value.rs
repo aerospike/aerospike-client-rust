@@ -35,8 +35,7 @@ use command::buffer::Buffer;
 use msgpack::encoder::pack_value;
 use msgpack::decoder::*;
 
-///////////////////////////////////////////////////////////////////////////
-
+/// ////////////////////////////////////////////////////////////////////////
 #[derive(Debug,Clone,PartialEq,Eq,Hash)]
 pub enum FloatValue {
     F32(u32),
@@ -46,7 +45,10 @@ pub enum FloatValue {
 impl From<FloatValue> for f64 {
     fn from(val: FloatValue) -> f64 {
         match val {
-            FloatValue::F32(val) => panic!("This library does not automatically convert f32 -> f64 to be used in keys or bins."),
+            FloatValue::F32(val) => {
+                panic!("This library does not automatically convert f32 -> f64 to be used in keys \
+                        or bins.")
+            }
             FloatValue::F64(val) => unsafe { mem::transmute(val) },
         }
     }
@@ -55,7 +57,10 @@ impl From<FloatValue> for f64 {
 impl<'a> From<&'a FloatValue> for f64 {
     fn from(val: &FloatValue) -> f64 {
         match val {
-            &FloatValue::F32(val) => panic!("This library does not automatically convert f32 -> f64 to be used in keys or bins."),
+            &FloatValue::F32(val) => {
+                panic!("This library does not automatically convert f32 -> f64 to be used in keys \
+                        or bins.")
+            }
             &FloatValue::F64(val) => unsafe { mem::transmute(val) },
         }
     }
@@ -64,7 +69,9 @@ impl<'a> From<&'a FloatValue> for f64 {
 impl From<f64> for FloatValue {
     fn from(val: f64) -> FloatValue {
         let mut val = val;
-        if val.is_nan() { val = f64::NAN } // make all NaNs have the same representation
+        if val.is_nan() {
+            val = f64::NAN
+        } // make all NaNs have the same representation
         unsafe { FloatValue::F64(mem::transmute(val)) }
     }
 }
@@ -72,7 +79,9 @@ impl From<f64> for FloatValue {
 impl<'a> From<&'a f64> for FloatValue {
     fn from(val: &f64) -> FloatValue {
         let mut val = *val;
-        if val.is_nan() { val = f64::NAN } // make all NaNs have the same representation
+        if val.is_nan() {
+            val = f64::NAN
+        } // make all NaNs have the same representation
         unsafe { FloatValue::F64(mem::transmute(val)) }
     }
 }
@@ -98,7 +107,9 @@ impl<'a> From<&'a FloatValue> for f32 {
 impl From<f32> for FloatValue {
     fn from(val: f32) -> FloatValue {
         let mut val = val;
-        if val.is_nan() { val = f32::NAN } // make all NaNs have the same representation
+        if val.is_nan() {
+            val = f32::NAN
+        } // make all NaNs have the same representation
         unsafe { FloatValue::F32(mem::transmute(val)) }
     }
 }
@@ -106,7 +117,9 @@ impl From<f32> for FloatValue {
 impl<'a> From<&'a f32> for FloatValue {
     fn from(val: &f32) -> FloatValue {
         let mut val = *val;
-        if val.is_nan() { val = f32::NAN } // make all NaNs have the same representation
+        if val.is_nan() {
+            val = f32::NAN
+        } // make all NaNs have the same representation
         unsafe { FloatValue::F32(mem::transmute(val)) }
     }
 }
@@ -117,7 +130,7 @@ impl core::fmt::Display for FloatValue {
     }
 }
 
-///////////////////////////////////////////////////////////////////////////
+/// ////////////////////////////////////////////////////////////////////////
 #[derive(Debug,Clone, PartialEq, Eq)]
 pub enum Value {
     Nil,
@@ -135,7 +148,10 @@ pub enum Value {
 impl Hash for Value {
     fn hash<H: Hasher>(&self, state: &mut H) {
         match self {
-            &Value::Nil => { let v :Option<u8> = None; v.hash(state) },
+            &Value::Nil => {
+                let v: Option<u8> = None;
+                v.hash(state)
+            }
             &Value::Bool(ref val) => val.hash(state),
             &Value::Int(ref val) => val.hash(state),
             &Value::UInt(ref val) => val.hash(state),
@@ -154,7 +170,10 @@ impl Value {
         match self {
             &Value::Nil => ParticleType::NULL,
             &Value::Int(_) => ParticleType::INTEGER,
-            &Value::UInt(_) => panic!("Aerospike does not support u64 natively on server-side. Use casting to store and retrieve u64 values."),
+            &Value::UInt(_) => {
+                panic!("Aerospike does not support u64 natively on server-side. Use casting to \
+                        store and retrieve u64 values.")
+            }
             &Value::Bool(_) => ParticleType::INTEGER,
             &Value::Float(_) => ParticleType::FLOAT,
             &Value::String(_) => ParticleType::STRING,
@@ -184,7 +203,10 @@ impl Value {
         match self {
             &Value::Nil => Ok(0),
             &Value::Int(_) => Ok(8),
-            &Value::UInt(_) => panic!("Aerospike does not support u64 natively on server-side. Use casting to store and retrieve u64 values."),
+            &Value::UInt(_) => {
+                panic!("Aerospike does not support u64 natively on server-side. Use casting to \
+                        store and retrieve u64 values.")
+            }
             &Value::Bool(_) => Ok(8),
             &Value::Float(_) => Ok(8),
             &Value::String(ref s) => Ok(s.len()),
@@ -199,7 +221,10 @@ impl Value {
         match self {
             &Value::Nil => Ok(0),
             &Value::Int(ref val) => buf.write_i64(*val),
-            &Value::UInt(ref val) => panic!("Aerospike does not support u64 natively on server-side. Use casting to store and retrieve u64 values."),
+            &Value::UInt(ref val) => {
+                panic!("Aerospike does not support u64 natively on server-side. Use casting to \
+                        store and retrieve u64 values.")
+            }
             &Value::Bool(ref val) => buf.write_bool(*val),
             &Value::Float(ref val) => buf.write_f64(f64::from(val)),
             &Value::String(ref val) => buf.write_str(val),
@@ -217,18 +242,18 @@ impl Value {
                 NetworkEndian::write_i64(&mut buf, *val);
                 h.input(&buf);
                 Ok(())
-            },
+            }
             &Value::Float(ref val) => {
                 let mut buf = [0; 8];
                 NetworkEndian::write_f64(&mut buf, f64::from(val));
                 h.input(&buf);
                 Ok(())
-            },
+            }
             &Value::String(ref val) => {
                 h.input(val.as_bytes());
                 Ok(())
-            },
-            _ => panic!("Data type is not supported as Key value.")
+            }
+            _ => panic!("Data type is not supported as Key value."),
         }
     }
 }
@@ -365,10 +390,22 @@ impl From<u64> for Value {
     }
 }
 
+impl From<isize> for Value {
+    fn from(val: isize) -> Value {
+        Value::Int(val as i64)
+    }
+}
+
+impl From<usize> for Value {
+    fn from(val: usize) -> Value {
+        Value::UInt(val as u64)
+    }
+}
+
 impl<'a> From<&'a i8> for Value {
     fn from(val: &'a i8) -> Value {
         Value::Int(*val as i64)
-     }
+    }
 }
 
 impl<'a> From<&'a u8> for Value {
@@ -413,55 +450,82 @@ impl<'a> From<&'a u64> for Value {
     }
 }
 
+impl<'a> From<&'a isize> for Value {
+    fn from(val: &'a isize) -> Value {
+        Value::Int(*val as i64)
+    }
+}
+
+impl<'a> From<&'a usize> for Value {
+    fn from(val: &'a usize) -> Value {
+        Value::UInt(*val as u64)
+    }
+}
+
+
 impl<'a> From<&'a bool> for Value {
     fn from(val: &'a bool) -> Value {
         Value::Bool(*val)
     }
 }
 
-pub fn bytes_to_particle(ptype: u8, buf: &mut Buffer, len: usize) -> AerospikeResult<Option<Value>> {
+impl From<Value> for i64 {
+    fn from(val: Value) -> i64 {
+        match val {
+            Value::Int(val) => val,
+            Value::UInt(val) => val as i64,
+            _ => panic!("Value is not an integer to convert."),
+        }
+    }
+}
+
+impl<'a> From<&'a Value> for i64 {
+    fn from(val: &'a Value) -> i64 {
+        match val {
+            &Value::Int(val) => val,
+            &Value::UInt(val) => val as i64,
+            _ => panic!("Value is not an integer to convert."),
+        }
+    }
+}
+
+
+
+pub fn bytes_to_particle(ptype: u8, buf: &mut Buffer, len: usize) -> AerospikeResult<Value> {
     match ParticleType::from(ptype) {
-        ParticleType::NULL => {
-            Ok(None)
-        },
+        ParticleType::NULL => Ok(Value::Nil),
         ParticleType::INTEGER => {
             let val = try!(buf.read_i64(None));
-            Ok(Some(Value::Int(val)))
-        },
+            Ok(Value::Int(val))
+        }
         ParticleType::FLOAT => {
             let val = try!(buf.read_f64(None));
-            Ok(Some(Value::Float(FloatValue::from(val))))
-        },
+            Ok(Value::Float(FloatValue::from(val)))
+        }
         ParticleType::STRING => {
             let val = try!(buf.read_str(len));
-            Ok(Some(Value::String(val)))
-        },
+            Ok(Value::String(val))
+        }
         ParticleType::GEOJSON => {
-            buf.skip_bytes(1);
+            buf.skip(1);
             let ncells = try!(buf.read_i16(None)) as usize;
             let header_size: usize = ncells * 8;
 
-            buf.skip_bytes(header_size);
+            buf.skip(header_size);
             let val = try!(buf.read_str(len - header_size - 3));
-            Ok(Some(Value::String(val)))
-        },
-        ParticleType::BLOB => {
-            Ok(Some(Value::Blob(try!(buf.read_blob(len)))))
-        },
+            Ok(Value::String(val))
+        }
+        ParticleType::BLOB => Ok(Value::Blob(try!(buf.read_blob(len)))),
         ParticleType::LIST => {
             let val = try!(unpack_value_list(buf));
-            Ok(Some(val))
-        },
+            Ok(val)
+        }
         ParticleType::MAP => {
             let val = try!(unpack_value_map(buf));
-            Ok(Some(val))
-        },
-        ParticleType::DIGEST => {
-            Ok(Some(Value::from("A DIGEST, NOT IMPLEMENTED YET!")))
-        },
-        ParticleType::LDT => {
-            Ok(Some(Value::from("A LDT, NOT IMPLEMENTED YET!")))
-        },
+            Ok(val)
+        }
+        ParticleType::DIGEST => Ok(Value::from("A DIGEST, NOT IMPLEMENTED YET!")),
+        ParticleType::LDT => Ok(Value::from("A LDT, NOT IMPLEMENTED YET!")),
     }
 }
 

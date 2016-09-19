@@ -13,7 +13,7 @@
 // License for the specific language governing permissions and limitations under
 // the License.
 
-#[derive(Debug)]
+#[derive(Debug,Clone)]
 pub enum ParticleType {
     // Server particle types. Unsupported types are commented out.
     NULL = 0,
@@ -71,4 +71,3 @@ impl From<u8> for ParticleType {
         }
     }
 }
-

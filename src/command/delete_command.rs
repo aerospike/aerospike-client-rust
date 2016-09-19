@@ -14,7 +14,7 @@
 
 use std::sync::Arc;
 use std::io::Write;
-use std::collections::{HashMap};
+use std::collections::HashMap;
 use std::time::{Instant, Duration};
 use std::str;
 
@@ -22,7 +22,7 @@ use byteorder::{NetworkEndian, ReadBytesExt, WriteBytesExt, ByteOrder};
 
 use net::Connection;
 use error::{AerospikeError, ResultCode, AerospikeResult};
-use value::{Value};
+use value::Value;
 
 use net::Host;
 use cluster::node_validator::NodeValidator;
@@ -35,7 +35,7 @@ use common::operation;
 use command::command::Command;
 use command::single_command::SingleCommand;
 use command::buffer;
-use command::buffer::{Buffer};
+use command::buffer::Buffer;
 use value::value;
 
 pub struct DeleteCommand<'a> {
@@ -46,8 +46,10 @@ pub struct DeleteCommand<'a> {
 }
 
 impl<'a> DeleteCommand<'a> {
-
-    pub fn new(policy: &'a WritePolicy, cluster: Arc<Cluster>, key: &'a Key<'a>) -> AerospikeResult<Self> {
+    pub fn new(policy: &'a WritePolicy,
+               cluster: Arc<Cluster>,
+               key: &'a Key)
+               -> AerospikeResult<Self> {
         Ok(DeleteCommand {
             single_command: try!(SingleCommand::new(cluster, key)),
 
@@ -59,12 +61,13 @@ impl<'a> DeleteCommand<'a> {
     pub fn execute(&mut self) -> AerospikeResult<()> {
         SingleCommand::execute(self.policy, self)
     }
-
 }
 
 impl<'a> Command for DeleteCommand<'a> {
-
-    fn write_timeout(&mut self, conn: &mut Connection, timeout: Option<Duration>) -> AerospikeResult<()> {
+    fn write_timeout(&mut self,
+                     conn: &mut Connection,
+                     timeout: Option<Duration>)
+                     -> AerospikeResult<()> {
         conn.buffer.write_timeout(timeout);
         Ok(())
     }
@@ -102,5 +105,4 @@ impl<'a> Command for DeleteCommand<'a> {
 
         SingleCommand::empty_socket(conn)
     }
-
- }
+}

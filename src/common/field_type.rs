@@ -22,12 +22,10 @@ pub enum FieldType {
     Key = 2,
 
     // BIN  = 3,
-
     DigestRipe = 4,
 
     // GUID  = 5,
-
-    DigestRipeArrau = 6,
+    DigestRipeArray = 6,
     TranId = 7, // user supplied transaction id, which is simply passed back,
     ScanOptions = 8,
     IndexName = 21,
@@ -40,5 +38,5 @@ pub enum FieldType {
     UdfFunction = 31,
     UdfArgList = 32,
     UdfOp = 33,
-    QueryBinlist = 40,
+    QueryBinList = 40,
 }

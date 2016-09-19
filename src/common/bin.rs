@@ -13,7 +13,7 @@
 // License for the specific language governing permissions and limitations under
 // the License.
 
-use value::{Value};
+use value::Value;
 
 // #[derive(Debug)]
 pub struct Bin<'a> {
@@ -23,12 +23,12 @@ pub struct Bin<'a> {
 
 
 impl<'a> Bin<'a> {
-	pub fn new(name: &'a str, val: Value) -> Self {
-		Bin {
-			name: name,
-			value: val,
-		}
-	}
+    pub fn new(name: &'a str, val: Value) -> Self {
+        Bin {
+            name: name,
+            value: val,
+        }
+    }
 }
 
 #[macro_export]

@@ -13,27 +13,24 @@
 // License for the specific language governing permissions and limitations under
 // the License.
 
-extern crate core;
+use std::fmt;
 
-#[derive(Debug)]
-pub enum UDFLang {
-    Lua,
+#[derive(Debug,Clone,PartialEq)]
+pub enum CollectionIndexType {
+    Default = 0,
+    List,
+    MapKeys,
+    MapValues,
 }
 
-impl<'a> core::fmt::Display for UDFLang {
-    fn fmt(&self, f: &mut core::fmt::Formatter) -> Result<(), core::fmt::Error> {
-        let s = match self {
-            &UDFLang::Lua => "LUA",
-        };
-
-        write!(f, "{}", s)
-    }
-}
-
-impl<'a> From<UDFLang> for &'a str {
-    fn from(val: UDFLang) -> &'a str {
-        match val {
-            UDFLang::Lua => "LUA",
+impl fmt::Display for CollectionIndexType {
+    fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
+        match self {
+            &CollectionIndexType::Default => panic!("Unknown IndexCollectionType value `Default`"),
+            &CollectionIndexType::List => try!("LIST".fmt(f)),
+            &CollectionIndexType::MapKeys => try!("MAPKEYS".fmt(f)),
+            &CollectionIndexType::MapValues => try!("MAPVALUES".fmt(f)),
         }
+        Ok(())
     }
 }

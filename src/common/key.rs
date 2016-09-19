@@ -19,7 +19,7 @@ use std::fmt;
 
 
 use error::{AerospikeResult, ResultCode, AerospikeError};
-use value::{Value};
+use value::Value;
 use value;
 use common::ParticleType;
 
@@ -27,19 +27,21 @@ use crypto::ripemd160::Ripemd160;
 use crypto::digest::Digest;
 
 #[derive(Debug,Clone)]
-pub struct Key<'a> {
-    pub namespace: &'a str,
-    pub set_name: &'a str,
+pub struct Key {
+    pub namespace: String,
+    pub set_name: String,
     pub digest: [u8; 20],
     pub user_key: Option<Value>,
 }
 
-impl<'a> Key<'a> {
-    pub fn new(namespace: &'a str, setname: &'a str, key: Value) -> AerospikeResult<Self> {
+impl<'a> Key {
+    pub fn new<S>(namespace: S, set_name: S, key: Value) -> AerospikeResult<Self>
+        where S: Into<String>
+    {
         let mut key = Key {
-            namespace: namespace,
-            set_name: setname,
-            digest: [0;20],
+            namespace: namespace.into(),
+            set_name: set_name.into(),
+            digest: [0; 20],
             user_key: Some(key),
         };
 
@@ -62,7 +64,7 @@ impl<'a> Key<'a> {
     }
 }
 
-impl<'a> core::fmt::Display for Key<'a> {
+impl<'a> core::fmt::Display for Key {
     fn fmt(&self, f: &mut core::fmt::Formatter) -> Result<(), core::fmt::Error> {
         try!(self.namespace.fmt(f));
         Ok(())

@@ -10,17 +10,22 @@ extern crate byteorder;
 extern crate crypto;
 extern crate bytebuffer;
 extern crate rustc_serialize;
+extern crate crossbeam;
+extern crate rand;
+extern crate threadpool;
 
 use command::info_command::*;
 use msgpack::encoder::*;
 
-pub use value::{Value};
-pub use policy::{Policy, ClientPolicy, ReadPolicy, WritePolicy, Priority, ConsistencyLevel, CommitLevel, RecordExistsAction, GenerationPolicy};
+pub use value::Value;
+pub use policy::{Policy, ClientPolicy, ReadPolicy, WritePolicy, Priority, ConsistencyLevel,
+                 CommitLevel, RecordExistsAction, GenerationPolicy, ScanPolicy, QueryPolicy};
 pub use net::{Host, Connection};
 pub use cluster::{Node, Cluster};
 pub use error::{AerospikeError, ResultCode, AerospikeResult};
 pub use client::Client;
-pub use common::{Key, Bin, Operation, UDFLang};
+pub use common::{Key, Bin, Operation, UDFLang, Recordset, Statement, Filter, IndexType,
+                 CollectionIndexType};
 
 mod command;
 mod msgpack;

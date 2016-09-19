@@ -14,7 +14,7 @@
 
 use std::sync::Arc;
 use std::io::Write;
-use std::collections::{HashMap};
+use std::collections::HashMap;
 use std::time::{Instant, Duration};
 use std::str;
 
@@ -22,7 +22,7 @@ use byteorder::{NetworkEndian, ReadBytesExt, WriteBytesExt, ByteOrder};
 
 use net::Connection;
 use error::{AerospikeError, ResultCode, AerospikeResult};
-use value::{Value};
+use value::Value;
 
 use net::Host;
 use cluster::node_validator::NodeValidator;
@@ -35,7 +35,7 @@ use common::operation;
 use command::command::Command;
 use command::single_command::SingleCommand;
 use command::buffer;
-use command::buffer::{Buffer};
+use command::buffer::Buffer;
 use value::value;
 
 pub struct ReadCommand<'a> {
@@ -44,12 +44,15 @@ pub struct ReadCommand<'a> {
     policy: &'a ReadPolicy,
     bin_names: Option<&'a [&'a str]>,
 
-    pub record: Option<Record<'a>>,
+    pub record: Option<Record>,
 }
 
 impl<'a> ReadCommand<'a> {
-
-    pub fn new(policy: &'a ReadPolicy, cluster: Arc<Cluster>, key: &'a Key<'a>, bin_names: Option<&'a [&'a str]>) -> AerospikeResult<Self> {
+    pub fn new(policy: &'a ReadPolicy,
+               cluster: Arc<Cluster>,
+               key: &'a Key,
+               bin_names: Option<&'a [&'a str]>)
+               -> AerospikeResult<Self> {
         Ok(ReadCommand {
             single_command: try!(SingleCommand::new(cluster, key)),
 
@@ -59,14 +62,23 @@ impl<'a> ReadCommand<'a> {
         })
     }
 
-    fn handle_udf_error(&self, result_code: isize, bins: &HashMap<String, Value>) -> AerospikeError {
+    fn handle_udf_error(&self,
+                        result_code: isize,
+                        bins: &HashMap<String, Value>)
+                        -> AerospikeError {
         if let Some(ret) = bins.get("FAILURE") {
             return AerospikeError::new(result_code, Some(ret.to_string()));
         }
         return AerospikeError::new(result_code, None);
     }
 
-    fn parse_record(&mut self, conn: &mut Connection, op_count: usize, field_count: usize, generation: u32, expiration: u32) -> AerospikeResult<Record<'a>> {
+    fn parse_record(&mut self,
+                    conn: &mut Connection,
+                    op_count: usize,
+                    field_count: usize,
+                    generation: u32,
+                    expiration: u32)
+                    -> AerospikeResult<Record> {
         let mut bins: HashMap<String, Value> = HashMap::with_capacity(op_count);
 
         // There can be fields in the response (setname etc).
@@ -90,19 +102,21 @@ impl<'a> ReadCommand<'a> {
             let name: String = try!(conn.buffer.read_str(name_size));
 
             let particle_bytes_size = op_size - (4 + name_size);
-            let value = try!(value::bytes_to_particle(particle_type, &mut conn.buffer, particle_bytes_size));
+            let value = try!(value::bytes_to_particle(particle_type,
+                                                      &mut conn.buffer,
+                                                      particle_bytes_size));
 
-            if let Some(value) = value {
+            if value != Value::Nil {
                 // for operate list command results
                 if bins.contains_key(&name) {
                     let prev = bins.get_mut(&name).unwrap();
                     match prev {
                         &mut Value::List(ref mut prev) => {
                             prev.push(value);
-                        },
+                        }
                         _ => {
                             *prev = Value::from(vec![prev.clone(), value]);
-                        },
+                        }
 
                     }
                 } else {
@@ -117,12 +131,13 @@ impl<'a> ReadCommand<'a> {
     pub fn execute(&mut self) -> AerospikeResult<()> {
         SingleCommand::execute(self.policy, self)
     }
-
 }
 
 impl<'a> Command for ReadCommand<'a> {
-
-    fn write_timeout(&mut self, conn: &mut Connection, timeout: Option<Duration>) -> AerospikeResult<()> {
+    fn write_timeout(&mut self,
+                     conn: &mut Connection,
+                     timeout: Option<Duration>)
+                     -> AerospikeResult<()> {
         conn.buffer.write_timeout(timeout);
         Ok(())
     }
@@ -169,10 +184,14 @@ impl<'a> Command for ReadCommand<'a> {
 
         if result_code != 0 {
             if result_code == ResultCode::UDF_BAD_RESPONSE {
-                let record = try!(self.parse_record(conn, op_count, field_count, generation, expiration));
+                let record = try!(self.parse_record(conn,
+                                                    op_count,
+                                                    field_count,
+                                                    generation,
+                                                    expiration));
                 let err = self.handle_udf_error(result_code, &record.bins);
                 warn!("UDF execution error: {}", err);
-                return Err(err)
+                return Err(err);
             }
 
             return Err(AerospikeError::new(result_code, None));
@@ -181,11 +200,14 @@ impl<'a> Command for ReadCommand<'a> {
         if op_count == 0 {
             // data Bin was not returned
             self.record = Some(try!(Record::new(None, HashMap::new(), generation, expiration)));
-            return Ok(())
+            return Ok(());
         }
 
-        self.record = Some(try!(self.parse_record(conn, op_count, field_count, generation, expiration)));
+        self.record = Some(try!(self.parse_record(conn,
+                                                  op_count,
+                                                  field_count,
+                                                  generation,
+                                                  expiration)));
         Ok(())
     }
-
 }

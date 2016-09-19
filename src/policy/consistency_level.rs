@@ -16,7 +16,7 @@
 
 // ConsistencyLevel indicates how replicas should be consulted in a read
 // operation to provide the desired consistency guarantee.
-#[derive(Debug,PartialEq)]
+#[derive(Debug,PartialEq,Clone)]
 pub enum ConsistencyLevel {
     // ConsistencyOne indicates only a single replica should be consulted in
     // the read operation.

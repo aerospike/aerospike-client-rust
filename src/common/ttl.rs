@@ -13,7 +13,7 @@
 // License for the specific language governing permissions and limitations under
 // the License.
 
-use std::time::{SystemTime};
+use std::time::SystemTime;
 
 // citrusleaf epoc: Jan 01 2010 00:00:00 GMT
 const CITRUSLEAF_EPOCH: i64 = 1262304000;

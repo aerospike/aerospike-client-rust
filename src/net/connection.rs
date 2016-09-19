@@ -39,6 +39,8 @@ pub struct Connection {
     // connection object
     conn: TcpStream,
 
+    bytes_read: usize,
+
     pub buffer: Buffer,
 }
 
@@ -50,7 +52,7 @@ impl Connection {
         let cpolicy: ClientPolicy = Default::default();
 
         let mut conn = Connection {
-            // node: None,
+            bytes_read: 0,
             buffer: Buffer::new(),
             timeout: cpolicy.timeout,
             conn: stream,
@@ -76,7 +78,7 @@ impl Connection {
 
         let mut conn = Connection {
             buffer: Buffer::new(),
-            // node: Some(node),
+            bytes_read: 0,
             timeout: cpolicy.timeout,
             conn: stream,
 
@@ -106,6 +108,8 @@ impl Connection {
     pub fn read_buffer(&mut self, size: usize) -> AerospikeResult<()> {
         try!(self.buffer.resize_buffer(size));
         try!(self.conn.read_exact(&mut self.buffer.data_buffer));
+        self.bytes_read += size;
+        self.buffer.reset_offset();
         self.refresh();
         return Ok(());
     }
@@ -119,6 +123,7 @@ impl Connection {
 
     pub fn read(&mut self, buf: &mut [u8]) -> AerospikeResult<()> {
         try!(self.conn.read_exact(buf));
+        self.bytes_read += buf.len();
         self.refresh();
         return Ok(());
     }
@@ -142,6 +147,14 @@ impl Connection {
         if let Some(idle_to) = self.idle_timeout {
             self.idle_deadline = Some(Instant::now().add(idle_to))
         };
+    }
+
+    pub fn bookmark(&mut self) {
+        self.bytes_read = 0;
+    }
+
+    pub fn bytes_read(&self) -> usize {
+        self.bytes_read
     }
 }
 

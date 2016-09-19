@@ -58,9 +58,6 @@ pub struct Cluster {
     // wg_tend:      WaitGroup,
     tend_channel: Mutex<Sender<()>>,
     closed: AtomicBool,
-
-    // Aerospike v3.6.0+
-    supports_float: AtomicBool,
 }
 
 impl<'a> Cluster {
@@ -79,16 +76,13 @@ impl<'a> Cluster {
 
             tend_channel: Mutex::new(tx),
             closed: AtomicBool::new(false),
-
-            supports_float: AtomicBool::new(false),
         });
 
         // try to seed connections for first use
         try!(Cluster::wait_till_stabilized(cluster.clone()));
 
         // apply policy rules
-        if cluster.client_policy.fail_if_not_connected &&
-           !cluster.is_connected() {
+        if cluster.client_policy.fail_if_not_connected && !cluster.is_connected() {
             return Err(AerospikeError::new(ResultCode::INVALID_NODE_ERROR,
                                            Some(format!("Failed to connect to host(s): . The \
                                                          network connection(s) to cluster \
@@ -109,8 +103,6 @@ impl<'a> Cluster {
         let tend_interval = cluster.client_policy.tend_interval;
 
         loop {
-            // let mut cluster = cluster.read().unwrap();
-
             // try to read from the receive channel to see if it hung up
             match rx.try_recv() {
                 Ok(_) => unreachable!(),
@@ -150,8 +142,6 @@ impl<'a> Cluster {
         let mut friend_list: Vec<Host> = vec![];
         let mut refresh_count = 0;
 
-        let mut float_support = true;
-
         // Refresh all known nodes.
         for node in nodes.iter() {
             let old_gen = node.partition_generation();
@@ -159,9 +149,6 @@ impl<'a> Cluster {
                 match node.refresh(self.aliases()) {
                     Ok(friends) => {
                         refresh_count += 1;
-
-                        // make sure ALL nodes support float
-                        float_support &= node.supports_float();
 
                         if friends.len() > 0 {
                             friend_list.extend_from_slice(&friends);
@@ -178,9 +165,6 @@ impl<'a> Cluster {
                 }
             }
         }
-
-        // set the float support
-        self.supports_float.store(float_support, Ordering::Relaxed);
 
         // Add nodes in a batch.
         let add_list = try!(self.find_new_nodes_to_add(friend_list));
@@ -279,7 +263,7 @@ impl<'a> Cluster {
             Ok(res) => res,
             Err(e) => {
                 node.invalidate_connection(&mut conn);
-                return Err(e)
+                return Err(e);
             }
         };
 

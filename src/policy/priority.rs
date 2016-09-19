@@ -13,7 +13,7 @@
 // limitations under the License.
 
 // Priority of operations on database server.
-#[derive(Debug)]
+#[derive(Debug,Clone)]
 pub enum Priority {
     // Default determines that the server defines the priority.
     Default = 0,

@@ -52,21 +52,25 @@ impl AerospikeError {
     }
 
     pub fn ErrRecordNotFound() -> AerospikeError {
-        AerospikeError::new(ResultCode::KEY_NOT_FOUND_ERROR, Some("Record not found.".to_string()))
+        AerospikeError::new(ResultCode::KEY_NOT_FOUND_ERROR,
+                            Some("Record not found.".to_string()))
     }
 
     pub fn ErrConnectionPoolEmpty() -> AerospikeError {
-        AerospikeError::new(ResultCode::NO_AVAILABLE_CONNECTIONS_TO_NODE, Some("Connection pool is empty.".to_string()))
+        AerospikeError::new(ResultCode::NO_AVAILABLE_CONNECTIONS_TO_NODE,
+                            Some("Connection pool is empty.".to_string()))
     }
 
     pub fn ErrSkipMsgPackHeader() -> AerospikeError {
-        AerospikeError::new(ResultCode::OK, Some("Msgpack header skipped. You should not see this message".to_string()))
+        AerospikeError::new(ResultCode::OK,
+                            Some("Msgpack header skipped. You should not see this message"
+                                     .to_string()))
     }
 
     pub fn ErrSerialize() -> AerospikeError {
-        AerospikeError::new(ResultCode::SERIALIZE_ERROR, Some("Serialization Error".to_string()))
+        AerospikeError::new(ResultCode::SERIALIZE_ERROR,
+                            Some("Serialization Error".to_string()))
     }
-
 }
 
 #[derive(Debug)]
@@ -89,16 +93,15 @@ impl PartialEq for AerospikeError {
 
 impl From<mpsc::RecvError> for AerospikeError {
     fn from(err: mpsc::RecvError) -> AerospikeError {
-        AerospikeError {
-            err: ErrorType::WithDescription(ResultCode::IO_ERROR, format!("{}", err)),
-        }
+        AerospikeError { err: ErrorType::WithDescription(ResultCode::IO_ERROR, format!("{}", err)) }
     }
 }
 
 impl From<num::ParseIntError> for AerospikeError {
     fn from(err: num::ParseIntError) -> AerospikeError {
         AerospikeError {
-            err: ErrorType::WithDescription(ResultCode::PARSE_ERROR, format!("Invalid Int: {}", err)),
+            err: ErrorType::WithDescription(ResultCode::PARSE_ERROR,
+                                            format!("Invalid Int: {}", err)),
         }
     }
 }

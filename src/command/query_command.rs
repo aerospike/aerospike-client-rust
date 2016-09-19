@@ -29,32 +29,34 @@ use cluster::node_validator::NodeValidator;
 use cluster::partition_tokenizer::PartitionTokenizer;
 use cluster::partition::Partition;
 use cluster::{Node, Cluster};
-use common::{Key, Record, OperationType, FieldType, ParticleType, Bin};
-use policy::{ClientPolicy, WritePolicy, Policy, ConsistencyLevel};
+use common::{Key, Record, OperationType, FieldType, ParticleType, Bin, Recordset, Statement};
+use policy::{ClientPolicy, QueryPolicy};
 use common::operation;
 use command::command::Command;
 use command::single_command::SingleCommand;
+use command::stream_command::StreamCommand;
 use command::buffer;
 use command::buffer::Buffer;
 use value::value;
 
-pub struct ExistsCommand<'a> {
-    single_command: SingleCommand<'a>,
+pub struct QueryCommand<'a> {
+    stream_command: StreamCommand,
 
-    policy: &'a WritePolicy,
-    pub exists: bool,
+    policy: &'a QueryPolicy,
+    statement: Arc<Statement>,
 }
 
-impl<'a> ExistsCommand<'a> {
-    pub fn new(policy: &'a WritePolicy,
-               cluster: Arc<Cluster>,
-               key: &'a Key)
+impl<'a> QueryCommand<'a> {
+    pub fn new(policy: &'a QueryPolicy,
+               node: Arc<Node>,
+               statement: Arc<Statement>,
+               recordset: Arc<Recordset>)
                -> AerospikeResult<Self> {
-        Ok(ExistsCommand {
-            single_command: try!(SingleCommand::new(cluster, key)),
+        Ok(QueryCommand {
+            stream_command: try!(StreamCommand::new(node, recordset)),
 
             policy: policy,
-            exists: false,
+            statement: statement,
         })
     }
 
@@ -63,7 +65,7 @@ impl<'a> ExistsCommand<'a> {
     }
 }
 
-impl<'a> Command for ExistsCommand<'a> {
+impl<'a> Command for QueryCommand<'a> {
     fn write_timeout(&mut self,
                      conn: &mut Connection,
                      timeout: Option<Duration>)
@@ -77,32 +79,17 @@ impl<'a> Command for ExistsCommand<'a> {
     }
 
     fn prepare_buffer(&mut self, conn: &mut Connection) -> AerospikeResult<()> {
-        conn.buffer.set_exists(self.policy, self.single_command.key)
+        conn.buffer.set_query(self.policy,
+                              &self.statement,
+                              false,
+                              self.stream_command.recordset.task_id())
     }
 
     fn get_node(&self) -> AerospikeResult<Arc<Node>> {
-        self.single_command.get_node()
+        self.stream_command.get_node()
     }
 
     fn parse_result(&mut self, conn: &mut Connection) -> AerospikeResult<()> {
-        // Read header.
-        if let Err(err) = conn.read_buffer(buffer::MSG_TOTAL_HEADER_SIZE as usize) {
-            warn!("Parse result error: {}", err);
-            return Err(err);
-        }
-
-        try!(conn.buffer.reset_offset());
-
-        // A number of these are commented out because we just don't care enough to read
-        // that section of the header. If we do care, uncomment and check!
-        let result_code = (try!(conn.buffer.read_u8(Some(13))) & 0xFF) as isize;
-
-        if result_code != 0 && result_code != ResultCode::KEY_NOT_FOUND_ERROR {
-            return Err(AerospikeError::new(result_code, None));
-        }
-
-        self.exists = result_code == 0;
-
-        SingleCommand::empty_socket(conn)
+        StreamCommand::parse_result(&mut self.stream_command, conn)
     }
 }

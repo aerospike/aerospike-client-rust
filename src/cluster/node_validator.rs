@@ -80,8 +80,7 @@ impl<'a> NodeValidator<'a> {
                 let addrs = try!(format!("{}:{}", host.name, host.port).to_socket_addrs());
                 let mut aliases: Vec<Host> = vec![];
                 for addr in addrs {
-                    aliases.push(Host::new(&format!("{}", addr.ip()),
-                                           host.port));
+                    aliases.push(Host::new(&format!("{}", addr.ip()), host.port));
                 }
                 self.aliases = aliases;
             }
@@ -97,8 +96,7 @@ impl<'a> NodeValidator<'a> {
             try!(conn.set_timeout(timeout));
 
             // TODO: authenticate
-            let info_map = try!(Message::info(&mut conn,
-                                              &["node", "build", "features"]));
+            let info_map = try!(Message::info(&mut conn, &["node", "build", "features"]));
 
             if let Some(node_name) = info_map.get("node") {
                 self.name = node_name.to_string();

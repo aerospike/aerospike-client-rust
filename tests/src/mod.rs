@@ -13,27 +13,7 @@
 // License for the specific language governing permissions and limitations under
 // the License.
 
-extern crate core;
-
-#[derive(Debug)]
-pub enum UDFLang {
-    Lua,
-}
-
-impl<'a> core::fmt::Display for UDFLang {
-    fn fmt(&self, f: &mut core::fmt::Formatter) -> Result<(), core::fmt::Error> {
-        let s = match self {
-            &UDFLang::Lua => "LUA",
-        };
-
-        write!(f, "{}", s)
-    }
-}
-
-impl<'a> From<UDFLang> for &'a str {
-    fn from(val: UDFLang) -> &'a str {
-        match val {
-            UDFLang::Lua => "LUA",
-        }
-    }
-}
+mod kv;
+mod query;
+mod scan;
+mod udf;

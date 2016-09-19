@@ -26,7 +26,7 @@ use byteorder::{NetworkEndian, ReadBytesExt, WriteBytesExt, ByteOrder};
 
 use net::Connection;
 use error::{AerospikeError, ResultCode, AerospikeResult};
-use value::{Value};
+use value::Value;
 
 use net::Host;
 use cluster::node_validator::NodeValidator;
@@ -36,28 +36,21 @@ use cluster::{Node, Cluster};
 use common::{Key, Record, OperationType, FieldType, ParticleType};
 use policy::{ClientPolicy, ReadPolicy, Policy, ConsistencyLevel};
 use common::operation;
-use command::command::{Command};
+use command::command::Command;
 use command::buffer::Buffer;
 
 pub struct SingleCommand<'a> {
-    // pub buffer: Buffer,
-
-    node: Arc<Node>,
     cluster: Arc<Cluster>,
-    pub key: &'a Key<'a>,
+    pub key: &'a Key,
     partition: Partition<'a>,
 }
 
 impl<'a> SingleCommand<'a> {
-
-    pub fn new(cluster: Arc<Cluster>, key: &'a Key<'a>) -> AerospikeResult<Self> {
+    pub fn new(cluster: Arc<Cluster>, key: &'a Key) -> AerospikeResult<Self> {
         let partition = Partition::new_by_key(key);
 
         Ok(SingleCommand {
-            // buffer: Buffer::new(),
-
             cluster: cluster.clone(),
-            node: try!(cluster.get_node(&partition)),
             key: key,
             partition: partition,
         })
@@ -70,10 +63,9 @@ impl<'a> SingleCommand<'a> {
     pub fn empty_socket(conn: &mut Connection) -> AerospikeResult<()> {
         // There should not be any more bytes.
         // Empty the socket to be safe.
-        // self.buffer.data_offset = 0;
         let sz = try!(conn.buffer.read_i64(None));
         let header_length = try!(conn.buffer.read_u8(None)) as i64;
-        let receive_size = ((sz&0xFFFFFFFFFFFF) - header_length) as usize;
+        let receive_size = ((sz & 0xFFFFFFFFFFFF) - header_length) as usize;
 
         // Read remaining message bytes.
         if receive_size > 0 {
@@ -84,7 +76,6 @@ impl<'a> SingleCommand<'a> {
         Ok(())
     }
 
-    //
     // EXECUTE
     //
 
@@ -97,14 +88,16 @@ impl<'a> SingleCommand<'a> {
 
         // Execute command until successful, timed out or maximum iterations have been reached.
         loop {
-            iterations+=1;
+            iterations += 1;
 
             // too many retries
             if let Some(max_retries) = policy.max_retries() {
-                if iterations > max_retries+1 {
+                if iterations > max_retries + 1 {
                     return Err(AerospikeError::new(ResultCode::TIMEOUT,
-                                            Some("command execution timed out: Exceeded number of retries. See `Policy.max_retries`"
-                                                     .to_string())))
+                                                   Some("command execution timed out: Exceeded \
+                                                         number of retries. See \
+                                                         `Policy.max_retries`"
+                                                            .to_string())));
                 }
             }
 
@@ -118,22 +111,22 @@ impl<'a> SingleCommand<'a> {
             // check for command timeout
             if let Some(deadline) = deadline {
                 if Instant::now() > deadline {
-                    break
+                    break;
                 }
             }
 
             // set command node, so when you return a record it has the node
             let node = match cmd.get_node() {
                 Ok(node) => node,
-                _ => continue // Node is currently inactive. Retry.
+                _ => continue, // Node is currently inactive. Retry.
             };
 
             let mut conn = match node.get_connection(policy.timeout()) {
                 Ok(conn) => conn,
                 Err(err) => {
                     warn!("Node {}: {}", node, err);
-                    continue
-                },
+                    continue;
+                }
             };
 
             // Set command buffer.
@@ -143,14 +136,13 @@ impl<'a> SingleCommand<'a> {
             try!(cmd.write_timeout(&mut conn, policy.timeout()));
 
             // Send command.
-            // if let Err(err) = conn.write(&buffer.data_buffer[..buffer.data_offset]) {
             if let Err(err) = cmd.write_buffer(&mut conn) {
                 // IO errors are considered temporary anomalies. Retry.
                 // Close socket to flush out possible garbage. Do not put back in pool.
                 node.invalidate_connection(&mut conn);
 
                 warn!("Node {}: {}", node, err);
-                continue
+                continue;
             }
 
             // Parse results.
@@ -165,20 +157,21 @@ impl<'a> SingleCommand<'a> {
                 } else {
                     node.invalidate_connection(&mut conn);
                 }
-                return Err(err)
+                return Err(err);
             }
 
             // Put connection back in pool.
             node.put_connection(conn);
 
             // command has completed successfully.  Exit method.
-            return Ok(())
+            return Ok(());
 
         }
 
         // execution timeout
         Err(AerospikeError::new(ResultCode::TIMEOUT,
-                                Some("command execution timed out: Exceeded number of retries. See `Policy.max_retries`"
+                                Some("command execution timed out: Exceeded number of retries. \
+                                      See `Policy.max_retries`"
                                          .to_string())))
     }
 }

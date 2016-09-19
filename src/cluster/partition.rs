@@ -45,11 +45,11 @@ impl<'a> Partition<'a> {
         }
     }
 
-    pub fn new_by_key(key: &Key<'a>) -> Self {
+    pub fn new_by_key(key: &'a Key) -> Self {
         let mut rdr = Cursor::new(&key.digest[0..4]);
 
         Partition {
-            namespace: key.namespace,
+            namespace: &key.namespace,
 
             // CAN'T USE MOD directly - mod will give negative numbers.
             // First AND makes positive and negative correctly, then mod.

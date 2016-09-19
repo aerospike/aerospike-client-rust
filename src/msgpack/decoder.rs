@@ -40,10 +40,15 @@ pub fn unpack_value_list(buf: &mut Buffer) -> AerospikeResult<Value> {
 
     let ltype: u8 = try!(buf.read_u8(None)) & 0xff;
 
-    let count: usize = if (ltype & 0xf0) == 0x90 { (ltype & 0x0f) as usize }
-    else if ltype == 0xdc { try!(buf.read_u16(None)) as usize }
-    else if ltype == 0xdd { try!(buf.read_u32(None)) as usize }
-    else { unreachable!() };
+    let count: usize = if (ltype & 0xf0) == 0x90 {
+        (ltype & 0x0f) as usize
+    } else if ltype == 0xdc {
+        try!(buf.read_u16(None)) as usize
+    } else if ltype == 0xdd {
+        try!(buf.read_u32(None)) as usize
+    } else {
+        unreachable!()
+    };
 
     unpack_list(buf, count)
 }
@@ -55,10 +60,15 @@ pub fn unpack_value_map(buf: &mut Buffer) -> AerospikeResult<Value> {
 
     let ltype: u8 = try!(buf.read_u8(None)) & 0xff;
 
-    let count: usize = if (ltype & 0xf0) == 0x80 { (ltype & 0x0f) as usize }
-    else if ltype == 0xde { try!(buf.read_u16(None)) as usize }
-    else if ltype == 0xdf { try!(buf.read_u32(None)) as usize }
-    else { unreachable!() };
+    let count: usize = if (ltype & 0xf0) == 0x80 {
+        (ltype & 0x0f) as usize
+    } else if ltype == 0xde {
+        try!(buf.read_u16(None)) as usize
+    } else if ltype == 0xdf {
+        try!(buf.read_u32(None)) as usize
+    } else {
+        unreachable!()
+    };
 
     unpack_map(buf, count)
 }
@@ -92,19 +102,21 @@ fn unpack_blob(buf: &mut Buffer, count: usize) -> AerospikeResult<Value> {
         ParticleType::STRING => {
             let val = try!(buf.read_str(count));
             Ok(Value::String(val))
-        },
+        }
 
-        ParticleType::BLOB => {
-            Ok(Value::Blob(try!(buf.read_blob(count))))
-        },
+        ParticleType::BLOB => Ok(Value::Blob(try!(buf.read_blob(count)))),
 
         ParticleType::GEOJSON => {
-                let val = try!(buf.read_str(count));
-                Ok(Value::GeoJSON(val))
-        },
+            let val = try!(buf.read_str(count));
+            Ok(Value::GeoJSON(val))
+        }
 
-    _ =>
-        Err(AerospikeError::new(ResultCode::SERIALIZE_ERROR, Some(format!("Error while unpacking BLOB. Type-header with code `{}` not recognized.", vtype)))),
+        _ => {
+            Err(AerospikeError::new(ResultCode::SERIALIZE_ERROR,
+                                    Some(format!("Error while unpacking BLOB. Type-header with \
+                                                  code `{}` not recognized.",
+                                                 vtype))))
+        }
     }
 }
 
@@ -139,94 +151,94 @@ fn unpack_value(buf: &mut Buffer) -> AerospikeResult<Value> {
         0xd3 => return Ok(Value::from(try!(buf.read_i64(None)))),
 
         0xc4 | 0xd9 => {
-                let count = try!(buf.read_u8(None));
-                return Ok(Value::from(try!(unpack_blob(buf, count as usize))));
-            },
+            let count = try!(buf.read_u8(None));
+            return Ok(Value::from(try!(unpack_blob(buf, count as usize))));
+        }
 
         0xc5 | 0xda => {
-                let count = try!(buf.read_u16(None));
-                return Ok(Value::from(try!(unpack_blob(buf, count as usize))));
-            },
+            let count = try!(buf.read_u16(None));
+            return Ok(Value::from(try!(unpack_blob(buf, count as usize))));
+        }
 
         0xc6 | 0xdb => {
-                let count = try!(buf.read_u32(None));
-                return Ok(Value::from(try!(unpack_blob(buf, count as usize))));
-            },
+            let count = try!(buf.read_u32(None));
+            return Ok(Value::from(try!(unpack_blob(buf, count as usize))));
+        }
 
         0xdc => {
-                let count = try!(buf.read_u16(None));
-                return unpack_list(buf, count as usize);
-            },
+            let count = try!(buf.read_u16(None));
+            return unpack_list(buf, count as usize);
+        }
 
         0xdd => {
-                let count = try!(buf.read_u32(None));
-                return unpack_list(buf, count as usize);
-            },
+            let count = try!(buf.read_u32(None));
+            return unpack_list(buf, count as usize);
+        }
 
         0xde => {
-                let count = try!(buf.read_u16(None));
-                return unpack_map(buf, count as usize);
-            },
+            let count = try!(buf.read_u16(None));
+            return unpack_map(buf, count as usize);
+        }
 
         0xdf => {
-                let count = try!(buf.read_u32(None));
-                return unpack_map(buf, count as usize);
-            },
+            let count = try!(buf.read_u32(None));
+            return unpack_map(buf, count as usize);
+        }
 
         0xd4 => {
-                let count = (1 + 1) as usize;
-                try!(buf.skip_bytes(count)); // Skip over type extension with 1 byte
-            },
+            let count = (1 + 1) as usize;
+            try!(buf.skip_bytes(count)); // Skip over type extension with 1 byte
+        }
         0xd5 => {
-                let count = (1 + 2) as usize;
-                try!(buf.skip_bytes(count)); // Skip over type extension with 2 bytes
-            },
+            let count = (1 + 2) as usize;
+            try!(buf.skip_bytes(count)); // Skip over type extension with 2 bytes
+        }
         0xd6 => {
-                let count = (1 + 4) as usize;
-                try!(buf.skip_bytes(count)); // Skip over type extension with 4 bytes
-            },
+            let count = (1 + 4) as usize;
+            try!(buf.skip_bytes(count)); // Skip over type extension with 4 bytes
+        }
         0xd7 => {
-                let count = (1 + 8) as usize;
-                try!(buf.skip_bytes(count)); // Skip over type extension with 8 bytes
-            },
+            let count = (1 + 8) as usize;
+            try!(buf.skip_bytes(count)); // Skip over type extension with 8 bytes
+        }
         0xd8 => {
-                let count = (1 + 16) as usize;
-                try!(buf.skip_bytes(count)); // Skip over type extension with 16 bytes
-            },
+            let count = (1 + 16) as usize;
+            try!(buf.skip_bytes(count)); // Skip over type extension with 16 bytes
+        }
         0xc7 => {
-                let count = 1 + try!(buf.read_u8(None));
-                try!(buf.skip_bytes(count as usize)); // Skip over type extension with 8 bit header and bytes
-            },
+            let count = 1 + try!(buf.read_u8(None));
+            try!(buf.skip_bytes(count as usize)); // Skip over type extension with 8 bit header and bytes
+        }
         0xc8 => {
-                let count = 1 + try!(buf.read_u16(None));
-                try!(buf.skip_bytes(count as usize)); // Skip over type extension with 16 bit header and bytes
-            },
+            let count = 1 + try!(buf.read_u16(None));
+            try!(buf.skip_bytes(count as usize)); // Skip over type extension with 16 bit header and bytes
+        }
         0xc9 => {
-                let count = 1 + try!(buf.read_u32(None));
-                try!(buf.skip_bytes(count as usize)); // Skip over type extension with 32 bit header and bytes
-            },
+            let count = 1 + try!(buf.read_u32(None));
+            try!(buf.skip_bytes(count as usize)); // Skip over type extension with 32 bit header and bytes
+        }
         _ => {
-                if (obj_type & 0xe0) == 0xa0 {
-                    return unpack_blob(buf, (obj_type & 0x1f) as usize)
-                }
+            if (obj_type & 0xe0) == 0xa0 {
+                return unpack_blob(buf, (obj_type & 0x1f) as usize);
+            }
 
-                if (obj_type & 0xf0) == 0x80 {
-                    return unpack_map(buf, (obj_type & 0x0f) as usize)
-                }
+            if (obj_type & 0xf0) == 0x80 {
+                return unpack_map(buf, (obj_type & 0x0f) as usize);
+            }
 
-                if (obj_type & 0xf0) == 0x90 {
-                    let count = (obj_type & 0x0f) as usize;
-                    return unpack_list(buf, count)
-                }
+            if (obj_type & 0xf0) == 0x90 {
+                let count = (obj_type & 0x0f) as usize;
+                return unpack_list(buf, count);
+            }
 
-                if obj_type < 0x80 {
-                    return Ok(Value::from(obj_type))
-                }
+            if obj_type < 0x80 {
+                return Ok(Value::from(obj_type));
+            }
 
-                if obj_type >= 0xe0 {
-                    return Ok(Value::from((obj_type as i8) - 0xe0 - 32))
-                }
-            },
+            if obj_type >= 0xe0 {
+                return Ok(Value::from((obj_type as i8) - 0xe0 - 32));
+            }
+        }
     }
 
     Err(AerospikeError::ErrSerialize())

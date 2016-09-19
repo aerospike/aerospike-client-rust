@@ -40,10 +40,12 @@ pub fn pack_value(buf: Option<&mut Buffer>, val: &Value) -> AerospikeResult<usiz
         &Value::UInt(ref val) => pack_u64(buf, *val),
         &Value::Bool(ref val) => pack_bool(buf, *val),
         &Value::String(ref val) => pack_string(buf, val),
-        &Value::Float(ref val) => match val {
-            &FloatValue::F64(_) => pack_f64(buf, f64::from(val)),
-            &FloatValue::F32(_) => pack_f32(buf, f32::from(val)),
-        },
+        &Value::Float(ref val) => {
+            match val {
+                &FloatValue::F64(_) => pack_f64(buf, f64::from(val)),
+                &FloatValue::F32(_) => pack_f32(buf, f32::from(val)),
+            }
+        }
         &Value::Blob(ref val) => pack_blob(buf, val),
         &Value::List(ref val) => pack_array(buf, val),
         &Value::HashMap(ref val) => pack_map(buf, val),
@@ -51,7 +53,7 @@ pub fn pack_value(buf: Option<&mut Buffer>, val: &Value) -> AerospikeResult<usiz
     }
 }
 
-pub fn pack_empty_args_array(buf: Option<&mut Buffer>) -> AerospikeResult<usize>  {
+pub fn pack_empty_args_array(buf: Option<&mut Buffer>) -> AerospikeResult<usize> {
     let mut size = 0;
     if let Some(buf) = buf {
         size += try!(pack_array_begin(Some(buf), 0));
@@ -62,7 +64,7 @@ pub fn pack_empty_args_array(buf: Option<&mut Buffer>) -> AerospikeResult<usize>
     Ok(size)
 }
 
-pub fn pack_array(buf: Option<&mut Buffer>, values: &[Value]) -> AerospikeResult<usize>  {
+pub fn pack_array(buf: Option<&mut Buffer>, values: &[Value]) -> AerospikeResult<usize> {
     let mut size = 0;
 
     if let Some(buf) = buf {
@@ -80,7 +82,7 @@ pub fn pack_array(buf: Option<&mut Buffer>, values: &[Value]) -> AerospikeResult
     Ok(size)
 }
 
-fn pack_map(buf: Option<&mut Buffer>, map: &HashMap<Value, Value>) -> AerospikeResult<usize>  {
+fn pack_map(buf: Option<&mut Buffer>, map: &HashMap<Value, Value>) -> AerospikeResult<usize> {
     let mut size = 0;
 
     if let Some(buf) = buf {
@@ -100,21 +102,21 @@ fn pack_map(buf: Option<&mut Buffer>, map: &HashMap<Value, Value>) -> AerospikeR
     Ok(size)
 }
 
-//////////////////////////////////////////////////////////////////////
+/// ///////////////////////////////////////////////////////////////////
 
- const MSGPACK_MARKER_NIL: u8 = 0xc0;
- const MSGPACK_MARKER_BOOL_TRUE: u8 = 0xc3;
- const MSGPACK_MARKER_BOOL_FALSE: u8 = 0xc2;
+const MSGPACK_MARKER_NIL: u8 = 0xc0;
+const MSGPACK_MARKER_BOOL_TRUE: u8 = 0xc3;
+const MSGPACK_MARKER_BOOL_FALSE: u8 = 0xc2;
 
- const MSGPACK_MARKER_I8: u8 = 0xcc;
- const MSGPACK_MARKER_I16: u8 = 0xcd;
- const MSGPACK_MARKER_I32: u8 = 0xce;
- const MSGPACK_MARKER_I64: u8 = 0xd3;
+const MSGPACK_MARKER_I8: u8 = 0xcc;
+const MSGPACK_MARKER_I16: u8 = 0xcd;
+const MSGPACK_MARKER_I32: u8 = 0xce;
+const MSGPACK_MARKER_I64: u8 = 0xd3;
 
- const MSGPACK_MARKER_NI8: u8 = 0xd0;
- const MSGPACK_MARKER_NI16: u8 = 0xd1;
- const MSGPACK_MARKER_NI32: u8 = 0xd2;
- const MSGPACK_MARKER_NI64: u8 = 0xd3;
+const MSGPACK_MARKER_NI8: u8 = 0xd0;
+const MSGPACK_MARKER_NI16: u8 = 0xd1;
+const MSGPACK_MARKER_NI32: u8 = 0xd2;
+const MSGPACK_MARKER_NI64: u8 = 0xd3;
 
 fn pack_half_byte(buf: Option<&mut Buffer>, val: u8) -> AerospikeResult<usize> {
     if let Some(buf) = buf {
@@ -152,7 +154,7 @@ fn pack_bool(buf: Option<&mut Buffer>, val: bool) -> AerospikeResult<usize> {
 fn pack_map_begin(buf: Option<&mut Buffer>, length: usize) -> AerospikeResult<usize> {
     match length {
         val if val < 16 => pack_half_byte(buf, 0x80 | (length as u8)),
-        val if val >= 16 && val < 2^16 => pack_i16(buf, 0xde, length as i16),
+        val if val >= 16 && val < 2 ^ 16 => pack_i16(buf, 0xde, length as i16),
         _ => pack_i32(buf, 0xdf, length as i32),
     }
 }
@@ -160,7 +162,7 @@ fn pack_map_begin(buf: Option<&mut Buffer>, length: usize) -> AerospikeResult<us
 fn pack_array_begin(buf: Option<&mut Buffer>, length: usize) -> AerospikeResult<usize> {
     match length {
         val if val < 16 => pack_half_byte(buf, 0x90 | (length as u8)),
-        val if val >= 16 && val < 2^16 => pack_i16(buf, 0xdc, length as i16),
+        val if val >= 16 && val < 2 ^ 16 => pack_i16(buf, 0xdc, length as i16),
         _ => pack_i32(buf, 0xdd, length as i32),
     }
 }
@@ -168,7 +170,7 @@ fn pack_array_begin(buf: Option<&mut Buffer>, length: usize) -> AerospikeResult<
 fn pack_byte_array_begin(buf: Option<&mut Buffer>, length: usize) -> AerospikeResult<usize> {
     match length {
         val if val < 32 => pack_half_byte(buf, 0xa0 | (length as u8)),
-        val if val >= 32 && val < 2^16 => pack_i16(buf, 0xda, length as i16),
+        val if val >= 32 && val < 2 ^ 16 => pack_i16(buf, 0xda, length as i16),
         _ => pack_i32(buf, 0xdb, length as i32),
     }
 }
@@ -217,17 +219,25 @@ fn pack_geo_json(buf: Option<&mut Buffer>, val: &str) -> AerospikeResult<usize> 
 
 fn pack_integer(buf: Option<&mut Buffer>, val: i64) -> AerospikeResult<usize> {
     match val {
-        val if val >= 0 && val < 2^7 => pack_half_byte(buf, val as u8),
-        val if val >= 2^7 && val < i8::MAX as i64 => pack_byte(buf, MSGPACK_MARKER_I8, val as u8),
-        val if val >= i8::MAX as i64 && val <  i16::MAX as i64 => pack_i16(buf, MSGPACK_MARKER_I16, val as i16),
-        val if val >= i16::MAX as i64 && val < i32::MAX as i64 => pack_i32(buf, MSGPACK_MARKER_I32, val as i32),
+        val if val >= 0 && val < 2 ^ 7 => pack_half_byte(buf, val as u8),
+        val if val >= 2 ^ 7 && val < i8::MAX as i64 => pack_byte(buf, MSGPACK_MARKER_I8, val as u8),
+        val if val >= i8::MAX as i64 && val < i16::MAX as i64 => {
+            pack_i16(buf, MSGPACK_MARKER_I16, val as i16)
+        }
+        val if val >= i16::MAX as i64 && val < i32::MAX as i64 => {
+            pack_i32(buf, MSGPACK_MARKER_I32, val as i32)
+        }
         val if val >= i32::MAX as i64 => pack_i64(buf, MSGPACK_MARKER_I32, val),
 
         // Negative values
         val if val >= -32 && val < 0 => pack_half_byte(buf, 0xe0 | (val as u8 + 32)),
-        val if val >= i8::MIN as i64 && val < -32 => pack_byte(buf,  MSGPACK_MARKER_NI8, val as u8),
-        val if val >= i16::MIN as i64 && val < i8::MIN as i64 => pack_i16(buf, MSGPACK_MARKER_NI16, val as i16),
-        val if val >= i32::MIN as i64 && val < i16::MIN as i64 => pack_i32(buf, MSGPACK_MARKER_NI32, val as i32),
+        val if val >= i8::MIN as i64 && val < -32 => pack_byte(buf, MSGPACK_MARKER_NI8, val as u8),
+        val if val >= i16::MIN as i64 && val < i8::MIN as i64 => {
+            pack_i16(buf, MSGPACK_MARKER_NI16, val as i16)
+        }
+        val if val >= i32::MIN as i64 && val < i16::MIN as i64 => {
+            pack_i32(buf, MSGPACK_MARKER_NI32, val as i32)
+        }
         val if val < i32::MIN as i64 => pack_i64(buf, MSGPACK_MARKER_NI64, val),
         _ => unreachable!(),
     }
