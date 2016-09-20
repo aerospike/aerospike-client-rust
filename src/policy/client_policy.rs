@@ -14,16 +14,20 @@
 
 use std::time::Duration;
 use std::collections::HashMap;
+use std::thread;
+
+use crypto::bcrypt_pbkdf::bcrypt_pbkdf;
+use rustc_serialize::base64::{ToBase64, FromBase64, STANDARD};
+use pwhash::bcrypt;
+use pwhash::bcrypt::{BcryptVariant, BcryptSetup};
+
+use error::AerospikeResult;
 
 // ClientPolicy encapsulates parameters for client policy command.
 #[derive(Debug, Clone)]
 pub struct ClientPolicy {
     // User authentication to cluster. Leave empty for clusters running without restricted access.
-    pub user: Option<String>,
-
-    // Password authentication to cluster. The password will be stored by the client and sent
-    // to server in hashed format. Leave empty for clusters running without restricted access.
-    pub password: Option<String>,
+    pub user_password: Option<(String, String)>,
 
     // Initial host connection timeout in milliseconds.  The timeout when opening a connection
     // to the server host for the first time.
@@ -68,8 +72,7 @@ pub struct ClientPolicy {
 impl Default for ClientPolicy {
     fn default() -> ClientPolicy {
         ClientPolicy {
-            user: None,
-            password: None,
+            user_password: None,
             timeout: Some(Duration::new(30, 0)),
             idle_timeout: Some(Duration::new(5, 0)),
             connection_pool_size_per_node: 256,
@@ -83,8 +86,22 @@ impl Default for ClientPolicy {
 }
 
 impl ClientPolicy {
-    // RequiresAuthentication returns true if a USer or Password is set for ClientPolicy.
-    fn requires_authentication(&self) -> bool {
-        return self.user.is_some() || self.password.is_some();
+    pub fn set_user_password(&mut self, creds: Option<(String, String)>) -> AerospikeResult<()> {
+        match creds {
+            None => self.user_password = None,
+            Some((user, password)) => {
+                let password = bcrypt::hash_with(BcryptSetup {
+                                                     salt: Some("7EqJtq98hPqEX7fNZaFWoO"),
+                                                     cost: Some(10),
+                                                     variant: Some(BcryptVariant::V2a),
+                                                 },
+                                                 &password)
+                                   .unwrap();
+
+                self.user_password = Some((user, password));
+            }
+        }
+
+        Ok(())
     }
 }

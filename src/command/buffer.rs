@@ -110,7 +110,7 @@ pub struct Buffer {
 impl Buffer {
     pub fn new() -> Self {
         Buffer {
-            data_buffer: vec![],
+            data_buffer: Vec::with_capacity(1024),
             data_offset: 0,
         }
     }
@@ -120,7 +120,7 @@ impl Buffer {
         Ok(())
     }
 
-    fn size_buffer(&mut self) -> AerospikeResult<()> {
+    pub fn size_buffer(&mut self) -> AerospikeResult<()> {
         let offset = self.data_offset;
         self.resize_buffer(offset)
     }
@@ -144,7 +144,7 @@ impl Buffer {
         Ok(())
     }
 
-    fn end(&mut self) -> AerospikeResult<()> {
+    pub fn end(&mut self) -> AerospikeResult<()> {
         let size = ((self.data_offset - 8) as i64) | (((CL_MSG_VERSION as i64) << 56) as i64) |
                    ((AS_MSG_TYPE as i64) << 48);
 
@@ -1226,5 +1226,9 @@ impl Buffer {
                               (val.subsec_nanos() / 1_000_000) as i32;
             NetworkEndian::write_i32(&mut self.data_buffer[22..22 + 4], millis);
         }
+    }
+
+    pub fn dump_buffer(&self) {
+        println!(">>>>>>>>>>>>>>> {:?}", self.data_buffer.to_vec());
     }
 }

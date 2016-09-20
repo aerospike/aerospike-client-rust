@@ -92,10 +92,9 @@ impl<'a> NodeValidator<'a> {
 
     fn set_address(&mut self, timeout: Option<Duration>) -> AerospikeResult<()> {
         for alias in self.aliases.to_vec() {
-            let mut conn = try!(Connection::new_raw(&alias));
+            let mut conn = try!(Connection::new_raw(&alias, &self.cluster.client_policy()));
             try!(conn.set_timeout(timeout));
 
-            // TODO: authenticate
             let info_map = try!(Message::info(&mut conn, &["node", "build", "features"]));
 
             if let Some(node_name) = info_map.get("node") {

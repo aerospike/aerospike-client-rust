@@ -27,6 +27,7 @@ use error::{AerospikeResult, ResultCode, AerospikeError};
 use cluster::node::Node;
 use Host;
 use command::buffer::Buffer;
+use command::admin_command::AdminCommand;
 
 #[derive(Debug)]
 pub struct Connection {
@@ -45,11 +46,9 @@ pub struct Connection {
 }
 
 impl Connection {
-    pub fn new_raw(host: &Host) -> AerospikeResult<Self> {
+    pub fn new_raw(host: &Host, cpolicy: &ClientPolicy) -> AerospikeResult<Self> {
         let s: &str = &host.name;
         let stream = try!(TcpStream::connect((s, host.port)));
-
-        let cpolicy: ClientPolicy = Default::default();
 
         let mut conn = Connection {
             bytes_read: 0,
@@ -64,12 +63,14 @@ impl Connection {
             },
         };
 
+        try!(conn.authenticate(&cpolicy.user_password));
+
         conn.refresh();
 
         Ok(conn)
     }
 
-    pub fn new(node: &Node) -> AerospikeResult<Self> {
+    pub fn new(node: &Node, user_password: &Option<(String, String)>) -> AerospikeResult<Self> {
         let nd = node;
 
         let stream = try!(TcpStream::connect(nd.address()));
@@ -88,6 +89,8 @@ impl Connection {
                 Some(timeout) => Some(Instant::now() + timeout),
             },
         };
+
+        try!(conn.authenticate(user_password));
 
         conn.refresh();
 
@@ -147,6 +150,23 @@ impl Connection {
         if let Some(idle_to) = self.idle_timeout {
             self.idle_deadline = Some(Instant::now().add(idle_to))
         };
+    }
+
+
+    fn authenticate(&mut self, user_password: &Option<(String, String)>) -> AerospikeResult<()> {
+        if let &Some((ref user, ref password)) = user_password {
+            match AdminCommand::authenticate(self, user, password) {
+                Ok(()) => {
+                    return Ok(());
+                }
+                Err(err) => {
+                    self.close();
+                    return Err(err);
+                }
+            }
+        }
+
+        Ok(())
     }
 
     pub fn bookmark(&mut self) {

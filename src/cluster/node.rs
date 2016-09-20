@@ -273,7 +273,7 @@ impl Node {
                         return Err(AerospikeError::ErrConnectionPoolEmpty());
                     }
 
-                    let conn = match Connection::new(self) {
+                    let conn = match Connection::new(self, &self.client_policy.user_password) {
                         Ok(c) => c,
                         Err(e) => {
                             self.dec_connections();

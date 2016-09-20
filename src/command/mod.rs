@@ -28,3 +28,4 @@ pub mod execute_udf_command;
 pub mod stream_command;
 pub mod scan_command;
 pub mod query_command;
+pub mod admin_command;

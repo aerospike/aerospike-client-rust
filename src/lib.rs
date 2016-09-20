@@ -13,6 +13,7 @@ extern crate rustc_serialize;
 extern crate crossbeam;
 extern crate rand;
 extern crate threadpool;
+extern crate pwhash;
 
 use command::info_command::*;
 use msgpack::encoder::*;
