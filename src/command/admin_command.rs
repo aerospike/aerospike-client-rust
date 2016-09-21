@@ -77,10 +77,7 @@ impl AdminCommand {
         Ok(AdminCommand {})
     }
 
-    pub fn execute(node: Arc<Node>,
-                   mut conn: Connection,
-                   policy: &AdminPolicy)
-                   -> AerospikeResult<()> {
+    pub fn execute(node: Arc<Node>, mut conn: Connection) -> AerospikeResult<()> {
         // Write the message header
         try!(conn.buffer.size_buffer());
         let size = conn.buffer.data_offset;
@@ -166,7 +163,7 @@ impl AdminCommand {
                                            &try!(AdminCommand::hash_password(password))));
         try!(AdminCommand::write_roles(&mut conn, roles));
 
-        AdminCommand::execute(node, conn, policy)
+        AdminCommand::execute(node, conn)
     }
 
     pub fn drop_user(cluster: &Cluster, policy: &AdminPolicy, user: &str) -> AerospikeResult<()> {
@@ -179,7 +176,7 @@ impl AdminCommand {
         try!(AdminCommand::write_header(&mut conn, DROP_USER, 1));
         try!(AdminCommand::write_field_str(&mut conn, USER, user));
 
-        AdminCommand::execute(node, conn, policy)
+        AdminCommand::execute(node, conn)
     }
 
     pub fn set_password(cluster: &Cluster,
@@ -199,7 +196,7 @@ impl AdminCommand {
                                            PASSWORD,
                                            &try!(AdminCommand::hash_password(password))));
 
-        AdminCommand::execute(node, conn, policy)
+        AdminCommand::execute(node, conn)
     }
 
     pub fn change_password(cluster: &Cluster,
@@ -229,7 +226,7 @@ impl AdminCommand {
                                            PASSWORD,
                                            &try!(AdminCommand::hash_password(password))));
 
-        AdminCommand::execute(node, conn, policy)
+        AdminCommand::execute(node, conn)
     }
 
     pub fn grant_roles(cluster: &Cluster,
@@ -247,7 +244,7 @@ impl AdminCommand {
         try!(AdminCommand::write_field_str(&mut conn, USER, user));
         try!(AdminCommand::write_roles(&mut conn, roles));
 
-        AdminCommand::execute(node, conn, policy)
+        AdminCommand::execute(node, conn)
     }
 
     pub fn revoke_roles(cluster: &Cluster,
@@ -265,7 +262,7 @@ impl AdminCommand {
         try!(AdminCommand::write_field_str(&mut conn, USER, user));
         try!(AdminCommand::write_roles(&mut conn, roles));
 
-        AdminCommand::execute(node, conn, policy)
+        AdminCommand::execute(node, conn)
     }
 
     // Utility methods

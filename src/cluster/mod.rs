@@ -14,11 +14,11 @@
 // the License.
 
 
-pub use self::node_validator::NodeValidator;
+use self::node_validator::NodeValidator;
 pub use self::node::Node;
 pub use self::cluster::Cluster;
-pub use self::partition::Partition;
-pub use self::partition_tokenizer::PartitionTokenizer;
+use self::partition::Partition;
+use self::partition_tokenizer::PartitionTokenizer;
 
 pub mod node_validator;
 pub mod node;

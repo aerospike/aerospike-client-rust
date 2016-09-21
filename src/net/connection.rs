@@ -98,7 +98,7 @@ impl Connection {
     }
 
     pub fn close(&mut self) {
-        self.conn.shutdown(Shutdown::Both);
+        let _ = self.conn.shutdown(Shutdown::Both);
     }
 
     pub fn flush(&mut self) -> AerospikeResult<()> {
@@ -112,7 +112,7 @@ impl Connection {
         try!(self.buffer.resize_buffer(size));
         try!(self.conn.read_exact(&mut self.buffer.data_buffer));
         self.bytes_read += size;
-        self.buffer.reset_offset();
+        try!(self.buffer.reset_offset());
         self.refresh();
         return Ok(());
     }

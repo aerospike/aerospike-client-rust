@@ -28,7 +28,6 @@ impl fmt::Display for IndexType {
             &IndexType::Numeric => "NUMERIC".fmt(f),
             &IndexType::String => "STRING".fmt(f),
             &IndexType::Geo2DSphere => "GEO2DSPHERE".fmt(f),
-        };
-        Ok(())
+        }
     }
 }

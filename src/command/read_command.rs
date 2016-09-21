@@ -89,15 +89,15 @@ impl<'a> ReadCommand<'a> {
             for _ in 0..field_count {
                 // debug!("Receive Offset: {}", receive_offset);
                 let field_size = try!(conn.buffer.read_u32(None)) as usize;
-                conn.buffer.skip_bytes(4 + field_size);
+                try!(conn.buffer.skip(4 + field_size));
             }
         }
 
         for _ in 0..op_count {
             let op_size = try!(conn.buffer.read_u32(None)) as usize;
-            conn.buffer.skip_bytes(1);
+            try!(conn.buffer.skip(1));
             let particle_type = try!(conn.buffer.read_u8(None));
-            conn.buffer.skip_bytes(1);
+            try!(conn.buffer.skip(1));
             let name_size = try!(conn.buffer.read_u8(None)) as usize;
             let name: String = try!(conn.buffer.read_str(name_size));
 

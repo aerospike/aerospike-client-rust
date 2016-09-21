@@ -202,7 +202,7 @@ impl Client {
                           udf_body.len(),
                           language);
         let node = try!(self.cluster.get_random_node());
-        let response = try!(node.info(&[&cmd]));
+        let response = try!(node.info(policy.base_policy.timeout, &[&cmd]));
 
         if let Some(msg) = response.get("error") {
             let msg = try!(msg.from_base64());
@@ -245,9 +245,9 @@ impl Client {
 
         let cmd = format!("udf-remove:filename={}.{};", udf_name, language);
         let node = try!(self.cluster.get_random_node());
-        let response = try!(node.info(&[&cmd]));
+        let response = try!(node.info(policy.base_policy.timeout, &[&cmd]));
 
-        if let Some(msg) = response.get("ok") {
+        if let Some(_) = response.get("ok") {
             return Ok(());
         }
 
@@ -308,7 +308,7 @@ impl Client {
         };
 
         let nodes = self.cluster.nodes();
-        let mut recordset = Arc::new(try!(Recordset::new(policy.record_queue_size, nodes.len())));
+        let recordset = Arc::new(try!(Recordset::new(policy.record_queue_size, nodes.len())));
         for node in nodes {
             let node = node.clone();
             let recordset = recordset.clone();
@@ -349,7 +349,7 @@ impl Client {
             }
         };
 
-        let mut recordset = Arc::new(try!(Recordset::new(policy.record_queue_size, 1)));
+        let recordset = Arc::new(try!(Recordset::new(policy.record_queue_size, 1)));
         let node = node.clone();
         let t_recordset = recordset.clone();
         let policy = policy.to_owned();
@@ -379,7 +379,7 @@ impl Client {
         try!(statement.validate());
 
         let nodes = self.cluster.nodes();
-        let mut recordset = Arc::new(try!(Recordset::new(policy.record_queue_size, nodes.len())));
+        let recordset = Arc::new(try!(Recordset::new(policy.record_queue_size, nodes.len())));
         for node in nodes {
             let node = node.clone();
             let t_recordset = recordset.clone();
@@ -402,7 +402,7 @@ impl Client {
 
         try!(statement.validate());
 
-        let mut recordset = Arc::new(try!(Recordset::new(policy.record_queue_size, 1)));
+        let recordset = Arc::new(try!(Recordset::new(policy.record_queue_size, 1)));
         let node = node.clone();
         let t_recordset = recordset.clone();
         let policy = policy.to_owned();
@@ -458,7 +458,7 @@ impl Client {
                           );
 
         let node = try!(self.cluster.get_random_node());
-        let response = try!(node.info(&[&cmd]));
+        let response = try!(node.info(policy.base_policy.timeout, &[&cmd]));
 
         for v in response.values() {
             match v {
@@ -493,7 +493,7 @@ impl Client {
                           );
 
         let node = try!(self.cluster.get_random_node());
-        let response = try!(node.info(&[&cmd]));
+        let response = try!(node.info(policy.base_policy.timeout, &[&cmd]));
 
         for v in response.values() {
             match v {

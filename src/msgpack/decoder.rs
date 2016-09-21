@@ -75,7 +75,7 @@ pub fn unpack_value_map(buf: &mut Buffer) -> AerospikeResult<Value> {
 
 fn unpack_list(buf: &mut Buffer, count: usize) -> AerospikeResult<Value> {
     let mut list: Vec<Value> = Vec::with_capacity(count);
-    for i in 0..count {
+    for _ in 0..count {
         let val = try!(unpack_value(buf));
         list.push(val);
     }
@@ -85,7 +85,7 @@ fn unpack_list(buf: &mut Buffer, count: usize) -> AerospikeResult<Value> {
 
 fn unpack_map(buf: &mut Buffer, count: usize) -> AerospikeResult<Value> {
     let mut map: HashMap<Value, Value> = HashMap::with_capacity(count);
-    for i in 0..count {
+    for _ in 0..count {
         let key = try!(unpack_value(buf));
         let val = try!(unpack_value(buf));
         map.insert(key, val);
@@ -236,7 +236,8 @@ fn unpack_value(buf: &mut Buffer) -> AerospikeResult<Value> {
             }
 
             if obj_type >= 0xe0 {
-                return Ok(Value::from((obj_type as i8) - 0xe0 - 32));
+                let obj_type = obj_type as i16 - 0xe0 - 32;
+                return Ok(Value::from(obj_type as i8));
             }
         }
     }

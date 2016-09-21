@@ -90,7 +90,7 @@ impl Statement {
                                   function_name: &str,
                                   function_args: Option<&[Value]>)
                                   -> AerospikeResult<()> {
-        let mut agg = Aggregation {
+        let agg = Aggregation {
             package_name: package_name.to_owned(),
             function_name: function_name.to_owned(),
             function_args: match function_args {

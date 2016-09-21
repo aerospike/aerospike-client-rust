@@ -20,6 +20,7 @@ use std::str;
 use std::fmt;
 use std::io::Write;
 use std::collections::HashMap;
+use std::num::Wrapping;
 
 use byteorder::{NetworkEndian, ReadBytesExt, WriteBytesExt, ByteOrder};
 
@@ -29,6 +30,7 @@ use crypto::digest::Digest;
 use std::vec::Vec;
 
 use common::ParticleType;
+use common::operation;
 use error::{AerospikeResult, ResultCode, AerospikeError};
 use command::buffer::Buffer;
 use value::*;
@@ -63,6 +65,73 @@ pub fn pack_empty_args_array(buf: Option<&mut Buffer>) -> AerospikeResult<usize>
 
     Ok(size)
 }
+
+pub fn pack_cdt_list_args(buf: Option<&mut Buffer>,
+                          cdt_op: u8,
+                          meta_args: &Option<Vec<Value>>,
+                          args: &Option<&[Value]>,
+                          single_value: &Value)
+                          -> AerospikeResult<usize> {
+
+    let mut args_len: usize = 0;
+    if let &Some(ref meta_args) = meta_args {
+        args_len += meta_args.len();
+    };
+
+    // all args are considered ONE argument
+    if args.is_some() || single_value != operation::NIL_VALUE {
+        args_len += 1;
+    }
+
+    let mut size: usize = 0;
+
+    if let Some(buf) = buf {
+        size += try!(pack_raw_u16(Some(buf), cdt_op as u16));
+
+        if args_len > 0 {
+            size += try!(pack_array_begin(Some(buf), args_len));
+        }
+
+        if let &Some(ref meta_args) = meta_args {
+            for value in meta_args {
+                size += try!(pack_value(Some(buf), &value));
+            }
+        }
+
+        if let &Some(args) = args {
+            size += try!(pack_array_begin(Some(buf), args.len()));
+            for arg in args {
+                size += try!(pack_value(Some(buf), arg));
+            }
+        } else if single_value != operation::NIL_VALUE {
+            size += try!(pack_value(Some(buf), single_value));
+        }
+    } else {
+        size += try!(pack_raw_u16(None, cdt_op as u16));
+
+        if args_len > 0 {
+            size += try!(pack_array_begin(None, args_len));
+        }
+
+        if let &Some(ref meta_args) = meta_args {
+            for value in meta_args {
+                size += try!(pack_value(None, &value));
+            }
+        }
+
+        if let &Some(args) = args {
+            size += try!(pack_array_begin(None, args.len()));
+            for arg in args {
+                size += try!(pack_value(None, arg));
+            }
+        } else if single_value != operation::NIL_VALUE {
+            size += try!(pack_value(None, single_value));
+        }
+    }
+
+    Ok(size)
+}
+
 
 pub fn pack_array(buf: Option<&mut Buffer>, values: &[Value]) -> AerospikeResult<usize> {
     let mut size = 0;
@@ -117,6 +186,15 @@ const MSGPACK_MARKER_NI8: u8 = 0xd0;
 const MSGPACK_MARKER_NI16: u8 = 0xd1;
 const MSGPACK_MARKER_NI32: u8 = 0xd2;
 const MSGPACK_MARKER_NI64: u8 = 0xd3;
+
+// This method is not compatible with MsgPack specs and is only used by aerospike client<->server
+// for wire transfer only
+fn pack_raw_u16(buf: Option<&mut Buffer>, val: u16) -> AerospikeResult<usize> {
+    if let Some(buf) = buf {
+        try!(buf.write_u16(val));
+    }
+    Ok(2)
+}
 
 fn pack_half_byte(buf: Option<&mut Buffer>, val: u8) -> AerospikeResult<usize> {
     if let Some(buf) = buf {
@@ -230,7 +308,9 @@ fn pack_integer(buf: Option<&mut Buffer>, val: i64) -> AerospikeResult<usize> {
         val if val >= i32::MAX as i64 => pack_i64(buf, MSGPACK_MARKER_I32, val),
 
         // Negative values
-        val if val >= -32 && val < 0 => pack_half_byte(buf, 0xe0 | (val as u8 + 32)),
+        val if val >= -32 && val < 0 => {
+            pack_half_byte(buf, 0xe0 | ((Wrapping(val as u8) + Wrapping(32)).0))
+        }
         val if val >= i8::MIN as i64 && val < -32 => pack_byte(buf, MSGPACK_MARKER_NI8, val as u8),
         val if val >= i16::MIN as i64 && val < i8::MIN as i64 => {
             pack_i16(buf, MSGPACK_MARKER_NI16, val as i16)

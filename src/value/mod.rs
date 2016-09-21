@@ -15,6 +15,4 @@
 
 pub use self::value::{Value, FloatValue};
 
-#[macro_use]
-#[macro_export]
 pub mod value;

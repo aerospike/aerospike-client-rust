@@ -45,7 +45,7 @@ pub enum FloatValue {
 impl From<FloatValue> for f64 {
     fn from(val: FloatValue) -> f64 {
         match val {
-            FloatValue::F32(val) => {
+            FloatValue::F32(_) => {
                 panic!("This library does not automatically convert f32 -> f64 to be used in keys \
                         or bins.")
             }
@@ -57,7 +57,7 @@ impl From<FloatValue> for f64 {
 impl<'a> From<&'a FloatValue> for f64 {
     fn from(val: &FloatValue) -> f64 {
         match val {
-            &FloatValue::F32(val) => {
+            &FloatValue::F32(_) => {
                 panic!("This library does not automatically convert f32 -> f64 to be used in keys \
                         or bins.")
             }
@@ -126,12 +126,21 @@ impl<'a> From<&'a f32> for FloatValue {
 
 impl core::fmt::Display for FloatValue {
     fn fmt(&self, f: &mut core::fmt::Formatter) -> Result<(), core::fmt::Error> {
-        write!(f, "{}", self)
+        match self {
+            &FloatValue::F32(val) => {
+                let val: f32 = unsafe { mem::transmute(val) };
+                write!(f, "{}", val)
+            }
+            &FloatValue::F64(val) => {
+                let val: f64 = unsafe { mem::transmute(val) };
+                write!(f, "{}", val)
+            }
+        }
     }
 }
 
 /// ////////////////////////////////////////////////////////////////////////
-#[derive(Debug,Clone, PartialEq, Eq)]
+#[derive(Debug,Clone,PartialEq,Eq)]
 pub enum Value {
     Nil,
     Bool(bool),
@@ -221,7 +230,7 @@ impl Value {
         match self {
             &Value::Nil => Ok(0),
             &Value::Int(ref val) => buf.write_i64(*val),
-            &Value::UInt(ref val) => {
+            &Value::UInt(_) => {
                 panic!("Aerospike does not support u64 natively on server-side. Use casting to \
                         store and retrieve u64 values.")
             }
@@ -229,8 +238,8 @@ impl Value {
             &Value::Float(ref val) => buf.write_f64(f64::from(val)),
             &Value::String(ref val) => buf.write_str(val),
             &Value::Blob(ref val) => buf.write_bytes(val),
-            &Value::List(ref val) => pack_value(Some(buf), self),
-            &Value::HashMap(ref val) => pack_value(Some(buf), self),
+            &Value::List(_) => pack_value(Some(buf), self),
+            &Value::HashMap(_) => pack_value(Some(buf), self),
             &Value::GeoJSON(ref val) => buf.write_geo(val),
         }
     }
@@ -507,11 +516,11 @@ pub fn bytes_to_particle(ptype: u8, buf: &mut Buffer, len: usize) -> AerospikeRe
             Ok(Value::String(val))
         }
         ParticleType::GEOJSON => {
-            buf.skip(1);
+            try!(buf.skip(1));
             let ncells = try!(buf.read_i16(None)) as usize;
             let header_size: usize = ncells * 8;
 
-            buf.skip(header_size);
+            try!(buf.skip(header_size));
             let val = try!(buf.read_str(len - header_size - 3));
             Ok(Value::String(val))
         }
@@ -552,6 +561,19 @@ macro_rules! as_list {
             $(
                 temp_vec.push(Value::from($v));
             )*
+            Value::List(temp_vec)
+        }
+    };
+}
+
+#[macro_export]
+macro_rules! as_values {
+    ( $( $v:expr),* ) => {
+        {
+            let mut temp_vec: Vec<Value> = Vec::new();
+            $(
+                temp_vec.push(Value::from($v));
+            )*
             temp_vec
         }
     };
@@ -565,7 +587,7 @@ macro_rules! as_map {
             $(
                 temp_map.insert(Value::from($k), Value::from($v));
             )*
-            temp_map
+            Value::HashMap(temp_map)
         }
     };
 }

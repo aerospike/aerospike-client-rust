@@ -52,7 +52,7 @@ impl Record {
 impl core::fmt::Display for Record {
     fn fmt(&self, f: &mut core::fmt::Formatter) -> Result<(), core::fmt::Error> {
         try!("key: ".fmt(f));
-        write!(f, "{:?}", self.key);
+        try!(write!(f, "{:?}", self.key));
         try!(", bins: {".fmt(f));
         for (k, v) in &self.bins {
             try!(k.fmt(f));

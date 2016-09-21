@@ -140,7 +140,7 @@ impl Node {
             commands.extend(&["node", "partition-generation", "servicges-alternate"]);
         }
 
-        let info_map = try!(self.info(&commands));
+        let info_map = try!(self.info(None, &commands));
         try!(self.verify_node_name(&info_map));
 
         self.responded.store(true, Ordering::Relaxed);
@@ -354,8 +354,11 @@ impl Node {
         }
     }
 
-    pub fn info(&self, commands: &[&str]) -> AerospikeResult<HashMap<String, String>> {
-        let mut conn = try!(self.get_connection(self.client_policy.timeout));
+    pub fn info(&self,
+                timeout: Option<Duration>,
+                commands: &[&str])
+                -> AerospikeResult<HashMap<String, String>> {
+        let mut conn = try!(self.get_connection(timeout));
         match Message::info(&mut conn, commands) {
             Ok(res) => Ok(res),
             Err(e) => {

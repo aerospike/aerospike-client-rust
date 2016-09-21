@@ -27,6 +27,7 @@ pub use self::collection_index_type::CollectionIndexType;
 pub use self::filter::Filter;
 pub use self::statement::Statement;
 pub use self::user::User;
+pub use self::operation_cdt_list::*;
 
 
 pub mod bin;
@@ -43,3 +44,4 @@ pub mod collection_index_type;
 pub mod filter;
 pub mod statement;
 pub mod user;
+pub mod operation_cdt_list;

@@ -158,7 +158,7 @@ impl Buffer {
     // Writes the command for write operations
     pub fn set_write<'a>(&mut self,
                          policy: &WritePolicy,
-                         operation: &OperationType,
+                         op_type: &OperationType,
                          key: &Key,
                          bins: &[&Bin<'a>])
                          -> AerospikeResult<()> {
@@ -178,7 +178,7 @@ impl Buffer {
         try!(self.write_key(key, policy.send_key));
 
         for bin in bins {
-            try!(self.write_operation_for_bin(bin, operation));
+            try!(self.write_operation_for_bin(bin, op_type));
         }
 
         self.end()
@@ -296,7 +296,8 @@ impl Buffer {
         let mut respond_per_each_op = policy.respond_per_each_op;
 
         for operation in operations {
-            if operation.op == operation::MAP_READ || operation.op == operation::MAP_MODIFY {
+            if operation.op == operation::CDT_MAP_READ ||
+               operation.op == operation::CDT_MAP_MODIFY {
                 respond_per_each_op = true;
             }
 
@@ -318,7 +319,7 @@ impl Buffer {
                 _ => write_attr |= INFO2_WRITE,
             }
 
-            try!(self.estimate_operation_size_for_operation(operation));
+            self.data_offset += try!(operation.estimate_size()) + OPERATION_HEADER_SIZE as usize;
         }
 
         let field_count = try!(self.estimate_key_size(key, policy.send_key && write_attr != 0));
@@ -349,7 +350,8 @@ impl Buffer {
         try!(self.write_key(key, policy.send_key && write_attr != 0));
 
         for operation in operations {
-            try!(self.write_operation_for_operation(operation));
+            try!(operation.write_to(self));
+            // try!(self.write_operation_for_operation(operation));
         }
 
         self.end()
@@ -410,7 +412,7 @@ impl Buffer {
         let bin_count = match *bin_names {
             Some(ref bin_names) => {
                 for bin_name in bin_names {
-                    self.estimate_operation_size_for_bin_name(&bin_name);
+                    try!(self.estimate_operation_size_for_bin_name(&bin_name));
                 }
                 bin_names.len()
             }
@@ -706,16 +708,6 @@ impl Buffer {
         Ok(3)
     }
 
-    fn estimate_operation_size_for_operation(&mut self,
-                                             operation: &Operation)
-                                             -> AerospikeResult<()> {
-        self.data_offset += OPERATION_HEADER_SIZE as usize;
-        self.data_offset += operation.bin_name.len();
-        self.data_offset += try!(operation.bin_value.estimate_size());
-
-        Ok(())
-    }
-
     fn estimate_operation_size_for_bin(&mut self, bin: &Bin) -> AerospikeResult<()> {
         self.data_offset += bin.name.len() + OPERATION_HEADER_SIZE as usize;
         self.data_offset += try!(bin.value.estimate_size());
@@ -893,32 +885,16 @@ impl Buffer {
     }
 
 
-    fn write_operation_for_operation(&mut self, operation: &Operation) -> AerospikeResult<()> {
-
-        let name_length: usize = operation.bin_name.len();
-        let value_length: usize = try!(operation.bin_value.estimate_size());
-
-        try!(self.write_i32((name_length + value_length + 4) as i32));
-        try!(self.write_u8(operation.op.op));
-        try!(self.write_u8(operation.bin_value.particle_type() as u8));
-        try!(self.write_u8(0));
-        try!(self.write_u8(name_length as u8));
-        try!(self.write_str(operation.bin_name));
-        try!(operation.bin_value.write_to(self));
-
-        Ok(())
-    }
-
     fn write_operation_for_bin(&mut self,
                                bin: &Bin,
-                               operation: &OperationType)
+                               op_type: &OperationType)
                                -> AerospikeResult<()> {
 
         let name_length = bin.name.len();
         let value_length = try!(bin.value.estimate_size());
 
         try!(self.write_i32((name_length + value_length + 4) as i32));
-        try!(self.write_u8(operation.op));
+        try!(self.write_u8(op_type.op));
         try!(self.write_u8(bin.value.particle_type() as u8));
         try!(self.write_u8(0));
         try!(self.write_u8(name_length as u8));
@@ -930,10 +906,10 @@ impl Buffer {
 
     fn write_operation_for_bin_name(&mut self,
                                     name: &str,
-                                    operation: &OperationType)
+                                    op_type: &OperationType)
                                     -> AerospikeResult<()> {
         try!(self.write_i32(name.len() as i32 + 4));
-        try!(self.write_u8(operation.op));
+        try!(self.write_u8(op_type.op));
         try!(self.write_u8(0));
         try!(self.write_u8(0));
         try!(self.write_u8(name.len() as u8));
@@ -943,10 +919,10 @@ impl Buffer {
     }
 
     fn write_operation_for_operation_type(&mut self,
-                                          operation: &OperationType)
+                                          op_type: &OperationType)
                                           -> AerospikeResult<()> {
         try!(self.write_i32(4));
-        try!(self.write_u8(operation.op));
+        try!(self.write_u8(op_type.op));
         try!(self.write_u8(0));
         try!(self.write_u8(0));
         try!(self.write_u8(0));

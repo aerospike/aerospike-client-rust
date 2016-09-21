@@ -13,9 +13,5 @@
 // License for the specific language governing permissions and limitations under
 // the License.
 
-// pub use self::encoder::{Encoder};
-
-#[macro_use]
-#[macro_export]
 pub mod encoder;
 pub mod decoder;
