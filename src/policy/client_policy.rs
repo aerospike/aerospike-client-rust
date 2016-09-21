@@ -18,10 +18,9 @@ use std::thread;
 
 use crypto::bcrypt_pbkdf::bcrypt_pbkdf;
 use rustc_serialize::base64::{ToBase64, FromBase64, STANDARD};
-use pwhash::bcrypt;
-use pwhash::bcrypt::{BcryptVariant, BcryptSetup};
 
 use error::AerospikeResult;
+use command::admin_command::AdminCommand;
 
 // ClientPolicy encapsulates parameters for client policy command.
 #[derive(Debug, Clone)]
@@ -90,14 +89,7 @@ impl ClientPolicy {
         match creds {
             None => self.user_password = None,
             Some((user, password)) => {
-                let password = bcrypt::hash_with(BcryptSetup {
-                                                     salt: Some("7EqJtq98hPqEX7fNZaFWoO"),
-                                                     cost: Some(10),
-                                                     variant: Some(BcryptVariant::V2a),
-                                                 },
-                                                 &password)
-                                   .unwrap();
-
+                let password = try!(AdminCommand::hash_password(&password));
                 self.user_password = Some((user, password));
             }
         }

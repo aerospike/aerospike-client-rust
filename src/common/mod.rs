@@ -26,6 +26,7 @@ pub use self::index_type::IndexType;
 pub use self::collection_index_type::CollectionIndexType;
 pub use self::filter::Filter;
 pub use self::statement::Statement;
+pub use self::user::User;
 
 
 pub mod bin;
@@ -41,3 +42,4 @@ pub mod index_type;
 pub mod collection_index_type;
 pub mod filter;
 pub mod statement;
+pub mod user;

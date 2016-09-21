@@ -25,6 +25,7 @@ pub use self::read_policy::ReadPolicy;
 pub use self::write_policy::WritePolicy;
 pub use self::scan_policy::ScanPolicy;
 pub use self::query_policy::QueryPolicy;
+pub use self::admin_policy::AdminPolicy;
 
 pub mod priority;
 pub mod consistency_level;
@@ -38,3 +39,4 @@ pub mod read_policy;
 pub mod write_policy;
 pub mod scan_policy;
 pub mod query_policy;
+pub mod admin_policy;

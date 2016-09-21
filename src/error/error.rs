@@ -28,6 +28,7 @@ use std::sync::mpsc;
 use core::num;
 
 use rustc_serialize::base64;
+use pwhash;
 
 use ResultCode;
 
@@ -147,6 +148,15 @@ impl From<(isize, String)> for AerospikeError {
         AerospikeError { err: ErrorType::WithDescription(kind, desc) }
     }
 }
+
+impl From<pwhash::error::Error> for AerospikeError {
+    fn from(err: pwhash::error::Error) -> AerospikeError {
+        AerospikeError {
+            err: ErrorType::WithDescription(ResultCode::PARAMETER_ERROR, format!("{}", err)),
+        }
+    }
+}
+
 
 impl error::Error for AerospikeError {
     fn description(&self) -> &str {
