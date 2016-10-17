@@ -51,6 +51,7 @@ pub fn pack_value(buf: Option<&mut Buffer>, val: &Value) -> AerospikeResult<usiz
         &Value::Blob(ref val) => pack_blob(buf, val),
         &Value::List(ref val) => pack_array(buf, val),
         &Value::HashMap(ref val) => pack_map(buf, val),
+        &Value::OrderedMap(_) => panic!("Ordered maps are not supported in this encoder."),
         &Value::GeoJSON(ref val) => pack_geo_json(buf, val),
     }
 }
@@ -72,6 +73,11 @@ pub fn pack_cdt_list_args(buf: Option<&mut Buffer>,
                           args: &Option<&[Value]>,
                           single_value: &Value)
                           -> AerospikeResult<usize> {
+
+    // arguments will always be either in args or single value
+    // never in both
+    assert_eq!(args.is_some() && (single_value != operation::NIL_VALUE),
+               false);
 
     let mut args_len: usize = 0;
     if let &Some(ref meta_args) = meta_args {
@@ -99,10 +105,7 @@ pub fn pack_cdt_list_args(buf: Option<&mut Buffer>,
         }
 
         if let &Some(args) = args {
-            size += try!(pack_array_begin(Some(buf), args.len()));
-            for arg in args {
-                size += try!(pack_value(Some(buf), arg));
-            }
+            size += try!(pack_array(Some(buf), args));
         } else if single_value != operation::NIL_VALUE {
             size += try!(pack_value(Some(buf), single_value));
         }
@@ -120,12 +123,87 @@ pub fn pack_cdt_list_args(buf: Option<&mut Buffer>,
         }
 
         if let &Some(args) = args {
-            size += try!(pack_array_begin(None, args.len()));
-            for arg in args {
-                size += try!(pack_value(None, arg));
-            }
+            size += try!(pack_array(None, args));
         } else if single_value != operation::NIL_VALUE {
             size += try!(pack_value(None, single_value));
+        }
+    }
+
+    Ok(size)
+}
+
+pub fn pack_cdt_map_args(buf: Option<&mut Buffer>,
+                         cdt_op: u8,
+                         meta_args: &Option<Vec<Value>>,
+                         lists: &Option<&[Value]>,
+                         args: &Option<&HashMap<Value, Value>>,
+                         single_entry: &Option<(&Value, &Value)>)
+                         -> AerospikeResult<usize> {
+
+    let mut args_len: usize = 0;
+    if let &Some(ref meta_args) = meta_args {
+        args_len += meta_args.len();
+    };
+
+    // all args are considered ONE argument
+    if args.is_some() || lists.is_some() {
+        args_len += 1;
+    }
+
+    if let &Some((_, v)) = single_entry {
+        args_len += 1;
+        if v != operation::NIL_VALUE {
+            args_len += 1;
+        }
+    }
+
+    let mut size: usize = 0;
+
+    if let Some(buf) = buf {
+        size += try!(pack_raw_u16(Some(buf), cdt_op as u16));
+
+        if args_len > 0 {
+            size += try!(pack_array_begin(Some(buf), args_len));
+        }
+
+        if let &Some(ref meta_args) = meta_args {
+            for value in meta_args {
+                size += try!(pack_value(Some(buf), &value));
+            }
+        }
+
+        if let &Some(args) = args {
+            size += try!(pack_map(Some(buf), args));
+        } else if let &Some((key, val)) = single_entry {
+            size += try!(pack_value(Some(buf), key));
+            if val != operation::NIL_VALUE {
+                size += try!(pack_value(Some(buf), val));
+            }
+        } else if let &Some(items) = lists {
+            size += try!(pack_array(Some(buf), items));
+        }
+    } else {
+        size += try!(pack_raw_u16(None, cdt_op as u16));
+
+        if args_len > 0 {
+            size += try!(pack_array_begin(None, args_len));
+        }
+
+        if let &Some(ref meta_args) = meta_args {
+            for value in meta_args {
+                size += try!(pack_value(None, &value));
+            }
+        }
+
+        if let &Some(args) = args {
+            size += try!(pack_map(None, args));
+        } else if let &Some((key, val)) = single_entry {
+            size += try!(pack_value(None, key));
+            if val != operation::NIL_VALUE {
+                size += try!(pack_value(None, val));
+            }
+        } else if let &Some(items) = lists {
+            size += try!(pack_array(None, items));
         }
     }
 

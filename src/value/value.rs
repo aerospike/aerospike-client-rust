@@ -151,6 +151,7 @@ pub enum Value {
     Blob(Vec<u8>),
     List(Vec<Value>),
     HashMap(HashMap<Value, Value>),
+    OrderedMap(Vec<(Value, Value)>),
     GeoJSON(String),
 }
 
@@ -169,6 +170,7 @@ impl Hash for Value {
             &Value::Blob(ref val) => val.hash(state),
             &Value::List(ref val) => val.hash(state),
             &Value::HashMap(_) => panic!("HashMaps cannot be used as map keys."),
+            &Value::OrderedMap(_) => panic!("OrderedMaps cannot be used as map keys."),
             &Value::GeoJSON(ref val) => val.hash(state),
         }
     }
@@ -189,6 +191,7 @@ impl Value {
             &Value::Blob(_) => ParticleType::BLOB,
             &Value::List(_) => ParticleType::LIST,
             &Value::HashMap(_) => ParticleType::MAP,
+            &Value::OrderedMap(_) => panic!("The library never passes ordered maps to the server."),
             &Value::GeoJSON(_) => ParticleType::GEOJSON,
         }
     }
@@ -204,6 +207,7 @@ impl Value {
             &Value::Blob(ref val) => format!("{:?}", val),
             &Value::List(ref val) => format!("{:?}", val),
             &Value::HashMap(ref val) => format!("{:?}", val),
+            &Value::OrderedMap(ref val) => format!("{:?}", val),
             &Value::GeoJSON(ref val) => format!("{}", val),
         }
     }
@@ -222,6 +226,7 @@ impl Value {
             &Value::Blob(ref b) => Ok(b.len()),
             &Value::List(_) => pack_value(None, self),
             &Value::HashMap(_) => pack_value(None, self),
+            &Value::OrderedMap(_) => panic!("The library never passes ordered maps to the server."),
             &Value::GeoJSON(ref s) => Ok(1 + 2 + s.len()), // flags + ncells + jsonstr
         }
     }
@@ -240,6 +245,7 @@ impl Value {
             &Value::Blob(ref val) => buf.write_bytes(val),
             &Value::List(_) => pack_value(Some(buf), self),
             &Value::HashMap(_) => pack_value(Some(buf), self),
+            &Value::OrderedMap(_) => panic!("The library never passes ordered maps to the server."),
             &Value::GeoJSON(ref val) => buf.write_geo(val),
         }
     }

@@ -13,6 +13,8 @@
 // License for the specific language governing permissions and limitations under
 // the License.
 
+use std::collections::HashMap;
+
 use value::Value;
 use common::Bin;
 
@@ -26,20 +28,54 @@ use common::ParticleType;
 #[derive(PartialEq, Eq)]
 pub struct OperationType {
     pub op: u8,
+    descriminant: u8,
 }
 
-pub const READ: OperationType = OperationType { op: 1 };
-pub const READ_HEADER: OperationType = OperationType { op: 1 };
+pub const READ: OperationType = OperationType {
+    op: 1,
+    descriminant: 0,
+};
+pub const READ_HEADER: OperationType = OperationType {
+    op: 1,
+    descriminant: 1,
+};
 
-pub const WRITE: OperationType = OperationType { op: 2 };
-pub const CDT_LIST_READ: OperationType = OperationType { op: 3 };
-pub const CDT_LIST_MODIFY: OperationType = OperationType { op: 4 };
-pub const CDT_MAP_READ: OperationType = OperationType { op: 3 };
-pub const CDT_MAP_MODIFY: OperationType = OperationType { op: 4 };
-pub const ADD: OperationType = OperationType { op: 5 };
-pub const APPEND: OperationType = OperationType { op: 9 };
-pub const PREPEND: OperationType = OperationType { op: 10 };
-pub const TOUCH: OperationType = OperationType { op: 11 };
+pub const WRITE: OperationType = OperationType {
+    op: 2,
+    descriminant: 0,
+};
+pub const CDT_LIST_READ: OperationType = OperationType {
+    op: 3,
+    descriminant: 0,
+};
+pub const CDT_LIST_MODIFY: OperationType = OperationType {
+    op: 4,
+    descriminant: 0,
+};
+pub const CDT_MAP_READ: OperationType = OperationType {
+    op: 3,
+    descriminant: 1,
+};
+pub const CDT_MAP_MODIFY: OperationType = OperationType {
+    op: 4,
+    descriminant: 1,
+};
+pub const ADD: OperationType = OperationType {
+    op: 5,
+    descriminant: 0,
+};
+pub const APPEND: OperationType = OperationType {
+    op: 9,
+    descriminant: 0,
+};
+pub const PREPEND: OperationType = OperationType {
+    op: 10,
+    descriminant: 0,
+};
+pub const TOUCH: OperationType = OperationType {
+    op: 11,
+    descriminant: 0,
+};
 
 pub const NIL_VALUE: &'static Value = &Value::Nil;
 
@@ -66,7 +102,10 @@ pub struct Operation<'a> {
     // Otherwise they first element will be kept in bin_value and this
     // attribute will be set to None.
     // This complication is for performance reasons to avoid allocating memory.
-    pub cdt_values: Option<&'a [Value]>,
+    pub cdt_list_values: Option<&'a [Value]>,
+
+    pub cdt_map_entry: Option<(&'a Value, &'a Value)>,
+    pub cdt_map_values: Option<&'a HashMap<Value, Value>>,
 }
 
 impl<'a> Operation<'a> {
@@ -78,8 +117,16 @@ impl<'a> Operation<'a> {
                 try!(encoder::pack_cdt_list_args(None,
                                                  self.cdt_op.unwrap(),
                                                  &self.cdt_args,
-                                                 &self.cdt_values,
+                                                 &self.cdt_list_values,
                                                  self.bin_value))
+            }
+            CDT_MAP_READ | CDT_MAP_MODIFY => {
+                try!(encoder::pack_cdt_map_args(None,
+                                                self.cdt_op.unwrap(),
+                                                &self.cdt_args,
+                                                &self.cdt_list_values,
+                                                &self.cdt_map_values,
+                                                &self.cdt_map_entry))
             }
             _ => try!(self.bin_value.estimate_size()),
         };
@@ -102,7 +149,7 @@ impl<'a> Operation<'a> {
                 size += try!(encoder::pack_cdt_list_args(Some(buffer),
                                                          self.cdt_op.unwrap(),
                                                          &self.cdt_args,
-                                                         &self.cdt_values,
+                                                         &self.cdt_list_values,
                                                          self.bin_value));
             }
             _ => {
@@ -128,7 +175,9 @@ impl<'a> Operation<'a> {
             op: READ,
             cdt_op: None,
             cdt_args: None,
-            cdt_values: None,
+            cdt_list_values: None,
+            cdt_map_entry: None,
+            cdt_map_values: None,
             bin_name: "",
             bin_value: NIL_VALUE,
             header_only: false,
@@ -140,7 +189,9 @@ impl<'a> Operation<'a> {
             op: READ,
             cdt_op: None,
             cdt_args: None,
-            cdt_values: None,
+            cdt_list_values: None,
+            cdt_map_entry: None,
+            cdt_map_values: None,
             bin_name: "",
             bin_value: NIL_VALUE,
             header_only: true,
@@ -152,7 +203,9 @@ impl<'a> Operation<'a> {
             op: READ,
             cdt_op: None,
             cdt_args: None,
-            cdt_values: None,
+            cdt_list_values: None,
+            cdt_map_entry: None,
+            cdt_map_values: None,
             bin_name: bin_name,
             bin_value: NIL_VALUE,
             header_only: false,
@@ -164,7 +217,9 @@ impl<'a> Operation<'a> {
             op: WRITE,
             cdt_op: None,
             cdt_args: None,
-            cdt_values: None,
+            cdt_list_values: None,
+            cdt_map_entry: None,
+            cdt_map_values: None,
             bin_name: bin.name,
             bin_value: &bin.value,
             header_only: false,
@@ -176,7 +231,9 @@ impl<'a> Operation<'a> {
             op: APPEND,
             cdt_op: None,
             cdt_args: None,
-            cdt_values: None,
+            cdt_list_values: None,
+            cdt_map_entry: None,
+            cdt_map_values: None,
             bin_name: bin.name,
             bin_value: &bin.value,
             header_only: false,
@@ -188,7 +245,9 @@ impl<'a> Operation<'a> {
             op: PREPEND,
             cdt_op: None,
             cdt_args: None,
-            cdt_values: None,
+            cdt_list_values: None,
+            cdt_map_entry: None,
+            cdt_map_values: None,
             bin_name: bin.name,
             bin_value: &bin.value,
             header_only: false,
@@ -200,7 +259,9 @@ impl<'a> Operation<'a> {
             op: ADD,
             cdt_op: None,
             cdt_args: None,
-            cdt_values: None,
+            cdt_list_values: None,
+            cdt_map_entry: None,
+            cdt_map_values: None,
             bin_name: bin.name,
             bin_value: &bin.value,
             header_only: false,
@@ -212,7 +273,9 @@ impl<'a> Operation<'a> {
             op: TOUCH,
             cdt_op: None,
             cdt_args: None,
-            cdt_values: None,
+            cdt_list_values: None,
+            cdt_map_entry: None,
+            cdt_map_values: None,
             bin_name: "",
             bin_value: NIL_VALUE,
             header_only: false,

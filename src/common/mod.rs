@@ -28,6 +28,7 @@ pub use self::filter::Filter;
 pub use self::statement::Statement;
 pub use self::user::User;
 pub use self::operation_cdt_list::*;
+pub use self::operation_cdt_map::*;
 
 
 pub mod bin;
@@ -45,3 +46,4 @@ pub mod filter;
 pub mod statement;
 pub mod user;
 pub mod operation_cdt_list;
+pub mod operation_cdt_map;
