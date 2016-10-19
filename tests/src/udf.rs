@@ -85,15 +85,9 @@ end
                                  "test_udf2",
                                  "echo",
                                  Some(&[as_val!("ha ha...")]));
-    assert!(res.is_ok());
-    if let Ok(Some(Value::String(echo))) = res {
-        assert_eq!(echo, "ha ha...");
-    } else {
-        panic!("UDF function did not return expected string");
-    }
+    assert_eq!(res, Ok(Some(as_val!("ha ha..."))));
 
     let res = client.execute_udf(&wpolicy, &key, "test_udf1", "func_div", Some(&[as_val!(2)]));
-    assert!(res.is_ok());
     if let Ok(Some(Value::HashMap(values))) = res {
         assert_eq!(values.get(&as_val!("status")), Some(&as_val!("OK")));
         assert_eq!(values.get(&as_val!("res")), Some(&as_val!(5)));
