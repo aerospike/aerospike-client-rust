@@ -58,13 +58,12 @@ let ref client = common1::GLOBAL_CLIENT;
 
     let now = Instant::now();
     let spolicy = ScanPolicy::default();
-    // let node = client.cluster.get_random_node().unwrap();
-    let mut rs = client.scan(&spolicy, namespace, set_name, None).unwrap();
+    let rs = client.scan(&spolicy, namespace, set_name, None).unwrap();
 
     let mut count = 0;
     for res in rs.iter() {
         match res {
-            Ok(rec) => count += 1,
+            Ok(_) => count += 1,
             Err(err) => println!("{:?}", err),
         }
     }
@@ -78,8 +77,7 @@ let ref client = common1::GLOBAL_CLIENT;
 fn scan_multi_consumer() {
     let _ = env_logger::init();
 
-let ref client = common1::GLOBAL_CLIENT;
-
+    let ref client = common1::GLOBAL_CLIENT;
     let namespace: &str = &common1::AEROSPIKE_NAMESPACE;
     let set_name = &common1::rand_str(10);
 
@@ -95,18 +93,18 @@ let ref client = common1::GLOBAL_CLIENT;
     let now = Instant::now();
     let mut spolicy = ScanPolicy::default();
     spolicy.record_queue_size = 4096;
-    let mut rs = client.scan(&spolicy, namespace, set_name, None).unwrap();
+    let rs = client.scan(&spolicy, namespace, set_name, None).unwrap();
 
-    let mut count = Arc::new(AtomicUsize::new(0));
+    let count = Arc::new(AtomicUsize::new(0));
     let mut threads = vec![];
 
-    for i in 0..8 {
+    for _ in 0..8 {
         let count = count.clone();
         let rs = rs.clone();
         threads.push(thread::spawn(move || {
             for res in rs.iter() {
                 match res {
-                    Ok(rec) => {
+                    Ok(_) => {
                         count.fetch_add(1, Ordering::Relaxed);
                     }
                     Err(_) => (),
@@ -116,7 +114,8 @@ let ref client = common1::GLOBAL_CLIENT;
     }
 
     for t in threads {
-        t.join();
+        t.join()
+            .expect("Cannot join thread");
     }
 
     println!("total time: {:?}", now.elapsed());

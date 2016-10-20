@@ -34,10 +34,9 @@ const EXPECTED: usize = 1000;
 #[test]
 fn query_single_consumer() {
 
-let _ = env_logger::init();
+    let _ = env_logger::init();
 
-let ref client = common1::GLOBAL_CLIENT;
-
+    let ref client = common1::GLOBAL_CLIENT;
     let namespace: &str = &common1::AEROSPIKE_NAMESPACE;
     let set_name = &common1::rand_str(10);
 
@@ -55,20 +54,18 @@ let ref client = common1::GLOBAL_CLIENT;
                         set_name,
                         "bin",
                         &format!("{}_{}_{}", namespace, set_name, "bin"),
-                        IndexType::Numeric);
+                        IndexType::Numeric)
+        .expect("Failed to create index");
 
-thread::sleep(Duration::from_millis(1000));
-
+    thread::sleep(Duration::from_millis(1000));
 
     let qpolicy = QueryPolicy::default();
     // let node = client.cluster.get_random_node().unwrap();
 
     let mut statement = Statement::new(namespace, set_name, None).unwrap();
-    let f = as_eq!("bin", 1);
-    statement.add_filter(f);
+    statement.add_filter(as_eq!("bin", 1));
 
-    let now = Instant::now();
-    let mut rs = client.query(&qpolicy, Arc::new(statement)).unwrap();
+    let rs = client.query(&qpolicy, Arc::new(statement)).unwrap();
     let mut count = 0;
     for res in rs.iter() {
         match res {
@@ -80,26 +77,22 @@ thread::sleep(Duration::from_millis(1000));
             Err(err) => panic!(format!("{:?}", err)),
         }
     }
-    // println!("total time: {:?}", now.elapsed());
-    // println!("records read: {}", count);
 
-assert_eq!(count, 1);
+    assert_eq!(count, 1);
 
     // Range Query
     let mut statement = Statement::new(namespace, set_name, None).unwrap();
     let f = as_range!("bin", 0, 9);
     statement.add_filter(f);
 
-    let now = Instant::now();
-    let mut rs = client.query(&qpolicy, Arc::new(statement)).unwrap();
+    let rs = client.query(&qpolicy, Arc::new(statement)).unwrap();
     let mut count = 0;
     for res in rs.iter() {
         match res {
             Ok(rec) => {
                 // println!("Record: {}", rec);
                 count += 1;
-
-let v = i64::from(rec.bins.get("bin").unwrap());
+                let v = i64::from(rec.bins.get("bin").unwrap());
 
                 assert!(v >= 0);
                 assert!(v < 10);
@@ -108,8 +101,6 @@ let v = i64::from(rec.bins.get("bin").unwrap());
             Err(err) => panic!(format!("{:?}", err)),
         }
     }
-    // println!("total time: {:?}", now.elapsed());
-    // println!("records read: {}", count);
 
     assert_eq!(count, 10);
 }
@@ -139,39 +130,35 @@ let ref client = common1::GLOBAL_CLIENT;
                         set_name,
                         "bin",
                         &format!("{}_{}_{}", namespace, set_name, "bin"),
-                        IndexType::Numeric);
+                        IndexType::Numeric)
+        .expect("Failed to create index");
 
-thread::sleep(Duration::from_millis(1000));
+    thread::sleep(Duration::from_millis(1000));
 
-
-let qpolicy = QueryPolicy::default();
+    let qpolicy = QueryPolicy::default();
 
     // Range Query
     let mut statement = Statement::new(namespace, set_name, None).unwrap();
     let f = as_range!("bin", 0, 9);
     statement.add_filter(f);
 
-    let now = Instant::now();
-    let mut rs = client.query(&qpolicy, Arc::new(statement)).unwrap();
+    let rs = client.query(&qpolicy, Arc::new(statement)).unwrap();
 
-    let mut count = Arc::new(AtomicUsize::new(0));
+    let count = Arc::new(AtomicUsize::new(0));
     let mut threads = vec![];
 
-    for i in 0..8 {
+    for _ in 0..8 {
         let count = count.clone();
         let rs = rs.clone();
         threads.push(thread::spawn(move || {
             for res in rs.iter() {
                 match res {
                     Ok(rec) => {
-                        // println!("Record: {}", rec);
                         count.fetch_add(1, Ordering::Relaxed);
-
-let v = i64::from(rec.bins.get("bin").unwrap());
+                        let v = i64::from(rec.bins.get("bin").unwrap());
 
                         assert!(v >= 0);
                         assert!(v < 10);
-
                     }
                     Err(err) => panic!(format!("{:?}", err)),
                 }
@@ -180,11 +167,9 @@ let v = i64::from(rec.bins.get("bin").unwrap());
     }
 
     for t in threads {
-        t.join();
+        t.join()
+            .expect("Failed to join threads");
     }
-
-    // println!("total time: {:?}", now.elapsed());
-    // println!("records read: {}", count.load(Ordering::Relaxed));
 
     assert_eq!(count.load(Ordering::Relaxed), 10);
 }

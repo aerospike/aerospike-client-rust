@@ -941,7 +941,7 @@ impl Buffer {
     #[inline(always)]
     pub fn skip_bytes(&mut self, count: usize) -> AerospikeResult<()> {
         self.data_offset += count;
-        Err(AerospikeError::ErrSkipMsgPackHeader())
+        Err(AerospikeError::err_skip_msg_pack_header())
     }
 
     #[inline(always)]

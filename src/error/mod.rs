@@ -52,23 +52,23 @@ impl AerospikeError {
         }
     }
 
-    pub fn ErrRecordNotFound() -> AerospikeError {
+    pub fn err_record_not_found() -> AerospikeError {
         AerospikeError::new(ResultCode::KEY_NOT_FOUND_ERROR,
                             Some("Record not found.".to_string()))
     }
 
-    pub fn ErrConnectionPoolEmpty() -> AerospikeError {
+    pub fn err_connection_pool_empty() -> AerospikeError {
         AerospikeError::new(ResultCode::NO_AVAILABLE_CONNECTIONS_TO_NODE,
                             Some("Connection pool is empty.".to_string()))
     }
 
-    pub fn ErrSkipMsgPackHeader() -> AerospikeError {
+    pub fn err_skip_msg_pack_header() -> AerospikeError {
         AerospikeError::new(ResultCode::OK,
                             Some("Msgpack header skipped. You should not see this message"
                                 .to_string()))
     }
 
-    pub fn ErrSerialize() -> AerospikeError {
+    pub fn err_serialize() -> AerospikeError {
         AerospikeError::new(ResultCode::SERIALIZE_ERROR,
                             Some("Serialization Error".to_string()))
     }

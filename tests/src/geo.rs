@@ -18,12 +18,9 @@ use std::sync::atomic::{AtomicBool, AtomicIsize, AtomicUsize, Ordering};
 
 use aerospike::*;
 
-// use log::LogLevel;
 use env_logger;
 
-// use std::collections::{HashMap, VecDeque};
 use std::sync::{RwLock, Arc, Mutex};
-// use std::vec::Vec;
 use std::thread;
 use std::time::{Instant, Duration};
 
@@ -33,12 +30,23 @@ use common1;
 fn geo_filter_macros() {
     let _ = env_logger::init();
 
-    let geo_filter = as_within_region!("bin1", "{}".to_string());
+    let geo_filter = as_within_region!("bin1", "{}");
+    assert_eq!(geo_filter.bin_name, "bin1");
+
     let geo_filter = as_within_region_in_collection!("bin1", CollectionIndexType::MapValues, "{}");
+    assert_eq!(geo_filter.bin_name, "bin1");
+
     let geo_filter = as_regions_containing_point!("bin1", "{}");
+    assert_eq!(geo_filter.bin_name, "bin1");
+
     let geo_filter = as_regions_containing_point_in_collection!("bin1",
                                                                 CollectionIndexType::MapValues,
                                                                 "{}");
+    assert_eq!(geo_filter.bin_name, "bin1");
+
     let geo_filter = as_within_radius!("bin1", 1, 3, 7);
+    assert_eq!(geo_filter.bin_name, "bin1");
+
     let geo_filter = as_within_radius_in_collection!("bin1", CollectionIndexType::List, 1, 3, 7);
+    assert_eq!(geo_filter.bin_name, "bin1");
 }

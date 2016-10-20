@@ -63,7 +63,7 @@ impl Statement {
         })
     }
 
-    pub fn add_filter(&mut self, filter: Arc<Filter>) -> AerospikeResult<()> {
+    pub fn add_filter(&mut self, filter: Arc<Filter>) {
         match self.filters {
             Some(ref mut filters) => {
                 filters.push(filter.to_owned());
@@ -74,8 +74,6 @@ impl Statement {
                 self.filters = Some(filters);
             }
         }
-
-        Ok(())
     }
 
     pub fn is_scan(&self) -> bool {

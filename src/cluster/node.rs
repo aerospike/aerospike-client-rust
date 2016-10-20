@@ -270,7 +270,7 @@ impl Node {
                     if self.inc_connections() > self.client_policy.connection_pool_size_per_node {
                         // too many connections, undo
                         self.dec_connections();
-                        return Err(AerospikeError::ErrConnectionPoolEmpty());
+                        return Err(AerospikeError::err_connection_pool_empty());
                     }
 
                     let conn = match Connection::new(self, &self.client_policy.user_password) {

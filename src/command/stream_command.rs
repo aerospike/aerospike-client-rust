@@ -210,6 +210,7 @@ impl Command for StreamCommand {
         conn.flush()
     }
 
+    #[allow(unused_variables)]
     fn prepare_buffer(&mut self, conn: &mut Connection) -> AerospikeResult<()> {
         // should be implemented downstream
         unreachable!()

@@ -311,10 +311,10 @@ impl<'a> Operation<'a> {
         }
     }
 
-    pub fn map_clear(policy: &'a MapPolicy,
+    pub fn map_clear(_policy: &'a MapPolicy,
                      bin_name: &'a str,
-                     key: &'a Value,
-                     incr: &'a Value)
+                     _key: &'a Value,
+                     _incr: &'a Value)
                      -> Self {
         Operation {
             op: operation::CDT_MAP_MODIFY,
@@ -329,7 +329,7 @@ impl<'a> Operation<'a> {
         }
     }
 
-    pub fn map_remove_by_key(policy: &'a MapPolicy,
+    pub fn map_remove_by_key(_policy: &'a MapPolicy,
                              bin_name: &'a str,
                              key: &'a Value,
                              return_type: MapReturnType)
@@ -347,7 +347,7 @@ impl<'a> Operation<'a> {
         }
     }
 
-    pub fn map_remove_by_keys(policy: &'a MapPolicy,
+    pub fn map_remove_by_keys(_policy: &'a MapPolicy,
                               bin_name: &'a str,
                               keys: &'a [Value],
                               return_type: MapReturnType)
@@ -365,7 +365,7 @@ impl<'a> Operation<'a> {
         }
     }
 
-    pub fn map_remove_by_key_range(policy: &'a MapPolicy,
+    pub fn map_remove_by_key_range(_policy: &'a MapPolicy,
                                    bin_name: &'a str,
                                    begin: &'a Value,
                                    end: &'a Value,
@@ -398,7 +398,7 @@ impl<'a> Operation<'a> {
         }
     }
 
-    pub fn map_remove_by_value(policy: &'a MapPolicy,
+    pub fn map_remove_by_value(_policy: &'a MapPolicy,
                                bin_name: &'a str,
                                value: &'a Value,
                                return_type: MapReturnType)
@@ -416,7 +416,7 @@ impl<'a> Operation<'a> {
         }
     }
 
-    pub fn map_remove_by_values(policy: &'a MapPolicy,
+    pub fn map_remove_by_values(_policy: &'a MapPolicy,
                                 bin_name: &'a str,
                                 values: &'a [Value],
                                 return_type: MapReturnType)
@@ -434,7 +434,7 @@ impl<'a> Operation<'a> {
         }
     }
 
-    pub fn map_remove_by_value_range(policy: &'a MapPolicy,
+    pub fn map_remove_by_value_range(_policy: &'a MapPolicy,
                                      bin_name: &'a str,
                                      begin: &'a Value,
                                      end: &'a Value,

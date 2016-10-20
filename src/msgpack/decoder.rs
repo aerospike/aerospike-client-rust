@@ -242,5 +242,5 @@ fn unpack_value(buf: &mut Buffer) -> AerospikeResult<Value> {
         }
     }
 
-    Err(AerospikeError::ErrSerialize())
+    Err(AerospikeError::err_serialize())
 }

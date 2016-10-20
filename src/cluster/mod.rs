@@ -130,7 +130,9 @@ impl<'a> Cluster {
             node.close();
         }
 
-        cluster.set_nodes(vec![]);
+        if let Err(err) = cluster.set_nodes(vec![]) { 
+            error!("{}", err);
+        }
     }
 
     fn tend(&'a self) -> AerospikeResult<()> {
@@ -219,7 +221,9 @@ impl<'a> Cluster {
                 count = cluster_for_tend.nodes().len() as isize;
             }
 
-            snd.send(());
+            if let Err(err) = snd.send(()) {
+                error!("{}", err);
+            }
         });
 
         try!(rx.recv());
