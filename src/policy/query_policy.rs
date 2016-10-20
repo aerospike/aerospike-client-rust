@@ -18,7 +18,7 @@ use std::error::Error;
 use std::option::Option;
 use std::u32;
 
-use policy::policy::{BasePolicy, PolicyLike};
+use policy::{BasePolicy, PolicyLike};
 use Priority;
 use RecordExistsAction;
 use GenerationPolicy;

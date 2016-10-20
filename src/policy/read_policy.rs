@@ -20,7 +20,7 @@ use Priority;
 use ConsistencyLevel;
 use Policy;
 use policy;
-use policy::policy::{BasePolicy, PolicyLike};
+use policy::{BasePolicy, PolicyLike};
 
 use error::{AerospikeError, ResultCode, AerospikeResult};
 

@@ -19,7 +19,7 @@ use std::fmt;
 // The positive numbers align with the server side file proto.h.
 pub mod ResultCode {
 
-    use error::error::{AerospikeError, ErrorType};
+    use error::{AerospikeError, ErrorType};
 
     // Too many filters were set on the statement
     pub const TOO_MANY_FILTERS_ERROR: isize = -11;

@@ -32,12 +32,12 @@ use cluster::{Node, Cluster};
 use common::{Key, Record, OperationType, FieldType, ParticleType, Bin, Operation};
 use policy::{ClientPolicy, WritePolicy, Policy, ConsistencyLevel};
 use common::operation;
-use command::command::Command;
+use command::Command;
 use command::single_command::SingleCommand;
 use command::read_command::ReadCommand;
 use command::buffer;
 use command::buffer::Buffer;
-use value::value;
+use value;
 
 pub struct ExecuteUDFCommand<'a> {
     pub read_command: ReadCommand<'a>,

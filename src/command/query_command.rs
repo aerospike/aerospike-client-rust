@@ -32,12 +32,12 @@ use cluster::{Node, Cluster};
 use common::{Key, Record, OperationType, FieldType, ParticleType, Bin, Recordset, Statement};
 use policy::{ClientPolicy, QueryPolicy};
 use common::operation;
-use command::command::Command;
+use command::Command;
 use command::single_command::SingleCommand;
 use command::stream_command::StreamCommand;
 use command::buffer;
 use command::buffer::Buffer;
-use value::value;
+use value;
 
 pub struct QueryCommand<'a> {
     stream_command: StreamCommand,

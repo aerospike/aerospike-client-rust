@@ -35,7 +35,7 @@ use policy::{ClientPolicy, WritePolicy, ReadPolicy, Policy, ConsistencyLevel, Co
              GenerationPolicy, RecordExistsAction, ScanPolicy, QueryPolicy};
 use common::operation::Operation;
 use common::operation;
-use command::command::Command;
+use command::Command;
 use msgpack::encoder;
 
 // Flags commented out are not supported by cmd client.

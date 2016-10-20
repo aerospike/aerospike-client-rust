@@ -34,11 +34,11 @@ use common::{Key, Record, OperationType, FieldType, ParticleType};
 use policy::{ClientPolicy, ReadPolicy, Policy, ConsistencyLevel};
 use common::operation;
 use common::recordset::Recordset;
-use command::command::Command;
+use command::Command;
 use command::single_command::SingleCommand;
 use command::buffer;
 use command::buffer::Buffer;
-use value::value;
+use value;
 
 pub struct StreamCommand {
     node: Arc<Node>,

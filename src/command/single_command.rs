@@ -36,7 +36,7 @@ use cluster::{Node, Cluster};
 use common::{Key, Record, OperationType, FieldType, ParticleType};
 use policy::{ClientPolicy, ReadPolicy, Policy, ConsistencyLevel};
 use common::operation;
-use command::command::Command;
+use command::Command;
 use command::buffer::Buffer;
 
 pub struct SingleCommand<'a> {
