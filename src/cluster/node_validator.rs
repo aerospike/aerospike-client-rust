@@ -12,15 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::ffi::{CString, CStr};
-
-use std::rc::Rc;
-use std::cell::RefCell;
-use std::error::Error;
 use std::time::Duration;
 use std::vec::Vec;
-use std::sync::{Arc, Mutex};
-use std::net::{IpAddr, SocketAddr, ToSocketAddrs, TcpStream};
+use std::net::{IpAddr, ToSocketAddrs};
 use std::str::FromStr;
 use std::str;
 

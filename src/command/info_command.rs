@@ -13,11 +13,10 @@
 // License for the specific language governing permissions and limitations under
 // the License.
 
-use std::io::{Cursor, Read, Write};
+use std::io::{Cursor, Write};
 use std::collections::HashMap;
 use byteorder::{NetworkEndian, ReadBytesExt, WriteBytesExt};
 use std::str;
-use std::sync::{Arc, Mutex};
 
 use net::Connection;
 use error::{AerospikeError, ResultCode, AerospikeResult};

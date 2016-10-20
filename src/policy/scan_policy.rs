@@ -13,16 +13,7 @@
 // License for the specific language governing permissions and limitations under
 // the License.
 
-use std::time::Duration;
-use std::error::Error;
-use std::option::Option;
-use std::u32;
-
 use policy::{BasePolicy, PolicyLike};
-use Priority;
-use RecordExistsAction;
-use GenerationPolicy;
-use CommitLevel;
 
 #[derive(Debug,Clone)]
 pub struct ScanPolicy {

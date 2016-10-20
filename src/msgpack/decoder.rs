@@ -15,17 +15,7 @@
 
 extern crate core;
 
-use std::{i8, i16, i32, i64};
-use std::str;
-use std::fmt;
-use std::io::Write;
 use std::collections::HashMap;
-
-use byteorder::{NetworkEndian, ReadBytesExt, WriteBytesExt, ByteOrder};
-
-use crypto::ripemd160::Ripemd160;
-use crypto::digest::Digest;
-
 use std::vec::Vec;
 
 use common::ParticleType;

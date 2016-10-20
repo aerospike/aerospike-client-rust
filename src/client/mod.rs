@@ -13,15 +13,10 @@
 // License for the specific language governing permissions and limitations under
 // the License.
 
-use log::LogLevel;
-use env_logger;
-
-use std::collections::{HashMap, VecDeque};
-use std::sync::{RwLock, Arc, Mutex};
+use std::sync::Arc;
 use std::vec::Vec;
 use std::thread;
 use std::str;
-use std::time::{Instant, Duration};
 use std::fs::File;
 use std::io::prelude::*;
 use std::path::Path;

@@ -12,30 +12,18 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::sync::Arc;
-use std::io::Write;
+use std::time::Duration;
 
-use std::thread;
-use std::time::{Instant, Duration};
+use byteorder::{NetworkEndian, ByteOrder};
 
-use byteorder::{NetworkEndian, ReadBytesExt, WriteBytesExt, ByteOrder};
-
-use net::Connection;
 use error::{AerospikeError, ResultCode, AerospikeResult};
 use value::Value;
 
-use net::Host;
-use cluster::node_validator::NodeValidator;
-use cluster::partition_tokenizer::PartitionTokenizer;
-use cluster::partition::Partition;
-use cluster::{Node, Cluster};
-use common::{Key, Record, OperationType, FieldType, ParticleType, Bin, Statement,
-             CollectionIndexType};
-use policy::{ClientPolicy, WritePolicy, ReadPolicy, Policy, ConsistencyLevel, CommitLevel,
+use common::{Key, OperationType, FieldType, Bin, Statement, CollectionIndexType};
+use policy::{WritePolicy, ReadPolicy, ConsistencyLevel, CommitLevel,
              GenerationPolicy, RecordExistsAction, ScanPolicy, QueryPolicy};
 use common::operation::Operation;
 use common::operation;
-use command::Command;
 use msgpack::encoder;
 
 // Flags commented out are not supported by cmd client.

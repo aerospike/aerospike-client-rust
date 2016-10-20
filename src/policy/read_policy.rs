@@ -13,22 +13,14 @@
 // License for the specific language governing permissions and limitations under
 // the License.
 
-use std::time::{Duration, Instant};
-use std::error::Error;
-use std::option::Option;
+use std::time::Duration;
 use Priority;
 use ConsistencyLevel;
-use Policy;
-use policy;
-use policy::{BasePolicy, PolicyLike};
-
-use error::{AerospikeError, ResultCode, AerospikeResult};
+use policy::BasePolicy;
 
 // ReadPolicy excapsulates parameters for transaction policy attributes
 // used in all database operation calls.
 pub type ReadPolicy = BasePolicy;
-
-
 
 impl Default for ReadPolicy {
     fn default() -> ReadPolicy {

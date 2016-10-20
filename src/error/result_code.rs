@@ -13,8 +13,6 @@
 // License for the specific language governing permissions and limitations under
 // the License.
 
-use std::fmt;
-
 // ResultCode signifies the database operation error codes.
 // The positive numbers align with the server side file proto.h.
 pub mod ResultCode {

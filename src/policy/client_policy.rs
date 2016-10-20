@@ -14,10 +14,6 @@
 
 use std::time::Duration;
 use std::collections::HashMap;
-use std::thread;
-
-use crypto::bcrypt_pbkdf::bcrypt_pbkdf;
-use rustc_serialize::base64::{ToBase64, FromBase64, STANDARD};
 
 use error::AerospikeResult;
 use command::admin_command::AdminCommand;

@@ -29,19 +29,12 @@ pub mod query_command;
 pub mod admin_command;
 
 use std::sync::Arc;
-use std::time::{Instant, Duration};
+use std::time::Duration;
 
 use net::Connection;
-use error::{AerospikeError, ResultCode, AerospikeResult};
+use error::AerospikeResult;
 
-use net::Host;
-use cluster::node_validator::NodeValidator;
-use cluster::partition_tokenizer::PartitionTokenizer;
-use cluster::partition::Partition;
-use cluster::{Node, Cluster};
-use common::{Key, Record};
-use policy::{ClientPolicy, ReadPolicy, Policy};
-use command::buffer::Buffer;
+use cluster::Node;
 
 // Command interface describes all commands available
 pub trait Command {

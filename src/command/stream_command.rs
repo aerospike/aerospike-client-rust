@@ -13,31 +13,20 @@
 // limitations under the License.
 
 use std::sync::Arc;
-use std::io::Write;
 use std::collections::HashMap;
-use std::time::{Instant, Duration};
+use std::time::Duration;
 use std::str;
 use std::thread;
-
-use byteorder::{NetworkEndian, ReadBytesExt, WriteBytesExt, ByteOrder};
 
 use net::Connection;
 use error::{AerospikeError, ResultCode, AerospikeResult};
 use value::Value;
 
-use net::Host;
-use cluster::node_validator::NodeValidator;
-use cluster::partition_tokenizer::PartitionTokenizer;
-use cluster::partition::Partition;
-use cluster::{Node, Cluster};
-use common::{Key, Record, OperationType, FieldType, ParticleType};
-use policy::{ClientPolicy, ReadPolicy, Policy, ConsistencyLevel};
-use common::operation;
+use cluster::Node;
+use common::{Key, Record, FieldType};
 use common::recordset::Recordset;
 use command::Command;
-use command::single_command::SingleCommand;
 use command::buffer;
-use command::buffer::Buffer;
 use value;
 
 pub struct StreamCommand {

@@ -16,21 +16,14 @@
 extern crate core;
 extern crate rand;
 
-use std::fmt;
-
-use std::collections::HashMap;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicIsize, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::thread;
 
 use crossbeam::sync::MsQueue;
 use rand::Rng;
 
-use value::Value;
-use cluster::node::Node;
-use common::key::Key;
 use common::record::Record;
-use error::{AerospikeResult, ResultCode, AerospikeError};
+use error::AerospikeResult;
 
 // #[derive(Debug)]
 pub struct Recordset {

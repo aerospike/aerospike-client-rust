@@ -16,22 +16,12 @@ extern crate rustc_serialize;
 
 use std::str;
 use std::collections::HashMap;
-use std::rc::Rc;
-use std::cell::RefCell;
-use std::error::Error;
-use std::time::Duration;
 use std::vec::Vec;
-use std::sync::{Arc, Mutex, RwLock};
-use net::Host;
-use std::io::Cursor;
+use std::sync::{Arc, RwLock};
 
-use byteorder::{BigEndian, ReadBytesExt};
 use rustc_serialize::base64::FromBase64;
 
-use Cluster;
 use Node;
-use common::Key;
-use Value;
 use net::Connection;
 use command::info_command::Message;
 use error::{AerospikeError, ResultCode, AerospikeResult};

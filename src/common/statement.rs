@@ -13,7 +13,6 @@
 // License for the specific language governing permissions and limitations under
 // the License.
 
-use std::vec;
 use std::sync::Arc;
 
 use value::Value;

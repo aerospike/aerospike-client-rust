@@ -14,30 +14,19 @@
 
 extern crate core;
 
-use core::borrow::Borrow;
-
 use std::sync::Arc;
-use std::io::Write;
 
 use std::thread;
-use std::time::{Instant, Duration};
-
-use byteorder::{NetworkEndian, ReadBytesExt, WriteBytesExt, ByteOrder};
+use std::time::Instant;
 
 use net::Connection;
 use error::{AerospikeError, ResultCode, AerospikeResult};
-use value::Value;
 
-use net::Host;
-use cluster::node_validator::NodeValidator;
-use cluster::partition_tokenizer::PartitionTokenizer;
 use cluster::partition::Partition;
 use cluster::{Node, Cluster};
-use common::{Key, Record, OperationType, FieldType, ParticleType};
-use policy::{ClientPolicy, ReadPolicy, Policy, ConsistencyLevel};
-use common::operation;
+use common::Key;
+use policy::Policy;
 use command::Command;
-use command::buffer::Buffer;
 
 pub struct SingleCommand<'a> {
     cluster: Arc<Cluster>,

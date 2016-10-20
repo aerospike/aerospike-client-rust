@@ -13,10 +13,11 @@
 // License for the specific language governing permissions and limitations under
 // the License.
 
+#![allow(dead_code)]
+
 use std::collections::HashMap;
 
 use value::Value;
-use common::Bin;
 use common::operation;
 use common::operation::*;
 use error::AerospikeResult;

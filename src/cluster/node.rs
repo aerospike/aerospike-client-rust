@@ -13,14 +13,10 @@
 // License for the specific language governing permissions and limitations under
 // the License.
 
-use std::rc::Rc;
 use std::str::FromStr;
 use std::collections::{HashMap, VecDeque};
-use std::sync::{RwLock, MutexGuard, Arc, Mutex};
-use std::error::Error;
-use std::num::ParseIntError;
-use std::cell::RefCell;
-use std::time::{Instant, Duration};
+use std::sync::{RwLock, Arc};
+use std::time::Duration;
 use std::sync::atomic::{AtomicBool, AtomicIsize, AtomicUsize, Ordering};
 use std::fmt;
 
@@ -28,7 +24,6 @@ use net::{Host, Connection};
 use command::info_command::Message;
 use error::{AerospikeError, ResultCode, AerospikeResult};
 use policy::ClientPolicy;
-use Cluster;
 use cluster::node_validator::NodeValidator;
 
 pub const PARTITIONS: usize = 4096;
@@ -330,11 +325,6 @@ impl Node {
     pub fn aliases(&self) -> Vec<Host> {
         let aliases = self.aliases.read().unwrap();
         aliases.to_vec()
-    }
-
-    fn set_aliases(&mut self, new_aliases: &[Host]) {
-        let mut aliases = self.aliases.write().unwrap();
-        *aliases = new_aliases.to_vec();
     }
 
     pub fn add_alias(&self, alias: Host) {

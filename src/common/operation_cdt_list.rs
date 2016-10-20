@@ -14,7 +14,6 @@
 // the License.
 
 use value::Value;
-use common::Bin;
 use common::operation;
 use common::operation::*;
 

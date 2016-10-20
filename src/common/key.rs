@@ -15,13 +15,8 @@
 
 extern crate core;
 
-use std::fmt;
-
-
-use error::{AerospikeResult, ResultCode, AerospikeError};
+use error::AerospikeResult;
 use value::Value;
-use value;
-use common::ParticleType;
 
 use crypto::ripemd160::Ripemd160;
 use crypto::digest::Digest;

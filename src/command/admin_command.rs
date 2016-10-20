@@ -12,33 +12,19 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+#![allow(dead_code)]
+
 use std::sync::Arc;
-use std::io::Write;
-use std::collections::HashMap;
-use std::time::{Instant, Duration};
 use std::str;
 
-use byteorder::{NetworkEndian, ReadBytesExt, WriteBytesExt, ByteOrder};
 use pwhash::bcrypt;
 use pwhash::bcrypt::{BcryptVariant, BcryptSetup};
 
 use net::Connection;
-use error::{AerospikeError, ResultCode, AerospikeResult};
-use value::Value;
+use error::{AerospikeError, AerospikeResult};
 
-use net::Host;
-use cluster::node_validator::NodeValidator;
-use cluster::partition_tokenizer::PartitionTokenizer;
-use cluster::partition::Partition;
 use cluster::{Node, Cluster};
-use common::{Key, Record, OperationType, FieldType, ParticleType, Bin, User};
-use policy::{ClientPolicy, WritePolicy, Policy, ConsistencyLevel, AdminPolicy};
-use common::operation;
-use command::Command;
-use command::single_command::SingleCommand;
-use command::buffer;
-use command::buffer::Buffer;
-use value;
+use policy::AdminPolicy;
 
 
 // Commands

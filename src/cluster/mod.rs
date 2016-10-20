@@ -26,8 +26,7 @@ use self::partition_tokenizer::PartitionTokenizer;
 use std::collections::HashMap;
 use std::vec::Vec;
 use std::sync::{RwLock, Arc, Mutex};
-use std::error::Error;
-use std::sync::atomic::{AtomicBool, AtomicIsize, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicIsize, Ordering};
 use std::thread;
 use std::sync::mpsc::{Sender, Receiver, TryRecvError};
 use std::sync::mpsc;
@@ -232,22 +231,12 @@ impl<'a> Cluster {
         &self.client_policy
     }
 
-    fn seeds(&self) -> AerospikeResult<Vec<Host>> {
-        let seeds = self.seeds.read().unwrap();
-        Ok(seeds.to_vec())
-    }
-
     pub fn add_seeds(&self, new_seeds: &[Host]) -> AerospikeResult<()> {
         let mut seeds = self.seeds.write().unwrap();
         seeds.extend_from_slice(new_seeds);
 
         Ok(())
     }
-
-    // pub fn find_alias(&self, host: &Host) -> AerospikeResult<Option<&Node>> {
-    // 	let aliases = self.aliases.read().unwrap();
-    // 	Ok(aliases.get(host).map_or(None, |n| Some(n.clone())))
-    // }
 
     pub fn alias_exists(&self, host: &Host) -> AerospikeResult<bool> {
         let aliases = self.aliases.read().unwrap();

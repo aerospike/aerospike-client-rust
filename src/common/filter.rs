@@ -15,12 +15,11 @@
 
 use std::sync::Arc;
 
-use net::Connection;
 use value::Value;
 use common::particle_type::ParticleType;
 use common::collection_index_type::CollectionIndexType;
 use command::buffer::Buffer;
-use error::{AerospikeError, ResultCode, AerospikeResult};
+use error::AerospikeResult;
 
 #[derive(Debug,Clone)]
 pub struct Filter {

@@ -19,9 +19,8 @@ use value::Value;
 use common::Bin;
 
 use msgpack::encoder;
-use command::buffer;
 use command::buffer::Buffer;
-use error::{AerospikeError, ResultCode, AerospikeResult};
+use error::AerospikeResult;
 use common::ParticleType;
 
 #[derive(Debug,Clone)]

@@ -40,9 +40,7 @@ pub use self::query_policy::QueryPolicy;
 pub use self::admin_policy::AdminPolicy;
 
 use std::time::{Duration, Instant};
-use std::error::Error;
 use std::option::Option;
-use error::{AerospikeError, ResultCode, AerospikeResult};
 
 pub trait Policy {
     fn priority(&self) -> &Priority;

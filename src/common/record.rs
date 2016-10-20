@@ -15,15 +15,11 @@
 
 extern crate core;
 
-use std::fmt;
-
 use std::collections::HashMap;
-use std::sync::Arc;
 
 use value::Value;
-use cluster::node::Node;
 use common::key::Key;
-use error::{AerospikeResult, ResultCode, AerospikeError};
+use error::AerospikeResult;
 
 #[derive(Debug)]
 pub struct Record {

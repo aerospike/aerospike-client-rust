@@ -20,9 +20,8 @@ pub mod result_code;
 pub use self::result_code::ResultCode;
 
 use std::error;
-use std::convert;
 use std::string::FromUtf8Error;
-use std::str::{from_utf8, Utf8Error};
+use std::str::Utf8Error;
 
 use std::fmt;
 use std::io;

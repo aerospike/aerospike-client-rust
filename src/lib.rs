@@ -1,7 +1,3 @@
-#![allow(dead_code)]
-#![allow(unused_imports)]
-// #![allow(non_camel_case_types)]
-
 #[macro_use]
 extern crate log;
 extern crate env_logger;
@@ -14,9 +10,6 @@ extern crate crossbeam;
 extern crate rand;
 extern crate threadpool;
 extern crate pwhash;
-
-use command::info_command::*;
-use msgpack::encoder::*;
 
 pub use value::Value;
 pub use policy::{Policy, ClientPolicy, ReadPolicy, WritePolicy, Priority, ConsistencyLevel,

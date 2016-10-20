@@ -15,14 +15,12 @@
 
 extern crate core;
 
-use std::{str, f32, f64};
-use std::fmt;
+use std::{f32, f64};
 use std::mem;
-use std::io::Write;
 use std::collections::HashMap;
-use std::hash::{Hash, Hasher, SipHasher};
+use std::hash::{Hash, Hasher};
 
-use byteorder::{NetworkEndian, ReadBytesExt, WriteBytesExt, ByteOrder};
+use byteorder::{NetworkEndian, ByteOrder};
 
 use crypto::ripemd160::Ripemd160;
 use crypto::digest::Digest;
@@ -30,7 +28,7 @@ use crypto::digest::Digest;
 use std::vec::Vec;
 
 use common::ParticleType;
-use error::{AerospikeResult, ResultCode, AerospikeError};
+use error::AerospikeResult;
 use command::buffer::Buffer;
 use msgpack::encoder::pack_value;
 use msgpack::decoder::*;

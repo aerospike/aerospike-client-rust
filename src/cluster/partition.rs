@@ -12,23 +12,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::rc::Rc;
-use std::cell::RefCell;
-use std::error::Error;
-use std::time::Duration;
-use std::vec::Vec;
-use std::sync::Arc;
-use net::Host;
 use std::io::Cursor;
 use std::fmt;
 
-use byteorder::{BigEndian, LittleEndian, ReadBytesExt};
+use byteorder::{LittleEndian, ReadBytesExt};
 
-use Cluster;
 use cluster::node;
 use common::Key;
-use Value;
-use error::AerospikeResult;
 
 // Validates a Database server node
 #[derive(Debug, Clone)]

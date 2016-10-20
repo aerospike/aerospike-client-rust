@@ -13,17 +13,14 @@
 // License for the specific language governing permissions and limitations under
 // the License.
 
-use std::sync::{Mutex, Arc};
 use std::io::prelude::*;
 use std::net::TcpStream;
 use std::time::{Instant, Duration};
-use std::io::{Error, ErrorKind};
 use std::net::Shutdown;
 use std::ops::Add;
-use std::default::Default;
 
 use policy::client_policy::ClientPolicy;
-use error::{AerospikeResult, ResultCode, AerospikeError};
+use error::AerospikeResult;
 use cluster::node::Node;
 use Host;
 use command::buffer::Buffer;
