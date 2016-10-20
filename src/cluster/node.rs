@@ -24,7 +24,6 @@ use std::time::{Instant, Duration};
 use std::sync::atomic::{AtomicBool, AtomicIsize, AtomicUsize, Ordering};
 use std::fmt;
 
-use internal::wait_group::WaitGroup;
 use net::{Host, Connection};
 use command::info_command::Message;
 use error::{AerospikeError, ResultCode, AerospikeResult};

@@ -38,7 +38,3 @@ pub mod net;
 pub mod cluster;
 pub mod error;
 pub mod client;
-
-use internal::wait_group::WaitGroup;
-
-mod internal;

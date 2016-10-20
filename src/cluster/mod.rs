@@ -33,7 +33,6 @@ use std::sync::mpsc::{Sender, Receiver, TryRecvError};
 use std::sync::mpsc;
 use std::time::{Instant, Duration};
 
-use internal::wait_group::WaitGroup;
 use net::Host;
 
 use policy::ClientPolicy;
@@ -61,7 +60,6 @@ pub struct Cluster {
     client_policy: ClientPolicy,
 
     // mutex:       RWLock,
-    // wg_tend:      WaitGroup,
     tend_channel: Mutex<Sender<()>>,
     closed: AtomicBool,
 }

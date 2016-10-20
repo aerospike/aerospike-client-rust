@@ -29,7 +29,6 @@ use std::path::Path;
 use rustc_serialize::base64::{ToBase64, FromBase64, STANDARD};
 use threadpool::ThreadPool;
 
-use internal::wait_group::WaitGroup;
 use net::Host;
 use cluster::{Cluster, Node};
 use common::operation;
