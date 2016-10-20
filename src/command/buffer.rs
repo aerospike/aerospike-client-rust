@@ -1068,7 +1068,7 @@ impl Buffer {
     #[inline(always)]
     pub fn read_str(&mut self, len: usize) -> AerospikeResult<String> {
         let s = try!(String::from_utf8(self.data_buffer[self.data_offset..self.data_offset + len]
-                                           .to_vec()));
+            .to_vec()));
         self.data_offset += len;
         Ok(s)
     }

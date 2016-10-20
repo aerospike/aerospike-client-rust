@@ -106,11 +106,8 @@ impl Client {
                        key: &'a Key,
                        bins: &'a [&'b Bin])
                        -> AerospikeResult<()> {
-        let mut command = try!(WriteCommand::new(policy,
-                                                 self.cluster.clone(),
-                                                 key,
-                                                 bins,
-                                                 operation::WRITE));
+        let mut command =
+            try!(WriteCommand::new(policy, self.cluster.clone(), key, bins, operation::WRITE));
         command.execute()
     }
 
@@ -119,11 +116,8 @@ impl Client {
                        key: &'a Key,
                        bins: &'a [&'b Bin])
                        -> AerospikeResult<()> {
-        let mut command = try!(WriteCommand::new(policy,
-                                                 self.cluster.clone(),
-                                                 key,
-                                                 bins,
-                                                 operation::ADD));
+        let mut command =
+            try!(WriteCommand::new(policy, self.cluster.clone(), key, bins, operation::ADD));
         command.execute()
     }
 
@@ -132,11 +126,8 @@ impl Client {
                           key: &'a Key,
                           bins: &'a [&'b Bin])
                           -> AerospikeResult<()> {
-        let mut command = try!(WriteCommand::new(policy,
-                                                 self.cluster.clone(),
-                                                 key,
-                                                 bins,
-                                                 operation::APPEND));
+        let mut command =
+            try!(WriteCommand::new(policy, self.cluster.clone(), key, bins, operation::APPEND));
         command.execute()
     }
 
@@ -145,11 +136,8 @@ impl Client {
                            key: &'a Key,
                            bins: &'a [&'b Bin])
                            -> AerospikeResult<()> {
-        let mut command = try!(WriteCommand::new(policy,
-                                                 self.cluster.clone(),
-                                                 key,
-                                                 bins,
-                                                 operation::PREPEND));
+        let mut command =
+            try!(WriteCommand::new(policy, self.cluster.clone(), key, bins, operation::PREPEND));
         command.execute()
     }
 
@@ -211,11 +199,11 @@ impl Client {
                                            Some(format!("UDF Registration failed: {}\nFile: \
                                                          {}\nLine: {}\nMessage: {}",
                                                         response.get("error")
-                                                                .unwrap_or(&"-".to_string()),
+                                                            .unwrap_or(&"-".to_string()),
                                                         response.get("file")
-                                                                .unwrap_or(&"-".to_string()),
+                                                            .unwrap_or(&"-".to_string()),
                                                         response.get("line")
-                                                                .unwrap_or(&"-".to_string()),
+                                                            .unwrap_or(&"-".to_string()),
                                                         msg))));
         }
 
@@ -318,13 +306,9 @@ impl Client {
             let bin_names = bin_names.to_owned();
 
             thread::spawn(move || {
-                let mut command = ScanCommand::new(&policy,
-                                                   node,
-                                                   &namespace,
-                                                   &set_name,
-                                                   &bin_names,
-                                                   recordset)
-                                      .unwrap();
+                let mut command =
+                    ScanCommand::new(&policy, node, &namespace, &set_name, &bin_names, recordset)
+                        .unwrap();
                 command.execute().unwrap();
             });
 
@@ -364,7 +348,7 @@ impl Client {
                                                &set_name,
                                                &bin_names,
                                                t_recordset)
-                                  .unwrap();
+                .unwrap();
             command.execute().unwrap();
         });
 

@@ -111,14 +111,14 @@ impl Statement {
                                                Some("Too many filters set in the statement. \
                                                      Aerospike server supports only one filter \
                                                      per query ."
-                                                        .to_string())));
+                                                   .to_string())));
             }
         }
 
         if self.set_name == "" {
             return Err(AerospikeError::new(ResultCode::PARAMETER_ERROR,
                                            Some("Set name cannot be empty in the statement."
-                                                    .to_string())));
+                                               .to_string())));
         }
 
         if let Some(ref index_name) = self.index_name {
@@ -126,7 +126,7 @@ impl Statement {
                 return Err(AerospikeError::new(ResultCode::PARAMETER_ERROR,
                                                Some("Index name cannot be empty in the \
                                                      statement."
-                                                        .to_string())));
+                                                   .to_string())));
             }
         }
 
@@ -135,14 +135,14 @@ impl Statement {
                 return Err(AerospikeError::new(ResultCode::PARAMETER_ERROR,
                                                Some("Package name cannot be empty in the \
                                                      statement."
-                                                        .to_string())));
+                                                   .to_string())));
             }
 
             if agg.function_name == "" {
                 return Err(AerospikeError::new(ResultCode::PARAMETER_ERROR,
                                                Some("Function name cannot be empty in the \
                                                      statement."
-                                                        .to_string())));
+                                                   .to_string())));
             }
 
         }

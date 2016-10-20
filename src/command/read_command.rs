@@ -184,11 +184,8 @@ impl<'a> Command for ReadCommand<'a> {
 
         if result_code != 0 {
             if result_code == ResultCode::UDF_BAD_RESPONSE {
-                let record = try!(self.parse_record(conn,
-                                                    op_count,
-                                                    field_count,
-                                                    generation,
-                                                    expiration));
+                let record =
+                    try!(self.parse_record(conn, op_count, field_count, generation, expiration));
                 let err = self.handle_udf_error(result_code, &record.bins);
                 warn!("UDF execution error: {}", err);
                 return Err(err);
@@ -203,11 +200,8 @@ impl<'a> Command for ReadCommand<'a> {
             return Ok(());
         }
 
-        self.record = Some(try!(self.parse_record(conn,
-                                                  op_count,
-                                                  field_count,
-                                                  generation,
-                                                  expiration)));
+        self.record =
+            Some(try!(self.parse_record(conn, op_count, field_count, generation, expiration)));
         Ok(())
     }
 }

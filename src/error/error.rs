@@ -65,7 +65,7 @@ impl AerospikeError {
     pub fn ErrSkipMsgPackHeader() -> AerospikeError {
         AerospikeError::new(ResultCode::OK,
                             Some("Msgpack header skipped. You should not see this message"
-                                     .to_string()))
+                                .to_string()))
     }
 
     pub fn ErrSerialize() -> AerospikeError {

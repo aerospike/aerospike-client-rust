@@ -97,7 +97,7 @@ impl<'a> SingleCommand<'a> {
                                                    Some("command execution timed out: Exceeded \
                                                          number of retries. See \
                                                          `Policy.max_retries`"
-                                                            .to_string())));
+                                                       .to_string())));
                 }
             }
 
@@ -172,6 +172,6 @@ impl<'a> SingleCommand<'a> {
         Err(AerospikeError::new(ResultCode::TIMEOUT,
                                 Some("command execution timed out: Exceeded number of retries. \
                                       See `Policy.max_retries`"
-                                         .to_string())))
+                                    .to_string())))
     }
 }
