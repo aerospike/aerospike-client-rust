@@ -212,68 +212,42 @@ impl<'a> Operation<'a> {
                         key: &'a Value,
                         val: &'a Value)
                         -> Self {
-        match policy.write_mode_item {
-            CDT_MAP_REPLACE => {
-                Operation {
-                    op: operation::CDT_MAP_MODIFY,
-                    cdt_op: Some(policy.write_mode_item),
-                    cdt_args: None,
-                    cdt_list_values: None,
-                    cdt_map_entry: Some((key, val)),
-                    cdt_map_values: None,
-                    bin_name: bin_name,
-                    bin_value: operation::NIL_VALUE,
-                    header_only: false,
-                }
-            }
-            _ => {
-                Operation {
-                    op: operation::CDT_MAP_MODIFY,
-                    cdt_op: Some(policy.write_mode_item),
-                    cdt_args: Some(vec![Value::from(policy.order.clone() as u8)]),
-                    cdt_list_values: None,
-                    cdt_map_entry: Some((key, val)),
-                    cdt_map_values: None,
-                    bin_name: bin_name,
-                    bin_value: operation::NIL_VALUE,
-                    header_only: false,
-                }
-            }
+        let mut op = Operation {
+            op: operation::CDT_MAP_MODIFY,
+            cdt_op: Some(policy.write_mode_item),
+            cdt_args: None,
+            cdt_list_values: None,
+            cdt_map_entry: Some((key, val)),
+            cdt_map_values: None,
+            bin_name: bin_name,
+            bin_value: operation::NIL_VALUE,
+            header_only: false,
+        };
+        if policy.write_mode_item != CDT_MAP_REPLACE {
+            op.cdt_args = Some(vec![Value::from(policy.order.clone() as u8)]);
         }
+        op
     }
 
     pub fn map_put_items(policy: &'a MapPolicy,
                          bin_name: &'a str,
                          items: &'a HashMap<Value, Value>)
                          -> Self {
-        match policy.write_mode_items {
-            CDT_MAP_REPLACE_ITEMS => {
-                Operation {
-                    op: operation::CDT_MAP_MODIFY,
-                    cdt_op: Some(policy.write_mode_items),
-                    cdt_args: None,
-                    cdt_list_values: None,
-                    cdt_map_entry: None,
-                    cdt_map_values: Some(items),
-                    bin_name: bin_name,
-                    bin_value: operation::NIL_VALUE,
-                    header_only: false,
-                }
-            }
-            _ => {
-                Operation {
-                    op: operation::CDT_MAP_MODIFY,
-                    cdt_op: Some(policy.write_mode_items),
-                    cdt_args: Some(vec![Value::from(policy.order.clone() as u8)]),
-                    cdt_list_values: None,
-                    cdt_map_entry: None,
-                    cdt_map_values: Some(items),
-                    bin_name: bin_name,
-                    bin_value: operation::NIL_VALUE,
-                    header_only: false,
-                }
-            }
+        let mut op = Operation {
+            op: operation::CDT_MAP_MODIFY,
+            cdt_op: Some(policy.write_mode_items),
+            cdt_args: None,
+            cdt_list_values: None,
+            cdt_map_entry: None,
+            cdt_map_values: Some(items),
+            bin_name: bin_name,
+            bin_value: operation::NIL_VALUE,
+            header_only: false,
+        };
+        if policy.write_mode_items != CDT_MAP_REPLACE_ITEMS {
+            op.cdt_args = Some(vec![Value::from(policy.order.clone() as u8)]);
         }
+        op
     }
 
     pub fn map_increment_value(policy: &'a MapPolicy,
