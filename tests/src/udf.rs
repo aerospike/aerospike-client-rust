@@ -16,24 +16,10 @@
 extern crate aerospike;
 extern crate env_logger;
 
-use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, AtomicIsize, AtomicUsize, Ordering};
-
-use aerospike::{Client, Host};
-use aerospike::{ClientPolicy, ReadPolicy, WritePolicy, ScanPolicy};
-use aerospike::{Key, Bin, Recordset};
-use aerospike::Operation;
+use aerospike::WritePolicy;
+use aerospike::{Key, Bin};
 use aerospike::UDFLang;
 use aerospike::value::*;
-
-// use log::LogLevel;
-// use env_logger;
-
-// use std::collections::{HashMap, VecDeque};
-use std::sync::{RwLock, Arc, Mutex};
-// use std::vec::Vec;
-use std::thread;
-use std::time::{Instant, Duration};
 
 use common1;
 

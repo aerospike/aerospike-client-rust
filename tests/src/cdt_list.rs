@@ -13,24 +13,12 @@
 // License for the specific language governing permissions and limitations under
 // the License.
 
-use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, AtomicIsize, AtomicUsize, Ordering};
-
-use aerospike::{Client, Host};
-use aerospike::{ClientPolicy, ReadPolicy, WritePolicy, ScanPolicy};
-use aerospike::{Key, Bin, Recordset};
+use aerospike::{ReadPolicy, WritePolicy};
+use aerospike::{Key, Bin};
 use aerospike::Operation;
-use aerospike::UDFLang;
 use aerospike::value::*;
 
-// use log::LogLevel;
 use env_logger;
-
-// use std::collections::{HashMap, VecDeque};
-use std::sync::{RwLock, Arc, Mutex};
-// use std::vec::Vec;
-use std::thread;
-use std::time::{Instant, Duration};
 
 use common1;
 

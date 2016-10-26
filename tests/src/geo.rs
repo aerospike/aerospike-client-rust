@@ -13,23 +13,12 @@
 // License for the specific language governing permissions and limitations under
 // the License.
 
-use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, AtomicIsize, AtomicUsize, Ordering};
-
 use aerospike::*;
 
-use env_logger;
-
-use std::sync::{RwLock, Arc, Mutex};
-use std::thread;
-use std::time::{Instant, Duration};
-
-use common1;
+use std::sync::Arc;
 
 #[test]
 fn geo_filter_macros() {
-    let _ = env_logger::init();
-
     let geo_filter = as_within_region!("bin1", "{}");
     assert_eq!(geo_filter.bin_name, "bin1");
 
