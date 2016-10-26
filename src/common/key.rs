@@ -61,8 +61,14 @@ impl<'a> Key {
 
 impl<'a> core::fmt::Display for Key {
     fn fmt(&self, f: &mut core::fmt::Formatter) -> Result<(), core::fmt::Error> {
-        try!(self.namespace.fmt(f));
-        Ok(())
+        match self.user_key {
+            Some(ref value) => { 
+                write!(f, "<Key: ns=\"{}\", set=\"{}\", key=\"{}\">", &self.namespace, &self.set_name, value)
+            }
+            None => {
+                write!(f, "<Key: ns=\"{}\", set=\"{}\", digest=\"{:?}\">", &self.namespace, &self.set_name, &self.digest)
+            }
+        }
     }
 }
 
