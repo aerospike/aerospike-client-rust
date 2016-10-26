@@ -1,6 +1,5 @@
 #[macro_use]
 extern crate log;
-extern crate env_logger;
 extern crate core;
 extern crate byteorder;
 extern crate crypto;

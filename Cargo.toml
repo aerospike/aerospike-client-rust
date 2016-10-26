@@ -12,7 +12,6 @@ readme = "README.md"
 
 [dependencies]
 log = "0.3"
-env_logger = "0.3"
 byteorder = "^0.5"
 rust-crypto = "^0.2"
 bytebuffer = "^0.2"
