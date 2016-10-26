@@ -151,6 +151,15 @@ impl<'a> Operation<'a> {
                                                          &self.cdt_list_values,
                                                          self.bin_value));
             }
+            CDT_MAP_READ | CDT_MAP_MODIFY => {
+                size += try!(self.write_op_header_to(buffer, ParticleType::BLOB as u8));
+                size += try!(encoder::pack_cdt_map_args(Some(buffer),
+                                                self.cdt_op.unwrap(),
+                                                &self.cdt_args,
+                                                &self.cdt_list_values,
+                                                &self.cdt_map_values,
+                                                &self.cdt_map_entry))
+            }
             _ => {
                 size += try!(self.write_op_header_to(buffer, self.bin_value.particle_type() as u8));
                 size += try!(self.bin_value.write_to(buffer));

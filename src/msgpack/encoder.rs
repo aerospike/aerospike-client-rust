@@ -157,12 +157,6 @@ pub fn pack_cdt_map_args(buf: Option<&mut Buffer>,
             size += try!(pack_array_begin(Some(buf), args_len));
         }
 
-        if let &Some(ref meta_args) = meta_args {
-            for value in meta_args {
-                size += try!(pack_value(Some(buf), &value));
-            }
-        }
-
         if let &Some(args) = args {
             size += try!(pack_map(Some(buf), args));
         } else if let &Some((key, val)) = single_entry {
@@ -173,17 +167,17 @@ pub fn pack_cdt_map_args(buf: Option<&mut Buffer>,
         } else if let &Some(items) = lists {
             size += try!(pack_array(Some(buf), items));
         }
+
+        if let &Some(ref meta_args) = meta_args {
+            for value in meta_args {
+                size += try!(pack_value(Some(buf), &value));
+            }
+        }
     } else {
         size += try!(pack_raw_u16(None, cdt_op as u16));
 
         if args_len > 0 {
             size += try!(pack_array_begin(None, args_len));
-        }
-
-        if let &Some(ref meta_args) = meta_args {
-            for value in meta_args {
-                size += try!(pack_value(None, &value));
-            }
         }
 
         if let &Some(args) = args {
@@ -195,6 +189,12 @@ pub fn pack_cdt_map_args(buf: Option<&mut Buffer>,
             }
         } else if let &Some(items) = lists {
             size += try!(pack_array(None, items));
+        }
+
+        if let &Some(ref meta_args) = meta_args {
+            for value in meta_args {
+                size += try!(pack_value(None, &value));
+            }
         }
     }
 
