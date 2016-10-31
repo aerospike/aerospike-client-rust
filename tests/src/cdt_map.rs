@@ -23,7 +23,7 @@ use aerospike::value::*;
 use common1;
 
 #[test]
-fn put_item() {
+fn map_operations() {
     let ref client = common1::GLOBAL_CLIENT;
     let namespace: &str = &common1::AEROSPIKE_NAMESPACE;
     let set_name = &common1::rand_str(10);
@@ -34,22 +34,50 @@ fn put_item() {
 
     let key = common1::rand_str(10);
     let key = as_key!(namespace, set_name, &key);
-    let val = as_map!("a" => 1, "b" => 2);
-    let wbin = as_bin!("bin", val);
-    let bins = vec![&wbin];
 
     client.delete(&wpolicy, &key).unwrap();
+
+    let val = as_map!("a" => 1, "b" => 2);
+    let bin_name = "bin";
+    let bin = as_bin!(bin_name, val);
+    let bins = vec![&bin];
+
     client.put(&wpolicy, &key, &bins).unwrap();
 
-    let k1 = as_val!("c");
-    let v1 = as_val!(3);
-    let bin = "bin";
-    let op = Operation::map_put_item(&mpolicy, &bin, &k1, &v1);
-    let ops = vec![op];
-    let rec = client.operate(&wpolicy, &key, &ops).unwrap();
-    assert_eq!(*rec.bins.get("bin").unwrap(), as_val!(3)); // size of map after put
+    let (k, v) = (as_val!("c"), as_val!(3));
+    let op = Operation::map_put_item(&mpolicy, &bin_name, &k, &v);
+    let rec = client.operate(&wpolicy, &key, &vec![op]).unwrap();
+    assert_eq!(*rec.bins.get(bin_name).unwrap(), as_val!(3)); // size of map after put
 
     let rec = client.get(&rpolicy, &key, None).unwrap();
-    assert_eq!(*rec.bins.get("bin").unwrap(),
+    assert_eq!(*rec.bins.get(bin_name).unwrap(),
         as_map!("a" => 1, "b" => 2, "c" => 3));
+
+    let mut items = HashMap::new();
+    items.insert(as_val!("d"), as_val!(4));
+    items.insert(as_val!("e"), as_val!(5));
+    let op = Operation::map_put_items(&mpolicy, &bin_name, &items);
+    let rec = client.operate(&wpolicy, &key, &vec![op]).unwrap();
+    assert_eq!(*rec.bins.get(bin_name).unwrap(), as_val!(5)); // size of map after put
+
+    // let k = as_val!("e");
+    // let op = Operation::map_remove_by_key(&mpolicy, &bin_name, &k, MapReturnType::Value);
+    // let rec = client.operate(&wpolicy, &key, &vec![op]).unwrap();
+    // assert_eq!(*rec.bins.get(bin_name).unwrap(), as_val!(5));
+
+    let (k, i) = (as_val!("a"), as_val!(19));
+    let op = Operation::map_increment_value(&mpolicy, &bin_name, &k, &i);
+    let rec = client.operate(&wpolicy, &key, &vec![op]).unwrap();
+    assert_eq!(*rec.bins.get(bin_name).unwrap(), as_val!(20)); // value of the key after increment
+
+    let (k, i) = (as_val!("a"), as_val!(10));
+    let op = Operation::map_decrement_value(&mpolicy, &bin_name, &k, &i);
+    let rec = client.operate(&wpolicy, &key, &vec![op]).unwrap();
+    assert_eq!(*rec.bins.get(bin_name).unwrap(), as_val!(10)); // value of the key after decrement
+
+    let op = Operation::map_clear(&mpolicy, &bin_name);
+    let rec = client.operate(&wpolicy, &key, &vec![op]).unwrap();
+    assert!(rec.bins.get(bin_name).is_none()); // map_clear returns no result
+
+    client.delete(&wpolicy, &key).unwrap();
 }

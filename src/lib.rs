@@ -18,7 +18,8 @@ pub use cluster::{Node, Cluster};
 pub use error::{AerospikeError, ResultCode, AerospikeResult};
 pub use client::Client;
 pub use common::{Key, Bin, Operation, UDFLang, Recordset, Statement, Filter, IndexType,
-                 CollectionIndexType, ParticleType, MapPolicy};
+                 CollectionIndexType, ParticleType};
+pub use common::{MapPolicy, MapReturnType};
 
 mod command;
 mod msgpack;
