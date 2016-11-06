@@ -26,7 +26,7 @@ use error::AerospikeResult;
 use command::buffer::Buffer;
 use value::*;
 
-pub fn pack_value(buf: Option<&mut Buffer>, val: &Value) -> AerospikeResult<usize> {
+pub fn pack_value(buf: &mut Option<&mut Buffer>, val: &Value) -> AerospikeResult<usize> {
     match val {
         &Value::Nil => pack_nil(buf),
         &Value::Int(ref val) => pack_integer(buf, *val),
@@ -47,18 +47,14 @@ pub fn pack_value(buf: Option<&mut Buffer>, val: &Value) -> AerospikeResult<usiz
     }
 }
 
-pub fn pack_empty_args_array(buf: Option<&mut Buffer>) -> AerospikeResult<usize> {
+pub fn pack_empty_args_array(buf: &mut Option<&mut Buffer>) -> AerospikeResult<usize> {
     let mut size = 0;
-    if let Some(buf) = buf {
-        size += try!(pack_array_begin(Some(buf), 0));
-    } else {
-        size += try!(pack_array_begin(None, 0));
-    }
+    size += try!(pack_array_begin(buf, 0));
 
     Ok(size)
 }
 
-pub fn pack_cdt_list_args(buf: Option<&mut Buffer>,
+pub fn pack_cdt_list_args(buf: &mut Option<&mut Buffer>,
                           cdt_op: u8,
                           meta_args: &Option<Vec<Value>>,
                           args: &Option<&[Value]>,
@@ -82,48 +78,28 @@ pub fn pack_cdt_list_args(buf: Option<&mut Buffer>,
 
     let mut size: usize = 0;
 
-    if let Some(buf) = buf {
-        size += try!(pack_raw_u16(Some(buf), cdt_op as u16));
+    size += try!(pack_raw_u16(buf, cdt_op as u16));
 
-        if args_len > 0 {
-            size += try!(pack_array_begin(Some(buf), args_len));
-        }
+    if args_len > 0 {
+        size += try!(pack_array_begin(buf, args_len));
+    }
 
-        if let &Some(ref meta_args) = meta_args {
-            for value in meta_args {
-                size += try!(pack_value(Some(buf), &value));
-            }
+    if let &Some(ref meta_args) = meta_args {
+        for value in meta_args {
+            size += try!(pack_value(buf, &value));
         }
+    }
 
-        if let &Some(args) = args {
-            size += try!(pack_array(Some(buf), args));
-        } else if single_value != operation::NIL_VALUE {
-            size += try!(pack_value(Some(buf), single_value));
-        }
-    } else {
-        size += try!(pack_raw_u16(None, cdt_op as u16));
-
-        if args_len > 0 {
-            size += try!(pack_array_begin(None, args_len));
-        }
-
-        if let &Some(ref meta_args) = meta_args {
-            for value in meta_args {
-                size += try!(pack_value(None, &value));
-            }
-        }
-
-        if let &Some(args) = args {
-            size += try!(pack_array(None, args));
-        } else if single_value != operation::NIL_VALUE {
-            size += try!(pack_value(None, single_value));
-        }
+    if let &Some(args) = args {
+        size += try!(pack_array(buf, args));
+    } else if single_value != operation::NIL_VALUE {
+        size += try!(pack_value(buf, single_value));
     }
 
     Ok(size)
 }
 
-pub fn pack_cdt_map_args(buf: Option<&mut Buffer>,
+pub fn pack_cdt_map_args(buf: &mut Option<&mut Buffer>,
                          cdt_op: u8,
                          meta_args: &Option<Vec<Value>>,
                          lists: &Option<&[Value]>,
@@ -150,51 +126,26 @@ pub fn pack_cdt_map_args(buf: Option<&mut Buffer>,
 
     let mut size: usize = 0;
 
-    if let Some(buf) = buf {
-        size += try!(pack_raw_u16(Some(buf), cdt_op as u16));
+    size += try!(pack_raw_u16(buf, cdt_op as u16));
 
-        if args_len > 0 {
-            size += try!(pack_array_begin(Some(buf), args_len));
+    if args_len > 0 {
+        size += try!(pack_array_begin(buf, args_len));
+    }
+
+    if let &Some(args) = args {
+        size += try!(pack_map(buf, args));
+    } else if let &Some((key, val)) = single_entry {
+        size += try!(pack_value(buf, key));
+        if val != operation::NIL_VALUE {
+            size += try!(pack_value(buf, val));
         }
+    } else if let &Some(items) = lists {
+        size += try!(pack_array(buf, items));
+    }
 
-        if let &Some(args) = args {
-            size += try!(pack_map(Some(buf), args));
-        } else if let &Some((key, val)) = single_entry {
-            size += try!(pack_value(Some(buf), key));
-            if val != operation::NIL_VALUE {
-                size += try!(pack_value(Some(buf), val));
-            }
-        } else if let &Some(items) = lists {
-            size += try!(pack_array(Some(buf), items));
-        }
-
-        if let &Some(ref meta_args) = meta_args {
-            for value in meta_args {
-                size += try!(pack_value(Some(buf), &value));
-            }
-        }
-    } else {
-        size += try!(pack_raw_u16(None, cdt_op as u16));
-
-        if args_len > 0 {
-            size += try!(pack_array_begin(None, args_len));
-        }
-
-        if let &Some(args) = args {
-            size += try!(pack_map(None, args));
-        } else if let &Some((key, val)) = single_entry {
-            size += try!(pack_value(None, key));
-            if val != operation::NIL_VALUE {
-                size += try!(pack_value(None, val));
-            }
-        } else if let &Some(items) = lists {
-            size += try!(pack_array(None, items));
-        }
-
-        if let &Some(ref meta_args) = meta_args {
-            for value in meta_args {
-                size += try!(pack_value(None, &value));
-            }
+    if let &Some(ref meta_args) = meta_args {
+        for value in meta_args {
+            size += try!(pack_value(buf, &value));
         }
     }
 
@@ -202,39 +153,24 @@ pub fn pack_cdt_map_args(buf: Option<&mut Buffer>,
 }
 
 
-pub fn pack_array(buf: Option<&mut Buffer>, values: &[Value]) -> AerospikeResult<usize> {
+pub fn pack_array(buf: &mut Option<&mut Buffer>, values: &[Value]) -> AerospikeResult<usize> {
     let mut size = 0;
 
-    if let Some(buf) = buf {
-        size += try!(pack_array_begin(Some(buf), values.len()));
-        for val in values {
-            size += try!(pack_value(Some(buf), val));
-        }
-    } else {
-        size += try!(pack_array_begin(None, values.len()));
-        for val in values {
-            size += try!(pack_value(None, val));
-        }
+    size += try!(pack_array_begin(buf, values.len()));
+    for val in values {
+        size += try!(pack_value(buf, val));
     }
 
     Ok(size)
 }
 
-fn pack_map(buf: Option<&mut Buffer>, map: &HashMap<Value, Value>) -> AerospikeResult<usize> {
+fn pack_map(buf: &mut Option<&mut Buffer>, map: &HashMap<Value, Value>) -> AerospikeResult<usize> {
     let mut size = 0;
 
-    if let Some(buf) = buf {
-        size += try!(pack_map_begin(Some(buf), map.len()));
-        for (key, val) in map.iter() {
-            size += try!(pack_value(Some(buf), key));
-            size += try!(pack_value(Some(buf), val));
-        }
-    } else {
-        size += try!(pack_map_begin(None, map.len()));
-        for (key, val) in map {
-            size += try!(pack_value(None, key));
-            size += try!(pack_value(None, val));
-        }
+    size += try!(pack_map_begin(buf, map.len()));
+    for (key, val) in map.iter() {
+        size += try!(pack_value(buf, key));
+        size += try!(pack_value(buf, val));
     }
 
     Ok(size)
@@ -258,37 +194,37 @@ const MSGPACK_MARKER_NI64: u8 = 0xd3;
 
 // This method is not compatible with MsgPack specs and is only used by aerospike client<->server
 // for wire transfer only
-fn pack_raw_u16(buf: Option<&mut Buffer>, val: u16) -> AerospikeResult<usize> {
-    if let Some(buf) = buf {
+fn pack_raw_u16(buf: &mut Option<&mut Buffer>, val: u16) -> AerospikeResult<usize> {
+    if let &mut Some(ref mut buf) = buf {
         try!(buf.write_u16(val));
     }
     Ok(2)
 }
 
-fn pack_half_byte(buf: Option<&mut Buffer>, val: u8) -> AerospikeResult<usize> {
-    if let Some(buf) = buf {
+fn pack_half_byte(buf: &mut Option<&mut Buffer>, val: u8) -> AerospikeResult<usize> {
+    if let &mut Some(ref mut buf) = buf {
         try!(buf.write_u8(val));
     }
     Ok(1)
 }
 
-fn pack_byte(buf: Option<&mut Buffer>, marker: u8, val: u8) -> AerospikeResult<usize> {
-    if let Some(buf) = buf {
+fn pack_byte(buf: &mut Option<&mut Buffer>, marker: u8, val: u8) -> AerospikeResult<usize> {
+    if let &mut Some(ref mut buf) = buf {
         try!(buf.write_u8(marker));
         try!(buf.write_u8(val));
     }
     Ok(2)
 }
 
-fn pack_nil(buf: Option<&mut Buffer>) -> AerospikeResult<usize> {
-    if let Some(buf) = buf {
+fn pack_nil(buf: &mut Option<&mut Buffer>) -> AerospikeResult<usize> {
+    if let &mut Some(ref mut buf) = buf {
         try!(buf.write_u8(MSGPACK_MARKER_NIL));
     }
     Ok(1)
 }
 
-fn pack_bool(buf: Option<&mut Buffer>, val: bool) -> AerospikeResult<usize> {
-    if let Some(buf) = buf {
+fn pack_bool(buf: &mut Option<&mut Buffer>, val: bool) -> AerospikeResult<usize> {
+    if let &mut Some(ref mut buf) = buf {
         if val {
             try!(buf.write_u8(MSGPACK_MARKER_BOOL_TRUE));
         } else {
@@ -298,7 +234,7 @@ fn pack_bool(buf: Option<&mut Buffer>, val: bool) -> AerospikeResult<usize> {
     Ok(1)
 }
 
-fn pack_map_begin(buf: Option<&mut Buffer>, length: usize) -> AerospikeResult<usize> {
+fn pack_map_begin(buf: &mut Option<&mut Buffer>, length: usize) -> AerospikeResult<usize> {
     match length {
         val if val < 16 => pack_half_byte(buf, 0x80 | (length as u8)),
         val if val >= 16 && val < 2 ^ 16 => pack_i16(buf, 0xde, length as i16),
@@ -306,7 +242,7 @@ fn pack_map_begin(buf: Option<&mut Buffer>, length: usize) -> AerospikeResult<us
     }
 }
 
-fn pack_array_begin(buf: Option<&mut Buffer>, length: usize) -> AerospikeResult<usize> {
+fn pack_array_begin(buf: &mut Option<&mut Buffer>, length: usize) -> AerospikeResult<usize> {
     match length {
         val if val < 16 => pack_half_byte(buf, 0x90 | (length as u8)),
         val if val >= 16 && val < 2 ^ 16 => pack_i16(buf, 0xdc, length as i16),
@@ -314,7 +250,7 @@ fn pack_array_begin(buf: Option<&mut Buffer>, length: usize) -> AerospikeResult<
     }
 }
 
-fn pack_byte_array_begin(buf: Option<&mut Buffer>, length: usize) -> AerospikeResult<usize> {
+fn pack_byte_array_begin(buf: &mut Option<&mut Buffer>, length: usize) -> AerospikeResult<usize> {
     match length {
         val if val < 32 => pack_half_byte(buf, 0xa0 | (length as u8)),
         val if val >= 32 && val < 2 ^ 16 => pack_i16(buf, 0xda, length as i16),
@@ -322,49 +258,43 @@ fn pack_byte_array_begin(buf: Option<&mut Buffer>, length: usize) -> AerospikeRe
     }
 }
 
-fn pack_blob(buf: Option<&mut Buffer>, val: &[u8]) -> AerospikeResult<usize> {
+fn pack_blob(buf: &mut Option<&mut Buffer>, val: &[u8]) -> AerospikeResult<usize> {
     let mut size = val.len() + 1;
 
-    if let Some(buf) = buf {
-        size += try!(pack_byte_array_begin(Some(buf), size));
+    size += try!(pack_byte_array_begin(buf, size));
+    if let &mut Some(ref mut buf) = buf {
         try!(buf.write_u8(ParticleType::BLOB as u8));
         try!(buf.write_bytes(val));
-    } else {
-        size += try!(pack_byte_array_begin(None, size));
     }
 
     Ok(size)
 }
 
-fn pack_string(buf: Option<&mut Buffer>, val: &str) -> AerospikeResult<usize> {
+fn pack_string(buf: &mut Option<&mut Buffer>, val: &str) -> AerospikeResult<usize> {
     let mut size = val.len() + 1;
 
-    if let Some(buf) = buf {
-        size += try!(pack_byte_array_begin(Some(buf), size));
+    size += try!(pack_byte_array_begin(buf, size));
+    if let &mut Some(ref mut buf) = buf {
         try!(buf.write_u8(ParticleType::STRING as u8));
         try!(buf.write_str(val));
-    } else {
-        size += try!(pack_byte_array_begin(None, size));
     }
 
     Ok(size)
 }
 
-fn pack_geo_json(buf: Option<&mut Buffer>, val: &str) -> AerospikeResult<usize> {
+fn pack_geo_json(buf: &mut Option<&mut Buffer>, val: &str) -> AerospikeResult<usize> {
     let mut size = val.len() + 1;
 
-    if let Some(buf) = buf {
-        size += try!(pack_byte_array_begin(Some(buf), size));
+    size += try!(pack_byte_array_begin(buf, size));
+    if let &mut Some(ref mut buf) = buf {
         try!(buf.write_u8(ParticleType::GEOJSON as u8));
         try!(buf.write_str(val));
-    } else {
-        size += try!(pack_byte_array_begin(None, size));
     }
 
     Ok(size)
 }
 
-fn pack_integer(buf: Option<&mut Buffer>, val: i64) -> AerospikeResult<usize> {
+fn pack_integer(buf: &mut Option<&mut Buffer>, val: i64) -> AerospikeResult<usize> {
     match val {
         val if val >= 0 && val < 2 ^ 7 => pack_half_byte(buf, val as u8),
         val if val >= 2 ^ 7 && val < i8::MAX as i64 => pack_byte(buf, MSGPACK_MARKER_I8, val as u8),
@@ -392,52 +322,52 @@ fn pack_integer(buf: Option<&mut Buffer>, val: i64) -> AerospikeResult<usize> {
     }
 }
 
-fn pack_i16(buf: Option<&mut Buffer>, marker: u8, val: i16) -> AerospikeResult<usize> {
-    if let Some(buf) = buf {
+fn pack_i16(buf: &mut Option<&mut Buffer>, marker: u8, val: i16) -> AerospikeResult<usize> {
+    if let &mut Some(ref mut buf) = buf {
         try!(buf.write_u8(marker));
         try!(buf.write_i16(val));
     }
     Ok(3)
 }
 
-fn pack_i32(buf: Option<&mut Buffer>, marker: u8, val: i32) -> AerospikeResult<usize> {
-    if let Some(buf) = buf {
+fn pack_i32(buf: &mut Option<&mut Buffer>, marker: u8, val: i32) -> AerospikeResult<usize> {
+    if let &mut Some(ref mut buf) = buf {
         try!(buf.write_u8(marker));
         try!(buf.write_i32(val));
     }
     Ok(5)
 }
 
-fn pack_i64(buf: Option<&mut Buffer>, marker: u8, val: i64) -> AerospikeResult<usize> {
-    if let Some(buf) = buf {
+fn pack_i64(buf: &mut Option<&mut Buffer>, marker: u8, val: i64) -> AerospikeResult<usize> {
+    if let &mut Some(ref mut buf) = buf {
         try!(buf.write_u8(marker));
         try!(buf.write_i64(val));
     }
     Ok(9)
 }
 
-fn pack_u64(buf: Option<&mut Buffer>, val: u64) -> AerospikeResult<usize> {
+fn pack_u64(buf: &mut Option<&mut Buffer>, val: u64) -> AerospikeResult<usize> {
     if val <= i64::MAX as u64 {
         return pack_integer(buf, val as i64);
     }
 
-    if let Some(buf) = buf {
+    if let &mut Some(ref mut buf) = buf {
         try!(buf.write_u8(0xcf));
         try!(buf.write_u64(val));
     }
     Ok(9)
 }
 
-fn pack_f32(buf: Option<&mut Buffer>, val: f32) -> AerospikeResult<usize> {
-    if let Some(buf) = buf {
+fn pack_f32(buf: &mut Option<&mut Buffer>, val: f32) -> AerospikeResult<usize> {
+    if let &mut Some(ref mut buf) = buf {
         try!(buf.write_u8(0xca));
         try!(buf.write_f32(val));
     }
     Ok(5)
 }
 
-fn pack_f64(buf: Option<&mut Buffer>, val: f64) -> AerospikeResult<usize> {
-    if let Some(buf) = buf {
+fn pack_f64(buf: &mut Option<&mut Buffer>, val: f64) -> AerospikeResult<usize> {
+    if let &mut Some(ref mut buf) = buf {
         try!(buf.write_u8(0xcb));
         try!(buf.write_f64(val));
     }

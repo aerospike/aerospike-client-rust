@@ -222,8 +222,8 @@ impl Value {
             &Value::Float(_) => Ok(8),
             &Value::String(ref s) => Ok(s.len()),
             &Value::Blob(ref b) => Ok(b.len()),
-            &Value::List(_) => pack_value(None, self),
-            &Value::HashMap(_) => pack_value(None, self),
+            &Value::List(_) => pack_value(&mut None, self),
+            &Value::HashMap(_) => pack_value(&mut None, self),
             &Value::OrderedMap(_) => panic!("The library never passes ordered maps to the server."),
             &Value::GeoJSON(ref s) => Ok(1 + 2 + s.len()), // flags + ncells + jsonstr
         }
@@ -241,8 +241,8 @@ impl Value {
             &Value::Float(ref val) => buf.write_f64(f64::from(val)),
             &Value::String(ref val) => buf.write_str(val),
             &Value::Blob(ref val) => buf.write_bytes(val),
-            &Value::List(_) => pack_value(Some(buf), self),
-            &Value::HashMap(_) => pack_value(Some(buf), self),
+            &Value::List(_) => pack_value(&mut Some(buf), self),
+            &Value::HashMap(_) => pack_value(&mut Some(buf), self),
             &Value::OrderedMap(_) => panic!("The library never passes ordered maps to the server."),
             &Value::GeoJSON(ref val) => buf.write_geo(val),
         }

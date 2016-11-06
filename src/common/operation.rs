@@ -113,14 +113,14 @@ impl<'a> Operation<'a> {
         size += self.bin_name.len();
         size += match self.op {
             CDT_LIST_READ | CDT_LIST_MODIFY => {
-                try!(encoder::pack_cdt_list_args(None,
+                try!(encoder::pack_cdt_list_args(&mut None,
                                                  self.cdt_op.unwrap(),
                                                  &self.cdt_args,
                                                  &self.cdt_list_values,
                                                  self.bin_value))
             }
             CDT_MAP_READ | CDT_MAP_MODIFY => {
-                try!(encoder::pack_cdt_map_args(None,
+                try!(encoder::pack_cdt_map_args(&mut None,
                                                 self.cdt_op.unwrap(),
                                                 &self.cdt_args,
                                                 &self.cdt_list_values,
@@ -145,7 +145,7 @@ impl<'a> Operation<'a> {
         match self.op {
             CDT_LIST_READ | CDT_LIST_MODIFY => {
                 size += try!(self.write_op_header_to(buffer, ParticleType::BLOB as u8));
-                size += try!(encoder::pack_cdt_list_args(Some(buffer),
+                size += try!(encoder::pack_cdt_list_args(&mut Some(buffer),
                                                          self.cdt_op.unwrap(),
                                                          &self.cdt_args,
                                                          &self.cdt_list_values,
@@ -153,7 +153,7 @@ impl<'a> Operation<'a> {
             }
             CDT_MAP_READ | CDT_MAP_MODIFY => {
                 size += try!(self.write_op_header_to(buffer, ParticleType::BLOB as u8));
-                size += try!(encoder::pack_cdt_map_args(Some(buffer),
+                size += try!(encoder::pack_cdt_map_args(&mut Some(buffer),
                                                 self.cdt_op.unwrap(),
                                                 &self.cdt_args,
                                                 &self.cdt_list_values,

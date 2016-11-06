@@ -677,9 +677,9 @@ impl Buffer {
 
     fn estimate_args_size(&mut self, args: Option<&[Value]>) -> AerospikeResult<()> {
         if let Some(args) = args {
-            self.data_offset += try!(encoder::pack_array(None, args)) + FIELD_HEADER_SIZE as usize;
+            self.data_offset += try!(encoder::pack_array(&mut None, args)) + FIELD_HEADER_SIZE as usize;
         } else {
-            self.data_offset += try!(encoder::pack_empty_args_array(None)) +
+            self.data_offset += try!(encoder::pack_empty_args_array(&mut None)) +
                                 FIELD_HEADER_SIZE as usize;
         }
         Ok(())
@@ -862,11 +862,11 @@ impl Buffer {
 
     fn write_args(&mut self, args: Option<&[Value]>, ftype: FieldType) -> AerospikeResult<()> {
         if let Some(args) = args {
-            try!(self.write_field_header(try!(encoder::pack_array(None, args)), ftype));
-            try!(encoder::pack_array(Some(self), args));
+            try!(self.write_field_header(try!(encoder::pack_array(&mut None, args)), ftype));
+            try!(encoder::pack_array(&mut Some(self), args));
         } else {
-            try!(self.write_field_header(try!(encoder::pack_empty_args_array(None)), ftype));
-            try!(encoder::pack_empty_args_array(Some(self)));
+            try!(self.write_field_header(try!(encoder::pack_empty_args_array(&mut None)), ftype));
+            try!(encoder::pack_empty_args_array(&mut Some(self)));
         }
 
         Ok(())
