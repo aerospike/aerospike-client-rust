@@ -70,7 +70,7 @@ impl<'a> Command for WriteCommand<'a> {
 
     fn prepare_buffer(&mut self, conn: &mut Connection) -> AerospikeResult<()> {
         conn.buffer.set_write(self.policy,
-                              &self.operation,
+                              self.operation,
                               self.single_command.key,
                               self.bins)
     }

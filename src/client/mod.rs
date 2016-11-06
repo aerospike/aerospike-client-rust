@@ -26,7 +26,7 @@ use threadpool::ThreadPool;
 
 use net::Host;
 use cluster::{Cluster, Node};
-use common::operation;
+use common::operation::{Operation, OperationType};
 use common::{Key, Record, Bin, UDFLang, Recordset, Statement, IndexType, CollectionIndexType};
 use command::read_command::ReadCommand;
 use command::write_command::WriteCommand;
@@ -101,7 +101,7 @@ impl Client {
                        bins: &'a [&'b Bin])
                        -> AerospikeResult<()> {
         let mut command =
-            try!(WriteCommand::new(policy, self.cluster.clone(), key, bins, operation::WRITE));
+            try!(WriteCommand::new(policy, self.cluster.clone(), key, bins, OperationType::Write));
         command.execute()
     }
 
@@ -111,7 +111,7 @@ impl Client {
                        bins: &'a [&'b Bin])
                        -> AerospikeResult<()> {
         let mut command =
-            try!(WriteCommand::new(policy, self.cluster.clone(), key, bins, operation::ADD));
+            try!(WriteCommand::new(policy, self.cluster.clone(), key, bins, OperationType::Incr));
         command.execute()
     }
 
@@ -121,7 +121,7 @@ impl Client {
                           bins: &'a [&'b Bin])
                           -> AerospikeResult<()> {
         let mut command =
-            try!(WriteCommand::new(policy, self.cluster.clone(), key, bins, operation::APPEND));
+            try!(WriteCommand::new(policy, self.cluster.clone(), key, bins, OperationType::Append));
         command.execute()
     }
 
@@ -131,7 +131,7 @@ impl Client {
                            bins: &'a [&'b Bin])
                            -> AerospikeResult<()> {
         let mut command =
-            try!(WriteCommand::new(policy, self.cluster.clone(), key, bins, operation::PREPEND));
+            try!(WriteCommand::new(policy, self.cluster.clone(), key, bins, OperationType::Prepend));
         command.execute()
     }
 
@@ -161,7 +161,7 @@ impl Client {
     pub fn operate<'a, 'b>(&'a self,
                            policy: &'a WritePolicy,
                            key: &'a Key,
-                           ops: &'a [operation::Operation<'a>])
+                           ops: &'a [Operation<'a>])
                            -> AerospikeResult<Record> {
         let mut command = try!(OperateCommand::new(policy, self.cluster.clone(), key, ops));
         try!(command.execute());

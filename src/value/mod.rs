@@ -175,6 +175,13 @@ impl Hash for Value {
 }
 
 impl Value {
+    pub fn is_nil(&self) -> bool {
+        match self {
+            &Value::Nil => true,
+            _ => false
+        }
+    }
+
     pub fn particle_type(&self) -> ParticleType {
         match self {
             &Value::Nil => ParticleType::NULL,

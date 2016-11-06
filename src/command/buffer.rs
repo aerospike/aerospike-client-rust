@@ -19,11 +19,10 @@ use byteorder::{NetworkEndian, ByteOrder};
 use error::{AerospikeError, ResultCode, AerospikeResult};
 use value::Value;
 
-use common::{Key, OperationType, FieldType, Bin, Statement, CollectionIndexType};
+use common::{Key, FieldType, Bin, Statement, CollectionIndexType};
 use policy::{WritePolicy, ReadPolicy, ConsistencyLevel, CommitLevel,
              GenerationPolicy, RecordExistsAction, ScanPolicy, QueryPolicy};
-use common::operation::Operation;
-use common::operation;
+use common::operation::*;
 use msgpack::encoder;
 
 // Flags commented out are not supported by cmd client.
@@ -146,7 +145,7 @@ impl Buffer {
     // Writes the command for write operations
     pub fn set_write<'a>(&mut self,
                          policy: &WritePolicy,
-                         op_type: &OperationType,
+                         op_type: OperationType,
                          key: &Key,
                          bins: &[&Bin<'a>])
                          -> AerospikeResult<()> {
@@ -195,7 +194,7 @@ impl Buffer {
         try!(self.size_buffer());
         try!(self.write_header_with_policy(policy, 0, INFO2_WRITE, field_count as u16, 1));
         try!(self.write_key(key, policy.send_key));
-        try!(self.write_operation_for_operation_type(&operation::TOUCH));
+        try!(self.write_operation_for_operation_type(OperationType::Touch));
         self.end()
     }
 
@@ -248,7 +247,7 @@ impl Buffer {
                 try!(self.write_header(policy, INFO1_READ, 0, field_count, bin_names.len() as u16));
                 try!(self.write_key(key, false));
                 for bin_name in bin_names {
-                    try!(self.write_operation_for_bin_name(bin_name, &operation::READ));
+                    try!(self.write_operation_for_bin_name(bin_name, OperationType::Read));
                 }
                 try!(self.end());
             }
@@ -265,7 +264,7 @@ impl Buffer {
         try!(self.size_buffer());
         try!(self.write_header(policy, INFO1_READ | INFO1_NOBINDATA, 0, field_count, 1));
         try!(self.write_key(key, false));
-        try!(self.write_operation_for_bin_name("", &operation::READ));
+        try!(self.write_operation_for_bin_name("", OperationType::Read));
         self.end()
     }
 
@@ -279,48 +278,32 @@ impl Buffer {
 
         let mut read_attr = 0;
         let mut write_attr = 0;
-        let mut read_bin = false;
-        let mut read_header = false;
-        let mut respond_per_each_op = policy.respond_per_each_op;
 
         for operation in operations {
-            if operation.op == operation::CDT_MAP_READ ||
-               operation.op == operation::CDT_MAP_MODIFY {
-                respond_per_each_op = true;
+            match operation {
+                &Operation { op: OperationType::Read, bin: OperationBin::None, ..  } =>
+                    read_attr |= INFO1_READ | INFO1_NOBINDATA,
+                &Operation { op: OperationType::Read, bin: OperationBin::All, ..  } =>
+                    read_attr |= INFO1_READ | INFO1_GET_ALL,
+                &Operation { op: OperationType::Read, ..  } =>
+                    read_attr |= INFO1_READ,
+                _ => write_attr |= INFO2_WRITE
             }
 
-            match operation.op {
-                operation::READ /*| operation::CDT_READ*/ => {
-                    if!operation.header_only {
-                        read_attr |= INFO1_READ;
-
-                        // Read all bins if no bin is specified.
-                        if operation.bin_name == "" {
-                            read_attr |= INFO1_GET_ALL;
-                        }
-                        read_bin = true;
-                    } else {
-                        read_attr |= INFO1_READ;
-                        read_header = true;
-                    }
-                },
-                _ => write_attr |= INFO2_WRITE,
+            let map_op = match operation.data {
+                OperationData::CdtMapOp(_) => true,
+                _ => false
+            };
+            if policy.respond_per_each_op || map_op {
+                write_attr |= INFO2_RESPOND_ALL_OPS;
             }
 
             self.data_offset += try!(operation.estimate_size()) + OPERATION_HEADER_SIZE as usize;
-        }
+        };
 
         let field_count = try!(self.estimate_key_size(key, policy.send_key && write_attr != 0));
 
         try!(self.size_buffer());
-
-        if read_header && !read_bin {
-            read_attr |= INFO1_NOBINDATA;
-        }
-
-        if respond_per_each_op {
-            write_attr |= INFO2_RESPOND_ALL_OPS;
-        }
 
         if write_attr != 0 {
             try!(self.write_header_with_policy(policy,
@@ -339,7 +322,6 @@ impl Buffer {
 
         for operation in operations {
             try!(operation.write_to(self));
-            // try!(self.write_operation_for_operation(operation));
         }
 
         self.end()
@@ -448,7 +430,7 @@ impl Buffer {
 
         if let Some(ref bin_names) = *bin_names {
             for bin_name in bin_names {
-                try!(self.write_operation_for_bin_name(&bin_name, &operation::READ));
+                try!(self.write_operation_for_bin_name(&bin_name, OperationType::Read));
             }
         }
 
@@ -640,7 +622,7 @@ impl Buffer {
         if statement.is_scan() {
             if let Some(ref bin_names) = statement.bin_names {
                 for bin_name in bin_names {
-                    try!(self.write_operation_for_bin_name(&bin_name, &operation::READ));
+                    try!(self.write_operation_for_bin_name(&bin_name, OperationType::Read));
                 }
             }
         }
@@ -875,14 +857,14 @@ impl Buffer {
 
     fn write_operation_for_bin(&mut self,
                                bin: &Bin,
-                               op_type: &OperationType)
+                               op_type: OperationType)
                                -> AerospikeResult<()> {
 
         let name_length = bin.name.len();
         let value_length = try!(bin.value.estimate_size());
 
         try!(self.write_i32((name_length + value_length + 4) as i32));
-        try!(self.write_u8(op_type.op));
+        try!(self.write_u8(op_type as u8));
         try!(self.write_u8(bin.value.particle_type() as u8));
         try!(self.write_u8(0));
         try!(self.write_u8(name_length as u8));
@@ -894,10 +876,10 @@ impl Buffer {
 
     fn write_operation_for_bin_name(&mut self,
                                     name: &str,
-                                    op_type: &OperationType)
+                                    op_type: OperationType)
                                     -> AerospikeResult<()> {
         try!(self.write_i32(name.len() as i32 + 4));
-        try!(self.write_u8(op_type.op));
+        try!(self.write_u8(op_type as u8));
         try!(self.write_u8(0));
         try!(self.write_u8(0));
         try!(self.write_u8(name.len() as u8));
@@ -907,10 +889,10 @@ impl Buffer {
     }
 
     fn write_operation_for_operation_type(&mut self,
-                                          op_type: &OperationType)
+                                          op_type: OperationType)
                                           -> AerospikeResult<()> {
         try!(self.write_i32(4));
-        try!(self.write_u8(op_type.op));
+        try!(self.write_u8(op_type as u8));
         try!(self.write_u8(0));
         try!(self.write_u8(0));
         try!(self.write_u8(0));

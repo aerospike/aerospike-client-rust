@@ -97,7 +97,7 @@ impl<'a> ReadCommand<'a> {
                                                       &mut conn.buffer,
                                                       particle_bytes_size));
 
-            if value != Value::Nil {
+            if !value.is_nil() {
                 // for operate list command results
                 if bins.contains_key(&name) {
                     let prev = bins.get_mut(&name).unwrap();

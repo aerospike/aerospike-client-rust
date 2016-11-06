@@ -14,248 +14,251 @@
 // the License.
 
 use value::Value;
-use common::operation;
 use common::operation::*;
 
-const CDT_LIST_APPEND: u8 = 1;
-const CDT_LIST_APPEND_ITEMS: u8 = 2;
-const CDT_LIST_INSERT: u8 = 3;
-const CDT_LIST_INSERT_ITEMS: u8 = 4;
-const CDT_LIST_POP: u8 = 5;
-const CDT_LIST_POP_RANGE: u8 = 6;
-const CDT_LIST_REMOVE: u8 = 7;
-const CDT_LIST_REMOVE_RANGE: u8 = 8;
-const CDT_LIST_SET: u8 = 9;
-const CDT_LIST_TRIM: u8 = 10;
-const CDT_LIST_CLEAR: u8 = 11;
-const CDT_LIST_SIZE: u8 = 16;
-const CDT_LIST_GET: u8 = 17;
-const CDT_LIST_GET_RANGE: u8 = 18;
-
 impl<'a> Operation<'a> {
-    pub fn list_append(bin_name: &'a str, values: &'a [Value]) -> Self {
+    pub fn list_append(bin: &'a str, value: &'a Value) -> Self {
+        let cdt_op = CdtOperation {
+            op: CdtOpType::ListAppend,
+            data: CdtOpData::Value(value),
+            pre_args: None,
+            post_args: None,
+        };
+        Operation {
+            op: OperationType::CdtWrite,
+            bin: OperationBin::Name(bin),
+            data: OperationData::CdtListOp(cdt_op),
+        }
+    }
+
+    pub fn list_append_items(bin: &'a str, values: &'a [Value]) -> Self {
         assert!(values.len() > 0);
 
-        let (bin_value, cdt_list_values, op) = match values.len() {
-            1 => (&values[0], None, CDT_LIST_APPEND),
-            _ => (operation::NIL_VALUE, Some(values), CDT_LIST_APPEND_ITEMS),
+        let cdt_op = CdtOperation {
+            op: CdtOpType::ListAppendItems,
+            data: CdtOpData::List(values),
+            pre_args: None,
+            post_args: None,
         };
-
         Operation {
-            op: operation::CDT_LIST_MODIFY,
-            cdt_op: Some(op),
-            cdt_args: None,
-            cdt_list_values: cdt_list_values,
-            cdt_map_entry: None,
-            cdt_map_values: None,
-            bin_name: bin_name,
-            bin_value: bin_value,
-            header_only: false,
+            op: OperationType::CdtWrite,
+            bin: OperationBin::Name(bin),
+            data: OperationData::CdtListOp(cdt_op),
         }
     }
 
-    pub fn list_insert(bin_name: &'a str, index: i64, values: &'a [Value]) -> Self {
+    pub fn list_insert(bin: &'a str, index: i64, value: &'a Value) -> Self {
+        let cdt_op = CdtOperation {
+            op: CdtOpType::ListInsert,
+            data: CdtOpData::Value(value),
+            pre_args: Some(vec![Value::from(index)]),
+            post_args: None,
+        };
+        Operation {
+            op: OperationType::CdtWrite,
+            bin: OperationBin::Name(bin),
+            data: OperationData::CdtListOp(cdt_op),
+        }
+    }
+
+    pub fn list_insert_items(bin: &'a str, index: i64, values: &'a [Value]) -> Self {
         assert!(values.len() > 0);
 
-        let (bin_value, cdt_list_values, op) = match values.len() {
-            1 => (&values[0], None, CDT_LIST_INSERT),
-            _ => (operation::NIL_VALUE, Some(values), CDT_LIST_INSERT_ITEMS),
+        let cdt_op = CdtOperation {
+            op: CdtOpType::ListInsertItems,
+            data: CdtOpData::List(values),
+            pre_args: Some(vec![Value::from(index)]),
+            post_args: None,
         };
-
         Operation {
-            op: operation::CDT_LIST_MODIFY,
-            cdt_op: Some(op),
-            cdt_args: Some(vec![Value::from(index)]),
-            cdt_list_values: cdt_list_values,
-            cdt_map_entry: None,
-            cdt_map_values: None,
-            bin_name: bin_name,
-            bin_value: bin_value,
-            header_only: false,
+            op: OperationType::CdtWrite,
+            bin: OperationBin::Name(bin),
+            data: OperationData::CdtListOp(cdt_op),
         }
     }
 
-    pub fn list_pop(bin_name: &'a str, index: i64) -> Self {
+    pub fn list_pop(bin: &'a str, index: i64) -> Self {
+        let cdt_op = CdtOperation {
+            op: CdtOpType::ListPop,
+            data: CdtOpData::None,
+            pre_args: Some(vec![Value::from(index)]),
+            post_args: None,
+        };
         Operation {
-            op: operation::CDT_LIST_MODIFY,
-            cdt_op: Some(CDT_LIST_POP),
-            cdt_args: Some(vec![Value::from(index)]),
-            cdt_list_values: None,
-            cdt_map_entry: None,
-            cdt_map_values: None,
-            bin_name: bin_name,
-            bin_value: operation::NIL_VALUE,
-            header_only: false,
+            op: OperationType::CdtWrite,
+            bin: OperationBin::Name(bin),
+            data: OperationData::CdtListOp(cdt_op),
         }
     }
 
-    pub fn list_pop_range(bin_name: &'a str, index: i64, count: i64) -> Self {
+
+    pub fn list_pop_range(bin: &'a str, index: i64, count: i64) -> Self {
+        let cdt_op = CdtOperation {
+            op: CdtOpType::ListPopRange,
+            data: CdtOpData::None,
+            pre_args: Some(vec![Value::from(index), Value::from(count)]),
+            post_args: None,
+        };
         Operation {
-            op: operation::CDT_LIST_MODIFY,
-            cdt_op: Some(CDT_LIST_POP_RANGE),
-            cdt_args: Some(vec![Value::from(index), Value::from(count)]),
-            cdt_list_values: None,
-            cdt_map_entry: None,
-            cdt_map_values: None,
-            bin_name: bin_name,
-            bin_value: operation::NIL_VALUE,
-            header_only: false,
+            op: OperationType::CdtWrite,
+            bin: OperationBin::Name(bin),
+            data: OperationData::CdtListOp(cdt_op),
         }
     }
 
-    pub fn list_pop_range_from(bin_name: &'a str, index: i64) -> Self {
+    pub fn list_pop_range_from(bin: &'a str, index: i64) -> Self {
+        let cdt_op = CdtOperation {
+            op: CdtOpType::ListPopRange,
+            data: CdtOpData::None,
+            pre_args: Some(vec![Value::from(index)]),
+            post_args: None,
+        };
         Operation {
-            op: operation::CDT_LIST_MODIFY,
-            cdt_op: Some(CDT_LIST_POP_RANGE),
-            cdt_args: Some(vec![Value::from(index)]),
-            cdt_list_values: None,
-            cdt_map_entry: None,
-            cdt_map_values: None,
-            bin_name: bin_name,
-            bin_value: operation::NIL_VALUE,
-            header_only: false,
+            op: OperationType::CdtWrite,
+            bin: OperationBin::Name(bin),
+            data: OperationData::CdtListOp(cdt_op),
         }
     }
 
-    pub fn list_remove(bin_name: &'a str, index: i64) -> Self {
+    pub fn list_remove(bin: &'a str, index: i64) -> Self {
+        let cdt_op = CdtOperation {
+            op: CdtOpType::ListRemove,
+            data: CdtOpData::None,
+            pre_args: Some(vec![Value::from(index)]),
+            post_args: None,
+        };
         Operation {
-            op: operation::CDT_LIST_MODIFY,
-            cdt_op: Some(CDT_LIST_REMOVE),
-            cdt_args: Some(vec![Value::from(index)]),
-            cdt_list_values: None,
-            cdt_map_entry: None,
-            cdt_map_values: None,
-            bin_name: bin_name,
-            bin_value: operation::NIL_VALUE,
-            header_only: false,
+            op: OperationType::CdtWrite,
+            bin: OperationBin::Name(bin),
+            data: OperationData::CdtListOp(cdt_op),
         }
     }
 
-    pub fn list_remove_range(bin_name: &'a str, index: i64, count: i64) -> Self {
+    pub fn list_remove_range(bin: &'a str, index: i64, count: i64) -> Self {
+        let cdt_op = CdtOperation {
+            op: CdtOpType::ListRemoveRange,
+            data: CdtOpData::None,
+            pre_args: Some(vec![Value::from(index), Value::from(count)]),
+            post_args: None,
+        };
         Operation {
-            op: operation::CDT_LIST_MODIFY,
-            cdt_op: Some(CDT_LIST_REMOVE_RANGE),
-            cdt_args: Some(vec![Value::from(index), Value::from(count)]),
-            cdt_list_values: None,
-            cdt_map_entry: None,
-            cdt_map_values: None,
-            bin_name: bin_name,
-            bin_value: operation::NIL_VALUE,
-            header_only: false,
+            op: OperationType::CdtWrite,
+            bin: OperationBin::Name(bin),
+            data: OperationData::CdtListOp(cdt_op),
         }
     }
 
-    pub fn list_remove_range_from(bin_name: &'a str, index: i64) -> Self {
+    pub fn list_remove_range_from(bin: &'a str, index: i64) -> Self {
+        let cdt_op = CdtOperation {
+            op: CdtOpType::ListRemoveRange,
+            data: CdtOpData::None,
+            pre_args: Some(vec![Value::from(index)]),
+            post_args: None,
+        };
         Operation {
-            op: operation::CDT_LIST_MODIFY,
-            cdt_op: Some(CDT_LIST_REMOVE_RANGE),
-            cdt_args: Some(vec![Value::from(index)]),
-            cdt_list_values: None,
-            cdt_map_entry: None,
-            cdt_map_values: None,
-            bin_name: bin_name,
-            bin_value: operation::NIL_VALUE,
-            header_only: false,
+            op: OperationType::CdtWrite,
+            bin: OperationBin::Name(bin),
+            data: OperationData::CdtListOp(cdt_op),
         }
     }
 
-    pub fn list_set(bin_name: &'a str, index: i64, value: &'a Value) -> Self {
-        assert!(value != operation::NIL_VALUE);
+    pub fn list_set(bin: &'a str, index: i64, value: &'a Value) -> Self {
+        assert!(!value.is_nil());
 
+        let cdt_op = CdtOperation {
+            op: CdtOpType::ListSet,
+            data: CdtOpData::Value(value),
+            pre_args: Some(vec![Value::from(index)]),
+            post_args: None,
+        };
         Operation {
-            op: operation::CDT_LIST_MODIFY,
-            cdt_op: Some(CDT_LIST_SET),
-            cdt_args: Some(vec![Value::from(index)]),
-            cdt_list_values: None,
-            cdt_map_entry: None,
-            cdt_map_values: None,
-            bin_name: bin_name,
-            bin_value: value,
-            header_only: false,
+            op: OperationType::CdtWrite,
+            bin: OperationBin::Name(bin),
+            data: OperationData::CdtListOp(cdt_op),
         }
     }
 
-    pub fn list_trim(bin_name: &'a str, index: i64, count: i64) -> Self {
+    pub fn list_trim(bin: &'a str, index: i64, count: i64) -> Self {
+        let cdt_op = CdtOperation {
+            op: CdtOpType::ListTrim,
+            data: CdtOpData::None,
+            pre_args: Some(vec![Value::from(index), Value::from(count)]),
+            post_args: None,
+        };
         Operation {
-            op: operation::CDT_LIST_MODIFY,
-            cdt_op: Some(CDT_LIST_TRIM),
-            cdt_args: Some(vec![Value::from(index), Value::from(count)]),
-            cdt_list_values: None,
-            cdt_map_entry: None,
-            cdt_map_values: None,
-            bin_name: bin_name,
-            bin_value: operation::NIL_VALUE,
-            header_only: false,
+            op: OperationType::CdtWrite,
+            bin: OperationBin::Name(bin),
+            data: OperationData::CdtListOp(cdt_op),
         }
     }
 
-    pub fn list_clear(bin_name: &'a str) -> Self {
+    pub fn list_clear(bin: &'a str) -> Self {
+        let cdt_op = CdtOperation {
+            op: CdtOpType::ListClear,
+            data: CdtOpData::None,
+            pre_args: None,
+            post_args: None,
+        };
         Operation {
-            op: operation::CDT_LIST_MODIFY,
-            cdt_op: Some(CDT_LIST_CLEAR),
-            cdt_args: None,
-            cdt_list_values: None,
-            cdt_map_entry: None,
-            cdt_map_values: None,
-            bin_name: bin_name,
-            bin_value: operation::NIL_VALUE,
-            header_only: false,
+            op: OperationType::CdtWrite,
+            bin: OperationBin::Name(bin),
+            data: OperationData::CdtListOp(cdt_op),
         }
     }
 
-    pub fn list_size(bin_name: &'a str) -> Self {
+    pub fn list_size(bin: &'a str) -> Self {
+        let cdt_op = CdtOperation {
+            op: CdtOpType::ListSize,
+            data: CdtOpData::None,
+            pre_args: None,
+            post_args: None,
+        };
         Operation {
-            op: operation::CDT_LIST_READ,
-            cdt_op: Some(CDT_LIST_SIZE),
-            cdt_args: None,
-            cdt_list_values: None,
-            cdt_map_entry: None,
-            cdt_map_values: None,
-            bin_name: bin_name,
-            bin_value: operation::NIL_VALUE,
-            header_only: false,
+            op: OperationType::CdtRead,
+            bin: OperationBin::Name(bin),
+            data: OperationData::CdtListOp(cdt_op),
         }
     }
 
-    pub fn list_get(bin_name: &'a str, index: i64) -> Self {
+    pub fn list_get(bin: &'a str, index: i64) -> Self {
+        let cdt_op = CdtOperation {
+            op: CdtOpType::ListGet,
+            data: CdtOpData::None,
+            pre_args: Some(vec![Value::from(index)]),
+            post_args: None,
+        };
         Operation {
-            op: operation::CDT_LIST_READ,
-            cdt_op: Some(CDT_LIST_GET),
-            cdt_args: Some(vec![Value::from(index)]),
-            cdt_list_values: None,
-            cdt_map_entry: None,
-            cdt_map_values: None,
-            bin_name: bin_name,
-            bin_value: operation::NIL_VALUE,
-            header_only: false,
+            op: OperationType::CdtRead,
+            bin: OperationBin::Name(bin),
+            data: OperationData::CdtListOp(cdt_op),
         }
     }
 
-    pub fn list_get_range(bin_name: &'a str, index: i64, count: i64) -> Self {
+    pub fn list_get_range(bin: &'a str, index: i64, count: i64) -> Self {
+        let cdt_op = CdtOperation {
+            op: CdtOpType::ListGetRange,
+            data: CdtOpData::None,
+            pre_args: Some(vec![Value::from(index), Value::from(count)]),
+            post_args: None,
+        };
         Operation {
-            op: operation::CDT_LIST_READ,
-            cdt_op: Some(CDT_LIST_GET_RANGE),
-            cdt_args: Some(vec![Value::from(index), Value::from(count)]),
-            cdt_list_values: None,
-            cdt_map_entry: None,
-            cdt_map_values: None,
-            bin_name: bin_name,
-            bin_value: operation::NIL_VALUE,
-            header_only: false,
+            op: OperationType::CdtRead,
+            bin: OperationBin::Name(bin),
+            data: OperationData::CdtListOp(cdt_op),
         }
     }
 
-    pub fn list_get_range_from(bin_name: &'a str, index: i64) -> Self {
+    pub fn list_get_range_from(bin: &'a str, index: i64) -> Self {
+        let cdt_op = CdtOperation {
+            op: CdtOpType::ListGetRange,
+            data: CdtOpData::None,
+            pre_args: Some(vec![Value::from(index)]),
+            post_args: None,
+        };
         Operation {
-            op: operation::CDT_LIST_READ,
-            cdt_op: Some(CDT_LIST_GET_RANGE),
-            cdt_args: Some(vec![Value::from(index)]),
-            cdt_list_values: None,
-            cdt_map_entry: None,
-            cdt_map_values: None,
-            bin_name: bin_name,
-            bin_value: operation::NIL_VALUE,
-            header_only: false,
+            op: OperationType::CdtRead,
+            bin: OperationBin::Name(bin),
+            data: OperationData::CdtListOp(cdt_op),
         }
     }
 }
