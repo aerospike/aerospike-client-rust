@@ -112,6 +112,22 @@ pub struct CdtOperation<'a> {
     pub args: Vec<CdtArgument<'a>>,
 }
 
+impl<'a> CdtOperation<'a> {
+    fn particle_type(&self) -> ParticleType {
+        ParticleType::BLOB
+    }
+
+    fn estimate_size(&self) -> AerospikeResult<usize> {
+        let size: usize = try!(encoder::pack_cdt_op(&mut None, self));
+        Ok(size)
+    }
+
+    fn write_to(&self, buffer: &mut Buffer) -> AerospikeResult<usize> {
+        let size: usize = try!(encoder::pack_cdt_op(&mut Some(buffer), self));
+        Ok(size)
+    }
+}
+
 #[derive(Debug)]
 pub struct Operation<'a> {
     // OpType determines type of operation.
@@ -134,7 +150,8 @@ impl<'a> Operation<'a> {
         size += match self.data {
             OperationData::None => 0,
             OperationData::Value(ref value) => try!(value.estimate_size()),
-            OperationData::CdtListOp(ref cdt_op) | OperationData::CdtMapOp(ref cdt_op) => try!(encoder::pack_cdt_op(&mut None, cdt_op)),
+            OperationData::CdtListOp(ref cdt_op) |
+                OperationData::CdtMapOp(ref cdt_op) => try!(cdt_op.estimate_size()),
         };
 
         Ok(size)
@@ -158,8 +175,8 @@ impl<'a> Operation<'a> {
                 size += try!(value.write_to(buffer));
             }
             OperationData::CdtListOp(ref cdt_op) | OperationData::CdtMapOp(ref cdt_op) => {
-                size += try!(self.write_op_header_to(buffer, ParticleType::BLOB as u8));
-                size += try!(encoder::pack_cdt_op(&mut Some(buffer), cdt_op));
+                size += try!(self.write_op_header_to(buffer, cdt_op.particle_type() as u8));
+                size += try!(cdt_op.write_to(buffer));
             }
         };
 
