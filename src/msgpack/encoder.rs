@@ -18,10 +18,9 @@ extern crate core;
 use std::{i8, i16, i32, i64};
 use std::collections::HashMap;
 use std::num::Wrapping;
-use std::vec::Vec;
 
 use common::ParticleType;
-use common::operation;
+use common::operation::*;
 use error::AerospikeResult;
 use command::buffer::Buffer;
 use value::*;
@@ -54,98 +53,24 @@ pub fn pack_empty_args_array(buf: &mut Option<&mut Buffer>) -> AerospikeResult<u
     Ok(size)
 }
 
-pub fn pack_cdt_list_args(buf: &mut Option<&mut Buffer>,
-                          cdt_op: u8,
-                          meta_args: &Option<Vec<Value>>,
-                          args: &Option<&[Value]>,
-                          single_value: &Value)
-                          -> AerospikeResult<usize> {
-
-    // arguments will always be either in args or single value
-    // never in both
-    assert_eq!(args.is_some() && (single_value != operation::NIL_VALUE),
-               false);
-
-    let mut args_len: usize = 0;
-    if let &Some(ref meta_args) = meta_args {
-        args_len += meta_args.len();
-    };
-
-    // all args are considered ONE argument
-    if args.is_some() || single_value != operation::NIL_VALUE {
-        args_len += 1;
-    }
+pub fn pack_cdt_op(
+    buf: &mut Option<&mut Buffer>,
+    cdt_op: &CdtOperation)
+    -> AerospikeResult<usize> {
 
     let mut size: usize = 0;
+    size += try!(pack_raw_u16(buf, cdt_op.op as u16));
 
-    size += try!(pack_raw_u16(buf, cdt_op as u16));
-
-    if args_len > 0 {
-        size += try!(pack_array_begin(buf, args_len));
-    }
-
-    if let &Some(ref meta_args) = meta_args {
-        for value in meta_args {
-            size += try!(pack_value(buf, &value));
-        }
-    }
-
-    if let &Some(args) = args {
-        size += try!(pack_array(buf, args));
-    } else if single_value != operation::NIL_VALUE {
-        size += try!(pack_value(buf, single_value));
-    }
-
-    Ok(size)
-}
-
-pub fn pack_cdt_map_args(buf: &mut Option<&mut Buffer>,
-                         cdt_op: u8,
-                         meta_args: &Option<Vec<Value>>,
-                         lists: &Option<&[Value]>,
-                         args: &Option<&HashMap<Value, Value>>,
-                         single_entry: &Option<(&Value, &Value)>)
-                         -> AerospikeResult<usize> {
-
-    let mut args_len: usize = 0;
-    if let &Some(ref meta_args) = meta_args {
-        args_len += meta_args.len();
-    };
-
-    // all args are considered ONE argument
-    if args.is_some() || lists.is_some() {
-        args_len += 1;
-    }
-
-    if let &Some((_, v)) = single_entry {
-        args_len += 1;
-        if v != operation::NIL_VALUE {
-            args_len += 1;
-        }
-    }
-
-    let mut size: usize = 0;
-
-    size += try!(pack_raw_u16(buf, cdt_op as u16));
-
-    if args_len > 0 {
-        size += try!(pack_array_begin(buf, args_len));
-    }
-
-    if let &Some(args) = args {
-        size += try!(pack_map(buf, args));
-    } else if let &Some((key, val)) = single_entry {
-        size += try!(pack_value(buf, key));
-        if val != operation::NIL_VALUE {
-            size += try!(pack_value(buf, val));
-        }
-    } else if let &Some(items) = lists {
-        size += try!(pack_array(buf, items));
-    }
-
-    if let &Some(ref meta_args) = meta_args {
-        for value in meta_args {
-            size += try!(pack_value(buf, &value));
+    if !cdt_op.args.is_empty() {
+        size += try!(pack_array_begin(buf, cdt_op.args.len()));
+        for arg in &cdt_op.args {
+            size += match arg {
+                &CdtArgument::Byte(byte)   => try!(pack_value(buf, &Value::from(byte))),
+                &CdtArgument::Int(int)     => try!(pack_value(buf, &Value::from(int))),
+                &CdtArgument::Value(value) => try!(pack_value(buf, value)),
+                &CdtArgument::List(list)   => try!(pack_array(buf, list)),
+                &CdtArgument::Map(map)     => try!(pack_map(buf, map)),
+            }
         }
     }
 

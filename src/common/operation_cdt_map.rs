@@ -13,47 +13,14 @@
 // License for the specific language governing permissions and limitations under
 // the License.
 
-#![allow(dead_code)]
-
 use std::collections::HashMap;
 
 use value::Value;
-use common::operation;
 use common::operation::*;
 use error::AerospikeResult;
 
-const CDT_MAP_SET_TYPE: u8 = 64;
-const CDT_MAP_ADD: u8 = 65;
-const CDT_MAP_ADD_ITEMS: u8 = 66;
-const CDT_MAP_PUT: u8 = 67;
-const CDT_MAP_PUT_ITEMS: u8 = 68;
-const CDT_MAP_REPLACE: u8 = 69;
-const CDT_MAP_REPLACE_ITEMS: u8 = 70;
-const CDT_MAP_INCREMENT: u8 = 73;
-const CDT_MAP_DECREMENT: u8 = 74;
-const CDT_MAP_CLEAR: u8 = 75;
-const CDT_MAP_REMOVE_BY_KEY: u8 = 76;
-const CDT_MAP_REMOVE_BY_INDEX: u8 = 77;
-const CDT_MAP_REMOVE_BY_RANK: u8 = 79;
-const CDT_MAP_REMOVE_KEY_LIST: u8 = 81;
-const CDT_MAP_REMOVE_BY_VALUE: u8 = 82;
-const CDT_MAP_REMOVE_VALUE_LIST: u8 = 83;
-const CDT_MAP_REMOVE_BY_KEY_INTERVAL: u8 = 84;
-const CDT_MAP_REMOVE_BY_INDEX_RANGE: u8 = 85;
-const CDT_MAP_REMOVE_BY_VALUE_INTERVAL: u8 = 86;
-const CDT_MAP_REMOVE_BY_RANK_RANGE: u8 = 87;
-const CDT_MAP_SIZE: u8 = 96;
-const CDT_MAP_GET_BY_KEY: u8 = 97;
-const CDT_MAP_GET_BY_INDEX: u8 = 98;
-const CDT_MAP_GET_BY_RANK: u8 = 100;
-const CDT_MAP_GET_BY_VALUE: u8 = 102;
-const CDT_MAP_GET_BY_KEY_INTERVAL: u8 = 103;
-const CDT_MAP_GET_BY_INDEX_RANGE: u8 = 104;
-const CDT_MAP_GET_BY_VALUE_INTERVAL: u8 = 105;
-const CDT_MAP_GET_BY_RANK_RANGE: u8 = 106;
-
 // Map storage order.
-#[derive(Clone)]
+#[derive(Clone, Copy)]
 pub enum MapOrder {
     // Map is not ordered. This is the default.
     Unordered = 0,
@@ -130,30 +97,17 @@ pub enum MapWriteMode {
     CreateOnly,
 }
 
-impl MapWriteMode {
-    fn mode_conf(&self) -> (u8, u8) {
-        match self {
-            &MapWriteMode::Update => (CDT_MAP_PUT, CDT_MAP_PUT_ITEMS),
-            &MapWriteMode::UpdateOnly => (CDT_MAP_REPLACE, CDT_MAP_REPLACE_ITEMS),
-            &MapWriteMode::CreateOnly => (CDT_MAP_ADD, CDT_MAP_ADD_ITEMS),
-        }
-    }
-}
-
 // MapPolicy directives when creating a map and writing map items.
 pub struct MapPolicy {
     order: MapOrder,
-    write_mode_item: u8,
-    write_mode_items: u8,
+    write_mode: MapWriteMode,
 }
 
 impl MapPolicy {
     pub fn new(order: MapOrder, write_mode: MapWriteMode) -> AerospikeResult<Self> {
-        let (item, items) = write_mode.mode_conf();
         Ok(MapPolicy {
             order: order,
-            write_mode_item: item,
-            write_mode_items: items,
+            write_mode: write_mode,
         })
     }
 }
@@ -161,6 +115,21 @@ impl MapPolicy {
 impl Default for MapPolicy {
     fn default() -> Self {
         MapPolicy::new(MapOrder::Unordered, MapWriteMode::Update).unwrap()
+    }
+}
+
+fn map_write_op(policy: &MapPolicy, multi: bool) -> CdtOpType {
+    match policy.write_mode {
+        MapWriteMode::Update     => if multi { CdtOpType::MapPutItems     } else { CdtOpType::MapPut     },
+        MapWriteMode::UpdateOnly => if multi { CdtOpType::MapReplaceItems } else { CdtOpType::MapReplace },
+        MapWriteMode::CreateOnly => if multi { CdtOpType::MapAddItems     } else { CdtOpType::MapAdd     },
+    }
+}
+
+fn map_order_arg(policy: &MapPolicy) -> Option<CdtArgument> {
+    match policy.write_mode {
+        MapWriteMode::UpdateOnly => None,
+        _ => Some(CdtArgument::Byte(policy.order as u8))
     }
 }
 
@@ -193,250 +162,507 @@ impl<'a> Operation<'a> {
 
     // MapSetPolicyOp creates set map policy operation.
     // Server sets map policy attributes.  Server returns null.
-    pub fn map_set_order(bin_name: &'a str, map_order: MapOrder) -> Self {
+    pub fn map_set_order(bin: &'a str, map_order: MapOrder) -> Self {
+        let cdt_op = CdtOperation {
+            op: CdtOpType::MapSetType,
+            args: vec![CdtArgument::Byte(map_order as u8)],
+        };
         Operation {
-            op: operation::CDT_MAP_MODIFY,
-            cdt_op: Some(CDT_MAP_SET_TYPE),
-            cdt_args: Some(vec![Value::from(map_order as u8)]),
-            cdt_list_values: None,
-            cdt_map_entry: None,
-            cdt_map_values: None,
-            bin_name: bin_name,
-            bin_value: operation::NIL_VALUE,
-            header_only: false,
+            op: OperationType::CdtWrite,
+            bin: OperationBin::Name(bin),
+            data: OperationData::CdtMapOp(cdt_op),
         }
     }
 
     pub fn map_put_item(policy: &'a MapPolicy,
-                        bin_name: &'a str,
+                        bin: &'a str,
                         key: &'a Value,
                         val: &'a Value)
                         -> Self {
-        let mut op = Operation {
-            op: operation::CDT_MAP_MODIFY,
-            cdt_op: Some(policy.write_mode_item),
-            cdt_args: None,
-            cdt_list_values: None,
-            cdt_map_entry: Some((key, val)),
-            cdt_map_values: None,
-            bin_name: bin_name,
-            bin_value: operation::NIL_VALUE,
-            header_only: false,
-        };
-        if policy.write_mode_item != CDT_MAP_REPLACE {
-            op.cdt_args = Some(vec![Value::from(policy.order.clone() as u8)]);
+        let mut args = vec![CdtArgument::Value(key)];
+        if !val.is_nil() {
+            args.push(CdtArgument::Value(val));
         }
-        op
+        if let Some(arg) = map_order_arg(&policy) {
+            args.push(arg);
+        }
+        let cdt_op = CdtOperation {
+            op: map_write_op(&policy, false),
+            args: args,
+        };
+        Operation {
+            op: OperationType::CdtWrite,
+            bin: OperationBin::Name(bin),
+            data: OperationData::CdtMapOp(cdt_op),
+        }
     }
 
     pub fn map_put_items(policy: &'a MapPolicy,
-                         bin_name: &'a str,
+                         bin: &'a str,
                          items: &'a HashMap<Value, Value>)
                          -> Self {
-        let mut op = Operation {
-            op: operation::CDT_MAP_MODIFY,
-            cdt_op: Some(policy.write_mode_items),
-            cdt_args: None,
-            cdt_list_values: None,
-            cdt_map_entry: None,
-            cdt_map_values: Some(items),
-            bin_name: bin_name,
-            bin_value: operation::NIL_VALUE,
-            header_only: false,
-        };
-        if policy.write_mode_items != CDT_MAP_REPLACE_ITEMS {
-            op.cdt_args = Some(vec![Value::from(policy.order.clone() as u8)]);
+        let mut args = vec![CdtArgument::Map(items)];
+        if let Some(arg) = map_order_arg(&policy) {
+            args.push(arg);
         }
-        op
+        let cdt_op = CdtOperation {
+            op: map_write_op(&policy, true),
+            args: args,
+        };
+        Operation {
+            op: OperationType::CdtWrite,
+            bin: OperationBin::Name(bin),
+            data: OperationData::CdtMapOp(cdt_op),
+        }
     }
 
     pub fn map_increment_value(policy: &'a MapPolicy,
-                               bin_name: &'a str,
+                               bin: &'a str,
                                key: &'a Value,
                                incr: &'a Value)
                                -> Self {
+        let mut args = vec![CdtArgument::Value(key)];
+        if !incr.is_nil() {
+            args.push(CdtArgument::Value(incr));
+        }
+        if let Some(arg) = map_order_arg(&policy) {
+            args.push(arg);
+        }
+        let cdt_op = CdtOperation {
+            op: CdtOpType::MapIncrement,
+            args: args,
+        };
         Operation {
-            op: operation::CDT_MAP_MODIFY,
-            cdt_op: Some(CDT_MAP_INCREMENT),
-            cdt_args: Some(vec![Value::from(policy.order.clone() as u8)]),
-            cdt_list_values: None,
-            cdt_map_entry: Some((key, incr)),
-            cdt_map_values: None,
-            bin_name: bin_name,
-            bin_value: operation::NIL_VALUE,
-            header_only: false,
+            op: OperationType::CdtWrite,
+            bin: OperationBin::Name(bin),
+            data: OperationData::CdtMapOp(cdt_op),
         }
     }
 
     pub fn map_decrement_value(policy: &'a MapPolicy,
-                               bin_name: &'a str,
+                               bin: &'a str,
                                key: &'a Value,
                                decr: &'a Value)
                                -> Self {
+        let mut args = vec![CdtArgument::Value(key)];
+        if !decr.is_nil() {
+            args.push(CdtArgument::Value(decr));
+        }
+        if let Some(arg) = map_order_arg(&policy) {
+            args.push(arg);
+        }
+        let cdt_op = CdtOperation {
+            op: CdtOpType::MapDecrement,
+            args: args,
+        };
         Operation {
-            op: operation::CDT_MAP_MODIFY,
-            cdt_op: Some(CDT_MAP_DECREMENT),
-            cdt_args: Some(vec![Value::from(policy.order.clone() as u8)]),
-            cdt_list_values: None,
-            cdt_map_entry: Some((key, decr)),
-            cdt_map_values: None,
-            bin_name: bin_name,
-            bin_value: operation::NIL_VALUE,
-            header_only: false,
+            op: OperationType::CdtWrite,
+            bin: OperationBin::Name(bin),
+            data: OperationData::CdtMapOp(cdt_op),
         }
     }
 
     pub fn map_clear(_policy: &'a MapPolicy,
-                     bin_name: &'a str)
+                     bin: &'a str)
                      -> Self {
+        let cdt_op = CdtOperation {
+            op: CdtOpType::MapClear,
+            args: vec![],
+        };
         Operation {
-            op: operation::CDT_MAP_MODIFY,
-            cdt_op: Some(CDT_MAP_CLEAR),
-            cdt_args: None,
-            cdt_list_values: None,
-            cdt_map_entry: None,
-            cdt_map_values: None,
-            bin_name: bin_name,
-            bin_value: operation::NIL_VALUE,
-            header_only: false,
+            op: OperationType::CdtWrite,
+            bin: OperationBin::Name(bin),
+            data: OperationData::CdtMapOp(cdt_op),
         }
     }
 
     pub fn map_remove_by_key(_policy: &'a MapPolicy,
-                             bin_name: &'a str,
+                             bin: &'a str,
                              key: &'a Value,
                              return_type: MapReturnType)
                              -> Self {
+        let cdt_op = CdtOperation {
+            op: CdtOpType::MapRemoveByKey,
+            args: vec![CdtArgument::Byte(return_type as u8), CdtArgument::Value(key)],
+        };
         Operation {
-            op: operation::CDT_MAP_MODIFY,
-            cdt_op: Some(CDT_MAP_REMOVE_BY_KEY),
-            cdt_args: Some(vec![Value::from(return_type as u8)]),
-            cdt_list_values: None,
-            cdt_map_entry: Some((key, operation::NIL_VALUE)),
-            cdt_map_values: None,
-            bin_name: bin_name,
-            bin_value: operation::NIL_VALUE,
-            header_only: false,
+            op: OperationType::CdtWrite,
+            bin: OperationBin::Name(bin),
+            data: OperationData::CdtMapOp(cdt_op),
         }
     }
 
-    pub fn map_remove_by_keys(_policy: &'a MapPolicy,
-                              bin_name: &'a str,
+    pub fn map_remove_by_key_list(_policy: &'a MapPolicy,
+                              bin: &'a str,
                               keys: &'a [Value],
                               return_type: MapReturnType)
                               -> Self {
+        let cdt_op = CdtOperation {
+            op: CdtOpType::MapRemoveByKeyList,
+            args: vec![CdtArgument::Byte(return_type as u8), CdtArgument::List(keys)],
+        };
         Operation {
-            op: operation::CDT_MAP_MODIFY,
-            cdt_op: Some(CDT_MAP_REMOVE_KEY_LIST),
-            cdt_args: Some(vec![Value::from(return_type as u8)]),
-            cdt_list_values: Some(keys),
-            cdt_map_entry: None,
-            cdt_map_values: None,
-            bin_name: bin_name,
-            bin_value: operation::NIL_VALUE,
-            header_only: false,
+            op: OperationType::CdtWrite,
+            bin: OperationBin::Name(bin),
+            data: OperationData::CdtMapOp(cdt_op),
         }
     }
 
     pub fn map_remove_by_key_range(_policy: &'a MapPolicy,
-                                   bin_name: &'a str,
+                                   bin: &'a str,
                                    begin: &'a Value,
                                    end: &'a Value,
                                    return_type: MapReturnType)
                                    -> Self {
-        if *end == Value::Nil {
-            Operation {
-                op: operation::CDT_MAP_MODIFY,
-                cdt_op: Some(CDT_MAP_REMOVE_BY_KEY_INTERVAL),
-                cdt_args: Some(vec![Value::from(return_type as u8)]),
-                cdt_list_values: None,
-                cdt_map_entry: Some((begin, operation::NIL_VALUE)),
-                cdt_map_values: None,
-                bin_name: bin_name,
-                bin_value: operation::NIL_VALUE,
-                header_only: false,
-            }
-        } else {
-            Operation {
-                op: operation::CDT_MAP_MODIFY,
-                cdt_op: Some(CDT_MAP_REMOVE_BY_KEY_INTERVAL),
-                cdt_args: Some(vec![Value::from(return_type as u8)]),
-                cdt_list_values: None,
-                cdt_map_entry: Some((begin, end)),
-                cdt_map_values: None,
-                bin_name: bin_name,
-                bin_value: operation::NIL_VALUE,
-                header_only: false,
-            }
+        let mut args = vec![CdtArgument::Byte(return_type as u8), CdtArgument::Value(begin)];
+        if !end.is_nil() {
+            args.push(CdtArgument::Value(end));
+        }
+        let cdt_op = CdtOperation {
+            op: CdtOpType::MapRemoveByKeyInterval,
+            args: args,
+        };
+        Operation {
+            op: OperationType::CdtWrite,
+            bin: OperationBin::Name(bin),
+            data: OperationData::CdtMapOp(cdt_op),
         }
     }
 
     pub fn map_remove_by_value(_policy: &'a MapPolicy,
-                               bin_name: &'a str,
+                               bin: &'a str,
                                value: &'a Value,
                                return_type: MapReturnType)
                                -> Self {
+        let cdt_op = CdtOperation {
+            op: CdtOpType::MapRemoveByValue,
+            args: vec![CdtArgument::Byte(return_type as u8), CdtArgument::Value(value)],
+        };
         Operation {
-            op: operation::CDT_MAP_MODIFY,
-            cdt_op: Some(CDT_MAP_REMOVE_BY_VALUE),
-            cdt_args: Some(vec![Value::from(return_type as u8)]),
-            cdt_list_values: None,
-            cdt_map_entry: Some((value, operation::NIL_VALUE)),
-            cdt_map_values: None,
-            bin_name: bin_name,
-            bin_value: operation::NIL_VALUE,
-            header_only: false,
+            op: OperationType::CdtWrite,
+            bin: OperationBin::Name(bin),
+            data: OperationData::CdtMapOp(cdt_op),
         }
     }
 
-    pub fn map_remove_by_values(_policy: &'a MapPolicy,
-                                bin_name: &'a str,
+    pub fn map_remove_by_value_list(_policy: &'a MapPolicy,
+                                bin: &'a str,
                                 values: &'a [Value],
                                 return_type: MapReturnType)
                                 -> Self {
+        let cdt_op = CdtOperation {
+            op: CdtOpType::MapRemoveByValueList,
+            args: vec![CdtArgument::Byte(return_type as u8), CdtArgument::List(values)],
+        };
         Operation {
-            op: operation::CDT_MAP_MODIFY,
-            cdt_op: Some(CDT_MAP_REMOVE_VALUE_LIST),
-            cdt_args: Some(vec![Value::from(return_type as u8)]),
-            cdt_list_values: Some(values),
-            cdt_map_entry: None,
-            cdt_map_values: None,
-            bin_name: bin_name,
-            bin_value: operation::NIL_VALUE,
-            header_only: false,
+            op: OperationType::CdtWrite,
+            bin: OperationBin::Name(bin),
+            data: OperationData::CdtMapOp(cdt_op),
         }
     }
 
     pub fn map_remove_by_value_range(_policy: &'a MapPolicy,
-                                     bin_name: &'a str,
+                                     bin: &'a str,
                                      begin: &'a Value,
                                      end: &'a Value,
                                      return_type: MapReturnType)
                                      -> Self {
-        if *end == Value::Nil {
-            Operation {
-                op: operation::CDT_MAP_MODIFY,
-                cdt_op: Some(CDT_MAP_REMOVE_BY_VALUE_INTERVAL),
-                cdt_args: Some(vec![Value::from(return_type as u8)]),
-                cdt_list_values: None,
-                cdt_map_entry: Some((begin, operation::NIL_VALUE)),
-                cdt_map_values: None,
-                bin_name: bin_name,
-                bin_value: operation::NIL_VALUE,
-                header_only: false,
-            }
-        } else {
-            Operation {
-                op: operation::CDT_MAP_MODIFY,
-                cdt_op: Some(CDT_MAP_REMOVE_BY_VALUE_INTERVAL),
-                cdt_args: Some(vec![Value::from(return_type as u8)]),
-                cdt_list_values: None,
-                cdt_map_entry: Some((begin, end)),
-                cdt_map_values: None,
-                bin_name: bin_name,
-                bin_value: operation::NIL_VALUE,
-                header_only: false,
-            }
+        let mut args = vec![CdtArgument::Byte(return_type as u8), CdtArgument::Value(begin)];
+        if !end.is_nil() {
+            args.push(CdtArgument::Value(end));
+        }
+        let cdt_op = CdtOperation {
+            op: CdtOpType::MapRemoveByValueInterval,
+            args: args,
+        };
+        Operation {
+            op: OperationType::CdtWrite,
+            bin: OperationBin::Name(bin),
+            data: OperationData::CdtMapOp(cdt_op),
+        }
+    }
+
+    pub fn map_remove_by_index(_policy: &'a MapPolicy,
+                               bin: &'a str,
+                               index: i64,
+                               return_type: MapReturnType)
+                               -> Self {
+        let cdt_op = CdtOperation {
+            op: CdtOpType::MapRemoveByIndex,
+            args: vec![CdtArgument::Byte(return_type as u8), CdtArgument::Int(index)],
+        };
+        Operation {
+            op: OperationType::CdtWrite,
+            bin: OperationBin::Name(bin),
+            data: OperationData::CdtMapOp(cdt_op),
+        }
+    }
+
+    pub fn map_remove_by_index_range(_policy: &'a MapPolicy,
+                                     bin: &'a str,
+                                     begin: i64,
+                                     end: i64,
+                                     return_type: MapReturnType)
+                                     -> Self {
+        let cdt_op = CdtOperation {
+            op: CdtOpType::MapRemoveByIndexRange,
+            args: vec![CdtArgument::Byte(return_type as u8), CdtArgument::Int(begin), CdtArgument::Int(end)],
+        };
+        Operation {
+            op: OperationType::CdtWrite,
+            bin: OperationBin::Name(bin),
+            data: OperationData::CdtMapOp(cdt_op),
+        }
+    }
+
+    pub fn map_remove_by_index_range_from(_policy: &'a MapPolicy,
+                                     bin: &'a str,
+                                     begin: i64,
+                                     return_type: MapReturnType)
+                                     -> Self {
+        let cdt_op = CdtOperation {
+            op: CdtOpType::MapRemoveByIndexRange,
+            args: vec![CdtArgument::Byte(return_type as u8), CdtArgument::Int(begin)],
+        };
+        Operation {
+            op: OperationType::CdtWrite,
+            bin: OperationBin::Name(bin),
+            data: OperationData::CdtMapOp(cdt_op),
+        }
+    }
+
+    pub fn map_remove_by_rank(_policy: &'a MapPolicy,
+                               bin: &'a str,
+                               rank: i64,
+                               return_type: MapReturnType)
+                               -> Self {
+        let cdt_op = CdtOperation {
+            op: CdtOpType::MapRemoveByRank,
+            args: vec![CdtArgument::Byte(return_type as u8), CdtArgument::Int(rank)],
+        };
+        Operation {
+            op: OperationType::CdtWrite,
+            bin: OperationBin::Name(bin),
+            data: OperationData::CdtMapOp(cdt_op),
+        }
+    }
+
+    pub fn map_remove_by_rank_range(_policy: &'a MapPolicy,
+                                     bin: &'a str,
+                                     begin: i64,
+                                     end: i64,
+                                     return_type: MapReturnType)
+                                     -> Self {
+        let cdt_op = CdtOperation {
+            op: CdtOpType::MapRemoveByRankRange,
+            args: vec![CdtArgument::Byte(return_type as u8), CdtArgument::Int(begin), CdtArgument::Int(end)],
+        };
+        Operation {
+            op: OperationType::CdtWrite,
+            bin: OperationBin::Name(bin),
+            data: OperationData::CdtMapOp(cdt_op),
+        }
+    }
+
+    pub fn map_remove_by_rank_range_from(_policy: &'a MapPolicy,
+                                     bin: &'a str,
+                                     begin: i64,
+                                     return_type: MapReturnType)
+                                     -> Self {
+        let cdt_op = CdtOperation {
+            op: CdtOpType::MapRemoveByRankRange,
+            args: vec![CdtArgument::Byte(return_type as u8), CdtArgument::Int(begin)],
+        };
+        Operation {
+            op: OperationType::CdtWrite,
+            bin: OperationBin::Name(bin),
+            data: OperationData::CdtMapOp(cdt_op),
+        }
+    }
+
+    pub fn map_size(_policy: &'a MapPolicy,
+                             bin: &'a str)
+                             -> Self {
+        let cdt_op = CdtOperation {
+            op: CdtOpType::MapSize,
+            args: vec![],
+        };
+        Operation {
+            op: OperationType::CdtRead,
+            bin: OperationBin::Name(bin),
+            data: OperationData::CdtMapOp(cdt_op),
+        }
+    }
+
+    pub fn map_get_by_key(_policy: &'a MapPolicy,
+                             bin: &'a str,
+                             key: &'a Value,
+                             return_type: MapReturnType)
+                             -> Self {
+        let cdt_op = CdtOperation {
+            op: CdtOpType::MapGetByKey,
+            args: vec![CdtArgument::Byte(return_type as u8), CdtArgument::Value(key)],
+        };
+        Operation {
+            op: OperationType::CdtRead,
+            bin: OperationBin::Name(bin),
+            data: OperationData::CdtMapOp(cdt_op),
+        }
+    }
+
+    pub fn map_get_by_key_range(_policy: &'a MapPolicy,
+                                   bin: &'a str,
+                                   begin: &'a Value,
+                                   end: &'a Value,
+                                   return_type: MapReturnType)
+                                   -> Self {
+        let mut args = vec![CdtArgument::Byte(return_type as u8), CdtArgument::Value(begin)];
+        if !end.is_nil() {
+            args.push(CdtArgument::Value(end));
+        }
+        let cdt_op = CdtOperation {
+            op: CdtOpType::MapGetByKeyInterval,
+            args: args,
+        };
+        Operation {
+            op: OperationType::CdtRead,
+            bin: OperationBin::Name(bin),
+            data: OperationData::CdtMapOp(cdt_op),
+        }
+    }
+
+    pub fn map_get_by_value(_policy: &'a MapPolicy,
+                               bin: &'a str,
+                               value: &'a Value,
+                               return_type: MapReturnType)
+                               -> Self {
+        let cdt_op = CdtOperation {
+            op: CdtOpType::MapGetByValue,
+            args: vec![CdtArgument::Byte(return_type as u8), CdtArgument::Value(value)],
+        };
+        Operation {
+            op: OperationType::CdtRead,
+            bin: OperationBin::Name(bin),
+            data: OperationData::CdtMapOp(cdt_op),
+        }
+    }
+
+    pub fn map_get_by_value_range(_policy: &'a MapPolicy,
+                                     bin: &'a str,
+                                     begin: &'a Value,
+                                     end: &'a Value,
+                                     return_type: MapReturnType)
+                                     -> Self {
+        let mut args = vec![CdtArgument::Byte(return_type as u8), CdtArgument::Value(begin)];
+        if !end.is_nil() {
+            args.push(CdtArgument::Value(end));
+        }
+        let cdt_op = CdtOperation {
+            op: CdtOpType::MapGetByValueInterval,
+            args: args,
+        };
+        Operation {
+            op: OperationType::CdtRead,
+            bin: OperationBin::Name(bin),
+            data: OperationData::CdtMapOp(cdt_op),
+        }
+    }
+
+    pub fn map_get_by_index(_policy: &'a MapPolicy,
+                               bin: &'a str,
+                               index: i64,
+                               return_type: MapReturnType)
+                               -> Self {
+        let cdt_op = CdtOperation {
+            op: CdtOpType::MapGetByIndex,
+            args: vec![CdtArgument::Byte(return_type as u8), CdtArgument::Int(index)],
+        };
+        Operation {
+            op: OperationType::CdtRead,
+            bin: OperationBin::Name(bin),
+            data: OperationData::CdtMapOp(cdt_op),
+        }
+    }
+
+    pub fn map_get_by_index_range(_policy: &'a MapPolicy,
+                                     bin: &'a str,
+                                     begin: i64,
+                                     end: i64,
+                                     return_type: MapReturnType)
+                                     -> Self {
+        let cdt_op = CdtOperation {
+            op: CdtOpType::MapGetByIndexRange,
+            args: vec![CdtArgument::Byte(return_type as u8), CdtArgument::Int(begin), CdtArgument::Int(end)],
+        };
+        Operation {
+            op: OperationType::CdtRead,
+            bin: OperationBin::Name(bin),
+            data: OperationData::CdtMapOp(cdt_op),
+        }
+    }
+
+    pub fn map_get_by_index_range_from(_policy: &'a MapPolicy,
+                                     bin: &'a str,
+                                     begin: i64,
+                                     return_type: MapReturnType)
+                                     -> Self {
+        let cdt_op = CdtOperation {
+            op: CdtOpType::MapGetByIndexRange,
+            args: vec![CdtArgument::Byte(return_type as u8), CdtArgument::Int(begin)],
+        };
+        Operation {
+            op: OperationType::CdtRead,
+            bin: OperationBin::Name(bin),
+            data: OperationData::CdtMapOp(cdt_op),
+        }
+    }
+
+    pub fn map_get_by_rank(_policy: &'a MapPolicy,
+                               bin: &'a str,
+                               rank: i64,
+                               return_type: MapReturnType)
+                               -> Self {
+        let cdt_op = CdtOperation {
+            op: CdtOpType::MapGetByRank,
+            args: vec![CdtArgument::Byte(return_type as u8), CdtArgument::Int(rank)],
+        };
+        Operation {
+            op: OperationType::CdtRead,
+            bin: OperationBin::Name(bin),
+            data: OperationData::CdtMapOp(cdt_op),
+        }
+    }
+
+    pub fn map_get_by_rank_range(_policy: &'a MapPolicy,
+                                     bin: &'a str,
+                                     begin: i64,
+                                     end: i64,
+                                     return_type: MapReturnType)
+                                     -> Self {
+        let cdt_op = CdtOperation {
+            op: CdtOpType::MapGetByRankRange,
+            args: vec![CdtArgument::Byte(return_type as u8), CdtArgument::Int(begin), CdtArgument::Int(end)],
+        };
+        Operation {
+            op: OperationType::CdtRead,
+            bin: OperationBin::Name(bin),
+            data: OperationData::CdtMapOp(cdt_op),
+        }
+    }
+
+    pub fn map_get_by_rank_range_from(_policy: &'a MapPolicy,
+                                     bin: &'a str,
+                                     begin: i64,
+                                     return_type: MapReturnType)
+                                     -> Self {
+        let cdt_op = CdtOperation {
+            op: CdtOpType::MapGetByRankRange,
+            args: vec![CdtArgument::Byte(return_type as u8), CdtArgument::Int(begin)],
+        };
+        Operation {
+            op: OperationType::CdtRead,
+            bin: OperationBin::Name(bin),
+            data: OperationData::CdtMapOp(cdt_op),
         }
     }
 }

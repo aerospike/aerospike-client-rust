@@ -50,7 +50,7 @@ fn cdt_list() {
     assert_eq!(*rec.bins.get("bin").unwrap(), Value::from(3));
 
     let values = vec![as_val!(9), as_val!(8), as_val!(7)];
-    let ops = &vec![Operation::list_insert("bin", 1, &values), Operation::get_bin("bin")];
+    let ops = &vec![Operation::list_insert_items("bin", 1, &values), Operation::get_bin("bin")];
     let rec = client.operate(&wpolicy, &key, ops).unwrap();
     assert_eq!(*rec.bins.get("bin").unwrap(),
                as_list!(6, as_list!("0", 9, 8, 7, 1, 2.1f64)));
@@ -72,7 +72,7 @@ fn cdt_list() {
 
     let values = as_values!["0", 9, 8, 7, 1, 2.1f64];
     let ops = &vec![Operation::list_clear("bin"),
-                    Operation::list_append("bin", &values),
+                    Operation::list_append_items("bin", &values),
                     Operation::get_bin("bin")];
     let rec = client.operate(&wpolicy, &key, ops).unwrap();
     assert_eq!(*rec.bins.get("bin").unwrap(),
@@ -100,7 +100,7 @@ fn cdt_list() {
 
     let values = as_values!["0", 9, 8, 7, 1, 2.1f64, -1];
     let ops = &vec![Operation::list_clear("bin"),
-                    Operation::list_append("bin", &values),
+                    Operation::list_append_items("bin", &values),
                     Operation::get_bin("bin")];
     let rec = client.operate(&wpolicy, &key, ops).unwrap();
     assert_eq!(*rec.bins.get("bin").unwrap(),
@@ -112,7 +112,7 @@ fn cdt_list() {
 
     let values = as_values!["0", 9, 8, 7, 1, 2.1f64, -1];
     let ops = &vec![Operation::list_clear("bin"),
-                    Operation::list_append("bin", &values),
+                    Operation::list_append_items("bin", &values),
                     Operation::get_bin("bin")];
     let rec = client.operate(&wpolicy, &key, ops).unwrap();
     assert_eq!(*rec.bins.get("bin").unwrap(),

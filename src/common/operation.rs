@@ -23,60 +23,110 @@ use command::buffer::Buffer;
 use error::AerospikeResult;
 use common::ParticleType;
 
-#[derive(Debug,Clone)]
-#[derive(PartialEq, Eq)]
-pub struct OperationType {
-    pub op: u8,
-    descriminant: u8,
+#[derive(Debug, Clone, Copy)]
+pub enum OperationType {
+    Read = 1,
+    Write = 2,
+    CdtRead = 3,
+    CdtWrite = 4,
+    Incr = 5,
+    Append = 9,
+    Prepend = 10,
+    Touch = 11,
 }
 
-pub const READ: OperationType = OperationType {
-    op: 1,
-    descriminant: 0,
-};
-pub const READ_HEADER: OperationType = OperationType {
-    op: 1,
-    descriminant: 1,
-};
+#[derive(Debug)]
+pub enum OperationData<'a> {
+    None,
+    Value(&'a Value),
+    CdtListOp(CdtOperation<'a>),
+    CdtMapOp(CdtOperation<'a>),
+}
 
-pub const WRITE: OperationType = OperationType {
-    op: 2,
-    descriminant: 0,
-};
-pub const CDT_LIST_READ: OperationType = OperationType {
-    op: 3,
-    descriminant: 0,
-};
-pub const CDT_LIST_MODIFY: OperationType = OperationType {
-    op: 4,
-    descriminant: 0,
-};
-pub const CDT_MAP_READ: OperationType = OperationType {
-    op: 3,
-    descriminant: 1,
-};
-pub const CDT_MAP_MODIFY: OperationType = OperationType {
-    op: 4,
-    descriminant: 1,
-};
-pub const ADD: OperationType = OperationType {
-    op: 5,
-    descriminant: 0,
-};
-pub const APPEND: OperationType = OperationType {
-    op: 9,
-    descriminant: 0,
-};
-pub const PREPEND: OperationType = OperationType {
-    op: 10,
-    descriminant: 0,
-};
-pub const TOUCH: OperationType = OperationType {
-    op: 11,
-    descriminant: 0,
-};
+#[derive(Debug)]
+pub enum OperationBin<'a> {
+    None,
+    All,
+    Name(&'a str),
+}
 
-pub const NIL_VALUE: &'static Value = &Value::Nil;
+#[derive(Debug, Clone, Copy)]
+pub enum CdtOpType {
+    ListAppend = 1,
+    ListAppendItems = 2,
+    ListInsert = 3,
+    ListInsertItems = 4,
+    ListPop = 5,
+    ListPopRange = 6,
+    ListRemove = 7,
+    ListRemoveRange = 8,
+    ListSet = 9,
+    ListTrim = 10,
+    ListClear = 11,
+    ListSize = 16,
+    ListGet = 17,
+    ListGetRange = 18,
+    MapSetType = 64,
+    MapAdd = 65,
+    MapAddItems = 66,
+    MapPut = 67,
+    MapPutItems = 68,
+    MapReplace = 69,
+    MapReplaceItems = 70,
+    MapIncrement = 73,
+    MapDecrement = 74,
+    MapClear = 75,
+    MapRemoveByKey = 76,
+    MapRemoveByIndex = 77,
+    MapRemoveByValue = 78,
+    MapRemoveByRank = 79,
+    MapRemoveByKeyList = 81,
+    MapRemoveByValueList = 83,
+    MapRemoveByKeyInterval = 84,
+    MapRemoveByIndexRange = 85,
+    MapRemoveByValueInterval = 86,
+    MapRemoveByRankRange = 87,
+    MapSize = 96,
+    MapGetByKey = 97,
+    MapGetByIndex = 98,
+    MapGetByValue = 99,
+    MapGetByRank = 100,
+    MapGetByKeyInterval = 103,
+    MapGetByIndexRange = 104,
+    MapGetByValueInterval = 105,
+    MapGetByRankRange = 106,
+}
+
+#[derive(Debug)]
+pub enum CdtArgument<'a> {
+    Byte(u8),
+    Int(i64),
+    Value(&'a Value),
+    List(&'a [Value]),
+    Map(&'a HashMap<Value, Value>),
+}
+
+#[derive(Debug)]
+pub struct CdtOperation<'a> {
+    pub op: CdtOpType,
+    pub args: Vec<CdtArgument<'a>>,
+}
+
+impl<'a> CdtOperation<'a> {
+    fn particle_type(&self) -> ParticleType {
+        ParticleType::BLOB
+    }
+
+    fn estimate_size(&self) -> AerospikeResult<usize> {
+        let size: usize = try!(encoder::pack_cdt_op(&mut None, self));
+        Ok(size)
+    }
+
+    fn write_to(&self, buffer: &mut Buffer) -> AerospikeResult<usize> {
+        let size: usize = try!(encoder::pack_cdt_op(&mut Some(buffer), self));
+        Ok(size)
+    }
+}
 
 #[derive(Debug)]
 pub struct Operation<'a> {
@@ -84,50 +134,24 @@ pub struct Operation<'a> {
     pub op: OperationType,
 
     // BinName (Optional) determines the name of bin used in operation.
-    pub bin_name: &'a str,
+    pub bin: OperationBin<'a>,
 
-    // BinValue (Optional) determines bin value used in operation.
-    pub bin_value: &'a Value,
-
-    // will be true ONLY for GetHeader() operation
-    pub header_only: bool,
-
-    // CDT operation
-    pub cdt_op: Option<u8>,
-    // CDT operations aruments
-    pub cdt_args: Option<Vec<Value>>,
-    // values passed to the CDT operation
-    // if they are an array of size more than ONE, they will be kept here.
-    // Otherwise they first element will be kept in bin_value and this
-    // attribute will be set to None.
-    // This complication is for performance reasons to avoid allocating memory.
-    pub cdt_list_values: Option<&'a [Value]>,
-
-    pub cdt_map_entry: Option<(&'a Value, &'a Value)>,
-    pub cdt_map_values: Option<&'a HashMap<Value, Value>>,
+    // BinData determines bin value used in operation.
+    pub data: OperationData<'a>,
 }
 
 impl<'a> Operation<'a> {
     pub fn estimate_size(&self) -> AerospikeResult<usize> {
         let mut size: usize = 0;
-        size += self.bin_name.len();
-        size += match self.op {
-            CDT_LIST_READ | CDT_LIST_MODIFY => {
-                try!(encoder::pack_cdt_list_args(&mut None,
-                                                 self.cdt_op.unwrap(),
-                                                 &self.cdt_args,
-                                                 &self.cdt_list_values,
-                                                 self.bin_value))
-            }
-            CDT_MAP_READ | CDT_MAP_MODIFY => {
-                try!(encoder::pack_cdt_map_args(&mut None,
-                                                self.cdt_op.unwrap(),
-                                                &self.cdt_args,
-                                                &self.cdt_list_values,
-                                                &self.cdt_map_values,
-                                                &self.cdt_map_entry))
-            }
-            _ => try!(self.bin_value.estimate_size()),
+        size += match self.bin {
+            OperationBin::Name(bin) => bin.len(),
+            OperationBin::None | OperationBin::All => 0
+        };
+        size += match self.data {
+            OperationData::None => 0,
+            OperationData::Value(ref value) => try!(value.estimate_size()),
+            OperationData::CdtListOp(ref cdt_op) |
+                OperationData::CdtMapOp(ref cdt_op) => try!(cdt_op.estimate_size()),
         };
 
         Ok(size)
@@ -140,29 +164,19 @@ impl<'a> Operation<'a> {
         let op_size = try!(self.estimate_size());
 
         size += try!(buffer.write_u32(op_size as u32 + 4));
-        size += try!(buffer.write_u8(self.op.op));
+        size += try!(buffer.write_u8(self.op as u8));
 
-        match self.op {
-            CDT_LIST_READ | CDT_LIST_MODIFY => {
-                size += try!(self.write_op_header_to(buffer, ParticleType::BLOB as u8));
-                size += try!(encoder::pack_cdt_list_args(&mut Some(buffer),
-                                                         self.cdt_op.unwrap(),
-                                                         &self.cdt_args,
-                                                         &self.cdt_list_values,
-                                                         self.bin_value));
+        match self.data {
+            OperationData::None => {
+                size += try!(self.write_op_header_to(buffer, ParticleType::NULL as u8));
             }
-            CDT_MAP_READ | CDT_MAP_MODIFY => {
-                size += try!(self.write_op_header_to(buffer, ParticleType::BLOB as u8));
-                size += try!(encoder::pack_cdt_map_args(&mut Some(buffer),
-                                                self.cdt_op.unwrap(),
-                                                &self.cdt_args,
-                                                &self.cdt_list_values,
-                                                &self.cdt_map_values,
-                                                &self.cdt_map_entry))
+            OperationData::Value(ref value) => {
+                size += try!(self.write_op_header_to(buffer, value.particle_type() as u8));
+                size += try!(value.write_to(buffer));
             }
-            _ => {
-                size += try!(self.write_op_header_to(buffer, self.bin_value.particle_type() as u8));
-                size += try!(self.bin_value.write_to(buffer));
+            OperationData::CdtListOp(ref cdt_op) | OperationData::CdtMapOp(ref cdt_op) => {
+                size += try!(self.write_op_header_to(buffer, cdt_op.particle_type() as u8));
+                size += try!(cdt_op.write_to(buffer));
             }
         };
 
@@ -172,121 +186,80 @@ impl<'a> Operation<'a> {
     fn write_op_header_to(&self, buffer: &mut Buffer, particle_type: u8) -> AerospikeResult<usize> {
         let mut size = try!(buffer.write_u8(particle_type as u8));
         size += try!(buffer.write_u8(0));
-        size += try!(buffer.write_u8(self.bin_name.len() as u8));
-        size += try!(buffer.write_str(self.bin_name));
+        match self.bin {
+            OperationBin::Name(bin) => {
+                size += try!(buffer.write_u8(bin.len() as u8));
+                size += try!(buffer.write_str(bin));
+            }
+            OperationBin::None | OperationBin::All => {
+                size += try!(buffer.write_u8(0));
+            }
+        }
         Ok(size)
     }
 
 
     pub fn get() -> Self {
         Operation {
-            op: READ,
-            cdt_op: None,
-            cdt_args: None,
-            cdt_list_values: None,
-            cdt_map_entry: None,
-            cdt_map_values: None,
-            bin_name: "",
-            bin_value: NIL_VALUE,
-            header_only: false,
+            op: OperationType::Read,
+            bin: OperationBin::All,
+            data: OperationData::None,
         }
     }
 
     pub fn get_header() -> Self {
         Operation {
-            op: READ,
-            cdt_op: None,
-            cdt_args: None,
-            cdt_list_values: None,
-            cdt_map_entry: None,
-            cdt_map_values: None,
-            bin_name: "",
-            bin_value: NIL_VALUE,
-            header_only: true,
+            op: OperationType::Read,
+            bin: OperationBin::None,
+            data: OperationData::None,
         }
     }
 
     pub fn get_bin(bin_name: &'a str) -> Self {
         Operation {
-            op: READ,
-            cdt_op: None,
-            cdt_args: None,
-            cdt_list_values: None,
-            cdt_map_entry: None,
-            cdt_map_values: None,
-            bin_name: bin_name,
-            bin_value: NIL_VALUE,
-            header_only: false,
+            op: OperationType::Read,
+            bin: OperationBin::Name(bin_name),
+            data: OperationData::None,
         }
     }
 
     pub fn put(bin: &'a Bin) -> Self {
         Operation {
-            op: WRITE,
-            cdt_op: None,
-            cdt_args: None,
-            cdt_list_values: None,
-            cdt_map_entry: None,
-            cdt_map_values: None,
-            bin_name: bin.name,
-            bin_value: &bin.value,
-            header_only: false,
+            op: OperationType::Write,
+            bin: OperationBin::Name(bin.name),
+            data: OperationData::Value(&bin.value),
         }
     }
 
     pub fn append(bin: &'a Bin) -> Self {
         Operation {
-            op: APPEND,
-            cdt_op: None,
-            cdt_args: None,
-            cdt_list_values: None,
-            cdt_map_entry: None,
-            cdt_map_values: None,
-            bin_name: bin.name,
-            bin_value: &bin.value,
-            header_only: false,
+            op: OperationType::Append,
+            bin: OperationBin::Name(bin.name),
+            data: OperationData::Value(&bin.value),
         }
     }
 
     pub fn prepend(bin: &'a Bin) -> Self {
         Operation {
-            op: PREPEND,
-            cdt_op: None,
-            cdt_args: None,
-            cdt_list_values: None,
-            cdt_map_entry: None,
-            cdt_map_values: None,
-            bin_name: bin.name,
-            bin_value: &bin.value,
-            header_only: false,
+            op: OperationType::Prepend,
+            bin: OperationBin::Name(bin.name),
+            data: OperationData::Value(&&bin.value),
         }
     }
 
-    pub fn add(bin: &'a Bin) -> Self {
+    pub fn incr(bin: &'a Bin) -> Self {
         Operation {
-            op: ADD,
-            cdt_op: None,
-            cdt_args: None,
-            cdt_list_values: None,
-            cdt_map_entry: None,
-            cdt_map_values: None,
-            bin_name: bin.name,
-            bin_value: &bin.value,
-            header_only: false,
+            op: OperationType::Incr,
+            bin: OperationBin::Name(bin.name),
+            data: OperationData::Value(&bin.value),
         }
     }
 
     pub fn touch() -> Self {
         Operation {
-            op: TOUCH,
-            cdt_op: None,
-            cdt_args: None,
-            cdt_list_values: None,
-            cdt_map_entry: None,
-            cdt_map_values: None,
-            bin_name: "",
-            bin_value: NIL_VALUE,
-            header_only: false,
+            op: OperationType::Touch,
+            bin: OperationBin::None,
+            data: OperationData::None,
         }
     }
 }
