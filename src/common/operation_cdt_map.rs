@@ -287,9 +287,7 @@ impl<'a> Operation<'a> {
     }
 
     pub fn map_clear(_policy: &'a MapPolicy,
-                     bin_name: &'a str,
-                     _key: &'a Value,
-                     _incr: &'a Value)
+                     bin_name: &'a str)
                      -> Self {
         Operation {
             op: operation::CDT_MAP_MODIFY,
