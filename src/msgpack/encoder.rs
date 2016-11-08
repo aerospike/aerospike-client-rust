@@ -58,57 +58,19 @@ pub fn pack_cdt_op(
     cdt_op: &CdtOperation)
     -> AerospikeResult<usize> {
 
-    let mut args_len: usize = match cdt_op.data {
-        CdtOpData::None => 0,
-        CdtOpData::Pair(_, opt) if *opt != Value::Nil => 2,
-        _ => 1,
-    };
-    if let Some(ref args) = cdt_op.pre_args {
-        args_len += args.len();
-    }
-    if let Some(ref args) = cdt_op.post_args {
-        args_len += args.len();
-    }
-
     let mut size: usize = 0;
-
     size += try!(pack_raw_u16(buf, cdt_op.op as u16));
 
-    if args_len > 0 {
-        size += try!(pack_array_begin(buf, args_len));
-    }
-
-    if let Some(ref args) = cdt_op.pre_args {
-        for value in args {
-            size += try!(pack_value(buf, &value));
-        }
-    }
-
-    match cdt_op.data {
-        CdtOpData::None => { },
-        CdtOpData::Val(ref val) => {
-            size += try!(pack_value(buf, val));
-        }
-        CdtOpData::Value(value) => {
-            size += try!(pack_value(buf, value));
-        }
-        CdtOpData::Pair(val1, val2) => {
-            size += try!(pack_value(buf, val1));
-            if !val2.is_nil() {
-                size += try!(pack_value(buf, val2));
+    if !cdt_op.args.is_empty() {
+        size += try!(pack_array_begin(buf, cdt_op.args.len()));
+        for arg in &cdt_op.args {
+            size += match arg {
+                &CdtArgument::Byte(byte)   => try!(pack_value(buf, &Value::from(byte))),
+                &CdtArgument::Int(int)     => try!(pack_value(buf, &Value::from(int))),
+                &CdtArgument::Value(value) => try!(pack_value(buf, value)),
+                &CdtArgument::List(list)   => try!(pack_array(buf, list)),
+                &CdtArgument::Map(map)     => try!(pack_map(buf, map)),
             }
-        }
-        CdtOpData::List(list) => {
-            size += try!(pack_array(buf, list));
-        }
-        CdtOpData::Map(map) => {
-            size += try!(pack_map(buf, map));
-        }
-    }
-
-    if let Some(ref args) = cdt_op.post_args {
-        for value in args {
-            size += try!(pack_value(buf, &value));
         }
     }
 

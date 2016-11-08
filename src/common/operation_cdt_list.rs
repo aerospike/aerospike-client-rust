@@ -20,9 +20,7 @@ impl<'a> Operation<'a> {
     pub fn list_append(bin: &'a str, value: &'a Value) -> Self {
         let cdt_op = CdtOperation {
             op: CdtOpType::ListAppend,
-            data: CdtOpData::Value(value),
-            pre_args: None,
-            post_args: None,
+            args: vec![CdtArgument::Value(value)],
         };
         Operation {
             op: OperationType::CdtWrite,
@@ -36,9 +34,7 @@ impl<'a> Operation<'a> {
 
         let cdt_op = CdtOperation {
             op: CdtOpType::ListAppendItems,
-            data: CdtOpData::List(values),
-            pre_args: None,
-            post_args: None,
+            args: vec![CdtArgument::List(values)],
         };
         Operation {
             op: OperationType::CdtWrite,
@@ -50,9 +46,7 @@ impl<'a> Operation<'a> {
     pub fn list_insert(bin: &'a str, index: i64, value: &'a Value) -> Self {
         let cdt_op = CdtOperation {
             op: CdtOpType::ListInsert,
-            data: CdtOpData::Value(value),
-            pre_args: Some(vec![Value::from(index)]),
-            post_args: None,
+            args: vec![CdtArgument::Int(index), CdtArgument::Value(value)],
         };
         Operation {
             op: OperationType::CdtWrite,
@@ -66,9 +60,7 @@ impl<'a> Operation<'a> {
 
         let cdt_op = CdtOperation {
             op: CdtOpType::ListInsertItems,
-            data: CdtOpData::List(values),
-            pre_args: Some(vec![Value::from(index)]),
-            post_args: None,
+            args: vec![CdtArgument::Int(index), CdtArgument::List(values)],
         };
         Operation {
             op: OperationType::CdtWrite,
@@ -80,9 +72,7 @@ impl<'a> Operation<'a> {
     pub fn list_pop(bin: &'a str, index: i64) -> Self {
         let cdt_op = CdtOperation {
             op: CdtOpType::ListPop,
-            data: CdtOpData::None,
-            pre_args: Some(vec![Value::from(index)]),
-            post_args: None,
+            args: vec![CdtArgument::Int(index)],
         };
         Operation {
             op: OperationType::CdtWrite,
@@ -95,9 +85,7 @@ impl<'a> Operation<'a> {
     pub fn list_pop_range(bin: &'a str, index: i64, count: i64) -> Self {
         let cdt_op = CdtOperation {
             op: CdtOpType::ListPopRange,
-            data: CdtOpData::None,
-            pre_args: Some(vec![Value::from(index), Value::from(count)]),
-            post_args: None,
+            args: vec![CdtArgument::Int(index), CdtArgument::Int(count)],
         };
         Operation {
             op: OperationType::CdtWrite,
@@ -109,9 +97,7 @@ impl<'a> Operation<'a> {
     pub fn list_pop_range_from(bin: &'a str, index: i64) -> Self {
         let cdt_op = CdtOperation {
             op: CdtOpType::ListPopRange,
-            data: CdtOpData::None,
-            pre_args: Some(vec![Value::from(index)]),
-            post_args: None,
+            args: vec![CdtArgument::Int(index)],
         };
         Operation {
             op: OperationType::CdtWrite,
@@ -123,9 +109,7 @@ impl<'a> Operation<'a> {
     pub fn list_remove(bin: &'a str, index: i64) -> Self {
         let cdt_op = CdtOperation {
             op: CdtOpType::ListRemove,
-            data: CdtOpData::None,
-            pre_args: Some(vec![Value::from(index)]),
-            post_args: None,
+            args: vec![CdtArgument::Int(index)],
         };
         Operation {
             op: OperationType::CdtWrite,
@@ -137,9 +121,7 @@ impl<'a> Operation<'a> {
     pub fn list_remove_range(bin: &'a str, index: i64, count: i64) -> Self {
         let cdt_op = CdtOperation {
             op: CdtOpType::ListRemoveRange,
-            data: CdtOpData::None,
-            pre_args: Some(vec![Value::from(index), Value::from(count)]),
-            post_args: None,
+            args: vec![CdtArgument::Int(index), CdtArgument::Int(count)],
         };
         Operation {
             op: OperationType::CdtWrite,
@@ -151,9 +133,7 @@ impl<'a> Operation<'a> {
     pub fn list_remove_range_from(bin: &'a str, index: i64) -> Self {
         let cdt_op = CdtOperation {
             op: CdtOpType::ListRemoveRange,
-            data: CdtOpData::None,
-            pre_args: Some(vec![Value::from(index)]),
-            post_args: None,
+            args: vec![CdtArgument::Int(index)],
         };
         Operation {
             op: OperationType::CdtWrite,
@@ -167,9 +147,7 @@ impl<'a> Operation<'a> {
 
         let cdt_op = CdtOperation {
             op: CdtOpType::ListSet,
-            data: CdtOpData::Value(value),
-            pre_args: Some(vec![Value::from(index)]),
-            post_args: None,
+            args: vec![CdtArgument::Int(index), CdtArgument::Value(value)],
         };
         Operation {
             op: OperationType::CdtWrite,
@@ -181,9 +159,7 @@ impl<'a> Operation<'a> {
     pub fn list_trim(bin: &'a str, index: i64, count: i64) -> Self {
         let cdt_op = CdtOperation {
             op: CdtOpType::ListTrim,
-            data: CdtOpData::None,
-            pre_args: Some(vec![Value::from(index), Value::from(count)]),
-            post_args: None,
+            args: vec![CdtArgument::Int(index), CdtArgument::Int(count)],
         };
         Operation {
             op: OperationType::CdtWrite,
@@ -195,9 +171,7 @@ impl<'a> Operation<'a> {
     pub fn list_clear(bin: &'a str) -> Self {
         let cdt_op = CdtOperation {
             op: CdtOpType::ListClear,
-            data: CdtOpData::None,
-            pre_args: None,
-            post_args: None,
+            args: vec![],
         };
         Operation {
             op: OperationType::CdtWrite,
@@ -209,9 +183,7 @@ impl<'a> Operation<'a> {
     pub fn list_size(bin: &'a str) -> Self {
         let cdt_op = CdtOperation {
             op: CdtOpType::ListSize,
-            data: CdtOpData::None,
-            pre_args: None,
-            post_args: None,
+            args: vec![],
         };
         Operation {
             op: OperationType::CdtRead,
@@ -223,9 +195,7 @@ impl<'a> Operation<'a> {
     pub fn list_get(bin: &'a str, index: i64) -> Self {
         let cdt_op = CdtOperation {
             op: CdtOpType::ListGet,
-            data: CdtOpData::None,
-            pre_args: Some(vec![Value::from(index)]),
-            post_args: None,
+            args: vec![CdtArgument::Int(index)],
         };
         Operation {
             op: OperationType::CdtRead,
@@ -237,9 +207,7 @@ impl<'a> Operation<'a> {
     pub fn list_get_range(bin: &'a str, index: i64, count: i64) -> Self {
         let cdt_op = CdtOperation {
             op: CdtOpType::ListGetRange,
-            data: CdtOpData::None,
-            pre_args: Some(vec![Value::from(index), Value::from(count)]),
-            post_args: None,
+            args: vec![CdtArgument::Int(index), CdtArgument::Int(count)],
         };
         Operation {
             op: OperationType::CdtRead,
@@ -251,9 +219,7 @@ impl<'a> Operation<'a> {
     pub fn list_get_range_from(bin: &'a str, index: i64) -> Self {
         let cdt_op = CdtOperation {
             op: CdtOpType::ListGetRange,
-            data: CdtOpData::None,
-            pre_args: Some(vec![Value::from(index)]),
-            post_args: None,
+            args: vec![CdtArgument::Int(index)],
         };
         Operation {
             op: OperationType::CdtRead,

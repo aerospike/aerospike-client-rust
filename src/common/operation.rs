@@ -98,11 +98,10 @@ pub enum CdtOpType {
 }
 
 #[derive(Debug)]
-pub enum CdtOpData<'a> {
-    None,
-    Val(Value),
+pub enum CdtArgument<'a> {
+    Byte(u8),
+    Int(i64),
     Value(&'a Value),
-    Pair(&'a Value, &'a Value),
     List(&'a [Value]),
     Map(&'a HashMap<Value, Value>),
 }
@@ -110,9 +109,7 @@ pub enum CdtOpData<'a> {
 #[derive(Debug)]
 pub struct CdtOperation<'a> {
     pub op: CdtOpType,
-    pub data: CdtOpData<'a>,
-    pub pre_args: Option<Vec<Value>>,
-    pub post_args: Option<Vec<Value>>,
+    pub args: Vec<CdtArgument<'a>>,
 }
 
 #[derive(Debug)]

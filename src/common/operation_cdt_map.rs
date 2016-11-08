@@ -128,10 +128,10 @@ fn map_write_op(policy: &MapPolicy, multi: bool) -> CdtOpType {
     }
 }
 
-fn map_order_value(policy: &MapPolicy) -> Option<Vec<Value>> {
+fn map_order_arg(policy: &MapPolicy) -> Option<CdtArgument> {
     match policy.write_mode {
         MapWriteMode::UpdateOnly => None,
-        _ => Some(vec![Value::from(policy.order as u8)])
+        _ => Some(CdtArgument::Byte(policy.order as u8))
     }
 }
 
@@ -167,9 +167,7 @@ impl<'a> Operation<'a> {
     pub fn map_set_order(bin: &'a str, map_order: MapOrder) -> Self {
         let cdt_op = CdtOperation {
             op: CdtOpType::MapSetType,
-            data: CdtOpData::Val(Value::from(map_order as u8)),
-            pre_args: None,
-            post_args: None,
+            args: vec![CdtArgument::Byte(map_order as u8)],
         };
         Operation {
             op: OperationType::CdtWrite,
@@ -183,11 +181,16 @@ impl<'a> Operation<'a> {
                         key: &'a Value,
                         val: &'a Value)
                         -> Self {
+        let mut args = vec![CdtArgument::Value(key)];
+        if !val.is_nil() {
+            args.push(CdtArgument::Value(val));
+        }
+        if let Some(arg) = map_order_arg(&policy) {
+            args.push(arg);
+        }
         let cdt_op = CdtOperation {
             op: map_write_op(&policy, false),
-            data: CdtOpData::Pair(key, val),
-            pre_args: None,
-            post_args: map_order_value(&policy),
+            args: args,
         };
         Operation {
             op: OperationType::CdtWrite,
@@ -200,11 +203,13 @@ impl<'a> Operation<'a> {
                          bin: &'a str,
                          items: &'a HashMap<Value, Value>)
                          -> Self {
+        let mut args = vec![CdtArgument::Map(items)];
+        if let Some(arg) = map_order_arg(&policy) {
+            args.push(arg);
+        }
         let cdt_op = CdtOperation {
             op: map_write_op(&policy, true),
-            data: CdtOpData::Map(items),
-            pre_args: None,
-            post_args: map_order_value(&policy),
+            args: args,
         };
         Operation {
             op: OperationType::CdtWrite,
@@ -218,11 +223,16 @@ impl<'a> Operation<'a> {
                                key: &'a Value,
                                incr: &'a Value)
                                -> Self {
+        let mut args = vec![CdtArgument::Value(key)];
+        if !incr.is_nil() {
+            args.push(CdtArgument::Value(incr));
+        }
+        if let Some(arg) = map_order_arg(&policy) {
+            args.push(arg);
+        }
         let cdt_op = CdtOperation {
             op: CdtOpType::MapIncrement,
-            data: CdtOpData::Pair(key, incr),
-            pre_args: None,
-            post_args: Some(vec![Value::from(policy.order as u8)]),
+            args: args,
         };
         Operation {
             op: OperationType::CdtWrite,
@@ -236,11 +246,16 @@ impl<'a> Operation<'a> {
                                key: &'a Value,
                                decr: &'a Value)
                                -> Self {
+        let mut args = vec![CdtArgument::Value(key)];
+        if !decr.is_nil() {
+            args.push(CdtArgument::Value(decr));
+        }
+        if let Some(arg) = map_order_arg(&policy) {
+            args.push(arg);
+        }
         let cdt_op = CdtOperation {
             op: CdtOpType::MapDecrement,
-            data: CdtOpData::Pair(key, decr),
-            pre_args: None,
-            post_args: Some(vec![Value::from(policy.order as u8)]),
+            args: args,
         };
         Operation {
             op: OperationType::CdtWrite,
@@ -254,9 +269,7 @@ impl<'a> Operation<'a> {
                      -> Self {
         let cdt_op = CdtOperation {
             op: CdtOpType::MapClear,
-            data: CdtOpData::None,
-            pre_args: None,
-            post_args: None,
+            args: vec![],
         };
         Operation {
             op: OperationType::CdtWrite,
@@ -272,9 +285,7 @@ impl<'a> Operation<'a> {
                              -> Self {
         let cdt_op = CdtOperation {
             op: CdtOpType::MapRemoveByKey,
-            data: CdtOpData::Value(key),
-            pre_args: Some(vec![Value::from(return_type as u8)]),
-            post_args: None,
+            args: vec![CdtArgument::Byte(return_type as u8), CdtArgument::Value(key)],
         };
         Operation {
             op: OperationType::CdtWrite,
@@ -290,9 +301,7 @@ impl<'a> Operation<'a> {
                               -> Self {
         let cdt_op = CdtOperation {
             op: CdtOpType::MapRemoveByKeyList,
-            data: CdtOpData::List(keys),
-            pre_args: Some(vec![Value::from(return_type as u8)]),
-            post_args: None,
+            args: vec![CdtArgument::Byte(return_type as u8), CdtArgument::List(keys)],
         };
         Operation {
             op: OperationType::CdtWrite,
@@ -307,11 +316,13 @@ impl<'a> Operation<'a> {
                                    end: &'a Value,
                                    return_type: MapReturnType)
                                    -> Self {
+        let mut args = vec![CdtArgument::Byte(return_type as u8), CdtArgument::Value(begin)];
+        if !end.is_nil() {
+            args.push(CdtArgument::Value(end));
+        }
         let cdt_op = CdtOperation {
             op: CdtOpType::MapRemoveByKeyInterval,
-            data: CdtOpData::Pair(begin, end),
-            pre_args: Some(vec![Value::from(return_type as u8)]),
-            post_args: None,
+            args: args,
         };
         Operation {
             op: OperationType::CdtWrite,
@@ -327,9 +338,7 @@ impl<'a> Operation<'a> {
                                -> Self {
         let cdt_op = CdtOperation {
             op: CdtOpType::MapRemoveByValue,
-            data: CdtOpData::Value(value),
-            pre_args: Some(vec![Value::from(return_type as u8)]),
-            post_args: None,
+            args: vec![CdtArgument::Byte(return_type as u8), CdtArgument::Value(value)],
         };
         Operation {
             op: OperationType::CdtWrite,
@@ -345,9 +354,7 @@ impl<'a> Operation<'a> {
                                 -> Self {
         let cdt_op = CdtOperation {
             op: CdtOpType::MapRemoveByValueList,
-            data: CdtOpData::List(values),
-            pre_args: Some(vec![Value::from(return_type as u8)]),
-            post_args: None,
+            args: vec![CdtArgument::Byte(return_type as u8), CdtArgument::List(values)],
         };
         Operation {
             op: OperationType::CdtWrite,
@@ -362,11 +369,13 @@ impl<'a> Operation<'a> {
                                      end: &'a Value,
                                      return_type: MapReturnType)
                                      -> Self {
+        let mut args = vec![CdtArgument::Byte(return_type as u8), CdtArgument::Value(begin)];
+        if !end.is_nil() {
+            args.push(CdtArgument::Value(end));
+        }
         let cdt_op = CdtOperation {
             op: CdtOpType::MapRemoveByValueInterval,
-            data: CdtOpData::Pair(begin, end),
-            pre_args: Some(vec![Value::from(return_type as u8)]),
-            post_args: None,
+            args: args,
         };
         Operation {
             op: OperationType::CdtWrite,
