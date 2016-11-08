@@ -308,7 +308,7 @@ impl<'a> Operation<'a> {
         }
     }
 
-    pub fn map_remove_by_key_interval(_policy: &'a MapPolicy,
+    pub fn map_remove_by_key_range(_policy: &'a MapPolicy,
                                    bin: &'a str,
                                    begin: &'a Value,
                                    end: &'a Value,
@@ -361,7 +361,7 @@ impl<'a> Operation<'a> {
         }
     }
 
-    pub fn map_remove_by_value_interval(_policy: &'a MapPolicy,
+    pub fn map_remove_by_value_range(_policy: &'a MapPolicy,
                                      bin: &'a str,
                                      begin: &'a Value,
                                      end: &'a Value,
@@ -510,7 +510,7 @@ impl<'a> Operation<'a> {
         }
     }
 
-    pub fn map_get_by_key_interval(_policy: &'a MapPolicy,
+    pub fn map_get_by_key_range(_policy: &'a MapPolicy,
                                    bin: &'a str,
                                    begin: &'a Value,
                                    end: &'a Value,
@@ -547,7 +547,7 @@ impl<'a> Operation<'a> {
         }
     }
 
-    pub fn map_get_by_value_interval(_policy: &'a MapPolicy,
+    pub fn map_get_by_value_range(_policy: &'a MapPolicy,
                                      bin: &'a str,
                                      begin: &'a Value,
                                      end: &'a Value,
