@@ -18,6 +18,7 @@ use std::collections::HashMap;
 use aerospike::{Key, Bin};
 use aerospike::{ReadPolicy, WritePolicy, MapPolicy};
 use aerospike::Operation;
+use aerospike::MapReturnType;
 use aerospike::value::*;
 
 use common1;
@@ -49,6 +50,10 @@ fn map_operations() {
     let rec = client.operate(&wpolicy, &key, &vec![op]).unwrap();
     assert_eq!(*rec.bins.get(bin_name).unwrap(), as_val!(3)); // size of map after put
 
+    let op = Operation::map_size(&mpolicy, &bin_name);
+    let rec = client.operate(&wpolicy, &key, &vec![op]).unwrap();
+    assert_eq!(*rec.bins.get(bin_name).unwrap(), as_val!(3)); // size of map
+
     let rec = client.get(&rpolicy, &key, None).unwrap();
     assert_eq!(*rec.bins.get(bin_name).unwrap(),
         as_map!("a" => 1, "b" => 2, "c" => 3));
@@ -60,10 +65,10 @@ fn map_operations() {
     let rec = client.operate(&wpolicy, &key, &vec![op]).unwrap();
     assert_eq!(*rec.bins.get(bin_name).unwrap(), as_val!(5)); // size of map after put
 
-    // let k = as_val!("e");
-    // let op = Operation::map_remove_by_key(&mpolicy, &bin_name, &k, MapReturnType::Value);
-    // let rec = client.operate(&wpolicy, &key, &vec![op]).unwrap();
-    // assert_eq!(*rec.bins.get(bin_name).unwrap(), as_val!(5));
+    let k = as_val!("e");
+    let op = Operation::map_remove_by_key(&mpolicy, &bin_name, &k, MapReturnType::Value);
+    let rec = client.operate(&wpolicy, &key, &vec![op]).unwrap();
+    assert_eq!(*rec.bins.get(bin_name).unwrap(), as_val!(5));
 
     let (k, i) = (as_val!("a"), as_val!(19));
     let op = Operation::map_increment_value(&mpolicy, &bin_name, &k, &i);
