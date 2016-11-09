@@ -147,7 +147,7 @@ impl Buffer {
                          policy: &WritePolicy,
                          op_type: OperationType,
                          key: &Key,
-                         bins: &[&Bin<'a>])
+                         bins: &[&Bin])
                          -> AerospikeResult<()> {
         try!(self.begin());
         let field_count = try!(self.estimate_key_size(key, policy.send_key));
