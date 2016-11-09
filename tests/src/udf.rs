@@ -21,6 +21,9 @@ use aerospike::{Key, Bin};
 use aerospike::UDFLang;
 use aerospike::value::*;
 
+use std::thread;
+use std::time::Duration;
+
 use common1;
 
 #[test]
@@ -65,6 +68,9 @@ end
                         "test_udf2.lua",
                         UDFLang::Lua)
           .unwrap();
+
+    // FIXME: replace sleep with wait task
+    thread::sleep(Duration::from_millis(3000));
 
     let res = client.execute_udf(&wpolicy,
                                  &key,

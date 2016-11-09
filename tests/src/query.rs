@@ -54,6 +54,7 @@ fn query_single_consumer() {
                         IndexType::Numeric)
         .expect("Failed to create index");
 
+    // FIXME: replace sleep with wait task
     thread::sleep(Duration::from_millis(3000));
 
     let qpolicy = QueryPolicy::default();
@@ -130,6 +131,7 @@ let ref client = common1::GLOBAL_CLIENT;
                         IndexType::Numeric)
         .expect("Failed to create index");
 
+    // FIXME: replace sleep with wait task
     thread::sleep(Duration::from_millis(3000));
 
     let qpolicy = QueryPolicy::default();
