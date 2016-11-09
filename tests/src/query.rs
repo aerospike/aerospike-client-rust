@@ -54,7 +54,7 @@ fn query_single_consumer() {
                         IndexType::Numeric)
         .expect("Failed to create index");
 
-    thread::sleep(Duration::from_millis(1000));
+    thread::sleep(Duration::from_millis(3000));
 
     let qpolicy = QueryPolicy::default();
     // let node = client.cluster.get_random_node().unwrap();
@@ -130,7 +130,7 @@ let ref client = common1::GLOBAL_CLIENT;
                         IndexType::Numeric)
         .expect("Failed to create index");
 
-    thread::sleep(Duration::from_millis(1000));
+    thread::sleep(Duration::from_millis(3000));
 
     let qpolicy = QueryPolicy::default();
 
