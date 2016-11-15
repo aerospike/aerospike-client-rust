@@ -3,7 +3,6 @@ extern crate log;
 extern crate core;
 extern crate byteorder;
 extern crate crypto;
-extern crate bytebuffer;
 extern crate rustc_serialize;
 extern crate crossbeam;
 extern crate rand;
