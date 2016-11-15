@@ -29,7 +29,7 @@ pub struct Key {
     pub user_key: Option<Value>,
 }
 
-impl<'a> Key {
+impl Key {
     pub fn new<S>(namespace: S, set_name: S, key: Value) -> AerospikeResult<Self>
         where S: Into<String>
     {
@@ -59,7 +59,7 @@ impl<'a> Key {
     }
 }
 
-impl<'a> core::fmt::Display for Key {
+impl core::fmt::Display for Key {
     fn fmt(&self, f: &mut core::fmt::Formatter) -> Result<(), core::fmt::Error> {
         match self.user_key {
             Some(ref value) => { 

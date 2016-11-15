@@ -63,7 +63,7 @@ pub struct Cluster {
     closed: AtomicBool,
 }
 
-impl<'a> Cluster {
+impl Cluster {
     pub fn new(policy: ClientPolicy, hosts: &[Host]) -> AerospikeResult<Arc<Self>> {
 
         let (tx, rx): (Sender<()>, Receiver<()>) = mpsc::channel();
@@ -132,7 +132,7 @@ impl<'a> Cluster {
         }
     }
 
-    fn tend(&'a self) -> AerospikeResult<()> {
+    fn tend(&self) -> AerospikeResult<()> {
         let mut nodes = self.nodes();
 
         // All node additions/deletions are performed in tend thread.
@@ -273,7 +273,7 @@ impl<'a> Cluster {
         Ok(())
     }
 
-    pub fn seed_nodes(&'a self) -> AerospikeResult<bool> {
+    pub fn seed_nodes(&self) -> AerospikeResult<bool> {
         let seed_array = self.seeds.read().unwrap();
 
         info!("Seeding the cluster. Seeds count: {}", seed_array.len());
@@ -328,7 +328,7 @@ impl<'a> Cluster {
         Ok(false)
     }
 
-    fn find_new_nodes_to_add(&'a self, hosts: Vec<Host>) -> AerospikeResult<Vec<Arc<Node>>> {
+    fn find_new_nodes_to_add(&self, hosts: Vec<Host>) -> AerospikeResult<Vec<Arc<Node>>> {
         let mut list: Vec<Arc<Node>> = vec![];
 
         for host in hosts {
@@ -366,7 +366,7 @@ impl<'a> Cluster {
         Ok(Node::new(self.client_policy.clone(), nv))
     }
 
-    fn find_nodes_to_remove(&'a self, refresh_count: usize) -> AerospikeResult<Vec<Arc<Node>>> {
+    fn find_nodes_to_remove(&self, refresh_count: usize) -> AerospikeResult<Vec<Arc<Node>>> {
         let nodes = self.nodes.read().unwrap().to_vec();
 
         let mut remove_list: Vec<Arc<Node>> = vec![];
