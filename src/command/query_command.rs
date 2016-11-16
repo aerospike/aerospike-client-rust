@@ -27,7 +27,6 @@ use command::stream_command::StreamCommand;
 
 pub struct QueryCommand<'a> {
     stream_command: StreamCommand,
-
     policy: &'a QueryPolicy,
     statement: Arc<Statement>,
 }
@@ -37,13 +36,12 @@ impl<'a> QueryCommand<'a> {
                node: Arc<Node>,
                statement: Arc<Statement>,
                recordset: Arc<Recordset>)
-               -> AerospikeResult<Self> {
-        Ok(QueryCommand {
-            stream_command: try!(StreamCommand::new(node, recordset)),
-
+               -> Self {
+        QueryCommand {
+            stream_command: StreamCommand::new(node, recordset),
             policy: policy,
             statement: statement,
-        })
+        }
     }
 
     pub fn execute(&mut self) -> AerospikeResult<()> {

@@ -29,7 +29,6 @@ use command::read_command::ReadCommand;
 
 pub struct ExecuteUDFCommand<'a> {
     pub read_command: ReadCommand<'a>,
-
     policy: &'a WritePolicy,
     package_name: &'a str,
     function_name: &'a str,
@@ -43,15 +42,14 @@ impl<'a> ExecuteUDFCommand<'a> {
                package_name: &'a str,
                function_name: &'a str,
                args: Option<&'a [Value]>)
-               -> AerospikeResult<Self> {
-        Ok(ExecuteUDFCommand {
-            read_command: try!(ReadCommand::new(&policy.base_policy, cluster, key, None)),
-
+               -> Self {
+        ExecuteUDFCommand {
+            read_command: ReadCommand::new(&policy.base_policy, cluster, key, None),
             policy: policy,
             package_name: package_name,
             function_name: function_name,
             args: args,
-        })
+        }
     }
 
     pub fn execute(&mut self) -> AerospikeResult<()> {

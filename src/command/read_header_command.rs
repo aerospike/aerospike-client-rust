@@ -29,9 +29,7 @@ use command::buffer;
 
 pub struct ReadHeaderCommand<'a> {
     single_command: SingleCommand<'a>,
-
     policy: &'a ReadPolicy,
-
     pub record: Option<Record>,
 }
 
@@ -39,13 +37,12 @@ impl<'a> ReadHeaderCommand<'a> {
     pub fn new(policy: &'a ReadPolicy,
                cluster: Arc<Cluster>,
                key: &'a Key)
-               -> AerospikeResult<Self> {
-        Ok(ReadHeaderCommand {
-            single_command: try!(SingleCommand::new(cluster, key)),
-
+               -> Self {
+        ReadHeaderCommand {
+            single_command: SingleCommand::new(cluster, key),
             policy: policy,
             record: None,
-        })
+        }
     }
 
     pub fn execute(&mut self) -> AerospikeResult<()> {

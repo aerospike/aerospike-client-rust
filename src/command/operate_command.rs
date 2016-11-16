@@ -27,7 +27,6 @@ use command::read_command::ReadCommand;
 
 pub struct OperateCommand<'a> {
     pub read_command: ReadCommand<'a>,
-
     policy: &'a WritePolicy,
     operations: &'a [Operation<'a>],
 }
@@ -37,13 +36,12 @@ impl<'a> OperateCommand<'a> {
                cluster: Arc<Cluster>,
                key: &'a Key,
                operations: &'a [Operation<'a>])
-               -> AerospikeResult<Self> {
-        Ok(OperateCommand {
-            read_command: try!(ReadCommand::new(&policy.base_policy, cluster, key, None)),
-
+               -> Self {
+        OperateCommand {
+            read_command: ReadCommand::new(&policy.base_policy, cluster, key, None),
             policy: policy,
             operations: operations,
-        })
+        }
     }
 
     pub fn execute(&mut self) -> AerospikeResult<()> {

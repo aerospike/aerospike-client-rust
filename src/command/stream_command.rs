@@ -44,11 +44,11 @@ impl Drop for StreamCommand {
 }
 
 impl StreamCommand {
-    pub fn new(node: Arc<Node>, recordset: Arc<Recordset>) -> AerospikeResult<Self> {
-        Ok(StreamCommand {
+    pub fn new(node: Arc<Node>, recordset: Arc<Recordset>) -> Self {
+        StreamCommand {
             node: node,
             recordset: recordset,
-        })
+        }
     }
 
     fn parse_record(conn: &mut Connection, size: usize) -> AerospikeResult<Option<Record>> {

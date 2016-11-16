@@ -29,7 +29,6 @@ use command::buffer;
 
 pub struct DeleteCommand<'a> {
     single_command: SingleCommand<'a>,
-
     policy: &'a WritePolicy,
     pub existed: bool,
 }
@@ -38,13 +37,12 @@ impl<'a> DeleteCommand<'a> {
     pub fn new(policy: &'a WritePolicy,
                cluster: Arc<Cluster>,
                key: &'a Key)
-               -> AerospikeResult<Self> {
-        Ok(DeleteCommand {
-            single_command: try!(SingleCommand::new(cluster, key)),
-
+               -> Self {
+        DeleteCommand {
+            single_command: SingleCommand::new(cluster, key),
             policy: policy,
             existed: false,
-        })
+        }
     }
 
     pub fn execute(&mut self) -> AerospikeResult<()> {

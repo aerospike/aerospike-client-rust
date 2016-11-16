@@ -36,19 +36,18 @@ pub struct Recordset {
 }
 
 impl Recordset {
-    pub fn new(rec_queue_size: usize, nodes: usize) -> AerospikeResult<Self> {
-
+    pub fn new(rec_queue_size: usize, nodes: usize) -> Self {
         let mut rng = rand::thread_rng();
+        let task_id = rng.gen::<usize>();
 
-        Ok(Recordset {
+        Recordset {
             instances: AtomicUsize::new(nodes),
             record_queue_size: AtomicUsize::new(rec_queue_size),
             record_queue_count: AtomicUsize::new(0),
             record_queue: MsQueue::new(),
             active: AtomicBool::new(true),
-
-            task_id: AtomicUsize::new(rng.gen::<usize>()),
-        })
+            task_id: AtomicUsize::new(task_id),
+        }
     }
 
     pub fn close(&self) {

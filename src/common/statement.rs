@@ -42,7 +42,7 @@ impl Statement {
     pub fn new(namespace: &str,
                set_name: &str,
                bin_names: Option<&[&str]>)
-               -> AerospikeResult<Self> {
+               -> Self {
 
         let bin_names = match bin_names {
             None => None,
@@ -52,7 +52,7 @@ impl Statement {
             }
         };
 
-        Ok(Statement {
+        Statement {
             namespace: namespace.to_owned(),
             set_name: set_name.to_owned(),
             bin_names: bin_names,
@@ -60,7 +60,7 @@ impl Statement {
             index_name: None,
             aggregation: None,
             filters: None,
-        })
+        }
     }
 
     pub fn add_filter(&mut self, filter: Arc<Filter>) {

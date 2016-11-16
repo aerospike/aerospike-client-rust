@@ -29,7 +29,6 @@ use command::buffer;
 
 pub struct TouchCommand<'a> {
     single_command: SingleCommand<'a>,
-
     policy: &'a WritePolicy,
 }
 
@@ -37,12 +36,11 @@ impl<'a> TouchCommand<'a> {
     pub fn new(policy: &'a WritePolicy,
                cluster: Arc<Cluster>,
                key: &'a Key)
-               -> AerospikeResult<Self> {
-        Ok(TouchCommand {
-            single_command: try!(SingleCommand::new(cluster, key)),
-
+               -> Self {
+        TouchCommand {
+            single_command: SingleCommand::new(cluster, key),
             policy: policy,
-        })
+        }
     }
 
     pub fn execute(&mut self) -> AerospikeResult<()> {

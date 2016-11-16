@@ -32,11 +32,9 @@ use value;
 
 pub struct ReadCommand<'a> {
     pub single_command: SingleCommand<'a>,
-
+    pub record: Option<Record>,
     policy: &'a ReadPolicy,
     bin_names: Option<&'a [&'a str]>,
-
-    pub record: Option<Record>,
 }
 
 impl<'a> ReadCommand<'a> {
@@ -44,14 +42,13 @@ impl<'a> ReadCommand<'a> {
                cluster: Arc<Cluster>,
                key: &'a Key,
                bin_names: Option<&'a [&'a str]>)
-               -> AerospikeResult<Self> {
-        Ok(ReadCommand {
-            single_command: try!(SingleCommand::new(cluster, key)),
-
+               -> Self {
+        ReadCommand {
+            single_command: SingleCommand::new(cluster, key),
             bin_names: bin_names,
             policy: policy,
             record: None,
-        })
+        }
     }
 
     fn handle_udf_error(&self,

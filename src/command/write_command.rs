@@ -29,7 +29,6 @@ use command::buffer;
 
 pub struct WriteCommand<'a> {
     single_command: SingleCommand<'a>,
-
     policy: &'a WritePolicy,
     bins: &'a [&'a Bin<'a>],
     operation: OperationType,
@@ -41,14 +40,13 @@ impl<'a> WriteCommand<'a> {
                key: &'a Key,
                bins: &'a [&'a Bin],
                operation: OperationType)
-               -> AerospikeResult<Self> {
-        Ok(WriteCommand {
-            single_command: try!(SingleCommand::new(cluster, key)),
-
+               -> Self {
+        WriteCommand {
+            single_command: SingleCommand::new(cluster, key),
             bins: bins,
             policy: policy,
             operation: operation,
-        })
+        }
     }
 
     pub fn execute(&mut self) -> AerospikeResult<()> {

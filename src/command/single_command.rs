@@ -34,14 +34,13 @@ pub struct SingleCommand<'a> {
 }
 
 impl<'a> SingleCommand<'a> {
-    pub fn new(cluster: Arc<Cluster>, key: &'a Key) -> AerospikeResult<Self> {
+    pub fn new(cluster: Arc<Cluster>, key: &'a Key) -> Self {
         let partition = Partition::new_by_key(key);
-
-        Ok(SingleCommand {
+        SingleCommand {
             cluster: cluster.clone(),
             key: key,
             partition: partition,
-        })
+        }
     }
 
     pub fn get_node(&self) -> AerospikeResult<Arc<Node>> {
