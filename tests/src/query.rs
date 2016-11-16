@@ -63,7 +63,7 @@ fn query_single_consumer() {
     let mut statement = Statement::new(namespace, set_name, None).unwrap();
     statement.add_filter(as_eq!("bin", 1));
 
-    let rs = client.query(&qpolicy, Arc::new(statement)).unwrap();
+    let rs = client.query(&qpolicy, statement).unwrap();
     let mut count = 0;
     for res in rs.iter() {
         match res {
@@ -83,7 +83,7 @@ fn query_single_consumer() {
     let f = as_range!("bin", 0, 9);
     statement.add_filter(f);
 
-    let rs = client.query(&qpolicy, Arc::new(statement)).unwrap();
+    let rs = client.query(&qpolicy, statement).unwrap();
     let mut count = 0;
     for res in rs.iter() {
         match res {
@@ -141,7 +141,7 @@ let ref client = common1::GLOBAL_CLIENT;
     let f = as_range!("bin", 0, 9);
     statement.add_filter(f);
 
-    let rs = client.query(&qpolicy, Arc::new(statement)).unwrap();
+    let rs = client.query(&qpolicy, statement).unwrap();
 
     let count = Arc::new(AtomicUsize::new(0));
     let mut threads = vec![];

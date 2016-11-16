@@ -317,7 +317,7 @@ impl Client {
 
     pub fn scan_node(&self,
                              policy: &ScanPolicy,
-                             node: Arc<Node>,
+                             node: Node,
                              namespace: &str,
                              set_name: &str,
                              bin_names: Option<&[&str]>)
@@ -333,7 +333,7 @@ impl Client {
         };
 
         let recordset = Arc::new(try!(Recordset::new(policy.record_queue_size, 1)));
-        let node = node.clone();
+        let node = Arc::new(node).clone();
         let t_recordset = recordset.clone();
         let policy = policy.to_owned();
         let namespace = namespace.to_owned();
@@ -356,10 +356,11 @@ impl Client {
 
     pub fn query(&self,
                          policy: &QueryPolicy,
-                         statement: Arc<Statement>)
+                         statement: Statement)
                          -> AerospikeResult<Arc<Recordset>> {
 
         try!(statement.validate());
+        let statement = Arc::new(statement);
 
         let nodes = self.cluster.nodes();
         let recordset = Arc::new(try!(Recordset::new(policy.record_queue_size, nodes.len())));
@@ -379,17 +380,17 @@ impl Client {
 
     pub fn query_node(&self,
                               policy: &QueryPolicy,
-                              node: Arc<Node>,
-                              statement: Arc<Statement>)
+                              node: Node,
+                              statement: Statement)
                               -> AerospikeResult<Arc<Recordset>> {
 
         try!(statement.validate());
 
         let recordset = Arc::new(try!(Recordset::new(policy.record_queue_size, 1)));
-        let node = node.clone();
+        let node = Arc::new(node).clone();
         let t_recordset = recordset.clone();
         let policy = policy.to_owned();
-        let statement = statement.clone();
+        let statement = Arc::new(statement).clone();
 
         self.thread_pool.execute(move || {
             let mut command = QueryCommand::new(&policy, node, statement, t_recordset).unwrap();
