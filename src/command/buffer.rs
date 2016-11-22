@@ -51,7 +51,7 @@ const INFO2_GENERATION: u8 = (1 << 2);
 const INFO2_GENERATION_GT: u8 = (1 << 3);
 
 // Create a duplicate on a generation collision.
-const INFO2_GENERATION_DUP: u8 = (1 << 4);
+// const INFO2_GENERATION_DUP: u8 = (1 << 4);
 
 // Create only. Fail if record already exists.
 const INFO2_CREATE_ONLY: u8 = (1 << 5);

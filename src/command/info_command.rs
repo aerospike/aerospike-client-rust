@@ -21,12 +21,6 @@ use std::str;
 use net::Connection;
 use error::{AerospikeError, ResultCode, AerospikeResult};
 
-enum MessageType {
-    Info = 1,
-    Message = 3,
-}
-
-
 #[derive(Debug, Clone)]
 pub struct Message {
     buf: Vec<u8>,
@@ -38,35 +32,23 @@ impl Message {
                 -> AerospikeResult<HashMap<String, String>> {
 
         let cmd = commands.join("\n") + "\n";
-        let mut msg = try!(Message::new(MessageType::Info, &cmd.into_bytes()));
+        let mut msg = try!(Message::new(&cmd.into_bytes()));
 
         try!(msg.send(conn));
         Ok(try!(msg.parse_response()))
     }
 
-    fn new(msg_type: MessageType, data: &[u8]) -> AerospikeResult<Self> {
+    fn new(data: &[u8]) -> AerospikeResult<Self> {
         let mut len = Vec::with_capacity(8);
         len.write_u64::<NetworkEndian>(data.len() as u64).unwrap();
 
         let mut buf: Vec<u8> = Vec::with_capacity(1024);
         buf.push(2); // version
-        buf.push(msg_type as u8); // msg_type
+        buf.push(1); // msg_type
         try!(buf.write(&len[2..8]));
         try!(buf.write(&data));
 
         Ok(Message { buf: buf })
-    }
-
-    fn version(&self) -> isize {
-        self.buf[0] as isize
-    }
-
-    fn msg_type(&self) -> MessageType {
-        match self.buf[1] {
-            1 => MessageType::Info,
-            3 => MessageType::Message,
-            _ => unreachable!(),
-        }
     }
 
     fn data_len(&self) -> u64 {
@@ -118,10 +100,3 @@ impl Message {
         Ok(result)
     }
 }
-
-// #[test]
-// fn test_info() {
-//     let data: Vec<u8> = vec![0];
-//     let mut msg = Message::new(MessageType::Message, &data);
-//     assert_eq!(1, msg.data_len());
-// }

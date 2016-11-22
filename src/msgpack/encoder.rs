@@ -110,7 +110,7 @@ const MSGPACK_MARKER_BOOL_FALSE: u8 = 0xc2;
 const MSGPACK_MARKER_I8: u8 = 0xcc;
 const MSGPACK_MARKER_I16: u8 = 0xcd;
 const MSGPACK_MARKER_I32: u8 = 0xce;
-const MSGPACK_MARKER_I64: u8 = 0xd3;
+// const MSGPACK_MARKER_I64: u8 = 0xd3;
 
 const MSGPACK_MARKER_NI8: u8 = 0xd0;
 const MSGPACK_MARKER_NI16: u8 = 0xd1;
