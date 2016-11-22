@@ -370,6 +370,6 @@ impl PartialEq for Node {
 
 impl fmt::Display for Node {
     fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
-        format!("{}: ({})", self.name, self.host).fmt(f)
+        format!("{}: {}", self.name, self.host).fmt(f)
     }
 }

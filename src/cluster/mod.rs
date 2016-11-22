@@ -344,19 +344,24 @@ impl Cluster {
             // services list contains both internal and external IP addresses
             // for the same node.  Add new host to list of alias filters
             // and do not add new node.
+            let mut dup = false;
             match self.get_node_by_name(&nv.name) {
                 Ok(node) => {
                     try!(self.add_alias(host, node.clone()));
+                    dup = true;
                 }
                 _ => {
                     if let Some(node) = list.iter().find(|n| n.name() == nv.name) {
                         try!(self.add_alias(host, node.clone()));
+                        dup = true;
                     }
                 }
             };
 
-            let node = try!(self.create_node(Arc::new(nv)));
-            list.push(Arc::new(node));
+            if !dup {
+                let node = try!(self.create_node(Arc::new(nv)));
+                list.push(Arc::new(node));
+            }
         }
 
         Ok(list)
