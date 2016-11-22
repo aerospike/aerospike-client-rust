@@ -13,9 +13,8 @@
 // License for the specific language governing permissions and limitations under
 // the License.
 
-extern crate core;
-
 use std::{f32, f64};
+use std::fmt;
 use std::mem;
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
@@ -33,7 +32,6 @@ use command::buffer::Buffer;
 use msgpack::encoder::pack_value;
 use msgpack::decoder::*;
 
-/// ////////////////////////////////////////////////////////////////////////
 #[derive(Debug,Clone,PartialEq,Eq,Hash)]
 pub enum FloatValue {
     F32(u32),
@@ -122,8 +120,8 @@ impl<'a> From<&'a f32> for FloatValue {
     }
 }
 
-impl core::fmt::Display for FloatValue {
-    fn fmt(&self, f: &mut core::fmt::Formatter) -> Result<(), core::fmt::Error> {
+impl fmt::Display for FloatValue {
+    fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
         match self {
             &FloatValue::F32(val) => {
                 let val: f32 = unsafe { mem::transmute(val) };
@@ -278,8 +276,8 @@ impl Value {
     }
 }
 
-impl core::fmt::Display for Value {
-    fn fmt(&self, f: &mut core::fmt::Formatter) -> Result<(), core::fmt::Error> {
+impl fmt::Display for Value {
+    fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
         write!(f, "{}", self.as_string())
     }
 }

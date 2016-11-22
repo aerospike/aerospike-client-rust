@@ -13,7 +13,6 @@
 // License for the specific language governing permissions and limitations under
 // the License.
 
-extern crate core;
 extern crate rand;
 
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};

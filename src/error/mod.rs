@@ -26,9 +26,8 @@ use std::str::Utf8Error;
 use std::fmt;
 use std::io;
 use std::net;
+use std::num;
 use std::sync::mpsc;
-
-use core::num;
 
 use rustc_serialize::base64;
 use pwhash;

@@ -13,7 +13,7 @@
 // License for the specific language governing permissions and limitations under
 // the License.
 
-extern crate core;
+use std::fmt;
 
 use error::AerospikeResult;
 use value::Value;
@@ -59,8 +59,8 @@ impl Key {
     }
 }
 
-impl core::fmt::Display for Key {
-    fn fmt(&self, f: &mut core::fmt::Formatter) -> Result<(), core::fmt::Error> {
+impl fmt::Display for Key {
+    fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
         match self.user_key {
             Some(ref value) => { 
                 write!(f, "<Key: ns=\"{}\", set=\"{}\", key=\"{}\">", &self.namespace, &self.set_name, value)

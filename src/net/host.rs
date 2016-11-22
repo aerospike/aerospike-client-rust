@@ -13,7 +13,7 @@
 // License for the specific language governing permissions and limitations under
 // the License.
 
-use core::cmp;
+use std::cmp;
 use std::fmt;
 
 // Host name/port of database server.
@@ -27,7 +27,6 @@ pub struct Host {
 }
 
 impl Host {
-    // NewHost initializes new host instance.
     pub fn new(name: &str, port: u16) -> Self {
         Host {
             name: name.to_string(),
@@ -47,8 +46,3 @@ impl fmt::Display for Host {
         write!(f, "({}, {})", self.name, self.port)
     }
 }
-
-// // Implements stringer interface
-// func (h *Host) String() string {
-// 	return h.addPort
-// }

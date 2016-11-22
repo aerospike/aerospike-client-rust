@@ -13,15 +13,15 @@
 // License for the specific language governing permissions and limitations under
 // the License.
 
-extern crate core;
+use std::fmt;
 
 #[derive(Debug)]
 pub enum UDFLang {
     Lua,
 }
 
-impl<'a> core::fmt::Display for UDFLang {
-    fn fmt(&self, f: &mut core::fmt::Formatter) -> Result<(), core::fmt::Error> {
+impl fmt::Display for UDFLang {
+    fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
         let s = match self {
             &UDFLang::Lua => "LUA",
         };

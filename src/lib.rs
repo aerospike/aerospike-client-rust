@@ -1,6 +1,5 @@
 #[macro_use]
 extern crate log;
-extern crate core;
 extern crate byteorder;
 extern crate crypto;
 extern crate rustc_serialize;
