@@ -43,6 +43,7 @@ use value::Value;
 use policy::{ClientPolicy, ReadPolicy, WritePolicy, ScanPolicy, QueryPolicy};
 use error::{AerospikeResult, ResultCode, AerospikeError};
 
+pub mod result_code;
 
 // Client encapsulates an Aerospike cluster.
 // All database operations are available against this object.
