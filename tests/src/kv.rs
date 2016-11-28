@@ -31,7 +31,7 @@ use common1;
 fn connect() {
     let _ = env_logger::init();
 
-let ref client = common1::GLOBAL_CLIENT;
+    let ref client = common1::GLOBAL_CLIENT;
 
     let namespace: &str = &common1::AEROSPIKE_NAMESPACE;
     let set_name = &common1::rand_str(10);
@@ -65,7 +65,7 @@ let ref client = common1::GLOBAL_CLIENT;
     let _ = as_key!(namespace, set_name, "haha".to_string());
     let _ = as_key!(namespace, set_name, &"haha".to_string());
 
-let policy = ReadPolicy::default();
+    let policy = ReadPolicy::default();
 
     let wpolicy = WritePolicy::default();
     let key = as_key!(namespace, set_name, -1);
@@ -81,7 +81,7 @@ let policy = ReadPolicy::default();
                                         19.45612)));
     let bins = vec![&wbin, &wbin1, &wbin2, &wbin3, &wbin4, &wbin5, &wbin6];
 
-client.delete(&wpolicy, &key).unwrap();
+    client.delete(&wpolicy, &key).unwrap();
 
 
     client.put(&wpolicy, &key, &bins).unwrap();
@@ -113,7 +113,7 @@ client.delete(&wpolicy, &key).unwrap();
 fn read_me_example() {
     let _ = env_logger::init();
 
-let ref client = common1::GLOBAL_CLIENT;
+    let ref client = common1::GLOBAL_CLIENT;
 
     let namespace: &str = &common1::AEROSPIKE_NAMESPACE;
     let set_name: String = common1::rand_str(10);
