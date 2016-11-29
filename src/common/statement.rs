@@ -17,7 +17,8 @@ use std::sync::Arc;
 
 use value::Value;
 use common::filter::Filter;
-use error::{AerospikeError, ResultCode, AerospikeResult};
+use error::{AerospikeError, AerospikeResult};
+use client::ResultCode;
 
 #[derive(Clone)]
 pub struct Aggregation {
@@ -104,7 +105,7 @@ impl Statement {
     pub fn validate(&self) -> AerospikeResult<()> {
         if let Some(ref filters) = self.filters {
             if filters.len() > 1 {
-                return Err(AerospikeError::new(ResultCode::PARAMETER_ERROR,
+                return Err(AerospikeError::new(ResultCode::ParameterError,
                                                Some("Too many filters set in the statement. \
                                                      Aerospike server supports only one filter \
                                                      per query ."
@@ -113,14 +114,14 @@ impl Statement {
         }
 
         if self.set_name == "" {
-            return Err(AerospikeError::new(ResultCode::PARAMETER_ERROR,
+            return Err(AerospikeError::new(ResultCode::ParameterError,
                                            Some("Set name cannot be empty in the statement."
                                                .to_string())));
         }
 
         if let Some(ref index_name) = self.index_name {
             if index_name == "" {
-                return Err(AerospikeError::new(ResultCode::PARAMETER_ERROR,
+                return Err(AerospikeError::new(ResultCode::ParameterError,
                                                Some("Index name cannot be empty in the \
                                                      statement."
                                                    .to_string())));
@@ -129,14 +130,14 @@ impl Statement {
 
         if let Some(ref agg) = self.aggregation {
             if agg.package_name == "" {
-                return Err(AerospikeError::new(ResultCode::PARAMETER_ERROR,
+                return Err(AerospikeError::new(ResultCode::ParameterError,
                                                Some("Package name cannot be empty in the \
                                                      statement."
                                                    .to_string())));
             }
 
             if agg.function_name == "" {
-                return Err(AerospikeError::new(ResultCode::PARAMETER_ERROR,
+                return Err(AerospikeError::new(ResultCode::ParameterError,
                                                Some("Function name cannot be empty in the \
                                                      statement."
                                                    .to_string())));

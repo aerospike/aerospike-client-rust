@@ -19,7 +19,8 @@ use byteorder::{NetworkEndian, ReadBytesExt, WriteBytesExt};
 use std::str;
 
 use net::Connection;
-use error::{AerospikeError, ResultCode, AerospikeResult};
+use error::{AerospikeError, AerospikeResult};
+use client::ResultCode;
 
 #[derive(Debug, Clone)]
 pub struct Message {
@@ -91,7 +92,7 @@ impl Message {
                 (Some(key), Some(val)) => result.insert(key.to_string(), val.to_string()),
                 (Some(key), None) => result.insert(key.to_string(), "".to_string()),
                 _ => {
-                    return Err(AerospikeError::new(ResultCode::PARSE_ERROR,
+                    return Err(AerospikeError::new(ResultCode::ParseError,
                                                    Some("parsing info command failed".to_string())))
                 }
             };

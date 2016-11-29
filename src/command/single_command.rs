@@ -18,8 +18,9 @@ use std::thread;
 use std::time::Instant;
 
 use net::Connection;
-use error::{AerospikeError, ResultCode, AerospikeResult};
+use error::{AerospikeError, AerospikeResult};
 
+use client::ResultCode;
 use cluster::partition::Partition;
 use cluster::{Node, Cluster};
 use common::Key;
@@ -80,7 +81,7 @@ impl<'a> SingleCommand<'a> {
             // too many retries
             if let Some(max_retries) = policy.max_retries() {
                 if iterations > max_retries + 1 {
-                    return Err(AerospikeError::new(ResultCode::TIMEOUT,
+                    return Err(AerospikeError::new(ResultCode::Timeout,
                                                    Some("command execution timed out: Exceeded \
                                                          number of retries. See \
                                                          `Policy.max_retries`"
@@ -138,7 +139,7 @@ impl<'a> SingleCommand<'a> {
                 // cancelling/closing the batch/multi commands will return an error, which will
                 // close the connection to throw away its data and signal the server about the
                 // situation. We will not put back the connection in the buffer.
-                if ResultCode::keep_connection(&err) {
+                if err.keep_connection() {
                     // Put connection back in pool.
                     node.put_connection(conn);
                 } else {
@@ -156,7 +157,7 @@ impl<'a> SingleCommand<'a> {
         }
 
         // execution timeout
-        Err(AerospikeError::new(ResultCode::TIMEOUT,
+        Err(AerospikeError::new(ResultCode::Timeout,
                                 Some("command execution timed out: Exceeded number of retries. \
                                       See `Policy.max_retries`"
                                     .to_string())))

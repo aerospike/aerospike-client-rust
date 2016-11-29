@@ -15,10 +15,6 @@
 
 extern crate rustc_serialize;
 
-pub mod result_code;
-
-pub use self::result_code::ResultCode;
-
 use std::error;
 use std::string::FromUtf8Error;
 use std::str::Utf8Error;
@@ -32,6 +28,8 @@ use std::sync::mpsc;
 use rustc_serialize::base64;
 use pwhash;
 
+use client::ResultCode;
+
 pub type AerospikeResult<T> = Result<T, AerospikeError>;
 
 #[derive(Debug)]
@@ -40,41 +38,54 @@ pub struct AerospikeError {
 }
 
 impl AerospikeError {
-    pub fn new(code: isize, detail: Option<String>) -> AerospikeError {
+    pub fn new(code: ResultCode, detail: Option<String>) -> AerospikeError {
         AerospikeError {
             err: ErrorType::WithDescription(code,
                                             match detail {
                                                 Some(x) => x,
-                                                None => ResultCode::to_string(code).to_owned(),
+                                                None => code.into(),
                                             }),
         }
     }
 
+    // Should connection be put back into pool.
+    pub fn keep_connection(&self) -> bool {
+        match self.err {
+            ErrorType::WithDescription(result_code, _) => {
+                match result_code {
+                    ResultCode::KeyNotFoundError => true,
+                    _ => false,
+                }
+            }
+            _ => false,
+        }
+    }
+
     pub fn err_record_not_found() -> AerospikeError {
-        AerospikeError::new(ResultCode::KEY_NOT_FOUND_ERROR,
+        AerospikeError::new(ResultCode::KeyNotFoundError,
                             Some("Record not found.".to_string()))
     }
 
     pub fn err_connection_pool_empty() -> AerospikeError {
-        AerospikeError::new(ResultCode::NO_AVAILABLE_CONNECTIONS_TO_NODE,
+        AerospikeError::new(ResultCode::NoAvailableConnectionsToNode,
                             Some("Connection pool is empty.".to_string()))
     }
 
     pub fn err_skip_msg_pack_header() -> AerospikeError {
-        AerospikeError::new(ResultCode::OK,
+        AerospikeError::new(ResultCode::Ok,
                             Some("Msgpack header skipped. You should not see this message"
                                 .to_string()))
     }
 
     pub fn err_serialize() -> AerospikeError {
-        AerospikeError::new(ResultCode::SERIALIZE_ERROR,
+        AerospikeError::new(ResultCode::SerializeError,
                             Some("Serialization Error".to_string()))
     }
 }
 
 #[derive(Debug)]
 pub enum ErrorType {
-    WithDescription(isize, String),
+    WithDescription(ResultCode, String),
     IoError(io::Error),
     AddrParseError(net::AddrParseError),
 }
@@ -92,14 +103,14 @@ impl PartialEq for AerospikeError {
 
 impl From<mpsc::RecvError> for AerospikeError {
     fn from(err: mpsc::RecvError) -> AerospikeError {
-        AerospikeError { err: ErrorType::WithDescription(ResultCode::IO_ERROR, format!("{}", err)) }
+        AerospikeError { err: ErrorType::WithDescription(ResultCode::IoError, format!("{}", err)) }
     }
 }
 
 impl From<num::ParseIntError> for AerospikeError {
     fn from(err: num::ParseIntError) -> AerospikeError {
         AerospikeError {
-            err: ErrorType::WithDescription(ResultCode::PARSE_ERROR,
+            err: ErrorType::WithDescription(ResultCode::ParseError,
                                             format!("Invalid Int: {}", err)),
         }
     }
@@ -108,7 +119,7 @@ impl From<num::ParseIntError> for AerospikeError {
 impl From<base64::FromBase64Error> for AerospikeError {
     fn from(err: base64::FromBase64Error) -> AerospikeError {
         AerospikeError {
-            err: ErrorType::WithDescription(ResultCode::PARSE_ERROR, format!("{}", err)),
+            err: ErrorType::WithDescription(ResultCode::ParseError, format!("{}", err)),
         }
     }
 }
@@ -128,7 +139,7 @@ impl From<net::AddrParseError> for AerospikeError {
 impl From<Utf8Error> for AerospikeError {
     fn from(_: Utf8Error) -> AerospikeError {
         AerospikeError {
-            err: ErrorType::WithDescription(ResultCode::PARSE_ERROR, "Invalid UTF-8".to_string()),
+            err: ErrorType::WithDescription(ResultCode::ParseError, "Invalid UTF-8".to_string()),
         }
     }
 }
@@ -136,21 +147,15 @@ impl From<Utf8Error> for AerospikeError {
 impl From<FromUtf8Error> for AerospikeError {
     fn from(_: FromUtf8Error) -> AerospikeError {
         AerospikeError {
-            err: ErrorType::WithDescription(ResultCode::PARSE_ERROR, "Invalid UTF-8".to_string()),
+            err: ErrorType::WithDescription(ResultCode::ParseError, "Invalid UTF-8".to_string()),
         }
-    }
-}
-
-impl From<(isize, String)> for AerospikeError {
-    fn from((kind, desc): (isize, String)) -> AerospikeError {
-        AerospikeError { err: ErrorType::WithDescription(kind, desc) }
     }
 }
 
 impl From<pwhash::error::Error> for AerospikeError {
     fn from(err: pwhash::error::Error) -> AerospikeError {
         AerospikeError {
-            err: ErrorType::WithDescription(ResultCode::PARAMETER_ERROR, format!("{}", err)),
+            err: ErrorType::WithDescription(ResultCode::ParameterError, format!("{}", err)),
         }
     }
 }

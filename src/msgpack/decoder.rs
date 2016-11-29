@@ -17,7 +17,8 @@ use std::collections::HashMap;
 use std::vec::Vec;
 
 use common::ParticleType;
-use error::{AerospikeResult, ResultCode, AerospikeError};
+use error::{AerospikeResult, AerospikeError};
+use client::ResultCode;
 use command::buffer::Buffer;
 use value::*;
 
@@ -100,7 +101,7 @@ fn unpack_blob(buf: &mut Buffer, count: usize) -> AerospikeResult<Value> {
         }
 
         _ => {
-            Err(AerospikeError::new(ResultCode::SERIALIZE_ERROR,
+            Err(AerospikeError::new(ResultCode::SerializeError,
                                     Some(format!("Error while unpacking BLOB. Type-header with \
                                                   code `{}` not recognized.",
                                                  vtype))))

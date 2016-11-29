@@ -18,7 +18,8 @@ use std::time::Duration;
 use std::str;
 
 use net::Connection;
-use error::{AerospikeError, ResultCode, AerospikeResult};
+use error::{AerospikeError, AerospikeResult};
+use client::ResultCode;
 use value::Value;
 
 use cluster::{Node, Cluster};
@@ -54,7 +55,7 @@ impl<'a> ReadCommand<'a> {
     }
 
     fn handle_udf_error(&self,
-                        result_code: isize,
+                        result_code: ResultCode,
                         bins: &HashMap<String, Value>)
                         -> AerospikeError {
         if let Some(ret) = bins.get("FAILURE") {
@@ -158,7 +159,7 @@ impl<'a> Command for ReadCommand<'a> {
         // that section of the header. If we do care, uncomment and check!
         let sz = try!(conn.buffer.read_u64(Some(0)));
         let header_length = try!(conn.buffer.read_u8(Some(8)));
-        let result_code = (try!(conn.buffer.read_u8(Some(13))) & 0xFF) as isize;
+        let result_code = ResultCode::from(try!(conn.buffer.read_u8(Some(13))) & 0xFF);
         let generation = try!(conn.buffer.read_u32(Some(14)));
         let expiration = try!(conn.buffer.read_u32(Some(18)));
         let field_count = try!(conn.buffer.read_u16(Some(26))) as usize; // almost certainly 0
@@ -173,8 +174,8 @@ impl<'a> Command for ReadCommand<'a> {
             }
         }
 
-        if result_code != 0 {
-            if result_code == ResultCode::UDF_BAD_RESPONSE {
+        if result_code != ResultCode::Ok {
+            if result_code == ResultCode::UdfBadResponse {
                 let record =
                     try!(self.parse_record(conn, op_count, field_count, generation, expiration));
                 let err = self.handle_udf_error(result_code, &record.bins);
