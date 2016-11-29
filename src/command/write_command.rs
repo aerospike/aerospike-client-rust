@@ -18,6 +18,7 @@ use std::str;
 
 use net::Connection;
 use error::{AerospikeError, AerospikeResult};
+use client::ResultCode;
 
 use cluster::{Node, Cluster};
 use common::{Key, OperationType, Bin};
@@ -90,9 +91,9 @@ impl<'a> Command for WriteCommand<'a> {
 
         // A number of these are commented out because we just don't care enough to read
         // that section of the header. If we do care, uncomment and check!
-        let result_code = (try!(conn.buffer.read_u8(Some(13))) & 0xFF) as isize;
+        let result_code = ResultCode::from(try!(conn.buffer.read_u8(Some(13))) & 0xFF);
 
-        if result_code != 0 {
+        if result_code != ResultCode::Ok {
             return Err(AerospikeError::new(result_code, None));
         }
 

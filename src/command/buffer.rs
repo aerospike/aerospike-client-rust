@@ -16,7 +16,8 @@ use std::time::Duration;
 
 use byteorder::{NetworkEndian, ByteOrder};
 
-use error::{AerospikeError, ResultCode, AerospikeResult};
+use error::{AerospikeError, AerospikeResult};
+use client::ResultCode;
 use value::Value;
 
 use common::{Key, FieldType, Bin, Statement, CollectionIndexType};
@@ -116,7 +117,7 @@ impl Buffer {
         // Corrupted data streams can result in a huge length.
         // Do a sanity check here.
         if size > MAX_BUFFER_SIZE {
-            return Err(AerospikeError::new(ResultCode::PARSE_ERROR,
+            return Err(AerospikeError::new(ResultCode::ParseError,
                                            Some(format!("Invalid size for buffer: {}", size))));
         }
 

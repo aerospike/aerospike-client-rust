@@ -22,6 +22,7 @@ use pwhash::bcrypt::{BcryptVariant, BcryptSetup};
 
 use net::Connection;
 use error::{AerospikeError, AerospikeResult};
+use client::ResultCode;
 
 use cluster::{Node, Cluster};
 use policy::AdminPolicy;
@@ -92,9 +93,10 @@ impl AdminCommand {
                 return Err(err);
             }
         };
+        let result_code = ResultCode::from(result_code);
 
-        if result_code != 0 {
-            return Err(AerospikeError::new(result_code as isize, None));
+        if result_code != ResultCode::Ok {
+            return Err(AerospikeError::new(result_code, None));
         }
 
         Ok(())
@@ -106,8 +108,9 @@ impl AdminCommand {
         try!(conn.flush());
         try!(conn.read_buffer(HEADER_SIZE));
         let result_code = try!(conn.buffer.read_u8(Some(RESULT_CODE)));
-        if result_code != 0 {
-            return Err(AerospikeError::new(result_code as isize,
+        let result_code = ResultCode::from(result_code);
+        if result_code != ResultCode::Ok {
+            return Err(AerospikeError::new(result_code,
                                            Some("Authentication Failed".to_string())));
         }
 

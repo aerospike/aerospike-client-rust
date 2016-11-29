@@ -19,7 +19,8 @@ use std::str;
 use std::thread;
 
 use net::Connection;
-use error::{AerospikeError, ResultCode, AerospikeResult};
+use error::{AerospikeError, AerospikeResult};
+use client::ResultCode;
 use value::Value;
 
 use cluster::Node;
@@ -53,10 +54,9 @@ impl StreamCommand {
     fn parse_record(conn: &mut Connection, size: usize) -> AerospikeResult<Option<Record>> {
         // A number of these are commented out because we just don't care enough to read
         // that section of the header. If we do care, uncomment and check!
-        let result_code = try!(conn.buffer.read_u8(Some(5))) & 0xFF;
-        let result_code = result_code as isize;
-        if result_code != 0 {
-            if result_code == ResultCode::KEY_NOT_FOUND_ERROR {
+        let result_code = ResultCode::from(try!(conn.buffer.read_u8(Some(5))) & 0xFF);
+        if result_code != ResultCode::Ok {
+            if result_code == ResultCode::KeyNotFoundError {
                 if conn.bytes_read() < size {
                     let remaining = size - conn.bytes_read();
                     try!(conn.read_buffer(remaining));

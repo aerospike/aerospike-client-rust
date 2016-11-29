@@ -22,7 +22,8 @@ use std::fmt;
 
 use net::{Host, Connection};
 use command::info_command::Message;
-use error::{AerospikeError, ResultCode, AerospikeResult};
+use error::{AerospikeError, AerospikeResult};
+use client::ResultCode;
 use policy::ClientPolicy;
 use cluster::node_validator::NodeValidator;
 
@@ -150,14 +151,14 @@ impl Node {
     fn verify_node_name(&self, info_map: &HashMap<String, String>) -> AerospikeResult<()> {
         match info_map.get("node") {
             None => {
-                return Err(AerospikeError::new(ResultCode::INVALID_NODE_ERROR,
+                return Err(AerospikeError::new(ResultCode::InvalidNodeError,
                                                Some("Node name is empty.".to_string())))
             }
             Some(info_name) => {
                 if !(&self.name == info_name) {
                     // Set node to inactive immediately.
                     self.active.store(false, Ordering::Relaxed);
-                    return Err(AerospikeError::new(ResultCode::INVALID_NODE_ERROR,
+                    return Err(AerospikeError::new(ResultCode::InvalidNodeError,
                                                    Some(format!("Node name has changed. \
                                                                  Old='{}' New={}",
                                                                 self.name,
@@ -177,7 +178,7 @@ impl Node {
 
         let friend_string = match info_map.get("services") {
             None => {
-                return Err(AerospikeError::new(ResultCode::INVALID_NODE_ERROR,
+                return Err(AerospikeError::new(ResultCode::InvalidNodeError,
                                                Some("Node name is empty.".to_string())))
             }
 
@@ -198,7 +199,7 @@ impl Node {
             let host = friend_info.nth(0).unwrap();
             let port = try!(u16::from_str(friend_info.nth(0).unwrap()));
             // let port = friend_info.nth(0).unwrap().parse::<u16>().unwrap_or({
-            //     return Err(AerospikeError::new(ResultCode::PARSE_ERROR,
+            //     return Err(AerospikeError::new(ResultCode::ParseError,
             //                                    Some("Node port wasn't a number.".to_string())));
             // });
 
@@ -234,7 +235,7 @@ impl Node {
     fn update_partitions(&self, info_map: &HashMap<String, String>) -> AerospikeResult<()> {
         match info_map.get("partition-generation") {
             None => {
-                return Err(AerospikeError::new(ResultCode::PARSE_ERROR,
+                return Err(AerospikeError::new(ResultCode::ParseError,
                                                Some("partition-generation is empty.".to_string())))
             }
             Some(gen_string) => {

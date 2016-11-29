@@ -17,7 +17,8 @@ use std::time::Duration;
 use std::str;
 
 use net::Connection;
-use error::{AerospikeError, ResultCode, AerospikeResult};
+use error::{AerospikeError, AerospikeResult};
+use client::ResultCode;
 
 use cluster::{Node, Cluster};
 use common::Key;
@@ -83,13 +84,13 @@ impl<'a> Command for ExistsCommand<'a> {
 
         // A number of these are commented out because we just don't care enough to read
         // that section of the header. If we do care, uncomment and check!
-        let result_code = (try!(conn.buffer.read_u8(Some(13))) & 0xFF) as isize;
+        let result_code = ResultCode::from(try!(conn.buffer.read_u8(Some(13))) & 0xFF);
 
-        if result_code != 0 && result_code != ResultCode::KEY_NOT_FOUND_ERROR {
+        if result_code != ResultCode::Ok && result_code != ResultCode::KeyNotFoundError {
             return Err(AerospikeError::new(result_code, None));
         }
 
-        self.exists = result_code == 0;
+        self.exists = result_code == ResultCode::Ok;
 
         SingleCommand::empty_socket(conn)
     }

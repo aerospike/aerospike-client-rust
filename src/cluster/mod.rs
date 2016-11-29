@@ -35,7 +35,8 @@ use std::time::{Instant, Duration};
 use net::Host;
 
 use policy::ClientPolicy;
-use error::{AerospikeError, ResultCode, AerospikeResult};
+use error::{AerospikeError, AerospikeResult};
+use client::ResultCode;
 
 // Cluster encapsulates the aerospike cluster nodes and manages
 // them.
@@ -86,7 +87,7 @@ impl Cluster {
 
         // apply policy rules
         if cluster.client_policy.fail_if_not_connected && !cluster.is_connected() {
-            return Err(AerospikeError::new(ResultCode::INVALID_NODE_ERROR,
+            return Err(AerospikeError::new(ResultCode::InvalidNodeError,
                                            Some(format!("Failed to connect to host(s): . The \
                                                          network connection(s) to cluster \
                                                          nodes may have timed out, or the \
@@ -546,7 +547,7 @@ impl Cluster {
             }
         }
 
-        Err(AerospikeError::new(ResultCode::INVALID_NODE_ERROR, None))
+        Err(AerospikeError::new(ResultCode::InvalidNodeError, None))
     }
 
     fn get_node_by_name(&self, node_name: &str) -> AerospikeResult<Arc<Node>> {
@@ -558,7 +559,7 @@ impl Cluster {
             }
         }
 
-        Err(AerospikeError::new(ResultCode::INVALID_NODE_ERROR,
+        Err(AerospikeError::new(ResultCode::InvalidNodeError,
                                 Some(format!("Requested node `{}` not found.", node_name))))
     }
 

@@ -24,7 +24,8 @@ use rustc_serialize::base64::FromBase64;
 use Node;
 use net::Connection;
 use command::info_command::Message;
-use error::{AerospikeError, ResultCode, AerospikeResult};
+use error::{AerospikeError, AerospikeResult};
+use client::ResultCode;
 use cluster::node;
 
 const REPLICAS_NAME: &'static str = "replicas-master";
@@ -49,7 +50,7 @@ impl PartitionTokenizer {
             });
         }
 
-        Err(AerospikeError::new(ResultCode::PARSE_ERROR,
+        Err(AerospikeError::new(ResultCode::ParseError,
                                 Some(format!("error while fetching partition info: {:?}",
                                              info_map))))
     }
@@ -87,7 +88,7 @@ impl PartitionTokenizer {
                 }
                 (None, None) => break,
                 _ => {
-                    return Err(AerospikeError::new(ResultCode::PARSE_ERROR,
+                    return Err(AerospikeError::new(ResultCode::ParseError,
                                                    Some(format!("error while parsing partition \
                                                                  info: {:?}",
                                                                 part_str))))

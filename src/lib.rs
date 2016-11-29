@@ -13,8 +13,8 @@ pub use policy::{Policy, ClientPolicy, ReadPolicy, WritePolicy, Priority, Consis
                  CommitLevel, RecordExistsAction, GenerationPolicy, ScanPolicy, QueryPolicy};
 pub use net::{Host, Connection};
 pub use cluster::{Node, Cluster};
-pub use error::{AerospikeError, ResultCode, AerospikeResult};
-pub use client::Client;
+pub use error::{AerospikeError, AerospikeResult};
+pub use client::{Client, ResultCode};
 pub use common::{Key, Bin, Operation, UDFLang, Recordset, Statement, Filter, IndexType,
                  CollectionIndexType, ParticleType};
 pub use common::{MapPolicy, MapReturnType};

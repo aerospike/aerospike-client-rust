@@ -13,6 +13,10 @@
 // License for the specific language governing permissions and limitations under
 // the License.
 
+pub mod result_code;
+
+pub use self::result_code::ResultCode;
+
 use std::sync::Arc;
 use std::vec::Vec;
 use std::thread;
@@ -41,9 +45,8 @@ use command::query_command::QueryCommand;
 use value::Value;
 
 use policy::{ClientPolicy, ReadPolicy, WritePolicy, ScanPolicy, QueryPolicy};
-use error::{AerospikeResult, ResultCode, AerospikeError};
+use error::{AerospikeResult, AerospikeError};
 
-pub mod result_code;
 
 // Client encapsulates an Aerospike cluster.
 // All database operations are available against this object.
@@ -190,7 +193,7 @@ impl Client {
         if let Some(msg) = response.get("error") {
             let msg = try!(msg.from_base64());
             let msg = try!(str::from_utf8(&msg));
-            return Err(AerospikeError::new(ResultCode::COMMAND_REJECTED,
+            return Err(AerospikeError::new(ResultCode::CommandRejected,
                                            Some(format!("UDF Registration failed: {}\nFile: \
                                                          {}\nLine: {}\nMessage: {}",
                                                         response.get("error")
@@ -234,7 +237,7 @@ impl Client {
             return Ok(());
         }
 
-        Err(AerospikeError::new(ResultCode::COMMAND_REJECTED,
+        Err(AerospikeError::new(ResultCode::CommandRejected,
                                 Some(format!("UDF Remove failed: {:?}", response))))
     }
 
@@ -265,12 +268,12 @@ impl Client {
             if key.contains("SUCCESS") {
                 return Ok(Some(value.clone()));
             } else if key.contains("FAILURE") {
-                return Err(AerospikeError::new(ResultCode::SERVER_ERROR,
+                return Err(AerospikeError::new(ResultCode::ServerError,
                                                Some(format!("{:?}", value))));
             }
         }
 
-        Err(AerospikeError::new(ResultCode::UDF_BAD_RESPONSE,
+        Err(AerospikeError::new(ResultCode::UdfBadResponse,
                                 Some("Invalid UDF return value".to_string())))
     }
 
@@ -443,13 +446,13 @@ impl Client {
             match v {
                 _ if v.to_uppercase() == "OK" => return Ok(()),
                 _ if v.to_uppercase().contains("FAIL:200") => {
-                    return Err(AerospikeError::new(ResultCode::INDEX_FOUND, None));
+                    return Err(AerospikeError::new(ResultCode::IndexFound, None));
                 }
-                _ => return Err(AerospikeError::new(ResultCode::INDEX_GENERIC, Some(v.to_owned()))),
+                _ => return Err(AerospikeError::new(ResultCode::IndexGeneric, Some(v.to_owned()))),
             };
         }
 
-        Err(AerospikeError::new(ResultCode::INDEX_GENERIC, None))
+        Err(AerospikeError::new(ResultCode::IndexGeneric, None))
     }
 
 
@@ -478,12 +481,12 @@ impl Client {
             match v {
                 _ if v.to_uppercase() == "OK" => return Ok(()),
                 _ if v.to_uppercase().contains("FAIL:201") => {
-                    return Err(AerospikeError::new(ResultCode::INDEX_GENERIC, None));
+                    return Err(AerospikeError::new(ResultCode::IndexGeneric, None));
                 }
-                _ => return Err(AerospikeError::new(ResultCode::INDEX_GENERIC, Some(v.to_owned()))),
+                _ => return Err(AerospikeError::new(ResultCode::IndexGeneric, Some(v.to_owned()))),
             };
         }
 
-        Err(AerospikeError::new(ResultCode::INDEX_GENERIC, None))
+        Err(AerospikeError::new(ResultCode::IndexGeneric, None))
     }
 }
