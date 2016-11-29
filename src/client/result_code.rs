@@ -391,27 +391,27 @@ impl From<ResultCode> for String {
 
 #[cfg(test)]
 mod tests {
-  use super::*;
+    use super::*;
 
-  #[test]
-  fn from_result_code() {
-      assert_eq!(ResultCode::KeyNotFoundError, ResultCode::from(2u8));
-  }
+    #[test]
+    fn from_result_code() {
+        assert_eq!(ResultCode::KeyNotFoundError, ResultCode::from(2u8));
+    }
 
-  #[test]
-  fn from_unknown_result_code() {
-      assert_eq!(ResultCode::Unknown(234), ResultCode::from(234u8));
-  }
+    #[test]
+    fn from_unknown_result_code() {
+        assert_eq!(ResultCode::Unknown(234), ResultCode::from(234u8));
+    }
 
-  #[test]
-  fn into_string() {
-      let result: String = ResultCode::KeyNotFoundError.into();
-      assert_eq!("Key not found", result);
-  }
+    #[test]
+    fn into_string() {
+        let result: String = ResultCode::KeyNotFoundError.into();
+        assert_eq!("Key not found", result);
+    }
 
-  #[test]
-  fn unknown_into_string() {
-      let result: String = ResultCode::Unknown(234).into();
-      assert_eq!("Unknown server error code: 234", result);
-  }
+    #[test]
+    fn unknown_into_string() {
+        let result: String = ResultCode::Unknown(234).into();
+        assert_eq!("Unknown server error code: 234", result);
+    }
 }
