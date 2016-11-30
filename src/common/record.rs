@@ -49,8 +49,7 @@ impl Record {
 
     pub fn time_to_live(&self) -> Option<Duration> {
         match self.expiration {
-          // record never expires
-          0x00000000 | 0xFFFFFFFF => None,
+          0 => None, // record never expires
           secs_since_epoch @ _ => {
               let expiration = *CITRUSLEAF_EPOCH + Duration::new(secs_since_epoch as u64, 0);
               match expiration.duration_since(SystemTime::now()) {
@@ -108,9 +107,7 @@ mod tests {
 
     #[test]
     fn ttl_never_expires() {
-        let record = Record::new(None, HashMap::new(), 0, 0x00000000);
-        assert_eq!(record.time_to_live(), None);
-        let record = Record::new(None, HashMap::new(), 0, 0xFFFFFFFF);
+        let record = Record::new(None, HashMap::new(), 0, 0);
         assert_eq!(record.time_to_live(), None);
     }
 }
