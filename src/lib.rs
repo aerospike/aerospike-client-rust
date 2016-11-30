@@ -7,6 +7,8 @@ extern crate crossbeam;
 extern crate rand;
 extern crate threadpool;
 extern crate pwhash;
+#[macro_use]
+extern crate lazy_static;
 
 pub use value::Value;
 pub use policy::{Policy, ClientPolicy, ReadPolicy, WritePolicy, Priority, ConsistencyLevel,

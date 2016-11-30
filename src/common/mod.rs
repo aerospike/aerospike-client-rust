@@ -38,7 +38,6 @@ pub mod recordset;
 pub mod particle_type;
 pub mod operation;
 pub mod field_type;
-pub mod ttl;
 pub mod udf_lang;
 pub mod index_type;
 pub mod collection_index_type;
