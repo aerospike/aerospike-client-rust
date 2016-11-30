@@ -778,7 +778,7 @@ impl Buffer {
         try!(self.write_u8(0)); // clear the result code
 
         try!(self.write_u32(generation));
-        try!(self.write_u32(policy.expiration.expiration()));
+        try!(self.write_u32(policy.expiration.into()));
 
         // Initialize timeout. It will be written later.
         try!(self.write_u8(0));
