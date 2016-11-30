@@ -18,10 +18,10 @@ crossbeam = "0.2"
 rand = "0.3"
 threadpool = "1.0"
 pwhash = "0.1"
+lazy_static = "^0.2"
 
 [dev-dependencies]
 env_logger = "0.3"
-lazy_static = "0.1"
 
 #[profile.release]
 #debug = true
