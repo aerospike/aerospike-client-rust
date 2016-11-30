@@ -18,7 +18,6 @@ use std::fmt;
 
 use value::Value;
 use common::key::Key;
-use error::AerospikeResult;
 
 #[derive(Debug)]
 pub struct Record {
@@ -33,13 +32,13 @@ impl Record {
                bins: HashMap<String, Value>,
                generation: u32,
                expiration: u32)
-               -> AerospikeResult<Self> {
-        Ok(Record {
+               -> Self {
+        Record {
             key: key,
             bins: bins,
             generation: generation,
             expiration: expiration,
-        })
+        }
     }
 }
 

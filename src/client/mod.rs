@@ -93,10 +93,10 @@ impl Client {
     pub fn get_header(&self,
                               policy: &ReadPolicy,
                               key: &Key)
-                              -> AerospikeResult<Arc<Record>> {
+                              -> AerospikeResult<Record> {
         let mut command = try!(ReadHeaderCommand::new(policy, self.cluster.clone(), key));
         try!(command.execute());
-        Ok(command.record.as_ref().unwrap().clone())
+        Ok(command.record.unwrap())
     }
 
     pub fn put(&self,

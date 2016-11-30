@@ -117,7 +117,7 @@ impl<'a> ReadCommand<'a> {
             }
         }
 
-        Ok(try!(Record::new(None, bins, generation, expiration)))
+        Ok(Record::new(None, bins, generation, expiration))
     }
 
     pub fn execute(&mut self) -> AerospikeResult<()> {
@@ -188,7 +188,7 @@ impl<'a> Command for ReadCommand<'a> {
 
         if op_count == 0 {
             // data Bin was not returned
-            self.record = Some(try!(Record::new(None, HashMap::new(), generation, expiration)));
+            self.record = Some(Record::new(None, HashMap::new(), generation, expiration));
             return Ok(());
         }
 

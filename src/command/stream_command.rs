@@ -105,7 +105,7 @@ impl StreamCommand {
             bins.insert(name, value);
         }
 
-        let record = try!(Record::new(Some(key), bins, generation, expiration));
+        let record = Record::new(Some(key), bins, generation, expiration);
         Ok(Some(record))
     }
 
