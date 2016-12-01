@@ -22,9 +22,6 @@ use aerospike::value::*;
 
 use env_logger;
 
-use std::thread;
-use std::time::Instant;
-
 use common1;
 
 #[test]
@@ -85,85 +82,20 @@ fn connect() {
 
 
     client.put(&wpolicy, &key, &bins).unwrap();
-    let rec = client.get(&policy, &key, None).unwrap();
-    println!("@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@ {}", rec);
+    client.get(&policy, &key, None).unwrap();
 
     client.touch(&wpolicy, &key).unwrap();
-    let rec = client.get(&policy, &key, None);
-    println!("@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@ {}", rec.unwrap());
-
-    let rec = client.get_header(&policy, &key);
-    println!("@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@/// {}", rec.unwrap());
-
+    client.get(&policy, &key, None).unwrap();
+    client.get_header(&policy, &key).unwrap();
     let exists = client.exists(&wpolicy, &key).unwrap();
-    println!("exists: {}", exists);
+    assert!(exists);
 
     let ops = &vec![Operation::put(&wbin), Operation::get()];
-    let op_rec = client.operate(&wpolicy, &key, ops);
-    println!("operate: {}", op_rec.unwrap());
+    client.operate(&wpolicy, &key, ops).unwrap();
 
     let existed = client.delete(&wpolicy, &key).unwrap();
-    println!("existed: {}", existed);
+    assert!(existed);
 
     let existed = client.delete(&wpolicy, &key).unwrap();
-    println!("existed: {}", existed);
-}
-
-#[test]
-fn read_me_example() {
-    let _ = env_logger::init();
-
-    let ref client = common1::GLOBAL_CLIENT;
-
-    let namespace: &str = &common1::AEROSPIKE_NAMESPACE;
-    let set_name: String = common1::rand_str(10);
-
-    let mut threads = vec![];
-    let now = Instant::now();
-    for i in 0..2 {
-        let client = client.clone();
-        let namespace = namespace.clone();
-        let set_name = set_name.clone();
-        let t = thread::spawn(move || {
-            let policy = ReadPolicy::default();
-
-            let wpolicy = WritePolicy::default();
-            let key = as_key!(namespace, &set_name, i);
-
-            let wbin = as_bin!("bin999", 1);
-            let bins = vec![&wbin];
-
-            client.put(&wpolicy, &key, &bins).unwrap();
-            let rec = client.get(&policy, &key, None);
-            println!("Record: {}", rec.unwrap());
-
-            client.touch(&wpolicy, &key).unwrap();
-            let rec = client.get(&policy, &key, None);
-            println!("Record: {}", rec.unwrap());
-
-            let rec = client.get_header(&policy, &key);
-            println!("Record Header: {}", rec.unwrap());
-
-            let exists = client.exists(&wpolicy, &key).unwrap();
-            println!("exists: {}", exists);
-
-            let ops = &vec![Operation::put(&wbin), Operation::get()];
-            let op_rec = client.operate(&wpolicy, &key, ops);
-            println!("operate: {}", op_rec.unwrap());
-
-            let existed = client.delete(&wpolicy, &key).unwrap();
-            println!("existed (sould be true): {}", existed);
-
-            let existed = client.delete(&wpolicy, &key).unwrap();
-            println!("existed (should be false): {}", existed);
-        });
-
-        threads.push(t);
-    }
-
-    for t in threads {
-        t.join().unwrap();
-    }
-
-    println!("total time: {:?}", now.elapsed());
+    assert!(!existed);
 }
