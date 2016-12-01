@@ -18,6 +18,9 @@
 //! The following is a very simple example of CRUD operations in an Aerospike database.
 //!
 //! ```rust,no_run
+//! #[macro_use]
+//! extern crate aerospike;
+//!
 //! use aerospike::*;
 //! use std::sync::Arc;
 //! use std::time::Instant;
