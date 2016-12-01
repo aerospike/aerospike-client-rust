@@ -79,3 +79,63 @@ macro_rules! as_key {
         Key::new($ns, $set, Value::from($val)).unwrap()
     }};
 }
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use value::Value;
+
+    static NS: &'static str = "namespace";
+    static SET: &'static str = "set";
+
+    #[test]
+    fn int_keys() {
+        let expected = vec![
+            0x82, 0xd7, 0x21, 0x3b, 0x46, 0x98, 0x12, 0x94, 0x7c, 0x10,
+            0x9a, 0x6d, 0x34, 0x1e, 0x3b, 0x5b, 0x1d, 0xed, 0xec, 0x1f
+        ];
+        assert_eq!(expected, as_key!(NS, SET, 1).digest);
+        assert_eq!(expected, as_key!(NS, SET, &1).digest);
+        assert_eq!(expected, as_key!(NS, SET, 1i8).digest);
+        assert_eq!(expected, as_key!(NS, SET, &1i8).digest);
+        assert_eq!(expected, as_key!(NS, SET, 1u8).digest);
+        assert_eq!(expected, as_key!(NS, SET, &1u8).digest);
+        assert_eq!(expected, as_key!(NS, SET, 1i16).digest);
+        assert_eq!(expected, as_key!(NS, SET, &1i16).digest);
+        assert_eq!(expected, as_key!(NS, SET, 1u16).digest);
+        assert_eq!(expected, as_key!(NS, SET, &1u16).digest);
+        assert_eq!(expected, as_key!(NS, SET, 1i32).digest);
+        assert_eq!(expected, as_key!(NS, SET, &1i32).digest);
+        assert_eq!(expected, as_key!(NS, SET, 1u32).digest);
+        assert_eq!(expected, as_key!(NS, SET, &1u32).digest);
+        assert_eq!(expected, as_key!(NS, SET, 1i64).digest);
+        assert_eq!(expected, as_key!(NS, SET, &1i64).digest);
+    }
+
+    #[test]
+    fn string_keys() {
+        let expected = vec![
+            0x36, 0xeb, 0x02, 0xa8, 0x07, 0xdb, 0xad, 0xe8, 0xcd, 0x78,
+            0x4e, 0x78, 0x00, 0xd7, 0x63, 0x08, 0xb4, 0xe8, 0x92, 0x12
+        ];
+        assert_eq!(expected, as_key!(NS, SET, "haha").digest);
+        assert_eq!(expected, as_key!(NS, SET, "haha".to_string()).digest);
+        assert_eq!(expected, as_key!(NS, SET, &"haha".to_string()).digest);
+    }
+
+    #[test]
+    fn blob_keys() {
+        let expected = vec![
+            0x81, 0xf0, 0xf1, 0xb8, 0xfb, 0x1e, 0x28, 0xcf, 0xfe, 0x37,
+            0xd3, 0x5a, 0x4f, 0xd9, 0xaf, 0xbb, 0x76, 0x1d, 0x50, 0x12
+        ];
+        assert_eq!(expected, as_key!(NS, SET, vec![0x68, 0x61, 0x68, 0x61]).digest);
+    }
+
+    #[test]
+    #[should_panic(expected = "Data type is not supported as Key value.")]
+    fn unsupported_key_type() {
+        as_key!(NS, SET, 3.1415);
+    }
+}

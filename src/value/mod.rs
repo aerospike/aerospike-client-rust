@@ -135,7 +135,6 @@ impl fmt::Display for FloatValue {
     }
 }
 
-/// ////////////////////////////////////////////////////////////////////////
 #[derive(Debug,Clone,PartialEq,Eq)]
 pub enum Value {
     Nil,
@@ -261,14 +260,12 @@ impl Value {
                 h.input(&buf);
                 Ok(())
             }
-            &Value::Float(ref val) => {
-                let mut buf = [0; 8];
-                NetworkEndian::write_f64(&mut buf, f64::from(val));
-                h.input(&buf);
-                Ok(())
-            }
             &Value::String(ref val) => {
                 h.input(val.as_bytes());
+                Ok(())
+            }
+            &Value::Blob(ref val) => {
+                h.input(val);
                 Ok(())
             }
             _ => panic!("Data type is not supported as Key value."),
