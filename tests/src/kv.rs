@@ -33,35 +33,6 @@ fn connect() {
     let namespace: &str = &common1::AEROSPIKE_NAMESPACE;
     let set_name = &common1::rand_str(10);
 
-    let t: i64 = 1;
-    let _ = Key::new(namespace, set_name, Value::from(t));
-    let _ = as_key!(namespace, set_name, t);
-    let _ = as_key!(namespace, set_name, &t);
-    let _ = as_key!(namespace, set_name, 1);
-    let _ = as_key!(namespace, set_name, &1);
-    let _ = as_key!(namespace, set_name, 1i8);
-    let _ = as_key!(namespace, set_name, &1i8);
-    let _ = as_key!(namespace, set_name, 1u8);
-    let _ = as_key!(namespace, set_name, &1u8);
-    let _ = as_key!(namespace, set_name, 1i16);
-    let _ = as_key!(namespace, set_name, &1i16);
-    let _ = as_key!(namespace, set_name, 1u16);
-    let _ = as_key!(namespace, set_name, &1u16);
-    let _ = as_key!(namespace, set_name, 1i32);
-    let _ = as_key!(namespace, set_name, &1i32);
-    let _ = as_key!(namespace, set_name, 1u32);
-    let _ = as_key!(namespace, set_name, &1u32);
-    let _ = as_key!(namespace, set_name, 1i64);
-    let _ = as_key!(namespace, set_name, &1i64);
-    // let _ = as_key!(namespace, set_name, 1.0f32);
-    // let _ = as_key!(namespace, set_name, &1.0f32);
-    let _ = as_key!(namespace, set_name, 1.0f64);
-    let _ = as_key!(namespace, set_name, &1.0f64);
-
-    let _ = as_key!(namespace, set_name, "haha");
-    let _ = as_key!(namespace, set_name, "haha".to_string());
-    let _ = as_key!(namespace, set_name, &"haha".to_string());
-
     let policy = ReadPolicy::default();
 
     let wpolicy = WritePolicy::default();
