@@ -110,3 +110,6 @@ pub mod net;
 pub mod cluster;
 pub mod error;
 pub mod client;
+
+#[cfg(test)]
+extern crate hex;
