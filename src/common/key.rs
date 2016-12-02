@@ -159,7 +159,13 @@ mod tests {
 
     #[test]
     #[should_panic(expected = "Data type is not supported as Key value.")]
-    fn unsupported_key_type() {
+    fn unsupported_float_key() {
         as_key!("namespace", "set", 3.1415);
+    }
+
+    #[test]
+    #[should_panic(expected = "Aerospike does not support u64 natively on server-side.")]
+    fn unsupported_u64_key() {
+        as_key!("namespace", "set", u64::max_value());
     }
 }
