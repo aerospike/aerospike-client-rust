@@ -61,10 +61,11 @@ unsafe impl Sync for Client {}
 impl Client {
     pub fn new(policy: &ClientPolicy, hosts: &[Host]) -> AerospikeResult<Self> {
         let cluster = try!(Cluster::new(policy.clone(), hosts));
+        let thread_pool = ThreadPool::new(policy.thread_pool_size);
 
         Ok(Client {
             cluster: cluster,
-            thread_pool: ThreadPool::new(policy.thread_pool_size),
+            thread_pool: thread_pool,
         })
     }
 

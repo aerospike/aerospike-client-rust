@@ -132,7 +132,7 @@ impl Node {
         if !self.client_policy.use_services_alternate {
             commands.extend(&["node", "partition-generation", "services"]);
         } else {
-            commands.extend(&["node", "partition-generation", "servicges-alternate"]);
+            commands.extend(&["node", "partition-generation", "services-alternate"]);
         }
 
         let info_map = try!(self.info(None, &commands));
