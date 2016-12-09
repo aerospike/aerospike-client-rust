@@ -59,9 +59,10 @@ impl<'a> ReadCommand<'a> {
                         bins: &HashMap<String, Value>)
                         -> AerospikeError {
         if let Some(ret) = bins.get("FAILURE") {
-            return AerospikeError::new(result_code, Some(ret.to_string()));
+            AerospikeError::new(result_code, Some(ret.to_string()))
+        } else {
+            AerospikeError::new(result_code, None)
         }
-        return AerospikeError::new(result_code, None);
     }
 
     fn parse_record(&mut self,

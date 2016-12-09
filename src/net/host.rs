@@ -13,11 +13,10 @@
 // License for the specific language governing permissions and limitations under
 // the License.
 
-use std::cmp;
 use std::fmt;
 
 // Host name/port of database server.
-#[derive(Debug, Eq, Hash, Clone)]
+#[derive(Debug, PartialEq, Eq, Hash, Clone)]
 pub struct Host {
     // Host name or IP address of database server.
     pub name: String,
@@ -32,12 +31,6 @@ impl Host {
             name: name.to_string(),
             port: port,
         }
-    }
-}
-
-impl cmp::PartialEq for Host {
-    fn eq(&self, other: &Host) -> bool {
-        self.name == other.name && self.port == other.port
     }
 }
 
