@@ -1,29 +1,31 @@
 # Aerospike Rust Client
 
-An Aerospike library for Rust.
+An [Aerospike](https://www.aerospike.com/) client library for Rust.
 
 > Notice: This is a work in progress. Use with discretion. Feedback, bug reports and pull requests are welcome!
 
 This library is compatible with Rust v1.0+ and supports the following operating systems: Linux, Mac OS X (Windows builds are possible, but untested)
 
-Please refer to [`CHANGELOG.md`](CHANGELOG.md) if you encounter breaking changes.
-
 - [Usage](#Usage)
-- [Prerequisites](#Prerequisites)
-- [Installation](#Installation)
-- [Tweaking Performance](#Performance)
-- [Benchmarks](#Benchmarks)
-- [API Documentaion](#API-Documentation)
 - [Tests](#Tests)
-- [Examples](#Examples)
-  - [Tools](#Tools)
 
 
+<a name="Usage"></a>
 ## Usage:
 
 The following is a very simple example of CRUD operations in an Aerospike database.
 
 ```rust
+#[macro_use]
+extern crate aerospike;
+
+use aerospike::*;
+use std::sync::Arc;
+use std::time::Instant;
+use std::thread;
+
+fn main() {
+    let cpolicy = ClientPolicy::default();
     let client: Arc<Client> = Arc::new(Client::new(&cpolicy, &vec![Host::new("127.0.0.1", 3000)]).unwrap());
 
     let mut threads = vec![];
@@ -32,11 +34,9 @@ The following is a very simple example of CRUD operations in an Aerospike databa
         let client = client.clone();
         let t = thread::spawn(move || {
             let policy = ReadPolicy::default();
-
             let wpolicy = WritePolicy::default();
-            let key = key!("test", "test", i);
-
-            let wbin = bin!("bin999", 1);
+            let key = as_key!("test", "test", i);
+            let wbin = as_bin!("bin999", 1);
             let bins = vec![&wbin];
 
             client.put(&wpolicy, &key, &bins).unwrap();
@@ -74,9 +74,6 @@ The following is a very simple example of CRUD operations in an Aerospike databa
     println!("total time: {:?}", now.elapsed());
 }
 ```
-
-More examples illustrating the use of the API are located in the
-[`examples`](examples) directory.
 
 <a name="Tests"></a>
 ## Tests
