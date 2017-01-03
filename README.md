@@ -1,4 +1,7 @@
-# Aerospike Rust Client
+# Aerospike Rust Client [![travis][travis-image]][travis-url]
+
+[travis-image]: https://travis-ci.org/aerospike/aerospike-client-rust.svg?branch=master
+[travis-url]: https://travis-ci.org/aerospike/aerospike-client-rust
 
 An [Aerospike](https://www.aerospike.com/) client library for Rust.
 
