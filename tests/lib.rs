@@ -21,7 +21,6 @@ extern crate rand;
 extern crate lazy_static;
 
 pub mod common1 {
-    use std::u16;
     use std::env;
     use std::sync::Arc;
 
@@ -38,15 +37,6 @@ pub mod common1 {
     }
 
     lazy_static! {
-        pub static ref AEROSPIKE_HOST: String = match env::var("AEROSPIKE_HOST") {
-            Ok(s) => s,
-                Err(_) => "127.0.0.1".to_string(),
-        };
-
-        pub static ref AEROSPIKE_PORT: u16 = match env::var("AEROSPIKE_PORT") {
-            Ok(s) => s.parse().unwrap(),
-                Err(_) => 3000,
-        };
         pub static ref AEROSPIKE_NAMESPACE: String = match env::var("AEROSPIKE_NAMESPACE") {
             Ok(s) => s,
                 Err(_) => "test".to_string(),
@@ -68,7 +58,8 @@ pub mod common1 {
             cp
         };
         pub static ref GLOBAL_CLIENT: Arc<Client> = {
-            Arc::new(Client::new(&GLOBAL_CLIENT_POLICY, &vec![Host::new(&AEROSPIKE_HOST, *AEROSPIKE_PORT)]).unwrap())
+            let hosts = env::var("AEROSPIKE_HOSTS").expect("Please set AEROSPIKE_HOSTS env variable!");
+            Arc::new(Client::new(&GLOBAL_CLIENT_POLICY, &hosts).unwrap())
         };
     }
 }
