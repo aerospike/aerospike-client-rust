@@ -26,22 +26,14 @@ pub struct Parser<'a> {
 
 impl<'a> Parser<'a> {
 
-    fn new(s: &'a str, default_port: u16) -> Self {
+    pub fn new(s: &'a str, default_port: u16) -> Self {
         Parser {
             s: s.chars().peekable(),
             default_port: default_port,
         }
     }
 
-    fn peek(&mut self) -> Option<&char> {
-        self.s.peek()
-    }
-
-    fn next_char(&mut self) -> Option<char> {
-        self.s.next()
-    }
-
-    fn read_hosts(&mut self) -> AerospikeResult<Vec<Host>> {
+    pub fn read_hosts(&mut self) -> AerospikeResult<Vec<Host>> {
         let mut hosts = Vec::new();
         loop {
             let addr = try!(self.read_addr_tuple());
@@ -99,6 +91,14 @@ impl<'a> Parser<'a> {
                 }
             }
         }
+    }
+
+    fn peek(&mut self) -> Option<&char> {
+        self.s.peek()
+    }
+
+    fn next_char(&mut self) -> Option<char> {
+        self.s.next()
     }
 }
 

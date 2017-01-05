@@ -14,6 +14,7 @@
 // the License.
 
 pub use self::host::Host;
+pub use self::host::ToHosts;
 pub use self::connection::Connection;
 
 pub mod host;
