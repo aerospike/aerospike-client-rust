@@ -58,7 +58,7 @@ pub mod common1 {
             cp
         };
         pub static ref GLOBAL_CLIENT: Arc<Client> = {
-            let hosts = env::var("AEROSPIKE_HOSTS").expect("Please set AEROSPIKE_HOSTS env variable!");
+            let hosts = env::var("AEROSPIKE_HOSTS").unwrap_or(String::from("127.0.0.1"));
             Arc::new(Client::new(&GLOBAL_CLIENT_POLICY, &hosts).unwrap())
         };
     }
