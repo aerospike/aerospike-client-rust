@@ -17,39 +17,44 @@
 //!
 //! The following is a very simple example of CRUD operations in an Aerospike database.
 //!
-//! ```rust,no_run
+//! ```rust
 //! #[macro_use]
 //! extern crate aerospike;
 //!
 //! use aerospike::*;
+//! use std::env;
 //! use std::sync::Arc;
 //! use std::time::Instant;
 //! use std::thread;
 //!
 //! fn main() {
 //!     let cpolicy = ClientPolicy::default();
-//!     let client: Arc<Client> = Arc::new(Client::new(&cpolicy, &vec![Host::new("127.0.0.1", 3000)]).unwrap());
+//!     let hosts = env::var("AEROSPIKE_HOSTS")
+//!         .unwrap_or(String::from("127.0.0.1:3000"));
+//!     let client = Client::new(&cpolicy, &hosts)
+//!         .expect("Failed to connect to cluster");
+//!     let client = Arc::new(client);
 //!
 //!     let mut threads = vec![];
 //!     let now = Instant::now();
 //!     for i in 0..2 {
 //!         let client = client.clone();
 //!         let t = thread::spawn(move || {
-//!             let policy = ReadPolicy::default();
+//!             let rpolicy = ReadPolicy::default();
 //!             let wpolicy = WritePolicy::default();
 //!             let key = as_key!("test", "test", i);
 //!             let wbin = as_bin!("bin999", 1);
 //!             let bins = vec![&wbin];
 //!
 //!             client.put(&wpolicy, &key, &bins).unwrap();
-//!             let rec = client.get(&policy, &key, None);
+//!             let rec = client.get(&rpolicy, &key, None);
 //!             println!("Record: {}", rec.unwrap());
 //!
 //!             client.touch(&wpolicy, &key).unwrap();
-//!             let rec = client.get(&policy, &key, None);
+//!             let rec = client.get(&rpolicy, &key, None);
 //!             println!("Record: {}", rec.unwrap());
 //!
-//!             let rec = client.get_header(&policy, &key);
+//!             let rec = client.get_header(&rpolicy, &key);
 //!             println!("Record Header: {}", rec.unwrap());
 //!
 //!             let exists = client.exists(&wpolicy, &key).unwrap();

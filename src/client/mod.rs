@@ -28,7 +28,7 @@ use std::path::Path;
 use rustc_serialize::base64::{ToBase64, FromBase64, STANDARD};
 use threadpool::ThreadPool;
 
-use net::Host;
+use net::ToHosts;
 use cluster::{Cluster, Node};
 use common::operation::{Operation, OperationType};
 use common::{Key, Record, Bin, UDFLang, Recordset, Statement, IndexType, CollectionIndexType};
@@ -59,8 +59,9 @@ unsafe impl Send for Client {}
 unsafe impl Sync for Client {}
 
 impl Client {
-    pub fn new(policy: &ClientPolicy, hosts: &[Host]) -> AerospikeResult<Self> {
-        let cluster = try!(Cluster::new(policy.clone(), hosts));
+    pub fn new(policy: &ClientPolicy, hosts: &ToHosts) -> AerospikeResult<Self> {
+        let hosts = try!(hosts.to_hosts());
+        let cluster = try!(Cluster::new(policy.clone(), &hosts));
         let thread_pool = ThreadPool::new(policy.thread_pool_size);
 
         Ok(Client {
