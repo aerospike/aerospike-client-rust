@@ -28,7 +28,6 @@ use command::stream_command::StreamCommand;
 
 pub struct ScanCommand<'a> {
     stream_command: StreamCommand,
-
     policy: &'a ScanPolicy,
     namespace: &'a str,
     set_name: &'a str,
@@ -42,15 +41,14 @@ impl<'a> ScanCommand<'a> {
                set_name: &'a str,
                bin_names: &'a Option<Vec<String>>,
                recordset: Arc<Recordset>)
-               -> AerospikeResult<Self> {
-        Ok(ScanCommand {
-            stream_command: try!(StreamCommand::new(node, recordset)),
-
+               -> Self {
+        ScanCommand {
+            stream_command: StreamCommand::new(node, recordset),
             policy: policy,
             namespace: namespace,
             set_name: set_name,
             bin_names: bin_names,
-        })
+        }
     }
 
     pub fn execute(&mut self) -> AerospikeResult<()> {

@@ -29,7 +29,6 @@ use command::buffer;
 
 pub struct ExistsCommand<'a> {
     single_command: SingleCommand<'a>,
-
     policy: &'a WritePolicy,
     pub exists: bool,
 }
@@ -38,13 +37,12 @@ impl<'a> ExistsCommand<'a> {
     pub fn new(policy: &'a WritePolicy,
                cluster: Arc<Cluster>,
                key: &'a Key)
-               -> AerospikeResult<Self> {
-        Ok(ExistsCommand {
-            single_command: try!(SingleCommand::new(cluster, key)),
-
+               -> Self {
+        ExistsCommand {
+            single_command: SingleCommand::new(cluster, key),
             policy: policy,
             exists: false,
-        })
+        }
     }
 
     pub fn execute(&mut self) -> AerospikeResult<()> {

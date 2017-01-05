@@ -86,7 +86,7 @@ impl Client {
                        key: &Key,
                        bin_names: Option<&[&str]>)
                        -> AerospikeResult<Record> {
-        let mut command = try!(ReadCommand::new(policy, self.cluster.clone(), key, bin_names));
+        let mut command = ReadCommand::new(policy, self.cluster.clone(), key, bin_names);
         try!(command.execute());
         Ok(command.record.unwrap())
     }
@@ -95,7 +95,7 @@ impl Client {
                               policy: &ReadPolicy,
                               key: &Key)
                               -> AerospikeResult<Record> {
-        let mut command = try!(ReadHeaderCommand::new(policy, self.cluster.clone(), key));
+        let mut command = ReadHeaderCommand::new(policy, self.cluster.clone(), key);
         try!(command.execute());
         Ok(command.record.unwrap())
     }
@@ -106,7 +106,7 @@ impl Client {
                        bins: &[&Bin])
                        -> AerospikeResult<()> {
         let mut command =
-            try!(WriteCommand::new(policy, self.cluster.clone(), key, bins, OperationType::Write));
+            WriteCommand::new(policy, self.cluster.clone(), key, bins, OperationType::Write);
         command.execute()
     }
 
@@ -116,7 +116,7 @@ impl Client {
                        bins: &[&Bin])
                        -> AerospikeResult<()> {
         let mut command =
-            try!(WriteCommand::new(policy, self.cluster.clone(), key, bins, OperationType::Incr));
+            WriteCommand::new(policy, self.cluster.clone(), key, bins, OperationType::Incr);
         command.execute()
     }
 
@@ -126,7 +126,7 @@ impl Client {
                           bins: &[&Bin])
                           -> AerospikeResult<()> {
         let mut command =
-            try!(WriteCommand::new(policy, self.cluster.clone(), key, bins, OperationType::Append));
+            WriteCommand::new(policy, self.cluster.clone(), key, bins, OperationType::Append);
         command.execute()
     }
 
@@ -136,7 +136,7 @@ impl Client {
                            bins: &[&Bin])
                            -> AerospikeResult<()> {
         let mut command =
-            try!(WriteCommand::new(policy, self.cluster.clone(), key, bins, OperationType::Prepend));
+            WriteCommand::new(policy, self.cluster.clone(), key, bins, OperationType::Prepend);
         command.execute()
     }
 
@@ -144,13 +144,13 @@ impl Client {
                           policy: &WritePolicy,
                           key: &Key)
                           -> AerospikeResult<bool> {
-        let mut command = try!(DeleteCommand::new(policy, self.cluster.clone(), key));
+        let mut command = DeleteCommand::new(policy, self.cluster.clone(), key);
         try!(command.execute());
         Ok(command.existed)
     }
 
     pub fn touch(&self, policy: &WritePolicy, key: &Key) -> AerospikeResult<()> {
-        let mut command = try!(TouchCommand::new(policy, self.cluster.clone(), key));
+        let mut command = TouchCommand::new(policy, self.cluster.clone(), key);
         command.execute()
     }
 
@@ -158,7 +158,7 @@ impl Client {
                           policy: &WritePolicy,
                           key: &Key)
                           -> AerospikeResult<bool> {
-        let mut command = try!(ExistsCommand::new(policy, self.cluster.clone(), key));
+        let mut command = ExistsCommand::new(policy, self.cluster.clone(), key);
         try!(command.execute());
         Ok(command.exists)
     }
@@ -168,7 +168,7 @@ impl Client {
                            key: &Key,
                            ops: &[Operation])
                            -> AerospikeResult<Record> {
-        let mut command = try!(OperateCommand::new(policy, self.cluster.clone(), key, ops));
+        let mut command = OperateCommand::new(policy, self.cluster.clone(), key, ops);
         try!(command.execute());
         Ok(command.read_command.record.unwrap())
     }
@@ -250,12 +250,12 @@ impl Client {
                                args: Option<&[Value]>)
                                -> AerospikeResult<Option<Value>> {
 
-        let mut command = try!(ExecuteUDFCommand::new(policy,
+        let mut command = ExecuteUDFCommand::new(policy,
                                                       self.cluster.clone(),
                                                       key,
                                                       udf_name,
                                                       function_name,
-                                                      args));
+                                                      args);
         try!(command.execute());
 
         let record = command.read_command.record.as_ref().unwrap().clone();
@@ -295,7 +295,7 @@ impl Client {
         };
 
         let nodes = self.cluster.nodes();
-        let recordset = Arc::new(try!(Recordset::new(policy.record_queue_size, nodes.len())));
+        let recordset = Arc::new(Recordset::new(policy.record_queue_size, nodes.len()));
         for node in nodes {
             let node = node.clone();
             let recordset = recordset.clone();
@@ -305,9 +305,7 @@ impl Client {
             let bin_names = bin_names.to_owned();
 
             thread::spawn(move || {
-                let mut command =
-                    ScanCommand::new(&policy, node, &namespace, &set_name, &bin_names, recordset)
-                        .unwrap();
+                let mut command = ScanCommand::new(&policy, node, &namespace, &set_name, &bin_names, recordset);
                 command.execute().unwrap();
             });
 
@@ -317,7 +315,7 @@ impl Client {
 
     pub fn scan_node(&self,
                              policy: &ScanPolicy,
-                             node: Arc<Node>,
+                             node: Node,
                              namespace: &str,
                              set_name: &str,
                              bin_names: Option<&[&str]>)
@@ -332,8 +330,8 @@ impl Client {
             }
         };
 
-        let recordset = Arc::new(try!(Recordset::new(policy.record_queue_size, 1)));
-        let node = node.clone();
+        let recordset = Arc::new(Recordset::new(policy.record_queue_size, 1));
+        let node = Arc::new(node).clone();
         let t_recordset = recordset.clone();
         let policy = policy.to_owned();
         let namespace = namespace.to_owned();
@@ -346,8 +344,7 @@ impl Client {
                                                &namespace,
                                                &set_name,
                                                &bin_names,
-                                               t_recordset)
-                .unwrap();
+                                               t_recordset);
             command.execute().unwrap();
         });
 
@@ -356,13 +353,14 @@ impl Client {
 
     pub fn query(&self,
                          policy: &QueryPolicy,
-                         statement: Arc<Statement>)
+                         statement: Statement)
                          -> AerospikeResult<Arc<Recordset>> {
 
         try!(statement.validate());
+        let statement = Arc::new(statement);
 
         let nodes = self.cluster.nodes();
-        let recordset = Arc::new(try!(Recordset::new(policy.record_queue_size, nodes.len())));
+        let recordset = Arc::new(Recordset::new(policy.record_queue_size, nodes.len()));
         for node in nodes {
             let node = node.clone();
             let t_recordset = recordset.clone();
@@ -370,7 +368,7 @@ impl Client {
             let statement = statement.clone();
 
             self.thread_pool.execute(move || {
-                let mut command = QueryCommand::new(&policy, node, statement, t_recordset).unwrap();
+                let mut command = QueryCommand::new(&policy, node, statement, t_recordset);
                 command.execute().unwrap();
             });
         }
@@ -379,20 +377,20 @@ impl Client {
 
     pub fn query_node(&self,
                               policy: &QueryPolicy,
-                              node: Arc<Node>,
-                              statement: Arc<Statement>)
+                              node: Node,
+                              statement: Statement)
                               -> AerospikeResult<Arc<Recordset>> {
 
         try!(statement.validate());
 
-        let recordset = Arc::new(try!(Recordset::new(policy.record_queue_size, 1)));
-        let node = node.clone();
+        let recordset = Arc::new(Recordset::new(policy.record_queue_size, 1));
+        let node = Arc::new(node).clone();
         let t_recordset = recordset.clone();
         let policy = policy.to_owned();
-        let statement = statement.clone();
+        let statement = Arc::new(statement).clone();
 
         self.thread_pool.execute(move || {
-            let mut command = QueryCommand::new(&policy, node, statement, t_recordset).unwrap();
+            let mut command = QueryCommand::new(&policy, node, statement, t_recordset);
             command.execute().unwrap();
         });
 

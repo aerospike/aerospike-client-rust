@@ -60,8 +60,8 @@ pub struct AdminCommand {
 }
 
 impl AdminCommand {
-    pub fn new() -> AerospikeResult<Self> {
-        Ok(AdminCommand {})
+    pub fn new() -> Self {
+        AdminCommand {}
     }
 
     pub fn execute(node: Arc<Node>, mut conn: Connection) -> AerospikeResult<()> {
