@@ -89,4 +89,4 @@ This library is packaged with a number of tests.
 
 To run all the test cases:
 
-`$ AEROSPIKE_HOST=host AEROSPIKE_PORT=3000 AEROSPIKE_NAMESPACE=test RUST_LOG=debug:aerospike RUST_BACKTRACE=1 cargo test -- --nocapture`
+    $ AEROSPIKE_HOSTS=127.0.0.1:3000 RUST_LOG=debug:aerospike RUST_BACKTRACE=1 cargo test -- --nocapture
