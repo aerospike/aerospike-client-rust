@@ -21,12 +21,11 @@ error_chain! {
     // `error_chain!`.
     foreign_links {
         Base64(::rustc_serialize::base64::FromBase64Error);
+        InvalidUtf8(::std::str::Utf8Error);
         Io(::std::io::Error);
         MpscRecv(::std::sync::mpsc::RecvError);
-        ParseInt(::std::num::ParseIntError);
         ParseAddr(::std::net::AddrParseError);
-        Utf8(::std::str::Utf8Error);
-        FromUtf8(::std::string::FromUtf8Error);
+        ParseInt(::std::num::ParseIntError);
         PwHash(::pwhash::error::Error);
     }
 

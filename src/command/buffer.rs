@@ -13,6 +13,7 @@
 // limitations under the License.
 
 use std::time::Duration;
+use std::str;
 
 use byteorder::{NetworkEndian, ByteOrder};
 
@@ -1035,10 +1036,9 @@ impl Buffer {
 
     #[inline(always)]
     pub fn read_str(&mut self, len: usize) -> Result<String> {
-        let s = try!(String::from_utf8(self.data_buffer[self.data_offset..self.data_offset + len]
-            .to_vec()));
+        let s = try!(str::from_utf8(&self.data_buffer[self.data_offset..self.data_offset + len]));
         self.data_offset += len;
-        Ok(s)
+        Ok(s.to_owned())
     }
 
     #[inline(always)]
