@@ -149,12 +149,13 @@ impl Node {
 
     fn verify_node_name(&self, info_map: &HashMap<String, String>) -> Result<()> {
         match info_map.get("node") {
-            None => bail!("Empty node name"),
+            None => bail!(ErrorKind::InvalidNodeInfo("Empty node name".to_string())),
             Some(info_name) => {
                 if !(&self.name == info_name) {
                     // Set node to inactive immediately.
                     self.active.store(false, Ordering::Relaxed);
-                    bail!("Node name has changed: '{}' => '{}'", self.name, info_name)
+                    bail!(ErrorKind::InvalidNodeInfo(
+                            format!("Node name has changed: '{}' => '{}'", self.name, info_name)));
                 }
             }
         }
@@ -169,7 +170,7 @@ impl Node {
         let mut friends: Vec<Host> = vec![];
 
         let friend_string = match info_map.get("services") {
-            None => bail!("Empty node name"),
+            None => bail!(ErrorKind::InvalidNodeInfo("Empty node name".to_string())),
             Some(friend_string) if friend_string == "" => return Ok(friends),
             Some(friend_string) => friend_string,
         };
@@ -178,8 +179,7 @@ impl Node {
         for friend in friend_names {
             let mut friend_info = friend.split(":");
             if friend_info.clone().count() != 2 {
-                error!("Node info from asinfo:services is malformed. Expected HOST:PORT, but got \
-                        '{}'",
+                error!("Node info from asinfo:services is malformed. Expected HOST:PORT, but got '{}'",
                        friend);
                 continue;
             }
@@ -217,7 +217,7 @@ impl Node {
 
     fn update_partitions(&self, info_map: &HashMap<String, String>) -> Result<()> {
         match info_map.get("partition-generation") {
-            None => bail!("Empty partition generation"),
+            None => bail!(ErrorKind::InvalidNodeInfo("Empty partition generation".to_string())),
             Some(gen_string) => {
                 let gen = try!(gen_string.parse::<isize>());
                 self.partition_generation.store(gen, Ordering::Relaxed);

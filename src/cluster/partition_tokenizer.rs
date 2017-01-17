@@ -40,7 +40,6 @@ pub struct PartitionTokenizer {
 impl PartitionTokenizer {
     pub fn new(conn: &mut Connection) -> Result<Self> {
         let info_map = try!(Message::info(conn, &vec![REPLICAS_NAME]));
-
         if let Some(buf) = info_map.get(REPLICAS_NAME) {
             return Ok(PartitionTokenizer {
                 length: info_map.len(),
@@ -48,8 +47,7 @@ impl PartitionTokenizer {
                 offset: 0,
             });
         }
-
-        bail!("Error fetching partition info: {:?}", info_map)
+        bail!(ErrorKind::InvalidNodeInfo("Missing replicas info".to_string()));
     }
 
     pub fn update_partition(&self,
@@ -84,7 +82,8 @@ impl PartitionTokenizer {
                     }
                 }
                 (None, None) => break,
-                _ => bail!("Error parsing partition info: {:?}", part_str)
+                _ => bail!(ErrorKind::InvalidNodeInfo(
+                        format!("Error parsing partition info: {:?}", part_str)))
             }
         }
 

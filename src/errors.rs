@@ -39,6 +39,10 @@ error_chain! {
             description("UDF Error")
             display("UDF error: {} [\"{}\"]", rc.into_string(), msg)
         }
+        InvalidNodeInfo(msg: String) {
+            description("Invalid Node")
+            display("Invalid node: {}", msg)
+        }
         InvalidStatement(msg: String) {
             description("Invalid Query Statement")
             display("Invalid query statement: {}", msg)
