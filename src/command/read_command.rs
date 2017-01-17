@@ -51,12 +51,10 @@ impl<'a> ReadCommand<'a> {
         }
     }
 
-    fn handle_udf_error(&self,
-                        result_code: ResultCode,
-                        bins: &HashMap<String, Value>)
-                        -> Error {
-        let msg = bins.get("FAILURE");
-        ErrorKind::UdfError(result_code, msg.map_or("".to_string(), |v| v.to_string())).into()
+    fn udf_response_to_error(record: &Record) -> Error {
+        let bins = &record.bins;
+        let reason = bins.get("FAILURE").map_or("".to_string(), |v| v.to_string());;
+        ErrorKind::UdfBadResponse(reason).into()
     }
 
     fn parse_record(&mut self,
@@ -171,13 +169,9 @@ impl<'a> Command for ReadCommand<'a> {
 
         if result_code != ResultCode::Ok {
             if result_code == ResultCode::UdfBadResponse {
-                let record =
-                    try!(self.parse_record(conn, op_count, field_count, generation, expiration));
-                let err = self.handle_udf_error(result_code, &record.bins);
-                warn!("UDF execution error: {}", err);
-                return Err(err);
+                let record = try!(self.parse_record(conn, op_count, field_count, generation, expiration));
+                return Err(ReadCommand::udf_response_to_error(&record));
             }
-
             bail!(ErrorKind::ServerError(result_code));
         }
 

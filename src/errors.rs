@@ -35,9 +35,9 @@ error_chain! {
             description("Command Timeout")
             display("Command execution timed out")
         }
-        UdfError(rc: ResultCode, msg: String) {
-            description("UDF Error")
-            display("UDF error: {} [\"{}\"]", rc.into_string(), msg)
+        UdfBadResponse(response: String) {
+            description("UDF Bad Response")
+            display("UDF Bad Response: '{}'", response)
         }
         InvalidNodeInfo(msg: String) {
             description("Invalid Node")
