@@ -19,17 +19,16 @@ use std::sync::{RwLock, Arc};
 use std::time::Duration;
 use std::sync::atomic::{AtomicBool, AtomicIsize, AtomicUsize, Ordering};
 use std::fmt;
+use std::result::Result as StdResult;
 
+use errors::*;
 use net::{Host, Connection};
 use command::info_command::Message;
-use error::{AerospikeError, AerospikeResult};
-use client::ResultCode;
 use policy::ClientPolicy;
 use cluster::node_validator::NodeValidator;
 
 pub const PARTITIONS: usize = 4096;
 
-// Node represents an Aerospike Database Server Node
 #[derive(Debug)]
 pub struct Node {
     client_policy: ClientPolicy,
@@ -122,7 +121,7 @@ impl Node {
         self.reference_count.load(Ordering::Relaxed)
     }
 
-    pub fn refresh(&self, current_aliases: HashMap<Host, Arc<Node>>) -> AerospikeResult<Vec<Host>> {
+    pub fn refresh(&self, current_aliases: HashMap<Host, Arc<Node>>) -> Result<Vec<Host>> {
         self.reference_count.store(0, Ordering::Relaxed);
         self.responded.store(false, Ordering::Relaxed);
 
@@ -148,21 +147,14 @@ impl Node {
         Ok(friends)
     }
 
-    fn verify_node_name(&self, info_map: &HashMap<String, String>) -> AerospikeResult<()> {
+    fn verify_node_name(&self, info_map: &HashMap<String, String>) -> Result<()> {
         match info_map.get("node") {
-            None => {
-                return Err(AerospikeError::new(ResultCode::InvalidNodeError,
-                                               Some("Node name is empty.".to_string())))
-            }
+            None => bail!("Empty node name"),
             Some(info_name) => {
                 if !(&self.name == info_name) {
                     // Set node to inactive immediately.
                     self.active.store(false, Ordering::Relaxed);
-                    return Err(AerospikeError::new(ResultCode::InvalidNodeError,
-                                                   Some(format!("Node name has changed. \
-                                                                 Old='{}' New={}",
-                                                                self.name,
-                                                                info_name))));
+                    bail!("Node name has changed: '{}' => '{}'", self.name, info_name)
                 }
             }
         }
@@ -173,15 +165,11 @@ impl Node {
     fn add_friends(&self,
                    current_aliases: HashMap<Host, Arc<Node>>,
                    info_map: &HashMap<String, String>)
-                   -> AerospikeResult<Vec<Host>> {
+                   -> Result<Vec<Host>> {
         let mut friends: Vec<Host> = vec![];
 
         let friend_string = match info_map.get("services") {
-            None => {
-                return Err(AerospikeError::new(ResultCode::InvalidNodeError,
-                                               Some("Node name is empty.".to_string())))
-            }
-
+            None => bail!("Empty node name"),
             Some(friend_string) if friend_string == "" => return Ok(friends),
             Some(friend_string) => friend_string,
         };
@@ -198,11 +186,6 @@ impl Node {
 
             let host = friend_info.nth(0).unwrap();
             let port = try!(u16::from_str(friend_info.nth(0).unwrap()));
-            // let port = friend_info.nth(0).unwrap().parse::<u16>().unwrap_or({
-            //     return Err(AerospikeError::new(ResultCode::ParseError,
-            //                                    Some("Node port wasn't a number.".to_string())));
-            // });
-
             let alias = match self.client_policy.ip_map {
                 Some(ref ip_map) if ip_map.contains_key(host) => {
                     Host::new(ip_map.get(host).unwrap(), port)
@@ -232,12 +215,9 @@ impl Node {
         return false;
     }
 
-    fn update_partitions(&self, info_map: &HashMap<String, String>) -> AerospikeResult<()> {
+    fn update_partitions(&self, info_map: &HashMap<String, String>) -> Result<()> {
         match info_map.get("partition-generation") {
-            None => {
-                return Err(AerospikeError::new(ResultCode::ParseError,
-                                               Some("partition-generation is empty.".to_string())))
-            }
+            None => bail!("Empty partition generation"),
             Some(gen_string) => {
                 let gen = try!(gen_string.parse::<isize>());
                 self.partition_generation.store(gen, Ordering::Relaxed);
@@ -247,7 +227,7 @@ impl Node {
         Ok(())
     }
 
-    pub fn get_connection(&self, timeout: Option<Duration>) -> AerospikeResult<Connection> {
+    pub fn get_connection(&self, timeout: Option<Duration>) -> Result<Connection> {
         let mut connections = self.connections.write().unwrap();
         loop {
             match connections.pop_front() {
@@ -265,7 +245,7 @@ impl Node {
                     if self.inc_connections() > self.client_policy.connection_pool_size_per_node {
                         // too many connections, undo
                         self.dec_connections();
-                        return Err(AerospikeError::err_connection_pool_empty());
+                        bail!("Exceeded max. connection pool size of {}", self.client_policy.connection_pool_size_per_node);
                     }
 
                     let conn = match Connection::new(self, &self.client_policy.user_password) {
@@ -347,7 +327,7 @@ impl Node {
     pub fn info(&self,
                 timeout: Option<Duration>,
                 commands: &[&str])
-                -> AerospikeResult<HashMap<String, String>> {
+                -> Result<HashMap<String, String>> {
         let mut conn = try!(self.get_connection(timeout));
         match Message::info(&mut conn, commands) {
             Ok(res) => Ok(res),
@@ -358,8 +338,8 @@ impl Node {
         }
     }
 
-    pub fn partition_generation(&self) -> AerospikeResult<isize> {
-        Ok(self.partition_generation.load(Ordering::Relaxed))
+    pub fn partition_generation(&self) -> isize {
+        self.partition_generation.load(Ordering::Relaxed)
     }
 }
 
@@ -370,7 +350,7 @@ impl PartialEq for Node {
 }
 
 impl fmt::Display for Node {
-    fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> StdResult<(), fmt::Error> {
         format!("{}: {}", self.name, self.host).fmt(f)
     }
 }

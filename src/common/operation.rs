@@ -18,9 +18,9 @@ use std::collections::HashMap;
 use value::Value;
 use common::Bin;
 
+use errors::*;
 use msgpack::encoder;
 use command::buffer::Buffer;
-use error::AerospikeResult;
 use common::ParticleType;
 
 #[derive(Debug, Clone, Copy)]
@@ -117,12 +117,12 @@ impl<'a> CdtOperation<'a> {
         ParticleType::BLOB
     }
 
-    fn estimate_size(&self) -> AerospikeResult<usize> {
+    fn estimate_size(&self) -> Result<usize> {
         let size: usize = try!(encoder::pack_cdt_op(&mut None, self));
         Ok(size)
     }
 
-    fn write_to(&self, buffer: &mut Buffer) -> AerospikeResult<usize> {
+    fn write_to(&self, buffer: &mut Buffer) -> Result<usize> {
         let size: usize = try!(encoder::pack_cdt_op(&mut Some(buffer), self));
         Ok(size)
     }
@@ -141,7 +141,7 @@ pub struct Operation<'a> {
 }
 
 impl<'a> Operation<'a> {
-    pub fn estimate_size(&self) -> AerospikeResult<usize> {
+    pub fn estimate_size(&self) -> Result<usize> {
         let mut size: usize = 0;
         size += match self.bin {
             OperationBin::Name(bin) => bin.len(),
@@ -157,7 +157,7 @@ impl<'a> Operation<'a> {
         Ok(size)
     }
 
-    pub fn write_to(&self, buffer: &mut Buffer) -> AerospikeResult<usize> {
+    pub fn write_to(&self, buffer: &mut Buffer) -> Result<usize> {
         let mut size: usize = 0;
 
         // remove the header size from the estimate
@@ -183,7 +183,7 @@ impl<'a> Operation<'a> {
         Ok(size)
     }
 
-    fn write_op_header_to(&self, buffer: &mut Buffer, particle_type: u8) -> AerospikeResult<usize> {
+    fn write_op_header_to(&self, buffer: &mut Buffer, particle_type: u8) -> Result<usize> {
         let mut size = try!(buffer.write_u8(particle_type as u8));
         size += try!(buffer.write_u8(0));
         match self.bin {

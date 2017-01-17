@@ -15,11 +15,11 @@
 
 use std::sync::Arc;
 
+use errors::*;
 use value::Value;
 use common::particle_type::ParticleType;
 use common::collection_index_type::CollectionIndexType;
 use command::buffer::Buffer;
-use error::AerospikeResult;
 
 #[derive(Debug,Clone)]
 pub struct Filter {
@@ -36,7 +36,7 @@ impl Filter {
                value_particle_type: ParticleType,
                begin: Arc<Value>,
                end: Arc<Value>)
-               -> AerospikeResult<Arc<Self>> {
+               -> Result<Arc<Self>> {
         Ok(Arc::new(Filter {
             bin_name: bin_name.to_owned(),
             collection_index_type: collection_index_type,
@@ -50,13 +50,13 @@ impl Filter {
         self.collection_index_type.clone()
     }
 
-    pub fn estimate_size(&self) -> AerospikeResult<usize> {
+    pub fn estimate_size(&self) -> Result<usize> {
         // bin name size(1) + particle type size(1) + begin particle size(4) + end particle size(4) = 10
         Ok(self.bin_name.len() + try!(self.begin.estimate_size()) +
            try!(self.end.estimate_size()) + 10)
     }
 
-    pub fn write(&self, buffer: &mut Buffer) -> AerospikeResult<()> {
+    pub fn write(&self, buffer: &mut Buffer) -> Result<()> {
         try!(buffer.write_u8(self.bin_name.len() as u8));
         try!(buffer.write_str(&self.bin_name));
         try!(buffer.write_u8(self.value_particle_type.clone() as u8));

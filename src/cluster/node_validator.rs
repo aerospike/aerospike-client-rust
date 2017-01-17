@@ -17,10 +17,11 @@ use std::vec::Vec;
 use std::net::{IpAddr, ToSocketAddrs};
 use std::str::FromStr;
 use std::str;
+use std::result::Result as StdResult;
 
+use errors::*;
 use net::{Host, Connection};
 use Cluster;
-use error::AerospikeResult;
 use command::info_command::Message;
 
 // Validates a Database server node
@@ -40,7 +41,7 @@ pub struct NodeValidator<'a> {
 
 // Generates a node validator
 impl<'a> NodeValidator<'a> {
-    pub fn new(cluster: &'a Cluster, host: &Host) -> AerospikeResult<Self> {
+    pub fn new(cluster: &'a Cluster, host: &Host) -> Result<Self> {
         let timeout = cluster.client_policy().timeout;
         let mut nv = NodeValidator {
             use_new_info: true,
@@ -66,8 +67,8 @@ impl<'a> NodeValidator<'a> {
         self.aliases.to_vec()
     }
 
-    fn set_aliases(&mut self, host: &Host) -> AerospikeResult<()> {
-        let ip_parsed: Result<IpAddr, _> = FromStr::from_str(&host.name);
+    fn set_aliases(&mut self, host: &Host) -> Result<()> {
+        let ip_parsed: StdResult<IpAddr, _> = FromStr::from_str(&host.name);
         match ip_parsed {
             Ok(_) => self.aliases = vec![Host::new(&host.name, host.port)],
             _ => {
@@ -84,7 +85,7 @@ impl<'a> NodeValidator<'a> {
         Ok(())
     }
 
-    fn set_address(&mut self, timeout: Option<Duration>) -> AerospikeResult<()> {
+    fn set_address(&mut self, timeout: Option<Duration>) -> Result<()> {
         for alias in self.aliases.to_vec() {
             let mut conn = try!(Connection::new_raw(&alias, &self.cluster.client_policy()));
             try!(conn.set_timeout(timeout));
@@ -104,7 +105,7 @@ impl<'a> NodeValidator<'a> {
         Ok(())
     }
 
-    fn set_features(&mut self, features: String) -> AerospikeResult<()> {
+    fn set_features(&mut self, features: String) -> Result<()> {
         let features = features.split(";");
         for feature in features {
             match feature {

@@ -21,15 +21,15 @@ use std::thread;
 use crossbeam::sync::MsQueue;
 use rand::Rng;
 
+use errors::*;
 use common::record::Record;
-use error::AerospikeResult;
 
 // #[derive(Debug)]
 pub struct Recordset {
     instances: AtomicUsize,
     record_queue_count: AtomicUsize,
     record_queue_size: AtomicUsize,
-    record_queue: MsQueue<AerospikeResult<Record>>,
+    record_queue: MsQueue<Result<Record>>,
     active: AtomicBool,
 
     task_id: AtomicUsize,
@@ -58,7 +58,7 @@ impl Recordset {
         self.active.load(Ordering::Relaxed)
     }
 
-    pub fn push(&self, record: AerospikeResult<Record>) -> Option<AerospikeResult<Record>> {
+    pub fn push(&self, record: Result<Record>) -> Option<Result<Record>> {
         if self.record_queue_count.fetch_add(1, Ordering::Relaxed) <
            self.record_queue_size.load(Ordering::Relaxed) {
             self.record_queue.push(record);
@@ -84,9 +84,9 @@ impl Recordset {
 }
 
 impl<'a> Iterator for &'a Recordset {
-    type Item = AerospikeResult<Record>;
+    type Item = Result<Record>;
 
-    fn next(&mut self) -> Option<AerospikeResult<Record>> {
+    fn next(&mut self) -> Option<Result<Record>> {
         loop {
             if self.is_active() || !self.record_queue.is_empty() {
                 let result = self.record_queue.try_pop();

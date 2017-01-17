@@ -77,7 +77,7 @@ end
                                  "test_udf2",
                                  "echo",
                                  Some(&[as_val!("ha ha...")]));
-    assert_eq!(res, Ok(Some(as_val!("ha ha..."))));
+    assert_eq!(Some(as_val!("ha ha...")), res.unwrap());
 
     let res = client.execute_udf(&wpolicy, &key, "test_udf1", "func_div", Some(&[as_val!(2)]));
     if let Ok(Some(Value::HashMap(values))) = res {

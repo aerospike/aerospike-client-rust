@@ -14,8 +14,9 @@
 // the License.
 
 use std::fmt;
+use std::result::Result as StdResult;
 
-use error::AerospikeResult;
+use errors::*;
 use value::Value;
 
 use crypto::ripemd160::Ripemd160;
@@ -30,7 +31,7 @@ pub struct Key {
 }
 
 impl Key {
-    pub fn new<S>(namespace: S, set_name: S, key: Value) -> AerospikeResult<Self>
+    pub fn new<S>(namespace: S, set_name: S, key: Value) -> Result<Self>
         where S: Into<String>
     {
         let mut key = Key {
@@ -44,7 +45,7 @@ impl Key {
         Ok(key)
     }
 
-    fn compute_digest(&mut self) -> AerospikeResult<()> {
+    fn compute_digest(&mut self) -> Result<()> {
         let mut hash = Ripemd160::new();
         hash.input(self.set_name.as_bytes());
         if let Some(ref user_key) = self.user_key {
@@ -60,7 +61,7 @@ impl Key {
 }
 
 impl fmt::Display for Key {
-    fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> StdResult<(), fmt::Error> {
         match self.user_key {
             Some(ref value) => { 
                 write!(f, "<Key: ns=\"{}\", set=\"{}\", key=\"{}\">", &self.namespace, &self.set_name, value)

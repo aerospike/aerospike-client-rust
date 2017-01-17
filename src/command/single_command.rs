@@ -17,8 +17,8 @@ use std::sync::Arc;
 use std::thread;
 use std::time::Instant;
 
+use errors::*;
 use net::Connection;
-use error::{AerospikeError, AerospikeResult};
 
 use client::ResultCode;
 use cluster::partition::Partition;
@@ -43,11 +43,11 @@ impl<'a> SingleCommand<'a> {
         }
     }
 
-    pub fn get_node(&self) -> AerospikeResult<Arc<Node>> {
+    pub fn get_node(&self) -> Result<Arc<Node>> {
         self.cluster.get_node(&self.partition)
     }
 
-    pub fn empty_socket(conn: &mut Connection) -> AerospikeResult<()> {
+    pub fn empty_socket(conn: &mut Connection) -> Result<()> {
         // There should not be any more bytes.
         // Empty the socket to be safe.
         let sz = try!(conn.buffer.read_i64(None));
@@ -66,7 +66,7 @@ impl<'a> SingleCommand<'a> {
     // EXECUTE
     //
 
-    pub fn execute(policy: &Policy, cmd: &'a mut Command) -> AerospikeResult<()> {
+    pub fn execute(policy: &Policy, cmd: &'a mut Command) -> Result<()> {
         let mut iterations = 0;
 
         // set timeout outside the loop
@@ -80,11 +80,7 @@ impl<'a> SingleCommand<'a> {
             // too many retries
             if let Some(max_retries) = policy.max_retries() {
                 if iterations > max_retries + 1 {
-                    return Err(AerospikeError::new(ResultCode::Timeout,
-                                                   Some("command execution timed out: Exceeded \
-                                                         number of retries. See \
-                                                         `Policy.max_retries`"
-                                                       .to_string())));
+                    bail!(ErrorKind::Timeout);
                 }
             }
 
@@ -138,7 +134,7 @@ impl<'a> SingleCommand<'a> {
                 // cancelling/closing the batch/multi commands will return an error, which will
                 // close the connection to throw away its data and signal the server about the
                 // situation. We will not put back the connection in the buffer.
-                if err.keep_connection() {
+                if SingleCommand::keep_connection(&err) {
                     // Put connection back in pool.
                     node.put_connection(conn);
                 } else {
@@ -155,10 +151,18 @@ impl<'a> SingleCommand<'a> {
 
         }
 
-        // execution timeout
-        Err(AerospikeError::new(ResultCode::Timeout,
-                                Some("command execution timed out: Exceeded number of retries. \
-                                      See `Policy.max_retries`"
-                                    .to_string())))
+        bail!(ErrorKind::Timeout)
+    }
+
+    fn keep_connection(err: &Error) -> bool {
+        match err {
+            &Error(ErrorKind::ServerError(result_code), _) => {
+                match result_code {
+                    ResultCode::KeyNotFoundError => true,
+                    _ => false,
+                }
+            }
+            _ => false,
+        }
     }
 }

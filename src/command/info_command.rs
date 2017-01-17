@@ -18,9 +18,8 @@ use std::collections::HashMap;
 use byteorder::{NetworkEndian, ReadBytesExt, WriteBytesExt};
 use std::str;
 
+use errors::*;
 use net::Connection;
-use error::{AerospikeError, AerospikeResult};
-use client::ResultCode;
 
 #[derive(Debug, Clone)]
 pub struct Message {
@@ -30,7 +29,7 @@ pub struct Message {
 impl Message {
     pub fn info(conn: &mut Connection,
                 commands: &[&str])
-                -> AerospikeResult<HashMap<String, String>> {
+                -> Result<HashMap<String, String>> {
 
         let cmd = commands.join("\n") + "\n";
         let mut msg = try!(Message::new(&cmd.into_bytes()));
@@ -39,7 +38,7 @@ impl Message {
         Ok(try!(msg.parse_response()))
     }
 
-    fn new(data: &[u8]) -> AerospikeResult<Self> {
+    fn new(data: &[u8]) -> Result<Self> {
         let mut len = Vec::with_capacity(8);
         len.write_u64::<NetworkEndian>(data.len() as u64).unwrap();
 
@@ -59,7 +58,7 @@ impl Message {
         rdr.read_u64::<NetworkEndian>().unwrap()
     }
 
-    fn send(&mut self, conn: &mut Connection) -> AerospikeResult<()> {
+    fn send(&mut self, conn: &mut Connection) -> Result<()> {
         // send the message
         try!(conn.write(&self.buf));
 
@@ -76,7 +75,7 @@ impl Message {
         Ok(())
     }
 
-    fn parse_response(&self) -> AerospikeResult<HashMap<String, String>> {
+    fn parse_response(&self) -> Result<HashMap<String, String>> {
         let response = try!(str::from_utf8(&self.buf));
         let response = response.trim_matches('\n');
 
@@ -91,10 +90,7 @@ impl Message {
             match (key, val) {
                 (Some(key), Some(val)) => result.insert(key.to_string(), val.to_string()),
                 (Some(key), None) => result.insert(key.to_string(), "".to_string()),
-                _ => {
-                    return Err(AerospikeError::new(ResultCode::ParseError,
-                                                   Some("parsing info command failed".to_string())))
-                }
+                _ => bail!("Parsing Info command failed"),
             };
         }
 

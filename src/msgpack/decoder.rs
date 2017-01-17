@@ -16,13 +16,12 @@
 use std::collections::HashMap;
 use std::vec::Vec;
 
+use errors::*;
 use common::ParticleType;
-use error::{AerospikeResult, AerospikeError};
-use client::ResultCode;
 use command::buffer::Buffer;
 use value::*;
 
-pub fn unpack_value_list(buf: &mut Buffer) -> AerospikeResult<Value> {
+pub fn unpack_value_list(buf: &mut Buffer) -> Result<Value> {
     if buf.data_buffer.len() == 0 {
         return Ok(Value::List(vec![]));
     }
@@ -42,7 +41,7 @@ pub fn unpack_value_list(buf: &mut Buffer) -> AerospikeResult<Value> {
     unpack_list(buf, count)
 }
 
-pub fn unpack_value_map(buf: &mut Buffer) -> AerospikeResult<Value> {
+pub fn unpack_value_map(buf: &mut Buffer) -> Result<Value> {
     if buf.data_buffer.len() == 0 {
         return Ok(Value::from(HashMap::with_capacity(0)));
     }
@@ -62,7 +61,7 @@ pub fn unpack_value_map(buf: &mut Buffer) -> AerospikeResult<Value> {
     unpack_map(buf, count)
 }
 
-fn unpack_list(buf: &mut Buffer, count: usize) -> AerospikeResult<Value> {
+fn unpack_list(buf: &mut Buffer, count: usize) -> Result<Value> {
     let mut list: Vec<Value> = Vec::with_capacity(count);
     for _ in 0..count {
         let val = try!(unpack_value(buf));
@@ -72,7 +71,7 @@ fn unpack_list(buf: &mut Buffer, count: usize) -> AerospikeResult<Value> {
     Ok(Value::from(list))
 }
 
-fn unpack_map(buf: &mut Buffer, count: usize) -> AerospikeResult<Value> {
+fn unpack_map(buf: &mut Buffer, count: usize) -> Result<Value> {
     let mut map: HashMap<Value, Value> = HashMap::with_capacity(count);
     for _ in 0..count {
         let key = try!(unpack_value(buf));
@@ -83,7 +82,7 @@ fn unpack_map(buf: &mut Buffer, count: usize) -> AerospikeResult<Value> {
     Ok(Value::from(map))
 }
 
-fn unpack_blob(buf: &mut Buffer, count: usize) -> AerospikeResult<Value> {
+fn unpack_blob(buf: &mut Buffer, count: usize) -> Result<Value> {
     let vtype = try!(buf.read_u8(None));
     let count = count - 1;
 
@@ -93,23 +92,19 @@ fn unpack_blob(buf: &mut Buffer, count: usize) -> AerospikeResult<Value> {
             Ok(Value::String(val))
         }
 
-        ParticleType::BLOB => Ok(Value::Blob(try!(buf.read_blob(count)))),
+        ParticleType::BLOB =>
+            Ok(Value::Blob(try!(buf.read_blob(count)))),
 
         ParticleType::GEOJSON => {
             let val = try!(buf.read_str(count));
             Ok(Value::GeoJSON(val))
         }
 
-        _ => {
-            Err(AerospikeError::new(ResultCode::SerializeError,
-                                    Some(format!("Error while unpacking BLOB. Type-header with \
-                                                  code `{}` not recognized.",
-                                                 vtype))))
-        }
+        _ => bail!("Error while unpacking BLOB. Type-header with code `{}` not recognized.", vtype)
     }
 }
 
-fn unpack_value(buf: &mut Buffer) -> AerospikeResult<Value> {
+fn unpack_value(buf: &mut Buffer) -> Result<Value> {
     let obj_type: u8 = try!(buf.read_u8(None)) & 0xff;
 
     match obj_type {
@@ -231,5 +226,5 @@ fn unpack_value(buf: &mut Buffer) -> AerospikeResult<Value> {
         }
     }
 
-    Err(AerospikeError::err_serialize())
+    bail!("Error unpacking value of type '{}'", obj_type)
 }

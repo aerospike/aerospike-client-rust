@@ -16,8 +16,8 @@ use std::sync::Arc;
 use std::time::Duration;
 use std::str;
 
+use errors::*;
 use net::Connection;
-use error::AerospikeResult;
 use value::Value;
 
 use cluster::{Node, Cluster};
@@ -52,7 +52,7 @@ impl<'a> ExecuteUDFCommand<'a> {
         }
     }
 
-    pub fn execute(&mut self) -> AerospikeResult<()> {
+    pub fn execute(&mut self) -> Result<()> {
         SingleCommand::execute(self.policy, self)
     }
 }
@@ -61,16 +61,16 @@ impl<'a> Command for ExecuteUDFCommand<'a> {
     fn write_timeout(&mut self,
                      conn: &mut Connection,
                      timeout: Option<Duration>)
-                     -> AerospikeResult<()> {
+                     -> Result<()> {
         conn.buffer.write_timeout(timeout);
         Ok(())
     }
 
-    fn write_buffer(&mut self, conn: &mut Connection) -> AerospikeResult<()> {
+    fn write_buffer(&mut self, conn: &mut Connection) -> Result<()> {
         conn.flush()
     }
 
-    fn prepare_buffer(&mut self, conn: &mut Connection) -> AerospikeResult<()> {
+    fn prepare_buffer(&mut self, conn: &mut Connection) -> Result<()> {
         conn.buffer.set_udf(self.policy,
                             self.read_command.single_command.key,
                             self.package_name,
@@ -78,11 +78,11 @@ impl<'a> Command for ExecuteUDFCommand<'a> {
                             self.args)
     }
 
-    fn get_node(&self) -> AerospikeResult<Arc<Node>> {
+    fn get_node(&self) -> Result<Arc<Node>> {
         self.read_command.get_node()
     }
 
-    fn parse_result(&mut self, conn: &mut Connection) -> AerospikeResult<()> {
+    fn parse_result(&mut self, conn: &mut Connection) -> Result<()> {
         self.read_command.parse_result(conn)
     }
 }
