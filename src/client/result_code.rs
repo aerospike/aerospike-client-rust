@@ -16,39 +16,6 @@
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum ResultCode {
 
-    // Too many filters were set on the statement
-    TooManyFiltersError,
-
-    // Record Queue Full
-    RecordQueueFullError,
-
-    // Io Error
-    IoError,
-
-    // There were no connections available to the node in the pool, and the pool was limited
-    NoAvailableConnectionsToNode,
-
-    // Asynchronous max concurrent database commands have been exceeded and therefore rejected.
-    TypeNotSupported,
-
-    // Asynchronous max concurrent database commands have been exceeded and therefore rejected.
-    CommandRejected,
-
-    // Query was terminated by user.
-    QueryTerminated,
-
-    // Scan was terminated by user.
-    ScanTerminated,
-
-    // Chosen node is not currently active.
-    InvalidNodeError,
-
-    // Client parse error.
-    ParseError,
-
-    // Client serialization error.
-    SerializeError,
-
     // OperationType was successful.
     Ok,
 
@@ -302,17 +269,6 @@ impl ResultCode {
 
     pub fn into_string(self) -> String {
         match self {
-            ResultCode::TooManyFiltersError => String::from("Too many filters were set for the statement. Aerospike supports only one filter on a statement."),
-            ResultCode::RecordQueueFullError => String::from("Record Queue Full Error"),
-            ResultCode::IoError => String::from("Io Error"),
-            ResultCode::NoAvailableConnectionsToNode => String::from("No available connections to the node. Connection Pool was empty, and limited to certain number of connections."),
-            ResultCode::TypeNotSupported => String::from("Type cannot be converted to Value Type."),
-            ResultCode::CommandRejected => String::from("command rejected"),
-            ResultCode::QueryTerminated => String::from("Query terminated"),
-            ResultCode::ScanTerminated => String::from("Scan terminated"),
-            ResultCode::InvalidNodeError => String::from("Invalid node"),
-            ResultCode::ParseError => String::from("Parse error"),
-            ResultCode::SerializeError => String::from("Serialize error"),
             ResultCode::Ok => String::from("ok"),
             ResultCode::ServerError => String::from("Server error"),
             ResultCode::KeyNotFoundError => String::from("Key not found"),
