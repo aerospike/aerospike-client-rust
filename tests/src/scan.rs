@@ -33,11 +33,9 @@ const EXPECTED: usize = 1000;
 
 #[test]
 fn scan_single_consumer() {
+    let _ = env_logger::init();
 
-let _ = env_logger::init();
-
-let ref client = common1::GLOBAL_CLIENT;
-
+    let ref client = common1::GLOBAL_CLIENT;
     let namespace: &str = &common1::AEROSPIKE_NAMESPACE;
     let set_name = &common1::rand_str(10);
 
