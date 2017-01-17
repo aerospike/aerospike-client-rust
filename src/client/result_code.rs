@@ -161,28 +161,28 @@ pub enum ResultCode {
     IndexFound,
 
     // Requested secondary index does not exist.
-    IndexNotfound,
+    IndexNotFound,
 
     // Secondary index memory space exceeded.
     IndexOom,
 
     // Secondary index not available.
-    IndexNotreadable,
+    IndexNotReadable,
 
     // Generic secondary index error.
     IndexGeneric,
 
     // Index name maximum length exceeded.
-    IndexNameMaxlen,
+    IndexNameMaxLen,
 
     // Maximum number of indicies exceeded.
-    IndexMaxcount,
+    IndexMaxCount,
 
     // Secondary index query aborted.
     QueryAborted,
 
     // Secondary index queue full.
-    QueryQueuefull,
+    QueryQueueFull,
 
     // Secondary index query timed out on server.
     QueryTimeout,
@@ -251,14 +251,14 @@ impl ResultCode {
             151 => ResultCode::BatchMaxRequestsExceeded,
             152 => ResultCode::BatchQueuesFull,
             200 => ResultCode::IndexFound,
-            201 => ResultCode::IndexNotfound,
+            201 => ResultCode::IndexNotFound,
             202 => ResultCode::IndexOom,
-            203 => ResultCode::IndexNotreadable,
+            203 => ResultCode::IndexNotReadable,
             204 => ResultCode::IndexGeneric,
-            205 => ResultCode::IndexNameMaxlen,
-            206 => ResultCode::IndexMaxcount,
+            205 => ResultCode::IndexNameMaxLen,
+            206 => ResultCode::IndexMaxCount,
             210 => ResultCode::QueryAborted,
-            211 => ResultCode::QueryQueuefull,
+            211 => ResultCode::QueryQueueFull,
             212 => ResultCode::QueryTimeout,
             213 => ResultCode::QueryGeneric,
             214 => ResultCode::QueryNetioErr,
@@ -316,14 +316,14 @@ impl ResultCode {
             ResultCode::BatchMaxRequestsExceeded => String::from("Batch max requests have been exceeded"),
             ResultCode::BatchQueuesFull => String::from("All batch queues are full"),
             ResultCode::IndexFound => String::from("Index already exists"),
-            ResultCode::IndexNotfound => String::from("Index not found"),
+            ResultCode::IndexNotFound => String::from("Index not found"),
             ResultCode::IndexOom => String::from("Index out of memory"),
-            ResultCode::IndexNotreadable => String::from("Index not readable"),
+            ResultCode::IndexNotReadable => String::from("Index not readable"),
             ResultCode::IndexGeneric => String::from("Index error"),
-            ResultCode::IndexNameMaxlen => String::from("Index name max length exceeded"),
-            ResultCode::IndexMaxcount => String::from("Index count exceeds max"),
+            ResultCode::IndexNameMaxLen => String::from("Index name max length exceeded"),
+            ResultCode::IndexMaxCount => String::from("Index count exceeds max"),
             ResultCode::QueryAborted => String::from("Query aborted"),
-            ResultCode::QueryQueuefull => String::from("Query queue full"),
+            ResultCode::QueryQueueFull => String::from("Query queue full"),
             ResultCode::QueryTimeout => String::from("Query timeout"),
             ResultCode::QueryGeneric => String::from("Query error"),
             ResultCode::QueryNetioErr => String::from("Query NetIo error on server"),
