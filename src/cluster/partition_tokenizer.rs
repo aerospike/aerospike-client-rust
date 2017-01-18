@@ -47,7 +47,7 @@ impl PartitionTokenizer {
                 offset: 0,
             });
         }
-        bail!(ErrorKind::InvalidNodeInfo("Missing replicas info".to_string()));
+        bail!(ErrorKind::ClusterTendError("Missing replicas info".to_string()));
     }
 
     pub fn update_partition(&self,
@@ -82,7 +82,7 @@ impl PartitionTokenizer {
                     }
                 }
                 (None, None) => break,
-                _ => bail!(ErrorKind::InvalidNodeInfo(
+                _ => bail!(ErrorKind::ClusterTendError(
                         format!("Error parsing partition info: {:?}", part_str)))
             }
         }

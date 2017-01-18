@@ -31,22 +31,32 @@ error_chain! {
 
     // Additional `ErrorKind` variants.
     errors {
+        /// The client was not able to complete a command within the timeout duration specified
+        /// within the client policy.
         Timeout {
             description("Command Timeout")
             display("Command execution timed out")
         }
+
+        /// Error returned when executing a User-Defined Function (UDF) resulted in an error.
         UdfBadResponse(response: String) {
             description("UDF Bad Response")
             display("UDF Bad Response: '{}'", response)
         }
-        InvalidNodeInfo(msg: String) {
-            description("Invalid Node")
-            display("Invalid node: {}", msg)
+
+        /// An error occurred during the cluster tend process.
+        ClusterTendError(msg: String) {
+            description("Cluster Tend Error")
+            display("Error during cluster tend: {}", msg)
         }
+
+        /// A query statement is invalid.
         InvalidStatement(msg: String) {
             description("Invalid Query Statement")
             display("Invalid query statement: {}", msg)
         }
+
+        /// Server responded with a responde code indicating an error condition.
         ServerError(rc: ResultCode) {
             description("Server Error")
             display("Server error: {}", rc.into_string())

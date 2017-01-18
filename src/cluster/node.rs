@@ -149,12 +149,12 @@ impl Node {
 
     fn verify_node_name(&self, info_map: &HashMap<String, String>) -> Result<()> {
         match info_map.get("node") {
-            None => bail!(ErrorKind::InvalidNodeInfo("Empty node name".to_string())),
+            None => bail!(ErrorKind::ClusterTendError("Missing node name".to_string())),
             Some(info_name) => {
                 if !(&self.name == info_name) {
                     // Set node to inactive immediately.
                     self.active.store(false, Ordering::Relaxed);
-                    bail!(ErrorKind::InvalidNodeInfo(
+                    bail!(ErrorKind::ClusterTendError(
                             format!("Node name has changed: '{}' => '{}'", self.name, info_name)));
                 }
             }
@@ -170,7 +170,7 @@ impl Node {
         let mut friends: Vec<Host> = vec![];
 
         let friend_string = match info_map.get("services") {
-            None => bail!(ErrorKind::InvalidNodeInfo("Empty node name".to_string())),
+            None => bail!(ErrorKind::ClusterTendError("Missing services list".to_string())),
             Some(friend_string) if friend_string == "" => return Ok(friends),
             Some(friend_string) => friend_string,
         };
@@ -217,7 +217,7 @@ impl Node {
 
     fn update_partitions(&self, info_map: &HashMap<String, String>) -> Result<()> {
         match info_map.get("partition-generation") {
-            None => bail!(ErrorKind::InvalidNodeInfo("Empty partition generation".to_string())),
+            None => bail!(ErrorKind::ClusterTendError("Missing partition generation".to_string())),
             Some(gen_string) => {
                 let gen = try!(gen_string.parse::<isize>());
                 self.partition_generation.store(gen, Ordering::Relaxed);
