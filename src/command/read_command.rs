@@ -169,6 +169,7 @@ impl<'a> Command for ReadCommand<'a> {
 
         if result_code != ResultCode::Ok {
             if result_code == ResultCode::UdfBadResponse {
+                // Need to parse the full record as it contains details about the UDF error.
                 let record = try!(self.parse_record(conn, op_count, field_count, generation, expiration));
                 return Err(ReadCommand::udf_response_to_error(&record));
             }

@@ -278,7 +278,6 @@ impl Client {
                         bin_names: Option<&[&str]>)
                         -> Result<Arc<Recordset>> {
 
-
         let bin_names = match bin_names {
             None => None,
             Some(bin_names) => {
@@ -421,29 +420,9 @@ impl Client {
             CollectionIndexType::Default => "".to_string(),
             _ => format!("indextype={};", collection_index_type),
         };
-
         let cmd = format!("sindex-create:ns={};set={};indexname={};numbins=1;{}indexdata={},{};priority=normal",
-                          namespace,
-                          set_name,
-                          index_name,
-                          cit_str,
-                          bin_name,
-                          index_type,
-                          );
-
-        let node = try!(self.cluster.get_random_node());
-        let response = try!(node.info(policy.base_policy.timeout, &[&cmd]));
-
-        for v in response.values() {
-            match v {
-                _ if v.to_uppercase() == "OK" => return Ok(()),
-                _ if v.to_uppercase().contains("FAIL:200") =>
-                    bail!(ErrorKind::ServerError(ResultCode::from(200))),
-                _ => bail!("Error creating index: {}", v),
-            };
-        }
-
-        bail!(ErrorKind::ServerError(ResultCode::IndexGeneric))
+                          namespace, set_name, index_name, cit_str, bin_name, index_type);
+        self.send_sindex_cmd(cmd, &policy).chain_err(|| "Error creating index")
     }
 
 
@@ -458,25 +437,27 @@ impl Client {
             "" => "".to_string(),
             _ => format!("set={};", set_name),
         };
-
         let cmd = format!("sindex-delete:ns={};{}indexname={}",
-                          namespace,
-                          set_name,
-                          index_name,
-                          );
+                          namespace, set_name, index_name);
+        self.send_sindex_cmd(cmd, &policy).chain_err(|| "Error dropping index")
+    }
 
+    fn send_sindex_cmd(&self, cmd: String, policy: &WritePolicy) -> Result<()> {
         let node = try!(self.cluster.get_random_node());
         let response = try!(node.info(policy.base_policy.timeout, &[&cmd]));
 
         for v in response.values() {
-            match v {
-                _ if v.to_uppercase() == "OK" => return Ok(()),
-                _ if v.to_uppercase().contains("FAIL:201") =>
-                    bail!(ErrorKind::ServerError(ResultCode::from(201))),
-                _ => bail!("Error dropping index: {}", v),
-            };
+            if v.to_uppercase() == "OK" {
+                return Ok(())
+            } else if v.starts_with("FAIL:200") {
+                bail!(ErrorKind::ServerError(ResultCode::from(200)));
+            } else if v.starts_with("FAIL:201") {
+                bail!(ErrorKind::ServerError(ResultCode::from(201)));
+            } else {
+                break;
+            }
         }
 
-        bail!(ErrorKind::ServerError(ResultCode::IndexGeneric))
+        bail!(ErrorKind::BadResponse("Unexpected sindex info command response".to_string()))
     }
 }

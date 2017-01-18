@@ -39,24 +39,30 @@ error_chain! {
         }
 
         /// Error returned when executing a User-Defined Function (UDF) resulted in an error.
-        UdfBadResponse(response: String) {
+        UdfBadResponse(details: String) {
             description("UDF Bad Response")
-            display("UDF Bad Response: '{}'", response)
+            display("UDF Bad Response: '{}'", details)
+        }
+
+        /// The client received a server response that it was not able to process.
+        BadResponse(details: String) {
+            description("Bad Server Response")
+            display("Bad Server Response: '{}'", details)
         }
 
         /// An error occurred during the cluster tend process.
-        ClusterTendError(msg: String) {
+        ClusterTendError(details: String) {
             description("Cluster Tend Error")
-            display("Error during cluster tend: {}", msg)
+            display("Error during cluster tend: {}", details)
         }
 
         /// A query statement is invalid.
-        InvalidStatement(msg: String) {
+        InvalidStatement(details: String) {
             description("Invalid Query Statement")
-            display("Invalid query statement: {}", msg)
+            display("Invalid query statement: {}", details)
         }
 
-        /// Server responded with a responde code indicating an error condition.
+        /// Server responded with a response code indicating an error condition.
         ServerError(rc: ResultCode) {
             description("Server Error")
             display("Server error: {}", rc.into_string())
