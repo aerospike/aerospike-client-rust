@@ -14,10 +14,8 @@
 
 use std::time::Duration;
 use std::vec::Vec;
-use std::net::{IpAddr, ToSocketAddrs};
-use std::str::FromStr;
+use std::net::ToSocketAddrs;
 use std::str;
-use std::result::Result as StdResult;
 
 use errors::*;
 use net::{Host, Connection};
@@ -68,20 +66,11 @@ impl<'a> NodeValidator<'a> {
     }
 
     fn set_aliases(&mut self, host: &Host) -> Result<()> {
-        let ip_parsed: StdResult<IpAddr, _> = FromStr::from_str(&host.name);
-        match ip_parsed {
-            Ok(_) => self.aliases = vec![Host::new(&host.name, host.port)],
-            _ => {
-                let addrs = try!(format!("{}:{}", host.name, host.port).to_socket_addrs());
-                let mut aliases: Vec<Host> = vec![];
-                for addr in addrs {
-                    aliases.push(Host::new(&format!("{}", addr.ip()), host.port));
-                }
-                self.aliases = aliases;
-            }
-        }
-
-        debug!("Node Validator has {} nodes.", self.aliases.len());
+        self.aliases = (host.name.as_ref(), host.port)
+            .to_socket_addrs()?
+            .map(|addr| Host::new(&addr.ip().to_string(), addr.port()))
+            .collect();
+        debug!("Resolved aliases for host {}: {:?}", host, self.aliases);
         Ok(())
     }
 
