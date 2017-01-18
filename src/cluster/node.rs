@@ -124,14 +124,13 @@ impl Node {
     pub fn refresh(&self, current_aliases: HashMap<Host, Arc<Node>>) -> Result<Vec<Host>> {
         self.reference_count.store(0, Ordering::Relaxed);
         self.responded.store(false, Ordering::Relaxed);
-
         self.refresh_count.fetch_add(1, Ordering::Relaxed);
 
-        let mut commands: Vec<&str> = vec![];
-        if !self.client_policy.use_services_alternate {
-            commands.extend(&["node", "partition-generation", "services"]);
+        let mut commands: Vec<&str> = vec!["node", "partition-generation"];
+        if self.client_policy.use_services_alternate {
+            commands.push("services-alternate");
         } else {
-            commands.extend(&["node", "partition-generation", "services-alternate"]);
+            commands.push("services");
         }
 
         let info_map = try!(self.info(None, &commands));
@@ -181,8 +180,8 @@ impl Node {
                 continue;
             }
 
-            let host = friend_info.nth(0).unwrap();
-            let port = try!(u16::from_str(friend_info.nth(0).unwrap()));
+            let host = friend_info.next().unwrap();
+            let port = try!(u16::from_str(friend_info.next().unwrap()));
             let alias = match self.client_policy.ip_map {
                 Some(ref ip_map) if ip_map.contains_key(host) => {
                     Host::new(ip_map.get(host).unwrap(), port)
@@ -192,24 +191,12 @@ impl Node {
 
             if current_aliases.contains_key(&alias) {
                 self.reference_count.fetch_add(1, Ordering::Relaxed);
-            } else {
-                if !self.find_alias(friends.as_slice(), &alias) {
-                    friends.push(alias);
-                }
+            } else if !friends.contains(&alias) {
+                friends.push(alias);
             }
         }
 
         Ok(friends)
-    }
-
-    fn find_alias(&self, friends: &[Host], alias: &Host) -> bool {
-        for h in friends {
-            if h == alias {
-                return true;
-            }
-        }
-
-        return false;
     }
 
     fn update_partitions(&self, info_map: &HashMap<String, String>) -> Result<()> {
