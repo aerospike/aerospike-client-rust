@@ -107,8 +107,20 @@ client:
 <a name="Tests"></a>
 ## Tests
 
-This library is packaged with a number of tests.
+This library is packaged with a number of tests. The tests assume that an
+Aerospike cluster is running at `localhost:3000`. To test using a cluster at a
+different address, set the `AEROSPIKE_HOSTS` environment variable to the list
+of cluster hosts.
 
 To run all the test cases:
 
-    $ AEROSPIKE_HOSTS=127.0.0.1:3000 RUST_LOG=debug:aerospike RUST_BACKTRACE=1 cargo test -- --nocapture
+    $ export AEROSPIKE_HOSTS=127.0.0.1:3000
+    $ cargo test
+
+To enable debug logging for the `aerospike` crate:
+
+    $ RUST_LOG=aerospike=debug cargo test
+
+To enable backtraces:
+
+    $ RUST_LOG=aerospike=debug RUST_BACKTRACE=1 cargo test
