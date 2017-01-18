@@ -104,27 +104,27 @@ impl Statement {
     pub fn validate(&self) -> Result<()> {
         if let Some(ref filters) = self.filters {
             if filters.len() > 1 {
-                bail!(ErrorKind::InvalidStatement("Too many filter expressions".to_string()));
+                bail!(ErrorKind::InvalidArgument("Too many filter expressions".to_string()));
             }
         }
 
         if self.set_name.is_empty() {
-            bail!(ErrorKind::InvalidStatement("Empty set name".to_string()));
+            bail!(ErrorKind::InvalidArgument("Empty set name".to_string()));
         }
 
         if let Some(ref index_name) = self.index_name {
             if index_name.is_empty() {
-                bail!(ErrorKind::InvalidStatement("Empty index name".to_string()));
+                bail!(ErrorKind::InvalidArgument("Empty index name".to_string()));
             }
         }
 
         if let Some(ref agg) = self.aggregation {
             if agg.package_name.is_empty() {
-                bail!(ErrorKind::InvalidStatement("Empty UDF package name".to_string()));
+                bail!(ErrorKind::InvalidArgument("Empty UDF package name".to_string()));
             }
 
             if agg.function_name.is_empty() {
-                bail!(ErrorKind::InvalidStatement("Empty UDF function name".to_string()));
+                bail!(ErrorKind::InvalidArgument("Empty UDF function name".to_string()));
             }
 
         }

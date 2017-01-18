@@ -46,7 +46,7 @@ impl<'a> Parser<'a> {
                     }
                 },
                 1 => (addr[0].clone(), None, self.default_port),
-                _ => bail!("Invalid address string"),
+                _ => bail!(ErrorKind::InvalidArgument("Invalid address string".to_string())),
             };
             // TODO: add TLS name
             hosts.push(Host::new(&host, port));
@@ -83,7 +83,7 @@ impl<'a> Parser<'a> {
                 }
                 _ => {
                     return if substr.is_empty() {
-                        bail!("Invalid address string")
+                        bail!(ErrorKind::InvalidArgument("Invalid address string".to_string()))
                     } else {
                         Ok(substr)
                     }

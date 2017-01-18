@@ -56,10 +56,10 @@ error_chain! {
             display("Error during cluster tend: {}", details)
         }
 
-        /// A query statement is invalid.
-        InvalidStatement(details: String) {
-            description("Invalid Query Statement")
-            display("Invalid query statement: {}", details)
+        /// One or more of the arguments passed to the client are invalid.
+        InvalidArgument(details: String) {
+            description("Invalid Argument")
+            display("Invalid argument: {}", details)
         }
 
         /// Server responded with a response code indicating an error condition.
