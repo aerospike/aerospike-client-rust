@@ -41,13 +41,13 @@ error_chain! {
         /// Error returned when executing a User-Defined Function (UDF) resulted in an error.
         UdfBadResponse(details: String) {
             description("UDF Bad Response")
-            display("UDF Bad Response: '{}'", details)
+            display("UDF Bad Response: {}", details)
         }
 
         /// The client received a server response that it was not able to process.
         BadResponse(details: String) {
             description("Bad Server Response")
-            display("Bad Server Response: '{}'", details)
+            display("Bad Server Response: {}", details)
         }
 
         /// An error occurred during the cluster tend process.
@@ -68,4 +68,17 @@ error_chain! {
             display("Server error: {}", rc.into_string())
         }
     }
+}
+
+macro_rules! log_error_chain {
+    ($err:expr, $($arg:tt)*) => {
+        error!($($arg)*);
+        error!("Error: {}", $err);
+        for e in $err.iter().skip(1) {
+            error!("caused by: {}", e);
+        }
+        if let Some(backtrace) = $err.backtrace() {
+            error!("backtrace: {:?}", backtrace);
+        }
+    };
 }

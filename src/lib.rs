@@ -110,6 +110,9 @@ pub use common::{Key, Bin, Operation, UDFLang, Recordset, Statement, Filter, Ind
                  CollectionIndexType, ParticleType};
 pub use common::{MapPolicy, MapReturnType};
 
+#[macro_use]
+pub mod errors;
+
 mod command;
 mod msgpack;
 
@@ -118,7 +121,6 @@ pub mod value;
 pub mod policy;
 pub mod net;
 pub mod cluster;
-pub mod errors;
 pub mod client;
 
 #[cfg(test)]

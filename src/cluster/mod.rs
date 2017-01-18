@@ -110,7 +110,7 @@ impl Cluster {
                 Err(TryRecvError::Disconnected) => break,
                 Err(TryRecvError::Empty) => {
                     if let Err(err) = cluster.tend() {
-                        error!("Error tending cluster: {}", err);
+                        log_error_chain!(err, "Error tending cluster");
                     }
 
                     thread::sleep(tend_interval);
@@ -125,7 +125,7 @@ impl Cluster {
         }
 
         if let Err(err) = cluster.set_nodes(vec![]) { 
-            error!("Error resetting nodes: {}", err);
+            log_error_chain!(err, "Error clearing nodes list");
         }
     }
 
@@ -204,7 +204,7 @@ impl Cluster {
                 }
 
                 if let Err(err) = cluster_for_tend.tend() {
-                    error!("Error tending cluster in wait_till_stabilized: {}", err);
+                    log_error_chain!(err, "Error during initial cluster tend");
                 }
 
                 if (cluster_for_tend.nodes().len() as isize) == count {
@@ -215,8 +215,8 @@ impl Cluster {
                 count = cluster_for_tend.nodes().len() as isize;
             }
 
-            if let Err(err) = snd.send(()) {
-                error!("Error sending: {}", err);
+            if let Err(err) = snd.send(()).chain_err(|| "Error joining threads") {
+                log_error_chain!(err, "Error during initial cluster tend");
             }
         });
 
@@ -279,8 +279,7 @@ impl Cluster {
         for seed in seed_array.iter() {
             let seed_node_validator = match NodeValidator::new(self, seed) {
                 Err(err) => {
-                    println!("Seed {} failed with error: {}", seed, err);
-                    error!("Seed {} failed with error: {}", seed, err);
+                    log_error_chain!(err, "Failed to validate seed host: {}", seed);
                     continue;
                 }
                 Ok(snv) => snv,
@@ -293,7 +292,7 @@ impl Cluster {
                 } else {
                     match NodeValidator::new(self, seed) {
                         Err(err) => {
-                            error!("Seed {} failed with error: {}", alias, err);
+                            log_error_chain!(err, "Seeding host {} failed with error", alias);
                             continue;
                         }
                         Ok(snv) => snv,
@@ -331,7 +330,7 @@ impl Cluster {
         for host in hosts {
             let nv = match NodeValidator::new(self, &host) {
                 Err(err) => {
-                    error!("Add node {} failed with error: {}", host.name, err);
+                    log_error_chain!(err, "Adding node {} failed with error", host.name);
                     continue;
                 }
                 Ok(nv) => nv,

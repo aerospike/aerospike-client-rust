@@ -57,8 +57,8 @@ impl<'a> NodeValidator<'a> {
             supports_geo: false,
         };
 
-        try!(nv.set_aliases(host));
-        try!(nv.set_address(timeout));
+        nv.set_aliases(host).chain_err(|| "Failed to resolve host aliases")?;
+        nv.set_address(timeout).chain_err(|| "Failed to retrieve node address")?;
 
         Ok(nv)
     }
@@ -90,7 +90,7 @@ impl<'a> NodeValidator<'a> {
             let mut conn = try!(Connection::new_raw(&alias, &self.cluster.client_policy()));
             try!(conn.set_timeout(timeout));
 
-            let info_map = try!(Message::info(&mut conn, &["node", "build", "features"]));
+            let info_map = try!(Message::info(&mut conn, &["node", "features"]));
 
             if let Some(node_name) = info_map.get("node") {
                 self.name = node_name.to_string();

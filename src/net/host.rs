@@ -38,7 +38,7 @@ impl Host {
 
 impl fmt::Display for Host {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "({}, {})", self.name, self.port)
+        write!(f, "{}:{}", self.name, self.port)
     }
 }
 
