@@ -80,7 +80,7 @@ impl<'a> SingleCommand<'a> {
             // too many retries
             if let Some(max_retries) = policy.max_retries() {
                 if iterations > max_retries + 1 {
-                    bail!(ErrorKind::Timeout);
+                    bail!(ErrorKind::Connection(format!("Timeout after {} tries", iterations)));
                 }
             }
 
@@ -112,11 +112,8 @@ impl<'a> SingleCommand<'a> {
                 }
             };
 
-            // Set command buffer.
-            try!(cmd.prepare_buffer(&mut conn));
-
-            // Reset timeout in send buffer (destined for server) and socket.
-            try!(cmd.write_timeout(&mut conn, policy.timeout()));
+            cmd.prepare_buffer(&mut conn).chain_err(|| "Failed to prepare send buffer")?;
+            cmd.write_timeout(&mut conn, policy.timeout()).chain_err(|| "Failed to set timeout for send buffer")?;
 
             // Send command.
             if let Err(err) = cmd.write_buffer(&mut conn) {
@@ -151,7 +148,7 @@ impl<'a> SingleCommand<'a> {
 
         }
 
-        bail!(ErrorKind::Timeout)
+        bail!(ErrorKind::Connection("Timeout".to_string()))
     }
 
     fn keep_connection(err: &Error) -> bool {

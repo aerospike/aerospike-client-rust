@@ -47,7 +47,7 @@ impl PartitionTokenizer {
                 offset: 0,
             });
         }
-        bail!(ErrorKind::ClusterTendError("Missing replicas info".to_string()));
+        bail!(ErrorKind::BadResponse("Missing replicas info".to_string()));
     }
 
     pub fn update_partition(&self,

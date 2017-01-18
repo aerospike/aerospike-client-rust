@@ -31,18 +31,6 @@ error_chain! {
 
     // Additional `ErrorKind` variants.
     errors {
-        /// The client was not able to complete a command within the timeout duration specified
-        /// within the client policy.
-        Timeout {
-            description("Command Timeout")
-            display("Command execution timed out")
-        }
-
-        /// Error returned when executing a User-Defined Function (UDF) resulted in an error.
-        UdfBadResponse(details: String) {
-            description("UDF Bad Response")
-            display("UDF Bad Response: {}", details)
-        }
 
         /// The client received a server response that it was not able to process.
         BadResponse(details: String) {
@@ -50,10 +38,11 @@ error_chain! {
             display("Bad Server Response: {}", details)
         }
 
-        /// An error occurred during the cluster tend process.
-        ClusterTendError(details: String) {
-            description("Cluster Tend Error")
-            display("Error during cluster tend: {}", details)
+        /// The client was not able to communicate with the cluster due to some issue with the
+        /// network connection.
+        Connection(details: String) {
+            description("Network Connection Issue")
+            display("Unable to communicate with server cluster: {}", details)
         }
 
         /// One or more of the arguments passed to the client are invalid.
@@ -66,6 +55,12 @@ error_chain! {
         ServerError(rc: ResultCode) {
             description("Server Error")
             display("Server error: {}", rc.into_string())
+        }
+
+        /// Error returned when executing a User-Defined Function (UDF) resulted in an error.
+        UdfBadResponse(details: String) {
+            description("UDF Bad Response")
+            display("UDF Bad Response: {}", details)
         }
     }
 }

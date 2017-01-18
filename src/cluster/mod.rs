@@ -86,13 +86,12 @@ impl Cluster {
 
         // apply policy rules
         if cluster.client_policy.fail_if_not_connected && !cluster.is_connected() {
-            bail!("Failed to connect to host(s). The network connection(s) to cluster \
-                   nodes may have timed out, or the cluster may be in a state of flux.")
+            bail!(ErrorKind::Connection("Failed to connect to host(s). The network connection(s) to cluster \
+                   nodes may have timed out, or the cluster may be in a state of flux.".to_string()));
         }
 
         let cluster_for_tend = cluster.clone();
         thread::spawn(move || Cluster::tend_thread(cluster_for_tend, rx));
-
 
         debug!("New cluster initialized and ready to be used...");
         Ok(cluster)
