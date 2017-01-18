@@ -135,13 +135,10 @@ impl Node {
         }
 
         let info_map = try!(self.info(None, &commands));
-        try!(self.verify_node_name(&info_map));
-
+        self.verify_node_name(&info_map).chain_err(|| "Failed to verify node name")?;
         self.responded.store(true, Ordering::Relaxed);
-
-        let friends = try!(self.add_friends(current_aliases, &info_map));
-        try!(self.update_partitions(&info_map));
-
+        let friends = self.add_friends(current_aliases, &info_map).chain_err(|| "Failed to add friends")?;
+        self.update_partitions(&info_map).chain_err(|| "Failed to update partitions")?;
         self.reset_failures();
 
         Ok(friends)
