@@ -57,11 +57,11 @@ impl PartitionTokenizer {
 
         let mut amap = nmap.read().unwrap().clone();
 
-        // <ns>, base64<partition>, <ns>, base64<partition>, ...
+        // <ns>:<base64-encoded partition map>;<ns>:<base64-encoded partition map>; ...
         let part_str = try!(str::from_utf8(&self.buffer));
-        let mut parts = part_str.trim_right().split(":");
+        let mut parts = part_str.trim_right().split(|c| c == ':' || c == ';');
         loop {
-            match (parts.nth(0), parts.nth(0)) {
+            match (parts.next(), parts.next()) {
                 (Some(ns), Some(part)) => {
                     let ns = ns.to_string();
                     let restore_buffer = try!(part.from_base64());
