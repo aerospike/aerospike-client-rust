@@ -18,6 +18,7 @@ use std::fmt;
 use std::mem;
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
+use std::result::Result as StdResult;
 
 use byteorder::{NetworkEndian, ByteOrder};
 
@@ -26,8 +27,8 @@ use crypto::digest::Digest;
 
 use std::vec::Vec;
 
+use errors::*;
 use common::ParticleType;
-use error::AerospikeResult;
 use command::buffer::Buffer;
 use msgpack::encoder::pack_value;
 use msgpack::decoder::*;
@@ -121,7 +122,7 @@ impl<'a> From<&'a f32> for FloatValue {
 }
 
 impl fmt::Display for FloatValue {
-    fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> StdResult<(), fmt::Error> {
         match self {
             &FloatValue::F32(val) => {
                 let val: f32 = unsafe { mem::transmute(val) };
@@ -214,7 +215,7 @@ impl Value {
         }
     }
 
-    pub fn estimate_size(&self) -> AerospikeResult<usize> {
+    pub fn estimate_size(&self) -> Result<usize> {
         match self {
             &Value::Nil => Ok(0),
             &Value::Int(_) => Ok(8),
@@ -233,7 +234,7 @@ impl Value {
         }
     }
 
-    pub fn write_to(&self, buf: &mut Buffer) -> AerospikeResult<usize> {
+    pub fn write_to(&self, buf: &mut Buffer) -> Result<usize> {
         match self {
             &Value::Nil => Ok(0),
             &Value::Int(ref val) => buf.write_i64(*val),
@@ -252,7 +253,7 @@ impl Value {
         }
     }
 
-    pub fn write_key_bytes(&self, h: &mut Ripemd160) -> AerospikeResult<()> {
+    pub fn write_key_bytes(&self, h: &mut Ripemd160) -> Result<()> {
         match self {
             &Value::Int(ref val) => {
                 let mut buf = [0; 8];
@@ -274,7 +275,7 @@ impl Value {
 }
 
 impl fmt::Display for Value {
-    fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> StdResult<(), fmt::Error> {
         write!(f, "{}", self.as_string())
     }
 }
@@ -506,7 +507,7 @@ impl<'a> From<&'a Value> for i64 {
 
 
 
-pub fn bytes_to_particle(ptype: u8, buf: &mut Buffer, len: usize) -> AerospikeResult<Value> {
+pub fn bytes_to_particle(ptype: u8, buf: &mut Buffer, len: usize) -> Result<Value> {
     match ParticleType::from(ptype) {
         ParticleType::NULL => Ok(Value::Nil),
         ParticleType::INTEGER => {

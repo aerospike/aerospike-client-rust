@@ -32,11 +32,10 @@ use std::sync::mpsc::{Sender, Receiver, TryRecvError};
 use std::sync::mpsc;
 use std::time::{Instant, Duration};
 
+use errors::*;
 use net::Host;
 
 use policy::ClientPolicy;
-use error::{AerospikeError, AerospikeResult};
-use client::ResultCode;
 
 // Cluster encapsulates the aerospike cluster nodes and manages
 // them.
@@ -65,7 +64,7 @@ pub struct Cluster {
 }
 
 impl Cluster {
-    pub fn new(policy: ClientPolicy, hosts: &[Host]) -> AerospikeResult<Arc<Self>> {
+    pub fn new(policy: ClientPolicy, hosts: &[Host]) -> Result<Arc<Self>> {
 
         let (tx, rx): (Sender<()>, Receiver<()>) = mpsc::channel();
         let cluster = Arc::new(Cluster {
@@ -87,16 +86,12 @@ impl Cluster {
 
         // apply policy rules
         if cluster.client_policy.fail_if_not_connected && !cluster.is_connected() {
-            return Err(AerospikeError::new(ResultCode::InvalidNodeError,
-                                           Some(format!("Failed to connect to host(s): . The \
-                                                         network connection(s) to cluster \
-                                                         nodes may have timed out, or the \
-                                                         cluster may be in a state of flux."))));
+            bail!(ErrorKind::Connection("Failed to connect to host(s). The network connection(s) to cluster \
+                   nodes may have timed out, or the cluster may be in a state of flux.".to_string()));
         }
 
         let cluster_for_tend = cluster.clone();
         thread::spawn(move || Cluster::tend_thread(cluster_for_tend, rx));
-
 
         debug!("New cluster initialized and ready to be used...");
         Ok(cluster)
@@ -114,7 +109,7 @@ impl Cluster {
                 Err(TryRecvError::Disconnected) => break,
                 Err(TryRecvError::Empty) => {
                     if let Err(err) = cluster.tend() {
-                        error!("{}", err);
+                        log_error_chain!(err, "Error tending cluster");
                     }
 
                     thread::sleep(tend_interval);
@@ -129,19 +124,18 @@ impl Cluster {
         }
 
         if let Err(err) = cluster.set_nodes(vec![]) { 
-            error!("{}", err);
+            log_error_chain!(err, "Error clearing nodes list");
         }
     }
 
-    fn tend(&self) -> AerospikeResult<()> {
+    fn tend(&self) -> Result<()> {
         let mut nodes = self.nodes();
 
         // All node additions/deletions are performed in tend thread.
         // If active nodes don't exist, seed cluster.
-        if nodes.len() == 0 {
+        if nodes.is_empty() {
             debug!("No connections available; seeding...");
             try!(self.seed_nodes());
-
             nodes = self.nodes();
         }
 
@@ -149,7 +143,7 @@ impl Cluster {
         let mut refresh_count = 0;
 
         // Refresh all known nodes.
-        for node in nodes.iter() {
+        for node in nodes {
             let old_gen = node.partition_generation();
             if node.is_active() {
                 match node.refresh(self.aliases()) {
@@ -189,7 +183,7 @@ impl Cluster {
         Ok(())
     }
 
-    fn wait_till_stabilized(cluster: Arc<Cluster>) -> AerospikeResult<()> {
+    fn wait_till_stabilized(cluster: Arc<Cluster>) -> Result<()> {
         let timeout = cluster.client_policy().timeout;
         let mut deadline = Instant::now();
         match timeout {
@@ -208,7 +202,7 @@ impl Cluster {
                 }
 
                 if let Err(err) = cluster_for_tend.tend() {
-                    error!("{}", err);
+                    log_error_chain!(err, "Error during initial cluster tend");
                 }
 
                 if (cluster_for_tend.nodes().len() as isize) == count {
@@ -219,8 +213,8 @@ impl Cluster {
                 count = cluster_for_tend.nodes().len() as isize;
             }
 
-            if let Err(err) = snd.send(()) {
-                error!("{}", err);
+            if let Err(err) = snd.send(()).chain_err(|| "Error joining threads") {
+                log_error_chain!(err, "Error during initial cluster tend");
             }
         });
 
@@ -232,19 +226,19 @@ impl Cluster {
         &self.client_policy
     }
 
-    pub fn add_seeds(&self, new_seeds: &[Host]) -> AerospikeResult<()> {
+    pub fn add_seeds(&self, new_seeds: &[Host]) -> Result<()> {
         let mut seeds = self.seeds.write().unwrap();
         seeds.extend_from_slice(new_seeds);
 
         Ok(())
     }
 
-    pub fn alias_exists(&self, host: &Host) -> AerospikeResult<bool> {
+    pub fn alias_exists(&self, host: &Host) -> Result<bool> {
         let aliases = self.aliases.read().unwrap();
         Ok(aliases.contains_key(host))
     }
 
-    fn set_partitions(&self, partitions: HashMap<String, Vec<Arc<Node>>>) -> AerospikeResult<()> {
+    fn set_partitions(&self, partitions: HashMap<String, Vec<Arc<Node>>>) -> Result<()> {
         let mut partition_map = self.partition_write_map.write().unwrap();
         *partition_map = partitions;
 
@@ -255,7 +249,7 @@ impl Cluster {
         self.partition_write_map.clone()
     }
 
-    pub fn update_partitions(&self, node: Arc<Node>) -> AerospikeResult<()> {
+    pub fn update_partitions(&self, node: Arc<Node>) -> Result<()> {
         let mut conn = try!(node.get_connection(self.client_policy.timeout));
         let tokens = match PartitionTokenizer::new(&mut conn) {
             Ok(res) => res,
@@ -274,39 +268,36 @@ impl Cluster {
         Ok(())
     }
 
-    pub fn seed_nodes(&self) -> AerospikeResult<bool> {
+    pub fn seed_nodes(&self) -> Result<bool> {
         let seed_array = self.seeds.read().unwrap();
 
         info!("Seeding the cluster. Seeds count: {}", seed_array.len());
 
         let mut list: Vec<Arc<Node>> = vec![];
         for seed in seed_array.iter() {
-            let seed_node_validator = match NodeValidator::new(self, seed) {
-                Err(err) => {
-                    println!("Seed {} failed with error: {}", seed, err);
-                    error!("Seed {} failed with error: {}", seed, err);
-                    continue;
-                }
-                Ok(snv) => snv,
+            let mut seed_node_validator = NodeValidator::new(self);
+            if let Err(err) = seed_node_validator.validate_node(&seed) {
+                log_error_chain!(err, "Failed to validate seed host: {}", seed);
+                continue;
             };
 
             let al = seed_node_validator.aliases();
             for alias in al.iter() {
-                let nv = Arc::new(if *seed == *alias {
+                let nv = if *seed == *alias {
                     seed_node_validator.clone()
                 } else {
-                    match NodeValidator::new(self, seed) {
-                        Err(err) => {
-                            error!("Seed {} failed with error: {}", alias, err);
-                            continue;
-                        }
-                        Ok(snv) => snv,
-                    }
-                });
+                    let mut nv2 = NodeValidator::new(self);
+                    if let Err(err) = nv2.validate_node(seed) {
+                        log_error_chain!(err, "Seeding host {} failed with error", alias);
+                        continue;
+                    };
+                    nv2
+                };
+                let nv = Arc::new(nv);
 
-                if !try!(self.find_node_name(&list, &nv.name)) {
-                    let node = Arc::new(try!(self.create_node(nv.clone())));
-                    try!(self.add_aliases(node.clone()));
+                if !self.find_node_name(&list, &nv.name)? {
+                    let node = Arc::new(self.create_node(nv.clone())?);
+                    self.add_aliases(node.clone())?;
                     list.push(node);
                 }
             }
@@ -320,7 +311,7 @@ impl Cluster {
         Ok(false)
     }
 
-    fn find_node_name(&self, list: &[Arc<Node>], name: &str) -> AerospikeResult<bool> {
+    fn find_node_name(&self, list: &[Arc<Node>], name: &str) -> Result<bool> {
         for node in list {
             if node.name() == name {
                 return Ok((true));
@@ -329,16 +320,14 @@ impl Cluster {
         Ok(false)
     }
 
-    fn find_new_nodes_to_add(&self, hosts: Vec<Host>) -> AerospikeResult<Vec<Arc<Node>>> {
+    fn find_new_nodes_to_add(&self, hosts: Vec<Host>) -> Result<Vec<Arc<Node>>> {
         let mut list: Vec<Arc<Node>> = vec![];
 
         for host in hosts {
-            let nv = match NodeValidator::new(self, &host) {
-                Err(err) => {
-                    error!("Add node {} failed with error: {}", host.name, err);
-                    continue;
-                }
-                Ok(nv) => nv,
+            let mut nv = NodeValidator::new(self);
+            if let Err(err) = nv.validate_node(&host) {
+                log_error_chain!(err, "Adding node {} failed with error", host.name);
+                continue;
             };
 
             // Duplicate node name found.  This usually occurs when the server
@@ -368,11 +357,11 @@ impl Cluster {
         Ok(list)
     }
 
-    fn create_node(&self, nv: Arc<NodeValidator>) -> AerospikeResult<Node> {
+    fn create_node(&self, nv: Arc<NodeValidator>) -> Result<Node> {
         Ok(Node::new(self.client_policy.clone(), nv))
     }
 
-    fn find_nodes_to_remove(&self, refresh_count: usize) -> AerospikeResult<Vec<Arc<Node>>> {
+    fn find_nodes_to_remove(&self, refresh_count: usize) -> Result<Vec<Arc<Node>>> {
         let nodes = self.nodes.read().unwrap().to_vec();
 
         let mut remove_list: Vec<Arc<Node>> = vec![];
@@ -398,6 +387,7 @@ impl Cluster {
                 2 if refresh_count == 1 && node.reference_count() == 0 && node.failures() > 0 => {
                     remove_list.push(node)
                 }
+
                 _ => {
                     // Multi-node clusters require two successful node refreshes before removing.
                     if refresh_count >= 2 && node.reference_count() == 0 {
@@ -405,7 +395,7 @@ impl Cluster {
                         // Check if node responded to info request.
                         if node.failures() == 0 {
                             // Node is alive, but not referenced by other nodes.  Check if mapped.
-                            if !try!(self.find_node_in_partition_map(node)) {
+                            if !self.find_node_in_partition_map(node)? {
                                 remove_list.push(tnode);
                             }
                         } else {
@@ -420,20 +410,20 @@ impl Cluster {
         Ok(remove_list)
     }
 
-    fn add_alias(&self, host: Host, node: Arc<Node>) -> AerospikeResult<()> {
+    fn add_alias(&self, host: Host, node: Arc<Node>) -> Result<()> {
         let mut aliases = self.aliases.write().unwrap();
         node.add_alias(host.clone());
         aliases.insert(host, node);
         Ok(())
     }
 
-    fn remove_alias(&self, host: &Host) -> AerospikeResult<()> {
+    fn remove_alias(&self, host: &Host) -> Result<()> {
         let mut aliases = self.aliases.write().unwrap();
         aliases.remove(host);
         Ok(())
     }
 
-    fn add_aliases(&self, node: Arc<Node>) -> AerospikeResult<()> {
+    fn add_aliases(&self, node: Arc<Node>) -> Result<()> {
         let mut aliases = self.aliases.write().unwrap();
         for alias in node.aliases() {
             aliases.insert(alias, node.clone());
@@ -442,7 +432,7 @@ impl Cluster {
         Ok(())
     }
 
-    fn find_node_in_partition_map(&self, filter: Arc<Node>) -> AerospikeResult<bool> {
+    fn find_node_in_partition_map(&self, filter: Arc<Node>) -> Result<bool> {
         // let partitions1 = self.partitions;
         let partitions = self.partition_write_map.read().unwrap();
 
@@ -457,7 +447,7 @@ impl Cluster {
         return Ok(false);
     }
 
-    fn add_nodes(&self, friend_list: &Vec<Arc<Node>>) -> AerospikeResult<()> {
+    fn add_nodes(&self, friend_list: &Vec<Arc<Node>>) -> Result<()> {
         for node in friend_list {
             try!(self.add_aliases(node.clone()))
         }
@@ -465,13 +455,13 @@ impl Cluster {
         self.add_nodes_copy(&friend_list)
     }
 
-    fn add_nodes_copy(&self, friend_list: &Vec<Arc<Node>>) -> AerospikeResult<()> {
+    fn add_nodes_copy(&self, friend_list: &Vec<Arc<Node>>) -> Result<()> {
         let mut nodes = self.nodes();
         nodes.extend(friend_list.iter().cloned());
         self.set_nodes(nodes)
     }
 
-    fn remove_nodes(&self, nodes_to_remove: Vec<Arc<Node>>) -> AerospikeResult<()> {
+    fn remove_nodes(&self, nodes_to_remove: Vec<Arc<Node>>) -> Result<()> {
         for node in nodes_to_remove.iter() {
             for alias in node.aliases() {
                 // debug!("Removing alias {:?}", alias)
@@ -483,7 +473,7 @@ impl Cluster {
         self.remove_nodes_copy(&nodes_to_remove)
     }
 
-    fn set_nodes(&self, new_nodes: Vec<Arc<Node>>) -> AerospikeResult<()> {
+    fn set_nodes(&self, new_nodes: Vec<Arc<Node>>) -> Result<()> {
         let mut nodes = self.nodes.write().unwrap();
 
         *nodes = new_nodes;
@@ -491,7 +481,7 @@ impl Cluster {
         Ok(())
     }
 
-    fn remove_nodes_copy(&self, nodes_to_remove: &Vec<Arc<Node>>) -> AerospikeResult<()> {
+    fn remove_nodes_copy(&self, nodes_to_remove: &Vec<Arc<Node>>) -> Result<()> {
         let nodes = self.nodes();
         let mut node_array: Vec<Arc<Node>> = vec![];
 
@@ -516,11 +506,10 @@ impl Cluster {
     }
 
     pub fn nodes(&self) -> Vec<Arc<Node>> {
-        let nodes = self.nodes.read().unwrap();
-        nodes.to_vec()
+        self.nodes.read().unwrap().clone()
     }
 
-    pub fn get_node(&self, partition: &Partition) -> AerospikeResult<Arc<Node>> {
+    pub fn get_node(&self, partition: &Partition) -> Result<Arc<Node>> {
         let partitions = self.partitions();
         let partitions = partitions.read();
 
@@ -535,7 +524,7 @@ impl Cluster {
         self.get_random_node()
     }
 
-    pub fn get_random_node(&self) -> AerospikeResult<Arc<Node>> {
+    pub fn get_random_node(&self) -> Result<Arc<Node>> {
         let node_array = self.nodes();
         let length = node_array.len() as isize;
 
@@ -548,10 +537,10 @@ impl Cluster {
             }
         }
 
-        Err(AerospikeError::new(ResultCode::InvalidNodeError, None))
+        bail!("No active node")
     }
 
-    fn get_node_by_name(&self, node_name: &str) -> AerospikeResult<Arc<Node>> {
+    fn get_node_by_name(&self, node_name: &str) -> Result<Arc<Node>> {
         let node_array = self.nodes();
 
         for node in node_array.iter() {
@@ -560,11 +549,10 @@ impl Cluster {
             }
         }
 
-        Err(AerospikeError::new(ResultCode::InvalidNodeError,
-                                Some(format!("Requested node `{}` not found.", node_name))))
+        bail!("Requested node `{}` not found.", node_name)
     }
 
-    pub fn close(&self) -> AerospikeResult<()> {
+    pub fn close(&self) -> Result<()> {
         if !self.closed.load(Ordering::Relaxed) {
             // close tend by closing the channel
             let tx = self.tend_channel.lock().unwrap();

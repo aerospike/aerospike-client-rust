@@ -32,7 +32,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use net::Connection;
-use error::AerospikeResult;
+use errors::*;
 
 use cluster::Node;
 
@@ -41,10 +41,9 @@ pub trait Command {
     fn write_timeout(&mut self,
                      conn: &mut Connection,
                      timeout: Option<Duration>)
-                     -> AerospikeResult<()>;
-    fn prepare_buffer(&mut self, conn: &mut Connection) -> AerospikeResult<()>;
-    fn get_node(&self) -> AerospikeResult<Arc<Node>>;
-    fn parse_result(&mut self, conn: &mut Connection) -> AerospikeResult<()>;
-
-    fn write_buffer(&mut self, conn: &mut Connection) -> AerospikeResult<()>;
+                     -> Result<()>;
+    fn prepare_buffer(&mut self, conn: &mut Connection) -> Result<()>;
+    fn get_node(&self) -> Result<Arc<Node>>;
+    fn parse_result(&mut self, conn: &mut Connection) -> Result<()>;
+    fn write_buffer(&mut self, conn: &mut Connection) -> Result<()>;
 }

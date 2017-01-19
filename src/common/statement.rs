@@ -15,10 +15,9 @@
 
 use std::sync::Arc;
 
+use errors::*;
 use value::Value;
 use common::filter::Filter;
-use error::{AerospikeError, AerospikeResult};
-use client::ResultCode;
 
 #[derive(Clone)]
 pub struct Aggregation {
@@ -87,7 +86,7 @@ impl Statement {
                                   package_name: &str,
                                   function_name: &str,
                                   function_args: Option<&[Value]>)
-                                  -> AerospikeResult<()> {
+                                  -> Result<()> {
         let agg = Aggregation {
             package_name: package_name.to_owned(),
             function_name: function_name.to_owned(),
@@ -102,45 +101,30 @@ impl Statement {
         Ok(())
     }
 
-    pub fn validate(&self) -> AerospikeResult<()> {
+    pub fn validate(&self) -> Result<()> {
         if let Some(ref filters) = self.filters {
             if filters.len() > 1 {
-                return Err(AerospikeError::new(ResultCode::ParameterError,
-                                               Some("Too many filters set in the statement. \
-                                                     Aerospike server supports only one filter \
-                                                     per query ."
-                                                   .to_string())));
+                bail!(ErrorKind::InvalidArgument("Too many filter expressions".to_string()));
             }
         }
 
-        if self.set_name == "" {
-            return Err(AerospikeError::new(ResultCode::ParameterError,
-                                           Some("Set name cannot be empty in the statement."
-                                               .to_string())));
+        if self.set_name.is_empty() {
+            bail!(ErrorKind::InvalidArgument("Empty set name".to_string()));
         }
 
         if let Some(ref index_name) = self.index_name {
-            if index_name == "" {
-                return Err(AerospikeError::new(ResultCode::ParameterError,
-                                               Some("Index name cannot be empty in the \
-                                                     statement."
-                                                   .to_string())));
+            if index_name.is_empty() {
+                bail!(ErrorKind::InvalidArgument("Empty index name".to_string()));
             }
         }
 
         if let Some(ref agg) = self.aggregation {
-            if agg.package_name == "" {
-                return Err(AerospikeError::new(ResultCode::ParameterError,
-                                               Some("Package name cannot be empty in the \
-                                                     statement."
-                                                   .to_string())));
+            if agg.package_name.is_empty() {
+                bail!(ErrorKind::InvalidArgument("Empty UDF package name".to_string()));
             }
 
-            if agg.function_name == "" {
-                return Err(AerospikeError::new(ResultCode::ParameterError,
-                                               Some("Function name cannot be empty in the \
-                                                     statement."
-                                                   .to_string())));
+            if agg.function_name.is_empty() {
+                bail!(ErrorKind::InvalidArgument("Empty UDF function name".to_string()));
             }
 
         }

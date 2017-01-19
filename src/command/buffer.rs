@@ -13,11 +13,11 @@
 // limitations under the License.
 
 use std::time::Duration;
+use std::str;
 
 use byteorder::{NetworkEndian, ByteOrder};
 
-use error::{AerospikeError, AerospikeResult};
-use client::ResultCode;
+use errors::*;
 use value::Value;
 
 use common::{Key, FieldType, Bin, Statement, CollectionIndexType};
@@ -103,22 +103,21 @@ impl Buffer {
         }
     }
 
-    fn begin(&mut self) -> AerospikeResult<()> {
+    fn begin(&mut self) -> Result<()> {
         self.data_offset = MSG_TOTAL_HEADER_SIZE as usize;
         Ok(())
     }
 
-    pub fn size_buffer(&mut self) -> AerospikeResult<()> {
+    pub fn size_buffer(&mut self) -> Result<()> {
         let offset = self.data_offset;
         self.resize_buffer(offset)
     }
 
-    pub fn resize_buffer(&mut self, size: usize) -> AerospikeResult<()> {
+    pub fn resize_buffer(&mut self, size: usize) -> Result<()> {
         // Corrupted data streams can result in a huge length.
         // Do a sanity check here.
         if size > MAX_BUFFER_SIZE {
-            return Err(AerospikeError::new(ResultCode::ParseError,
-                                           Some(format!("Invalid size for buffer: {}", size))));
+            bail!("Invalid size for buffer: {}", size);
         }
 
         self.data_buffer.resize(size, 0);
@@ -126,13 +125,13 @@ impl Buffer {
         Ok(())
     }
 
-    pub fn reset_offset(&mut self) -> AerospikeResult<()> {
+    pub fn reset_offset(&mut self) -> Result<()> {
         // reset data offset
         self.data_offset = 0;
         Ok(())
     }
 
-    pub fn end(&mut self) -> AerospikeResult<()> {
+    pub fn end(&mut self) -> Result<()> {
         let size = ((self.data_offset - 8) as i64) | (((CL_MSG_VERSION as i64) << 56) as i64) |
                    ((AS_MSG_TYPE as i64) << 48);
 
@@ -149,7 +148,7 @@ impl Buffer {
                          op_type: OperationType,
                          key: &Key,
                          bins: &[&Bin])
-                         -> AerospikeResult<()> {
+                         -> Result<()> {
         try!(self.begin());
         let field_count = try!(self.estimate_key_size(key, policy.send_key));
 
@@ -173,7 +172,7 @@ impl Buffer {
     }
 
     // Writes the command for write operations
-    pub fn set_delete<'a>(&mut self, policy: &WritePolicy, key: &Key) -> AerospikeResult<()> {
+    pub fn set_delete<'a>(&mut self, policy: &WritePolicy, key: &Key) -> Result<()> {
         try!(self.begin());
         let field_count = try!(self.estimate_key_size(key, false));
         try!(self.size_buffer());
@@ -187,7 +186,7 @@ impl Buffer {
     }
 
     // Writes the command for touch operations
-    pub fn set_touch<'a>(&mut self, policy: &WritePolicy, key: &Key) -> AerospikeResult<()> {
+    pub fn set_touch<'a>(&mut self, policy: &WritePolicy, key: &Key) -> Result<()> {
         try!(self.begin());
         let field_count = try!(self.estimate_key_size(key, policy.send_key));
 
@@ -200,7 +199,7 @@ impl Buffer {
     }
 
     // Writes the command for exist operations
-    pub fn set_exists<'a>(&mut self, policy: &WritePolicy, key: &Key) -> AerospikeResult<()> {
+    pub fn set_exists<'a>(&mut self, policy: &WritePolicy, key: &Key) -> Result<()> {
         try!(self.begin());
         let field_count = try!(self.estimate_key_size(key, false));
         try!(self.size_buffer());
@@ -216,7 +215,7 @@ impl Buffer {
     pub fn set_read_for_key_only<'a>(&mut self,
                                      policy: &ReadPolicy,
                                      key: &Key)
-                                     -> AerospikeResult<()> {
+                                     -> Result<()> {
         try!(self.begin());
 
         let field_count = try!(self.estimate_key_size(key, false));
@@ -232,7 +231,7 @@ impl Buffer {
                         policy: &ReadPolicy,
                         key: &Key,
                         bin_names: Option<&[&str]>)
-                        -> AerospikeResult<()> {
+                        -> Result<()> {
         match bin_names {
             None => {
                 try!(self.set_read_for_key_only(policy, key));
@@ -258,7 +257,7 @@ impl Buffer {
     }
 
     // Writes the command for getting metadata operations
-    pub fn set_read_header<'a>(&mut self, policy: &ReadPolicy, key: &Key) -> AerospikeResult<()> {
+    pub fn set_read_header<'a>(&mut self, policy: &ReadPolicy, key: &Key) -> Result<()> {
         try!(self.begin());
         let field_count = try!(self.estimate_key_size(key, false));
         try!(self.estimate_operation_size_for_bin_name(""));
@@ -274,7 +273,7 @@ impl Buffer {
                            policy: &WritePolicy,
                            key: &Key,
                            operations: &'a [Operation<'a>])
-                           -> AerospikeResult<()> {
+                           -> Result<()> {
         try!(self.begin());
 
         let mut read_attr = 0;
@@ -335,7 +334,7 @@ impl Buffer {
                    package_name: &str,
                    function_name: &str,
                    args: Option<&[Value]>)
-                   -> AerospikeResult<()> {
+                   -> Result<()> {
         try!(self.begin());
 
         let mut field_count = try!(self.estimate_key_size(key, policy.send_key));
@@ -358,7 +357,7 @@ impl Buffer {
                     set_name: &str,
                     bin_names: &Option<Vec<String>>,
                     task_id: u64)
-                    -> AerospikeResult<()> {
+                    -> Result<()> {
         try!(self.begin());
 
         let mut field_count = 0;
@@ -443,7 +442,7 @@ impl Buffer {
                      statement: &Statement,
                      write: bool,
                      task_id: u64)
-                     -> AerospikeResult<()> {
+                     -> Result<()> {
 
         let filter = match statement.filters {
             Some(ref filters) => Some(&filters[0]),
@@ -631,7 +630,7 @@ impl Buffer {
         self.end()
     }
 
-    fn estimate_key_size<'a>(&mut self, key: &Key, send_key: bool) -> AerospikeResult<u16> {
+    fn estimate_key_size<'a>(&mut self, key: &Key, send_key: bool) -> Result<u16> {
         let mut field_count: u16 = 0;
 
         if key.namespace != "" {
@@ -658,7 +657,7 @@ impl Buffer {
         Ok(field_count)
     }
 
-    fn estimate_args_size(&mut self, args: Option<&[Value]>) -> AerospikeResult<()> {
+    fn estimate_args_size(&mut self, args: Option<&[Value]>) -> Result<()> {
         if let Some(args) = args {
             self.data_offset += try!(encoder::pack_array(&mut None, args)) + FIELD_HEADER_SIZE as usize;
         } else {
@@ -672,25 +671,25 @@ impl Buffer {
                          package_name: &str,
                          function_name: &str,
                          args: Option<&[Value]>)
-                         -> AerospikeResult<usize> {
+                         -> Result<usize> {
         self.data_offset += package_name.len() + FIELD_HEADER_SIZE as usize;
         self.data_offset += function_name.len() + FIELD_HEADER_SIZE as usize;
         try!(self.estimate_args_size(args));
         Ok(3)
     }
 
-    fn estimate_operation_size_for_bin(&mut self, bin: &Bin) -> AerospikeResult<()> {
+    fn estimate_operation_size_for_bin(&mut self, bin: &Bin) -> Result<()> {
         self.data_offset += bin.name.len() + OPERATION_HEADER_SIZE as usize;
         self.data_offset += try!(bin.value.estimate_size());
         Ok(())
     }
 
-    fn estimate_operation_size_for_bin_name(&mut self, bin_name: &str) -> AerospikeResult<()> {
+    fn estimate_operation_size_for_bin_name(&mut self, bin_name: &str) -> Result<()> {
         self.data_offset += bin_name.len() + OPERATION_HEADER_SIZE as usize;
         Ok(())
     }
 
-    fn estimate_operation_size(&mut self) -> AerospikeResult<()> {
+    fn estimate_operation_size(&mut self) -> Result<()> {
         self.data_offset += OPERATION_HEADER_SIZE as usize;
         Ok(())
     }
@@ -701,7 +700,7 @@ impl Buffer {
                     write_attr: u8,
                     field_count: u16,
                     operation_count: u16)
-                    -> AerospikeResult<()> {
+                    -> Result<()> {
         let mut read_attr = read_attr;
 
         if policy.consistency_level == ConsistencyLevel::ConsistencyAll {
@@ -733,7 +732,7 @@ impl Buffer {
                                     write_attr: u8,
                                     field_count: u16,
                                     operation_count: u16)
-                                    -> AerospikeResult<()> {
+                                    -> Result<()> {
         // Set flags.
         let mut generation: u32 = 0;
         let mut info_attr: u8 = 0;
@@ -793,7 +792,7 @@ impl Buffer {
         Ok(())
     }
 
-    fn write_key(&mut self, key: &Key, send_key: bool) -> AerospikeResult<()> {
+    fn write_key(&mut self, key: &Key, send_key: bool) -> Result<()> {
         // Write key into buffer.
         if key.namespace != "" {
             try!(self.write_field_string(&key.namespace, FieldType::Namespace));
@@ -814,28 +813,28 @@ impl Buffer {
         Ok(())
     }
 
-    fn write_field_header(&mut self, size: usize, ftype: FieldType) -> AerospikeResult<()> {
+    fn write_field_header(&mut self, size: usize, ftype: FieldType) -> Result<()> {
         try!(self.write_i32(size as i32 + 1));
         try!(self.write_u8(ftype as u8));
 
         Ok(())
     }
 
-    fn write_field_string(&mut self, field: &str, ftype: FieldType) -> AerospikeResult<()> {
+    fn write_field_string(&mut self, field: &str, ftype: FieldType) -> Result<()> {
         try!(self.write_field_header(field.len(), ftype));
         try!(self.write_str(field));
 
         Ok(())
     }
 
-    fn write_field_bytes(&mut self, bytes: &[u8], ftype: FieldType) -> AerospikeResult<()> {
+    fn write_field_bytes(&mut self, bytes: &[u8], ftype: FieldType) -> Result<()> {
         try!(self.write_field_header(bytes.len(), ftype));
         try!(self.write_bytes(bytes));
 
         Ok(())
     }
 
-    fn write_field_value(&mut self, value: &Value, ftype: FieldType) -> AerospikeResult<()> {
+    fn write_field_value(&mut self, value: &Value, ftype: FieldType) -> Result<()> {
         try!(self.write_field_header(try!(value.estimate_size()) + 1, ftype));
         try!(self.write_u8(value.particle_type() as u8));
         try!(value.write_to(self));
@@ -843,7 +842,7 @@ impl Buffer {
         Ok(())
     }
 
-    fn write_args(&mut self, args: Option<&[Value]>, ftype: FieldType) -> AerospikeResult<()> {
+    fn write_args(&mut self, args: Option<&[Value]>, ftype: FieldType) -> Result<()> {
         if let Some(args) = args {
             try!(self.write_field_header(try!(encoder::pack_array(&mut None, args)), ftype));
             try!(encoder::pack_array(&mut Some(self), args));
@@ -859,7 +858,7 @@ impl Buffer {
     fn write_operation_for_bin(&mut self,
                                bin: &Bin,
                                op_type: OperationType)
-                               -> AerospikeResult<()> {
+                               -> Result<()> {
 
         let name_length = bin.name.len();
         let value_length = try!(bin.value.estimate_size());
@@ -878,7 +877,7 @@ impl Buffer {
     fn write_operation_for_bin_name(&mut self,
                                     name: &str,
                                     op_type: OperationType)
-                                    -> AerospikeResult<()> {
+                                    -> Result<()> {
         try!(self.write_i32(name.len() as i32 + 4));
         try!(self.write_u8(op_type as u8));
         try!(self.write_u8(0));
@@ -891,7 +890,7 @@ impl Buffer {
 
     fn write_operation_for_operation_type(&mut self,
                                           op_type: OperationType)
-                                          -> AerospikeResult<()> {
+                                          -> Result<()> {
         try!(self.write_i32(4));
         try!(self.write_u8(op_type as u8));
         try!(self.write_u8(0));
@@ -902,7 +901,6 @@ impl Buffer {
     }
 
     // Data buffer implementations
-    //
 
     #[inline(always)]
     pub fn data_offset(&self) -> usize {
@@ -910,19 +908,19 @@ impl Buffer {
     }
 
     #[inline(always)]
-    pub fn skip_bytes(&mut self, count: usize) -> AerospikeResult<()> {
+    pub fn skip_bytes(&mut self, count: usize) -> Result<()> {
         self.data_offset += count;
-        Err(AerospikeError::err_skip_msg_pack_header())
+        bail!("Msgpack header skipped. You should not see this message")
     }
 
     #[inline(always)]
-    pub fn skip(&mut self, count: usize) -> AerospikeResult<()> {
+    pub fn skip(&mut self, count: usize) -> Result<()> {
         self.data_offset += count;
         Ok(())
     }
 
     #[inline(always)]
-    pub fn read_u8(&mut self, pos: Option<usize>) -> AerospikeResult<u8> {
+    pub fn read_u8(&mut self, pos: Option<usize>) -> Result<u8> {
         match pos {
             Some(pos) => Ok(self.data_buffer[pos]),
             None => {
@@ -934,7 +932,7 @@ impl Buffer {
     }
 
     #[inline(always)]
-    pub fn read_i8(&mut self, pos: Option<usize>) -> AerospikeResult<i8> {
+    pub fn read_i8(&mut self, pos: Option<usize>) -> Result<i8> {
         match pos {
             Some(pos) => Ok(self.data_buffer[pos] as i8),
             None => {
@@ -946,7 +944,7 @@ impl Buffer {
     }
 
     #[inline(always)]
-    pub fn read_u16(&mut self, pos: Option<usize>) -> AerospikeResult<u16> {
+    pub fn read_u16(&mut self, pos: Option<usize>) -> Result<u16> {
         let len = 2;
         match pos {
             Some(pos) => Ok(NetworkEndian::read_u16(&mut self.data_buffer[pos..pos + len])),
@@ -959,13 +957,13 @@ impl Buffer {
     }
 
     #[inline(always)]
-    pub fn read_i16(&mut self, pos: Option<usize>) -> AerospikeResult<i16> {
+    pub fn read_i16(&mut self, pos: Option<usize>) -> Result<i16> {
         let val = try!(self.read_u16(pos));
         Ok(val as i16)
     }
 
     #[inline(always)]
-    pub fn read_u32(&mut self, pos: Option<usize>) -> AerospikeResult<u32> {
+    pub fn read_u32(&mut self, pos: Option<usize>) -> Result<u32> {
         let len = 4;
         match pos {
             Some(pos) => Ok(NetworkEndian::read_u32(&mut self.data_buffer[pos..pos + len])),
@@ -978,13 +976,13 @@ impl Buffer {
     }
 
     #[inline(always)]
-    pub fn read_i32(&mut self, pos: Option<usize>) -> AerospikeResult<i32> {
+    pub fn read_i32(&mut self, pos: Option<usize>) -> Result<i32> {
         let val = try!(self.read_u32(pos));
         Ok(val as i32)
     }
 
     #[inline(always)]
-    pub fn read_u64(&mut self, pos: Option<usize>) -> AerospikeResult<u64> {
+    pub fn read_u64(&mut self, pos: Option<usize>) -> Result<u64> {
         let len = 8;
         match pos {
             Some(pos) => Ok(NetworkEndian::read_u64(&mut self.data_buffer[pos..pos + len])),
@@ -997,20 +995,20 @@ impl Buffer {
     }
 
     #[inline(always)]
-    pub fn read_i64(&mut self, pos: Option<usize>) -> AerospikeResult<i64> {
+    pub fn read_i64(&mut self, pos: Option<usize>) -> Result<i64> {
         let val = try!(self.read_u64(pos));
         Ok(val as i64)
     }
 
     #[inline(always)]
-    pub fn read_msg_size(&mut self, pos: Option<usize>) -> AerospikeResult<usize> {
+    pub fn read_msg_size(&mut self, pos: Option<usize>) -> Result<usize> {
         let size = try!(self.read_i64(pos));
         let size = size & 0xFFFFFFFFFFFF;
         Ok(size as usize)
     }
 
     #[inline(always)]
-    pub fn read_f32(&mut self, pos: Option<usize>) -> AerospikeResult<f32> {
+    pub fn read_f32(&mut self, pos: Option<usize>) -> Result<f32> {
         let len = 4;
         match pos {
             Some(pos) => Ok(NetworkEndian::read_f32(&mut self.data_buffer[pos..pos + len])),
@@ -1023,7 +1021,7 @@ impl Buffer {
     }
 
     #[inline(always)]
-    pub fn read_f64(&mut self, pos: Option<usize>) -> AerospikeResult<f64> {
+    pub fn read_f64(&mut self, pos: Option<usize>) -> Result<f64> {
         let len = 8;
         match pos {
             Some(pos) => Ok(NetworkEndian::read_f64(&mut self.data_buffer[pos..pos + len])),
@@ -1037,51 +1035,45 @@ impl Buffer {
 
 
     #[inline(always)]
-    pub fn read_str(&mut self, len: usize) -> AerospikeResult<String> {
-        let s = try!(String::from_utf8(self.data_buffer[self.data_offset..self.data_offset + len]
-            .to_vec()));
+    pub fn read_str(&mut self, len: usize) -> Result<String> {
+        let s = try!(str::from_utf8(&self.data_buffer[self.data_offset..self.data_offset + len]));
         self.data_offset += len;
-        Ok(s)
+        Ok(s.to_owned())
     }
 
     #[inline(always)]
-    pub fn read_bytes(&mut self, pos: usize, count: usize) -> AerospikeResult<&[u8]> {
+    pub fn read_bytes(&mut self, pos: usize, count: usize) -> Result<&[u8]> {
         Ok(&self.data_buffer[pos..pos + count])
     }
 
     #[inline(always)]
-    pub fn read_slice(&mut self, count: usize) -> AerospikeResult<&[u8]> {
+    pub fn read_slice(&mut self, count: usize) -> Result<&[u8]> {
         Ok(&self.data_buffer[self.data_offset..self.data_offset + count])
     }
 
     #[inline(always)]
-    pub fn read_blob(&mut self, len: usize) -> AerospikeResult<Vec<u8>> {
+    pub fn read_blob(&mut self, len: usize) -> Result<Vec<u8>> {
         let val = self.data_buffer[self.data_offset..self.data_offset + len].to_vec();
         self.data_offset += len;
         Ok(val)
     }
 
-    // #[inline(always)]
-    // pub fn read_str(&mut self, pos: usize) -> AerospikeResult<&str> {
-    //     let res = ;
-    // }
-
     #[inline(always)]
-    pub fn write_u8(&mut self, val: u8) -> AerospikeResult<usize> {
+    pub fn write_u8(&mut self, val: u8) -> Result<usize> {
         self.data_buffer[self.data_offset] = val;
         self.data_offset += 1;
         Ok(1)
     }
 
     #[inline(always)]
-    pub fn write_i8(&mut self, val: i8) -> AerospikeResult<usize> {
+    pub fn write_i8(&mut self, val: i8) -> Result<usize> {
         self.data_buffer[self.data_offset] = val as u8;
         self.data_offset += 1;
         Ok(1)
     }
 
     #[inline(always)]
-    pub fn write_u16(&mut self, val: u16) -> AerospikeResult<usize> {
+    pub fn write_u16(&mut self, val: u16) -> Result<usize> {
         NetworkEndian::write_u16(&mut self.data_buffer[self.data_offset..self.data_offset + 2],
                                  val);
         self.data_offset += 2;
@@ -1089,12 +1081,12 @@ impl Buffer {
     }
 
     #[inline(always)]
-    pub fn write_i16(&mut self, val: i16) -> AerospikeResult<usize> {
+    pub fn write_i16(&mut self, val: i16) -> Result<usize> {
         self.write_u16(val as u16)
     }
 
     #[inline(always)]
-    pub fn write_u32(&mut self, val: u32) -> AerospikeResult<usize> {
+    pub fn write_u32(&mut self, val: u32) -> Result<usize> {
         NetworkEndian::write_u32(&mut self.data_buffer[self.data_offset..self.data_offset + 4],
                                  val);
         self.data_offset += 4;
@@ -1102,12 +1094,12 @@ impl Buffer {
     }
 
     #[inline(always)]
-    pub fn write_i32(&mut self, val: i32) -> AerospikeResult<usize> {
+    pub fn write_i32(&mut self, val: i32) -> Result<usize> {
         self.write_u32(val as u32)
     }
 
     #[inline(always)]
-    pub fn write_u64(&mut self, val: u64) -> AerospikeResult<usize> {
+    pub fn write_u64(&mut self, val: u64) -> Result<usize> {
         NetworkEndian::write_u64(&mut self.data_buffer[self.data_offset..self.data_offset + 8],
                                  val);
         self.data_offset += 8;
@@ -1115,12 +1107,12 @@ impl Buffer {
     }
 
     #[inline(always)]
-    pub fn write_i64(&mut self, val: i64) -> AerospikeResult<usize> {
+    pub fn write_i64(&mut self, val: i64) -> Result<usize> {
         self.write_u64(val as u64)
     }
 
     #[inline(always)]
-    pub fn write_bool(&mut self, val: bool) -> AerospikeResult<usize> {
+    pub fn write_bool(&mut self, val: bool) -> Result<usize> {
         let val = match val {
             true => 1,
             false => 0,
@@ -1129,7 +1121,7 @@ impl Buffer {
     }
 
     #[inline(always)]
-    pub fn write_f32(&mut self, val: f32) -> AerospikeResult<usize> {
+    pub fn write_f32(&mut self, val: f32) -> Result<usize> {
         NetworkEndian::write_f32(&mut self.data_buffer[self.data_offset..self.data_offset + 4],
                                  val);
         self.data_offset += 4;
@@ -1137,7 +1129,7 @@ impl Buffer {
     }
 
     #[inline(always)]
-    pub fn write_f64(&mut self, val: f64) -> AerospikeResult<usize> {
+    pub fn write_f64(&mut self, val: f64) -> Result<usize> {
         NetworkEndian::write_f64(&mut self.data_buffer[self.data_offset..self.data_offset + 8],
                                  val);
         self.data_offset += 8;
@@ -1145,7 +1137,7 @@ impl Buffer {
     }
 
     #[inline(always)]
-    pub fn write_bytes(&mut self, bytes: &[u8]) -> AerospikeResult<usize> {
+    pub fn write_bytes(&mut self, bytes: &[u8]) -> Result<usize> {
         for b in bytes {
             try!(self.write_u8(*b));
         }
@@ -1153,12 +1145,12 @@ impl Buffer {
     }
 
     #[inline(always)]
-    pub fn write_str(&mut self, val: &str) -> AerospikeResult<usize> {
+    pub fn write_str(&mut self, val: &str) -> Result<usize> {
         self.write_bytes(val.as_bytes())
     }
 
     #[inline(always)]
-    pub fn write_geo(&mut self, val: &str) -> AerospikeResult<usize> {
+    pub fn write_geo(&mut self, val: &str) -> Result<usize> {
         try!(self.write_u8(0));
         try!(self.write_u8(0));
         try!(self.write_u8(0));

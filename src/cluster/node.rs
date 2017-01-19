@@ -19,17 +19,16 @@ use std::sync::{RwLock, Arc};
 use std::time::Duration;
 use std::sync::atomic::{AtomicBool, AtomicIsize, AtomicUsize, Ordering};
 use std::fmt;
+use std::result::Result as StdResult;
 
+use errors::*;
 use net::{Host, Connection};
 use command::info_command::Message;
-use error::{AerospikeError, AerospikeResult};
-use client::ResultCode;
 use policy::ClientPolicy;
 use cluster::node_validator::NodeValidator;
 
 pub const PARTITIONS: usize = 4096;
 
-// Node represents an Aerospike Database Server Node
 #[derive(Debug)]
 pub struct Node {
     client_policy: ClientPolicy,
@@ -122,47 +121,37 @@ impl Node {
         self.reference_count.load(Ordering::Relaxed)
     }
 
-    pub fn refresh(&self, current_aliases: HashMap<Host, Arc<Node>>) -> AerospikeResult<Vec<Host>> {
+    pub fn refresh(&self, current_aliases: HashMap<Host, Arc<Node>>) -> Result<Vec<Host>> {
         self.reference_count.store(0, Ordering::Relaxed);
         self.responded.store(false, Ordering::Relaxed);
-
         self.refresh_count.fetch_add(1, Ordering::Relaxed);
 
-        let mut commands: Vec<&str> = vec![];
-        if !self.client_policy.use_services_alternate {
-            commands.extend(&["node", "partition-generation", "services"]);
+        let mut commands: Vec<&str> = vec!["node", "partition-generation"];
+        if self.client_policy.use_services_alternate {
+            commands.push("services-alternate");
         } else {
-            commands.extend(&["node", "partition-generation", "services-alternate"]);
+            commands.push("services");
         }
 
         let info_map = try!(self.info(None, &commands));
-        try!(self.verify_node_name(&info_map));
-
+        self.verify_node_name(&info_map).chain_err(|| "Failed to verify node name")?;
         self.responded.store(true, Ordering::Relaxed);
-
-        let friends = try!(self.add_friends(current_aliases, &info_map));
-        try!(self.update_partitions(&info_map));
-
+        let friends = self.add_friends(current_aliases, &info_map).chain_err(|| "Failed to add friends")?;
+        self.update_partitions(&info_map).chain_err(|| "Failed to update partitions")?;
         self.reset_failures();
 
         Ok(friends)
     }
 
-    fn verify_node_name(&self, info_map: &HashMap<String, String>) -> AerospikeResult<()> {
+    fn verify_node_name(&self, info_map: &HashMap<String, String>) -> Result<()> {
         match info_map.get("node") {
-            None => {
-                return Err(AerospikeError::new(ResultCode::InvalidNodeError,
-                                               Some("Node name is empty.".to_string())))
-            }
+            None => bail!(ErrorKind::BadResponse("Missing node name".to_string())),
             Some(info_name) => {
                 if !(&self.name == info_name) {
                     // Set node to inactive immediately.
                     self.active.store(false, Ordering::Relaxed);
-                    return Err(AerospikeError::new(ResultCode::InvalidNodeError,
-                                                   Some(format!("Node name has changed. \
-                                                                 Old='{}' New={}",
-                                                                self.name,
-                                                                info_name))));
+                    bail!(ErrorKind::BadResponse(
+                            format!("Node name has changed: '{}' => '{}'", self.name, info_name)));
                 }
             }
         }
@@ -173,15 +162,11 @@ impl Node {
     fn add_friends(&self,
                    current_aliases: HashMap<Host, Arc<Node>>,
                    info_map: &HashMap<String, String>)
-                   -> AerospikeResult<Vec<Host>> {
+                   -> Result<Vec<Host>> {
         let mut friends: Vec<Host> = vec![];
 
         let friend_string = match info_map.get("services") {
-            None => {
-                return Err(AerospikeError::new(ResultCode::InvalidNodeError,
-                                               Some("Node name is empty.".to_string())))
-            }
-
+            None => bail!(ErrorKind::BadResponse("Missing services list".to_string())),
             Some(friend_string) if friend_string == "" => return Ok(friends),
             Some(friend_string) => friend_string,
         };
@@ -190,19 +175,13 @@ impl Node {
         for friend in friend_names {
             let mut friend_info = friend.split(":");
             if friend_info.clone().count() != 2 {
-                error!("Node info from asinfo:services is malformed. Expected HOST:PORT, but got \
-                        '{}'",
+                error!("Node info from asinfo:services is malformed. Expected HOST:PORT, but got '{}'",
                        friend);
                 continue;
             }
 
-            let host = friend_info.nth(0).unwrap();
-            let port = try!(u16::from_str(friend_info.nth(0).unwrap()));
-            // let port = friend_info.nth(0).unwrap().parse::<u16>().unwrap_or({
-            //     return Err(AerospikeError::new(ResultCode::ParseError,
-            //                                    Some("Node port wasn't a number.".to_string())));
-            // });
-
+            let host = friend_info.next().unwrap();
+            let port = try!(u16::from_str(friend_info.next().unwrap()));
             let alias = match self.client_policy.ip_map {
                 Some(ref ip_map) if ip_map.contains_key(host) => {
                     Host::new(ip_map.get(host).unwrap(), port)
@@ -212,32 +191,17 @@ impl Node {
 
             if current_aliases.contains_key(&alias) {
                 self.reference_count.fetch_add(1, Ordering::Relaxed);
-            } else {
-                if !self.find_alias(friends.as_slice(), &alias) {
-                    friends.push(alias);
-                }
+            } else if !friends.contains(&alias) {
+                friends.push(alias);
             }
         }
 
         Ok(friends)
     }
 
-    fn find_alias(&self, friends: &[Host], alias: &Host) -> bool {
-        for h in friends {
-            if h == alias {
-                return true;
-            }
-        }
-
-        return false;
-    }
-
-    fn update_partitions(&self, info_map: &HashMap<String, String>) -> AerospikeResult<()> {
+    fn update_partitions(&self, info_map: &HashMap<String, String>) -> Result<()> {
         match info_map.get("partition-generation") {
-            None => {
-                return Err(AerospikeError::new(ResultCode::ParseError,
-                                               Some("partition-generation is empty.".to_string())))
-            }
+            None => bail!(ErrorKind::BadResponse("Missing partition generation".to_string())),
             Some(gen_string) => {
                 let gen = try!(gen_string.parse::<isize>());
                 self.partition_generation.store(gen, Ordering::Relaxed);
@@ -247,7 +211,7 @@ impl Node {
         Ok(())
     }
 
-    pub fn get_connection(&self, timeout: Option<Duration>) -> AerospikeResult<Connection> {
+    pub fn get_connection(&self, timeout: Option<Duration>) -> Result<Connection> {
         let mut connections = self.connections.write().unwrap();
         loop {
             match connections.pop_front() {
@@ -265,7 +229,7 @@ impl Node {
                     if self.inc_connections() > self.client_policy.connection_pool_size_per_node {
                         // too many connections, undo
                         self.dec_connections();
-                        return Err(AerospikeError::err_connection_pool_empty());
+                        bail!("Exceeded max. connection pool size of {}", self.client_policy.connection_pool_size_per_node);
                     }
 
                     let conn = match Connection::new(self, &self.client_policy.user_password) {
@@ -347,7 +311,7 @@ impl Node {
     pub fn info(&self,
                 timeout: Option<Duration>,
                 commands: &[&str])
-                -> AerospikeResult<HashMap<String, String>> {
+                -> Result<HashMap<String, String>> {
         let mut conn = try!(self.get_connection(timeout));
         match Message::info(&mut conn, commands) {
             Ok(res) => Ok(res),
@@ -358,8 +322,8 @@ impl Node {
         }
     }
 
-    pub fn partition_generation(&self) -> AerospikeResult<isize> {
-        Ok(self.partition_generation.load(Ordering::Relaxed))
+    pub fn partition_generation(&self) -> isize {
+        self.partition_generation.load(Ordering::Relaxed)
     }
 }
 
@@ -370,7 +334,7 @@ impl PartialEq for Node {
 }
 
 impl fmt::Display for Node {
-    fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> StdResult<(), fmt::Error> {
         format!("{}: {}", self.name, self.host).fmt(f)
     }
 }

@@ -15,7 +15,7 @@
 use std::time::Duration;
 use std::collections::HashMap;
 
-use error::AerospikeResult;
+use errors::*;
 use command::admin_command::AdminCommand;
 
 // ClientPolicy encapsulates parameters for client policy command.
@@ -81,7 +81,7 @@ impl Default for ClientPolicy {
 }
 
 impl ClientPolicy {
-    pub fn set_user_password(&mut self, creds: Option<(String, String)>) -> AerospikeResult<()> {
+    pub fn set_user_password(&mut self, creds: Option<(String, String)>) -> Result<()> {
         match creds {
             None => self.user_password = None,
             Some((user, password)) => {

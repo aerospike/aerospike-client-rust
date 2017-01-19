@@ -28,6 +28,7 @@ use std::path::Path;
 use rustc_serialize::base64::{ToBase64, FromBase64, STANDARD};
 use threadpool::ThreadPool;
 
+use errors::*;
 use net::ToHosts;
 use cluster::{Cluster, Node};
 use common::operation::{Operation, OperationType};
@@ -45,7 +46,6 @@ use command::query_command::QueryCommand;
 use value::Value;
 
 use policy::{ClientPolicy, ReadPolicy, WritePolicy, ScanPolicy, QueryPolicy};
-use error::{AerospikeResult, AerospikeError};
 
 
 // Client encapsulates an Aerospike cluster.
@@ -59,7 +59,7 @@ unsafe impl Send for Client {}
 unsafe impl Sync for Client {}
 
 impl Client {
-    pub fn new(policy: &ClientPolicy, hosts: &ToHosts) -> AerospikeResult<Self> {
+    pub fn new(policy: &ClientPolicy, hosts: &ToHosts) -> Result<Self> {
         let hosts = try!(hosts.to_hosts());
         let cluster = try!(Cluster::new(policy.clone(), &hosts));
         let thread_pool = ThreadPool::new(policy.thread_pool_size);
@@ -70,7 +70,7 @@ impl Client {
         })
     }
 
-    pub fn close(&self) -> AerospikeResult<()> {
+    pub fn close(&self) -> Result<()> {
         self.cluster.close()
     }
 
@@ -78,7 +78,7 @@ impl Client {
         self.cluster.is_connected()
     }
 
-    pub fn nodes(&self) -> AerospikeResult<Vec<Arc<Node>>> {
+    pub fn nodes(&self) -> Result<Vec<Arc<Node>>> {
         Ok(self.cluster.nodes())
     }
 
@@ -86,7 +86,7 @@ impl Client {
                        policy: &ReadPolicy,
                        key: &Key,
                        bin_names: Option<&[&str]>)
-                       -> AerospikeResult<Record> {
+                       -> Result<Record> {
         let mut command = ReadCommand::new(policy, self.cluster.clone(), key, bin_names);
         try!(command.execute());
         Ok(command.record.unwrap())
@@ -95,7 +95,7 @@ impl Client {
     pub fn get_header(&self,
                               policy: &ReadPolicy,
                               key: &Key)
-                              -> AerospikeResult<Record> {
+                              -> Result<Record> {
         let mut command = ReadHeaderCommand::new(policy, self.cluster.clone(), key);
         try!(command.execute());
         Ok(command.record.unwrap())
@@ -105,7 +105,7 @@ impl Client {
                        policy: &WritePolicy,
                        key: &Key,
                        bins: &[&Bin])
-                       -> AerospikeResult<()> {
+                       -> Result<()> {
         let mut command =
             WriteCommand::new(policy, self.cluster.clone(), key, bins, OperationType::Write);
         command.execute()
@@ -115,7 +115,7 @@ impl Client {
                        policy: &WritePolicy,
                        key: &Key,
                        bins: &[&Bin])
-                       -> AerospikeResult<()> {
+                       -> Result<()> {
         let mut command =
             WriteCommand::new(policy, self.cluster.clone(), key, bins, OperationType::Incr);
         command.execute()
@@ -125,7 +125,7 @@ impl Client {
                           policy: &WritePolicy,
                           key: &Key,
                           bins: &[&Bin])
-                          -> AerospikeResult<()> {
+                          -> Result<()> {
         let mut command =
             WriteCommand::new(policy, self.cluster.clone(), key, bins, OperationType::Append);
         command.execute()
@@ -135,7 +135,7 @@ impl Client {
                            policy: &WritePolicy,
                            key: &Key,
                            bins: &[&Bin])
-                           -> AerospikeResult<()> {
+                           -> Result<()> {
         let mut command =
             WriteCommand::new(policy, self.cluster.clone(), key, bins, OperationType::Prepend);
         command.execute()
@@ -144,13 +144,13 @@ impl Client {
     pub fn delete(&self,
                           policy: &WritePolicy,
                           key: &Key)
-                          -> AerospikeResult<bool> {
+                          -> Result<bool> {
         let mut command = DeleteCommand::new(policy, self.cluster.clone(), key);
         try!(command.execute());
         Ok(command.existed)
     }
 
-    pub fn touch(&self, policy: &WritePolicy, key: &Key) -> AerospikeResult<()> {
+    pub fn touch(&self, policy: &WritePolicy, key: &Key) -> Result<()> {
         let mut command = TouchCommand::new(policy, self.cluster.clone(), key);
         command.execute()
     }
@@ -158,7 +158,7 @@ impl Client {
     pub fn exists(&self,
                           policy: &WritePolicy,
                           key: &Key)
-                          -> AerospikeResult<bool> {
+                          -> Result<bool> {
         let mut command = ExistsCommand::new(policy, self.cluster.clone(), key);
         try!(command.execute());
         Ok(command.exists)
@@ -168,7 +168,7 @@ impl Client {
                            policy: &WritePolicy,
                            key: &Key,
                            ops: &[Operation])
-                           -> AerospikeResult<Record> {
+                           -> Result<Record> {
         let mut command = OperateCommand::new(policy, self.cluster.clone(), key, ops);
         try!(command.execute());
         Ok(command.read_command.record.unwrap())
@@ -181,7 +181,7 @@ impl Client {
                                 udf_body: &[u8],
                                 udf_name: &str,
                                 language: UDFLang)
-                                -> AerospikeResult<()> {
+                                -> Result<()> {
         let udf_body = udf_body.to_base64(STANDARD);
 
         let cmd = format!("udf-put:filename={};content={};content-len={};udf-type={};",
@@ -195,16 +195,11 @@ impl Client {
         if let Some(msg) = response.get("error") {
             let msg = try!(msg.from_base64());
             let msg = try!(str::from_utf8(&msg));
-            return Err(AerospikeError::new(ResultCode::CommandRejected,
-                                           Some(format!("UDF Registration failed: {}\nFile: \
-                                                         {}\nLine: {}\nMessage: {}",
-                                                        response.get("error")
-                                                            .unwrap_or(&"-".to_string()),
-                                                        response.get("file")
-                                                            .unwrap_or(&"-".to_string()),
-                                                        response.get("line")
-                                                            .unwrap_or(&"-".to_string()),
-                                                        msg))));
+            bail!("UDF Registration failed: {}, file: {}, line: {}, message: {}",
+                  response.get("error").unwrap_or(&"-".to_string()),
+                  response.get("file").unwrap_or(&"-".to_string()),
+                  response.get("line").unwrap_or(&"-".to_string()),
+                  msg);
         }
 
         Ok(())
@@ -215,7 +210,7 @@ impl Client {
                                           client_path: &str,
                                           udf_name: &str,
                                           language: UDFLang)
-                                          -> AerospikeResult<()> {
+                                          -> Result<()> {
 
         let path = Path::new(client_path);
         let mut file = try!(File::open(&path));
@@ -229,7 +224,7 @@ impl Client {
                               policy: &WritePolicy,
                               udf_name: &str,
                               language: UDFLang)
-                              -> AerospikeResult<()> {
+                              -> Result<()> {
 
         let cmd = format!("udf-remove:filename={}.{};", udf_name, language);
         let node = try!(self.cluster.get_random_node());
@@ -239,8 +234,7 @@ impl Client {
             return Ok(());
         }
 
-        Err(AerospikeError::new(ResultCode::CommandRejected,
-                                Some(format!("UDF Remove failed: {:?}", response))))
+        bail!("UDF Remove failed: {:?}", response)
     }
 
     pub fn execute_udf(&self,
@@ -249,7 +243,7 @@ impl Client {
                                udf_name: &str,
                                function_name: &str,
                                args: Option<&[Value]>)
-                               -> AerospikeResult<Option<Value>> {
+                               -> Result<Option<Value>> {
 
         let mut command = ExecuteUDFCommand::new(policy,
                                                       self.cluster.clone(),
@@ -270,13 +264,11 @@ impl Client {
             if key.contains("SUCCESS") {
                 return Ok(Some(value.clone()));
             } else if key.contains("FAILURE") {
-                return Err(AerospikeError::new(ResultCode::ServerError,
-                                               Some(format!("{:?}", value))));
+                bail!("{:?}", value);
             }
         }
 
-        Err(AerospikeError::new(ResultCode::UdfBadResponse,
-                                Some("Invalid UDF return value".to_string())))
+        Err("Invalid UDF return value".into())
     }
 
     pub fn scan(&self,
@@ -284,8 +276,7 @@ impl Client {
                         namespace: &str,
                         set_name: &str,
                         bin_names: Option<&[&str]>)
-                        -> AerospikeResult<Arc<Recordset>> {
-
+                        -> Result<Arc<Recordset>> {
 
         let bin_names = match bin_names {
             None => None,
@@ -320,7 +311,7 @@ impl Client {
                              namespace: &str,
                              set_name: &str,
                              bin_names: Option<&[&str]>)
-                             -> AerospikeResult<Arc<Recordset>> {
+                             -> Result<Arc<Recordset>> {
 
 
         let bin_names = match bin_names {
@@ -355,7 +346,7 @@ impl Client {
     pub fn query(&self,
                          policy: &QueryPolicy,
                          statement: Statement)
-                         -> AerospikeResult<Arc<Recordset>> {
+                         -> Result<Arc<Recordset>> {
 
         try!(statement.validate());
         let statement = Arc::new(statement);
@@ -380,7 +371,7 @@ impl Client {
                               policy: &QueryPolicy,
                               node: Node,
                               statement: Statement)
-                              -> AerospikeResult<Arc<Recordset>> {
+                              -> Result<Arc<Recordset>> {
 
         try!(statement.validate());
 
@@ -405,7 +396,7 @@ impl Client {
                         bin_name: &str,
                         index_name: &str,
                         index_type: IndexType)
-                        -> AerospikeResult<()> {
+                        -> Result<()> {
         self.create_complex_index(policy,
                                   namespace,
                                   set_name,
@@ -424,35 +415,14 @@ impl Client {
                                 index_name: &str,
                                 index_type: IndexType,
                                 collection_index_type: CollectionIndexType)
-                                -> AerospikeResult<()> {
+                                -> Result<()> {
         let cit_str: String = match collection_index_type {
             CollectionIndexType::Default => "".to_string(),
             _ => format!("indextype={};", collection_index_type),
         };
-
         let cmd = format!("sindex-create:ns={};set={};indexname={};numbins=1;{}indexdata={},{};priority=normal",
-                          namespace,
-                          set_name,
-                          index_name,
-                          cit_str,
-                          bin_name,
-                          index_type,
-                          );
-
-        let node = try!(self.cluster.get_random_node());
-        let response = try!(node.info(policy.base_policy.timeout, &[&cmd]));
-
-        for v in response.values() {
-            match v {
-                _ if v.to_uppercase() == "OK" => return Ok(()),
-                _ if v.to_uppercase().contains("FAIL:200") => {
-                    return Err(AerospikeError::new(ResultCode::IndexFound, None));
-                }
-                _ => return Err(AerospikeError::new(ResultCode::IndexGeneric, Some(v.to_owned()))),
-            };
-        }
-
-        Err(AerospikeError::new(ResultCode::IndexGeneric, None))
+                          namespace, set_name, index_name, cit_str, bin_name, index_type);
+        self.send_sindex_cmd(cmd, &policy).chain_err(|| "Error creating index")
     }
 
 
@@ -461,32 +431,33 @@ impl Client {
                       namespace: &str,
                       set_name: &str,
                       index_name: &str)
-                      -> AerospikeResult<()> {
+                      -> Result<()> {
 
         let set_name: String = match set_name {
             "" => "".to_string(),
             _ => format!("set={};", set_name),
         };
-
         let cmd = format!("sindex-delete:ns={};{}indexname={}",
-                          namespace,
-                          set_name,
-                          index_name,
-                          );
+                          namespace, set_name, index_name);
+        self.send_sindex_cmd(cmd, &policy).chain_err(|| "Error dropping index")
+    }
 
+    fn send_sindex_cmd(&self, cmd: String, policy: &WritePolicy) -> Result<()> {
         let node = try!(self.cluster.get_random_node());
         let response = try!(node.info(policy.base_policy.timeout, &[&cmd]));
 
         for v in response.values() {
-            match v {
-                _ if v.to_uppercase() == "OK" => return Ok(()),
-                _ if v.to_uppercase().contains("FAIL:201") => {
-                    return Err(AerospikeError::new(ResultCode::IndexGeneric, None));
-                }
-                _ => return Err(AerospikeError::new(ResultCode::IndexGeneric, Some(v.to_owned()))),
-            };
+            if v.to_uppercase() == "OK" {
+                return Ok(())
+            } else if v.starts_with("FAIL:200") {
+                bail!(ErrorKind::ServerError(ResultCode::from(200)));
+            } else if v.starts_with("FAIL:201") {
+                bail!(ErrorKind::ServerError(ResultCode::from(201)));
+            } else {
+                break;
+            }
         }
 
-        Err(AerospikeError::new(ResultCode::IndexGeneric, None))
+        bail!(ErrorKind::BadResponse("Unexpected sindex info command response".to_string()))
     }
 }

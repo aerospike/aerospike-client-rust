@@ -135,11 +135,6 @@ impl Policy for BasePolicy {
         self.timeout
     }
 
-    // fn set_timeout(&mut self, to: Option<Duration>) ->  AerospikeResult<()> {
-    //     self.timeout = to;
-    //     Ok(())
-    // }
-
     fn max_retries(&self) -> Option<usize> {
         self.max_retries
     }
@@ -151,9 +146,4 @@ impl Policy for BasePolicy {
     fn sleep_between_retries(&self) -> Option<Duration> {
         self.sleep_between_retries
     }
-
-    // fn set_sleep_between_retries(&mut self, to: Option<Duration>) -> AerospikeResult<()> {
-    //     self.sleep_between_retries = to;
-    //     Ok(())
-    // }
 }

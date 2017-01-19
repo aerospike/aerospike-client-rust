@@ -14,8 +14,7 @@
 // the License.
 
 use Host;
-use error::{AerospikeResult, AerospikeError};
-use client::ResultCode;
+use errors::*;
 use std::str::Chars;
 use std::iter::Peekable;
 
@@ -33,7 +32,7 @@ impl<'a> Parser<'a> {
         }
     }
 
-    pub fn read_hosts(&mut self) -> AerospikeResult<Vec<Host>> {
+    pub fn read_hosts(&mut self) -> Result<Vec<Host>> {
         let mut hosts = Vec::new();
         loop {
             let addr = try!(self.read_addr_tuple());
@@ -47,7 +46,7 @@ impl<'a> Parser<'a> {
                     }
                 },
                 1 => (addr[0].clone(), None, self.default_port),
-                _ => return Err(AerospikeError::new(ResultCode::ParseError, Some("Invalid address string".to_string()))),
+                _ => bail!(ErrorKind::InvalidArgument("Invalid address string".to_string())),
             };
             // TODO: add TLS name
             hosts.push(Host::new(&host, port));
@@ -61,7 +60,7 @@ impl<'a> Parser<'a> {
         Ok(hosts)
     }
 
-    fn read_addr_tuple(&mut self) -> AerospikeResult<Vec<String>> {
+    fn read_addr_tuple(&mut self) -> Result<Vec<String>> {
         let mut parts = Vec::new();
         loop {
             let part= try!(self.read_addr_part());
@@ -74,7 +73,7 @@ impl<'a> Parser<'a> {
         Ok(parts)
     }
 
-    fn read_addr_part(&mut self) -> AerospikeResult<String> {
+    fn read_addr_part(&mut self) -> Result<String> {
         let mut substr = String::new();
         loop {
             match self.peek() {
@@ -84,7 +83,7 @@ impl<'a> Parser<'a> {
                 }
                 _ => {
                     return if substr.is_empty() {
-                        Err(AerospikeError::new(ResultCode::ParseError, Some("Invalid address string".to_string())))
+                        bail!(ErrorKind::InvalidArgument("Invalid address string".to_string()))
                     } else {
                         Ok(substr)
                     }
@@ -109,9 +108,9 @@ mod tests {
 
     #[test]
     fn read_addr_part() {
-        assert_eq!(Ok("foo".to_string()), Parser::new("foo:bar", 3000).read_addr_part());
-        assert_eq!(Ok("foo".to_string()), Parser::new("foo,bar", 3000).read_addr_part());
-        assert_eq!(Ok("foo".to_string()), Parser::new("foo", 3000).read_addr_part());
+        assert_eq!("foo".to_string(), Parser::new("foo:bar", 3000).read_addr_part().unwrap());
+        assert_eq!("foo".to_string(), Parser::new("foo,bar", 3000).read_addr_part().unwrap());
+        assert_eq!("foo".to_string(), Parser::new("foo", 3000).read_addr_part().unwrap());
         assert!(Parser::new("", 3000).read_addr_part().is_err());
         assert!(Parser::new(",", 3000).read_addr_part().is_err());
         assert!(Parser::new(":", 3000).read_addr_part().is_err());
@@ -119,9 +118,9 @@ mod tests {
 
     #[test]
     fn read_addr_tuple() {
-        assert_eq!(Ok(vec!["foo".to_string()]), Parser::new("foo", 3000).read_addr_tuple());
-        assert_eq!(Ok(vec!["foo".to_string(), "bar".to_string()]), Parser::new("foo:bar", 3000).read_addr_tuple());
-        assert_eq!(Ok(vec!["foo".to_string()]), Parser::new("foo,", 3000).read_addr_tuple());
+        assert_eq!(vec!["foo".to_string()], Parser::new("foo", 3000).read_addr_tuple().unwrap());
+        assert_eq!(vec!["foo".to_string(), "bar".to_string()], Parser::new("foo:bar", 3000).read_addr_tuple().unwrap());
+        assert_eq!(vec!["foo".to_string()], Parser::new("foo,", 3000).read_addr_tuple().unwrap());
         assert!(Parser::new("", 3000).read_addr_tuple().is_err());
         assert!(Parser::new(",", 3000).read_addr_tuple().is_err());
         assert!(Parser::new(":", 3000).read_addr_tuple().is_err());
@@ -130,11 +129,11 @@ mod tests {
 
     #[test]
     fn read_hosts() {
-        assert_eq!(Ok(vec![Host::new("foo", 3000)]), Parser::new("foo", 3000).read_hosts());
-        assert_eq!(Ok(vec![Host::new("foo", 3000)]), Parser::new("foo:bar", 3000).read_hosts());
-        assert_eq!(Ok(vec![Host::new("foo", 1234)]), Parser::new("foo:1234", 3000).read_hosts());
-        assert_eq!(Ok(vec![Host::new("foo", 1234)]), Parser::new("foo:bar:1234", 3000).read_hosts());
-        assert_eq!(Ok(vec![Host::new("foo", 1234), Host::new("bar", 1234)]), Parser::new("foo:1234,bar:1234", 3000).read_hosts());
+        assert_eq!(vec![Host::new("foo", 3000)], Parser::new("foo", 3000).read_hosts().unwrap());
+        assert_eq!(vec![Host::new("foo", 3000)], Parser::new("foo:bar", 3000).read_hosts().unwrap());
+        assert_eq!(vec![Host::new("foo", 1234)], Parser::new("foo:1234", 3000).read_hosts().unwrap());
+        assert_eq!(vec![Host::new("foo", 1234)], Parser::new("foo:bar:1234", 3000).read_hosts().unwrap());
+        assert_eq!(vec![Host::new("foo", 1234), Host::new("bar", 1234)], Parser::new("foo:1234,bar:1234", 3000).read_hosts().unwrap());
         assert!(Parser::new("", 3000).read_hosts().is_err());
         assert!(Parser::new(",", 3000).read_hosts().is_err());
         assert!(Parser::new("foo,", 3000).read_hosts().is_err());

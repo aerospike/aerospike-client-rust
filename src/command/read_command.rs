@@ -17,8 +17,8 @@ use std::collections::HashMap;
 use std::time::Duration;
 use std::str;
 
+use errors::*;
 use net::Connection;
-use error::{AerospikeError, AerospikeResult};
 use client::ResultCode;
 use value::Value;
 
@@ -51,15 +51,10 @@ impl<'a> ReadCommand<'a> {
         }
     }
 
-    fn handle_udf_error(&self,
-                        result_code: ResultCode,
-                        bins: &HashMap<String, Value>)
-                        -> AerospikeError {
-        if let Some(ret) = bins.get("FAILURE") {
-            AerospikeError::new(result_code, Some(ret.to_string()))
-        } else {
-            AerospikeError::new(result_code, None)
-        }
+    fn udf_response_to_error(record: &Record) -> Error {
+        let bins = &record.bins;
+        let reason = bins.get("FAILURE").map_or("".to_string(), |v| v.to_string());;
+        ErrorKind::UdfBadResponse(reason).into()
     }
 
     fn parse_record(&mut self,
@@ -68,7 +63,7 @@ impl<'a> ReadCommand<'a> {
                     field_count: usize,
                     generation: u32,
                     expiration: u32)
-                    -> AerospikeResult<Record> {
+                    -> Result<Record> {
         let mut bins: HashMap<String, Value> = HashMap::with_capacity(op_count);
 
         // There can be fields in the response (setname etc).
@@ -118,7 +113,7 @@ impl<'a> ReadCommand<'a> {
         Ok(Record::new(None, bins, generation, expiration))
     }
 
-    pub fn execute(&mut self) -> AerospikeResult<()> {
+    pub fn execute(&mut self) -> Result<()> {
         SingleCommand::execute(self.policy, self)
     }
 }
@@ -127,24 +122,24 @@ impl<'a> Command for ReadCommand<'a> {
     fn write_timeout(&mut self,
                      conn: &mut Connection,
                      timeout: Option<Duration>)
-                     -> AerospikeResult<()> {
+                     -> Result<()> {
         conn.buffer.write_timeout(timeout);
         Ok(())
     }
 
-    fn write_buffer(&mut self, conn: &mut Connection) -> AerospikeResult<()> {
+    fn write_buffer(&mut self, conn: &mut Connection) -> Result<()> {
         conn.flush()
     }
 
-    fn prepare_buffer(&mut self, conn: &mut Connection) -> AerospikeResult<()> {
+    fn prepare_buffer(&mut self, conn: &mut Connection) -> Result<()> {
         conn.buffer.set_read(self.policy, self.single_command.key, self.bin_names)
     }
 
-    fn get_node(&self) -> AerospikeResult<Arc<Node>> {
+    fn get_node(&self) -> Result<Arc<Node>> {
         self.single_command.get_node()
     }
 
-    fn parse_result(&mut self, conn: &mut Connection) -> AerospikeResult<()> {
+    fn parse_result(&mut self, conn: &mut Connection) -> Result<()> {
         // Read header.
         if let Err(err) = conn.read_buffer(buffer::MSG_TOTAL_HEADER_SIZE as usize) {
             warn!("Parse result error: {}", err);
@@ -174,14 +169,11 @@ impl<'a> Command for ReadCommand<'a> {
 
         if result_code != ResultCode::Ok {
             if result_code == ResultCode::UdfBadResponse {
-                let record =
-                    try!(self.parse_record(conn, op_count, field_count, generation, expiration));
-                let err = self.handle_udf_error(result_code, &record.bins);
-                warn!("UDF execution error: {}", err);
-                return Err(err);
+                // Need to parse the full record as it contains details about the UDF error.
+                let record = try!(self.parse_record(conn, op_count, field_count, generation, expiration));
+                return Err(ReadCommand::udf_response_to_error(&record));
             }
-
-            return Err(AerospikeError::new(result_code, None));
+            bail!(ErrorKind::ServerError(result_code));
         }
 
         if op_count == 0 {

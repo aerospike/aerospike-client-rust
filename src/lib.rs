@@ -82,6 +82,9 @@
 //! }
 //! ```
 
+// `error_chain` can recurse deeply
+#![recursion_limit = "1024"]
+
 #[macro_use]
 extern crate log;
 extern crate byteorder;
@@ -93,17 +96,22 @@ extern crate threadpool;
 extern crate pwhash;
 #[macro_use]
 extern crate lazy_static;
+#[macro_use]
+extern crate error_chain;
 
+pub use errors::*;
 pub use value::Value;
 pub use policy::{Policy, ClientPolicy, ReadPolicy, WritePolicy, Priority, ConsistencyLevel,
                  CommitLevel, RecordExistsAction, GenerationPolicy, ScanPolicy, QueryPolicy};
 pub use net::{Host, Connection};
 pub use cluster::{Node, Cluster};
-pub use error::{AerospikeError, AerospikeResult};
 pub use client::{Client, ResultCode};
 pub use common::{Key, Bin, Operation, UDFLang, Recordset, Statement, Filter, IndexType,
                  CollectionIndexType, ParticleType};
 pub use common::{MapPolicy, MapReturnType};
+
+#[macro_use]
+pub mod errors;
 
 mod command;
 mod msgpack;
@@ -113,7 +121,6 @@ pub mod value;
 pub mod policy;
 pub mod net;
 pub mod cluster;
-pub mod error;
 pub mod client;
 
 #[cfg(test)]

@@ -20,8 +20,8 @@ use std::str;
 use pwhash::bcrypt;
 use pwhash::bcrypt::{BcryptVariant, BcryptSetup};
 
+use errors::*;
 use net::Connection;
-use error::{AerospikeError, AerospikeResult};
 use client::ResultCode;
 
 use cluster::{Node, Cluster};
@@ -64,7 +64,7 @@ impl AdminCommand {
         AdminCommand {}
     }
 
-    pub fn execute(node: Arc<Node>, mut conn: Connection) -> AerospikeResult<()> {
+    pub fn execute(node: Arc<Node>, mut conn: Connection) -> Result<()> {
         // Write the message header
         try!(conn.buffer.size_buffer());
         let size = conn.buffer.data_offset;
@@ -96,13 +96,13 @@ impl AdminCommand {
         let result_code = ResultCode::from(result_code);
 
         if result_code != ResultCode::Ok {
-            return Err(AerospikeError::new(result_code, None));
+            bail!(ErrorKind::ServerError(result_code));
         }
 
         Ok(())
     }
 
-    pub fn authenticate(conn: &mut Connection, user: &str, password: &str) -> AerospikeResult<()> {
+    pub fn authenticate(conn: &mut Connection, user: &str, password: &str) -> Result<()> {
 
         try!(AdminCommand::set_authenticate(conn, user, password));
         try!(conn.flush());
@@ -110,14 +110,13 @@ impl AdminCommand {
         let result_code = try!(conn.buffer.read_u8(Some(RESULT_CODE)));
         let result_code = ResultCode::from(result_code);
         if result_code != ResultCode::Ok {
-            return Err(AerospikeError::new(result_code,
-                                           Some("Authentication Failed".to_string())));
+            bail!(ErrorKind::ServerError(result_code));
         }
 
         Ok(())
     }
 
-    fn set_authenticate(conn: &mut Connection, user: &str, password: &str) -> AerospikeResult<()> {
+    fn set_authenticate(conn: &mut Connection, user: &str, password: &str) -> Result<()> {
 
         try!(conn.buffer.resize_buffer(1024));
         try!(conn.buffer.reset_offset());
@@ -138,7 +137,7 @@ impl AdminCommand {
                        user: &str,
                        password: &str,
                        roles: &[&str])
-                       -> AerospikeResult<()> {
+                       -> Result<()> {
 
         let node = try!(cluster.get_random_node());
         let mut conn = try!(node.get_connection(Some(policy.timeout)));
@@ -155,7 +154,7 @@ impl AdminCommand {
         AdminCommand::execute(node, conn)
     }
 
-    pub fn drop_user(cluster: &Cluster, policy: &AdminPolicy, user: &str) -> AerospikeResult<()> {
+    pub fn drop_user(cluster: &Cluster, policy: &AdminPolicy, user: &str) -> Result<()> {
 
         let node = try!(cluster.get_random_node());
         let mut conn = try!(node.get_connection(Some(policy.timeout)));
@@ -172,7 +171,7 @@ impl AdminCommand {
                         policy: &AdminPolicy,
                         user: &str,
                         password: &str)
-                        -> AerospikeResult<()> {
+                        -> Result<()> {
 
         let node = try!(cluster.get_random_node());
         let mut conn = try!(node.get_connection(Some(policy.timeout)));
@@ -192,7 +191,7 @@ impl AdminCommand {
                            policy: &AdminPolicy,
                            user: &str,
                            password: &str)
-                           -> AerospikeResult<()> {
+                           -> Result<()> {
 
         let node = try!(cluster.get_random_node());
         let mut conn = try!(node.get_connection(Some(policy.timeout)));
@@ -222,7 +221,7 @@ impl AdminCommand {
                        policy: &AdminPolicy,
                        user: &str,
                        roles: &[&str])
-                       -> AerospikeResult<()> {
+                       -> Result<()> {
 
         let node = try!(cluster.get_random_node());
         let mut conn = try!(node.get_connection(Some(policy.timeout)));
@@ -240,7 +239,7 @@ impl AdminCommand {
                         policy: &AdminPolicy,
                         user: &str,
                         roles: &[&str])
-                        -> AerospikeResult<()> {
+                        -> Result<()> {
 
         let node = try!(cluster.get_random_node());
         let mut conn = try!(node.get_connection(Some(policy.timeout)));
@@ -256,7 +255,7 @@ impl AdminCommand {
 
     // Utility methods
 
-    fn write_size(conn: &mut Connection, size: i64) -> AerospikeResult<()> {
+    fn write_size(conn: &mut Connection, size: i64) -> Result<()> {
         // Write total size of message which is the current offset.
         let size = (size - 8) | (MSG_VERSION << 56) | (MSG_TYPE << 48);
         try!(conn.buffer.write_i64(size));
@@ -264,7 +263,7 @@ impl AdminCommand {
         Ok(())
     }
 
-    fn write_header(conn: &mut Connection, command: u8, field_count: u8) -> AerospikeResult<()> {
+    fn write_header(conn: &mut Connection, command: u8, field_count: u8) -> Result<()> {
         conn.buffer.data_offset = 8;
         try!(conn.buffer.write_u8(0));
         try!(conn.buffer.write_u8(0));
@@ -279,25 +278,25 @@ impl AdminCommand {
         Ok(())
     }
 
-    fn write_field_header(conn: &mut Connection, id: u8, size: usize) -> AerospikeResult<()> {
+    fn write_field_header(conn: &mut Connection, id: u8, size: usize) -> Result<()> {
         try!(conn.buffer.write_u32(size as u32 + 1));
         try!(conn.buffer.write_u8(id));
         Ok(())
     }
 
-    fn write_field_str(conn: &mut Connection, id: u8, s: &str) -> AerospikeResult<()> {
+    fn write_field_str(conn: &mut Connection, id: u8, s: &str) -> Result<()> {
         try!(AdminCommand::write_field_header(conn, id, s.len()));
         try!(conn.buffer.write_str(s));
         Ok(())
     }
 
-    fn write_field_bytes(conn: &mut Connection, id: u8, b: &[u8]) -> AerospikeResult<()> {
+    fn write_field_bytes(conn: &mut Connection, id: u8, b: &[u8]) -> Result<()> {
         try!(AdminCommand::write_field_header(conn, id, b.len()));
         try!(conn.buffer.write_bytes(b));
         Ok(())
     }
 
-    fn write_roles(conn: &mut Connection, roles: &[&str]) -> AerospikeResult<()> {
+    fn write_roles(conn: &mut Connection, roles: &[&str]) -> Result<()> {
         let mut size = 0;
         for role in roles {
             size += role.len() + 1; // size + len
@@ -313,7 +312,7 @@ impl AdminCommand {
         Ok(())
     }
 
-    pub fn hash_password(password: &str) -> AerospikeResult<String> {
+    pub fn hash_password(password: &str) -> Result<String> {
         let password_hash = try!(bcrypt::hash_with(BcryptSetup {
                                                        salt: Some("7EqJtq98hPqEX7fNZaFWoO"),
                                                        cost: Some(10),

@@ -18,8 +18,8 @@ use std::time::Duration;
 use std::str;
 use std::thread;
 
+use errors::*;
 use net::Connection;
-use error::{AerospikeError, AerospikeResult};
 use client::ResultCode;
 use value::Value;
 
@@ -51,7 +51,7 @@ impl StreamCommand {
         }
     }
 
-    fn parse_record(conn: &mut Connection, size: usize) -> AerospikeResult<Option<Record>> {
+    fn parse_record(conn: &mut Connection, size: usize) -> Result<Option<Record>> {
         // A number of these are commented out because we just don't care enough to read
         // that section of the header. If we do care, uncomment and check!
         let result_code = ResultCode::from(try!(conn.buffer.read_u8(Some(5))) & 0xFF);
@@ -64,7 +64,7 @@ impl StreamCommand {
                 return Ok(None);
             }
 
-            return Err(AerospikeError::new(result_code, None));
+            bail!(ErrorKind::ServerError(result_code));
         }
 
         // if cmd is the end marker of the response, do not proceed further
@@ -109,7 +109,7 @@ impl StreamCommand {
         Ok(Some(record))
     }
 
-    fn parse_stream(&mut self, conn: &mut Connection, size: usize) -> AerospikeResult<bool> {
+    fn parse_stream(&mut self, conn: &mut Connection, size: usize) -> Result<bool> {
 
         while self.recordset.is_active() && conn.bytes_read() < size {
             // Read header.
@@ -143,7 +143,7 @@ impl StreamCommand {
         Ok(true)
     }
 
-    fn parse_key(conn: &mut Connection, field_count: usize) -> AerospikeResult<Key> {
+    fn parse_key(conn: &mut Connection, field_count: usize) -> Result<Key> {
         let mut digest: [u8; 20] = [0; 20];
         let mut namespace: String = "".to_string();
         let mut set_name: String = "".to_string();
@@ -190,26 +190,26 @@ impl Command for StreamCommand {
     fn write_timeout(&mut self,
                      conn: &mut Connection,
                      timeout: Option<Duration>)
-                     -> AerospikeResult<()> {
+                     -> Result<()> {
         conn.buffer.write_timeout(timeout);
         Ok(())
     }
 
-    fn write_buffer(&mut self, conn: &mut Connection) -> AerospikeResult<()> {
+    fn write_buffer(&mut self, conn: &mut Connection) -> Result<()> {
         conn.flush()
     }
 
     #[allow(unused_variables)]
-    fn prepare_buffer(&mut self, conn: &mut Connection) -> AerospikeResult<()> {
+    fn prepare_buffer(&mut self, conn: &mut Connection) -> Result<()> {
         // should be implemented downstream
         unreachable!()
     }
 
-    fn get_node(&self) -> AerospikeResult<Arc<Node>> {
+    fn get_node(&self) -> Result<Arc<Node>> {
         Ok(self.node.clone())
     }
 
-    fn parse_result(&mut self, conn: &mut Connection) -> AerospikeResult<()> {
+    fn parse_result(&mut self, conn: &mut Connection) -> Result<()> {
         let mut status = true;
 
         while status {

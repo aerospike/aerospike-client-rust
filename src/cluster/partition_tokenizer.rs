@@ -21,11 +21,10 @@ use std::sync::{Arc, RwLock};
 
 use rustc_serialize::base64::FromBase64;
 
+use errors::*;
 use Node;
 use net::Connection;
 use command::info_command::Message;
-use error::{AerospikeError, AerospikeResult};
-use client::ResultCode;
 use cluster::node;
 
 const REPLICAS_NAME: &'static str = "replicas-master";
@@ -39,9 +38,8 @@ pub struct PartitionTokenizer {
 }
 
 impl PartitionTokenizer {
-    pub fn new(conn: &mut Connection) -> AerospikeResult<Self> {
+    pub fn new(conn: &mut Connection) -> Result<Self> {
         let info_map = try!(Message::info(conn, &vec![REPLICAS_NAME]));
-
         if let Some(buf) = info_map.get(REPLICAS_NAME) {
             return Ok(PartitionTokenizer {
                 length: info_map.len(),
@@ -49,16 +47,13 @@ impl PartitionTokenizer {
                 offset: 0,
             });
         }
-
-        Err(AerospikeError::new(ResultCode::ParseError,
-                                Some(format!("error while fetching partition info: {:?}",
-                                             info_map))))
+        bail!(ErrorKind::BadResponse("Missing replicas info".to_string()));
     }
 
     pub fn update_partition(&self,
                             nmap: Arc<RwLock<HashMap<String, Vec<Arc<Node>>>>>,
                             node: Arc<Node>)
-                            -> AerospikeResult<HashMap<String, Vec<Arc<Node>>>> {
+                            -> Result<HashMap<String, Vec<Arc<Node>>>> {
 
         let mut amap = nmap.read().unwrap().clone();
 
@@ -87,12 +82,7 @@ impl PartitionTokenizer {
                     }
                 }
                 (None, None) => break,
-                _ => {
-                    return Err(AerospikeError::new(ResultCode::ParseError,
-                                                   Some(format!("error while parsing partition \
-                                                                 info: {:?}",
-                                                                part_str))))
-                }
+                _ => bail!(ErrorKind::BadResponse("Error parsing partition info".to_string()))
             }
         }
 

@@ -16,6 +16,7 @@
 extern crate aerospike;
 extern crate env_logger;
 
+use aerospike::errors::*;
 use aerospike::WritePolicy;
 use aerospike::{Key, Bin};
 use aerospike::UDFLang;
@@ -27,7 +28,7 @@ use std::time::Duration;
 use common1;
 
 #[test]
-fn udf() {
+fn execute_udf() {
     let _ = env_logger::init();
 
     let ref client = common1::GLOBAL_CLIENT;
@@ -77,7 +78,7 @@ end
                                  "test_udf2",
                                  "echo",
                                  Some(&[as_val!("ha ha...")]));
-    assert_eq!(res, Ok(Some(as_val!("ha ha..."))));
+    assert_eq!(Some(as_val!("ha ha...")), res.unwrap());
 
     let res = client.execute_udf(&wpolicy, &key, "test_udf1", "func_div", Some(&[as_val!(2)]));
     if let Ok(Some(Value::HashMap(values))) = res {
@@ -85,5 +86,12 @@ end
         assert_eq!(values.get(&as_val!("res")), Some(&as_val!(5)));
     } else {
         panic!("UDF function did not return expected value");
+    }
+
+    let res = client.execute_udf(&wpolicy, &key, "test_udf1", "no_such_function", None);
+    if let Err(Error(ErrorKind::UdfBadResponse(response), _)) = res {
+        assert_eq!(response, "function not found".to_string());
+    } else {
+        panic!("UDF function did not return the expected error");
     }
 }

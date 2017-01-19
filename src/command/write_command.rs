@@ -16,8 +16,8 @@ use std::sync::Arc;
 use std::time::Duration;
 use std::str;
 
+use errors::*;
 use net::Connection;
-use error::{AerospikeError, AerospikeResult};
 use client::ResultCode;
 
 use cluster::{Node, Cluster};
@@ -49,7 +49,7 @@ impl<'a> WriteCommand<'a> {
         }
     }
 
-    pub fn execute(&mut self) -> AerospikeResult<()> {
+    pub fn execute(&mut self) -> Result<()> {
         SingleCommand::execute(self.policy, self)
     }
 }
@@ -58,27 +58,27 @@ impl<'a> Command for WriteCommand<'a> {
     fn write_timeout(&mut self,
                      conn: &mut Connection,
                      timeout: Option<Duration>)
-                     -> AerospikeResult<()> {
+                     -> Result<()> {
         conn.buffer.write_timeout(timeout);
         Ok(())
     }
 
-    fn write_buffer(&mut self, conn: &mut Connection) -> AerospikeResult<()> {
+    fn write_buffer(&mut self, conn: &mut Connection) -> Result<()> {
         conn.flush()
     }
 
-    fn prepare_buffer(&mut self, conn: &mut Connection) -> AerospikeResult<()> {
+    fn prepare_buffer(&mut self, conn: &mut Connection) -> Result<()> {
         conn.buffer.set_write(self.policy,
                               self.operation,
                               self.single_command.key,
                               self.bins)
     }
 
-    fn get_node(&self) -> AerospikeResult<Arc<Node>> {
+    fn get_node(&self) -> Result<Arc<Node>> {
         self.single_command.get_node()
     }
 
-    fn parse_result(&mut self, conn: &mut Connection) -> AerospikeResult<()> {
+    fn parse_result(&mut self, conn: &mut Connection) -> Result<()> {
         // Read header.
         if let Err(err) = conn.read_buffer(buffer::MSG_TOTAL_HEADER_SIZE as usize) {
             warn!("Parse result error: {}", err);
@@ -87,12 +87,9 @@ impl<'a> Command for WriteCommand<'a> {
 
         try!(conn.buffer.reset_offset());
 
-        // A number of these are commented out because we just don't care enough to read
-        // that section of the header. If we do care, uncomment and check!
         let result_code = ResultCode::from(try!(conn.buffer.read_u8(Some(13))) & 0xFF);
-
         if result_code != ResultCode::Ok {
-            return Err(AerospikeError::new(result_code, None));
+            bail!(ErrorKind::ServerError(result_code));
         }
 
         SingleCommand::empty_socket(conn)

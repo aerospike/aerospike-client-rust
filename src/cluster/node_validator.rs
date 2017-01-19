@@ -12,26 +12,24 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::time::Duration;
 use std::vec::Vec;
-use std::net::{IpAddr, ToSocketAddrs};
-use std::str::FromStr;
+use std::net::ToSocketAddrs;
 use std::str;
 
+use errors::*;
 use net::{Host, Connection};
 use Cluster;
-use error::AerospikeResult;
 use command::info_command::Message;
+use policy::ClientPolicy;
 
 // Validates a Database server node
 #[derive(Clone)]
-pub struct NodeValidator<'a> {
+pub struct NodeValidator {
     pub name: String,
     pub aliases: Vec<Host>,
     pub address: String,
-    pub use_new_info: bool, // = true
-    pub cluster: &'a Cluster,
-
+    pub client_policy: ClientPolicy,
+    pub use_new_info: bool,
     pub supports_float: bool,
     pub supports_batch_index: bool,
     pub supports_replicas_all: bool,
@@ -39,57 +37,46 @@ pub struct NodeValidator<'a> {
 }
 
 // Generates a node validator
-impl<'a> NodeValidator<'a> {
-    pub fn new(cluster: &'a Cluster, host: &Host) -> AerospikeResult<Self> {
-        let timeout = cluster.client_policy().timeout;
-        let mut nv = NodeValidator {
-            use_new_info: true,
-            cluster: cluster,
-
+impl NodeValidator {
+    pub fn new(cluster: &Cluster) -> Self {
+        NodeValidator {
             name: "".to_string(),
             aliases: vec![],
             address: "".to_string(),
-
+            client_policy: cluster.client_policy().clone(),
+            use_new_info: true,
             supports_float: false,
             supports_batch_index: false,
             supports_replicas_all: false,
             supports_geo: false,
-        };
+        }
+    }
 
-        try!(nv.set_aliases(host));
-        try!(nv.set_address(timeout));
-
-        Ok(nv)
+    pub fn validate_node(&mut self, host: &Host) -> Result<()> {
+        self.set_aliases(host).chain_err(|| "Failed to resolve host aliases")?;
+        self.set_address().chain_err(|| "Failed to retrieve node address")?;
+        Ok(())
     }
 
     pub fn aliases(&self) -> Vec<Host> {
         self.aliases.to_vec()
     }
 
-    fn set_aliases(&mut self, host: &Host) -> AerospikeResult<()> {
-        let ip_parsed: Result<IpAddr, _> = FromStr::from_str(&host.name);
-        match ip_parsed {
-            Ok(_) => self.aliases = vec![Host::new(&host.name, host.port)],
-            _ => {
-                let addrs = try!(format!("{}:{}", host.name, host.port).to_socket_addrs());
-                let mut aliases: Vec<Host> = vec![];
-                for addr in addrs {
-                    aliases.push(Host::new(&format!("{}", addr.ip()), host.port));
-                }
-                self.aliases = aliases;
-            }
-        }
-
-        debug!("Node Validator has {} nodes.", self.aliases.len());
+    fn set_aliases(&mut self, host: &Host) -> Result<()> {
+        self.aliases = (host.name.as_ref(), host.port)
+            .to_socket_addrs()?
+            .map(|addr| Host::new(&addr.ip().to_string(), addr.port()))
+            .collect();
+        debug!("Resolved aliases for host {}: {:?}", host, self.aliases);
         Ok(())
     }
 
-    fn set_address(&mut self, timeout: Option<Duration>) -> AerospikeResult<()> {
+    fn set_address(&mut self) -> Result<()> {
         for alias in self.aliases.to_vec() {
-            let mut conn = try!(Connection::new_raw(&alias, &self.cluster.client_policy()));
-            try!(conn.set_timeout(timeout));
+            let mut conn = Connection::new_raw(&alias, &self.client_policy)?;
+            conn.set_timeout(self.client_policy.timeout)?;
 
-            let info_map = try!(Message::info(&mut conn, &["node", "build", "features"]));
+            let info_map = try!(Message::info(&mut conn, &["node", "features"]));
 
             if let Some(node_name) = info_map.get("node") {
                 self.name = node_name.to_string();
@@ -104,7 +91,7 @@ impl<'a> NodeValidator<'a> {
         Ok(())
     }
 
-    fn set_features(&mut self, features: String) -> AerospikeResult<()> {
+    fn set_features(&mut self, features: String) -> Result<()> {
         let features = features.split(";");
         for feature in features {
             match feature {

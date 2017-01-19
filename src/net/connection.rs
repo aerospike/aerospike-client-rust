@@ -19,8 +19,8 @@ use std::time::{Instant, Duration};
 use std::net::Shutdown;
 use std::ops::Add;
 
+use errors::*;
 use policy::client_policy::ClientPolicy;
-use error::AerospikeResult;
 use cluster::node::Node;
 use Host;
 use command::buffer::Buffer;
@@ -43,7 +43,7 @@ pub struct Connection {
 }
 
 impl Connection {
-    pub fn new_raw(host: &Host, cpolicy: &ClientPolicy) -> AerospikeResult<Self> {
+    pub fn new_raw(host: &Host, cpolicy: &ClientPolicy) -> Result<Self> {
         let s: &str = &host.name;
         let stream = try!(TcpStream::connect((s, host.port)));
 
@@ -67,7 +67,7 @@ impl Connection {
         Ok(conn)
     }
 
-    pub fn new(node: &Node, user_password: &Option<(String, String)>) -> AerospikeResult<Self> {
+    pub fn new(node: &Node, user_password: &Option<(String, String)>) -> Result<Self> {
         let nd = node;
 
         let stream = try!(TcpStream::connect(nd.address()));
@@ -98,14 +98,14 @@ impl Connection {
         let _ = self.conn.shutdown(Shutdown::Both);
     }
 
-    pub fn flush(&mut self) -> AerospikeResult<()> {
+    pub fn flush(&mut self) -> Result<()> {
         try!(self.conn.write_all(&self.buffer.data_buffer));
         self.refresh();
         return Ok(());
     }
 
 
-    pub fn read_buffer(&mut self, size: usize) -> AerospikeResult<()> {
+    pub fn read_buffer(&mut self, size: usize) -> Result<()> {
         try!(self.buffer.resize_buffer(size));
         try!(self.conn.read_exact(&mut self.buffer.data_buffer));
         self.bytes_read += size;
@@ -115,20 +115,20 @@ impl Connection {
     }
 
 
-    pub fn write(&mut self, buf: &[u8]) -> AerospikeResult<()> {
+    pub fn write(&mut self, buf: &[u8]) -> Result<()> {
         try!(self.conn.write_all(buf));
         self.refresh();
         return Ok(());
     }
 
-    pub fn read(&mut self, buf: &mut [u8]) -> AerospikeResult<()> {
+    pub fn read(&mut self, buf: &mut [u8]) -> Result<()> {
         try!(self.conn.read_exact(buf));
         self.bytes_read += buf.len();
         self.refresh();
         return Ok(());
     }
 
-    pub fn set_timeout(&self, timeout: Option<Duration>) -> AerospikeResult<()> {
+    pub fn set_timeout(&self, timeout: Option<Duration>) -> Result<()> {
         try!(self.conn.set_read_timeout(timeout));
         try!(self.conn.set_write_timeout(timeout));
         Ok(())
@@ -150,7 +150,7 @@ impl Connection {
     }
 
 
-    fn authenticate(&mut self, user_password: &Option<(String, String)>) -> AerospikeResult<()> {
+    fn authenticate(&mut self, user_password: &Option<(String, String)>) -> Result<()> {
         if let &Some((ref user, ref password)) = user_password {
             match AdminCommand::authenticate(self, user, password) {
                 Ok(()) => {

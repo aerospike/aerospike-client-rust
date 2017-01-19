@@ -15,9 +15,9 @@
 
 use std::collections::HashMap;
 
+use errors::*;
 use value::Value;
 use common::operation::*;
-use error::AerospikeResult;
 
 // Map storage order.
 #[derive(Clone, Copy)]
@@ -104,7 +104,7 @@ pub struct MapPolicy {
 }
 
 impl MapPolicy {
-    pub fn new(order: MapOrder, write_mode: MapWriteMode) -> AerospikeResult<Self> {
+    pub fn new(order: MapOrder, write_mode: MapWriteMode) -> Result<Self> {
         Ok(MapPolicy {
             order: order,
             write_mode: write_mode,
