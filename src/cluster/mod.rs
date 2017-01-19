@@ -422,6 +422,7 @@ impl Cluster {
 
     fn add_alias(&self, host: Host, node: Arc<Node>) -> AerospikeResult<()> {
         let mut aliases = self.aliases.write().unwrap();
+        node.add_alias(host.clone());
         aliases.insert(host, node);
         Ok(())
     }
