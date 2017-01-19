@@ -12,7 +12,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::time::Duration;
 use std::vec::Vec;
 use std::net::ToSocketAddrs;
 use std::str;
@@ -21,16 +20,16 @@ use errors::*;
 use net::{Host, Connection};
 use Cluster;
 use command::info_command::Message;
+use policy::ClientPolicy;
 
 // Validates a Database server node
 #[derive(Clone)]
-pub struct NodeValidator<'a> {
+pub struct NodeValidator {
     pub name: String,
     pub aliases: Vec<Host>,
     pub address: String,
-    pub use_new_info: bool, // = true
-    pub cluster: &'a Cluster,
-
+    pub client_policy: ClientPolicy,
+    pub use_new_info: bool,
     pub supports_float: bool,
     pub supports_batch_index: bool,
     pub supports_replicas_all: bool,
@@ -38,27 +37,25 @@ pub struct NodeValidator<'a> {
 }
 
 // Generates a node validator
-impl<'a> NodeValidator<'a> {
-    pub fn new(cluster: &'a Cluster, host: &Host) -> Result<Self> {
-        let timeout = cluster.client_policy().timeout;
-        let mut nv = NodeValidator {
-            use_new_info: true,
-            cluster: cluster,
-
+impl NodeValidator {
+    pub fn new(cluster: &Cluster) -> Self {
+        NodeValidator {
             name: "".to_string(),
             aliases: vec![],
             address: "".to_string(),
-
+            client_policy: cluster.client_policy().clone(),
+            use_new_info: true,
             supports_float: false,
             supports_batch_index: false,
             supports_replicas_all: false,
             supports_geo: false,
-        };
+        }
+    }
 
-        nv.set_aliases(host).chain_err(|| "Failed to resolve host aliases")?;
-        nv.set_address(timeout).chain_err(|| "Failed to retrieve node address")?;
-
-        Ok(nv)
+    pub fn validate_node(&mut self, host: &Host) -> Result<()> {
+        self.set_aliases(host).chain_err(|| "Failed to resolve host aliases")?;
+        self.set_address().chain_err(|| "Failed to retrieve node address")?;
+        Ok(())
     }
 
     pub fn aliases(&self) -> Vec<Host> {
@@ -74,10 +71,10 @@ impl<'a> NodeValidator<'a> {
         Ok(())
     }
 
-    fn set_address(&mut self, timeout: Option<Duration>) -> Result<()> {
+    fn set_address(&mut self) -> Result<()> {
         for alias in self.aliases.to_vec() {
-            let mut conn = try!(Connection::new_raw(&alias, &self.cluster.client_policy()));
-            try!(conn.set_timeout(timeout));
+            let mut conn = Connection::new_raw(&alias, &self.client_policy)?;
+            conn.set_timeout(self.client_policy.timeout)?;
 
             let info_map = try!(Message::info(&mut conn, &["node", "features"]));
 

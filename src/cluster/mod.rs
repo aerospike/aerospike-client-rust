@@ -133,10 +133,9 @@ impl Cluster {
 
         // All node additions/deletions are performed in tend thread.
         // If active nodes don't exist, seed cluster.
-        if nodes.len() == 0 {
+        if nodes.is_empty() {
             debug!("No connections available; seeding...");
             try!(self.seed_nodes());
-
             nodes = self.nodes();
         }
 
@@ -144,7 +143,7 @@ impl Cluster {
         let mut refresh_count = 0;
 
         // Refresh all known nodes.
-        for node in nodes.iter() {
+        for node in nodes {
             let old_gen = node.partition_generation();
             if node.is_active() {
                 match node.refresh(self.aliases()) {
@@ -276,31 +275,29 @@ impl Cluster {
 
         let mut list: Vec<Arc<Node>> = vec![];
         for seed in seed_array.iter() {
-            let seed_node_validator = match NodeValidator::new(self, seed) {
-                Err(err) => {
-                    log_error_chain!(err, "Failed to validate seed host: {}", seed);
-                    continue;
-                }
-                Ok(snv) => snv,
+            let mut seed_node_validator = NodeValidator::new(self);
+            if let Err(err) = seed_node_validator.validate_node(&seed) {
+                log_error_chain!(err, "Failed to validate seed host: {}", seed);
+                continue;
             };
 
             let al = seed_node_validator.aliases();
             for alias in al.iter() {
-                let nv = Arc::new(if *seed == *alias {
+                let nv = if *seed == *alias {
                     seed_node_validator.clone()
                 } else {
-                    match NodeValidator::new(self, seed) {
-                        Err(err) => {
-                            log_error_chain!(err, "Seeding host {} failed with error", alias);
-                            continue;
-                        }
-                        Ok(snv) => snv,
-                    }
-                });
+                    let mut nv2 = NodeValidator::new(self);
+                    if let Err(err) = nv2.validate_node(seed) {
+                        log_error_chain!(err, "Seeding host {} failed with error", alias);
+                        continue;
+                    };
+                    nv2
+                };
+                let nv = Arc::new(nv);
 
-                if !try!(self.find_node_name(&list, &nv.name)) {
-                    let node = Arc::new(try!(self.create_node(nv.clone())));
-                    try!(self.add_aliases(node.clone()));
+                if !self.find_node_name(&list, &nv.name)? {
+                    let node = Arc::new(self.create_node(nv.clone())?);
+                    self.add_aliases(node.clone())?;
                     list.push(node);
                 }
             }
@@ -327,12 +324,10 @@ impl Cluster {
         let mut list: Vec<Arc<Node>> = vec![];
 
         for host in hosts {
-            let nv = match NodeValidator::new(self, &host) {
-                Err(err) => {
-                    log_error_chain!(err, "Adding node {} failed with error", host.name);
-                    continue;
-                }
-                Ok(nv) => nv,
+            let mut nv = NodeValidator::new(self);
+            if let Err(err) = nv.validate_node(&host) {
+                log_error_chain!(err, "Adding node {} failed with error", host.name);
+                continue;
             };
 
             // Duplicate node name found.  This usually occurs when the server
@@ -392,6 +387,7 @@ impl Cluster {
                 2 if refresh_count == 1 && node.reference_count() == 0 && node.failures() > 0 => {
                     remove_list.push(node)
                 }
+
                 _ => {
                     // Multi-node clusters require two successful node refreshes before removing.
                     if refresh_count >= 2 && node.reference_count() == 0 {
@@ -399,7 +395,7 @@ impl Cluster {
                         // Check if node responded to info request.
                         if node.failures() == 0 {
                             // Node is alive, but not referenced by other nodes.  Check if mapped.
-                            if !try!(self.find_node_in_partition_map(node)) {
+                            if !self.find_node_in_partition_map(node)? {
                                 remove_list.push(tnode);
                             }
                         } else {
@@ -509,8 +505,7 @@ impl Cluster {
     }
 
     pub fn nodes(&self) -> Vec<Arc<Node>> {
-        let nodes = self.nodes.read().unwrap();
-        nodes.to_vec()
+        self.nodes.read().unwrap().clone()
     }
 
     pub fn get_node(&self, partition: &Partition) -> Result<Arc<Node>> {
