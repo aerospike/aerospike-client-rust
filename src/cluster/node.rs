@@ -126,14 +126,8 @@ impl Node {
         self.responded.store(false, Ordering::Relaxed);
         self.refresh_count.fetch_add(1, Ordering::Relaxed);
 
-        let mut commands: Vec<&str> = vec!["node", "partition-generation"];
-        if self.client_policy.use_services_alternate {
-            commands.push("services-alternate");
-        } else {
-            commands.push("services");
-        }
-
-        let info_map = try!(self.info(None, &commands));
+        let commands = vec!["node", "partition-generation", self.services_name()];
+        let info_map = self.info(None, &commands).chain_err(|| "Info command failed")?;
         self.verify_node_name(&info_map).chain_err(|| "Failed to verify node name")?;
         self.responded.store(true, Ordering::Relaxed);
         let friends = self.add_friends(current_aliases, &info_map).chain_err(|| "Failed to add friends")?;
@@ -141,6 +135,14 @@ impl Node {
         self.reset_failures();
 
         Ok(friends)
+    }
+
+    fn services_name(&self) -> &'static str {
+        if self.client_policy.use_services_alternate {
+            "services-alternate"
+        } else {
+            "services"
+        }
     }
 
     fn verify_node_name(&self, info_map: &HashMap<String, String>) -> Result<()> {
@@ -165,7 +167,7 @@ impl Node {
                    -> Result<Vec<Host>> {
         let mut friends: Vec<Host> = vec![];
 
-        let friend_string = match info_map.get("services") {
+        let friend_string = match info_map.get(self.services_name()) {
             None => bail!(ErrorKind::BadResponse("Missing services list".to_string())),
             Some(friend_string) if friend_string == "" => return Ok(friends),
             Some(friend_string) => friend_string,
