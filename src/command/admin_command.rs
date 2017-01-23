@@ -22,7 +22,7 @@ use pwhash::bcrypt::{BcryptVariant, BcryptSetup};
 
 use errors::*;
 use net::Connection;
-use client::ResultCode;
+use common::ResultCode;
 
 use cluster::{Node, Cluster};
 use policy::AdminPolicy;

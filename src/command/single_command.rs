@@ -20,7 +20,7 @@ use std::time::Instant;
 use errors::*;
 use net::Connection;
 
-use client::ResultCode;
+use common::ResultCode;
 use cluster::partition::Partition;
 use cluster::{Node, Cluster};
 use common::Key;

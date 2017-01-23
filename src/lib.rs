@@ -102,25 +102,25 @@ extern crate lazy_static;
 extern crate error_chain;
 
 pub use errors::*;
+pub use client::Client;
+pub use net::Host;
 pub use value::Value;
 pub use policy::{Policy, ClientPolicy, ReadPolicy, WritePolicy, Priority, ConsistencyLevel,
                  CommitLevel, RecordExistsAction, GenerationPolicy, ScanPolicy, QueryPolicy};
-pub use net::{Host, Connection};
-pub use client::{Client, ResultCode};
 pub use common::{Key, Bin, Operation, UDFLang, Recordset, Statement, Filter, IndexType,
-                 CollectionIndexType, ParticleType, MapPolicy, MapReturnType};
+                 CollectionIndexType, ParticleType, MapPolicy, MapReturnType, ResultCode};
 
 #[macro_use]
 pub mod errors;
 
 mod command;
 mod msgpack;
+mod cluster;
 
 pub mod common;
 pub mod value;
 pub mod policy;
 pub mod net;
-pub mod cluster;
 pub mod client;
 
 #[cfg(test)]

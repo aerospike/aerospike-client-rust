@@ -20,7 +20,6 @@ pub use self::recordset::Recordset;
 pub use self::particle_type::ParticleType;
 pub use self::operation::OperationType;
 pub use self::operation::Operation;
-pub use self::field_type::FieldType;
 pub use self::udf_lang::UDFLang;
 pub use self::index_type::IndexType;
 pub use self::collection_index_type::CollectionIndexType;
@@ -29,6 +28,7 @@ pub use self::statement::Statement;
 pub use self::user::User;
 pub use self::operation_cdt_list::*;
 pub use self::operation_cdt_map::*;
+pub use self::result_code::ResultCode;
 
 
 pub mod bin;
@@ -37,7 +37,6 @@ pub mod record;
 pub mod recordset;
 pub mod particle_type;
 pub mod operation;
-pub mod field_type;
 pub mod udf_lang;
 pub mod index_type;
 pub mod collection_index_type;
@@ -46,3 +45,4 @@ pub mod statement;
 pub mod user;
 pub mod operation_cdt_list;
 pub mod operation_cdt_map;
+pub mod result_code;

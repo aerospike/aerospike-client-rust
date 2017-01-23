@@ -20,7 +20,8 @@ use byteorder::{NetworkEndian, ByteOrder};
 use errors::*;
 use value::Value;
 
-use common::{Key, FieldType, Bin, Statement, CollectionIndexType};
+use command::field_type::FieldType;
+use common::{Key, Bin, Statement, CollectionIndexType};
 use policy::{WritePolicy, ReadPolicy, ConsistencyLevel, CommitLevel,
              GenerationPolicy, RecordExistsAction, ScanPolicy, QueryPolicy};
 use common::operation::*;

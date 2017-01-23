@@ -20,13 +20,14 @@ use std::thread;
 
 use errors::*;
 use net::Connection;
-use client::ResultCode;
+use common::ResultCode;
 use value::Value;
 
 use cluster::Node;
-use common::{Key, Record, FieldType};
+use common::{Key, Record};
 use common::recordset::Recordset;
 use command::Command;
+use command::field_type::FieldType;
 use command::buffer;
 use value;
 

@@ -18,7 +18,7 @@ use std::str;
 
 use errors::*;
 use net::Connection;
-use client::ResultCode;
+use common::ResultCode;
 
 use cluster::{Node, Cluster};
 use common::{Key, OperationType, Bin};

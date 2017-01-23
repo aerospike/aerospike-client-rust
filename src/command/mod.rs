@@ -27,6 +27,7 @@ pub mod stream_command;
 pub mod scan_command;
 pub mod query_command;
 pub mod admin_command;
+mod field_type;
 
 use std::sync::Arc;
 use std::time::Duration;

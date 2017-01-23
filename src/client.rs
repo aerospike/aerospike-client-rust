@@ -13,10 +13,6 @@
 // License for the specific language governing permissions and limitations under
 // the License.
 
-pub mod result_code;
-
-pub use self::result_code::ResultCode;
-
 use std::sync::Arc;
 use std::vec::Vec;
 use std::thread;
@@ -32,7 +28,7 @@ use errors::*;
 use net::ToHosts;
 use cluster::{Cluster, Node};
 use common::operation::{Operation, OperationType};
-use common::{Key, Record, Bin, UDFLang, Recordset, Statement, IndexType, CollectionIndexType};
+use common::{Key, Record, Bin, UDFLang, Recordset, Statement, IndexType, CollectionIndexType, ResultCode};
 use command::read_command::ReadCommand;
 use command::write_command::WriteCommand;
 use command::delete_command::DeleteCommand;
