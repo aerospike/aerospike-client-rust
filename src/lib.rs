@@ -13,6 +13,8 @@
 // License for the specific language governing permissions and limitations under
 // the License.
 
+//! A pure-rust client for the Aerospike NoSQL database.
+//!
 //! ## Example
 //!
 //! The following is a very simple example of CRUD operations in an Aerospike database.
@@ -104,11 +106,9 @@ pub use value::Value;
 pub use policy::{Policy, ClientPolicy, ReadPolicy, WritePolicy, Priority, ConsistencyLevel,
                  CommitLevel, RecordExistsAction, GenerationPolicy, ScanPolicy, QueryPolicy};
 pub use net::{Host, Connection};
-pub use cluster::{Node, Cluster};
 pub use client::{Client, ResultCode};
 pub use common::{Key, Bin, Operation, UDFLang, Recordset, Statement, Filter, IndexType,
-                 CollectionIndexType, ParticleType};
-pub use common::{MapPolicy, MapReturnType};
+                 CollectionIndexType, ParticleType, MapPolicy, MapReturnType};
 
 #[macro_use]
 pub mod errors;

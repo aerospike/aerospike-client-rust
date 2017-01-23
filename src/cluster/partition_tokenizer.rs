@@ -22,7 +22,7 @@ use std::sync::{Arc, RwLock};
 use rustc_serialize::base64::FromBase64;
 
 use errors::*;
-use Node;
+use cluster::Node;
 use net::Connection;
 use command::info_command::Message;
 use cluster::node;

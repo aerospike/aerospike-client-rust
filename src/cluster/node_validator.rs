@@ -18,7 +18,7 @@ use std::str;
 
 use errors::*;
 use net::{Host, Connection};
-use Cluster;
+use cluster::Cluster;
 use command::info_command::Message;
 use policy::ClientPolicy;
 
