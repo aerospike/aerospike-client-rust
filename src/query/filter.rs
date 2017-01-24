@@ -107,32 +107,32 @@ macro_rules! as_contains_range {
 #[macro_export]
 macro_rules! as_within_region {
     ($bin_name:expr, $region:expr) => {{
-        let region = Arc::new(::aerospike::Value::String(String::from($region)));
-        ::aerospike::Filter::new($bin_name, ::aerospike::CollectionIndexType::Default, ::aerospike::ParticleType::GEOJSON, region.clone(), region.clone()).unwrap()
+        let region = Arc::new(::aerospike::Value::GeoJSON(String::from($region)));
+        ::aerospike::Filter::new($bin_name, ::aerospike::CollectionIndexType::Default, region.particle_type(), region.clone(), region.clone()).unwrap()
     }};
 }
 
 #[macro_export]
 macro_rules! as_within_region_in_collection {
     ($bin_name:expr, $cit:expr, $region:expr) => {{
-        let region = Arc::new(::aerospike::Value::String(String::from($region)));
-        ::aerospike::Filter::new($bin_name, $cit, ::aerospike::ParticleType::GEOJSON, region.clone(), region.clone()).unwrap()
+        let region = Arc::new(::aerospike::Value::GeoJSON(String::from($region)));
+        ::aerospike::Filter::new($bin_name, $cit, region.particle_type(), region.clone(), region.clone()).unwrap()
     }};
 }
 
 #[macro_export]
 macro_rules! as_regions_containing_point {
     ($bin_name:expr, $point:expr) => {{
-        let point = Arc::new(::aerospike::Value::String(String::from($point)));
-        ::aerospike::Filter::new($bin_name, ::aerospike::CollectionIndexType::Default, ::aerospike::ParticleType::GEOJSON, point.clone(), point.clone()).unwrap()
+        let point = Arc::new(::aerospike::Value::GeoJSON(String::from($point)));
+        ::aerospike::Filter::new($bin_name, ::aerospike::CollectionIndexType::Default, point.particle_type(), point.clone(), point.clone()).unwrap()
     }};
 }
 
 #[macro_export]
 macro_rules! as_regions_containing_point_in_collection {
     ($bin_name:expr, $cit:expr, $point:expr) => {{
-        let point = Arc::new(::aerospike::Value::String(String::from($point)));
-        ::aerospike::Filter::new($bin_name, $cit, ::aerospike::ParticleType::GEOJSON, point.clone(), point.clone()).unwrap()
+        let point = Arc::new(::aerospike::Value::GeoJSON(String::from($point)));
+        ::aerospike::Filter::new($bin_name, $cit, point.particle_type(), point.clone(), point.clone()).unwrap()
     }};
 }
 
@@ -142,8 +142,8 @@ macro_rules! as_within_radius {
         let lat = ::aerospike::Value::from($lat as f64);
         let lng = ::aerospike::Value::from($lng as f64);
         let radius = ::aerospike::Value::from($radius as f64);
-        let geo_json = Arc::new(::aerospike::Value::String(format!("{{ \"type\": \"Aeroircle\", \"coordinates\": [[{:.8}, {:.8}], {}] }}", lng, lat, radius)));
-        ::aerospike::Filter::new($bin_name, ::aerospike::CollectionIndexType::Default, ::aerospike::ParticleType::GEOJSON, geo_json.clone(), geo_json.clone()).unwrap()
+        let geo_json = Arc::new(::aerospike::Value::GeoJSON(format!("{{ \"type\": \"Aeroircle\", \"coordinates\": [[{:.8}, {:.8}], {}] }}", lng, lat, radius)));
+        ::aerospike::Filter::new($bin_name, ::aerospike::CollectionIndexType::Default, geo_json.particle_type(), geo_json.clone(), geo_json.clone()).unwrap()
     }};
 }
 
@@ -153,7 +153,7 @@ macro_rules! as_within_radius_in_collection {
         let lat = ::aerospike::Value::from($lat as f64);
         let lng = ::aerospike::Value::from($lng as f64);
         let radius = ::aerospike::Value::from($radius as f64);
-        let geo_json = Arc::new(::aerospike::Value::String(format!("{{ \"type\": \"Aeroircle\", \"coordinates\": [[{:.8}, {:.8}], {}] }}", lng, lat, radius)));
-        ::aerospike::Filter::new($bin_name, $cit, ::aerospike::ParticleType::GEOJSON, geo_json.clone(), geo_json.clone()).unwrap()
+        let geo_json = Arc::new(::aerospike::Value::GeoJSON(format!("{{ \"type\": \"Aeroircle\", \"coordinates\": [[{:.8}, {:.8}], {}] }}", lng, lat, radius)));
+        ::aerospike::Filter::new($bin_name, $cit, geo_json.particle_type(), geo_json.clone(), geo_json.clone()).unwrap()
     }};
 }

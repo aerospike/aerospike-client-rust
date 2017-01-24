@@ -113,7 +113,7 @@ pub use record::Record;
 pub use query::{Statement, Filter, UDFLang, Recordset};
 pub use result_code::ResultCode;
 pub use user::User;
-pub use commands::{IndexType, CollectionIndexType, ParticleType};
+pub use commands::{IndexType, CollectionIndexType};
 pub use operations::{Operation, MapPolicy, MapReturnType};
 
 #[macro_use]
