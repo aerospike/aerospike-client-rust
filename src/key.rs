@@ -77,16 +77,14 @@ impl fmt::Display for Key {
 #[macro_export]
 macro_rules! as_key {
     ($ns:expr, $set:expr, $val:expr) => {{
-        Key::new($ns, $set, Value::from($val)).unwrap()
+        $crate::Key::new($ns, $set, $crate::Value::from($val)).unwrap()
     }};
 }
 
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use std::str;
-    use value::Value;
     use hex::ToHex;
 
     macro_rules! digest {

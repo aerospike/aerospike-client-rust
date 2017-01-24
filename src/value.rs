@@ -547,28 +547,28 @@ pub fn bytes_to_particle(ptype: u8, buf: &mut Buffer, len: usize) -> Result<Valu
 
 #[macro_export]
 macro_rules! as_val {
-    ($val:expr) => {{ Value::from($val) }}
+    ($val:expr) => {{ $crate::Value::from($val) }}
 }
 
 #[macro_export]
 macro_rules! as_geo {
-    ($val:expr) => {{ Value::GeoJSON($val) }}
+    ($val:expr) => {{ $crate::Value::GeoJSON($val) }}
 }
 
 #[macro_export]
 macro_rules! as_blob {
-    ($val:expr) => {{ Value::Blob($val) }}
+    ($val:expr) => {{ $crate::Value::Blob($val) }}
 }
 
 #[macro_export]
 macro_rules! as_list {
     ( $( $v:expr),* ) => {
         {
-            let mut temp_vec: Vec<Value> = Vec::new();
+            let mut temp_vec: Vec<$crate::Value> = Vec::new();
             $(
-                temp_vec.push(Value::from($v));
+                temp_vec.push($crate::Value::from($v));
             )*
-            Value::List(temp_vec)
+            $crate::Value::List(temp_vec)
         }
     };
 }
@@ -577,9 +577,9 @@ macro_rules! as_list {
 macro_rules! as_values {
     ( $( $v:expr),* ) => {
         {
-            let mut temp_vec: Vec<Value> = Vec::new();
+            let mut temp_vec: Vec<$crate::Value> = Vec::new();
             $(
-                temp_vec.push(Value::from($v));
+                temp_vec.push($crate::Value::from($v));
             )*
             temp_vec
         }
@@ -590,11 +590,11 @@ macro_rules! as_values {
 macro_rules! as_map {
     ( $( $k:expr => $v:expr),* ) => {
         {
-            let mut temp_map: HashMap<Value, Value> = HashMap::new();
+            let mut temp_map: HashMap<$crate::Value, $crate::Value> = HashMap::new();
             $(
-                temp_map.insert(Value::from($k), Value::from($v));
+                temp_map.insert($crate::Value::from($k), $crate::Value::from($v));
             )*
-            Value::HashMap(temp_map)
+            $crate::Value::HashMap(temp_map)
         }
     };
 }

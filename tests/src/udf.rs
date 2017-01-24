@@ -18,9 +18,8 @@ extern crate env_logger;
 
 use aerospike::errors::*;
 use aerospike::WritePolicy;
-use aerospike::{Key, Bin};
 use aerospike::UDFLang;
-use aerospike::value::*;
+use aerospike::Value;
 
 use std::thread;
 use std::time::Duration;

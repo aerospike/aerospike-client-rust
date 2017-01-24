@@ -15,11 +15,7 @@
 
 use std::collections::HashMap;
 
-use aerospike::{Key, Bin};
-use aerospike::{ReadPolicy, WritePolicy, MapPolicy};
-use aerospike::Operation;
-use aerospike::MapReturnType;
-use aerospike::value::*;
+use aerospike::{Operation, ReadPolicy, WritePolicy, MapPolicy, MapReturnType};
 
 use common1;
 

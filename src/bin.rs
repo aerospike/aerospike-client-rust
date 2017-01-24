@@ -34,9 +34,9 @@ impl<'a> Bin<'a> {
 #[macro_export]
 macro_rules! as_bin {
     ($bin_name:expr, None) => {{
-        Bin::new($bin_name, Value::Nil)
+        $crate::Bin::new($bin_name, $crate::Value::Nil)
     }};
     ($bin_name:expr, $val:expr) => {{
-        Bin::new($bin_name, Value::from($val))
+        $crate::Bin::new($bin_name, $crate::Value::from($val))
     }};
 }

@@ -13,10 +13,7 @@
 // License for the specific language governing permissions and limitations under
 // the License.
 
-use aerospike::{ReadPolicy, WritePolicy};
-use aerospike::{Key, Bin};
-use aerospike::Operation;
-use aerospike::value::*;
+use aerospike::{Value, Operation, ReadPolicy, WritePolicy};
 
 use env_logger;
 

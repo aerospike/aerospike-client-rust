@@ -74,86 +74,86 @@ impl Filter {
 macro_rules! as_eq {
     ($bin_name:expr, $val:expr) => {{
         let val = Arc::new(Value::from($val));
-        ::aerospike::Filter::new($bin_name, ::aerospike::CollectionIndexType::Default, val.particle_type(), val.clone(), val.clone()).unwrap()
+        $crate::Filter::new($bin_name, $crate::CollectionIndexType::Default, val.particle_type(), val.clone(), val.clone()).unwrap()
     }};
 }
 
 #[macro_export]
 macro_rules! as_range {
     ($bin_name:expr, $begin:expr, $end:expr) => {{
-        let begin = Arc::new(::aerospike::Value::from($begin));
-        let end = Arc::new(::aerospike::Value::from($end));
-        ::aerospike::Filter::new($bin_name, ::aerospike::CollectionIndexType::Default, begin.particle_type(), begin, end).unwrap()
+        let begin = Arc::new($crate::Value::from($begin));
+        let end = Arc::new($crate::Value::from($end));
+        $crate::Filter::new($bin_name, $crate::CollectionIndexType::Default, begin.particle_type(), begin, end).unwrap()
     }};
 }
 
 #[macro_export]
 macro_rules! as_contains {
     ($bin_name:expr, $cit:expr, $val:expr) => {{
-        let val = Arc::new(::aerospike::Value::from($val));
-        ::aerospike::Filter::new($bin_name, $cit, val.particle_type(), val.clone(), val.clone()).unwrap()
+        let val = Arc::new($crate::Value::from($val));
+        $crate::Filter::new($bin_name, $cit, val.particle_type(), val.clone(), val.clone()).unwrap()
     }};
 }
 
 #[macro_export]
 macro_rules! as_contains_range {
     ($bin_name:expr, $cit:expr, $begin:expr, $end:expr) => {{
-        let begin = Arc::new(::aerospike::Value::from($begin));
-        let end = Arc::new(::aerospike::Value::from($end));
-        ::aerospike::Filter::new($bin_name, $cit, begin.particle_type(), begin, end).unwrap()
+        let begin = Arc::new($crate::Value::from($begin));
+        let end = Arc::new($crate::Value::from($end));
+        $crate::Filter::new($bin_name, $cit, begin.particle_type(), begin, end).unwrap()
     }};
 }
 
 #[macro_export]
 macro_rules! as_within_region {
     ($bin_name:expr, $region:expr) => {{
-        let region = Arc::new(::aerospike::Value::GeoJSON(String::from($region)));
-        ::aerospike::Filter::new($bin_name, ::aerospike::CollectionIndexType::Default, region.particle_type(), region.clone(), region.clone()).unwrap()
+        let region = Arc::new($crate::Value::GeoJSON(String::from($region)));
+        $crate::Filter::new($bin_name, $crate::CollectionIndexType::Default, region.particle_type(), region.clone(), region.clone()).unwrap()
     }};
 }
 
 #[macro_export]
 macro_rules! as_within_region_in_collection {
     ($bin_name:expr, $cit:expr, $region:expr) => {{
-        let region = Arc::new(::aerospike::Value::GeoJSON(String::from($region)));
-        ::aerospike::Filter::new($bin_name, $cit, region.particle_type(), region.clone(), region.clone()).unwrap()
+        let region = Arc::new($crate::Value::GeoJSON(String::from($region)));
+        $crate::Filter::new($bin_name, $cit, region.particle_type(), region.clone(), region.clone()).unwrap()
     }};
 }
 
 #[macro_export]
 macro_rules! as_regions_containing_point {
     ($bin_name:expr, $point:expr) => {{
-        let point = Arc::new(::aerospike::Value::GeoJSON(String::from($point)));
-        ::aerospike::Filter::new($bin_name, ::aerospike::CollectionIndexType::Default, point.particle_type(), point.clone(), point.clone()).unwrap()
+        let point = Arc::new($crate::Value::GeoJSON(String::from($point)));
+        $crate::Filter::new($bin_name, $crate::CollectionIndexType::Default, point.particle_type(), point.clone(), point.clone()).unwrap()
     }};
 }
 
 #[macro_export]
 macro_rules! as_regions_containing_point_in_collection {
     ($bin_name:expr, $cit:expr, $point:expr) => {{
-        let point = Arc::new(::aerospike::Value::GeoJSON(String::from($point)));
-        ::aerospike::Filter::new($bin_name, $cit, point.particle_type(), point.clone(), point.clone()).unwrap()
+        let point = Arc::new($crate::Value::GeoJSON(String::from($point)));
+        $crate::Filter::new($bin_name, $cit, point.particle_type(), point.clone(), point.clone()).unwrap()
     }};
 }
 
 #[macro_export]
 macro_rules! as_within_radius {
     ($bin_name:expr, $lat:expr, $lng:expr, $radius:expr) => {{
-        let lat = ::aerospike::Value::from($lat as f64);
-        let lng = ::aerospike::Value::from($lng as f64);
-        let radius = ::aerospike::Value::from($radius as f64);
-        let geo_json = Arc::new(::aerospike::Value::GeoJSON(format!("{{ \"type\": \"Aeroircle\", \"coordinates\": [[{:.8}, {:.8}], {}] }}", lng, lat, radius)));
-        ::aerospike::Filter::new($bin_name, ::aerospike::CollectionIndexType::Default, geo_json.particle_type(), geo_json.clone(), geo_json.clone()).unwrap()
+        let lat = $crate::Value::from($lat as f64);
+        let lng = $crate::Value::from($lng as f64);
+        let radius = $crate::Value::from($radius as f64);
+        let geo_json = Arc::new($crate::Value::GeoJSON(format!("{{ \"type\": \"Aeroircle\", \"coordinates\": [[{:.8}, {:.8}], {}] }}", lng, lat, radius)));
+        $crate::Filter::new($bin_name, $crate::CollectionIndexType::Default, geo_json.particle_type(), geo_json.clone(), geo_json.clone()).unwrap()
     }};
 }
 
 #[macro_export]
 macro_rules! as_within_radius_in_collection {
     ($bin_name:expr, $cit:expr, $lat:expr, $lng:expr, $radius:expr) => {{
-        let lat = ::aerospike::Value::from($lat as f64);
-        let lng = ::aerospike::Value::from($lng as f64);
-        let radius = ::aerospike::Value::from($radius as f64);
-        let geo_json = Arc::new(::aerospike::Value::GeoJSON(format!("{{ \"type\": \"Aeroircle\", \"coordinates\": [[{:.8}, {:.8}], {}] }}", lng, lat, radius)));
-        ::aerospike::Filter::new($bin_name, $cit, geo_json.particle_type(), geo_json.clone(), geo_json.clone()).unwrap()
+        let lat = $crate::Value::from($lat as f64);
+        let lng = $crate::Value::from($lng as f64);
+        let radius = $crate::Value::from($radius as f64);
+        let geo_json = Arc::new($crate::Value::GeoJSON(format!("{{ \"type\": \"Aeroircle\", \"coordinates\": [[{:.8}, {:.8}], {}] }}", lng, lat, radius)));
+        $crate::Filter::new($bin_name, $cit, geo_json.particle_type(), geo_json.clone(), geo_json.clone()).unwrap()
     }};
 }

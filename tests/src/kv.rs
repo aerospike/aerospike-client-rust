@@ -16,9 +16,7 @@
 use std::collections::HashMap;
 
 use aerospike::{ReadPolicy, WritePolicy};
-use aerospike::{Key, Bin};
 use aerospike::Operation;
-use aerospike::value::*;
 
 use env_logger;
 

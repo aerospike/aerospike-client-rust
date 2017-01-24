@@ -17,15 +17,11 @@ extern crate aerospike;
 extern crate env_logger;
 
 use std::sync::atomic::{AtomicUsize, Ordering};
-
-use aerospike::{WritePolicy, ScanPolicy};
-use aerospike::{Key, Bin};
-use aerospike::value::*;
-
-
 use std::sync::Arc;
 use std::thread;
 use std::time::Instant;
+
+use aerospike::{WritePolicy, ScanPolicy};
 
 use common1;
 

@@ -24,10 +24,11 @@ The following is a very simple example of CRUD operations in an Aerospike databa
 #[macro_use]
 extern crate aerospike;
 
-use aerospike::*;
 use std::sync::Arc;
 use std::time::Instant;
 use std::thread;
+
+use aerospike::{Client, Operation, ClientPolicy, ReadPolicy, WritePolicy};
 
 fn main() {
     let cpolicy = ClientPolicy::default();
