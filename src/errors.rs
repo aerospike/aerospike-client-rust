@@ -13,7 +13,7 @@
 // License for the specific language governing permissions and limitations under
 // the License.
 
-use common::ResultCode;
+use ResultCode;
 
 error_chain! {
 

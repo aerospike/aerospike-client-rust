@@ -14,33 +14,38 @@
 
 use std::sync::Arc;
 use std::time::Duration;
+use std::str;
 
 use errors::*;
+use Key;
+use Value;
+use cluster::{Node, Cluster};
+use commands::{Command, SingleCommand, ReadCommand};
 use net::Connection;
+use policy::WritePolicy;
 
-use cluster::Node;
-use common::{Recordset, Statement};
-use policy::QueryPolicy;
-use command::Command;
-use command::single_command::SingleCommand;
-use command::stream_command::StreamCommand;
-
-pub struct QueryCommand<'a> {
-    stream_command: StreamCommand,
-    policy: &'a QueryPolicy,
-    statement: Arc<Statement>,
+pub struct ExecuteUDFCommand<'a> {
+    pub read_command: ReadCommand<'a>,
+    policy: &'a WritePolicy,
+    package_name: &'a str,
+    function_name: &'a str,
+    args: Option<&'a [Value]>,
 }
 
-impl<'a> QueryCommand<'a> {
-    pub fn new(policy: &'a QueryPolicy,
-               node: Arc<Node>,
-               statement: Arc<Statement>,
-               recordset: Arc<Recordset>)
+impl<'a> ExecuteUDFCommand<'a> {
+    pub fn new(policy: &'a WritePolicy,
+               cluster: Arc<Cluster>,
+               key: &'a Key,
+               package_name: &'a str,
+               function_name: &'a str,
+               args: Option<&'a [Value]>)
                -> Self {
-        QueryCommand {
-            stream_command: StreamCommand::new(node, recordset),
+        ExecuteUDFCommand {
+            read_command: ReadCommand::new(&policy.base_policy, cluster, key, None),
             policy: policy,
-            statement: statement,
+            package_name: package_name,
+            function_name: function_name,
+            args: args,
         }
     }
 
@@ -49,7 +54,7 @@ impl<'a> QueryCommand<'a> {
     }
 }
 
-impl<'a> Command for QueryCommand<'a> {
+impl<'a> Command for ExecuteUDFCommand<'a> {
     fn write_timeout(&mut self,
                      conn: &mut Connection,
                      timeout: Option<Duration>)
@@ -63,17 +68,18 @@ impl<'a> Command for QueryCommand<'a> {
     }
 
     fn prepare_buffer(&mut self, conn: &mut Connection) -> Result<()> {
-        conn.buffer.set_query(self.policy,
-                              &self.statement,
-                              false,
-                              self.stream_command.recordset.task_id())
+        conn.buffer.set_udf(self.policy,
+                            self.read_command.single_command.key,
+                            self.package_name,
+                            self.function_name,
+                            self.args)
     }
 
     fn get_node(&self) -> Result<Arc<Node>> {
-        self.stream_command.get_node()
+        self.read_command.get_node()
     }
 
     fn parse_result(&mut self, conn: &mut Connection) -> Result<()> {
-        StreamCommand::parse_result(&mut self.stream_command, conn)
+        self.read_command.parse_result(conn)
     }
 }

@@ -21,12 +21,10 @@ use pwhash::bcrypt;
 use pwhash::bcrypt::{BcryptVariant, BcryptSetup};
 
 use errors::*;
-use net::Connection;
-use common::ResultCode;
-
+use ResultCode;
 use cluster::{Node, Cluster};
+use net::Connection;
 use policy::AdminPolicy;
-
 
 // Commands
 const AUTHENTICATE: u8 = 0;

@@ -19,23 +19,22 @@ use std::str;
 use std::thread;
 
 use errors::*;
-use net::Connection;
-use common::ResultCode;
-use value::Value;
-
+use Key;
+use Record;
+use ResultCode;
+use Value;
 use cluster::Node;
-use common::{Key, Record};
-use common::recordset::Recordset;
-use command::Command;
-use command::field_type::FieldType;
-use command::buffer;
-use value;
+use commands::Command;
+use commands::buffer;
+use commands::field_type::FieldType;
+use net::Connection;
+use query::Recordset;
+use value::bytes_to_particle;
 
 pub struct StreamCommand {
     node: Arc<Node>,
     pub recordset: Arc<Recordset>,
 }
-
 
 impl Drop for StreamCommand {
     fn drop(&mut self) {
@@ -98,10 +97,7 @@ impl StreamCommand {
 
             let particle_bytes_size = op_size - (4 + name_size);
             try!(conn.read_buffer(particle_bytes_size));
-            let value = try!(value::bytes_to_particle(particle_type,
-                                                      &mut conn.buffer,
-                                                      particle_bytes_size));
-
+            let value = bytes_to_particle(particle_type, &mut conn.buffer, particle_bytes_size)?;
 
             bins.insert(name, value);
         }
@@ -169,9 +165,8 @@ impl StreamCommand {
                 x if x == FieldType::Key as u8 => {
                     let particle_type = try!(conn.buffer.read_u8(None));
                     let particle_bytes_size = field_len - 2;
-                    orig_key = Some(try!(value::bytes_to_particle(particle_type,
-                                                                  &mut conn.buffer,
-                                                                  particle_bytes_size)));
+                    orig_key = Some(bytes_to_particle(
+                            particle_type, &mut conn.buffer, particle_bytes_size)?);
                 }
                 _ => unreachable!(),
             }

@@ -17,7 +17,7 @@ use std::fmt;
 use std::result::Result as StdResult;
 
 use errors::*;
-use value::Value;
+use Value;
 
 use crypto::ripemd160::Ripemd160;
 use crypto::digest::Digest;

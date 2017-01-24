@@ -17,9 +17,9 @@ use std::net::ToSocketAddrs;
 use std::str;
 
 use errors::*;
-use net::{Host, Connection};
 use cluster::Cluster;
-use command::info_command::Message;
+use commands::Message;
+use net::{Host, Connection};
 use policy::ClientPolicy;
 
 // Validates a Database server node

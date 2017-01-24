@@ -14,33 +14,38 @@
 
 use std::sync::Arc;
 use std::time::Duration;
+use std::str;
 
 use errors::*;
-use net::Connection;
-
+use Bin;
+use Key;
+use ResultCode;
 use cluster::{Node, Cluster};
-use common::{Key, Operation};
+use commands::buffer;
+use commands::{Command, SingleCommand};
+use net::Connection;
+use operations::OperationType;
 use policy::WritePolicy;
-use command::Command;
-use command::single_command::SingleCommand;
-use command::read_command::ReadCommand;
 
-pub struct OperateCommand<'a> {
-    pub read_command: ReadCommand<'a>,
+pub struct WriteCommand<'a> {
+    single_command: SingleCommand<'a>,
     policy: &'a WritePolicy,
-    operations: &'a [Operation<'a>],
+    bins: &'a [&'a Bin<'a>],
+    operation: OperationType,
 }
 
-impl<'a> OperateCommand<'a> {
+impl<'a> WriteCommand<'a> {
     pub fn new(policy: &'a WritePolicy,
                cluster: Arc<Cluster>,
                key: &'a Key,
-               operations: &'a [Operation<'a>])
+               bins: &'a [&'a Bin],
+               operation: OperationType)
                -> Self {
-        OperateCommand {
-            read_command: ReadCommand::new(&policy.base_policy, cluster, key, None),
+        WriteCommand {
+            single_command: SingleCommand::new(cluster, key),
+            bins: bins,
             policy: policy,
-            operations: operations,
+            operation: operation,
         }
     }
 
@@ -49,7 +54,7 @@ impl<'a> OperateCommand<'a> {
     }
 }
 
-impl<'a> Command for OperateCommand<'a> {
+impl<'a> Command for WriteCommand<'a> {
     fn write_timeout(&mut self,
                      conn: &mut Connection,
                      timeout: Option<Duration>)
@@ -63,16 +68,30 @@ impl<'a> Command for OperateCommand<'a> {
     }
 
     fn prepare_buffer(&mut self, conn: &mut Connection) -> Result<()> {
-        conn.buffer.set_operate(self.policy,
-                                self.read_command.single_command.key,
-                                self.operations)
+        conn.buffer.set_write(self.policy,
+                              self.operation,
+                              self.single_command.key,
+                              self.bins)
     }
 
     fn get_node(&self) -> Result<Arc<Node>> {
-        self.read_command.get_node()
+        self.single_command.get_node()
     }
 
     fn parse_result(&mut self, conn: &mut Connection) -> Result<()> {
-        self.read_command.parse_result(conn)
+        // Read header.
+        if let Err(err) = conn.read_buffer(buffer::MSG_TOTAL_HEADER_SIZE as usize) {
+            warn!("Parse result error: {}", err);
+            return Err(err);
+        }
+
+        try!(conn.buffer.reset_offset());
+
+        let result_code = ResultCode::from(try!(conn.buffer.read_u8(Some(13))) & 0xFF);
+        if result_code != ResultCode::Ok {
+            bail!(ErrorKind::ServerError(result_code));
+        }
+
+        SingleCommand::empty_socket(conn)
     }
 }

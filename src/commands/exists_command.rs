@@ -17,29 +17,29 @@ use std::time::Duration;
 use std::str;
 
 use errors::*;
-use net::Connection;
-use common::ResultCode;
-
+use Key;
+use ResultCode;
 use cluster::{Node, Cluster};
-use common::Key;
+use commands::buffer;
+use commands::{Command, SingleCommand};
+use net::Connection;
 use policy::WritePolicy;
-use command::Command;
-use command::single_command::SingleCommand;
-use command::buffer;
 
-pub struct TouchCommand<'a> {
+pub struct ExistsCommand<'a> {
     single_command: SingleCommand<'a>,
     policy: &'a WritePolicy,
+    pub exists: bool,
 }
 
-impl<'a> TouchCommand<'a> {
+impl<'a> ExistsCommand<'a> {
     pub fn new(policy: &'a WritePolicy,
                cluster: Arc<Cluster>,
                key: &'a Key)
                -> Self {
-        TouchCommand {
+        ExistsCommand {
             single_command: SingleCommand::new(cluster, key),
             policy: policy,
+            exists: false,
         }
     }
 
@@ -48,7 +48,7 @@ impl<'a> TouchCommand<'a> {
     }
 }
 
-impl<'a> Command for TouchCommand<'a> {
+impl<'a> Command for ExistsCommand<'a> {
     fn write_timeout(&mut self,
                      conn: &mut Connection,
                      timeout: Option<Duration>)
@@ -62,7 +62,7 @@ impl<'a> Command for TouchCommand<'a> {
     }
 
     fn prepare_buffer(&mut self, conn: &mut Connection) -> Result<()> {
-        conn.buffer.set_touch(self.policy, self.single_command.key)
+        conn.buffer.set_exists(self.policy, self.single_command.key)
     }
 
     fn get_node(&self) -> Result<Arc<Node>> {
@@ -78,10 +78,15 @@ impl<'a> Command for TouchCommand<'a> {
 
         try!(conn.buffer.reset_offset());
 
+        // A number of these are commented out because we just don't care enough to read
+        // that section of the header. If we do care, uncomment and check!
         let result_code = ResultCode::from(try!(conn.buffer.read_u8(Some(13))) & 0xFF);
-        if result_code != ResultCode::Ok {
+
+        if result_code != ResultCode::Ok && result_code != ResultCode::KeyNotFoundError {
             bail!(ErrorKind::ServerError(result_code));
         }
+
+        self.exists = result_code == ResultCode::Ok;
 
         SingleCommand::empty_socket(conn)
     }

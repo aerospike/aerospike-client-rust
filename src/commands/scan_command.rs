@@ -17,38 +17,34 @@ use std::time::Duration;
 use std::str;
 
 use errors::*;
+use Recordset;
+use cluster::Node;
+use commands::{Command, SingleCommand, StreamCommand};
 use net::Connection;
-use value::Value;
+use policy::ScanPolicy;
 
-use cluster::{Node, Cluster};
-use common::Key;
-use policy::WritePolicy;
-use command::Command;
-use command::single_command::SingleCommand;
-use command::read_command::ReadCommand;
-
-pub struct ExecuteUDFCommand<'a> {
-    pub read_command: ReadCommand<'a>,
-    policy: &'a WritePolicy,
-    package_name: &'a str,
-    function_name: &'a str,
-    args: Option<&'a [Value]>,
+pub struct ScanCommand<'a> {
+    stream_command: StreamCommand,
+    policy: &'a ScanPolicy,
+    namespace: &'a str,
+    set_name: &'a str,
+    bin_names: &'a Option<Vec<String>>,
 }
 
-impl<'a> ExecuteUDFCommand<'a> {
-    pub fn new(policy: &'a WritePolicy,
-               cluster: Arc<Cluster>,
-               key: &'a Key,
-               package_name: &'a str,
-               function_name: &'a str,
-               args: Option<&'a [Value]>)
+impl<'a> ScanCommand<'a> {
+    pub fn new(policy: &'a ScanPolicy,
+               node: Arc<Node>,
+               namespace: &'a str,
+               set_name: &'a str,
+               bin_names: &'a Option<Vec<String>>,
+               recordset: Arc<Recordset>)
                -> Self {
-        ExecuteUDFCommand {
-            read_command: ReadCommand::new(&policy.base_policy, cluster, key, None),
+        ScanCommand {
+            stream_command: StreamCommand::new(node, recordset),
             policy: policy,
-            package_name: package_name,
-            function_name: function_name,
-            args: args,
+            namespace: namespace,
+            set_name: set_name,
+            bin_names: bin_names,
         }
     }
 
@@ -57,7 +53,7 @@ impl<'a> ExecuteUDFCommand<'a> {
     }
 }
 
-impl<'a> Command for ExecuteUDFCommand<'a> {
+impl<'a> Command for ScanCommand<'a> {
     fn write_timeout(&mut self,
                      conn: &mut Connection,
                      timeout: Option<Duration>)
@@ -71,18 +67,18 @@ impl<'a> Command for ExecuteUDFCommand<'a> {
     }
 
     fn prepare_buffer(&mut self, conn: &mut Connection) -> Result<()> {
-        conn.buffer.set_udf(self.policy,
-                            self.read_command.single_command.key,
-                            self.package_name,
-                            self.function_name,
-                            self.args)
+        conn.buffer.set_scan(self.policy,
+                             self.namespace,
+                             self.set_name,
+                             self.bin_names,
+                             self.stream_command.recordset.task_id())
     }
 
     fn get_node(&self) -> Result<Arc<Node>> {
-        self.read_command.get_node()
+        self.stream_command.get_node()
     }
 
     fn parse_result(&mut self, conn: &mut Connection) -> Result<()> {
-        self.read_command.parse_result(conn)
+        StreamCommand::parse_result(&mut self.stream_command, conn)
     }
 }

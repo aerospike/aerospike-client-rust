@@ -13,19 +13,17 @@
 // limitations under the License.
 
 use std::sync::Arc;
-
 use std::thread;
 use std::time::Instant;
 
 use errors::*;
-use net::Connection;
-
-use common::ResultCode;
+use Key;
+use ResultCode;
 use cluster::partition::Partition;
 use cluster::{Node, Cluster};
-use common::Key;
+use commands::Command;
+use net::Connection;
 use policy::Policy;
-use command::Command;
 
 pub struct SingleCommand<'a> {
     cluster: Arc<Cluster>,

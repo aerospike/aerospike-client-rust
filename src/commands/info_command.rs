@@ -15,8 +15,8 @@
 
 use std::io::{Cursor, Write};
 use std::collections::HashMap;
-use byteorder::{NetworkEndian, ReadBytesExt, WriteBytesExt};
 use std::str;
+use byteorder::{NetworkEndian, ReadBytesExt, WriteBytesExt};
 
 use errors::*;
 use net::Connection;

@@ -20,10 +20,8 @@ pub enum FieldType {
     Namespace = 0,
     Table = 1,
     Key = 2,
-
     // BIN  = 3,
     DigestRipe = 4,
-
     // GUID  = 5,
     // DigestRipeArray = 6,
     TranId = 7, // user supplied transaction id, which is simply passed back,

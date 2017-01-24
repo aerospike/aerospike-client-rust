@@ -17,8 +17,8 @@ use std::fmt;
 
 use byteorder::{LittleEndian, ReadBytesExt};
 
+use Key;
 use cluster::node;
-use common::Key;
 
 // Validates a Database server node
 #[derive(Debug, Clone)]

@@ -22,7 +22,7 @@ use crossbeam::sync::MsQueue;
 use rand::Rng;
 
 use errors::*;
-use common::record::Record;
+use Record;
 
 // #[derive(Debug)]
 pub struct Recordset {

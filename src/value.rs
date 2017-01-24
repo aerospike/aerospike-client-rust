@@ -28,8 +28,8 @@ use crypto::digest::Digest;
 use std::vec::Vec;
 
 use errors::*;
-use common::ParticleType;
-use command::buffer::Buffer;
+use commands::ParticleType;
+use commands::buffer::Buffer;
 use msgpack::encoder::pack_value;
 use msgpack::decoder::*;
 

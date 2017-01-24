@@ -23,9 +23,9 @@ use rustc_serialize::base64::FromBase64;
 
 use errors::*;
 use cluster::Node;
-use net::Connection;
-use command::info_command::Message;
 use cluster::node;
+use commands::Message;
+use net::Connection;
 
 const REPLICAS_NAME: &'static str = "replicas-master";
 

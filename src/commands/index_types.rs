@@ -16,11 +16,28 @@
 use std::fmt;
 
 #[derive(Debug,Clone,PartialEq)]
+pub enum IndexType {
+    Numeric,
+    String,
+    Geo2DSphere,
+}
+
+#[derive(Debug,Clone,PartialEq)]
 pub enum CollectionIndexType {
     Default = 0,
     List,
     MapKeys,
     MapValues,
+}
+
+impl fmt::Display for IndexType {
+    fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
+        match self {
+            &IndexType::Numeric => "NUMERIC".fmt(f),
+            &IndexType::String => "STRING".fmt(f),
+            &IndexType::Geo2DSphere => "GEO2DSPHERE".fmt(f),
+        }
+    }
 }
 
 impl fmt::Display for CollectionIndexType {

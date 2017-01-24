@@ -18,9 +18,9 @@ use std::collections::HashMap;
 use std::num::Wrapping;
 
 use errors::*;
-use common::ParticleType;
-use common::operation::*;
-use command::buffer::Buffer;
+use commands::ParticleType;
+use commands::buffer::Buffer;
+use operations::*;
 use value::*;
 
 pub fn pack_value(buf: &mut Option<&mut Buffer>, val: &Value) -> Result<usize> {

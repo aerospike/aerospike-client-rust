@@ -18,14 +18,16 @@ use std::str;
 use byteorder::{NetworkEndian, ByteOrder};
 
 use errors::*;
-use value::Value;
-
-use command::field_type::FieldType;
-use common::{Key, Bin, Statement, CollectionIndexType};
+use Bin;
+use CollectionIndexType;
+use Key;
+use Statement;
+use Value;
+use commands::field_type::FieldType;
+use msgpack::encoder;
+use operations::{Operation, OperationBin, OperationData, OperationType};
 use policy::{WritePolicy, ReadPolicy, ConsistencyLevel, CommitLevel,
              GenerationPolicy, RecordExistsAction, ScanPolicy, QueryPolicy};
-use common::operation::*;
-use msgpack::encoder;
 
 // Flags commented out are not supported by cmd client.
 // Contains a read operation.

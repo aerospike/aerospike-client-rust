@@ -14,40 +14,31 @@
 
 use std::sync::Arc;
 use std::time::Duration;
-use std::str;
 
 use errors::*;
+use Key;
+use Operation;
+use cluster::{Node, Cluster};
+use commands::{Command, SingleCommand, ReadCommand};
 use net::Connection;
+use policy::WritePolicy;
 
-use cluster::Node;
-use common::Recordset;
-use policy::ScanPolicy;
-use command::Command;
-use command::single_command::SingleCommand;
-use command::stream_command::StreamCommand;
-
-pub struct ScanCommand<'a> {
-    stream_command: StreamCommand,
-    policy: &'a ScanPolicy,
-    namespace: &'a str,
-    set_name: &'a str,
-    bin_names: &'a Option<Vec<String>>,
+pub struct OperateCommand<'a> {
+    pub read_command: ReadCommand<'a>,
+    policy: &'a WritePolicy,
+    operations: &'a [Operation<'a>],
 }
 
-impl<'a> ScanCommand<'a> {
-    pub fn new(policy: &'a ScanPolicy,
-               node: Arc<Node>,
-               namespace: &'a str,
-               set_name: &'a str,
-               bin_names: &'a Option<Vec<String>>,
-               recordset: Arc<Recordset>)
+impl<'a> OperateCommand<'a> {
+    pub fn new(policy: &'a WritePolicy,
+               cluster: Arc<Cluster>,
+               key: &'a Key,
+               operations: &'a [Operation<'a>])
                -> Self {
-        ScanCommand {
-            stream_command: StreamCommand::new(node, recordset),
+        OperateCommand {
+            read_command: ReadCommand::new(&policy.base_policy, cluster, key, None),
             policy: policy,
-            namespace: namespace,
-            set_name: set_name,
-            bin_names: bin_names,
+            operations: operations,
         }
     }
 
@@ -56,7 +47,7 @@ impl<'a> ScanCommand<'a> {
     }
 }
 
-impl<'a> Command for ScanCommand<'a> {
+impl<'a> Command for OperateCommand<'a> {
     fn write_timeout(&mut self,
                      conn: &mut Connection,
                      timeout: Option<Duration>)
@@ -70,18 +61,16 @@ impl<'a> Command for ScanCommand<'a> {
     }
 
     fn prepare_buffer(&mut self, conn: &mut Connection) -> Result<()> {
-        conn.buffer.set_scan(self.policy,
-                             self.namespace,
-                             self.set_name,
-                             self.bin_names,
-                             self.stream_command.recordset.task_id())
+        conn.buffer.set_operate(self.policy,
+                                self.read_command.single_command.key,
+                                self.operations)
     }
 
     fn get_node(&self) -> Result<Arc<Node>> {
-        self.stream_command.get_node()
+        self.read_command.get_node()
     }
 
     fn parse_result(&mut self, conn: &mut Connection) -> Result<()> {
-        StreamCommand::parse_result(&mut self.stream_command, conn)
+        self.read_command.parse_result(conn)
     }
 }

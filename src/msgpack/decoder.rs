@@ -17,8 +17,8 @@ use std::collections::HashMap;
 use std::vec::Vec;
 
 use errors::*;
-use common::ParticleType;
-use command::buffer::Buffer;
+use commands::ParticleType;
+use commands::buffer::Buffer;
 use value::*;
 
 pub fn unpack_value_list(buf: &mut Buffer) -> Result<Value> {

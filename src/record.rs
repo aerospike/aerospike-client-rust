@@ -17,8 +17,8 @@ use std::collections::HashMap;
 use std::fmt;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use value::Value;
-use common::key::Key;
+use Value;
+use Key;
 
 lazy_static! {
   // Fri Jan  1 00:00:00 UTC 2010

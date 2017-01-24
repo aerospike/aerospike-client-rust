@@ -13,8 +13,8 @@
 // License for the specific language governing permissions and limitations under
 // the License.
 
-use value::Value;
-use common::operation::*;
+use operations::*;
+use Value;
 
 impl<'a> Operation<'a> {
     pub fn list_append(bin: &'a str, value: &'a Value) -> Self {

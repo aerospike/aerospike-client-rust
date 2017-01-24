@@ -13,35 +13,32 @@
 // limitations under the License.
 
 use std::sync::Arc;
-use std::collections::HashMap;
 use std::time::Duration;
-use std::str;
 
 use errors::*;
+use Recordset;
+use Statement;
+use cluster::Node;
+use commands::{Command, SingleCommand, StreamCommand};
 use net::Connection;
+use policy::QueryPolicy;
 
-use cluster::{Node, Cluster};
-use common::{Key, Record};
-use policy::ReadPolicy;
-use command::Command;
-use command::single_command::SingleCommand;
-use command::buffer;
-
-pub struct ReadHeaderCommand<'a> {
-    single_command: SingleCommand<'a>,
-    policy: &'a ReadPolicy,
-    pub record: Option<Record>,
+pub struct QueryCommand<'a> {
+    stream_command: StreamCommand,
+    policy: &'a QueryPolicy,
+    statement: Arc<Statement>,
 }
 
-impl<'a> ReadHeaderCommand<'a> {
-    pub fn new(policy: &'a ReadPolicy,
-               cluster: Arc<Cluster>,
-               key: &'a Key)
+impl<'a> QueryCommand<'a> {
+    pub fn new(policy: &'a QueryPolicy,
+               node: Arc<Node>,
+               statement: Arc<Statement>,
+               recordset: Arc<Recordset>)
                -> Self {
-        ReadHeaderCommand {
-            single_command: SingleCommand::new(cluster, key),
+        QueryCommand {
+            stream_command: StreamCommand::new(node, recordset),
             policy: policy,
-            record: None,
+            statement: statement,
         }
     }
 
@@ -50,7 +47,7 @@ impl<'a> ReadHeaderCommand<'a> {
     }
 }
 
-impl<'a> Command for ReadHeaderCommand<'a> {
+impl<'a> Command for QueryCommand<'a> {
     fn write_timeout(&mut self,
                      conn: &mut Connection,
                      timeout: Option<Duration>)
@@ -64,28 +61,17 @@ impl<'a> Command for ReadHeaderCommand<'a> {
     }
 
     fn prepare_buffer(&mut self, conn: &mut Connection) -> Result<()> {
-        conn.buffer.set_read_header(self.policy, self.single_command.key)
+        conn.buffer.set_query(self.policy,
+                              &self.statement,
+                              false,
+                              self.stream_command.recordset.task_id())
     }
 
     fn get_node(&self) -> Result<Arc<Node>> {
-        self.single_command.get_node()
+        self.stream_command.get_node()
     }
 
     fn parse_result(&mut self, conn: &mut Connection) -> Result<()> {
-        // Read header.
-        if let Err(err) = conn.read_buffer(buffer::MSG_TOTAL_HEADER_SIZE as usize) {
-            warn!("Parse result error: {}", err);
-            return Err(err);
-        }
-
-        let result_code = (try!(conn.buffer.read_u8(Some(13))) & 0xFF) as isize;
-
-        if result_code == 0 {
-            let generation = try!(conn.buffer.read_u32(Some(14)));
-            let expiration = try!(conn.buffer.read_u32(Some(18)));
-            self.record = Some(Record::new(None, HashMap::new(), generation, expiration));
-        }
-
-        SingleCommand::empty_socket(conn)
+        StreamCommand::parse_result(&mut self.stream_command, conn)
     }
 }

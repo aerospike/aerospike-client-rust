@@ -13,7 +13,6 @@
 // limitations under the License.
 
 pub mod info_command;
-pub mod buffer;
 pub mod single_command;
 pub mod read_command;
 pub mod write_command;
@@ -27,14 +26,33 @@ pub mod stream_command;
 pub mod scan_command;
 pub mod query_command;
 pub mod admin_command;
+pub mod buffer;
+pub mod index_types;
+pub mod particle_type;
+
 mod field_type;
+
+pub use self::delete_command::DeleteCommand;
+pub use self::execute_udf_command::ExecuteUDFCommand;
+pub use self::exists_command::ExistsCommand;
+pub use self::info_command::Message;
+pub use self::operate_command::OperateCommand;
+pub use self::query_command::QueryCommand;
+pub use self::read_command::ReadCommand;
+pub use self::read_header_command::ReadHeaderCommand;
+pub use self::scan_command::ScanCommand;
+pub use self::single_command::SingleCommand;
+pub use self::stream_command::StreamCommand;
+pub use self::touch_command::TouchCommand;
+pub use self::write_command::WriteCommand;
+pub use self::index_types::{IndexType, CollectionIndexType};
+pub use self::particle_type::ParticleType;
 
 use std::sync::Arc;
 use std::time::Duration;
 
-use net::Connection;
 use errors::*;
-
+use net::Connection;
 use cluster::Node;
 
 // Command interface describes all commands available

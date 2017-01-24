@@ -25,22 +25,21 @@ use rustc_serialize::base64::{ToBase64, FromBase64, STANDARD};
 use threadpool::ThreadPool;
 
 use errors::*;
-use net::ToHosts;
+use Bin;
+use CollectionIndexType;
+use IndexType;
+use Key;
+use Record;
+use Recordset;
+use ResultCode;
+use Statement;
+use UDFLang;
+use Value;
 use cluster::{Cluster, Node};
-use common::operation::{Operation, OperationType};
-use common::{Key, Record, Bin, UDFLang, Recordset, Statement, IndexType, CollectionIndexType, ResultCode};
-use command::read_command::ReadCommand;
-use command::write_command::WriteCommand;
-use command::delete_command::DeleteCommand;
-use command::touch_command::TouchCommand;
-use command::exists_command::ExistsCommand;
-use command::read_header_command::ReadHeaderCommand;
-use command::operate_command::OperateCommand;
-use command::execute_udf_command::ExecuteUDFCommand;
-use command::scan_command::ScanCommand;
-use command::query_command::QueryCommand;
-use value::Value;
-
+use commands::{ReadCommand, WriteCommand, DeleteCommand, TouchCommand, ExistsCommand,
+               ReadHeaderCommand, OperateCommand, ExecuteUDFCommand, ScanCommand, QueryCommand};
+use net::ToHosts;
+use operations::{Operation, OperationType};
 use policy::{ClientPolicy, ReadPolicy, WritePolicy, ScanPolicy, QueryPolicy};
 
 

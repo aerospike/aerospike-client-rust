@@ -16,8 +16,8 @@
 use std::sync::Arc;
 
 use errors::*;
-use value::Value;
-use common::filter::Filter;
+use Value;
+use query::Filter;
 
 #[derive(Clone)]
 pub struct Aggregation {

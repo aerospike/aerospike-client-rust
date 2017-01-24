@@ -16,8 +16,8 @@
 use std::collections::HashMap;
 
 use errors::*;
-use value::Value;
-use common::operation::*;
+use operations::*;
+use Value;
 
 // Map storage order.
 #[derive(Clone, Copy)]

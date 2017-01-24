@@ -17,15 +17,13 @@ use std::time::Duration;
 use std::str;
 
 use errors::*;
-use net::Connection;
-use common::ResultCode;
-
+use Key;
+use ResultCode;
 use cluster::{Node, Cluster};
-use common::Key;
+use commands::buffer;
+use commands::{Command, SingleCommand};
+use net::Connection;
 use policy::WritePolicy;
-use command::Command;
-use command::single_command::SingleCommand;
-use command::buffer;
 
 pub struct DeleteCommand<'a> {
     single_command: SingleCommand<'a>,

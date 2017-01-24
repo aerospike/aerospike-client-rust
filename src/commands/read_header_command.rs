@@ -13,39 +13,34 @@
 // limitations under the License.
 
 use std::sync::Arc;
+use std::collections::HashMap;
 use std::time::Duration;
 use std::str;
 
 use errors::*;
-use net::Connection;
-use common::ResultCode;
-
+use Key;
+use Record;
 use cluster::{Node, Cluster};
-use common::{Key, OperationType, Bin};
-use policy::WritePolicy;
-use command::Command;
-use command::single_command::SingleCommand;
-use command::buffer;
+use commands::buffer;
+use commands::{Command, SingleCommand};
+use net::Connection;
+use policy::ReadPolicy;
 
-pub struct WriteCommand<'a> {
+pub struct ReadHeaderCommand<'a> {
     single_command: SingleCommand<'a>,
-    policy: &'a WritePolicy,
-    bins: &'a [&'a Bin<'a>],
-    operation: OperationType,
+    policy: &'a ReadPolicy,
+    pub record: Option<Record>,
 }
 
-impl<'a> WriteCommand<'a> {
-    pub fn new(policy: &'a WritePolicy,
+impl<'a> ReadHeaderCommand<'a> {
+    pub fn new(policy: &'a ReadPolicy,
                cluster: Arc<Cluster>,
-               key: &'a Key,
-               bins: &'a [&'a Bin],
-               operation: OperationType)
+               key: &'a Key)
                -> Self {
-        WriteCommand {
+        ReadHeaderCommand {
             single_command: SingleCommand::new(cluster, key),
-            bins: bins,
             policy: policy,
-            operation: operation,
+            record: None,
         }
     }
 
@@ -54,7 +49,7 @@ impl<'a> WriteCommand<'a> {
     }
 }
 
-impl<'a> Command for WriteCommand<'a> {
+impl<'a> Command for ReadHeaderCommand<'a> {
     fn write_timeout(&mut self,
                      conn: &mut Connection,
                      timeout: Option<Duration>)
@@ -68,10 +63,7 @@ impl<'a> Command for WriteCommand<'a> {
     }
 
     fn prepare_buffer(&mut self, conn: &mut Connection) -> Result<()> {
-        conn.buffer.set_write(self.policy,
-                              self.operation,
-                              self.single_command.key,
-                              self.bins)
+        conn.buffer.set_read_header(self.policy, self.single_command.key)
     }
 
     fn get_node(&self) -> Result<Arc<Node>> {
@@ -85,11 +77,12 @@ impl<'a> Command for WriteCommand<'a> {
             return Err(err);
         }
 
-        try!(conn.buffer.reset_offset());
+        let result_code = (try!(conn.buffer.read_u8(Some(13))) & 0xFF) as isize;
 
-        let result_code = ResultCode::from(try!(conn.buffer.read_u8(Some(13))) & 0xFF);
-        if result_code != ResultCode::Ok {
-            bail!(ErrorKind::ServerError(result_code));
+        if result_code == 0 {
+            let generation = try!(conn.buffer.read_u32(Some(14)));
+            let expiration = try!(conn.buffer.read_u32(Some(18)));
+            self.record = Some(Record::new(None, HashMap::new(), generation, expiration));
         }
 
         SingleCommand::empty_socket(conn)

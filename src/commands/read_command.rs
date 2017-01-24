@@ -18,17 +18,16 @@ use std::time::Duration;
 use std::str;
 
 use errors::*;
-use net::Connection;
-use common::ResultCode;
-use value::Value;
-
+use Key;
+use Record;
+use ResultCode;
+use Value;
 use cluster::{Node, Cluster};
-use common::{Key, Record};
+use commands::buffer;
+use commands::{Command, SingleCommand};
+use net::Connection;
 use policy::ReadPolicy;
-use command::Command;
-use command::single_command::SingleCommand;
-use command::buffer;
-use value;
+use value::bytes_to_particle;
 
 pub struct ReadCommand<'a> {
     pub single_command: SingleCommand<'a>,
@@ -87,9 +86,7 @@ impl<'a> ReadCommand<'a> {
             let name: String = try!(conn.buffer.read_str(name_size));
 
             let particle_bytes_size = op_size - (4 + name_size);
-            let value = try!(value::bytes_to_particle(particle_type,
-                                                      &mut conn.buffer,
-                                                      particle_bytes_size));
+            let value = bytes_to_particle(particle_type, &mut conn.buffer, particle_bytes_size)?;
 
             if !value.is_nil() {
                 // for operate list command results

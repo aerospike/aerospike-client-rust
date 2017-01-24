@@ -13,15 +13,20 @@
 // License for the specific language governing permissions and limitations under
 // the License.
 
+pub use self::lists::*;
+pub use self::maps::*;
+
+pub mod scalar;
+pub mod lists;
+pub mod maps;
+
 use std::collections::HashMap;
 
-use value::Value;
-use common::Bin;
-
 use errors::*;
+use Value;
 use msgpack::encoder;
-use command::buffer::Buffer;
-use common::ParticleType;
+use commands::ParticleType;
+use commands::buffer::Buffer;
 
 #[derive(Debug, Clone, Copy)]
 pub enum OperationType {
@@ -196,70 +201,5 @@ impl<'a> Operation<'a> {
             }
         }
         Ok(size)
-    }
-
-
-    pub fn get() -> Self {
-        Operation {
-            op: OperationType::Read,
-            bin: OperationBin::All,
-            data: OperationData::None,
-        }
-    }
-
-    pub fn get_header() -> Self {
-        Operation {
-            op: OperationType::Read,
-            bin: OperationBin::None,
-            data: OperationData::None,
-        }
-    }
-
-    pub fn get_bin(bin_name: &'a str) -> Self {
-        Operation {
-            op: OperationType::Read,
-            bin: OperationBin::Name(bin_name),
-            data: OperationData::None,
-        }
-    }
-
-    pub fn put(bin: &'a Bin) -> Self {
-        Operation {
-            op: OperationType::Write,
-            bin: OperationBin::Name(bin.name),
-            data: OperationData::Value(&bin.value),
-        }
-    }
-
-    pub fn append(bin: &'a Bin) -> Self {
-        Operation {
-            op: OperationType::Append,
-            bin: OperationBin::Name(bin.name),
-            data: OperationData::Value(&bin.value),
-        }
-    }
-
-    pub fn prepend(bin: &'a Bin) -> Self {
-        Operation {
-            op: OperationType::Prepend,
-            bin: OperationBin::Name(bin.name),
-            data: OperationData::Value(&&bin.value),
-        }
-    }
-
-    pub fn incr(bin: &'a Bin) -> Self {
-        Operation {
-            op: OperationType::Incr,
-            bin: OperationBin::Name(bin.name),
-            data: OperationData::Value(&bin.value),
-        }
-    }
-
-    pub fn touch() -> Self {
-        Operation {
-            op: OperationType::Touch,
-            bin: OperationBin::None,
-            data: OperationData::None,
-        }
     }
 }
