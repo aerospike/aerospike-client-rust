@@ -566,7 +566,7 @@ macro_rules! as_list {
         {
             let mut temp_vec = Vec::new();
             $(
-                temp_vec.push($crate::Value::from($v));
+                temp_vec.push(as_val!($v));
             )*
             $crate::Value::List(temp_vec)
         }
@@ -579,7 +579,7 @@ macro_rules! as_values {
         {
             let mut temp_vec = Vec::new();
             $(
-                temp_vec.push($crate::Value::from($v));
+                temp_vec.push(as_val!($v));
             )*
             temp_vec
         }
@@ -592,7 +592,7 @@ macro_rules! as_map {
         {
             let mut temp_map = HashMap::new();
             $(
-                temp_map.insert($crate::Value::from($k), $crate::Value::from($v));
+                temp_map.insert(as_val!($k), as_val!($v));
             )*
             $crate::Value::HashMap(temp_map)
         }
