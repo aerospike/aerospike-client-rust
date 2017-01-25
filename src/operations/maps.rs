@@ -15,12 +15,12 @@
 
 use std::collections::HashMap;
 
-use errors::*;
-use operations::*;
 use Value;
+use operations::{Operation, OperationType, OperationBin, OperationData,
+                 CdtOperation, CdtOpType, CdtArgument};
 
 // Map storage order.
-#[derive(Clone, Copy)]
+#[derive(Debug, Clone, Copy)]
 pub enum MapOrder {
     // Map is not ordered. This is the default.
     Unordered = 0,
@@ -34,7 +34,7 @@ pub enum MapOrder {
 
 
 // Map return type. Type of data to return when selecting or removing items from the map.
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub enum MapReturnType {
     // Do not return a result.
     None = 0,
@@ -82,7 +82,7 @@ pub enum MapReturnType {
     KeyValue = 8,
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub enum MapWriteMode {
     // If the key already exists, the item will be overwritten.
     // If the key does not exist, a new item will be created.
@@ -98,23 +98,24 @@ pub enum MapWriteMode {
 }
 
 // MapPolicy directives when creating a map and writing map items.
+#[derive(Debug)]
 pub struct MapPolicy {
     order: MapOrder,
     write_mode: MapWriteMode,
 }
 
 impl MapPolicy {
-    pub fn new(order: MapOrder, write_mode: MapWriteMode) -> Result<Self> {
-        Ok(MapPolicy {
+    pub fn new(order: MapOrder, write_mode: MapWriteMode) -> Self {
+        MapPolicy {
             order: order,
             write_mode: write_mode,
-        })
+        }
     }
 }
 
 impl Default for MapPolicy {
     fn default() -> Self {
-        MapPolicy::new(MapOrder::Unordered, MapWriteMode::Update).unwrap()
+        MapPolicy::new(MapOrder::Unordered, MapWriteMode::Update)
     }
 }
 

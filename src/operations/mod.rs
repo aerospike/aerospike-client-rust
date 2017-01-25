@@ -13,14 +13,13 @@
 // License for the specific language governing permissions and limitations under
 // the License.
 
-pub use self::lists::*;
-pub use self::maps::*;
-
 pub mod scalar;
 pub mod lists;
 pub mod maps;
 
 use std::collections::HashMap;
+
+pub use self::maps::{MapOrder, MapReturnType, MapWriteMode, MapPolicy};
 
 use errors::*;
 use Value;

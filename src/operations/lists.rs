@@ -13,8 +13,9 @@
 // License for the specific language governing permissions and limitations under
 // the License.
 
-use operations::*;
 use Value;
+use operations::{Operation, OperationType, OperationBin, OperationData,
+                 CdtOperation, CdtOpType, CdtArgument};
 
 impl<'a> Operation<'a> {
     pub fn list_append(bin: &'a str, value: &'a Value) -> Self {

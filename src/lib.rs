@@ -102,42 +102,41 @@ extern crate lazy_static;
 #[macro_use]
 extern crate error_chain;
 
-pub use errors::*;
+pub use bin::Bin;
 pub use client::Client;
+pub use errors::{Error, ErrorKind, Result};
+pub use index_types::{IndexType, CollectionIndexType};
+pub use key::Key;
 pub use net::Host;
-pub use value::Value;
+pub use operations::{Operation, MapPolicy, MapReturnType, MapWriteMode};
 pub use policy::{Policy, ClientPolicy, ReadPolicy, WritePolicy, Priority, ConsistencyLevel,
                  CommitLevel, RecordExistsAction, GenerationPolicy, ScanPolicy, QueryPolicy};
-pub use key::Key;
-pub use bin::Bin;
-pub use record::Record;
 pub use query::{Statement, Filter, UDFLang, Recordset};
+pub use record::Record;
 pub use result_code::ResultCode;
 pub use user::User;
-pub use commands::{IndexType, CollectionIndexType};
-pub use operations::{Operation, MapPolicy, MapReturnType};
+pub use value::Value;
 
 #[macro_use]
 pub mod errors;
-
-mod commands;
-mod msgpack;
+#[macro_use]
+mod bin;
+mod client;
 mod cluster;
-
+mod commands;
+mod index_types;
 #[macro_use]
-pub mod bin;
-pub mod client;
-#[macro_use]
-pub mod key;
-pub mod net;
+mod key;
+mod msgpack;
+mod net;
 pub mod operations;
 pub mod policy;
 pub mod query;
-pub mod record;
-pub mod result_code;
-pub mod user;
+mod record;
+mod result_code;
+mod user;
 #[macro_use]
-pub mod value;
+mod value;
 
 #[cfg(test)]
 extern crate hex;

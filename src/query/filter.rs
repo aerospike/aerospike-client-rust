@@ -16,9 +16,10 @@
 use std::sync::Arc;
 
 use errors::*;
+use CollectionIndexType;
 use Value;
+use commands::ParticleType;
 use commands::buffer::Buffer;
-use commands::{CollectionIndexType, ParticleType};
 
 #[derive(Debug,Clone)]
 pub struct Filter {
