@@ -13,9 +13,10 @@
 // License for the specific language governing permissions and limitations under
 // the License.
 
-use aerospike::*;
-
 use std::sync::Arc;
+
+use aerospike::CollectionIndexType;
+
 
 #[test]
 fn geo_filter_macros() {

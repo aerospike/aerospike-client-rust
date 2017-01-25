@@ -23,7 +23,7 @@ use std::result::Result as StdResult;
 
 use errors::*;
 use net::{Host, Connection};
-use command::info_command::Message;
+use commands::Message;
 use policy::ClientPolicy;
 use cluster::node_validator::NodeValidator;
 

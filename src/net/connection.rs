@@ -23,8 +23,8 @@ use errors::*;
 use policy::client_policy::ClientPolicy;
 use cluster::node::Node;
 use Host;
-use command::buffer::Buffer;
-use command::admin_command::AdminCommand;
+use commands::buffer::Buffer;
+use commands::admin_command::AdminCommand;
 
 #[derive(Debug)]
 pub struct Connection {

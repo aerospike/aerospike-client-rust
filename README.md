@@ -12,6 +12,7 @@ This library is compatible with Rust v1.0+ and supports the following operating 
 - [Usage](#Usage)
 - [Known Limitations](#Limitations)
 - [Tests](#Tests)
+- [Benchmarks](#Benchmarks)
 
 
 <a name="Usage"></a>
@@ -23,10 +24,11 @@ The following is a very simple example of CRUD operations in an Aerospike databa
 #[macro_use]
 extern crate aerospike;
 
-use aerospike::*;
 use std::sync::Arc;
 use std::time::Instant;
 use std::thread;
+
+use aerospike::{Client, Operation, ClientPolicy, ReadPolicy, WritePolicy};
 
 fn main() {
     let cpolicy = ClientPolicy::default();
@@ -124,3 +126,11 @@ To enable debug logging for the `aerospike` crate:
 To enable backtraces:
 
     $ RUST_LOG=aerospike=debug RUST_BACKTRACE=1 cargo test
+
+<a name="Benchmarks"></a>
+## Benchmarks
+
+The micro-benchmarks in the `benches` directory require nightly Rust builds to execute:
+
+    $ export AEROSPIKE_HOSTS=127.0.0.1:3000
+    $ rustup run nightly cargo bench

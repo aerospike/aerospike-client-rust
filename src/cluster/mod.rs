@@ -18,11 +18,6 @@ pub mod node;
 pub mod partition;
 pub mod partition_tokenizer;
 
-use self::node_validator::NodeValidator;
-pub use self::node::Node;
-use self::partition::Partition;
-use self::partition_tokenizer::PartitionTokenizer;
-
 use std::collections::HashMap;
 use std::vec::Vec;
 use std::sync::{RwLock, Arc, Mutex};
@@ -32,9 +27,14 @@ use std::sync::mpsc::{Sender, Receiver, TryRecvError};
 use std::sync::mpsc;
 use std::time::{Instant, Duration};
 
+pub use self::node::Node;
+
+use self::node_validator::NodeValidator;
+use self::partition::Partition;
+use self::partition_tokenizer::PartitionTokenizer;
+
 use errors::*;
 use net::Host;
-
 use policy::ClientPolicy;
 
 // Cluster encapsulates the aerospike cluster nodes and manages

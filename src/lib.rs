@@ -13,6 +13,8 @@
 // License for the specific language governing permissions and limitations under
 // the License.
 
+//! A pure-rust client for the Aerospike NoSQL database.
+//!
 //! ## Example
 //!
 //! The following is a very simple example of CRUD operations in an Aerospike database.
@@ -21,11 +23,12 @@
 //! #[macro_use]
 //! extern crate aerospike;
 //!
-//! use aerospike::*;
 //! use std::env;
 //! use std::sync::Arc;
 //! use std::time::Instant;
 //! use std::thread;
+//!
+//! use aerospike::{Client, Operation, ClientPolicy, ReadPolicy, WritePolicy};
 //!
 //! fn main() {
 //!     let cpolicy = ClientPolicy::default();
@@ -100,28 +103,41 @@ extern crate lazy_static;
 extern crate error_chain;
 
 pub use errors::*;
+pub use client::Client;
+pub use net::Host;
 pub use value::Value;
 pub use policy::{Policy, ClientPolicy, ReadPolicy, WritePolicy, Priority, ConsistencyLevel,
                  CommitLevel, RecordExistsAction, GenerationPolicy, ScanPolicy, QueryPolicy};
-pub use net::{Host, Connection};
-pub use cluster::{Node, Cluster};
-pub use client::{Client, ResultCode};
-pub use common::{Key, Bin, Operation, UDFLang, Recordset, Statement, Filter, IndexType,
-                 CollectionIndexType, ParticleType};
-pub use common::{MapPolicy, MapReturnType};
+pub use key::Key;
+pub use bin::Bin;
+pub use record::Record;
+pub use query::{Statement, Filter, UDFLang, Recordset};
+pub use result_code::ResultCode;
+pub use user::User;
+pub use commands::{IndexType, CollectionIndexType};
+pub use operations::{Operation, MapPolicy, MapReturnType};
 
 #[macro_use]
 pub mod errors;
 
-mod command;
+mod commands;
 mod msgpack;
+mod cluster;
 
-pub mod common;
-pub mod value;
-pub mod policy;
-pub mod net;
-pub mod cluster;
+#[macro_use]
+pub mod bin;
 pub mod client;
+#[macro_use]
+pub mod key;
+pub mod net;
+pub mod operations;
+pub mod policy;
+pub mod query;
+pub mod record;
+pub mod result_code;
+pub mod user;
+#[macro_use]
+pub mod value;
 
 #[cfg(test)]
 extern crate hex;

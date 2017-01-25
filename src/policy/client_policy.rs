@@ -16,7 +16,7 @@ use std::time::Duration;
 use std::collections::HashMap;
 
 use errors::*;
-use command::admin_command::AdminCommand;
+use commands::admin_command::AdminCommand;
 
 // ClientPolicy encapsulates parameters for client policy command.
 #[derive(Debug, Clone)]
