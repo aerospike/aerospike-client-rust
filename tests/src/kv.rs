@@ -27,12 +27,9 @@ fn connect() {
     let _ = env_logger::init();
 
     let ref client = common1::GLOBAL_CLIENT;
-
     let namespace: &str = &common1::AEROSPIKE_NAMESPACE;
     let set_name = &common1::rand_str(10);
-
     let policy = ReadPolicy::default();
-
     let wpolicy = WritePolicy::default();
     let key = as_key!(namespace, set_name, -1);
     let wbin = as_bin!("bin999", "test string");
@@ -41,21 +38,17 @@ fn connect() {
     let wbin3 = as_bin!("bin map", as_map!(1 => 1, 2 => 2, 3 => "hi!"));
     let wbin4 = as_bin!("bin f64", 1.64f64);
     let wbin5 = as_bin!("bin Nil", None);
-    let wbin6 = as_bin!("bin Geo",
-                        as_geo!(format!("{{ \"type\": \"Point\", \"coordinates\": [{}, {}] }}",
-                                        17.119381,
-                                        19.45612)));
+    let wbin6 = as_bin!("bin Geo", as_geo!(format!(
+                "{{ \"type\": \"Point\", \"coordinates\": [{}, {}] }}", 17.119381, 19.45612)));
     let bins = vec![&wbin, &wbin1, &wbin2, &wbin3, &wbin4, &wbin5, &wbin6];
 
     client.delete(&wpolicy, &key).unwrap();
-
-
     client.put(&wpolicy, &key, &bins).unwrap();
     client.get(&policy, &key, None).unwrap();
-
     client.touch(&wpolicy, &key).unwrap();
     client.get(&policy, &key, None).unwrap();
     client.get_header(&policy, &key).unwrap();
+
     let exists = client.exists(&wpolicy, &key).unwrap();
     assert!(exists);
 
