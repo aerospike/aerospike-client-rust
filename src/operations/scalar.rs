@@ -66,7 +66,7 @@ impl<'a> Operation<'a> {
         }
     }
 
-    pub fn incr(bin: &'a Bin) -> Self {
+    pub fn add(bin: &'a Bin) -> Self {
         Operation {
             op: OperationType::Incr,
             bin: OperationBin::Name(bin.name),
