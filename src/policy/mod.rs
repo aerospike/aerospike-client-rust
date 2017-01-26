@@ -31,6 +31,7 @@ pub use self::consistency_level::ConsistencyLevel;
 pub use self::generation_policy::GenerationPolicy;
 pub use self::record_exists_action::RecordExistsAction;
 pub use self::commit_level::CommitLevel;
+pub use self::write_policy::Expiration;
 
 pub use self::client_policy::ClientPolicy;
 pub use self::read_policy::ReadPolicy;
