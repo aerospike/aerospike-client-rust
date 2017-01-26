@@ -15,7 +15,19 @@
 
 //! A pure-rust client for the Aerospike NoSQL database.
 //!
-//! ## Example
+//! Aerospike is an enterprise-class, NoSQL database solution for real-time operational
+//! applications, delivering predictable performance at scale, superior uptime, and high
+//! availability at the lowest TCO compared to first-generation NoSQL and relational databases. For
+//! more information please refer to https://www.aerospike.com/.
+//!
+//! # Installation
+//!
+//! Add this to your `Cargo.toml`:
+//!
+//! [dependencies]
+//! aerospike = "0.0.1"
+//!
+//! # Examples
 //!
 //! The following is a very simple example of CRUD operations in an Aerospike database.
 //!
