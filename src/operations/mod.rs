@@ -132,6 +132,52 @@ impl<'a> CdtOperation<'a> {
     }
 }
 
+/// Database operation definition. This struct is used in the client's `operate()` method.
+///
+/// # List Operations
+///
+/// List operations support negative indexing. If the index is negative, the resolved index starts
+/// backwards from the end of the list.
+///
+/// Index/Count examples:
+///
+/// * Index 0: First item in list.
+/// * Index 4: Fifth item in list.
+/// * Index -1: Last item in list.
+/// * Index -3: Third to last item in list.
+/// * Index 1, Count 2: Second and third item in list.
+/// * Index -3, Count 3: Last three items in list.
+/// * Index -5, Count 4: Range between fifth to last item to second to last item inclusive.
+///
+/// If an index is out of bounds, a paramter error will be returned. If a range is partially out of
+/// bounds, the valid part of the range will be returned.
+///
+/// # Map Operations
+///
+/// All maps maintain an index and a rank. The index is the item offset from the start of the map,
+/// for both unordered and ordered maps. The rank is the sorted index of the value component.
+/// Map supports negative indexing for indexjkj and rank.
+///
+/// The default unique key map is unordered.
+///
+/// Index/Count examples:
+///
+/// * Index 0: First item in map.
+/// * Index 4: Fifth item in map.
+/// * Index -1: Last item in map.
+/// * Index -3: Third to last item in map.
+/// * Index 1, Count 2: Second and third items in map.
+/// * Index -3, Count 3: Last three items in map.
+/// * Index -5, Count 4: Range between fifth to last item to second to last item inclusive.
+///
+/// Rank examples:
+///
+/// * Rank 0: Item with lowest value rank in map.
+/// * Rank 4: Fifth lowest ranked item in map.
+/// * Rank -1: Item with highest ranked value in map.
+/// * Rank -3: Item with third highest ranked value in map.
+/// * Rank 1 Count 2: Second and third lowest ranked items in map.
+/// * Rank -3 Count 3: Top three ranked items in map.
 #[derive(Debug)]
 pub struct Operation<'a> {
     // OpType determines type of operation.

@@ -18,6 +18,7 @@ use operations::*;
 
 impl<'a> Operation<'a> {
 
+    /// Create read all record bins database operation.
     pub fn get() -> Self {
         Operation {
             op: OperationType::Read,
@@ -26,6 +27,7 @@ impl<'a> Operation<'a> {
         }
     }
 
+    /// Create read record header database operation.
     pub fn get_header() -> Self {
         Operation {
             op: OperationType::Read,
@@ -34,6 +36,7 @@ impl<'a> Operation<'a> {
         }
     }
 
+    /// Create read bin database operation.
     pub fn get_bin(bin_name: &'a str) -> Self {
         Operation {
             op: OperationType::Read,
@@ -42,6 +45,7 @@ impl<'a> Operation<'a> {
         }
     }
 
+    /// Create set database operation.
     pub fn put(bin: &'a Bin) -> Self {
         Operation {
             op: OperationType::Write,
@@ -50,6 +54,7 @@ impl<'a> Operation<'a> {
         }
     }
 
+    /// Create string append database operation.
     pub fn append(bin: &'a Bin) -> Self {
         Operation {
             op: OperationType::Append,
@@ -58,6 +63,7 @@ impl<'a> Operation<'a> {
         }
     }
 
+    /// Create string prepend database operation.
     pub fn prepend(bin: &'a Bin) -> Self {
         Operation {
             op: OperationType::Prepend,
@@ -66,6 +72,7 @@ impl<'a> Operation<'a> {
         }
     }
 
+    /// Create integer add database operation.
     pub fn add(bin: &'a Bin) -> Self {
         Operation {
             op: OperationType::Incr,
@@ -74,6 +81,7 @@ impl<'a> Operation<'a> {
         }
     }
 
+    /// Create touch database operation.
     pub fn touch() -> Self {
         Operation {
             op: OperationType::Touch,
