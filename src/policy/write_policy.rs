@@ -13,42 +13,11 @@
 // License for the specific language governing permissions and limitations under
 // the License.
 
-const NAMESPACE_DEFAULT: u32 = 0x00000000;
-const NEVER_EXPIRE: u32      = 0xFFFFFFFF; // -1 as i32
-const DONT_UPDATE: u32       = 0xFFFFFFFE; // -2 as i32
-
-use std::u32;
-
 use policy::{BasePolicy, PolicyLike};
 use RecordExistsAction;
 use GenerationPolicy;
 use CommitLevel;
-
-#[derive(Debug, Clone, Copy)]
-pub enum Expiration {
-    /// Set the record to expire X seconds from now
-    Seconds(u32),
-
-    /// Set the record's expiry time using the default time-to-live (TTL) value for the namespace
-    NamespaceDefault,
-
-    /// Set the record to never expire
-    Never,
-
-    /// Do not change the record's expiry time when updating the record
-    DontUpdate,
-}
-
-impl From<Expiration> for u32 {
-    fn from(exp: Expiration) -> u32 {
-        match exp {
-            Expiration::Seconds(secs)    => secs,
-            Expiration::NamespaceDefault => NAMESPACE_DEFAULT,
-            Expiration::Never            => NEVER_EXPIRE,
-            Expiration::DontUpdate       => DONT_UPDATE,
-        }
-    }
-}
+use Expiration;
 
 pub struct WritePolicy {
     pub base_policy: BasePolicy,

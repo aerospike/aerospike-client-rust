@@ -122,8 +122,8 @@ pub use index_types::{IndexType, CollectionIndexType};
 pub use key::Key;
 pub use net::Host;
 pub use operations::{Operation, MapPolicy, MapReturnType, MapWriteMode};
-pub use policy::{Policy, ClientPolicy, ReadPolicy, WritePolicy, Priority, ConsistencyLevel,
-                 CommitLevel, RecordExistsAction, GenerationPolicy, ScanPolicy, QueryPolicy};
+pub use policy::{Policy, ClientPolicy, ReadPolicy, WritePolicy, ScanPolicy, QueryPolicy,
+    Priority, ConsistencyLevel, CommitLevel, RecordExistsAction, GenerationPolicy, Expiration};
 pub use query::{Statement, Filter, UDFLang, Recordset};
 pub use record::Record;
 pub use result_code::ResultCode;

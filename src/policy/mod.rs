@@ -13,6 +13,7 @@
 // License for the specific language governing permissions and limitations under
 // the License.
 
+mod expiration;
 mod priority;
 mod consistency_level;
 mod generation_policy;
@@ -25,19 +26,18 @@ mod scan_policy;
 mod query_policy;
 mod admin_policy;
 
-pub use self::priority::Priority;
-pub use self::consistency_level::ConsistencyLevel;
-pub use self::generation_policy::GenerationPolicy;
-pub use self::record_exists_action::RecordExistsAction;
-pub use self::commit_level::CommitLevel;
-pub use self::write_policy::Expiration;
-
-pub use self::client_policy::ClientPolicy;
-pub use self::read_policy::ReadPolicy;
-pub use self::write_policy::WritePolicy;
-pub use self::scan_policy::ScanPolicy;
-pub use self::query_policy::QueryPolicy;
 pub use self::admin_policy::AdminPolicy;
+pub use self::client_policy::ClientPolicy;
+pub use self::commit_level::CommitLevel;
+pub use self::consistency_level::ConsistencyLevel;
+pub use self::expiration::Expiration;
+pub use self::generation_policy::GenerationPolicy;
+pub use self::priority::Priority;
+pub use self::query_policy::QueryPolicy;
+pub use self::read_policy::ReadPolicy;
+pub use self::record_exists_action::RecordExistsAction;
+pub use self::scan_policy::ScanPolicy;
+pub use self::write_policy::WritePolicy;
 
 use std::time::{Duration, Instant};
 use std::option::Option;
