@@ -27,8 +27,6 @@ pub struct ScanPolicy {
 
     pub include_bin_data: bool, // = true
 
-    pub include_ldt_data: bool, // = false
-
     pub fail_on_cluster_change: bool, // = true
 }
 
@@ -51,8 +49,6 @@ impl Default for ScanPolicy {
             record_queue_size: 1024,
 
             include_bin_data: true,
-
-            include_ldt_data: false,
 
             fail_on_cluster_change: true,
         }

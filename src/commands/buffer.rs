@@ -421,9 +421,6 @@ impl Buffer {
         if policy.fail_on_cluster_change {
             priority |= 0x08;
         }
-        if policy.include_ldt_data {
-            priority |= 0x02;
-        }
 
         try!(self.write_u8(priority));
         try!(self.write_u8(policy.scan_percent));
