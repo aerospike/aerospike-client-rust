@@ -43,8 +43,8 @@
 use std::collections::HashMap;
 
 use Value;
-use operations::{Operation, OperationType, OperationBin, OperationData,
-                 CdtOperation, CdtOpType, CdtArgument};
+use operations::{Operation, OperationType, OperationBin, OperationData};
+use operations::cdt::{CdtOperation, CdtOpType, CdtArgument};
 
 /// Map storage order.
 #[derive(Debug, Clone, Copy)]

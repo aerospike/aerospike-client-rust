@@ -32,8 +32,8 @@
 //! bounds, the valid part of the range will be returned.
 
 use Value;
-use operations::{Operation, OperationType, OperationBin, OperationData,
-                 CdtOperation, CdtOpType, CdtArgument};
+use operations::{Operation, OperationType, OperationBin, OperationData};
+use operations::cdt::{CdtOperation, CdtOpType, CdtArgument};
 
 /// Create list append operation. Server appends value to the end of list bin. Server returns
 /// list size.

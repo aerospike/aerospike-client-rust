@@ -20,7 +20,7 @@ use std::num::Wrapping;
 use errors::*;
 use commands::ParticleType;
 use commands::buffer::Buffer;
-use operations::*;
+use operations::cdt::{CdtOperation, CdtArgument};
 use value::*;
 
 pub fn pack_value(buf: &mut Option<&mut Buffer>, val: &Value) -> Result<usize> {
