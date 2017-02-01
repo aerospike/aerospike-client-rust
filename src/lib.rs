@@ -40,7 +40,8 @@
 //! use std::time::Instant;
 //! use std::thread;
 //!
-//! use aerospike::{Client, Operation, ClientPolicy, ReadPolicy, WritePolicy};
+//! use aerospike::{Client, ClientPolicy, ReadPolicy, WritePolicy};
+//! use aerospike::operations;
 //!
 //! fn main() {
 //!     let cpolicy = ClientPolicy::default();
@@ -75,7 +76,7 @@
 //!             let exists = client.exists(&wpolicy, &key).unwrap();
 //!             println!("exists: {}", exists);
 //!
-//!             let ops = &vec![Operation::put(&wbin), Operation::get()];
+//!             let ops = &vec![operations::put(&wbin), operations::get()];
 //!             let op_rec = client.operate(&wpolicy, &key, ops);
 //!             println!("operate: {}", op_rec.unwrap());
 //!

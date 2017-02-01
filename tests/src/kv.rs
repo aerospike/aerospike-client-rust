@@ -16,7 +16,7 @@
 use std::collections::HashMap;
 
 use aerospike::{ReadPolicy, WritePolicy};
-use aerospike::Operation;
+use aerospike::operations;
 
 use env_logger;
 
@@ -52,7 +52,7 @@ fn connect() {
     let exists = client.exists(&wpolicy, &key).unwrap();
     assert!(exists);
 
-    let ops = &vec![Operation::put(&wbin), Operation::get()];
+    let ops = &vec![operations::put(&wbin), operations::get()];
     client.operate(&wpolicy, &key, ops).unwrap();
 
     let existed = client.delete(&wpolicy, &key).unwrap();

@@ -371,8 +371,8 @@ impl Client {
     /// let key = as_key!("test", "test", "mykey");
     /// let bin = as_bin!("a", 42);
     /// let ops = vec![
-    ///     Operation::add(&bin),
-    ///     Operation::get_bin("a"),
+    ///     operations::add(&bin),
+    ///     operations::get_bin("a"),
     /// ];
     /// match client.operate(&WritePolicy::default(), &key, &ops) {
     ///     Ok(record) => println!("The new value is {}", record.bins.get("a").unwrap()),
