@@ -46,7 +46,7 @@ fn map_operations() {
     let rec = client.operate(&wpolicy, &key, &vec![op]).unwrap();
     assert_eq!(*rec.bins.get(bin_name).unwrap(), as_val!(3)); // size of map after put
 
-    let op = Operation::map_size(&mpolicy, &bin_name);
+    let op = Operation::map_size(&bin_name);
     let rec = client.operate(&wpolicy, &key, &vec![op]).unwrap();
     assert_eq!(*rec.bins.get(bin_name).unwrap(), as_val!(3)); // size of map
 
@@ -62,7 +62,7 @@ fn map_operations() {
     assert_eq!(*rec.bins.get(bin_name).unwrap(), as_val!(5)); // size of map after put
 
     let k = as_val!("e");
-    let op = Operation::map_remove_by_key(&mpolicy, &bin_name, &k, MapReturnType::Value);
+    let op = Operation::map_remove_by_key(&bin_name, &k, MapReturnType::Value);
     let rec = client.operate(&wpolicy, &key, &vec![op]).unwrap();
     assert_eq!(*rec.bins.get(bin_name).unwrap(), as_val!(5));
 
@@ -76,7 +76,7 @@ fn map_operations() {
     let rec = client.operate(&wpolicy, &key, &vec![op]).unwrap();
     assert_eq!(*rec.bins.get(bin_name).unwrap(), as_val!(10)); // value of the key after decrement
 
-    let op = Operation::map_clear(&mpolicy, &bin_name);
+    let op = Operation::map_clear(&bin_name);
     let rec = client.operate(&wpolicy, &key, &vec![op]).unwrap();
     assert!(rec.bins.get(bin_name).is_none()); // map_clear returns no result
 
