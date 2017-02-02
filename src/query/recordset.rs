@@ -77,10 +77,6 @@ impl Recordset {
             self.close()
         };
     }
-
-    pub fn iter(&self) -> &Self {
-        self
-    }
 }
 
 impl<'a> Iterator for &'a Recordset {
