@@ -13,6 +13,10 @@
 // License for the specific language governing permissions and limitations under
 // the License.
 
+//! Error and Result types for the Aerospike client.
+
+#![allow(missing_docs)]
+
 use ResultCode;
 
 error_chain! {
@@ -20,13 +24,13 @@ error_chain! {
     // Automatic conversions between this error chain and other error types not defined by the
     // `error_chain!`.
     foreign_links {
-        Base64(::rustc_serialize::base64::FromBase64Error);
-        InvalidUtf8(::std::str::Utf8Error);
-        Io(::std::io::Error);
-        MpscRecv(::std::sync::mpsc::RecvError);
-        ParseAddr(::std::net::AddrParseError);
-        ParseInt(::std::num::ParseIntError);
-        PwHash(::pwhash::error::Error);
+        Base64(::rustc_serialize::base64::FromBase64Error) #[doc = "Error deserializing a Base64 encoded value"];
+        InvalidUtf8(::std::str::Utf8Error) #[doc = "Error interpreting a sequence of u8 as a UTF-8 encoded string."];
+        Io(::std::io::Error) #[doc = "Error during an I/O operation"];
+        MpscRecv(::std::sync::mpsc::RecvError) #[doc = "Error returned from the `recv` function on an MPSC `Receiver`"];
+        ParseAddr(::std::net::AddrParseError) #[doc = "Error parsing an IP or socket address"];
+        ParseInt(::std::num::ParseIntError) #[doc = "Error parsing an integer"];
+        PwHash(::pwhash::error::Error) #[doc = "Error returned while hashing a password for user authentication"];
     }
 
     // Additional `ErrorKind` variants.

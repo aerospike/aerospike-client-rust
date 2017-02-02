@@ -15,14 +15,20 @@
 
 use value::Value;
 
-// #[derive(Debug)]
+/// Container object for a record bin, comprising a name and a value.
 pub struct Bin<'a> {
+
+    /// Bin name
     pub name: &'a str,
+
+    /// Bin value
     pub value: Value,
 }
 
 
 impl<'a> Bin<'a> {
+
+    /// Construct a new bin given a name and a value.
     pub fn new(name: &'a str, val: Value) -> Self {
         Bin {
             name: name,
@@ -31,6 +37,7 @@ impl<'a> Bin<'a> {
     }
 }
 
+/// Construct a new bin from a name and an optional value (defaults to the empty value `nil`).
 #[macro_export]
 macro_rules! as_bin {
     ($bin_name:expr, None) => {{

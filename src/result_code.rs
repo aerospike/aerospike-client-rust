@@ -13,195 +13,198 @@
 // License for the specific language governing permissions and limitations under
 // the License.
 
+use std::fmt;
+use std::result::Result as StdResult;
+
+/// Database operation error codes. The error codes are defined in the server-side file proto.h.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum ResultCode {
 
-    // OperationType was successful.
+    /// OperationType was successful.
     Ok,
 
-    // Unknown server failure.
+    /// Unknown server failure.
     ServerError,
 
-    // On retrieving, touching or replacing a record that doesn't exist.
+    /// On retrieving, touching or replacing a record that doesn't exist.
     KeyNotFoundError,
 
-    // On modifying a record with unexpected generation.
+    /// On modifying a record with unexpected generation.
     GenerationError,
 
-    // Bad parameter(s) were passed in database operation call.
+    /// Bad parameter(s) were passed in database operation call.
     ParameterError,
 
-    // On create-only (write unique) operations on a record that already
-    // exists.
+    /// On create-only (write unique) operations on a record that already exists.
     KeyExistsError,
 
-    // On create-only (write unique) operations on a bin that already
-    // exists.
+    /// On create-only (write unique) operations on a bin that already exists.
     BinExistsError,
 
-    // Expected cluster Id was not received.
+    /// Expected cluster Id was not received.
     ClusterKeyMismatch,
 
-    // Server has run out of memory.
+    /// Server has run out of memory.
     ServerMemError,
 
-    // Client or server has timed out.
+    /// Client or server has timed out.
     Timeout,
 
-    // Xds product is not available.
+    /// Xds product is not available.
     NoXds,
 
-    // Server is not accepting requests.
+    /// Server is not accepting requests.
     ServerNotAvailable,
 
-    // OperationType is not supported with configured bin type (single-bin or
-    // multi-bin).
+    /// OperationType is not supported with configured bin type (single-bin or multi-bin).
     BinTypeError,
 
-    // Record size exceeds limit.
+    /// Record size exceeds limit.
     RecordTooBig,
 
-    // Too many concurrent operations on the same record.
+    /// Too many concurrent operations on the same record.
     KeyBusy,
 
-    // Scan aborted by server.
+    /// Scan aborted by server.
     ScanAbort,
 
-    // Unsupported Server Feature (e.g. Scan + Udf)
+    /// Unsupported Server Feature (e.g. Scan + Udf)
     UnsupportedFeature,
 
-    // Specified bin name does not exist in record.
+    /// Specified bin name does not exist in record.
     BinNotFound,
 
-    // Specified bin name does not exist in record.
+    /// Specified bin name does not exist in record.
     DeviceOverload,
 
-    // Key type mismatch.
+    /// Key type mismatch.
     KeyMismatch,
 
-    // Invalid namespace.
+    /// Invalid namespace.
     InvalidNamespace,
 
-    // Bin name length greater than 14 characters.
+    /// Bin name length greater than 14 characters.
     BinNameTooLong,
 
-    // OperationType not allowed at this time.
+    /// OperationType not allowed at this time.
     FailForbidden,
 
-    // There are no more records left for query.
+    /// There are no more records left for query.
     QueryEnd,
 
-    // Security type not supported by connected server.
+    /// Security type not supported by connected server.
     SecurityNotSupported,
 
-    // Administration command is invalid.
+    /// Administration command is invalid.
     SecurityNotEnabled,
 
-    // Administration field is invalid.
+    /// Administration field is invalid.
     SecuritySchemeNotSupported,
 
-    // Administration command is invalid.
+    /// Administration command is invalid.
     InvalidCommand,
 
-    // Administration field is invalid.
+    /// Administration field is invalid.
     InvalidField,
 
-    // Security protocol not followed.
+    /// Security protocol not followed.
     IllegalState,
 
-    // User name is invalid.
+    /// User name is invalid.
     InvalidUser,
 
-    // User was previously created.
+    /// User was previously created.
     UserAlreadyExists,
 
-    // Password is invalid.
+    /// Password is invalid.
     InvalidPassword,
 
-    // Security credential is invalid.
+    /// Security credential is invalid.
     ExpiredPassword,
 
-    // Forbidden password (e.g. recently used)
+    /// Forbidden password (e.g. recently used)
     ForbiddenPassword,
 
-    // Security credential is invalid.
+    /// Security credential is invalid.
     InvalidCredential,
 
-    // Role name is invalid.
+    /// Role name is invalid.
     InvalidRole,
 
-    // Role already exists.
+    /// Role already exists.
     RoleAlreadyExists,
 
-    // Privilege is invalid.
+    /// Privilege is invalid.
     InvalidPrivilege,
 
-    // User must be authentication before performing database operations.
+    /// User must be authentication before performing database operations.
     NotAuthenticated,
 
-    // User does not posses the required role to perform the database operation.
+    /// User does not posses the required role to perform the database operation.
     RoleViolation,
 
-    // A user defined function returned an error code.
+    /// A user defined function returned an error code.
     UdfBadResponse,
 
-    // The requested item in a large collection was not found.
+    /// The requested item in a large collection was not found.
     LargeItemNotFound,
 
-    // Batch functionality has been disabled.
+    /// Batch functionality has been disabled.
     BatchDisabled,
 
-    // Batch max requests have been exceeded.
+    /// Batch max requests have been exceeded.
     BatchMaxRequestsExceeded,
 
-    // All batch queues are full.
+    /// All batch queues are full.
     BatchQueuesFull,
 
-    // Secondary index already exists.
+    /// Secondary index already exists.
     IndexFound,
 
-    // Requested secondary index does not exist.
+    /// Requested secondary index does not exist.
     IndexNotFound,
 
-    // Secondary index memory space exceeded.
+    /// Secondary index memory space exceeded.
     IndexOom,
 
-    // Secondary index not available.
+    /// Secondary index not available.
     IndexNotReadable,
 
-    // Generic secondary index error.
+    /// Generic secondary index error.
     IndexGeneric,
 
-    // Index name maximum length exceeded.
+    /// Index name maximum length exceeded.
     IndexNameMaxLen,
 
-    // Maximum number of indicies exceeded.
+    /// Maximum number of indicies exceeded.
     IndexMaxCount,
 
-    // Secondary index query aborted.
+    /// Secondary index query aborted.
     QueryAborted,
 
-    // Secondary index queue full.
+    /// Secondary index queue full.
     QueryQueueFull,
 
-    // Secondary index query timed out on server.
+    /// Secondary index query timed out on server.
     QueryTimeout,
 
-    // Generic query error.
+    /// Generic query error.
     QueryGeneric,
 
-    // Query NetIo error on server
+    /// Query NetIo error on server
     QueryNetioErr,
 
-    // Duplicate TaskId sent for the statement
+    /// Duplicate TaskId sent for the statement
     QueryDuplicate,
 
-    // Unknown server result code
+    /// Unknown server result code
     Unknown(u8),
 }
 
 impl ResultCode {
 
+    /// Convert the result code from the server response.
+    #[doc(hidden)]
     pub fn from_u8(n: u8) -> ResultCode {
         match n {
             0 => ResultCode::Ok,
@@ -267,6 +270,7 @@ impl ResultCode {
         }
     }
 
+    /// Convert a result code into an string.
     pub fn into_string(self) -> String {
         match self {
             ResultCode::Ok => String::from("ok"),
@@ -340,8 +344,14 @@ impl From<u8> for ResultCode {
 }
 
 impl From<ResultCode> for String {
-    fn from(code: ResultCode) -> String{
-        ResultCode::into_string(code)
+    fn from(code: ResultCode) -> String {
+        code.into_string()
+    }
+}
+
+impl fmt::Display for ResultCode {
+    fn fmt(&self, f: &mut fmt::Formatter) -> StdResult<(), fmt::Error> {
+        write!(f, "{}", self.into_string())
     }
 }
 

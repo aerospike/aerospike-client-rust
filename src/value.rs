@@ -32,6 +32,7 @@ use commands::ParticleType;
 use commands::buffer::Buffer;
 use msgpack::{encoder, decoder};
 
+/// Container for floating point bin values stored in the Aerospike database.
 #[derive(Debug,Clone,PartialEq,Eq,Hash)]
 pub enum FloatValue {
     F32(u32),
@@ -135,18 +136,54 @@ impl fmt::Display for FloatValue {
     }
 }
 
+/// Container for bin values stored in the Aerospike database.
 #[derive(Debug,Clone,PartialEq,Eq)]
 pub enum Value {
+
+    /// Empty value.
     Nil,
+
+    /// Boolean value.
     Bool(bool),
+
+    /// Integer value. All integers are represented as 64-bit numerics in Aerospike.
     Int(i64),
+
+    /// Unsigned integer value. The largest integer value that can be stored in a record bin is
+    /// `i64::max_value()`; however the list and map data types can store integer values (and keys)
+    /// up to `u64::max_value()`.
+    ///
+    /// # Panics
+    ///
+    /// Attempting to store an `u64` value as a record bin value will cause a panic. Use casting to
+    /// store and retrieve `u64` values.
     UInt(u64),
+
+    /// Floating point value. All floating point values are stored in 64-bit IEEE-754 format in
+    /// Aerospike. Aerospike server v3.6.0 and later support double data type.
     Float(FloatValue),
+
+    /// String value.
     String(String),
+
+    /// Byte array value.
     Blob(Vec<u8>),
+
+    /// List data type is an ordered collection of values. Lists can contain values of any
+    /// supported data type. List data order is maintained on writes and reads.
     List(Vec<Value>),
+
+    /// Map data type is a collection of key-value pairs. Each key can only appear once in a
+    /// collection and is associated with a value. Map keys and values can be any supported data
+    /// type.
     HashMap(HashMap<Value, Value>),
+
+    /// Map data type where the map entries are sorted based key ordering (K-ordered maps) and may
+    /// have an additional value-order index depending the namespace configuration (KV-ordered
+    /// maps).
     OrderedMap(Vec<(Value, Value)>),
+
+    /// GeoJSON data type are JSON formatted strings to encode geospatial information.
     GeoJSON(String),
 }
 
@@ -172,6 +209,8 @@ impl Hash for Value {
 }
 
 impl Value {
+
+    /// Returns true if this value is the empty value (nil).
     pub fn is_nil(&self) -> bool {
         match self {
             &Value::Nil => true,
@@ -179,6 +218,9 @@ impl Value {
         }
     }
 
+    /// Return the particle type for the value used in the wire protocol.
+    /// For internal use only.
+    #[doc(hidden)]
     pub fn particle_type(&self) -> ParticleType {
         match self {
             &Value::Nil => ParticleType::NULL,
@@ -198,6 +240,7 @@ impl Value {
         }
     }
 
+    /// Returns a string representation of the value.
     pub fn as_string(&self) -> String {
         match self {
             &Value::Nil => "<null>".to_string(),
@@ -214,6 +257,9 @@ impl Value {
         }
     }
 
+    /// Calculate the size in bytes that the representation on wire for this value will require.
+    /// For internal use only.
+    #[doc(hidden)]
     pub fn estimate_size(&self) -> Result<usize> {
         match self {
             &Value::Nil => Ok(0),
@@ -233,6 +279,9 @@ impl Value {
         }
     }
 
+    /// Serialize the value into the given buffer.
+    /// For internal use only.
+    #[doc(hidden)]
     pub fn write_to(&self, buf: &mut Buffer) -> Result<usize> {
         match self {
             &Value::Nil => Ok(0),
@@ -252,6 +301,9 @@ impl Value {
         }
     }
 
+    /// Serialize the value as a record key.
+    /// For internal use only.
+    #[doc(hidden)]
     pub fn write_key_bytes(&self, h: &mut Ripemd160) -> Result<()> {
         match self {
             &Value::Int(ref val) => {
@@ -504,8 +556,7 @@ impl<'a> From<&'a Value> for i64 {
     }
 }
 
-
-
+#[doc(hidden)]
 pub fn bytes_to_particle(ptype: u8, buf: &mut Buffer, len: usize) -> Result<Value> {
     match ParticleType::from(ptype) {
         ParticleType::NULL => Ok(Value::Nil),
@@ -544,21 +595,42 @@ pub fn bytes_to_particle(ptype: u8, buf: &mut Buffer, len: usize) -> Result<Valu
     }
 }
 
+/// Constructs a new Value from one of the supported native data types.
 #[macro_export]
 macro_rules! as_val {
     ($val:expr) => {{ $crate::Value::from($val) }}
 }
 
+/// Constructs a new GeoJSON Value from one of the supported native data types.
 #[macro_export]
 macro_rules! as_geo {
     ($val:expr) => {{ $crate::Value::GeoJSON($val) }}
 }
 
+/// Constructs a new Blob Value from one of the supported native data types.
 #[macro_export]
 macro_rules! as_blob {
     ($val:expr) => {{ $crate::Value::Blob($val) }}
 }
 
+/// Constructs a new List Value from a list of one or more native data types.
+///
+/// # Examples
+///
+/// Write a list value to a record bin.
+///
+/// ```rust
+/// # #[macro_use] extern crate aerospike;
+/// # use aerospike::*;
+/// # use std::vec::Vec;
+/// # fn main() {
+/// # let client = Client::new(&ClientPolicy::default(), &std::env::var("AEROSPIKE_HOSTS").unwrap()).unwrap();
+/// # let key = as_key!("test", "test", "mykey");
+/// let list = as_list!("a", "b", "c");
+/// let bin = as_bin!("list", list);
+/// client.put(&WritePolicy::default(), &key, &vec![&bin]);
+/// # }
+/// ```
 #[macro_export]
 macro_rules! as_list {
     ( $( $v:expr),* ) => {
@@ -572,6 +644,26 @@ macro_rules! as_list {
     };
 }
 
+/// Constructs a vector of Values from a list of one or more native data types.
+///
+/// # Examples
+///
+/// Execute a user-defined function (UDF) with some arguments.
+///
+/// ```rust
+/// # #[macro_use] extern crate aerospike;
+/// # use aerospike::*;
+/// # use std::vec::Vec;
+/// # fn main() {
+/// # let client = Client::new(&ClientPolicy::default(), &std::env::var("AEROSPIKE_HOSTS").unwrap()).unwrap();
+/// # let key = as_key!("test", "test", "mykey");
+/// let module = "myUDF";
+/// let func = "myFunction";
+/// let args = as_values!("a", "b", "c");
+/// client.execute_udf(&WritePolicy::default(), &key, 
+///     &module, &func, Some(&args));
+/// # }
+/// ```
 #[macro_export]
 macro_rules! as_values {
     ( $( $v:expr),* ) => {
@@ -585,6 +677,24 @@ macro_rules! as_values {
     };
 }
 
+/// Constructs a Map Value from a list of key/value pairs.
+///
+/// # Examples
+///
+/// Write a map value to a record bin.
+///
+/// ```rust
+/// # #[macro_use] extern crate aerospike;
+/// # use aerospike::*;
+/// # use std::collections::HashMap;
+/// # fn main() {
+/// # let client = Client::new(&ClientPolicy::default(), &std::env::var("AEROSPIKE_HOSTS").unwrap()).unwrap();
+/// # let key = as_key!("test", "test", "mykey");
+/// let map = as_map!("a" => 1, "b" => 2);
+/// let bin = as_bin!("map", map);
+/// client.put(&WritePolicy::default(), &key, &vec![&bin]);
+/// # }
+/// ```
 #[macro_export]
 macro_rules! as_map {
     ( $( $k:expr => $v:expr),* ) => {

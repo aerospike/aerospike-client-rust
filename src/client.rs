@@ -43,8 +43,19 @@ use operations::{Operation, OperationType};
 use policy::{ClientPolicy, ReadPolicy, WritePolicy, ScanPolicy, QueryPolicy};
 
 
-// Client encapsulates an Aerospike cluster.
-// All database operations are available against this object.
+/// Instantiate a Client instance to access an Aerospike database cluster and perform database
+/// operations.
+///
+/// The client is thread-safe. Only one client instance should be used per cluster. Multiple
+/// threads should share this cluster instance.
+///
+/// Your application uses this class' API to perform database operations such as writing and
+/// reading records, and selecting sets of records. Write operations include specialized
+/// functionality such as append/prepend and arithmetic addition.
+///
+/// Each record may have multiple bins, unless the Aerospike server nodes are configured as
+/// "single-bin". In "multi-bin" mode, partial records may be written or read by specifying the
+/// relevant subset of bins.
 pub struct Client {
     cluster: Arc<Cluster>,
     thread_pool: ThreadPool,

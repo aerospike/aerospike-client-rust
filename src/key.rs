@@ -22,15 +22,32 @@ use Value;
 use crypto::ripemd160::Ripemd160;
 use crypto::digest::Digest;
 
+/// Unique record identifier. Records can be identified using a specified namespace, an optional
+/// set name and a user defined key which must be uique within a set. Records can also be
+/// identified by namespace/digest, which is the combination used on the server.
 #[derive(Debug,Clone)]
 pub struct Key {
+
+    /// Namespace.
     pub namespace: String,
+
+    /// Set name.
     pub set_name: String,
-    pub digest: [u8; 20],
+
+    /// Original user key.
     pub user_key: Option<Value>,
+
+    /// Unique server hash value generated from set name and user key.
+    pub digest: [u8; 20],
 }
 
 impl Key {
+    /// Construct a new key given a namespace, a set name and a user key value.
+    ///
+    /// # Panics
+    ///
+    /// Only integers, strings and blobs (`Vec<u8>`) can be used as user keys. The constructor will
+    /// panic if any other value type is passed.
     pub fn new<S>(namespace: S, set_name: S, key: Value) -> Result<Self>
         where S: Into<String>
     {
@@ -73,7 +90,12 @@ impl fmt::Display for Key {
     }
 }
 
-
+/// Construct a new key given a namespace, a set name and a user key.
+///
+/// # Panics
+///
+/// Only integers, strings and blobs (`Vec<u8>`) can be used as user keys. The macro will
+/// panic if any other value type is passed.
 #[macro_export]
 macro_rules! as_key {
     ($ns:expr, $set:expr, $val:expr) => {{
