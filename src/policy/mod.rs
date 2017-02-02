@@ -51,7 +51,7 @@ pub trait Policy {
     /// Transaction priority.
     fn priority(&self) -> &Priority;
 
-    #[doc(hide)]
+    #[doc(hidden)]
     /// Deadline for current transaction based on specified timeout. For internal use only.
     fn deadline(&self) -> Option<Instant>;
 
@@ -76,7 +76,7 @@ pub trait Policy {
     fn consistency_level(&self) -> &ConsistencyLevel;
 }
 
-#[doc(hide)]
+#[doc(hidden)]
 /// Policy-like object that encapsulates a base policy instance.
 pub trait PolicyLike {
 
