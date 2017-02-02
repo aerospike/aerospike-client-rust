@@ -120,10 +120,10 @@ pub use client::Client;
 pub use errors::{Error, ErrorKind, Result};
 pub use key::Key;
 pub use net::Host;
-pub use operations::{Operation, MapPolicy, MapReturnType, MapWriteMode};
+pub use operations::{MapPolicy, MapReturnType, MapWriteMode};
 pub use policy::{Policy, ClientPolicy, ReadPolicy, WritePolicy, ScanPolicy, QueryPolicy,
     Priority, ConsistencyLevel, CommitLevel, RecordExistsAction, GenerationPolicy, Expiration};
-pub use query::{Statement, Filter, UDFLang, Recordset, IndexType, CollectionIndexType};
+pub use query::{Statement, UDFLang, Recordset, IndexType, CollectionIndexType};
 pub use record::Record;
 pub use result_code::ResultCode;
 pub use user::User;

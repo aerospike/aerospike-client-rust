@@ -17,10 +17,10 @@ use std::time::Duration;
 
 use errors::*;
 use Key;
-use Operation;
 use cluster::{Node, Cluster};
 use commands::{Command, SingleCommand, ReadCommand};
 use net::Connection;
+use operations::Operation;
 use policy::WritePolicy;
 
 pub struct OperateCommand<'a> {

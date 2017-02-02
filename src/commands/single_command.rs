@@ -70,7 +70,6 @@ impl<'a> SingleCommand<'a> {
         // set timeout outside the loop
         let deadline = policy.deadline();
 
-
         // Execute command until successful, timed out or maximum iterations have been reached.
         loop {
             iterations += 1;
