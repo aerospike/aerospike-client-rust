@@ -85,15 +85,11 @@ impl Default for ClientPolicy {
 }
 
 impl ClientPolicy {
-    pub fn set_user_password(&mut self, creds: Option<(String, String)>) -> Result<()> {
-        match creds {
-            None => self.user_password = None,
-            Some((user, password)) => {
-                let password = try!(AdminCommand::hash_password(&password));
-                self.user_password = Some((user, password));
-            }
-        }
 
+    /// Set username and password to use when authenticating to the cluster.
+    pub fn set_user_password(&mut self, username: String, password: String) -> Result<()> {
+        let password = AdminCommand::hash_password(&password)?;
+        self.user_password = Some((username, password));
         Ok(())
     }
 }
