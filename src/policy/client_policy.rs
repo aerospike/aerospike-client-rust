@@ -18,50 +18,54 @@ use std::collections::HashMap;
 use errors::*;
 use commands::admin_command::AdminCommand;
 
-// ClientPolicy encapsulates parameters for client policy command.
+/// ClientPolicy encapsulates parameters for client policy command.
 #[derive(Debug, Clone)]
 pub struct ClientPolicy {
-    // User authentication to cluster. Leave empty for clusters running without restricted access.
+
+    /// User authentication to cluster. Leave empty for clusters running without restricted access.
     pub user_password: Option<(String, String)>,
 
-    // Initial host connection timeout in milliseconds.  The timeout when opening a connection
-    // to the server host for the first time.
-    pub timeout: Option<Duration>, // = 1 second
+    /// Initial host connection timeout in milliseconds.  The timeout when opening a connection
+    /// to the server host for the first time.
+    pub timeout: Option<Duration>,
 
-    // Connection idle timeout. Every time a connection is used, its idle
-    // deadline will be extended by this duration. When this deadline is reached,
-    // the connection will be closed and discarded from the connection pool.
-    pub idle_timeout: Option<Duration>, // = 14 seconds
+    /// Connection idle timeout. Every time a connection is used, its idle
+    /// deadline will be extended by this duration. When this deadline is reached,
+    /// the connection will be closed and discarded from the connection pool.
+    pub idle_timeout: Option<Duration>,
 
-    // Size of the Connection Queue cache.
-    pub connection_pool_size_per_node: usize, // = 256
+    /// Size of the Connection Queue cache.
+    pub connection_pool_size_per_node: usize,
 
-    // Throw exception if host connection fails during addHost().
-    pub fail_if_not_connected: bool, // = true
+    /// Throw exception if host connection fails during addHost().
+    pub fail_if_not_connected: bool,
 
-    // TendInterval determines interval for checking for cluster state changes.
-    // Minimum possible interval is 10 Milliseconds.
-    pub tend_interval: Duration, // = 1 second
+    /// TendInterval determines interval for checking for cluster state changes.
+    /// Minimum possible interval is 10 Milliseconds.
+    pub tend_interval: Duration,
 
-    // A IP translation table is used in cases where different clients
-    // use different server IP addresses.  This may be necessary when
-    // using clients from both inside and outside a local area
-    // network. Default is no translation.
-    // The key is the IP address returned from friend info requests to other servers.
-    // The value is the real IP address used to connect to the server.
+    /// A IP translation table is used in cases where different clients
+    /// use different server IP addresses.  This may be necessary when
+    /// using clients from both inside and outside a local area
+    /// network. Default is no translation.
+    /// The key is the IP address returned from friend info requests to other servers.
+    /// The value is the real IP address used to connect to the server.
     pub ip_map: Option<HashMap<String, String>>,
 
-    // UseServicesAlternate determines if the client should use "services-alternate"
-    // instead of "services" in info request during cluster tending.
-    // "services-alternate" returns server configured external IP addresses that client
-    // uses to talk to nodes.  "services-alternate" can be used in place of
-    // providing a client "ipMap".
-    // This feature is recommended instead of using the client-side IpMap above.
-    //
-    // "services-alternate" is available with Aerospike Server versions >= 3.7.1.
-    pub use_services_alternate: bool, // false
+    /// UseServicesAlternate determines if the client should use "services-alternate"
+    /// instead of "services" in info request during cluster tending.
+    /// "services-alternate" returns server configured external IP addresses that client
+    /// uses to talk to nodes.  "services-alternate" can be used in place of
+    /// providing a client "ipMap".
+    /// This feature is recommended instead of using the client-side IpMap above.
+    ///
+    /// "services-alternate" is available with Aerospike Server versions >= 3.7.1.
+    pub use_services_alternate: bool,
 
-    pub thread_pool_size: usize, // 128
+    /// Size of the thread pool used in scan and query commands. These commands are often sent to
+    /// multiple server nodes in parallel threads. A thread pool improves performance because
+    /// threads do not have to be created/destroyed for each command.
+    pub thread_pool_size: usize,
 }
 
 impl Default for ClientPolicy {
