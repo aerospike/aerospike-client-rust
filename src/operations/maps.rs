@@ -133,6 +133,7 @@ pub struct MapPolicy {
 }
 
 impl MapPolicy {
+    /// Create a new map policy given the ordering for the map and the write mode.
     pub fn new(order: MapOrder, write_mode: MapWriteMode) -> Self {
         MapPolicy {
             order: order,

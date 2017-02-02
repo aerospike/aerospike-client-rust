@@ -13,6 +13,9 @@
 // License for the specific language governing permissions and limitations under
 // the License.
 
+//! Functions used to create database operations used in the client's `operate()` method.
+
+#[doc(hidden)]
 pub mod cdt;
 pub mod scalar;
 pub mod lists;
@@ -61,16 +64,20 @@ pub enum OperationBin<'a> {
 #[derive(Debug)]
 pub struct Operation<'a> {
     // OpType determines type of operation.
-    #[doc(hidden)] pub op: OperationType,
+    #[doc(hidden)]
+    pub op: OperationType,
 
     // BinName (Optional) determines the name of bin used in operation.
-    #[doc(hidden)] pub bin: OperationBin<'a>,
+    #[doc(hidden)]
+    pub bin: OperationBin<'a>,
 
     // BinData determines bin value used in operation.
-    #[doc(hidden)] pub data: OperationData<'a>,
+    #[doc(hidden)]
+    pub data: OperationData<'a>,
 }
 
 impl<'a> Operation<'a> {
+    #[doc(hidden)]
     pub fn estimate_size(&self) -> Result<usize> {
         let mut size: usize = 0;
         size += match self.bin {
@@ -87,6 +94,7 @@ impl<'a> Operation<'a> {
         Ok(size)
     }
 
+    #[doc(hidden)]
     pub fn write_to(&self, buffer: &mut Buffer) -> Result<usize> {
         let mut size: usize = 0;
 
@@ -113,6 +121,7 @@ impl<'a> Operation<'a> {
         Ok(size)
     }
 
+    #[doc(hidden)]
     fn write_op_header_to(&self, buffer: &mut Buffer, particle_type: u8) -> Result<usize> {
         let mut size = try!(buffer.write_u8(particle_type as u8));
         size += try!(buffer.write_u8(0));
