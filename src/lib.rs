@@ -118,13 +118,12 @@ extern crate error_chain;
 pub use bin::Bin;
 pub use client::Client;
 pub use errors::{Error, ErrorKind, Result};
-pub use index_types::{IndexType, CollectionIndexType};
 pub use key::Key;
 pub use net::Host;
 pub use operations::{Operation, MapPolicy, MapReturnType, MapWriteMode};
 pub use policy::{Policy, ClientPolicy, ReadPolicy, WritePolicy, ScanPolicy, QueryPolicy,
     Priority, ConsistencyLevel, CommitLevel, RecordExistsAction, GenerationPolicy, Expiration};
-pub use query::{Statement, Filter, UDFLang, Recordset};
+pub use query::{Statement, Filter, UDFLang, Recordset, IndexType, CollectionIndexType};
 pub use record::Record;
 pub use result_code::ResultCode;
 pub use user::User;
@@ -137,7 +136,6 @@ mod bin;
 mod client;
 mod cluster;
 mod commands;
-mod index_types;
 #[macro_use]
 mod key;
 mod msgpack;
