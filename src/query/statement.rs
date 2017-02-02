@@ -26,18 +26,34 @@ pub struct Aggregation {
     pub function_args: Option<Vec<Value>>,
 }
 
+/// Query statement parameters.
 #[derive(Clone)]
 pub struct Statement {
+
+    /// Namespace
     pub namespace: String,
+
+    /// Set name
     pub set_name: String,
+
+    /// Optional index name
     pub index_name: Option<String>,
+
+    /// Optional list of bin names to return in query.
     pub bin_names: Option<Vec<String>>,
 
+    /// Optional list of query filters. Currently, only one filter is allowed by the server on a
+    /// secondary index lookup.
     pub filters: Option<Vec<Arc<Filter>>>,
+
+    /// Optional Lua aggregation function parameters.
     pub aggregation: Option<Aggregation>,
 }
 
 impl Statement {
+
+    /// Create a new query statement with the given namespace, set name and optional list of bin
+    /// names.
     pub fn new(namespace: &str,
                set_name: &str,
                bin_names: Option<&[&str]>)
@@ -55,13 +71,14 @@ impl Statement {
             namespace: namespace.to_owned(),
             set_name: set_name.to_owned(),
             bin_names: bin_names,
-
             index_name: None,
             aggregation: None,
             filters: None,
         }
     }
 
+    /// Add a query filter to the statement. Currently, only one filter is allowed by the server on
+    /// a secondary index lookup.
     pub fn add_filter(&mut self, filter: Arc<Filter>) {
         match self.filters {
             Some(ref mut filters) => {
@@ -75,18 +92,11 @@ impl Statement {
         }
     }
 
-    pub fn is_scan(&self) -> bool {
-        if let Some(ref filters) = self.filters {
-            return filters.len() == 0;
-        }
-        return true;
-    }
-
+    /// Set Lua aggregation function parameters.
     pub fn set_aggregate_function(&mut self,
                                   package_name: &str,
                                   function_name: &str,
-                                  function_args: Option<&[Value]>)
-                                  -> Result<()> {
+                                  function_args: Option<&[Value]>) {
         let agg = Aggregation {
             package_name: package_name.to_owned(),
             function_name: function_name.to_owned(),
@@ -95,12 +105,18 @@ impl Statement {
                 None => None,
             },
         };
-
         self.aggregation = Some(agg);
-
-        Ok(())
     }
 
+    #[doc(hidden)]
+    pub fn is_scan(&self) -> bool {
+        match self.filters {
+            Some(ref filters) => filters.is_empty(),
+            None => true
+        }
+    }
+
+    #[doc(hidden)]
     pub fn validate(&self) -> Result<()> {
         if let Some(ref filters) = self.filters {
             if filters.len() > 1 {
@@ -130,6 +146,5 @@ impl Statement {
         }
 
         Ok(())
-
     }
 }

@@ -21,16 +21,36 @@ use Value;
 use commands::ParticleType;
 use commands::buffer::Buffer;
 
+/// Query filter definition. Currently, only one filter is allowed in a Statement, and must be on a
+/// bin which has a secondary index defined.
+///
+/// Filter instances should be instantiated using one of the provided macros:
+///
+/// - `as_eq`
+/// - `as_range`
+/// - `as_contains`
+/// - `as_within_region`
+/// - `as_within_radius`
+/// - `as_regions_containing_point`
 #[derive(Debug,Clone)]
 pub struct Filter {
+
+    #[doc(hidden)]
     pub bin_name: String,
     collection_index_type: CollectionIndexType,
     value_particle_type: ParticleType,
+
+    #[doc(hidden)]
     pub begin: Arc<Value>,
+
+    #[doc(hidden)]
     pub end: Arc<Value>,
 }
 
 impl Filter {
+    /// Create a new filter instance. For internal use only. Applications should use one of the
+    /// provided macros to create new filters.
+    #[doc(hidden)]
     pub fn new(bin_name: &str,
                collection_index_type: CollectionIndexType,
                value_particle_type: ParticleType,
@@ -46,16 +66,19 @@ impl Filter {
         }))
     }
 
+    #[doc(hidden)]
     pub fn collection_index_type(&self) -> CollectionIndexType {
         self.collection_index_type.clone()
     }
 
+    #[doc(hidden)]
     pub fn estimate_size(&self) -> Result<usize> {
         // bin name size(1) + particle type size(1) + begin particle size(4) + end particle size(4) = 10
         Ok(self.bin_name.len() + try!(self.begin.estimate_size()) +
            try!(self.end.estimate_size()) + 10)
     }
 
+    #[doc(hidden)]
     pub fn write(&self, buffer: &mut Buffer) -> Result<()> {
         try!(buffer.write_u8(self.bin_name.len() as u8));
         try!(buffer.write_str(&self.bin_name));
@@ -71,6 +94,7 @@ impl Filter {
     }
 }
 
+/// Create equality filter for queries; supports integer and string values.
 #[macro_export]
 macro_rules! as_eq {
     ($bin_name:expr, $val:expr) => {{
@@ -79,6 +103,7 @@ macro_rules! as_eq {
     }};
 }
 
+/// Create range filter for queries; supports integer values.
 #[macro_export]
 macro_rules! as_range {
     ($bin_name:expr, $begin:expr, $end:expr) => {{
@@ -88,6 +113,7 @@ macro_rules! as_range {
     }};
 }
 
+/// Create contains number filter for queries on a collection index.
 #[macro_export]
 macro_rules! as_contains {
     ($bin_name:expr, $val:expr, $cit:expr) => {{
@@ -96,6 +122,7 @@ macro_rules! as_contains {
     }};
 }
 
+/// Create contains range filter for queries on a collection index.
 #[macro_export]
 macro_rules! as_contains_range {
     ($bin_name:expr, $begin:expr, $end:expr, $cit:expr) => {{
@@ -105,6 +132,8 @@ macro_rules! as_contains_range {
     }};
 }
 
+/// Create geospatial "points within region" filter for queries. For queries on a collection index the
+/// collection index type must be specified.
 #[macro_export]
 macro_rules! as_within_region {
     ($bin_name:expr, $region:expr) => {{
@@ -118,6 +147,8 @@ macro_rules! as_within_region {
     }};
 }
 
+/// Create geospatial "points within radius" filter for queries. For queries on a collection index
+/// the collection index type must be specified.
 #[macro_export]
 macro_rules! as_within_radius {
     ($bin_name:expr, $lat:expr, $lng:expr, $radius:expr) => {{
@@ -137,6 +168,8 @@ macro_rules! as_within_radius {
     }};
 }
 
+/// Create geospatial "regions containing point" filter for queries. For queries on a collection
+/// index the collection index type must be specified.
 #[macro_export]
 macro_rules! as_regions_containing_point {
     ($bin_name:expr, $point:expr) => {{

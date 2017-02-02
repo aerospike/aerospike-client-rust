@@ -15,18 +15,34 @@
 
 use std::fmt;
 
+/// Underlying data type of secondary index.
 #[derive(Debug,Clone,PartialEq)]
 pub enum IndexType {
+
+    /// Numeric index.
     Numeric,
+
+    /// String index.
     String,
+
+    /// 2-dimensional spherical geospatial index.
     Geo2DSphere,
 }
 
+/// Secondary index collection type.
 #[derive(Debug,Clone,PartialEq)]
 pub enum CollectionIndexType {
+
+    /// Normal, scalar index.
     Default = 0,
+
+    /// Index list elements.
     List,
+
+    /// Index map keys.
     MapKeys,
+
+    /// Index map values.
     MapValues,
 }
 
