@@ -13,6 +13,8 @@
 // License for the specific language governing permissions and limitations under
 // the License.
 
+#![warn(missing_docs)]
+
 //! A pure-rust client for the Aerospike NoSQL database.
 //!
 //! Aerospike is an enterprise-class, NoSQL database solution for real-time operational
