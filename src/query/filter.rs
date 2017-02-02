@@ -90,7 +90,7 @@ macro_rules! as_range {
 
 #[macro_export]
 macro_rules! as_contains {
-    ($bin_name:expr, $cit:expr, $val:expr) => {{
+    ($bin_name:expr, $val:expr, $cit:expr) => {{
         let val = Arc::new(as_val!($val));
         $crate::Filter::new($bin_name, $cit, val.particle_type(), val.clone(), val.clone()).unwrap()
     }};
@@ -98,7 +98,7 @@ macro_rules! as_contains {
 
 #[macro_export]
 macro_rules! as_contains_range {
-    ($bin_name:expr, $cit:expr, $begin:expr, $end:expr) => {{
+    ($bin_name:expr, $begin:expr, $end:expr, $cit:expr) => {{
         let begin = Arc::new(as_val!($begin));
         let end = Arc::new(as_val!($end));
         $crate::Filter::new($bin_name, $cit, begin.particle_type(), begin, end).unwrap()
@@ -108,53 +108,44 @@ macro_rules! as_contains_range {
 #[macro_export]
 macro_rules! as_within_region {
     ($bin_name:expr, $region:expr) => {{
+        let cit = $crate::CollectionIndexType::Default;
         let region = Arc::new(as_geo!(String::from($region)));
-        $crate::Filter::new($bin_name, $crate::CollectionIndexType::Default, region.particle_type(), region.clone(), region.clone()).unwrap()
+        $crate::Filter::new($bin_name, cit, region.particle_type(), region.clone(), region.clone()).unwrap()
     }};
-}
-
-#[macro_export]
-macro_rules! as_within_region_in_collection {
-    ($bin_name:expr, $cit:expr, $region:expr) => {{
+    ($bin_name:expr, $region:expr, $cit:expr) => {{
         let region = Arc::new(as_geo!(String::from($region)));
         $crate::Filter::new($bin_name, $cit, region.particle_type(), region.clone(), region.clone()).unwrap()
     }};
 }
 
 #[macro_export]
-macro_rules! as_regions_containing_point {
-    ($bin_name:expr, $point:expr) => {{
-        let point = Arc::new(as_geo!(String::from($point)));
-        $crate::Filter::new($bin_name, $crate::CollectionIndexType::Default, point.particle_type(), point.clone(), point.clone()).unwrap()
-    }};
-}
-
-#[macro_export]
-macro_rules! as_regions_containing_point_in_collection {
-    ($bin_name:expr, $cit:expr, $point:expr) => {{
-        let point = Arc::new(as_geo!(String::from($point)));
-        $crate::Filter::new($bin_name, $cit, point.particle_type(), point.clone(), point.clone()).unwrap()
-    }};
-}
-
-#[macro_export]
 macro_rules! as_within_radius {
     ($bin_name:expr, $lat:expr, $lng:expr, $radius:expr) => {{
+        let cit = $crate::CollectionIndexType::Default;
         let lat = as_val!($lat as f64);
         let lng = as_val!($lng as f64);
         let radius = as_val!($radius as f64);
         let geo_json = Arc::new(as_geo!(format!("{{ \"type\": \"Aeroircle\", \"coordinates\": [[{:.8}, {:.8}], {}] }}", lng, lat, radius)));
-        $crate::Filter::new($bin_name, $crate::CollectionIndexType::Default, geo_json.particle_type(), geo_json.clone(), geo_json.clone()).unwrap()
+        $crate::Filter::new($bin_name, cit, geo_json.particle_type(), geo_json.clone(), geo_json.clone()).unwrap()
     }};
-}
-
-#[macro_export]
-macro_rules! as_within_radius_in_collection {
-    ($bin_name:expr, $cit:expr, $lat:expr, $lng:expr, $radius:expr) => {{
+    ($bin_name:expr, $lat:expr, $lng:expr, $radius:expr, $cit:expr) => {{
         let lat = as_val!($lat as f64);
         let lng = as_val!($lng as f64);
         let radius = as_val!($radius as f64);
         let geo_json = Arc::new($crate::Value::GeoJSON(format!("{{ \"type\": \"Aeroircle\", \"coordinates\": [[{:.8}, {:.8}], {}] }}", lng, lat, radius)));
         $crate::Filter::new($bin_name, $cit, geo_json.particle_type(), geo_json.clone(), geo_json.clone()).unwrap()
+    }};
+}
+
+#[macro_export]
+macro_rules! as_regions_containing_point {
+    ($bin_name:expr, $point:expr) => {{
+        let cit = $crate::CollectionIndexType::Default;
+        let point = Arc::new(as_geo!(String::from($point)));
+        $crate::Filter::new($bin_name, cit, point.particle_type(), point.clone(), point.clone()).unwrap()
+    }};
+    ($bin_name:expr, $point:expr, $cit:expr) => {{
+        let point = Arc::new(as_geo!(String::from($point)));
+        $crate::Filter::new($bin_name, $cit, point.particle_type(), point.clone(), point.clone()).unwrap()
     }};
 }

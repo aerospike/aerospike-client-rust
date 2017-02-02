@@ -23,20 +23,18 @@ fn geo_filter_macros() {
     let geo_filter = as_within_region!("bin1", "{}");
     assert_eq!(geo_filter.bin_name, "bin1");
 
-    let geo_filter = as_within_region_in_collection!("bin1", CollectionIndexType::MapValues, "{}");
+    let geo_filter = as_within_region!("bin1", "{}", CollectionIndexType::MapValues);
     assert_eq!(geo_filter.bin_name, "bin1");
 
     let geo_filter = as_regions_containing_point!("bin1", "{}");
     assert_eq!(geo_filter.bin_name, "bin1");
 
-    let geo_filter = as_regions_containing_point_in_collection!("bin1",
-                                                                CollectionIndexType::MapValues,
-                                                                "{}");
+    let geo_filter = as_regions_containing_point!("bin1", "{}", CollectionIndexType::MapValues);
     assert_eq!(geo_filter.bin_name, "bin1");
 
     let geo_filter = as_within_radius!("bin1", 1, 3, 7);
     assert_eq!(geo_filter.bin_name, "bin1");
 
-    let geo_filter = as_within_radius_in_collection!("bin1", CollectionIndexType::List, 1, 3, 7);
+    let geo_filter = as_within_radius!("bin1", 1, 3, 7, CollectionIndexType::List);
     assert_eq!(geo_filter.bin_name, "bin1");
 }
