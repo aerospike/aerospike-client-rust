@@ -14,6 +14,8 @@
 // the License.
 
 #![warn(missing_docs)]
+#![doc(test(attr(allow(unused_variables), allow(unused_assignments), allow(unused_mut),
+                 allow(unused_attributes), allow(dead_code), deny(warnings))))]
 
 //! A pure-rust client for the Aerospike NoSQL database.
 //!
@@ -93,7 +95,7 @@
 //!     }
 //!
 //!     for t in threads {
-//!         t.join();
+//!         t.join().unwrap();
 //!     }
 //!
 //!     println!("total time: {:?}", now.elapsed());

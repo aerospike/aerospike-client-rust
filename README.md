@@ -78,7 +78,7 @@ fn main() {
     }
 
     for t in threads {
-        t.join();
+        t.join().unwrap();
     }
 
     println!("total time: {:?}", now.elapsed());

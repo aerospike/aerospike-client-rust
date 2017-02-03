@@ -628,7 +628,7 @@ macro_rules! as_blob {
 /// # let key = as_key!("test", "test", "mykey");
 /// let list = as_list!("a", "b", "c");
 /// let bin = as_bin!("list", list);
-/// client.put(&WritePolicy::default(), &key, &vec![&bin]);
+/// client.put(&WritePolicy::default(), &key, &vec![&bin]).unwrap();
 /// # }
 /// ```
 #[macro_export]
@@ -650,7 +650,7 @@ macro_rules! as_list {
 ///
 /// Execute a user-defined function (UDF) with some arguments.
 ///
-/// ```rust
+/// ```rust,should_panic
 /// # #[macro_use] extern crate aerospike;
 /// # use aerospike::*;
 /// # use std::vec::Vec;
@@ -661,7 +661,7 @@ macro_rules! as_list {
 /// let func = "myFunction";
 /// let args = as_values!("a", "b", "c");
 /// client.execute_udf(&WritePolicy::default(), &key, 
-///     &module, &func, Some(&args));
+///     &module, &func, Some(&args)).unwrap();
 /// # }
 /// ```
 #[macro_export]
@@ -692,7 +692,7 @@ macro_rules! as_values {
 /// # let key = as_key!("test", "test", "mykey");
 /// let map = as_map!("a" => 1, "b" => 2);
 /// let bin = as_bin!("map", map);
-/// client.put(&WritePolicy::default(), &key, &vec![&bin]);
+/// client.put(&WritePolicy::default(), &key, &vec![&bin]).unwrap();
 /// # }
 /// ```
 #[macro_export]
