@@ -50,12 +50,6 @@ impl<'a> ReadCommand<'a> {
         }
     }
 
-    fn udf_response_to_error(record: &Record) -> Error {
-        let bins = &record.bins;
-        let reason = bins.get("FAILURE").map_or("".to_string(), |v| v.to_string());;
-        ErrorKind::UdfBadResponse(reason).into()
-    }
-
     fn parse_record(&mut self,
                     conn: &mut Connection,
                     op_count: usize,
@@ -137,50 +131,42 @@ impl<'a> Command for ReadCommand<'a> {
     }
 
     fn parse_result(&mut self, conn: &mut Connection) -> Result<()> {
-        // Read header.
         if let Err(err) = conn.read_buffer(buffer::MSG_TOTAL_HEADER_SIZE as usize) {
             warn!("Parse result error: {}", err);
-            return Err(err);
+            bail!(err);
         }
 
-        try!(conn.buffer.reset_offset());
-
-        // A number of these are commented out because we just don't care enough to read
-        // that section of the header. If we do care, uncomment and check!
-        let sz = try!(conn.buffer.read_u64(Some(0)));
-        let header_length = try!(conn.buffer.read_u8(Some(8)));
-        let result_code = ResultCode::from(try!(conn.buffer.read_u8(Some(13))) & 0xFF);
-        let generation = try!(conn.buffer.read_u32(Some(14)));
-        let expiration = try!(conn.buffer.read_u32(Some(18)));
-        let field_count = try!(conn.buffer.read_u16(Some(26))) as usize; // almost certainly 0
-        let op_count = try!(conn.buffer.read_u16(Some(28))) as usize;
+        conn.buffer.reset_offset()?;
+        let sz = conn.buffer.read_u64(Some(0))?;
+        let header_length = conn.buffer.read_u8(Some(8))?;
+        let result_code = conn.buffer.read_u8(Some(13))?;
+        let generation = conn.buffer.read_u32(Some(14))?;
+        let expiration = conn.buffer.read_u32(Some(18))?;
+        let field_count = conn.buffer.read_u16(Some(26))? as usize; // almost certainly 0
+        let op_count = conn.buffer.read_u16(Some(28))? as usize;
         let receive_size = ((sz & 0xFFFFFFFFFFFF) - header_length as u64) as usize;
 
-        // Read remaining message bytes.
+        // Read remaining message bytes
         if receive_size > 0 {
             if let Err(err) = conn.read_buffer(receive_size) {
                 warn!("Parse result error: {}", err);
-                return Err(err);
+                bail!(err);
             }
         }
 
-        if result_code != ResultCode::Ok {
-            if result_code == ResultCode::UdfBadResponse {
-                // Need to parse the full record as it contains details about the UDF error.
-                let record = try!(self.parse_record(conn, op_count, field_count, generation, expiration));
-                return Err(ReadCommand::udf_response_to_error(&record));
-            }
-            bail!(ErrorKind::ServerError(result_code));
+        match ResultCode::from(result_code) {
+            ResultCode::Ok => {
+                let record = self.parse_record(conn, op_count, field_count, generation, expiration)?;
+                self.record = Some(record);
+                Ok(())
+            },
+            ResultCode::UdfBadResponse => {
+                // record bin "FAILURE" contains details about the UDF error
+                let record = self.parse_record(conn, op_count, field_count, generation, expiration)?;
+                let reason = record.bins.get("FAILURE").map_or(String::from("UDF Error"), |v| v.to_string());;
+                Err(ErrorKind::UdfBadResponse(reason).into())
+            },
+            rc @ _ => Err(ErrorKind::ServerError(rc).into()),
         }
-
-        if op_count == 0 {
-            // data Bin was not returned
-            self.record = Some(Record::new(None, HashMap::new(), generation, expiration));
-            return Ok(());
-        }
-
-        self.record =
-            Some(try!(self.parse_record(conn, op_count, field_count, generation, expiration)));
-        Ok(())
     }
 }

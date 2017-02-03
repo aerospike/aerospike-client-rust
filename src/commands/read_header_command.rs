@@ -20,6 +20,7 @@ use std::str;
 use errors::*;
 use Key;
 use Record;
+use ResultCode;
 use cluster::{Node, Cluster};
 use commands::buffer;
 use commands::{Command, SingleCommand};
@@ -71,20 +72,19 @@ impl<'a> Command for ReadHeaderCommand<'a> {
     }
 
     fn parse_result(&mut self, conn: &mut Connection) -> Result<()> {
-        // Read header.
         if let Err(err) = conn.read_buffer(buffer::MSG_TOTAL_HEADER_SIZE as usize) {
             warn!("Parse result error: {}", err);
-            return Err(err);
+            bail!(err);
         }
 
-        let result_code = (try!(conn.buffer.read_u8(Some(13))) & 0xFF) as isize;
-
-        if result_code == 0 {
-            let generation = try!(conn.buffer.read_u32(Some(14)));
-            let expiration = try!(conn.buffer.read_u32(Some(18)));
-            self.record = Some(Record::new(None, HashMap::new(), generation, expiration));
+        match ResultCode::from(conn.buffer.read_u8(Some(13))?) {
+            ResultCode::Ok => {
+                let generation = conn.buffer.read_u32(Some(14))?;
+                let expiration = conn.buffer.read_u32(Some(18))?;
+                self.record = Some(Record::new(None, HashMap::new(), generation, expiration));
+                SingleCommand::empty_socket(conn)
+            }
+            rc @ _ => Err(ErrorKind::ServerError(rc).into()),
         }
-
-        SingleCommand::empty_socket(conn)
     }
 }
