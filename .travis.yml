@@ -23,7 +23,7 @@ install:
 - mkdir instance1
 - mkdir instance2
 - ./bin/aerospike init --home instance1 --instance 1 --service-port 3000
-- ./bin/aerospike init --home instance2 --instance 2 --service-port 3010
+- ./bin/aerospike init --home instance2 --instance 2 --service-port 3100
 - cd instance1
 - ./bin/aerospike start
 - ../../scripts/wait-for-node.sh var/log/aerospike.log
