@@ -13,9 +13,25 @@
 // License for the specific language governing permissions and limitations under
 // the License.
 
+#![warn(missing_docs)]
+#![doc(test(attr(allow(unused_variables), allow(unused_assignments), allow(unused_mut),
+                 allow(unused_attributes), allow(dead_code), deny(warnings))))]
+
 //! A pure-rust client for the Aerospike NoSQL database.
 //!
-//! ## Example
+//! Aerospike is an enterprise-class, NoSQL database solution for real-time operational
+//! applications, delivering predictable performance at scale, superior uptime, and high
+//! availability at the lowest TCO compared to first-generation NoSQL and relational databases. For
+//! more information please refer to https://www.aerospike.com/.
+//!
+//! # Installation
+//!
+//! Add this to your `Cargo.toml`:
+//!
+//! [dependencies]
+//! aerospike = "0.0.1"
+//!
+//! # Examples
 //!
 //! The following is a very simple example of CRUD operations in an Aerospike database.
 //!
@@ -28,7 +44,8 @@
 //! use std::time::Instant;
 //! use std::thread;
 //!
-//! use aerospike::{Client, Operation, ClientPolicy, ReadPolicy, WritePolicy};
+//! use aerospike::{Client, ClientPolicy, ReadPolicy, WritePolicy};
+//! use aerospike::operations;
 //!
 //! fn main() {
 //!     let cpolicy = ClientPolicy::default();
@@ -63,7 +80,7 @@
 //!             let exists = client.exists(&wpolicy, &key).unwrap();
 //!             println!("exists: {}", exists);
 //!
-//!             let ops = &vec![Operation::put(&wbin), Operation::get()];
+//!             let ops = &vec![operations::put(&wbin), operations::get()];
 //!             let op_rec = client.operate(&wpolicy, &key, ops);
 //!             println!("operate: {}", op_rec.unwrap());
 //!
@@ -78,7 +95,7 @@
 //!     }
 //!
 //!     for t in threads {
-//!         t.join();
+//!         t.join().unwrap();
 //!     }
 //!
 //!     println!("total time: {:?}", now.elapsed());
@@ -102,42 +119,39 @@ extern crate lazy_static;
 #[macro_use]
 extern crate error_chain;
 
-pub use errors::*;
-pub use client::Client;
-pub use net::Host;
-pub use value::Value;
-pub use policy::{Policy, ClientPolicy, ReadPolicy, WritePolicy, Priority, ConsistencyLevel,
-                 CommitLevel, RecordExistsAction, GenerationPolicy, ScanPolicy, QueryPolicy};
-pub use key::Key;
 pub use bin::Bin;
+pub use client::Client;
+pub use errors::{Error, ErrorKind, Result};
+pub use key::Key;
+pub use net::Host;
+pub use operations::{MapPolicy, MapReturnType, MapWriteMode};
+pub use policy::{Policy, ClientPolicy, ReadPolicy, WritePolicy, ScanPolicy, QueryPolicy,
+    Priority, ConsistencyLevel, CommitLevel, RecordExistsAction, GenerationPolicy, Expiration};
+pub use query::{Statement, UDFLang, Recordset, IndexType, CollectionIndexType};
 pub use record::Record;
-pub use query::{Statement, Filter, UDFLang, Recordset};
 pub use result_code::ResultCode;
 pub use user::User;
-pub use commands::{IndexType, CollectionIndexType};
-pub use operations::{Operation, MapPolicy, MapReturnType};
+pub use value::Value;
 
 #[macro_use]
 pub mod errors;
-
-mod commands;
-mod msgpack;
+#[macro_use]
+mod bin;
+mod client;
 mod cluster;
-
+mod commands;
 #[macro_use]
-pub mod bin;
-pub mod client;
-#[macro_use]
-pub mod key;
-pub mod net;
+mod key;
+mod msgpack;
+mod net;
 pub mod operations;
 pub mod policy;
 pub mod query;
-pub mod record;
-pub mod result_code;
-pub mod user;
+mod record;
+mod result_code;
+mod user;
 #[macro_use]
-pub mod value;
+mod value;
 
 #[cfg(test)]
 extern crate hex;

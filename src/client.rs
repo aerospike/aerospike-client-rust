@@ -43,10 +43,21 @@ use operations::{Operation, OperationType};
 use policy::{ClientPolicy, ReadPolicy, WritePolicy, ScanPolicy, QueryPolicy};
 
 
-// Client encapsulates an Aerospike cluster.
-// All database operations are available against this object.
+/// Instantiate a Client instance to access an Aerospike database cluster and perform database
+/// operations.
+///
+/// The client is thread-safe. Only one client instance should be used per cluster. Multiple
+/// threads should share this cluster instance.
+///
+/// Your application uses this class' API to perform database operations such as writing and
+/// reading records, and selecting sets of records. Write operations include specialized
+/// functionality such as append/prepend and arithmetic addition.
+///
+/// Each record may have multiple bins, unless the Aerospike server nodes are configured as
+/// "single-bin". In "multi-bin" mode, partial records may be written or read by specifying the
+/// relevant subset of bins.
 pub struct Client {
-    pub cluster: Arc<Cluster>,
+    cluster: Arc<Cluster>,
     thread_pool: ThreadPool,
 }
 
@@ -54,6 +65,40 @@ unsafe impl Send for Client {}
 unsafe impl Sync for Client {}
 
 impl Client {
+
+    /// Initializes Aerospike client with suitable hosts to seed the cluster map. The client policy
+    /// is used to set defaults and size internal data structures. For each host connection that
+    /// succeeds, the client will:
+    ///
+    /// - Add host to the cluster map
+    /// - Request host's list of other nodes in cluster
+    /// - Add these nodes to the cluster map
+    ///
+    /// In most cases, only one host is necessary to seed the cluster. The remaining hosts are
+    /// added as future seeds in case of a complete network failure.
+    ///
+    /// If one connection succeeds, the client is ready to process database requests. If all
+    /// connections fail and the policy's `fail_
+    ///
+    /// The seed hosts to connect to (one or more) can be specified as a comma-separated list of
+    /// hostnames or IP addresses with optional port numbers, e.g.
+    ///
+    /// ```text
+    /// 10.0.0.1:3000,10.0.0.2:3000,10.0.0.3:3000
+    /// ```
+    ///
+    /// Port 3000 is used by default if the port number is omitted for any of the hosts.
+    ///
+    /// # Examples
+    ///
+    /// Using an environment variable to set the list of seed hosts.
+    ///
+    /// ```rust
+    /// use aerospike::{Client, ClientPolicy};
+    ///
+    /// let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap();
+    /// let client = Client::new(&ClientPolicy::default(), &hosts).unwrap();
+    /// ```
     pub fn new(policy: &ClientPolicy, hosts: &ToHosts) -> Result<Self> {
         let hosts = try!(hosts.to_hosts());
         let cluster = try!(Cluster::new(policy.clone(), &hosts));
@@ -65,18 +110,41 @@ impl Client {
         })
     }
 
+    /// Closes the connection to the Aerospike cluster.
     pub fn close(&self) -> Result<()> {
         self.cluster.close()
     }
 
+    /// Returns `true` if the client is connected to any cluster nodes.
     pub fn is_connected(&self) -> bool {
         self.cluster.is_connected()
     }
 
-    pub fn nodes(&self) -> Result<Vec<Arc<Node>>> {
-        Ok(self.cluster.nodes())
-    }
-
+    /// Read record header and bins for the specified key. The policy can be used to specify
+    /// timeouts. If no bin names are specified (`bin_names = None`), then the entire record will
+    /// be read.
+    ///
+    /// # Examples
+    ///
+    /// Fetch specified bins for a record with the given key.
+    ///
+    /// ```rust
+    /// # #[macro_use] extern crate aerospike;
+    /// # use aerospike::*;
+    /// # fn main() {
+    /// # let client = Client::new(&ClientPolicy::default(), &std::env::var("AEROSPIKE_HOSTS").unwrap()).unwrap();
+    /// let key = as_key!("test", "test", "mykey");
+    /// let bins = vec!["a"];
+    /// match client.get(&ReadPolicy::default(), &key, Some(&bins)) {
+    ///     Ok(record)
+    ///         => println!("a={:?}", record.bins.get("a")),
+    ///     Err(Error(ErrorKind::ServerError(ResultCode::KeyNotFoundError), _))
+    ///         => println!("No such record: {}", key),
+    ///     Err(err)
+    ///         => println!("Error fetching record: {:?}", err),
+    /// }
+    /// # }
+    /// ```
     pub fn get(&self,
                        policy: &ReadPolicy,
                        key: &Key,
@@ -87,6 +155,33 @@ impl Client {
         Ok(command.record.unwrap())
     }
 
+    /// Read record generation and expiration for the specified key. Bins are not read. The policy
+    /// can be used to specify timeouts.
+    ///
+    /// # Examples
+    ///
+    /// Determine the remaining time-to-live of a record.
+    ///
+    /// ```rust
+    /// # #[macro_use] extern crate aerospike;
+    /// # use aerospike::*;
+    /// # fn main() {
+    /// # let client = Client::new(&ClientPolicy::default(), &std::env::var("AEROSPIKE_HOSTS").unwrap()).unwrap();
+    /// let key = as_key!("test", "test", "mykey");
+    /// match client.get_header(&ReadPolicy::default(), &key) {
+    ///     Ok(record) => {
+    ///         match record.time_to_live() {
+    ///             None => println!("record never expires"),
+    ///             Some(duration) => println!("ttl: {} secs", duration.as_secs()),
+    ///         }
+    ///     },
+    ///     Err(Error(ErrorKind::ServerError(ResultCode::KeyNotFoundError), _))
+    ///         => println!("No such record: {}", key),
+    ///     Err(err)
+    ///         => println!("Error fetching record: {:?}", err),
+    /// }
+    /// # }
+    /// ```
     pub fn get_header(&self,
                               policy: &ReadPolicy,
                               key: &Key)
@@ -96,6 +191,44 @@ impl Client {
         Ok(command.record.unwrap())
     }
 
+    /// Write record bin(s). The policy specifies the transaction timeout, record expiration and
+    /// how the transaction is handled when the record already exists.
+    ///
+    /// # Examples
+    ///
+    /// Write a record with a single integer bin.
+    ///
+    /// ```rust
+    /// # #[macro_use] extern crate aerospike;
+    /// # use aerospike::*;
+    /// # fn main() {
+    /// # let client = Client::new(&ClientPolicy::default(), &std::env::var("AEROSPIKE_HOSTS").unwrap()).unwrap();
+    /// let key = as_key!("test", "test", "mykey");
+    /// let bin = as_bin!("i", 42);
+    /// match client.put(&WritePolicy::default(), &key, &vec![&bin]) {
+    ///     Ok(()) => println!("Record written"),
+    ///     Err(err) => println!("Error writing record: {:?}", err),
+    /// }
+    /// # }
+    /// ```
+    ///
+    /// Write a record with an expiration of 10 seconds.
+    ///
+    /// ```rust
+    /// # #[macro_use] extern crate aerospike;
+    /// # use aerospike::*;
+    /// # fn main() {
+    /// # let client = Client::new(&ClientPolicy::default(), &std::env::var("AEROSPIKE_HOSTS").unwrap()).unwrap();
+    /// let key = as_key!("test", "test", "mykey");
+    /// let bin = as_bin!("i", 42);
+    /// let mut policy = WritePolicy::default();
+    /// policy.expiration = policy::Expiration::Seconds(10);
+    /// match client.put(&policy, &key, &vec![&bin]) {
+    ///     Ok(()) => println!("Record written"),
+    ///     Err(err) => println!("Error writing record: {:?}", err),
+    /// }
+    /// # }
+    /// ```
     pub fn put(&self,
                        policy: &WritePolicy,
                        key: &Key,
@@ -106,6 +239,29 @@ impl Client {
         command.execute()
     }
 
+    /// Add integer bin values to existing record bin values. The policy specifies the transaction
+    /// timeout, record expiration and how the transaction is handled when the record already
+    /// exists. This call only works for integer values.
+    ///
+    /// # Examples
+    ///
+    /// Add two integer values to two existing bin values.
+    ///
+    /// ```rust
+    /// # #[macro_use] extern crate aerospike;
+    /// # use aerospike::*;
+    /// # fn main() {
+    /// # let client = Client::new(&ClientPolicy::default(), &std::env::var("AEROSPIKE_HOSTS").unwrap()).unwrap();
+    /// let key = as_key!("test", "test", "mykey");
+    /// let bina = as_bin!("a", 1);
+    /// let binb = as_bin!("b", 2);
+    /// let bins = vec![&bina, &binb];
+    /// match client.add(&WritePolicy::default(), &key, &bins) {
+    ///     Ok(()) => println!("Record updated"),
+    ///     Err(err) => println!("Error writing record: {:?}", err),
+    /// }
+    /// # }
+    /// ```
     pub fn add(&self,
                        policy: &WritePolicy,
                        key: &Key,
@@ -116,6 +272,9 @@ impl Client {
         command.execute()
     }
 
+    /// Append bin string values to existing record bin values. The policy specifies the
+    /// transaction timeout, record expiration and how the transaction is handled when the record
+    /// already exists. This call only works for string values.
     pub fn append(&self,
                           policy: &WritePolicy,
                           key: &Key,
@@ -126,6 +285,9 @@ impl Client {
         command.execute()
     }
 
+    /// Prepend bin string values to existing record bin values. The policy specifies the
+    /// transaction timeout, record expiration and how the transaction is handled when the record
+    /// already exists. This call only works for string values.
     pub fn prepend(&self,
                            policy: &WritePolicy,
                            key: &Key,
@@ -136,6 +298,26 @@ impl Client {
         command.execute()
     }
 
+    /// Delete record for specified key. The policy specifies the transaction timeout.
+    /// The call returns `true` if the record existed on the server before deletion.
+    ///
+    /// # Examples
+    ///
+    /// Delete a record.
+    ///
+    /// ```rust
+    /// # #[macro_use] extern crate aerospike;
+    /// # use aerospike::*;
+    /// # fn main() {
+    /// # let client = Client::new(&ClientPolicy::default(), &std::env::var("AEROSPIKE_HOSTS").unwrap()).unwrap();
+    /// let key = as_key!("test", "test", "mykey");
+    /// match client.delete(&WritePolicy::default(), &key) {
+    ///     Ok(true) => println!("Record deleted"),
+    ///     Ok(false) => println!("Record did not exist"),
+    ///     Err(err) => println!("Error deleting record: {:?}", err),
+    /// }
+    /// # }
+    /// ```
     pub fn delete(&self,
                           policy: &WritePolicy,
                           key: &Key)
@@ -145,11 +327,33 @@ impl Client {
         Ok(command.existed)
     }
 
+    /// Reset record's time to expiration using the policy's expiration. Fail if the record does
+    /// not exist.
+    ///
+    /// # Examples
+    ///
+    /// Reset a record's time to expiration to the default ttl for the namespace.
+    ///
+    /// ```rust
+    /// # #[macro_use] extern crate aerospike;
+    /// # use aerospike::*;
+    /// # fn main() {
+    /// # let client = Client::new(&ClientPolicy::default(), &std::env::var("AEROSPIKE_HOSTS").unwrap()).unwrap();
+    /// let key = as_key!("test", "test", "mykey");
+    /// let mut policy = WritePolicy::default();
+    /// policy.expiration = policy::Expiration::NamespaceDefault;
+    /// match client.touch(&policy, &key) {
+    ///     Ok(()) => println!("Record expiration updated"),
+    ///     Err(err) => println!("Error writing record: {:?}", err),
+    /// }
+    /// # }
+    /// ```
     pub fn touch(&self, policy: &WritePolicy, key: &Key) -> Result<()> {
         let mut command = TouchCommand::new(policy, self.cluster.clone(), key);
         command.execute()
     }
 
+    /// Determine if a record key exists. The policy can be used to specify timeouts.
     pub fn exists(&self,
                           policy: &WritePolicy,
                           key: &Key)
@@ -159,6 +363,34 @@ impl Client {
         Ok(command.exists)
     }
 
+    /// Perform multiple read/write operations on a single key in one batch call.
+    ///
+    /// Operations on scalar values, lists and maps can be performed in the same call.
+    ///
+    /// Operations execute in the order specified by the client application.
+    ///
+    /// # Examples
+    ///
+    /// Add an integer value to an existing record and then read the result, all in one database
+    /// call.
+    ///
+    /// ```rust
+    /// # #[macro_use] extern crate aerospike;
+    /// # use aerospike::*;
+    /// # fn main() {
+    /// # let client = Client::new(&ClientPolicy::default(), &std::env::var("AEROSPIKE_HOSTS").unwrap()).unwrap();
+    /// let key = as_key!("test", "test", "mykey");
+    /// let bin = as_bin!("a", 42);
+    /// let ops = vec![
+    ///     operations::add(&bin),
+    ///     operations::get_bin("a"),
+    /// ];
+    /// match client.operate(&WritePolicy::default(), &key, &ops) {
+    ///     Ok(record) => println!("The new value is {}", record.bins.get("a").unwrap()),
+    ///     Err(err) => println!("Error writing record: {:?}", err),
+    /// }
+    /// # }
+    /// ```
     pub fn operate(&self,
                            policy: &WritePolicy,
                            key: &Key,
@@ -169,8 +401,12 @@ impl Client {
         Ok(command.read_command.record.unwrap())
     }
 
-    /// //////////////////////////////////////////////////////////////////////////
-
+    /// Register a package containing user-defined functions (UDF) with the cluster. This
+    /// asynchronous server call will return before the command is complete. The client registers
+    /// the UDF package with a single, random cluster node; from there a copy will get distributed
+    /// to all other cluster nodes automatically.
+    ///
+    /// Lua is the only supported scripting laungauge for UDFs at the moment.
     pub fn register_udf(&self,
                                 policy: &WritePolicy,
                                 udf_body: &[u8],
@@ -200,6 +436,12 @@ impl Client {
         Ok(())
     }
 
+    /// Register a package containing user-defined functions (UDF) with the cluster. This
+    /// asynchronous server call will return before the command is complete. The client registers
+    /// the UDF package with a single, random cluster node; from there a copy will get distributed
+    /// to all other cluster nodes automatically.
+    ///
+    /// Lua is the only supported scripting laungauge for UDFs at the moment.
     pub fn register_udf_from_file(&self,
                                           policy: &WritePolicy,
                                           client_path: &str,
@@ -215,6 +457,7 @@ impl Client {
         self.register_udf(policy, &udf_body, udf_name, language)
     }
 
+    /// Remove a user-defined function (UDF) module from the server.
     pub fn remove_udf(&self,
                               policy: &WritePolicy,
                               udf_name: &str,
@@ -232,6 +475,8 @@ impl Client {
         bail!("UDF Remove failed: {:?}", response)
     }
 
+    /// Execute a user-defined function on the server and return the results. The function operates
+    /// on a single record. The UDF package name is required to locate the UDF.
     pub fn execute_udf(&self,
                                policy: &WritePolicy,
                                key: &Key,
@@ -266,6 +511,11 @@ impl Client {
         Err("Invalid UDF return value".into())
     }
 
+    /// Read all records in the specified namespace and set and return a record iterator. The scan
+    /// executor puts records on a queue in separate threads. The calling thread concurrently pops
+    /// records off the queue through the record iterator. Up to `policy.max_concurrent_nodes` nodes are
+    /// scanned in parallel. If concurrent nodes is set to zero, the server nodes are read in
+    /// series.
     pub fn scan(&self,
                         policy: &ScanPolicy,
                         namespace: &str,
@@ -300,6 +550,11 @@ impl Client {
         Ok(recordset)
     }
 
+    /// Read all records in the specified namespace and set for one node only and return a record
+    /// iterator. The scan executor puts records on a queue in separate threads. The calling thread
+    /// concurrently pops records off the queue through the record iterator. Up to
+    /// `policy.max_concurrent_nodes` nodes are scanned in parallel. If concurrent nodes is set to
+    /// zero, the server nodes are read in series.
     pub fn scan_node(&self,
                              policy: &ScanPolicy,
                              node: Node,
@@ -338,6 +593,9 @@ impl Client {
         Ok(recordset)
     }
 
+    /// Execute a query on all server nodes and return a record iterator. The query executor puts
+    /// records on a queue in separate threads. The calling thread concurrently pops records off
+    /// the queue through the record iterator.
     pub fn query(&self,
                          policy: &QueryPolicy,
                          statement: Statement)
@@ -362,6 +620,9 @@ impl Client {
         Ok(recordset)
     }
 
+    /// Execute a query on a single server node and return a record iterator. The query executor
+    /// puts records on a queue in separate threads. The calling thread concurrently pops records
+    /// off the queue through the record iterator.
     pub fn query_node(&self,
                               policy: &QueryPolicy,
                               node: Node,
@@ -384,6 +645,8 @@ impl Client {
         Ok(recordset)
     }
 
+    /// Create a secondary index on a bin containing scalar values. This asynchronous server call
+    /// returns before the command is complete.
     pub fn create_index(&self,
                         policy: &WritePolicy,
                         namespace: &str,
@@ -402,6 +665,8 @@ impl Client {
 
     }
 
+    /// Create a complex secondary index on a bin containing scalar, list or map values. This
+    /// asynchronous server call returns before the command is complete.
     pub fn create_complex_index(&self,
                                 policy: &WritePolicy,
                                 namespace: &str,
@@ -420,7 +685,7 @@ impl Client {
         self.send_sindex_cmd(cmd, &policy).chain_err(|| "Error creating index")
     }
 
-
+    /// Delete secondary index.
     pub fn drop_index(&self,
                       policy: &WritePolicy,
                       namespace: &str,

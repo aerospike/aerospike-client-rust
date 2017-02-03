@@ -13,12 +13,16 @@
 // License for the specific language governing permissions and limitations under
 // the License.
 
+//! Types and methods used for database queries and scans.
+
 pub use self::filter::Filter;
+pub use self::index_types::{IndexType, CollectionIndexType};
 pub use self::recordset::Recordset;
 pub use self::statement::Statement;
 pub use self::udf::UDFLang;
 
-pub mod filter;
-pub mod recordset;
-pub mod statement;
-pub mod udf;
+mod filter;
+mod index_types;
+mod recordset;
+mod statement;
+mod udf;

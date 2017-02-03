@@ -13,45 +13,74 @@
 // License for the specific language governing permissions and limitations under
 // the License.
 
-pub mod priority;
-pub mod consistency_level;
-pub mod generation_policy;
-pub mod record_exists_action;
-pub mod commit_level;
+//! Policy types encapsulate optional parameters for various client operations.
 
-pub mod client_policy;
-pub mod read_policy;
-pub mod write_policy;
-pub mod scan_policy;
-pub mod query_policy;
-pub mod admin_policy;
+mod expiration;
+mod priority;
+mod consistency_level;
+mod generation_policy;
+mod record_exists_action;
+mod commit_level;
+mod client_policy;
+mod read_policy;
+mod write_policy;
+mod scan_policy;
+mod query_policy;
+mod admin_policy;
 
-pub use self::priority::Priority;
-pub use self::consistency_level::ConsistencyLevel;
-pub use self::generation_policy::GenerationPolicy;
-pub use self::record_exists_action::RecordExistsAction;
-pub use self::commit_level::CommitLevel;
-
-pub use self::client_policy::ClientPolicy;
-pub use self::read_policy::ReadPolicy;
-pub use self::write_policy::WritePolicy;
-pub use self::scan_policy::ScanPolicy;
-pub use self::query_policy::QueryPolicy;
 pub use self::admin_policy::AdminPolicy;
+pub use self::client_policy::ClientPolicy;
+pub use self::commit_level::CommitLevel;
+pub use self::consistency_level::ConsistencyLevel;
+pub use self::expiration::Expiration;
+pub use self::generation_policy::GenerationPolicy;
+pub use self::priority::Priority;
+pub use self::query_policy::QueryPolicy;
+pub use self::read_policy::ReadPolicy;
+pub use self::record_exists_action::RecordExistsAction;
+pub use self::scan_policy::ScanPolicy;
+pub use self::write_policy::WritePolicy;
 
 use std::time::{Duration, Instant};
 use std::option::Option;
 
+/// Trait implemented by most policy types; policies that implement this trait typically encompass
+/// an instance of `BasePolicy`.
 pub trait Policy {
+
+    /// Transaction priority.
     fn priority(&self) -> &Priority;
+
+    #[doc(hidden)]
+    /// Deadline for current transaction based on specified timeout. For internal use only.
     fn deadline(&self) -> Option<Instant>;
+
+    /// Total transaction timeout for both client and server. The timeout is tracked on the client
+    /// and also sent to the server along with the transaction in the wire protocol. The client
+    /// will most likely timeout first, but the server has the capability to timeout the
+    /// transaction as well.
+    ///
+    /// The timeout is also used as a socket timeout. Default: 0 (no timeout).
     fn timeout(&self) -> Option<Duration>;
+
+    /// Maximum number of retries before aborting the current transaction. A retry may be attempted
+    /// when there is a network error. If `max_retries` is exceeded, the abort will occur even if
+    /// the timeout has not yet been exceeded.
     fn max_retries(&self) -> Option<usize>;
+
+    /// Time to sleep between retries. Set to zero to skip sleep. Default: 500ms.
     fn sleep_between_retries(&self) -> Option<Duration>;
+
+    /// How replicas should be consulted in read operations to provide the desired consistency
+    /// guarantee.
     fn consistency_level(&self) -> &ConsistencyLevel;
 }
 
+#[doc(hidden)]
+/// Policy-like object that encapsulates a base policy instance.
 pub trait PolicyLike {
+
+    /// Retrieve a reference to the base policy.
     fn base(&self) -> &BasePolicy;
 }
 
@@ -83,32 +112,34 @@ impl<T> Policy for T
     }
 }
 
+/// Common parameters shared by all policy types.
 #[derive(Debug,Clone)]
 pub struct BasePolicy {
-    // Priority of request relative to other transactions.
-    // Currently, only used for scans.
-    pub priority: Priority, // = Priority.DEFAULT;
 
-    // How replicas should be consulted in a read operation to provide the desired
-    // consistency guarantee. Default to allowing one replica to be used in the
-    // read operation.
-    pub consistency_level: ConsistencyLevel, // = CONSISTENCY_ONE
+    /// Priority of request relative to other transactions.
+    /// Currently, only used for scans.
+    pub priority: Priority,
 
-    // Timeout specifies transaction timeout.
-    // This timeout is used to set the socket timeout and is also sent to the
-    // server along with the transaction in the wire protocol.
-    // Default to no timeout (0).
+    /// How replicas should be consulted in a read operation to provide the desired
+    /// consistency guarantee. Default to allowing one replica to be used in the
+    /// read operation.
+    pub consistency_level: ConsistencyLevel,
+
+    /// Timeout specifies transaction timeout.
+    /// This timeout is used to set the socket timeout and is also sent to the
+    /// server along with the transaction in the wire protocol.
+    /// Default to no timeout (0).
     pub timeout: Option<Duration>,
 
-    // MaxRetries determines maximum number of retries before aborting the current transaction.
-    // A retry is attempted when there is a network error other than timeout.
-    // If maxRetries is exceeded, the abort will occur even if the timeout
-    // has not yet been exceeded.
-    pub max_retries: Option<usize>, // = 2;
+    /// MaxRetries determines maximum number of retries before aborting the current transaction.
+    /// A retry is attempted when there is a network error other than timeout.
+    /// If maxRetries is exceeded, the abort will occur even if the timeout
+    /// has not yet been exceeded.
+    pub max_retries: Option<usize>,
 
-    // SleepBetweenReplies determines duration to sleep between retries if a
-    // transaction fails and the timeout was not exceeded.  Enter zero to skip sleep.
-    pub sleep_between_retries: Option<Duration>, // = 500ms;
+    /// SleepBetweenReplies determines duration to sleep between retries if a
+    /// transaction fails and the timeout was not exceeded.  Enter zero to skip sleep.
+    pub sleep_between_retries: Option<Duration>,
 }
 
 impl Policy for BasePolicy {
@@ -119,10 +150,6 @@ impl Policy for BasePolicy {
     fn consistency_level(&self) -> &ConsistencyLevel {
         &self.consistency_level
     }
-
-    // fn set_priority(&mut self, p: Priority) {
-    //     self.priority = p
-    // }
 
     fn deadline(&self) -> Option<Instant> {
         match self.timeout {
@@ -138,10 +165,6 @@ impl Policy for BasePolicy {
     fn max_retries(&self) -> Option<usize> {
         self.max_retries
     }
-
-    // fn set_max_retries(&mut self, r: Option<usize>) {
-    //     self.max_retries = r
-    // }
 
     fn sleep_between_retries(&self) -> Option<Duration> {
         self.sleep_between_retries

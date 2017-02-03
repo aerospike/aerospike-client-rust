@@ -12,19 +12,20 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Priority of operations on database server.
+/// Priority of operations on database server.
 #[derive(Debug,Clone)]
 pub enum Priority {
-    // Default determines that the server defines the priority.
+
+    /// Default determines that the server defines the priority.
     Default = 0,
 
-    // Low determines that the server should run the operation in a background thread.
+    /// Low determines that the server should run the operation in a background thread.
     Low = 1,
 
-    // Medium determines that the server should run the operation at medium priority.
+    /// Medium determines that the server should run the operation at medium priority.
     Medium = 2,
 
-    // High determines that the server should run the operation at the highest priority.
+    /// High determines that the server should run the operation at the highest priority.
     High = 3,
 }
 

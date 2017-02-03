@@ -13,22 +13,25 @@
 // License for the specific language governing permissions and limitations under
 // the License.
 
-pub use self::lists::*;
-pub use self::maps::*;
+//! Functions used to create database operations used in the client's `operate()` method.
 
+#[doc(hidden)]
+pub mod cdt;
 pub mod scalar;
 pub mod lists;
 pub mod maps;
 
-use std::collections::HashMap;
+pub use self::maps::{MapOrder, MapReturnType, MapWriteMode, MapPolicy};
+pub use self::scalar::*;
+use self::cdt::CdtOperation;
 
 use errors::*;
 use Value;
-use msgpack::encoder;
 use commands::ParticleType;
 use commands::buffer::Buffer;
 
 #[derive(Debug, Clone, Copy)]
+#[doc(hidden)]
 pub enum OperationType {
     Read = 1,
     Write = 2,
@@ -41,6 +44,7 @@ pub enum OperationType {
 }
 
 #[derive(Debug)]
+#[doc(hidden)]
 pub enum OperationData<'a> {
     None,
     Value(&'a Value),
@@ -49,103 +53,31 @@ pub enum OperationData<'a> {
 }
 
 #[derive(Debug)]
+#[doc(hidden)]
 pub enum OperationBin<'a> {
     None,
     All,
     Name(&'a str),
 }
 
-#[derive(Debug, Clone, Copy)]
-pub enum CdtOpType {
-    ListAppend = 1,
-    ListAppendItems = 2,
-    ListInsert = 3,
-    ListInsertItems = 4,
-    ListPop = 5,
-    ListPopRange = 6,
-    ListRemove = 7,
-    ListRemoveRange = 8,
-    ListSet = 9,
-    ListTrim = 10,
-    ListClear = 11,
-    ListSize = 16,
-    ListGet = 17,
-    ListGetRange = 18,
-    MapSetType = 64,
-    MapAdd = 65,
-    MapAddItems = 66,
-    MapPut = 67,
-    MapPutItems = 68,
-    MapReplace = 69,
-    MapReplaceItems = 70,
-    MapIncrement = 73,
-    MapDecrement = 74,
-    MapClear = 75,
-    MapRemoveByKey = 76,
-    MapRemoveByIndex = 77,
-    MapRemoveByValue = 78,
-    MapRemoveByRank = 79,
-    MapRemoveByKeyList = 81,
-    MapRemoveByValueList = 83,
-    MapRemoveByKeyInterval = 84,
-    MapRemoveByIndexRange = 85,
-    MapRemoveByValueInterval = 86,
-    MapRemoveByRankRange = 87,
-    MapSize = 96,
-    MapGetByKey = 97,
-    MapGetByIndex = 98,
-    MapGetByValue = 99,
-    MapGetByRank = 100,
-    MapGetByKeyInterval = 103,
-    MapGetByIndexRange = 104,
-    MapGetByValueInterval = 105,
-    MapGetByRankRange = 106,
-}
-
-#[derive(Debug)]
-pub enum CdtArgument<'a> {
-    Byte(u8),
-    Int(i64),
-    Value(&'a Value),
-    List(&'a [Value]),
-    Map(&'a HashMap<Value, Value>),
-}
-
-#[derive(Debug)]
-pub struct CdtOperation<'a> {
-    pub op: CdtOpType,
-    pub args: Vec<CdtArgument<'a>>,
-}
-
-impl<'a> CdtOperation<'a> {
-    fn particle_type(&self) -> ParticleType {
-        ParticleType::BLOB
-    }
-
-    fn estimate_size(&self) -> Result<usize> {
-        let size: usize = try!(encoder::pack_cdt_op(&mut None, self));
-        Ok(size)
-    }
-
-    fn write_to(&self, buffer: &mut Buffer) -> Result<usize> {
-        let size: usize = try!(encoder::pack_cdt_op(&mut Some(buffer), self));
-        Ok(size)
-    }
-}
-
+/// Database operation definition. This data type is used in the client's `operate()` method.
 #[derive(Debug)]
 pub struct Operation<'a> {
     // OpType determines type of operation.
+    #[doc(hidden)]
     pub op: OperationType,
 
     // BinName (Optional) determines the name of bin used in operation.
+    #[doc(hidden)]
     pub bin: OperationBin<'a>,
 
     // BinData determines bin value used in operation.
+    #[doc(hidden)]
     pub data: OperationData<'a>,
 }
 
 impl<'a> Operation<'a> {
+    #[doc(hidden)]
     pub fn estimate_size(&self) -> Result<usize> {
         let mut size: usize = 0;
         size += match self.bin {
@@ -162,6 +94,7 @@ impl<'a> Operation<'a> {
         Ok(size)
     }
 
+    #[doc(hidden)]
     pub fn write_to(&self, buffer: &mut Buffer) -> Result<usize> {
         let mut size: usize = 0;
 
@@ -188,6 +121,7 @@ impl<'a> Operation<'a> {
         Ok(size)
     }
 
+    #[doc(hidden)]
     fn write_op_header_to(&self, buffer: &mut Buffer, particle_type: u8) -> Result<usize> {
         let mut size = try!(buffer.write_u8(particle_type as u8));
         size += try!(buffer.write_u8(0));

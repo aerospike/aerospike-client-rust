@@ -49,7 +49,7 @@ fn scan_single_consumer() {
     let rs = client.scan(&spolicy, namespace, set_name, None).unwrap();
 
     let mut count = 0;
-    for res in rs.iter() {
+    for res in rs.into_iter() {
         match res {
             Ok(_) => count += 1,
             Err(err) => println!("{:?}", err),
@@ -90,7 +90,7 @@ fn scan_multi_consumer() {
         let count = count.clone();
         let rs = rs.clone();
         threads.push(thread::spawn(move || {
-            for res in rs.iter() {
+            for res in rs.into_iter() {
                 match res {
                     Ok(_) => {
                         count.fetch_add(1, Ordering::Relaxed);

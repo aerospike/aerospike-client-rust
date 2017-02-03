@@ -25,15 +25,27 @@ lazy_static! {
   pub static ref CITRUSLEAF_EPOCH: SystemTime = UNIX_EPOCH + Duration::new(1262304000, 0);
 }
 
+/// Container object for a database record.
 #[derive(Debug)]
 pub struct Record {
+
+    /// Record key. When reading a record from the database, the key is not set in the returned
+    /// Record struct.
     pub key: Option<Key>,
+
+    /// Map of named record bins.
     pub bins: HashMap<String, Value>,
+
+    /// Record modification count.
     pub generation: u32,
+
+    /// Date record will expire, in seconds from Jan 01 2010, 00:00:00 UTC.
     expiration: u32,
 }
 
 impl Record {
+    /// Construct a new Record. For internal use only.
+    #[doc(hidden)]
     pub fn new(key: Option<Key>,
                bins: HashMap<String, Value>,
                generation: u32,
@@ -47,6 +59,8 @@ impl Record {
         }
     }
 
+    /// Returns the remaining time-to-live (TTL, a.k.a. expiration time) for the record or `None` if the
+    /// record never expires.
     pub fn time_to_live(&self) -> Option<Duration> {
         match self.expiration {
           0 => None, // record never expires

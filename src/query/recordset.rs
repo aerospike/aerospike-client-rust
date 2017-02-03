@@ -24,18 +24,21 @@ use rand::Rng;
 use errors::*;
 use Record;
 
-// #[derive(Debug)]
+/// Virtual collection of records retrieved through queries and scans. During a query/scan,
+/// multiple threads will retrieve records from the server nodes and put these records on an
+/// internal queue managed by the recordset. The single user thread consumes these records from the
+/// queue.
 pub struct Recordset {
     instances: AtomicUsize,
     record_queue_count: AtomicUsize,
     record_queue_size: AtomicUsize,
     record_queue: MsQueue<Result<Record>>,
     active: AtomicBool,
-
     task_id: AtomicUsize,
 }
 
 impl Recordset {
+    #[doc(hidden)]
     pub fn new(rec_queue_size: usize, nodes: usize) -> Self {
         let mut rng = rand::thread_rng();
         let task_id = rng.gen::<usize>();
@@ -50,14 +53,17 @@ impl Recordset {
         }
     }
 
+    /// Close the query.
     pub fn close(&self) {
         self.active.store(false, Ordering::Relaxed)
     }
 
+    /// Check whether the query is still active.
     pub fn is_active(&self) -> bool {
         self.active.load(Ordering::Relaxed)
     }
 
+    #[doc(hidden)]
     pub fn push(&self, record: Result<Record>) -> Option<Result<Record>> {
         if self.record_queue_count.fetch_add(1, Ordering::Relaxed) <
            self.record_queue_size.load(Ordering::Relaxed) {
@@ -68,18 +74,16 @@ impl Recordset {
         Some(record)
     }
 
+    /// Returns the task ID for the scan/query.
     pub fn task_id(&self) -> u64 {
         self.task_id.load(Ordering::Relaxed) as u64
     }
 
+    #[doc(hidden)]
     pub fn signal_end(&self) {
         if self.instances.fetch_sub(1, Ordering::Relaxed) == 1 {
             self.close()
         };
-    }
-
-    pub fn iter(&self) -> &Self {
-        self
     }
 }
 

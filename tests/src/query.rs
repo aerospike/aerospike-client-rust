@@ -65,7 +65,7 @@ fn query_single_consumer() {
 
     let rs = client.query(&qpolicy, statement).unwrap();
     let mut count = 0;
-    for res in rs.iter() {
+    for res in rs.into_iter() {
         match res {
             Ok(rec) => {
                 assert_eq!(*rec.bins.get("bin").unwrap(), as_val!(1));
@@ -85,7 +85,7 @@ fn query_single_consumer() {
 
     let rs = client.query(&qpolicy, statement).unwrap();
     let mut count = 0;
-    for res in rs.iter() {
+    for res in rs.into_iter() {
         match res {
             Ok(rec) => {
                 // println!("Record: {}", rec);
@@ -150,7 +150,7 @@ let ref client = common1::GLOBAL_CLIENT;
         let count = count.clone();
         let rs = rs.clone();
         threads.push(thread::spawn(move || {
-            for res in rs.iter() {
+            for res in rs.into_iter() {
                 match res {
                     Ok(rec) => {
                         count.fetch_add(1, Ordering::Relaxed);

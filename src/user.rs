@@ -12,11 +12,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// UserRoles contains information about a user.
+/// User and assigned roles.
 pub struct User {
-    // User name.
+    /// User name.
     pub user: String,
 
-    // Roles is a list of assigned roles.
+    /// List of assigned roles.
     pub roles: Vec<String>,
 }

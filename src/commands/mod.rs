@@ -27,10 +27,12 @@ pub mod scan_command;
 pub mod query_command;
 pub mod admin_command;
 pub mod buffer;
-pub mod index_types;
 pub mod particle_type;
 
 mod field_type;
+
+use std::sync::Arc;
+use std::time::Duration;
 
 pub use self::delete_command::DeleteCommand;
 pub use self::execute_udf_command::ExecuteUDFCommand;
@@ -45,11 +47,7 @@ pub use self::single_command::SingleCommand;
 pub use self::stream_command::StreamCommand;
 pub use self::touch_command::TouchCommand;
 pub use self::write_command::WriteCommand;
-pub use self::index_types::{IndexType, CollectionIndexType};
 pub use self::particle_type::ParticleType;
-
-use std::sync::Arc;
-use std::time::Duration;
 
 use errors::*;
 use net::Connection;

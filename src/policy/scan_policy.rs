@@ -15,25 +15,38 @@
 
 use policy::{BasePolicy, PolicyLike};
 
+/// ScanPolicy encapsulates optional parameters used in scan operations.
 #[derive(Debug,Clone)]
 pub struct ScanPolicy {
+
+    /// Base policy instance
     pub base_policy: BasePolicy,
 
-    pub scan_percent: u8, // = 100
+    /// Percent of data to scan. Valid integer range is 1 to 100. Default is 100.
+    pub scan_percent: u8,
 
-    pub max_concurrent_nodes: usize, // 0, parallel all
+    /// Maximum number of concurrent requests to server nodes at any point in time. If there are 16
+    /// nodes in the cluster and `max_concurrent_nodes` is 8, then scan requests will be made to 8
+    /// nodes in parallel. When a scan completes, a new scan request will be issued until all 16
+    /// nodes have been scanned. Default (0) is to issue requests to all server nodes in parallel.
+    pub max_concurrent_nodes: usize,
 
-    pub record_queue_size: usize, // = 1024
+    /// Number of records to place in queue before blocking. Records received from multiple server
+    /// nodes will be placed in a queue. A separate thread consumes these records in parallel. If
+    /// the queue is full, the producer threads will block until records are consumed.
+    pub record_queue_size: usize,
 
-    pub include_bin_data: bool, // = true
+    /// Indicates if bin data is retrieved. If false, only record digests are retrieved.
+    pub include_bin_data: bool,
 
-    pub include_ldt_data: bool, // = false
-
-    pub fail_on_cluster_change: bool, // = true
+    /// Terminate scan if cluster is in fluctuating state.
+    pub fail_on_cluster_change: bool,
 }
 
 
 impl ScanPolicy {
+
+    /// Create a new scan policy instance with default parameters.
     pub fn new() -> Self {
         ScanPolicy::default()
     }
@@ -43,17 +56,10 @@ impl Default for ScanPolicy {
     fn default() -> ScanPolicy {
         ScanPolicy {
             base_policy: BasePolicy::default(),
-
             scan_percent: 100,
-
             max_concurrent_nodes: 0,
-
             record_queue_size: 1024,
-
             include_bin_data: true,
-
-            include_ldt_data: false,
-
             fail_on_cluster_change: true,
         }
     }

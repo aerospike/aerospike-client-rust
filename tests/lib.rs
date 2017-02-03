@@ -49,12 +49,10 @@ pub mod common1 {
                         Ok(pass) => pass,
                             Err(_) => "".to_string(),
                     };
-
-                    cp.set_user_password(Some((user, pass))).unwrap();
+                    cp.set_user_password(user, pass).unwrap();
                 }
                 Err(_) => (),
             }
-
             cp
         };
         pub static ref GLOBAL_CLIENT: Arc<Client> = {

@@ -20,7 +20,7 @@ use std::net::Shutdown;
 use std::ops::Add;
 
 use errors::*;
-use policy::client_policy::ClientPolicy;
+use policy::ClientPolicy;
 use cluster::node::Node;
 use Host;
 use commands::buffer::Buffer;

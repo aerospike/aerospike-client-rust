@@ -17,17 +17,18 @@ use errors::*;
 use net::parser::Parser;
 use std::fmt;
 
-// Host name/port of database server.
+/// Host name/port of database server.
 #[derive(Debug, PartialEq, Eq, Hash, Clone)]
 pub struct Host {
-    // Host name or IP address of database server.
+    /// Host name or IP address of database server.
     pub name: String,
 
-    // Port of database server.
+    /// Port of database server.
     pub port: u16,
 }
 
 impl Host {
+    /// Create a new host instance given a hostname/IP and a port number.
     pub fn new(name: &str, port: u16) -> Self {
         Host {
             name: name.to_string(),
