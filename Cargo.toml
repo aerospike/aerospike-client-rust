@@ -9,6 +9,11 @@ homepage = "http://www.aerospike.com/"
 license = "Apache 2"
 readme = "README.md"
 
+exclude = [
+    ".travis.yml",
+    ".travis/*",
+]
+
 [dependencies]
 log = "0.3"
 byteorder = "^0.5"
@@ -25,5 +30,3 @@ error-chain = "^0.7"
 env_logger = "0.3"
 hex = "^0.2"
 
-#[profile.release]
-#debug = true
