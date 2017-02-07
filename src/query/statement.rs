@@ -13,8 +13,6 @@
 // License for the specific language governing permissions and limitations under
 // the License.
 
-use std::sync::Arc;
-
 use errors::*;
 use Value;
 use query::Filter;
@@ -44,7 +42,7 @@ pub struct Statement {
 
     /// Optional list of query filters. Currently, only one filter is allowed by the server on a
     /// secondary index lookup.
-    pub filters: Option<Vec<Arc<Filter>>>,
+    pub filters: Option<Vec<Filter>>,
 
     /// Optional Lua aggregation function parameters.
     pub aggregation: Option<Aggregation>,
@@ -104,7 +102,7 @@ impl Statement {
     /// stmt.add_filter(as_range!("baz", 0, 100));
     /// # }
     /// ```
-    pub fn add_filter(&mut self, filter: Arc<Filter>) {
+    pub fn add_filter(&mut self, filter: Filter) {
         match self.filters {
             Some(ref mut filters) => {
                 filters.push(filter.to_owned());
