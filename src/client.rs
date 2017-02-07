@@ -141,7 +141,7 @@ impl Client {
     ///     Err(Error(ErrorKind::ServerError(ResultCode::KeyNotFoundError), _))
     ///         => println!("No such record: {}", key),
     ///     Err(err)
-    ///         => println!("Error fetching record: {:?}", err),
+    ///         => println!("Error fetching record: {}", err),
     /// }
     /// # }
     /// ```
@@ -178,7 +178,7 @@ impl Client {
     ///     Err(Error(ErrorKind::ServerError(ResultCode::KeyNotFoundError), _))
     ///         => println!("No such record: {}", key),
     ///     Err(err)
-    ///         => println!("Error fetching record: {:?}", err),
+    ///         => println!("Error fetching record: {}", err),
     /// }
     /// # }
     /// ```
@@ -207,7 +207,7 @@ impl Client {
     /// let bin = as_bin!("i", 42);
     /// match client.put(&WritePolicy::default(), &key, &vec![&bin]) {
     ///     Ok(()) => println!("Record written"),
-    ///     Err(err) => println!("Error writing record: {:?}", err),
+    ///     Err(err) => println!("Error writing record: {}", err),
     /// }
     /// # }
     /// ```
@@ -225,7 +225,7 @@ impl Client {
     /// policy.expiration = policy::Expiration::Seconds(10);
     /// match client.put(&policy, &key, &vec![&bin]) {
     ///     Ok(()) => println!("Record written"),
-    ///     Err(err) => println!("Error writing record: {:?}", err),
+    ///     Err(err) => println!("Error writing record: {}", err),
     /// }
     /// # }
     /// ```
@@ -258,7 +258,7 @@ impl Client {
     /// let bins = vec![&bina, &binb];
     /// match client.add(&WritePolicy::default(), &key, &bins) {
     ///     Ok(()) => println!("Record updated"),
-    ///     Err(err) => println!("Error writing record: {:?}", err),
+    ///     Err(err) => println!("Error writing record: {}", err),
     /// }
     /// # }
     /// ```
@@ -314,7 +314,7 @@ impl Client {
     /// match client.delete(&WritePolicy::default(), &key) {
     ///     Ok(true) => println!("Record deleted"),
     ///     Ok(false) => println!("Record did not exist"),
-    ///     Err(err) => println!("Error deleting record: {:?}", err),
+    ///     Err(err) => println!("Error deleting record: {}", err),
     /// }
     /// # }
     /// ```
@@ -344,7 +344,7 @@ impl Client {
     /// policy.expiration = policy::Expiration::NamespaceDefault;
     /// match client.touch(&policy, &key) {
     ///     Ok(()) => println!("Record expiration updated"),
-    ///     Err(err) => println!("Error writing record: {:?}", err),
+    ///     Err(err) => println!("Error writing record: {}", err),
     /// }
     /// # }
     /// ```
@@ -387,7 +387,7 @@ impl Client {
     /// ];
     /// match client.operate(&WritePolicy::default(), &key, &ops) {
     ///     Ok(record) => println!("The new value is {}", record.bins.get("a").unwrap()),
-    ///     Err(err) => println!("Error writing record: {:?}", err),
+    ///     Err(err) => println!("Error writing record: {}", err),
     /// }
     /// # }
     /// ```
@@ -407,6 +407,41 @@ impl Client {
     /// to all other cluster nodes automatically.
     ///
     /// Lua is the only supported scripting laungauge for UDFs at the moment.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// # #[macro_use] extern crate aerospike;
+    /// # use aerospike::*;
+    /// # fn main() {
+    /// # let client = Client::new(&ClientPolicy::default(), &std::env::var("AEROSPIKE_HOSTS").unwrap()).unwrap();
+    /// let code = r#"
+    /// -- Validate value before writing.
+    /// function writeWithValidation(r,name,value)
+    ///   if (value >= 1 and value <= 10) then
+    ///     if not aerospike:exists(r) then
+    ///       aerospike:create(r)
+    ///     end
+    ///     r[name] = value
+    ///     aerospike:update(r)
+    ///   else
+    ///       error("1000:Invalid value")
+    ///   end
+    /// end
+    ///
+    /// -- Set a particular bin only if record does not already exist.
+    /// function writeUnique(r,name,value)
+    ///   if not aerospike:exists(r) then
+    ///     aerospike:create(r)
+    ///     r[name] = value
+    ///     aerospike:update(r)
+    ///   end
+    /// end
+    /// "#;
+    ///
+    /// client.register_udf(&WritePolicy::default(), code.as_bytes(), "example.lua", UDFLang::Lua).unwrap();
+    /// # }
+    /// ```
     pub fn register_udf(&self,
                                 policy: &WritePolicy,
                                 udf_body: &[u8],
@@ -516,6 +551,29 @@ impl Client {
     /// records off the queue through the record iterator. Up to `policy.max_concurrent_nodes` nodes are
     /// scanned in parallel. If concurrent nodes is set to zero, the server nodes are read in
     /// series.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// # #[macro_use] extern crate aerospike;
+    /// # use aerospike::*;
+    /// # fn main() {
+    /// # let client = Client::new(&ClientPolicy::default(), &std::env::var("AEROSPIKE_HOSTS").unwrap()).unwrap();
+    /// match client.scan(&ScanPolicy::default(), "test", "demo", None) {
+    ///     Ok(records) => {
+    ///         let mut count = 0;
+    ///         for record in &*records {
+    ///             match record {
+    ///                 Ok(record) => count += 1,
+    ///                 Err(err) => panic!("Error executing scan: {}", err),
+    ///             }
+    ///         }
+    ///         println!("Records: {}", count);
+    ///     },
+    ///     Err(err) => println!("Failed to execute scan: {}", err),
+    /// }
+    /// # }
+    /// ```
     pub fn scan(&self,
                         policy: &ScanPolicy,
                         namespace: &str,
@@ -596,6 +654,25 @@ impl Client {
     /// Execute a query on all server nodes and return a record iterator. The query executor puts
     /// records on a queue in separate threads. The calling thread concurrently pops records off
     /// the queue through the record iterator.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// # #[macro_use] extern crate aerospike;
+    /// # use aerospike::*;
+    /// # fn main() {
+    /// # let client = Client::new(&ClientPolicy::default(), &std::env::var("AEROSPIKE_HOSTS").unwrap()).unwrap();
+    /// let stmt = Statement::new("test", "test", None);
+    /// match client.query(&QueryPolicy::default(), stmt) {
+    ///     Ok(records) => {
+    ///         for record in &*records {
+    ///             // .. process record
+    ///         }
+    ///     },
+    ///     Err(err) => println!("Error fetching record: {}", err),
+    /// }
+    /// # }
+    /// ```
     pub fn query(&self,
                          policy: &QueryPolicy,
                          statement: Statement)
@@ -647,6 +724,24 @@ impl Client {
 
     /// Create a secondary index on a bin containing scalar values. This asynchronous server call
     /// returns before the command is complete.
+    ///
+    /// # Examples
+    /// 
+    /// The following example creates an index `idx_foo_bar_baz`. The index is in namespace `foo`
+    /// within set `bar` and bin `baz`:
+    ///
+    /// ```rust
+    /// # #[macro_use] extern crate aerospike;
+    /// # use aerospike::*;
+    /// # fn main() {
+    /// # let client = Client::new(&ClientPolicy::default(), &std::env::var("AEROSPIKE_HOSTS").unwrap()).unwrap();
+    /// match client.create_index(&WritePolicy::default(), "foo", "bar", "baz",
+    ///     "idx_foo_bar_baz", IndexType::Numeric) {
+    ///     Err(err) => println!("Failed to create index: {}", err),
+    ///     _ => {}
+    /// }
+    /// # }
+    /// ```
     pub fn create_index(&self,
                         policy: &WritePolicy,
                         namespace: &str,

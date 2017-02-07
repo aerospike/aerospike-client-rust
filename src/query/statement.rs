@@ -54,6 +54,17 @@ impl Statement {
 
     /// Create a new query statement with the given namespace, set name and optional list of bin
     /// names.
+    ///
+    /// # Examples
+    ///
+    /// Create a new statement to query the namespace "foo" and set "bar" and return the "name" and
+    /// "age" bins for each matching record.
+    ///
+    /// ```rust
+    /// use aerospike::Statement;
+    ///
+    /// let stmt = Statement::new("foo", "bar", Some(&vec!["name", "age"]));
+    /// ```
     pub fn new(namespace: &str,
                set_name: &str,
                bin_names: Option<&[&str]>)
@@ -79,6 +90,20 @@ impl Statement {
 
     /// Add a query filter to the statement. Currently, only one filter is allowed by the server on
     /// a secondary index lookup.
+    ///
+    /// # Example
+    ///
+    /// This example uses a numeric index on bin _baz_ in namespace _foo_ within set _bar_ to find
+    /// all records using a filter with the range 0 to 100 inclusive:
+    ///
+    /// ```rust
+    /// # #[macro_use] extern crate aerospike;
+    /// # use aerospike::*;
+    /// # fn main() {
+    /// let mut stmt = Statement::new("foo", "bar", Some(&vec!["name", "age"]));
+    /// stmt.add_filter(as_range!("baz", 0, 100));
+    /// # }
+    /// ```
     pub fn add_filter(&mut self, filter: Arc<Filter>) {
         match self.filters {
             Some(ref mut filters) => {
