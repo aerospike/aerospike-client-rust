@@ -29,6 +29,7 @@ use commands::buffer::Buffer;
 /// - `as_eq`
 /// - `as_range`
 /// - `as_contains`
+/// - `as_contains_range`
 /// - `as_within_region`
 /// - `as_within_radius`
 /// - `as_regions_containing_point`
@@ -98,7 +99,7 @@ impl Filter {
 #[macro_export]
 macro_rules! as_eq {
     ($bin_name:expr, $val:expr) => {{
-        let val = Arc::new(as_val!($val));
+        let val = std::sync::Arc::new(as_val!($val));
         $crate::query::Filter::new($bin_name, $crate::CollectionIndexType::Default, val.particle_type(), val.clone(), val.clone()).unwrap()
     }};
 }
@@ -107,8 +108,8 @@ macro_rules! as_eq {
 #[macro_export]
 macro_rules! as_range {
     ($bin_name:expr, $begin:expr, $end:expr) => {{
-        let begin = Arc::new(as_val!($begin));
-        let end = Arc::new(as_val!($end));
+        let begin = std::sync::Arc::new(as_val!($begin));
+        let end = std::sync::Arc::new(as_val!($end));
         $crate::query::Filter::new($bin_name, $crate::CollectionIndexType::Default, begin.particle_type(), begin, end).unwrap()
     }};
 }
@@ -117,7 +118,7 @@ macro_rules! as_range {
 #[macro_export]
 macro_rules! as_contains {
     ($bin_name:expr, $val:expr, $cit:expr) => {{
-        let val = Arc::new(as_val!($val));
+        let val = std::sync::Arc::new(as_val!($val));
         $crate::query::Filter::new($bin_name, $cit, val.particle_type(), val.clone(), val.clone()).unwrap()
     }};
 }
@@ -126,8 +127,8 @@ macro_rules! as_contains {
 #[macro_export]
 macro_rules! as_contains_range {
     ($bin_name:expr, $begin:expr, $end:expr, $cit:expr) => {{
-        let begin = Arc::new(as_val!($begin));
-        let end = Arc::new(as_val!($end));
+        let begin = std::sync::Arc::new(as_val!($begin));
+        let end = std::sync::Arc::new(as_val!($end));
         $crate::query::Filter::new($bin_name, $cit, begin.particle_type(), begin, end).unwrap()
     }};
 }
@@ -138,11 +139,11 @@ macro_rules! as_contains_range {
 macro_rules! as_within_region {
     ($bin_name:expr, $region:expr) => {{
         let cit = $crate::CollectionIndexType::Default;
-        let region = Arc::new(as_geo!(String::from($region)));
+        let region = std::sync::Arc::new(as_geo!(String::from($region)));
         $crate::query::Filter::new($bin_name, cit, region.particle_type(), region.clone(), region.clone()).unwrap()
     }};
     ($bin_name:expr, $region:expr, $cit:expr) => {{
-        let region = Arc::new(as_geo!(String::from($region)));
+        let region = std::sync::Arc::new(as_geo!(String::from($region)));
         $crate::query::Filter::new($bin_name, $cit, region.particle_type(), region.clone(), region.clone()).unwrap()
     }};
 }
@@ -156,14 +157,14 @@ macro_rules! as_within_radius {
         let lat = as_val!($lat as f64);
         let lng = as_val!($lng as f64);
         let radius = as_val!($radius as f64);
-        let geo_json = Arc::new(as_geo!(format!("{{ \"type\": \"Aeroircle\", \"coordinates\": [[{:.8}, {:.8}], {}] }}", lng, lat, radius)));
+        let geo_json = std::sync::Arc::new(as_geo!(format!("{{ \"type\": \"Aeroircle\", \"coordinates\": [[{:.8}, {:.8}], {}] }}", lng, lat, radius)));
         $crate::query::Filter::new($bin_name, cit, geo_json.particle_type(), geo_json.clone(), geo_json.clone()).unwrap()
     }};
     ($bin_name:expr, $lat:expr, $lng:expr, $radius:expr, $cit:expr) => {{
         let lat = as_val!($lat as f64);
         let lng = as_val!($lng as f64);
         let radius = as_val!($radius as f64);
-        let geo_json = Arc::new($crate::Value::GeoJSON(format!("{{ \"type\": \"Aeroircle\", \"coordinates\": [[{:.8}, {:.8}], {}] }}", lng, lat, radius)));
+        let geo_json = std::sync::Arc::new($crate::Value::GeoJSON(format!("{{ \"type\": \"Aeroircle\", \"coordinates\": [[{:.8}, {:.8}], {}] }}", lng, lat, radius)));
         $crate::query::Filter::new($bin_name, $cit, geo_json.particle_type(), geo_json.clone(), geo_json.clone()).unwrap()
     }};
 }
@@ -174,11 +175,11 @@ macro_rules! as_within_radius {
 macro_rules! as_regions_containing_point {
     ($bin_name:expr, $point:expr) => {{
         let cit = $crate::CollectionIndexType::Default;
-        let point = Arc::new(as_geo!(String::from($point)));
+        let point = std::sync::Arc::new(as_geo!(String::from($point)));
         $crate::query::Filter::new($bin_name, cit, point.particle_type(), point.clone(), point.clone()).unwrap()
     }};
     ($bin_name:expr, $point:expr, $cit:expr) => {{
-        let point = Arc::new(as_geo!(String::from($point)));
+        let point = std::sync::Arc::new(as_geo!(String::from($point)));
         $crate::query::Filter::new($bin_name, $cit, point.particle_type(), point.clone(), point.clone()).unwrap()
     }};
 }
