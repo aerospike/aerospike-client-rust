@@ -44,7 +44,8 @@
 //! use std::time::Instant;
 //! use std::thread;
 //!
-//! use aerospike::{Client, ClientPolicy, ReadPolicy, WritePolicy};
+//! use aerospike::Client;
+//! use aerospike::{ClientPolicy, ReadPolicy, WritePolicy};
 //! use aerospike::operations;
 //!
 //! fn main() {
