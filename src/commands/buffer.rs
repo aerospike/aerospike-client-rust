@@ -26,8 +26,8 @@ use Value;
 use commands::field_type::FieldType;
 use msgpack::encoder;
 use operations::{Operation, OperationBin, OperationData, OperationType};
-use policy::{WritePolicy, ReadPolicy, ConsistencyLevel, CommitLevel,
-             GenerationPolicy, RecordExistsAction, ScanPolicy, QueryPolicy};
+use policy::{WritePolicy, ReadPolicy, ConsistencyLevel, CommitLevel, GenerationPolicy,
+             RecordExistsAction, ScanPolicy, QueryPolicy};
 
 // Flags commented out are not supported by cmd client.
 // Contains a read operation.
@@ -215,10 +215,7 @@ impl Buffer {
         self.end()
     }
 
-    pub fn set_read_for_key_only<'a>(&mut self,
-                                     policy: &ReadPolicy,
-                                     key: &Key)
-                                     -> Result<()> {
+    pub fn set_read_for_key_only<'a>(&mut self, policy: &ReadPolicy, key: &Key) -> Result<()> {
         try!(self.begin());
 
         let field_count = try!(self.estimate_key_size(key, false));
@@ -284,25 +281,26 @@ impl Buffer {
 
         for operation in operations {
             match operation {
-                &Operation { op: OperationType::Read, bin: OperationBin::None, ..  } =>
-                    read_attr |= INFO1_READ | INFO1_NOBINDATA,
-                &Operation { op: OperationType::Read, bin: OperationBin::All, ..  } =>
-                    read_attr |= INFO1_READ | INFO1_GET_ALL,
-                &Operation { op: OperationType::Read, ..  } =>
-                    read_attr |= INFO1_READ,
-                _ => write_attr |= INFO2_WRITE
+                &Operation { op: OperationType::Read, bin: OperationBin::None, .. } => {
+                    read_attr |= INFO1_READ | INFO1_NOBINDATA
+                }
+                &Operation { op: OperationType::Read, bin: OperationBin::All, .. } => {
+                    read_attr |= INFO1_READ | INFO1_GET_ALL
+                }
+                &Operation { op: OperationType::Read, .. } => read_attr |= INFO1_READ,
+                _ => write_attr |= INFO2_WRITE,
             }
 
             let map_op = match operation.data {
                 OperationData::CdtMapOp(_) => true,
-                _ => false
+                _ => false,
             };
             if policy.respond_per_each_op || map_op {
                 write_attr |= INFO2_RESPOND_ALL_OPS;
             }
 
             self.data_offset += try!(operation.estimate_size()) + OPERATION_HEADER_SIZE as usize;
-        };
+        }
 
         let field_count = try!(self.estimate_key_size(key, policy.send_key && write_attr != 0));
 
@@ -659,7 +657,8 @@ impl Buffer {
 
     fn estimate_args_size(&mut self, args: Option<&[Value]>) -> Result<()> {
         if let Some(args) = args {
-            self.data_offset += try!(encoder::pack_array(&mut None, args)) + FIELD_HEADER_SIZE as usize;
+            self.data_offset += try!(encoder::pack_array(&mut None, args)) +
+                                FIELD_HEADER_SIZE as usize;
         } else {
             self.data_offset += try!(encoder::pack_empty_args_array(&mut None)) +
                                 FIELD_HEADER_SIZE as usize;
@@ -855,10 +854,7 @@ impl Buffer {
     }
 
 
-    fn write_operation_for_bin(&mut self,
-                               bin: &Bin,
-                               op_type: OperationType)
-                               -> Result<()> {
+    fn write_operation_for_bin(&mut self, bin: &Bin, op_type: OperationType) -> Result<()> {
 
         let name_length = bin.name.len();
         let value_length = try!(bin.value.estimate_size());
@@ -874,10 +870,7 @@ impl Buffer {
         Ok(())
     }
 
-    fn write_operation_for_bin_name(&mut self,
-                                    name: &str,
-                                    op_type: OperationType)
-                                    -> Result<()> {
+    fn write_operation_for_bin_name(&mut self, name: &str, op_type: OperationType) -> Result<()> {
         try!(self.write_i32(name.len() as i32 + 4));
         try!(self.write_u8(op_type as u8));
         try!(self.write_u8(0));
@@ -888,9 +881,7 @@ impl Buffer {
         Ok(())
     }
 
-    fn write_operation_for_operation_type(&mut self,
-                                          op_type: OperationType)
-                                          -> Result<()> {
+    fn write_operation_for_operation_type(&mut self, op_type: OperationType) -> Result<()> {
         try!(self.write_i32(4));
         try!(self.write_u8(op_type as u8));
         try!(self.write_u8(0));
@@ -949,7 +940,8 @@ impl Buffer {
         match pos {
             Some(pos) => Ok(NetworkEndian::read_u16(&mut self.data_buffer[pos..pos + len])),
             None => {
-                let res = NetworkEndian::read_u16(&mut self.data_buffer[self.data_offset..self.data_offset + len]);
+                let res = NetworkEndian::read_u16(
+                    &mut self.data_buffer[self.data_offset..self.data_offset + len]);
                 self.data_offset += len;
                 Ok(res)
             }
@@ -968,7 +960,8 @@ impl Buffer {
         match pos {
             Some(pos) => Ok(NetworkEndian::read_u32(&mut self.data_buffer[pos..pos + len])),
             None => {
-                let res = NetworkEndian::read_u32(&mut self.data_buffer[self.data_offset..self.data_offset + len]);
+                let res = NetworkEndian::read_u32(
+                    &mut self.data_buffer[self.data_offset..self.data_offset + len]);
                 self.data_offset += len;
                 Ok(res)
             }
@@ -987,7 +980,8 @@ impl Buffer {
         match pos {
             Some(pos) => Ok(NetworkEndian::read_u64(&mut self.data_buffer[pos..pos + len])),
             None => {
-                let res = NetworkEndian::read_u64(&mut self.data_buffer[self.data_offset..self.data_offset + len]);
+                let res = NetworkEndian::read_u64(
+                    &mut self.data_buffer[self.data_offset..self.data_offset + len]);
                 self.data_offset += len;
                 Ok(res)
             }
@@ -1013,7 +1007,8 @@ impl Buffer {
         match pos {
             Some(pos) => Ok(NetworkEndian::read_f32(&mut self.data_buffer[pos..pos + len])),
             None => {
-                let res = NetworkEndian::read_f32(&mut self.data_buffer[self.data_offset..self.data_offset + len]);
+                let res = NetworkEndian::read_f32(
+                    &mut self.data_buffer[self.data_offset..self.data_offset + len]);
                 self.data_offset += len;
                 Ok(res)
             }
@@ -1026,7 +1021,8 @@ impl Buffer {
         match pos {
             Some(pos) => Ok(NetworkEndian::read_f64(&mut self.data_buffer[pos..pos + len])),
             None => {
-                let res = NetworkEndian::read_f64(&mut self.data_buffer[self.data_offset..self.data_offset + len]);
+                let res = NetworkEndian::read_f64(
+                    &mut self.data_buffer[self.data_offset..self.data_offset + len]);
                 self.data_offset += len;
                 Ok(res)
             }

@@ -18,7 +18,6 @@
 /// operation to provide the desired consistency guarantee.
 #[derive(Debug,PartialEq,Clone)]
 pub enum ConsistencyLevel {
-
     /// ConsistencyOne indicates only a single replica should be consulted in
     /// the read operation.
     ConsistencyOne = 0,

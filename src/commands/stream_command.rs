@@ -165,8 +165,9 @@ impl StreamCommand {
                 x if x == FieldType::Key as u8 => {
                     let particle_type = try!(conn.buffer.read_u8(None));
                     let particle_bytes_size = field_len - 2;
-                    orig_key = Some(bytes_to_particle(
-                            particle_type, &mut conn.buffer, particle_bytes_size)?);
+                    orig_key = Some(bytes_to_particle(particle_type,
+                                                      &mut conn.buffer,
+                                                      particle_bytes_size)?);
                 }
                 _ => unreachable!(),
             }
@@ -183,10 +184,7 @@ impl StreamCommand {
 }
 
 impl Command for StreamCommand {
-    fn write_timeout(&mut self,
-                     conn: &mut Connection,
-                     timeout: Option<Duration>)
-                     -> Result<()> {
+    fn write_timeout(&mut self, conn: &mut Connection, timeout: Option<Duration>) -> Result<()> {
         conn.buffer.write_timeout(timeout);
         Ok(())
     }

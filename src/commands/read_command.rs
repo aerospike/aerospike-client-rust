@@ -110,10 +110,7 @@ impl<'a> ReadCommand<'a> {
 }
 
 impl<'a> Command for ReadCommand<'a> {
-    fn write_timeout(&mut self,
-                     conn: &mut Connection,
-                     timeout: Option<Duration>)
-                     -> Result<()> {
+    fn write_timeout(&mut self, conn: &mut Connection, timeout: Option<Duration>) -> Result<()> {
         conn.buffer.write_timeout(timeout);
         Ok(())
     }
@@ -156,16 +153,19 @@ impl<'a> Command for ReadCommand<'a> {
 
         match ResultCode::from(result_code) {
             ResultCode::Ok => {
-                let record = self.parse_record(conn, op_count, field_count, generation, expiration)?;
+                let record =
+                    self.parse_record(conn, op_count, field_count, generation, expiration)?;
                 self.record = Some(record);
                 Ok(())
-            },
+            }
             ResultCode::UdfBadResponse => {
                 // record bin "FAILURE" contains details about the UDF error
-                let record = self.parse_record(conn, op_count, field_count, generation, expiration)?;
-                let reason = record.bins.get("FAILURE").map_or(String::from("UDF Error"), |v| v.to_string());;
+                let record =
+                    self.parse_record(conn, op_count, field_count, generation, expiration)?;
+                let reason =
+                    record.bins.get("FAILURE").map_or(String::from("UDF Error"), |v| v.to_string());
                 Err(ErrorKind::UdfBadResponse(reason).into())
-            },
+            }
             rc @ _ => Err(ErrorKind::ServerError(rc).into()),
         }
     }

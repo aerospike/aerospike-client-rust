@@ -82,7 +82,7 @@ impl PartitionTokenizer {
                     }
                 }
                 (None, None) => break,
-                _ => bail!(ErrorKind::BadResponse("Error parsing partition info".to_string()))
+                _ => bail!(ErrorKind::BadResponse("Error parsing partition info".to_string())),
             }
         }
 

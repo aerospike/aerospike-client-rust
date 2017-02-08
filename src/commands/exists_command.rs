@@ -32,10 +32,7 @@ pub struct ExistsCommand<'a> {
 }
 
 impl<'a> ExistsCommand<'a> {
-    pub fn new(policy: &'a WritePolicy,
-               cluster: Arc<Cluster>,
-               key: &'a Key)
-               -> Self {
+    pub fn new(policy: &'a WritePolicy, cluster: Arc<Cluster>, key: &'a Key) -> Self {
         ExistsCommand {
             single_command: SingleCommand::new(cluster, key),
             policy: policy,
@@ -49,10 +46,7 @@ impl<'a> ExistsCommand<'a> {
 }
 
 impl<'a> Command for ExistsCommand<'a> {
-    fn write_timeout(&mut self,
-                     conn: &mut Connection,
-                     timeout: Option<Duration>)
-                     -> Result<()> {
+    fn write_timeout(&mut self, conn: &mut Connection, timeout: Option<Duration>) -> Result<()> {
         conn.buffer.write_timeout(timeout);
         Ok(())
     }

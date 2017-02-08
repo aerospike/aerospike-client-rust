@@ -17,7 +17,6 @@ use value::Value;
 
 /// Container object for a record bin, comprising a name and a value.
 pub struct Bin<'a> {
-
     /// Bin name
     pub name: &'a str,
 
@@ -27,7 +26,6 @@ pub struct Bin<'a> {
 
 
 impl<'a> Bin<'a> {
-
     /// Construct a new bin given a name and a value.
     pub fn new(name: &'a str, val: Value) -> Self {
         Bin {

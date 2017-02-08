@@ -55,10 +55,7 @@ impl<'a> ExecuteUDFCommand<'a> {
 }
 
 impl<'a> Command for ExecuteUDFCommand<'a> {
-    fn write_timeout(&mut self,
-                     conn: &mut Connection,
-                     timeout: Option<Duration>)
-                     -> Result<()> {
+    fn write_timeout(&mut self, conn: &mut Connection, timeout: Option<Duration>) -> Result<()> {
         conn.buffer.write_timeout(timeout);
         Ok(())
     }

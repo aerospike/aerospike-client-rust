@@ -130,7 +130,8 @@ impl Node {
         let info_map = self.info(None, &commands).chain_err(|| "Info command failed")?;
         self.verify_node_name(&info_map).chain_err(|| "Failed to verify node name")?;
         self.responded.store(true, Ordering::Relaxed);
-        let friends = self.add_friends(current_aliases, &info_map).chain_err(|| "Failed to add friends")?;
+        let friends = self.add_friends(current_aliases, &info_map)
+            .chain_err(|| "Failed to add friends")?;
         self.update_partitions(&info_map).chain_err(|| "Failed to update partitions")?;
         self.reset_failures();
 
@@ -152,8 +153,9 @@ impl Node {
                 if !(&self.name == info_name) {
                     // Set node to inactive immediately.
                     self.active.store(false, Ordering::Relaxed);
-                    bail!(ErrorKind::BadResponse(
-                            format!("Node name has changed: '{}' => '{}'", self.name, info_name)));
+                    bail!(ErrorKind::BadResponse(format!("Node name has changed: '{}' => '{}'",
+                                                         self.name,
+                                                         info_name)));
                 }
             }
         }
@@ -177,7 +179,8 @@ impl Node {
         for friend in friend_names {
             let mut friend_info = friend.split(":");
             if friend_info.clone().count() != 2 {
-                error!("Node info from asinfo:services is malformed. Expected HOST:PORT, but got '{}'",
+                error!("Node info from asinfo:services is malformed. Expected HOST:PORT, but got \
+                        '{}'",
                        friend);
                 continue;
             }
@@ -231,7 +234,8 @@ impl Node {
                     if self.inc_connections() > self.client_policy.connection_pool_size_per_node {
                         // too many connections, undo
                         self.dec_connections();
-                        bail!("Exceeded max. connection pool size of {}", self.client_policy.connection_pool_size_per_node);
+                        bail!("Exceeded max. connection pool size of {}",
+                              self.client_policy.connection_pool_size_per_node);
                     }
 
                     let conn = match Connection::new(self, &self.client_policy.user_password) {

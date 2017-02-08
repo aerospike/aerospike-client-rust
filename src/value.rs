@@ -139,7 +139,6 @@ impl fmt::Display for FloatValue {
 /// Container for bin values stored in the Aerospike database.
 #[derive(Debug,Clone,PartialEq,Eq)]
 pub enum Value {
-
     /// Empty value.
     Nil,
 
@@ -209,12 +208,11 @@ impl Hash for Value {
 }
 
 impl Value {
-
     /// Returns true if this value is the empty value (nil).
     pub fn is_nil(&self) -> bool {
         match self {
             &Value::Nil => true,
-            _ => false
+            _ => false,
         }
     }
 
@@ -624,7 +622,8 @@ macro_rules! as_blob {
 /// # use aerospike::*;
 /// # use std::vec::Vec;
 /// # fn main() {
-/// # let client = Client::new(&ClientPolicy::default(), &std::env::var("AEROSPIKE_HOSTS").unwrap()).unwrap();
+/// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap();
+/// # let client = Client::new(&ClientPolicy::default(), &hosts).unwrap();
 /// # let key = as_key!("test", "test", "mykey");
 /// let list = as_list!("a", "b", "c");
 /// let bin = as_bin!("list", list);
@@ -655,12 +654,13 @@ macro_rules! as_list {
 /// # use aerospike::*;
 /// # use std::vec::Vec;
 /// # fn main() {
-/// # let client = Client::new(&ClientPolicy::default(), &std::env::var("AEROSPIKE_HOSTS").unwrap()).unwrap();
+/// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap();
+/// # let client = Client::new(&ClientPolicy::default(), &hosts).unwrap();
 /// # let key = as_key!("test", "test", "mykey");
 /// let module = "myUDF";
 /// let func = "myFunction";
 /// let args = as_values!("a", "b", "c");
-/// client.execute_udf(&WritePolicy::default(), &key, 
+/// client.execute_udf(&WritePolicy::default(), &key,
 ///     &module, &func, Some(&args)).unwrap();
 /// # }
 /// ```
@@ -688,7 +688,8 @@ macro_rules! as_values {
 /// # use aerospike::*;
 /// # use std::collections::HashMap;
 /// # fn main() {
-/// # let client = Client::new(&ClientPolicy::default(), &std::env::var("AEROSPIKE_HOSTS").unwrap()).unwrap();
+/// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap();
+/// # let client = Client::new(&ClientPolicy::default(), &hosts).unwrap();
 /// # let key = as_key!("test", "test", "mykey");
 /// let map = as_map!("a" => 1, "b" => 2);
 /// let bin = as_bin!("map", map);

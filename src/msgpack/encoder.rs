@@ -51,10 +51,7 @@ pub fn pack_empty_args_array(buf: &mut Option<&mut Buffer>) -> Result<usize> {
     Ok(size)
 }
 
-pub fn pack_cdt_op(
-    buf: &mut Option<&mut Buffer>,
-    cdt_op: &CdtOperation)
-    -> Result<usize> {
+pub fn pack_cdt_op(buf: &mut Option<&mut Buffer>, cdt_op: &CdtOperation) -> Result<usize> {
 
     let mut size: usize = 0;
     size += try!(pack_raw_u16(buf, cdt_op.op as u16));
@@ -63,11 +60,11 @@ pub fn pack_cdt_op(
         size += try!(pack_array_begin(buf, cdt_op.args.len()));
         for arg in &cdt_op.args {
             size += match arg {
-                &CdtArgument::Byte(byte)   => try!(pack_value(buf, &Value::from(byte))),
-                &CdtArgument::Int(int)     => try!(pack_value(buf, &Value::from(int))),
+                &CdtArgument::Byte(byte) => try!(pack_value(buf, &Value::from(byte))),
+                &CdtArgument::Int(int) => try!(pack_value(buf, &Value::from(int))),
                 &CdtArgument::Value(value) => try!(pack_value(buf, value)),
-                &CdtArgument::List(list)   => try!(pack_array(buf, list)),
-                &CdtArgument::Map(map)     => try!(pack_map(buf, map)),
+                &CdtArgument::List(list) => try!(pack_array(buf, list)),
+                &CdtArgument::Map(map) => try!(pack_map(buf, map)),
             }
         }
     }

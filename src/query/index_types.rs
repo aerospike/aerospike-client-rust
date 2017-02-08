@@ -18,7 +18,6 @@ use std::fmt;
 /// Underlying data type of secondary index.
 #[derive(Debug,Clone,PartialEq)]
 pub enum IndexType {
-
     /// Numeric index.
     Numeric,
 
@@ -32,7 +31,6 @@ pub enum IndexType {
 /// Secondary index collection type.
 #[derive(Debug,Clone,PartialEq)]
 pub enum CollectionIndexType {
-
     /// Normal, scalar index.
     Default = 0,
 

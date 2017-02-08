@@ -34,10 +34,7 @@ pub struct ReadHeaderCommand<'a> {
 }
 
 impl<'a> ReadHeaderCommand<'a> {
-    pub fn new(policy: &'a ReadPolicy,
-               cluster: Arc<Cluster>,
-               key: &'a Key)
-               -> Self {
+    pub fn new(policy: &'a ReadPolicy, cluster: Arc<Cluster>, key: &'a Key) -> Self {
         ReadHeaderCommand {
             single_command: SingleCommand::new(cluster, key),
             policy: policy,
@@ -51,10 +48,7 @@ impl<'a> ReadHeaderCommand<'a> {
 }
 
 impl<'a> Command for ReadHeaderCommand<'a> {
-    fn write_timeout(&mut self,
-                     conn: &mut Connection,
-                     timeout: Option<Duration>)
-                     -> Result<()> {
+    fn write_timeout(&mut self, conn: &mut Connection, timeout: Option<Duration>) -> Result<()> {
         conn.buffer.write_timeout(timeout);
         Ok(())
     }

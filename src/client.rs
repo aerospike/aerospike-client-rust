@@ -65,7 +65,6 @@ unsafe impl Send for Client {}
 unsafe impl Sync for Client {}
 
 impl Client {
-
     /// Initializes Aerospike client with suitable hosts to seed the cluster map. The client policy
     /// is used to set defaults and size internal data structures. For each host connection that
     /// succeeds, the client will:
@@ -132,7 +131,8 @@ impl Client {
     /// # #[macro_use] extern crate aerospike;
     /// # use aerospike::*;
     /// # fn main() {
-    /// # let client = Client::new(&ClientPolicy::default(), &std::env::var("AEROSPIKE_HOSTS").unwrap()).unwrap();
+    /// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap();
+    /// # let client = Client::new(&ClientPolicy::default(), &hosts).unwrap();
     /// let key = as_key!("test", "test", "mykey");
     /// let bins = vec!["a"];
     /// match client.get(&ReadPolicy::default(), &key, Some(&bins)) {
@@ -146,10 +146,10 @@ impl Client {
     /// # }
     /// ```
     pub fn get(&self,
-                       policy: &ReadPolicy,
-                       key: &Key,
-                       bin_names: Option<&[&str]>)
-                       -> Result<Record> {
+               policy: &ReadPolicy,
+               key: &Key,
+               bin_names: Option<&[&str]>)
+               -> Result<Record> {
         let mut command = ReadCommand::new(policy, self.cluster.clone(), key, bin_names);
         try!(command.execute());
         Ok(command.record.unwrap())
@@ -166,7 +166,8 @@ impl Client {
     /// # #[macro_use] extern crate aerospike;
     /// # use aerospike::*;
     /// # fn main() {
-    /// # let client = Client::new(&ClientPolicy::default(), &std::env::var("AEROSPIKE_HOSTS").unwrap()).unwrap();
+    /// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap();
+    /// # let client = Client::new(&ClientPolicy::default(), &hosts).unwrap();
     /// let key = as_key!("test", "test", "mykey");
     /// match client.get_header(&ReadPolicy::default(), &key) {
     ///     Ok(record) => {
@@ -182,10 +183,7 @@ impl Client {
     /// }
     /// # }
     /// ```
-    pub fn get_header(&self,
-                              policy: &ReadPolicy,
-                              key: &Key)
-                              -> Result<Record> {
+    pub fn get_header(&self, policy: &ReadPolicy, key: &Key) -> Result<Record> {
         let mut command = ReadHeaderCommand::new(policy, self.cluster.clone(), key);
         try!(command.execute());
         Ok(command.record.unwrap())
@@ -202,7 +200,8 @@ impl Client {
     /// # #[macro_use] extern crate aerospike;
     /// # use aerospike::*;
     /// # fn main() {
-    /// # let client = Client::new(&ClientPolicy::default(), &std::env::var("AEROSPIKE_HOSTS").unwrap()).unwrap();
+    /// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap();
+    /// # let client = Client::new(&ClientPolicy::default(), &hosts).unwrap();
     /// let key = as_key!("test", "test", "mykey");
     /// let bin = as_bin!("i", 42);
     /// match client.put(&WritePolicy::default(), &key, &vec![&bin]) {
@@ -218,7 +217,8 @@ impl Client {
     /// # #[macro_use] extern crate aerospike;
     /// # use aerospike::*;
     /// # fn main() {
-    /// # let client = Client::new(&ClientPolicy::default(), &std::env::var("AEROSPIKE_HOSTS").unwrap()).unwrap();
+    /// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap();
+    /// # let client = Client::new(&ClientPolicy::default(), &hosts).unwrap();
     /// let key = as_key!("test", "test", "mykey");
     /// let bin = as_bin!("i", 42);
     /// let mut policy = WritePolicy::default();
@@ -229,13 +229,12 @@ impl Client {
     /// }
     /// # }
     /// ```
-    pub fn put(&self,
-                       policy: &WritePolicy,
-                       key: &Key,
-                       bins: &[&Bin])
-                       -> Result<()> {
-        let mut command =
-            WriteCommand::new(policy, self.cluster.clone(), key, bins, OperationType::Write);
+    pub fn put(&self, policy: &WritePolicy, key: &Key, bins: &[&Bin]) -> Result<()> {
+        let mut command = WriteCommand::new(policy,
+                                            self.cluster.clone(),
+                                            key,
+                                            bins,
+                                            OperationType::Write);
         command.execute()
     }
 
@@ -251,7 +250,8 @@ impl Client {
     /// # #[macro_use] extern crate aerospike;
     /// # use aerospike::*;
     /// # fn main() {
-    /// # let client = Client::new(&ClientPolicy::default(), &std::env::var("AEROSPIKE_HOSTS").unwrap()).unwrap();
+    /// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap();
+    /// # let client = Client::new(&ClientPolicy::default(), &hosts).unwrap();
     /// let key = as_key!("test", "test", "mykey");
     /// let bina = as_bin!("a", 1);
     /// let binb = as_bin!("b", 2);
@@ -262,11 +262,7 @@ impl Client {
     /// }
     /// # }
     /// ```
-    pub fn add(&self,
-                       policy: &WritePolicy,
-                       key: &Key,
-                       bins: &[&Bin])
-                       -> Result<()> {
+    pub fn add(&self, policy: &WritePolicy, key: &Key, bins: &[&Bin]) -> Result<()> {
         let mut command =
             WriteCommand::new(policy, self.cluster.clone(), key, bins, OperationType::Incr);
         command.execute()
@@ -275,26 +271,24 @@ impl Client {
     /// Append bin string values to existing record bin values. The policy specifies the
     /// transaction timeout, record expiration and how the transaction is handled when the record
     /// already exists. This call only works for string values.
-    pub fn append(&self,
-                          policy: &WritePolicy,
-                          key: &Key,
-                          bins: &[&Bin])
-                          -> Result<()> {
-        let mut command =
-            WriteCommand::new(policy, self.cluster.clone(), key, bins, OperationType::Append);
+    pub fn append(&self, policy: &WritePolicy, key: &Key, bins: &[&Bin]) -> Result<()> {
+        let mut command = WriteCommand::new(policy,
+                                            self.cluster.clone(),
+                                            key,
+                                            bins,
+                                            OperationType::Append);
         command.execute()
     }
 
     /// Prepend bin string values to existing record bin values. The policy specifies the
     /// transaction timeout, record expiration and how the transaction is handled when the record
     /// already exists. This call only works for string values.
-    pub fn prepend(&self,
-                           policy: &WritePolicy,
-                           key: &Key,
-                           bins: &[&Bin])
-                           -> Result<()> {
-        let mut command =
-            WriteCommand::new(policy, self.cluster.clone(), key, bins, OperationType::Prepend);
+    pub fn prepend(&self, policy: &WritePolicy, key: &Key, bins: &[&Bin]) -> Result<()> {
+        let mut command = WriteCommand::new(policy,
+                                            self.cluster.clone(),
+                                            key,
+                                            bins,
+                                            OperationType::Prepend);
         command.execute()
     }
 
@@ -309,7 +303,8 @@ impl Client {
     /// # #[macro_use] extern crate aerospike;
     /// # use aerospike::*;
     /// # fn main() {
-    /// # let client = Client::new(&ClientPolicy::default(), &std::env::var("AEROSPIKE_HOSTS").unwrap()).unwrap();
+    /// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap();
+    /// # let client = Client::new(&ClientPolicy::default(), &hosts).unwrap();
     /// let key = as_key!("test", "test", "mykey");
     /// match client.delete(&WritePolicy::default(), &key) {
     ///     Ok(true) => println!("Record deleted"),
@@ -318,10 +313,7 @@ impl Client {
     /// }
     /// # }
     /// ```
-    pub fn delete(&self,
-                          policy: &WritePolicy,
-                          key: &Key)
-                          -> Result<bool> {
+    pub fn delete(&self, policy: &WritePolicy, key: &Key) -> Result<bool> {
         let mut command = DeleteCommand::new(policy, self.cluster.clone(), key);
         try!(command.execute());
         Ok(command.existed)
@@ -338,7 +330,8 @@ impl Client {
     /// # #[macro_use] extern crate aerospike;
     /// # use aerospike::*;
     /// # fn main() {
-    /// # let client = Client::new(&ClientPolicy::default(), &std::env::var("AEROSPIKE_HOSTS").unwrap()).unwrap();
+    /// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap();
+    /// # let client = Client::new(&ClientPolicy::default(), &hosts).unwrap();
     /// let key = as_key!("test", "test", "mykey");
     /// let mut policy = WritePolicy::default();
     /// policy.expiration = policy::Expiration::NamespaceDefault;
@@ -354,10 +347,7 @@ impl Client {
     }
 
     /// Determine if a record key exists. The policy can be used to specify timeouts.
-    pub fn exists(&self,
-                          policy: &WritePolicy,
-                          key: &Key)
-                          -> Result<bool> {
+    pub fn exists(&self, policy: &WritePolicy, key: &Key) -> Result<bool> {
         let mut command = ExistsCommand::new(policy, self.cluster.clone(), key);
         try!(command.execute());
         Ok(command.exists)
@@ -378,7 +368,8 @@ impl Client {
     /// # #[macro_use] extern crate aerospike;
     /// # use aerospike::*;
     /// # fn main() {
-    /// # let client = Client::new(&ClientPolicy::default(), &std::env::var("AEROSPIKE_HOSTS").unwrap()).unwrap();
+    /// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap();
+    /// # let client = Client::new(&ClientPolicy::default(), &hosts).unwrap();
     /// let key = as_key!("test", "test", "mykey");
     /// let bin = as_bin!("a", 42);
     /// let ops = vec![
@@ -391,11 +382,7 @@ impl Client {
     /// }
     /// # }
     /// ```
-    pub fn operate(&self,
-                           policy: &WritePolicy,
-                           key: &Key,
-                           ops: &[Operation])
-                           -> Result<Record> {
+    pub fn operate(&self, policy: &WritePolicy, key: &Key, ops: &[Operation]) -> Result<Record> {
         let mut command = OperateCommand::new(policy, self.cluster.clone(), key, ops);
         try!(command.execute());
         Ok(command.read_command.record.unwrap())
@@ -414,7 +401,8 @@ impl Client {
     /// # extern crate aerospike;
     /// # use aerospike::*;
     /// # fn main() {
-    /// # let client = Client::new(&ClientPolicy::default(), &std::env::var("AEROSPIKE_HOSTS").unwrap()).unwrap();
+    /// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap();
+    /// # let client = Client::new(&ClientPolicy::default(), &hosts).unwrap();
     /// let code = r#"
     /// -- Validate value before writing.
     /// function writeWithValidation(r,name,value)
@@ -439,15 +427,16 @@ impl Client {
     /// end
     /// "#;
     ///
-    /// client.register_udf(&WritePolicy::default(), code.as_bytes(), "example.lua", UDFLang::Lua).unwrap();
+    /// client.register_udf(&WritePolicy::default(), code.as_bytes(),
+    ///                     "example.lua", UDFLang::Lua).unwrap();
     /// # }
     /// ```
     pub fn register_udf(&self,
-                                policy: &WritePolicy,
-                                udf_body: &[u8],
-                                udf_name: &str,
-                                language: UDFLang)
-                                -> Result<()> {
+                        policy: &WritePolicy,
+                        udf_body: &[u8],
+                        udf_name: &str,
+                        language: UDFLang)
+                        -> Result<()> {
         let udf_body = udf_body.to_base64(STANDARD);
 
         let cmd = format!("udf-put:filename={};content={};content-len={};udf-type={};",
@@ -478,11 +467,11 @@ impl Client {
     ///
     /// Lua is the only supported scripting laungauge for UDFs at the moment.
     pub fn register_udf_from_file(&self,
-                                          policy: &WritePolicy,
-                                          client_path: &str,
-                                          udf_name: &str,
-                                          language: UDFLang)
-                                          -> Result<()> {
+                                  policy: &WritePolicy,
+                                  client_path: &str,
+                                  udf_name: &str,
+                                  language: UDFLang)
+                                  -> Result<()> {
 
         let path = Path::new(client_path);
         let mut file = try!(File::open(&path));
@@ -494,10 +483,10 @@ impl Client {
 
     /// Remove a user-defined function (UDF) module from the server.
     pub fn remove_udf(&self,
-                              policy: &WritePolicy,
-                              udf_name: &str,
-                              language: UDFLang)
-                              -> Result<()> {
+                      policy: &WritePolicy,
+                      udf_name: &str,
+                      language: UDFLang)
+                      -> Result<()> {
 
         let cmd = format!("udf-remove:filename={}.{};", udf_name, language);
         let node = try!(self.cluster.get_random_node());
@@ -513,19 +502,19 @@ impl Client {
     /// Execute a user-defined function on the server and return the results. The function operates
     /// on a single record. The UDF package name is required to locate the UDF.
     pub fn execute_udf(&self,
-                               policy: &WritePolicy,
-                               key: &Key,
-                               udf_name: &str,
-                               function_name: &str,
-                               args: Option<&[Value]>)
-                               -> Result<Option<Value>> {
+                       policy: &WritePolicy,
+                       key: &Key,
+                       udf_name: &str,
+                       function_name: &str,
+                       args: Option<&[Value]>)
+                       -> Result<Option<Value>> {
 
         let mut command = ExecuteUDFCommand::new(policy,
-                                                      self.cluster.clone(),
-                                                      key,
-                                                      udf_name,
-                                                      function_name,
-                                                      args);
+                                                 self.cluster.clone(),
+                                                 key,
+                                                 udf_name,
+                                                 function_name,
+                                                 args);
         try!(command.execute());
 
         let record = command.read_command.record.as_ref().unwrap().clone();
@@ -548,9 +537,9 @@ impl Client {
 
     /// Read all records in the specified namespace and set and return a record iterator. The scan
     /// executor puts records on a queue in separate threads. The calling thread concurrently pops
-    /// records off the queue through the record iterator. Up to `policy.max_concurrent_nodes` nodes are
-    /// scanned in parallel. If concurrent nodes is set to zero, the server nodes are read in
-    /// series.
+    /// records off the queue through the record iterator. Up to `policy.max_concurrent_nodes`
+    /// nodes are scanned in parallel. If concurrent nodes is set to zero, the server nodes are
+    /// read in series.
     ///
     /// # Examples
     ///
@@ -558,7 +547,8 @@ impl Client {
     /// # extern crate aerospike;
     /// # use aerospike::*;
     /// # fn main() {
-    /// # let client = Client::new(&ClientPolicy::default(), &std::env::var("AEROSPIKE_HOSTS").unwrap()).unwrap();
+    /// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap();
+    /// # let client = Client::new(&ClientPolicy::default(), &hosts).unwrap();
     /// match client.scan(&ScanPolicy::default(), "test", "demo", None) {
     ///     Ok(records) => {
     ///         let mut count = 0;
@@ -575,11 +565,11 @@ impl Client {
     /// # }
     /// ```
     pub fn scan(&self,
-                        policy: &ScanPolicy,
-                        namespace: &str,
-                        set_name: &str,
-                        bin_names: Option<&[&str]>)
-                        -> Result<Arc<Recordset>> {
+                policy: &ScanPolicy,
+                namespace: &str,
+                set_name: &str,
+                bin_names: Option<&[&str]>)
+                -> Result<Arc<Recordset>> {
 
         let bin_names = match bin_names {
             None => None,
@@ -600,7 +590,8 @@ impl Client {
             let bin_names = bin_names.to_owned();
 
             thread::spawn(move || {
-                let mut command = ScanCommand::new(&policy, node, &namespace, &set_name, &bin_names, recordset);
+                let mut command =
+                    ScanCommand::new(&policy, node, &namespace, &set_name, &bin_names, recordset);
                 command.execute().unwrap();
             });
 
@@ -614,12 +605,12 @@ impl Client {
     /// `policy.max_concurrent_nodes` nodes are scanned in parallel. If concurrent nodes is set to
     /// zero, the server nodes are read in series.
     pub fn scan_node(&self,
-                             policy: &ScanPolicy,
-                             node: Node,
-                             namespace: &str,
-                             set_name: &str,
-                             bin_names: Option<&[&str]>)
-                             -> Result<Arc<Recordset>> {
+                     policy: &ScanPolicy,
+                     node: Node,
+                     namespace: &str,
+                     set_name: &str,
+                     bin_names: Option<&[&str]>)
+                     -> Result<Arc<Recordset>> {
 
 
         let bin_names = match bin_names {
@@ -661,7 +652,8 @@ impl Client {
     /// # extern crate aerospike;
     /// # use aerospike::*;
     /// # fn main() {
-    /// # let client = Client::new(&ClientPolicy::default(), &std::env::var("AEROSPIKE_HOSTS").unwrap()).unwrap();
+    /// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap();
+    /// # let client = Client::new(&ClientPolicy::default(), &hosts).unwrap();
     /// let stmt = Statement::new("test", "test", None);
     /// match client.query(&QueryPolicy::default(), stmt) {
     ///     Ok(records) => {
@@ -673,10 +665,7 @@ impl Client {
     /// }
     /// # }
     /// ```
-    pub fn query(&self,
-                         policy: &QueryPolicy,
-                         statement: Statement)
-                         -> Result<Arc<Recordset>> {
+    pub fn query(&self, policy: &QueryPolicy, statement: Statement) -> Result<Arc<Recordset>> {
 
         try!(statement.validate());
         let statement = Arc::new(statement);
@@ -701,10 +690,10 @@ impl Client {
     /// puts records on a queue in separate threads. The calling thread concurrently pops records
     /// off the queue through the record iterator.
     pub fn query_node(&self,
-                              policy: &QueryPolicy,
-                              node: Node,
-                              statement: Statement)
-                              -> Result<Arc<Recordset>> {
+                      policy: &QueryPolicy,
+                      node: Node,
+                      statement: Statement)
+                      -> Result<Arc<Recordset>> {
 
         try!(statement.validate());
 
@@ -726,7 +715,7 @@ impl Client {
     /// returns before the command is complete.
     ///
     /// # Examples
-    /// 
+    ///
     /// The following example creates an index `idx_foo_bar_baz`. The index is in namespace `foo`
     /// within set `bar` and bin `baz`:
     ///
@@ -734,7 +723,8 @@ impl Client {
     /// # extern crate aerospike;
     /// # use aerospike::*;
     /// # fn main() {
-    /// # let client = Client::new(&ClientPolicy::default(), &std::env::var("AEROSPIKE_HOSTS").unwrap()).unwrap();
+    /// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap();
+    /// # let client = Client::new(&ClientPolicy::default(), &hosts).unwrap();
     /// match client.create_index(&WritePolicy::default(), "foo", "bar", "baz",
     ///     "idx_foo_bar_baz", IndexType::Numeric) {
     ///     Err(err) => println!("Failed to create index: {}", err),
@@ -775,8 +765,14 @@ impl Client {
             CollectionIndexType::Default => "".to_string(),
             _ => format!("indextype={};", collection_index_type),
         };
-        let cmd = format!("sindex-create:ns={};set={};indexname={};numbins=1;{}indexdata={},{};priority=normal",
-                          namespace, set_name, index_name, cit_str, bin_name, index_type);
+        let cmd = format!("sindex-create:ns={};set={};indexname={};numbins=1;{}indexdata={},{};\
+                           priority=normal",
+                          namespace,
+                          set_name,
+                          index_name,
+                          cit_str,
+                          bin_name,
+                          index_type);
         self.send_sindex_cmd(cmd, &policy).chain_err(|| "Error creating index")
     }
 
@@ -793,7 +789,9 @@ impl Client {
             _ => format!("set={};", set_name),
         };
         let cmd = format!("sindex-delete:ns={};{}indexname={}",
-                          namespace, set_name, index_name);
+                          namespace,
+                          set_name,
+                          index_name);
         self.send_sindex_cmd(cmd, &policy).chain_err(|| "Error dropping index")
     }
 
@@ -803,7 +801,7 @@ impl Client {
 
         for v in response.values() {
             if v.to_uppercase() == "OK" {
-                return Ok(())
+                return Ok(());
             } else if v.starts_with("FAIL:200") {
                 bail!(ErrorKind::ServerError(ResultCode::from(200)));
             } else if v.starts_with("FAIL:201") {

@@ -18,7 +18,6 @@ use policy::{BasePolicy, PolicyLike};
 /// ScanPolicy encapsulates optional parameters used in scan operations.
 #[derive(Debug,Clone)]
 pub struct ScanPolicy {
-
     /// Base policy instance
     pub base_policy: BasePolicy,
 
@@ -45,7 +44,6 @@ pub struct ScanPolicy {
 
 
 impl ScanPolicy {
-
     /// Create a new scan policy instance with default parameters.
     pub fn new() -> Self {
         ScanPolicy::default()

@@ -18,7 +18,6 @@ use policy::{BasePolicy, PolicyLike};
 /// QueryPolicy encapsulates parameters for query operations.
 #[derive(Debug,Clone)]
 pub struct QueryPolicy {
-
     /// Base policy instance
     pub base_policy: BasePolicy,
 
@@ -42,7 +41,6 @@ pub struct QueryPolicy {
 
 
 impl QueryPolicy {
-
     /// Create a new query policy instance with default parameters.
     pub fn new() -> Self {
         QueryPolicy::default()

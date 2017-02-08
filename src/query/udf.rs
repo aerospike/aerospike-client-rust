@@ -18,7 +18,6 @@ use std::fmt;
 /// User-defined function (UDF) language
 #[derive(Debug)]
 pub enum UDFLang {
-
     /// Lua embedded programming language.
     Lua,
 }

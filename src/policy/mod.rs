@@ -47,7 +47,6 @@ use std::option::Option;
 /// Trait implemented by most policy types; policies that implement this trait typically encompass
 /// an instance of `BasePolicy`.
 pub trait Policy {
-
     /// Transaction priority.
     fn priority(&self) -> &Priority;
 
@@ -79,7 +78,6 @@ pub trait Policy {
 #[doc(hidden)]
 /// Policy-like object that encapsulates a base policy instance.
 pub trait PolicyLike {
-
     /// Retrieve a reference to the base policy.
     fn base(&self) -> &BasePolicy;
 }
@@ -115,7 +113,6 @@ impl<T> Policy for T
 /// Common parameters shared by all policy types.
 #[derive(Debug,Clone)]
 pub struct BasePolicy {
-
     /// Priority of request relative to other transactions.
     /// Currently, only used for scans.
     pub priority: Priority,

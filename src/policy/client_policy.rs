@@ -21,7 +21,6 @@ use commands::admin_command::AdminCommand;
 /// ClientPolicy encapsulates parameters for client policy command.
 #[derive(Debug, Clone)]
 pub struct ClientPolicy {
-
     /// User authentication to cluster. Leave empty for clusters running without restricted access.
     pub user_password: Option<(String, String)>,
 
@@ -85,7 +84,6 @@ impl Default for ClientPolicy {
 }
 
 impl ClientPolicy {
-
     /// Set username and password to use when authenticating to the cluster.
     pub fn set_user_password(&mut self, username: String, password: String) -> Result<()> {
         let password = AdminCommand::hash_password(&password)?;

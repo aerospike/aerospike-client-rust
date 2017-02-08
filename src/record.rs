@@ -28,7 +28,6 @@ lazy_static! {
 /// Container object for a database record.
 #[derive(Debug)]
 pub struct Record {
-
     /// Record key. When reading a record from the database, the key is not set in the returned
     /// Record struct.
     pub key: Option<Key>,
@@ -59,20 +58,20 @@ impl Record {
         }
     }
 
-    /// Returns the remaining time-to-live (TTL, a.k.a. expiration time) for the record or `None` if the
-    /// record never expires.
+    /// Returns the remaining time-to-live (TTL, a.k.a. expiration time) for the record or `None`
+    /// if the record never expires.
     pub fn time_to_live(&self) -> Option<Duration> {
         match self.expiration {
-          0 => None, // record never expires
-          secs_since_epoch @ _ => {
-              let expiration = *CITRUSLEAF_EPOCH + Duration::new(secs_since_epoch as u64, 0);
-              match expiration.duration_since(SystemTime::now()) {
-                  Ok(d) => Some(d),
-                  // Record was not expired at server but it looks expired at client
-                  // because of delay or clock difference, present it as not-expired.
-                  _ => Some(Duration::new(1u64, 0))
-              }
-          }
+            0 => None,
+            secs_since_epoch @ _ => {
+                let expiration = *CITRUSLEAF_EPOCH + Duration::new(secs_since_epoch as u64, 0);
+                match expiration.duration_since(SystemTime::now()) {
+                    Ok(d) => Some(d),
+                    // Record was not expired at server but it looks expired at client
+                    // because of delay or clock difference, present it as not-expired.
+                    _ => Some(Duration::new(1u64, 0)),
+                }
+            }
         }
     }
 }

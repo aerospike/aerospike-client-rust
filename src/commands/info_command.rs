@@ -27,9 +27,7 @@ pub struct Message {
 }
 
 impl Message {
-    pub fn info(conn: &mut Connection,
-                commands: &[&str])
-                -> Result<HashMap<String, String>> {
+    pub fn info(conn: &mut Connection, commands: &[&str]) -> Result<HashMap<String, String>> {
 
         let cmd = commands.join("\n") + "\n";
         let mut msg = try!(Message::new(&cmd.into_bytes()));

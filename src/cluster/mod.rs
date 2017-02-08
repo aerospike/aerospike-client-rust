@@ -86,8 +86,10 @@ impl Cluster {
 
         // apply policy rules
         if cluster.client_policy.fail_if_not_connected && !cluster.is_connected() {
-            bail!(ErrorKind::Connection("Failed to connect to host(s). The network connection(s) to cluster \
-                   nodes may have timed out, or the cluster may be in a state of flux.".to_string()));
+            bail!(ErrorKind::Connection("Failed to connect to host(s). The network \
+                                         connection(s) to cluster nodes may have timed out, or \
+                                         the cluster may be in a state of flux."
+                .to_string()));
         }
 
         let cluster_for_tend = cluster.clone();
@@ -123,7 +125,7 @@ impl Cluster {
             node.close();
         }
 
-        if let Err(err) = cluster.set_nodes(vec![]) { 
+        if let Err(err) = cluster.set_nodes(vec![]) {
             log_error_chain!(err, "Error clearing nodes list");
         }
     }

@@ -55,10 +55,7 @@ use cluster::Node;
 
 // Command interface describes all commands available
 pub trait Command {
-    fn write_timeout(&mut self,
-                     conn: &mut Connection,
-                     timeout: Option<Duration>)
-                     -> Result<()>;
+    fn write_timeout(&mut self, conn: &mut Connection, timeout: Option<Duration>) -> Result<()>;
     fn prepare_buffer(&mut self, conn: &mut Connection) -> Result<()>;
     fn get_node(&self) -> Result<Arc<Node>>;
     fn parse_result(&mut self, conn: &mut Connection) -> Result<()>;

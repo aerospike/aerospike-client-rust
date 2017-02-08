@@ -17,8 +17,8 @@
 /// CommitLevel determines how to handle record writes based on record generation.
 #[derive(Debug,PartialEq)]
 pub enum CommitLevel {
-
-    /// CommitAll indicates the server should wait until successfully committing master and all replicas.
+    /// CommitAll indicates the server should wait until successfully committing master and all
+    /// replicas.
     CommitAll = 0,
 
     /// CommitMaster indicates the server should wait until successfully committing master only.

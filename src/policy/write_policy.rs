@@ -21,7 +21,6 @@ use Expiration;
 
 /// WritePolicy encapsulates parameters for all write operations.
 pub struct WritePolicy {
-
     /// Base policy instance
     pub base_policy: BasePolicy,
 
@@ -52,9 +51,9 @@ pub struct WritePolicy {
     pub send_key: bool,
 
     /// For Client::operate() method, return a result for every operation.
-    /// Some list operations do not return results by default (`operations::list::clear()` for example).
-    /// This can sometimes make it difficult to determine the desired result offset in the returned
-    /// bin's result list.
+    /// Some list operations do not return results by default (`operations::list::clear()` for
+    /// example). This can sometimes make it difficult to determine the desired result offset in
+    /// the returned bin's result list.
     ///
     /// Setting RespondPerEachOp to true makes it easier to identify the desired result offset
     /// (result offset equals bin's operate sequence). This only makes sense when multiple list
@@ -65,7 +64,6 @@ pub struct WritePolicy {
 
 
 impl WritePolicy {
-
     /// Create a new write policy instance with the specified generation and expiration parameters.
     pub fn new(gen: u32, exp: Expiration) -> Self {
         let mut wp = WritePolicy::default();

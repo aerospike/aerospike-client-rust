@@ -19,7 +19,6 @@ use std::result::Result as StdResult;
 /// Database operation error codes. The error codes are defined in the server-side file proto.h.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum ResultCode {
-
     /// OperationType was successful.
     Ok,
 
@@ -202,7 +201,6 @@ pub enum ResultCode {
 }
 
 impl ResultCode {
-
     /// Convert the result code from the server response.
     #[doc(hidden)]
     pub fn from_u8(n: u8) -> ResultCode {
@@ -294,7 +292,9 @@ impl ResultCode {
             ResultCode::DeviceOverload => String::from("Device overload"),
             ResultCode::KeyMismatch => String::from("Key mismatch"),
             ResultCode::InvalidNamespace => String::from("Namespace not found"),
-            ResultCode::BinNameTooLong => String::from("Bin name length greater than 14 characters"),
+            ResultCode::BinNameTooLong => {
+                String::from("Bin name length greater than 14 characters")
+            }
             ResultCode::FailForbidden => String::from("OperationType not allowed at this time"),
             ResultCode::QueryEnd => String::from("Query end"),
             ResultCode::SecurityNotSupported => String::from("Security not supported"),
@@ -317,7 +317,9 @@ impl ResultCode {
             ResultCode::UdfBadResponse => String::from("Udf returned error"),
             ResultCode::LargeItemNotFound => String::from("Large collection item not found"),
             ResultCode::BatchDisabled => String::from("Batch functionality has been disabled"),
-            ResultCode::BatchMaxRequestsExceeded => String::from("Batch max requests have been exceeded"),
+            ResultCode::BatchMaxRequestsExceeded => {
+                String::from("Batch max requests have been exceeded")
+            }
             ResultCode::BatchQueuesFull => String::from("All batch queues are full"),
             ResultCode::IndexFound => String::from("Index already exists"),
             ResultCode::IndexNotFound => String::from("Index not found"),

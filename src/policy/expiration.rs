@@ -16,8 +16,8 @@
 use std::u32;
 
 const NAMESPACE_DEFAULT: u32 = 0x00000000;
-const NEVER_EXPIRE: u32      = 0xFFFFFFFF; // -1 as i32
-const DONT_UPDATE: u32       = 0xFFFFFFFE; // -2 as i32
+const NEVER_EXPIRE: u32 = 0xFFFFFFFF; // -1 as i32
+const DONT_UPDATE: u32 = 0xFFFFFFFE; // -2 as i32
 
 /// Record expiration, also known as time-to-live (TTL).
 #[derive(Debug, Clone, Copy)]
@@ -40,10 +40,10 @@ pub enum Expiration {
 impl From<Expiration> for u32 {
     fn from(exp: Expiration) -> u32 {
         match exp {
-            Expiration::Seconds(secs)    => secs,
+            Expiration::Seconds(secs) => secs,
             Expiration::NamespaceDefault => NAMESPACE_DEFAULT,
-            Expiration::Never            => NEVER_EXPIRE,
-            Expiration::DontUpdate       => DONT_UPDATE,
+            Expiration::Never => NEVER_EXPIRE,
+            Expiration::DontUpdate => DONT_UPDATE,
         }
     }
 }

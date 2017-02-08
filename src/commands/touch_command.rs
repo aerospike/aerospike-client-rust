@@ -31,10 +31,7 @@ pub struct TouchCommand<'a> {
 }
 
 impl<'a> TouchCommand<'a> {
-    pub fn new(policy: &'a WritePolicy,
-               cluster: Arc<Cluster>,
-               key: &'a Key)
-               -> Self {
+    pub fn new(policy: &'a WritePolicy, cluster: Arc<Cluster>, key: &'a Key) -> Self {
         TouchCommand {
             single_command: SingleCommand::new(cluster, key),
             policy: policy,
@@ -47,10 +44,7 @@ impl<'a> TouchCommand<'a> {
 }
 
 impl<'a> Command for TouchCommand<'a> {
-    fn write_timeout(&mut self,
-                     conn: &mut Connection,
-                     timeout: Option<Duration>)
-                     -> Result<()> {
+    fn write_timeout(&mut self, conn: &mut Connection, timeout: Option<Duration>) -> Result<()> {
         conn.buffer.write_timeout(timeout);
         Ok(())
     }

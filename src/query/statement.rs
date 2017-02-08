@@ -27,7 +27,6 @@ pub struct Aggregation {
 /// Query statement parameters.
 #[derive(Clone)]
 pub struct Statement {
-
     /// Namespace
     pub namespace: String,
 
@@ -49,7 +48,6 @@ pub struct Statement {
 }
 
 impl Statement {
-
     /// Create a new query statement with the given namespace, set name and optional list of bin
     /// names.
     ///
@@ -63,10 +61,7 @@ impl Statement {
     ///
     /// let stmt = Statement::new("foo", "bar", Some(&vec!["name", "age"]));
     /// ```
-    pub fn new(namespace: &str,
-               set_name: &str,
-               bin_names: Option<&[&str]>)
-               -> Self {
+    pub fn new(namespace: &str, set_name: &str, bin_names: Option<&[&str]>) -> Self {
 
         let bin_names = match bin_names {
             None => None,
@@ -135,7 +130,7 @@ impl Statement {
     pub fn is_scan(&self) -> bool {
         match self.filters {
             Some(ref filters) => filters.is_empty(),
-            None => true
+            None => true,
         }
     }
 

@@ -24,7 +24,6 @@ pub struct Parser<'a> {
 }
 
 impl<'a> Parser<'a> {
-
     pub fn new(s: &'a str, default_port: u16) -> Self {
         Parser {
             s: s.chars().peekable(),
@@ -44,7 +43,7 @@ impl<'a> Parser<'a> {
                     } else {
                         (addr[0].clone(), Some(addr[1].clone()), self.default_port)
                     }
-                },
+                }
                 1 => (addr[0].clone(), None, self.default_port),
                 _ => bail!(ErrorKind::InvalidArgument("Invalid address string".to_string())),
             };
@@ -63,7 +62,7 @@ impl<'a> Parser<'a> {
     fn read_addr_tuple(&mut self) -> Result<Vec<String>> {
         let mut parts = Vec::new();
         loop {
-            let part= try!(self.read_addr_part());
+            let part = try!(self.read_addr_part());
             parts.push(part);
             match self.peek() {
                 Some(&c) if c == ':' => self.next_char(),
@@ -108,9 +107,12 @@ mod tests {
 
     #[test]
     fn read_addr_part() {
-        assert_eq!("foo".to_string(), Parser::new("foo:bar", 3000).read_addr_part().unwrap());
-        assert_eq!("foo".to_string(), Parser::new("foo,bar", 3000).read_addr_part().unwrap());
-        assert_eq!("foo".to_string(), Parser::new("foo", 3000).read_addr_part().unwrap());
+        assert_eq!("foo".to_string(),
+                   Parser::new("foo:bar", 3000).read_addr_part().unwrap());
+        assert_eq!("foo".to_string(),
+                   Parser::new("foo,bar", 3000).read_addr_part().unwrap());
+        assert_eq!("foo".to_string(),
+                   Parser::new("foo", 3000).read_addr_part().unwrap());
         assert!(Parser::new("", 3000).read_addr_part().is_err());
         assert!(Parser::new(",", 3000).read_addr_part().is_err());
         assert!(Parser::new(":", 3000).read_addr_part().is_err());
@@ -118,9 +120,12 @@ mod tests {
 
     #[test]
     fn read_addr_tuple() {
-        assert_eq!(vec!["foo".to_string()], Parser::new("foo", 3000).read_addr_tuple().unwrap());
-        assert_eq!(vec!["foo".to_string(), "bar".to_string()], Parser::new("foo:bar", 3000).read_addr_tuple().unwrap());
-        assert_eq!(vec!["foo".to_string()], Parser::new("foo,", 3000).read_addr_tuple().unwrap());
+        assert_eq!(vec!["foo".to_string()],
+                   Parser::new("foo", 3000).read_addr_tuple().unwrap());
+        assert_eq!(vec!["foo".to_string(), "bar".to_string()],
+                   Parser::new("foo:bar", 3000).read_addr_tuple().unwrap());
+        assert_eq!(vec!["foo".to_string()],
+                   Parser::new("foo,", 3000).read_addr_tuple().unwrap());
         assert!(Parser::new("", 3000).read_addr_tuple().is_err());
         assert!(Parser::new(",", 3000).read_addr_tuple().is_err());
         assert!(Parser::new(":", 3000).read_addr_tuple().is_err());
@@ -129,11 +134,16 @@ mod tests {
 
     #[test]
     fn read_hosts() {
-        assert_eq!(vec![Host::new("foo", 3000)], Parser::new("foo", 3000).read_hosts().unwrap());
-        assert_eq!(vec![Host::new("foo", 3000)], Parser::new("foo:bar", 3000).read_hosts().unwrap());
-        assert_eq!(vec![Host::new("foo", 1234)], Parser::new("foo:1234", 3000).read_hosts().unwrap());
-        assert_eq!(vec![Host::new("foo", 1234)], Parser::new("foo:bar:1234", 3000).read_hosts().unwrap());
-        assert_eq!(vec![Host::new("foo", 1234), Host::new("bar", 1234)], Parser::new("foo:1234,bar:1234", 3000).read_hosts().unwrap());
+        assert_eq!(vec![Host::new("foo", 3000)],
+                   Parser::new("foo", 3000).read_hosts().unwrap());
+        assert_eq!(vec![Host::new("foo", 3000)],
+                   Parser::new("foo:bar", 3000).read_hosts().unwrap());
+        assert_eq!(vec![Host::new("foo", 1234)],
+                   Parser::new("foo:1234", 3000).read_hosts().unwrap());
+        assert_eq!(vec![Host::new("foo", 1234)],
+                   Parser::new("foo:bar:1234", 3000).read_hosts().unwrap());
+        assert_eq!(vec![Host::new("foo", 1234), Host::new("bar", 1234)],
+                   Parser::new("foo:1234,bar:1234", 3000).read_hosts().unwrap());
         assert!(Parser::new("", 3000).read_hosts().is_err());
         assert!(Parser::new(",", 3000).read_hosts().is_err());
         assert!(Parser::new("foo,", 3000).read_hosts().is_err());

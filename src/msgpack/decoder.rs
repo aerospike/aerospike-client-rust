@@ -92,15 +92,17 @@ fn unpack_blob(buf: &mut Buffer, count: usize) -> Result<Value> {
             Ok(Value::String(val))
         }
 
-        ParticleType::BLOB =>
-            Ok(Value::Blob(try!(buf.read_blob(count)))),
+        ParticleType::BLOB => Ok(Value::Blob(try!(buf.read_blob(count)))),
 
         ParticleType::GEOJSON => {
             let val = try!(buf.read_str(count));
             Ok(Value::GeoJSON(val))
         }
 
-        _ => bail!("Error while unpacking BLOB. Type-header with code `{}` not recognized.", vtype)
+        _ => {
+            bail!("Error while unpacking BLOB. Type-header with code `{}` not recognized.",
+                  vtype)
+        }
     }
 }
 
@@ -170,36 +172,44 @@ fn unpack_value(buf: &mut Buffer) -> Result<Value> {
         }
 
         0xd4 => {
+            // Skip over type extension with 1 byte
             let count = (1 + 1) as usize;
-            try!(buf.skip_bytes(count)); // Skip over type extension with 1 byte
+            try!(buf.skip_bytes(count));
         }
         0xd5 => {
+            // Skip over type extension with 2 bytes
             let count = (1 + 2) as usize;
-            try!(buf.skip_bytes(count)); // Skip over type extension with 2 bytes
+            try!(buf.skip_bytes(count));
         }
         0xd6 => {
+            // Skip over type extension with 4 bytes
             let count = (1 + 4) as usize;
-            try!(buf.skip_bytes(count)); // Skip over type extension with 4 bytes
+            try!(buf.skip_bytes(count));
         }
         0xd7 => {
+            // Skip over type extension with 8 bytes
             let count = (1 + 8) as usize;
-            try!(buf.skip_bytes(count)); // Skip over type extension with 8 bytes
+            try!(buf.skip_bytes(count));
         }
         0xd8 => {
+            // Skip over type extension with 16 bytes
             let count = (1 + 16) as usize;
-            try!(buf.skip_bytes(count)); // Skip over type extension with 16 bytes
+            try!(buf.skip_bytes(count));
         }
         0xc7 => {
+            // Skip over type extension with 8 bit header and bytes
             let count = 1 + try!(buf.read_u8(None));
-            try!(buf.skip_bytes(count as usize)); // Skip over type extension with 8 bit header and bytes
+            try!(buf.skip_bytes(count as usize));
         }
         0xc8 => {
+            // Skip over type extension with 16 bit header and bytes
             let count = 1 + try!(buf.read_u16(None));
-            try!(buf.skip_bytes(count as usize)); // Skip over type extension with 16 bit header and bytes
+            try!(buf.skip_bytes(count as usize));
         }
         0xc9 => {
+            // Skip over type extension with 32 bit header and bytes
             let count = 1 + try!(buf.read_u32(None));
-            try!(buf.skip_bytes(count as usize)); // Skip over type extension with 32 bit header and bytes
+            try!(buf.skip_bytes(count as usize));
         }
         _ => {
             if (obj_type & 0xe0) == 0xa0 {
