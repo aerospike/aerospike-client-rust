@@ -1,5 +1,9 @@
-# Aerospike Rust Client [![travis][travis-image]][travis-url]
+# Aerospike Rust Client [![crates-io][crates-io-image]][crates-io-url] [![docs][docs-image]][docs-url] [![travis][travis-image]][travis-url]
 
+[crates-io-image]: https://img.shields.io/crates/v/aerospike.svg
+[crates-io-url]: https://crates.io/crates/aerospike
+[docs-image]: https://docs.rs/aerospike/badge.svg
+[docs-url]: https://docs.rs/aerospike/
 [travis-image]: https://travis-ci.org/aerospike/aerospike-client-rust.svg?branch=master
 [travis-url]: https://travis-ci.org/aerospike/aerospike-client-rust
 
