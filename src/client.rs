@@ -411,7 +411,7 @@ impl Client {
     /// # Examples
     ///
     /// ```rust
-    /// # #[macro_use] extern crate aerospike;
+    /// # extern crate aerospike;
     /// # use aerospike::*;
     /// # fn main() {
     /// # let client = Client::new(&ClientPolicy::default(), &std::env::var("AEROSPIKE_HOSTS").unwrap()).unwrap();
@@ -555,7 +555,7 @@ impl Client {
     /// # Examples
     ///
     /// ```rust
-    /// # #[macro_use] extern crate aerospike;
+    /// # extern crate aerospike;
     /// # use aerospike::*;
     /// # fn main() {
     /// # let client = Client::new(&ClientPolicy::default(), &std::env::var("AEROSPIKE_HOSTS").unwrap()).unwrap();
@@ -658,7 +658,7 @@ impl Client {
     /// # Examples
     ///
     /// ```rust
-    /// # #[macro_use] extern crate aerospike;
+    /// # extern crate aerospike;
     /// # use aerospike::*;
     /// # fn main() {
     /// # let client = Client::new(&ClientPolicy::default(), &std::env::var("AEROSPIKE_HOSTS").unwrap()).unwrap();
@@ -731,7 +731,7 @@ impl Client {
     /// within set `bar` and bin `baz`:
     ///
     /// ```rust
-    /// # #[macro_use] extern crate aerospike;
+    /// # extern crate aerospike;
     /// # use aerospike::*;
     /// # fn main() {
     /// # let client = Client::new(&ClientPolicy::default(), &std::env::var("AEROSPIKE_HOSTS").unwrap()).unwrap();
