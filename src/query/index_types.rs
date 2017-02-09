@@ -46,22 +46,21 @@ pub enum CollectionIndexType {
 
 impl fmt::Display for IndexType {
     fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
-        match self {
-            &IndexType::Numeric => "NUMERIC".fmt(f),
-            &IndexType::String => "STRING".fmt(f),
-            &IndexType::Geo2DSphere => "GEO2DSPHERE".fmt(f),
+        match *self {
+            IndexType::Numeric => "NUMERIC".fmt(f),
+            IndexType::String => "STRING".fmt(f),
+            IndexType::Geo2DSphere => "GEO2DSPHERE".fmt(f),
         }
     }
 }
 
 impl fmt::Display for CollectionIndexType {
     fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
-        match self {
-            &CollectionIndexType::Default => panic!("Unknown IndexCollectionType value `Default`"),
-            &CollectionIndexType::List => try!("LIST".fmt(f)),
-            &CollectionIndexType::MapKeys => try!("MAPKEYS".fmt(f)),
-            &CollectionIndexType::MapValues => try!("MAPVALUES".fmt(f)),
+        match *self {
+            CollectionIndexType::Default => panic!("Unknown IndexCollectionType value `Default`"),
+            CollectionIndexType::List => "LIST".fmt(f),
+            CollectionIndexType::MapKeys => "MAPKEYS".fmt(f),
+            CollectionIndexType::MapValues => "MAPVALUES".fmt(f),
         }
-        Ok(())
     }
 }

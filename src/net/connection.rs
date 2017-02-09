@@ -99,47 +99,47 @@ impl Connection {
     }
 
     pub fn flush(&mut self) -> Result<()> {
-        try!(self.conn.write_all(&self.buffer.data_buffer));
+        self.conn.write_all(&self.buffer.data_buffer)?;
         self.refresh();
-        return Ok(());
+        Ok(())
     }
 
 
     pub fn read_buffer(&mut self, size: usize) -> Result<()> {
-        try!(self.buffer.resize_buffer(size));
-        try!(self.conn.read_exact(&mut self.buffer.data_buffer));
+        self.buffer.resize_buffer(size)?;
+        self.conn.read_exact(&mut self.buffer.data_buffer)?;
         self.bytes_read += size;
-        try!(self.buffer.reset_offset());
+        self.buffer.reset_offset()?;
         self.refresh();
-        return Ok(());
+        Ok(())
     }
 
 
     pub fn write(&mut self, buf: &[u8]) -> Result<()> {
-        try!(self.conn.write_all(buf));
+        self.conn.write_all(buf)?;
         self.refresh();
-        return Ok(());
+        Ok(())
     }
 
     pub fn read(&mut self, buf: &mut [u8]) -> Result<()> {
-        try!(self.conn.read_exact(buf));
+        self.conn.read_exact(buf)?;
         self.bytes_read += buf.len();
         self.refresh();
-        return Ok(());
+        Ok(())
     }
 
     pub fn set_timeout(&self, timeout: Option<Duration>) -> Result<()> {
-        try!(self.conn.set_read_timeout(timeout));
-        try!(self.conn.set_write_timeout(timeout));
+        self.conn.set_read_timeout(timeout)?;
+        self.conn.set_write_timeout(timeout)?;
         Ok(())
     }
 
     pub fn is_idle(&self) -> bool {
         if let Some(idle_dl) = self.idle_deadline {
-            return Instant::now() >= idle_dl;
-        };
-
-        return false;
+            Instant::now() >= idle_dl
+        } else {
+            false
+        }
     }
 
     fn refresh(&mut self) {
@@ -151,7 +151,7 @@ impl Connection {
 
 
     fn authenticate(&mut self, user_password: &Option<(String, String)>) -> Result<()> {
-        if let &Some((ref user, ref password)) = user_password {
+        if let Some((ref user, ref password)) = *user_password {
             match AdminCommand::authenticate(self, user, password) {
                 Ok(()) => {
                     return Ok(());

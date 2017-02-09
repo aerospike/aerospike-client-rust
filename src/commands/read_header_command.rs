@@ -78,7 +78,7 @@ impl<'a> Command for ReadHeaderCommand<'a> {
                 self.record = Some(Record::new(None, HashMap::new(), generation, expiration));
                 SingleCommand::empty_socket(conn)
             }
-            rc @ _ => Err(ErrorKind::ServerError(rc).into()),
+            rc => Err(ErrorKind::ServerError(rc).into()),
         }
     }
 }

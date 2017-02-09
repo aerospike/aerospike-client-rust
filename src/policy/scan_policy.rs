@@ -15,7 +15,7 @@
 
 use policy::{BasePolicy, PolicyLike};
 
-/// ScanPolicy encapsulates optional parameters used in scan operations.
+/// `ScanPolicy` encapsulates optional parameters used in scan operations.
 #[derive(Debug,Clone)]
 pub struct ScanPolicy {
     /// Base policy instance

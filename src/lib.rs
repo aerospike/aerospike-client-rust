@@ -137,6 +137,8 @@ pub use value::Value;
 #[macro_use]
 pub mod errors;
 #[macro_use]
+mod value;
+#[macro_use]
 mod bin;
 mod client;
 mod cluster;
@@ -151,8 +153,6 @@ pub mod query;
 mod record;
 mod result_code;
 mod user;
-#[macro_use]
-mod value;
 
 #[cfg(test)]
 extern crate hex;

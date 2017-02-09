@@ -33,7 +33,7 @@ fn query_single_consumer() {
 
     let _ = env_logger::init();
 
-    let ref client = common1::GLOBAL_CLIENT;
+    let client = &common1::GLOBAL_CLIENT;
     let namespace: &str = &common1::AEROSPIKE_NAMESPACE;
     let set_name = &common1::rand_str(10);
 
@@ -65,10 +65,10 @@ fn query_single_consumer() {
 
     let rs = client.query(&qpolicy, statement).unwrap();
     let mut count = 0;
-    for res in rs.into_iter() {
+    for res in &*rs {
         match res {
             Ok(rec) => {
-                assert_eq!(*rec.bins.get("bin").unwrap(), as_val!(1));
+                assert_eq!(rec.bins["bin"], as_val!(1));
                 // println!("Record: {}", rec);
                 count += 1;
             }
@@ -85,13 +85,11 @@ fn query_single_consumer() {
 
     let rs = client.query(&qpolicy, statement).unwrap();
     let mut count = 0;
-    for res in rs.into_iter() {
+    for res in &*rs {
         match res {
             Ok(rec) => {
-                // println!("Record: {}", rec);
                 count += 1;
-                let v = i64::from(rec.bins.get("bin").unwrap());
-
+                let v: i64 = rec.bins["bin"].clone().into();
                 assert!(v >= 0);
                 assert!(v < 10);
 
@@ -105,12 +103,9 @@ fn query_single_consumer() {
 
 #[test]
 fn query_multi_consumer() {
+    let _ = env_logger::init();
 
-let _ = env_logger::init();
-
-
-let ref client = common1::GLOBAL_CLIENT;
-
+    let client = &common1::GLOBAL_CLIENT;
     let namespace: &str = &common1::AEROSPIKE_NAMESPACE;
     let set_name = &common1::rand_str(10);
 
@@ -150,12 +145,11 @@ let ref client = common1::GLOBAL_CLIENT;
         let count = count.clone();
         let rs = rs.clone();
         threads.push(thread::spawn(move || {
-            for res in rs.into_iter() {
+            for res in &*rs {
                 match res {
                     Ok(rec) => {
                         count.fetch_add(1, Ordering::Relaxed);
-                        let v = i64::from(rec.bins.get("bin").unwrap());
-
+                        let v: i64 = rec.bins["bin"].clone().into();
                         assert!(v >= 0);
                         assert!(v < 10);
                     }

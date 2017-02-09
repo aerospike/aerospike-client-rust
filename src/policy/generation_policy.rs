@@ -14,7 +14,7 @@
 // the License.
 //
 
-/// GenerationPolicy determines how to handle record writes based on record generation.
+/// `GenerationPolicy` determines how to handle record writes based on record generation.
 #[derive(Debug,PartialEq)]
 pub enum GenerationPolicy {
     /// None means: Do not use record generation to restrict writes.

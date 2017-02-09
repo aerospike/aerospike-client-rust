@@ -14,6 +14,7 @@
 
 use std::sync::Arc;
 use std::collections::HashMap;
+use std::collections::hash_map::Entry::{Occupied, Vacant};
 use std::time::Duration;
 use std::str;
 
@@ -59,16 +60,11 @@ impl<'a> ReadCommand<'a> {
                     -> Result<Record> {
         let mut bins: HashMap<String, Value> = HashMap::with_capacity(op_count);
 
-        // There can be fields in the response (setname etc).
-        // But for now, ignore them. Expose them to the API if needed in the future.
-        // Logger.Debug("field count: %d, databuffer: %v", field_count, conn.buffer)
-        if field_count > 0 {
-            // Just skip over all the fields
-            for _ in 0..field_count {
-                // debug!("Receive Offset: {}", receive_offset);
-                let field_size = try!(conn.buffer.read_u32(None)) as usize;
-                try!(conn.buffer.skip(4 + field_size));
-            }
+        // There can be fields in the response (setname etc). For now, ignore them. Expose them to
+        // the API if needed in the future.
+        for _ in 0..field_count {
+            let field_size = conn.buffer.read_u32(None)? as usize;
+            conn.buffer.skip(4 + field_size)?;
         }
 
         for _ in 0..op_count {
@@ -83,20 +79,13 @@ impl<'a> ReadCommand<'a> {
             let value = bytes_to_particle(particle_type, &mut conn.buffer, particle_bytes_size)?;
 
             if !value.is_nil() {
-                // for operate list command results
-                if bins.contains_key(&name) {
-                    let prev = bins.get_mut(&name).unwrap();
-                    match prev {
-                        &mut Value::List(ref mut prev) => {
-                            prev.push(value);
-                        }
-                        _ => {
-                            *prev = Value::from(vec![prev.clone(), value]);
-                        }
-
-                    }
-                } else {
-                    bins.insert(name, value);
+                // list/map operations may return multiple values for the same bin.
+                match bins.entry(name) {
+                    Vacant(entry) => { entry.insert(value); () },
+                    Occupied(entry) => match *entry.into_mut() {
+                        Value::List(ref mut list) => list.push(value),
+                        ref mut prev => { *prev = as_list!(prev.clone(), value); () },
+                    },
                 }
             }
         }
@@ -166,7 +155,7 @@ impl<'a> Command for ReadCommand<'a> {
                     record.bins.get("FAILURE").map_or(String::from("UDF Error"), |v| v.to_string());
                 Err(ErrorKind::UdfBadResponse(reason).into())
             }
-            rc @ _ => Err(ErrorKind::ServerError(rc).into()),
+            rc => Err(ErrorKind::ServerError(rc).into()),
         }
     }
 }

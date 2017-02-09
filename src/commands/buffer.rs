@@ -31,7 +31,7 @@ use policy::{WritePolicy, ReadPolicy, ConsistencyLevel, CommitLevel, GenerationP
 
 // Flags commented out are not supported by cmd client.
 // Contains a read operation.
-const INFO1_READ: u8 = (1 << 0);
+const INFO1_READ: u8 = 1;
 
 // Get all bins.
 const INFO1_GET_ALL: u8 = (1 << 1);
@@ -43,7 +43,7 @@ const INFO1_NOBINDATA: u8 = (1 << 5);
 const INFO1_CONSISTENCY_ALL: u8 = (1 << 6);
 
 // Create or update record
-const INFO2_WRITE: u8 = (1 << 0);
+const INFO2_WRITE: u8 = 1;
 
 // Fling a record into the belly of Moloch.
 const INFO2_DELETE: u8 = (1 << 1);
@@ -64,7 +64,7 @@ const INFO2_CREATE_ONLY: u8 = (1 << 5);
 const INFO2_RESPOND_ALL_OPS: u8 = (1 << 7);
 
 // This is the last of a multi-part message.
-pub const INFO3_LAST: u8 = (1 << 0);
+pub const INFO3_LAST: u8 = 1;
 
 // Commit to master only before declaring success.
 const INFO3_COMMIT_MASTER: u8 = (1 << 1);
@@ -92,7 +92,7 @@ const AS_MSG_TYPE: u8 = 3;
 const MAX_BUFFER_SIZE: usize = 1024 * 1024 + 8; // 1 MB + header
 
 // Holds data buffer for the command
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct Buffer {
     pub data_buffer: Vec<u8>,
     pub data_offset: usize,
@@ -146,7 +146,7 @@ impl Buffer {
     }
 
     // Writes the command for write operations
-    pub fn set_write<'a>(&mut self,
+    pub fn set_write(&mut self,
                          policy: &WritePolicy,
                          op_type: OperationType,
                          key: &Key,
@@ -175,7 +175,7 @@ impl Buffer {
     }
 
     // Writes the command for write operations
-    pub fn set_delete<'a>(&mut self, policy: &WritePolicy, key: &Key) -> Result<()> {
+    pub fn set_delete(&mut self, policy: &WritePolicy, key: &Key) -> Result<()> {
         try!(self.begin());
         let field_count = try!(self.estimate_key_size(key, false));
         try!(self.size_buffer());
@@ -189,7 +189,7 @@ impl Buffer {
     }
 
     // Writes the command for touch operations
-    pub fn set_touch<'a>(&mut self, policy: &WritePolicy, key: &Key) -> Result<()> {
+    pub fn set_touch(&mut self, policy: &WritePolicy, key: &Key) -> Result<()> {
         try!(self.begin());
         let field_count = try!(self.estimate_key_size(key, policy.send_key));
 
@@ -202,7 +202,7 @@ impl Buffer {
     }
 
     // Writes the command for exist operations
-    pub fn set_exists<'a>(&mut self, policy: &WritePolicy, key: &Key) -> Result<()> {
+    pub fn set_exists(&mut self, policy: &WritePolicy, key: &Key) -> Result<()> {
         try!(self.begin());
         let field_count = try!(self.estimate_key_size(key, false));
         try!(self.size_buffer());
@@ -215,7 +215,7 @@ impl Buffer {
         self.end()
     }
 
-    pub fn set_read_for_key_only<'a>(&mut self, policy: &ReadPolicy, key: &Key) -> Result<()> {
+    pub fn set_read_for_key_only(&mut self, policy: &ReadPolicy, key: &Key) -> Result<()> {
         try!(self.begin());
 
         let field_count = try!(self.estimate_key_size(key, false));
@@ -227,7 +227,7 @@ impl Buffer {
     }
 
     // Writes the command for get operations (specified bins)
-    pub fn set_read<'a>(&mut self,
+    pub fn set_read(&mut self,
                         policy: &ReadPolicy,
                         key: &Key,
                         bin_names: Option<&[&str]>)
@@ -257,7 +257,7 @@ impl Buffer {
     }
 
     // Writes the command for getting metadata operations
-    pub fn set_read_header<'a>(&mut self, policy: &ReadPolicy, key: &Key) -> Result<()> {
+    pub fn set_read_header(&mut self, policy: &ReadPolicy, key: &Key) -> Result<()> {
         try!(self.begin());
         let field_count = try!(self.estimate_key_size(key, false));
         try!(self.estimate_operation_size_for_bin_name(""));
@@ -280,14 +280,14 @@ impl Buffer {
         let mut write_attr = 0;
 
         for operation in operations {
-            match operation {
-                &Operation { op: OperationType::Read, bin: OperationBin::None, .. } => {
+            match *operation {
+                Operation { op: OperationType::Read, bin: OperationBin::None, .. } => {
                     read_attr |= INFO1_READ | INFO1_NOBINDATA
                 }
-                &Operation { op: OperationType::Read, bin: OperationBin::All, .. } => {
+                Operation { op: OperationType::Read, bin: OperationBin::All, .. } => {
                     read_attr |= INFO1_READ | INFO1_GET_ALL
                 }
-                &Operation { op: OperationType::Read, .. } => read_attr |= INFO1_READ,
+                Operation { op: OperationType::Read, .. } => read_attr |= INFO1_READ,
                 _ => write_attr |= INFO2_WRITE,
             }
 
@@ -554,7 +554,7 @@ impl Buffer {
         }
 
         if let Some(ref index_name) = statement.index_name {
-            if index_name.len() > 0 {
+            if !index_name.is_empty() {
                 try!(self.write_field_string(&index_name, FieldType::IndexName));
             }
         }
@@ -581,7 +581,7 @@ impl Buffer {
             try!(filter.write(self));
 
             if let Some(ref bin_names) = statement.bin_names {
-                if bin_names.len() > 0 {
+                if !bin_names.is_empty() {
                     try!(self.write_field_header(bin_name_size, FieldType::QueryBinList));
                     try!(self.write_u8(bin_names.len() as u8));
 
@@ -628,7 +628,7 @@ impl Buffer {
         self.end()
     }
 
-    fn estimate_key_size<'a>(&mut self, key: &Key, send_key: bool) -> Result<u16> {
+    fn estimate_key_size(&mut self, key: &Key, send_key: bool) -> Result<u16> {
         let mut field_count: u16 = 0;
 
         if key.namespace != "" {
@@ -725,7 +725,7 @@ impl Buffer {
     }
 
     // Header write for write operations.
-    fn write_header_with_policy<'a>(&mut self,
+    fn write_header_with_policy(&mut self,
                                     policy: &WritePolicy,
                                     read_attr: u8,
                                     write_attr: u8,
@@ -893,24 +893,20 @@ impl Buffer {
 
     // Data buffer implementations
 
-    #[inline(always)]
     pub fn data_offset(&self) -> usize {
         self.data_offset
     }
 
-    #[inline(always)]
     pub fn skip_bytes(&mut self, count: usize) -> Result<()> {
         self.data_offset += count;
         bail!("Msgpack header skipped. You should not see this message")
     }
 
-    #[inline(always)]
     pub fn skip(&mut self, count: usize) -> Result<()> {
         self.data_offset += count;
         Ok(())
     }
 
-    #[inline(always)]
     pub fn read_u8(&mut self, pos: Option<usize>) -> Result<u8> {
         match pos {
             Some(pos) => Ok(self.data_buffer[pos]),
@@ -922,7 +918,6 @@ impl Buffer {
         }
     }
 
-    #[inline(always)]
     pub fn read_i8(&mut self, pos: Option<usize>) -> Result<i8> {
         match pos {
             Some(pos) => Ok(self.data_buffer[pos] as i8),
@@ -934,95 +929,86 @@ impl Buffer {
         }
     }
 
-    #[inline(always)]
     pub fn read_u16(&mut self, pos: Option<usize>) -> Result<u16> {
         let len = 2;
         match pos {
-            Some(pos) => Ok(NetworkEndian::read_u16(&mut self.data_buffer[pos..pos + len])),
+            Some(pos) => Ok(NetworkEndian::read_u16(&self.data_buffer[pos..pos + len])),
             None => {
                 let res = NetworkEndian::read_u16(
-                    &mut self.data_buffer[self.data_offset..self.data_offset + len]);
+                    &self.data_buffer[self.data_offset..self.data_offset + len]);
                 self.data_offset += len;
                 Ok(res)
             }
         }
     }
 
-    #[inline(always)]
     pub fn read_i16(&mut self, pos: Option<usize>) -> Result<i16> {
         let val = try!(self.read_u16(pos));
         Ok(val as i16)
     }
 
-    #[inline(always)]
     pub fn read_u32(&mut self, pos: Option<usize>) -> Result<u32> {
         let len = 4;
         match pos {
-            Some(pos) => Ok(NetworkEndian::read_u32(&mut self.data_buffer[pos..pos + len])),
+            Some(pos) => Ok(NetworkEndian::read_u32(&self.data_buffer[pos..pos + len])),
             None => {
                 let res = NetworkEndian::read_u32(
-                    &mut self.data_buffer[self.data_offset..self.data_offset + len]);
+                    &self.data_buffer[self.data_offset..self.data_offset + len]);
                 self.data_offset += len;
                 Ok(res)
             }
         }
     }
 
-    #[inline(always)]
     pub fn read_i32(&mut self, pos: Option<usize>) -> Result<i32> {
         let val = try!(self.read_u32(pos));
         Ok(val as i32)
     }
 
-    #[inline(always)]
     pub fn read_u64(&mut self, pos: Option<usize>) -> Result<u64> {
         let len = 8;
         match pos {
-            Some(pos) => Ok(NetworkEndian::read_u64(&mut self.data_buffer[pos..pos + len])),
+            Some(pos) => Ok(NetworkEndian::read_u64(&self.data_buffer[pos..pos + len])),
             None => {
                 let res = NetworkEndian::read_u64(
-                    &mut self.data_buffer[self.data_offset..self.data_offset + len]);
+                    &self.data_buffer[self.data_offset..self.data_offset + len]);
                 self.data_offset += len;
                 Ok(res)
             }
         }
     }
 
-    #[inline(always)]
     pub fn read_i64(&mut self, pos: Option<usize>) -> Result<i64> {
         let val = try!(self.read_u64(pos));
         Ok(val as i64)
     }
 
-    #[inline(always)]
     pub fn read_msg_size(&mut self, pos: Option<usize>) -> Result<usize> {
         let size = try!(self.read_i64(pos));
         let size = size & 0xFFFFFFFFFFFF;
         Ok(size as usize)
     }
 
-    #[inline(always)]
     pub fn read_f32(&mut self, pos: Option<usize>) -> Result<f32> {
         let len = 4;
         match pos {
-            Some(pos) => Ok(NetworkEndian::read_f32(&mut self.data_buffer[pos..pos + len])),
+            Some(pos) => Ok(NetworkEndian::read_f32(&self.data_buffer[pos..pos + len])),
             None => {
                 let res = NetworkEndian::read_f32(
-                    &mut self.data_buffer[self.data_offset..self.data_offset + len]);
+                    &self.data_buffer[self.data_offset..self.data_offset + len]);
                 self.data_offset += len;
                 Ok(res)
             }
         }
     }
 
-    #[inline(always)]
     pub fn read_f64(&mut self, pos: Option<usize>) -> Result<f64> {
         let len = 8;
         match pos {
-            Some(pos) => Ok(NetworkEndian::read_f64(&mut self.data_buffer[pos..pos + len])),
+            Some(pos) => Ok(NetworkEndian::read_f64(&self.data_buffer[pos..pos + len])),
             None => {
                 let res = NetworkEndian::read_f64(
-                    &mut self.data_buffer[self.data_offset..self.data_offset + len]);
+                    &self.data_buffer[self.data_offset..self.data_offset + len]);
                 self.data_offset += len;
                 Ok(res)
             }
@@ -1030,45 +1016,38 @@ impl Buffer {
     }
 
 
-    #[inline(always)]
     pub fn read_str(&mut self, len: usize) -> Result<String> {
         let s = try!(str::from_utf8(&self.data_buffer[self.data_offset..self.data_offset + len]));
         self.data_offset += len;
         Ok(s.to_owned())
     }
 
-    #[inline(always)]
     pub fn read_bytes(&mut self, pos: usize, count: usize) -> Result<&[u8]> {
         Ok(&self.data_buffer[pos..pos + count])
     }
 
-    #[inline(always)]
     pub fn read_slice(&mut self, count: usize) -> Result<&[u8]> {
         Ok(&self.data_buffer[self.data_offset..self.data_offset + count])
     }
 
-    #[inline(always)]
     pub fn read_blob(&mut self, len: usize) -> Result<Vec<u8>> {
         let val = self.data_buffer[self.data_offset..self.data_offset + len].to_vec();
         self.data_offset += len;
         Ok(val)
     }
 
-    #[inline(always)]
     pub fn write_u8(&mut self, val: u8) -> Result<usize> {
         self.data_buffer[self.data_offset] = val;
         self.data_offset += 1;
         Ok(1)
     }
 
-    #[inline(always)]
     pub fn write_i8(&mut self, val: i8) -> Result<usize> {
         self.data_buffer[self.data_offset] = val as u8;
         self.data_offset += 1;
         Ok(1)
     }
 
-    #[inline(always)]
     pub fn write_u16(&mut self, val: u16) -> Result<usize> {
         NetworkEndian::write_u16(&mut self.data_buffer[self.data_offset..self.data_offset + 2],
                                  val);
@@ -1076,12 +1055,10 @@ impl Buffer {
         Ok(2)
     }
 
-    #[inline(always)]
     pub fn write_i16(&mut self, val: i16) -> Result<usize> {
         self.write_u16(val as u16)
     }
 
-    #[inline(always)]
     pub fn write_u32(&mut self, val: u32) -> Result<usize> {
         NetworkEndian::write_u32(&mut self.data_buffer[self.data_offset..self.data_offset + 4],
                                  val);
@@ -1089,12 +1066,10 @@ impl Buffer {
         Ok(4)
     }
 
-    #[inline(always)]
     pub fn write_i32(&mut self, val: i32) -> Result<usize> {
         self.write_u32(val as u32)
     }
 
-    #[inline(always)]
     pub fn write_u64(&mut self, val: u64) -> Result<usize> {
         NetworkEndian::write_u64(&mut self.data_buffer[self.data_offset..self.data_offset + 8],
                                  val);
@@ -1102,21 +1077,15 @@ impl Buffer {
         Ok(8)
     }
 
-    #[inline(always)]
     pub fn write_i64(&mut self, val: i64) -> Result<usize> {
         self.write_u64(val as u64)
     }
 
-    #[inline(always)]
     pub fn write_bool(&mut self, val: bool) -> Result<usize> {
-        let val = match val {
-            true => 1,
-            false => 0,
-        };
+        let val = if val { 1 } else { 0 };
         self.write_i64(val)
     }
 
-    #[inline(always)]
     pub fn write_f32(&mut self, val: f32) -> Result<usize> {
         NetworkEndian::write_f32(&mut self.data_buffer[self.data_offset..self.data_offset + 4],
                                  val);
@@ -1124,7 +1093,6 @@ impl Buffer {
         Ok(4)
     }
 
-    #[inline(always)]
     pub fn write_f64(&mut self, val: f64) -> Result<usize> {
         NetworkEndian::write_f64(&mut self.data_buffer[self.data_offset..self.data_offset + 8],
                                  val);
@@ -1132,7 +1100,6 @@ impl Buffer {
         Ok(8)
     }
 
-    #[inline(always)]
     pub fn write_bytes(&mut self, bytes: &[u8]) -> Result<usize> {
         for b in bytes {
             try!(self.write_u8(*b));
@@ -1140,12 +1107,10 @@ impl Buffer {
         Ok(bytes.len())
     }
 
-    #[inline(always)]
     pub fn write_str(&mut self, val: &str) -> Result<usize> {
         self.write_bytes(val.as_bytes())
     }
 
-    #[inline(always)]
     pub fn write_geo(&mut self, val: &str) -> Result<usize> {
         try!(self.write_u8(0));
         try!(self.write_u8(0));
@@ -1154,7 +1119,6 @@ impl Buffer {
         Ok(3 + val.len())
     }
 
-    #[inline(always)]
     pub fn write_timeout(&mut self, val: Option<Duration>) {
         if let Some(val) = val {
             let millis: i32 = (val.as_secs() * 1_000) as i32 +

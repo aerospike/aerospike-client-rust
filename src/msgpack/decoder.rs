@@ -22,7 +22,7 @@ use commands::buffer::Buffer;
 use value::*;
 
 pub fn unpack_value_list(buf: &mut Buffer) -> Result<Value> {
-    if buf.data_buffer.len() == 0 {
+    if buf.data_buffer.is_empty() {
         return Ok(Value::List(vec![]));
     }
 
@@ -42,7 +42,7 @@ pub fn unpack_value_list(buf: &mut Buffer) -> Result<Value> {
 }
 
 pub fn unpack_value_map(buf: &mut Buffer) -> Result<Value> {
-    if buf.data_buffer.len() == 0 {
+    if buf.data_buffer.is_empty() {
         return Ok(Value::from(HashMap::with_capacity(0)));
     }
 
@@ -111,66 +111,46 @@ fn unpack_value(buf: &mut Buffer) -> Result<Value> {
 
     match obj_type {
         0xc0 => return Ok(Value::Nil),
-
         0xc3 => return Ok(Value::from(true)),
-
         0xc2 => return Ok(Value::from(false)),
-
         0xca => return Ok(Value::from(try!(buf.read_f32(None)))),
-
         0xcb => return Ok(Value::from(try!(buf.read_f64(None)))),
-
         0xcc => return Ok(Value::from(try!(buf.read_u8(None)))),
-
         0xcd => return Ok(Value::from(try!(buf.read_u16(None)))),
-
         0xce => return Ok(Value::from(try!(buf.read_u32(None)))),
-
         0xcf => return Ok(Value::from(try!(buf.read_u64(None)))),
-
         0xd0 => return Ok(Value::from(try!(buf.read_i8(None)))),
-
         0xd1 => return Ok(Value::from(try!(buf.read_i16(None)))),
-
         0xd2 => return Ok(Value::from(try!(buf.read_i32(None)))),
-
         0xd3 => return Ok(Value::from(try!(buf.read_i64(None)))),
-
         0xc4 | 0xd9 => {
             let count = try!(buf.read_u8(None));
             return Ok(Value::from(try!(unpack_blob(buf, count as usize))));
         }
-
         0xc5 | 0xda => {
             let count = try!(buf.read_u16(None));
             return Ok(Value::from(try!(unpack_blob(buf, count as usize))));
         }
-
         0xc6 | 0xdb => {
             let count = try!(buf.read_u32(None));
             return Ok(Value::from(try!(unpack_blob(buf, count as usize))));
         }
-
         0xdc => {
             let count = try!(buf.read_u16(None));
             return unpack_list(buf, count as usize);
         }
-
         0xdd => {
             let count = try!(buf.read_u32(None));
             return unpack_list(buf, count as usize);
         }
-
         0xde => {
             let count = try!(buf.read_u16(None));
             return unpack_map(buf, count as usize);
         }
-
         0xdf => {
             let count = try!(buf.read_u32(None));
             return unpack_map(buf, count as usize);
         }
-
         0xd4 => {
             // Skip over type extension with 1 byte
             let count = (1 + 1) as usize;

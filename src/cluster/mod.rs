@@ -152,7 +152,7 @@ impl Cluster {
                     Ok(friends) => {
                         refresh_count += 1;
 
-                        if friends.len() > 0 {
+                        if !friends.is_empty() {
                             friend_list.extend_from_slice(&friends);
                         }
 
@@ -170,7 +170,7 @@ impl Cluster {
 
         // Add nodes in a batch.
         let add_list = try!(self.find_new_nodes_to_add(friend_list));
-        if add_list.len() > 0 {
+        if !add_list.is_empty() {
             try!(self.add_nodes(&add_list));
         }
 
@@ -178,7 +178,7 @@ impl Cluster {
         // Handle nodes changes determined from refreshes.
         // Remove nodes in a batch.
         let remove_list = try!(self.find_nodes_to_remove(refresh_count));
-        if remove_list.len() > 0 {
+        if !remove_list.is_empty() {
             try!(self.remove_nodes(remove_list));
         }
 
@@ -186,12 +186,9 @@ impl Cluster {
     }
 
     fn wait_till_stabilized(cluster: Arc<Cluster>) -> Result<()> {
-        let timeout = cluster.client_policy().timeout;
-        let mut deadline = Instant::now();
-        match timeout {
-            Some(timeout) => deadline = deadline + timeout,
-            None => deadline = deadline + Duration::from_millis(3_000),
-        }
+        let policy = cluster.client_policy();
+        let timeout = policy.timeout.unwrap_or_else(|| Duration::from_secs(3));
+        let deadline = Instant::now() + timeout;
 
         let (tx, rx): (Sender<()>, Receiver<()>) = mpsc::channel();
         let cluster_for_tend = cluster.clone();
@@ -276,15 +273,15 @@ impl Cluster {
         info!("Seeding the cluster. Seeds count: {}", seed_array.len());
 
         let mut list: Vec<Arc<Node>> = vec![];
-        for seed in seed_array.iter() {
+        for seed in &*seed_array {
             let mut seed_node_validator = NodeValidator::new(self);
-            if let Err(err) = seed_node_validator.validate_node(&seed) {
+            if let Err(err) = seed_node_validator.validate_node(seed) {
                 log_error_chain!(err, "Failed to validate seed host: {}", seed);
                 continue;
             };
 
             let al = seed_node_validator.aliases();
-            for alias in al.iter() {
+            for alias in &*al {
                 let nv = if *seed == *alias {
                     seed_node_validator.clone()
                 } else {
@@ -297,7 +294,7 @@ impl Cluster {
                 };
                 let nv = Arc::new(nv);
 
-                if !self.find_node_name(&list, &nv.name)? {
+                if !self.find_node_name(&list, &nv.name) {
                     let node = Arc::new(self.create_node(nv.clone())?);
                     self.add_aliases(node.clone())?;
                     list.push(node);
@@ -305,7 +302,7 @@ impl Cluster {
             }
         }
 
-        if list.len() > 0 {
+        if !list.is_empty() {
             try!(self.add_nodes(&list));
             return Ok(true);
         }
@@ -313,13 +310,8 @@ impl Cluster {
         Ok(false)
     }
 
-    fn find_node_name(&self, list: &[Arc<Node>], name: &str) -> Result<bool> {
-        for node in list {
-            if node.name() == name {
-                return Ok((true));
-            }
-        }
-        Ok(false)
+    fn find_node_name(&self, list: &[Arc<Node>], name: &str) -> bool {
+        list.iter().any(|node| node.name() == name)
     }
 
     fn find_new_nodes_to_add(&self, hosts: Vec<Host>) -> Result<Vec<Arc<Node>>> {
@@ -397,7 +389,7 @@ impl Cluster {
                         // Check if node responded to info request.
                         if node.failures() == 0 {
                             // Node is alive, but not referenced by other nodes.  Check if mapped.
-                            if !self.find_node_in_partition_map(node)? {
+                            if !self.find_node_in_partition_map(node) {
                                 remove_list.push(tnode);
                             }
                         } else {
@@ -434,40 +426,31 @@ impl Cluster {
         Ok(())
     }
 
-    fn find_node_in_partition_map(&self, filter: Arc<Node>) -> Result<bool> {
-        // let partitions1 = self.partitions;
+    fn find_node_in_partition_map(&self, filter: Arc<Node>) -> bool {
         let partitions = self.partition_write_map.read().unwrap();
-
-        for (_, map) in partitions.iter() {
-            for node in map {
-                if *node == filter {
-                    return Ok(true);
-                }
-            }
-        }
-
-        return Ok(false);
+        (*partitions).values().any(
+            |map| map.iter().any(
+                |node| *node == filter))
     }
 
-    fn add_nodes(&self, friend_list: &Vec<Arc<Node>>) -> Result<()> {
+    fn add_nodes(&self, friend_list: &[Arc<Node>]) -> Result<()> {
         for node in friend_list {
-            try!(self.add_aliases(node.clone()))
+            self.add_aliases(node.clone())?
         }
 
-        self.add_nodes_copy(&friend_list)
+        self.add_nodes_copy(friend_list)
     }
 
-    fn add_nodes_copy(&self, friend_list: &Vec<Arc<Node>>) -> Result<()> {
+    fn add_nodes_copy(&self, friend_list: &[Arc<Node>]) -> Result<()> {
         let mut nodes = self.nodes();
         nodes.extend(friend_list.iter().cloned());
         self.set_nodes(nodes)
     }
 
     fn remove_nodes(&self, nodes_to_remove: Vec<Arc<Node>>) -> Result<()> {
-        for node in nodes_to_remove.iter() {
+        for node in &nodes_to_remove {
             for alias in node.aliases() {
-                // debug!("Removing alias {:?}", alias)
-                try!(self.remove_alias(&alias));
+                self.remove_alias(&alias)?;
             }
             node.close();
         }
@@ -483,11 +466,11 @@ impl Cluster {
         Ok(())
     }
 
-    fn remove_nodes_copy(&self, nodes_to_remove: &Vec<Arc<Node>>) -> Result<()> {
+    fn remove_nodes_copy(&self, nodes_to_remove: &[Arc<Node>]) -> Result<()> {
         let nodes = self.nodes();
         let mut node_array: Vec<Arc<Node>> = vec![];
 
-        for node in nodes.iter() {
+        for node in &nodes {
             if !nodes_to_remove.contains(node) {
                 node_array.push(node.clone());
             }
@@ -499,7 +482,7 @@ impl Cluster {
     pub fn is_connected(&self) -> bool {
         let nodes = self.nodes();
         let closed = self.closed.load(Ordering::Relaxed);
-        return nodes.len() > 0 && !closed;
+        !nodes.is_empty() && !closed
     }
 
     pub fn aliases(&self) -> HashMap<Host, Arc<Node>> {
@@ -545,7 +528,7 @@ impl Cluster {
     fn get_node_by_name(&self, node_name: &str) -> Result<Arc<Node>> {
         let node_array = self.nodes();
 
-        for node in node_array.iter() {
+        for node in &node_array {
             if node.name() == node_name {
                 return Ok(node.clone());
             }

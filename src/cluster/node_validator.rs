@@ -83,7 +83,7 @@ impl NodeValidator {
                 self.address = format!("{}:{}", alias.name, alias.port);
 
                 if let Some(features) = info_map.get("features") {
-                    try!(self.set_features(features.to_string()));
+                    self.set_features(features);
                 }
             }
         }
@@ -91,8 +91,8 @@ impl NodeValidator {
         Ok(())
     }
 
-    fn set_features(&mut self, features: String) -> Result<()> {
-        let features = features.split(";");
+    fn set_features(&mut self, features: &str) {
+        let features = features.split(';');
         for feature in features {
             match feature {
                 "float" => self.supports_float = true,
@@ -102,7 +102,5 @@ impl NodeValidator {
                 _ => (),
             }
         }
-
-        Ok(())
     }
 }

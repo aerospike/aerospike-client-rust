@@ -93,10 +93,6 @@ impl Node {
         &self.client_policy
     }
 
-    // pub fn cluster(&self) -> Arc<RwLock<Cluster>> {
-    //     self.cluster.clone()
-    // }
-
     pub fn host(&self) -> Host {
         self.host.clone()
     }
@@ -175,9 +171,9 @@ impl Node {
             Some(friend_string) => friend_string,
         };
 
-        let friend_names = friend_string.split(";");
+        let friend_names = friend_string.split(';');
         for friend in friend_names {
-            let mut friend_info = friend.split(":");
+            let mut friend_info = friend.split(':');
             if friend_info.clone().count() != 2 {
                 error!("Node info from asinfo:services is malformed. Expected HOST:PORT, but got \
                         '{}'",
@@ -246,12 +242,9 @@ impl Node {
                         }
                     };
 
-                    match conn.set_timeout(timeout) {
-                        Err(e) => {
-                            self.dec_connections();
-                            return Err(e);
-                        }
-                        _ => (),
+                    if let Err(e) = conn.set_timeout(timeout) {
+                        self.dec_connections();
+                        return Err(e);
                     }
 
                     return Ok(conn);

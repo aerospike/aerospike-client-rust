@@ -19,7 +19,7 @@ use GenerationPolicy;
 use CommitLevel;
 use Expiration;
 
-/// WritePolicy encapsulates parameters for all write operations.
+/// `WritePolicy` encapsulates parameters for all write operations.
 pub struct WritePolicy {
     /// Base policy instance
     pub base_policy: BasePolicy,

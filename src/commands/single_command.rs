@@ -150,8 +150,8 @@ impl<'a> SingleCommand<'a> {
     }
 
     fn keep_connection(err: &Error) -> bool {
-        match err {
-            &Error(ErrorKind::ServerError(result_code), _) => {
+        match *err {
+            Error(ErrorKind::ServerError(result_code), _) => {
                 match result_code {
                     ResultCode::KeyNotFoundError => true,
                     _ => false,

@@ -16,6 +16,7 @@ extern crate rustc_serialize;
 
 use std::str;
 use std::collections::HashMap;
+use std::collections::hash_map::Entry::{Vacant, Occupied};
 use std::vec::Vec;
 use std::sync::{Arc, RwLock};
 
@@ -39,7 +40,7 @@ pub struct PartitionTokenizer {
 
 impl PartitionTokenizer {
     pub fn new(conn: &mut Connection) -> Result<Self> {
-        let info_map = try!(Message::info(conn, &vec![REPLICAS_NAME]));
+        let info_map = try!(Message::info(conn, &[REPLICAS_NAME]));
         if let Some(buf) = info_map.get(REPLICAS_NAME) {
             return Ok(PartitionTokenizer {
                 length: info_map.len(),
@@ -63,22 +64,18 @@ impl PartitionTokenizer {
         loop {
             match (parts.next(), parts.next()) {
                 (Some(ns), Some(part)) => {
-                    let ns = ns.to_string();
                     let restore_buffer = try!(part.from_base64());
-
-                    if !amap.contains_key(&ns) {
-                        let mut node_array: Vec<Arc<Node>> = Vec::with_capacity(node::PARTITIONS);
-                        for _ in 0..node::PARTITIONS {
-                            node_array.push(node.clone());
-                        }
-                        amap.insert(ns, node_array);
-                    } else {
-                        let mut node_array: &mut Vec<Arc<Node>> = amap.entry(ns).or_insert(vec![]);
-                        for i in 0..node::PARTITIONS {
-                            if restore_buffer[i >> 3] & (0x80 >> (i & 7) as u8) != 0 {
-                                node_array[i] = node.clone();
-                            }
-                        }
+                    match amap.entry(ns.to_string()) {
+                        Vacant(entry) => {
+                            entry.insert(vec![node.clone(); node::PARTITIONS]);
+                        },
+                        Occupied(mut entry) => {
+                            for (idx, item) in entry.get_mut().iter_mut().enumerate() {
+                                if restore_buffer[idx >> 3] & (0x80 >> (idx & 7) as u8) != 0 {
+                                    *item = node.clone();
+                                }
+                            };
+                        },
                     }
                 }
                 (None, None) => break,

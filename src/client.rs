@@ -492,7 +492,7 @@ impl Client {
         let node = try!(self.cluster.get_random_node());
         let response = try!(node.info(policy.base_policy.timeout, &[&cmd]));
 
-        if let Some(_) = response.get("ok") {
+        if response.get("ok").is_some() {
             return Ok(());
         }
 
@@ -517,14 +517,14 @@ impl Client {
                                                  args);
         try!(command.execute());
 
-        let record = command.read_command.record.as_ref().unwrap().clone();
+        let record = command.read_command.record.unwrap();
 
         // User defined functions don't have to return a value.
-        if record.bins.len() == 0 {
+        if record.bins.is_empty() {
             return Ok(None);
         }
 
-        for (key, value) in record.bins.iter() {
+        for (key, value) in &record.bins {
             if key.contains("SUCCESS") {
                 return Ok(Some(value.clone()));
             } else if key.contains("FAILURE") {
@@ -773,7 +773,7 @@ impl Client {
                           cit_str,
                           bin_name,
                           index_type);
-        self.send_sindex_cmd(cmd, &policy).chain_err(|| "Error creating index")
+        self.send_sindex_cmd(cmd, policy).chain_err(|| "Error creating index")
     }
 
     /// Delete secondary index.
@@ -792,7 +792,7 @@ impl Client {
                           namespace,
                           set_name,
                           index_name);
-        self.send_sindex_cmd(cmd, &policy).chain_err(|| "Error dropping index")
+        self.send_sindex_cmd(cmd, policy).chain_err(|| "Error dropping index")
     }
 
     fn send_sindex_cmd(&self, cmd: String, policy: &WritePolicy) -> Result<()> {

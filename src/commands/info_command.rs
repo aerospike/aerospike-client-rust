@@ -43,8 +43,8 @@ impl Message {
         let mut buf: Vec<u8> = Vec::with_capacity(1024);
         buf.push(2); // version
         buf.push(1); // msg_type
-        try!(buf.write(&len[2..8]));
-        try!(buf.write(&data));
+        buf.write_all(&len[2..8])?;
+        buf.write_all(data)?;
 
         Ok(Message { buf: buf })
     }
@@ -57,7 +57,6 @@ impl Message {
     }
 
     fn send(&mut self, conn: &mut Connection) -> Result<()> {
-        // send the message
         try!(conn.write(&self.buf));
 
         // read the header
@@ -80,8 +79,8 @@ impl Message {
         debug!("response from server for info command: {:?}", response);
         let mut result: HashMap<String, String> = HashMap::new();
 
-        for tuple in response.split("\n") {
-            let mut kv = tuple.split("\t");
+        for tuple in response.split('\n') {
+            let mut kv = tuple.split('\t');
             let key = kv.nth(0);
             let val = kv.nth(0);
 

@@ -264,7 +264,7 @@ impl ResultCode {
             213 => ResultCode::QueryGeneric,
             214 => ResultCode::QueryNetioErr,
             215 => ResultCode::QueryDuplicate,
-            code @ _ => ResultCode::Unknown(code),
+            code => ResultCode::Unknown(code),
         }
     }
 

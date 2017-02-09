@@ -14,7 +14,7 @@
 // the License.
 //
 
-/// ConsistencyLevel indicates how replicas should be consulted in a read
+/// `ConsistencyLevel` indicates how replicas should be consulted in a read
 /// operation to provide the desired consistency guarantee.
 #[derive(Debug,PartialEq,Clone)]
 pub enum ConsistencyLevel {

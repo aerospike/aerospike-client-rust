@@ -39,18 +39,10 @@ lazy_static! {
     };
     pub static ref GLOBAL_CLIENT_POLICY: ClientPolicy = {
         let mut cp = ClientPolicy::default();
-        match env::var("AEROSPIKE_USER") {
-            Ok(user) => {
-                let pass =  match env::var("AEROSPIKE_PASSWORD") {
-                    Ok(pass) => pass,
-                    Err(_) => "".to_string(),
-                };
-
-                cp.set_user_password(Some((user, pass))).unwrap();
-            }
-            Err(_) => (),
+        if let Ok(user) = env::var("AEROSPIKE_USER") {
+            let pass = env::var("AEROSPIKE_PASSWORD").unwrap_or(String::new());
+            cp.set_user_password(user, pass).unwrap();
         }
-
         cp
     };
     pub static ref GLOBAL_CLIENT: Arc<Client> = {
