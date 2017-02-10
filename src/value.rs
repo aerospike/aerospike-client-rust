@@ -602,7 +602,7 @@ macro_rules! as_val {
 /// Constructs a new GeoJSON Value from one of the supported native data types.
 #[macro_export]
 macro_rules! as_geo {
-    ($val:expr) => {{ $crate::Value::GeoJSON($val) }}
+    ($val:expr) => {{ $crate::Value::GeoJSON($val.to_owned()) }}
 }
 
 /// Constructs a new Blob Value from one of the supported native data types.
@@ -707,4 +707,26 @@ macro_rules! as_map {
             $crate::Value::HashMap(temp_map)
         }
     };
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn as_string() {
+        assert_eq!(Value::Nil.as_string(), String::from("<null>"));
+        assert_eq!(Value::Int(42).as_string(), String::from("42"));
+        assert_eq!(Value::UInt(9223372036854775808).as_string(), String::from("9223372036854775808"));
+        assert_eq!(Value::Bool(true).as_string(), String::from("true"));
+        assert_eq!(Value::from(3.1416).as_string(), String::from("3.1416"));
+        assert_eq!(as_geo!(r#"{"type":"Point"}"#).as_string(), String::from(r#"{"type":"Point"}"#));
+    }
+
+    #[test]
+    fn as_geo() {
+        let string = String::from(r#"{"type":"Point"}"#);
+        let str = r#"{"type":"Point"}"#;
+        assert_eq!(as_geo!(string), as_geo!(str));
+    }
 }
