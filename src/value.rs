@@ -53,12 +53,12 @@ impl From<FloatValue> for f64 {
 
 impl<'a> From<&'a FloatValue> for f64 {
     fn from(val: &FloatValue) -> f64 {
-        match val {
-            &FloatValue::F32(_) => {
+        match *val {
+            FloatValue::F32(_) => {
                 panic!("This library does not automatically convert f32 -> f64 to be used in keys \
                         or bins.")
             }
-            &FloatValue::F64(val) => unsafe { mem::transmute(val) },
+            FloatValue::F64(val) => unsafe { mem::transmute(val) },
         }
     }
 }
@@ -94,9 +94,9 @@ impl From<FloatValue> for f32 {
 
 impl<'a> From<&'a FloatValue> for f32 {
     fn from(val: &FloatValue) -> f32 {
-        match val {
-            &FloatValue::F32(val) => unsafe { mem::transmute(val) },
-            &FloatValue::F64(val) => unsafe { mem::transmute(val as u32) },
+        match *val {
+            FloatValue::F32(val) => unsafe { mem::transmute(val) },
+            FloatValue::F64(val) => unsafe { mem::transmute(val as u32) },
         }
     }
 }
@@ -123,12 +123,12 @@ impl<'a> From<&'a f32> for FloatValue {
 
 impl fmt::Display for FloatValue {
     fn fmt(&self, f: &mut fmt::Formatter) -> StdResult<(), fmt::Error> {
-        match self {
-            &FloatValue::F32(val) => {
+        match *self {
+            FloatValue::F32(val) => {
                 let val: f32 = unsafe { mem::transmute(val) };
                 write!(f, "{}", val)
             }
-            &FloatValue::F64(val) => {
+            FloatValue::F64(val) => {
                 let val: f64 = unsafe { mem::transmute(val) };
                 write!(f, "{}", val)
             }
@@ -188,21 +188,21 @@ pub enum Value {
 
 impl Hash for Value {
     fn hash<H: Hasher>(&self, state: &mut H) {
-        match self {
-            &Value::Nil => {
+        match *self {
+            Value::Nil => {
                 let v: Option<u8> = None;
                 v.hash(state)
             }
-            &Value::Bool(ref val) => val.hash(state),
-            &Value::Int(ref val) => val.hash(state),
-            &Value::UInt(ref val) => val.hash(state),
-            &Value::Float(ref val) => val.hash(state),
-            &Value::String(ref val) => val.hash(state),
-            &Value::Blob(ref val) => val.hash(state),
-            &Value::List(ref val) => val.hash(state),
-            &Value::HashMap(_) => panic!("HashMaps cannot be used as map keys."),
-            &Value::OrderedMap(_) => panic!("OrderedMaps cannot be used as map keys."),
-            &Value::GeoJSON(ref val) => val.hash(state),
+            Value::Bool(ref val) => val.hash(state),
+            Value::Int(ref val) => val.hash(state),
+            Value::UInt(ref val) => val.hash(state),
+            Value::Float(ref val) => val.hash(state),
+            Value::String(ref val) => val.hash(state),
+            Value::Blob(ref val) => val.hash(state),
+            Value::List(ref val) => val.hash(state),
+            Value::HashMap(_) => panic!("HashMaps cannot be used as map keys."),
+            Value::OrderedMap(_) => panic!("OrderedMaps cannot be used as map keys."),
+            Value::GeoJSON(ref val) => val.hash(state),
         }
     }
 }
@@ -210,8 +210,8 @@ impl Hash for Value {
 impl Value {
     /// Returns true if this value is the empty value (nil).
     pub fn is_nil(&self) -> bool {
-        match self {
-            &Value::Nil => true,
+        match *self {
+            Value::Nil => true,
             _ => false,
         }
     }
@@ -220,38 +220,38 @@ impl Value {
     /// For internal use only.
     #[doc(hidden)]
     pub fn particle_type(&self) -> ParticleType {
-        match self {
-            &Value::Nil => ParticleType::NULL,
-            &Value::Int(_) => ParticleType::INTEGER,
-            &Value::UInt(_) => {
+        match *self {
+            Value::Nil => ParticleType::NULL,
+            Value::Int(_) => ParticleType::INTEGER,
+            Value::UInt(_) => {
                 panic!("Aerospike does not support u64 natively on server-side. Use casting to \
                         store and retrieve u64 values.")
             }
-            &Value::Bool(_) => ParticleType::INTEGER,
-            &Value::Float(_) => ParticleType::FLOAT,
-            &Value::String(_) => ParticleType::STRING,
-            &Value::Blob(_) => ParticleType::BLOB,
-            &Value::List(_) => ParticleType::LIST,
-            &Value::HashMap(_) => ParticleType::MAP,
-            &Value::OrderedMap(_) => panic!("The library never passes ordered maps to the server."),
-            &Value::GeoJSON(_) => ParticleType::GEOJSON,
+            Value::Bool(_) => ParticleType::INTEGER,
+            Value::Float(_) => ParticleType::FLOAT,
+            Value::String(_) => ParticleType::STRING,
+            Value::Blob(_) => ParticleType::BLOB,
+            Value::List(_) => ParticleType::LIST,
+            Value::HashMap(_) => ParticleType::MAP,
+            Value::OrderedMap(_) => panic!("The library never passes ordered maps to the server."),
+            Value::GeoJSON(_) => ParticleType::GEOJSON,
         }
     }
 
     /// Returns a string representation of the value.
     pub fn as_string(&self) -> String {
-        match self {
-            &Value::Nil => "<null>".to_string(),
-            &Value::Int(ref val) => format!("{}", val),
-            &Value::UInt(ref val) => format!("{}", val),
-            &Value::Bool(ref val) => format!("{}", val),
-            &Value::Float(ref val) => format!("{}", f64::from(val)),
-            &Value::String(ref val) => format!("{}", val),
-            &Value::Blob(ref val) => format!("{:?}", val),
-            &Value::List(ref val) => format!("{:?}", val),
-            &Value::HashMap(ref val) => format!("{:?}", val),
-            &Value::OrderedMap(ref val) => format!("{:?}", val),
-            &Value::GeoJSON(ref val) => format!("{}", val),
+        match *self {
+            Value::Nil => "<null>".to_string(),
+            Value::Int(ref val) => val.to_string(),
+            Value::UInt(ref val) => val.to_string(),
+            Value::Bool(ref val) => val.to_string(),
+            Value::Float(ref val) => val.to_string(),
+            Value::String(ref val) => val.to_string(),
+            Value::Blob(ref val) => format!("{:?}", val),
+            Value::List(ref val) => format!("{:?}", val),
+            Value::HashMap(ref val) => format!("{:?}", val),
+            Value::OrderedMap(ref val) => format!("{:?}", val),
+            Value::GeoJSON(ref val) => val.to_string(),
         }
     }
 
@@ -259,21 +259,21 @@ impl Value {
     /// For internal use only.
     #[doc(hidden)]
     pub fn estimate_size(&self) -> Result<usize> {
-        match self {
-            &Value::Nil => Ok(0),
-            &Value::Int(_) => Ok(8),
-            &Value::UInt(_) => {
+        match *self {
+            Value::Nil => Ok(0),
+            Value::Int(_) => Ok(8),
+            Value::UInt(_) => {
                 panic!("Aerospike does not support u64 natively on server-side. Use casting to \
                         store and retrieve u64 values.")
             }
-            &Value::Bool(_) => Ok(8),
-            &Value::Float(_) => Ok(8),
-            &Value::String(ref s) => Ok(s.len()),
-            &Value::Blob(ref b) => Ok(b.len()),
-            &Value::List(_) => encoder::pack_value(&mut None, self),
-            &Value::HashMap(_) => encoder::pack_value(&mut None, self),
-            &Value::OrderedMap(_) => panic!("The library never passes ordered maps to the server."),
-            &Value::GeoJSON(ref s) => Ok(1 + 2 + s.len()), // flags + ncells + jsonstr
+            Value::Bool(_) => Ok(8),
+            Value::Float(_) => Ok(8),
+            Value::String(ref s) => Ok(s.len()),
+            Value::Blob(ref b) => Ok(b.len()),
+            Value::List(_) => encoder::pack_value(&mut None, self),
+            Value::HashMap(_) => encoder::pack_value(&mut None, self),
+            Value::OrderedMap(_) => panic!("The library never passes ordered maps to the server."),
+            Value::GeoJSON(ref s) => Ok(1 + 2 + s.len()), // flags + ncells + jsonstr
         }
     }
 
@@ -281,21 +281,21 @@ impl Value {
     /// For internal use only.
     #[doc(hidden)]
     pub fn write_to(&self, buf: &mut Buffer) -> Result<usize> {
-        match self {
-            &Value::Nil => Ok(0),
-            &Value::Int(ref val) => buf.write_i64(*val),
-            &Value::UInt(_) => {
+        match *self {
+            Value::Nil => Ok(0),
+            Value::Int(ref val) => buf.write_i64(*val),
+            Value::UInt(_) => {
                 panic!("Aerospike does not support u64 natively on server-side. Use casting to \
                         store and retrieve u64 values.")
             }
-            &Value::Bool(ref val) => buf.write_bool(*val),
-            &Value::Float(ref val) => buf.write_f64(f64::from(val)),
-            &Value::String(ref val) => buf.write_str(val),
-            &Value::Blob(ref val) => buf.write_bytes(val),
-            &Value::List(_) => encoder::pack_value(&mut Some(buf), self),
-            &Value::HashMap(_) => encoder::pack_value(&mut Some(buf), self),
-            &Value::OrderedMap(_) => panic!("The library never passes ordered maps to the server."),
-            &Value::GeoJSON(ref val) => buf.write_geo(val),
+            Value::Bool(ref val) => buf.write_bool(*val),
+            Value::Float(ref val) => buf.write_f64(f64::from(val)),
+            Value::String(ref val) => buf.write_str(val),
+            Value::Blob(ref val) => buf.write_bytes(val),
+            Value::List(_) |
+            Value::HashMap(_) => encoder::pack_value(&mut Some(buf), self),
+            Value::OrderedMap(_) => panic!("The library never passes ordered maps to the server."),
+            Value::GeoJSON(ref val) => buf.write_geo(val),
         }
     }
 
@@ -303,18 +303,18 @@ impl Value {
     /// For internal use only.
     #[doc(hidden)]
     pub fn write_key_bytes(&self, h: &mut Ripemd160) -> Result<()> {
-        match self {
-            &Value::Int(ref val) => {
+        match *self {
+            Value::Int(ref val) => {
                 let mut buf = [0; 8];
                 NetworkEndian::write_i64(&mut buf, *val);
                 h.input(&buf);
                 Ok(())
             }
-            &Value::String(ref val) => {
+            Value::String(ref val) => {
                 h.input(val.as_bytes());
                 Ok(())
             }
-            &Value::Blob(ref val) => {
+            Value::Blob(ref val) => {
                 h.input(val);
                 Ok(())
             }
@@ -546,9 +546,9 @@ impl From<Value> for i64 {
 
 impl<'a> From<&'a Value> for i64 {
     fn from(val: &'a Value) -> i64 {
-        match val {
-            &Value::Int(val) => val,
-            &Value::UInt(val) => val as i64,
+        match *val {
+            Value::Int(val) => val,
+            Value::UInt(val) => val as i64,
             _ => panic!("Value is not an integer to convert."),
         }
     }
@@ -717,10 +717,12 @@ mod tests {
     fn as_string() {
         assert_eq!(Value::Nil.as_string(), String::from("<null>"));
         assert_eq!(Value::Int(42).as_string(), String::from("42"));
-        assert_eq!(Value::UInt(9223372036854775808).as_string(), String::from("9223372036854775808"));
+        assert_eq!(Value::UInt(9223372036854775808).as_string(),
+                   String::from("9223372036854775808"));
         assert_eq!(Value::Bool(true).as_string(), String::from("true"));
         assert_eq!(Value::from(3.1416).as_string(), String::from("3.1416"));
-        assert_eq!(as_geo!(r#"{"type":"Point"}"#).as_string(), String::from(r#"{"type":"Point"}"#));
+        assert_eq!(as_geo!(r#"{"type":"Point"}"#).as_string(),
+                   String::from(r#"{"type":"Point"}"#));
     }
 
     #[test]

@@ -24,8 +24,8 @@ pub enum UDFLang {
 
 impl fmt::Display for UDFLang {
     fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
-        let s = match self {
-            &UDFLang::Lua => "LUA",
+        let s = match *self {
+            UDFLang::Lua => "LUA",
         };
 
         write!(f, "{}", s)

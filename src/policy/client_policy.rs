@@ -18,7 +18,7 @@ use std::collections::HashMap;
 use errors::*;
 use commands::admin_command::AdminCommand;
 
-/// ClientPolicy encapsulates parameters for client policy command.
+/// `ClientPolicy` encapsulates parameters for client policy command.
 #[derive(Debug, Clone)]
 pub struct ClientPolicy {
     /// User authentication to cluster. Leave empty for clusters running without restricted access.

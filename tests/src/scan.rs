@@ -31,7 +31,7 @@ const EXPECTED: usize = 1000;
 fn scan_single_consumer() {
     let _ = env_logger::init();
 
-    let ref client = common1::GLOBAL_CLIENT;
+    let client = &common1::GLOBAL_CLIENT;
     let namespace: &str = &common1::AEROSPIKE_NAMESPACE;
     let set_name = &common1::rand_str(10);
 
@@ -48,24 +48,17 @@ fn scan_single_consumer() {
     let spolicy = ScanPolicy::default();
     let rs = client.scan(&spolicy, namespace, set_name, None).unwrap();
 
-    let mut count = 0;
-    for res in rs.into_iter() {
-        match res {
-            Ok(_) => count += 1,
-            Err(err) => println!("{:?}", err),
-        }
-    }
+    let count = (&*rs).filter(|r| r.is_ok()).count();
+    assert_eq!(count, EXPECTED);
     println!("total time: {:?}", now.elapsed());
     println!("records read: {}", count);
-
-    assert_eq!(count, EXPECTED);
 }
 
 #[test]
 fn scan_multi_consumer() {
     let _ = env_logger::init();
 
-    let ref client = common1::GLOBAL_CLIENT;
+    let client = &common1::GLOBAL_CLIENT;
     let namespace: &str = &common1::AEROSPIKE_NAMESPACE;
     let set_name = &common1::rand_str(10);
 
@@ -90,23 +83,16 @@ fn scan_multi_consumer() {
         let count = count.clone();
         let rs = rs.clone();
         threads.push(thread::spawn(move || {
-            for res in rs.into_iter() {
-                match res {
-                    Ok(_) => {
-                        count.fetch_add(1, Ordering::Relaxed);
-                    }
-                    Err(_) => (),
-                }
-            }
+            let ok = (&*rs).filter(|r| r.is_ok()).count();
+            count.fetch_add(ok, Ordering::Relaxed);
         }));
     }
 
     for t in threads {
-        t.join()
-            .expect("Cannot join thread");
+        t.join().expect("Cannot join thread");
     }
 
+    assert_eq!(count.load(Ordering::Relaxed), EXPECTED);
     println!("total time: {:?}", now.elapsed());
     println!("records read: {}", count.load(Ordering::Relaxed));
-    assert_eq!(count.load(Ordering::Relaxed), EXPECTED);
 }

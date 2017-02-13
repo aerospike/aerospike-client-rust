@@ -86,7 +86,7 @@ impl<'a> Operation<'a> {
         };
         size += match self.data {
             OperationData::None => 0,
-            OperationData::Value(ref value) => try!(value.estimate_size()),
+            OperationData::Value(value) => try!(value.estimate_size()),
             OperationData::CdtListOp(ref cdt_op) |
             OperationData::CdtMapOp(ref cdt_op) => try!(cdt_op.estimate_size()),
         };
@@ -108,7 +108,7 @@ impl<'a> Operation<'a> {
             OperationData::None => {
                 size += try!(self.write_op_header_to(buffer, ParticleType::NULL as u8));
             }
-            OperationData::Value(ref value) => {
+            OperationData::Value(value) => {
                 size += try!(self.write_op_header_to(buffer, value.particle_type() as u8));
                 size += try!(value.write_to(buffer));
             }

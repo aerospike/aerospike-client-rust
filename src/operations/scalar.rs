@@ -37,7 +37,7 @@ pub fn get_header<'a>() -> Operation<'a> {
 }
 
 /// Create read bin database operation.
-pub fn get_bin<'a>(bin_name: &'a str) -> Operation<'a> {
+pub fn get_bin(bin_name: &str) -> Operation {
     Operation {
         op: OperationType::Read,
         bin: OperationBin::Name(bin_name),

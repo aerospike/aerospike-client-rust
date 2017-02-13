@@ -125,7 +125,7 @@ pub enum MapWriteMode {
     CreateOnly,
 }
 
-/// MapPolicy directives when creating a map and writing map items.
+/// `MapPolicy` directives when creating a map and writing map items.
 #[derive(Debug)]
 pub struct MapPolicy {
     order: MapOrder,
@@ -185,7 +185,7 @@ fn map_order_arg(policy: &MapPolicy) -> Option<CdtArgument> {
 /// return a result.
 ///
 /// The required map policy attributes can be changed after the map has been created.
-pub fn set_order<'a>(bin: &'a str, map_order: MapOrder) -> Operation<'a> {
+pub fn set_order(bin: &str, map_order: MapOrder) -> Operation {
     let cdt_op = CdtOperation {
         op: CdtOpType::MapSetType,
         args: vec![CdtArgument::Byte(map_order as u8)],
@@ -211,11 +211,11 @@ pub fn put_item<'a>(policy: &'a MapPolicy,
     if !val.is_nil() {
         args.push(CdtArgument::Value(val));
     }
-    if let Some(arg) = map_order_arg(&policy) {
+    if let Some(arg) = map_order_arg(policy) {
         args.push(arg);
     }
     let cdt_op = CdtOperation {
-        op: map_write_op(&policy, false),
+        op: map_write_op(policy, false),
         args: args,
     };
     Operation {
@@ -235,11 +235,11 @@ pub fn put_items<'a>(policy: &'a MapPolicy,
                      items: &'a HashMap<Value, Value>)
                      -> Operation<'a> {
     let mut args = vec![CdtArgument::Map(items)];
-    if let Some(arg) = map_order_arg(&policy) {
+    if let Some(arg) = map_order_arg(policy) {
         args.push(arg);
     }
     let cdt_op = CdtOperation {
-        op: map_write_op(&policy, true),
+        op: map_write_op(policy, true),
         args: args,
     };
     Operation {
@@ -263,7 +263,7 @@ pub fn increment_value<'a>(policy: &'a MapPolicy,
     if !incr.is_nil() {
         args.push(CdtArgument::Value(incr));
     }
-    if let Some(arg) = map_order_arg(&policy) {
+    if let Some(arg) = map_order_arg(policy) {
         args.push(arg);
     }
     let cdt_op = CdtOperation {
@@ -291,7 +291,7 @@ pub fn decrement_value<'a>(policy: &'a MapPolicy,
     if !decr.is_nil() {
         args.push(CdtArgument::Value(decr));
     }
-    if let Some(arg) = map_order_arg(&policy) {
+    if let Some(arg) = map_order_arg(policy) {
         args.push(arg);
     }
     let cdt_op = CdtOperation {
@@ -307,7 +307,7 @@ pub fn decrement_value<'a>(policy: &'a MapPolicy,
 
 /// Create map clear operation. Server removes all items in the map. Server does not return a
 /// result.
-pub fn clear<'a>(bin: &'a str) -> Operation<'a> {
+pub fn clear(bin: &str) -> Operation {
     let cdt_op = CdtOperation {
         op: CdtOpType::MapClear,
         args: vec![],
@@ -437,7 +437,7 @@ pub fn remove_by_value_range<'a>(bin: &'a str,
 
 /// Create map remove operation. Server removes the map item identified by the index and return
 /// the removed data specified by `return_type`.
-pub fn remove_by_index<'a>(bin: &'a str, index: i64, return_type: MapReturnType) -> Operation<'a> {
+pub fn remove_by_index(bin: &str, index: i64, return_type: MapReturnType) -> Operation {
     let cdt_op = CdtOperation {
         op: CdtOpType::MapRemoveByIndex,
         args: vec![CdtArgument::Byte(return_type as u8), CdtArgument::Int(index)],
@@ -451,11 +451,11 @@ pub fn remove_by_index<'a>(bin: &'a str, index: i64, return_type: MapReturnType)
 
 /// Create map remove operation. Server removes `count` map items starting at the specified
 /// index and returns the removed data specified by `return_type`.
-pub fn remove_by_index_range<'a>(bin: &'a str,
-                                 index: i64,
-                                 count: i64,
-                                 return_type: MapReturnType)
-                                 -> Operation<'a> {
+pub fn remove_by_index_range(bin: &str,
+                             index: i64,
+                             count: i64,
+                             return_type: MapReturnType)
+                             -> Operation {
     let cdt_op = CdtOperation {
         op: CdtOpType::MapRemoveByIndexRange,
         args: vec![CdtArgument::Byte(return_type as u8),
@@ -471,10 +471,7 @@ pub fn remove_by_index_range<'a>(bin: &'a str,
 
 /// Create map remove operation. Server removes the map items starting at the specified index
 /// to the end of the map and returns the removed data specified by `return_type`.
-pub fn remove_by_index_range_from<'a>(bin: &'a str,
-                                      index: i64,
-                                      return_type: MapReturnType)
-                                      -> Operation<'a> {
+pub fn remove_by_index_range_from(bin: &str, index: i64, return_type: MapReturnType) -> Operation {
     let cdt_op = CdtOperation {
         op: CdtOpType::MapRemoveByIndexRange,
         args: vec![CdtArgument::Byte(return_type as u8), CdtArgument::Int(index)],
@@ -488,7 +485,7 @@ pub fn remove_by_index_range_from<'a>(bin: &'a str,
 
 /// Create map remove operation. Server removes the map item identified by rank and returns the
 /// removed data specified by `return_type`.
-pub fn remove_by_rank<'a>(bin: &'a str, rank: i64, return_type: MapReturnType) -> Operation<'a> {
+pub fn remove_by_rank(bin: &str, rank: i64, return_type: MapReturnType) -> Operation {
     let cdt_op = CdtOperation {
         op: CdtOpType::MapRemoveByRank,
         args: vec![CdtArgument::Byte(return_type as u8), CdtArgument::Int(rank)],
@@ -502,11 +499,11 @@ pub fn remove_by_rank<'a>(bin: &'a str, rank: i64, return_type: MapReturnType) -
 
 /// Create map remove operation. Server removes `count` map items starting at the specified
 /// rank and returns the removed data specified by `return_type`.
-pub fn remove_by_rank_range<'a>(bin: &'a str,
-                                rank: i64,
-                                count: i64,
-                                return_type: MapReturnType)
-                                -> Operation<'a> {
+pub fn remove_by_rank_range(bin: &str,
+                            rank: i64,
+                            count: i64,
+                            return_type: MapReturnType)
+                            -> Operation {
     let cdt_op = CdtOperation {
         op: CdtOpType::MapRemoveByRankRange,
         args: vec![CdtArgument::Byte(return_type as u8),
@@ -522,10 +519,7 @@ pub fn remove_by_rank_range<'a>(bin: &'a str,
 
 /// Create map remove operation. Server removes the map items starting at the specified rank to
 /// the last ranked item and returns the removed data specified by `return_type`.
-pub fn remove_by_rank_range_from<'a>(bin: &'a str,
-                                     rank: i64,
-                                     return_type: MapReturnType)
-                                     -> Operation<'a> {
+pub fn remove_by_rank_range_from(bin: &str, rank: i64, return_type: MapReturnType) -> Operation {
     let cdt_op = CdtOperation {
         op: CdtOpType::MapRemoveByRankRange,
         args: vec![CdtArgument::Byte(return_type as u8), CdtArgument::Int(rank)],
@@ -538,7 +532,7 @@ pub fn remove_by_rank_range_from<'a>(bin: &'a str,
 }
 
 /// Create map size operation. Server returns the size of the map.
-pub fn size<'a>(bin: &'a str) -> Operation<'a> {
+pub fn size(bin: &str) -> Operation {
     let cdt_op = CdtOperation {
         op: CdtOpType::MapSize,
         args: vec![],
@@ -631,7 +625,7 @@ pub fn get_by_value_range<'a>(bin: &'a str,
 
 /// Create map get by index operation. Server selects the map item identified by index and
 /// returns the selected data specified by `return_type`.
-pub fn get_by_index<'a>(bin: &'a str, index: i64, return_type: MapReturnType) -> Operation<'a> {
+pub fn get_by_index(bin: &str, index: i64, return_type: MapReturnType) -> Operation {
     let cdt_op = CdtOperation {
         op: CdtOpType::MapGetByIndex,
         args: vec![CdtArgument::Byte(return_type as u8), CdtArgument::Int(index)],
@@ -645,11 +639,11 @@ pub fn get_by_index<'a>(bin: &'a str, index: i64, return_type: MapReturnType) ->
 
 /// Create map get by index range operation. Server selects `count` map items starting at the
 /// specified index and returns the selected data specified by `return_type`.
-pub fn get_by_index_range<'a>(bin: &'a str,
-                              index: i64,
-                              count: i64,
-                              return_type: MapReturnType)
-                              -> Operation<'a> {
+pub fn get_by_index_range(bin: &str,
+                          index: i64,
+                          count: i64,
+                          return_type: MapReturnType)
+                          -> Operation {
     let cdt_op = CdtOperation {
         op: CdtOpType::MapGetByIndexRange,
         args: vec![CdtArgument::Byte(return_type as u8),
@@ -666,10 +660,7 @@ pub fn get_by_index_range<'a>(bin: &'a str,
 /// Create map get by index range operation. Server selects the map items starting at the
 /// specified index to the end of the map and returns the selected data specified by
 /// `return_type`.
-pub fn get_by_index_range_from<'a>(bin: &'a str,
-                                   index: i64,
-                                   return_type: MapReturnType)
-                                   -> Operation<'a> {
+pub fn get_by_index_range_from(bin: &str, index: i64, return_type: MapReturnType) -> Operation {
     let cdt_op = CdtOperation {
         op: CdtOpType::MapGetByIndexRange,
         args: vec![CdtArgument::Byte(return_type as u8), CdtArgument::Int(index)],
@@ -683,7 +674,7 @@ pub fn get_by_index_range_from<'a>(bin: &'a str,
 
 /// Create map get by rank operation. Server selects the mamp item identified by rank and
 /// returns the selected data specified by `return_type`.
-pub fn get_by_rank<'a>(bin: &'a str, rank: i64, return_type: MapReturnType) -> Operation<'a> {
+pub fn get_by_rank(bin: &str, rank: i64, return_type: MapReturnType) -> Operation {
     let cdt_op = CdtOperation {
         op: CdtOpType::MapGetByRank,
         args: vec![CdtArgument::Byte(return_type as u8), CdtArgument::Int(rank)],
@@ -697,11 +688,11 @@ pub fn get_by_rank<'a>(bin: &'a str, rank: i64, return_type: MapReturnType) -> O
 
 /// Create map get ranke range operation. Server selects `count` map items at the specified
 /// rank and returns the selected data specified by `return_type`.
-pub fn get_by_rank_range<'a>(bin: &'a str,
-                             rank: i64,
-                             count: i64,
-                             return_type: MapReturnType)
-                             -> Operation<'a> {
+pub fn get_by_rank_range(bin: &str,
+                         rank: i64,
+                         count: i64,
+                         return_type: MapReturnType)
+                         -> Operation {
     let cdt_op = CdtOperation {
         op: CdtOpType::MapGetByRankRange,
         args: vec![CdtArgument::Byte(return_type as u8),
@@ -718,10 +709,7 @@ pub fn get_by_rank_range<'a>(bin: &'a str,
 /// Create map get by rank range operation. Server selects the map items starting at the
 /// specified rank to the last ranked item and returns the selected data specified by
 /// `return_type`.
-pub fn get_by_rank_range_from<'a>(bin: &'a str,
-                                  rank: i64,
-                                  return_type: MapReturnType)
-                                  -> Operation<'a> {
+pub fn get_by_rank_range_from(bin: &str, rank: i64, return_type: MapReturnType) -> Operation {
     let cdt_op = CdtOperation {
         op: CdtOpType::MapGetByRankRange,
         args: vec![CdtArgument::Byte(return_type as u8), CdtArgument::Int(rank)],

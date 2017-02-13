@@ -97,7 +97,7 @@ pub fn insert_items<'a>(bin: &'a str, index: i64, values: &'a [Value]) -> Operat
 
 /// Create list pop operation. Server returns the item at the specified index and removes the
 /// item from the list bin.
-pub fn pop<'a>(bin: &'a str, index: i64) -> Operation<'a> {
+pub fn pop(bin: &str, index: i64) -> Operation {
     let cdt_op = CdtOperation {
         op: CdtOpType::ListPop,
         args: vec![CdtArgument::Int(index)],
@@ -111,7 +111,7 @@ pub fn pop<'a>(bin: &'a str, index: i64) -> Operation<'a> {
 
 /// Create list pop range operation. Server returns `count` items starting at the specified
 /// index and removes the items from the list bin.
-pub fn pop_range<'a>(bin: &'a str, index: i64, count: i64) -> Operation<'a> {
+pub fn pop_range(bin: &str, index: i64, count: i64) -> Operation {
     let cdt_op = CdtOperation {
         op: CdtOpType::ListPopRange,
         args: vec![CdtArgument::Int(index), CdtArgument::Int(count)],
@@ -125,7 +125,7 @@ pub fn pop_range<'a>(bin: &'a str, index: i64, count: i64) -> Operation<'a> {
 
 /// Create list pop range operation. Server returns the items starting at the specified index
 /// to the end of the list and removes those items from the list bin.
-pub fn pop_range_from<'a>(bin: &'a str, index: i64) -> Operation<'a> {
+pub fn pop_range_from(bin: &str, index: i64) -> Operation {
     let cdt_op = CdtOperation {
         op: CdtOpType::ListPopRange,
         args: vec![CdtArgument::Int(index)],
@@ -139,7 +139,7 @@ pub fn pop_range_from<'a>(bin: &'a str, index: i64) -> Operation<'a> {
 
 /// Create list remove operation. Server removes the item at the specified index from the list
 /// bin. Server returns the number of items removed.
-pub fn remove<'a>(bin: &'a str, index: i64) -> Operation<'a> {
+pub fn remove(bin: &str, index: i64) -> Operation {
     let cdt_op = CdtOperation {
         op: CdtOpType::ListRemove,
         args: vec![CdtArgument::Int(index)],
@@ -153,7 +153,7 @@ pub fn remove<'a>(bin: &'a str, index: i64) -> Operation<'a> {
 
 /// Create list remove range operation. Server removes `count` items starting at the specified
 /// index from the list bin. Server returns the number of items removed.
-pub fn remove_range<'a>(bin: &'a str, index: i64, count: i64) -> Operation<'a> {
+pub fn remove_range(bin: &str, index: i64, count: i64) -> Operation {
     let cdt_op = CdtOperation {
         op: CdtOpType::ListRemoveRange,
         args: vec![CdtArgument::Int(index), CdtArgument::Int(count)],
@@ -167,7 +167,7 @@ pub fn remove_range<'a>(bin: &'a str, index: i64, count: i64) -> Operation<'a> {
 
 /// Create list remove range operation. Server removes the items starting at the specified
 /// index to the end of the list. Server returns the number of items removed.
-pub fn remove_range_from<'a>(bin: &'a str, index: i64) -> Operation<'a> {
+pub fn remove_range_from(bin: &str, index: i64) -> Operation {
     let cdt_op = CdtOperation {
         op: CdtOpType::ListRemoveRange,
         args: vec![CdtArgument::Int(index)],
@@ -198,7 +198,7 @@ pub fn set<'a>(bin: &'a str, index: i64, value: &'a Value) -> Operation<'a> {
 /// Create list trim operation. Server removes `count` items in the list bin that do not fall
 /// into the range specified by `index` and `count`. If the range is out of bounds, then all
 /// items will be removed. Server returns list size after trim.
-pub fn trim<'a>(bin: &'a str, index: i64, count: i64) -> Operation<'a> {
+pub fn trim(bin: &str, index: i64, count: i64) -> Operation {
     let cdt_op = CdtOperation {
         op: CdtOpType::ListTrim,
         args: vec![CdtArgument::Int(index), CdtArgument::Int(count)],
@@ -212,7 +212,7 @@ pub fn trim<'a>(bin: &'a str, index: i64, count: i64) -> Operation<'a> {
 
 /// Create list clear operation. Server removes all items in the list bin. Server does not
 /// return a result by default.
-pub fn clear<'a>(bin: &'a str) -> Operation<'a> {
+pub fn clear(bin: &str) -> Operation {
     let cdt_op = CdtOperation {
         op: CdtOpType::ListClear,
         args: vec![],
@@ -225,7 +225,7 @@ pub fn clear<'a>(bin: &'a str) -> Operation<'a> {
 }
 
 /// Create list size operation. Server returns size of the list.
-pub fn size<'a>(bin: &'a str) -> Operation<'a> {
+pub fn size(bin: &str) -> Operation {
     let cdt_op = CdtOperation {
         op: CdtOpType::ListSize,
         args: vec![],
@@ -238,7 +238,7 @@ pub fn size<'a>(bin: &'a str) -> Operation<'a> {
 }
 
 /// Create list get operation. Server returns the item at the specified index in the list bin.
-pub fn get<'a>(bin: &'a str, index: i64) -> Operation<'a> {
+pub fn get(bin: &str, index: i64) -> Operation {
     let cdt_op = CdtOperation {
         op: CdtOpType::ListGet,
         args: vec![CdtArgument::Int(index)],
@@ -252,7 +252,7 @@ pub fn get<'a>(bin: &'a str, index: i64) -> Operation<'a> {
 
 /// Create list get range operation. Server returns `count` items starting at the specified
 /// index in the list bin.
-pub fn get_range<'a>(bin: &'a str, index: i64, count: i64) -> Operation<'a> {
+pub fn get_range(bin: &str, index: i64, count: i64) -> Operation {
     let cdt_op = CdtOperation {
         op: CdtOpType::ListGetRange,
         args: vec![CdtArgument::Int(index), CdtArgument::Int(count)],
@@ -266,7 +266,7 @@ pub fn get_range<'a>(bin: &'a str, index: i64, count: i64) -> Operation<'a> {
 
 /// Create list get range operation. Server returns items starting at the index to the end of
 /// the list.
-pub fn get_range_from<'a>(bin: &'a str, index: i64) -> Operation<'a> {
+pub fn get_range_from(bin: &str, index: i64) -> Operation {
     let cdt_op = CdtOperation {
         op: CdtOpType::ListGetRange,
         args: vec![CdtArgument::Int(index)],

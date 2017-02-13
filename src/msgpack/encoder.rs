@@ -24,23 +24,23 @@ use operations::cdt::{CdtOperation, CdtArgument};
 use value::*;
 
 pub fn pack_value(buf: &mut Option<&mut Buffer>, val: &Value) -> Result<usize> {
-    match val {
-        &Value::Nil => pack_nil(buf),
-        &Value::Int(ref val) => pack_integer(buf, *val),
-        &Value::UInt(ref val) => pack_u64(buf, *val),
-        &Value::Bool(ref val) => pack_bool(buf, *val),
-        &Value::String(ref val) => pack_string(buf, val),
-        &Value::Float(ref val) => {
-            match val {
-                &FloatValue::F64(_) => pack_f64(buf, f64::from(val)),
-                &FloatValue::F32(_) => pack_f32(buf, f32::from(val)),
+    match *val {
+        Value::Nil => pack_nil(buf),
+        Value::Int(ref val) => pack_integer(buf, *val),
+        Value::UInt(ref val) => pack_u64(buf, *val),
+        Value::Bool(ref val) => pack_bool(buf, *val),
+        Value::String(ref val) => pack_string(buf, val),
+        Value::Float(ref val) => {
+            match *val {
+                FloatValue::F64(_) => pack_f64(buf, f64::from(val)),
+                FloatValue::F32(_) => pack_f32(buf, f32::from(val)),
             }
         }
-        &Value::Blob(ref val) => pack_blob(buf, val),
-        &Value::List(ref val) => pack_array(buf, val),
-        &Value::HashMap(ref val) => pack_map(buf, val),
-        &Value::OrderedMap(_) => panic!("Ordered maps are not supported in this encoder."),
-        &Value::GeoJSON(ref val) => pack_geo_json(buf, val),
+        Value::Blob(ref val) => pack_blob(buf, val),
+        Value::List(ref val) => pack_array(buf, val),
+        Value::HashMap(ref val) => pack_map(buf, val),
+        Value::OrderedMap(_) => panic!("Ordered maps are not supported in this encoder."),
+        Value::GeoJSON(ref val) => pack_geo_json(buf, val),
     }
 }
 
@@ -59,12 +59,12 @@ pub fn pack_cdt_op(buf: &mut Option<&mut Buffer>, cdt_op: &CdtOperation) -> Resu
     if !cdt_op.args.is_empty() {
         size += try!(pack_array_begin(buf, cdt_op.args.len()));
         for arg in &cdt_op.args {
-            size += match arg {
-                &CdtArgument::Byte(byte) => try!(pack_value(buf, &Value::from(byte))),
-                &CdtArgument::Int(int) => try!(pack_value(buf, &Value::from(int))),
-                &CdtArgument::Value(value) => try!(pack_value(buf, value)),
-                &CdtArgument::List(list) => try!(pack_array(buf, list)),
-                &CdtArgument::Map(map) => try!(pack_map(buf, map)),
+            size += match *arg {
+                CdtArgument::Byte(byte) => try!(pack_value(buf, &Value::from(byte))),
+                CdtArgument::Int(int) => try!(pack_value(buf, &Value::from(int))),
+                CdtArgument::Value(value) => try!(pack_value(buf, value)),
+                CdtArgument::List(list) => try!(pack_array(buf, list)),
+                CdtArgument::Map(map) => try!(pack_map(buf, map)),
             }
         }
     }
@@ -115,21 +115,21 @@ const MSGPACK_MARKER_NI64: u8 = 0xd3;
 // This method is not compatible with MsgPack specs and is only used by aerospike client<->server
 // for wire transfer only
 fn pack_raw_u16(buf: &mut Option<&mut Buffer>, val: u16) -> Result<usize> {
-    if let &mut Some(ref mut buf) = buf {
+    if let Some(ref mut buf) = *buf {
         try!(buf.write_u16(val));
     }
     Ok(2)
 }
 
 fn pack_half_byte(buf: &mut Option<&mut Buffer>, val: u8) -> Result<usize> {
-    if let &mut Some(ref mut buf) = buf {
+    if let Some(ref mut buf) = *buf {
         try!(buf.write_u8(val));
     }
     Ok(1)
 }
 
 fn pack_byte(buf: &mut Option<&mut Buffer>, marker: u8, val: u8) -> Result<usize> {
-    if let &mut Some(ref mut buf) = buf {
+    if let Some(ref mut buf) = *buf {
         try!(buf.write_u8(marker));
         try!(buf.write_u8(val));
     }
@@ -137,14 +137,14 @@ fn pack_byte(buf: &mut Option<&mut Buffer>, marker: u8, val: u8) -> Result<usize
 }
 
 fn pack_nil(buf: &mut Option<&mut Buffer>) -> Result<usize> {
-    if let &mut Some(ref mut buf) = buf {
+    if let Some(ref mut buf) = *buf {
         try!(buf.write_u8(MSGPACK_MARKER_NIL));
     }
     Ok(1)
 }
 
 fn pack_bool(buf: &mut Option<&mut Buffer>, val: bool) -> Result<usize> {
-    if let &mut Some(ref mut buf) = buf {
+    if let Some(ref mut buf) = *buf {
         if val {
             try!(buf.write_u8(MSGPACK_MARKER_BOOL_TRUE));
         } else {
@@ -182,7 +182,7 @@ fn pack_blob(buf: &mut Option<&mut Buffer>, val: &[u8]) -> Result<usize> {
     let mut size = val.len() + 1;
 
     size += try!(pack_byte_array_begin(buf, size));
-    if let &mut Some(ref mut buf) = buf {
+    if let Some(ref mut buf) = *buf {
         try!(buf.write_u8(ParticleType::BLOB as u8));
         try!(buf.write_bytes(val));
     }
@@ -194,7 +194,7 @@ fn pack_string(buf: &mut Option<&mut Buffer>, val: &str) -> Result<usize> {
     let mut size = val.len() + 1;
 
     size += try!(pack_byte_array_begin(buf, size));
-    if let &mut Some(ref mut buf) = buf {
+    if let Some(ref mut buf) = *buf {
         try!(buf.write_u8(ParticleType::STRING as u8));
         try!(buf.write_str(val));
     }
@@ -206,7 +206,7 @@ fn pack_geo_json(buf: &mut Option<&mut Buffer>, val: &str) -> Result<usize> {
     let mut size = val.len() + 1;
 
     size += try!(pack_byte_array_begin(buf, size));
-    if let &mut Some(ref mut buf) = buf {
+    if let Some(ref mut buf) = *buf {
         try!(buf.write_u8(ParticleType::GEOJSON as u8));
         try!(buf.write_str(val));
     }
@@ -243,7 +243,7 @@ fn pack_integer(buf: &mut Option<&mut Buffer>, val: i64) -> Result<usize> {
 }
 
 fn pack_i16(buf: &mut Option<&mut Buffer>, marker: u8, val: i16) -> Result<usize> {
-    if let &mut Some(ref mut buf) = buf {
+    if let Some(ref mut buf) = *buf {
         try!(buf.write_u8(marker));
         try!(buf.write_i16(val));
     }
@@ -251,7 +251,7 @@ fn pack_i16(buf: &mut Option<&mut Buffer>, marker: u8, val: i16) -> Result<usize
 }
 
 fn pack_i32(buf: &mut Option<&mut Buffer>, marker: u8, val: i32) -> Result<usize> {
-    if let &mut Some(ref mut buf) = buf {
+    if let Some(ref mut buf) = *buf {
         try!(buf.write_u8(marker));
         try!(buf.write_i32(val));
     }
@@ -259,7 +259,7 @@ fn pack_i32(buf: &mut Option<&mut Buffer>, marker: u8, val: i32) -> Result<usize
 }
 
 fn pack_i64(buf: &mut Option<&mut Buffer>, marker: u8, val: i64) -> Result<usize> {
-    if let &mut Some(ref mut buf) = buf {
+    if let Some(ref mut buf) = *buf {
         try!(buf.write_u8(marker));
         try!(buf.write_i64(val));
     }
@@ -271,7 +271,7 @@ fn pack_u64(buf: &mut Option<&mut Buffer>, val: u64) -> Result<usize> {
         return pack_integer(buf, val as i64);
     }
 
-    if let &mut Some(ref mut buf) = buf {
+    if let Some(ref mut buf) = *buf {
         try!(buf.write_u8(0xcf));
         try!(buf.write_u64(val));
     }
@@ -279,7 +279,7 @@ fn pack_u64(buf: &mut Option<&mut Buffer>, val: u64) -> Result<usize> {
 }
 
 fn pack_f32(buf: &mut Option<&mut Buffer>, val: f32) -> Result<usize> {
-    if let &mut Some(ref mut buf) = buf {
+    if let Some(ref mut buf) = *buf {
         try!(buf.write_u8(0xca));
         try!(buf.write_f32(val));
     }
@@ -287,7 +287,7 @@ fn pack_f32(buf: &mut Option<&mut Buffer>, val: f32) -> Result<usize> {
 }
 
 fn pack_f64(buf: &mut Option<&mut Buffer>, val: f64) -> Result<usize> {
-    if let &mut Some(ref mut buf) = buf {
+    if let Some(ref mut buf) = *buf {
         try!(buf.write_u8(0xcb));
         try!(buf.write_f64(val));
     }

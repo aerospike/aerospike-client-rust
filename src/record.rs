@@ -63,7 +63,7 @@ impl Record {
     pub fn time_to_live(&self) -> Option<Duration> {
         match self.expiration {
             0 => None,
-            secs_since_epoch @ _ => {
+            secs_since_epoch => {
                 let expiration = *CITRUSLEAF_EPOCH + Duration::new(secs_since_epoch as u64, 0);
                 match expiration.duration_since(SystemTime::now()) {
                     Ok(d) => Some(d),

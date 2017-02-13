@@ -23,8 +23,6 @@ extern crate rand;
 extern crate test;
 
 use aerospike::{ReadPolicy, WritePolicy};
-use aerospike::{Key, Bin};
-use aerospike::value::*;
 
 use test::Bencher;
 
@@ -32,7 +30,7 @@ mod common1;
 
 #[bench]
 fn single_key_read(b: &mut Bencher) {
-    let ref client = common1::GLOBAL_CLIENT;
+    let client = &common1::GLOBAL_CLIENT;
     let namespace: &str = &common1::AEROSPIKE_NAMESPACE;
     let set_name: &str = &common1::AEROSPIKE_SET;
     let key = as_key!(namespace, set_name, common1::rand_str(10));

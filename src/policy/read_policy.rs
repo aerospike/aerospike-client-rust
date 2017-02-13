@@ -18,7 +18,7 @@ use Priority;
 use ConsistencyLevel;
 use policy::BasePolicy;
 
-/// ReadPolicy excapsulates parameters for transaction policy attributes
+/// `ReadPolicy` excapsulates parameters for transaction policy attributes
 /// used in all database operation calls.
 pub type ReadPolicy = BasePolicy;
 

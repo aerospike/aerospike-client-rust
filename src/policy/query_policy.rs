@@ -15,7 +15,7 @@
 
 use policy::{BasePolicy, PolicyLike};
 
-/// QueryPolicy encapsulates parameters for query operations.
+/// `QueryPolicy` encapsulates parameters for query operations.
 #[derive(Debug,Clone)]
 pub struct QueryPolicy {
     /// Base policy instance

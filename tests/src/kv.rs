@@ -26,7 +26,7 @@ use common1;
 fn connect() {
     let _ = env_logger::init();
 
-    let ref client = common1::GLOBAL_CLIENT;
+    let client = &common1::GLOBAL_CLIENT;
     let namespace: &str = &common1::AEROSPIKE_NAMESPACE;
     let set_name = &common1::rand_str(10);
     let policy = ReadPolicy::default();
@@ -39,7 +39,7 @@ fn connect() {
     let wbin4 = as_bin!("bin f64", 1.64f64);
     let wbin5 = as_bin!("bin Nil", None);
     let wbin6 = as_bin!("bin Geo", as_geo!(format!(
-                "{{ \"type\": \"Point\", \"coordinates\": [{}, {}] }}", 17.119381, 19.45612)));
+                r#"{{ "type": "Point", "coordinates": [{}, {}] }}"#, 17.119381, 19.45612)));
     let bins = vec![&wbin, &wbin1, &wbin2, &wbin3, &wbin4, &wbin5, &wbin6];
 
     client.delete(&wpolicy, &key).unwrap();
