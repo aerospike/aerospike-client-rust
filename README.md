@@ -139,4 +139,4 @@ To enable backtraces:
 The micro-benchmarks in the `benches` directory require nightly Rust builds to execute:
 
     $ export AEROSPIKE_HOSTS=127.0.0.1:3000
-    $ rustup run nightly cargo bench
+    $ cargo +nightly bench
