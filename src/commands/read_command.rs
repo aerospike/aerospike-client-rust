@@ -81,11 +81,19 @@ impl<'a> ReadCommand<'a> {
             if !value.is_nil() {
                 // list/map operations may return multiple values for the same bin.
                 match bins.entry(name) {
-                    Vacant(entry) => { entry.insert(value); () },
-                    Occupied(entry) => match *entry.into_mut() {
-                        Value::List(ref mut list) => list.push(value),
-                        ref mut prev => { *prev = as_list!(prev.clone(), value); () },
-                    },
+                    Vacant(entry) => {
+                        entry.insert(value);
+                        ()
+                    }
+                    Occupied(entry) => {
+                        match *entry.into_mut() {
+                            Value::List(ref mut list) => list.push(value),
+                            ref mut prev => {
+                                *prev = as_list!(prev.clone(), value);
+                                ()
+                            }
+                        }
+                    }
                 }
             }
         }

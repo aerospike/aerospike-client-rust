@@ -35,7 +35,7 @@ pub fn pack_value(buf: &mut Option<&mut Buffer>, val: &Value) -> Result<usize> {
                 FloatValue::F64(_) => pack_f64(buf, f64::from(val)),
                 FloatValue::F32(_) => pack_f32(buf, f32::from(val)),
             }
-        },
+        }
         Value::Blob(ref val) => pack_blob(buf, val),
         Value::List(ref val) => pack_array(buf, val),
         Value::HashMap(ref val) => pack_map(buf, val),

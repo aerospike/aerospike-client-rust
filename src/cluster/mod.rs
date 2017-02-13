@@ -428,9 +428,7 @@ impl Cluster {
 
     fn find_node_in_partition_map(&self, filter: Arc<Node>) -> bool {
         let partitions = self.partition_write_map.read().unwrap();
-        (*partitions).values().any(
-            |map| map.iter().any(
-                |node| *node == filter))
+        (*partitions).values().any(|map| map.iter().any(|node| *node == filter))
     }
 
     fn add_nodes(&self, friend_list: &[Arc<Node>]) -> Result<()> {

@@ -54,8 +54,10 @@ impl From<FloatValue> for f64 {
 impl<'a> From<&'a FloatValue> for f64 {
     fn from(val: &FloatValue) -> f64 {
         match *val {
-            FloatValue::F32(_) =>
-                panic!("This library does not automatically convert f32 -> f64 to be used in keys or bins."),
+            FloatValue::F32(_) => {
+                panic!("This library does not automatically convert f32 -> f64 to be used in keys \
+                        or bins.")
+            }
             FloatValue::F64(val) => unsafe { mem::transmute(val) },
         }
     }
@@ -290,7 +292,8 @@ impl Value {
             Value::Float(ref val) => buf.write_f64(f64::from(val)),
             Value::String(ref val) => buf.write_str(val),
             Value::Blob(ref val) => buf.write_bytes(val),
-            Value::List(_) | Value::HashMap(_) => encoder::pack_value(&mut Some(buf), self),
+            Value::List(_) |
+            Value::HashMap(_) => encoder::pack_value(&mut Some(buf), self),
             Value::OrderedMap(_) => panic!("The library never passes ordered maps to the server."),
             Value::GeoJSON(ref val) => buf.write_geo(val),
         }
@@ -714,10 +717,12 @@ mod tests {
     fn as_string() {
         assert_eq!(Value::Nil.as_string(), String::from("<null>"));
         assert_eq!(Value::Int(42).as_string(), String::from("42"));
-        assert_eq!(Value::UInt(9223372036854775808).as_string(), String::from("9223372036854775808"));
+        assert_eq!(Value::UInt(9223372036854775808).as_string(),
+                   String::from("9223372036854775808"));
         assert_eq!(Value::Bool(true).as_string(), String::from("true"));
         assert_eq!(Value::from(3.1416).as_string(), String::from("3.1416"));
-        assert_eq!(as_geo!(r#"{"type":"Point"}"#).as_string(), String::from(r#"{"type":"Point"}"#));
+        assert_eq!(as_geo!(r#"{"type":"Point"}"#).as_string(),
+                   String::from(r#"{"type":"Point"}"#));
     }
 
     #[test]

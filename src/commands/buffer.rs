@@ -147,11 +147,11 @@ impl Buffer {
 
     // Writes the command for write operations
     pub fn set_write(&mut self,
-                         policy: &WritePolicy,
-                         op_type: OperationType,
-                         key: &Key,
-                         bins: &[&Bin])
-                         -> Result<()> {
+                     policy: &WritePolicy,
+                     op_type: OperationType,
+                     key: &Key,
+                     bins: &[&Bin])
+                     -> Result<()> {
         try!(self.begin());
         let field_count = try!(self.estimate_key_size(key, policy.send_key));
 
@@ -228,10 +228,10 @@ impl Buffer {
 
     // Writes the command for get operations (specified bins)
     pub fn set_read(&mut self,
-                        policy: &ReadPolicy,
-                        key: &Key,
-                        bin_names: Option<&[&str]>)
-                        -> Result<()> {
+                    policy: &ReadPolicy,
+                    key: &Key,
+                    bin_names: Option<&[&str]>)
+                    -> Result<()> {
         match bin_names {
             None => {
                 try!(self.set_read_for_key_only(policy, key));
@@ -726,12 +726,12 @@ impl Buffer {
 
     // Header write for write operations.
     fn write_header_with_policy(&mut self,
-                                    policy: &WritePolicy,
-                                    read_attr: u8,
-                                    write_attr: u8,
-                                    field_count: u16,
-                                    operation_count: u16)
-                                    -> Result<()> {
+                                policy: &WritePolicy,
+                                read_attr: u8,
+                                write_attr: u8,
+                                field_count: u16,
+                                operation_count: u16)
+                                -> Result<()> {
         // Set flags.
         let mut generation: u32 = 0;
         let mut info_attr: u8 = 0;
@@ -934,8 +934,9 @@ impl Buffer {
         match pos {
             Some(pos) => Ok(NetworkEndian::read_u16(&self.data_buffer[pos..pos + len])),
             None => {
-                let res = NetworkEndian::read_u16(
-                    &self.data_buffer[self.data_offset..self.data_offset + len]);
+                let res =
+                    NetworkEndian::read_u16(&self.data_buffer[self.data_offset..self.data_offset +
+                                                                                len]);
                 self.data_offset += len;
                 Ok(res)
             }
@@ -952,8 +953,9 @@ impl Buffer {
         match pos {
             Some(pos) => Ok(NetworkEndian::read_u32(&self.data_buffer[pos..pos + len])),
             None => {
-                let res = NetworkEndian::read_u32(
-                    &self.data_buffer[self.data_offset..self.data_offset + len]);
+                let res =
+                    NetworkEndian::read_u32(&self.data_buffer[self.data_offset..self.data_offset +
+                                                                                len]);
                 self.data_offset += len;
                 Ok(res)
             }
@@ -970,8 +972,9 @@ impl Buffer {
         match pos {
             Some(pos) => Ok(NetworkEndian::read_u64(&self.data_buffer[pos..pos + len])),
             None => {
-                let res = NetworkEndian::read_u64(
-                    &self.data_buffer[self.data_offset..self.data_offset + len]);
+                let res =
+                    NetworkEndian::read_u64(&self.data_buffer[self.data_offset..self.data_offset +
+                                                                                len]);
                 self.data_offset += len;
                 Ok(res)
             }
@@ -994,8 +997,9 @@ impl Buffer {
         match pos {
             Some(pos) => Ok(NetworkEndian::read_f32(&self.data_buffer[pos..pos + len])),
             None => {
-                let res = NetworkEndian::read_f32(
-                    &self.data_buffer[self.data_offset..self.data_offset + len]);
+                let res =
+                    NetworkEndian::read_f32(&self.data_buffer[self.data_offset..self.data_offset +
+                                                                                len]);
                 self.data_offset += len;
                 Ok(res)
             }
@@ -1007,8 +1011,9 @@ impl Buffer {
         match pos {
             Some(pos) => Ok(NetworkEndian::read_f64(&self.data_buffer[pos..pos + len])),
             None => {
-                let res = NetworkEndian::read_f64(
-                    &self.data_buffer[self.data_offset..self.data_offset + len]);
+                let res =
+                    NetworkEndian::read_f64(&self.data_buffer[self.data_offset..self.data_offset +
+                                                                                len]);
                 self.data_offset += len;
                 Ok(res)
             }
