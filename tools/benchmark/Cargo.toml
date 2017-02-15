@@ -8,6 +8,10 @@ repository = "https://github.com/aerospike/aerospike-client-rust/"
 license = "Apache-2.0"
 
 [dependencies]
+clap = "2.20"
+log = "0.3"
+env_logger = "0.3"
+aerospike = { path = "../.." }
 
 [[bin]]
 name = "benchmark"
