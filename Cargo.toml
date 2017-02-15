@@ -35,3 +35,6 @@ error-chain = "^0.7"
 [dev-dependencies]
 env_logger = "0.3"
 hex = "^0.2"
+
+[workspace]
+members = ["tools/benchmark"]
