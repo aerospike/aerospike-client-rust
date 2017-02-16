@@ -7,12 +7,14 @@ extern crate log;
 extern crate env_logger;
 
 mod cli;
-
-use std::str::FromStr;
+mod workload;
+mod tasks;
 
 use aerospike::{Client, ClientPolicy};
 
 use cli::Options;
+use workload::Workload;
+use tasks::InsertTask;
 
 fn main() {
     env_logger::init().unwrap();
@@ -20,7 +22,7 @@ fn main() {
     debug!("Command line options: {:?}", options);
     let workload = &options.workload;
     let client = connect(&options);
-    run_workload(workload, &client);
+    run_workload(workload, &client, &options);
 }
 
 fn connect(options: &Options) -> Client {
@@ -28,30 +30,8 @@ fn connect(options: &Options) -> Client {
     Client::new(&policy, &options.hosts).unwrap()
 }
 
-fn run_workload(workload: &Workload, client: &Client) {
+fn run_workload(workload: &Workload, client: &Client, options: &Options) {
     println!("Running benchmark with workload {:?}", workload);
-}
-
-#[derive(Debug)]
-pub struct Percent(u8);
-
-#[derive(Debug)]
-pub enum Workload {
-    // Initialize data with sequential key writes.
-    Initialize,
-
-    // Read/Update. Perform random key, random read all bins wor write all bins workload.
-    ReadUpdate { read_pct: Percent },
-}
-
-impl FromStr for Workload {
-    type Err = String;
-
-    fn from_str(s: &str) -> Result<Workload, String> {
-        match s {
-            "RU" => Ok(Workload::ReadUpdate { read_pct: Percent(50) }),
-            "I" => Ok(Workload::Initialize),
-            _ => Err(String::from("Invalid workload definition")),
-        }
-    }
+    let key_range = options.start_key..(options.start_key + options.keys);
+    InsertTask::new(client, key_range, options).run();
 }
