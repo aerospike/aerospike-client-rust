@@ -1,31 +1,32 @@
 use std::ops::Range;
+use std::sync::Arc;
 
 use aerospike::{Key, Bin, Client, WritePolicy};
 
 use cli::Options;
 
-pub struct InsertTask<'a> {
-    client: &'a Client,
+pub struct InsertTask {
+    client: Arc<Client>,
     policy: WritePolicy,
-    namespace: &'a str,
-    set: &'a str,
+    namespace: String,
+    set: String,
     key_range: Range<i64>,
 }
 
-impl<'a> InsertTask<'a> {
-    pub fn new(client: &'a Client, key_range: Range<i64>, options: &'a Options) -> Self {
+impl InsertTask {
+    pub fn new(client: Arc<Client>, key_range: Range<i64>, options: &Options) -> Self {
         InsertTask {
             client: client,
             policy: WritePolicy::default(),
-            namespace: &options.namespace,
-            set: &options.set,
+            namespace: options.namespace.clone(),
+            set: options.set.clone(),
             key_range: key_range,
         }
     }
 
     pub fn run(self) {
         for i in self.key_range.clone() {
-            let key = as_key!(self.namespace, self.set, i);
+            let key = as_key!(self.namespace.clone(), self.set.clone(), i);
             let bin = as_bin!("1", i);
             self.insert(&key, &[&bin]);
         }

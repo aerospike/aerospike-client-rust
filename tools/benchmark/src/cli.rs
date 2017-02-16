@@ -34,7 +34,7 @@ pub struct Options {
     pub set: String,
     pub keys: i64,
     pub start_key: i64,
-    pub concurrency: u8,
+    pub concurrency: i64,
     pub workload: Workload,
 }
 
@@ -49,7 +49,7 @@ pub fn parse_options() -> Options {
         set: matches.value_of("set").unwrap().to_owned(),
         keys: i64::from_str(matches.value_of("keys").unwrap()).unwrap(),
         start_key: i64::from_str(matches.value_of("startkey").unwrap()).unwrap(),
-        concurrency: u8::from_str(matches.value_of("concurrency").unwrap()).unwrap(),
+        concurrency: i64::from_str(matches.value_of("concurrency").unwrap()).unwrap(),
         workload: Workload::from_str(matches.value_of("workload").unwrap()).unwrap(),
     }
 }
@@ -78,8 +78,8 @@ fn build_cli() -> App<'static, 'static> {
             .validator(|val| validate::<i64>(val, "Must be number".into()))
             .default_value("0"))
         .arg(Arg::from_usage("-c, --concurrency=THREADS 'No. threads used to generate load'")
-            .validator(|val| validate::<u8>(val, "Must be number".into()))
-            .default_value("32"))
+            .validator(|val| validate::<i64>(val, "Must be number".into()))
+            .default_value("2"))
         .arg(Arg::from_usage("-w, --workload=WORKLOAD 'Workload definition (see below for \
                               details)'")
             .default_value("I"))
