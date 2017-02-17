@@ -9,6 +9,7 @@ extern crate env_logger;
 mod cli;
 mod workload;
 mod tasks;
+mod counters;
 
 use std::sync::Arc;
 use std::thread;
@@ -16,6 +17,7 @@ use std::thread;
 use aerospike::{Client, ClientPolicy};
 
 use cli::Options;
+use counters::Counters;
 use tasks::InsertTask;
 
 fn main() {
@@ -32,6 +34,7 @@ fn connect(options: &Options) -> Client {
 }
 
 fn run_workload(client: Client, options: Options) {
+    let counters = Arc::new(Counters::default());
     let client = Arc::new(client);
     let keys_per_task = options.keys / options.concurrency;
     let remainder = options.keys % options.concurrency;
@@ -44,7 +47,7 @@ fn run_workload(client: Client, options: Options) {
         }
         let key_range = start_key..(start_key + keys);
         start_key += keys;
-        let task = InsertTask::new(client.clone(), key_range, &options);
+        let task = InsertTask::new(client.clone(), key_range, &options, counters.clone());
         let t = thread::spawn(move || task.run());
         threads.push(t);
     }
@@ -52,4 +55,7 @@ fn run_workload(client: Client, options: Options) {
     for t in threads {
         t.join().unwrap()
     }
+
+    debug!("Counters: {:?}", counters);
+    println!("Total duration: {}ms", counters.elapsed_as_millis());
 }
