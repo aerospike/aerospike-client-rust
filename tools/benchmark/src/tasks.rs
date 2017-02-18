@@ -1,6 +1,5 @@
 use std::ops::Range;
 use std::sync::Arc;
-use std::time::Instant;
 
 use aerospike::{Key, Bin, Client, WritePolicy};
 
@@ -17,7 +16,11 @@ pub struct InsertTask {
 }
 
 impl InsertTask {
-    pub fn new(client: Arc<Client>, key_range: Range<i64>, options: &Options, counters: Arc<Counters>) -> Self {
+    pub fn new(client: Arc<Client>,
+               key_range: Range<i64>,
+               options: &Options,
+               counters: Arc<Counters>)
+               -> Self {
         InsertTask {
             client: client,
             policy: WritePolicy::default(),
@@ -38,9 +41,6 @@ impl InsertTask {
 
     fn insert(&self, key: &Key, bins: &[&Bin]) {
         trace!("Inserting {}", key);
-        let now = Instant::now();
-        self.client.put(&self.policy, key, bins).unwrap();
-        self.counters.add_elapsed(now.elapsed());
-        self.counters.inc_count();
+        self.counters.track_request(|| self.client.put(&self.policy, key, bins));
     }
 }

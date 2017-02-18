@@ -34,7 +34,7 @@ fn connect(options: &Options) -> Client {
 }
 
 fn run_workload(client: Client, options: Options) {
-    let counters = Arc::new(Counters::default());
+    let counters = Arc::new(Counters::new());
     let client = Arc::new(client);
     let keys_per_task = options.keys / options.concurrency;
     let remainder = options.keys % options.concurrency;
@@ -56,6 +56,5 @@ fn run_workload(client: Client, options: Options) {
         t.join().unwrap()
     }
 
-    debug!("Counters: {:?}", counters);
-    println!("Total duration: {}ms", counters.elapsed_as_millis());
+    println!("{}", counters);
 }
