@@ -4,7 +4,7 @@ use std::convert::AsRef;
 
 use clap::{App, Arg};
 
-use workload::Workload;
+use workers::Workload;
 
 const AFTER_HELP: &'static str = r###"
 
