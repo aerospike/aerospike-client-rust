@@ -24,7 +24,7 @@ use generator::KeyPartitions;
 fn main() {
     env_logger::init().unwrap();
     let options = cli::parse_options();
-    debug!("Command line options: {:?}", options);
+    info!("{:?}", options);
     let client = connect(&options);
     run_workload(client, options);
 }
@@ -46,5 +46,5 @@ fn run_workload(client: Client, opts: Options) {
         thread::spawn(move || worker.run(keys));
     }
     let histogram = collector.collect();
-    println!("{:?}", histogram);
+    info!("{:?}", histogram);
 }
