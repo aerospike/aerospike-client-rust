@@ -49,7 +49,7 @@ impl Worker {
             Workload::ReadUpdate { .. } => panic!("not yet implemented"),
         };
         Worker {
-            histogram: Histogram::new(4),
+            histogram: Histogram::new(),
             collector: collector.sender(),
             last_report: Instant::now(),
             task: task,
@@ -74,12 +74,12 @@ impl Worker {
             let millis = elapsed.as_secs() * 1_000 + elapsed.subsec_nanos() as u64 / 1_000_000;
             self.histogram.add(millis);
             if self.last_report.elapsed() > Duration::new(0, 100_000_000) {
-                self.reporter.send(self.histogram.clone()).unwrap();
+                self.reporter.send(self.histogram).unwrap();
                 self.histogram.reset();
                 self.last_report = Instant::now();
             }
         }
-        self.reporter.send(self.histogram.clone()).unwrap();
+        self.reporter.send(self.histogram).unwrap();
     }
 }
 

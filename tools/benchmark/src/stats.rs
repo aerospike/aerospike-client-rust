@@ -14,7 +14,7 @@ impl Collector {
         Collector {
             receiver: recv,
             sender: send,
-            histogram: Histogram::new(4),
+            histogram: Histogram::new(),
         }
     }
 
@@ -31,9 +31,11 @@ impl Collector {
     }
 }
 
-#[derive(Debug, Clone)]
+const HIST_BUCKETS: usize = 6;
+
+#[derive(Debug, Copy, Clone)]
 pub struct Histogram {
-    pub buckets: Vec<u64>,
+    pub buckets: [u64; HIST_BUCKETS],
     pub min: u64,
     pub max: u64,
     pub timeouts: u64,
@@ -41,9 +43,9 @@ pub struct Histogram {
 }
 
 impl Histogram {
-    pub fn new(buckets: usize) -> Self {
+    pub fn new() -> Self {
         Histogram {
-            buckets: vec![0; buckets + 1],
+            buckets: [0; HIST_BUCKETS],
             min: u64::max_value(),
             max: u64::min_value(),
             timeouts: 0,
@@ -112,28 +114,28 @@ mod test {
 
     #[test]
     fn test_histogram_add() {
-        let mut hist = Histogram::new(4);
+        let mut hist = Histogram::new();
         for i in 0..10 {
             hist.add(i);
         }
-        assert_eq!(hist.buckets, vec![1, 1, 2, 4, 2]);
+        assert_eq!(hist.buckets, [1, 1, 2, 4, 2, 0]);
         assert_eq!(hist.min, 0);
         assert_eq!(hist.max, 9);
 
         hist.add(42);
-        assert_eq!(hist.buckets, vec![1, 1, 2, 4, 3]);
+        assert_eq!(hist.buckets, [1, 1, 2, 4, 2, 1]);
     }
 
     #[test]
     fn test_histogram_merge() {
-        let mut hist1 = Histogram::new(4);
+        let mut hist1 = Histogram::new();
         for i in 0..8 {
             hist1.add(i);
         }
         hist1.timeouts = 1;
         hist1.errors = 2;
 
-        let mut hist2 = Histogram::new(4);
+        let mut hist2 = Histogram::new();
         for i in 2..10 {
             hist2.add(i);
         }
@@ -141,7 +143,7 @@ mod test {
         hist2.errors = 4;
 
         hist1.merge(hist2);
-        assert_eq!(hist1.buckets, vec![1, 1, 4, 8, 2]);
+        assert_eq!(hist1.buckets, [1, 1, 4, 8, 2, 0]);
         assert_eq!(hist1.min, 0);
         assert_eq!(hist1.max, 9);
         assert_eq!(hist1.timeouts, 4);
