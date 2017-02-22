@@ -11,6 +11,11 @@ use aerospike::Error as asError;
 use generator::KeyRange;
 use stats::{Collector, Histogram};
 
+lazy_static! {
+    // How frequently workers send stats to the collector (milliseconds)
+    pub static ref COLLECT_MS: Duration = Duration::from_millis(100);
+}
+
 #[derive(Debug)]
 pub struct Percent(u8);
 
@@ -75,7 +80,7 @@ impl Worker {
     }
 
     fn collect(&mut self, force: bool) {
-        if force || self.last_report.elapsed() > Duration::from_millis(100) {
+        if force || self.last_report.elapsed() > *COLLECT_MS {
             self.collector.send(self.histogram).unwrap();
             self.histogram.reset();
             self.last_report = Instant::now();

@@ -3,6 +3,7 @@ use std::str::FromStr;
 use std::convert::AsRef;
 
 use clap::{App, Arg};
+use num_cpus;
 
 use workers::Workload;
 
@@ -26,6 +27,10 @@ benchmark:
 * Insert workload (-w I)
 
 "###;
+
+lazy_static! {
+    pub static ref NUM_CPUS: String = format!("{}", num_cpus::get());
+}
 
 #[derive(Debug)]
 pub struct Options {
@@ -70,7 +75,7 @@ fn build_cli() -> App<'static, 'static> {
                    randomly across the values between startkey and startkey + num_keys. startkey \
                    can be set using '-S' or '--startkey'.")
             .validator(|val| validate::<i64>(val, "Must be number".into()))
-            .default_value("10"))
+            .default_value("100000"))
         .arg(Arg::from_usage("-S, --startkey=STARTKEY")
             .help("Set the starting value of the working set of keys. If using an 'insert' \
                    workload, the start_value indicates the first value to write. Otherwise, the \
@@ -79,7 +84,7 @@ fn build_cli() -> App<'static, 'static> {
             .default_value("0"))
         .arg(Arg::from_usage("-c, --concurrency=THREADS 'No. threads used to generate load'")
             .validator(|val| validate::<i64>(val, "Must be number".into()))
-            .default_value("2"))
+            .default_value(&*NUM_CPUS))
         .arg(Arg::from_usage("-w, --workload=WORKLOAD 'Workload definition (see below for \
                               details)'")
             .default_value("I"))

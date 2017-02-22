@@ -5,6 +5,9 @@ extern crate clap;
 #[macro_use]
 extern crate log;
 extern crate env_logger;
+#[macro_use]
+extern crate lazy_static;
+extern crate num_cpus;
 
 mod cli;
 mod workers;
