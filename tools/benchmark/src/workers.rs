@@ -1,12 +1,16 @@
 use std::ops::Range;
 use std::str::FromStr;
 use std::sync::Arc;
+use std::sync::mpsc::Sender;
 use std::boxed::Box;
+use std::time::{Duration, Instant};
 
-use aerospike::{Key, Bin, Client, WritePolicy};
+use aerospike::{Key, Bin, Client, WritePolicy, ErrorKind, ResultCode};
+use aerospike::Result as asResult;
+use aerospike::Error as asError;
 
 use cli::Options;
-use counters::Counters;
+use reporter::Histogram;
 
 #[derive(Debug)]
 pub struct Percent(u8);
@@ -33,13 +37,17 @@ impl FromStr for Workload {
 }
 
 pub trait Worker: Send {
-    fn run(&self, key_range: Range<i64>);
+    fn run(&mut self, key_range: Range<i64>);
 }
 
 impl Worker {
-    pub fn for_workload(workload: &Workload, client: Arc<Client>, counters: Arc<Counters>, options: &Options) -> Box<Worker> {
+    pub fn for_workload(workload: &Workload,
+                        client: Arc<Client>,
+                        reporter: Sender<Histogram>,
+                        options: &Options)
+                        -> Box<Worker> {
         let worker = match *workload {
-            Workload::Initialize => InsertWorker::new(client, counters, options),
+            Workload::Initialize => InsertWorker::new(client, reporter, options),
             Workload::ReadUpdate { .. } => panic!("not yet implemented"),
         };
         Box::new(worker)
@@ -52,35 +60,56 @@ pub struct InsertWorker {
     policy: WritePolicy,
     namespace: String,
     set: String,
-    counters: Arc<Counters>,
+    histogram: Histogram,
+    reporter: Sender<Histogram>,
+    last_report: Instant,
 }
 
 impl InsertWorker {
-    pub fn new(client: Arc<Client>,
-               counters: Arc<Counters>,
-               options: &Options)
-               -> Self {
+    pub fn new(client: Arc<Client>, reporter: Sender<Histogram>, options: &Options) -> Self {
         InsertWorker {
             client: client,
             policy: WritePolicy::default(),
             namespace: options.namespace.clone(),
             set: options.set.clone(),
-            counters: counters,
+            histogram: Histogram::new(4),
+            reporter: reporter,
+            last_report: Instant::now(),
         }
     }
 
-    fn insert(&self, key: &Key, bins: &[&Bin]) {
+    fn insert(&self, key: &Key, bins: &[&Bin]) -> asResult<()> {
         trace!("Inserting {}", key);
-        self.counters.track_request(|| self.client.put(&self.policy, key, bins));
+        self.client.put(&self.policy, key, bins)
     }
 }
 
 impl Worker for InsertWorker {
-    fn run(&self, key_range: Range<i64>) {
+    fn run(&mut self, key_range: Range<i64>) {
         for i in key_range {
             let key = as_key!(self.namespace.clone(), self.set.clone(), i);
             let bin = as_bin!("1", i);
-            self.insert(&key, &[&bin]);
+            let now = Instant::now();
+            match self.insert(&key, &[&bin]) {
+                Err(asError(ErrorKind::ServerError(ResultCode::Timeout), _)) => {
+                    self.histogram.timeouts += 1;
+                    ()
+                }
+                Err(_) => {
+                    self.histogram.errors += 1;
+                    ()
+                }
+                Ok(_) => {}
+            }
+            let elapsed = now.elapsed();
+            let millis = elapsed.as_secs() * 1_000 + elapsed.subsec_nanos() as u64 / 1_000_000;
+            self.histogram.add(millis);
+            if self.last_report.elapsed() > Duration::new(0, 100_000_000) {
+                self.reporter.send(self.histogram.clone()).unwrap();
+                self.histogram.reset();
+                self.last_report = Instant::now();
+            }
         }
+        self.reporter.send(self.histogram.clone()).unwrap();
     }
 }

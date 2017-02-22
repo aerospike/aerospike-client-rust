@@ -8,15 +8,17 @@ extern crate env_logger;
 
 mod cli;
 mod workers;
-mod counters;
+mod reporter;
 
+use std::ops::DerefMut;
 use std::sync::Arc;
+use std::sync::mpsc;
 use std::thread;
 
 use aerospike::{Client, ClientPolicy};
 
 use cli::Options;
-use counters::Counters;
+use reporter::Reporter;
 use workers::Worker;
 
 fn main() {
@@ -35,7 +37,8 @@ fn connect(options: &Options) -> Client {
 fn run_workload(client: Client, options: Options) {
     let workload = &options.workload;
     let client = Arc::new(client);
-    let counters = Arc::new(Counters::new());
+    let (send, recv) = mpsc::channel();
+    let mut reporter = Reporter::new(recv);
     let keys_per_task = options.keys / options.concurrency;
     let remainder = options.keys % options.concurrency;
     let mut start_key = options.start_key;
@@ -45,16 +48,14 @@ fn run_workload(client: Client, options: Options) {
         if i < remainder {
             keys += 1
         }
-        let worker = Worker::for_workload(workload, client.clone(), counters.clone(), &options);
+        let mut worker = Worker::for_workload(workload, client.clone(), send.clone(), &options);
         let key_range = start_key..(start_key + keys);
-        let t = thread::spawn(move || worker.run(key_range));
+        let t = thread::spawn(move || worker.deref_mut().run(key_range));
         start_key += keys;
         threads.push(t);
     }
+    drop(send);
 
-    for t in threads {
-        t.join().unwrap()
-    }
-
-    println!("{}", counters);
+    reporter.run();
+    println!("{:?}", reporter.histogram);
 }
