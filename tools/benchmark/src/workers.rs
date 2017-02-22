@@ -59,27 +59,34 @@ impl Worker {
     pub fn run(&mut self, key_range: KeyRange) {
         for key in key_range {
             let now = Instant::now();
-            match self.task.execute(&key) {
-                Err(asError(ErrorKind::ServerError(ResultCode::Timeout), _)) => {
-                    self.histogram.timeouts += 1;
-                    ()
+            if let Err(error) = self.task.execute(&key) {
+                match error {
+                    asError(ErrorKind::ServerError(ResultCode::Timeout), _) => {
+                        self.histogram.timeouts += 1
+                    }
+                    _ => self.histogram.errors += 1,
                 }
-                Err(_) => {
-                    self.histogram.errors += 1;
-                    ()
-                }
-                Ok(_) => {}
             }
-            let elapsed = now.elapsed();
-            let millis = elapsed.as_secs() * 1_000 + elapsed.subsec_nanos() as u64 / 1_000_000;
+            let millis = Self::elapsed_millis(now);
             self.histogram.add(millis);
-            if self.last_report.elapsed() > Duration::new(0, 100_000_000) {
-                self.reporter.send(self.histogram).unwrap();
-                self.histogram.reset();
-                self.last_report = Instant::now();
-            }
+            self.collect(false);
         }
-        self.reporter.send(self.histogram).unwrap();
+        self.collect(true);
+    }
+
+    fn collect(&mut self, force: bool) {
+        if force || self.last_report.elapsed() > Duration::from_millis(100) {
+            self.collector.send(self.histogram).unwrap();
+            self.histogram.reset();
+            self.last_report = Instant::now();
+        }
+    }
+
+    fn elapsed_millis(time: Instant) -> u64 {
+        let elapsed = time.elapsed();
+        let secs = elapsed.as_secs();
+        let nanos = elapsed.subsec_nanos() as u64;
+        secs * 1_000 + nanos / 1_000_000
     }
 }
 
