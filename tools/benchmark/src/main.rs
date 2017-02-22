@@ -42,7 +42,7 @@ fn run_workload(client: Client, opts: Options) {
                                    opts.start_key,
                                    opts.keys,
                                    opts.concurrency) {
-        let mut worker = Worker::for_workload(&opts.workload, client.clone(), collector.sender());
+        let mut worker = Worker::for_workload(&opts.workload, client.clone(), &collector);
         thread::spawn(move || worker.run(keys));
     }
     let histogram = collector.collect();

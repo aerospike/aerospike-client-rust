@@ -9,7 +9,7 @@ use aerospike::Result as asResult;
 use aerospike::Error as asError;
 
 use generator::KeyRange;
-use stats::Histogram;
+use stats::{Collector, Histogram};
 
 #[derive(Debug)]
 pub struct Percent(u8);
@@ -37,23 +37,20 @@ impl FromStr for Workload {
 
 pub struct Worker {
     histogram: Histogram,
-    reporter: Sender<Histogram>,
+    collector: Sender<Histogram>,
     last_report: Instant,
     task: Box<Task>,
 }
 
 impl Worker {
-    pub fn for_workload(workload: &Workload,
-                        client: Arc<Client>,
-                        reporter: Sender<Histogram>)
-                        -> Self {
+    pub fn for_workload(workload: &Workload, client: Arc<Client>, collector: &Collector) -> Self {
         let task = match *workload {
             Workload::Initialize => Box::new(InsertTask::new(client)),
             Workload::ReadUpdate { .. } => panic!("not yet implemented"),
         };
         Worker {
             histogram: Histogram::new(4),
-            reporter: reporter,
+            collector: collector.sender(),
             last_report: Instant::now(),
             task: task,
         }
