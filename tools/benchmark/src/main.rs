@@ -10,7 +10,6 @@ mod cli;
 mod workers;
 mod reporter;
 
-use std::ops::DerefMut;
 use std::sync::Arc;
 use std::sync::mpsc;
 use std::thread;
@@ -50,7 +49,7 @@ fn run_workload(client: Client, options: Options) {
         }
         let mut worker = Worker::for_workload(workload, client.clone(), send.clone(), &options);
         let key_range = start_key..(start_key + keys);
-        let t = thread::spawn(move || worker.deref_mut().run(key_range));
+        let t = thread::spawn(move || worker.run(key_range));
         start_key += keys;
         threads.push(t);
     }
