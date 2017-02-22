@@ -1,20 +1,28 @@
+use std::time::{Duration, Instant};
 use std::sync::mpsc;
 use std::sync::mpsc::{Receiver, Sender};
+use std::sync::{Arc, RwLock};
+use std::thread;
+
+// Number of buckets for latency histogram, e.g.
+// 6 buckets => "<1ms", "<2ms", "<4ms", "<8ms", "<16ms", ">=16ms"
+const HIST_BUCKETS: usize = 6;
 
 #[derive(Debug)]
 pub struct Collector {
     receiver: Receiver<Histogram>,
     sender: Sender<Histogram>,
-    histogram: Histogram,
+    histogram: Arc<RwLock<Histogram>>,
 }
 
 impl Collector {
     pub fn new() -> Self {
         let (send, recv) = mpsc::channel();
+        let histogram = Arc::new(RwLock::new(Histogram::new()));
         Collector {
             receiver: recv,
             sender: send,
-            histogram: Histogram::new(),
+            histogram: histogram,
         }
     }
 
@@ -22,16 +30,48 @@ impl Collector {
         self.sender.clone()
     }
 
-    pub fn collect(mut self) -> Histogram {
+    pub fn stats(&self) -> Arc<RwLock<Histogram>> {
+        self.histogram.clone()
+    }
+
+    pub fn collect(self) {
         drop(self.sender);
         for hist in self.receiver.iter() {
-            self.histogram.merge(hist);
+            self.histogram.write().unwrap().merge(hist);
         }
-        self.histogram
+        let mut hist = self.histogram.write().unwrap();
+        hist.done = true;
     }
 }
 
-const HIST_BUCKETS: usize = 6;
+pub struct Reporter {
+    histogram: Arc<RwLock<Histogram>>,
+    interval: Duration,
+}
+
+impl Reporter {
+    pub fn new(collector: &Collector) -> Self {
+        Reporter {
+            histogram: collector.stats(),
+            interval: Duration::new(1, 0),
+        }
+    }
+
+    pub fn run(&self) {
+        loop {
+            thread::sleep(self.interval);
+            let hist = *self.histogram.read().unwrap();
+            self.print(hist);
+            if hist.done {
+                break
+            }
+        }
+    }
+
+    fn print(&self, hist: Histogram) {
+        println!("{:?}", hist);
+    }
+}
 
 #[derive(Debug, Copy, Clone)]
 pub struct Histogram {
@@ -40,6 +80,8 @@ pub struct Histogram {
     pub max: u64,
     pub timeouts: u64,
     pub errors: u64,
+    pub done: bool,
+    start: Instant,
 }
 
 impl Histogram {
@@ -50,6 +92,8 @@ impl Histogram {
             max: u64::min_value(),
             timeouts: 0,
             errors: 0,
+            done: false,
+            start: Instant::now(),
         }
     }
 

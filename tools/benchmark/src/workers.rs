@@ -10,6 +10,7 @@ use aerospike::Error as asError;
 
 use generator::KeyRange;
 use stats::{Collector, Histogram};
+use util;
 
 lazy_static! {
     // How frequently workers send stats to the collector (milliseconds)
@@ -72,7 +73,7 @@ impl Worker {
                     _ => self.histogram.errors += 1,
                 }
             }
-            let millis = Self::elapsed_millis(now);
+            let millis = util::elapsed_millis(now);
             self.histogram.add(millis);
             self.collect(false);
         }
@@ -87,12 +88,6 @@ impl Worker {
         }
     }
 
-    fn elapsed_millis(time: Instant) -> u64 {
-        let elapsed = time.elapsed();
-        let secs = elapsed.as_secs();
-        let nanos = elapsed.subsec_nanos() as u64;
-        secs * 1_000 + nanos / 1_000_000
-    }
 }
 
 trait Task: Send {

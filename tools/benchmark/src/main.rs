@@ -13,6 +13,7 @@ mod cli;
 mod workers;
 mod stats;
 mod generator;
+mod util;
 
 use std::sync::Arc;
 use std::thread;
@@ -20,7 +21,7 @@ use std::thread;
 use aerospike::{Client, ClientPolicy};
 
 use cli::Options;
-use stats::Collector;
+use stats::{Collector, Reporter};
 use workers::Worker;
 use generator::KeyPartitions;
 
@@ -48,6 +49,7 @@ fn run_workload(client: Client, opts: Options) {
         let mut worker = Worker::for_workload(&opts.workload, client.clone(), &collector);
         thread::spawn(move || worker.run(keys));
     }
-    let histogram = collector.collect();
-    info!("{:?}", histogram);
+    let reporter = Reporter::new(&collector);
+    thread::spawn(move || reporter.run());
+    collector.collect();
 }
