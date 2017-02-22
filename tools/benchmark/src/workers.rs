@@ -1,4 +1,3 @@
-use std::ops::Range;
 use std::str::FromStr;
 use std::sync::Arc;
 use std::sync::mpsc::Sender;
@@ -9,7 +8,7 @@ use aerospike::{Key, Client, WritePolicy, ErrorKind, ResultCode};
 use aerospike::Result as asResult;
 use aerospike::Error as asError;
 
-use cli::Options;
+use generator::KeyRange;
 use stats::Histogram;
 
 #[derive(Debug)]
@@ -37,8 +36,6 @@ impl FromStr for Workload {
 }
 
 pub struct Worker {
-    namespace: String,
-    set: String,
     histogram: Histogram,
     reporter: Sender<Histogram>,
     last_report: Instant,
@@ -48,16 +45,13 @@ pub struct Worker {
 impl Worker {
     pub fn for_workload(workload: &Workload,
                         client: Arc<Client>,
-                        reporter: Sender<Histogram>,
-                        options: &Options)
+                        reporter: Sender<Histogram>)
                         -> Self {
         let task = match *workload {
             Workload::Initialize => Box::new(InsertTask::new(client)),
             Workload::ReadUpdate { .. } => panic!("not yet implemented"),
         };
         Worker {
-            namespace: options.namespace.clone(),
-            set: options.set.clone(),
             histogram: Histogram::new(4),
             reporter: reporter,
             last_report: Instant::now(),
@@ -65,9 +59,8 @@ impl Worker {
         }
     }
 
-    pub fn run(&mut self, key_range: Range<i64>) {
-        for i in key_range {
-            let key = as_key!(self.namespace.clone(), self.set.clone(), i);
+    pub fn run(&mut self, key_range: KeyRange) {
+        for key in key_range {
             let now = Instant::now();
             match self.task.execute(&key) {
                 Err(asError(ErrorKind::ServerError(ResultCode::Timeout), _)) => {
