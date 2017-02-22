@@ -8,16 +8,15 @@ extern crate env_logger;
 
 mod cli;
 mod workers;
-mod reporter;
+mod stats;
 
 use std::sync::Arc;
-use std::sync::mpsc;
 use std::thread;
 
 use aerospike::{Client, ClientPolicy};
 
 use cli::Options;
-use reporter::Reporter;
+use stats::Collector;
 use workers::Worker;
 
 fn main() {
@@ -36,8 +35,7 @@ fn connect(options: &Options) -> Client {
 fn run_workload(client: Client, options: Options) {
     let workload = &options.workload;
     let client = Arc::new(client);
-    let (send, recv) = mpsc::channel();
-    let mut reporter = Reporter::new(recv);
+    let collector = Collector::new();
     let keys_per_task = options.keys / options.concurrency;
     let remainder = options.keys % options.concurrency;
     let mut start_key = options.start_key;
@@ -47,14 +45,13 @@ fn run_workload(client: Client, options: Options) {
         if i < remainder {
             keys += 1
         }
-        let mut worker = Worker::for_workload(workload, client.clone(), send.clone(), &options);
+        let mut worker = Worker::for_workload(workload, client.clone(), collector.sender(), &options);
         let key_range = start_key..(start_key + keys);
         let t = thread::spawn(move || worker.run(key_range));
         start_key += keys;
         threads.push(t);
     }
-    drop(send);
 
-    reporter.run();
-    println!("{:?}", reporter.histogram);
+    let histogram = collector.collect();
+    println!("{:?}", histogram);
 }

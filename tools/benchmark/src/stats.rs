@@ -1,24 +1,33 @@
-use std::sync::mpsc::Receiver;
+use std::sync::mpsc;
+use std::sync::mpsc::{Receiver, Sender};
 
 #[derive(Debug)]
-pub struct Reporter {
+pub struct Collector {
     receiver: Receiver<Histogram>,
-    pub histogram: Histogram,
+    sender: Sender<Histogram>,
+    histogram: Histogram,
 }
 
-impl Reporter {
-    pub fn new(receiver: Receiver<Histogram>) -> Self {
-        Reporter {
-            receiver: receiver,
+impl Collector {
+    pub fn new() -> Self {
+        let (send, recv) = mpsc::channel();
+        Collector {
+            receiver: recv,
+            sender: send,
             histogram: Histogram::new(4),
         }
     }
 
-    pub fn run(&mut self) {
+    pub fn sender(&self) -> Sender<Histogram> {
+        self.sender.clone()
+    }
+
+    pub fn collect(mut self) -> Histogram {
+        drop(self.sender);
         for hist in self.receiver.iter() {
             self.histogram.merge(hist);
-            trace!("{:?}", self.histogram);
         }
+        self.histogram
     }
 }
 

@@ -10,7 +10,7 @@ use aerospike::Result as asResult;
 use aerospike::Error as asError;
 
 use cli::Options;
-use reporter::Histogram;
+use stats::Histogram;
 
 #[derive(Debug)]
 pub struct Percent(u8);
