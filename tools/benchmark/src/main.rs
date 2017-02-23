@@ -8,6 +8,7 @@ extern crate env_logger;
 #[macro_use]
 extern crate lazy_static;
 extern crate num_cpus;
+extern crate rand;
 
 mod cli;
 mod workers;

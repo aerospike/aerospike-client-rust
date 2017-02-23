@@ -13,6 +13,7 @@ log = "0.3"
 env_logger = "0.3"
 lazy_static = "0.2"
 num_cpus = "1.2"
+rand = "0.3"
 aerospike = { path = "../.." }
 
 [[bin]]

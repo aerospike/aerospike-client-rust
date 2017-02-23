@@ -4,7 +4,9 @@ use std::sync::mpsc::Sender;
 use std::boxed::Box;
 use std::time::{Duration, Instant};
 
-use aerospike::{Key, Client, WritePolicy, ErrorKind, ResultCode};
+use rand::random;
+
+use aerospike::{Key, Client, ReadPolicy, WritePolicy, ErrorKind, ResultCode};
 use aerospike::Result as asResult;
 use aerospike::Error as asError;
 
@@ -33,7 +35,7 @@ impl FromStr for Workload {
 
     fn from_str(s: &str) -> Result<Workload, String> {
         match s {
-            "RU" => Ok(Workload::ReadUpdate { read_pct: Percent(50) }),
+            "RU" => Ok(Workload::ReadUpdate { read_pct: Percent(100) }),
             "I" => Ok(Workload::Initialize),
             _ => Err(String::from("Invalid workload definition")),
         }
@@ -51,9 +53,9 @@ impl Worker {
                         client: Arc<Client>,
                         sender: Sender<Histogram>)
                         -> Self {
-        let task = match *workload {
+        let task: Box<Task> = match *workload {
             Workload::Initialize => Box::new(InsertTask::new(client)),
-            Workload::ReadUpdate { .. } => panic!("not yet implemented"),
+            Workload::ReadUpdate { .. } => Box::new(ReadUpdateTask::new(client)),
         };
         Worker {
             histogram: Histogram::new(),
@@ -116,8 +118,29 @@ impl InsertTask {
 
 impl Task for InsertTask {
     fn execute(&self, key: &Key) -> Status {
-        let bin = as_bin!("1", 1);
+        let bin = as_bin!("int", random::<i64>());
         trace!("Inserting {}", key);
         self.status(self.client.put(&self.policy, key, &[&bin]))
+    }
+}
+
+pub struct ReadUpdateTask {
+    client: Arc<Client>,
+    policy: ReadPolicy,
+}
+
+impl ReadUpdateTask {
+    pub fn new(client: Arc<Client>) -> Self {
+        ReadUpdateTask {
+            client: client,
+            policy: ReadPolicy::default(),
+        }
+    }
+}
+
+impl Task for ReadUpdateTask {
+    fn execute(&self, key: &Key) -> Status {
+        trace!("Fetching {}", key);
+        self.status(self.client.get(&self.policy, key, Some(&["int"])).map(|_| ()))
     }
 }
