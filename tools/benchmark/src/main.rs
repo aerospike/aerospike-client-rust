@@ -13,7 +13,6 @@ mod cli;
 mod workers;
 mod stats;
 mod generator;
-mod util;
 
 use std::sync::Arc;
 use std::thread;

@@ -1,5 +1,8 @@
 use std::time::{Duration, Instant};
 use std::sync::mpsc::Receiver;
+use std::f64;
+
+use workers::Status;
 
 // Number of buckets for latency histogram, e.g.
 // 6 buckets => "<1ms", "<2ms", "<4ms", "<8ms", "<16ms", ">=16ms"
@@ -38,16 +41,41 @@ impl Collector {
     }
 
     fn report(&self) {
-        println!("{:?}", self.histogram);
-        println!("TPS: {:.0}", self.histogram.tps());
+        let hist = self.histogram;
+        let count = hist.count;
+        let bkt = hist.buckets;
+        let pct: Vec<f64> = bkt.iter().map(|&b| b as f64 / count as f64 * 100.0).collect();
+        println!("TPS: {:.0}, Timeouts: {}, Errors: {}",
+                 hist.tps(),
+                 hist.timeouts,
+                 hist.errors);
+        println!("{:>8.3} {:>8.3} {:>8.3} | {:>7}/{:>4.1}% {:>7}/{:>4.1}% {:>7}/{:>4.1}% \
+                  {:>7}/{:>4.1}% {:>7}/{:>4.1}% {:>7}/{:>4.1}%",
+                 hist.min(),
+                 hist.avg(),
+                 hist.max(),
+                 bkt[0],
+                 pct[0],
+                 bkt[1],
+                 pct[1],
+                 bkt[2],
+                 pct[2],
+                 bkt[3],
+                 pct[3],
+                 bkt[4],
+                 pct[4],
+                 bkt[5],
+                 pct[5]);
     }
 }
 
 #[derive(Debug, Copy, Clone)]
 pub struct Histogram {
     pub buckets: [u64; HIST_BUCKETS],
-    pub min: u64,
-    pub max: u64,
+    pub min: f64,
+    pub max: f64,
+    pub sum: f64,
+    pub count: u64,
     pub timeouts: u64,
     pub errors: u64,
     start: Instant,
@@ -57,34 +85,42 @@ impl Histogram {
     pub fn new() -> Self {
         Histogram {
             buckets: [0; HIST_BUCKETS],
-            min: u64::max_value(),
-            max: u64::min_value(),
+            min: f64::INFINITY,
+            max: f64::NEG_INFINITY,
+            sum: 0.0,
+            count: 0,
             timeouts: 0,
             errors: 0,
             start: Instant::now(),
         }
     }
 
-    pub fn add(&mut self, val: u64) {
-        if val < self.min {
-            self.min = val;
+    pub fn add(&mut self, latency: Duration, status: Status) {
+        let millis = latency.as_millis();
+        if millis < self.min {
+            self.min = millis;
         }
 
-        if val > self.max {
-            self.max = val;
+        if millis > self.max {
+            self.max = millis;
         }
 
-        let mut l = 1;
-        for bucket in &mut self.buckets {
-            if val < l {
+        self.count += 1;
+        self.sum += millis;
+
+        let mut upper = 1;
+        for (i, bucket) in self.buckets.iter_mut().enumerate() {
+            if ((millis as u64) < upper) || (i == HIST_BUCKETS - 1) {
                 *bucket += 1;
-                return;
+                break;
             }
-            l <<= 1;
+            upper <<= 1;
         }
 
-        if let Some(last) = self.buckets.last_mut() {
-            *last += 1;
+        match status {
+            Status::Timeout => self.timeouts += 1,
+            Status::Error => self.errors += 1,
+            _ => {}
         }
     }
 
@@ -101,6 +137,9 @@ impl Histogram {
             other.max
         };
 
+        self.count += other.count;
+        self.sum += other.sum;
+
         for (s, o) in self.buckets.iter_mut().zip(other.buckets.iter()) {
             *s += *o
         }
@@ -113,24 +152,46 @@ impl Histogram {
         for bucket in &mut self.buckets {
             *bucket = 0;
         }
-        self.min = u64::max_value();
-        self.max = u64::min_value();
+        self.min = f64::INFINITY;
+        self.max = f64::NEG_INFINITY;
+        self.sum = 0.0;
+        self.count = 0;
         self.timeouts = 0;
         self.errors = 0;
         self.start = Instant::now();
     }
 
     pub fn tps(&self) -> f64 {
-        self.total() as f64 / self.elapsed_as_secs()
+        self.count as f64 / self.elapsed_as_secs()
+    }
+
+    pub fn min(&self) -> f64 {
+        self.min
+    }
+
+    pub fn max(&self) -> f64 {
+        self.max
+    }
+
+    pub fn avg(&self) -> f64 {
+        self.sum / self.count as f64
     }
 
     fn elapsed_as_secs(&self) -> f64 {
         let elapsed = self.start.elapsed();
         elapsed.as_secs() as f64 + elapsed.subsec_nanos() as f64 / 1_000_000_000.0
     }
+}
 
-    fn total(&self) -> u64 {
-        self.buckets.into_iter().sum()
+trait DurationExt {
+    fn as_millis(&self) -> f64;
+}
+
+impl DurationExt for Duration {
+    fn as_millis(&self) -> f64 {
+        let secs = self.as_secs() as f64;
+        let nanos = self.subsec_nanos() as f64;
+        secs * 1_000.0 + nanos / 1_000_000.0
     }
 }
 
@@ -142,13 +203,23 @@ mod test {
     fn test_histogram_add() {
         let mut hist = Histogram::new();
         for i in 0..10 {
-            hist.add(i);
+            let status = match i % 3 {
+                0 => Status::Success,
+                1 => Status::Error,
+                2 => Status::Timeout,
+                _ => unreachable!(),
+            };
+            hist.add(Duration::from_millis(i), status);
         }
         assert_eq!(hist.buckets, [1, 1, 2, 4, 2, 0]);
-        assert_eq!(hist.min, 0);
-        assert_eq!(hist.max, 9);
+        assert_eq!(hist.min, 0.0);
+        assert_eq!(hist.max, 9.0);
+        assert_eq!(hist.sum, 45.0);
+        assert_eq!(hist.count, 10);
+        assert_eq!(hist.errors, 3);
+        assert_eq!(hist.timeouts, 3);
 
-        hist.add(42);
+        hist.add(Duration::from_millis(42), Status::Success);
         assert_eq!(hist.buckets, [1, 1, 2, 4, 2, 1]);
     }
 
@@ -156,23 +227,29 @@ mod test {
     fn test_histogram_merge() {
         let mut hist1 = Histogram::new();
         for i in 0..8 {
-            hist1.add(i);
+            let status = if i < 5 {
+                Status::Success
+            } else {
+                Status::Timeout
+            };
+            hist1.add(Duration::from_millis(i), status);
         }
-        hist1.timeouts = 1;
-        hist1.errors = 2;
 
         let mut hist2 = Histogram::new();
         for i in 2..10 {
-            hist2.add(i);
+            let status = if i < 8 {
+                Status::Success
+            } else {
+                Status::Error
+            };
+            hist2.add(Duration::from_millis(i), status);
         }
-        hist2.timeouts = 3;
-        hist2.errors = 4;
 
         hist1.merge(hist2);
         assert_eq!(hist1.buckets, [1, 1, 4, 8, 2, 0]);
-        assert_eq!(hist1.min, 0);
-        assert_eq!(hist1.max, 9);
-        assert_eq!(hist1.timeouts, 4);
-        assert_eq!(hist1.errors, 6);
+        assert_eq!(hist1.min, 0.0);
+        assert_eq!(hist1.max, 9.0);
+        assert_eq!(hist1.timeouts, 3);
+        assert_eq!(hist1.errors, 2);
     }
 }

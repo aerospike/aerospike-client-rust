@@ -10,7 +10,6 @@ use aerospike::Error as asError;
 
 use generator::KeyRange;
 use stats::Histogram;
-use util;
 
 lazy_static! {
     // How frequently workers send stats to the collector
@@ -48,7 +47,10 @@ pub struct Worker {
 }
 
 impl Worker {
-    pub fn for_workload(workload: &Workload, client: Arc<Client>, sender: Sender<Histogram>) -> Self {
+    pub fn for_workload(workload: &Workload,
+                        client: Arc<Client>,
+                        sender: Sender<Histogram>)
+                        -> Self {
         let task = match *workload {
             Workload::Initialize => Box::new(InsertTask::new(client)),
             Workload::ReadUpdate { .. } => panic!("not yet implemented"),
@@ -64,16 +66,8 @@ impl Worker {
         let mut last_collection = Instant::now();
         for key in key_range {
             let now = Instant::now();
-            if let Err(error) = self.task.execute(&key) {
-                match error {
-                    asError(ErrorKind::ServerError(ResultCode::Timeout), _) => {
-                        self.histogram.timeouts += 1
-                    }
-                    _ => self.histogram.errors += 1,
-                }
-            }
-            let millis = util::elapsed_millis(now);
-            self.histogram.add(millis);
+            let status = self.task.execute(&key);
+            self.histogram.add(now.elapsed(), status);
             if last_collection.elapsed() > *COLLECT_MS {
                 self.collect();
                 last_collection = Instant::now();
@@ -86,11 +80,24 @@ impl Worker {
         self.collector.send(self.histogram).unwrap();
         self.histogram.reset();
     }
+}
 
+pub enum Status {
+    Success,
+    Error,
+    Timeout,
 }
 
 trait Task: Send {
-    fn execute(&self, key: &Key) -> asResult<()>;
+    fn execute(&self, key: &Key) -> Status;
+
+    fn status(&self, result: asResult<()>) -> Status {
+        match result {
+            Err(asError(ErrorKind::ServerError(ResultCode::Timeout), _)) => Status::Timeout,
+            Err(_) => Status::Error,
+            _ => Status::Success,
+        }
+    }
 }
 
 pub struct InsertTask {
@@ -108,9 +115,9 @@ impl InsertTask {
 }
 
 impl Task for InsertTask {
-    fn execute(&self, key: &Key) -> asResult<()> {
+    fn execute(&self, key: &Key) -> Status {
         let bin = as_bin!("1", 1);
         trace!("Inserting {}", key);
-        self.client.put(&self.policy, key, &[&bin])
+        self.status(self.client.put(&self.policy, key, &[&bin]))
     }
 }
