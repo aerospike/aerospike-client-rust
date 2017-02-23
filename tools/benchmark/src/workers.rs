@@ -18,10 +18,24 @@ lazy_static! {
     pub static ref COLLECT_MS: Duration = Duration::from_millis(100);
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub struct Percent(u8);
 
-#[derive(Debug)]
+impl FromStr for Percent {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Percent, String> {
+        if let Ok(pct) = u8::from_str(s) {
+            if pct <= 100 {
+                return Ok(Percent(pct));
+            }
+        }
+        Err("Invalid percent value".into())
+    }
+}
+
+
+#[derive(Debug, PartialEq)]
 pub enum Workload {
     // Initialize data with sequential key writes.
     Initialize,
@@ -34,9 +48,16 @@ impl FromStr for Workload {
     type Err = String;
 
     fn from_str(s: &str) -> Result<Workload, String> {
-        match s {
-            "RU" => Ok(Workload::ReadUpdate { read_pct: Percent(100) }),
-            "I" => Ok(Workload::Initialize),
+        let mut parts = s.splitn(2, ',');
+        match parts.next() {
+            Some("RU") => {
+                let read_pct = Percent::from_str(parts.next().unwrap_or("100"))?;
+                if read_pct != Percent(100) {
+                    panic!("Mixed read/update workloads not yet supported!");
+                }
+                Ok(Workload::ReadUpdate { read_pct: read_pct })
+            }
+            Some("I") => Ok(Workload::Initialize),
             _ => Err(String::from("Invalid workload definition")),
         }
     }
@@ -142,5 +163,27 @@ impl Task for ReadUpdateTask {
     fn execute(&self, key: &Key) -> Status {
         trace!("Fetching {}", key);
         self.status(self.client.get(&self.policy, key, Some(&["int"])).map(|_| ()))
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn test_percent_from_str() {
+        assert_eq!(Percent::from_str("42"), Ok(Percent(42)));
+        assert!(Percent::from_str("0.5").is_err());
+        assert!(Percent::from_str("120").is_err());
+        assert!(Percent::from_str("abc").is_err());
+    }
+
+    #[test]
+    fn test_workload_from_str() {
+        assert_eq!(Workload::from_str("I"), Ok(Workload::Initialize));
+        assert_eq!(Workload::from_str("RU"),
+                   Ok(Workload::ReadUpdate { read_pct: Percent(100) }));
+        assert_eq!(Workload::from_str("RU,50"),
+                   Ok(Workload::ReadUpdate { read_pct: Percent(50) }));
     }
 }

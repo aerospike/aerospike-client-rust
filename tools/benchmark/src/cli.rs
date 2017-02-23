@@ -65,8 +65,7 @@ fn build_cli() -> App<'static, 'static> {
         .version(crate_version!())
         .about(crate_description!())
         .arg(Arg::from_usage("-h, --hosts=[hosts] 'List of seed hosts (see below)'"))
-        .arg(Arg::from_usage("-n, --namespace 'Aerospike namespace'")
-            .default_value("test"))
+        .arg(Arg::from_usage("-n, --namespace 'Aerospike namespace'").default_value("test"))
         .arg(Arg::from_usage("-s, --set 'Aerospike set name'").default_value("testset"))
         .arg(Arg::from_usage("-k, --keys")
             .help("Set the number of keys the client is dealing with. If using an 'insert' \
