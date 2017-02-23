@@ -17,11 +17,12 @@ mod util;
 
 use std::sync::Arc;
 use std::thread;
+use std::sync::mpsc;
 
 use aerospike::{Client, ClientPolicy};
 
 use cli::Options;
-use stats::{Collector, Reporter};
+use stats::Collector;
 use workers::Worker;
 use generator::KeyPartitions;
 
@@ -40,16 +41,16 @@ fn connect(options: &Options) -> Client {
 
 fn run_workload(client: Client, opts: Options) {
     let client = Arc::new(client);
-    let collector = Collector::new();
+    let (send, recv) = mpsc::channel();
+    let collector = Collector::new(recv);
     for keys in KeyPartitions::new(opts.namespace,
                                    opts.set,
                                    opts.start_key,
                                    opts.keys,
                                    opts.concurrency) {
-        let mut worker = Worker::for_workload(&opts.workload, client.clone(), &collector);
+        let mut worker = Worker::for_workload(&opts.workload, client.clone(), send.clone());
         thread::spawn(move || worker.run(keys));
     }
-    let reporter = Reporter::new(&collector);
-    thread::spawn(move || reporter.run());
+    drop(send);
     collector.collect();
 }

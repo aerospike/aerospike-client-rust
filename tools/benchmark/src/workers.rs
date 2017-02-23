@@ -9,11 +9,11 @@ use aerospike::Result as asResult;
 use aerospike::Error as asError;
 
 use generator::KeyRange;
-use stats::{Collector, Histogram};
+use stats::Histogram;
 use util;
 
 lazy_static! {
-    // How frequently workers send stats to the collector (milliseconds)
+    // How frequently workers send stats to the collector
     pub static ref COLLECT_MS: Duration = Duration::from_millis(100);
 }
 
@@ -44,25 +44,24 @@ impl FromStr for Workload {
 pub struct Worker {
     histogram: Histogram,
     collector: Sender<Histogram>,
-    last_report: Instant,
     task: Box<Task>,
 }
 
 impl Worker {
-    pub fn for_workload(workload: &Workload, client: Arc<Client>, collector: &Collector) -> Self {
+    pub fn for_workload(workload: &Workload, client: Arc<Client>, sender: Sender<Histogram>) -> Self {
         let task = match *workload {
             Workload::Initialize => Box::new(InsertTask::new(client)),
             Workload::ReadUpdate { .. } => panic!("not yet implemented"),
         };
         Worker {
             histogram: Histogram::new(),
-            collector: collector.sender(),
-            last_report: Instant::now(),
+            collector: sender,
             task: task,
         }
     }
 
     pub fn run(&mut self, key_range: KeyRange) {
+        let mut last_collection = Instant::now();
         for key in key_range {
             let now = Instant::now();
             if let Err(error) = self.task.execute(&key) {
@@ -75,17 +74,17 @@ impl Worker {
             }
             let millis = util::elapsed_millis(now);
             self.histogram.add(millis);
-            self.collect(false);
+            if last_collection.elapsed() > *COLLECT_MS {
+                self.collect();
+                last_collection = Instant::now();
+            }
         }
-        self.collect(true);
+        self.collect();
     }
 
-    fn collect(&mut self, force: bool) {
-        if force || self.last_report.elapsed() > *COLLECT_MS {
-            self.collector.send(self.histogram).unwrap();
-            self.histogram.reset();
-            self.last_report = Instant::now();
-        }
+    fn collect(&mut self) {
+        self.collector.send(self.histogram).unwrap();
+        self.histogram.reset();
     }
 
 }

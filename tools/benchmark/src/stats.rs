@@ -1,75 +1,45 @@
 use std::time::{Duration, Instant};
-use std::sync::mpsc;
-use std::sync::mpsc::{Receiver, Sender};
-use std::sync::{Arc, RwLock};
-use std::thread;
+use std::sync::mpsc::Receiver;
 
 // Number of buckets for latency histogram, e.g.
 // 6 buckets => "<1ms", "<2ms", "<4ms", "<8ms", "<16ms", ">=16ms"
 const HIST_BUCKETS: usize = 6;
 
+lazy_static! {
+    // How frequently histogram is printed
+    pub static ref REPORT_MS: Duration = Duration::from_secs(1);
+}
+
 #[derive(Debug)]
 pub struct Collector {
     receiver: Receiver<Histogram>,
-    sender: Sender<Histogram>,
-    histogram: Arc<RwLock<Histogram>>,
+    histogram: Histogram,
 }
 
 impl Collector {
-    pub fn new() -> Self {
-        let (send, recv) = mpsc::channel();
-        let histogram = Arc::new(RwLock::new(Histogram::new()));
+    pub fn new(recv: Receiver<Histogram>) -> Self {
         Collector {
             receiver: recv,
-            sender: send,
-            histogram: histogram,
+            histogram: Histogram::new(),
         }
     }
 
-    pub fn sender(&self) -> Sender<Histogram> {
-        self.sender.clone()
-    }
-
-    pub fn stats(&self) -> Arc<RwLock<Histogram>> {
-        self.histogram.clone()
-    }
-
-    pub fn collect(self) {
-        drop(self.sender);
+    pub fn collect(mut self) {
+        let mut last_report = Instant::now();
         for hist in self.receiver.iter() {
-            self.histogram.write().unwrap().merge(hist);
-        }
-        let mut hist = self.histogram.write().unwrap();
-        hist.done = true;
-    }
-}
-
-pub struct Reporter {
-    histogram: Arc<RwLock<Histogram>>,
-    interval: Duration,
-}
-
-impl Reporter {
-    pub fn new(collector: &Collector) -> Self {
-        Reporter {
-            histogram: collector.stats(),
-            interval: Duration::new(1, 0),
-        }
-    }
-
-    pub fn run(&self) {
-        loop {
-            thread::sleep(self.interval);
-            let hist = *self.histogram.read().unwrap();
-            self.print(hist);
-            if hist.done {
-                break
+            self.histogram.merge(hist);
+            if last_report.elapsed() > *REPORT_MS {
+                self.report();
+                last_report = Instant::now();
+                self.histogram.reset()
             }
         }
+        self.report();
     }
 
-    fn print(&self, hist: Histogram) {
-        println!("{:?}", hist);
+    fn report(&self) {
+        println!("{:?}", self.histogram);
+        println!("TPS: {:.0}", self.histogram.tps());
     }
 }
 
@@ -80,7 +50,6 @@ pub struct Histogram {
     pub max: u64,
     pub timeouts: u64,
     pub errors: u64,
-    pub done: bool,
     start: Instant,
 }
 
@@ -92,7 +61,6 @@ impl Histogram {
             max: u64::min_value(),
             timeouts: 0,
             errors: 0,
-            done: false,
             start: Instant::now(),
         }
     }
@@ -149,6 +117,20 @@ impl Histogram {
         self.max = u64::min_value();
         self.timeouts = 0;
         self.errors = 0;
+        self.start = Instant::now();
+    }
+
+    pub fn tps(&self) -> f64 {
+        self.total() as f64 / self.elapsed_as_secs()
+    }
+
+    fn elapsed_as_secs(&self) -> f64 {
+        let elapsed = self.start.elapsed();
+        elapsed.as_secs() as f64 + elapsed.subsec_nanos() as f64 / 1_000_000_000.0
+    }
+
+    fn total(&self) -> u64 {
+        self.buckets.into_iter().sum()
     }
 }
 
