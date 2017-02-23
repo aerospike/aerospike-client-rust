@@ -64,11 +64,11 @@ fn build_cli() -> App<'static, 'static> {
         .bin_name("benchmark")
         .version(crate_version!())
         .about(crate_description!())
-        .arg(Arg::from_usage("-h, --hosts=HOSTS 'List of seed hosts (see below)'"))
-        .arg(Arg::from_usage("-n, --namespace=NAMESPACE 'Aerospike namespace'")
+        .arg(Arg::from_usage("-h, --hosts=[hosts] 'List of seed hosts (see below)'"))
+        .arg(Arg::from_usage("-n, --namespace 'Aerospike namespace'")
             .default_value("test"))
-        .arg(Arg::from_usage("-s, --set=SET 'Aerospike set name'").default_value("testset"))
-        .arg(Arg::from_usage("-k, --keys=KEYS")
+        .arg(Arg::from_usage("-s, --set 'Aerospike set name'").default_value("testset"))
+        .arg(Arg::from_usage("-k, --keys")
             .help("Set the number of keys the client is dealing with. If using an 'insert' \
                    workload (detailed below), the client will write this number of keys, \
                    starting from value = startkey. Otherwise, the client will read and update \
@@ -76,16 +76,16 @@ fn build_cli() -> App<'static, 'static> {
                    can be set using '-S' or '--startkey'.")
             .validator(|val| validate::<i64>(val, "Must be number".into()))
             .default_value("100000"))
-        .arg(Arg::from_usage("-S, --startkey=STARTKEY")
+        .arg(Arg::from_usage("-S, --startkey")
             .help("Set the starting value of the working set of keys. If using an 'insert' \
                    workload, the start_value indicates the first value to write. Otherwise, the \
                    start_value indicates the smallest value in the working set of keys.")
             .validator(|val| validate::<i64>(val, "Must be number".into()))
             .default_value("0"))
-        .arg(Arg::from_usage("-c, --concurrency=THREADS 'No. threads used to generate load'")
+        .arg(Arg::from_usage("-c, --concurrency 'No. threads used to generate load'")
             .validator(|val| validate::<i64>(val, "Must be number".into()))
             .default_value(&*NUM_CPUS))
-        .arg(Arg::from_usage("-w, --workload=WORKLOAD 'Workload definition (see below for \
+        .arg(Arg::from_usage("-w, --workload 'Workload definition (see below for \
                               details)'")
             .default_value("I"))
         .after_help(AFTER_HELP.trim())
