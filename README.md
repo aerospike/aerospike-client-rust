@@ -129,9 +129,9 @@ To enable debug logging for the `aerospike` crate:
 
     $ RUST_LOG=aerospike=debug cargo test
 
-To enable backtraces:
+To enable backtraces set the `RUST_BACKTRACE` environment variable:
 
-    $ RUST_LOG=aerospike=debug RUST_BACKTRACE=1 cargo test
+    $ RUST_BACKTRACE=1 cargo test
 
 <a name="Benchmarks"></a>
 ## Benchmarks
@@ -140,3 +140,7 @@ The micro-benchmarks in the `benches` directory require nightly Rust builds to e
 
     $ export AEROSPIKE_HOSTS=127.0.0.1:3000
     $ cargo +nightly bench
+
+There is a separate benchmark tool under the
+[tools/benchmark](tree/master/tools/benchmark) directory that is designed to
+insert data into an Aerospike server cluster and generate load.
