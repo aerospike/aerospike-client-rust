@@ -25,6 +25,7 @@ The -w/--workload parameter is used to select the desired workload for the
 benchmark:
 
 * Insert workload (-w I)
+* Read workload (-w RU)
 
 "###;
 
@@ -84,7 +85,7 @@ fn build_cli() -> App<'static, 'static> {
         .arg(Arg::from_usage("-c, --concurrency 'No. threads used to generate load'")
             .validator(|val| validate::<i64>(val, "Must be number".into()))
             .default_value(&*NUM_CPUS))
-        .arg(Arg::from_usage("-w, --workload 'Workload definition (see below for \
+        .arg(Arg::from_usage("-w, --workload 'Workload definition: I | RU (see below for \
                               details)'")
             .default_value("I"))
         .after_help(AFTER_HELP.trim())
