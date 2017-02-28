@@ -142,5 +142,5 @@ The micro-benchmarks in the `benches` directory require nightly Rust builds to e
     $ cargo +nightly bench
 
 There is a separate benchmark tool under the
-[tools/benchmark](tree/master/tools/benchmark) directory that is designed to
+[tools/benchmark](tools/benchmark) directory that is designed to
 insert data into an Aerospike server cluster and generate load.
