@@ -34,55 +34,69 @@ impl Collector {
             if last_report.elapsed() > *REPORT_MS {
                 self.report();
                 last_report = Instant::now();
-                self.histogram.reset()
+                self.histogram.reset();
             }
         }
         self.report();
+        self.histogram.reset();
+        self.summary();
     }
 
     fn report(&self) {
         let hist = self.histogram;
-        let count = hist.count;
-        let bkt = hist.buckets;
-        let pct: Vec<f64> = bkt.iter().map(|&b| b as f64 / count as f64 * 100.0).collect();
-        println!("TPS: {:.0}, Timeouts: {}, Errors: {}",
+        let bkt = hist.latencies();
+        println!("TPS: {:>8.0},   Success: {:>8},   Timeouts: {:>8},   Errors: {:>8}",
                  hist.tps(),
-                 hist.timeouts,
-                 hist.errors);
-        println!("{:>8.3} {:>8.3} {:>8.3} | {:>7}/{:>4.1}% {:>7}/{:>4.1}% {:>7}/{:>4.1}% \
-                  {:>7}/{:>4.1}% {:>7}/{:>4.1}% {:>7}/{:>4.1}%",
+                 hist.count(),
+                 hist.timeouts(),
+                 hist.errors());
+        println!("Latency:    min      avg      max    |        < 1 ms        < 2 ms        < 4 \
+                  ms        < 8 ms       < 16 ms      >= 16 ms");
+        println!("       {:>8.3} {:>8.3} {:>8.3} ms | {:>7}/{:>4.1}% {:>7}/{:>4.1}% \
+                  {:>7}/{:>4.1}% {:>7}/{:>4.1}% {:>7}/{:>4.1}% {:>7}/{:>4.1}%",
                  hist.min(),
                  hist.avg(),
                  hist.max(),
-                 bkt[0],
-                 pct[0],
-                 bkt[1],
-                 pct[1],
-                 bkt[2],
-                 pct[2],
-                 bkt[3],
-                 pct[3],
-                 bkt[4],
-                 pct[4],
-                 bkt[5],
-                 pct[5]);
+                 bkt[0].0,
+                 bkt[0].1,
+                 bkt[1].0,
+                 bkt[1].1,
+                 bkt[2].0,
+                 bkt[2].1,
+                 bkt[3].0,
+                 bkt[3].1,
+                 bkt[4].0,
+                 bkt[4].1,
+                 bkt[5].0,
+                 bkt[5].1);
+    }
+
+    fn summary(&self) {
+        let hist = self.histogram;
+        println!("Total requests: {},   Elapsed time: {:.1}s,    TPS: {:.0}",
+                 hist.total(),
+                 hist.total_elapsed_as_secs(),
+                 hist.total_tps())
     }
 }
 
 #[derive(Debug, Copy, Clone)]
 pub struct Histogram {
-    pub buckets: [u64; HIST_BUCKETS],
-    pub min: f64,
-    pub max: f64,
-    pub sum: f64,
-    pub count: u64,
-    pub timeouts: u64,
-    pub errors: u64,
+    buckets: [u64; HIST_BUCKETS],
+    min: f64,
+    max: f64,
+    sum: f64,
+    count: u64,
+    timeouts: u64,
+    errors: u64,
+    interval: Instant,
     start: Instant,
+    total: u64,
 }
 
 impl Histogram {
     pub fn new() -> Self {
+        let now = Instant::now();
         Histogram {
             buckets: [0; HIST_BUCKETS],
             min: f64::INFINITY,
@@ -91,8 +105,61 @@ impl Histogram {
             count: 0,
             timeouts: 0,
             errors: 0,
-            start: Instant::now(),
+            interval: now,
+            start: now,
+            total: 0,
         }
+    }
+
+    pub fn min(&self) -> f64 {
+        self.min
+    }
+
+    pub fn max(&self) -> f64 {
+        self.max
+    }
+
+    pub fn avg(&self) -> f64 {
+        self.sum / self.count as f64
+    }
+
+    pub fn tps(&self) -> f64 {
+        self.count as f64 / self.interval_as_secs()
+    }
+
+    pub fn count(&self) -> u64 {
+        self.count
+    }
+
+    pub fn timeouts(&self) -> u64 {
+        self.timeouts
+    }
+
+    pub fn errors(&self) -> u64 {
+        self.errors
+    }
+
+    pub fn latencies(&self) -> Vec<(u64, f64)> {
+        self.buckets
+            .iter()
+            .map(|&c| {
+                let pct = c as f64 / self.count as f64 * 100.0;
+                (c, pct)
+            })
+            .collect()
+    }
+
+    pub fn total(&self) -> u64 {
+        self.total
+    }
+
+    pub fn total_elapsed_as_secs(&self) -> f64 {
+        let elapsed = self.start.elapsed();
+        elapsed.as_secs() as f64 + elapsed.subsec_nanos() as f64 / 1_000_000_000.0
+    }
+
+    pub fn total_tps(&self) -> f64 {
+        self.total as f64 / self.total_elapsed_as_secs()
     }
 
     pub fn add(&mut self, latency: Duration, status: Status) {
@@ -152,33 +219,18 @@ impl Histogram {
         for bucket in &mut self.buckets {
             *bucket = 0;
         }
+        self.total += self.count;
         self.min = f64::INFINITY;
         self.max = f64::NEG_INFINITY;
         self.sum = 0.0;
         self.count = 0;
         self.timeouts = 0;
         self.errors = 0;
-        self.start = Instant::now();
+        self.interval = Instant::now();
     }
 
-    pub fn tps(&self) -> f64 {
-        self.count as f64 / self.elapsed_as_secs()
-    }
-
-    pub fn min(&self) -> f64 {
-        self.min
-    }
-
-    pub fn max(&self) -> f64 {
-        self.max
-    }
-
-    pub fn avg(&self) -> f64 {
-        self.sum / self.count as f64
-    }
-
-    fn elapsed_as_secs(&self) -> f64 {
-        let elapsed = self.start.elapsed();
+    fn interval_as_secs(&self) -> f64 {
+        let elapsed = self.interval.elapsed();
         elapsed.as_secs() as f64 + elapsed.subsec_nanos() as f64 / 1_000_000_000.0
     }
 }
