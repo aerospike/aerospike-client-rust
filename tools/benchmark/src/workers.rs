@@ -1,10 +1,14 @@
+use std::cmp::Ordering;
 use std::str::FromStr;
 use std::sync::Arc;
 use std::sync::mpsc::Sender;
 use std::boxed::Box;
 use std::time::{Duration, Instant};
+use std::rc::Rc;
+use std::cell::RefCell;
 
-use rand::random;
+use rand;
+use rand::{Rand, Rng, XorShiftRng};
 
 use aerospike::{Key, Client, ReadPolicy, WritePolicy, ErrorKind, ResultCode};
 use aerospike::Result as asResult;
@@ -18,7 +22,15 @@ lazy_static! {
     pub static ref COLLECT_MS: Duration = Duration::from_millis(100);
 }
 
-#[derive(Debug, PartialEq)]
+thread_local!(static THREAD_WEAK_RNG_KEY: Rc<RefCell<XorShiftRng>> = {
+    Rc::new(RefCell::new(rand::weak_rng()))
+});
+
+fn random<T: Rand>() -> T {
+    THREAD_WEAK_RNG_KEY.with(|rng| rng.borrow_mut().gen())
+}
+
+#[derive(Clone, Copy, Eq, PartialEq, PartialOrd, Debug)]
 pub struct Percent(u8);
 
 impl FromStr for Percent {
@@ -34,6 +46,19 @@ impl FromStr for Percent {
     }
 }
 
+impl Ord for Percent {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.0.cmp(&other.0)
+    }
+}
+
+impl Rand for Percent {
+    fn rand<R: Rng>(rng: &mut R) -> Self {
+        let r: u32 = rng.gen();
+        let pct = r % 101;
+        Percent(pct as u8)
+    }
+}
 
 #[derive(Debug, PartialEq)]
 pub enum Workload {
@@ -52,9 +77,6 @@ impl FromStr for Workload {
         match parts.next() {
             Some("RU") => {
                 let read_pct = Percent::from_str(parts.next().unwrap_or("100"))?;
-                if read_pct != Percent(100) {
-                    panic!("Mixed read/update workloads not yet supported!");
-                }
                 Ok(Workload::ReadUpdate { read_pct: read_pct })
             }
             Some("I") => Ok(Workload::Initialize),
@@ -76,7 +98,7 @@ impl Worker {
                         -> Self {
         let task: Box<Task> = match *workload {
             Workload::Initialize => Box::new(InsertTask::new(client)),
-            Workload::ReadUpdate { .. } => Box::new(ReadUpdateTask::new(client)),
+            Workload::ReadUpdate { read_pct } => Box::new(ReadUpdateTask::new(client, read_pct)),
         };
         Worker {
             histogram: Histogram::new(),
@@ -147,22 +169,32 @@ impl Task for InsertTask {
 
 pub struct ReadUpdateTask {
     client: Arc<Client>,
-    policy: ReadPolicy,
+    rpolicy: ReadPolicy,
+    wpolicy: WritePolicy,
+    reads: Percent,
 }
 
 impl ReadUpdateTask {
-    pub fn new(client: Arc<Client>) -> Self {
+    pub fn new(client: Arc<Client>, reads: Percent) -> Self {
         ReadUpdateTask {
             client: client,
-            policy: ReadPolicy::default(),
+            rpolicy: ReadPolicy::default(),
+            wpolicy: WritePolicy::default(),
+            reads: reads,
         }
     }
 }
 
 impl Task for ReadUpdateTask {
     fn execute(&self, key: &Key) -> Status {
-        trace!("Fetching {}", key);
-        self.status(self.client.get(&self.policy, key, Some(&["int"])).map(|_| ()))
+        if self.reads >= random() {
+            trace!("Reading {}", key);
+            self.status(self.client.get(&self.rpolicy, key, Some(&["int"])).map(|_| ()))
+        } else {
+            trace!("Writing {}", key);
+            let bin = as_bin!("int", random::<i64>());
+            self.status(self.client.put(&self.wpolicy, key, &[&bin]))
+        }
     }
 }
 
