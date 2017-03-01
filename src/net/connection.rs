@@ -14,10 +14,9 @@
 // the License.
 
 use std::io::prelude::*;
-use std::net::TcpStream;
-use std::time::{Instant, Duration};
-use std::net::Shutdown;
+use std::net::{TcpStream, ToSocketAddrs, Shutdown};
 use std::ops::Add;
+use std::time::{Instant, Duration};
 
 use errors::*;
 use policy::ClientPolicy;
@@ -43,54 +42,22 @@ pub struct Connection {
 }
 
 impl Connection {
-    pub fn new_raw(host: &Host, cpolicy: &ClientPolicy) -> Result<Self> {
-        let s: &str = &host.name;
-        let stream = try!(TcpStream::connect((s, host.port)));
 
+    pub fn new<T: ToSocketAddrs>(addr: T, policy: &ClientPolicy) -> Result<Self> {
+        let stream = TcpStream::connect(addr)?;
         let mut conn = Connection {
-            bytes_read: 0,
             buffer: Buffer::new(),
-            timeout: cpolicy.timeout,
+            bytes_read: 0,
+            timeout: policy.timeout,
             conn: stream,
-
-            idle_timeout: cpolicy.idle_timeout,
-            idle_deadline: match cpolicy.idle_timeout {
+            idle_timeout: policy.idle_timeout,
+            idle_deadline: match policy.idle_timeout {
                 None => None,
                 Some(timeout) => Some(Instant::now() + timeout),
             },
         };
-
-        try!(conn.authenticate(&cpolicy.user_password));
-
+        conn.authenticate(&policy.user_password)?;
         conn.refresh();
-
-        Ok(conn)
-    }
-
-    pub fn new(node: &Node, user_password: &Option<(String, String)>) -> Result<Self> {
-        let nd = node;
-
-        let stream = try!(TcpStream::connect(nd.address()));
-
-        let cpolicy = node.client_policy();
-
-        let mut conn = Connection {
-            buffer: Buffer::new(),
-            bytes_read: 0,
-            timeout: cpolicy.timeout,
-            conn: stream,
-
-            idle_timeout: cpolicy.idle_timeout,
-            idle_deadline: match cpolicy.idle_timeout {
-                None => None,
-                Some(timeout) => Some(Instant::now() + timeout),
-            },
-        };
-
-        try!(conn.authenticate(user_password));
-
-        conn.refresh();
-
         Ok(conn)
     }
 

@@ -234,7 +234,7 @@ impl Node {
                               self.client_policy.connection_pool_size_per_node);
                     }
 
-                    let conn = match Connection::new(self, &self.client_policy.user_password) {
+                    let conn = match Connection::new(&self.host, &self.client_policy) {
                         Ok(c) => c,
                         Err(e) => {
                             self.dec_connections();

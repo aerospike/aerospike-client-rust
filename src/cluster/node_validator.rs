@@ -73,7 +73,7 @@ impl NodeValidator {
 
     fn set_address(&mut self) -> Result<()> {
         for alias in self.aliases.to_vec() {
-            let mut conn = Connection::new_raw(&alias, &self.client_policy)?;
+            let mut conn = Connection::new(&alias, &self.client_policy)?;
             conn.set_timeout(self.client_policy.timeout)?;
 
             let info_map = try!(Message::info(&mut conn, &["node", "features"]));
