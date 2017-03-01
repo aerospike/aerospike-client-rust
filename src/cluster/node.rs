@@ -14,7 +14,7 @@
 // the License.
 
 use std::str::FromStr;
-use std::collections::{HashMap, VecDeque};
+use std::collections::HashMap;
 use std::sync::{RwLock, Arc};
 use std::time::Duration;
 use std::sync::atomic::{AtomicBool, AtomicIsize, AtomicUsize, Ordering};
@@ -22,7 +22,7 @@ use std::fmt;
 use std::result::Result as StdResult;
 
 use errors::*;
-use net::{Host, Connection};
+use net::{Host, ConnectionPool, PooledConnection};
 use commands::Message;
 use policy::ClientPolicy;
 use cluster::node_validator::NodeValidator;
@@ -37,8 +37,7 @@ pub struct Node {
     aliases: RwLock<Vec<Host>>,
     address: String,
 
-    connections: RwLock<VecDeque<Connection>>,
-    connection_count: AtomicUsize,
+    connection_pool: ConnectionPool,
     failures: AtomicUsize,
 
     partition_generation: AtomicIsize,
@@ -56,17 +55,15 @@ pub struct Node {
 
 impl Node {
     pub fn new(client_policy: ClientPolicy, nv: Arc<NodeValidator>) -> Self {
-        let pool_size = client_policy.connection_pool_size_per_node;
         Node {
-            client_policy: client_policy,
+            client_policy: client_policy.clone(),
             name: nv.name.clone(),
             aliases: RwLock::new(nv.aliases.to_vec()),
             address: nv.address.to_owned(),
             use_new_info: nv.use_new_info,
 
             host: nv.aliases[0].clone(),
-            connections: RwLock::new(VecDeque::with_capacity(pool_size)),
-            connection_count: AtomicUsize::new(0),
+            connection_pool: ConnectionPool::new(nv.aliases[0].clone(), client_policy),
             failures: AtomicUsize::new(0),
             partition_generation: AtomicIsize::new(-1),
             refresh_count: AtomicUsize::new(0),
@@ -103,14 +100,6 @@ impl Node {
 
     pub fn supports_geo(&self) -> bool {
         self.supports_geo.load(Ordering::Relaxed)
-    }
-
-    pub fn dec_connections(&self) -> usize {
-        self.connection_count.fetch_sub(1, Ordering::Relaxed)
-    }
-
-    pub fn inc_connections(&self) -> usize {
-        self.connection_count.fetch_add(1, Ordering::Relaxed)
     }
 
     pub fn reference_count(&self) -> usize {
@@ -212,62 +201,8 @@ impl Node {
         Ok(())
     }
 
-    pub fn get_connection(&self, timeout: Option<Duration>) -> Result<Connection> {
-        let mut connections = self.connections.write().unwrap();
-        loop {
-            match connections.pop_front() {
-                Some(mut conn) => {
-                    {
-                        if conn.is_idle() {
-                            self.invalidate_connection(&mut conn);
-                            continue;
-                        }
-                        try!(conn.set_timeout(timeout));
-                    }
-                    return Ok(conn);
-                }
-                None => {
-                    if self.inc_connections() > self.client_policy.connection_pool_size_per_node {
-                        // too many connections, undo
-                        self.dec_connections();
-                        bail!("Exceeded max. connection pool size of {}",
-                              self.client_policy.connection_pool_size_per_node);
-                    }
-
-                    let conn = match Connection::new(&self.host, &self.client_policy) {
-                        Ok(c) => c,
-                        Err(e) => {
-                            self.dec_connections();
-                            return Err(e);
-                        }
-                    };
-
-                    if let Err(e) = conn.set_timeout(timeout) {
-                        self.dec_connections();
-                        return Err(e);
-                    }
-
-                    return Ok(conn);
-
-                }
-            }
-        }
-    }
-
-    pub fn put_connection(&self, mut conn: Connection) {
-        if self.active.load(Ordering::Relaxed) {
-            let mut connections = self.connections.write().unwrap();
-            if connections.len() < self.client_policy.connection_pool_size_per_node {
-                connections.push_back(conn);
-            } else {
-                self.invalidate_connection(&mut conn);
-            }
-        }
-    }
-
-    pub fn invalidate_connection(&self, conn: &mut Connection) {
-        self.dec_connections();
-        conn.close();
+    pub fn get_connection(&self, timeout: Option<Duration>) -> Result<PooledConnection> {
+        self.connection_pool.get(timeout)
     }
 
     pub fn failures(&self) -> usize {
@@ -299,26 +234,18 @@ impl Node {
 
     pub fn close(&self) {
         self.active.store(false, Ordering::Relaxed);
-        let mut connections = self.connections.write().unwrap();
-        loop {
-            if connections.pop_front().is_none() {
-                break;
-            }
-        }
+        self.connection_pool.close();
     }
 
     pub fn info(&self,
                 timeout: Option<Duration>,
                 commands: &[&str])
                 -> Result<HashMap<String, String>> {
-        let mut conn = try!(self.get_connection(timeout));
-        match Message::info(&mut conn, commands) {
-            Ok(res) => Ok(res),
-            Err(e) => {
-                self.invalidate_connection(&mut conn);
-                Err(e)
-            }
-        }
+        let mut conn = self.get_connection(timeout)?;
+        Message::info(&mut conn, commands).or_else(|e| {
+            conn.invalidate();
+            Err(e)
+        })
     }
 
     pub fn partition_generation(&self) -> isize {

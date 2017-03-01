@@ -20,8 +20,6 @@ use std::time::{Instant, Duration};
 
 use errors::*;
 use policy::ClientPolicy;
-use cluster::node::Node;
-use Host;
 use commands::buffer::Buffer;
 use commands::admin_command::AdminCommand;
 
@@ -42,7 +40,6 @@ pub struct Connection {
 }
 
 impl Connection {
-
     pub fn new<T: ToSocketAddrs>(addr: T, policy: &ClientPolicy) -> Result<Self> {
         let stream = TcpStream::connect(addr)?;
         let mut conn = Connection {
@@ -141,13 +138,3 @@ impl Connection {
         self.bytes_read
     }
 }
-
-// TODO: implement this
-// impl Drop for Connection {
-//     fn drop(&mut self) {
-//         if let Some(node) = self.node {
-//             node.dec_connections();
-//         }
-//         self.conn.shutdown(Shutdown::Both);
-//     }
-// }

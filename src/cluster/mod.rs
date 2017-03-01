@@ -243,16 +243,14 @@ impl Cluster {
     }
 
     pub fn update_partitions(&self, node: Arc<Node>) -> Result<()> {
-        let mut conn = try!(node.get_connection(self.client_policy.timeout));
+        let mut conn = node.get_connection(self.client_policy.timeout)?;
         let tokens = match PartitionTokenizer::new(&mut conn) {
             Ok(res) => res,
             Err(e) => {
-                node.invalidate_connection(&mut conn);
+                conn.invalidate();
                 return Err(e);
             }
         };
-
-        node.put_connection(conn);
 
         let nmap = try!(tokens.update_partition(self.partitions(), node));
         self.set_partitions(nmap);

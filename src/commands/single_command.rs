@@ -117,8 +117,7 @@ impl<'a> SingleCommand<'a> {
             if let Err(err) = cmd.write_buffer(&mut conn) {
                 // IO errors are considered temporary anomalies. Retry.
                 // Close socket to flush out possible garbage. Do not put back in pool.
-                node.invalidate_connection(&mut conn);
-
+                conn.invalidate();
                 warn!("Node {}: {}", node, err);
                 continue;
             }
@@ -129,17 +128,11 @@ impl<'a> SingleCommand<'a> {
                 // cancelling/closing the batch/multi commands will return an error, which will
                 // close the connection to throw away its data and signal the server about the
                 // situation. We will not put back the connection in the buffer.
-                if SingleCommand::keep_connection(&err) {
-                    // Put connection back in pool.
-                    node.put_connection(conn);
-                } else {
-                    node.invalidate_connection(&mut conn);
+                if !SingleCommand::keep_connection(&err) {
+                    conn.invalidate();
                 }
                 return Err(err);
             }
-
-            // Put connection back in pool.
-            node.put_connection(conn);
 
             // command has completed successfully.  Exit method.
             return Ok(());
