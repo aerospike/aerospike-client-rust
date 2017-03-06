@@ -232,7 +232,7 @@ impl Node {
         self.reference_count.fetch_add(1, Ordering::Relaxed);
     }
 
-    pub fn close(&self) {
+    pub fn close(&mut self) {
         self.active.store(false, Ordering::Relaxed);
         self.connection_pool.close();
     }

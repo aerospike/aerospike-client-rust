@@ -15,8 +15,8 @@
 
 use std::collections::VecDeque;
 use std::ops::{Deref, DerefMut, Drop};
-use std::sync::{Arc, RwLock};
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use errors::*;
@@ -24,133 +24,193 @@ use net::{Connection, Host};
 use policy::ClientPolicy;
 
 #[derive(Debug)]
-struct IdleConnection {
-    conn: Connection,
+struct IdleConnection(Connection);
+
+#[derive(Debug)]
+struct QueueInternals {
+    connections: VecDeque<IdleConnection>,
+    num_conns: usize,
 }
 
 #[derive(Debug)]
-struct SharedPool {
+struct SharedQueue {
+    internals: Mutex<QueueInternals>,
+    capacity: usize,
     host: Host,
-    connections: RwLock<VecDeque<IdleConnection>>,
-    connection_count: AtomicUsize,
-    client_policy: ClientPolicy,
+    policy: ClientPolicy,
 }
 
 #[derive(Debug)]
-pub struct ConnectionPool(Arc<SharedPool>);
+struct Queue(Arc<SharedQueue>);
 
-impl ConnectionPool {
-    pub fn new(host: Host, client_policy: ClientPolicy) -> Self {
-        let pool_size = client_policy.connection_pool_size_per_node;
-        let connections = RwLock::new(VecDeque::with_capacity(pool_size));
-        let shared = SharedPool {
-            host: host,
-            connections: connections,
-            connection_count: AtomicUsize::new(0),
-            client_policy: client_policy,
+impl Queue {
+    pub fn with_capacity(capacity: usize, host: Host, policy: ClientPolicy) -> Self {
+        let internals = QueueInternals {
+            connections: VecDeque::with_capacity(capacity),
+            num_conns: 0,
         };
-        let shared = Arc::new(shared);
-        ConnectionPool(shared)
+        let shared = SharedQueue {
+            internals: Mutex::new(internals),
+            capacity: capacity,
+            host: host,
+            policy: policy,
+        };
+        Queue(Arc::new(shared))
     }
 
     pub fn get(&self, timeout: Option<Duration>) -> Result<PooledConnection> {
-        let mut connections = self.0.connections.write().unwrap();
+        let mut internals = self.0.internals.lock().unwrap();
         let connection;
         loop {
-            match connections.pop_front() {
-                Some(IdleConnection { mut conn }) => {
-                    {
-                        if conn.is_idle() {
-                            conn.close();
-                            self.dec_connections();
-                            continue;
-                        }
-                        try!(conn.set_timeout(timeout));
+            match internals.connections.pop_front() {
+                Some(IdleConnection(mut conn)) => {
+                    if conn.is_idle() {
+                        internals.num_conns -= 1;
+                        conn.close();
+                        continue;
                     }
                     connection = conn;
                     break;
                 }
                 None => {
-                    if self.inc_connections() > self.0.client_policy.connection_pool_size_per_node {
-                        // too many connections, undo
-                        self.dec_connections();
-                        bail!("Exceeded max. connection pool size of {}",
-                              self.0.client_policy.connection_pool_size_per_node);
+                    if internals.num_conns >= self.0.capacity {
+                        bail!(ErrorKind::NoMoreConnections);
                     }
-
-                    let conn = match Connection::new(&self.0.host, &self.0.client_policy) {
-                        Ok(c) => c,
-                        Err(e) => {
-                            self.dec_connections();
-                            return Err(e);
-                        }
-                    };
-
-                    if let Err(e) = conn.set_timeout(timeout) {
-                        self.dec_connections();
-                        return Err(e);
-                    }
-
+                    let conn = Connection::new(&self.0.host, &self.0.policy)?;
+                    internals.num_conns += 1;
                     connection = conn;
                     break;
                 }
             }
         }
 
+        connection.set_timeout(timeout)
+            .or_else(|err| {
+                internals.num_conns -= 1;
+                Err(err)
+            })?;
+
         Ok(PooledConnection {
-            pool: self.clone(),
+            queue: self.clone(),
             conn: Some(connection),
         })
     }
 
-    pub fn put(&self, mut conn: Connection) {
-        let mut connections = self.0.connections.write().unwrap();
-        if connections.len() < self.0.client_policy.connection_pool_size_per_node {
-            connections.push_back(IdleConnection { conn: conn });
+    pub fn put_back(&self, mut conn: Connection) {
+        let mut internals = self.0.internals.lock().unwrap();
+        if internals.num_conns < self.0.capacity {
+            internals.connections.push_back(IdleConnection(conn));
         } else {
             conn.close();
-            self.dec_connections();
+            internals.num_conns -= 1;
         }
     }
 
-    pub fn close(&self) {
-        let mut connections = self.0.connections.write().unwrap();
-        connections.clear();
+    pub fn drop_conn(&self, mut conn: Connection) {
+        {
+            let mut internals = self.0.internals.lock().unwrap();
+            internals.num_conns -= 1;
+        }
+        conn.close();
     }
 
-    pub fn dec_connections(&self) -> usize {
-        self.0.connection_count.fetch_sub(1, Ordering::Relaxed)
-    }
-
-    fn inc_connections(&self) -> usize {
-        self.0.connection_count.fetch_add(1, Ordering::Relaxed)
+    pub fn clear(&mut self) {
+        let mut internals = self.0.internals.lock().unwrap();
+        for mut conn in internals.connections.drain(..) {
+            conn.0.close();
+        }
+        internals.num_conns = 0;
     }
 }
 
-impl Clone for ConnectionPool {
+impl Clone for Queue {
     fn clone(&self) -> Self {
-        ConnectionPool(self.0.clone())
+        Queue(self.0.clone())
+    }
+}
+
+#[derive(Debug)]
+pub struct ConnectionPool {
+    num_queues: usize,
+    queues: Vec<Queue>,
+    queue_counter: AtomicUsize,
+}
+
+impl ConnectionPool {
+    pub fn new(host: Host, policy: ClientPolicy) -> Self {
+        let num_conns = policy.max_conns_per_node;
+        let num_queues = policy.conn_pools_per_node;
+        let queues = ConnectionPool::initialize_queues(num_conns, num_queues, host, policy);
+        ConnectionPool {
+            num_queues: num_queues,
+            queues: queues,
+            queue_counter: AtomicUsize::default(),
+        }
+    }
+
+    fn initialize_queues(num_conns: usize,
+                         num_queues: usize,
+                         host: Host,
+                         policy: ClientPolicy)
+                         -> Vec<Queue> {
+        let max = num_conns / num_queues;
+        let mut rem = num_conns % num_queues;
+        let mut queues = Vec::with_capacity(num_queues);
+        for _ in 0..num_queues {
+            let mut capacity = max;
+            if rem > 0 {
+                capacity += 1;
+                rem -= 1;
+            }
+            queues.push(Queue::with_capacity(capacity, host.clone(), policy.clone()));
+        }
+        queues
+    }
+
+
+    pub fn get(&self, timeout: Option<Duration>) -> Result<PooledConnection> {
+        if self.num_queues == 1 {
+            self.queues[0].get(timeout)
+        } else {
+            let mut attempts = self.num_queues;
+            loop {
+                let i = self.queue_counter.fetch_add(1, Ordering::Relaxed);
+                let connection = self.queues[i % self.num_queues].get(timeout);
+                if let Err(Error(ErrorKind::NoMoreConnections, _)) = connection {
+                    attempts -= 1;
+                    if attempts > 0 {
+                        continue;
+                    }
+                }
+                return connection;
+            }
+        }
+    }
+
+    pub fn close(&mut self) {
+        for mut queue in self.queues.drain(..) {
+            queue.clear();
+        }
     }
 }
 
 #[derive(Debug)]
 pub struct PooledConnection {
-    pool: ConnectionPool,
+    queue: Queue,
     pub conn: Option<Connection>,
 }
 
 impl PooledConnection {
     pub fn invalidate(mut self) {
-        self.conn.take().unwrap().close()
+        let conn = self.conn.take().unwrap();
+        self.queue.drop_conn(conn);
     }
 }
 
 impl Drop for PooledConnection {
     fn drop(&mut self) {
         if let Some(conn) = self.conn.take() {
-            self.pool.put(conn);
-        } else {
-            self.pool.dec_connections();
+            self.queue.put_back(conn);
         }
     }
 }
