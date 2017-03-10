@@ -195,3 +195,29 @@ macro_rules! as_regions_containing_point {
                                    point.clone(), point.clone())
     }};
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn geo_filter_macros() {
+        let geo_filter = as_within_region!("bin1", "{}");
+        assert_eq!(geo_filter.bin_name, "bin1");
+
+        let geo_filter = as_within_region!("bin1", "{}", CollectionIndexType::MapValues);
+        assert_eq!(geo_filter.bin_name, "bin1");
+
+        let geo_filter = as_regions_containing_point!("bin1", "{}");
+        assert_eq!(geo_filter.bin_name, "bin1");
+
+        let geo_filter = as_regions_containing_point!("bin1", "{}", CollectionIndexType::MapValues);
+        assert_eq!(geo_filter.bin_name, "bin1");
+
+        let geo_filter = as_within_radius!("bin1", 1, 3, 7);
+        assert_eq!(geo_filter.bin_name, "bin1");
+
+        let geo_filter = as_within_radius!("bin1", 1, 3, 7, CollectionIndexType::List);
+        assert_eq!(geo_filter.bin_name, "bin1");
+    }
+}
