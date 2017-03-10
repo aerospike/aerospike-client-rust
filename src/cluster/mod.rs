@@ -65,7 +65,6 @@ pub struct Cluster {
 
 impl Cluster {
     pub fn new(policy: ClientPolicy, hosts: &[Host]) -> Result<Arc<Self>> {
-
         let (tx, rx): (Sender<()>, Receiver<()>) = mpsc::channel();
         let cluster = Arc::new(Cluster {
             client_policy: policy,
@@ -124,10 +123,7 @@ impl Cluster {
         for node in nodes {
             node.close();
         }
-
-        if let Err(err) = cluster.set_nodes(vec![]) {
-            log_error_chain!(err, "Error clearing nodes list");
-        }
+        cluster.set_nodes(vec![]);
     }
 
     fn tend(&self) -> Result<()> {
@@ -237,11 +233,9 @@ impl Cluster {
         Ok(aliases.contains_key(host))
     }
 
-    fn set_partitions(&self, partitions: HashMap<String, Vec<Arc<Node>>>) -> Result<()> {
+    fn set_partitions(&self, partitions: HashMap<String, Vec<Arc<Node>>>) {
         let mut partition_map = self.partition_write_map.write().unwrap();
         *partition_map = partitions;
-
-        Ok(())
     }
 
     fn partitions(&self) -> Arc<RwLock<HashMap<String, Vec<Arc<Node>>>>> {
@@ -261,8 +255,7 @@ impl Cluster {
         node.put_connection(conn);
 
         let nmap = try!(tokens.update_partition(self.partitions(), node));
-
-        try!(self.set_partitions(nmap));
+        self.set_partitions(nmap);
 
         Ok(())
     }
@@ -436,10 +429,11 @@ impl Cluster {
             self.add_aliases(node.clone())?
         }
 
-        self.add_nodes_copy(friend_list)
+        self.add_nodes_copy(friend_list);
+        Ok(())
     }
 
-    fn add_nodes_copy(&self, friend_list: &[Arc<Node>]) -> Result<()> {
+    fn add_nodes_copy(&self, friend_list: &[Arc<Node>]) {
         let mut nodes = self.nodes();
         nodes.extend(friend_list.iter().cloned());
         self.set_nodes(nodes)
@@ -452,19 +446,16 @@ impl Cluster {
             }
             node.close();
         }
-
-        self.remove_nodes_copy(&nodes_to_remove)
-    }
-
-    fn set_nodes(&self, new_nodes: Vec<Arc<Node>>) -> Result<()> {
-        let mut nodes = self.nodes.write().unwrap();
-
-        *nodes = new_nodes;
-
+        self.remove_nodes_copy(&nodes_to_remove);
         Ok(())
     }
 
-    fn remove_nodes_copy(&self, nodes_to_remove: &[Arc<Node>]) -> Result<()> {
+    fn set_nodes(&self, new_nodes: Vec<Arc<Node>>) {
+        let mut nodes = self.nodes.write().unwrap();
+        *nodes = new_nodes;
+    }
+
+    fn remove_nodes_copy(&self, nodes_to_remove: &[Arc<Node>]) {
         let nodes = self.nodes();
         let mut node_array: Vec<Arc<Node>> = vec![];
 
