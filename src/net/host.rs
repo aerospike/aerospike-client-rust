@@ -13,9 +13,13 @@
 // License for the specific language governing permissions and limitations under
 // the License.
 
+use std::fmt;
+use std::io;
+use std::net::{SocketAddr, ToSocketAddrs};
+use std::vec::IntoIter;
+
 use errors::*;
 use net::parser::Parser;
-use std::fmt;
 
 /// Host name/port of database server.
 #[derive(Debug, PartialEq, Eq, Hash, Clone)]
@@ -34,6 +38,13 @@ impl Host {
             name: name.to_string(),
             port: port,
         }
+    }
+}
+
+impl ToSocketAddrs for Host {
+    type Iter = IntoIter<SocketAddr>;
+    fn to_socket_addrs(&self) -> io::Result<IntoIter<SocketAddr>> {
+        (self.name.as_str(), self.port).to_socket_addrs()
     }
 }
 

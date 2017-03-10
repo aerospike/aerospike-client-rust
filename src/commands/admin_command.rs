@@ -14,7 +14,6 @@
 
 #![allow(dead_code)]
 
-use std::sync::Arc;
 use std::str;
 
 use pwhash::bcrypt;
@@ -22,8 +21,9 @@ use pwhash::bcrypt::{BcryptVariant, BcryptSetup};
 
 use errors::*;
 use ResultCode;
-use cluster::{Node, Cluster};
+use cluster::Cluster;
 use net::Connection;
+use net::PooledConnection;
 use policy::AdminPolicy;
 
 // Commands
@@ -62,7 +62,7 @@ impl AdminCommand {
         AdminCommand {}
     }
 
-    pub fn execute(node: Arc<Node>, mut conn: Connection) -> Result<()> {
+    fn execute(mut conn: PooledConnection) -> Result<()> {
         // Write the message header
         try!(conn.buffer.size_buffer());
         let size = conn.buffer.data_offset;
@@ -71,28 +71,18 @@ impl AdminCommand {
 
         // Send command.
         if let Err(err) = conn.flush() {
-            node.invalidate_connection(&mut conn);
+            conn.invalidate();
             return Err(err);
         }
 
         // read header
         if let Err(err) = conn.read_buffer(HEADER_SIZE) {
-            node.invalidate_connection(&mut conn);
+            conn.invalidate();
             return Err(err);
         }
 
-        let result_code = match conn.buffer.read_u8(Some(RESULT_CODE)) {
-            Ok(v) => {
-                node.put_connection(conn);
-                v
-            }
-            Err(err) => {
-                node.put_connection(conn);
-                return Err(err);
-            }
-        };
+        let result_code = conn.buffer.read_u8(Some(RESULT_CODE))?;
         let result_code = ResultCode::from(result_code);
-
         if result_code != ResultCode::Ok {
             bail!(ErrorKind::ServerError(result_code));
         }
@@ -149,7 +139,7 @@ impl AdminCommand {
                                            &try!(AdminCommand::hash_password(password))));
         try!(AdminCommand::write_roles(&mut conn, roles));
 
-        AdminCommand::execute(node, conn)
+        AdminCommand::execute(conn)
     }
 
     pub fn drop_user(cluster: &Cluster, policy: &AdminPolicy, user: &str) -> Result<()> {
@@ -162,7 +152,7 @@ impl AdminCommand {
         try!(AdminCommand::write_header(&mut conn, DROP_USER, 1));
         try!(AdminCommand::write_field_str(&mut conn, USER, user));
 
-        AdminCommand::execute(node, conn)
+        AdminCommand::execute(conn)
     }
 
     pub fn set_password(cluster: &Cluster,
@@ -182,7 +172,7 @@ impl AdminCommand {
                                            PASSWORD,
                                            &try!(AdminCommand::hash_password(password))));
 
-        AdminCommand::execute(node, conn)
+        AdminCommand::execute(conn)
     }
 
     pub fn change_password(cluster: &Cluster,
@@ -212,7 +202,7 @@ impl AdminCommand {
                                            PASSWORD,
                                            &try!(AdminCommand::hash_password(password))));
 
-        AdminCommand::execute(node, conn)
+        AdminCommand::execute(conn)
     }
 
     pub fn grant_roles(cluster: &Cluster,
@@ -230,7 +220,7 @@ impl AdminCommand {
         try!(AdminCommand::write_field_str(&mut conn, USER, user));
         try!(AdminCommand::write_roles(&mut conn, roles));
 
-        AdminCommand::execute(node, conn)
+        AdminCommand::execute(conn)
     }
 
     pub fn revoke_roles(cluster: &Cluster,
@@ -248,7 +238,7 @@ impl AdminCommand {
         try!(AdminCommand::write_field_str(&mut conn, USER, user));
         try!(AdminCommand::write_roles(&mut conn, roles));
 
-        AdminCommand::execute(node, conn)
+        AdminCommand::execute(conn)
     }
 
     // Utility methods
