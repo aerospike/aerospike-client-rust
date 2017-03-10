@@ -100,6 +100,12 @@ error_chain! {
             display("Invalid argument: {}", details)
         }
 
+/// Exceeded max. number of connections per node.
+        NoMoreConnections {
+            description("Too many connections")
+            display("Too many connections")
+        }
+
 /// Server responded with a response code indicating an error condition.
         ServerError(rc: ResultCode) {
             description("Server Error")

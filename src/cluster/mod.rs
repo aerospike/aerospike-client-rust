@@ -120,8 +120,10 @@ impl Cluster {
 
         // close all nodes
         let nodes = cluster.nodes();
-        for node in nodes {
-            node.close();
+        for mut node in nodes {
+            if let Some(node) = Arc::get_mut(&mut node) {
+                node.close();
+            }
         }
         cluster.set_nodes(vec![]);
     }
@@ -437,12 +439,14 @@ impl Cluster {
         self.set_nodes(nodes)
     }
 
-    fn remove_nodes(&self, nodes_to_remove: Vec<Arc<Node>>) -> Result<()> {
-        for node in &nodes_to_remove {
+    fn remove_nodes(&self, mut nodes_to_remove: Vec<Arc<Node>>) -> Result<()> {
+        for node in &mut nodes_to_remove {
             for alias in node.aliases() {
                 self.remove_alias(&alias)?;
             }
-            node.close();
+            if let Some(node) = Arc::get_mut(node) {
+                node.close();
+            }
         }
         self.remove_nodes_copy(&nodes_to_remove);
         Ok(())

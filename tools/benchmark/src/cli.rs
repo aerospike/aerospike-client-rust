@@ -57,6 +57,7 @@ pub struct Options {
     pub start_key: i64,
     pub concurrency: i64,
     pub workload: Workload,
+    pub conn_pools_per_node: usize,
 }
 
 pub fn parse_options() -> Options {
@@ -72,6 +73,7 @@ pub fn parse_options() -> Options {
         start_key: i64::from_str(matches.value_of("startkey").unwrap()).unwrap(),
         concurrency: i64::from_str(matches.value_of("concurrency").unwrap()).unwrap(),
         workload: Workload::from_str(matches.value_of("workload").unwrap()).unwrap(),
+        conn_pools_per_node: usize::from_str(matches.value_of("connPoolsPerNode").unwrap()).unwrap(),
     }
 }
 
@@ -103,6 +105,9 @@ fn build_cli() -> App<'static, 'static> {
         .arg(Arg::from_usage("-w, --workload 'Workload definition: I | RU (see below for \
                               details)'")
             .default_value("I"))
+        .arg(Arg::from_usage("-Y, --connPoolsPerNode 'Number of connection pools per node'")
+             .validator(|val| validate::<usize>(val, "Must be number".into()))
+             .default_value("1"))
         .after_help(AFTER_HELP.trim())
 }
 
