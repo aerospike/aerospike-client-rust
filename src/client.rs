@@ -104,9 +104,9 @@ impl Client {
         let thread_pool = ThreadPool::new(policy.thread_pool_size);
 
         Ok(Client {
-            cluster: cluster,
-            thread_pool: thread_pool,
-        })
+               cluster: cluster,
+               thread_pool: thread_pool,
+           })
     }
 
     /// Closes the connection to the Aerospike cluster.
@@ -574,7 +574,10 @@ impl Client {
         let bin_names = match bin_names {
             None => None,
             Some(bin_names) => {
-                let bin_names: Vec<_> = bin_names.iter().cloned().map(String::from).collect();
+                let bin_names: Vec<_> = bin_names.iter()
+                    .cloned()
+                    .map(String::from)
+                    .collect();
                 Some(bin_names)
             }
         };
@@ -590,10 +593,10 @@ impl Client {
             let bin_names = bin_names.to_owned();
 
             thread::spawn(move || {
-                let mut command =
+                              let mut command =
                     ScanCommand::new(&policy, node, &namespace, &set_name, &bin_names, recordset);
-                command.execute().unwrap();
-            });
+                              command.execute().unwrap();
+                          });
 
         }
         Ok(recordset)
@@ -616,7 +619,10 @@ impl Client {
         let bin_names = match bin_names {
             None => None,
             Some(bin_names) => {
-                let bin_names: Vec<_> = bin_names.iter().cloned().map(String::from).collect();
+                let bin_names: Vec<_> = bin_names.iter()
+                    .cloned()
+                    .map(String::from)
+                    .collect();
                 Some(bin_names)
             }
         };

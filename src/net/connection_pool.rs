@@ -59,7 +59,10 @@ impl Queue {
     }
 
     pub fn get(&self, timeout: Option<Duration>) -> Result<PooledConnection> {
-        let mut internals = self.0.internals.lock().unwrap();
+        let mut internals = self.0
+            .internals
+            .lock()
+            .unwrap();
         let connection;
         loop {
             match internals.connections.pop_front() {
@@ -86,18 +89,21 @@ impl Queue {
 
         connection.set_timeout(timeout)
             .or_else(|err| {
-                internals.num_conns -= 1;
-                Err(err)
-            })?;
+                         internals.num_conns -= 1;
+                         Err(err)
+                     })?;
 
         Ok(PooledConnection {
-            queue: self.clone(),
-            conn: Some(connection),
-        })
+               queue: self.clone(),
+               conn: Some(connection),
+           })
     }
 
     pub fn put_back(&self, mut conn: Connection) {
-        let mut internals = self.0.internals.lock().unwrap();
+        let mut internals = self.0
+            .internals
+            .lock()
+            .unwrap();
         if internals.num_conns < self.0.capacity {
             internals.connections.push_back(IdleConnection(conn));
         } else {
@@ -108,14 +114,20 @@ impl Queue {
 
     pub fn drop_conn(&self, mut conn: Connection) {
         {
-            let mut internals = self.0.internals.lock().unwrap();
+            let mut internals = self.0
+                .internals
+                .lock()
+                .unwrap();
             internals.num_conns -= 1;
         }
         conn.close();
     }
 
     pub fn clear(&mut self) {
-        let mut internals = self.0.internals.lock().unwrap();
+        let mut internals = self.0
+            .internals
+            .lock()
+            .unwrap();
         for mut conn in internals.connections.drain(..) {
             conn.0.close();
         }

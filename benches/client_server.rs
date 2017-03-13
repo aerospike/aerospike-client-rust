@@ -40,7 +40,5 @@ fn single_key_read(b: &mut Bencher) {
     let wpolicy = WritePolicy::default();
     client.put(&wpolicy, &key, &bins).unwrap();
 
-    b.iter(|| {
-        client.get(&rpolicy, &key, None).unwrap()
-    });
+    b.iter(|| client.get(&rpolicy, &key, None).unwrap());
 }

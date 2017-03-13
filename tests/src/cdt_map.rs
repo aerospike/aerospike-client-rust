@@ -45,22 +45,25 @@ fn map_operations() {
     let (k, v) = (as_val!("c"), as_val!(3));
     let op = maps::put_item(&mpolicy, bin_name, &k, &v);
     let rec = client.operate(&wpolicy, &key, &[op]).unwrap();
-    assert_eq!(*rec.bins.get(bin_name).unwrap(), as_val!(3)); // size of map after put
+    // returns size of map after put
+    assert_eq!(*rec.bins.get(bin_name).unwrap(), as_val!(3));
 
     let op = maps::size(bin_name);
     let rec = client.operate(&wpolicy, &key, &[op]).unwrap();
-    assert_eq!(*rec.bins.get(bin_name).unwrap(), as_val!(3)); // size of map
+    // returns size of map
+    assert_eq!(*rec.bins.get(bin_name).unwrap(), as_val!(3));
 
     let rec = client.get(&rpolicy, &key, None).unwrap();
     assert_eq!(*rec.bins.get(bin_name).unwrap(),
-        as_map!("a" => 1, "b" => 2, "c" => 3));
+               as_map!("a" => 1, "b" => 2, "c" => 3));
 
     let mut items = HashMap::new();
     items.insert(as_val!("d"), as_val!(4));
     items.insert(as_val!("e"), as_val!(5));
     let op = maps::put_items(&mpolicy, bin_name, &items);
     let rec = client.operate(&wpolicy, &key, &[op]).unwrap();
-    assert_eq!(*rec.bins.get(bin_name).unwrap(), as_val!(5)); // size of map after put
+    // returns size of map after put
+    assert_eq!(*rec.bins.get(bin_name).unwrap(), as_val!(5));
 
     let k = as_val!("e");
     let op = maps::remove_by_key(bin_name, &k, MapReturnType::Value);
@@ -70,23 +73,27 @@ fn map_operations() {
     let (k, i) = (as_val!("a"), as_val!(19));
     let op = maps::increment_value(&mpolicy, bin_name, &k, &i);
     let rec = client.operate(&wpolicy, &key, &[op]).unwrap();
-    assert_eq!(*rec.bins.get(bin_name).unwrap(), as_val!(20)); // value of the key after increment
+    // returns value of the key after increment
+    assert_eq!(*rec.bins.get(bin_name).unwrap(), as_val!(20));
 
     let (k, i) = (as_val!("a"), as_val!(10));
     let op = maps::decrement_value(&mpolicy, bin_name, &k, &i);
     let rec = client.operate(&wpolicy, &key, &[op]).unwrap();
-    assert_eq!(*rec.bins.get(bin_name).unwrap(), as_val!(10)); // value of the key after decrement
+    // returns value of the key after decrement
+    assert_eq!(*rec.bins.get(bin_name).unwrap(), as_val!(10));
 
     let (k, i) = (as_val!("a"), as_val!(5));
     let dec = maps::decrement_value(&mpolicy, bin_name, &k, &i);
     let (k, i) = (as_val!("a"), as_val!(7));
     let inc = maps::increment_value(&mpolicy, bin_name, &k, &i);
     let rec = client.operate(&wpolicy, &key, &[dec, inc]).unwrap();
-    assert_eq!(*rec.bins.get(bin_name).unwrap(), as_list!(5, 12)); // values from multiple ops returned as list
+    // returns values from multiple ops returned as list
+    assert_eq!(*rec.bins.get(bin_name).unwrap(), as_list!(5, 12));
 
     let op = maps::clear(bin_name);
     let rec = client.operate(&wpolicy, &key, &[op]).unwrap();
-    assert!(rec.bins.get(bin_name).is_none()); // map_clear returns no result
+    // map_clear returns no result
+    assert!(rec.bins.get(bin_name).is_none());
 
     client.delete(&wpolicy, &key).unwrap();
 }

@@ -144,24 +144,21 @@ fn query_multi_consumer() {
     for _ in 0..8 {
         let count = count.clone();
         let rs = rs.clone();
-        threads.push(thread::spawn(move || {
-            for res in &*rs {
-                match res {
-                    Ok(rec) => {
-                        count.fetch_add(1, Ordering::Relaxed);
-                        let v: i64 = rec.bins["bin"].clone().into();
-                        assert!(v >= 0);
-                        assert!(v < 10);
-                    }
-                    Err(err) => panic!(format!("{:?}", err)),
-                }
+        threads.push(thread::spawn(move || for res in &*rs {
+                                       match res {
+                                           Ok(rec) => {
+                count.fetch_add(1, Ordering::Relaxed);
+                let v: i64 = rec.bins["bin"].clone().into();
+                assert!(v >= 0);
+                assert!(v < 10);
             }
-        }));
+                                           Err(err) => panic!(format!("{:?}", err)),
+                                       }
+                                   }));
     }
 
     for t in threads {
-        t.join()
-            .expect("Failed to join threads");
+        t.join().expect("Failed to join threads");
     }
 
     assert_eq!(count.load(Ordering::Relaxed), 10);

@@ -83,9 +83,9 @@ fn scan_multi_consumer() {
         let count = count.clone();
         let rs = rs.clone();
         threads.push(thread::spawn(move || {
-            let ok = (&*rs).filter(|r| r.is_ok()).count();
-            count.fetch_add(ok, Ordering::Relaxed);
-        }));
+                                       let ok = (&*rs).filter(|r| r.is_ok()).count();
+                                       count.fetch_add(ok, Ordering::Relaxed);
+                                   }));
     }
 
     for t in threads {

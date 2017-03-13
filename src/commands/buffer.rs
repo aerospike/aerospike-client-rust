@@ -934,9 +934,8 @@ impl Buffer {
         match pos {
             Some(pos) => Ok(NetworkEndian::read_u16(&self.data_buffer[pos..pos + len])),
             None => {
-                let res =
-                    NetworkEndian::read_u16(&self.data_buffer[self.data_offset..self.data_offset +
-                                                                                len]);
+                let res = NetworkEndian::read_u16(&self.data_buffer[self.data_offset..
+                                                   self.data_offset + len]);
                 self.data_offset += len;
                 Ok(res)
             }
@@ -953,9 +952,8 @@ impl Buffer {
         match pos {
             Some(pos) => Ok(NetworkEndian::read_u32(&self.data_buffer[pos..pos + len])),
             None => {
-                let res =
-                    NetworkEndian::read_u32(&self.data_buffer[self.data_offset..self.data_offset +
-                                                                                len]);
+                let res = NetworkEndian::read_u32(&self.data_buffer[self.data_offset..
+                                                   self.data_offset + len]);
                 self.data_offset += len;
                 Ok(res)
             }
@@ -972,9 +970,8 @@ impl Buffer {
         match pos {
             Some(pos) => Ok(NetworkEndian::read_u64(&self.data_buffer[pos..pos + len])),
             None => {
-                let res =
-                    NetworkEndian::read_u64(&self.data_buffer[self.data_offset..self.data_offset +
-                                                                                len]);
+                let res = NetworkEndian::read_u64(&self.data_buffer[self.data_offset..
+                                                   self.data_offset + len]);
                 self.data_offset += len;
                 Ok(res)
             }
@@ -997,9 +994,8 @@ impl Buffer {
         match pos {
             Some(pos) => Ok(NetworkEndian::read_f32(&self.data_buffer[pos..pos + len])),
             None => {
-                let res =
-                    NetworkEndian::read_f32(&self.data_buffer[self.data_offset..self.data_offset +
-                                                                                len]);
+                let res = NetworkEndian::read_f32(&self.data_buffer[self.data_offset..
+                                                   self.data_offset + len]);
                 self.data_offset += len;
                 Ok(res)
             }
@@ -1011,9 +1007,8 @@ impl Buffer {
         match pos {
             Some(pos) => Ok(NetworkEndian::read_f64(&self.data_buffer[pos..pos + len])),
             None => {
-                let res =
-                    NetworkEndian::read_f64(&self.data_buffer[self.data_offset..self.data_offset +
-                                                                                len]);
+                let res = NetworkEndian::read_f64(&self.data_buffer[self.data_offset..
+                                                   self.data_offset + len]);
                 self.data_offset += len;
                 Ok(res)
             }

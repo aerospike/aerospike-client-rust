@@ -67,18 +67,18 @@ impl Cluster {
     pub fn new(policy: ClientPolicy, hosts: &[Host]) -> Result<Arc<Self>> {
         let (tx, rx): (Sender<()>, Receiver<()>) = mpsc::channel();
         let cluster = Arc::new(Cluster {
-            client_policy: policy,
+                                   client_policy: policy,
 
-            seeds: Arc::new(RwLock::new(hosts.to_vec())),
-            aliases: Arc::new(RwLock::new(HashMap::new())),
-            nodes: Arc::new(RwLock::new(vec![])),
+                                   seeds: Arc::new(RwLock::new(hosts.to_vec())),
+                                   aliases: Arc::new(RwLock::new(HashMap::new())),
+                                   nodes: Arc::new(RwLock::new(vec![])),
 
-            partition_write_map: Arc::new(RwLock::new(HashMap::new())),
-            node_index: AtomicIsize::new(0),
+                                   partition_write_map: Arc::new(RwLock::new(HashMap::new())),
+                                   node_index: AtomicIsize::new(0),
 
-            tend_channel: Mutex::new(tx),
-            closed: AtomicBool::new(false),
-        });
+                                   tend_channel: Mutex::new(tx),
+                                   closed: AtomicBool::new(false),
+                               });
 
         // try to seed connections for first use
         try!(Cluster::wait_till_stabilized(cluster.clone()));
@@ -88,7 +88,7 @@ impl Cluster {
             bail!(ErrorKind::Connection("Failed to connect to host(s). The network \
                                          connection(s) to cluster nodes may have timed out, or \
                                          the cluster may be in a state of flux."
-                .to_string()));
+                                                .to_string()));
         }
 
         let cluster_for_tend = cluster.clone();
@@ -349,7 +349,10 @@ impl Cluster {
     }
 
     fn find_nodes_to_remove(&self, refresh_count: usize) -> Result<Vec<Arc<Node>>> {
-        let nodes = self.nodes.read().unwrap().to_vec();
+        let nodes = self.nodes
+            .read()
+            .unwrap()
+            .to_vec();
 
         let mut remove_list: Vec<Arc<Node>> = vec![];
         let cluster_size = nodes.len();
@@ -482,7 +485,10 @@ impl Cluster {
     }
 
     pub fn nodes(&self) -> Vec<Arc<Node>> {
-        self.nodes.read().unwrap().clone()
+        self.nodes
+            .read()
+            .unwrap()
+            .clone()
     }
 
     pub fn get_node(&self, partition: &Partition) -> Result<Arc<Node>> {

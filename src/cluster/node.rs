@@ -243,9 +243,9 @@ impl Node {
                 -> Result<HashMap<String, String>> {
         let mut conn = self.get_connection(timeout)?;
         Message::info(&mut conn, commands).or_else(|e| {
-            conn.invalidate();
-            Err(e)
-        })
+                                                       conn.invalidate();
+                                                       Err(e)
+                                                   })
     }
 
     pub fn partition_generation(&self) -> isize {

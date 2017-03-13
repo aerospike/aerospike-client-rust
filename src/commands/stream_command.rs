@@ -175,11 +175,11 @@ impl StreamCommand {
 
 
         Ok(Key {
-            namespace: namespace,
-            set_name: set_name,
-            user_key: orig_key,
-            digest: digest,
-        })
+               namespace: namespace,
+               set_name: set_name,
+               user_key: orig_key,
+               digest: digest,
+           })
     }
 }
 

@@ -38,8 +38,10 @@ fn connect() {
     let wbin3 = as_bin!("bin map", as_map!(1 => 1, 2 => 2, 3 => "hi!"));
     let wbin4 = as_bin!("bin f64", 1.64f64);
     let wbin5 = as_bin!("bin Nil", None);
-    let wbin6 = as_bin!("bin Geo", as_geo!(format!(
-                r#"{{ "type": "Point", "coordinates": [{}, {}] }}"#, 17.119381, 19.45612)));
+    let wbin6 = as_bin!("bin Geo",
+                        as_geo!(format!(r#"{{ "type": "Point", "coordinates": [{}, {}] }}"#,
+                                        17.119381,
+                                        19.45612)));
     let bins = vec![&wbin, &wbin1, &wbin2, &wbin3, &wbin4, &wbin5, &wbin6];
 
     client.delete(&wpolicy, &key).unwrap();

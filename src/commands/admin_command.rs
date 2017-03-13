@@ -54,8 +54,7 @@ const RESULT_CODE: usize = 9;
 const QUERY_END: usize = 50;
 
 
-pub struct AdminCommand {
-}
+pub struct AdminCommand {}
 
 impl AdminCommand {
     pub fn new() -> Self {

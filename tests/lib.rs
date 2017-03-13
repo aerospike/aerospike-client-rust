@@ -30,10 +30,7 @@ pub mod common1 {
     use aerospike::*;
 
     pub fn rand_str(sz: usize) -> String {
-        rand::thread_rng()
-            .gen_ascii_chars()
-            .take(sz)
-            .collect()
+        rand::thread_rng().gen_ascii_chars().take(sz).collect()
     }
 
     lazy_static! {

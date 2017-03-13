@@ -62,12 +62,12 @@ end
                         udf_body1.as_bytes(),
                         "test_udf1.lua",
                         UDFLang::Lua)
-          .unwrap();
+        .unwrap();
     client.register_udf(&wpolicy,
                         udf_body2.as_bytes(),
                         "test_udf2.lua",
                         UDFLang::Lua)
-          .unwrap();
+        .unwrap();
 
     // FIXME: replace sleep with wait task
     thread::sleep(Duration::from_millis(3000));
