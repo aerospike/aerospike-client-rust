@@ -1,4 +1,5 @@
 language: rust
+cache: cargo
 rust:
   - nightly
   - beta
@@ -32,7 +33,11 @@ install:
 - ./bin/aerospike start
 - ../../.travis/wait-for-node.sh var/log/aerospike.log
 - cd ../..
+before_script:
+- export PATH="$PATH:$HOME/.cargo/bin"
+- which rustfmt || cargo install rustfmt
 script:
+- cargo fmt -- --write-mode=diff
 - cargo build
 - cargo test
 notifications:
