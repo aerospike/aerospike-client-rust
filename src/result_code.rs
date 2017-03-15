@@ -95,6 +95,9 @@ pub enum ResultCode {
     /// exists.
     ElementExists,
 
+    /// Enterprise-only feature not supported by the community edition
+    EnterpriseOnly,
+
     /// There are no more records left for query.
     QueryEnd,
 
@@ -237,6 +240,7 @@ impl ResultCode {
             22 => ResultCode::FailForbidden,
             23 => ResultCode::ElementNotFound,
             24 => ResultCode::ElementExists,
+            25 => ResultCode::EnterpriseOnly,
             50 => ResultCode::QueryEnd,
             51 => ResultCode::SecurityNotSupported,
             52 => ResultCode::SecurityNotEnabled,
@@ -307,6 +311,9 @@ impl ResultCode {
             ResultCode::FailForbidden => String::from("OperationType not allowed at this time"),
             ResultCode::ElementNotFound => String::from("Element not found"),
             ResultCode::ElementExists => String::from("Element already exists"),
+            #[cfg_attr(rustfmt, rustfmt_skip)]
+            ResultCode::EnterpriseOnly =>
+                String::from("Enterprise-only feature not supported by community edition"),
             ResultCode::QueryEnd => String::from("Query end"),
             ResultCode::SecurityNotSupported => String::from("Security not supported"),
             ResultCode::SecurityNotEnabled => String::from("Security not enabled"),
