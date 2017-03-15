@@ -30,12 +30,15 @@ lazy_static! {
     static ref AEROSPIKE_NAMESPACE: String =
         env::var("AEROSPIKE_NAMESPACE").unwrap_or(String::from("test"));
 
+    static ref AEROSPIKE_CLUSTER: Option<String> = env::var("AEROSPIKE_CLUSTER").ok();
+
     static ref GLOBAL_CLIENT_POLICY: ClientPolicy = {
         let mut policy = ClientPolicy::default();
         if let Ok(user) = env::var("AEROSPIKE_USER") {
             let password = env::var("AEROSPIKE_PASSWORD").unwrap_or(String::new());
             policy.set_user_password(user, password).unwrap();
         }
+        policy.cluster_name = AEROSPIKE_CLUSTER.clone();
         policy
     };
 

@@ -207,6 +207,10 @@ impl Cluster {
         handle.join().map_err(|err| format!("Error during initial cluster tend: {:?}", err).into())
     }
 
+    pub fn cluster_name(&self) -> &Option<String> {
+        &self.client_policy.cluster_name
+    }
+
     pub fn client_policy(&self) -> &ClientPolicy {
         &self.client_policy
     }
@@ -253,7 +257,7 @@ impl Cluster {
         let mut list: Vec<Arc<Node>> = vec![];
         for seed in &*seed_array {
             let mut seed_node_validator = NodeValidator::new(self);
-            if let Err(err) = seed_node_validator.validate_node(seed) {
+            if let Err(err) = seed_node_validator.validate_node(&self, seed) {
                 log_error_chain!(err, "Failed to validate seed host: {}", seed);
                 continue;
             };
@@ -263,7 +267,7 @@ impl Cluster {
                     seed_node_validator.clone()
                 } else {
                     let mut nv2 = NodeValidator::new(self);
-                    if let Err(err) = nv2.validate_node(seed) {
+                    if let Err(err) = nv2.validate_node(&self, seed) {
                         log_error_chain!(err, "Seeding host {} failed with error", alias);
                         continue;
                     };
@@ -294,7 +298,7 @@ impl Cluster {
 
         for host in hosts {
             let mut nv = NodeValidator::new(self);
-            if let Err(err) = nv.validate_node(&host) {
+            if let Err(err) = nv.validate_node(&self, &host) {
                 log_error_chain!(err, "Adding node {} failed with error", host.name);
                 continue;
             };
@@ -345,8 +349,8 @@ impl Cluster {
             match cluster_size {
                 // Single node clusters rely on whether it responded to info requests.
                 1 if node.failures() > 5 => {
+                    // 5 consecutive info requests failed. Try seeds.
                     if self.seed_nodes() {
-                        // 5 consecutive info requests failed. Try seeds.
                         remove_list.push(tnode);
                     }
                 }
