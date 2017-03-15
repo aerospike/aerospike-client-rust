@@ -110,7 +110,7 @@ impl NodeValidator {
             }
         }
 
-        self.address = format!("{}:{}", alias.name, alias.port);
+        self.address = alias.address();
 
         if let Some(features) = info_map.get("features") {
             self.set_features(features);

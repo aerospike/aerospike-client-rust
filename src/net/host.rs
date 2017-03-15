@@ -39,6 +39,11 @@ impl Host {
             port: port,
         }
     }
+
+    /// Returns a string representation of the host's address.
+    pub fn address(&self) -> String {
+        format!("{}:{}", self.name, self.port)
+    }
 }
 
 impl ToSocketAddrs for Host {
