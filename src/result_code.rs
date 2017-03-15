@@ -88,6 +88,13 @@ pub enum ResultCode {
     /// OperationType not allowed at this time.
     FailForbidden,
 
+    /// Returned by Map put and put_items operations when policy is REPLACE but key was not found.
+    ElementNotFound,
+
+    /// Returned by Map put and put_items operations when policy is CREATE_ONLY but key already
+    /// exists.
+    ElementExists,
+
     /// There are no more records left for query.
     QueryEnd,
 
@@ -228,6 +235,8 @@ impl ResultCode {
             20 => ResultCode::InvalidNamespace,
             21 => ResultCode::BinNameTooLong,
             22 => ResultCode::FailForbidden,
+            23 => ResultCode::ElementNotFound,
+            24 => ResultCode::ElementExists,
             50 => ResultCode::QueryEnd,
             51 => ResultCode::SecurityNotSupported,
             52 => ResultCode::SecurityNotEnabled,
@@ -296,6 +305,8 @@ impl ResultCode {
             ResultCode::BinNameTooLong =>
                 String::from("Bin name length greater than 14 characters"),
             ResultCode::FailForbidden => String::from("OperationType not allowed at this time"),
+            ResultCode::ElementNotFound => String::from("Element not found"),
+            ResultCode::ElementExists => String::from("Element already exists"),
             ResultCode::QueryEnd => String::from("Query end"),
             ResultCode::SecurityNotSupported => String::from("Security not supported"),
             ResultCode::SecurityNotEnabled => String::from("Security not enabled"),
