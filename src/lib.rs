@@ -120,14 +120,16 @@ extern crate error_chain;
 extern crate parking_lot;
 extern crate scoped_pool;
 
+pub use batch::BatchRead;
 pub use bin::{Bin, Bins};
 pub use client::Client;
 pub use errors::{Error, ErrorKind, Result};
 pub use key::Key;
 pub use net::Host;
 pub use operations::{MapPolicy, MapReturnType, MapWriteMode};
-pub use policy::{Policy, ClientPolicy, ReadPolicy, WritePolicy, ScanPolicy, QueryPolicy, Priority,
-                 ConsistencyLevel, CommitLevel, RecordExistsAction, GenerationPolicy, Expiration};
+pub use policy::{Policy, BatchPolicy, ClientPolicy, ReadPolicy, WritePolicy, ScanPolicy,
+                 QueryPolicy, Priority, ConsistencyLevel, CommitLevel, RecordExistsAction,
+                 GenerationPolicy, Expiration};
 pub use query::{Statement, UDFLang, Recordset, IndexType, CollectionIndexType};
 pub use record::Record;
 pub use result_code::ResultCode;
@@ -140,11 +142,12 @@ pub mod errors;
 mod value;
 #[macro_use]
 mod bin;
+#[macro_use]
+mod key;
+mod batch;
 mod client;
 mod cluster;
 mod commands;
-#[macro_use]
-mod key;
 mod msgpack;
 mod net;
 pub mod operations;

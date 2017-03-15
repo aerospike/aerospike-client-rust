@@ -21,6 +21,7 @@ mod consistency_level;
 mod generation_policy;
 mod record_exists_action;
 mod commit_level;
+mod batch_policy;
 mod client_policy;
 mod read_policy;
 mod write_policy;
@@ -29,6 +30,7 @@ mod query_policy;
 mod admin_policy;
 
 pub use self::admin_policy::AdminPolicy;
+pub use self::batch_policy::BatchPolicy;
 pub use self::client_policy::ClientPolicy;
 pub use self::commit_level::CommitLevel;
 pub use self::consistency_level::ConsistencyLevel;

@@ -49,6 +49,7 @@ macro_rules! as_bin {
 }
 
 /// Specify which, if any, bins to return in read operations.
+#[derive(Debug, Clone)]
 pub enum Bins<'a> {
     /// Read all bins.
     All,

@@ -13,18 +13,19 @@
 // License for the specific language governing permissions and limitations under
 // the License.
 
-use std::sync::Arc;
-use std::vec::Vec;
-use std::thread;
-use std::str;
 use std::fs::File;
 use std::io::prelude::*;
 use std::path::Path;
+use std::str;
+use std::sync::Arc;
+use std::thread;
+use std::vec::Vec;
 
 use rustc_serialize::base64::{ToBase64, FromBase64, STANDARD};
 use scoped_pool::Pool;
 
 use errors::*;
+use BatchRead;
 use Bin;
 use Bins;
 use CollectionIndexType;
@@ -36,12 +37,13 @@ use ResultCode;
 use Statement;
 use UDFLang;
 use Value;
+use batch::BatchExecutor;
 use cluster::{Cluster, Node};
 use commands::{ReadCommand, WriteCommand, DeleteCommand, TouchCommand, ExistsCommand,
                OperateCommand, ExecuteUDFCommand, ScanCommand, QueryCommand};
 use net::ToHosts;
 use operations::{Operation, OperationType};
-use policy::{ClientPolicy, ReadPolicy, WritePolicy, ScanPolicy, QueryPolicy};
+use policy::{ClientPolicy, BatchPolicy, ReadPolicy, WritePolicy, ScanPolicy, QueryPolicy};
 
 
 /// Instantiate a Client instance to access an Aerospike database cluster and perform database
@@ -112,7 +114,9 @@ impl Client {
 
     /// Closes the connection to the Aerospike cluster.
     pub fn close(&self) -> Result<()> {
-        self.cluster.close()
+        self.cluster.close()?;
+        self.thread_pool.shutdown();
+        Ok(())
     }
 
     /// Returns `true` if the client is connected to any cluster nodes.
@@ -172,9 +176,24 @@ impl Client {
     pub fn get<'a, T>(&self, policy: &ReadPolicy, key: &Key, bins: T) -> Result<Record>
         where T: Into<Bins<'a>>
     {
-        let mut command = ReadCommand::new(policy, self.cluster.clone(), key, bins.into());
+        let bins = bins.into();
+        let mut command = ReadCommand::new(policy, self.cluster.clone(), key, bins);
         command.execute()?;
         Ok(command.record.unwrap())
+    }
+
+
+    /// Read multiple record for specified batch keys in one batch call. This method allows
+    /// different namespaces/bins to be requested for each key in the batch. If the `BatchRead` key
+    /// field is not found, the corresponding record field will be `None`. The policy can be used
+    /// to specify timeouts and maximum concurrent threads. This method requires Aerospike Server
+    /// version >= 3.6.0.
+    pub fn batch_get<'a>(&self,
+                         policy: &BatchPolicy,
+                         batch_reads: &'a mut [BatchRead<'a>])
+                         -> Result<()> {
+        let executor = BatchExecutor::new(self.cluster.clone(), self.thread_pool.clone());
+        executor.execute_batch_read(policy, batch_reads)
     }
 
     /// Write record bin(s). The policy specifies the transaction timeout, record expiration and

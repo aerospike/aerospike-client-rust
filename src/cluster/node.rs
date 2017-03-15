@@ -13,13 +13,14 @@
 // License for the specific language governing permissions and limitations under
 // the License.
 
-use std::str::FromStr;
 use std::collections::HashMap;
-use std::sync::Arc;
-use std::time::Duration;
-use std::sync::atomic::{AtomicBool, AtomicIsize, AtomicUsize, Ordering};
 use std::fmt;
+use std::hash::{Hash, Hasher};
 use std::result::Result as StdResult;
+use std::str::FromStr;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicIsize, AtomicUsize, Ordering};
+use std::time::Duration;
 
 use parking_lot::RwLock;
 
@@ -281,11 +282,19 @@ impl Node {
     }
 }
 
+impl Hash for Node {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.name.hash(state);
+    }
+}
+
 impl PartialEq for Node {
     fn eq(&self, other: &Node) -> bool {
         self.name == other.name
     }
 }
+
+impl Eq for Node {}
 
 impl fmt::Display for Node {
     fn fmt(&self, f: &mut fmt::Formatter) -> StdResult<(), fmt::Error> {
