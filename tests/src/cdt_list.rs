@@ -19,15 +19,15 @@ use aerospike::operations::lists;
 
 use env_logger;
 
-use common1;
+use common;
 
 #[test]
 fn cdt_list() {
     let _ = env_logger::init();
 
-    let client = &common1::GLOBAL_CLIENT;
-    let namespace: &str = &common1::AEROSPIKE_NAMESPACE;
-    let set_name = &common1::rand_str(10);
+    let client = &common::GLOBAL_CLIENT;
+    let namespace: &str = &common::AEROSPIKE_NAMESPACE;
+    let set_name = &common::rand_str(10);
 
     let policy = ReadPolicy::default();
 

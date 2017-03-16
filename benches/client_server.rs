@@ -26,14 +26,15 @@ use aerospike::{ReadPolicy, WritePolicy};
 
 use test::Bencher;
 
-mod common1;
+#[path="../tests/common/mod.rs"]
+mod common;
 
 #[bench]
 fn single_key_read(b: &mut Bencher) {
-    let client = &common1::GLOBAL_CLIENT;
-    let namespace: &str = &common1::AEROSPIKE_NAMESPACE;
-    let set_name: &str = &common1::AEROSPIKE_SET;
-    let key = as_key!(namespace, set_name, common1::rand_str(10));
+    let client = &common::GLOBAL_CLIENT;
+    let namespace: &str = &common::AEROSPIKE_NAMESPACE;
+    let set_name = &common::rand_str(10);
+    let key = as_key!(namespace, set_name, common::rand_str(10));
     let wbin = as_bin!("i", 1);
     let bins = vec![&wbin];
     let rpolicy = ReadPolicy::default();

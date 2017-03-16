@@ -18,19 +18,19 @@ use std::collections::HashMap;
 use aerospike::{ReadPolicy, WritePolicy, MapPolicy, MapReturnType};
 use aerospike::operations::maps;
 
-use common1;
+use common;
 
 #[test]
 fn map_operations() {
-    let client = &common1::GLOBAL_CLIENT;
-    let namespace: &str = &common1::AEROSPIKE_NAMESPACE;
-    let set_name = &common1::rand_str(10);
+    let client = &common::GLOBAL_CLIENT;
+    let namespace: &str = &common::AEROSPIKE_NAMESPACE;
+    let set_name = &common::rand_str(10);
 
     let wpolicy = WritePolicy::default();
     let mpolicy = MapPolicy::default();
     let rpolicy = ReadPolicy::default();
 
-    let key = common1::rand_str(10);
+    let key = common::rand_str(10);
     let key = as_key!(namespace, set_name, &key);
 
     client.delete(&wpolicy, &key).unwrap();

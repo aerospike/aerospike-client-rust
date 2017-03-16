@@ -24,7 +24,7 @@ use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
 
-use common1;
+use common;
 
 const EXPECTED: usize = 1000;
 
@@ -33,9 +33,9 @@ fn query_single_consumer() {
 
     let _ = env_logger::init();
 
-    let client = &common1::GLOBAL_CLIENT;
-    let namespace: &str = &common1::AEROSPIKE_NAMESPACE;
-    let set_name = &common1::rand_str(10);
+    let client = &common::GLOBAL_CLIENT;
+    let namespace: &str = &common::AEROSPIKE_NAMESPACE;
+    let set_name = &common::rand_str(10);
 
     let wpolicy = WritePolicy::default();
     for i in 0..EXPECTED as i64 {
@@ -105,9 +105,9 @@ fn query_single_consumer() {
 fn query_multi_consumer() {
     let _ = env_logger::init();
 
-    let client = &common1::GLOBAL_CLIENT;
-    let namespace: &str = &common1::AEROSPIKE_NAMESPACE;
-    let set_name = &common1::rand_str(10);
+    let client = &common::GLOBAL_CLIENT;
+    let namespace: &str = &common::AEROSPIKE_NAMESPACE;
+    let set_name = &common::rand_str(10);
 
     let wpolicy = WritePolicy::default();
     for i in 0..EXPECTED as i64 {
