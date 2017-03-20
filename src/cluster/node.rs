@@ -162,10 +162,11 @@ impl Node {
                     Some(info_name) if info_name == expected => Ok(()),
                     Some(info_name) => {
                         self.inactivate();
-                        Err(ErrorKind::InvalidNode(format!("Cluster name mismatch: expected={}, got={}",
-                                                   expected,
-                                                   info_name))
-                            .into())
+                        Err(ErrorKind::InvalidNode(format!("Cluster name mismatch: expected={},
+                                                           got={}",
+                                                           expected,
+                                                           info_name))
+                                    .into())
                     }
                 }
             }

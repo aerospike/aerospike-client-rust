@@ -103,7 +103,8 @@ impl NodeValidator {
                 None => bail!(ErrorKind::InvalidNode(String::from("Missing cluster name"))),
                 Some(info_name) if info_name == cluster_name => {}
                 Some(info_name) => {
-                    bail!(ErrorKind::InvalidNode(format!("Cluster name mismatch: expected={}, got={}",
+                    bail!(ErrorKind::InvalidNode(format!("Cluster name mismatch: expected={},
+                                                         got={}",
                                                          cluster_name,
                                                          info_name)))
                 }
