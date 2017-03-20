@@ -119,6 +119,7 @@ extern crate pwhash;
 extern crate lazy_static;
 #[macro_use]
 extern crate error_chain;
+extern crate parking_lot;
 
 pub use bin::Bin;
 pub use client::Client;

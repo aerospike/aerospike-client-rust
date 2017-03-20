@@ -18,8 +18,9 @@ use std::str;
 use std::collections::HashMap;
 use std::collections::hash_map::Entry::{Vacant, Occupied};
 use std::vec::Vec;
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
 
+use parking_lot::RwLock;
 use rustc_serialize::base64::FromBase64;
 
 use errors::*;
@@ -56,7 +57,7 @@ impl PartitionTokenizer {
                             node: Arc<Node>)
                             -> Result<HashMap<String, Vec<Arc<Node>>>> {
 
-        let mut amap = nmap.read().unwrap().clone();
+        let mut amap = nmap.read().clone();
 
         // <ns>:<base64-encoded partition map>;<ns>:<base64-encoded partition map>; ...
         let part_str = try!(str::from_utf8(&self.buffer));
