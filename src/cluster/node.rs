@@ -111,9 +111,9 @@ impl Node {
         self.responded.store(false, Ordering::Relaxed);
         self.refresh_count.fetch_add(1, Ordering::Relaxed);
 
-        let commands = vec!["node", "partition-generation", self.services_name()];
+        let commands = vec!["node", "cluster-name", "partition-generation", self.services_name()];
         let info_map = self.info(None, &commands).chain_err(|| "Info command failed")?;
-        self.verify_node_name(&info_map).chain_err(|| "Failed to verify node name")?;
+        self.validate_node(&info_map).chain_err(|| "Failed to validate node")?;
         self.responded.store(true, Ordering::Relaxed);
         let friends = self.add_friends(current_aliases, &info_map)
             .chain_err(|| "Failed to add friends")?;
@@ -131,21 +131,43 @@ impl Node {
         }
     }
 
+    fn validate_node(&self, info_map: &HashMap<String, String>) -> Result<()> {
+        self.verify_node_name(info_map)?;
+        self.verify_cluster_name(info_map)?;
+        Ok(())
+    }
+
     fn verify_node_name(&self, info_map: &HashMap<String, String>) -> Result<()> {
         match info_map.get("node") {
-            None => bail!(ErrorKind::BadResponse("Missing node name".to_string())),
+            None => Err(ErrorKind::InvalidNode("Missing node name".to_string()).into()),
+            Some(info_name) if info_name == &self.name => Ok(()),
             Some(info_name) => {
-                if !(&self.name == info_name) {
-                    // Set node to inactive immediately.
-                    self.active.store(false, Ordering::Relaxed);
-                    bail!(ErrorKind::BadResponse(format!("Node name has changed: '{}' => '{}'",
-                                                         self.name,
-                                                         info_name)));
+                self.inactivate();
+                Err(ErrorKind::InvalidNode(format!("Node name has changed: '{}' => '{}'",
+                                                   self.name,
+                                                   info_name))
+                            .into())
+            }
+        }
+    }
+
+    fn verify_cluster_name(&self, info_map: &HashMap<String, String>) -> Result<()> {
+        match self.client_policy.cluster_name {
+            None => Ok(()),
+            Some(ref expected) => {
+                match info_map.get("cluster-name") {
+                    None => Err(ErrorKind::InvalidNode("Missing cluster name".to_string()).into()),
+                    Some(info_name) if info_name == expected => Ok(()),
+                    Some(info_name) => {
+                        self.inactivate();
+                        Err(ErrorKind::InvalidNode(format!("Cluster name mismatch: expected={}, got={}",
+                                                   expected,
+                                                   info_name))
+                            .into())
+                    }
                 }
             }
         }
-
-        Ok(())
     }
 
     fn add_friends(&self,
@@ -217,6 +239,10 @@ impl Node {
         self.failures.fetch_add(1, Ordering::Relaxed)
     }
 
+    fn inactivate(&self) {
+        self.active.store(false, Ordering::Relaxed);
+    }
+
     pub fn is_active(&self) -> bool {
         self.active.load(Ordering::Relaxed)
     }
@@ -233,7 +259,7 @@ impl Node {
     }
 
     pub fn close(&mut self) {
-        self.active.store(false, Ordering::Relaxed);
+        self.inactivate();
         self.connection_pool.close();
     }
 

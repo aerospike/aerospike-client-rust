@@ -71,6 +71,11 @@ pub struct ClientPolicy {
     /// multiple server nodes in parallel threads. A thread pool improves performance because
     /// threads do not have to be created/destroyed for each command.
     pub thread_pool_size: usize,
+
+    /// Expected cluster name. It not `None`, server nodes must return this cluster name in order
+    /// to join the client's view of the cluster. Should only be set when connecting to servers
+    /// that support the "cluster-name" info command.
+    pub cluster_name: Option<String>,
 }
 
 impl Default for ClientPolicy {
@@ -86,6 +91,7 @@ impl Default for ClientPolicy {
             ip_map: None,
             use_services_alternate: false,
             thread_pool_size: 128,
+            cluster_name: None,
         }
     }
 }

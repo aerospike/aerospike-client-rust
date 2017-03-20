@@ -52,40 +52,68 @@ impl NodeValidator {
         }
     }
 
-    pub fn validate_node(&mut self, host: &Host) -> Result<()> {
-        self.set_aliases(host).chain_err(|| "Failed to resolve host aliases")?;
-        self.set_address().chain_err(|| "Failed to retrieve node address")?;
-        Ok(())
+    pub fn validate_node(&mut self, cluster: &Cluster, host: &Host) -> Result<()> {
+        self.resolve_aliases(host).chain_err(|| "Failed to resolve host aliases")?;
+
+        let mut last_err = None;
+        for ref alias in self.aliases() {
+            match self.validate_alias(cluster, alias) {
+                Ok(_) => return Ok(()),
+                Err(err) => {
+                    debug!("Alias {} failed: {:?}", alias, err);
+                    last_err = Some(err);
+                }
+            }
+        }
+        match last_err {
+            Some(err) => Err(err),
+            None => unreachable!(),
+        }
     }
 
     pub fn aliases(&self) -> Vec<Host> {
         self.aliases.to_vec()
     }
 
-    fn set_aliases(&mut self, host: &Host) -> Result<()> {
+    fn resolve_aliases(&mut self, host: &Host) -> Result<()> {
         self.aliases = (host.name.as_ref(), host.port)
             .to_socket_addrs()?
             .map(|addr| Host::new(&addr.ip().to_string(), addr.port()))
             .collect();
         debug!("Resolved aliases for host {}: {:?}", host, self.aliases);
-        Ok(())
+        if self.aliases.is_empty() {
+            Err(ErrorKind::Connection(format!("Failed to find addresses for {}", host)).into())
+        } else {
+            Ok(())
+        }
     }
 
-    fn set_address(&mut self) -> Result<()> {
-        for alias in self.aliases.to_vec() {
-            let mut conn = Connection::new(&alias, &self.client_policy)?;
-            conn.set_timeout(self.client_policy.timeout)?;
+    fn validate_alias(&mut self, cluster: &Cluster, alias: &Host) -> Result<()> {
+        let mut conn = Connection::new(&alias, &self.client_policy)?;
+        conn.set_timeout(self.client_policy.timeout)?;
+        let info_map = Message::info(&mut conn, &["node", "cluster-name", "features"])?;
 
-            let info_map = try!(Message::info(&mut conn, &["node", "features"]));
+        match info_map.get("node") {
+            None => bail!(ErrorKind::InvalidNode(String::from("Missing node name"))),
+            Some(node_name) => self.name = node_name.to_owned(),
+        }
 
-            if let Some(node_name) = info_map.get("node") {
-                self.name = node_name.to_string();
-                self.address = format!("{}:{}", alias.name, alias.port);
-
-                if let Some(features) = info_map.get("features") {
-                    self.set_features(features);
+        if let Some(ref cluster_name) = *cluster.cluster_name() {
+            match info_map.get("cluster-name") {
+                None => bail!(ErrorKind::InvalidNode(String::from("Missing cluster name"))),
+                Some(info_name) if info_name == cluster_name => {}
+                Some(info_name) => {
+                    bail!(ErrorKind::InvalidNode(format!("Cluster name mismatch: expected={}, got={}",
+                                                         cluster_name,
+                                                         info_name)))
                 }
             }
+        }
+
+        self.address = alias.address();
+
+        if let Some(features) = info_map.get("features") {
+            self.set_features(features);
         }
 
         Ok(())

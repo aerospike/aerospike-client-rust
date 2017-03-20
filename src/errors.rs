@@ -100,6 +100,12 @@ error_chain! {
             display("Invalid argument: {}", details)
         }
 
+/// Cluster node is invalid.
+        InvalidNode(details: String) {
+            description("Invalid cluster node")
+            display("Invalid cluster node: {}", details)
+        }
+
 /// Exceeded max. number of connections per node.
         NoMoreConnections {
             description("Too many connections")
