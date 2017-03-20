@@ -60,6 +60,11 @@ pub struct WritePolicy {
     /// operations are used in one operate call and some of those operations do not return results
     /// by default.
     pub respond_per_each_op: bool,
+
+    /// If the transaction results in a record deletion, leave a tombstone for the record. This
+    /// prevents deleted records from reappearing after node failures.  Valid for Aerospike Server
+    /// Enterprise Edition 3.10+ only.
+    pub durable_delete: bool,
 }
 
 
@@ -86,6 +91,7 @@ impl Default for WritePolicy {
             expiration: Expiration::NamespaceDefault,
             send_key: false,
             respond_per_each_op: false,
+            durable_delete: false,
         }
     }
 }

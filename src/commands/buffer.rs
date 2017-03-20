@@ -54,8 +54,8 @@ const INFO2_GENERATION: u8 = (1 << 2);
 // Update if new generation >= old, good for restore.
 const INFO2_GENERATION_GT: u8 = (1 << 3);
 
-// Create a duplicate on a generation collision.
-// const INFO2_GENERATION_DUP: u8 = (1 << 4);
+// Transaction resulting in record deletion leaves tombstone (Enterprise only).
+const INFO2_DURABLE_DELETE: u8 = (1 << 4);
 
 // Create only. Fail if record already exists.
 const INFO2_CREATE_ONLY: u8 = (1 << 5);
@@ -764,6 +764,10 @@ impl Buffer {
 
         if policy.base_policy.consistency_level == ConsistencyLevel::ConsistencyAll {
             read_attr |= INFO1_CONSISTENCY_ALL
+        }
+
+        if policy.durable_delete {
+            write_attr |= INFO2_DURABLE_DELETE
         }
 
         // Write all header data except total size which must be written last.
