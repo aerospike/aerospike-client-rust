@@ -22,9 +22,11 @@ use rand::Rng;
 use aerospike::{Client, ClientPolicy};
 
 lazy_static! {
-    pub static ref AEROSPIKE_HOSTS: String = env::var("AEROSPIKE_HOSTS").unwrap_or(String::from("127.0.0.1"));
+    pub static ref AEROSPIKE_HOSTS: String =
+        env::var("AEROSPIKE_HOSTS").unwrap_or(String::from("127.0.0.1"));
 
-    pub static ref AEROSPIKE_NAMESPACE: String = env::var("AEROSPIKE_NAMESPACE").unwrap_or(String::from("test"));
+    pub static ref AEROSPIKE_NAMESPACE: String =
+        env::var("AEROSPIKE_NAMESPACE").unwrap_or(String::from("test"));
 
     pub static ref GLOBAL_CLIENT_POLICY: ClientPolicy = {
         let mut policy = ClientPolicy::default();
