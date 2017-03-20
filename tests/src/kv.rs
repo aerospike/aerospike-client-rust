@@ -26,8 +26,8 @@ use common;
 fn connect() {
     let _ = env_logger::init();
 
-    let client = &common::GLOBAL_CLIENT;
-    let namespace: &str = &common::AEROSPIKE_NAMESPACE;
+    let client = common::client();
+    let namespace: &str = common::namespace();
     let set_name = &common::rand_str(10);
     let policy = ReadPolicy::default();
     let wpolicy = WritePolicy::default();

@@ -13,6 +13,8 @@
 // License for the specific language governing permissions and limitations under
 // the License.
 
+#![allow(dead_code)]
+
 use std::env;
 use std::sync::Arc;
 
@@ -22,13 +24,13 @@ use rand::Rng;
 use aerospike::{Client, ClientPolicy};
 
 lazy_static! {
-    pub static ref AEROSPIKE_HOSTS: String =
+    static ref AEROSPIKE_HOSTS: String =
         env::var("AEROSPIKE_HOSTS").unwrap_or(String::from("127.0.0.1"));
 
-    pub static ref AEROSPIKE_NAMESPACE: String =
+    static ref AEROSPIKE_NAMESPACE: String =
         env::var("AEROSPIKE_NAMESPACE").unwrap_or(String::from("test"));
 
-    pub static ref GLOBAL_CLIENT_POLICY: ClientPolicy = {
+    static ref GLOBAL_CLIENT_POLICY: ClientPolicy = {
         let mut policy = ClientPolicy::default();
         if let Ok(user) = env::var("AEROSPIKE_USER") {
             let password = env::var("AEROSPIKE_PASSWORD").unwrap_or(String::new());
@@ -37,9 +39,25 @@ lazy_static! {
         policy
     };
 
-    pub static ref GLOBAL_CLIENT: Arc<Client> = {
+    static ref GLOBAL_CLIENT: Arc<Client> = {
         Arc::new(Client::new(&GLOBAL_CLIENT_POLICY, &*AEROSPIKE_HOSTS).unwrap())
     };
+}
+
+pub fn hosts() -> &'static str {
+    &*AEROSPIKE_HOSTS
+}
+
+pub fn namespace() -> &'static str {
+    &*AEROSPIKE_NAMESPACE
+}
+
+pub fn client_policy() -> &'static ClientPolicy {
+    &*GLOBAL_CLIENT_POLICY
+}
+
+pub fn client() -> Arc<Client> {
+    GLOBAL_CLIENT.clone()
 }
 
 pub fn rand_str(sz: usize) -> String {

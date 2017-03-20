@@ -13,25 +13,23 @@
 // License for the specific language governing permissions and limitations under
 // the License.
 
-extern crate aerospike;
-extern crate env_logger;
+use std::thread;
+use std::time::Duration;
+
+use env_logger;
+use common;
 
 use aerospike::{Error, ErrorKind};
 use aerospike::UDFLang;
 use aerospike::Value;
 use aerospike::WritePolicy;
 
-use std::thread;
-use std::time::Duration;
-
-use common;
-
 #[test]
 fn execute_udf() {
     let _ = env_logger::init();
 
-    let client = &common::GLOBAL_CLIENT;
-    let namespace: &str = &common::AEROSPIKE_NAMESPACE;
+    let client = common::client();
+    let namespace = common::namespace();
     let set_name = &common::rand_str(10);
 
     let wpolicy = WritePolicy::default();

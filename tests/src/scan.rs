@@ -13,17 +13,15 @@
 // License for the specific language governing permissions and limitations under
 // the License.
 
-extern crate aerospike;
-extern crate env_logger;
-
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::thread;
 use std::time::Instant;
 
-use aerospike::{WritePolicy, ScanPolicy};
-
+use env_logger;
 use common;
+
+use aerospike::{WritePolicy, ScanPolicy};
 
 const EXPECTED: usize = 1000;
 
@@ -31,8 +29,8 @@ const EXPECTED: usize = 1000;
 fn scan_single_consumer() {
     let _ = env_logger::init();
 
-    let client = &common::GLOBAL_CLIENT;
-    let namespace: &str = &common::AEROSPIKE_NAMESPACE;
+    let client = common::client();
+    let namespace = common::namespace();
     let set_name = &common::rand_str(10);
 
     let wpolicy = WritePolicy::default();
@@ -58,8 +56,8 @@ fn scan_single_consumer() {
 fn scan_multi_consumer() {
     let _ = env_logger::init();
 
-    let client = &common::GLOBAL_CLIENT;
-    let namespace: &str = &common::AEROSPIKE_NAMESPACE;
+    let client = common::client();
+    let namespace = common::namespace();
     let set_name = &common::rand_str(10);
 
     let wpolicy = WritePolicy::default();

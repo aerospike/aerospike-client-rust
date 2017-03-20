@@ -13,20 +13,19 @@
 // License for the specific language governing permissions and limitations under
 // the License.
 
+use env_logger;
+use common;
+
 use aerospike::{Value, ReadPolicy, WritePolicy};
 use aerospike::operations;
 use aerospike::operations::lists;
-
-use env_logger;
-
-use common;
 
 #[test]
 fn cdt_list() {
     let _ = env_logger::init();
 
-    let client = &common::GLOBAL_CLIENT;
-    let namespace: &str = &common::AEROSPIKE_NAMESPACE;
+    let client = common::client();
+    let namespace = common::namespace();
     let set_name = &common::rand_str(10);
 
     let policy = ReadPolicy::default();

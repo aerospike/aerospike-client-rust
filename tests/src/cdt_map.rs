@@ -15,15 +15,18 @@
 
 use std::collections::HashMap;
 
+use env_logger;
+use common;
+
 use aerospike::{ReadPolicy, WritePolicy, MapPolicy, MapReturnType};
 use aerospike::operations::maps;
 
-use common;
-
 #[test]
 fn map_operations() {
-    let client = &common::GLOBAL_CLIENT;
-    let namespace: &str = &common::AEROSPIKE_NAMESPACE;
+    let _ = env_logger::init();
+
+    let client = common::client();
+    let namespace = common::namespace();
     let set_name = &common::rand_str(10);
 
     let wpolicy = WritePolicy::default();

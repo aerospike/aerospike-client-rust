@@ -13,28 +13,24 @@
 // License for the specific language governing permissions and limitations under
 // the License.
 
-extern crate aerospike;
-extern crate env_logger;
-
-use std::sync::atomic::{AtomicUsize, Ordering};
-
-use aerospike::*;
-
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::thread;
 use std::time::Duration;
 
+use env_logger;
 use common;
+
+use aerospike::*;
 
 const EXPECTED: usize = 1000;
 
 #[test]
 fn query_single_consumer() {
-
     let _ = env_logger::init();
 
-    let client = &common::GLOBAL_CLIENT;
-    let namespace: &str = &common::AEROSPIKE_NAMESPACE;
+    let client = common::client();
+    let namespace = common::namespace();
     let set_name = &common::rand_str(10);
 
     let wpolicy = WritePolicy::default();
@@ -105,8 +101,8 @@ fn query_single_consumer() {
 fn query_multi_consumer() {
     let _ = env_logger::init();
 
-    let client = &common::GLOBAL_CLIENT;
-    let namespace: &str = &common::AEROSPIKE_NAMESPACE;
+    let client = common::client();
+    let namespace = common::namespace();
     let set_name = &common::rand_str(10);
 
     let wpolicy = WritePolicy::default();
