@@ -19,13 +19,15 @@ pub mod partition;
 pub mod partition_tokenizer;
 
 use std::collections::HashMap;
-use std::vec::Vec;
-use std::sync::{RwLock, Arc, Mutex};
+use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicIsize, Ordering};
-use std::thread;
 use std::sync::mpsc::{Sender, Receiver, TryRecvError};
 use std::sync::mpsc;
+use std::thread;
 use std::time::{Instant, Duration};
+use std::vec::Vec;
+
+use parking_lot::{RwLock, Mutex};
 
 pub use self::node::Node;
 
@@ -216,19 +218,19 @@ impl Cluster {
     }
 
     pub fn add_seeds(&self, new_seeds: &[Host]) -> Result<()> {
-        let mut seeds = self.seeds.write().unwrap();
+        let mut seeds = self.seeds.write();
         seeds.extend_from_slice(new_seeds);
 
         Ok(())
     }
 
     pub fn alias_exists(&self, host: &Host) -> Result<bool> {
-        let aliases = self.aliases.read().unwrap();
+        let aliases = self.aliases.read();
         Ok(aliases.contains_key(host))
     }
 
     fn set_partitions(&self, partitions: HashMap<String, Vec<Arc<Node>>>) {
-        let mut partition_map = self.partition_write_map.write().unwrap();
+        let mut partition_map = self.partition_write_map.write();
         *partition_map = partitions;
     }
 
@@ -250,7 +252,7 @@ impl Cluster {
     }
 
     pub fn seed_nodes(&self) -> bool {
-        let seed_array = self.seeds.read().unwrap();
+        let seed_array = self.seeds.read();
 
         info!("Seeding the cluster. Seeds count: {}", seed_array.len());
 
@@ -402,25 +404,25 @@ impl Cluster {
     }
 
     fn add_alias(&self, host: Host, node: Arc<Node>) {
-        let mut aliases = self.aliases.write().unwrap();
+        let mut aliases = self.aliases.write();
         node.add_alias(host.clone());
         aliases.insert(host, node);
     }
 
     fn remove_alias(&self, host: &Host) {
-        let mut aliases = self.aliases.write().unwrap();
+        let mut aliases = self.aliases.write();
         aliases.remove(host);
     }
 
     fn add_aliases(&self, node: Arc<Node>) {
-        let mut aliases = self.aliases.write().unwrap();
+        let mut aliases = self.aliases.write();
         for alias in node.aliases() {
             aliases.insert(alias, node.clone());
         }
     }
 
     fn find_node_in_partition_map(&self, filter: Arc<Node>) -> bool {
-        let partitions = self.partition_write_map.read().unwrap();
+        let partitions = self.partition_write_map.read();
         (*partitions).values().any(|map| map.iter().any(|node| *node == filter))
     }
 
@@ -458,21 +460,15 @@ impl Cluster {
     }
 
     pub fn aliases(&self) -> HashMap<Host, Arc<Node>> {
-        self.aliases
-            .read()
-            .unwrap()
-            .clone()
+        self.aliases.read().clone()
     }
 
     pub fn nodes(&self) -> Vec<Arc<Node>> {
-        self.nodes
-            .read()
-            .unwrap()
-            .clone()
+        self.nodes.read().clone()
     }
 
     fn set_nodes(&self, new_nodes: Vec<Arc<Node>>) {
-        let mut nodes = self.nodes.write().unwrap();
+        let mut nodes = self.nodes.write();
         *nodes = new_nodes;
     }
 
@@ -480,11 +476,9 @@ impl Cluster {
         let partitions = self.partitions();
         let partitions = partitions.read();
 
-        if let Ok(partitions1) = partitions {
-            if let Some(node_array) = partitions1.get(partition.namespace) {
-                if let Some(node) = node_array.get(partition.partition_id) {
-                    return Ok(node.clone());
-                }
+        if let Some(node_array) = partitions.get(partition.namespace) {
+            if let Some(node) = node_array.get(partition.partition_id) {
+                return Ok(node.clone());
             }
         }
 
@@ -522,7 +516,7 @@ impl Cluster {
     pub fn close(&self) -> Result<()> {
         if !self.closed.load(Ordering::Relaxed) {
             // close tend by closing the channel
-            let tx = self.tend_channel.lock().unwrap();
+            let tx = self.tend_channel.lock();
             drop(tx);
         }
 

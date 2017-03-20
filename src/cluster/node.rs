@@ -15,11 +15,13 @@
 
 use std::str::FromStr;
 use std::collections::HashMap;
-use std::sync::{RwLock, Arc};
+use std::sync::Arc;
 use std::time::Duration;
 use std::sync::atomic::{AtomicBool, AtomicIsize, AtomicUsize, Ordering};
 use std::fmt;
 use std::result::Result as StdResult;
+
+use parking_lot::RwLock;
 
 use errors::*;
 use net::{Host, ConnectionPool, PooledConnection};
@@ -248,12 +250,11 @@ impl Node {
     }
 
     pub fn aliases(&self) -> Vec<Host> {
-        let aliases = self.aliases.read().unwrap();
-        aliases.to_vec()
+        self.aliases.read().to_vec()
     }
 
     pub fn add_alias(&self, alias: Host) {
-        let mut aliases = self.aliases.write().unwrap();
+        let mut aliases = self.aliases.write();
         aliases.push(alias);
         self.reference_count.fetch_add(1, Ordering::Relaxed);
     }

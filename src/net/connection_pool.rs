@@ -16,8 +16,10 @@
 use std::collections::VecDeque;
 use std::ops::{Deref, DerefMut, Drop};
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::Duration;
+
+use parking_lot::Mutex;
 
 use errors::*;
 use net::{Connection, Host};
@@ -59,10 +61,7 @@ impl Queue {
     }
 
     pub fn get(&self, timeout: Option<Duration>) -> Result<PooledConnection> {
-        let mut internals = self.0
-            .internals
-            .lock()
-            .unwrap();
+        let mut internals = self.0.internals.lock();
         let connection;
         loop {
             match internals.connections.pop_front() {
@@ -100,10 +99,7 @@ impl Queue {
     }
 
     pub fn put_back(&self, mut conn: Connection) {
-        let mut internals = self.0
-            .internals
-            .lock()
-            .unwrap();
+        let mut internals = self.0.internals.lock();
         if internals.num_conns < self.0.capacity {
             internals.connections.push_back(IdleConnection(conn));
         } else {
@@ -114,20 +110,14 @@ impl Queue {
 
     pub fn drop_conn(&self, mut conn: Connection) {
         {
-            let mut internals = self.0
-                .internals
-                .lock()
-                .unwrap();
+            let mut internals = self.0.internals.lock();
             internals.num_conns -= 1;
         }
         conn.close();
     }
 
     pub fn clear(&mut self) {
-        let mut internals = self.0
-            .internals
-            .lock()
-            .unwrap();
+        let mut internals = self.0.internals.lock();
         for mut conn in internals.connections.drain(..) {
             conn.0.close();
         }
