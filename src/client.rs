@@ -26,6 +26,7 @@ use scoped_pool::Pool;
 
 use errors::*;
 use Bin;
+use Bins;
 use CollectionIndexType;
 use IndexType;
 use Key;
@@ -37,7 +38,7 @@ use UDFLang;
 use Value;
 use cluster::{Cluster, Node};
 use commands::{ReadCommand, WriteCommand, DeleteCommand, TouchCommand, ExistsCommand,
-               ReadHeaderCommand, OperateCommand, ExecuteUDFCommand, ScanCommand, QueryCommand};
+               OperateCommand, ExecuteUDFCommand, ScanCommand, QueryCommand};
 use net::ToHosts;
 use operations::{Operation, OperationType};
 use policy::{ClientPolicy, ReadPolicy, WritePolicy, ScanPolicy, QueryPolicy};
@@ -119,9 +120,9 @@ impl Client {
         self.cluster.is_connected()
     }
 
-    /// Read record header and bins for the specified key. The policy can be used to specify
-    /// timeouts. If no bin names are specified (`bin_names = None`), then the entire record will
-    /// be read.
+    /// Read record for the specified key. Depending on the bins value provided, all record bins,
+    /// only selected record bins or only the record headers will be returned. The policy can be
+    /// used to specify timeouts.
     ///
     /// # Examples
     ///
@@ -134,8 +135,7 @@ impl Client {
     /// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap();
     /// # let client = Client::new(&ClientPolicy::default(), &hosts).unwrap();
     /// let key = as_key!("test", "test", "mykey");
-    /// let bins = vec!["a"];
-    /// match client.get(&ReadPolicy::default(), &key, Some(&bins)) {
+    /// match client.get(&ReadPolicy::default(), &key, &["a", "b"]) {
     ///     Ok(record)
     ///         => println!("a={:?}", record.bins.get("a")),
     ///     Err(Error(ErrorKind::ServerError(ResultCode::KeyNotFoundError), _))
@@ -145,20 +145,6 @@ impl Client {
     /// }
     /// # }
     /// ```
-    pub fn get(&self,
-               policy: &ReadPolicy,
-               key: &Key,
-               bin_names: Option<&[&str]>)
-               -> Result<Record> {
-        let mut command = ReadCommand::new(policy, self.cluster.clone(), key, bin_names);
-        try!(command.execute());
-        Ok(command.record.unwrap())
-    }
-
-    /// Read record generation and expiration for the specified key. Bins are not read. The policy
-    /// can be used to specify timeouts.
-    ///
-    /// # Examples
     ///
     /// Determine the remaining time-to-live of a record.
     ///
@@ -169,7 +155,7 @@ impl Client {
     /// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap();
     /// # let client = Client::new(&ClientPolicy::default(), &hosts).unwrap();
     /// let key = as_key!("test", "test", "mykey");
-    /// match client.get_header(&ReadPolicy::default(), &key) {
+    /// match client.get(&ReadPolicy::default(), &key, Bins::None) {
     ///     Ok(record) => {
     ///         match record.time_to_live() {
     ///             None => println!("record never expires"),
@@ -183,9 +169,11 @@ impl Client {
     /// }
     /// # }
     /// ```
-    pub fn get_header(&self, policy: &ReadPolicy, key: &Key) -> Result<Record> {
-        let mut command = ReadHeaderCommand::new(policy, self.cluster.clone(), key);
-        try!(command.execute());
+    pub fn get<'a, T>(&self, policy: &ReadPolicy, key: &Key, bins: T) -> Result<Record>
+        where T: Into<Bins<'a>>
+    {
+        let mut command = ReadCommand::new(policy, self.cluster.clone(), key, bins.into());
+        command.execute()?;
         Ok(command.record.unwrap())
     }
 

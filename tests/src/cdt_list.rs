@@ -16,7 +16,7 @@
 use env_logger;
 use common;
 
-use aerospike::{Value, ReadPolicy, WritePolicy};
+use aerospike::{Bins, Value, ReadPolicy, WritePolicy};
 use aerospike::operations;
 use aerospike::operations::lists;
 
@@ -39,7 +39,7 @@ fn cdt_list() {
     client.delete(&wpolicy, &key).unwrap();
 
     client.put(&wpolicy, &key, &bins).unwrap();
-    let rec = client.get(&policy, &key, None).unwrap();
+    let rec = client.get(&policy, &key, Bins::All).unwrap();
     assert_eq!(*rec.bins.get("bin").unwrap(), val);
 
     let ops = &vec![lists::size("bin")];

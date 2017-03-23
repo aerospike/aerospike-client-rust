@@ -44,8 +44,7 @@
 //! use std::time::Instant;
 //! use std::thread;
 //!
-//! use aerospike::Client;
-//! use aerospike::{ClientPolicy, ReadPolicy, WritePolicy};
+//! use aerospike::{Bins, Client, ClientPolicy, ReadPolicy, WritePolicy};
 //! use aerospike::operations;
 //!
 //! fn main() {
@@ -68,14 +67,14 @@
 //!             let bins = vec![&wbin];
 //!
 //!             client.put(&wpolicy, &key, &bins).unwrap();
-//!             let rec = client.get(&rpolicy, &key, None);
+//!             let rec = client.get(&rpolicy, &key, Bins::All);
 //!             println!("Record: {}", rec.unwrap());
 //!
 //!             client.touch(&wpolicy, &key).unwrap();
-//!             let rec = client.get(&rpolicy, &key, None);
+//!             let rec = client.get(&rpolicy, &key, Bins::All);
 //!             println!("Record: {}", rec.unwrap());
 //!
-//!             let rec = client.get_header(&rpolicy, &key);
+//!             let rec = client.get(&rpolicy, &key, Bins::None);
 //!             println!("Record Header: {}", rec.unwrap());
 //!
 //!             let exists = client.exists(&wpolicy, &key).unwrap();
@@ -121,7 +120,7 @@ extern crate error_chain;
 extern crate parking_lot;
 extern crate scoped_pool;
 
-pub use bin::Bin;
+pub use bin::{Bin, Bins};
 pub use client::Client;
 pub use errors::{Error, ErrorKind, Result};
 pub use key::Key;

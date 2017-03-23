@@ -19,6 +19,7 @@ use byteorder::{NetworkEndian, ByteOrder};
 
 use errors::*;
 use Bin;
+use Bins;
 use CollectionIndexType;
 use Key;
 use Statement;
@@ -215,45 +216,28 @@ impl Buffer {
         self.end()
     }
 
-    pub fn set_read_for_key_only(&mut self, policy: &ReadPolicy, key: &Key) -> Result<()> {
-        try!(self.begin());
-
-        let field_count = try!(self.estimate_key_size(key, false));
-        try!(self.size_buffer());
-        try!(self.write_header(policy, INFO1_READ | INFO1_GET_ALL, 0, field_count, 0));
-        try!(self.write_key(key, false));
-
-        self.end()
-    }
-
-    // Writes the command for get operations (specified bins)
-    pub fn set_read(&mut self,
-                    policy: &ReadPolicy,
-                    key: &Key,
-                    bin_names: Option<&[&str]>)
-                    -> Result<()> {
-        match bin_names {
-            None => {
-                try!(self.set_read_for_key_only(policy, key));
-            }
-            Some(bin_names) => {
+    // Writes the command for get operations
+    pub fn set_read<'a>(&mut self, policy: &ReadPolicy, key: &Key, bins: &Bins<'a>) -> Result<()> {
+        match *bins {
+            Bins::None => self.set_read_header(policy, key),
+            Bins::All => self.set_read_for_key_only(policy, key),
+            Bins::Some(bin_names) => {
                 try!(self.begin());
                 let field_count = try!(self.estimate_key_size(key, false));
                 for bin_name in bin_names {
                     try!(self.estimate_operation_size_for_bin_name(bin_name));
                 }
 
-                try!(self.size_buffer());
-                try!(self.write_header(policy, INFO1_READ, 0, field_count, bin_names.len() as u16));
-                try!(self.write_key(key, false));
+                self.size_buffer()?;
+                self.write_header(policy, INFO1_READ, 0, field_count, bin_names.len() as u16)?;
+                self.write_key(key, false)?;
                 for bin_name in bin_names {
-                    try!(self.write_operation_for_bin_name(bin_name, OperationType::Read));
+                    self.write_operation_for_bin_name(bin_name, OperationType::Read)?;
                 }
-                try!(self.end());
+                self.end()?;
+                Ok(())
             }
         }
-
-        Ok(())
     }
 
     // Writes the command for getting metadata operations
@@ -265,6 +249,17 @@ impl Buffer {
         try!(self.write_header(policy, INFO1_READ | INFO1_NOBINDATA, 0, field_count, 1));
         try!(self.write_key(key, false));
         try!(self.write_operation_for_bin_name("", OperationType::Read));
+        self.end()
+    }
+
+    pub fn set_read_for_key_only(&mut self, policy: &ReadPolicy, key: &Key) -> Result<()> {
+        try!(self.begin());
+
+        let field_count = try!(self.estimate_key_size(key, false));
+        try!(self.size_buffer());
+        try!(self.write_header(policy, INFO1_READ | INFO1_GET_ALL, 0, field_count, 0));
+        try!(self.write_key(key, false));
+
         self.end()
     }
 

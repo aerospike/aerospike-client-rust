@@ -32,8 +32,7 @@ use std::sync::Arc;
 use std::time::Instant;
 use std::thread;
 
-use aerospike::Client;
-use aerospike::{ClientPolicy, ReadPolicy, WritePolicy};
+use aerospike::{Bins, Client, ClientPolicy, ReadPolicy, WritePolicy};
 use aerospike::operations;
 
 fn main() {
@@ -56,14 +55,14 @@ fn main() {
             let bins = vec![&wbin];
 
             client.put(&wpolicy, &key, &bins).unwrap();
-            let rec = client.get(&rpolicy, &key, None);
+            let rec = client.get(&rpolicy, &key, Bins::All);
             println!("Record: {}", rec.unwrap());
 
             client.touch(&wpolicy, &key).unwrap();
-            let rec = client.get(&rpolicy, &key, None);
+            let rec = client.get(&rpolicy, &key, Bins::All);
             println!("Record: {}", rec.unwrap());
 
-            let rec = client.get_header(&rpolicy, &key);
+            let rec = client.get(&rpolicy, &key, Bins::None);
             println!("Record Header: {}", rec.unwrap());
 
             let exists = client.exists(&wpolicy, &key).unwrap();

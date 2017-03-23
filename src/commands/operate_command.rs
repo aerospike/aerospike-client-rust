@@ -16,6 +16,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use errors::*;
+use Bins;
 use Key;
 use cluster::{Node, Cluster};
 use commands::{Command, SingleCommand, ReadCommand};
@@ -36,7 +37,7 @@ impl<'a> OperateCommand<'a> {
                operations: &'a [Operation<'a>])
                -> Self {
         OperateCommand {
-            read_command: ReadCommand::new(&policy.base_policy, cluster, key, None),
+            read_command: ReadCommand::new(&policy.base_policy, cluster, key, Bins::All),
             policy: policy,
             operations: operations,
         }
