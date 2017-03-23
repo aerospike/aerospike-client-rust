@@ -22,7 +22,7 @@ use std::io::prelude::*;
 use std::path::Path;
 
 use rustc_serialize::base64::{ToBase64, FromBase64, STANDARD};
-use threadpool::ThreadPool;
+use scoped_pool::Pool;
 
 use errors::*;
 use Bin;
@@ -58,7 +58,7 @@ use policy::{ClientPolicy, ReadPolicy, WritePolicy, ScanPolicy, QueryPolicy};
 /// relevant subset of bins.
 pub struct Client {
     cluster: Arc<Cluster>,
-    thread_pool: ThreadPool,
+    thread_pool: Pool,
 }
 
 unsafe impl Send for Client {}
@@ -101,7 +101,7 @@ impl Client {
     pub fn new(policy: &ClientPolicy, hosts: &ToHosts) -> Result<Self> {
         let hosts = try!(hosts.to_hosts());
         let cluster = try!(Cluster::new(policy.clone(), &hosts));
-        let thread_pool = ThreadPool::new(policy.thread_pool_size);
+        let thread_pool = Pool::new(policy.thread_pool_size);
 
         Ok(Client {
                cluster: cluster,
@@ -635,7 +635,7 @@ impl Client {
         let set_name = set_name.to_owned();
         let bin_names = bin_names.to_owned();
 
-        self.thread_pool.execute(move || {
+        self.thread_pool.spawn(move || {
             let mut command = ScanCommand::new(&policy,
                                                node,
                                                &namespace,
@@ -684,7 +684,7 @@ impl Client {
             let policy = policy.to_owned();
             let statement = statement.clone();
 
-            self.thread_pool.execute(move || {
+            self.thread_pool.spawn(move || {
                 let mut command = QueryCommand::new(&policy, node, statement, t_recordset);
                 command.execute().unwrap();
             });
@@ -709,7 +709,7 @@ impl Client {
         let policy = policy.to_owned();
         let statement = Arc::new(statement).clone();
 
-        self.thread_pool.execute(move || {
+        self.thread_pool.spawn(move || {
             let mut command = QueryCommand::new(&policy, node, statement, t_recordset);
             command.execute().unwrap();
         });
