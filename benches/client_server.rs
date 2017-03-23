@@ -43,3 +43,18 @@ fn single_key_read(b: &mut Bencher) {
 
     b.iter(|| client.get(&rpolicy, &key, None).unwrap());
 }
+
+#[bench]
+fn single_key_read_header(b: &mut Bencher) {
+    let client = common::client();
+    let namespace = common::namespace();
+    let set_name = &common::rand_str(10);
+    let key = as_key!(namespace, set_name, common::rand_str(10));
+    let wbin = as_bin!("i", 1);
+    let bins = vec![&wbin];
+    let rpolicy = ReadPolicy::default();
+    let wpolicy = WritePolicy::default();
+    client.put(&wpolicy, &key, &bins).unwrap();
+
+    b.iter(|| client.get_header(&rpolicy, &key).unwrap());
+}
