@@ -31,8 +31,8 @@ mod common;
 
 #[bench]
 fn single_key_read(b: &mut Bencher) {
-    let client = &common::GLOBAL_CLIENT;
-    let namespace: &str = &common::AEROSPIKE_NAMESPACE;
+    let client = common::client();
+    let namespace = common::namespace();
     let set_name = &common::rand_str(10);
     let key = as_key!(namespace, set_name, common::rand_str(10));
     let wbin = as_bin!("i", 1);
