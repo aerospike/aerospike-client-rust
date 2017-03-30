@@ -24,6 +24,7 @@ pub mod execute_udf_command;
 pub mod stream_command;
 pub mod scan_command;
 pub mod query_command;
+pub mod batch_read_command;
 pub mod admin_command;
 pub mod buffer;
 pub mod particle_type;
@@ -33,6 +34,7 @@ mod field_type;
 use std::sync::Arc;
 use std::time::Duration;
 
+pub use self::batch_read_command::BatchReadCommand;
 pub use self::delete_command::DeleteCommand;
 pub use self::execute_udf_command::ExecuteUDFCommand;
 pub use self::exists_command::ExistsCommand;
@@ -50,6 +52,7 @@ pub use self::particle_type::ParticleType;
 use errors::*;
 use net::Connection;
 use cluster::Node;
+use ResultCode;
 
 // Command interface describes all commands available
 pub trait Command {
@@ -58,4 +61,16 @@ pub trait Command {
     fn get_node(&self) -> Result<Arc<Node>>;
     fn parse_result(&mut self, conn: &mut Connection) -> Result<()>;
     fn write_buffer(&mut self, conn: &mut Connection) -> Result<()>;
+}
+
+pub fn keep_connection(err: &Error) -> bool {
+    match *err {
+        Error(ErrorKind::ServerError(result_code), _) => {
+            match result_code {
+                ResultCode::KeyNotFoundError => true,
+                _ => false,
+            }
+        }
+        _ => false,
+    }
 }
