@@ -36,7 +36,7 @@ struct BatchRecord {
 
 pub struct BatchReadCommand<'a, 'b> {
     policy: &'b BatchPolicy,
-    node: Arc<Node>,
+    pub node: Arc<Node>,
     batch_reads: SharedSlice<'a, BatchRead<'a>>,
     offsets: Vec<usize>,
 }

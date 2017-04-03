@@ -127,9 +127,9 @@ pub use errors::{Error, ErrorKind, Result};
 pub use key::Key;
 pub use net::Host;
 pub use operations::{MapPolicy, MapReturnType, MapWriteMode};
-pub use policy::{Policy, BatchPolicy, ClientPolicy, ReadPolicy, WritePolicy, ScanPolicy,
-                 QueryPolicy, Priority, ConsistencyLevel, CommitLevel, RecordExistsAction,
-                 GenerationPolicy, Expiration};
+pub use policy::{Policy, BatchPolicy, Concurrency, ClientPolicy, ReadPolicy, WritePolicy,
+                 ScanPolicy, QueryPolicy, Priority, ConsistencyLevel, CommitLevel,
+                 RecordExistsAction, GenerationPolicy, Expiration};
 pub use query::{Statement, UDFLang, Recordset, IndexType, CollectionIndexType};
 pub use record::Record;
 pub use result_code::ResultCode;

@@ -13,30 +13,7 @@
 // License for the specific language governing permissions and limitations under
 // the License.
 
-use policy::{BasePolicy, PolicyLike};
-
-pub enum BatchConcurrency {
-    /// Issue batch requests sequentially. This mode has a performance advantage for small to
-    /// medium sized batch sizes because requests can be issued in the main transaction thread.
-    /// This is the default.
-    Sequential,
-
-    /// Issue all batch requests in parallel threads. This mode has a performance advantage for
-    /// extremely large batch sizes because each node can process the request immediately. The
-    /// downside is extra threads will need to be created (or takedn from a thread pool).
-    Parallel,
-
-    /// Issue up to N batch requests in parallel threads. When a request completes, a new request
-    /// will be issued until all threads are complete. This mode prevents too many parallel threads
-    /// being created for large cluster implementations. The downside is extra threads will still
-    /// need to be created (or taken from a thread pool).
-    ///
-    /// E.g. if there are 16 nodes/namespace combinations requested and concurrency is set to
-    /// `MaxThreads(8)`, then batch requests will be made for 8 node/namespace combinations in
-    /// parallel threads. When a request completes, a new request will be issued until all 16
-    /// requests are complete.
-    MaxThreads(usize),
-}
+use policy::{BasePolicy, PolicyLike, Concurrency};
 
 /// `BatchPolicy` encapsulates parameters for all batch operations.
 pub struct BatchPolicy {
@@ -45,7 +22,7 @@ pub struct BatchPolicy {
 
     /// Concurrency mode for batch requests: Sequential or Parallel (with optional max. no of
     /// parallel threads).
-    pub concurrency: BatchConcurrency,
+    pub concurrency: Concurrency,
 
     /// Allow batch to be processed immediately in the server's receiving thread when the server
     /// deems it to be appropriate. If false, the batch will always be processed in separate
@@ -79,7 +56,7 @@ impl Default for BatchPolicy {
     fn default() -> Self {
         BatchPolicy {
             base_policy: BasePolicy::default(),
-            concurrency: BatchConcurrency::Sequential,
+            concurrency: Concurrency::Sequential,
             allow_inline: true,
             send_set_name: false,
         }

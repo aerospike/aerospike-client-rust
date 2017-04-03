@@ -188,10 +188,10 @@ impl Client {
     /// field is not found, the corresponding record field will be `None`. The policy can be used
     /// to specify timeouts and maximum concurrent threads. This method requires Aerospike Server
     /// version >= 3.6.0.
-    pub fn batch_get<'a>(&self,
-                         policy: &BatchPolicy,
-                         batch_reads: &'a mut [BatchRead<'a>])
-                         -> Result<()> {
+    pub fn batch_get<'a, 'b: 'a>(&self,
+                                 policy: &BatchPolicy,
+                                 batch_reads: &'b mut [BatchRead<'a>])
+                                 -> Result<()> {
         let executor = BatchExecutor::new(self.cluster.clone(), self.thread_pool.clone());
         executor.execute_batch_read(policy, batch_reads)
     }

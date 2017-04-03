@@ -15,7 +15,7 @@
 
 use aerospike::BatchRead;
 use aerospike::Bins;
-use aerospike::{BatchPolicy, WritePolicy};
+use aerospike::{BatchPolicy, WritePolicy, Concurrency};
 
 use env_logger;
 
@@ -28,7 +28,8 @@ fn batch_get() {
     let client = common::client();
     let namespace: &str = common::namespace();
     let set_name = &common::rand_str(10);
-    let bpolicy = BatchPolicy::default();
+    let mut bpolicy = BatchPolicy::default();
+    bpolicy.concurrency = Concurrency::Parallel;
     let wpolicy = WritePolicy::default();
 
     let bin1 = as_bin!("a", "a value");

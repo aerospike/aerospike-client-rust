@@ -17,6 +17,7 @@ use std::cell::UnsafeCell;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::mem::transmute;
+use std::cmp;
 
 use scoped_pool::Pool;
 use parking_lot::Mutex;
@@ -27,7 +28,7 @@ use batch::BatchRead;
 use cluster::partition::Partition;
 use cluster::{Cluster, Node};
 use commands::BatchReadCommand;
-use policy::BatchPolicy;
+use policy::{BatchPolicy, Concurrency};
 
 pub struct BatchExecutor {
     cluster: Arc<Cluster>,
@@ -42,26 +43,46 @@ impl BatchExecutor {
         }
     }
 
-    pub fn execute_batch_read<'a>(&self,
-                                  policy: &BatchPolicy,
-                                  batch_reads: &'a mut [BatchRead<'a>])
-                                  -> Result<()> {
+    pub fn execute_batch_read<'a, 'b: 'a>(&self,
+                                          policy: &BatchPolicy,
+                                          batch_reads: &'b mut [BatchRead<'a>])
+                                          -> Result<()> {
         let mut batch_nodes = self.get_batch_nodes(batch_reads)?;
         let batch_reads = SharedSlice::new(batch_reads);
+        let jobs = batch_nodes.drain()
+            .map(|(node, offsets)| {
+                     BatchReadCommand::new(policy, node, batch_reads.clone(), offsets)
+                 })
+            .collect();
+        self.execute_batch_jobs(jobs, &policy.concurrency)
+    }
+
+    fn execute_batch_jobs(&self,
+                          mut jobs: Vec<BatchReadCommand>,
+                          concurrency: &Concurrency)
+                          -> Result<()> {
+        let threads = match *concurrency {
+            Concurrency::Sequential => 1,
+            Concurrency::Parallel => jobs.len(),
+            Concurrency::MaxThreads(max) => cmp::min(max, jobs.len()),
+        };
+        let jobs = Arc::new(Mutex::new(jobs.iter_mut()));
         let last_err: Arc<Mutex<Option<Error>>> = Arc::default();
         self.thread_pool.scoped(|scope| {
-            for (node, offsets) in batch_nodes.drain() {
-                let batch_reads = batch_reads.clone();
+            for _ in 0..threads {
                 let last_err = last_err.clone();
+                let jobs = jobs.clone();
                 scope.execute(move || {
-                    let mut cmd =
-                        BatchReadCommand::new(policy, node, batch_reads, offsets);
-                    if let Err(err) = cmd.execute() {
-                        *last_err.lock() = Some(err);
-                    };
+                    let next_job = || jobs.lock().next();
+                    while let Some(mut cmd) = next_job() {
+                        if let Err(err) = cmd.execute() {
+                            *last_err.lock() = Some(err);
+                            jobs.lock().all(|_| true); // consume the remaining jobs
+                        };
+                    }
                 });
             }
-            () // to keep rustfmt from horribly mangling the closure...
+            () // foo
         });
         match Arc::try_unwrap(last_err).unwrap().into_inner() {
             None => Ok(()),
