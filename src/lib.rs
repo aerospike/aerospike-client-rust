@@ -113,13 +113,13 @@ extern crate crypto;
 extern crate rustc_serialize;
 extern crate crossbeam;
 extern crate rand;
-extern crate threadpool;
 extern crate pwhash;
 #[macro_use]
 extern crate lazy_static;
 #[macro_use]
 extern crate error_chain;
 extern crate parking_lot;
+extern crate scoped_pool;
 
 pub use bin::Bin;
 pub use client::Client;
