@@ -188,6 +188,37 @@ impl Client {
     /// field is not found, the corresponding record field will be `None`. The policy can be used
     /// to specify timeouts and maximum concurrent threads. This method requires Aerospike Server
     /// version >= 3.6.0.
+    ///
+    /// # Examples
+    ///
+    /// Fetch multiple records in a single client request
+    ///
+    /// ```rust
+    /// # #[macro_use] extern crate aerospike;
+    /// # use aerospike::*;
+    /// # fn main() {
+    /// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap();
+    /// # let client = Client::new(&ClientPolicy::default(), &hosts).unwrap();
+    /// let bins = ["name", "age"];
+    /// let mut batch_reads = vec![];
+    /// for i in 0..10 {
+    ///   let key = as_key!("test", "test", i);
+    ///   batch_reads.push(BatchRead::new(key, &bins));
+    /// }
+    /// match client.batch_get(&BatchPolicy::default(), batch_reads) {
+    ///     Ok(results) => {
+    ///       for result in results {
+    ///         match result.record {
+    ///           Some(record) => println!("{:?} => {:?}", result.key, record.bins),
+    ///           None => println!("No such record: {:?}", result.key),
+    ///         }
+    ///       }
+    ///     }
+    ///     Err(err)
+    ///         => println!("Error executing batch request: {}", err),
+    /// }
+    /// # }
+    /// ```
     pub fn batch_get<'a>(&self,
                          policy: &BatchPolicy,
                          batch_reads: Vec<BatchRead<'a>>)
