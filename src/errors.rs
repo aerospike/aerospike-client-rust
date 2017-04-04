@@ -28,7 +28,7 @@
 //!     let policy = ClientPolicy::default();
 //!     let client = Client::new(&policy, &hosts).expect("Failed to connect to cluster");
 //!     let key = as_key!("test", "test", "someKey");
-//!     match client.get_header(&ReadPolicy::default(), &key) {
+//!     match client.get(&ReadPolicy::default(), &key, Bins::None) {
 //!         Ok(record) => {
 //!             match record.time_to_live() {
 //!                 None => println!("record never expires"),

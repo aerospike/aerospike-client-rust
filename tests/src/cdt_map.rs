@@ -18,7 +18,7 @@ use std::collections::HashMap;
 use env_logger;
 use common;
 
-use aerospike::{ReadPolicy, WritePolicy, MapPolicy, MapReturnType};
+use aerospike::{Bins, ReadPolicy, WritePolicy, MapPolicy, MapReturnType};
 use aerospike::operations::maps;
 
 #[test]
@@ -56,7 +56,7 @@ fn map_operations() {
     // returns size of map
     assert_eq!(*rec.bins.get(bin_name).unwrap(), as_val!(3));
 
-    let rec = client.get(&rpolicy, &key, None).unwrap();
+    let rec = client.get(&rpolicy, &key, Bins::All).unwrap();
     assert_eq!(*rec.bins.get(bin_name).unwrap(),
                as_map!("a" => 1, "b" => 2, "c" => 3));
 

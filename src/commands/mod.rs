@@ -19,12 +19,12 @@ pub mod write_command;
 pub mod delete_command;
 pub mod touch_command;
 pub mod exists_command;
-pub mod read_header_command;
 pub mod operate_command;
 pub mod execute_udf_command;
 pub mod stream_command;
 pub mod scan_command;
 pub mod query_command;
+pub mod batch_read_command;
 pub mod admin_command;
 pub mod buffer;
 pub mod particle_type;
@@ -34,6 +34,7 @@ mod field_type;
 use std::sync::Arc;
 use std::time::Duration;
 
+pub use self::batch_read_command::BatchReadCommand;
 pub use self::delete_command::DeleteCommand;
 pub use self::execute_udf_command::ExecuteUDFCommand;
 pub use self::exists_command::ExistsCommand;
@@ -41,7 +42,6 @@ pub use self::info_command::Message;
 pub use self::operate_command::OperateCommand;
 pub use self::query_command::QueryCommand;
 pub use self::read_command::ReadCommand;
-pub use self::read_header_command::ReadHeaderCommand;
 pub use self::scan_command::ScanCommand;
 pub use self::single_command::SingleCommand;
 pub use self::stream_command::StreamCommand;
@@ -52,6 +52,7 @@ pub use self::particle_type::ParticleType;
 use errors::*;
 use net::Connection;
 use cluster::Node;
+use ResultCode;
 
 // Command interface describes all commands available
 pub trait Command {
@@ -60,4 +61,16 @@ pub trait Command {
     fn get_node(&self) -> Result<Arc<Node>>;
     fn parse_result(&mut self, conn: &mut Connection) -> Result<()>;
     fn write_buffer(&mut self, conn: &mut Connection) -> Result<()>;
+}
+
+pub fn keep_connection(err: &Error) -> bool {
+    match *err {
+        Error(ErrorKind::ServerError(result_code), _) => {
+            match result_code {
+                ResultCode::KeyNotFoundError => true,
+                _ => false,
+            }
+        }
+        _ => false,
+    }
 }

@@ -13,10 +13,8 @@
 // License for the specific language governing permissions and limitations under
 // the License.
 
-mod kv;
-mod query;
-mod scan;
-mod udf;
-mod cdt_list;
-mod cdt_map;
-mod batch;
+pub mod batch_read;
+pub mod batch_executor;
+
+pub use self::batch_read::BatchRead;
+pub use self::batch_executor::BatchExecutor;

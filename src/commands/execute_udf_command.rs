@@ -17,6 +17,7 @@ use std::time::Duration;
 use std::str;
 
 use errors::*;
+use Bins;
 use Key;
 use Value;
 use cluster::{Node, Cluster};
@@ -41,7 +42,7 @@ impl<'a> ExecuteUDFCommand<'a> {
                args: Option<&'a [Value]>)
                -> Self {
         ExecuteUDFCommand {
-            read_command: ReadCommand::new(&policy.base_policy, cluster, key, None),
+            read_command: ReadCommand::new(&policy.base_policy, cluster, key, Bins::All),
             policy: policy,
             package_name: package_name,
             function_name: function_name,

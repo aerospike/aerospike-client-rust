@@ -15,6 +15,7 @@
 
 use std::collections::HashMap;
 
+use aerospike::Bins;
 use aerospike::{ReadPolicy, WritePolicy};
 use aerospike::operations;
 
@@ -46,10 +47,10 @@ fn connect() {
 
     client.delete(&wpolicy, &key).unwrap();
     client.put(&wpolicy, &key, &bins).unwrap();
-    client.get(&policy, &key, None).unwrap();
+    client.get(&policy, &key, Bins::All).unwrap();
     client.touch(&wpolicy, &key).unwrap();
-    client.get(&policy, &key, None).unwrap();
-    client.get_header(&policy, &key).unwrap();
+    client.get(&policy, &key, Bins::All).unwrap();
+    client.get(&policy, &key, Bins::None).unwrap();
 
     let exists = client.exists(&wpolicy, &key).unwrap();
     assert!(exists);

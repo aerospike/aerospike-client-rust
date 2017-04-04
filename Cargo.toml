@@ -21,7 +21,7 @@ exclude = [
 travis-ci = { repository = "aerospike/aerospike-client-rust" }
 
 [dependencies]
-log = "0.3"
+log = "^0.3"
 byteorder = "^0.5"
 rust-crypto = "^0.2"
 rustc-serialize = "0.3"
@@ -34,7 +34,7 @@ error-chain = "^0.7"
 parking_lot = "^0.4"
 
 [dev-dependencies]
-env_logger = "0.3"
+env_logger = "^0.4"
 hex = "^0.2"
 rustfmt = "^0.8"
 

@@ -140,7 +140,7 @@ impl StreamCommand {
         Ok(true)
     }
 
-    fn parse_key(conn: &mut Connection, field_count: usize) -> Result<Key> {
+    pub fn parse_key(conn: &mut Connection, field_count: usize) -> Result<Key> {
         let mut digest: [u8; 20] = [0; 20];
         let mut namespace: String = "".to_string();
         let mut set_name: String = "".to_string();

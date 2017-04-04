@@ -19,6 +19,7 @@ use std::time::Duration;
 use std::str;
 
 use errors::*;
+use Bins;
 use Key;
 use Record;
 use ResultCode;
@@ -34,21 +35,25 @@ pub struct ReadCommand<'a> {
     pub single_command: SingleCommand<'a>,
     pub record: Option<Record>,
     policy: &'a ReadPolicy,
-    bin_names: Option<&'a [&'a str]>,
+    bins: Bins<'a>,
 }
 
 impl<'a> ReadCommand<'a> {
     pub fn new(policy: &'a ReadPolicy,
                cluster: Arc<Cluster>,
                key: &'a Key,
-               bin_names: Option<&'a [&'a str]>)
+               bins: Bins<'a>)
                -> Self {
         ReadCommand {
             single_command: SingleCommand::new(cluster, key),
-            bin_names: bin_names,
+            bins: bins,
             policy: policy,
             record: None,
         }
+    }
+
+    pub fn execute(&mut self) -> Result<()> {
+        SingleCommand::execute(self.policy, self)
     }
 
     fn parse_record(&mut self,
@@ -100,10 +105,6 @@ impl<'a> ReadCommand<'a> {
 
         Ok(Record::new(None, bins, generation, expiration))
     }
-
-    pub fn execute(&mut self) -> Result<()> {
-        SingleCommand::execute(self.policy, self)
-    }
 }
 
 impl<'a> Command for ReadCommand<'a> {
@@ -117,7 +118,7 @@ impl<'a> Command for ReadCommand<'a> {
     }
 
     fn prepare_buffer(&mut self, conn: &mut Connection) -> Result<()> {
-        conn.buffer.set_read(self.policy, self.single_command.key, self.bin_names)
+        conn.buffer.set_read(self.policy, self.single_command.key, &self.bins)
     }
 
     fn get_node(&self) -> Result<Arc<Node>> {
@@ -150,8 +151,11 @@ impl<'a> Command for ReadCommand<'a> {
 
         match ResultCode::from(result_code) {
             ResultCode::Ok => {
-                let record =
-                    self.parse_record(conn, op_count, field_count, generation, expiration)?;
+                let record = if self.bins.is_none() {
+                    Record::new(None, HashMap::new(), generation, expiration)
+                } else {
+                    self.parse_record(conn, op_count, field_count, generation, expiration)?
+                };
                 self.record = Some(record);
                 Ok(())
             }

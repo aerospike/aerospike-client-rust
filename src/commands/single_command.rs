@@ -18,10 +18,9 @@ use std::time::Instant;
 
 use errors::*;
 use Key;
-use ResultCode;
 use cluster::partition::Partition;
 use cluster::{Node, Cluster};
-use commands::Command;
+use commands::{self, Command};
 use net::Connection;
 use policy::Policy;
 
@@ -128,7 +127,7 @@ impl<'a> SingleCommand<'a> {
                 // cancelling/closing the batch/multi commands will return an error, which will
                 // close the connection to throw away its data and signal the server about the
                 // situation. We will not put back the connection in the buffer.
-                if !SingleCommand::keep_connection(&err) {
+                if !commands::keep_connection(&err) {
                     conn.invalidate();
                 }
                 return Err(err);
@@ -140,17 +139,5 @@ impl<'a> SingleCommand<'a> {
         }
 
         bail!(ErrorKind::Connection("Timeout".to_string()))
-    }
-
-    fn keep_connection(err: &Error) -> bool {
-        match *err {
-            Error(ErrorKind::ServerError(result_code), _) => {
-                match result_code {
-                    ResultCode::KeyNotFoundError => true,
-                    _ => false,
-                }
-            }
-            _ => false,
-        }
     }
 }

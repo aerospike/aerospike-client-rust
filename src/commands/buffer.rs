@@ -12,29 +12,34 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::time::Duration;
 use std::str;
+use std::time::Duration;
 
 use byteorder::{NetworkEndian, ByteOrder};
 
 use errors::*;
+use BatchRead;
 use Bin;
+use Bins;
 use CollectionIndexType;
 use Key;
 use Statement;
 use Value;
+use batch::batch_executor::SharedSlice;
 use commands::field_type::FieldType;
 use msgpack::encoder;
 use operations::{Operation, OperationBin, OperationData, OperationType};
 use policy::{WritePolicy, ReadPolicy, ConsistencyLevel, CommitLevel, GenerationPolicy,
-             RecordExistsAction, ScanPolicy, QueryPolicy};
+             RecordExistsAction, ScanPolicy, QueryPolicy, BatchPolicy};
 
-// Flags commented out are not supported by cmd client.
 // Contains a read operation.
 const INFO1_READ: u8 = 1;
 
 // Get all bins.
 const INFO1_GET_ALL: u8 = (1 << 1);
+
+// Batch read or exists.
+const INFO1_BATCH: u8 = (1 << 3);
 
 // Do not read the bins
 const INFO1_NOBINDATA: u8 = (1 << 5);
@@ -215,45 +220,28 @@ impl Buffer {
         self.end()
     }
 
-    pub fn set_read_for_key_only(&mut self, policy: &ReadPolicy, key: &Key) -> Result<()> {
-        try!(self.begin());
-
-        let field_count = try!(self.estimate_key_size(key, false));
-        try!(self.size_buffer());
-        try!(self.write_header(policy, INFO1_READ | INFO1_GET_ALL, 0, field_count, 0));
-        try!(self.write_key(key, false));
-
-        self.end()
-    }
-
-    // Writes the command for get operations (specified bins)
-    pub fn set_read(&mut self,
-                    policy: &ReadPolicy,
-                    key: &Key,
-                    bin_names: Option<&[&str]>)
-                    -> Result<()> {
-        match bin_names {
-            None => {
-                try!(self.set_read_for_key_only(policy, key));
-            }
-            Some(bin_names) => {
+    // Writes the command for get operations
+    pub fn set_read<'a>(&mut self, policy: &ReadPolicy, key: &Key, bins: &Bins<'a>) -> Result<()> {
+        match *bins {
+            Bins::None => self.set_read_header(policy, key),
+            Bins::All => self.set_read_for_key_only(policy, key),
+            Bins::Some(bin_names) => {
                 try!(self.begin());
                 let field_count = try!(self.estimate_key_size(key, false));
                 for bin_name in bin_names {
                     try!(self.estimate_operation_size_for_bin_name(bin_name));
                 }
 
-                try!(self.size_buffer());
-                try!(self.write_header(policy, INFO1_READ, 0, field_count, bin_names.len() as u16));
-                try!(self.write_key(key, false));
+                self.size_buffer()?;
+                self.write_header(policy, INFO1_READ, 0, field_count, bin_names.len() as u16)?;
+                self.write_key(key, false)?;
                 for bin_name in bin_names {
-                    try!(self.write_operation_for_bin_name(bin_name, OperationType::Read));
+                    self.write_operation_for_bin_name(bin_name, OperationType::Read)?;
                 }
-                try!(self.end());
+                self.end()?;
+                Ok(())
             }
         }
-
-        Ok(())
     }
 
     // Writes the command for getting metadata operations
@@ -265,6 +253,125 @@ impl Buffer {
         try!(self.write_header(policy, INFO1_READ | INFO1_NOBINDATA, 0, field_count, 1));
         try!(self.write_key(key, false));
         try!(self.write_operation_for_bin_name("", OperationType::Read));
+        self.end()
+    }
+
+    pub fn set_read_for_key_only(&mut self, policy: &ReadPolicy, key: &Key) -> Result<()> {
+        try!(self.begin());
+
+        let field_count = try!(self.estimate_key_size(key, false));
+        try!(self.size_buffer());
+        try!(self.write_header(policy, INFO1_READ | INFO1_GET_ALL, 0, field_count, 0));
+        try!(self.write_key(key, false));
+
+        self.end()
+    }
+
+    // Writes the command for batch read operations
+    pub fn set_batch_read<'a>(&mut self,
+                              policy: &BatchPolicy,
+                              batch_reads: SharedSlice<BatchRead<'a>>,
+                              offsets: &[usize])
+                              -> Result<()> {
+        let field_count = if policy.send_set_name { 2 } else { 1 };
+
+        self.begin()?;
+        self.data_offset += FIELD_HEADER_SIZE as usize + 5;
+
+        let mut prev: Option<&BatchRead> = None;
+        for idx in offsets {
+            let batch_read: &BatchRead = batch_reads.get(*idx).unwrap();
+            self.data_offset += batch_read.key.digest.len() + 4;
+            match prev {
+                Some(ref prev) if batch_read.match_header(&prev, policy.send_set_name) => {
+                    self.data_offset += 1;
+                }
+                _ => {
+                    let key = &batch_read.key;
+                    self.data_offset += key.namespace.len() + FIELD_HEADER_SIZE as usize + 6;
+                    if policy.send_set_name {
+                        self.data_offset += key.set_name.len() + FIELD_HEADER_SIZE as usize;
+                    }
+                    if let Bins::Some(bin_names) = batch_read.bins {
+                        for name in bin_names {
+                            self.estimate_operation_size_for_bin_name(name)?;
+                        }
+                    }
+                }
+            }
+            prev = Some(batch_read);
+        }
+
+        self.size_buffer()?;
+        self.write_header(&policy.base_policy,
+                          INFO1_READ | INFO1_BATCH,
+                          0,
+                          field_count,
+                          0)?;
+
+        let field_size_offset = self.data_offset;
+        let field_type = if policy.send_set_name {
+            FieldType::BatchIndexWithSet
+        } else {
+            FieldType::BatchIndex
+        };
+        self.write_field_header(0, field_type)?;
+        self.write_u32(offsets.len() as u32)?;
+        self.write_u8(if policy.allow_inline { 1 } else { 0 })?;
+
+        prev = None;
+        for idx in offsets {
+            let batch_read = batch_reads.get(*idx).unwrap();
+            let key = &batch_read.key;
+            self.write_u32(*idx as u32)?;
+            self.write_bytes(&key.digest)?;
+            match prev {
+                Some(ref prev) if batch_read.match_header(&prev, policy.send_set_name) => {
+                    self.write_u8(1)?;
+                }
+                _ => {
+                    self.write_u8(0)?;
+                    match batch_read.bins {
+                        Bins::None => {
+                            self.write_u8(INFO1_READ | INFO1_NOBINDATA)?;
+                            self.write_u16(field_count)?;
+                            self.write_u16(0)?;
+                            self.write_field_string(&key.namespace, FieldType::Namespace)?;
+                            if policy.send_set_name {
+                                self.write_field_string(&key.set_name, FieldType::Table)?;
+                            }
+                        }
+                        Bins::All => {
+                            self.write_u8(INFO1_READ | INFO1_GET_ALL)?;
+                            self.write_u16(field_count)?;
+                            self.write_u16(0)?;
+                            self.write_field_string(&key.namespace, FieldType::Namespace)?;
+                            if policy.send_set_name {
+                                self.write_field_string(&key.set_name, FieldType::Table)?;
+                            }
+                        }
+                        Bins::Some(bin_names) => {
+                            self.write_u8(INFO1_READ)?;
+                            self.write_u16(field_count)?;
+                            self.write_u16(bin_names.len() as u16)?;
+                            self.write_field_string(&key.namespace, FieldType::Namespace)?;
+                            if policy.send_set_name {
+                                self.write_field_string(&key.set_name, FieldType::Table)?;
+                            }
+                            for bin in bin_names {
+                                self.write_operation_for_bin_name(bin, OperationType::Read)?;
+                            }
+                        }
+                    }
+                }
+            }
+            prev = Some(batch_read);
+        }
+
+        let field_size = self.data_offset - MSG_TOTAL_HEADER_SIZE as usize - 4;
+        NetworkEndian::write_u32(&mut self.data_buffer[field_size_offset..field_size_offset + 4],
+                                 field_size as u32);
+
         self.end()
     }
 

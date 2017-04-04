@@ -22,7 +22,7 @@ extern crate lazy_static;
 extern crate rand;
 extern crate test;
 
-use aerospike::{ReadPolicy, WritePolicy};
+use aerospike::{Bins, ReadPolicy, WritePolicy};
 
 use test::Bencher;
 
@@ -41,7 +41,7 @@ fn single_key_read(b: &mut Bencher) {
     let wpolicy = WritePolicy::default();
     client.put(&wpolicy, &key, &bins).unwrap();
 
-    b.iter(|| client.get(&rpolicy, &key, None).unwrap());
+    b.iter(|| client.get(&rpolicy, &key, Bins::All).unwrap());
 }
 
 #[bench]
@@ -56,5 +56,5 @@ fn single_key_read_header(b: &mut Bencher) {
     let wpolicy = WritePolicy::default();
     client.put(&wpolicy, &key, &bins).unwrap();
 
-    b.iter(|| client.get_header(&rpolicy, &key).unwrap());
+    b.iter(|| client.get(&rpolicy, &key, Bins::None).unwrap());
 }
