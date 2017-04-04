@@ -226,10 +226,8 @@ impl<'a, 'b> Command for BatchReadCommand<'a, 'b> {
             conn.read_buffer(8)?;
             let size = conn.buffer.read_msg_size(None)?;
             conn.bookmark();
-            if size > 0 {
-                if !self.parse_group(conn, size as usize)? {
-                    break;
-                }
+            if size > 0 && !self.parse_group(conn, size as usize)? {
+                break;
             }
         }
         Ok(())

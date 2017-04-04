@@ -97,7 +97,7 @@ impl BatchExecutor {
         let mut map = HashMap::new();
         for (idx, batch_read) in batch_reads.iter().enumerate() {
             let node = self.node_for_key(&batch_read.key)?;
-            map.entry(node).or_insert(vec![]).push(idx);
+            map.entry(node).or_insert_with(|| vec![]).push(idx);
         }
         Ok(map)
     }

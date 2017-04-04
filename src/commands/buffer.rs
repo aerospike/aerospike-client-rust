@@ -283,7 +283,7 @@ impl Buffer {
             let batch_read: &BatchRead = batch_reads.get(*idx).unwrap();
             self.data_offset += batch_read.key.digest.len() + 4;
             match prev {
-                Some(ref prev) if batch_read.match_header(&prev, policy.send_set_name) => {
+                Some(prev) if batch_read.match_header(prev, policy.send_set_name) => {
                     self.data_offset += 1;
                 }
                 _ => {

@@ -259,7 +259,7 @@ impl Cluster {
         let mut list: Vec<Arc<Node>> = vec![];
         for seed in &*seed_array {
             let mut seed_node_validator = NodeValidator::new(self);
-            if let Err(err) = seed_node_validator.validate_node(&self, seed) {
+            if let Err(err) = seed_node_validator.validate_node(self, seed) {
                 log_error_chain!(err, "Failed to validate seed host: {}", seed);
                 continue;
             };
@@ -269,7 +269,7 @@ impl Cluster {
                     seed_node_validator.clone()
                 } else {
                     let mut nv2 = NodeValidator::new(self);
-                    if let Err(err) = nv2.validate_node(&self, seed) {
+                    if let Err(err) = nv2.validate_node(self, seed) {
                         log_error_chain!(err, "Seeding host {} failed with error", alias);
                         continue;
                     };
@@ -300,7 +300,7 @@ impl Cluster {
 
         for host in hosts {
             let mut nv = NodeValidator::new(self);
-            if let Err(err) = nv.validate_node(&self, &host) {
+            if let Err(err) = nv.validate_node(self, &host) {
                 log_error_chain!(err, "Adding node {} failed with error", host.name);
                 continue;
             };
