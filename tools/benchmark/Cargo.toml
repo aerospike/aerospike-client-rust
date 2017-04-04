@@ -1,6 +1,6 @@
 [package]
 name = "aerospike-client-rust-benchmark"
-version = "0.0.1"
+version = "0.1.0"
 description = "Benchmark suite for the Aerospike Rust client"
 authors = ["Jan Hecking <jhecking@netgaroo.com>"]
 homepage = "https://www.aerospike.com/"

@@ -1,7 +1,7 @@
 [package]
 
 name = "aerospike"
-version = "0.0.1"
+version = "0.1.0"
 authors = ["Khosrow Afroozeh <khosrow@aerospike.com>", "Jan Hecking <jhecking@aerospike.com>"]
 description = "Aerospike Client for Rust"
 keywords = ["aerospike", "nosql", "distributed", "database"]
