@@ -103,7 +103,6 @@ client supports managing users and roles.
 However the following features are not yet supported in the Aerospike Rust
 client:
 
-- Batch requests
 - Query Aggregation using Lua User-Defined Functions (which requires
   integrating the Lua run-time environment into the client)
 - Async Task operations (like execute UDF on scan/queries, index drop/create
