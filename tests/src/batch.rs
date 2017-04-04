@@ -46,17 +46,18 @@ fn batch_get() {
     client.put(&wpolicy, &key3, &[&bin1, &bin2, &bin3]).unwrap();
 
     let bins = &["a"];
-    let mut batch = vec![BatchRead::new(key1, Bins::Some(bins)),
-                         BatchRead::new(key2, Bins::All),
-                         BatchRead::new(key3, Bins::None),
-                         BatchRead::new(as_key!(namespace, set_name, -1), Bins::None)];
-    {
-        let slice = &mut batch;
-        client.batch_get(&bpolicy, slice).unwrap();
-    }
+    let batch = vec![BatchRead::new(key1, Bins::Some(bins)),
+                     BatchRead::new(key2, Bins::All),
+                     BatchRead::new(key3, Bins::None),
+                     BatchRead::new(as_key!(namespace, set_name, -1), Bins::None)];
+    let mut results = client.batch_get(&bpolicy, batch).unwrap();
 
-    // assert!(batch[0].record.is_some());
-    // assert!(batch[1].record.is_some());
-    // assert!(batch[2].record.is_some());
-    // assert!(batch[3].record.is_none());
+    let record = results.remove(0).record.unwrap();
+    assert_eq!(record.bins.keys().count(), 1);
+    let record = results.remove(0).record.unwrap();
+    assert_eq!(record.bins.keys().count(), 3);
+    let record = results.remove(0).record.unwrap();
+    assert_eq!(record.bins.keys().count(), 0);
+    let record = results.remove(0).record;
+    assert!(record.is_none());
 }

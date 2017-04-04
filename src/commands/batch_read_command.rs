@@ -37,14 +37,14 @@ struct BatchRecord {
 pub struct BatchReadCommand<'a, 'b> {
     policy: &'b BatchPolicy,
     pub node: Arc<Node>,
-    batch_reads: SharedSlice<'a, BatchRead<'a>>,
+    batch_reads: SharedSlice<BatchRead<'a>>,
     offsets: Vec<usize>,
 }
 
 impl<'a, 'b> BatchReadCommand<'a, 'b> {
     pub fn new(policy: &'b BatchPolicy,
                node: Arc<Node>,
-               batch_reads: SharedSlice<'a, BatchRead<'a>>,
+               batch_reads: SharedSlice<BatchRead<'a>>,
                offsets: Vec<usize>)
                -> Self {
         BatchReadCommand {

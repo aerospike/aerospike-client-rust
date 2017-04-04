@@ -270,7 +270,7 @@ impl Buffer {
     // Writes the command for batch read operations
     pub fn set_batch_read<'a>(&mut self,
                               policy: &BatchPolicy,
-                              batch_reads: SharedSlice<'a, BatchRead<'a>>,
+                              batch_reads: SharedSlice<BatchRead<'a>>,
                               offsets: &[usize])
                               -> Result<()> {
         let field_count = if policy.send_set_name { 2 } else { 1 };

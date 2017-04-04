@@ -43,18 +43,19 @@ impl BatchExecutor {
         }
     }
 
-    pub fn execute_batch_read<'a, 'b: 'a>(&self,
-                                          policy: &BatchPolicy,
-                                          batch_reads: &'b mut [BatchRead<'a>])
-                                          -> Result<()> {
-        let mut batch_nodes = self.get_batch_nodes(batch_reads)?;
+    pub fn execute_batch_read<'a>(&self,
+                                  policy: &BatchPolicy,
+                                  batch_reads: Vec<BatchRead<'a>>)
+                                  -> Result<Vec<BatchRead<'a>>> {
+        let mut batch_nodes = self.get_batch_nodes(&batch_reads)?;
         let batch_reads = SharedSlice::new(batch_reads);
         let jobs = batch_nodes.drain()
             .map(|(node, offsets)| {
                      BatchReadCommand::new(policy, node, batch_reads.clone(), offsets)
                  })
             .collect();
-        self.execute_batch_jobs(jobs, &policy.concurrency)
+        self.execute_batch_jobs(jobs, &policy.concurrency)?;
+        batch_reads.into_inner()
     }
 
     fn execute_batch_jobs(&self,
@@ -91,7 +92,7 @@ impl BatchExecutor {
     }
 
     fn get_batch_nodes<'a>(&self,
-                           batch_reads: &'a [BatchRead<'a>])
+                           batch_reads: &Vec<BatchRead<'a>>)
                            -> Result<HashMap<Arc<Node>, Vec<usize>>> {
         let mut map = HashMap::new();
         for (idx, batch_read) in batch_reads.iter().enumerate() {
@@ -111,22 +112,22 @@ impl BatchExecutor {
 // A slice with interior mutability, that can be shared across threads. The threads are required to
 // ensure that no member of the slice is accessed by more than one thread. No runtime checks are
 // performed by the slice to guarantee this.
-pub struct SharedSlice<'a, T: 'a> {
-    value: Arc<UnsafeCell<&'a mut [T]>>,
+pub struct SharedSlice<T> {
+    value: Arc<UnsafeCell<Vec<T>>>,
 }
 
-unsafe impl<'a, T> Send for SharedSlice<'a, T> {}
+unsafe impl<T> Send for SharedSlice<T> {}
 
-unsafe impl<'a, T> Sync for SharedSlice<'a, T> {}
+unsafe impl<T> Sync for SharedSlice<T> {}
 
-impl<'a, T: 'a> Clone for SharedSlice<'a, T> {
+impl<T> Clone for SharedSlice<T> {
     fn clone(&self) -> Self {
         SharedSlice { value: self.value.clone() }
     }
 }
 
-impl<'a, T> SharedSlice<'a, T> {
-    pub fn new(value: &'a mut [T]) -> Self {
+impl<T> SharedSlice<T> {
+    pub fn new(value: Vec<T>) -> Self {
         SharedSlice { value: Arc::new(UnsafeCell::new(value)) }
     }
 
@@ -136,10 +137,17 @@ impl<'a, T> SharedSlice<'a, T> {
 
     // Like slice.get_mut but does not require a mutable reference!
     pub fn get_mut(&self, idx: usize) -> Option<&mut T> {
-        unsafe { transmute::<*mut &mut [T], &mut &mut [T]>(self.value.get()).get_mut(idx) }
+        unsafe { transmute::<*mut Vec<T>, &mut Vec<T>>(self.value.get()).get_mut(idx) }
     }
 
     pub fn len(&self) -> usize {
         unsafe { (*self.value.get()).len() }
+    }
+
+    pub fn into_inner(self) -> Result<Vec<T>> {
+        match Arc::try_unwrap(self.value) {
+            Ok(cell) => Ok(unsafe { cell.into_inner() }),
+            Err(_) => Err("Unable to process batch request".into()),
+        }
     }
 }
