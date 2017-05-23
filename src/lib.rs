@@ -28,8 +28,10 @@
 //!
 //! Add this to your `Cargo.toml`:
 //!
+//! ```
 //! [dependencies]
-//! aerospike = "0.0.1"
+//! aerospike = "0.1.0"
+//! ```
 //!
 //! # Examples
 //!
