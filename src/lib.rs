@@ -28,7 +28,7 @@
 //!
 //! Add this to your `Cargo.toml`:
 //!
-//! ```
+//! ```text
 //! [dependencies]
 //! aerospike = "0.1.0"
 //! ```

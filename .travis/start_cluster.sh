@@ -54,13 +54,12 @@ function start_server {
 
 function install_server {
   wget -O aerospike-server.tgz http://aerospike.com/download/server/latest/artifact/tgz
-  tar xvzf aerospike-server.tgz
+  tar xzf aerospike-server.tgz
   cp -f .travis/aerospike.conf ./aerospike-server/share/etc
   cd aerospike-server
   sed -i -e 's/\${me}/"root"/' share/libexec/aerospike-start
   sed -i -e 's/set_shmmax$/#set_shmmax/' share/libexec/aerospike-start
   sed -i -e 's/set_shmall$/#set_shmall/' share/libexec/aerospike-start
-  sed -i -e 's/ulimit/#ulimit/' share/libexec/aerospike-start
 }
 
 nodes=$1
