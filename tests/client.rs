@@ -30,3 +30,26 @@ fn cluster_name() {
     policy.cluster_name = Some(String::from("notTheRealClusterName"));
     Client::new(policy, &common::hosts()).unwrap();
 }
+
+#[test]
+fn node_names() {
+    let client = common::client();
+    let names = client.node_names();
+    assert!(names.len() >= 1);
+}
+
+#[test]
+fn nodes() {
+    let client = common::client();
+    let nodes = client.nodes();
+    assert!(nodes.len() >= 1);
+}
+
+#[test]
+fn get_node() {
+    let client = common::client();
+    for name in client.node_names() {
+        let node = client.get_node(&name);
+        assert!(node.is_ok());
+    }
+}

@@ -124,6 +124,25 @@ impl Client {
         self.cluster.is_connected()
     }
 
+    /// Returns a list of the names of the active server nodes in the cluster.
+    pub fn node_names(&self) -> Vec<String> {
+        self.cluster
+            .nodes()
+            .iter()
+            .map(|node| node.name().to_owned())
+            .collect()
+    }
+
+    /// Return node given its name.
+    pub fn get_node(&self, name: &str) -> Result<Arc<Node>> {
+        self.cluster.get_node_by_name(name)
+    }
+
+    /// Returns a list of active server nodes in the cluster.
+    pub fn nodes(&self) -> Vec<Arc<Node>> {
+        self.cluster.nodes()
+    }
+
     /// Read record for the specified key. Depending on the bins value provided, all record bins,
     /// only selected record bins or only the record headers will be returned. The policy can be
     /// used to specify timeouts.
@@ -644,13 +663,11 @@ impl Client {
     /// zero, the server nodes are read in series.
     pub fn scan_node(&self,
                      policy: &ScanPolicy,
-                     node: Node,
+                     node: Arc<Node>,
                      namespace: &str,
                      set_name: &str,
                      bin_names: Option<&[&str]>)
                      -> Result<Arc<Recordset>> {
-
-
         let bin_names = match bin_names {
             None => None,
             Some(bin_names) => {
@@ -660,7 +677,6 @@ impl Client {
         };
 
         let recordset = Arc::new(Recordset::new(policy.record_queue_size, 1));
-        let node = Arc::new(node).clone();
         let t_recordset = recordset.clone();
         let policy = policy.to_owned();
         let namespace = namespace.to_owned();
@@ -732,14 +748,13 @@ impl Client {
     /// off the queue through the record iterator.
     pub fn query_node(&self,
                       policy: &QueryPolicy,
-                      node: Node,
+                      node: Arc<Node>,
                       statement: Statement)
                       -> Result<Arc<Recordset>> {
 
         try!(statement.validate());
 
         let recordset = Arc::new(Recordset::new(policy.record_queue_size, 1));
-        let node = Arc::new(node).clone();
         let t_recordset = recordset.clone();
         let policy = policy.to_owned();
         let statement = Arc::new(statement).clone();
