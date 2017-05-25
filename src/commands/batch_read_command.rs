@@ -101,7 +101,8 @@ impl<'a, 'b> BatchReadCommand<'a, 'b> {
                 }
             };
 
-            self.prepare_buffer(&mut conn).chain_err(|| "Failed to prepare send buffer")?;
+            self.prepare_buffer(&mut conn)
+                .chain_err(|| "Failed to prepare send buffer")?;
             self.write_timeout(&mut conn, base_policy.timeout())
                 .chain_err(|| "Failed to set timeout for send buffer")?;
 
@@ -212,9 +213,10 @@ impl<'a, 'b> Command for BatchReadCommand<'a, 'b> {
     }
 
     fn prepare_buffer(&mut self, conn: &mut Connection) -> Result<()> {
-        conn.buffer.set_batch_read(self.policy,
-                                   self.batch_reads.clone(),
-                                   self.offsets.as_slice())
+        conn.buffer
+            .set_batch_read(self.policy,
+                            self.batch_reads.clone(),
+                            self.offsets.as_slice())
     }
 
     fn get_node(&self) -> Result<Arc<Node>> {

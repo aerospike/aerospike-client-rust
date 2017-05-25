@@ -58,10 +58,11 @@ impl<'a> Command for QueryCommand<'a> {
     }
 
     fn prepare_buffer(&mut self, conn: &mut Connection) -> Result<()> {
-        conn.buffer.set_query(self.policy,
-                              &self.statement,
-                              false,
-                              self.stream_command.recordset.task_id())
+        conn.buffer
+            .set_query(self.policy,
+                       &self.statement,
+                       false,
+                       self.stream_command.recordset.task_id())
     }
 
     fn get_node(&self) -> Result<Arc<Node>> {

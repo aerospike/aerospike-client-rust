@@ -114,13 +114,19 @@ impl Node {
         self.responded.store(false, Ordering::Relaxed);
         self.refresh_count.fetch_add(1, Ordering::Relaxed);
 
-        let commands = vec!["node", "cluster-name", "partition-generation", self.services_name()];
-        let info_map = self.info(None, &commands).chain_err(|| "Info command failed")?;
-        self.validate_node(&info_map).chain_err(|| "Failed to validate node")?;
+        let commands = vec!["node",
+                            "cluster-name",
+                            "partition-generation",
+                            self.services_name()];
+        let info_map = self.info(None, &commands)
+            .chain_err(|| "Info command failed")?;
+        self.validate_node(&info_map)
+            .chain_err(|| "Failed to validate node")?;
         self.responded.store(true, Ordering::Relaxed);
         let friends = self.add_friends(current_aliases, &info_map)
             .chain_err(|| "Failed to add friends")?;
-        self.update_partitions(&info_map).chain_err(|| "Failed to update partitions")?;
+        self.update_partitions(&info_map)
+            .chain_err(|| "Failed to update partitions")?;
         self.reset_failures();
 
         Ok(friends)

@@ -305,15 +305,15 @@ impl ResultCode {
             ResultCode::DeviceOverload => String::from("Device overload"),
             ResultCode::KeyMismatch => String::from("Key mismatch"),
             ResultCode::InvalidNamespace => String::from("Namespace not found"),
-            #[cfg_attr(rustfmt, rustfmt_skip)]
-            ResultCode::BinNameTooLong =>
-                String::from("Bin name length greater than 14 characters"),
+            ResultCode::BinNameTooLong => {
+                String::from("Bin name length greater than 14 characters")
+            }
             ResultCode::FailForbidden => String::from("OperationType not allowed at this time"),
             ResultCode::ElementNotFound => String::from("Element not found"),
             ResultCode::ElementExists => String::from("Element already exists"),
-            #[cfg_attr(rustfmt, rustfmt_skip)]
-            ResultCode::EnterpriseOnly =>
-                String::from("Enterprise-only feature not supported by community edition"),
+            ResultCode::EnterpriseOnly => {
+                String::from("Enterprise-only feature not supported by community edition")
+            }
             ResultCode::QueryEnd => String::from("Query end"),
             ResultCode::SecurityNotSupported => String::from("Security not supported"),
             ResultCode::SecurityNotEnabled => String::from("Security not enabled"),
@@ -335,9 +335,9 @@ impl ResultCode {
             ResultCode::UdfBadResponse => String::from("Udf returned error"),
             ResultCode::LargeItemNotFound => String::from("Large collection item not found"),
             ResultCode::BatchDisabled => String::from("Batch functionality has been disabled"),
-            #[cfg_attr(rustfmt, rustfmt_skip)]
-            ResultCode::BatchMaxRequestsExceeded =>
-                String::from("Batch max requests have been exceeded"),
+            ResultCode::BatchMaxRequestsExceeded => {
+                String::from("Batch max requests have been exceeded")
+            }
             ResultCode::BatchQueuesFull => String::from("All batch queues are full"),
             ResultCode::IndexFound => String::from("Index already exists"),
             ResultCode::IndexNotFound => String::from("Index not found"),

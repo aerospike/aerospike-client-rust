@@ -66,10 +66,7 @@ impl Statement {
         let bin_names = match bin_names {
             None => None,
             Some(bin_names) => {
-                let bin_names: Vec<_> = bin_names.iter()
-                    .cloned()
-                    .map(String::from)
-                    .collect();
+                let bin_names: Vec<_> = bin_names.iter().cloned().map(String::from).collect();
                 Some(bin_names)
             }
         };

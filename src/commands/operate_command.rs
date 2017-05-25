@@ -59,9 +59,10 @@ impl<'a> Command for OperateCommand<'a> {
     }
 
     fn prepare_buffer(&mut self, conn: &mut Connection) -> Result<()> {
-        conn.buffer.set_operate(self.policy,
-                                self.read_command.single_command.key,
-                                self.operations)
+        conn.buffer
+            .set_operate(self.policy,
+                         self.read_command.single_command.key,
+                         self.operations)
     }
 
     fn get_node(&self) -> Result<Arc<Node>> {

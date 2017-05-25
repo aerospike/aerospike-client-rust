@@ -53,7 +53,8 @@ impl NodeValidator {
     }
 
     pub fn validate_node(&mut self, cluster: &Cluster, host: &Host) -> Result<()> {
-        self.resolve_aliases(host).chain_err(|| "Failed to resolve host aliases")?;
+        self.resolve_aliases(host)
+            .chain_err(|| "Failed to resolve host aliases")?;
 
         let mut last_err = None;
         for ref alias in self.aliases() {

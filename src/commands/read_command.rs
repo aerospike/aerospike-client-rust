@@ -118,7 +118,8 @@ impl<'a> Command for ReadCommand<'a> {
     }
 
     fn prepare_buffer(&mut self, conn: &mut Connection) -> Result<()> {
-        conn.buffer.set_read(self.policy, self.single_command.key, &self.bins)
+        conn.buffer
+            .set_read(self.policy, self.single_command.key, &self.bins)
     }
 
     fn get_node(&self) -> Result<Arc<Node>> {
@@ -163,8 +164,10 @@ impl<'a> Command for ReadCommand<'a> {
                 // record bin "FAILURE" contains details about the UDF error
                 let record =
                     self.parse_record(conn, op_count, field_count, generation, expiration)?;
-                let reason = record.bins.get("FAILURE").map_or(String::from("UDF Error"),
-                                                               |v| v.to_string());
+                let reason = record
+                    .bins
+                    .get("FAILURE")
+                    .map_or(String::from("UDF Error"), |v| v.to_string());
                 Err(ErrorKind::UdfBadResponse(reason).into())
             }
             rc => Err(ErrorKind::ServerError(rc).into()),
