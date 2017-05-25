@@ -37,6 +37,10 @@ parking_lot = "^0.4"
 env_logger = "^0.4"
 hex = "^0.2"
 rustfmt = "^0.8"
+skeptic = "0.9"
+
+[build-dependencies]
+skeptic = "0.9"
 
 [workspace]
 members = ["tools/benchmark"]
