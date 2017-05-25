@@ -64,11 +64,12 @@ impl<'a> Command for ScanCommand<'a> {
     }
 
     fn prepare_buffer(&mut self, conn: &mut Connection) -> Result<()> {
-        conn.buffer.set_scan(self.policy,
-                             self.namespace,
-                             self.set_name,
-                             self.bin_names,
-                             self.stream_command.recordset.task_id())
+        conn.buffer
+            .set_scan(self.policy,
+                      self.namespace,
+                      self.set_name,
+                      self.bin_names,
+                      self.stream_command.recordset.task_id())
     }
 
     fn get_node(&self) -> Result<Arc<Node>> {

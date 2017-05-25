@@ -49,7 +49,8 @@ impl BatchExecutor {
                                   -> Result<Vec<BatchRead<'a>>> {
         let mut batch_nodes = self.get_batch_nodes(&batch_reads)?;
         let batch_reads = SharedSlice::new(batch_reads);
-        let jobs = batch_nodes.drain()
+        let jobs = batch_nodes
+            .drain()
             .map(|(node, offsets)| {
                      BatchReadCommand::new(policy, node, batch_reads.clone(), offsets)
                  })
@@ -69,22 +70,22 @@ impl BatchExecutor {
         };
         let jobs = Arc::new(Mutex::new(jobs.iter_mut()));
         let last_err: Arc<Mutex<Option<Error>>> = Arc::default();
-        self.thread_pool.scoped(|scope| {
-            for _ in 0..threads {
-                let last_err = last_err.clone();
-                let jobs = jobs.clone();
-                scope.execute(move || {
-                    let next_job = || jobs.lock().next();
-                    while let Some(mut cmd) = next_job() {
-                        if let Err(err) = cmd.execute() {
-                            *last_err.lock() = Some(err);
-                            jobs.lock().all(|_| true); // consume the remaining jobs
-                        };
-                    }
-                });
-            }
-            () // foo
-        });
+        self.thread_pool
+            .scoped(|scope| {
+                for _ in 0..threads {
+                    let last_err = last_err.clone();
+                    let jobs = jobs.clone();
+                    scope.execute(move || {
+                        let next_job = || jobs.lock().next();
+                        while let Some(mut cmd) = next_job() {
+                            if let Err(err) = cmd.execute() {
+                                *last_err.lock() = Some(err);
+                                jobs.lock().all(|_| true); // consume the remaining jobs
+                            };
+                        }
+                    });
+                }
+            });
         match Arc::try_unwrap(last_err).unwrap().into_inner() {
             None => Ok(()),
             Some(err) => Err(err),

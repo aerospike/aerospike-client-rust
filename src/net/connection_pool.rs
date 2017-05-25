@@ -86,7 +86,8 @@ impl Queue {
             }
         }
 
-        connection.set_timeout(timeout)
+        connection
+            .set_timeout(timeout)
             .or_else(|err| {
                          internals.num_conns -= 1;
                          Err(err)

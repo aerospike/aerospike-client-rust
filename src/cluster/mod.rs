@@ -181,7 +181,10 @@ impl Cluster {
     }
 
     fn wait_till_stabilized(cluster: Arc<Cluster>) -> Result<()> {
-        let timeout = cluster.client_policy().timeout.unwrap_or_else(|| Duration::from_secs(3));
+        let timeout = cluster
+            .client_policy()
+            .timeout
+            .unwrap_or_else(|| Duration::from_secs(3));
         let deadline = Instant::now() + timeout;
         let sleep_between_tend = Duration::from_millis(1);
 
@@ -206,7 +209,9 @@ impl Cluster {
             }
         });
 
-        handle.join().map_err(|err| format!("Error during initial cluster tend: {:?}", err).into())
+        handle
+            .join()
+            .map_err(|err| format!("Error during initial cluster tend: {:?}", err).into())
     }
 
     pub fn cluster_name(&self) -> &Option<String> {
@@ -240,7 +245,8 @@ impl Cluster {
 
     pub fn update_partitions(&self, node: Arc<Node>) -> Result<()> {
         let mut conn = node.get_connection(self.client_policy.timeout)?;
-        let tokens = PartitionTokenizer::new(&mut conn).or_else(|e| {
+        let tokens = PartitionTokenizer::new(&mut conn)
+            .or_else(|e| {
                          conn.invalidate();
                          Err(e)
                      })?;
@@ -423,7 +429,9 @@ impl Cluster {
 
     fn find_node_in_partition_map(&self, filter: Arc<Node>) -> bool {
         let partitions = self.partition_write_map.read();
-        (*partitions).values().any(|map| map.iter().any(|node| *node == filter))
+        (*partitions)
+            .values()
+            .any(|map| map.iter().any(|node| *node == filter))
     }
 
     fn add_nodes(&self, friend_list: &[Arc<Node>]) {

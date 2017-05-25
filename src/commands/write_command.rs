@@ -65,10 +65,11 @@ impl<'a> Command for WriteCommand<'a> {
     }
 
     fn prepare_buffer(&mut self, conn: &mut Connection) -> Result<()> {
-        conn.buffer.set_write(self.policy,
-                              self.operation,
-                              self.single_command.key,
-                              self.bins)
+        conn.buffer
+            .set_write(self.policy,
+                       self.operation,
+                       self.single_command.key,
+                       self.bins)
     }
 
     fn get_node(&self) -> Result<Arc<Node>> {

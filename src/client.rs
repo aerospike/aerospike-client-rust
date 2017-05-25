@@ -612,10 +612,7 @@ impl Client {
         let bin_names = match bin_names {
             None => None,
             Some(bin_names) => {
-                let bin_names: Vec<_> = bin_names.iter()
-                    .cloned()
-                    .map(String::from)
-                    .collect();
+                let bin_names: Vec<_> = bin_names.iter().cloned().map(String::from).collect();
                 Some(bin_names)
             }
         };
@@ -631,10 +628,10 @@ impl Client {
             let bin_names = bin_names.to_owned();
 
             thread::spawn(move || {
-                              let mut command =
+                let mut command =
                     ScanCommand::new(&policy, node, &namespace, &set_name, &bin_names, recordset);
-                              command.execute().unwrap();
-                          });
+                command.execute().unwrap();
+            });
 
         }
         Ok(recordset)
@@ -657,10 +654,7 @@ impl Client {
         let bin_names = match bin_names {
             None => None,
             Some(bin_names) => {
-                let bin_names: Vec<_> = bin_names.iter()
-                    .cloned()
-                    .map(String::from)
-                    .collect();
+                let bin_names: Vec<_> = bin_names.iter().cloned().map(String::from).collect();
                 Some(bin_names)
             }
         };
@@ -673,15 +667,16 @@ impl Client {
         let set_name = set_name.to_owned();
         let bin_names = bin_names.to_owned();
 
-        self.thread_pool.spawn(move || {
-            let mut command = ScanCommand::new(&policy,
-                                               node,
-                                               &namespace,
-                                               &set_name,
-                                               &bin_names,
-                                               t_recordset);
-            command.execute().unwrap();
-        });
+        self.thread_pool
+            .spawn(move || {
+                let mut command = ScanCommand::new(&policy,
+                                                   node,
+                                                   &namespace,
+                                                   &set_name,
+                                                   &bin_names,
+                                                   t_recordset);
+                command.execute().unwrap();
+            });
 
         Ok(recordset)
     }
@@ -722,10 +717,12 @@ impl Client {
             let policy = policy.to_owned();
             let statement = statement.clone();
 
-            self.thread_pool.spawn(move || {
-                let mut command = QueryCommand::new(&policy, node, statement, t_recordset);
-                command.execute().unwrap();
-            });
+            self.thread_pool
+                .spawn(move || {
+                           let mut command =
+                               QueryCommand::new(&policy, node, statement, t_recordset);
+                           command.execute().unwrap();
+                       });
         }
         Ok(recordset)
     }
@@ -747,10 +744,11 @@ impl Client {
         let policy = policy.to_owned();
         let statement = Arc::new(statement).clone();
 
-        self.thread_pool.spawn(move || {
-            let mut command = QueryCommand::new(&policy, node, statement, t_recordset);
-            command.execute().unwrap();
-        });
+        self.thread_pool
+            .spawn(move || {
+                       let mut command = QueryCommand::new(&policy, node, statement, t_recordset);
+                       command.execute().unwrap();
+                   });
 
         Ok(recordset)
     }
@@ -817,7 +815,8 @@ impl Client {
                           cit_str,
                           bin_name,
                           index_type);
-        self.send_sindex_cmd(cmd, policy).chain_err(|| "Error creating index")
+        self.send_sindex_cmd(cmd, policy)
+            .chain_err(|| "Error creating index")
     }
 
     /// Delete secondary index.
@@ -836,7 +835,8 @@ impl Client {
                           namespace,
                           set_name,
                           index_name);
-        self.send_sindex_cmd(cmd, policy).chain_err(|| "Error dropping index")
+        self.send_sindex_cmd(cmd, policy)
+            .chain_err(|| "Error dropping index")
     }
 
     fn send_sindex_cmd(&self, cmd: String, policy: &WritePolicy) -> Result<()> {

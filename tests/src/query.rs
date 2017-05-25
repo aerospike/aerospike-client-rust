@@ -42,12 +42,13 @@ fn query_single_consumer() {
     }
 
     // create an index
-    client.create_index(&wpolicy,
-                        namespace,
-                        set_name,
-                        "bin",
-                        &format!("{}_{}_{}", namespace, set_name, "bin"),
-                        IndexType::Numeric)
+    client
+        .create_index(&wpolicy,
+                      namespace,
+                      set_name,
+                      "bin",
+                      &format!("{}_{}_{}", namespace, set_name, "bin"),
+                      IndexType::Numeric)
         .expect("Failed to create index");
 
     // FIXME: replace sleep with wait task
@@ -114,12 +115,13 @@ fn query_multi_consumer() {
     }
 
     // create an index
-    client.create_index(&wpolicy,
-                        namespace,
-                        set_name,
-                        "bin",
-                        &format!("{}_{}_{}", namespace, set_name, "bin"),
-                        IndexType::Numeric)
+    client
+        .create_index(&wpolicy,
+                      namespace,
+                      set_name,
+                      "bin",
+                      &format!("{}_{}_{}", namespace, set_name, "bin"),
+                      IndexType::Numeric)
         .expect("Failed to create index");
 
     // FIXME: replace sleep with wait task

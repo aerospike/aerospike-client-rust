@@ -56,15 +56,17 @@ function echo(rec, val)
 end
 "#;
 
-    client.register_udf(&wpolicy,
-                        udf_body1.as_bytes(),
-                        "test_udf1.lua",
-                        UDFLang::Lua)
+    client
+        .register_udf(&wpolicy,
+                      udf_body1.as_bytes(),
+                      "test_udf1.lua",
+                      UDFLang::Lua)
         .unwrap();
-    client.register_udf(&wpolicy,
-                        udf_body2.as_bytes(),
-                        "test_udf2.lua",
-                        UDFLang::Lua)
+    client
+        .register_udf(&wpolicy,
+                      udf_body2.as_bytes(),
+                      "test_udf2.lua",
+                      UDFLang::Lua)
         .unwrap();
 
     // FIXME: replace sleep with wait task

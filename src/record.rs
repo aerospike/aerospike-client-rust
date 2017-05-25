@@ -105,7 +105,10 @@ mod tests {
     #[test]
     fn ttl_expiration_future() {
         let expiration = SystemTime::now() + Duration::new(1000, 0);
-        let secs_since_epoch = expiration.duration_since(*CITRUSLEAF_EPOCH).unwrap().as_secs();
+        let secs_since_epoch = expiration
+            .duration_since(*CITRUSLEAF_EPOCH)
+            .unwrap()
+            .as_secs();
         let record = Record::new(None, HashMap::new(), 0, secs_since_epoch as u32);
         let ttl = record.time_to_live();
         assert!(ttl.is_some());

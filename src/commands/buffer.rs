@@ -388,12 +388,16 @@ impl Buffer {
 
         for operation in operations {
             match *operation {
-                Operation { op: OperationType::Read, bin: OperationBin::None, .. } => {
-                    read_attr |= INFO1_READ | INFO1_NOBINDATA
-                }
-                Operation { op: OperationType::Read, bin: OperationBin::All, .. } => {
-                    read_attr |= INFO1_READ | INFO1_GET_ALL
-                }
+                Operation {
+                    op: OperationType::Read,
+                    bin: OperationBin::None,
+                    ..
+                } => read_attr |= INFO1_READ | INFO1_NOBINDATA,
+                Operation {
+                    op: OperationType::Read,
+                    bin: OperationBin::All,
+                    ..
+                } => read_attr |= INFO1_READ | INFO1_GET_ALL,
                 Operation { op: OperationType::Read, .. } => read_attr |= INFO1_READ,
                 _ => write_attr |= INFO2_WRITE,
             }

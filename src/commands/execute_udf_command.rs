@@ -66,11 +66,12 @@ impl<'a> Command for ExecuteUDFCommand<'a> {
     }
 
     fn prepare_buffer(&mut self, conn: &mut Connection) -> Result<()> {
-        conn.buffer.set_udf(self.policy,
-                            self.read_command.single_command.key,
-                            self.package_name,
-                            self.function_name,
-                            self.args)
+        conn.buffer
+            .set_udf(self.policy,
+                     self.read_command.single_command.key,
+                     self.package_name,
+                     self.function_name,
+                     self.args)
     }
 
     fn get_node(&self) -> Result<Arc<Node>> {
