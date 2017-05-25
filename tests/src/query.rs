@@ -25,19 +25,17 @@ use aerospike::*;
 
 const EXPECTED: usize = 1000;
 
-#[test]
-fn query_single_consumer() {
-    let _ = env_logger::init();
-
+fn create_test_set(no_records: usize) -> String {
     let client = common::client();
     let namespace = common::namespace();
-    let set_name = &common::rand_str(10);
+    let set_name = common::rand_str(10);
 
     let wpolicy = WritePolicy::default();
-    for i in 0..EXPECTED as i64 {
-        let key = as_key!(namespace, set_name, i);
+    for i in 0..no_records as i64 {
+        let key = as_key!(namespace, &set_name, i);
         let wbin = as_bin!("bin", i);
         let bins = vec![&wbin];
+        client.delete(&wpolicy, &key).unwrap();
         client.put(&wpolicy, &key, &bins).unwrap();
     }
 
@@ -45,7 +43,7 @@ fn query_single_consumer() {
     client
         .create_index(&wpolicy,
                       namespace,
-                      set_name,
+                      &set_name,
                       "bin",
                       &format!("{}_{}_{}", namespace, set_name, "bin"),
                       IndexType::Numeric)
@@ -54,32 +52,37 @@ fn query_single_consumer() {
     // FIXME: replace sleep with wait task
     thread::sleep(Duration::from_millis(3000));
 
+    set_name
+}
+
+#[test]
+fn query_single_consumer() {
+    let _ = env_logger::init();
+
+    let client = common::client();
+    let namespace = common::namespace();
+    let set_name = create_test_set(EXPECTED);
     let qpolicy = QueryPolicy::default();
-    // let node = client.cluster.get_random_node().unwrap();
 
-    let mut statement = Statement::new(namespace, set_name, None);
+    // Filter Query
+    let mut statement = Statement::new(namespace, &set_name, None);
     statement.add_filter(as_eq!("bin", 1));
-
     let rs = client.query(&qpolicy, statement).unwrap();
     let mut count = 0;
     for res in &*rs {
         match res {
             Ok(rec) => {
                 assert_eq!(rec.bins["bin"], as_val!(1));
-                // println!("Record: {}", rec);
                 count += 1;
             }
             Err(err) => panic!(format!("{:?}", err)),
         }
     }
-
     assert_eq!(count, 1);
 
     // Range Query
-    let mut statement = Statement::new(namespace, set_name, None);
-    let f = as_range!("bin", 0, 9);
-    statement.add_filter(f);
-
+    let mut statement = Statement::new(namespace, &set_name, None);
+    statement.add_filter(as_range!("bin", 0, 9));
     let rs = client.query(&qpolicy, statement).unwrap();
     let mut count = 0;
     for res in &*rs {
@@ -94,7 +97,6 @@ fn query_single_consumer() {
             Err(err) => panic!(format!("{:?}", err)),
         }
     }
-
     assert_eq!(count, 10);
 }
 
@@ -104,36 +106,13 @@ fn query_multi_consumer() {
 
     let client = common::client();
     let namespace = common::namespace();
-    let set_name = &common::rand_str(10);
-
-    let wpolicy = WritePolicy::default();
-    for i in 0..EXPECTED as i64 {
-        let key = as_key!(namespace, set_name, i);
-        let wbin = as_bin!("bin", i);
-        let bins = vec![&wbin];
-        client.put(&wpolicy, &key, &bins).unwrap();
-    }
-
-    // create an index
-    client
-        .create_index(&wpolicy,
-                      namespace,
-                      set_name,
-                      "bin",
-                      &format!("{}_{}_{}", namespace, set_name, "bin"),
-                      IndexType::Numeric)
-        .expect("Failed to create index");
-
-    // FIXME: replace sleep with wait task
-    thread::sleep(Duration::from_millis(3000));
-
+    let set_name = create_test_set(EXPECTED);
     let qpolicy = QueryPolicy::default();
 
     // Range Query
-    let mut statement = Statement::new(namespace, set_name, None);
+    let mut statement = Statement::new(namespace, &set_name, None);
     let f = as_range!("bin", 0, 9);
     statement.add_filter(f);
-
     let rs = client.query(&qpolicy, statement).unwrap();
 
     let count = Arc::new(AtomicUsize::new(0));
@@ -160,4 +139,36 @@ fn query_multi_consumer() {
     }
 
     assert_eq!(count.load(Ordering::Relaxed), 10);
+}
+
+#[test]
+fn query_node() {
+    let _ = env_logger::init();
+
+    let client = common::client();
+    let namespace = common::namespace();
+    let set_name = create_test_set(EXPECTED);
+
+    let count = Arc::new(AtomicUsize::new(0));
+    let mut threads = vec![];
+
+    for node in client.nodes() {
+        let client = client.clone();
+        let count = count.clone();
+        let set_name = set_name.clone();
+        threads.push(thread::spawn(move || {
+            let qpolicy = QueryPolicy::default();
+            let mut statement = Statement::new(namespace, &set_name, None);
+            statement.add_filter(as_range!("bin", 0, 99));
+            let rs = client.query_node(&qpolicy, node, statement).unwrap();
+            let ok = (&*rs).filter(|r| r.is_ok()).count();
+            count.fetch_add(ok, Ordering::Relaxed);
+        }));
+    }
+
+    for t in threads {
+        t.join().expect("Failed to join threads");
+    }
+
+    assert_eq!(count.load(Ordering::Relaxed), 100);
 }

@@ -509,7 +509,7 @@ impl Cluster {
         bail!("No active node")
     }
 
-    fn get_node_by_name(&self, node_name: &str) -> Result<Arc<Node>> {
+    pub fn get_node_by_name(&self, node_name: &str) -> Result<Arc<Node>> {
         let node_array = self.nodes();
 
         for node in &node_array {
