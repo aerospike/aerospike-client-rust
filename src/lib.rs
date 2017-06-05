@@ -148,7 +148,7 @@ mod bin;
 mod key;
 mod batch;
 mod client;
-mod cluster;
+pub mod cluster;
 mod commands;
 mod msgpack;
 mod net;
