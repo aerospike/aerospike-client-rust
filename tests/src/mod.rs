@@ -20,3 +20,4 @@ mod udf;
 mod cdt_list;
 mod cdt_map;
 mod batch;
+mod index;
