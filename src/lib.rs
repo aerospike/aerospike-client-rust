@@ -136,7 +136,7 @@ pub use query::{Statement, UDFLang, Recordset, IndexType, CollectionIndexType};
 pub use record::Record;
 pub use result_code::ResultCode;
 pub use user::User;
-pub use value::Value;
+pub use value::{Value, FloatValue};
 
 #[macro_use]
 pub mod errors;
