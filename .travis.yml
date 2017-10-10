@@ -11,12 +11,15 @@ sudo: false
 os: linux
 dist: trusty
 env:
-  - AEROSPIKE_HOSTS=127.0.0.1:3000,127.0.0.1:3100
+  global:
+    - AEROSPIKE_HOSTS=127.0.0.1:3000,127.0.0.1:3100
 before_script:
   - .travis/start_cluster.sh 2
 script:
   - cargo build
   - cargo test
+after_script:
+- tail -n +1 aerospike-server/instance?/var/log/aerospike.log
 notifications:
   email:
   - qe-notices@aerospike.com

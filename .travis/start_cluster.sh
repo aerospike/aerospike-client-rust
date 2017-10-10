@@ -1,4 +1,4 @@
-#! /bin/bash
+#!/bin/bash
 ################################################################################
 # Copyright 2013-2017 Aerospike, Inc.
 #
@@ -14,6 +14,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 ################################################################################
+
+nodes=${1:-1}
+home=$(pwd)
 
 function wait_for_node {
   log=$1
@@ -44,6 +47,7 @@ function start_server {
   instance=$1
   dir="instance${instance}"
   port=$((2900 + 100 * $instance))
+  echo "## Starting Aerospike instance ${instance}/${nodes} on port ${port}"
   mkdir ${dir}
   ./bin/aerospike init --home ${dir} --instance ${instance} --service-port ${port}
   cd ${dir}
@@ -53,22 +57,22 @@ function start_server {
 }
 
 function install_server {
-  wget -O aerospike-server.tgz http://aerospike.com/download/server/latest/artifact/tgz
+  wget -nv -O aerospike-server.tgz http://aerospike.com/download/server/latest/artifact/tgz
   tar xzf aerospike-server.tgz
   cp -f .travis/aerospike.conf ./aerospike-server/share/etc
   cd aerospike-server
   sed -i -e 's/\${me}/"root"/' share/libexec/aerospike-start
   sed -i -e 's/set_shmmax$/#set_shmmax/' share/libexec/aerospike-start
   sed -i -e 's/set_shmall$/#set_shmall/' share/libexec/aerospike-start
+  sed -i -e 's/set_socket_buffer_limits$/#set_socket_buffer_limits/' share/libexec/aerospike-start
+  sed -i -e 's/ulimit/#ulimit/' share/libexec/aerospike-start
 }
 
-nodes=$1
-home=$(pwd)
+echo "## Fetching Aerospike server distribution"
 install_server
-i=1
-while [ $i -le $nodes ]
+for ((node = 1; node <= nodes; node++))
 do
-  start_server $i
-  i=$(($i + 1))
+  start_server $node
 done
 cd ${pwd}
+sleep 5 # ensure cluster has fully formed
