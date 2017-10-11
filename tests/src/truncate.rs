@@ -13,12 +13,20 @@
 // License for the specific language governing permissions and limitations under
 // the License.
 
-mod kv;
-mod query;
-mod scan;
-mod udf;
-mod cdt_list;
-mod cdt_map;
-mod batch;
-mod index;
-mod truncate;
+use aerospike::WritePolicy;
+
+use env_logger;
+use common;
+
+#[test]
+fn truncate() {
+    let _ = env_logger::init();
+
+    let client = common::client();
+    let namespace: &str = common::namespace();
+    let set_name = &common::rand_str(10);
+    let wpolicy = WritePolicy::default();
+
+    let result = client.truncate(&wpolicy, namespace, set_name, 0);
+    assert!(result.is_ok());
+}

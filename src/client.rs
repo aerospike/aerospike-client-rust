@@ -768,6 +768,41 @@ impl Client {
         Ok(recordset)
     }
 
+    /// Removes all records in the specified namespace/set efficiently.
+    ///
+    /// This method is many orders of magnitude faster than deleting records one at a time. Works
+    /// with Aerospike Server version 3.12 or later.
+    ///
+    /// The `set_name` is optional; set to `""` to delete all sets in `namespace`.
+    ///
+    /// `before_nanos` optionally specifies a last update timestamp (lut); if it is greater than
+    /// zero, only records with a lut less than `before_nanos` are deleted. Units are in
+    /// nanoseconds since unix epoch (1970-01-01). Pass in zero to delete all records in the
+    /// namespace/set recardless of last update time.
+    pub fn truncate(&self,
+                    policy: &WritePolicy,
+                    namespace: &str,
+                    set_name: &str,
+                    before_nanos: i64)
+                    -> Result<()> {
+        let mut cmd = String::with_capacity(160);
+        cmd.push_str("truncate:namespace=");
+        cmd.push_str(namespace);
+
+        if !set_name.is_empty() {
+            cmd.push_str(";set=");
+            cmd.push_str(set_name);
+        }
+
+        if before_nanos > 0 {
+            cmd.push_str(";lut=");
+            cmd.push_str(&format!("{}", before_nanos));
+        }
+
+        self.send_info_cmd(&cmd, policy)
+            .chain_err(|| "Error truncating ns/set")
+    }
+
     /// Create a secondary index on a bin containing scalar values. This asynchronous server call
     /// returns before the command is complete.
     ///
@@ -830,7 +865,7 @@ impl Client {
                           cit_str,
                           bin_name,
                           index_type);
-        self.send_sindex_cmd(cmd, policy)
+        self.send_info_cmd(&cmd, policy)
             .chain_err(|| "Error creating index")
     }
 
@@ -850,21 +885,20 @@ impl Client {
                           namespace,
                           set_name,
                           index_name);
-        self.send_sindex_cmd(cmd, policy)
+        self.send_info_cmd(&cmd, policy)
             .chain_err(|| "Error dropping index")
     }
 
-    fn send_sindex_cmd(&self, cmd: String, policy: &WritePolicy) -> Result<()> {
-        let node = try!(self.cluster.get_random_node());
-        let response = try!(node.info(policy.base_policy.timeout, &[&cmd]));
+    fn send_info_cmd(&self, cmd: &str, policy: &WritePolicy) -> Result<()> {
+        let node = self.cluster.get_random_node()?;
+        let response = node.info(policy.base_policy.timeout, &[&cmd])?;
 
         for v in response.values() {
             if v.to_uppercase() == "OK" {
                 return Ok(());
-            } else if v.starts_with("FAIL:200") {
-                bail!(ErrorKind::ServerError(ResultCode::from(200)));
-            } else if v.starts_with("FAIL:201") {
-                bail!(ErrorKind::ServerError(ResultCode::from(201)));
+            } else if v.starts_with("FAIL:") {
+                let result = v.split(':').skip(1).next().unwrap().parse::<u8>()?;
+                bail!(ErrorKind::ServerError(ResultCode::from(result)));
             } else {
                 break;
             }
