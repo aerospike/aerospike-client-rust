@@ -467,7 +467,7 @@ impl Buffer {
                     policy: &ScanPolicy,
                     namespace: &str,
                     set_name: &str,
-                    bin_names: &Option<Vec<String>>,
+                    bins: &Bins,
                     task_id: u64)
                     -> Result<()> {
         try!(self.begin());
@@ -491,20 +491,21 @@ impl Buffer {
         self.data_offset += 8 + FIELD_HEADER_SIZE as usize;
         field_count += 1;
 
-        let bin_count = match *bin_names {
-            Some(ref bin_names) => {
+        let bin_count = match *bins {
+            Bins::All => 0,
+            Bins::None => 0,
+            Bins::Some(ref bin_names) => {
                 for bin_name in bin_names {
                     try!(self.estimate_operation_size_for_bin_name(&bin_name));
                 }
                 bin_names.len()
             }
-            None => 0,
         };
 
         try!(self.size_buffer());
 
         let mut read_attr = INFO1_READ;
-        if !policy.include_bin_data {
+        if bins.is_none() {
             read_attr |= INFO1_NOBINDATA;
         }
 
@@ -537,7 +538,7 @@ impl Buffer {
         try!(self.write_field_header(8, FieldType::TranId));
         try!(self.write_u64(task_id));
 
-        if let Some(ref bin_names) = *bin_names {
+        if let Bins::Some(ref bin_names) = *bins {
             for bin_name in bin_names {
                 try!(self.write_operation_for_bin_name(&bin_name, OperationType::Read));
             }

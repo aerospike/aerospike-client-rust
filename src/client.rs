@@ -192,7 +192,7 @@ impl Client {
     /// }
     /// # }
     /// ```
-    pub fn get<'a, T>(&self, policy: &ReadPolicy, key: &Key, bins: T) -> Result<Record>
+    pub fn get<T>(&self, policy: &ReadPolicy, key: &Key, bins: T) -> Result<Record>
         where T: Into<Bins>
     {
         let bins = bins.into();
@@ -606,7 +606,7 @@ impl Client {
     /// # fn main() {
     /// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap();
     /// # let client = Client::new(&ClientPolicy::default(), &hosts).unwrap();
-    /// match client.scan(&ScanPolicy::default(), "test", "demo", None) {
+    /// match client.scan(&ScanPolicy::default(), "test", "demo", Bins::All) {
     ///     Ok(records) => {
     ///         let mut count = 0;
     ///         for record in &*records {
@@ -621,21 +621,15 @@ impl Client {
     /// }
     /// # }
     /// ```
-    pub fn scan(&self,
-                policy: &ScanPolicy,
-                namespace: &str,
-                set_name: &str,
-                bin_names: Option<&[&str]>)
-                -> Result<Arc<Recordset>> {
-
-        let bin_names = match bin_names {
-            None => None,
-            Some(bin_names) => {
-                let bin_names: Vec<_> = bin_names.iter().cloned().map(String::from).collect();
-                Some(bin_names)
-            }
-        };
-
+    pub fn scan<T>(&self,
+                   policy: &ScanPolicy,
+                   namespace: &str,
+                   set_name: &str,
+                   bins: T)
+                   -> Result<Arc<Recordset>>
+        where T: Into<Bins>
+    {
+        let bins = bins.into();
         let nodes = self.cluster.nodes();
         let recordset = Arc::new(Recordset::new(policy.record_queue_size, nodes.len()));
         for node in nodes {
@@ -644,11 +638,11 @@ impl Client {
             let policy = policy.to_owned();
             let namespace = namespace.to_owned();
             let set_name = set_name.to_owned();
-            let bin_names = bin_names.to_owned();
+            let bins = bins.clone();
 
             thread::spawn(move || {
                 let mut command =
-                    ScanCommand::new(&policy, node, &namespace, &set_name, &bin_names, recordset);
+                    ScanCommand::new(&policy, node, &namespace, &set_name, bins, recordset);
                 command.execute().unwrap();
             });
 
@@ -661,36 +655,26 @@ impl Client {
     /// concurrently pops records off the queue through the record iterator. Up to
     /// `policy.max_concurrent_nodes` nodes are scanned in parallel. If concurrent nodes is set to
     /// zero, the server nodes are read in series.
-    pub fn scan_node(&self,
-                     policy: &ScanPolicy,
-                     node: Arc<Node>,
-                     namespace: &str,
-                     set_name: &str,
-                     bin_names: Option<&[&str]>)
-                     -> Result<Arc<Recordset>> {
-        let bin_names = match bin_names {
-            None => None,
-            Some(bin_names) => {
-                let bin_names: Vec<_> = bin_names.iter().cloned().map(String::from).collect();
-                Some(bin_names)
-            }
-        };
-
+    pub fn scan_node<T>(&self,
+                        policy: &ScanPolicy,
+                        node: Arc<Node>,
+                        namespace: &str,
+                        set_name: &str,
+                        bins: T)
+                        -> Result<Arc<Recordset>>
+        where T: Into<Bins>
+    {
+        let bins = bins.into();
         let recordset = Arc::new(Recordset::new(policy.record_queue_size, 1));
         let t_recordset = recordset.clone();
         let policy = policy.to_owned();
         let namespace = namespace.to_owned();
         let set_name = set_name.to_owned();
-        let bin_names = bin_names.to_owned();
 
         self.thread_pool
             .spawn(move || {
-                let mut command = ScanCommand::new(&policy,
-                                                   node,
-                                                   &namespace,
-                                                   &set_name,
-                                                   &bin_names,
-                                                   t_recordset);
+                let mut command =
+                    ScanCommand::new(&policy, node, &namespace, &set_name, bins, t_recordset);
                 command.execute().unwrap();
             });
 

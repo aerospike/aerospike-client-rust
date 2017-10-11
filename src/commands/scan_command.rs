@@ -17,6 +17,7 @@ use std::time::Duration;
 use std::str;
 
 use errors::*;
+use Bins;
 use Recordset;
 use cluster::Node;
 use commands::{Command, SingleCommand, StreamCommand};
@@ -28,7 +29,7 @@ pub struct ScanCommand<'a> {
     policy: &'a ScanPolicy,
     namespace: &'a str,
     set_name: &'a str,
-    bin_names: &'a Option<Vec<String>>,
+    bins: Bins,
 }
 
 impl<'a> ScanCommand<'a> {
@@ -36,7 +37,7 @@ impl<'a> ScanCommand<'a> {
                node: Arc<Node>,
                namespace: &'a str,
                set_name: &'a str,
-               bin_names: &'a Option<Vec<String>>,
+               bins: Bins,
                recordset: Arc<Recordset>)
                -> Self {
         ScanCommand {
@@ -44,7 +45,7 @@ impl<'a> ScanCommand<'a> {
             policy: policy,
             namespace: namespace,
             set_name: set_name,
-            bin_names: bin_names,
+            bins: bins,
         }
     }
 
@@ -68,7 +69,7 @@ impl<'a> Command for ScanCommand<'a> {
             .set_scan(self.policy,
                       self.namespace,
                       self.set_name,
-                      self.bin_names,
+                      &self.bins,
                       self.stream_command.recordset.task_id())
     }
 
