@@ -17,4 +17,5 @@ rand = "0.3"
 aerospike = { path = "../.." }
 
 [[bin]]
+path = "src/main.rs"
 name = "benchmark"

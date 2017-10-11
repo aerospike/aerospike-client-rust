@@ -35,6 +35,7 @@ pub enum CdtOpType {
     ListSet = 9,
     ListTrim = 10,
     ListClear = 11,
+    ListIncrement = 12,
     ListSize = 16,
     ListGet = 17,
     ListGetRange = 18,

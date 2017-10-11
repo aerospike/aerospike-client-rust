@@ -76,6 +76,10 @@ fn cdt_list() {
     assert_eq!(*rec.bins.get("bin").unwrap(),
                as_list!(6, as_list!("0", 9, 8, 7, 1, 2.1f64)));
 
+    let ops = &vec![lists::increment("bin", 1, 4)];
+    let rec = client.operate(&wpolicy, &key, ops).unwrap();
+    assert_eq!(*rec.bins.get("bin").unwrap(), Value::from(13));
+
     let ops = &vec![lists::remove("bin", 1), operations::get_bin("bin")];
     let rec = client.operate(&wpolicy, &key, ops).unwrap();
     assert_eq!(*rec.bins.get("bin").unwrap(),
