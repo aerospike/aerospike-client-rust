@@ -14,6 +14,7 @@
 // the License.
 
 use errors::*;
+use Bins;
 use Value;
 use query::Filter;
 
@@ -37,7 +38,7 @@ pub struct Statement {
     pub index_name: Option<String>,
 
     /// Optional list of bin names to return in query.
-    pub bin_names: Option<Vec<String>>,
+    pub bins: Bins,
 
     /// Optional list of query filters. Currently, only one filter is allowed by the server on a
     /// secondary index lookup.
@@ -57,24 +58,15 @@ impl Statement {
     /// "age" bins for each matching record.
     ///
     /// ```rust
-    /// use aerospike::Statement;
+    /// # use aerospike::*;
     ///
-    /// let stmt = Statement::new("foo", "bar", Some(&vec!["name", "age"]));
+    /// let stmt = Statement::new("foo", "bar", Bins::from(["name", "age"]));
     /// ```
-    pub fn new(namespace: &str, set_name: &str, bin_names: Option<&[&str]>) -> Self {
-
-        let bin_names = match bin_names {
-            None => None,
-            Some(bin_names) => {
-                let bin_names: Vec<_> = bin_names.iter().cloned().map(String::from).collect();
-                Some(bin_names)
-            }
-        };
-
+    pub fn new(namespace: &str, set_name: &str, bins: Bins) -> Self {
         Statement {
             namespace: namespace.to_owned(),
             set_name: set_name.to_owned(),
-            bin_names: bin_names,
+            bins: bins,
             index_name: None,
             aggregation: None,
             filters: None,
@@ -93,7 +85,7 @@ impl Statement {
     /// # #[macro_use] extern crate aerospike;
     /// # use aerospike::*;
     /// # fn main() {
-    /// let mut stmt = Statement::new("foo", "bar", Some(&vec!["name", "age"]));
+    /// let mut stmt = Statement::new("foo", "bar", Bins::from(["name", "age"]));
     /// stmt.add_filter(as_range!("baz", 0, 100));
     /// # }
     /// ```
@@ -160,7 +152,6 @@ impl Statement {
             if agg.function_name.is_empty() {
                 bail!(ErrorKind::InvalidArgument("Empty UDF function name".to_string()));
             }
-
         }
 
         Ok(())

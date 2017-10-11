@@ -65,7 +65,7 @@ fn query_single_consumer() {
     let qpolicy = QueryPolicy::default();
 
     // Filter Query
-    let mut statement = Statement::new(namespace, &set_name, None);
+    let mut statement = Statement::new(namespace, &set_name, Bins::All);
     statement.add_filter(as_eq!("bin", 1));
     let rs = client.query(&qpolicy, statement).unwrap();
     let mut count = 0;
@@ -81,7 +81,7 @@ fn query_single_consumer() {
     assert_eq!(count, 1);
 
     // Range Query
-    let mut statement = Statement::new(namespace, &set_name, None);
+    let mut statement = Statement::new(namespace, &set_name, Bins::All);
     statement.add_filter(as_range!("bin", 0, 9));
     let rs = client.query(&qpolicy, statement).unwrap();
     let mut count = 0;
@@ -101,6 +101,29 @@ fn query_single_consumer() {
 }
 
 #[test]
+fn query_nobins() {
+    let _ = env_logger::init();
+
+    let client = common::client();
+    let namespace = common::namespace();
+    let set_name = create_test_set(EXPECTED);
+    let qpolicy = QueryPolicy::default();
+
+    let mut statement = Statement::new(namespace, &set_name, Bins::None);
+    statement.add_filter(as_range!("bin", 0, 9));
+    let rs = client.query(&qpolicy, statement).unwrap();
+    for res in &*rs {
+        match res {
+            Ok(rec) => {
+                assert!(rec.generation > 0);
+                assert_eq!(0, rec.bins.len());
+            }
+            Err(err) => panic!(format!("{:?}", err)),
+        }
+    }
+}
+
+#[test]
 fn query_multi_consumer() {
     let _ = env_logger::init();
 
@@ -110,7 +133,7 @@ fn query_multi_consumer() {
     let qpolicy = QueryPolicy::default();
 
     // Range Query
-    let mut statement = Statement::new(namespace, &set_name, None);
+    let mut statement = Statement::new(namespace, &set_name, Bins::All);
     let f = as_range!("bin", 0, 9);
     statement.add_filter(f);
     let rs = client.query(&qpolicy, statement).unwrap();
@@ -158,7 +181,7 @@ fn query_node() {
         let set_name = set_name.clone();
         threads.push(thread::spawn(move || {
             let qpolicy = QueryPolicy::default();
-            let mut statement = Statement::new(namespace, &set_name, None);
+            let mut statement = Statement::new(namespace, &set_name, Bins::All);
             statement.add_filter(as_range!("bin", 0, 99));
             let rs = client.query_node(&qpolicy, node, statement).unwrap();
             let ok = (&*rs).filter(|r| r.is_ok()).count();

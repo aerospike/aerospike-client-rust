@@ -221,22 +221,22 @@ impl Buffer {
     }
 
     // Writes the command for get operations
-    pub fn set_read<'a>(&mut self, policy: &ReadPolicy, key: &Key, bins: &Bins<'a>) -> Result<()> {
-        match *bins {
-            Bins::None => self.set_read_header(policy, key),
-            Bins::All => self.set_read_for_key_only(policy, key),
-            Bins::Some(bin_names) => {
+    pub fn set_read<'a>(&mut self, policy: &ReadPolicy, key: &Key, bins: &Bins) -> Result<()> {
+        match bins {
+            &Bins::None => self.set_read_header(policy, key),
+            &Bins::All => self.set_read_for_key_only(policy, key),
+            &Bins::Some(ref bin_names) => {
                 try!(self.begin());
                 let field_count = try!(self.estimate_key_size(key, false));
                 for bin_name in bin_names {
-                    try!(self.estimate_operation_size_for_bin_name(bin_name));
+                    try!(self.estimate_operation_size_for_bin_name(&bin_name));
                 }
 
                 self.size_buffer()?;
                 self.write_header(policy, INFO1_READ, 0, field_count, bin_names.len() as u16)?;
                 self.write_key(key, false)?;
                 for bin_name in bin_names {
-                    self.write_operation_for_bin_name(bin_name, OperationType::Read)?;
+                    self.write_operation_for_bin_name(&bin_name, OperationType::Read)?;
                 }
                 self.end()?;
                 Ok(())
@@ -292,9 +292,9 @@ impl Buffer {
                     if policy.send_set_name {
                         self.data_offset += key.set_name.len() + FIELD_HEADER_SIZE as usize;
                     }
-                    if let Bins::Some(bin_names) = batch_read.bins {
+                    if let &Bins::Some(ref bin_names) = batch_read.bins {
                         for name in bin_names {
-                            self.estimate_operation_size_for_bin_name(name)?;
+                            self.estimate_operation_size_for_bin_name(&name)?;
                         }
                     }
                 }
@@ -332,7 +332,7 @@ impl Buffer {
                 _ => {
                     self.write_u8(0)?;
                     match batch_read.bins {
-                        Bins::None => {
+                        &Bins::None => {
                             self.write_u8(INFO1_READ | INFO1_NOBINDATA)?;
                             self.write_u16(field_count)?;
                             self.write_u16(0)?;
@@ -341,7 +341,7 @@ impl Buffer {
                                 self.write_field_string(&key.set_name, FieldType::Table)?;
                             }
                         }
-                        Bins::All => {
+                        &Bins::All => {
                             self.write_u8(INFO1_READ | INFO1_GET_ALL)?;
                             self.write_u16(field_count)?;
                             self.write_u16(0)?;
@@ -350,7 +350,7 @@ impl Buffer {
                                 self.write_field_string(&key.set_name, FieldType::Table)?;
                             }
                         }
-                        Bins::Some(bin_names) => {
+                        &Bins::Some(ref bin_names) => {
                             self.write_u8(INFO1_READ)?;
                             self.write_u16(field_count)?;
                             self.write_u16(bin_names.len() as u16)?;
@@ -359,7 +359,7 @@ impl Buffer {
                                 self.write_field_string(&key.set_name, FieldType::Table)?;
                             }
                             for bin in bin_names {
-                                self.write_operation_for_bin_name(bin, OperationType::Read)?;
+                                self.write_operation_for_bin_name(&bin, OperationType::Read)?;
                             }
                         }
                     }
@@ -467,7 +467,7 @@ impl Buffer {
                     policy: &ScanPolicy,
                     namespace: &str,
                     set_name: &str,
-                    bin_names: &Option<Vec<String>>,
+                    bins: &Bins,
                     task_id: u64)
                     -> Result<()> {
         try!(self.begin());
@@ -491,20 +491,21 @@ impl Buffer {
         self.data_offset += 8 + FIELD_HEADER_SIZE as usize;
         field_count += 1;
 
-        let bin_count = match *bin_names {
-            Some(ref bin_names) => {
+        let bin_count = match *bins {
+            Bins::All => 0,
+            Bins::None => 0,
+            Bins::Some(ref bin_names) => {
                 for bin_name in bin_names {
                     try!(self.estimate_operation_size_for_bin_name(&bin_name));
                 }
                 bin_names.len()
             }
-            None => 0,
         };
 
         try!(self.size_buffer());
 
         let mut read_attr = INFO1_READ;
-        if !policy.include_bin_data {
+        if bins.is_none() {
             read_attr |= INFO1_NOBINDATA;
         }
 
@@ -537,7 +538,7 @@ impl Buffer {
         try!(self.write_field_header(8, FieldType::TranId));
         try!(self.write_u64(task_id));
 
-        if let Some(ref bin_names) = *bin_names {
+        if let Bins::Some(ref bin_names) = *bins {
             for bin_name in bin_names {
                 try!(self.write_operation_for_bin_name(&bin_name, OperationType::Read));
             }
@@ -598,7 +599,7 @@ impl Buffer {
             self.data_offset += 1 + try!(filter.estimate_size());
             field_count += 1;
 
-            if let Some(ref bin_names) = statement.bin_names {
+            if let Bins::Some(ref bin_names) = statement.bins {
                 self.data_offset += FIELD_HEADER_SIZE as usize;
                 bin_name_size += 1;
 
@@ -630,9 +631,9 @@ impl Buffer {
         }
 
         if statement.is_scan() {
-            if let Some(ref bin_names) = statement.bin_names {
+            if let Bins::Some(ref bin_names) = statement.bins {
                 for bin_name in bin_names {
-                    try!(self.estimate_operation_size_for_bin_name(&bin_name));
+                    self.estimate_operation_size_for_bin_name(&bin_name)?;
                 }
             }
         }
@@ -641,24 +642,23 @@ impl Buffer {
 
         let mut operation_count: usize = 0;
         if statement.is_scan() {
-            if let Some(ref bin_names) = statement.bin_names {
+            if let Bins::Some(ref bin_names) = statement.bins {
                 operation_count += bin_names.len();
             }
         }
 
-        if write {
-            try!(self.write_header(&policy.base_policy,
-                                   INFO1_READ,
-                                   INFO2_WRITE,
-                                   field_count,
-                                   operation_count as u16));
+        let info1 = if statement.bins.is_none() {
+            INFO1_READ | INFO1_NOBINDATA
         } else {
-            try!(self.write_header(&policy.base_policy,
-                                   INFO1_READ,
-                                   0,
-                                   field_count,
-                                   operation_count as u16));
-        }
+            INFO1_READ
+        };
+        let info2 = if write { INFO2_WRITE } else { 0 };
+
+        self.write_header(&policy.base_policy,
+                          info1,
+                          info2,
+                          field_count,
+                          operation_count as u16)?;
 
         if statement.namespace != "" {
             try!(self.write_field_string(&statement.namespace, FieldType::Namespace));
@@ -691,7 +691,7 @@ impl Buffer {
 
             try!(filter.write(self));
 
-            if let Some(ref bin_names) = statement.bin_names {
+            if let Bins::Some(ref bin_names) = statement.bins {
                 if !bin_names.is_empty() {
                     try!(self.write_field_header(bin_name_size, FieldType::QueryBinList));
                     try!(self.write_u8(bin_names.len() as u8));
@@ -712,10 +712,10 @@ impl Buffer {
 
         if let Some(ref aggregation) = statement.aggregation {
             try!(self.write_field_header(1, FieldType::UdfOp));
-            if policy.include_bin_data {
-                try!(self.write_u8(1));
-            } else {
+            if statement.bins.is_none() {
                 try!(self.write_u8(2));
+            } else {
+                try!(self.write_u8(1));
             }
 
             try!(self.write_field_string(&aggregation.package_name, FieldType::UdfPackageName));
@@ -729,7 +729,7 @@ impl Buffer {
 
         // scan binNames come last
         if statement.is_scan() {
-            if let Some(ref bin_names) = statement.bin_names {
+            if let Bins::Some(ref bin_names) = statement.bins {
                 for bin_name in bin_names {
                     try!(self.write_operation_for_bin_name(&bin_name, OperationType::Read));
                 }

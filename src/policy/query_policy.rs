@@ -32,9 +32,6 @@ pub struct QueryPolicy {
     /// the queue is full, the producer threads will block until records are consumed.
     pub record_queue_size: usize,
 
-    /// Indicates if bin data is retrieved. If false, only record digests are retrieved.
-    pub include_bin_data: bool,
-
     /// Terminate query if cluster is in fluctuating state.
     pub fail_on_cluster_change: bool,
 }
@@ -53,7 +50,6 @@ impl Default for QueryPolicy {
             base_policy: BasePolicy::default(),
             max_concurrent_nodes: 0,
             record_queue_size: 1024,
-            include_bin_data: true,
             fail_on_cluster_change: true,
         }
     }
