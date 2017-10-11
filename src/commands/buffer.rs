@@ -599,7 +599,7 @@ impl Buffer {
             self.data_offset += 1 + try!(filter.estimate_size());
             field_count += 1;
 
-            if let Some(ref bin_names) = statement.bin_names {
+            if let Bins::Some(ref bin_names) = statement.bins {
                 self.data_offset += FIELD_HEADER_SIZE as usize;
                 bin_name_size += 1;
 
@@ -631,9 +631,9 @@ impl Buffer {
         }
 
         if statement.is_scan() {
-            if let Some(ref bin_names) = statement.bin_names {
+            if let Bins::Some(ref bin_names) = statement.bins {
                 for bin_name in bin_names {
-                    try!(self.estimate_operation_size_for_bin_name(&bin_name));
+                    self.estimate_operation_size_for_bin_name(&bin_name)?;
                 }
             }
         }
@@ -642,24 +642,23 @@ impl Buffer {
 
         let mut operation_count: usize = 0;
         if statement.is_scan() {
-            if let Some(ref bin_names) = statement.bin_names {
+            if let Bins::Some(ref bin_names) = statement.bins {
                 operation_count += bin_names.len();
             }
         }
 
-        if write {
-            try!(self.write_header(&policy.base_policy,
-                                   INFO1_READ,
-                                   INFO2_WRITE,
-                                   field_count,
-                                   operation_count as u16));
+        let info1 = if statement.bins.is_none() {
+            INFO1_READ | INFO1_NOBINDATA
         } else {
-            try!(self.write_header(&policy.base_policy,
-                                   INFO1_READ,
-                                   0,
-                                   field_count,
-                                   operation_count as u16));
-        }
+            INFO1_READ
+        };
+        let info2 = if write { INFO2_WRITE } else { 0 };
+
+        self.write_header(&policy.base_policy,
+                          info1,
+                          info2,
+                          field_count,
+                          operation_count as u16)?;
 
         if statement.namespace != "" {
             try!(self.write_field_string(&statement.namespace, FieldType::Namespace));
@@ -692,7 +691,7 @@ impl Buffer {
 
             try!(filter.write(self));
 
-            if let Some(ref bin_names) = statement.bin_names {
+            if let Bins::Some(ref bin_names) = statement.bins {
                 if !bin_names.is_empty() {
                     try!(self.write_field_header(bin_name_size, FieldType::QueryBinList));
                     try!(self.write_u8(bin_names.len() as u8));
@@ -713,10 +712,10 @@ impl Buffer {
 
         if let Some(ref aggregation) = statement.aggregation {
             try!(self.write_field_header(1, FieldType::UdfOp));
-            if policy.include_bin_data {
-                try!(self.write_u8(1));
-            } else {
+            if statement.bins.is_none() {
                 try!(self.write_u8(2));
+            } else {
+                try!(self.write_u8(1));
             }
 
             try!(self.write_field_string(&aggregation.package_name, FieldType::UdfPackageName));
@@ -730,7 +729,7 @@ impl Buffer {
 
         // scan binNames come last
         if statement.is_scan() {
-            if let Some(ref bin_names) = statement.bin_names {
+            if let Bins::Some(ref bin_names) = statement.bins {
                 for bin_name in bin_names {
                     try!(self.write_operation_for_bin_name(&bin_name, OperationType::Read));
                 }

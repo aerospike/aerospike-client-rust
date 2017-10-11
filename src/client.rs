@@ -693,7 +693,7 @@ impl Client {
     /// # fn main() {
     /// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap();
     /// # let client = Client::new(&ClientPolicy::default(), &hosts).unwrap();
-    /// let stmt = Statement::new("test", "test", None);
+    /// let stmt = Statement::new("test", "test", Bins::All);
     /// match client.query(&QueryPolicy::default(), stmt) {
     ///     Ok(records) => {
     ///         for record in &*records {
