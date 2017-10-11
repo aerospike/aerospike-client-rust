@@ -224,6 +224,21 @@ pub fn clear(bin: &str) -> Operation {
     }
 }
 
+/// Create list increment operation. Server increments the item value at the specified index by the
+/// given amount and returns the final result.
+pub fn increment(bin: &str, index: i64, value: i64) -> Operation {
+    let cdt_op = CdtOperation {
+        op: CdtOpType::ListIncrement,
+        args: vec![CdtArgument::Int(index), CdtArgument::Int(value)],
+    };
+    Operation {
+        op: OperationType::CdtWrite,
+        bin: OperationBin::Name(bin),
+        data: OperationData::CdtListOp(cdt_op),
+    }
+}
+
+
 /// Create list size operation. Server returns size of the list.
 pub fn size(bin: &str) -> Operation {
     let cdt_op = CdtOperation {
