@@ -50,7 +50,7 @@ macro_rules! as_bin {
 
 /// Specify which, if any, bins to return in read operations.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Bins<'a> {
+pub enum Bins {
     /// Read all bins.
     All,
 
@@ -58,10 +58,10 @@ pub enum Bins<'a> {
     None,
 
     /// Read specified bin names only.
-    Some(&'a [&'a str]),
+    Some(Vec<String>),
 }
 
-impl<'a> Bins<'a> {
+impl Bins {
     /// Returns `true` if the bins selector is an `All` value.
     pub fn is_all(&self) -> bool {
         match *self {
@@ -79,50 +79,64 @@ impl<'a> Bins<'a> {
     }
 }
 
-impl<'a> From<&'a [&'a str]> for Bins<'a> {
+impl<'a> From<&'a [&'a str]> for Bins {
     fn from(bins: &'a [&'a str]) -> Self {
+        let bins = bins.iter().cloned().map(String::from).collect();
         Bins::Some(bins)
     }
 }
 
-impl<'a> From<&'a Vec<&'a str>> for Bins<'a> {
-    fn from(bins: &'a Vec<&'a str>) -> Self {
-        Bins::Some(bins.as_slice())
-    }
-}
-
-impl<'a> From<&'a [&'a str; 1]> for Bins<'a> {
-    fn from(bins: &'a [&'a str; 1]) -> Self {
+impl<'a> From<[&'a str; 1]> for Bins {
+    fn from(bins: [&'a str; 1]) -> Self {
+        let bins = bins.iter().cloned().map(String::from).collect();
         Bins::Some(bins)
     }
 }
 
-impl<'a> From<&'a [&'a str; 2]> for Bins<'a> {
-    fn from(bins: &'a [&'a str; 2]) -> Self {
+impl<'a> From<[&'a str; 2]> for Bins {
+    fn from(bins: [&'a str; 2]) -> Self {
+        let bins = bins.iter().cloned().map(String::from).collect();
         Bins::Some(bins)
     }
 }
 
-impl<'a> From<&'a [&'a str; 3]> for Bins<'a> {
-    fn from(bins: &'a [&'a str; 3]) -> Self {
+impl<'a> From<[&'a str; 3]> for Bins {
+    fn from(bins: [&'a str; 3]) -> Self {
+        let bins = bins.iter().cloned().map(String::from).collect();
         Bins::Some(bins)
     }
 }
 
-impl<'a> From<&'a [&'a str; 4]> for Bins<'a> {
-    fn from(bins: &'a [&'a str; 4]) -> Self {
+impl<'a> From<[&'a str; 4]> for Bins {
+    fn from(bins: [&'a str; 4]) -> Self {
+        let bins = bins.iter().cloned().map(String::from).collect();
         Bins::Some(bins)
     }
 }
 
-impl<'a> From<&'a [&'a str; 5]> for Bins<'a> {
-    fn from(bins: &'a [&'a str; 5]) -> Self {
+impl<'a> From<[&'a str; 5]> for Bins {
+    fn from(bins: [&'a str; 5]) -> Self {
+        let bins = bins.iter().cloned().map(String::from).collect();
         Bins::Some(bins)
     }
 }
 
-impl<'a> From<&'a [&'a str; 6]> for Bins<'a> {
-    fn from(bins: &'a [&'a str; 6]) -> Self {
+impl<'a> From<[&'a str; 6]> for Bins {
+    fn from(bins: [&'a str; 6]) -> Self {
+        let bins = bins.iter().cloned().map(String::from).collect();
         Bins::Some(bins)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn into_bins() {
+        let bin_names = vec!["a".to_string(), "b".to_string(), "c".to_string()];
+        let expected = Bins::Some(bin_names);
+
+        assert_eq!(expected, Bins::from(["a", "b", "c"]));
     }
 }

@@ -158,7 +158,7 @@ impl Client {
     /// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap();
     /// # let client = Client::new(&ClientPolicy::default(), &hosts).unwrap();
     /// let key = as_key!("test", "test", "mykey");
-    /// match client.get(&ReadPolicy::default(), &key, &["a", "b"]) {
+    /// match client.get(&ReadPolicy::default(), &key, ["a", "b"]) {
     ///     Ok(record)
     ///         => println!("a={:?}", record.bins.get("a")),
     ///     Err(Error(ErrorKind::ServerError(ResultCode::KeyNotFoundError), _))
@@ -193,7 +193,7 @@ impl Client {
     /// # }
     /// ```
     pub fn get<'a, T>(&self, policy: &ReadPolicy, key: &Key, bins: T) -> Result<Record>
-        where T: Into<Bins<'a>>
+        where T: Into<Bins>
     {
         let bins = bins.into();
         let mut command = ReadCommand::new(policy, self.cluster.clone(), key, bins);
@@ -218,7 +218,7 @@ impl Client {
     /// # fn main() {
     /// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap();
     /// # let client = Client::new(&ClientPolicy::default(), &hosts).unwrap();
-    /// let bins = ["name", "age"];
+    /// let bins = Bins::from(["name", "age"]);
     /// let mut batch_reads = vec![];
     /// for i in 0..10 {
     ///   let key = as_key!("test", "test", i);

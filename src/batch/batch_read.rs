@@ -23,7 +23,7 @@ pub struct BatchRead<'a> {
     pub key: Key,
 
     /// Bins to retrieve for this key.
-    pub bins: Bins<'a>,
+    pub bins: &'a Bins,
 
     /// Will contain the record after the batch read operation.
     pub record: Option<Record>,
@@ -31,10 +31,7 @@ pub struct BatchRead<'a> {
 
 impl<'a> BatchRead<'a> {
     /// Create a new `BatchRead` instance for the given key and bin selector.
-    pub fn new<T>(key: Key, bins: T) -> Self
-        where T: Into<Bins<'a>>
-    {
-        let bins = bins.into();
+    pub fn new(key: Key, bins: &'a Bins) -> Self {
         BatchRead {
             key: key,
             bins: bins,

@@ -45,11 +45,14 @@ fn batch_get() {
     let key3 = as_key!(namespace, set_name, 3);
     client.put(&wpolicy, &key3, &[&bin1, &bin2, &bin3]).unwrap();
 
-    let bins = &["a"];
-    let batch = vec![BatchRead::new(key1, Bins::Some(bins)),
-                     BatchRead::new(key2, Bins::All),
-                     BatchRead::new(key3, Bins::None),
-                     BatchRead::new(as_key!(namespace, set_name, -1), Bins::None)];
+    let selected = Bins::from(["a"]);
+    let all = Bins::All;
+    let none = Bins::None;
+
+    let batch = vec![BatchRead::new(key1, &selected),
+                     BatchRead::new(key2, &all),
+                     BatchRead::new(key3, &none),
+                     BatchRead::new(as_key!(namespace, set_name, -1), &none)];
     let mut results = client.batch_get(&bpolicy, batch).unwrap();
 
     let record = results.remove(0).record.unwrap();

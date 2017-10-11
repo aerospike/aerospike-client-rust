@@ -35,15 +35,11 @@ pub struct ReadCommand<'a> {
     pub single_command: SingleCommand<'a>,
     pub record: Option<Record>,
     policy: &'a ReadPolicy,
-    bins: Bins<'a>,
+    bins: Bins,
 }
 
 impl<'a> ReadCommand<'a> {
-    pub fn new(policy: &'a ReadPolicy,
-               cluster: Arc<Cluster>,
-               key: &'a Key,
-               bins: Bins<'a>)
-               -> Self {
+    pub fn new(policy: &'a ReadPolicy, cluster: Arc<Cluster>, key: &'a Key, bins: Bins) -> Self {
         ReadCommand {
             single_command: SingleCommand::new(cluster, key),
             bins: bins,
