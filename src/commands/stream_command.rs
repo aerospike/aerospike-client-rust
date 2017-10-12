@@ -15,7 +15,6 @@
 use std::sync::Arc;
 use std::collections::HashMap;
 use std::time::Duration;
-use std::str;
 use std::thread;
 
 use errors::*;

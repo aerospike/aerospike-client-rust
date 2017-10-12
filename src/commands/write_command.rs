@@ -14,7 +14,6 @@
 
 use std::sync::Arc;
 use std::time::Duration;
-use std::str;
 
 use errors::*;
 use Bin;

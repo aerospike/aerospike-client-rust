@@ -16,7 +16,6 @@ use std::sync::Arc;
 use std::collections::HashMap;
 use std::collections::hash_map::Entry::{Occupied, Vacant};
 use std::time::Duration;
-use std::str;
 
 use errors::*;
 use Bins;

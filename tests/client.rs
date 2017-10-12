@@ -26,7 +26,7 @@ mod common;
 #[test]
 #[should_panic(expected = "Failed to connect to host(s).")]
 fn cluster_name() {
-    let mut policy = &mut common::client_policy().clone();
+    let policy = &mut common::client_policy().clone();
     policy.cluster_name = Some(String::from("notTheRealClusterName"));
     Client::new(policy, &common::hosts()).unwrap();
 }

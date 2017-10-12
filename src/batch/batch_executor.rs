@@ -77,7 +77,7 @@ impl BatchExecutor {
                     let jobs = jobs.clone();
                     scope.execute(move || {
                         let next_job = || jobs.lock().next();
-                        while let Some(mut cmd) = next_job() {
+                        while let Some(cmd) = next_job() {
                             if let Err(err) = cmd.execute() {
                                 *last_err.lock() = Some(err);
                                 jobs.lock().all(|_| true); // consume the remaining jobs
