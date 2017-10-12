@@ -12,8 +12,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-extern crate rustc_serialize;
-
 use std::str;
 use std::collections::HashMap;
 use std::collections::hash_map::Entry::{Vacant, Occupied};
@@ -21,7 +19,7 @@ use std::vec::Vec;
 use std::sync::Arc;
 
 use parking_lot::RwLock;
-use rustc_serialize::base64::FromBase64;
+use base64;
 
 use errors::*;
 use cluster::Node;
@@ -65,7 +63,7 @@ impl PartitionTokenizer {
         loop {
             match (parts.next(), parts.next()) {
                 (Some(ns), Some(part)) => {
-                    let restore_buffer = try!(part.from_base64());
+                    let restore_buffer = base64::decode(part)?;
                     match amap.entry(ns.to_string()) {
                         Vacant(entry) => {
                             entry.insert(vec![node.clone(); node::PARTITIONS]);

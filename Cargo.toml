@@ -24,7 +24,7 @@ travis-ci = { repository = "aerospike/aerospike-client-rust" }
 log = "^0.3"
 byteorder = "^0.5"
 rust-crypto = "^0.2"
-rustc-serialize = "0.3"
+base64 = "^0.7.0"
 crossbeam = "0.2"
 rand = "0.3"
 scoped-pool = "^1.0"

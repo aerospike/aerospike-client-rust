@@ -62,8 +62,8 @@ error_chain! {
 // Automatic conversions between this error chain and other error types not defined by the
 // `error_chain!`.
     foreign_links {
-        Base64(::rustc_serialize::base64::FromBase64Error)
-            #[doc = "Error deserializing a Base64 encoded value"];
+        Base64(::base64::DecodeError)
+            #[doc = "Error decoding Base64 encoded value"];
         InvalidUtf8(::std::str::Utf8Error)
             #[doc = "Error interpreting a sequence of u8 as a UTF-8 encoded string."];
         Io(::std::io::Error)
