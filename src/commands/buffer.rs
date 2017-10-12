@@ -487,6 +487,10 @@ impl Buffer {
         self.data_offset += 2 + FIELD_HEADER_SIZE as usize;
         field_count += 1;
 
+        // Estimate scan timeout size.
+        self.data_offset += 4 + FIELD_HEADER_SIZE as usize;
+        field_count += 1;
+
         // Allocate space for task_id field.
         self.data_offset += 8 + FIELD_HEADER_SIZE as usize;
         field_count += 1;
@@ -534,6 +538,10 @@ impl Buffer {
 
         try!(self.write_u8(priority));
         try!(self.write_u8(policy.scan_percent));
+
+        // Write scan timeout
+        try!(self.write_field_header(4, FieldType::ScanTimeout));
+        try!(self.write_u32(policy.socket_timeout));
 
         try!(self.write_field_header(8, FieldType::TranId));
         try!(self.write_u64(task_id));
