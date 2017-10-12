@@ -13,48 +13,50 @@
 // License for the specific language governing permissions and limitations under
 // the License.
 
-#![feature(test)]
-
 #[macro_use]
 extern crate aerospike;
 #[macro_use]
 extern crate lazy_static;
 extern crate rand;
-extern crate test;
+#[macro_use]
+extern crate bencher;
 
 use aerospike::{Bins, ReadPolicy, WritePolicy};
 
-use test::Bencher;
+use bencher::Bencher;
 
 #[path="../tests/common/mod.rs"]
 mod common;
 
-#[bench]
-fn single_key_read(b: &mut Bencher) {
+lazy_static! {
+    static ref TEST_SET: String = common::rand_str(10);
+}
+
+fn single_key_read(bench: &mut Bencher) {
     let client = common::client();
     let namespace = common::namespace();
-    let set_name = &common::rand_str(10);
-    let key = as_key!(namespace, set_name, common::rand_str(10));
+    let key = as_key!(namespace, &TEST_SET, common::rand_str(10));
     let wbin = as_bin!("i", 1);
     let bins = vec![&wbin];
     let rpolicy = ReadPolicy::default();
     let wpolicy = WritePolicy::default();
     client.put(&wpolicy, &key, &bins).unwrap();
 
-    b.iter(|| client.get(&rpolicy, &key, Bins::All).unwrap());
+    bench.iter(|| client.get(&rpolicy, &key, Bins::All).unwrap());
 }
 
-#[bench]
-fn single_key_read_header(b: &mut Bencher) {
+fn single_key_read_header(bench: &mut Bencher) {
     let client = common::client();
     let namespace = common::namespace();
-    let set_name = &common::rand_str(10);
-    let key = as_key!(namespace, set_name, common::rand_str(10));
+    let key = as_key!(namespace, &TEST_SET, common::rand_str(10));
     let wbin = as_bin!("i", 1);
     let bins = vec![&wbin];
     let rpolicy = ReadPolicy::default();
     let wpolicy = WritePolicy::default();
     client.put(&wpolicy, &key, &bins).unwrap();
 
-    b.iter(|| client.get(&rpolicy, &key, Bins::None).unwrap());
+    bench.iter(|| client.get(&rpolicy, &key, Bins::None).unwrap());
 }
+
+benchmark_group!(benches, single_key_read, single_key_read_header);
+benchmark_main!(benches);

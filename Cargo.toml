@@ -38,9 +38,14 @@ env_logger = "^0.4"
 hex = "^0.2"
 rustfmt = "^0.8"
 skeptic = "0.9"
+bencher = "^0.1.4"
 
 [build-dependencies]
 skeptic = "0.9"
+
+[[bench]]
+name = "client_server"
+harness = false
 
 [workspace]
 members = ["tools/benchmark"]
