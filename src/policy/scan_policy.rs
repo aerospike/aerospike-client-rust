@@ -37,6 +37,11 @@ pub struct ScanPolicy {
 
     /// Terminate scan if cluster is in fluctuating state.
     pub fail_on_cluster_change: bool,
+
+    /// Maximum time in milliseconds to wait when polling socket for availability prior to
+    /// performing an operation on the socket on the server side. Zero means there is no socket
+    /// timeout. Default: 10,000 ms.
+    pub socket_timeout: u32,
 }
 
 
@@ -55,6 +60,7 @@ impl Default for ScanPolicy {
             max_concurrent_nodes: 0,
             record_queue_size: 1024,
             fail_on_cluster_change: true,
+            socket_timeout: 10000,
         }
     }
 }
