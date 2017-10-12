@@ -204,7 +204,7 @@ impl Task for ReadUpdateTask {
     fn execute(&self, key: &Key) -> Status {
         if self.reads >= random() {
             trace!("Reading {}", key);
-            self.status(self.client.get(&self.rpolicy, key, &["int"]).map(|_| ()))
+            self.status(self.client.get(&self.rpolicy, key, ["int"]).map(|_| ()))
         } else {
             trace!("Writing {}", key);
             let bin = as_bin!("int", random::<i64>());
