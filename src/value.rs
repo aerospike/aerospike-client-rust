@@ -35,7 +35,9 @@ use msgpack::{encoder, decoder};
 /// Container for floating point bin values stored in the Aerospike database.
 #[derive(Debug,Clone,PartialEq,Eq,Hash)]
 pub enum FloatValue {
+    /// Container for single precision float values.
     F32(u32),
+    /// Container for double precision float values.
     F64(u64),
 }
 
