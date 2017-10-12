@@ -21,7 +21,7 @@ use std::sync::Arc;
 use std::thread;
 use std::vec::Vec;
 
-use rustc_serialize::base64::{ToBase64, FromBase64, STANDARD};
+use base64;
 use scoped_pool::Pool;
 
 use errors::*;
@@ -494,7 +494,7 @@ impl Client {
                         udf_name: &str,
                         language: UDFLang)
                         -> Result<()> {
-        let udf_body = udf_body.to_base64(STANDARD);
+        let udf_body = base64::encode(udf_body);
 
         let cmd = format!("udf-put:filename={};content={};content-len={};udf-type={};",
                           udf_name,
@@ -505,7 +505,7 @@ impl Client {
         let response = try!(node.info(policy.base_policy.timeout, &[&cmd]));
 
         if let Some(msg) = response.get("error") {
-            let msg = try!(msg.from_base64());
+            let msg = base64::decode(msg)?;
             let msg = try!(str::from_utf8(&msg));
             bail!("UDF Registration failed: {}, file: {}, line: {}, message: {}",
                   response.get("error").unwrap_or(&"-".to_string()),

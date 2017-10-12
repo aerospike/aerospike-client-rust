@@ -111,7 +111,7 @@
 extern crate log;
 extern crate byteorder;
 extern crate crypto;
-extern crate rustc_serialize;
+extern crate base64;
 extern crate crossbeam;
 extern crate rand;
 extern crate pwhash;
