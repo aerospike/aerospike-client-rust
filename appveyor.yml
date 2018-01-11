@@ -40,23 +40,23 @@ environment:
   # Stable 64-bit MSVC
     - channel: stable
       target: x86_64-pc-windows-msvc
-  # Stable 32-bit MSVC
-    - channel: stable
-      target: i686-pc-windows-msvc
   # Beta 64-bit MSVC
     - channel: beta
       target: x86_64-pc-windows-msvc
-  # Beta 32-bit MSVC
-    - channel: beta
-      target: i686-pc-windows-msvc
   # Nightly 64-bit MSVC
     - channel: nightly
       target: x86_64-pc-windows-msvc
       #cargoflags: --features "unstable"
-  # Nightly 32-bit MSVC
-    - channel: nightly
-      target: i686-pc-windows-msvc
-      #cargoflags: --features "unstable"
+#  # Stable 32-bit MSVC
+#    - channel: stable
+#      target: i686-pc-windows-msvc
+#  # Beta 32-bit MSVC
+#    - channel: beta
+#      target: i686-pc-windows-msvc
+#  # Nightly 32-bit MSVC
+#    - channel: nightly
+#      target: i686-pc-windows-msvc
+#      #cargoflags: --features "unstable"
 
 # ### GNU Toolchains ###
 #
@@ -108,6 +108,7 @@ install:
   - rustc -vV
   - cargo -vV
   - docker version
+  - docker run -tid --name aerospike -p 3000:3000 -p 3001:3001 -p 3002:3002 -p 3003:3003 aerospike/aerospike-server
 
 ## Build Script ##
 
