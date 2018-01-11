@@ -107,6 +107,7 @@ install:
   - set PATH=%PATH%;%USERPROFILE%\.cargo\bin
   - rustc -vV
   - cargo -vV
+  - docker version
 
 ## Build Script ##
 
