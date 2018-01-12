@@ -13,6 +13,7 @@ dist: trusty
 env:
   global:
     - AEROSPIKE_HOSTS=127.0.0.1:3000,127.0.0.1:3100
+    - RUST_BACKTRACE=1
 before_script:
   - .travis/start_cluster.sh 2
 script:
