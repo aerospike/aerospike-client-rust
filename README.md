@@ -106,16 +106,22 @@ of cluster hosts.
 
 To run all the test cases:
 
-    $ export AEROSPIKE_HOSTS=127.0.0.1:3000
-    $ cargo test
+```shell
+$ export AEROSPIKE_HOSTS=127.0.0.1:3000
+$ cargo test
+``
 
 To enable debug logging for the `aerospike` crate:
 
-    $ RUST_LOG=aerospike=debug cargo test
+```shell
+$ RUST_LOG=aerospike=debug cargo test
+```
 
 To enable backtraces set the `RUST_BACKTRACE` environment variable:
 
-    $ RUST_BACKTRACE=1 cargo test
+```shell
+$ RUST_BACKTRACE=1 cargo test
+```
 
 <a name="Benchmarks"></a>
 ## Benchmarks
@@ -124,8 +130,10 @@ The micro-benchmarks in the `benches` directory use the
 [`bencher`](https://crates.io/crates/bencher) crate and can be run on Rust
 stable releases:
 
-    $ export AEROSPIKE_HOSTS=127.0.0.1:3000
-    $ cargo bench
+```shell
+$ export AEROSPIKE_HOSTS=127.0.0.1:3000
+$ cargo bench
+```
 
 There is a separate benchmark tool under the
 [tools/benchmark](tools/benchmark) directory that is designed to
