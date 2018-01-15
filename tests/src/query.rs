@@ -112,15 +112,18 @@ fn query_nobins() {
     let mut statement = Statement::new(namespace, &set_name, Bins::None);
     statement.add_filter(as_range!("bin", 0, 9));
     let rs = client.query(&qpolicy, statement).unwrap();
+    let mut count = 0;
     for res in &*rs {
         match res {
             Ok(rec) => {
+                count += 1;
                 assert!(rec.generation > 0);
                 assert_eq!(0, rec.bins.len());
             }
             Err(err) => panic!(format!("{:?}", err)),
         }
     }
+    assert_eq!(count, 10);
 }
 
 #[test]

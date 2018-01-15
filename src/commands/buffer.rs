@@ -601,10 +601,8 @@ impl Buffer {
                 field_count += 1;
             }
 
-            self.data_offset += FIELD_HEADER_SIZE as usize;
-            filter_size += 1;
-
-            self.data_offset += 1 + try!(filter.estimate_size());
+            filter_size = 1 + filter.estimate_size()?;
+            self.data_offset += filter_size + FIELD_HEADER_SIZE as usize;
             field_count += 1;
 
             if let Bins::Some(ref bin_names) = statement.bins {
