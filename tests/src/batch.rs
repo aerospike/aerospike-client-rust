@@ -45,22 +45,36 @@ fn batch_get() {
     let key3 = as_key!(namespace, set_name, 3);
     client.put(&wpolicy, &key3, &[&bin1, &bin2, &bin3]).unwrap();
 
+    let key4 = as_key!(namespace, set_name, -1);
+    // key does not exist
+
     let selected = Bins::from(["a"]);
     let all = Bins::All;
     let none = Bins::None;
 
-    let batch = vec![BatchRead::new(key1, &selected),
-                     BatchRead::new(key2, &all),
-                     BatchRead::new(key3, &none),
-                     BatchRead::new(as_key!(namespace, set_name, -1), &none)];
+    let batch = vec![BatchRead::new(key1.clone(), &selected),
+                     BatchRead::new(key2.clone(), &all),
+                     BatchRead::new(key3.clone(), &none),
+                     BatchRead::new(key4.clone(), &none)];
     let mut results = client.batch_get(&bpolicy, batch).unwrap();
 
-    let record = results.remove(0).record.unwrap();
+    let result = results.remove(0);
+    assert_eq!(result.key, key1);
+    let record = result.record.unwrap();
     assert_eq!(record.bins.keys().count(), 1);
-    let record = results.remove(0).record.unwrap();
+
+    let result = results.remove(0);
+    assert_eq!(result.key, key2);
+    let record = result.record.unwrap();
     assert_eq!(record.bins.keys().count(), 3);
-    let record = results.remove(0).record.unwrap();
+
+    let result = results.remove(0);
+    assert_eq!(result.key, key3);
+    let record = result.record.unwrap();
     assert_eq!(record.bins.keys().count(), 0);
-    let record = results.remove(0).record;
+
+    let result = results.remove(0);
+    assert_eq!(result.key, key4);
+    let record = result.record;
     assert!(record.is_none());
 }

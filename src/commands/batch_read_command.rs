@@ -140,9 +140,14 @@ impl<'a, 'b> BatchReadCommand<'a, 'b> {
             match self.parse_record(conn)? {
                 None => return Ok(false),
                 Some(batch_record) => {
-                    let batch_read = self.batch_reads.get_mut(batch_record.batch_index).unwrap();
-                    // TODO: Check that record.key matches batch_read.key
-                    batch_read.record = batch_record.record;
+                    let batch_read = self.batch_reads
+                        .get_mut(batch_record.batch_index)
+                        .expect("Invalid batch index");
+                    let record = batch_record.record;
+                    if let Some(Record { key: Some(ref key), .. }) = record {
+                        assert_eq!(batch_read.key.digest, key.digest);
+                    }
+                    batch_read.record = record;
                 }
             }
         }
