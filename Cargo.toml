@@ -1,6 +1,6 @@
 [package]
 name = "aerospike"
-version = "0.2.0"
+version = "0.2.1"
 authors = ["Khosrow Afroozeh <khosrow@aerospike.com>", "Jan Hecking <jhecking@aerospike.com>"]
 description = "Aerospike Client for Rust"
 keywords = ["aerospike", "nosql", "distributed", "database"]
@@ -14,6 +14,7 @@ readme = "README.md"
 exclude = [
     ".travis.yml",
     ".travis/*",
+    ".appveyor.yml",
 ]
 
 [badges]
