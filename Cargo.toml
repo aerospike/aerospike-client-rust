@@ -19,6 +19,7 @@ exclude = [
 
 [badges]
 travis-ci = { repository = "aerospike/aerospike-client-rust" }
+appveyor = { repository = "aerospike/aerospike-client-rust" }
 
 [dependencies]
 log = "^0.3"

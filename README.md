@@ -1,4 +1,4 @@
-# Aerospike Rust Client [![crates-io][crates-io-image]][crates-io-url] [![docs][docs-image]][docs-url] [![travis][travis-image]][travis-url]
+# Aerospike Rust Client [![crates-io][crates-io-image]][crates-io-url] [![docs][docs-image]][docs-url] [![travis][travis-image]][travis-url] [![appveyor][appveyor-image]][appveyor-url]
 
 [crates-io-image]: https://img.shields.io/crates/v/aerospike.svg
 [crates-io-url]: https://crates.io/crates/aerospike
@@ -6,6 +6,8 @@
 [docs-url]: https://docs.rs/aerospike/
 [travis-image]: https://travis-ci.org/aerospike/aerospike-client-rust.svg?branch=master
 [travis-url]: https://travis-ci.org/aerospike/aerospike-client-rust
+[appveyor-image]: https://ci.appveyor.com/api/projects/status/e9gx1b5d1307hj2t/branch/master?svg=true
+[appveyor-url]: https://ci.appveyor.com/project/aerospike/aerospike-client-rust/branch/master
 
 An [Aerospike](https://www.aerospike.com/) client library for Rust.
 
