@@ -754,8 +754,9 @@ impl Client {
 
     /// Removes all records in the specified namespace/set efficiently.
     ///
-    /// This method is many orders of magnitude faster than deleting records one at a time. Works
-    /// with Aerospike Server version 3.12 or later.
+    /// This method is many orders of magnitude faster than deleting records one at a time. It
+    /// requires Aerospike Server version 3.12 or later. See
+    /// https://www.aerospike.com/docs/reference/info#truncate for further info.
     ///
     /// The `set_name` is optional; set to `""` to delete all sets in `namespace`.
     ///
