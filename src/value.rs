@@ -579,7 +579,7 @@ pub fn bytes_to_particle(ptype: u8, buf: &mut Buffer, len: usize) -> Result<Valu
 
             try!(buf.skip(header_size));
             let val = try!(buf.read_str(len - header_size - 3));
-            Ok(Value::String(val))
+            Ok(Value::GeoJSON(val))
         }
         ParticleType::BLOB => Ok(Value::Blob(try!(buf.read_blob(len)))),
         ParticleType::LIST => {
