@@ -147,7 +147,7 @@ impl<T> SharedSlice<T> {
 
     pub fn into_inner(self) -> Result<Vec<T>> {
         match Arc::try_unwrap(self.value) {
-            Ok(cell) => Ok(unsafe { cell.into_inner() }),
+            Ok(cell) => Ok(cell.into_inner()),
             Err(_) => Err("Unable to process batch request".into()),
         }
     }
