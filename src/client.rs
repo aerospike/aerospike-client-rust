@@ -107,9 +107,9 @@ impl Client {
         let thread_pool = Pool::new(policy.thread_pool_size);
 
         Ok(Client {
-               cluster: cluster,
-               thread_pool: thread_pool,
-           })
+            cluster: cluster,
+            thread_pool: thread_pool,
+        })
     }
 
     /// Closes the connection to the Aerospike cluster.
@@ -719,10 +719,9 @@ impl Client {
 
             self.thread_pool
                 .spawn(move || {
-                           let mut command =
-                               QueryCommand::new(&policy, node, statement, t_recordset);
-                           command.execute().unwrap();
-                       });
+                    let mut command = QueryCommand::new(&policy, node, statement, t_recordset);
+                    command.execute().unwrap();
+                });
         }
         Ok(recordset)
     }
@@ -745,9 +744,9 @@ impl Client {
 
         self.thread_pool
             .spawn(move || {
-                       let mut command = QueryCommand::new(&policy, node, statement, t_recordset);
-                       command.execute().unwrap();
-                   });
+                let mut command = QueryCommand::new(&policy, node, statement, t_recordset);
+                command.execute().unwrap();
+            });
 
         Ok(recordset)
     }

@@ -40,8 +40,7 @@ fn create_test_set(no_records: usize) -> String {
     }
 
     // create an index
-    client
-        .create_index(&wpolicy,
+    client.create_index(&wpolicy,
                       namespace,
                       &set_name,
                       "bin",
@@ -148,16 +147,16 @@ fn query_multi_consumer() {
         let count = count.clone();
         let rs = rs.clone();
         threads.push(thread::spawn(move || for res in &*rs {
-                                       match res {
-                                           Ok(rec) => {
-                count.fetch_add(1, Ordering::Relaxed);
-                let v: i64 = rec.bins["bin"].clone().into();
-                assert!(v >= 0);
-                assert!(v < 10);
+            match res {
+                Ok(rec) => {
+                    count.fetch_add(1, Ordering::Relaxed);
+                    let v: i64 = rec.bins["bin"].clone().into();
+                    assert!(v >= 0);
+                    assert!(v < 10);
+                }
+                Err(err) => panic!(format!("{:?}", err)),
             }
-                                           Err(err) => panic!(format!("{:?}", err)),
-                                       }
-                                   }));
+        }));
     }
 
     for t in threads {

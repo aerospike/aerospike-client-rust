@@ -114,10 +114,7 @@ impl Node {
         self.responded.store(false, Ordering::Relaxed);
         self.refresh_count.fetch_add(1, Ordering::Relaxed);
 
-        let commands = vec!["node",
-                            "cluster-name",
-                            "partition-generation",
-                            self.services_name()];
+        let commands = vec!["node", "cluster-name", "partition-generation", self.services_name()];
         let info_map = self.info(None, &commands)
             .chain_err(|| "Info command failed")?;
         self.validate_node(&info_map)
@@ -155,7 +152,7 @@ impl Node {
                 Err(ErrorKind::InvalidNode(format!("Node name has changed: '{}' => '{}'",
                                                    self.name,
                                                    info_name))
-                            .into())
+                    .into())
             }
         }
     }
@@ -173,7 +170,7 @@ impl Node {
                                                            got={}",
                                                            expected,
                                                            info_name))
-                                    .into())
+                            .into())
                     }
                 }
             }
@@ -278,9 +275,9 @@ impl Node {
                 -> Result<HashMap<String, String>> {
         let mut conn = self.get_connection(timeout)?;
         Message::info(&mut conn, commands).or_else(|e| {
-                                                       conn.invalidate();
-                                                       Err(e)
-                                                   })
+            conn.invalidate();
+            Err(e)
+        })
     }
 
     pub fn partition_generation(&self) -> isize {

@@ -200,9 +200,9 @@ impl<'a, 'b> BatchReadCommand<'a, 'b> {
             None
         };
         Ok(Some(BatchRecord {
-                    batch_index: batch_index as usize,
-                    record: record,
-                }))
+            batch_index: batch_index as usize,
+            record: record,
+        }))
 
     }
 }

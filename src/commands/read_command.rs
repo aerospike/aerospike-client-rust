@@ -159,8 +159,7 @@ impl<'a> Command for ReadCommand<'a> {
                 // record bin "FAILURE" contains details about the UDF error
                 let record =
                     self.parse_record(conn, op_count, field_count, generation, expiration)?;
-                let reason = record
-                    .bins
+                let reason = record.bins
                     .get("FAILURE")
                     .map_or(String::from("UDF Error"), |v| v.to_string());
                 Err(ErrorKind::UdfBadResponse(reason).into())

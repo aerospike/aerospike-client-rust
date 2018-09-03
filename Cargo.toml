@@ -37,7 +37,6 @@ parking_lot = "^0.4"
 [dev-dependencies]
 env_logger = "^0.4"
 hex = "^0.2"
-rustfmt = "^0.8"
 bencher = "^0.1.4"
 
 [[bench]]

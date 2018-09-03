@@ -68,18 +68,18 @@ impl Cluster {
     pub fn new(policy: ClientPolicy, hosts: &[Host]) -> Result<Arc<Self>> {
         let (tx, rx): (Sender<()>, Receiver<()>) = mpsc::channel();
         let cluster = Arc::new(Cluster {
-                                   client_policy: policy,
+            client_policy: policy,
 
-                                   seeds: Arc::new(RwLock::new(hosts.to_vec())),
-                                   aliases: Arc::new(RwLock::new(HashMap::new())),
-                                   nodes: Arc::new(RwLock::new(vec![])),
+            seeds: Arc::new(RwLock::new(hosts.to_vec())),
+            aliases: Arc::new(RwLock::new(HashMap::new())),
+            nodes: Arc::new(RwLock::new(vec![])),
 
-                                   partition_write_map: Arc::new(RwLock::new(HashMap::new())),
-                                   node_index: AtomicIsize::new(0),
+            partition_write_map: Arc::new(RwLock::new(HashMap::new())),
+            node_index: AtomicIsize::new(0),
 
-                                   tend_channel: Mutex::new(tx),
-                                   closed: AtomicBool::new(false),
-                               });
+            tend_channel: Mutex::new(tx),
+            closed: AtomicBool::new(false),
+        });
 
         // try to seed connections for first use
         Cluster::wait_till_stabilized(cluster.clone())?;
@@ -89,7 +89,7 @@ impl Cluster {
             bail!(ErrorKind::Connection("Failed to connect to host(s). The network \
                                          connection(s) to cluster nodes may have timed out, or \
                                          the cluster may be in a state of flux."
-                                                .to_string()));
+                .to_string()));
         }
 
         let cluster_for_tend = cluster.clone();
@@ -181,8 +181,7 @@ impl Cluster {
     }
 
     fn wait_till_stabilized(cluster: Arc<Cluster>) -> Result<()> {
-        let timeout = cluster
-            .client_policy()
+        let timeout = cluster.client_policy()
             .timeout
             .unwrap_or_else(|| Duration::from_secs(3));
         let deadline = Instant::now() + timeout;
@@ -209,8 +208,7 @@ impl Cluster {
             }
         });
 
-        handle
-            .join()
+        handle.join()
             .map_err(|err| format!("Error during initial cluster tend: {:?}", err).into())
     }
 
@@ -245,11 +243,10 @@ impl Cluster {
 
     pub fn update_partitions(&self, node: Arc<Node>) -> Result<()> {
         let mut conn = node.get_connection(self.client_policy.timeout)?;
-        let tokens = PartitionTokenizer::new(&mut conn)
-            .or_else(|e| {
-                         conn.invalidate();
-                         Err(e)
-                     })?;
+        let tokens = PartitionTokenizer::new(&mut conn).or_else(|e| {
+                conn.invalidate();
+                Err(e)
+            })?;
 
         let nmap = tokens.update_partition(self.partitions(), node)?;
         self.set_partitions(nmap);

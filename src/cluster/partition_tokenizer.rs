@@ -42,10 +42,10 @@ impl PartitionTokenizer {
         let info_map = try!(Message::info(conn, &[REPLICAS_NAME]));
         if let Some(buf) = info_map.get(REPLICAS_NAME) {
             return Ok(PartitionTokenizer {
-                          length: info_map.len(),
-                          buffer: buf.as_bytes().to_owned(),
-                          offset: 0,
-                      });
+                length: info_map.len(),
+                buffer: buf.as_bytes().to_owned(),
+                offset: 0,
+            });
         }
         bail!(ErrorKind::BadResponse("Missing replicas info".to_string()));
     }

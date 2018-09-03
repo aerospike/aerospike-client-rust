@@ -327,8 +327,7 @@ pub fn remove_by_key<'a>(bin: &'a str,
                          -> Operation<'a> {
     let cdt_op = CdtOperation {
         op: CdtOpType::MapRemoveByKey,
-        args: vec![CdtArgument::Byte(return_type as u8),
-                   CdtArgument::Value(key)],
+        args: vec![CdtArgument::Byte(return_type as u8), CdtArgument::Value(key)],
     };
     Operation {
         op: OperationType::CdtWrite,
@@ -345,8 +344,7 @@ pub fn remove_by_key_list<'a>(bin: &'a str,
                               -> Operation<'a> {
     let cdt_op = CdtOperation {
         op: CdtOpType::MapRemoveByKeyList,
-        args: vec![CdtArgument::Byte(return_type as u8),
-                   CdtArgument::List(keys)],
+        args: vec![CdtArgument::Byte(return_type as u8), CdtArgument::List(keys)],
     };
     Operation {
         op: OperationType::CdtWrite,
@@ -364,8 +362,7 @@ pub fn remove_by_key_range<'a>(bin: &'a str,
                                end: &'a Value,
                                return_type: MapReturnType)
                                -> Operation<'a> {
-    let mut args = vec![CdtArgument::Byte(return_type as u8),
-                        CdtArgument::Value(begin)];
+    let mut args = vec![CdtArgument::Byte(return_type as u8), CdtArgument::Value(begin)];
     if !end.is_nil() {
         args.push(CdtArgument::Value(end));
     }
@@ -388,8 +385,7 @@ pub fn remove_by_value<'a>(bin: &'a str,
                            -> Operation<'a> {
     let cdt_op = CdtOperation {
         op: CdtOpType::MapRemoveByValue,
-        args: vec![CdtArgument::Byte(return_type as u8),
-                   CdtArgument::Value(value)],
+        args: vec![CdtArgument::Byte(return_type as u8), CdtArgument::Value(value)],
     };
     Operation {
         op: OperationType::CdtWrite,
@@ -406,8 +402,7 @@ pub fn remove_by_value_list<'a>(bin: &'a str,
                                 -> Operation<'a> {
     let cdt_op = CdtOperation {
         op: CdtOpType::MapRemoveByValueList,
-        args: vec![CdtArgument::Byte(return_type as u8),
-                   CdtArgument::List(values)],
+        args: vec![CdtArgument::Byte(return_type as u8), CdtArgument::List(values)],
     };
     Operation {
         op: OperationType::CdtWrite,
@@ -425,8 +420,7 @@ pub fn remove_by_value_range<'a>(bin: &'a str,
                                  end: &'a Value,
                                  return_type: MapReturnType)
                                  -> Operation<'a> {
-    let mut args = vec![CdtArgument::Byte(return_type as u8),
-                        CdtArgument::Value(begin)];
+    let mut args = vec![CdtArgument::Byte(return_type as u8), CdtArgument::Value(begin)];
     if !end.is_nil() {
         args.push(CdtArgument::Value(end));
     }
@@ -446,8 +440,7 @@ pub fn remove_by_value_range<'a>(bin: &'a str,
 pub fn remove_by_index(bin: &str, index: i64, return_type: MapReturnType) -> Operation {
     let cdt_op = CdtOperation {
         op: CdtOpType::MapRemoveByIndex,
-        args: vec![CdtArgument::Byte(return_type as u8),
-                   CdtArgument::Int(index)],
+        args: vec![CdtArgument::Byte(return_type as u8), CdtArgument::Int(index)],
     };
     Operation {
         op: OperationType::CdtWrite,
@@ -481,8 +474,7 @@ pub fn remove_by_index_range(bin: &str,
 pub fn remove_by_index_range_from(bin: &str, index: i64, return_type: MapReturnType) -> Operation {
     let cdt_op = CdtOperation {
         op: CdtOpType::MapRemoveByIndexRange,
-        args: vec![CdtArgument::Byte(return_type as u8),
-                   CdtArgument::Int(index)],
+        args: vec![CdtArgument::Byte(return_type as u8), CdtArgument::Int(index)],
     };
     Operation {
         op: OperationType::CdtWrite,
@@ -557,8 +549,7 @@ pub fn size(bin: &str) -> Operation {
 pub fn get_by_key<'a>(bin: &'a str, key: &'a Value, return_type: MapReturnType) -> Operation<'a> {
     let cdt_op = CdtOperation {
         op: CdtOpType::MapGetByKey,
-        args: vec![CdtArgument::Byte(return_type as u8),
-                   CdtArgument::Value(key)],
+        args: vec![CdtArgument::Byte(return_type as u8), CdtArgument::Value(key)],
     };
     Operation {
         op: OperationType::CdtRead,
@@ -576,8 +567,7 @@ pub fn get_by_key_range<'a>(bin: &'a str,
                             end: &'a Value,
                             return_type: MapReturnType)
                             -> Operation<'a> {
-    let mut args = vec![CdtArgument::Byte(return_type as u8),
-                        CdtArgument::Value(begin)];
+    let mut args = vec![CdtArgument::Byte(return_type as u8), CdtArgument::Value(begin)];
     if !end.is_nil() {
         args.push(CdtArgument::Value(end));
     }
@@ -600,8 +590,7 @@ pub fn get_by_value<'a>(bin: &'a str,
                         -> Operation<'a> {
     let cdt_op = CdtOperation {
         op: CdtOpType::MapGetByValue,
-        args: vec![CdtArgument::Byte(return_type as u8),
-                   CdtArgument::Value(value)],
+        args: vec![CdtArgument::Byte(return_type as u8), CdtArgument::Value(value)],
     };
     Operation {
         op: OperationType::CdtRead,
@@ -619,8 +608,7 @@ pub fn get_by_value_range<'a>(bin: &'a str,
                               end: &'a Value,
                               return_type: MapReturnType)
                               -> Operation<'a> {
-    let mut args = vec![CdtArgument::Byte(return_type as u8),
-                        CdtArgument::Value(begin)];
+    let mut args = vec![CdtArgument::Byte(return_type as u8), CdtArgument::Value(begin)];
     if !end.is_nil() {
         args.push(CdtArgument::Value(end));
     }
@@ -640,8 +628,7 @@ pub fn get_by_value_range<'a>(bin: &'a str,
 pub fn get_by_index(bin: &str, index: i64, return_type: MapReturnType) -> Operation {
     let cdt_op = CdtOperation {
         op: CdtOpType::MapGetByIndex,
-        args: vec![CdtArgument::Byte(return_type as u8),
-                   CdtArgument::Int(index)],
+        args: vec![CdtArgument::Byte(return_type as u8), CdtArgument::Int(index)],
     };
     Operation {
         op: OperationType::CdtRead,
@@ -676,8 +663,7 @@ pub fn get_by_index_range(bin: &str,
 pub fn get_by_index_range_from(bin: &str, index: i64, return_type: MapReturnType) -> Operation {
     let cdt_op = CdtOperation {
         op: CdtOpType::MapGetByIndexRange,
-        args: vec![CdtArgument::Byte(return_type as u8),
-                   CdtArgument::Int(index)],
+        args: vec![CdtArgument::Byte(return_type as u8), CdtArgument::Int(index)],
     };
     Operation {
         op: OperationType::CdtRead,

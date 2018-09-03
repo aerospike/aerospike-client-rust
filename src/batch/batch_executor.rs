@@ -49,12 +49,12 @@ impl BatchExecutor {
                                   -> Result<Vec<BatchRead<'a>>> {
         let mut batch_nodes = self.get_batch_nodes(&batch_reads)?;
         let batch_reads = SharedSlice::new(batch_reads);
-        let jobs = batch_nodes
-            .drain()
-            .map(|(node, offsets)| {
-                     BatchReadCommand::new(policy, node, batch_reads.clone(), offsets)
-                 })
-            .collect();
+        let jobs =
+            batch_nodes.drain()
+                .map(|(node, offsets)| {
+                    BatchReadCommand::new(policy, node, batch_reads.clone(), offsets)
+                })
+                .collect();
         self.execute_batch_jobs(jobs, &policy.concurrency)?;
         batch_reads.into_inner()
     }

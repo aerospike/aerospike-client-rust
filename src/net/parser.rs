@@ -82,11 +82,10 @@ impl<'a> Parser<'a> {
                 }
                 _ => {
                     return if substr.is_empty() {
-                               bail!(ErrorKind::InvalidArgument("Invalid address string"
-                                                                    .to_string()))
-                           } else {
-                               Ok(substr)
-                           }
+                        bail!(ErrorKind::InvalidArgument("Invalid address string".to_string()))
+                    } else {
+                        Ok(substr)
+                    }
                 }
             }
         }

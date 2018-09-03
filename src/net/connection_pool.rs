@@ -86,17 +86,16 @@ impl Queue {
             }
         }
 
-        connection
-            .set_timeout(timeout)
+        connection.set_timeout(timeout)
             .or_else(|err| {
-                         internals.num_conns -= 1;
-                         Err(err)
-                     })?;
+                internals.num_conns -= 1;
+                Err(err)
+            })?;
 
         Ok(PooledConnection {
-               queue: self.clone(),
-               conn: Some(connection),
-           })
+            queue: self.clone(),
+            conn: Some(connection),
+        })
     }
 
     pub fn put_back(&self, mut conn: Connection) {
