@@ -39,12 +39,11 @@ use UDFLang;
 use Value;
 use batch::BatchExecutor;
 use cluster::{Cluster, Node};
-use commands::{ReadCommand, WriteCommand, DeleteCommand, TouchCommand, ExistsCommand,
-               OperateCommand, ExecuteUDFCommand, ScanCommand, QueryCommand};
+use commands::{DeleteCommand, ExecuteUDFCommand, ExistsCommand, OperateCommand, QueryCommand,
+               ReadCommand, ScanCommand, TouchCommand, WriteCommand};
 use net::ToHosts;
 use operations::{Operation, OperationType};
-use policy::{ClientPolicy, BatchPolicy, ReadPolicy, WritePolicy, ScanPolicy, QueryPolicy};
-
+use policy::{BatchPolicy, ClientPolicy, QueryPolicy, ReadPolicy, ScanPolicy, WritePolicy};
 
 /// Instantiate a Client instance to access an Aerospike database cluster and perform database
 /// operations.
@@ -193,14 +192,14 @@ impl Client {
     /// # }
     /// ```
     pub fn get<T>(&self, policy: &ReadPolicy, key: &Key, bins: T) -> Result<Record>
-        where T: Into<Bins>
+    where
+        T: Into<Bins>,
     {
         let bins = bins.into();
         let mut command = ReadCommand::new(policy, self.cluster.clone(), key, bins);
         command.execute()?;
         Ok(command.record.unwrap())
     }
-
 
     /// Read multiple record for specified batch keys in one batch call. This method allows
     /// different namespaces/bins to be requested for each key in the batch. If the `BatchRead` key
@@ -238,10 +237,11 @@ impl Client {
     /// }
     /// # }
     /// ```
-    pub fn batch_get<'a>(&self,
-                         policy: &BatchPolicy,
-                         batch_reads: Vec<BatchRead<'a>>)
-                         -> Result<Vec<BatchRead<'a>>> {
+    pub fn batch_get<'a>(
+        &self,
+        policy: &BatchPolicy,
+        batch_reads: Vec<BatchRead<'a>>,
+    ) -> Result<Vec<BatchRead<'a>>> {
         let executor = BatchExecutor::new(self.cluster.clone(), self.thread_pool.clone());
         executor.execute_batch_read(policy, batch_reads)
     }
@@ -286,12 +286,19 @@ impl Client {
     /// }
     /// # }
     /// ```
-    pub fn put(&self, policy: &WritePolicy, key: &Key, bins: &[&Bin]) -> Result<()> {
-        let mut command = WriteCommand::new(policy,
-                                            self.cluster.clone(),
-                                            key,
-                                            bins,
-                                            OperationType::Write);
+    pub fn put<'a, 'b, A: AsRef<Bin<'b>>>(
+        &self,
+        policy: &'a WritePolicy,
+        key: &'a Key,
+        bins: &'a [A],
+    ) -> Result<()> {
+        let mut command = WriteCommand::new(
+            policy,
+            self.cluster.clone(),
+            key,
+            bins,
+            OperationType::Write,
+        );
         command.execute()
     }
 
@@ -319,7 +326,12 @@ impl Client {
     /// }
     /// # }
     /// ```
-    pub fn add(&self, policy: &WritePolicy, key: &Key, bins: &[&Bin]) -> Result<()> {
+    pub fn add<'a, 'b, A: AsRef<Bin<'b>>>(
+        &self,
+        policy: &'a WritePolicy,
+        key: &'a Key,
+        bins: &'a [A],
+    ) -> Result<()> {
         let mut command =
             WriteCommand::new(policy, self.cluster.clone(), key, bins, OperationType::Incr);
         command.execute()
@@ -328,24 +340,38 @@ impl Client {
     /// Append bin string values to existing record bin values. The policy specifies the
     /// transaction timeout, record expiration and how the transaction is handled when the record
     /// already exists. This call only works for string values.
-    pub fn append(&self, policy: &WritePolicy, key: &Key, bins: &[&Bin]) -> Result<()> {
-        let mut command = WriteCommand::new(policy,
-                                            self.cluster.clone(),
-                                            key,
-                                            bins,
-                                            OperationType::Append);
+    pub fn append<'a, 'b, A: AsRef<Bin<'b>>>(
+        &self,
+        policy: &'a WritePolicy,
+        key: &'a Key,
+        bins: &'a [A],
+    ) -> Result<()> {
+        let mut command = WriteCommand::new(
+            policy,
+            self.cluster.clone(),
+            key,
+            bins,
+            OperationType::Append,
+        );
         command.execute()
     }
 
     /// Prepend bin string values to existing record bin values. The policy specifies the
     /// transaction timeout, record expiration and how the transaction is handled when the record
     /// already exists. This call only works for string values.
-    pub fn prepend(&self, policy: &WritePolicy, key: &Key, bins: &[&Bin]) -> Result<()> {
-        let mut command = WriteCommand::new(policy,
-                                            self.cluster.clone(),
-                                            key,
-                                            bins,
-                                            OperationType::Prepend);
+    pub fn prepend<'a, 'b, A: AsRef<Bin<'b>>>(
+        &self,
+        policy: &'a WritePolicy,
+        key: &'a Key,
+        bins: &'a [A],
+    ) -> Result<()> {
+        let mut command = WriteCommand::new(
+            policy,
+            self.cluster.clone(),
+            key,
+            bins,
+            OperationType::Prepend,
+        );
         command.execute()
     }
 
@@ -488,30 +514,35 @@ impl Client {
     ///                     "example.lua", UDFLang::Lua).unwrap();
     /// # }
     /// ```
-    pub fn register_udf(&self,
-                        policy: &WritePolicy,
-                        udf_body: &[u8],
-                        udf_name: &str,
-                        language: UDFLang)
-                        -> Result<()> {
+    pub fn register_udf(
+        &self,
+        policy: &WritePolicy,
+        udf_body: &[u8],
+        udf_name: &str,
+        language: UDFLang,
+    ) -> Result<()> {
         let udf_body = base64::encode(udf_body);
 
-        let cmd = format!("udf-put:filename={};content={};content-len={};udf-type={};",
-                          udf_name,
-                          udf_body,
-                          udf_body.len(),
-                          language);
+        let cmd = format!(
+            "udf-put:filename={};content={};content-len={};udf-type={};",
+            udf_name,
+            udf_body,
+            udf_body.len(),
+            language
+        );
         let node = try!(self.cluster.get_random_node());
         let response = try!(node.info(policy.base_policy.timeout, &[&cmd]));
 
         if let Some(msg) = response.get("error") {
             let msg = base64::decode(msg)?;
             let msg = try!(str::from_utf8(&msg));
-            bail!("UDF Registration failed: {}, file: {}, line: {}, message: {}",
-                  response.get("error").unwrap_or(&"-".to_string()),
-                  response.get("file").unwrap_or(&"-".to_string()),
-                  response.get("line").unwrap_or(&"-".to_string()),
-                  msg);
+            bail!(
+                "UDF Registration failed: {}, file: {}, line: {}, message: {}",
+                response.get("error").unwrap_or(&"-".to_string()),
+                response.get("file").unwrap_or(&"-".to_string()),
+                response.get("line").unwrap_or(&"-".to_string()),
+                msg
+            );
         }
 
         Ok(())
@@ -523,13 +554,13 @@ impl Client {
     /// to all other cluster nodes automatically.
     ///
     /// Lua is the only supported scripting laungauge for UDFs at the moment.
-    pub fn register_udf_from_file(&self,
-                                  policy: &WritePolicy,
-                                  client_path: &str,
-                                  udf_name: &str,
-                                  language: UDFLang)
-                                  -> Result<()> {
-
+    pub fn register_udf_from_file(
+        &self,
+        policy: &WritePolicy,
+        client_path: &str,
+        udf_name: &str,
+        language: UDFLang,
+    ) -> Result<()> {
         let path = Path::new(client_path);
         let mut file = try!(File::open(&path));
         let mut udf_body: Vec<u8> = vec![];
@@ -539,12 +570,12 @@ impl Client {
     }
 
     /// Remove a user-defined function (UDF) module from the server.
-    pub fn remove_udf(&self,
-                      policy: &WritePolicy,
-                      udf_name: &str,
-                      language: UDFLang)
-                      -> Result<()> {
-
+    pub fn remove_udf(
+        &self,
+        policy: &WritePolicy,
+        udf_name: &str,
+        language: UDFLang,
+    ) -> Result<()> {
         let cmd = format!("udf-remove:filename={}.{};", udf_name, language);
         let node = try!(self.cluster.get_random_node());
         let response = try!(node.info(policy.base_policy.timeout, &[&cmd]));
@@ -558,20 +589,22 @@ impl Client {
 
     /// Execute a user-defined function on the server and return the results. The function operates
     /// on a single record. The UDF package name is required to locate the UDF.
-    pub fn execute_udf(&self,
-                       policy: &WritePolicy,
-                       key: &Key,
-                       udf_name: &str,
-                       function_name: &str,
-                       args: Option<&[Value]>)
-                       -> Result<Option<Value>> {
-
-        let mut command = ExecuteUDFCommand::new(policy,
-                                                 self.cluster.clone(),
-                                                 key,
-                                                 udf_name,
-                                                 function_name,
-                                                 args);
+    pub fn execute_udf(
+        &self,
+        policy: &WritePolicy,
+        key: &Key,
+        udf_name: &str,
+        function_name: &str,
+        args: Option<&[Value]>,
+    ) -> Result<Option<Value>> {
+        let mut command = ExecuteUDFCommand::new(
+            policy,
+            self.cluster.clone(),
+            key,
+            udf_name,
+            function_name,
+            args,
+        );
         try!(command.execute());
 
         let record = command.read_command.record.unwrap();
@@ -621,13 +654,15 @@ impl Client {
     /// }
     /// # }
     /// ```
-    pub fn scan<T>(&self,
-                   policy: &ScanPolicy,
-                   namespace: &str,
-                   set_name: &str,
-                   bins: T)
-                   -> Result<Arc<Recordset>>
-        where T: Into<Bins>
+    pub fn scan<T>(
+        &self,
+        policy: &ScanPolicy,
+        namespace: &str,
+        set_name: &str,
+        bins: T,
+    ) -> Result<Arc<Recordset>>
+    where
+        T: Into<Bins>,
     {
         let bins = bins.into();
         let nodes = self.cluster.nodes();
@@ -645,7 +680,6 @@ impl Client {
                     ScanCommand::new(&policy, node, &namespace, &set_name, bins, recordset);
                 command.execute().unwrap();
             });
-
         }
         Ok(recordset)
     }
@@ -655,14 +689,16 @@ impl Client {
     /// concurrently pops records off the queue through the record iterator. Up to
     /// `policy.max_concurrent_nodes` nodes are scanned in parallel. If concurrent nodes is set to
     /// zero, the server nodes are read in series.
-    pub fn scan_node<T>(&self,
-                        policy: &ScanPolicy,
-                        node: Arc<Node>,
-                        namespace: &str,
-                        set_name: &str,
-                        bins: T)
-                        -> Result<Arc<Recordset>>
-        where T: Into<Bins>
+    pub fn scan_node<T>(
+        &self,
+        policy: &ScanPolicy,
+        node: Arc<Node>,
+        namespace: &str,
+        set_name: &str,
+        bins: T,
+    ) -> Result<Arc<Recordset>>
+    where
+        T: Into<Bins>,
     {
         let bins = bins.into();
         let recordset = Arc::new(Recordset::new(policy.record_queue_size, 1));
@@ -671,12 +707,11 @@ impl Client {
         let namespace = namespace.to_owned();
         let set_name = set_name.to_owned();
 
-        self.thread_pool
-            .spawn(move || {
-                let mut command =
-                    ScanCommand::new(&policy, node, &namespace, &set_name, bins, t_recordset);
-                command.execute().unwrap();
-            });
+        self.thread_pool.spawn(move || {
+            let mut command =
+                ScanCommand::new(&policy, node, &namespace, &set_name, bins, t_recordset);
+            command.execute().unwrap();
+        });
 
         Ok(recordset)
     }
@@ -705,7 +740,6 @@ impl Client {
     /// # }
     /// ```
     pub fn query(&self, policy: &QueryPolicy, statement: Statement) -> Result<Arc<Recordset>> {
-
         try!(statement.validate());
         let statement = Arc::new(statement);
 
@@ -717,11 +751,10 @@ impl Client {
             let policy = policy.to_owned();
             let statement = statement.clone();
 
-            self.thread_pool
-                .spawn(move || {
-                    let mut command = QueryCommand::new(&policy, node, statement, t_recordset);
-                    command.execute().unwrap();
-                });
+            self.thread_pool.spawn(move || {
+                let mut command = QueryCommand::new(&policy, node, statement, t_recordset);
+                command.execute().unwrap();
+            });
         }
         Ok(recordset)
     }
@@ -729,12 +762,12 @@ impl Client {
     /// Execute a query on a single server node and return a record iterator. The query executor
     /// puts records on a queue in separate threads. The calling thread concurrently pops records
     /// off the queue through the record iterator.
-    pub fn query_node(&self,
-                      policy: &QueryPolicy,
-                      node: Arc<Node>,
-                      statement: Statement)
-                      -> Result<Arc<Recordset>> {
-
+    pub fn query_node(
+        &self,
+        policy: &QueryPolicy,
+        node: Arc<Node>,
+        statement: Statement,
+    ) -> Result<Arc<Recordset>> {
         try!(statement.validate());
 
         let recordset = Arc::new(Recordset::new(policy.record_queue_size, 1));
@@ -742,11 +775,10 @@ impl Client {
         let policy = policy.to_owned();
         let statement = Arc::new(statement).clone();
 
-        self.thread_pool
-            .spawn(move || {
-                let mut command = QueryCommand::new(&policy, node, statement, t_recordset);
-                command.execute().unwrap();
-            });
+        self.thread_pool.spawn(move || {
+            let mut command = QueryCommand::new(&policy, node, statement, t_recordset);
+            command.execute().unwrap();
+        });
 
         Ok(recordset)
     }
@@ -763,12 +795,13 @@ impl Client {
     /// zero, only records with a lut less than `before_nanos` are deleted. Units are in
     /// nanoseconds since unix epoch (1970-01-01). Pass in zero to delete all records in the
     /// namespace/set recardless of last update time.
-    pub fn truncate(&self,
-                    policy: &WritePolicy,
-                    namespace: &str,
-                    set_name: &str,
-                    before_nanos: i64)
-                    -> Result<()> {
+    pub fn truncate(
+        &self,
+        policy: &WritePolicy,
+        namespace: &str,
+        set_name: &str,
+        before_nanos: i64,
+    ) -> Result<()> {
         let mut cmd = String::with_capacity(160);
         cmd.push_str("truncate:namespace=");
         cmd.push_str(namespace);
@@ -808,67 +841,67 @@ impl Client {
     /// }
     /// # }
     /// ```
-    pub fn create_index(&self,
-                        policy: &WritePolicy,
-                        namespace: &str,
-                        set_name: &str,
-                        bin_name: &str,
-                        index_name: &str,
-                        index_type: IndexType)
-                        -> Result<()> {
-        self.create_complex_index(policy,
-                                  namespace,
-                                  set_name,
-                                  bin_name,
-                                  index_name,
-                                  index_type,
-                                  CollectionIndexType::Default)
-
+    pub fn create_index(
+        &self,
+        policy: &WritePolicy,
+        namespace: &str,
+        set_name: &str,
+        bin_name: &str,
+        index_name: &str,
+        index_type: IndexType,
+    ) -> Result<()> {
+        self.create_complex_index(
+            policy,
+            namespace,
+            set_name,
+            bin_name,
+            index_name,
+            index_type,
+            CollectionIndexType::Default,
+        )
     }
 
     /// Create a complex secondary index on a bin containing scalar, list or map values. This
     /// asynchronous server call returns before the command is complete.
-    pub fn create_complex_index(&self,
-                                policy: &WritePolicy,
-                                namespace: &str,
-                                set_name: &str,
-                                bin_name: &str,
-                                index_name: &str,
-                                index_type: IndexType,
-                                collection_index_type: CollectionIndexType)
-                                -> Result<()> {
+    pub fn create_complex_index(
+        &self,
+        policy: &WritePolicy,
+        namespace: &str,
+        set_name: &str,
+        bin_name: &str,
+        index_name: &str,
+        index_type: IndexType,
+        collection_index_type: CollectionIndexType,
+    ) -> Result<()> {
         let cit_str: String = match collection_index_type {
             CollectionIndexType::Default => "".to_string(),
             _ => format!("indextype={};", collection_index_type),
         };
-        let cmd = format!("sindex-create:ns={};set={};indexname={};numbins=1;{}indexdata={},{};\
-                           priority=normal",
-                          namespace,
-                          set_name,
-                          index_name,
-                          cit_str,
-                          bin_name,
-                          index_type);
+        let cmd = format!(
+            "sindex-create:ns={};set={};indexname={};numbins=1;{}indexdata={},{};\
+             priority=normal",
+            namespace, set_name, index_name, cit_str, bin_name, index_type
+        );
         self.send_info_cmd(&cmd, policy)
             .chain_err(|| "Error creating index")
     }
 
     /// Delete secondary index.
-    pub fn drop_index(&self,
-                      policy: &WritePolicy,
-                      namespace: &str,
-                      set_name: &str,
-                      index_name: &str)
-                      -> Result<()> {
-
+    pub fn drop_index(
+        &self,
+        policy: &WritePolicy,
+        namespace: &str,
+        set_name: &str,
+        index_name: &str,
+    ) -> Result<()> {
         let set_name: String = match set_name {
             "" => "".to_string(),
             _ => format!("set={};", set_name),
         };
-        let cmd = format!("sindex-delete:ns={};{}indexname={}",
-                          namespace,
-                          set_name,
-                          index_name);
+        let cmd = format!(
+            "sindex-delete:ns={};{}indexname={}",
+            namespace, set_name, index_name
+        );
         self.send_info_cmd(&cmd, policy)
             .chain_err(|| "Error dropping index")
     }
@@ -888,6 +921,8 @@ impl Client {
             }
         }
 
-        bail!(ErrorKind::BadResponse("Unexpected sindex info command response".to_string()))
+        bail!(ErrorKind::BadResponse(
+            "Unexpected sindex info command response".to_string()
+        ))
     }
 }

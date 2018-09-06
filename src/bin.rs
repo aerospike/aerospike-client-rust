@@ -26,7 +26,6 @@ pub struct Bin<'a> {
     pub value: Value,
 }
 
-
 impl<'a> Bin<'a> {
     /// Construct a new bin given a name and a value.
     pub fn new(name: &'a str, val: Value) -> Self {
@@ -34,6 +33,12 @@ impl<'a> Bin<'a> {
             name: name,
             value: val,
         }
+    }
+}
+
+impl<'a> AsRef<Bin<'a>> for Bin<'a> {
+    fn as_ref(&self) -> &Self {
+        self
     }
 }
 
