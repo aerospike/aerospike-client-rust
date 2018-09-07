@@ -20,6 +20,7 @@ use std::sync::Arc;
 
 use rand;
 use rand::Rng;
+use rand::distributions::Alphanumeric;
 
 use aerospike::{Client, ClientPolicy};
 
@@ -64,5 +65,6 @@ pub fn client() -> Arc<Client> {
 }
 
 pub fn rand_str(sz: usize) -> String {
-    rand::thread_rng().gen_ascii_chars().take(sz).collect()
+    let mut rng = rand::thread_rng();
+    rng.sample_iter(&Alphanumeric).take(sz).collect()
 }
