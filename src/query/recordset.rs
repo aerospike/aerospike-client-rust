@@ -18,7 +18,7 @@ extern crate rand;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::thread;
 
-use crossbeam::sync::MsQueue;
+use crossbeam::queue::MsQueue;
 use rand::Rng;
 
 use errors::*;
@@ -65,8 +65,9 @@ impl Recordset {
 
     #[doc(hidden)]
     pub fn push(&self, record: Result<Record>) -> Option<Result<Record>> {
-        if self.record_queue_count.fetch_add(1, Ordering::Relaxed) <
-           self.record_queue_size.load(Ordering::Relaxed) {
+        if self.record_queue_count.fetch_add(1, Ordering::Relaxed)
+            < self.record_queue_size.load(Ordering::Relaxed)
+        {
             self.record_queue.push(record);
             return None;
         }

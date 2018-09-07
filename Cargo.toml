@@ -22,17 +22,17 @@ travis-ci = { repository = "aerospike/aerospike-client-rust" }
 appveyor = { repository = "aerospike/aerospike-client-rust" }
 
 [dependencies]
-log = "^0.3"
+log = "^0.4"
 byteorder = "^0.5"
 rust-crypto = "^0.2"
 base64 = "^0.7.0"
-crossbeam = "0.2"
-rand = "0.3"
+crossbeam = "^0.4"
+rand = "^0.5"
 scoped-pool = "^1.0"
 pwhash = "0.1"
-lazy_static = "^0.2"
+lazy_static = "^1.0"
 error-chain = "^0.12"
-parking_lot = "^0.4"
+parking_lot = "^0.6"
 
 [dev-dependencies]
 env_logger = "^0.4"
