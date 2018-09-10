@@ -151,7 +151,6 @@ impl Client {
     /// Fetch specified bins for a record with the given key.
     ///
     /// ```rust
-    /// # #[macro_use] extern crate aerospike;
     /// # use aerospike::*;
     /// # fn main() {
     /// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap();
@@ -171,7 +170,6 @@ impl Client {
     /// Determine the remaining time-to-live of a record.
     ///
     /// ```rust
-    /// # #[macro_use] extern crate aerospike;
     /// # use aerospike::*;
     /// # fn main() {
     /// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap();
@@ -212,7 +210,6 @@ impl Client {
     /// Fetch multiple records in a single client request
     ///
     /// ```rust
-    /// # #[macro_use] extern crate aerospike;
     /// # use aerospike::*;
     /// # fn main() {
     /// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap();
@@ -254,7 +251,6 @@ impl Client {
     /// Write a record with a single integer bin.
     ///
     /// ```rust
-    /// # #[macro_use] extern crate aerospike;
     /// # use aerospike::*;
     /// # fn main() {
     /// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap();
@@ -271,7 +267,6 @@ impl Client {
     /// Write a record with an expiration of 10 seconds.
     ///
     /// ```rust
-    /// # #[macro_use] extern crate aerospike;
     /// # use aerospike::*;
     /// # fn main() {
     /// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap();
@@ -311,7 +306,6 @@ impl Client {
     /// Add two integer values to two existing bin values.
     ///
     /// ```rust
-    /// # #[macro_use] extern crate aerospike;
     /// # use aerospike::*;
     /// # fn main() {
     /// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap();
@@ -383,7 +377,6 @@ impl Client {
     /// Delete a record.
     ///
     /// ```rust
-    /// # #[macro_use] extern crate aerospike;
     /// # use aerospike::*;
     /// # fn main() {
     /// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap();
@@ -410,7 +403,6 @@ impl Client {
     /// Reset a record's time to expiration to the default ttl for the namespace.
     ///
     /// ```rust
-    /// # #[macro_use] extern crate aerospike;
     /// # use aerospike::*;
     /// # fn main() {
     /// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap();
@@ -448,7 +440,6 @@ impl Client {
     /// call.
     ///
     /// ```rust
-    /// # #[macro_use] extern crate aerospike;
     /// # use aerospike::*;
     /// # fn main() {
     /// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap();

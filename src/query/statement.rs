@@ -82,7 +82,6 @@ impl Statement {
     /// all records using a filter with the range 0 to 100 inclusive:
     ///
     /// ```rust
-    /// # #[macro_use] extern crate aerospike;
     /// # use aerospike::*;
     /// # fn main() {
     /// let mut stmt = Statement::new("foo", "bar", Bins::from(["name", "age"]));
@@ -103,10 +102,12 @@ impl Statement {
     }
 
     /// Set Lua aggregation function parameters.
-    pub fn set_aggregate_function(&mut self,
-                                  package_name: &str,
-                                  function_name: &str,
-                                  function_args: Option<&[Value]>) {
+    pub fn set_aggregate_function(
+        &mut self,
+        package_name: &str,
+        function_name: &str,
+        function_args: Option<&[Value]>,
+    ) {
         let agg = Aggregation {
             package_name: package_name.to_owned(),
             function_name: function_name.to_owned(),
@@ -130,7 +131,9 @@ impl Statement {
     pub fn validate(&self) -> Result<()> {
         if let Some(ref filters) = self.filters {
             if filters.len() > 1 {
-                bail!(ErrorKind::InvalidArgument("Too many filter expressions".to_string()));
+                bail!(ErrorKind::InvalidArgument(
+                    "Too many filter expressions".to_string()
+                ));
             }
         }
 
@@ -146,11 +149,15 @@ impl Statement {
 
         if let Some(ref agg) = self.aggregation {
             if agg.package_name.is_empty() {
-                bail!(ErrorKind::InvalidArgument("Empty UDF package name".to_string()));
+                bail!(ErrorKind::InvalidArgument(
+                    "Empty UDF package name".to_string()
+                ));
             }
 
             if agg.function_name.is_empty() {
-                bail!(ErrorKind::InvalidArgument("Empty UDF function name".to_string()));
+                bail!(ErrorKind::InvalidArgument(
+                    "Empty UDF function name".to_string()
+                ));
             }
         }
 
