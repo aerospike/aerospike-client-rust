@@ -16,16 +16,16 @@
 #[macro_use]
 extern crate aerospike;
 #[macro_use]
+extern crate bencher;
+#[macro_use]
 extern crate lazy_static;
 extern crate rand;
-#[macro_use]
-extern crate bencher;
 
 use aerospike::{Bins, ReadPolicy, WritePolicy};
 
 use bencher::Bencher;
 
-#[path="../tests/common/mod.rs"]
+#[path = "../tests/common/mod.rs"]
 mod common;
 
 lazy_static! {
@@ -58,5 +58,28 @@ fn single_key_read_header(bench: &mut Bencher) {
     bench.iter(|| client.get(&rpolicy, &key, Bins::None).unwrap());
 }
 
-benchmark_group!(benches, single_key_read, single_key_read_header);
+fn single_key_write(bench: &mut Bencher) {
+    let client = common::client();
+    let namespace = common::namespace();
+    let key = as_key!(namespace, &TEST_SET, common::rand_str(10));
+    let wpolicy = WritePolicy::default();
+
+    let bin1 = as_bin!("str1", common::rand_str(256));
+    let bin2 = as_bin!("str1", common::rand_str(256));
+    let bin3 = as_bin!("str1", common::rand_str(256));
+    let bin4 = as_bin!("str1", common::rand_str(256));
+    let bins = [bin1, bin2, bin3, bin4];
+
+    bench.iter(|| {
+        client.put(&wpolicy, &key, &bins).unwrap();
+    });
+}
+
+benchmark_group!(
+    benches,
+    single_key_read,
+    single_key_read_header,
+    single_key_write,
+    // single_key_write_iter,
+);
 benchmark_main!(benches);

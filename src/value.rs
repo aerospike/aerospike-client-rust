@@ -20,7 +20,7 @@ use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 use std::result::Result as StdResult;
 
-use byteorder::{NetworkEndian, ByteOrder};
+use byteorder::{ByteOrder, NetworkEndian};
 
 use crypto::ripemd160::Ripemd160;
 use crypto::digest::Digest;
@@ -30,10 +30,10 @@ use std::vec::Vec;
 use errors::*;
 use commands::ParticleType;
 use commands::buffer::Buffer;
-use msgpack::{encoder, decoder};
+use msgpack::{decoder, encoder};
 
 /// Container for floating point bin values stored in the Aerospike database.
-#[derive(Debug,Clone,PartialEq,Eq,Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum FloatValue {
     /// Container for single precision float values.
     F32(u32),
@@ -44,10 +44,10 @@ pub enum FloatValue {
 impl From<FloatValue> for f64 {
     fn from(val: FloatValue) -> f64 {
         match val {
-            FloatValue::F32(_) => {
-                panic!("This library does not automatically convert f32 -> f64 to be used in keys \
-                        or bins.")
-            }
+            FloatValue::F32(_) => panic!(
+                "This library does not automatically convert f32 -> f64 to be used in keys \
+                 or bins."
+            ),
             FloatValue::F64(val) => unsafe { mem::transmute(val) },
         }
     }
@@ -56,10 +56,10 @@ impl From<FloatValue> for f64 {
 impl<'a> From<&'a FloatValue> for f64 {
     fn from(val: &FloatValue) -> f64 {
         match *val {
-            FloatValue::F32(_) => {
-                panic!("This library does not automatically convert f32 -> f64 to be used in keys \
-                        or bins.")
-            }
+            FloatValue::F32(_) => panic!(
+                "This library does not automatically convert f32 -> f64 to be used in keys \
+                 or bins."
+            ),
             FloatValue::F64(val) => unsafe { mem::transmute(val) },
         }
     }
@@ -139,7 +139,7 @@ impl fmt::Display for FloatValue {
 }
 
 /// Container for bin values stored in the Aerospike database.
-#[derive(Debug,Clone,PartialEq,Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Value {
     /// Empty value.
     Nil,
@@ -225,10 +225,10 @@ impl Value {
         match *self {
             Value::Nil => ParticleType::NULL,
             Value::Int(_) => ParticleType::INTEGER,
-            Value::UInt(_) => {
-                panic!("Aerospike does not support u64 natively on server-side. Use casting to \
-                        store and retrieve u64 values.")
-            }
+            Value::UInt(_) => panic!(
+                "Aerospike does not support u64 natively on server-side. Use casting to \
+                 store and retrieve u64 values."
+            ),
             Value::Bool(_) => ParticleType::INTEGER,
             Value::Float(_) => ParticleType::FLOAT,
             Value::String(_) => ParticleType::STRING,
@@ -264,10 +264,10 @@ impl Value {
         match *self {
             Value::Nil => Ok(0),
             Value::Int(_) => Ok(8),
-            Value::UInt(_) => {
-                panic!("Aerospike does not support u64 natively on server-side. Use casting to \
-                        store and retrieve u64 values.")
-            }
+            Value::UInt(_) => panic!(
+                "Aerospike does not support u64 natively on server-side. Use casting to \
+                 store and retrieve u64 values."
+            ),
             Value::Bool(_) => Ok(8),
             Value::Float(_) => Ok(8),
             Value::String(ref s) => Ok(s.len()),
@@ -286,16 +286,15 @@ impl Value {
         match *self {
             Value::Nil => Ok(0),
             Value::Int(ref val) => buf.write_i64(*val),
-            Value::UInt(_) => {
-                panic!("Aerospike does not support u64 natively on server-side. Use casting to \
-                        store and retrieve u64 values.")
-            }
+            Value::UInt(_) => panic!(
+                "Aerospike does not support u64 natively on server-side. Use casting to \
+                 store and retrieve u64 values."
+            ),
             Value::Bool(ref val) => buf.write_bool(*val),
             Value::Float(ref val) => buf.write_f64(f64::from(val)),
             Value::String(ref val) => buf.write_str(val),
             Value::Blob(ref val) => buf.write_bytes(val),
-            Value::List(_) |
-            Value::HashMap(_) => encoder::pack_value(&mut Some(buf), self),
+            Value::List(_) | Value::HashMap(_) => encoder::pack_value(&mut Some(buf), self),
             Value::OrderedMap(_) => panic!("The library never passes ordered maps to the server."),
             Value::GeoJSON(ref val) => buf.write_geo(val),
         }
@@ -529,7 +528,6 @@ impl<'a> From<&'a usize> for Value {
     }
 }
 
-
 impl<'a> From<&'a bool> for Value {
     fn from(val: &'a bool) -> Value {
         Value::Bool(*val)
@@ -620,7 +618,6 @@ macro_rules! as_blob {
 /// Write a list value to a record bin.
 ///
 /// ```rust
-/// # #[macro_use] extern crate aerospike;
 /// # use aerospike::*;
 /// # use std::vec::Vec;
 /// # fn main() {
@@ -652,7 +649,6 @@ macro_rules! as_list {
 /// Execute a user-defined function (UDF) with some arguments.
 ///
 /// ```rust,should_panic
-/// # #[macro_use] extern crate aerospike;
 /// # use aerospike::*;
 /// # use std::vec::Vec;
 /// # fn main() {
@@ -686,7 +682,6 @@ macro_rules! as_values {
 /// Write a map value to a record bin.
 ///
 /// ```rust
-/// # #[macro_use] extern crate aerospike;
 /// # use aerospike::*;
 /// # use std::collections::HashMap;
 /// # fn main() {
@@ -719,12 +714,16 @@ mod tests {
     fn as_string() {
         assert_eq!(Value::Nil.as_string(), String::from("<null>"));
         assert_eq!(Value::Int(42).as_string(), String::from("42"));
-        assert_eq!(Value::UInt(9223372036854775808).as_string(),
-                   String::from("9223372036854775808"));
+        assert_eq!(
+            Value::UInt(9223372036854775808).as_string(),
+            String::from("9223372036854775808")
+        );
         assert_eq!(Value::Bool(true).as_string(), String::from("true"));
         assert_eq!(Value::from(3.1416).as_string(), String::from("3.1416"));
-        assert_eq!(as_geo!(r#"{"type":"Point"}"#).as_string(),
-                   String::from(r#"{"type":"Point"}"#));
+        assert_eq!(
+            as_geo!(r#"{"type":"Point"}"#).as_string(),
+            String::from(r#"{"type":"Point"}"#)
+        );
     }
 
     #[test]

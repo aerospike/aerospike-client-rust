@@ -65,8 +65,10 @@
 //!             let rpolicy = ReadPolicy::default();
 //!             let wpolicy = WritePolicy::default();
 //!             let key = as_key!("test", "test", i);
-//!             let wbin = as_bin!("bin999", 1);
-//!             let bins = vec![&wbin];
+//!             let bins = [
+//!                 as_bin!("int", 123),
+//!                 as_bin!("str", "Hello, World!"),
+//!             ];
 //!
 //!             client.put(&wpolicy, &key, &bins).unwrap();
 //!             let rec = client.get(&rpolicy, &key, Bins::All);
@@ -82,7 +84,8 @@
 //!             let exists = client.exists(&wpolicy, &key).unwrap();
 //!             println!("exists: {}", exists);
 //!
-//!             let ops = &vec![operations::put(&wbin), operations::get()];
+//!             let bin = as_bin!("int", 999);
+//!             let ops = &vec![operations::put(&bin), operations::get()];
 //!             let op_rec = client.operate(&wpolicy, &key, ops);
 //!             println!("operate: {}", op_rec.unwrap());
 //!

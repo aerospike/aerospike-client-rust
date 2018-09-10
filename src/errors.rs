@@ -20,7 +20,6 @@
 //! Handling an error returned by the client.
 //!
 //! ```rust
-//! #[macro_use] extern crate aerospike;
 //! use aerospike::*;
 //!
 //! fn main() {

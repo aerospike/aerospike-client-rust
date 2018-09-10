@@ -19,27 +19,28 @@ use errors::*;
 use Bin;
 use Key;
 use ResultCode;
-use cluster::{Node, Cluster};
+use cluster::{Cluster, Node};
 use commands::buffer;
 use commands::{Command, SingleCommand};
 use net::Connection;
 use operations::OperationType;
 use policy::WritePolicy;
 
-pub struct WriteCommand<'a> {
+pub struct WriteCommand<'a, A: 'a> {
     single_command: SingleCommand<'a>,
     policy: &'a WritePolicy,
-    bins: &'a [&'a Bin<'a>],
+    bins: &'a [A],
     operation: OperationType,
 }
 
-impl<'a> WriteCommand<'a> {
-    pub fn new(policy: &'a WritePolicy,
-               cluster: Arc<Cluster>,
-               key: &'a Key,
-               bins: &'a [&'a Bin],
-               operation: OperationType)
-               -> Self {
+impl<'a, 'b, A: AsRef<Bin<'b>>> WriteCommand<'a, A> {
+    pub fn new(
+        policy: &'a WritePolicy,
+        cluster: Arc<Cluster>,
+        key: &'a Key,
+        bins: &'a [A],
+        operation: OperationType,
+    ) -> Self {
         WriteCommand {
             single_command: SingleCommand::new(cluster, key),
             bins: bins,
@@ -53,7 +54,7 @@ impl<'a> WriteCommand<'a> {
     }
 }
 
-impl<'a> Command for WriteCommand<'a> {
+impl<'a, 'b, A: AsRef<Bin<'b>>> Command for WriteCommand<'a, A> {
     fn write_timeout(&mut self, conn: &mut Connection, timeout: Option<Duration>) -> Result<()> {
         conn.buffer.write_timeout(timeout);
         Ok(())
@@ -64,11 +65,12 @@ impl<'a> Command for WriteCommand<'a> {
     }
 
     fn prepare_buffer(&mut self, conn: &mut Connection) -> Result<()> {
-        conn.buffer
-            .set_write(self.policy,
-                       self.operation,
-                       self.single_command.key,
-                       self.bins)
+        conn.buffer.set_write(
+            self.policy,
+            self.operation,
+            self.single_command.key,
+            self.bins,
+        )
     }
 
     fn get_node(&self) -> Result<Arc<Node>> {
