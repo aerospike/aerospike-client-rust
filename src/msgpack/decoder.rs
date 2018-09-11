@@ -28,14 +28,11 @@ pub fn unpack_value_list(buf: &mut Buffer) -> Result<Value> {
 
     let ltype: u8 = try!(buf.read_u8(None)) & 0xff;
 
-    let count: usize = if (ltype & 0xf0) == 0x90 {
-        (ltype & 0x0f) as usize
-    } else if ltype == 0xdc {
-        try!(buf.read_u16(None)) as usize
-    } else if ltype == 0xdd {
-        try!(buf.read_u32(None)) as usize
-    } else {
-        unreachable!()
+    let count: usize = match ltype {
+        0x90...0x9f => (ltype & 0x0f) as usize,
+        0xdc => try!(buf.read_u16(None)) as usize,
+        0xdd => try!(buf.read_u32(None)) as usize,
+        _ => unreachable!(),
     };
 
     unpack_list(buf, count)
@@ -48,14 +45,11 @@ pub fn unpack_value_map(buf: &mut Buffer) -> Result<Value> {
 
     let ltype: u8 = try!(buf.read_u8(None)) & 0xff;
 
-    let count: usize = if (ltype & 0xf0) == 0x80 {
-        (ltype & 0x0f) as usize
-    } else if ltype == 0xde {
-        try!(buf.read_u16(None)) as usize
-    } else if ltype == 0xdf {
-        try!(buf.read_u32(None)) as usize
-    } else {
-        unreachable!()
+    let count: usize = match ltype {
+        0x80...0x8f => (ltype & 0x0f) as usize,
+        0xde => try!(buf.read_u16(None)) as usize,
+        0xdf => try!(buf.read_u32(None)) as usize,
+        _ => unreachable!(),
     };
 
     unpack_map(buf, count)
@@ -107,12 +101,43 @@ fn unpack_blob(buf: &mut Buffer, count: usize) -> Result<Value> {
 }
 
 fn unpack_value(buf: &mut Buffer) -> Result<Value> {
-    let obj_type: u8 = try!(buf.read_u8(None)) & 0xff;
+    let obj_type = try!(buf.read_u8(None));
 
     match obj_type {
+        0x00...0x7f => return Ok(Value::from(obj_type)),
+        0x80...0x8f => return unpack_map(buf, (obj_type & 0x0f) as usize),
+        0x90...0x9f => return unpack_list(buf, (obj_type & 0x0f) as usize),
+        0xa0...0xbf => return unpack_blob(buf, (obj_type & 0x1f) as usize),
         0xc0 => return Ok(Value::Nil),
-        0xc3 => return Ok(Value::from(true)),
         0xc2 => return Ok(Value::from(false)),
+        0xc3 => return Ok(Value::from(true)),
+        0xc4 => {
+            let count = try!(buf.read_u8(None));
+            return Ok(Value::from(try!(unpack_blob(buf, count as usize))));
+        }
+        0xc5 => {
+            let count = try!(buf.read_u16(None));
+            return Ok(Value::from(try!(unpack_blob(buf, count as usize))));
+        }
+        0xc6 => {
+            let count = try!(buf.read_u32(None));
+            return Ok(Value::from(try!(unpack_blob(buf, count as usize))));
+        }
+        0xc7 => {
+            // Skip over type extension with 8 bit header and bytes
+            let count = 1 + try!(buf.read_u8(None));
+            try!(buf.skip_bytes(count as usize));
+        }
+        0xc8 => {
+            // Skip over type extension with 16 bit header and bytes
+            let count = 1 + try!(buf.read_u16(None));
+            try!(buf.skip_bytes(count as usize));
+        }
+        0xc9 => {
+            // Skip over type extension with 32 bit header and bytes
+            let count = 1 + try!(buf.read_u32(None));
+            try!(buf.skip_bytes(count as usize));
+        }
         0xca => return Ok(Value::from(try!(buf.read_f32(None)))),
         0xcb => return Ok(Value::from(try!(buf.read_f64(None)))),
         0xcc => return Ok(Value::from(try!(buf.read_u8(None)))),
@@ -123,34 +148,6 @@ fn unpack_value(buf: &mut Buffer) -> Result<Value> {
         0xd1 => return Ok(Value::from(try!(buf.read_i16(None)))),
         0xd2 => return Ok(Value::from(try!(buf.read_i32(None)))),
         0xd3 => return Ok(Value::from(try!(buf.read_i64(None)))),
-        0xc4 | 0xd9 => {
-            let count = try!(buf.read_u8(None));
-            return Ok(Value::from(try!(unpack_blob(buf, count as usize))));
-        }
-        0xc5 | 0xda => {
-            let count = try!(buf.read_u16(None));
-            return Ok(Value::from(try!(unpack_blob(buf, count as usize))));
-        }
-        0xc6 | 0xdb => {
-            let count = try!(buf.read_u32(None));
-            return Ok(Value::from(try!(unpack_blob(buf, count as usize))));
-        }
-        0xdc => {
-            let count = try!(buf.read_u16(None));
-            return unpack_list(buf, count as usize);
-        }
-        0xdd => {
-            let count = try!(buf.read_u32(None));
-            return unpack_list(buf, count as usize);
-        }
-        0xde => {
-            let count = try!(buf.read_u16(None));
-            return unpack_map(buf, count as usize);
-        }
-        0xdf => {
-            let count = try!(buf.read_u32(None));
-            return unpack_map(buf, count as usize);
-        }
         0xd4 => {
             // Skip over type extension with 1 byte
             let count = (1 + 1) as usize;
@@ -176,43 +173,43 @@ fn unpack_value(buf: &mut Buffer) -> Result<Value> {
             let count = (1 + 16) as usize;
             try!(buf.skip_bytes(count));
         }
-        0xc7 => {
-            // Skip over type extension with 8 bit header and bytes
-            let count = 1 + try!(buf.read_u8(None));
-            try!(buf.skip_bytes(count as usize));
+        0xd9 => {
+            let count = try!(buf.read_u8(None));
+            return Ok(Value::from(try!(unpack_blob(buf, count as usize))));
         }
-        0xc8 => {
-            // Skip over type extension with 16 bit header and bytes
-            let count = 1 + try!(buf.read_u16(None));
-            try!(buf.skip_bytes(count as usize));
+        0xda => {
+            let count = try!(buf.read_u16(None));
+            return Ok(Value::from(try!(unpack_blob(buf, count as usize))));
         }
-        0xc9 => {
-            // Skip over type extension with 32 bit header and bytes
-            let count = 1 + try!(buf.read_u32(None));
-            try!(buf.skip_bytes(count as usize));
+        0xdb => {
+            let count = try!(buf.read_u32(None));
+            return Ok(Value::from(try!(unpack_blob(buf, count as usize))));
+        }
+        0xdc => {
+            let count = try!(buf.read_u16(None));
+            return unpack_list(buf, count as usize);
+        }
+        0xdd => {
+            let count = try!(buf.read_u32(None));
+            return unpack_list(buf, count as usize);
+        }
+        0xde => {
+            let count = try!(buf.read_u16(None));
+            return unpack_map(buf, count as usize);
+        }
+        0xdf => {
+            let count = try!(buf.read_u32(None));
+            return unpack_map(buf, count as usize);
+        }
+        0xe0...0xff => {
+            let value = obj_type as i16 - 0xe0 - 32;
+            return Ok(Value::from(value));
         }
         _ => {
-            if (obj_type & 0xe0) == 0xa0 {
-                return unpack_blob(buf, (obj_type & 0x1f) as usize);
-            }
-
-            if (obj_type & 0xf0) == 0x80 {
-                return unpack_map(buf, (obj_type & 0x0f) as usize);
-            }
-
-            if (obj_type & 0xf0) == 0x90 {
-                let count = (obj_type & 0x0f) as usize;
-                return unpack_list(buf, count);
-            }
-
-            if obj_type < 0x80 {
-                return Ok(Value::from(obj_type));
-            }
-
-            if obj_type >= 0xe0 {
-                let obj_type = obj_type as i16 - 0xe0 - 32;
-                return Ok(Value::from(obj_type as i8));
-            }
+            return Err(ErrorKind::BadResponse(format!(
+                "Error unpacking value of type '{:x}'",
+                obj_type
+            )).into())
         }
     }
 
