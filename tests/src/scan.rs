@@ -20,7 +20,7 @@ use std::thread;
 use env_logger;
 use common;
 
-use aerospike::{Bins, WritePolicy, ScanPolicy};
+use aerospike::{Bins, ScanPolicy, WritePolicy};
 
 const EXPECTED: usize = 1000;
 
@@ -50,7 +50,8 @@ fn scan_single_consumer() {
     let set_name = create_test_set(EXPECTED);
 
     let spolicy = ScanPolicy::default();
-    let rs = client.scan(&spolicy, namespace, &set_name, Bins::All)
+    let rs = client
+        .scan(&spolicy, namespace, &set_name, Bins::All)
         .unwrap();
 
     let count = (&*rs).filter(|r| r.is_ok()).count();
@@ -67,7 +68,8 @@ fn scan_multi_consumer() {
 
     let mut spolicy = ScanPolicy::default();
     spolicy.record_queue_size = 4096;
-    let rs = client.scan(&spolicy, namespace, &set_name, Bins::All)
+    let rs = client
+        .scan(&spolicy, namespace, &set_name, Bins::All)
         .unwrap();
 
     let count = Arc::new(AtomicUsize::new(0));
@@ -106,7 +108,8 @@ fn scan_node() {
         let set_name = set_name.clone();
         threads.push(thread::spawn(move || {
             let spolicy = ScanPolicy::default();
-            let rs = client.scan_node(&spolicy, node, namespace, &set_name, Bins::All)
+            let rs = client
+                .scan_node(&spolicy, node, namespace, &set_name, Bins::All)
                 .unwrap();
             let ok = (&*rs).filter(|r| r.is_ok()).count();
             count.fetch_add(ok, Ordering::Relaxed);

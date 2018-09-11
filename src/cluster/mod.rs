@@ -21,13 +21,13 @@ pub mod partition_tokenizer;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicIsize, Ordering};
-use std::sync::mpsc::{Sender, Receiver, TryRecvError};
+use std::sync::mpsc::{Receiver, Sender, TryRecvError};
 use std::sync::mpsc;
 use std::thread;
-use std::time::{Instant, Duration};
+use std::time::{Duration, Instant};
 use std::vec::Vec;
 
-use parking_lot::{RwLock, Mutex};
+use parking_lot::{Mutex, RwLock};
 
 pub use self::node::Node;
 
@@ -86,10 +86,12 @@ impl Cluster {
 
         // apply policy rules
         if cluster.client_policy.fail_if_not_connected && !cluster.is_connected() {
-            bail!(ErrorKind::Connection("Failed to connect to host(s). The network \
-                                         connection(s) to cluster nodes may have timed out, or \
-                                         the cluster may be in a state of flux."
-                .to_string()));
+            bail!(ErrorKind::Connection(
+                "Failed to connect to host(s). The network \
+                 connection(s) to cluster nodes may have timed out, or \
+                 the cluster may be in a state of flux."
+                    .to_string()
+            ));
         }
 
         let cluster_for_tend = cluster.clone();
@@ -98,7 +100,6 @@ impl Cluster {
         debug!("New cluster initialized and ready to be used...");
         Ok(cluster)
     }
-
 
     fn tend_thread(cluster: Arc<Cluster>, rx: Receiver<()>) {
         let tend_interval = cluster.client_policy.tend_interval;
@@ -181,7 +182,8 @@ impl Cluster {
     }
 
     fn wait_till_stabilized(cluster: Arc<Cluster>) -> Result<()> {
-        let timeout = cluster.client_policy()
+        let timeout = cluster
+            .client_policy()
             .timeout
             .unwrap_or_else(|| Duration::from_secs(3));
         let deadline = Instant::now() + timeout;
@@ -208,7 +210,8 @@ impl Cluster {
             }
         });
 
-        handle.join()
+        handle
+            .join()
             .map_err(|err| format!("Error during initial cluster tend: {:?}", err).into())
     }
 
@@ -244,9 +247,9 @@ impl Cluster {
     pub fn update_partitions(&self, node: Arc<Node>) -> Result<()> {
         let mut conn = node.get_connection(self.client_policy.timeout)?;
         let tokens = PartitionTokenizer::new(&mut conn).or_else(|e| {
-                conn.invalidate();
-                Err(e)
-            })?;
+            conn.invalidate();
+            Err(e)
+        })?;
 
         let nmap = tokens.update_partition(self.partitions(), node)?;
         self.set_partitions(nmap);

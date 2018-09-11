@@ -43,7 +43,8 @@ impl<'a> BatchRead<'a> {
     pub fn match_header(&self, other: &BatchRead<'a>, match_set: bool) -> bool {
         let key = &self.key;
         let other_key = &other.key;
-        (key.namespace == other_key.namespace) &&
-        (match_set && (key.set_name == other_key.set_name)) && (self.bins == other.bins)
+        (key.namespace == other_key.namespace)
+            && (match_set && (key.set_name == other_key.set_name))
+            && (self.bins == other.bins)
     }
 }

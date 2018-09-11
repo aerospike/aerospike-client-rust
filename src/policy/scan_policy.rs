@@ -16,7 +16,7 @@
 use policy::{BasePolicy, PolicyLike};
 
 /// `ScanPolicy` encapsulates optional parameters used in scan operations.
-#[derive(Debug,Clone)]
+#[derive(Debug, Clone)]
 pub struct ScanPolicy {
     /// Base policy instance
     pub base_policy: BasePolicy,
@@ -43,7 +43,6 @@ pub struct ScanPolicy {
     /// timeout. Default: 10,000 ms.
     pub socket_timeout: u32,
 }
-
 
 impl ScanPolicy {
     /// Create a new scan policy instance with default parameters.

@@ -33,13 +33,14 @@ pub struct ScanCommand<'a> {
 }
 
 impl<'a> ScanCommand<'a> {
-    pub fn new(policy: &'a ScanPolicy,
-               node: Arc<Node>,
-               namespace: &'a str,
-               set_name: &'a str,
-               bins: Bins,
-               recordset: Arc<Recordset>)
-               -> Self {
+    pub fn new(
+        policy: &'a ScanPolicy,
+        node: Arc<Node>,
+        namespace: &'a str,
+        set_name: &'a str,
+        bins: Bins,
+        recordset: Arc<Recordset>,
+    ) -> Self {
         ScanCommand {
             stream_command: StreamCommand::new(node, recordset),
             policy: policy,
@@ -65,12 +66,13 @@ impl<'a> Command for ScanCommand<'a> {
     }
 
     fn prepare_buffer(&mut self, conn: &mut Connection) -> Result<()> {
-        conn.buffer
-            .set_scan(self.policy,
-                      self.namespace,
-                      self.set_name,
-                      &self.bins,
-                      self.stream_command.recordset.task_id())
+        conn.buffer.set_scan(
+            self.policy,
+            self.namespace,
+            self.set_name,
+            &self.bins,
+            self.stream_command.recordset.task_id(),
+        )
     }
 
     fn get_node(&self) -> Result<Arc<Node>> {

@@ -18,7 +18,7 @@ use std::time::Duration;
 use errors::*;
 use Key;
 use ResultCode;
-use cluster::{Node, Cluster};
+use cluster::{Cluster, Node};
 use commands::buffer;
 use commands::{Command, SingleCommand};
 use net::Connection;

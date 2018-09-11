@@ -25,7 +25,7 @@ use std::time::Duration;
 use parking_lot::RwLock;
 
 use errors::*;
-use net::{Host, ConnectionPool, PooledConnection};
+use net::{ConnectionPool, Host, PooledConnection};
 use commands::Message;
 use policy::ClientPolicy;
 use cluster::node_validator::NodeValidator;
@@ -114,7 +114,12 @@ impl Node {
         self.responded.store(false, Ordering::Relaxed);
         self.refresh_count.fetch_add(1, Ordering::Relaxed);
 
-        let commands = vec!["node", "cluster-name", "partition-generation", self.services_name()];
+        let commands = vec![
+            "node",
+            "cluster-name",
+            "partition-generation",
+            self.services_name(),
+        ];
         let info_map = self.info(None, &commands)
             .chain_err(|| "Info command failed")?;
         self.validate_node(&info_map)
@@ -149,10 +154,10 @@ impl Node {
             Some(info_name) if info_name == &self.name => Ok(()),
             Some(info_name) => {
                 self.inactivate();
-                Err(ErrorKind::InvalidNode(format!("Node name has changed: '{}' => '{}'",
-                                                   self.name,
-                                                   info_name))
-                    .into())
+                Err(ErrorKind::InvalidNode(format!(
+                    "Node name has changed: '{}' => '{}'",
+                    self.name, info_name
+                )).into())
             }
         }
     }
@@ -160,27 +165,26 @@ impl Node {
     fn verify_cluster_name(&self, info_map: &HashMap<String, String>) -> Result<()> {
         match self.client_policy.cluster_name {
             None => Ok(()),
-            Some(ref expected) => {
-                match info_map.get("cluster-name") {
-                    None => Err(ErrorKind::InvalidNode("Missing cluster name".to_string()).into()),
-                    Some(info_name) if info_name == expected => Ok(()),
-                    Some(info_name) => {
-                        self.inactivate();
-                        Err(ErrorKind::InvalidNode(format!("Cluster name mismatch: expected={},
+            Some(ref expected) => match info_map.get("cluster-name") {
+                None => Err(ErrorKind::InvalidNode("Missing cluster name".to_string()).into()),
+                Some(info_name) if info_name == expected => Ok(()),
+                Some(info_name) => {
+                    self.inactivate();
+                    Err(ErrorKind::InvalidNode(format!(
+                        "Cluster name mismatch: expected={},
                                                            got={}",
-                                                           expected,
-                                                           info_name))
-                            .into())
-                    }
+                        expected, info_name
+                    )).into())
                 }
-            }
+            },
         }
     }
 
-    fn add_friends(&self,
-                   current_aliases: HashMap<Host, Arc<Node>>,
-                   info_map: &HashMap<String, String>)
-                   -> Result<Vec<Host>> {
+    fn add_friends(
+        &self,
+        current_aliases: HashMap<Host, Arc<Node>>,
+        info_map: &HashMap<String, String>,
+    ) -> Result<Vec<Host>> {
         let mut friends: Vec<Host> = vec![];
 
         let friend_string = match info_map.get(self.services_name()) {
@@ -193,9 +197,11 @@ impl Node {
         for friend in friend_names {
             let mut friend_info = friend.split(':');
             if friend_info.clone().count() != 2 {
-                error!("Node info from asinfo:services is malformed. Expected HOST:PORT, but got \
-                        '{}'",
-                       friend);
+                error!(
+                    "Node info from asinfo:services is malformed. Expected HOST:PORT, but got \
+                     '{}'",
+                    friend
+                );
                 continue;
             }
 
@@ -220,7 +226,9 @@ impl Node {
 
     fn update_partitions(&self, info_map: &HashMap<String, String>) -> Result<()> {
         match info_map.get("partition-generation") {
-            None => bail!(ErrorKind::BadResponse("Missing partition generation".to_string())),
+            None => bail!(ErrorKind::BadResponse(
+                "Missing partition generation".to_string()
+            )),
             Some(gen_string) => {
                 let gen = try!(gen_string.parse::<isize>());
                 self.partition_generation.store(gen, Ordering::Relaxed);
@@ -269,10 +277,11 @@ impl Node {
         self.connection_pool.close();
     }
 
-    pub fn info(&self,
-                timeout: Option<Duration>,
-                commands: &[&str])
-                -> Result<HashMap<String, String>> {
+    pub fn info(
+        &self,
+        timeout: Option<Duration>,
+        commands: &[&str],
+    ) -> Result<HashMap<String, String>> {
         let mut conn = self.get_connection(timeout)?;
         Message::info(&mut conn, commands).or_else(|e| {
             conn.invalidate();

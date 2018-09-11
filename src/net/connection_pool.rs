@@ -86,11 +86,10 @@ impl Queue {
             }
         }
 
-        connection.set_timeout(timeout)
-            .or_else(|err| {
-                internals.num_conns -= 1;
-                Err(err)
-            })?;
+        connection.set_timeout(timeout).or_else(|err| {
+            internals.num_conns -= 1;
+            Err(err)
+        })?;
 
         Ok(PooledConnection {
             queue: self.clone(),
@@ -150,11 +149,12 @@ impl ConnectionPool {
         }
     }
 
-    fn initialize_queues(num_conns: usize,
-                         num_queues: usize,
-                         host: Host,
-                         policy: ClientPolicy)
-                         -> Vec<Queue> {
+    fn initialize_queues(
+        num_conns: usize,
+        num_queues: usize,
+        host: Host,
+        policy: ClientPolicy,
+    ) -> Vec<Queue> {
         let max = num_conns / num_queues;
         let mut rem = num_conns % num_queues;
         let mut queues = Vec::with_capacity(num_queues);
@@ -168,7 +168,6 @@ impl ConnectionPool {
         }
         queues
     }
-
 
     pub fn get(&self, timeout: Option<Duration>) -> Result<PooledConnection> {
         if self.num_queues == 1 {

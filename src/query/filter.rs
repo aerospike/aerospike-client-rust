@@ -31,7 +31,7 @@ use commands::buffer::Buffer;
 /// - `as_within_region`
 /// - `as_within_radius`
 /// - `as_regions_containing_point`
-#[derive(Debug,Clone)]
+#[derive(Debug, Clone)]
 pub struct Filter {
     #[doc(hidden)]
     pub bin_name: String,
@@ -49,12 +49,13 @@ impl Filter {
     /// Create a new filter instance. For internal use only. Applications should use one of the
     /// provided macros to create new filters.
     #[doc(hidden)]
-    pub fn new(bin_name: &str,
-               collection_index_type: CollectionIndexType,
-               value_particle_type: ParticleType,
-               begin: Value,
-               end: Value)
-               -> Self {
+    pub fn new(
+        bin_name: &str,
+        collection_index_type: CollectionIndexType,
+        value_particle_type: ParticleType,
+        begin: Value,
+        end: Value,
+    ) -> Self {
         Filter {
             bin_name: bin_name.to_owned(),
             collection_index_type: collection_index_type,
@@ -73,8 +74,10 @@ impl Filter {
     pub fn estimate_size(&self) -> Result<usize> {
         // bin name size(1) + particle type size(1)
         //     + begin particle size(4) + end particle size(4) = 10
-        Ok(self.bin_name.len() + try!(self.begin.estimate_size()) +
-           try!(self.end.estimate_size()) + 10)
+        Ok(
+            self.bin_name.len() + try!(self.begin.estimate_size()) + try!(self.end.estimate_size())
+                + 10,
+        )
     }
 
     #[doc(hidden)]

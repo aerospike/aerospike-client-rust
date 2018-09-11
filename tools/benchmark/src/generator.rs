@@ -26,12 +26,13 @@ pub struct KeyPartitions {
 }
 
 impl KeyPartitions {
-    pub fn new(namespace: String,
-               set: String,
-               start_key: i64,
-               count: i64,
-               partitions: i64)
-               -> Self {
+    pub fn new(
+        namespace: String,
+        set: String,
+        start_key: i64,
+        count: i64,
+        partitions: i64,
+    ) -> Self {
         KeyPartitions {
             namespace: namespace,
             set: set,

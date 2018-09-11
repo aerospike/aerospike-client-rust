@@ -13,14 +13,14 @@
 // License for the specific language governing permissions and limitations under
 // the License.
 
-use std::{i8, i16, i32, i64};
+use std::{i16, i32, i64, i8};
 use std::collections::HashMap;
 use std::num::Wrapping;
 
 use errors::*;
 use commands::ParticleType;
 use commands::buffer::Buffer;
-use operations::cdt::{CdtOperation, CdtArgument};
+use operations::cdt::{CdtArgument, CdtOperation};
 use value::*;
 
 pub fn pack_value(buf: &mut Option<&mut Buffer>, val: &Value) -> Result<usize> {
@@ -30,12 +30,10 @@ pub fn pack_value(buf: &mut Option<&mut Buffer>, val: &Value) -> Result<usize> {
         Value::UInt(ref val) => pack_u64(buf, *val),
         Value::Bool(ref val) => pack_bool(buf, *val),
         Value::String(ref val) => pack_string(buf, val),
-        Value::Float(ref val) => {
-            match *val {
-                FloatValue::F64(_) => pack_f64(buf, f64::from(val)),
-                FloatValue::F32(_) => pack_f32(buf, f32::from(val)),
-            }
-        }
+        Value::Float(ref val) => match *val {
+            FloatValue::F64(_) => pack_f64(buf, f64::from(val)),
+            FloatValue::F32(_) => pack_f32(buf, f32::from(val)),
+        },
         Value::Blob(ref val) => pack_blob(buf, val),
         Value::List(ref val) => pack_array(buf, val),
         Value::HashMap(ref val) => pack_map(buf, val),
@@ -52,7 +50,6 @@ pub fn pack_empty_args_array(buf: &mut Option<&mut Buffer>) -> Result<usize> {
 }
 
 pub fn pack_cdt_op(buf: &mut Option<&mut Buffer>, cdt_op: &CdtOperation) -> Result<usize> {
-
     let mut size: usize = 0;
     size += try!(pack_raw_u16(buf, cdt_op.op as u16));
 
@@ -71,7 +68,6 @@ pub fn pack_cdt_op(buf: &mut Option<&mut Buffer>, cdt_op: &CdtOperation) -> Resu
 
     Ok(size)
 }
-
 
 pub fn pack_array(buf: &mut Option<&mut Buffer>, values: &[Value]) -> Result<usize> {
     let mut size = 0;

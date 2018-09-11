@@ -110,19 +110,19 @@
 // `error_chain` can recurse deeply
 #![recursion_limit = "1024"]
 
-#[macro_use]
-extern crate log;
-extern crate byteorder;
-extern crate crypto;
 extern crate base64;
+extern crate byteorder;
 extern crate crossbeam;
-extern crate rand;
-extern crate pwhash;
+extern crate crypto;
+#[macro_use]
+extern crate error_chain;
 #[macro_use]
 extern crate lazy_static;
 #[macro_use]
-extern crate error_chain;
+extern crate log;
 extern crate parking_lot;
+extern crate pwhash;
+extern crate rand;
 extern crate scoped_pool;
 
 pub use batch::BatchRead;
@@ -132,14 +132,14 @@ pub use errors::{Error, ErrorKind, Result};
 pub use key::Key;
 pub use net::Host;
 pub use operations::{MapPolicy, MapReturnType, MapWriteMode};
-pub use policy::{Policy, BatchPolicy, Concurrency, ClientPolicy, ReadPolicy, WritePolicy,
-                 ScanPolicy, QueryPolicy, Priority, ConsistencyLevel, CommitLevel,
-                 RecordExistsAction, GenerationPolicy, Expiration};
-pub use query::{Statement, UDFLang, Recordset, IndexType, CollectionIndexType};
+pub use policy::{BatchPolicy, ClientPolicy, CommitLevel, Concurrency, ConsistencyLevel,
+                 Expiration, GenerationPolicy, Policy, Priority, QueryPolicy, ReadPolicy,
+                 RecordExistsAction, ScanPolicy, WritePolicy};
+pub use query::{CollectionIndexType, IndexType, Recordset, Statement, UDFLang};
 pub use record::Record;
 pub use result_code::ResultCode;
 pub use user::User;
-pub use value::{Value, FloatValue};
+pub use value::{FloatValue, Value};
 
 #[macro_use]
 pub mod errors;

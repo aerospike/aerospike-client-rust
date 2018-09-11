@@ -17,11 +17,11 @@
 extern crate aerospike;
 #[macro_use]
 extern crate clap;
-#[macro_use]
-extern crate log;
 extern crate env_logger;
 #[macro_use]
 extern crate lazy_static;
+#[macro_use]
+extern crate log;
 extern crate num_cpus;
 extern crate rand;
 
@@ -59,11 +59,13 @@ fn run_workload(client: Client, opts: Options) {
     let client = Arc::new(client);
     let (send, recv) = mpsc::channel();
     let collector = Collector::new(recv);
-    for keys in KeyPartitions::new(opts.namespace,
-                                   opts.set,
-                                   opts.start_key,
-                                   opts.keys,
-                                   opts.concurrency) {
+    for keys in KeyPartitions::new(
+        opts.namespace,
+        opts.set,
+        opts.start_key,
+        opts.keys,
+        opts.concurrency,
+    ) {
         let mut worker = Worker::for_workload(&opts.workload, client.clone(), send.clone());
         thread::spawn(move || worker.run(keys));
     }

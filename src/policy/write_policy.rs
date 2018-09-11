@@ -67,7 +67,6 @@ pub struct WritePolicy {
     pub durable_delete: bool,
 }
 
-
 impl WritePolicy {
     /// Create a new write policy instance with the specified generation and expiration parameters.
     pub fn new(gen: u32, exp: Expiration) -> Self {

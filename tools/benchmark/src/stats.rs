@@ -60,38 +60,46 @@ impl Collector {
     fn report(&self) {
         let hist = self.histogram;
         let bkt = hist.latencies();
-        println!("TPS: {:>8.0},   Success: {:>8},   Timeouts: {:>8},   Errors: {:>8}",
-                 hist.tps(),
-                 hist.count(),
-                 hist.timeouts(),
-                 hist.errors());
-        println!("Latency:    min      avg      max    |        < 1 ms        < 2 ms        < 4 \
-                  ms        < 8 ms       < 16 ms      >= 16 ms");
-        println!("       {:>8.3} {:>8.3} {:>8.3} ms | {:>7}/{:>4.1}% {:>7}/{:>4.1}% \
-                  {:>7}/{:>4.1}% {:>7}/{:>4.1}% {:>7}/{:>4.1}% {:>7}/{:>4.1}%",
-                 hist.min(),
-                 hist.avg(),
-                 hist.max(),
-                 bkt[0].0,
-                 bkt[0].1,
-                 bkt[1].0,
-                 bkt[1].1,
-                 bkt[2].0,
-                 bkt[2].1,
-                 bkt[3].0,
-                 bkt[3].1,
-                 bkt[4].0,
-                 bkt[4].1,
-                 bkt[5].0,
-                 bkt[5].1);
+        println!(
+            "TPS: {:>8.0},   Success: {:>8},   Timeouts: {:>8},   Errors: {:>8}",
+            hist.tps(),
+            hist.count(),
+            hist.timeouts(),
+            hist.errors()
+        );
+        println!(
+            "Latency:    min      avg      max    |        < 1 ms        < 2 ms        < 4 \
+             ms        < 8 ms       < 16 ms      >= 16 ms"
+        );
+        println!(
+            "       {:>8.3} {:>8.3} {:>8.3} ms | {:>7}/{:>4.1}% {:>7}/{:>4.1}% \
+             {:>7}/{:>4.1}% {:>7}/{:>4.1}% {:>7}/{:>4.1}% {:>7}/{:>4.1}%",
+            hist.min(),
+            hist.avg(),
+            hist.max(),
+            bkt[0].0,
+            bkt[0].1,
+            bkt[1].0,
+            bkt[1].1,
+            bkt[2].0,
+            bkt[2].1,
+            bkt[3].0,
+            bkt[3].1,
+            bkt[4].0,
+            bkt[4].1,
+            bkt[5].0,
+            bkt[5].1
+        );
     }
 
     fn summary(&self) {
         let hist = self.histogram;
-        println!("Total requests: {},   Elapsed time: {:.1}s,    TPS: {:.0}",
-                 hist.total(),
-                 hist.total_elapsed_as_secs(),
-                 hist.total_tps())
+        println!(
+            "Total requests: {},   Elapsed time: {:.1}s,    TPS: {:.0}",
+            hist.total(),
+            hist.total_elapsed_as_secs(),
+            hist.total_tps()
+        )
     }
 }
 

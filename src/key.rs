@@ -48,7 +48,8 @@ impl Key {
     /// Only integers, strings and blobs (`Vec<u8>`) can be used as user keys. The constructor will
     /// panic if any other value type is passed.
     pub fn new<S>(namespace: S, set_name: S, key: Value) -> Result<Self>
-        where S: Into<String>
+    where
+        S: Into<String>,
     {
         let mut key = Key {
             namespace: namespace.into(),
@@ -79,20 +80,16 @@ impl Key {
 impl fmt::Display for Key {
     fn fmt(&self, f: &mut fmt::Formatter) -> StdResult<(), fmt::Error> {
         match self.user_key {
-            Some(ref value) => {
-                write!(f,
-                       "<Key: ns=\"{}\", set=\"{}\", key=\"{}\">",
-                       &self.namespace,
-                       &self.set_name,
-                       value)
-            }
-            None => {
-                write!(f,
-                       "<Key: ns=\"{}\", set=\"{}\", digest=\"{:?}\">",
-                       &self.namespace,
-                       &self.set_name,
-                       &self.digest)
-            }
+            Some(ref value) => write!(
+                f,
+                "<Key: ns=\"{}\", set=\"{}\", key=\"{}\">",
+                &self.namespace, &self.set_name, value
+            ),
+            None => write!(
+                f,
+                "<Key: ns=\"{}\", set=\"{}\", digest=\"{:?}\">",
+                &self.namespace, &self.set_name, &self.digest
+            ),
         }
     }
 }
@@ -109,7 +106,6 @@ macro_rules! as_key {
         $crate::Key::new($ns, $set, $crate::Value::from($val)).unwrap()
     }};
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -145,70 +141,122 @@ mod tests {
         assert_eq!(digest!(1isize), "82d7213b469812947c109a6d341e3b5b1dedec1f");
         assert_eq!(digest!(&1isize), "82d7213b469812947c109a6d341e3b5b1dedec1f");
 
-        assert_eq!(digest!(i64::min_value()),
-                   "7185c2a47fb02c996daed26b4e01b83240aee9d4");
-        assert_eq!(digest!(i64::max_value()),
-                   "1698328974afa62c8e069860c1516f780d63dbb8");
-        assert_eq!(digest!(i32::min_value()),
-                   "d635a867b755f8f54cdc6275e6fb437df82a728c");
-        assert_eq!(digest!(i32::max_value()),
-                   "fa8c47b8b898af1bbcb20af0d729ca68359a2645");
-        assert_eq!(digest!(i16::min_value()),
-                   "7f41e9dd1f3fe3694be0430e04c8bfc7d51ec2af");
-        assert_eq!(digest!(i16::max_value()),
-                   "309fc9c2619c4f65ff7f4cd82085c3ee7a31fc7c");
-        assert_eq!(digest!(i8::min_value()),
-                   "93191e549f8f3548d7e2cfc958ddc8c65bcbe4c6");
-        assert_eq!(digest!(i8::max_value()),
-                   "a58f7d98bf60e10fe369c82030b1c9dee053def9");
+        assert_eq!(
+            digest!(i64::min_value()),
+            "7185c2a47fb02c996daed26b4e01b83240aee9d4"
+        );
+        assert_eq!(
+            digest!(i64::max_value()),
+            "1698328974afa62c8e069860c1516f780d63dbb8"
+        );
+        assert_eq!(
+            digest!(i32::min_value()),
+            "d635a867b755f8f54cdc6275e6fb437df82a728c"
+        );
+        assert_eq!(
+            digest!(i32::max_value()),
+            "fa8c47b8b898af1bbcb20af0d729ca68359a2645"
+        );
+        assert_eq!(
+            digest!(i16::min_value()),
+            "7f41e9dd1f3fe3694be0430e04c8bfc7d51ec2af"
+        );
+        assert_eq!(
+            digest!(i16::max_value()),
+            "309fc9c2619c4f65ff7f4cd82085c3ee7a31fc7c"
+        );
+        assert_eq!(
+            digest!(i8::min_value()),
+            "93191e549f8f3548d7e2cfc958ddc8c65bcbe4c6"
+        );
+        assert_eq!(
+            digest!(i8::max_value()),
+            "a58f7d98bf60e10fe369c82030b1c9dee053def9"
+        );
 
-        assert_eq!(digest!(u32::max_value()),
-                   "2cdf52bf5641027042b9cf9a499e509a58b330e2");
-        assert_eq!(digest!(u16::max_value()),
-                   "3f0dd44352749a9fd5b7ec44213441ef54c46d57");
-        assert_eq!(digest!(u8::max_value()),
-                   "5a7dd3ea237c30c8735b051524e66fd401a10f6a");
+        assert_eq!(
+            digest!(u32::max_value()),
+            "2cdf52bf5641027042b9cf9a499e509a58b330e2"
+        );
+        assert_eq!(
+            digest!(u16::max_value()),
+            "3f0dd44352749a9fd5b7ec44213441ef54c46d57"
+        );
+        assert_eq!(
+            digest!(u8::max_value()),
+            "5a7dd3ea237c30c8735b051524e66fd401a10f6a"
+        );
     }
 
     #[test]
     fn string_keys() {
         assert_eq!(digest!(""), "2819b1ff6e346a43b4f5f6b77a88bc3eaac22a83");
-        assert_eq!(digest!(str_repeat!('s', 1)),
-                   "607cddba7cd111745ef0a3d783d57f0e83c8f311");
-        assert_eq!(digest!(str_repeat!('a', 10)),
-                   "5979fb32a80da070ff356f7695455592272e36c2");
-        assert_eq!(digest!(str_repeat!('m', 100)),
-                   "f00ad7dbcb4bd8122d9681bca49b8c2ffd4beeed");
-        assert_eq!(digest!(str_repeat!('t', 1000)),
-                   "07ac412d4c33b8628ab147b8db244ce44ae527f8");
-        assert_eq!(digest!(str_repeat!('-', 10000)),
-                   "b42e64afbfccb05912a609179228d9249ea1c1a0");
-        assert_eq!(digest!(str_repeat!('+', 100000)),
-                   "0a3e888c20bb8958537ddd4ba835e4070bd51740");
+        assert_eq!(
+            digest!(str_repeat!('s', 1)),
+            "607cddba7cd111745ef0a3d783d57f0e83c8f311"
+        );
+        assert_eq!(
+            digest!(str_repeat!('a', 10)),
+            "5979fb32a80da070ff356f7695455592272e36c2"
+        );
+        assert_eq!(
+            digest!(str_repeat!('m', 100)),
+            "f00ad7dbcb4bd8122d9681bca49b8c2ffd4beeed"
+        );
+        assert_eq!(
+            digest!(str_repeat!('t', 1000)),
+            "07ac412d4c33b8628ab147b8db244ce44ae527f8"
+        );
+        assert_eq!(
+            digest!(str_repeat!('-', 10000)),
+            "b42e64afbfccb05912a609179228d9249ea1c1a0"
+        );
+        assert_eq!(
+            digest!(str_repeat!('+', 100000)),
+            "0a3e888c20bb8958537ddd4ba835e4070bd51740"
+        );
 
         assert_eq!(digest!("haha"), "36eb02a807dbade8cd784e7800d76308b4e89212");
-        assert_eq!(digest!("haha".to_string()),
-                   "36eb02a807dbade8cd784e7800d76308b4e89212");
-        assert_eq!(digest!(&"haha".to_string()),
-                   "36eb02a807dbade8cd784e7800d76308b4e89212");
+        assert_eq!(
+            digest!("haha".to_string()),
+            "36eb02a807dbade8cd784e7800d76308b4e89212"
+        );
+        assert_eq!(
+            digest!(&"haha".to_string()),
+            "36eb02a807dbade8cd784e7800d76308b4e89212"
+        );
     }
 
     #[test]
     fn blob_keys() {
-        assert_eq!(digest!(vec![0u8; 0]),
-                   "327e2877b8815c7aeede0d5a8620d4ef8df4a4b4");
-        assert_eq!(digest!(vec!['s' as u8; 1]),
-                   "ca2d96dc9a184d15a7fa2927565e844e9254e001");
-        assert_eq!(digest!(vec!['a' as u8; 10]),
-                   "d10982327b2b04c7360579f252e164a75f83cd99");
-        assert_eq!(digest!(vec!['m' as u8; 100]),
-                   "475786aa4ee664532a7d1ea69cb02e4695fcdeed");
-        assert_eq!(digest!(vec!['t' as u8; 1000]),
-                   "5a32b507518a49bf47fdaa3deca53803f5b2e8c3");
-        assert_eq!(digest!(vec!['-' as u8; 10000]),
-                   "ed65c63f7a1f8c6697eb3894b6409a95461fd982");
-        assert_eq!(digest!(vec!['+' as u8; 100000]),
-                   "fe19770c371774ba1a1532438d4851b8a773a9e6");
+        assert_eq!(
+            digest!(vec![0u8; 0]),
+            "327e2877b8815c7aeede0d5a8620d4ef8df4a4b4"
+        );
+        assert_eq!(
+            digest!(vec!['s' as u8; 1]),
+            "ca2d96dc9a184d15a7fa2927565e844e9254e001"
+        );
+        assert_eq!(
+            digest!(vec!['a' as u8; 10]),
+            "d10982327b2b04c7360579f252e164a75f83cd99"
+        );
+        assert_eq!(
+            digest!(vec!['m' as u8; 100]),
+            "475786aa4ee664532a7d1ea69cb02e4695fcdeed"
+        );
+        assert_eq!(
+            digest!(vec!['t' as u8; 1000]),
+            "5a32b507518a49bf47fdaa3deca53803f5b2e8c3"
+        );
+        assert_eq!(
+            digest!(vec!['-' as u8; 10000]),
+            "ed65c63f7a1f8c6697eb3894b6409a95461fd982"
+        );
+        assert_eq!(
+            digest!(vec!['+' as u8; 100000]),
+            "fe19770c371774ba1a1532438d4851b8a773a9e6"
+        );
     }
 
     #[test]

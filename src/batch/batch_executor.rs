@@ -43,26 +43,28 @@ impl BatchExecutor {
         }
     }
 
-    pub fn execute_batch_read<'a>(&self,
-                                  policy: &BatchPolicy,
-                                  batch_reads: Vec<BatchRead<'a>>)
-                                  -> Result<Vec<BatchRead<'a>>> {
+    pub fn execute_batch_read<'a>(
+        &self,
+        policy: &BatchPolicy,
+        batch_reads: Vec<BatchRead<'a>>,
+    ) -> Result<Vec<BatchRead<'a>>> {
         let mut batch_nodes = self.get_batch_nodes(&batch_reads)?;
         let batch_reads = SharedSlice::new(batch_reads);
-        let jobs =
-            batch_nodes.drain()
-                .map(|(node, offsets)| {
-                    BatchReadCommand::new(policy, node, batch_reads.clone(), offsets)
-                })
-                .collect();
+        let jobs = batch_nodes
+            .drain()
+            .map(|(node, offsets)| {
+                BatchReadCommand::new(policy, node, batch_reads.clone(), offsets)
+            })
+            .collect();
         self.execute_batch_jobs(jobs, &policy.concurrency)?;
         batch_reads.into_inner()
     }
 
-    fn execute_batch_jobs(&self,
-                          mut jobs: Vec<BatchReadCommand>,
-                          concurrency: &Concurrency)
-                          -> Result<()> {
+    fn execute_batch_jobs(
+        &self,
+        mut jobs: Vec<BatchReadCommand>,
+        concurrency: &Concurrency,
+    ) -> Result<()> {
         let threads = match *concurrency {
             Concurrency::Sequential => 1,
             Concurrency::Parallel => jobs.len(),
@@ -70,31 +72,31 @@ impl BatchExecutor {
         };
         let jobs = Arc::new(Mutex::new(jobs.iter_mut()));
         let last_err: Arc<Mutex<Option<Error>>> = Arc::default();
-        self.thread_pool
-            .scoped(|scope| {
-                for _ in 0..threads {
-                    let last_err = last_err.clone();
-                    let jobs = jobs.clone();
-                    scope.execute(move || {
-                        let next_job = || jobs.lock().next();
-                        while let Some(cmd) = next_job() {
-                            if let Err(err) = cmd.execute() {
-                                *last_err.lock() = Some(err);
-                                jobs.lock().all(|_| true); // consume the remaining jobs
-                            };
-                        }
-                    });
-                }
-            });
+        self.thread_pool.scoped(|scope| {
+            for _ in 0..threads {
+                let last_err = last_err.clone();
+                let jobs = jobs.clone();
+                scope.execute(move || {
+                    let next_job = || jobs.lock().next();
+                    while let Some(cmd) = next_job() {
+                        if let Err(err) = cmd.execute() {
+                            *last_err.lock() = Some(err);
+                            jobs.lock().all(|_| true); // consume the remaining jobs
+                        };
+                    }
+                });
+            }
+        });
         match Arc::try_unwrap(last_err).unwrap().into_inner() {
             None => Ok(()),
             Some(err) => Err(err),
         }
     }
 
-    fn get_batch_nodes<'a>(&self,
-                           batch_reads: &Vec<BatchRead<'a>>)
-                           -> Result<HashMap<Arc<Node>, Vec<usize>>> {
+    fn get_batch_nodes<'a>(
+        &self,
+        batch_reads: &Vec<BatchRead<'a>>,
+    ) -> Result<HashMap<Arc<Node>, Vec<usize>>> {
         let mut map = HashMap::new();
         for (idx, batch_read) in batch_reads.iter().enumerate() {
             let node = self.node_for_key(&batch_read.key)?;
@@ -123,13 +125,17 @@ unsafe impl<T> Sync for SharedSlice<T> {}
 
 impl<T> Clone for SharedSlice<T> {
     fn clone(&self) -> Self {
-        SharedSlice { value: self.value.clone() }
+        SharedSlice {
+            value: self.value.clone(),
+        }
     }
 }
 
 impl<T> SharedSlice<T> {
     pub fn new(value: Vec<T>) -> Self {
-        SharedSlice { value: Arc::new(UnsafeCell::new(value)) }
+        SharedSlice {
+            value: Arc::new(UnsafeCell::new(value)),
+        }
     }
 
     pub fn get(&self, idx: usize) -> Option<&T> {

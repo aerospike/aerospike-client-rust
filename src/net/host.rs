@@ -78,7 +78,8 @@ impl ToHosts for Vec<Host> {
 impl ToHosts for String {
     fn to_hosts(&self) -> Result<Vec<Host>> {
         let mut parser = Parser::new(self, 3000);
-        parser.read_hosts()
+        parser
+            .read_hosts()
             .chain_err(|| ErrorKind::InvalidArgument(format!("Invalid hosts list: '{}'", self)))
     }
 }
@@ -95,11 +96,15 @@ mod tests {
 
     #[test]
     fn to_hosts() {
-        assert_eq!(vec![Host::new("foo", 3000)],
-                   String::from("foo").to_hosts().unwrap());
+        assert_eq!(
+            vec![Host::new("foo", 3000)],
+            String::from("foo").to_hosts().unwrap()
+        );
         assert_eq!(vec![Host::new("foo", 3000)], "foo".to_hosts().unwrap());
         assert_eq!(vec![Host::new("foo", 1234)], "foo:1234".to_hosts().unwrap());
-        assert_eq!(vec![Host::new("foo", 1234), Host::new("bar", 1234)],
-                   "foo:1234,bar:1234".to_hosts().unwrap());
+        assert_eq!(
+            vec![Host::new("foo", 1234), Host::new("bar", 1234)],
+            "foo:1234,bar:1234".to_hosts().unwrap()
+        );
     }
 }

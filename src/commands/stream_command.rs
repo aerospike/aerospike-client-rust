@@ -81,7 +81,6 @@ impl StreamCommand {
 
         let key = try!(StreamCommand::parse_key(conn, field_count));
 
-
         let mut bins: HashMap<String, Value> = HashMap::with_capacity(op_count);
 
         for _ in 0..op_count {
@@ -106,7 +105,6 @@ impl StreamCommand {
     }
 
     fn parse_stream(&mut self, conn: &mut Connection, size: usize) -> Result<bool> {
-
         while self.recordset.is_active() && conn.bytes_read() < size {
             // Read header.
             if let Err(err) = conn.read_buffer(buffer::MSG_REMAINING_HEADER_SIZE as usize) {
@@ -116,18 +114,16 @@ impl StreamCommand {
 
             let res = StreamCommand::parse_record(conn, size);
             match res {
-                Ok(Some(mut rec)) => {
-                    loop {
-                        let result = self.recordset.push(Ok(rec));
-                        match result {
-                            None => break,
-                            Some(returned) => {
-                                rec = try!(returned);
-                                thread::yield_now();
-                            }
+                Ok(Some(mut rec)) => loop {
+                    let result = self.recordset.push(Ok(rec));
+                    match result {
+                        None => break,
+                        Some(returned) => {
+                            rec = try!(returned);
+                            thread::yield_now();
                         }
                     }
-                }
+                },
                 Ok(None) => return Ok(false),
                 Err(err) => {
                     self.recordset.push(Err(err));
@@ -164,14 +160,15 @@ impl StreamCommand {
                 x if x == FieldType::Key as u8 => {
                     let particle_type = try!(conn.buffer.read_u8(None));
                     let particle_bytes_size = field_len - 2;
-                    orig_key = Some(bytes_to_particle(particle_type,
-                                                      &mut conn.buffer,
-                                                      particle_bytes_size)?);
+                    orig_key = Some(bytes_to_particle(
+                        particle_type,
+                        &mut conn.buffer,
+                        particle_bytes_size,
+                    )?);
                 }
                 _ => unreachable!(),
             }
         }
-
 
         Ok(Key {
             namespace: namespace,

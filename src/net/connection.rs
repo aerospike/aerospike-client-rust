@@ -14,9 +14,9 @@
 // the License.
 
 use std::io::prelude::*;
-use std::net::{TcpStream, ToSocketAddrs, Shutdown};
+use std::net::{Shutdown, TcpStream, ToSocketAddrs};
 use std::ops::Add;
-use std::time::{Instant, Duration};
+use std::time::{Duration, Instant};
 
 use errors::*;
 use policy::ClientPolicy;
@@ -68,7 +68,6 @@ impl Connection {
         Ok(())
     }
 
-
     pub fn read_buffer(&mut self, size: usize) -> Result<()> {
         self.buffer.resize_buffer(size)?;
         self.conn.read_exact(&mut self.buffer.data_buffer)?;
@@ -77,7 +76,6 @@ impl Connection {
         self.refresh();
         Ok(())
     }
-
 
     pub fn write(&mut self, buf: &[u8]) -> Result<()> {
         self.conn.write_all(buf)?;
@@ -112,7 +110,6 @@ impl Connection {
             self.idle_deadline = Some(Instant::now().add(idle_to))
         };
     }
-
 
     fn authenticate(&mut self, user_password: &Option<(String, String)>) -> Result<()> {
         if let Some((ref user, ref password)) = *user_password {

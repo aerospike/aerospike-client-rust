@@ -25,7 +25,7 @@ use std::cell::RefCell;
 use rand;
 use rand::{Rand, Rng, XorShiftRng};
 
-use aerospike::{Key, Client, ReadPolicy, WritePolicy, ErrorKind, ResultCode};
+use aerospike::{Client, ErrorKind, Key, ReadPolicy, ResultCode, WritePolicy};
 use aerospike::Result as asResult;
 use aerospike::Error as asError;
 
@@ -107,10 +107,11 @@ pub struct Worker {
 }
 
 impl Worker {
-    pub fn for_workload(workload: &Workload,
-                        client: Arc<Client>,
-                        sender: Sender<Histogram>)
-                        -> Self {
+    pub fn for_workload(
+        workload: &Workload,
+        client: Arc<Client>,
+        sender: Sender<Histogram>,
+    ) -> Self {
         let task: Box<Task> = match *workload {
             Workload::Initialize => Box::new(InsertTask::new(client)),
             Workload::ReadUpdate { read_pct } => Box::new(ReadUpdateTask::new(client, read_pct)),
@@ -228,9 +229,17 @@ mod test {
     #[test]
     fn test_workload_from_str() {
         assert_eq!(Workload::from_str("I"), Ok(Workload::Initialize));
-        assert_eq!(Workload::from_str("RU"),
-                   Ok(Workload::ReadUpdate { read_pct: Percent(100) }));
-        assert_eq!(Workload::from_str("RU,50"),
-                   Ok(Workload::ReadUpdate { read_pct: Percent(50) }));
+        assert_eq!(
+            Workload::from_str("RU"),
+            Ok(Workload::ReadUpdate {
+                read_pct: Percent(100),
+            })
+        );
+        assert_eq!(
+            Workload::from_str("RU,50"),
+            Ok(Workload::ReadUpdate {
+                read_pct: Percent(50),
+            })
+        );
     }
 }

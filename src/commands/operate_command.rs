@@ -18,8 +18,8 @@ use std::time::Duration;
 use errors::*;
 use Bins;
 use Key;
-use cluster::{Node, Cluster};
-use commands::{Command, SingleCommand, ReadCommand};
+use cluster::{Cluster, Node};
+use commands::{Command, ReadCommand, SingleCommand};
 use net::Connection;
 use operations::Operation;
 use policy::WritePolicy;
@@ -31,11 +31,12 @@ pub struct OperateCommand<'a> {
 }
 
 impl<'a> OperateCommand<'a> {
-    pub fn new(policy: &'a WritePolicy,
-               cluster: Arc<Cluster>,
-               key: &'a Key,
-               operations: &'a [Operation<'a>])
-               -> Self {
+    pub fn new(
+        policy: &'a WritePolicy,
+        cluster: Arc<Cluster>,
+        key: &'a Key,
+        operations: &'a [Operation<'a>],
+    ) -> Self {
         OperateCommand {
             read_command: ReadCommand::new(&policy.base_policy, cluster, key, Bins::All),
             policy: policy,
@@ -59,10 +60,11 @@ impl<'a> Command for OperateCommand<'a> {
     }
 
     fn prepare_buffer(&mut self, conn: &mut Connection) -> Result<()> {
-        conn.buffer
-            .set_operate(self.policy,
-                         self.read_command.single_command.key,
-                         self.operations)
+        conn.buffer.set_operate(
+            self.policy,
+            self.read_command.single_command.key,
+            self.operations,
+        )
     }
 
     fn get_node(&self) -> Result<Arc<Node>> {

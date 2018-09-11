@@ -13,7 +13,7 @@
 // License for the specific language governing permissions and limitations under
 // the License.
 
-#[derive(Debug,Clone)]
+#[derive(Debug, Clone)]
 pub enum ParticleType {
     // Server particle types. Unsupported types are commented out.
     NULL = 0,

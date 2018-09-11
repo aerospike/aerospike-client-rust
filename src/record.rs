@@ -45,11 +45,12 @@ pub struct Record {
 impl Record {
     /// Construct a new Record. For internal use only.
     #[doc(hidden)]
-    pub fn new(key: Option<Key>,
-               bins: HashMap<String, Value>,
-               generation: u32,
-               expiration: u32)
-               -> Self {
+    pub fn new(
+        key: Option<Key>,
+        bins: HashMap<String, Value>,
+        generation: u32,
+        expiration: u32,
+    ) -> Self {
         Record {
             key: key,
             bins: bins,
@@ -75,7 +76,6 @@ impl Record {
         }
     }
 }
-
 
 impl fmt::Display for Record {
     fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
@@ -105,7 +105,8 @@ mod tests {
     #[test]
     fn ttl_expiration_future() {
         let expiration = SystemTime::now() + Duration::new(1000, 0);
-        let secs_since_epoch = expiration.duration_since(*CITRUSLEAF_EPOCH)
+        let secs_since_epoch = expiration
+            .duration_since(*CITRUSLEAF_EPOCH)
             .unwrap()
             .as_secs();
         let record = Record::new(None, HashMap::new(), 0, secs_since_epoch as u32);

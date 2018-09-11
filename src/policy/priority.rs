@@ -13,7 +13,7 @@
 // limitations under the License.
 
 /// Priority of operations on database server.
-#[derive(Debug,Clone)]
+#[derive(Debug, Clone)]
 pub enum Priority {
     /// Default determines that the server defines the priority.
     Default = 0,
@@ -27,7 +27,6 @@ pub enum Priority {
     /// High determines that the server should run the operation at the highest priority.
     High = 3,
 }
-
 
 impl Default for Priority {
     fn default() -> Priority {

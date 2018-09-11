@@ -87,7 +87,8 @@ pub trait PolicyLike {
 }
 
 impl<T> Policy for T
-    where T: PolicyLike
+where
+    T: PolicyLike,
 {
     fn priority(&self) -> &Priority {
         self.base().priority()
@@ -115,7 +116,7 @@ impl<T> Policy for T
 }
 
 /// Common parameters shared by all policy types.
-#[derive(Debug,Clone)]
+#[derive(Debug, Clone)]
 pub struct BasePolicy {
     /// Priority of request relative to other transactions.
     /// Currently, only used for scans.

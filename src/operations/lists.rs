@@ -32,8 +32,8 @@
 //! bounds, the valid part of the range will be returned.
 
 use Value;
-use operations::{Operation, OperationType, OperationBin, OperationData};
-use operations::cdt::{CdtOperation, CdtOpType, CdtArgument};
+use operations::{Operation, OperationBin, OperationData, OperationType};
+use operations::cdt::{CdtArgument, CdtOpType, CdtOperation};
 
 /// Create list append operation. Server appends value to the end of list bin. Server returns
 /// list size.
@@ -237,7 +237,6 @@ pub fn increment(bin: &str, index: i64, value: i64) -> Operation {
         data: OperationData::CdtListOp(cdt_op),
     }
 }
-
 
 /// Create list size operation. Server returns size of the list.
 pub fn size(bin: &str) -> Operation {

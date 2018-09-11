@@ -16,7 +16,7 @@
 use policy::{BasePolicy, PolicyLike};
 
 /// `QueryPolicy` encapsulates parameters for query operations.
-#[derive(Debug,Clone)]
+#[derive(Debug, Clone)]
 pub struct QueryPolicy {
     /// Base policy instance
     pub base_policy: BasePolicy,
@@ -35,7 +35,6 @@ pub struct QueryPolicy {
     /// Terminate query if cluster is in fluctuating state.
     pub fail_on_cluster_change: bool,
 }
-
 
 impl QueryPolicy {
     /// Create a new query policy instance with default parameters.

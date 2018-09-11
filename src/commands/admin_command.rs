@@ -17,7 +17,7 @@
 use std::str;
 
 use pwhash::bcrypt;
-use pwhash::bcrypt::{BcryptVariant, BcryptSetup};
+use pwhash::bcrypt::{BcryptSetup, BcryptVariant};
 
 use errors::*;
 use ResultCode;
@@ -52,7 +52,6 @@ const HEADER_SIZE: usize = 24;
 const HEADER_REMAINING: usize = 16;
 const RESULT_CODE: usize = 9;
 const QUERY_END: usize = 50;
-
 
 pub struct AdminCommand {}
 
@@ -90,7 +89,6 @@ impl AdminCommand {
     }
 
     pub fn authenticate(conn: &mut Connection, user: &str, password: &str) -> Result<()> {
-
         try!(AdminCommand::set_authenticate(conn, user, password));
         try!(conn.flush());
         try!(conn.read_buffer(HEADER_SIZE));
@@ -104,12 +102,15 @@ impl AdminCommand {
     }
 
     fn set_authenticate(conn: &mut Connection, user: &str, password: &str) -> Result<()> {
-
         try!(conn.buffer.resize_buffer(1024));
         try!(conn.buffer.reset_offset());
         try!(AdminCommand::write_header(conn, AUTHENTICATE, 2));
         try!(AdminCommand::write_field_str(conn, USER, user));
-        try!(AdminCommand::write_field_bytes(conn, CREDENTIAL, password.as_bytes()));
+        try!(AdminCommand::write_field_bytes(
+            conn,
+            CREDENTIAL,
+            password.as_bytes()
+        ));
         try!(conn.buffer.size_buffer());
         let size = conn.buffer.data_offset;
         try!(conn.buffer.reset_offset());
@@ -118,14 +119,13 @@ impl AdminCommand {
         Ok(())
     }
 
-
-    pub fn create_user(cluster: &Cluster,
-                       policy: &AdminPolicy,
-                       user: &str,
-                       password: &str,
-                       roles: &[&str])
-                       -> Result<()> {
-
+    pub fn create_user(
+        cluster: &Cluster,
+        policy: &AdminPolicy,
+        user: &str,
+        password: &str,
+        roles: &[&str],
+    ) -> Result<()> {
         let node = try!(cluster.get_random_node());
         let mut conn = try!(node.get_connection(Some(policy.timeout)));
 
@@ -133,16 +133,17 @@ impl AdminCommand {
         try!(conn.buffer.reset_offset());
         try!(AdminCommand::write_header(&mut conn, CREATE_USER, 3));
         try!(AdminCommand::write_field_str(&mut conn, USER, user));
-        try!(AdminCommand::write_field_str(&mut conn,
-                                           PASSWORD,
-                                           &try!(AdminCommand::hash_password(password))));
+        try!(AdminCommand::write_field_str(
+            &mut conn,
+            PASSWORD,
+            &try!(AdminCommand::hash_password(password))
+        ));
         try!(AdminCommand::write_roles(&mut conn, roles));
 
         AdminCommand::execute(conn)
     }
 
     pub fn drop_user(cluster: &Cluster, policy: &AdminPolicy, user: &str) -> Result<()> {
-
         let node = try!(cluster.get_random_node());
         let mut conn = try!(node.get_connection(Some(policy.timeout)));
 
@@ -154,12 +155,12 @@ impl AdminCommand {
         AdminCommand::execute(conn)
     }
 
-    pub fn set_password(cluster: &Cluster,
-                        policy: &AdminPolicy,
-                        user: &str,
-                        password: &str)
-                        -> Result<()> {
-
+    pub fn set_password(
+        cluster: &Cluster,
+        policy: &AdminPolicy,
+        user: &str,
+        password: &str,
+    ) -> Result<()> {
         let node = try!(cluster.get_random_node());
         let mut conn = try!(node.get_connection(Some(policy.timeout)));
 
@@ -167,19 +168,21 @@ impl AdminCommand {
         try!(conn.buffer.reset_offset());
         try!(AdminCommand::write_header(&mut conn, SET_PASSWORD, 2));
         try!(AdminCommand::write_field_str(&mut conn, USER, user));
-        try!(AdminCommand::write_field_str(&mut conn,
-                                           PASSWORD,
-                                           &try!(AdminCommand::hash_password(password))));
+        try!(AdminCommand::write_field_str(
+            &mut conn,
+            PASSWORD,
+            &try!(AdminCommand::hash_password(password))
+        ));
 
         AdminCommand::execute(conn)
     }
 
-    pub fn change_password(cluster: &Cluster,
-                           policy: &AdminPolicy,
-                           user: &str,
-                           password: &str)
-                           -> Result<()> {
-
+    pub fn change_password(
+        cluster: &Cluster,
+        policy: &AdminPolicy,
+        user: &str,
+        password: &str,
+    ) -> Result<()> {
         let node = try!(cluster.get_random_node());
         let mut conn = try!(node.get_connection(Some(policy.timeout)));
 
@@ -189,27 +192,31 @@ impl AdminCommand {
         try!(AdminCommand::write_field_str(&mut conn, USER, user));
         match cluster.client_policy().user_password {
             Some((_, ref password)) => {
-                try!(AdminCommand::write_field_str(&mut conn,
-                                                   OLD_PASSWORD,
-                                                   &try!(AdminCommand::hash_password(password))));
+                try!(AdminCommand::write_field_str(
+                    &mut conn,
+                    OLD_PASSWORD,
+                    &try!(AdminCommand::hash_password(password))
+                ));
             }
 
             None => try!(AdminCommand::write_field_str(&mut conn, OLD_PASSWORD, "")),
         };
 
-        try!(AdminCommand::write_field_str(&mut conn,
-                                           PASSWORD,
-                                           &try!(AdminCommand::hash_password(password))));
+        try!(AdminCommand::write_field_str(
+            &mut conn,
+            PASSWORD,
+            &try!(AdminCommand::hash_password(password))
+        ));
 
         AdminCommand::execute(conn)
     }
 
-    pub fn grant_roles(cluster: &Cluster,
-                       policy: &AdminPolicy,
-                       user: &str,
-                       roles: &[&str])
-                       -> Result<()> {
-
+    pub fn grant_roles(
+        cluster: &Cluster,
+        policy: &AdminPolicy,
+        user: &str,
+        roles: &[&str],
+    ) -> Result<()> {
         let node = try!(cluster.get_random_node());
         let mut conn = try!(node.get_connection(Some(policy.timeout)));
 
@@ -222,12 +229,12 @@ impl AdminCommand {
         AdminCommand::execute(conn)
     }
 
-    pub fn revoke_roles(cluster: &Cluster,
-                        policy: &AdminPolicy,
-                        user: &str,
-                        roles: &[&str])
-                        -> Result<()> {
-
+    pub fn revoke_roles(
+        cluster: &Cluster,
+        policy: &AdminPolicy,
+        user: &str,
+        roles: &[&str],
+    ) -> Result<()> {
         let node = try!(cluster.get_random_node());
         let mut conn = try!(node.get_connection(Some(policy.timeout)));
 
@@ -300,12 +307,14 @@ impl AdminCommand {
     }
 
     pub fn hash_password(password: &str) -> Result<String> {
-        let password_hash = try!(bcrypt::hash_with(BcryptSetup {
-                                                       salt: Some("7EqJtq98hPqEX7fNZaFWoO"),
-                                                       cost: Some(10),
-                                                       variant: Some(BcryptVariant::V2a),
-                                                   },
-                                                   &password));
+        let password_hash = try!(bcrypt::hash_with(
+            BcryptSetup {
+                salt: Some("7EqJtq98hPqEX7fNZaFWoO"),
+                cost: Some(10),
+                variant: Some(BcryptVariant::V2a),
+            },
+            &password
+        ));
         Ok(password_hash)
     }
 }

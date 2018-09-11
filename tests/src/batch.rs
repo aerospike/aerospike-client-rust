@@ -15,7 +15,7 @@
 
 use aerospike::BatchRead;
 use aerospike::Bins;
-use aerospike::{BatchPolicy, WritePolicy, Concurrency};
+use aerospike::{BatchPolicy, Concurrency, WritePolicy};
 
 use env_logger;
 
@@ -52,10 +52,12 @@ fn batch_get() {
     let all = Bins::All;
     let none = Bins::None;
 
-    let batch = vec![BatchRead::new(key1.clone(), &selected),
-                     BatchRead::new(key2.clone(), &all),
-                     BatchRead::new(key3.clone(), &none),
-                     BatchRead::new(key4.clone(), &none)];
+    let batch = vec![
+        BatchRead::new(key1.clone(), &selected),
+        BatchRead::new(key2.clone(), &all),
+        BatchRead::new(key3.clone(), &none),
+        BatchRead::new(key4.clone(), &none),
+    ];
     let mut results = client.batch_get(&bpolicy, batch).unwrap();
 
     let result = results.remove(0);

@@ -40,12 +40,15 @@ fn create_test_set(no_records: usize) -> String {
     }
 
     // create an index
-    client.create_index(&wpolicy,
-                      namespace,
-                      &set_name,
-                      "bin",
-                      &format!("{}_{}_{}", namespace, set_name, "bin"),
-                      IndexType::Numeric)
+    client
+        .create_index(
+            &wpolicy,
+            namespace,
+            &set_name,
+            "bin",
+            &format!("{}_{}_{}", namespace, set_name, "bin"),
+            IndexType::Numeric,
+        )
         .expect("Failed to create index");
 
     // FIXME: replace sleep with wait task
@@ -91,7 +94,6 @@ fn query_single_consumer() {
                 let v: i64 = rec.bins["bin"].clone().into();
                 assert!(v >= 0);
                 assert!(v < 10);
-
             }
             Err(err) => panic!(format!("{:?}", err)),
         }
@@ -146,15 +148,17 @@ fn query_multi_consumer() {
     for _ in 0..8 {
         let count = count.clone();
         let rs = rs.clone();
-        threads.push(thread::spawn(move || for res in &*rs {
-            match res {
-                Ok(rec) => {
-                    count.fetch_add(1, Ordering::Relaxed);
-                    let v: i64 = rec.bins["bin"].clone().into();
-                    assert!(v >= 0);
-                    assert!(v < 10);
+        threads.push(thread::spawn(move || {
+            for res in &*rs {
+                match res {
+                    Ok(rec) => {
+                        count.fetch_add(1, Ordering::Relaxed);
+                        let v: i64 = rec.bins["bin"].clone().into();
+                        assert!(v >= 0);
+                        assert!(v < 10);
+                    }
+                    Err(err) => panic!(format!("{:?}", err)),
                 }
-                Err(err) => panic!(format!("{:?}", err)),
             }
         }));
     }

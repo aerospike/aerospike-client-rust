@@ -19,7 +19,7 @@ use std::str;
 use errors::*;
 use cluster::Cluster;
 use commands::Message;
-use net::{Host, Connection};
+use net::{Connection, Host};
 use policy::ClientPolicy;
 
 // Validates a Database server node
@@ -103,12 +103,11 @@ impl NodeValidator {
             match info_map.get("cluster-name") {
                 None => bail!(ErrorKind::InvalidNode(String::from("Missing cluster name"))),
                 Some(info_name) if info_name == cluster_name => {}
-                Some(info_name) => {
-                    bail!(ErrorKind::InvalidNode(format!("Cluster name mismatch: expected={},
+                Some(info_name) => bail!(ErrorKind::InvalidNode(format!(
+                    "Cluster name mismatch: expected={},
                                                          got={}",
-                                                         cluster_name,
-                                                         info_name)))
-                }
+                    cluster_name, info_name
+                ))),
             }
         }
 

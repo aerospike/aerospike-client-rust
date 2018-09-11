@@ -30,11 +30,12 @@ pub struct QueryCommand<'a> {
 }
 
 impl<'a> QueryCommand<'a> {
-    pub fn new(policy: &'a QueryPolicy,
-               node: Arc<Node>,
-               statement: Arc<Statement>,
-               recordset: Arc<Recordset>)
-               -> Self {
+    pub fn new(
+        policy: &'a QueryPolicy,
+        node: Arc<Node>,
+        statement: Arc<Statement>,
+        recordset: Arc<Recordset>,
+    ) -> Self {
         QueryCommand {
             stream_command: StreamCommand::new(node, recordset),
             policy: policy,
@@ -58,11 +59,12 @@ impl<'a> Command for QueryCommand<'a> {
     }
 
     fn prepare_buffer(&mut self, conn: &mut Connection) -> Result<()> {
-        conn.buffer
-            .set_query(self.policy,
-                       &self.statement,
-                       false,
-                       self.stream_command.recordset.task_id())
+        conn.buffer.set_query(
+            self.policy,
+            &self.statement,
+            false,
+            self.stream_command.recordset.task_id(),
+        )
     }
 
     fn get_node(&self) -> Result<Arc<Node>> {

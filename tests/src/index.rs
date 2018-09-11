@@ -58,10 +58,12 @@ fn recreate_index() {
     let _ = client.drop_index(&policy, ns, &set, &index);
     thread::sleep(Duration::from_millis(1000));
 
-    client.create_index(&policy, ns, &set, bin, &index, IndexType::Numeric)
+    client
+        .create_index(&policy, ns, &set, bin, &index, IndexType::Numeric)
         .expect("Failed to create index");
     thread::sleep(Duration::from_millis(1000));
 
-    client.create_index(&policy, ns, &set, bin, &index, IndexType::Numeric)
+    client
+        .create_index(&policy, ns, &set, bin, &index, IndexType::Numeric)
         .unwrap();
 }

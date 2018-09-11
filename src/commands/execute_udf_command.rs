@@ -20,8 +20,8 @@ use errors::*;
 use Bins;
 use Key;
 use Value;
-use cluster::{Node, Cluster};
-use commands::{Command, SingleCommand, ReadCommand};
+use cluster::{Cluster, Node};
+use commands::{Command, ReadCommand, SingleCommand};
 use net::Connection;
 use policy::WritePolicy;
 
@@ -34,13 +34,14 @@ pub struct ExecuteUDFCommand<'a> {
 }
 
 impl<'a> ExecuteUDFCommand<'a> {
-    pub fn new(policy: &'a WritePolicy,
-               cluster: Arc<Cluster>,
-               key: &'a Key,
-               package_name: &'a str,
-               function_name: &'a str,
-               args: Option<&'a [Value]>)
-               -> Self {
+    pub fn new(
+        policy: &'a WritePolicy,
+        cluster: Arc<Cluster>,
+        key: &'a Key,
+        package_name: &'a str,
+        function_name: &'a str,
+        args: Option<&'a [Value]>,
+    ) -> Self {
         ExecuteUDFCommand {
             read_command: ReadCommand::new(&policy.base_policy, cluster, key, Bins::All),
             policy: policy,
@@ -66,12 +67,13 @@ impl<'a> Command for ExecuteUDFCommand<'a> {
     }
 
     fn prepare_buffer(&mut self, conn: &mut Connection) -> Result<()> {
-        conn.buffer
-            .set_udf(self.policy,
-                     self.read_command.single_command.key,
-                     self.package_name,
-                     self.function_name,
-                     self.args)
+        conn.buffer.set_udf(
+            self.policy,
+            self.read_command.single_command.key,
+            self.package_name,
+            self.function_name,
+            self.args,
+        )
     }
 
     fn get_node(&self) -> Result<Arc<Node>> {

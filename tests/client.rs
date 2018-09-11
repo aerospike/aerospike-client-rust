@@ -15,9 +15,9 @@
 
 extern crate aerospike;
 extern crate env_logger;
-extern crate rand;
 #[macro_use]
 extern crate lazy_static;
+extern crate rand;
 
 use aerospike::Client;
 

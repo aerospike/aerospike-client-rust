@@ -23,7 +23,7 @@ use Key;
 use Record;
 use ResultCode;
 use Value;
-use cluster::{Node, Cluster};
+use cluster::{Cluster, Node};
 use commands::buffer;
 use commands::{Command, SingleCommand};
 use net::Connection;
@@ -51,13 +51,14 @@ impl<'a> ReadCommand<'a> {
         SingleCommand::execute(self.policy, self)
     }
 
-    fn parse_record(&mut self,
-                    conn: &mut Connection,
-                    op_count: usize,
-                    field_count: usize,
-                    generation: u32,
-                    expiration: u32)
-                    -> Result<Record> {
+    fn parse_record(
+        &mut self,
+        conn: &mut Connection,
+        op_count: usize,
+        field_count: usize,
+        generation: u32,
+        expiration: u32,
+    ) -> Result<Record> {
         let mut bins: HashMap<String, Value> = HashMap::with_capacity(op_count);
 
         // There can be fields in the response (setname etc). For now, ignore them. Expose them to
@@ -85,15 +86,13 @@ impl<'a> ReadCommand<'a> {
                         entry.insert(value);
                         ()
                     }
-                    Occupied(entry) => {
-                        match *entry.into_mut() {
-                            Value::List(ref mut list) => list.push(value),
-                            ref mut prev => {
-                                *prev = as_list!(prev.clone(), value);
-                                ()
-                            }
+                    Occupied(entry) => match *entry.into_mut() {
+                        Value::List(ref mut list) => list.push(value),
+                        ref mut prev => {
+                            *prev = as_list!(prev.clone(), value);
+                            ()
                         }
-                    }
+                    },
                 }
             }
         }
@@ -159,7 +158,8 @@ impl<'a> Command for ReadCommand<'a> {
                 // record bin "FAILURE" contains details about the UDF error
                 let record =
                     self.parse_record(conn, op_count, field_count, generation, expiration)?;
-                let reason = record.bins
+                let reason = record
+                    .bins
                     .get("FAILURE")
                     .map_or(String::from("UDF Error"), |v| v.to_string());
                 Err(ErrorKind::UdfBadResponse(reason).into())

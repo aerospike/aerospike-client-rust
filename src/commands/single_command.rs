@@ -19,7 +19,7 @@ use std::time::Instant;
 use errors::*;
 use Key;
 use cluster::partition::Partition;
-use cluster::{Node, Cluster};
+use cluster::{Cluster, Node};
 use commands::{self, Command};
 use net::Connection;
 use policy::Policy;
@@ -76,7 +76,10 @@ impl<'a> SingleCommand<'a> {
             // too many retries
             if let Some(max_retries) = policy.max_retries() {
                 if iterations > max_retries + 1 {
-                    bail!(ErrorKind::Connection(format!("Timeout after {} tries", iterations)));
+                    bail!(ErrorKind::Connection(format!(
+                        "Timeout after {} tries",
+                        iterations
+                    )));
                 }
             }
 
@@ -136,7 +139,6 @@ impl<'a> SingleCommand<'a> {
 
             // command has completed successfully.  Exit method.
             return Ok(());
-
         }
 
         bail!(ErrorKind::Connection("Timeout".to_string()))

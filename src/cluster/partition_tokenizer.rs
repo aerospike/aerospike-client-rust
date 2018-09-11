@@ -14,7 +14,7 @@
 
 use std::str;
 use std::collections::HashMap;
-use std::collections::hash_map::Entry::{Vacant, Occupied};
+use std::collections::hash_map::Entry::{Occupied, Vacant};
 use std::vec::Vec;
 use std::sync::Arc;
 
@@ -50,11 +50,11 @@ impl PartitionTokenizer {
         bail!(ErrorKind::BadResponse("Missing replicas info".to_string()));
     }
 
-    pub fn update_partition(&self,
-                            nmap: Arc<RwLock<HashMap<String, Vec<Arc<Node>>>>>,
-                            node: Arc<Node>)
-                            -> Result<HashMap<String, Vec<Arc<Node>>>> {
-
+    pub fn update_partition(
+        &self,
+        nmap: Arc<RwLock<HashMap<String, Vec<Arc<Node>>>>>,
+        node: Arc<Node>,
+    ) -> Result<HashMap<String, Vec<Arc<Node>>>> {
         let mut amap = nmap.read().clone();
 
         // <ns>:<base64-encoded partition map>;<ns>:<base64-encoded partition map>; ...
@@ -78,7 +78,9 @@ impl PartitionTokenizer {
                     }
                 }
                 (None, None) => break,
-                _ => bail!(ErrorKind::BadResponse("Error parsing partition info".to_string())),
+                _ => bail!(ErrorKind::BadResponse(
+                    "Error parsing partition info".to_string()
+                )),
             }
         }
 

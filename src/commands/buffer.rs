@@ -166,7 +166,13 @@ impl Buffer {
         }
 
         try!(self.size_buffer());
-        try!(self.write_header_with_policy(policy, 0, INFO2_WRITE, field_count as u16, bins.len() as u16));
+        try!(self.write_header_with_policy(
+            policy,
+            0,
+            INFO2_WRITE,
+            field_count as u16,
+            bins.len() as u16
+        ));
         try!(self.write_key(key, policy.send_key));
 
         for bin in bins {

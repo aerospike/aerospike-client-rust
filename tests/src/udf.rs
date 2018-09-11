@@ -56,25 +56,33 @@ function echo(rec, val)
 end
 "#;
 
-    client.register_udf(&wpolicy,
-                      udf_body1.as_bytes(),
-                      "test_udf1.lua",
-                      UDFLang::Lua)
+    client
+        .register_udf(
+            &wpolicy,
+            udf_body1.as_bytes(),
+            "test_udf1.lua",
+            UDFLang::Lua,
+        )
         .unwrap();
-    client.register_udf(&wpolicy,
-                      udf_body2.as_bytes(),
-                      "test_udf2.lua",
-                      UDFLang::Lua)
+    client
+        .register_udf(
+            &wpolicy,
+            udf_body2.as_bytes(),
+            "test_udf2.lua",
+            UDFLang::Lua,
+        )
         .unwrap();
 
     // FIXME: replace sleep with wait task
     thread::sleep(Duration::from_millis(3000));
 
-    let res = client.execute_udf(&wpolicy,
-                                 &key,
-                                 "test_udf2",
-                                 "echo",
-                                 Some(&[as_val!("ha ha...")]));
+    let res = client.execute_udf(
+        &wpolicy,
+        &key,
+        "test_udf2",
+        "echo",
+        Some(&[as_val!("ha ha...")]),
+    );
     assert_eq!(Some(as_val!("ha ha...")), res.unwrap());
 
     let res = client.execute_udf(&wpolicy, &key, "test_udf1", "func_div", Some(&[as_val!(2)]));

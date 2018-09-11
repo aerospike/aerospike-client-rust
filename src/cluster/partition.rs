@@ -49,7 +49,6 @@ impl<'a> Partition<'a> {
     }
 }
 
-
 impl<'a> PartialEq for Partition<'a> {
     fn eq(&self, other: &Partition) -> bool {
         self.namespace == other.namespace && self.partition_id == other.partition_id

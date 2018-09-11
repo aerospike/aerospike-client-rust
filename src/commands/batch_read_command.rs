@@ -15,7 +15,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::thread;
-use std::time::{Instant, Duration};
+use std::time::{Duration, Instant};
 
 use BatchRead;
 use Record;
@@ -42,11 +42,12 @@ pub struct BatchReadCommand<'a, 'b> {
 }
 
 impl<'a, 'b> BatchReadCommand<'a, 'b> {
-    pub fn new(policy: &'b BatchPolicy,
-               node: Arc<Node>,
-               batch_reads: SharedSlice<BatchRead<'a>>,
-               offsets: Vec<usize>)
-               -> Self {
+    pub fn new(
+        policy: &'b BatchPolicy,
+        node: Arc<Node>,
+        batch_reads: SharedSlice<BatchRead<'a>>,
+        offsets: Vec<usize>,
+    ) -> Self {
         BatchReadCommand {
             policy: policy,
             node: node,
@@ -69,7 +70,10 @@ impl<'a, 'b> BatchReadCommand<'a, 'b> {
             // too many retries
             if let Some(max_retries) = base_policy.max_retries() {
                 if iterations > max_retries + 1 {
-                    bail!(ErrorKind::Connection(format!("Timeout after {} tries", iterations)));
+                    bail!(ErrorKind::Connection(format!(
+                        "Timeout after {} tries",
+                        iterations
+                    )));
                 }
             }
 
@@ -144,7 +148,10 @@ impl<'a, 'b> BatchReadCommand<'a, 'b> {
                         .get_mut(batch_record.batch_index)
                         .expect("Invalid batch index");
                     let record = batch_record.record;
-                    if let Some(Record { key: Some(ref key), .. }) = record {
+                    if let Some(Record {
+                        key: Some(ref key), ..
+                    }) = record
+                    {
                         assert_eq!(batch_read.key.digest, key.digest);
                     }
                     batch_read.record = record;
@@ -203,7 +210,6 @@ impl<'a, 'b> BatchReadCommand<'a, 'b> {
             batch_index: batch_index as usize,
             record: record,
         }))
-
     }
 }
 
@@ -218,10 +224,11 @@ impl<'a, 'b> Command for BatchReadCommand<'a, 'b> {
     }
 
     fn prepare_buffer(&mut self, conn: &mut Connection) -> Result<()> {
-        conn.buffer
-            .set_batch_read(self.policy,
-                            self.batch_reads.clone(),
-                            self.offsets.as_slice())
+        conn.buffer.set_batch_read(
+            self.policy,
+            self.batch_reads.clone(),
+            self.offsets.as_slice(),
+        )
     }
 
     fn get_node(&self) -> Result<Arc<Node>> {

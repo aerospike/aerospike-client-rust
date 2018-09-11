@@ -99,10 +99,10 @@ fn unpack_blob(buf: &mut Buffer, count: usize) -> Result<Value> {
             Ok(Value::GeoJSON(val))
         }
 
-        _ => {
-            bail!("Error while unpacking BLOB. Type-header with code `{}` not recognized.",
-                  vtype)
-        }
+        _ => bail!(
+            "Error while unpacking BLOB. Type-header with code `{}` not recognized.",
+            vtype
+        ),
     }
 }
 
