@@ -80,6 +80,5 @@ benchmark_group!(
     single_key_read,
     single_key_read_header,
     single_key_write,
-    // single_key_write_iter,
 );
 benchmark_main!(benches);
