@@ -1043,14 +1043,17 @@ impl Buffer {
         self.data_offset
     }
 
-    pub fn skip_bytes(&mut self, count: usize) -> Result<()> {
+    pub fn skip_bytes(&mut self, count: usize) {
         self.data_offset += count;
-        bail!("Msgpack header skipped. You should not see this message")
     }
 
     pub fn skip(&mut self, count: usize) -> Result<()> {
         self.data_offset += count;
         Ok(())
+    }
+
+    pub fn peek(&self) -> u8 {
+        self.data_buffer[self.data_offset]
     }
 
     pub fn read_u8(&mut self, pos: Option<usize>) -> Result<u8> {
