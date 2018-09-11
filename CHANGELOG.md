@@ -4,12 +4,19 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.3.0] - 2018-09-11
+
+* **New Features**
+  * Use generics to make Client#put API more flexible. [#47](https://github.com/aerospike/aerospike-client-rust/issues/47) [#49](https://github.com/aerospike/aerospike-client-rust/pull/49)
+
 * **Bug Fixes**
-  * GeoJSON bins are returned as Value::String instead of Value::GeoJSON #48
+  * GeoJSON bins are returned as Value::String instead of Value::GeoJSON. [#48](https://github.com/aerospike/aerospike-client-rust/issues/48)
+  * Fix client panic when reading ordered list/map from server. [#51](https://github.com/aerospike/aerospike-client-rust/issues/51)
 
 * **Updates**
-  * Update to rustfmt-preview and re-apply cargo fmt
-  * Update to error-chain v0.12 to avoid compile-time warning
+  * Min. required Rust version is now v1.26.
+  * Update several package dependencies to latest version.
+  * Update to rustfmt-preview and re-apply cargo fmt.
 
 ## [0.2.1] - 2018-01-16
 
