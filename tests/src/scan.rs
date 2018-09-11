@@ -43,7 +43,7 @@ fn create_test_set(no_records: usize) -> String {
 
 #[test]
 fn scan_single_consumer() {
-    let _ = env_logger::init();
+    let _ = env_logger::try_init();
 
     let client = common::client();
     let namespace = common::namespace();
@@ -60,7 +60,7 @@ fn scan_single_consumer() {
 
 #[test]
 fn scan_multi_consumer() {
-    let _ = env_logger::init();
+    let _ = env_logger::try_init();
 
     let client = common::client();
     let namespace = common::namespace();
@@ -93,7 +93,7 @@ fn scan_multi_consumer() {
 
 #[test]
 fn scan_node() {
-    let _ = env_logger::init();
+    let _ = env_logger::try_init();
 
     let client = Arc::new(common::client());
     let namespace = common::namespace();

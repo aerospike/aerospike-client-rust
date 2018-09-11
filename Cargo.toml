@@ -35,7 +35,7 @@ error-chain = "^0.12"
 parking_lot = "^0.6"
 
 [dev-dependencies]
-env_logger = "^0.4"
+env_logger = "^0.5"
 hex = "^0.2"
 bencher = "^0.1.4"
 

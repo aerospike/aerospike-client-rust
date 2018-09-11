@@ -59,7 +59,7 @@ fn create_test_set(no_records: usize) -> String {
 
 #[test]
 fn query_single_consumer() {
-    let _ = env_logger::init();
+    let _ = env_logger::try_init();
 
     let client = common::client();
     let namespace = common::namespace();
@@ -103,7 +103,7 @@ fn query_single_consumer() {
 
 #[test]
 fn query_nobins() {
-    let _ = env_logger::init();
+    let _ = env_logger::try_init();
 
     let client = common::client();
     let namespace = common::namespace();
@@ -129,7 +129,7 @@ fn query_nobins() {
 
 #[test]
 fn query_multi_consumer() {
-    let _ = env_logger::init();
+    let _ = env_logger::try_init();
 
     let client = common::client();
     let namespace = common::namespace();
@@ -172,7 +172,7 @@ fn query_multi_consumer() {
 
 #[test]
 fn query_node() {
-    let _ = env_logger::init();
+    let _ = env_logger::try_init();
 
     let client = common::client();
     let namespace = common::namespace();

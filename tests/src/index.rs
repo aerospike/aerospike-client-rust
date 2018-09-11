@@ -46,7 +46,7 @@ fn create_test_set(no_records: usize) -> String {
 #[test]
 #[should_panic(expected = "IndexFound")]
 fn recreate_index() {
-    let _ = env_logger::init();
+    let _ = env_logger::try_init();
 
     let client = common::client();
     let ns = common::namespace();

@@ -23,7 +23,7 @@ use aerospike::operations::maps;
 
 #[test]
 fn map_operations() {
-    let _ = env_logger::init();
+    let _ = env_logger::try_init();
 
     let client = common::client();
     let namespace = common::namespace();

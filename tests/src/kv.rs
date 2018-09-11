@@ -24,7 +24,7 @@ use common;
 
 #[test]
 fn connect() {
-    let _ = env_logger::init();
+    let _ = env_logger::try_init();
 
     let client = common::client();
     let namespace: &str = common::namespace();

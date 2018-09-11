@@ -22,7 +22,7 @@ use aerospike::operations::lists;
 
 #[test]
 fn cdt_list() {
-    let _ = env_logger::init();
+    let _ = env_logger::try_init();
 
     let client = common::client();
     let namespace = common::namespace();
