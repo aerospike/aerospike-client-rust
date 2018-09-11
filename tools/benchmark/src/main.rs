@@ -25,6 +25,7 @@ extern crate log;
 extern crate num_cpus;
 extern crate rand;
 
+mod percent;
 mod cli;
 mod workers;
 mod stats;

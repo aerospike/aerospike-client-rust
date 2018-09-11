@@ -13,66 +13,25 @@
 // License for the specific language governing permissions and limitations under
 // the License.
 
-use std::cmp::Ordering;
 use std::str::FromStr;
 use std::sync::Arc;
 use std::sync::mpsc::Sender;
 use std::boxed::Box;
 use std::time::{Duration, Instant};
-use std::rc::Rc;
-use std::cell::RefCell;
 
-use rand;
-use rand::{Rand, Rng, XorShiftRng};
+use rand::prelude::*;
 
 use aerospike::{Client, ErrorKind, Key, ReadPolicy, ResultCode, WritePolicy};
 use aerospike::Result as asResult;
 use aerospike::Error as asError;
 
+use percent::Percent;
 use generator::KeyRange;
 use stats::Histogram;
 
 lazy_static! {
     // How frequently workers send stats to the collector
     pub static ref COLLECT_MS: Duration = Duration::from_millis(100);
-}
-
-thread_local!(static THREAD_WEAK_RNG_KEY: Rc<RefCell<XorShiftRng>> = {
-    Rc::new(RefCell::new(rand::weak_rng()))
-});
-
-fn random<T: Rand>() -> T {
-    THREAD_WEAK_RNG_KEY.with(|rng| rng.borrow_mut().gen())
-}
-
-#[derive(Clone, Copy, Eq, PartialEq, PartialOrd, Debug)]
-pub struct Percent(u8);
-
-impl FromStr for Percent {
-    type Err = String;
-
-    fn from_str(s: &str) -> Result<Percent, String> {
-        if let Ok(pct) = u8::from_str(s) {
-            if pct <= 100 {
-                return Ok(Percent(pct));
-            }
-        }
-        Err("Invalid percent value".into())
-    }
-}
-
-impl Ord for Percent {
-    fn cmp(&self, other: &Self) -> Ordering {
-        self.0.cmp(&other.0)
-    }
-}
-
-impl Rand for Percent {
-    fn rand<R: Rng>(rng: &mut R) -> Self {
-        let r: u32 = rng.gen();
-        let pct = r % 101;
-        Percent(pct as u8)
-    }
 }
 
 #[derive(Debug, PartialEq)]
@@ -219,26 +178,18 @@ mod test {
     use super::*;
 
     #[test]
-    fn test_percent_from_str() {
-        assert_eq!(Percent::from_str("42"), Ok(Percent(42)));
-        assert!(Percent::from_str("0.5").is_err());
-        assert!(Percent::from_str("120").is_err());
-        assert!(Percent::from_str("abc").is_err());
-    }
-
-    #[test]
     fn test_workload_from_str() {
         assert_eq!(Workload::from_str("I"), Ok(Workload::Initialize));
         assert_eq!(
             Workload::from_str("RU"),
             Ok(Workload::ReadUpdate {
-                read_pct: Percent(100),
+                read_pct: Percent::new(100),
             })
         );
         assert_eq!(
             Workload::from_str("RU,50"),
             Ok(Workload::ReadUpdate {
-                read_pct: Percent(50),
+                read_pct: Percent::new(50),
             })
         );
     }
