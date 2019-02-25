@@ -72,7 +72,7 @@ fn main() {
     println!("operate: {}", op_rec.unwrap());
 
     let existed = client.delete(&wpolicy, &key).unwrap();
-    println!("existed (sould be true): {}", existed);
+    println!("existed (should be true): {}", existed);
 
     let existed = client.delete(&wpolicy, &key).unwrap();
     println!("existed (should be false): {}", existed);
