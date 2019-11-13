@@ -29,7 +29,7 @@ pub fn unpack_value_list(buf: &mut Buffer) -> Result<Value> {
     let ltype: u8 = buf.read_u8(None)? & 0xff;
 
     let count: usize = match ltype {
-        0x90...0x9f => (ltype & 0x0f) as usize,
+        0x90..=0x9f => (ltype & 0x0f) as usize,
         0xdc => buf.read_u16(None)? as usize,
         0xdd => buf.read_u32(None)? as usize,
         _ => unreachable!(),
@@ -46,7 +46,7 @@ pub fn unpack_value_map(buf: &mut Buffer) -> Result<Value> {
     let ltype: u8 = buf.read_u8(None)? & 0xff;
 
     let count: usize = match ltype {
-        0x80...0x8f => (ltype & 0x0f) as usize,
+        0x80..=0x8f => (ltype & 0x0f) as usize,
         0xde => buf.read_u16(None)? as usize,
         0xdf => buf.read_u32(None)? as usize,
         _ => unreachable!(),
@@ -115,10 +115,10 @@ fn unpack_value(buf: &mut Buffer) -> Result<Value> {
     let obj_type = buf.read_u8(None)?;
 
     match obj_type {
-        0x00...0x7f => Ok(Value::from(obj_type)),
-        0x80...0x8f => unpack_map(buf, (obj_type & 0x0f) as usize),
-        0x90...0x9f => unpack_list(buf, (obj_type & 0x0f) as usize),
-        0xa0...0xbf => unpack_blob(buf, (obj_type & 0x1f) as usize),
+        0x00..=0x7f => Ok(Value::from(obj_type)),
+        0x80..=0x8f => unpack_map(buf, (obj_type & 0x0f) as usize),
+        0x90..=0x9f => unpack_list(buf, (obj_type & 0x0f) as usize),
+        0xa0..=0xbf => unpack_blob(buf, (obj_type & 0x1f) as usize),
         0xc0 => Ok(Value::Nil),
         0xc2 => Ok(Value::from(false)),
         0xc3 => Ok(Value::from(true)),
@@ -220,7 +220,7 @@ fn unpack_value(buf: &mut Buffer) -> Result<Value> {
             let count = buf.read_u32(None)?;
             unpack_map(buf, count as usize)
         }
-        0xe0...0xff => {
+        0xe0..=0xff => {
             let value = obj_type as i16 - 0xe0 - 32;
             Ok(Value::from(value))
         }
