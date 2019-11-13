@@ -16,8 +16,7 @@
 
 use std::str;
 
-use pwhash::bcrypt;
-use pwhash::bcrypt::{BcryptSetup, BcryptVariant};
+use pwhash::bcrypt::{self, BcryptSetup, BcryptVariant};
 
 use errors::*;
 use ResultCode;
@@ -307,14 +306,14 @@ impl AdminCommand {
     }
 
     pub fn hash_password(password: &str) -> Result<String> {
-        let password_hash = try!(bcrypt::hash_with(
+        bcrypt::hash_with(
             BcryptSetup {
                 salt: Some("7EqJtq98hPqEX7fNZaFWoO"),
                 cost: Some(10),
                 variant: Some(BcryptVariant::V2a),
             },
-            &password
-        ));
-        Ok(password_hash)
+            &password,
+        )
+        .map_err(|e| e.into())
     }
 }
