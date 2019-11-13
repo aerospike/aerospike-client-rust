@@ -63,7 +63,7 @@ impl<'a> SingleCommand<'a> {
     // EXECUTE
     //
 
-    pub fn execute(policy: &Policy, cmd: &'a mut Command) -> Result<()> {
+    pub fn execute(policy: &dyn Policy, cmd: &'a mut dyn Command) -> Result<()> {
         let mut iterations = 0;
 
         // set timeout outside the loop

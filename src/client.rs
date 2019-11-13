@@ -100,7 +100,7 @@ impl Client {
     /// let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap();
     /// let client = Client::new(&ClientPolicy::default(), &hosts).unwrap();
     /// ```
-    pub fn new(policy: &ClientPolicy, hosts: &ToHosts) -> Result<Self> {
+    pub fn new(policy: &ClientPolicy, hosts: &dyn ToHosts) -> Result<Self> {
         let hosts = hosts.to_hosts()?;
         let cluster = Cluster::new(policy.clone(), &hosts)?;
         let thread_pool = Pool::new(policy.thread_pool_size);
