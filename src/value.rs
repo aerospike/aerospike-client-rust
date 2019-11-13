@@ -559,33 +559,33 @@ pub fn bytes_to_particle(ptype: u8, buf: &mut Buffer, len: usize) -> Result<Valu
     match ParticleType::from(ptype) {
         ParticleType::NULL => Ok(Value::Nil),
         ParticleType::INTEGER => {
-            let val = try!(buf.read_i64(None));
+            let val = buf.read_i64(None)?;
             Ok(Value::Int(val))
         }
         ParticleType::FLOAT => {
-            let val = try!(buf.read_f64(None));
+            let val = buf.read_f64(None)?;
             Ok(Value::Float(FloatValue::from(val)))
         }
         ParticleType::STRING => {
-            let val = try!(buf.read_str(len));
+            let val = buf.read_str(len)?;
             Ok(Value::String(val))
         }
         ParticleType::GEOJSON => {
-            try!(buf.skip(1));
-            let ncells = try!(buf.read_i16(None)) as usize;
+            buf.skip(1)?;
+            let ncells = buf.read_i16(None)? as usize;
             let header_size: usize = ncells * 8;
 
-            try!(buf.skip(header_size));
-            let val = try!(buf.read_str(len - header_size - 3));
+            buf.skip(header_size)?;
+            let val = buf.read_str(len - header_size - 3)?;
             Ok(Value::GeoJSON(val))
         }
-        ParticleType::BLOB => Ok(Value::Blob(try!(buf.read_blob(len)))),
+        ParticleType::BLOB => Ok(Value::Blob(buf.read_blob(len)?)),
         ParticleType::LIST => {
-            let val = try!(decoder::unpack_value_list(buf));
+            let val = decoder::unpack_value_list(buf)?;
             Ok(val)
         }
         ParticleType::MAP => {
-            let val = try!(decoder::unpack_value_map(buf));
+            let val = decoder::unpack_value_map(buf)?;
             Ok(val)
         }
         ParticleType::DIGEST => Ok(Value::from("A DIGEST, NOT IMPLEMENTED YET!")),

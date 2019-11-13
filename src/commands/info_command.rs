@@ -29,10 +29,10 @@ pub struct Message {
 impl Message {
     pub fn info(conn: &mut Connection, commands: &[&str]) -> Result<HashMap<String, String>> {
         let cmd = commands.join("\n") + "\n";
-        let mut msg = try!(Message::new(&cmd.into_bytes()));
+        let mut msg = Message::new(&cmd.into_bytes())?;
 
-        try!(msg.send(conn));
-        Ok(try!(msg.parse_response()))
+        msg.send(conn)?;
+        Ok(msg.parse_response()?)
     }
 
     fn new(data: &[u8]) -> Result<Self> {
@@ -56,23 +56,23 @@ impl Message {
     }
 
     fn send(&mut self, conn: &mut Connection) -> Result<()> {
-        try!(conn.write(&self.buf));
+        conn.write(&self.buf)?;
 
         // read the header
-        try!(conn.read(self.buf[..8].as_mut()));
+        conn.read(self.buf[..8].as_mut())?;
 
         // figure our message size and grow the buffer if necessary
         let data_len = self.data_len() as usize;
         self.buf.resize(data_len, 0);
 
         // read the message content
-        try!(conn.read(self.buf.as_mut()));
+        conn.read(self.buf.as_mut())?;
 
         Ok(())
     }
 
     fn parse_response(&self) -> Result<HashMap<String, String>> {
-        let response = try!(str::from_utf8(&self.buf));
+        let response = str::from_utf8(&self.buf)?;
         let response = response.trim_matches('\n');
 
         debug!("response from server for info command: {:?}", response);

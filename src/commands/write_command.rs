@@ -84,9 +84,9 @@ impl<'a, 'b, A: AsRef<Bin<'b>>> Command for WriteCommand<'a, A> {
             return Err(err);
         }
 
-        try!(conn.buffer.reset_offset());
+        conn.buffer.reset_offset()?;
 
-        let result_code = ResultCode::from(try!(conn.buffer.read_u8(Some(13))) & 0xFF);
+        let result_code = ResultCode::from(conn.buffer.read_u8(Some(13))? & 0xFF);
         if result_code != ResultCode::Ok {
             bail!(ErrorKind::ServerError(result_code));
         }

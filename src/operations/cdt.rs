@@ -93,12 +93,12 @@ impl<'a> CdtOperation<'a> {
     }
 
     pub fn estimate_size(&self) -> Result<usize> {
-        let size: usize = try!(encoder::pack_cdt_op(&mut None, self));
+        let size: usize = encoder::pack_cdt_op(&mut None, self)?;
         Ok(size)
     }
 
     pub fn write_to(&self, buffer: &mut Buffer) -> Result<usize> {
-        let size: usize = try!(encoder::pack_cdt_op(&mut Some(buffer), self));
+        let size: usize = encoder::pack_cdt_op(&mut Some(buffer), self)?;
         Ok(size)
     }
 }

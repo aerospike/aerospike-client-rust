@@ -14,6 +14,8 @@
 // the License.
 
 #![allow(dead_code)]
+// TODO: Remove and fix all warnings
+#![allow(unused_mut, clippy::all)]
 
 use std::env;
 use std::sync::Arc;

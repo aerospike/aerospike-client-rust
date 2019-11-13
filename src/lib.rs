@@ -16,6 +16,8 @@
 #![warn(missing_docs)]
 #![doc(test(attr(allow(unused_variables), allow(unused_assignments), allow(unused_mut),
                  allow(unused_attributes), allow(dead_code), deny(warnings))))]
+// TODO: Remove and fix all warnings
+#![allow(bare_trait_objects, ellipsis_inclusive_range_patterns, clippy::all)]
 
 //! A pure-rust client for the Aerospike NoSQL database.
 //!

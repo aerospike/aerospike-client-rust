@@ -58,7 +58,7 @@ impl Key {
             user_key: Some(key),
         };
 
-        try!(key.compute_digest());
+        key.compute_digest()?;
         Ok(key)
     }
 
@@ -67,7 +67,7 @@ impl Key {
         hash.input(self.set_name.as_bytes());
         if let Some(ref user_key) = self.user_key {
             hash.input(&[user_key.particle_type() as u8]);
-            try!(user_key.write_key_bytes(&mut hash));
+            user_key.write_key_bytes(&mut hash)?;
         } else {
             unreachable!()
         }

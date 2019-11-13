@@ -13,6 +13,9 @@
 // License for the specific language governing permissions and limitations under
 // the License.
 
+// TODO: Remove and fix all warnings
+#![allow(clippy::all)]
+
 mod kv;
 mod query;
 mod scan;

@@ -206,7 +206,7 @@ impl Node {
             }
 
             let host = friend_info.next().unwrap();
-            let port = try!(u16::from_str(friend_info.next().unwrap()));
+            let port = u16::from_str(friend_info.next().unwrap())?;
             let alias = match self.client_policy.ip_map {
                 Some(ref ip_map) if ip_map.contains_key(host) => {
                     Host::new(ip_map.get(host).unwrap(), port)
@@ -230,7 +230,7 @@ impl Node {
                 "Missing partition generation".to_string()
             )),
             Some(gen_string) => {
-                let gen = try!(gen_string.parse::<isize>());
+                let gen = gen_string.parse::<isize>()?;
                 self.partition_generation.store(gen, Ordering::Relaxed);
             }
         }

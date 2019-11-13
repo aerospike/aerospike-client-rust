@@ -75,22 +75,22 @@ impl Filter {
         // bin name size(1) + particle type size(1)
         //     + begin particle size(4) + end particle size(4) = 10
         Ok(
-            self.bin_name.len() + try!(self.begin.estimate_size()) + try!(self.end.estimate_size())
+            self.bin_name.len() + self.begin.estimate_size()? + self.end.estimate_size()?
                 + 10,
         )
     }
 
     #[doc(hidden)]
     pub fn write(&self, buffer: &mut Buffer) -> Result<()> {
-        try!(buffer.write_u8(self.bin_name.len() as u8));
-        try!(buffer.write_str(&self.bin_name));
-        try!(buffer.write_u8(self.value_particle_type.clone() as u8));
+        buffer.write_u8(self.bin_name.len() as u8)?;
+        buffer.write_str(&self.bin_name)?;
+        buffer.write_u8(self.value_particle_type.clone() as u8)?;
 
-        try!(buffer.write_u32(try!(self.begin.estimate_size()) as u32));
-        try!(self.begin.write_to(buffer));
+        buffer.write_u32(self.begin.estimate_size()? as u32)?;
+        self.begin.write_to(buffer)?;
 
-        try!(buffer.write_u32(try!(self.end.estimate_size()) as u32));
-        try!(self.end.write_to(buffer));
+        buffer.write_u32(self.end.estimate_size()? as u32)?;
+        self.end.write_to(buffer)?;
 
         Ok(())
     }

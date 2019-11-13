@@ -39,7 +39,7 @@ pub struct PartitionTokenizer {
 
 impl PartitionTokenizer {
     pub fn new(conn: &mut Connection) -> Result<Self> {
-        let info_map = try!(Message::info(conn, &[REPLICAS_NAME]));
+        let info_map = Message::info(conn, &[REPLICAS_NAME])?;
         if let Some(buf) = info_map.get(REPLICAS_NAME) {
             return Ok(PartitionTokenizer {
                 length: info_map.len(),
@@ -58,8 +58,8 @@ impl PartitionTokenizer {
         let mut amap = nmap.read().clone();
 
         // <ns>:<base64-encoded partition map>;<ns>:<base64-encoded partition map>; ...
-        let part_str = try!(str::from_utf8(&self.buffer));
-        let mut parts = part_str.trim_right().split(|c| c == ':' || c == ';');
+        let part_str = str::from_utf8(&self.buffer)?;
+        let mut parts = part_str.trim_end().split(|c| c == ':' || c == ';');
         loop {
             match (parts.next(), parts.next()) {
                 (Some(ns), Some(part)) => {

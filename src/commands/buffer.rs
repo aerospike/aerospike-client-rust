@@ -144,8 +144,8 @@ impl Buffer {
             | ((AS_MSG_TYPE as i64) << 48);
 
         // reset data offset
-        try!(self.reset_offset());
-        try!(self.write_i64(size));
+        self.reset_offset()?;
+        self.write_i64(size)?;
 
         Ok(())
     }
@@ -158,25 +158,25 @@ impl Buffer {
         key: &Key,
         bins: &[A],
     ) -> Result<()> {
-        try!(self.begin());
-        let field_count = try!(self.estimate_key_size(key, policy.send_key));
+        self.begin()?;
+        let field_count = self.estimate_key_size(key, policy.send_key)?;
 
         for bin in bins {
-            try!(self.estimate_operation_size_for_bin(bin.as_ref()));
+            self.estimate_operation_size_for_bin(bin.as_ref())?;
         }
 
-        try!(self.size_buffer());
-        try!(self.write_header_with_policy(
+        self.size_buffer()?;
+        self.write_header_with_policy(
             policy,
             0,
             INFO2_WRITE,
             field_count as u16,
             bins.len() as u16
-        ));
-        try!(self.write_key(key, policy.send_key));
+        )?;
+        self.write_key(key, policy.send_key)?;
 
         for bin in bins {
-            try!(self.write_operation_for_bin(bin.as_ref(), op_type));
+            self.write_operation_for_bin(bin.as_ref(), op_type)?;
         }
 
         self.end()
@@ -184,46 +184,46 @@ impl Buffer {
 
     // Writes the command for write operations
     pub fn set_delete(&mut self, policy: &WritePolicy, key: &Key) -> Result<()> {
-        try!(self.begin());
-        let field_count = try!(self.estimate_key_size(key, false));
-        try!(self.size_buffer());
-        try!(self.write_header_with_policy(
+        self.begin()?;
+        let field_count = self.estimate_key_size(key, false)?;
+        self.size_buffer()?;
+        self.write_header_with_policy(
             policy,
             0,
             INFO2_WRITE | INFO2_DELETE,
             field_count as u16,
             0
-        ));
-        try!(self.write_key(key, false));
+        )?;
+        self.write_key(key, false)?;
         self.end()
     }
 
     // Writes the command for touch operations
     pub fn set_touch(&mut self, policy: &WritePolicy, key: &Key) -> Result<()> {
-        try!(self.begin());
-        let field_count = try!(self.estimate_key_size(key, policy.send_key));
+        self.begin()?;
+        let field_count = self.estimate_key_size(key, policy.send_key)?;
 
-        try!(self.estimate_operation_size());
-        try!(self.size_buffer());
-        try!(self.write_header_with_policy(policy, 0, INFO2_WRITE, field_count as u16, 1));
-        try!(self.write_key(key, policy.send_key));
-        try!(self.write_operation_for_operation_type(OperationType::Touch));
+        self.estimate_operation_size()?;
+        self.size_buffer()?;
+        self.write_header_with_policy(policy, 0, INFO2_WRITE, field_count as u16, 1)?;
+        self.write_key(key, policy.send_key)?;
+        self.write_operation_for_operation_type(OperationType::Touch)?;
         self.end()
     }
 
     // Writes the command for exist operations
     pub fn set_exists(&mut self, policy: &WritePolicy, key: &Key) -> Result<()> {
-        try!(self.begin());
-        let field_count = try!(self.estimate_key_size(key, false));
-        try!(self.size_buffer());
-        try!(self.write_header(
+        self.begin()?;
+        let field_count = self.estimate_key_size(key, false)?;
+        self.size_buffer()?;
+        self.write_header(
             &policy.base_policy,
             INFO1_READ | INFO1_NOBINDATA,
             0,
             field_count,
             0
-        ));
-        try!(self.write_key(key, false));
+        )?;
+        self.write_key(key, false)?;
         self.end()
     }
 
@@ -233,10 +233,10 @@ impl Buffer {
             &Bins::None => self.set_read_header(policy, key),
             &Bins::All => self.set_read_for_key_only(policy, key),
             &Bins::Some(ref bin_names) => {
-                try!(self.begin());
-                let field_count = try!(self.estimate_key_size(key, false));
+                self.begin()?;
+                let field_count = self.estimate_key_size(key, false)?;
                 for bin_name in bin_names {
-                    try!(self.estimate_operation_size_for_bin_name(&bin_name));
+                    self.estimate_operation_size_for_bin_name(&bin_name)?;
                 }
 
                 self.size_buffer()?;
@@ -253,23 +253,23 @@ impl Buffer {
 
     // Writes the command for getting metadata operations
     pub fn set_read_header(&mut self, policy: &ReadPolicy, key: &Key) -> Result<()> {
-        try!(self.begin());
-        let field_count = try!(self.estimate_key_size(key, false));
-        try!(self.estimate_operation_size_for_bin_name(""));
-        try!(self.size_buffer());
-        try!(self.write_header(policy, INFO1_READ | INFO1_NOBINDATA, 0, field_count, 1));
-        try!(self.write_key(key, false));
-        try!(self.write_operation_for_bin_name("", OperationType::Read));
+        self.begin()?;
+        let field_count = self.estimate_key_size(key, false)?;
+        self.estimate_operation_size_for_bin_name("")?;
+        self.size_buffer()?;
+        self.write_header(policy, INFO1_READ | INFO1_NOBINDATA, 0, field_count, 1)?;
+        self.write_key(key, false)?;
+        self.write_operation_for_bin_name("", OperationType::Read)?;
         self.end()
     }
 
     pub fn set_read_for_key_only(&mut self, policy: &ReadPolicy, key: &Key) -> Result<()> {
-        try!(self.begin());
+        self.begin()?;
 
-        let field_count = try!(self.estimate_key_size(key, false));
-        try!(self.size_buffer());
-        try!(self.write_header(policy, INFO1_READ | INFO1_GET_ALL, 0, field_count, 0));
-        try!(self.write_key(key, false));
+        let field_count = self.estimate_key_size(key, false)?;
+        self.size_buffer()?;
+        self.write_header(policy, INFO1_READ | INFO1_GET_ALL, 0, field_count, 0)?;
+        self.write_key(key, false)?;
 
         self.end()
     }
@@ -394,7 +394,7 @@ impl Buffer {
         key: &Key,
         operations: &'a [Operation<'a>],
     ) -> Result<()> {
-        try!(self.begin());
+        self.begin()?;
 
         let mut read_attr = 0;
         let mut write_attr = 0;
@@ -430,34 +430,34 @@ impl Buffer {
                 write_attr |= INFO2_RESPOND_ALL_OPS;
             }
 
-            self.data_offset += try!(operation.estimate_size()) + OPERATION_HEADER_SIZE as usize;
+            self.data_offset += operation.estimate_size()? + OPERATION_HEADER_SIZE as usize;
         }
 
-        let field_count = try!(self.estimate_key_size(key, policy.send_key && write_attr != 0));
+        let field_count = self.estimate_key_size(key, policy.send_key && write_attr != 0)?;
 
-        try!(self.size_buffer());
+        self.size_buffer()?;
 
         if write_attr != 0 {
-            try!(self.write_header_with_policy(
+            self.write_header_with_policy(
                 policy,
                 read_attr,
                 write_attr,
                 field_count,
                 operations.len() as u16
-            ));
+            )?;
         } else {
-            try!(self.write_header(
+            self.write_header(
                 &policy.base_policy,
                 read_attr,
                 write_attr,
                 field_count,
                 operations.len() as u16
-            ));
+            )?;
         }
-        try!(self.write_key(key, policy.send_key && write_attr != 0));
+        self.write_key(key, policy.send_key && write_attr != 0)?;
 
         for operation in operations {
-            try!(operation.write_to(self));
+            operation.write_to(self)?;
         }
 
         self.end()
@@ -471,18 +471,18 @@ impl Buffer {
         function_name: &str,
         args: Option<&[Value]>,
     ) -> Result<()> {
-        try!(self.begin());
+        self.begin()?;
 
-        let mut field_count = try!(self.estimate_key_size(key, policy.send_key));
-        field_count += try!(self.estimate_udf_size(package_name, function_name, args)) as u16;
+        let mut field_count = self.estimate_key_size(key, policy.send_key)?;
+        field_count += self.estimate_udf_size(package_name, function_name, args)? as u16;
 
-        try!(self.size_buffer());
+        self.size_buffer()?;
 
-        try!(self.write_header(&policy.base_policy, 0, INFO2_WRITE, field_count, 0));
-        try!(self.write_key(key, policy.send_key));
-        try!(self.write_field_string(package_name, FieldType::UdfPackageName));
-        try!(self.write_field_string(function_name, FieldType::UdfFunction));
-        try!(self.write_args(args, FieldType::UdfArgList));
+        self.write_header(&policy.base_policy, 0, INFO2_WRITE, field_count, 0)?;
+        self.write_key(key, policy.send_key)?;
+        self.write_field_string(package_name, FieldType::UdfPackageName)?;
+        self.write_field_string(function_name, FieldType::UdfFunction)?;
+        self.write_args(args, FieldType::UdfArgList)?;
         self.end()
     }
 
@@ -494,7 +494,7 @@ impl Buffer {
         bins: &Bins,
         task_id: u64,
     ) -> Result<()> {
-        try!(self.begin());
+        self.begin()?;
 
         let mut field_count = 0;
         if namespace != "" {
@@ -524,36 +524,36 @@ impl Buffer {
             Bins::None => 0,
             Bins::Some(ref bin_names) => {
                 for bin_name in bin_names {
-                    try!(self.estimate_operation_size_for_bin_name(&bin_name));
+                    self.estimate_operation_size_for_bin_name(&bin_name)?;
                 }
                 bin_names.len()
             }
         };
 
-        try!(self.size_buffer());
+        self.size_buffer()?;
 
         let mut read_attr = INFO1_READ;
         if bins.is_none() {
             read_attr |= INFO1_NOBINDATA;
         }
 
-        try!(self.write_header(
+        self.write_header(
             &policy.base_policy,
             read_attr,
             0,
             field_count,
             bin_count as u16
-        ));
+        )?;
 
         if namespace != "" {
-            try!(self.write_field_string(namespace, FieldType::Namespace));
+            self.write_field_string(namespace, FieldType::Namespace)?;
         }
 
         if set_name != "" {
-            try!(self.write_field_string(set_name, FieldType::Table));
+            self.write_field_string(set_name, FieldType::Table)?;
         }
 
-        try!(self.write_field_header(2, FieldType::ScanOptions));
+        self.write_field_header(2, FieldType::ScanOptions)?;
 
         let mut priority: u8 = policy.base_policy.priority.clone() as u8;
         priority <<= 4;
@@ -562,19 +562,19 @@ impl Buffer {
             priority |= 0x08;
         }
 
-        try!(self.write_u8(priority));
-        try!(self.write_u8(policy.scan_percent));
+        self.write_u8(priority)?;
+        self.write_u8(policy.scan_percent)?;
 
         // Write scan timeout
-        try!(self.write_field_header(4, FieldType::ScanTimeout));
-        try!(self.write_u32(policy.socket_timeout));
+        self.write_field_header(4, FieldType::ScanTimeout)?;
+        self.write_u32(policy.socket_timeout)?;
 
-        try!(self.write_field_header(8, FieldType::TranId));
-        try!(self.write_u64(task_id));
+        self.write_field_header(8, FieldType::TranId)?;
+        self.write_u64(task_id)?;
 
         if let Bins::Some(ref bin_names) = *bins {
             for bin_name in bin_names {
-                try!(self.write_operation_for_bin_name(&bin_name, OperationType::Read));
+                self.write_operation_for_bin_name(&bin_name, OperationType::Read)?;
             }
         }
 
@@ -593,7 +593,7 @@ impl Buffer {
             None => None,
         };
 
-        try!(self.begin());
+        self.begin()?;
 
         let mut field_count = 0;
         let mut filter_size = 0;
@@ -655,9 +655,9 @@ impl Buffer {
             self.data_offset += aggregation.function_name.len() + FIELD_HEADER_SIZE as usize;
 
             if let Some(ref args) = aggregation.function_args {
-                try!(self.estimate_args_size(Some(&args)));
+                self.estimate_args_size(Some(&args))?;
             } else {
-                try!(self.estimate_args_size(None));
+                self.estimate_args_size(None)?;
             }
             field_count += 4;
         }
@@ -670,7 +670,7 @@ impl Buffer {
             }
         }
 
-        try!(self.size_buffer());
+        self.size_buffer()?;
 
         let mut operation_count: usize = 0;
         if statement.is_scan() {
@@ -695,69 +695,69 @@ impl Buffer {
         )?;
 
         if statement.namespace != "" {
-            try!(self.write_field_string(&statement.namespace, FieldType::Namespace));
+            self.write_field_string(&statement.namespace, FieldType::Namespace)?;
         }
 
         if let Some(ref index_name) = statement.index_name {
             if !index_name.is_empty() {
-                try!(self.write_field_string(&index_name, FieldType::IndexName));
+                self.write_field_string(&index_name, FieldType::IndexName)?;
             }
         }
 
         if statement.set_name != "" {
-            try!(self.write_field_string(&statement.set_name, FieldType::Table));
+            self.write_field_string(&statement.set_name, FieldType::Table)?;
         }
 
-        try!(self.write_field_header(8, FieldType::TranId));
-        try!(self.write_u64(task_id));
+        self.write_field_header(8, FieldType::TranId)?;
+        self.write_u64(task_id)?;
 
         if filter.is_some() {
             let filter = filter.unwrap();
             let idx_type = filter.collection_index_type();
 
             if idx_type != CollectionIndexType::Default {
-                try!(self.write_field_header(1, FieldType::IndexType));
-                try!(self.write_u8(idx_type as u8));
+                self.write_field_header(1, FieldType::IndexType)?;
+                self.write_u8(idx_type as u8)?;
             }
 
-            try!(self.write_field_header(filter_size, FieldType::IndexRange));
-            try!(self.write_u8(1));
+            self.write_field_header(filter_size, FieldType::IndexRange)?;
+            self.write_u8(1)?;
 
-            try!(filter.write(self));
+            filter.write(self)?;
 
             if let Bins::Some(ref bin_names) = statement.bins {
                 if !bin_names.is_empty() {
-                    try!(self.write_field_header(bin_name_size, FieldType::QueryBinList));
-                    try!(self.write_u8(bin_names.len() as u8));
+                    self.write_field_header(bin_name_size, FieldType::QueryBinList)?;
+                    self.write_u8(bin_names.len() as u8)?;
 
                     for bin_name in bin_names {
-                        try!(self.write_u8(bin_name.len() as u8));
-                        try!(self.write_str(&bin_name));
+                        self.write_u8(bin_name.len() as u8)?;
+                        self.write_str(&bin_name)?;
                     }
                 }
             }
         } else {
             // Calling query with no filters is more efficiently handled by a primary index scan.
-            try!(self.write_field_header(2, FieldType::ScanOptions));
+            self.write_field_header(2, FieldType::ScanOptions)?;
             let priority: u8 = (policy.base_policy.priority.clone() as u8) << 4;
-            try!(self.write_u8(priority));
-            try!(self.write_u8(100));
+            self.write_u8(priority)?;
+            self.write_u8(100)?;
         }
 
         if let Some(ref aggregation) = statement.aggregation {
-            try!(self.write_field_header(1, FieldType::UdfOp));
+            self.write_field_header(1, FieldType::UdfOp)?;
             if statement.bins.is_none() {
-                try!(self.write_u8(2));
+                self.write_u8(2)?;
             } else {
-                try!(self.write_u8(1));
+                self.write_u8(1)?;
             }
 
-            try!(self.write_field_string(&aggregation.package_name, FieldType::UdfPackageName));
-            try!(self.write_field_string(&aggregation.function_name, FieldType::UdfFunction));
+            self.write_field_string(&aggregation.package_name, FieldType::UdfPackageName)?;
+            self.write_field_string(&aggregation.function_name, FieldType::UdfFunction)?;
             if let Some(ref args) = aggregation.function_args {
-                try!(self.write_args(Some(args), FieldType::UdfArgList));
+                self.write_args(Some(args), FieldType::UdfArgList)?;
             } else {
-                try!(self.write_args(None, FieldType::UdfArgList));
+                self.write_args(None, FieldType::UdfArgList)?;
             }
         }
 
@@ -765,7 +765,7 @@ impl Buffer {
         if statement.is_scan() {
             if let Bins::Some(ref bin_names) = statement.bins {
                 for bin_name in bin_names {
-                    try!(self.write_operation_for_bin_name(&bin_name, OperationType::Read));
+                    self.write_operation_for_bin_name(&bin_name, OperationType::Read)?;
                 }
             }
         }
@@ -792,7 +792,7 @@ impl Buffer {
         if send_key {
             if let Some(ref user_key) = key.user_key {
                 // field header size + key size
-                self.data_offset += try!(user_key.estimate_size()) + FIELD_HEADER_SIZE as usize + 1;
+                self.data_offset += user_key.estimate_size()? + FIELD_HEADER_SIZE as usize + 1;
                 field_count += 1;
             }
         }
@@ -803,10 +803,10 @@ impl Buffer {
     fn estimate_args_size(&mut self, args: Option<&[Value]>) -> Result<()> {
         if let Some(args) = args {
             self.data_offset +=
-                try!(encoder::pack_array(&mut None, args)) + FIELD_HEADER_SIZE as usize;
+                encoder::pack_array(&mut None, args)? + FIELD_HEADER_SIZE as usize;
         } else {
             self.data_offset +=
-                try!(encoder::pack_empty_args_array(&mut None)) + FIELD_HEADER_SIZE as usize;
+                encoder::pack_empty_args_array(&mut None)? + FIELD_HEADER_SIZE as usize;
         }
         Ok(())
     }
@@ -819,13 +819,13 @@ impl Buffer {
     ) -> Result<usize> {
         self.data_offset += package_name.len() + FIELD_HEADER_SIZE as usize;
         self.data_offset += function_name.len() + FIELD_HEADER_SIZE as usize;
-        try!(self.estimate_args_size(args));
+        self.estimate_args_size(args)?;
         Ok(3)
     }
 
     fn estimate_operation_size_for_bin(&mut self, bin: &Bin) -> Result<()> {
         self.data_offset += bin.name.len() + OPERATION_HEADER_SIZE as usize;
-        self.data_offset += try!(bin.value.estimate_size());
+        self.data_offset += bin.value.estimate_size()?;
         Ok(())
     }
 
@@ -863,8 +863,8 @@ impl Buffer {
         }
 
         self.data_offset = 26;
-        try!(self.write_u16(field_count as u16));
-        try!(self.write_u16(operation_count as u16));
+        self.write_u16(field_count as u16)?;
+        self.write_u16(operation_count as u16)?;
 
         self.data_offset = MSG_TOTAL_HEADER_SIZE as usize;
 
@@ -920,24 +920,24 @@ impl Buffer {
 
         // Write all header data except total size which must be written last.
         self.data_offset = 8;
-        try!(self.write_u8(MSG_REMAINING_HEADER_SIZE)); // Message header length.
-        try!(self.write_u8(read_attr));
-        try!(self.write_u8(write_attr));
-        try!(self.write_u8(info_attr));
-        try!(self.write_u8(0)); // unused
-        try!(self.write_u8(0)); // clear the result code
+        self.write_u8(MSG_REMAINING_HEADER_SIZE)?; // Message header length.
+        self.write_u8(read_attr)?;
+        self.write_u8(write_attr)?;
+        self.write_u8(info_attr)?;
+        self.write_u8(0)?; // unused
+        self.write_u8(0)?; // clear the result code
 
-        try!(self.write_u32(generation));
-        try!(self.write_u32(policy.expiration.into()));
+        self.write_u32(generation)?;
+        self.write_u32(policy.expiration.into())?;
 
         // Initialize timeout. It will be written later.
-        try!(self.write_u8(0));
-        try!(self.write_u8(0));
-        try!(self.write_u8(0));
-        try!(self.write_u8(0));
+        self.write_u8(0)?;
+        self.write_u8(0)?;
+        self.write_u8(0)?;
+        self.write_u8(0)?;
 
-        try!(self.write_u16(field_count));
-        try!(self.write_u16(operation_count));
+        self.write_u16(field_count)?;
+        self.write_u16(operation_count)?;
         self.data_offset = MSG_TOTAL_HEADER_SIZE as usize;
 
         Ok(())
@@ -946,18 +946,18 @@ impl Buffer {
     fn write_key(&mut self, key: &Key, send_key: bool) -> Result<()> {
         // Write key into buffer.
         if key.namespace != "" {
-            try!(self.write_field_string(&key.namespace, FieldType::Namespace));
+            self.write_field_string(&key.namespace, FieldType::Namespace)?;
         }
 
         if key.set_name != "" {
-            try!(self.write_field_string(&key.set_name, FieldType::Table));
+            self.write_field_string(&key.set_name, FieldType::Table)?;
         }
 
-        try!(self.write_field_bytes(&key.digest, FieldType::DigestRipe));
+        self.write_field_bytes(&key.digest, FieldType::DigestRipe)?;
 
         if send_key {
             if let Some(ref user_key) = key.user_key {
-                try!(self.write_field_value(user_key, FieldType::Key));
+                self.write_field_value(user_key, FieldType::Key)?;
             }
         }
 
@@ -965,41 +965,41 @@ impl Buffer {
     }
 
     fn write_field_header(&mut self, size: usize, ftype: FieldType) -> Result<()> {
-        try!(self.write_i32(size as i32 + 1));
-        try!(self.write_u8(ftype as u8));
+        self.write_i32(size as i32 + 1)?;
+        self.write_u8(ftype as u8)?;
 
         Ok(())
     }
 
     fn write_field_string(&mut self, field: &str, ftype: FieldType) -> Result<()> {
-        try!(self.write_field_header(field.len(), ftype));
-        try!(self.write_str(field));
+        self.write_field_header(field.len(), ftype)?;
+        self.write_str(field)?;
 
         Ok(())
     }
 
     fn write_field_bytes(&mut self, bytes: &[u8], ftype: FieldType) -> Result<()> {
-        try!(self.write_field_header(bytes.len(), ftype));
-        try!(self.write_bytes(bytes));
+        self.write_field_header(bytes.len(), ftype)?;
+        self.write_bytes(bytes)?;
 
         Ok(())
     }
 
     fn write_field_value(&mut self, value: &Value, ftype: FieldType) -> Result<()> {
-        try!(self.write_field_header(try!(value.estimate_size()) + 1, ftype));
-        try!(self.write_u8(value.particle_type() as u8));
-        try!(value.write_to(self));
+        self.write_field_header(value.estimate_size()? + 1, ftype)?;
+        self.write_u8(value.particle_type() as u8)?;
+        value.write_to(self)?;
 
         Ok(())
     }
 
     fn write_args(&mut self, args: Option<&[Value]>, ftype: FieldType) -> Result<()> {
         if let Some(args) = args {
-            try!(self.write_field_header(try!(encoder::pack_array(&mut None, args)), ftype));
-            try!(encoder::pack_array(&mut Some(self), args));
+            self.write_field_header(encoder::pack_array(&mut None, args)?, ftype)?;
+            encoder::pack_array(&mut Some(self), args)?;
         } else {
-            try!(self.write_field_header(try!(encoder::pack_empty_args_array(&mut None)), ftype));
-            try!(encoder::pack_empty_args_array(&mut Some(self)));
+            self.write_field_header(encoder::pack_empty_args_array(&mut None)?, ftype)?;
+            encoder::pack_empty_args_array(&mut Some(self))?;
         }
 
         Ok(())
@@ -1007,36 +1007,36 @@ impl Buffer {
 
     fn write_operation_for_bin(&mut self, bin: &Bin, op_type: OperationType) -> Result<()> {
         let name_length = bin.name.len();
-        let value_length = try!(bin.value.estimate_size());
+        let value_length = bin.value.estimate_size()?;
 
-        try!(self.write_i32((name_length + value_length + 4) as i32));
-        try!(self.write_u8(op_type as u8));
-        try!(self.write_u8(bin.value.particle_type() as u8));
-        try!(self.write_u8(0));
-        try!(self.write_u8(name_length as u8));
-        try!(self.write_str(bin.name));
-        try!(bin.value.write_to(self));
+        self.write_i32((name_length + value_length + 4) as i32)?;
+        self.write_u8(op_type as u8)?;
+        self.write_u8(bin.value.particle_type() as u8)?;
+        self.write_u8(0)?;
+        self.write_u8(name_length as u8)?;
+        self.write_str(bin.name)?;
+        bin.value.write_to(self)?;
 
         Ok(())
     }
 
     fn write_operation_for_bin_name(&mut self, name: &str, op_type: OperationType) -> Result<()> {
-        try!(self.write_i32(name.len() as i32 + 4));
-        try!(self.write_u8(op_type as u8));
-        try!(self.write_u8(0));
-        try!(self.write_u8(0));
-        try!(self.write_u8(name.len() as u8));
-        try!(self.write_str(name));
+        self.write_i32(name.len() as i32 + 4)?;
+        self.write_u8(op_type as u8)?;
+        self.write_u8(0)?;
+        self.write_u8(0)?;
+        self.write_u8(name.len() as u8)?;
+        self.write_str(name)?;
 
         Ok(())
     }
 
     fn write_operation_for_operation_type(&mut self, op_type: OperationType) -> Result<()> {
-        try!(self.write_i32(4));
-        try!(self.write_u8(op_type as u8));
-        try!(self.write_u8(0));
-        try!(self.write_u8(0));
-        try!(self.write_u8(0));
+        self.write_i32(4)?;
+        self.write_u8(op_type as u8)?;
+        self.write_u8(0)?;
+        self.write_u8(0)?;
+        self.write_u8(0)?;
 
         Ok(())
     }
@@ -1097,7 +1097,7 @@ impl Buffer {
     }
 
     pub fn read_i16(&mut self, pos: Option<usize>) -> Result<i16> {
-        let val = try!(self.read_u16(pos));
+        let val = self.read_u16(pos)?;
         Ok(val as i16)
     }
 
@@ -1116,7 +1116,7 @@ impl Buffer {
     }
 
     pub fn read_i32(&mut self, pos: Option<usize>) -> Result<i32> {
-        let val = try!(self.read_u32(pos));
+        let val = self.read_u32(pos)?;
         Ok(val as i32)
     }
 
@@ -1135,12 +1135,12 @@ impl Buffer {
     }
 
     pub fn read_i64(&mut self, pos: Option<usize>) -> Result<i64> {
-        let val = try!(self.read_u64(pos));
+        let val = self.read_u64(pos)?;
         Ok(val as i64)
     }
 
     pub fn read_msg_size(&mut self, pos: Option<usize>) -> Result<usize> {
-        let size = try!(self.read_i64(pos));
+        let size = self.read_i64(pos)?;
         let size = size & 0xFFFFFFFFFFFF;
         Ok(size as usize)
     }
@@ -1174,9 +1174,9 @@ impl Buffer {
     }
 
     pub fn read_str(&mut self, len: usize) -> Result<String> {
-        let s = try!(str::from_utf8(
+        let s = str::from_utf8(
             &self.data_buffer[self.data_offset..self.data_offset + len]
-        ));
+        )?;
         self.data_offset += len;
         Ok(s.to_owned())
     }
@@ -1271,7 +1271,7 @@ impl Buffer {
 
     pub fn write_bytes(&mut self, bytes: &[u8]) -> Result<usize> {
         for b in bytes {
-            try!(self.write_u8(*b));
+            self.write_u8(*b)?;
         }
         Ok(bytes.len())
     }
@@ -1281,10 +1281,10 @@ impl Buffer {
     }
 
     pub fn write_geo(&mut self, val: &str) -> Result<usize> {
-        try!(self.write_u8(0));
-        try!(self.write_u8(0));
-        try!(self.write_u8(0));
-        try!(self.write_bytes(val.as_bytes()));
+        self.write_u8(0)?;
+        self.write_u8(0)?;
+        self.write_u8(0)?;
+        self.write_bytes(val.as_bytes())?;
         Ok(3 + val.len())
     }
 

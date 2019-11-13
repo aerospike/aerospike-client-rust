@@ -69,12 +69,12 @@ impl<'a> ReadCommand<'a> {
         }
 
         for _ in 0..op_count {
-            let op_size = try!(conn.buffer.read_u32(None)) as usize;
-            try!(conn.buffer.skip(1));
-            let particle_type = try!(conn.buffer.read_u8(None));
-            try!(conn.buffer.skip(1));
-            let name_size = try!(conn.buffer.read_u8(None)) as usize;
-            let name: String = try!(conn.buffer.read_str(name_size));
+            let op_size = conn.buffer.read_u32(None)? as usize;
+            conn.buffer.skip(1)?;
+            let particle_type = conn.buffer.read_u8(None)?;
+            conn.buffer.skip(1)?;
+            let name_size = conn.buffer.read_u8(None)? as usize;
+            let name: String = conn.buffer.read_str(name_size)?;
 
             let particle_bytes_size = op_size - (4 + name_size);
             let value = bytes_to_particle(particle_type, &mut conn.buffer, particle_bytes_size)?;

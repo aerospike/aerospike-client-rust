@@ -101,8 +101,8 @@ impl Client {
     /// let client = Client::new(&ClientPolicy::default(), &hosts).unwrap();
     /// ```
     pub fn new(policy: &ClientPolicy, hosts: &ToHosts) -> Result<Self> {
-        let hosts = try!(hosts.to_hosts());
-        let cluster = try!(Cluster::new(policy.clone(), &hosts));
+        let hosts = hosts.to_hosts()?;
+        let cluster = Cluster::new(policy.clone(), &hosts)?;
         let thread_pool = Pool::new(policy.thread_pool_size);
 
         Ok(Client {
@@ -391,7 +391,7 @@ impl Client {
     /// ```
     pub fn delete(&self, policy: &WritePolicy, key: &Key) -> Result<bool> {
         let mut command = DeleteCommand::new(policy, self.cluster.clone(), key);
-        try!(command.execute());
+        command.execute()?;
         Ok(command.existed)
     }
 
@@ -424,7 +424,7 @@ impl Client {
     /// Determine if a record key exists. The policy can be used to specify timeouts.
     pub fn exists(&self, policy: &WritePolicy, key: &Key) -> Result<bool> {
         let mut command = ExistsCommand::new(policy, self.cluster.clone(), key);
-        try!(command.execute());
+        command.execute()?;
         Ok(command.exists)
     }
 
@@ -458,7 +458,7 @@ impl Client {
     /// ```
     pub fn operate(&self, policy: &WritePolicy, key: &Key, ops: &[Operation]) -> Result<Record> {
         let mut command = OperateCommand::new(policy, self.cluster.clone(), key, ops);
-        try!(command.execute());
+        command.execute()?;
         Ok(command.read_command.record.unwrap())
     }
 
@@ -521,12 +521,12 @@ impl Client {
             udf_body.len(),
             language
         );
-        let node = try!(self.cluster.get_random_node());
-        let response = try!(node.info(policy.base_policy.timeout, &[&cmd]));
+        let node = self.cluster.get_random_node()?;
+        let response = node.info(policy.base_policy.timeout, &[&cmd])?;
 
         if let Some(msg) = response.get("error") {
             let msg = base64::decode(msg)?;
-            let msg = try!(str::from_utf8(&msg));
+            let msg = str::from_utf8(&msg)?;
             bail!(
                 "UDF Registration failed: {}, file: {}, line: {}, message: {}",
                 response.get("error").unwrap_or(&"-".to_string()),
@@ -553,9 +553,9 @@ impl Client {
         language: UDFLang,
     ) -> Result<()> {
         let path = Path::new(client_path);
-        let mut file = try!(File::open(&path));
+        let mut file = File::open(&path)?;
         let mut udf_body: Vec<u8> = vec![];
-        try!(file.read_to_end(&mut udf_body));
+        file.read_to_end(&mut udf_body)?;
 
         self.register_udf(policy, &udf_body, udf_name, language)
     }
@@ -568,8 +568,8 @@ impl Client {
         language: UDFLang,
     ) -> Result<()> {
         let cmd = format!("udf-remove:filename={}.{};", udf_name, language);
-        let node = try!(self.cluster.get_random_node());
-        let response = try!(node.info(policy.base_policy.timeout, &[&cmd]));
+        let node = self.cluster.get_random_node()?;
+        let response = node.info(policy.base_policy.timeout, &[&cmd])?;
 
         if response.get("ok").is_some() {
             return Ok(());
@@ -596,7 +596,7 @@ impl Client {
             function_name,
             args,
         );
-        try!(command.execute());
+        command.execute()?;
 
         let record = command.read_command.record.unwrap();
 
@@ -731,7 +731,7 @@ impl Client {
     /// # }
     /// ```
     pub fn query(&self, policy: &QueryPolicy, statement: Statement) -> Result<Arc<Recordset>> {
-        try!(statement.validate());
+        statement.validate()?;
         let statement = Arc::new(statement);
 
         let nodes = self.cluster.nodes();
@@ -759,7 +759,7 @@ impl Client {
         node: Arc<Node>,
         statement: Statement,
     ) -> Result<Arc<Recordset>> {
-        try!(statement.validate());
+        statement.validate()?;
 
         let recordset = Arc::new(Recordset::new(policy.record_queue_size, 1));
         let t_recordset = recordset.clone();
