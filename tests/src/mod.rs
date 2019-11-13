@@ -13,15 +13,12 @@
 // License for the specific language governing permissions and limitations under
 // the License.
 
-// TODO: Remove and fix all warnings
-#![allow(clippy::all)]
-
+mod batch;
+mod cdt_list;
+mod cdt_map;
+mod index;
 mod kv;
 mod query;
 mod scan;
-mod udf;
-mod cdt_list;
-mod cdt_map;
-mod batch;
-mod index;
 mod truncate;
+mod udf;

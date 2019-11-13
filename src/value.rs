@@ -13,12 +13,11 @@
 // License for the specific language governing permissions and limitations under
 // the License.
 
-use std::{f32, f64};
-use std::fmt;
-use std::mem;
 use std::collections::HashMap;
+use std::fmt;
 use std::hash::{Hash, Hasher};
 use std::result::Result as StdResult;
+use std::{f32, f64};
 
 use byteorder::{ByteOrder, NetworkEndian};
 
@@ -27,9 +26,9 @@ use ripemd160::digest::Digest;
 
 use std::vec::Vec;
 
-use errors::*;
-use commands::ParticleType;
 use commands::buffer::Buffer;
+use commands::ParticleType;
+use errors::*;
 use msgpack::{decoder, encoder};
 
 /// Container for floating point bin values stored in the Aerospike database.
@@ -48,7 +47,7 @@ impl From<FloatValue> for f64 {
                 "This library does not automatically convert f32 -> f64 to be used in keys \
                  or bins."
             ),
-            FloatValue::F64(val) => unsafe { mem::transmute(val) },
+            FloatValue::F64(val) => f64::from_bits(val),
         }
     }
 }
@@ -60,7 +59,7 @@ impl<'a> From<&'a FloatValue> for f64 {
                 "This library does not automatically convert f32 -> f64 to be used in keys \
                  or bins."
             ),
-            FloatValue::F64(val) => unsafe { mem::transmute(val) },
+            FloatValue::F64(val) => f64::from_bits(val),
         }
     }
 }
@@ -71,7 +70,7 @@ impl From<f64> for FloatValue {
         if val.is_nan() {
             val = f64::NAN
         } // make all NaNs have the same representation
-        unsafe { FloatValue::F64(mem::transmute(val)) }
+        FloatValue::F64(val.to_bits())
     }
 }
 
@@ -81,15 +80,15 @@ impl<'a> From<&'a f64> for FloatValue {
         if val.is_nan() {
             val = f64::NAN
         } // make all NaNs have the same representation
-        unsafe { FloatValue::F64(mem::transmute(val)) }
+        FloatValue::F64(val.to_bits())
     }
 }
 
 impl From<FloatValue> for f32 {
     fn from(val: FloatValue) -> f32 {
         match val {
-            FloatValue::F32(val) => unsafe { mem::transmute(val) },
-            FloatValue::F64(val) => unsafe { mem::transmute(val as u32) },
+            FloatValue::F32(val) => f32::from_bits(val),
+            FloatValue::F64(val) => f32::from_bits(val as u32),
         }
     }
 }
@@ -97,8 +96,8 @@ impl From<FloatValue> for f32 {
 impl<'a> From<&'a FloatValue> for f32 {
     fn from(val: &FloatValue) -> f32 {
         match *val {
-            FloatValue::F32(val) => unsafe { mem::transmute(val) },
-            FloatValue::F64(val) => unsafe { mem::transmute(val as u32) },
+            FloatValue::F32(val) => f32::from_bits(val),
+            FloatValue::F64(val) => f32::from_bits(val as u32),
         }
     }
 }
@@ -109,7 +108,7 @@ impl From<f32> for FloatValue {
         if val.is_nan() {
             val = f32::NAN
         } // make all NaNs have the same representation
-        unsafe { FloatValue::F32(mem::transmute(val)) }
+        FloatValue::F32(val.to_bits())
     }
 }
 
@@ -119,7 +118,7 @@ impl<'a> From<&'a f32> for FloatValue {
         if val.is_nan() {
             val = f32::NAN
         } // make all NaNs have the same representation
-        unsafe { FloatValue::F32(mem::transmute(val)) }
+        FloatValue::F32(val.to_bits())
     }
 }
 
@@ -127,11 +126,11 @@ impl fmt::Display for FloatValue {
     fn fmt(&self, f: &mut fmt::Formatter) -> StdResult<(), fmt::Error> {
         match *self {
             FloatValue::F32(val) => {
-                let val: f32 = unsafe { mem::transmute(val) };
+                let val: f32 = f32::from_bits(val);
                 write!(f, "{}", val)
             }
             FloatValue::F64(val) => {
-                let val: f64 = unsafe { mem::transmute(val) };
+                let val: f64 = f64::from_bits(val);
                 write!(f, "{}", val)
             }
         }
@@ -188,6 +187,7 @@ pub enum Value {
     GeoJSON(String),
 }
 
+#[allow(clippy::derive_hash_xor_eq)]
 impl Hash for Value {
     fn hash<H: Hasher>(&self, state: &mut H) {
         match *self {
@@ -596,19 +596,25 @@ pub fn bytes_to_particle(ptype: u8, buf: &mut Buffer, len: usize) -> Result<Valu
 /// Constructs a new Value from one of the supported native data types.
 #[macro_export]
 macro_rules! as_val {
-    ($val:expr) => {{ $crate::Value::from($val) }}
+    ($val:expr) => {{
+        $crate::Value::from($val)
+    }};
 }
 
 /// Constructs a new GeoJSON Value from one of the supported native data types.
 #[macro_export]
 macro_rules! as_geo {
-    ($val:expr) => {{ $crate::Value::GeoJSON($val.to_owned()) }}
+    ($val:expr) => {{
+        $crate::Value::GeoJSON($val.to_owned())
+    }};
 }
 
 /// Constructs a new Blob Value from one of the supported native data types.
 #[macro_export]
 macro_rules! as_blob {
-    ($val:expr) => {{ $crate::Value::Blob($val) }}
+    ($val:expr) => {{
+        $crate::Value::Blob($val)
+    }};
 }
 
 /// Constructs a new List Value from a list of one or more native data types.
@@ -715,11 +721,11 @@ mod tests {
         assert_eq!(Value::Nil.as_string(), String::from("<null>"));
         assert_eq!(Value::Int(42).as_string(), String::from("42"));
         assert_eq!(
-            Value::UInt(9223372036854775808).as_string(),
+            Value::UInt(9_223_372_036_854_775_808).as_string(),
             String::from("9223372036854775808")
         );
         assert_eq!(Value::Bool(true).as_string(), String::from("true"));
-        assert_eq!(Value::from(3.1416).as_string(), String::from("3.1416"));
+        assert_eq!(Value::from(4.1416).as_string(), String::from("4.1416"));
         assert_eq!(
             as_geo!(r#"{"type":"Point"}"#).as_string(),
             String::from(r#"{"type":"Point"}"#)

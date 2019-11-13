@@ -13,13 +13,13 @@
 // License for the specific language governing permissions and limitations under
 // the License.
 
-use std::{i16, i32, i64, i8};
 use std::collections::HashMap;
 use std::num::Wrapping;
+use std::{i16, i32, i64, i8};
 
-use errors::*;
-use commands::ParticleType;
 use commands::buffer::Buffer;
+use commands::ParticleType;
+use errors::*;
 use operations::cdt::{CdtArgument, CdtOperation};
 use value::*;
 

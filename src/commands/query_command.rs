@@ -15,13 +15,13 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use errors::*;
-use Recordset;
-use Statement;
 use cluster::Node;
 use commands::{Command, SingleCommand, StreamCommand};
+use errors::*;
 use net::Connection;
 use policy::QueryPolicy;
+use Recordset;
+use Statement;
 
 pub struct QueryCommand<'a> {
     stream_command: StreamCommand,
@@ -38,8 +38,8 @@ impl<'a> QueryCommand<'a> {
     ) -> Self {
         QueryCommand {
             stream_command: StreamCommand::new(node, recordset),
-            policy: policy,
-            statement: statement,
+            policy,
+            statement,
         }
     }
 

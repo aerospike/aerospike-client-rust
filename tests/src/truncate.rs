@@ -15,8 +15,8 @@
 
 use aerospike::WritePolicy;
 
-use env_logger;
 use common;
+use env_logger;
 
 #[test]
 fn truncate() {

@@ -14,10 +14,10 @@
 // the License.
 
 use policy::{BasePolicy, PolicyLike};
-use RecordExistsAction;
-use GenerationPolicy;
 use CommitLevel;
 use Expiration;
+use GenerationPolicy;
+use RecordExistsAction;
 
 /// `WritePolicy` encapsulates parameters for all write operations.
 pub struct WritePolicy {

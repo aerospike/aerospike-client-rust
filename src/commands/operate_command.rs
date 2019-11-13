@@ -15,14 +15,14 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use errors::*;
-use Bins;
-use Key;
 use cluster::{Cluster, Node};
 use commands::{Command, ReadCommand, SingleCommand};
+use errors::*;
 use net::Connection;
 use operations::Operation;
 use policy::WritePolicy;
+use Bins;
+use Key;
 
 pub struct OperateCommand<'a> {
     pub read_command: ReadCommand<'a>,
@@ -39,8 +39,8 @@ impl<'a> OperateCommand<'a> {
     ) -> Self {
         OperateCommand {
             read_command: ReadCommand::new(&policy.base_policy, cluster, key, Bins::All),
-            policy: policy,
-            operations: operations,
+            policy,
+            operations,
         }
     }
 

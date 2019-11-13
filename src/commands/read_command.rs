@@ -12,23 +12,23 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::sync::Arc;
-use std::collections::HashMap;
 use std::collections::hash_map::Entry::{Occupied, Vacant};
+use std::collections::HashMap;
+use std::sync::Arc;
 use std::time::Duration;
 
+use cluster::{Cluster, Node};
+use commands::buffer;
+use commands::{Command, SingleCommand};
 use errors::*;
+use net::Connection;
+use policy::ReadPolicy;
+use value::bytes_to_particle;
 use Bins;
 use Key;
 use Record;
 use ResultCode;
 use Value;
-use cluster::{Cluster, Node};
-use commands::buffer;
-use commands::{Command, SingleCommand};
-use net::Connection;
-use policy::ReadPolicy;
-use value::bytes_to_particle;
 
 pub struct ReadCommand<'a> {
     pub single_command: SingleCommand<'a>,
@@ -41,8 +41,8 @@ impl<'a> ReadCommand<'a> {
     pub fn new(policy: &'a ReadPolicy, cluster: Arc<Cluster>, key: &'a Key, bins: Bins) -> Self {
         ReadCommand {
             single_command: SingleCommand::new(cluster, key),
-            bins: bins,
-            policy: policy,
+            bins,
+            policy,
             record: None,
         }
     }
@@ -84,13 +84,11 @@ impl<'a> ReadCommand<'a> {
                 match bins.entry(name) {
                     Vacant(entry) => {
                         entry.insert(value);
-                        ()
                     }
                     Occupied(entry) => match *entry.into_mut() {
                         Value::List(ref mut list) => list.push(value),
                         ref mut prev => {
                             *prev = as_list!(prev.clone(), value);
-                            ()
                         }
                     },
                 }
@@ -134,7 +132,7 @@ impl<'a> Command for ReadCommand<'a> {
         let expiration = conn.buffer.read_u32(Some(18))?;
         let field_count = conn.buffer.read_u16(Some(26))? as usize; // almost certainly 0
         let op_count = conn.buffer.read_u16(Some(28))? as usize;
-        let receive_size = ((sz & 0xFFFFFFFFFFFF) - header_length as u64) as usize;
+        let receive_size = ((sz & 0xFFFF_FFFF_FFFF) - header_length as u64) as usize;
 
         // Read remaining message bytes
         if receive_size > 0 {

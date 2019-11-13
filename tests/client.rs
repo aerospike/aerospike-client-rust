@@ -13,9 +13,6 @@
 // License for the specific language governing permissions and limitations under
 // the License.
 
-// TODO: Remove and fix all warnings
-#![allow(clippy::all)]
-
 extern crate aerospike;
 extern crate env_logger;
 #[macro_use]
@@ -38,14 +35,14 @@ fn cluster_name() {
 fn node_names() {
     let client = common::client();
     let names = client.node_names();
-    assert!(names.len() >= 1);
+    assert!(!names.is_empty());
 }
 
 #[test]
 fn nodes() {
     let client = common::client();
     let nodes = client.nodes();
-    assert!(nodes.len() >= 1);
+    assert!(!nodes.is_empty());
 }
 
 #[test]

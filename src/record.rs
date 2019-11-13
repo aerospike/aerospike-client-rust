@@ -17,12 +17,12 @@ use std::collections::HashMap;
 use std::fmt;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use Value;
 use Key;
+use Value;
 
 lazy_static! {
   // Fri Jan  1 00:00:00 UTC 2010
-  pub static ref CITRUSLEAF_EPOCH: SystemTime = UNIX_EPOCH + Duration::new(1262304000, 0);
+  pub static ref CITRUSLEAF_EPOCH: SystemTime = UNIX_EPOCH + Duration::new(1_262_304_000, 0);
 }
 
 /// Container object for a database record.
@@ -52,10 +52,10 @@ impl Record {
         expiration: u32,
     ) -> Self {
         Record {
-            key: key,
-            bins: bins,
-            generation: generation,
-            expiration: expiration,
+            key,
+            bins,
+            generation,
+            expiration,
         }
     }
 
@@ -99,8 +99,8 @@ impl fmt::Display for Record {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::time::{Duration, SystemTime};
     use std::collections::HashMap;
+    use std::time::{Duration, SystemTime};
 
     #[test]
     fn ttl_expiration_future() {
@@ -117,7 +117,7 @@ mod tests {
 
     #[test]
     fn ttl_expiration_past() {
-        let record = Record::new(None, HashMap::new(), 0, 0x0d00d21c);
+        let record = Record::new(None, HashMap::new(), 0, 0x0d00_d21c);
         assert_eq!(record.time_to_live(), Some(Duration::new(1u64, 0)));
     }
 

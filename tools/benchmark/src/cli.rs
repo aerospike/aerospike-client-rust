@@ -13,9 +13,9 @@
 // License for the specific language governing permissions and limitations under
 // the License.
 
+use std::convert::AsRef;
 use std::env;
 use std::str::FromStr;
-use std::convert::AsRef;
 
 use clap::{App, Arg};
 use num_cpus;
@@ -120,7 +120,8 @@ fn build_cli() -> App<'static, 'static> {
             Arg::from_usage(
                 "-w, --workload 'Workload definition: I | RU (see below for \
                  details)'",
-            ).default_value("I"),
+            )
+            .default_value("I"),
         )
         .arg(
             Arg::from_usage("-Y, --connPoolsPerNode 'Number of connection pools per node'")

@@ -13,8 +13,8 @@
 // License for the specific language governing permissions and limitations under
 // the License.
 
-pub mod batch_read;
 pub mod batch_executor;
+pub mod batch_read;
 
-pub use self::batch_read::BatchRead;
 pub use self::batch_executor::BatchExecutor;
+pub use self::batch_read::BatchRead;

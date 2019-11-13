@@ -16,9 +16,9 @@
 use std::collections::HashMap;
 use std::vec::Vec;
 
-use errors::*;
-use commands::ParticleType;
 use commands::buffer::Buffer;
+use commands::ParticleType;
+use errors::*;
 use value::*;
 
 pub fn unpack_value_list(buf: &mut Buffer) -> Result<Value> {
@@ -26,7 +26,7 @@ pub fn unpack_value_list(buf: &mut Buffer) -> Result<Value> {
         return Ok(Value::List(vec![]));
     }
 
-    let ltype: u8 = buf.read_u8(None)? & 0xff;
+    let ltype: u8 = buf.read_u8(None)?;
 
     let count: usize = match ltype {
         0x90..=0x9f => (ltype & 0x0f) as usize,
@@ -43,7 +43,7 @@ pub fn unpack_value_map(buf: &mut Buffer) -> Result<Value> {
         return Ok(Value::from(HashMap::with_capacity(0)));
     }
 
-    let ltype: u8 = buf.read_u8(None)? & 0xff;
+    let ltype: u8 = buf.read_u8(None)?;
 
     let count: usize = match ltype {
         0x80..=0x8f => (ltype & 0x0f) as usize,
@@ -124,15 +124,15 @@ fn unpack_value(buf: &mut Buffer) -> Result<Value> {
         0xc3 => Ok(Value::from(true)),
         0xc4 => {
             let count = buf.read_u8(None)?;
-            return Ok(Value::from(unpack_blob(buf, count as usize)?));
+            Ok(unpack_blob(buf, count as usize)?)
         }
         0xc5 => {
             let count = buf.read_u16(None)?;
-            return Ok(Value::from(unpack_blob(buf, count as usize)?));
+            Ok(unpack_blob(buf, count as usize)?)
         }
         0xc6 => {
             let count = buf.read_u32(None)?;
-            return Ok(Value::from(unpack_blob(buf, count as usize)?));
+            Ok(unpack_blob(buf, count as usize)?)
         }
         0xc7 => {
             warn!("Skipping over type extension with 8 bit header and bytes");
@@ -194,15 +194,15 @@ fn unpack_value(buf: &mut Buffer) -> Result<Value> {
         }
         0xd9 => {
             let count = buf.read_u8(None)?;
-            Ok(Value::from(unpack_blob(buf, count as usize)?))
+            Ok(unpack_blob(buf, count as usize)?)
         }
         0xda => {
             let count = buf.read_u16(None)?;
-            Ok(Value::from(unpack_blob(buf, count as usize)?))
+            Ok(unpack_blob(buf, count as usize)?)
         }
         0xdb => {
             let count = buf.read_u32(None)?;
-            Ok(Value::from(unpack_blob(buf, count as usize)?))
+            Ok(unpack_blob(buf, count as usize)?)
         }
         0xdc => {
             let count = buf.read_u16(None)?;

@@ -15,14 +15,14 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use errors::*;
-use Key;
-use ResultCode;
 use cluster::{Cluster, Node};
 use commands::buffer;
 use commands::{Command, SingleCommand};
+use errors::*;
 use net::Connection;
 use policy::WritePolicy;
+use Key;
+use ResultCode;
 
 pub struct DeleteCommand<'a> {
     single_command: SingleCommand<'a>,
@@ -34,7 +34,7 @@ impl<'a> DeleteCommand<'a> {
     pub fn new(policy: &'a WritePolicy, cluster: Arc<Cluster>, key: &'a Key) -> Self {
         DeleteCommand {
             single_command: SingleCommand::new(cluster, key),
-            policy: policy,
+            policy,
             existed: false,
         }
     }
@@ -73,7 +73,7 @@ impl<'a> Command for DeleteCommand<'a> {
 
         // A number of these are commented out because we just don't care enough to read
         // that section of the header. If we do care, uncomment and check!
-        let result_code = ResultCode::from(conn.buffer.read_u8(Some(13))? & 0xFF);
+        let result_code = ResultCode::from(conn.buffer.read_u8(Some(13))?);
 
         if result_code != ResultCode::Ok && result_code != ResultCode::KeyNotFoundError {
             bail!(ErrorKind::ServerError(result_code));

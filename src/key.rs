@@ -115,10 +115,13 @@ mod tests {
         ($x:expr) => (hex::encode(as_key!("namespace", "set", $x).digest))
     }
     macro_rules! str_repeat {
-        ($c:expr, $n:expr) => (str::from_utf8(&vec![$c as u8; $n]).unwrap())
+        ($c:expr, $n:expr) => {
+            str::from_utf8(&[$c as u8; $n]).unwrap()
+        };
     }
 
     #[test]
+    #[allow(clippy::cognitive_complexity)]
     fn int_keys() {
         assert_eq!(digest!(0), "93d943aae37b017ad7e011b0c1d2e2143c2fb37d");
         assert_eq!(digest!(-1), "22116d253745e29fc63fdf760b6e26f7e197e01d");
@@ -211,7 +214,7 @@ mod tests {
             "b42e64afbfccb05912a609179228d9249ea1c1a0"
         );
         assert_eq!(
-            digest!(str_repeat!('+', 100000)),
+            digest!(str_repeat!('+', 100_000)),
             "0a3e888c20bb8958537ddd4ba835e4070bd51740"
         );
 
@@ -233,27 +236,27 @@ mod tests {
             "327e2877b8815c7aeede0d5a8620d4ef8df4a4b4"
         );
         assert_eq!(
-            digest!(vec!['s' as u8; 1]),
+            digest!(vec![b's'; 1]),
             "ca2d96dc9a184d15a7fa2927565e844e9254e001"
         );
         assert_eq!(
-            digest!(vec!['a' as u8; 10]),
+            digest!(vec![b'a'; 10]),
             "d10982327b2b04c7360579f252e164a75f83cd99"
         );
         assert_eq!(
-            digest!(vec!['m' as u8; 100]),
+            digest!(vec![b'm'; 100]),
             "475786aa4ee664532a7d1ea69cb02e4695fcdeed"
         );
         assert_eq!(
-            digest!(vec!['t' as u8; 1000]),
+            digest!(vec![b't'; 1000]),
             "5a32b507518a49bf47fdaa3deca53803f5b2e8c3"
         );
         assert_eq!(
-            digest!(vec!['-' as u8; 10000]),
+            digest!(vec![b'-'; 10000]),
             "ed65c63f7a1f8c6697eb3894b6409a95461fd982"
         );
         assert_eq!(
-            digest!(vec!['+' as u8; 100000]),
+            digest!(vec![b'+'; 100_000]),
             "fe19770c371774ba1a1532438d4851b8a773a9e6"
         );
     }
@@ -261,7 +264,7 @@ mod tests {
     #[test]
     #[should_panic(expected = "Data type is not supported as Key value.")]
     fn unsupported_float_key() {
-        as_key!("namespace", "set", 3.1415);
+        as_key!("namespace", "set", 4.1415);
     }
 
     #[test]

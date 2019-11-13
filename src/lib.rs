@@ -14,10 +14,14 @@
 // the License.
 
 #![warn(missing_docs)]
-#![doc(test(attr(allow(unused_variables), allow(unused_assignments), allow(unused_mut),
-                 allow(unused_attributes), allow(dead_code), deny(warnings))))]
-// TODO: Remove and fix all warnings
-#![allow(clippy::all)]
+#![doc(test(attr(
+    allow(unused_variables),
+    allow(unused_assignments),
+    allow(unused_mut),
+    allow(unused_attributes),
+    allow(dead_code),
+    deny(warnings)
+)))]
 
 //! A pure-rust client for the Aerospike NoSQL database.
 //!
@@ -134,9 +138,11 @@ pub use errors::{Error, ErrorKind, Result};
 pub use key::Key;
 pub use net::Host;
 pub use operations::{MapPolicy, MapReturnType, MapWriteMode};
-pub use policy::{BatchPolicy, ClientPolicy, CommitLevel, Concurrency, ConsistencyLevel,
-                 Expiration, GenerationPolicy, Policy, Priority, QueryPolicy, ReadPolicy,
-                 RecordExistsAction, ScanPolicy, WritePolicy};
+pub use policy::{
+    BatchPolicy, ClientPolicy, CommitLevel, Concurrency, ConsistencyLevel, Expiration,
+    GenerationPolicy, Policy, Priority, QueryPolicy, ReadPolicy, RecordExistsAction, ScanPolicy,
+    WritePolicy,
+};
 pub use query::{CollectionIndexType, IndexType, Recordset, Statement, UDFLang};
 pub use record::Record;
 pub use result_code::ResultCode;

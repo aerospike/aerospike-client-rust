@@ -17,17 +17,17 @@ use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
 
-use BatchRead;
-use Record;
-use ResultCode;
-use Value;
+use batch::batch_executor::SharedSlice;
 use cluster::Node;
 use commands::{self, buffer, Command, StreamCommand};
 use errors::*;
 use net::Connection;
 use policy::{BatchPolicy, Policy, PolicyLike};
 use value;
-use batch::batch_executor::SharedSlice;
+use BatchRead;
+use Record;
+use ResultCode;
+use Value;
 
 struct BatchRecord {
     batch_index: usize,
@@ -49,10 +49,10 @@ impl<'a, 'b> BatchReadCommand<'a, 'b> {
         offsets: Vec<usize>,
     ) -> Self {
         BatchReadCommand {
-            policy: policy,
-            node: node,
-            batch_reads: batch_reads,
-            offsets: offsets,
+            policy,
+            node,
+            batch_reads,
+            offsets,
         }
     }
 
@@ -144,7 +144,8 @@ impl<'a, 'b> BatchReadCommand<'a, 'b> {
             match self.parse_record(conn)? {
                 None => return Ok(false),
                 Some(batch_record) => {
-                    let batch_read = self.batch_reads
+                    let batch_read = self
+                        .batch_reads
                         .get_mut(batch_record.batch_index)
                         .expect("Invalid batch index");
                     let record = batch_record.record;
@@ -208,7 +209,7 @@ impl<'a, 'b> BatchReadCommand<'a, 'b> {
         };
         Ok(Some(BatchRecord {
             batch_index: batch_index as usize,
-            record: record,
+            record,
         }))
     }
 }

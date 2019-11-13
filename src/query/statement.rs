@@ -14,9 +14,9 @@
 // the License.
 
 use errors::*;
+use query::Filter;
 use Bins;
 use Value;
-use query::Filter;
 
 #[derive(Clone)]
 pub struct Aggregation {
@@ -66,7 +66,7 @@ impl Statement {
         Statement {
             namespace: namespace.to_owned(),
             set_name: set_name.to_owned(),
-            bins: bins,
+            bins,
             index_name: None,
             aggregation: None,
             filters: None,

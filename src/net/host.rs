@@ -36,7 +36,7 @@ impl Host {
     pub fn new(name: &str, port: u16) -> Self {
         Host {
             name: name.to_string(),
-            port: port,
+            port,
         }
     }
 

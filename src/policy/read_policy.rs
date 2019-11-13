@@ -13,10 +13,10 @@
 // License for the specific language governing permissions and limitations under
 // the License.
 
-use std::time::Duration;
-use Priority;
-use ConsistencyLevel;
 use policy::BasePolicy;
+use std::time::Duration;
+use ConsistencyLevel;
+use Priority;
 
 /// `ReadPolicy` excapsulates parameters for transaction policy attributes
 /// used in all database operation calls.
@@ -28,7 +28,7 @@ impl Default for ReadPolicy {
             priority: Priority::Default,
             timeout: Some(Duration::new(30, 0)),
             max_retries: Some(2),
-            sleep_between_retries: Some(Duration::new(0, 500000000)),
+            sleep_between_retries: Some(Duration::new(0, 500_000_000)),
             consistency_level: ConsistencyLevel::ConsistencyOne,
         }
     }

@@ -12,22 +12,22 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::str;
-use std::collections::HashMap;
 use std::collections::hash_map::Entry::{Occupied, Vacant};
-use std::vec::Vec;
+use std::collections::HashMap;
+use std::str;
 use std::sync::Arc;
+use std::vec::Vec;
 
-use parking_lot::RwLock;
 use base64;
+use parking_lot::RwLock;
 
-use errors::*;
-use cluster::Node;
 use cluster::node;
+use cluster::Node;
 use commands::Message;
+use errors::*;
 use net::Connection;
 
-const REPLICAS_NAME: &'static str = "replicas-master";
+const REPLICAS_NAME: &str = "replicas-master";
 
 // Validates a Database server node
 #[derive(Debug, Clone)]

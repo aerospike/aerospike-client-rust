@@ -16,8 +16,8 @@
 use std::cmp::Ordering;
 use std::str::FromStr;
 
-use rand::Rng;
 use rand::distributions::{Distribution, Standard};
+use rand::Rng;
 
 #[derive(Clone, Copy, Eq, PartialEq, PartialOrd, Debug)]
 pub struct Percent(u8);

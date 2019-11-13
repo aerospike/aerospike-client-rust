@@ -15,8 +15,8 @@
 
 //! String/number bin operations. Create operations used by the client's `operate()` method.
 
-use Bin;
 use operations::*;
+use Bin;
 
 /// Create read all record bins database operation.
 pub fn get<'a>() -> Operation<'a> {

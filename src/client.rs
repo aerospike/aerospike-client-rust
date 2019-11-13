@@ -24,7 +24,16 @@ use std::vec::Vec;
 use base64;
 use scoped_pool::Pool;
 
+use batch::BatchExecutor;
+use cluster::{Cluster, Node};
+use commands::{
+    DeleteCommand, ExecuteUDFCommand, ExistsCommand, OperateCommand, QueryCommand, ReadCommand,
+    ScanCommand, TouchCommand, WriteCommand,
+};
 use errors::*;
+use net::ToHosts;
+use operations::{Operation, OperationType};
+use policy::{BatchPolicy, ClientPolicy, QueryPolicy, ReadPolicy, ScanPolicy, WritePolicy};
 use BatchRead;
 use Bin;
 use Bins;
@@ -37,13 +46,6 @@ use ResultCode;
 use Statement;
 use UDFLang;
 use Value;
-use batch::BatchExecutor;
-use cluster::{Cluster, Node};
-use commands::{DeleteCommand, ExecuteUDFCommand, ExistsCommand, OperateCommand, QueryCommand,
-               ReadCommand, ScanCommand, TouchCommand, WriteCommand};
-use net::ToHosts;
-use operations::{Operation, OperationType};
-use policy::{BatchPolicy, ClientPolicy, QueryPolicy, ReadPolicy, ScanPolicy, WritePolicy};
 
 /// Instantiate a Client instance to access an Aerospike database cluster and perform database
 /// operations.
@@ -106,8 +108,8 @@ impl Client {
         let thread_pool = Pool::new(policy.thread_pool_size);
 
         Ok(Client {
-            cluster: cluster,
-            thread_pool: thread_pool,
+            cluster,
+            thread_pool,
         })
     }
 
@@ -854,6 +856,7 @@ impl Client {
 
     /// Create a complex secondary index on a bin containing scalar, list or map values. This
     /// asynchronous server call returns before the command is complete.
+    #[allow(clippy::too_many_arguments)]
     pub fn create_complex_index(
         &self,
         policy: &WritePolicy,
@@ -901,14 +904,12 @@ impl Client {
         let node = self.cluster.get_random_node()?;
         let response = node.info(policy.base_policy.timeout, &[&cmd])?;
 
-        for v in response.values() {
+        if let Some(v) = response.values().next() {
             if v.to_uppercase() == "OK" {
                 return Ok(());
             } else if v.starts_with("FAIL:") {
-                let result = v.split(':').skip(1).next().unwrap().parse::<u8>()?;
+                let result = v.split(':').nth(1).unwrap().parse::<u8>()?;
                 bail!(ErrorKind::ServerError(ResultCode::from(result)));
-            } else {
-                break;
             }
         }
 

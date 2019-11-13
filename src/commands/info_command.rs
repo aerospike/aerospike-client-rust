@@ -13,10 +13,10 @@
 // License for the specific language governing permissions and limitations under
 // the License.
 
-use std::io::{Cursor, Write};
-use std::collections::HashMap;
-use std::str;
 use byteorder::{NetworkEndian, ReadBytesExt, WriteBytesExt};
+use std::collections::HashMap;
+use std::io::{Cursor, Write};
+use std::str;
 
 use errors::*;
 use net::Connection;
@@ -45,7 +45,7 @@ impl Message {
         buf.write_all(&len[2..8])?;
         buf.write_all(data)?;
 
-        Ok(Message { buf: buf })
+        Ok(Message { buf })
     }
 
     fn data_len(&self) -> u64 {

@@ -12,23 +12,23 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::sync::Arc;
 use std::collections::HashMap;
-use std::time::Duration;
+use std::sync::Arc;
 use std::thread;
+use std::time::Duration;
 
+use cluster::Node;
+use commands::buffer;
+use commands::field_type::FieldType;
+use commands::Command;
 use errors::*;
+use net::Connection;
+use query::Recordset;
+use value::bytes_to_particle;
 use Key;
 use Record;
 use ResultCode;
 use Value;
-use cluster::Node;
-use commands::Command;
-use commands::buffer;
-use commands::field_type::FieldType;
-use net::Connection;
-use query::Recordset;
-use value::bytes_to_particle;
 
 pub struct StreamCommand {
     node: Arc<Node>,
@@ -44,16 +44,13 @@ impl Drop for StreamCommand {
 
 impl StreamCommand {
     pub fn new(node: Arc<Node>, recordset: Arc<Recordset>) -> Self {
-        StreamCommand {
-            node: node,
-            recordset: recordset,
-        }
+        StreamCommand { node, recordset }
     }
 
     fn parse_record(conn: &mut Connection, size: usize) -> Result<Option<Record>> {
         // A number of these are commented out because we just don't care enough to read
         // that section of the header. If we do care, uncomment and check!
-        let result_code = ResultCode::from(conn.buffer.read_u8(Some(5))? & 0xFF);
+        let result_code = ResultCode::from(conn.buffer.read_u8(Some(5))?);
         if result_code != ResultCode::Ok {
             if result_code == ResultCode::KeyNotFoundError {
                 if conn.bytes_read() < size {
@@ -171,10 +168,10 @@ impl StreamCommand {
         }
 
         Ok(Key {
-            namespace: namespace,
-            set_name: set_name,
+            namespace,
+            set_name,
             user_key: orig_key,
-            digest: digest,
+            digest,
         })
     }
 }

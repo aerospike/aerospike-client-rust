@@ -15,8 +15,8 @@
 
 use std::collections::HashMap;
 
-use aerospike::{Bins, ReadPolicy, Value, WritePolicy};
 use aerospike::operations;
+use aerospike::{Bins, ReadPolicy, Value, WritePolicy};
 
 use env_logger;
 
@@ -46,7 +46,7 @@ fn connect() {
             "bin Geo",
             as_geo!(format!(
                 r#"{{ "type": "Point", "coordinates": [{}, {}] }}"#,
-                17.119381, 19.45612
+                17.119_381, 19.45612
             ))
         ),
         as_bin!("bin-name-len-15", "max. bin name length is 15 chars"),

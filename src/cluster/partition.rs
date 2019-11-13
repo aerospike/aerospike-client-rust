@@ -12,13 +12,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::io::Cursor;
 use std::fmt;
+use std::io::Cursor;
 
 use byteorder::{LittleEndian, ReadBytesExt};
 
-use Key;
 use cluster::node;
+use Key;
 
 // Validates a Database server node
 #[derive(Debug, Clone)]
@@ -30,8 +30,8 @@ pub struct Partition<'a> {
 impl<'a> Partition<'a> {
     pub fn new(namespace: &'a str, partition_id: usize) -> Self {
         Partition {
-            namespace: namespace,
-            partition_id: partition_id,
+            namespace,
+            partition_id,
         }
     }
 

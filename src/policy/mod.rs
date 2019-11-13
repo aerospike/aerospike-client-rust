@@ -15,20 +15,20 @@
 
 //! Policy types encapsulate optional parameters for various client operations.
 
-mod expiration;
-mod priority;
-mod consistency_level;
-mod generation_policy;
-mod record_exists_action;
-mod commit_level;
-mod concurrency;
+mod admin_policy;
 mod batch_policy;
 mod client_policy;
-mod read_policy;
-mod write_policy;
-mod scan_policy;
+mod commit_level;
+mod concurrency;
+mod consistency_level;
+mod expiration;
+mod generation_policy;
+mod priority;
 mod query_policy;
-mod admin_policy;
+mod read_policy;
+mod record_exists_action;
+mod scan_policy;
+mod write_policy;
 
 pub use self::admin_policy::AdminPolicy;
 pub use self::batch_policy::BatchPolicy;
@@ -45,8 +45,8 @@ pub use self::record_exists_action::RecordExistsAction;
 pub use self::scan_policy::ScanPolicy;
 pub use self::write_policy::WritePolicy;
 
-use std::time::{Duration, Instant};
 use std::option::Option;
+use std::time::{Duration, Instant};
 
 /// Trait implemented by most policy types; policies that implement this trait typically encompass
 /// an instance of `BasePolicy`.

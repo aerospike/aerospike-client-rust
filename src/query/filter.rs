@@ -13,11 +13,11 @@
 // License for the specific language governing permissions and limitations under
 // the License.
 
+use commands::buffer::Buffer;
+use commands::ParticleType;
 use errors::*;
 use CollectionIndexType;
 use Value;
-use commands::ParticleType;
-use commands::buffer::Buffer;
 
 /// Query filter definition. Currently, only one filter is allowed in a Statement, and must be on a
 /// bin which has a secondary index defined.
@@ -58,10 +58,10 @@ impl Filter {
     ) -> Self {
         Filter {
             bin_name: bin_name.to_owned(),
-            collection_index_type: collection_index_type,
-            value_particle_type: value_particle_type,
-            begin: begin,
-            end: end,
+            collection_index_type,
+            value_particle_type,
+            begin,
+            end,
         }
     }
 
@@ -74,10 +74,7 @@ impl Filter {
     pub fn estimate_size(&self) -> Result<usize> {
         // bin name size(1) + particle type size(1)
         //     + begin particle size(4) + end particle size(4) = 10
-        Ok(
-            self.bin_name.len() + self.begin.estimate_size()? + self.end.estimate_size()?
-                + 10,
-        )
+        Ok(self.bin_name.len() + self.begin.estimate_size()? + self.end.estimate_size()? + 10)
     }
 
     #[doc(hidden)]
@@ -101,8 +98,13 @@ impl Filter {
 macro_rules! as_eq {
     ($bin_name:expr, $val:expr) => {{
         let val = as_val!($val);
-        $crate::query::Filter::new($bin_name, $crate::CollectionIndexType::Default,
-                                   val.particle_type(), val.clone(), val.clone())
+        $crate::query::Filter::new(
+            $bin_name,
+            $crate::CollectionIndexType::Default,
+            val.particle_type(),
+            val.clone(),
+            val.clone(),
+        )
     }};
 }
 
@@ -112,8 +114,13 @@ macro_rules! as_range {
     ($bin_name:expr, $begin:expr, $end:expr) => {{
         let begin = as_val!($begin);
         let end = as_val!($end);
-        $crate::query::Filter::new($bin_name, $crate::CollectionIndexType::Default,
-                                   begin.particle_type(), begin, end)
+        $crate::query::Filter::new(
+            $bin_name,
+            $crate::CollectionIndexType::Default,
+            begin.particle_type(),
+            begin,
+            end,
+        )
     }};
 }
 
@@ -122,7 +129,13 @@ macro_rules! as_range {
 macro_rules! as_contains {
     ($bin_name:expr, $val:expr, $cit:expr) => {{
         let val = as_val!($val);
-        $crate::query::Filter::new($bin_name, $cit, val.particle_type(), val.clone(), val.clone())
+        $crate::query::Filter::new(
+            $bin_name,
+            $cit,
+            val.particle_type(),
+            val.clone(),
+            val.clone(),
+        )
     }};
 }
 
@@ -143,13 +156,23 @@ macro_rules! as_within_region {
     ($bin_name:expr, $region:expr) => {{
         let cit = $crate::CollectionIndexType::Default;
         let region = as_geo!(String::from($region));
-        $crate::query::Filter::new($bin_name, cit, region.particle_type(),
-                                   region.clone(), region.clone())
+        $crate::query::Filter::new(
+            $bin_name,
+            cit,
+            region.particle_type(),
+            region.clone(),
+            region.clone(),
+        )
     }};
     ($bin_name:expr, $region:expr, $cit:expr) => {{
         let region = as_geo!(String::from($region));
-        $crate::query::Filter::new($bin_name, $cit, region.particle_type(),
-                                   region.clone(), region.clone())
+        $crate::query::Filter::new(
+            $bin_name,
+            $cit,
+            region.particle_type(),
+            region.clone(),
+            region.clone(),
+        )
     }};
 }
 
@@ -164,10 +187,16 @@ macro_rules! as_within_radius {
         let radius = as_val!($radius as f64);
         let geo_json = format!(
             "{{ \"type\": \"Aeroircle\", \"coordinates\": [[{:.8}, {:.8}], {}] }}",
-            lng, lat, radius);
+            lng, lat, radius
+        );
         let geo_json = as_geo!(geo_json);
-        $crate::query::Filter::new($bin_name, cit, geo_json.particle_type(),
-                                   geo_json.clone(), geo_json.clone())
+        $crate::query::Filter::new(
+            $bin_name,
+            cit,
+            geo_json.particle_type(),
+            geo_json.clone(),
+            geo_json.clone(),
+        )
     }};
     ($bin_name:expr, $lat:expr, $lng:expr, $radius:expr, $cit:expr) => {{
         let lat = as_val!($lat as f64);
@@ -175,10 +204,16 @@ macro_rules! as_within_radius {
         let radius = as_val!($radius as f64);
         let geo_json = format!(
             "{{ \"type\": \"Aeroircle\", \"coordinates\": [[{:.8}, {:.8}], {}] }}",
-            lng, lat, radius);
+            lng, lat, radius
+        );
         let geo_json = as_geo!(geo_json);
-        $crate::query::Filter::new($bin_name, $cit, geo_json.particle_type(),
-                                   geo_json.clone(), geo_json.clone())
+        $crate::query::Filter::new(
+            $bin_name,
+            $cit,
+            geo_json.particle_type(),
+            geo_json.clone(),
+            geo_json.clone(),
+        )
     }};
 }
 
@@ -189,13 +224,23 @@ macro_rules! as_regions_containing_point {
     ($bin_name:expr, $point:expr) => {{
         let cit = $crate::CollectionIndexType::Default;
         let point = as_geo!(String::from($point));
-        $crate::query::Filter::new($bin_name, cit, point.particle_type(),
-                                   point.clone(), point.clone())
+        $crate::query::Filter::new(
+            $bin_name,
+            cit,
+            point.particle_type(),
+            point.clone(),
+            point.clone(),
+        )
     }};
     ($bin_name:expr, $point:expr, $cit:expr) => {{
         let point = as_geo!(String::from($point));
-        $crate::query::Filter::new($bin_name, $cit, point.particle_type(),
-                                   point.clone(), point.clone())
+        $crate::query::Filter::new(
+            $bin_name,
+            $cit,
+            point.particle_type(),
+            point.clone(),
+            point.clone(),
+        )
     }};
 }
 

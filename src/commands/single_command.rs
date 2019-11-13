@@ -16,13 +16,13 @@ use std::sync::Arc;
 use std::thread;
 use std::time::Instant;
 
-use errors::*;
-use Key;
 use cluster::partition::Partition;
 use cluster::{Cluster, Node};
 use commands::{self, Command};
+use errors::*;
 use net::Connection;
 use policy::Policy;
+use Key;
 
 pub struct SingleCommand<'a> {
     cluster: Arc<Cluster>,
@@ -35,8 +35,8 @@ impl<'a> SingleCommand<'a> {
         let partition = Partition::new_by_key(key);
         SingleCommand {
             cluster: cluster.clone(),
-            key: key,
-            partition: partition,
+            key,
+            partition,
         }
     }
 
@@ -49,7 +49,7 @@ impl<'a> SingleCommand<'a> {
         // Empty the socket to be safe.
         let sz = conn.buffer.read_i64(None)?;
         let header_length = conn.buffer.read_u8(None)? as i64;
-        let receive_size = ((sz & 0xFFFFFFFFFFFF) - header_length) as usize;
+        let receive_size = ((sz & 0xFFFF_FFFF_FFFF) - header_length) as usize;
 
         // Read remaining message bytes.
         if receive_size > 0 {

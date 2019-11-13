@@ -13,12 +13,12 @@
 // License for the specific language governing permissions and limitations under
 // the License.
 
-use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
 use std::thread;
 
-use env_logger;
 use common;
+use env_logger;
 
 use aerospike::{Bins, ScanPolicy, WritePolicy};
 

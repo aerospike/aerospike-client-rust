@@ -17,18 +17,18 @@
 
 #[doc(hidden)]
 pub mod cdt;
-pub mod scalar;
 pub mod lists;
 pub mod maps;
+pub mod scalar;
 
+use self::cdt::CdtOperation;
 pub use self::maps::{MapOrder, MapPolicy, MapReturnType, MapWriteMode};
 pub use self::scalar::*;
-use self::cdt::CdtOperation;
 
+use commands::buffer::Buffer;
+use commands::ParticleType;
 use errors::*;
 use Value;
-use commands::ParticleType;
-use commands::buffer::Buffer;
 
 #[derive(Debug, Clone, Copy)]
 #[doc(hidden)]

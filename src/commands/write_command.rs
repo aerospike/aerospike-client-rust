@@ -15,16 +15,16 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use errors::*;
-use Bin;
-use Key;
-use ResultCode;
 use cluster::{Cluster, Node};
 use commands::buffer;
 use commands::{Command, SingleCommand};
+use errors::*;
 use net::Connection;
 use operations::OperationType;
 use policy::WritePolicy;
+use Bin;
+use Key;
+use ResultCode;
 
 pub struct WriteCommand<'a, A: 'a> {
     single_command: SingleCommand<'a>,
@@ -43,9 +43,9 @@ impl<'a, 'b, A: AsRef<Bin<'b>>> WriteCommand<'a, A> {
     ) -> Self {
         WriteCommand {
             single_command: SingleCommand::new(cluster, key),
-            bins: bins,
-            policy: policy,
-            operation: operation,
+            bins,
+            policy,
+            operation,
         }
     }
 
@@ -86,7 +86,7 @@ impl<'a, 'b, A: AsRef<Bin<'b>>> Command for WriteCommand<'a, A> {
 
         conn.buffer.reset_offset()?;
 
-        let result_code = ResultCode::from(conn.buffer.read_u8(Some(13))? & 0xFF);
+        let result_code = ResultCode::from(conn.buffer.read_u8(Some(13))?);
         if result_code != ResultCode::Ok {
             bail!(ErrorKind::ServerError(result_code));
         }

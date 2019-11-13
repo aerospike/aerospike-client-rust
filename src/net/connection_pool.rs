@@ -53,9 +53,9 @@ impl Queue {
         };
         let shared = SharedQueue {
             internals: Mutex::new(internals),
-            capacity: capacity,
-            host: host,
-            policy: policy,
+            capacity,
+            host,
+            policy,
         };
         Queue(Arc::new(shared))
     }
@@ -143,8 +143,8 @@ impl ConnectionPool {
         let num_queues = policy.conn_pools_per_node;
         let queues = ConnectionPool::initialize_queues(num_conns, num_queues, host, policy);
         ConnectionPool {
-            num_queues: num_queues,
-            queues: queues,
+            num_queues,
+            queues,
             queue_counter: AtomicUsize::default(),
         }
     }
