@@ -10,7 +10,7 @@ matrix:
     - rust: nightly
 sudo: false
 os: linux
-dist: trusty
+dist: xenial
 env:
   global:
     - AEROSPIKE_HOSTS=127.0.0.1:3000,127.0.0.1:3100
