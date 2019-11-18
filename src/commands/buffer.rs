@@ -415,6 +415,10 @@ impl Buffer {
                     op: OperationType::Read,
                     ..
                 } => read_attr |= INFO1_READ,
+                Operation {
+                    op: OperationType::CdtRead,
+                    ..
+                } => read_attr |= INFO1_READ,
                 _ => write_attr |= INFO2_WRITE,
             }
 
