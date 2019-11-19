@@ -18,7 +18,7 @@ extern crate rand;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::thread;
 
-use crossbeam::queue::MsQueue;
+use crossbeam_queue::SegQueue;
 use rand::Rng;
 
 use errors::*;
@@ -32,7 +32,7 @@ pub struct Recordset {
     instances: AtomicUsize,
     record_queue_count: AtomicUsize,
     record_queue_size: AtomicUsize,
-    record_queue: MsQueue<Result<Record>>,
+    record_queue: SegQueue<Result<Record>>,
     active: AtomicBool,
     task_id: AtomicUsize,
 }
@@ -47,7 +47,7 @@ impl Recordset {
             instances: AtomicUsize::new(nodes),
             record_queue_size: AtomicUsize::new(rec_queue_size),
             record_queue_count: AtomicUsize::new(0),
-            record_queue: MsQueue::new(),
+            record_queue: SegQueue::new(),
             active: AtomicBool::new(true),
             task_id: AtomicUsize::new(task_id),
         }
@@ -94,7 +94,7 @@ impl<'a> Iterator for &'a Recordset {
     fn next(&mut self) -> Option<Result<Record>> {
         loop {
             if self.is_active() || !self.record_queue.is_empty() {
-                let result = self.record_queue.try_pop();
+                let result = self.record_queue.pop().ok();
                 if result.is_some() {
                     self.record_queue_count.fetch_sub(1, Ordering::Relaxed);
                     return result;

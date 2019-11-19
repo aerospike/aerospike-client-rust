@@ -19,8 +19,8 @@ use std::result::Result as StdResult;
 use errors::*;
 use Value;
 
-use crypto::ripemd160::Ripemd160;
-use crypto::digest::Digest;
+use ripemd160::Ripemd160;
+use ripemd160::digest::Digest;
 
 /// Unique record identifier. Records can be identified using a specified namespace, an optional
 /// set name and a user defined key which must be uique within a set. Records can also be
@@ -71,7 +71,7 @@ impl Key {
         } else {
             unreachable!()
         }
-        hash.result(&mut self.digest);
+        self.digest = hash.result().into();
 
         Ok(())
     }
@@ -110,10 +110,9 @@ macro_rules! as_key {
 #[cfg(test)]
 mod tests {
     use std::str;
-    use hex::ToHex;
 
     macro_rules! digest {
-        ($x:expr) => (as_key!("namespace", "set", $x).digest.to_hex())
+        ($x:expr) => (hex::encode(as_key!("namespace", "set", $x).digest))
     }
     macro_rules! str_repeat {
         ($c:expr, $n:expr) => (str::from_utf8(&vec![$c as u8; $n]).unwrap())

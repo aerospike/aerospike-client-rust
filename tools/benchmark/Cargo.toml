@@ -8,12 +8,12 @@ repository = "https://github.com/aerospike/aerospike-client-rust/"
 license = "Apache-2.0"
 
 [dependencies]
-clap = "2.20"
-log = "^0.4"
-env_logger = "^0.5"
-lazy_static = "^1.0"
-num_cpus = "1.2"
-rand = "^0.5"
+clap = "2.33"
+log = "0.4"
+env_logger = "0.7"
+lazy_static = "1.4"
+num_cpus = "1.11"
+rand = "0.7"
 aerospike = { path = "../.." }
 
 [[bin]]

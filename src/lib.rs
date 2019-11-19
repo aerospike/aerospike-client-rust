@@ -112,8 +112,8 @@
 
 extern crate base64;
 extern crate byteorder;
-extern crate crossbeam;
-extern crate crypto;
+extern crate crossbeam_queue;
+extern crate ripemd160;
 #[macro_use]
 extern crate error_chain;
 #[macro_use]

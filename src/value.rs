@@ -22,8 +22,8 @@ use std::result::Result as StdResult;
 
 use byteorder::{ByteOrder, NetworkEndian};
 
-use crypto::ripemd160::Ripemd160;
-use crypto::digest::Digest;
+use ripemd160::Ripemd160;
+use ripemd160::digest::Digest;
 
 use std::vec::Vec;
 
