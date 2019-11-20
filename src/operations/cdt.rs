@@ -88,7 +88,7 @@ pub struct CdtOperation<'a> {
 }
 
 impl<'a> CdtOperation<'a> {
-    pub fn particle_type(&self) -> ParticleType {
+    pub const fn particle_type(&self) -> ParticleType {
         ParticleType::BLOB
     }
 

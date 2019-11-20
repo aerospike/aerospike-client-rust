@@ -122,15 +122,15 @@ fn unpack_value(buf: &mut Buffer) -> Result<Value> {
         0xc0 => Ok(Value::Nil),
         0xc2 => Ok(Value::from(false)),
         0xc3 => Ok(Value::from(true)),
-        0xc4 => {
+        0xc4 | 0xd9 => {
             let count = buf.read_u8(None)?;
             Ok(unpack_blob(buf, count as usize)?)
         }
-        0xc5 => {
+        0xc5 | 0xda => {
             let count = buf.read_u16(None)?;
             Ok(unpack_blob(buf, count as usize)?)
         }
-        0xc6 => {
+        0xc6 | 0xdb => {
             let count = buf.read_u32(None)?;
             Ok(unpack_blob(buf, count as usize)?)
         }
@@ -192,18 +192,6 @@ fn unpack_value(buf: &mut Buffer) -> Result<Value> {
             buf.skip_bytes(count);
             Ok(Value::Nil)
         }
-        0xd9 => {
-            let count = buf.read_u8(None)?;
-            Ok(unpack_blob(buf, count as usize)?)
-        }
-        0xda => {
-            let count = buf.read_u16(None)?;
-            Ok(unpack_blob(buf, count as usize)?)
-        }
-        0xdb => {
-            let count = buf.read_u32(None)?;
-            Ok(unpack_blob(buf, count as usize)?)
-        }
         0xdc => {
             let count = buf.read_u16(None)?;
             unpack_list(buf, count as usize)
@@ -221,7 +209,7 @@ fn unpack_value(buf: &mut Buffer) -> Result<Value> {
             unpack_map(buf, count as usize)
         }
         0xe0..=0xff => {
-            let value = obj_type as i16 - 0xe0 - 32;
+            let value = i16::from(obj_type) - 0xe0 - 32;
             Ok(Value::from(value))
         }
         _ => Err(

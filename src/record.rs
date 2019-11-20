@@ -45,7 +45,7 @@ pub struct Record {
 impl Record {
     /// Construct a new Record. For internal use only.
     #[doc(hidden)]
-    pub fn new(
+    pub const fn new(
         key: Option<Key>,
         bins: HashMap<String, Value>,
         generation: u32,
@@ -65,7 +65,7 @@ impl Record {
         match self.expiration {
             0 => None,
             secs_since_epoch => {
-                let expiration = *CITRUSLEAF_EPOCH + Duration::new(secs_since_epoch as u64, 0);
+                let expiration = *CITRUSLEAF_EPOCH + Duration::new(u64::from(secs_since_epoch), 0);
                 match expiration.duration_since(SystemTime::now()) {
                     Ok(d) => Some(d),
                     // Record was not expired at server but it looks expired at client

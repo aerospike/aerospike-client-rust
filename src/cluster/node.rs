@@ -89,7 +89,7 @@ impl Node {
         &self.name
     }
 
-    pub fn client_policy(&self) -> &ClientPolicy {
+    pub const fn client_policy(&self) -> &ClientPolicy {
         &self.client_policy
     }
 

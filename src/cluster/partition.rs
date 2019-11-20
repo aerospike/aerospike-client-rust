@@ -28,7 +28,7 @@ pub struct Partition<'a> {
 }
 
 impl<'a> Partition<'a> {
-    pub fn new(namespace: &'a str, partition_id: usize) -> Self {
+    pub const fn new(namespace: &'a str, partition_id: usize) -> Self {
         Partition {
             namespace,
             partition_id,

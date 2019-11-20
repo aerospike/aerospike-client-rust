@@ -19,7 +19,7 @@ use operations::*;
 use Bin;
 
 /// Create read all record bins database operation.
-pub fn get<'a>() -> Operation<'a> {
+pub const fn get<'a>() -> Operation<'a> {
     Operation {
         op: OperationType::Read,
         bin: OperationBin::All,
@@ -28,7 +28,7 @@ pub fn get<'a>() -> Operation<'a> {
 }
 
 /// Create read record header database operation.
-pub fn get_header<'a>() -> Operation<'a> {
+pub const fn get_header<'a>() -> Operation<'a> {
     Operation {
         op: OperationType::Read,
         bin: OperationBin::None,
@@ -82,7 +82,7 @@ pub fn add<'a>(bin: &'a Bin) -> Operation<'a> {
 }
 
 /// Create touch database operation.
-pub fn touch<'a>() -> Operation<'a> {
+pub const fn touch<'a>() -> Operation<'a> {
     Operation {
         op: OperationType::Touch,
         bin: OperationBin::None,

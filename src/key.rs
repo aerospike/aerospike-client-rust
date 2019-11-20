@@ -19,8 +19,8 @@ use std::result::Result as StdResult;
 use errors::*;
 use Value;
 
-use ripemd160::Ripemd160;
 use ripemd160::digest::Digest;
+use ripemd160::Ripemd160;
 
 /// Unique record identifier. Records can be identified using a specified namespace, an optional
 /// set name and a user defined key which must be uique within a set. Records can also be
@@ -112,7 +112,9 @@ mod tests {
     use std::str;
 
     macro_rules! digest {
-        ($x:expr) => (hex::encode(as_key!("namespace", "set", $x).digest))
+        ($x:expr) => {
+            hex::encode(as_key!("namespace", "set", $x).digest)
+        };
     }
     macro_rules! str_repeat {
         ($c:expr, $n:expr) => {

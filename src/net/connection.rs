@@ -131,7 +131,7 @@ impl Connection {
         self.bytes_read = 0;
     }
 
-    pub fn bytes_read(&self) -> usize {
+    pub const fn bytes_read(&self) -> usize {
         self.bytes_read
     }
 }

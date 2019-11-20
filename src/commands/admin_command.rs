@@ -55,7 +55,7 @@ const QUERY_END: usize = 50;
 pub struct AdminCommand {}
 
 impl AdminCommand {
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         AdminCommand {}
     }
 

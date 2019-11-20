@@ -64,25 +64,22 @@ impl Queue {
         let mut internals = self.0.internals.lock();
         let connection;
         loop {
-            match internals.connections.pop_front() {
-                Some(IdleConnection(mut conn)) => {
-                    if conn.is_idle() {
-                        internals.num_conns -= 1;
-                        conn.close();
-                        continue;
-                    }
-                    connection = conn;
-                    break;
+            if let Some(IdleConnection(mut conn)) = internals.connections.pop_front() {
+                if conn.is_idle() {
+                    internals.num_conns -= 1;
+                    conn.close();
+                    continue;
                 }
-                None => {
-                    if internals.num_conns >= self.0.capacity {
-                        bail!(ErrorKind::NoMoreConnections);
-                    }
-                    let conn = Connection::new(&self.0.host, &self.0.policy)?;
-                    internals.num_conns += 1;
-                    connection = conn;
-                    break;
+                connection = conn;
+                break;
+            } else {
+                if internals.num_conns >= self.0.capacity {
+                    bail!(ErrorKind::NoMoreConnections);
                 }
+                let conn = Connection::new(&self.0.host, &self.0.policy)?;
+                internals.num_conns += 1;
+                connection = conn;
+                break;
             }
         }
 

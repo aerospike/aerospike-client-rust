@@ -31,7 +31,7 @@ pub struct BatchRead<'a> {
 
 impl<'a> BatchRead<'a> {
     /// Create a new `BatchRead` instance for the given key and bin selector.
-    pub fn new(key: Key, bins: &'a Bins) -> Self {
+    pub const fn new(key: Key, bins: &'a Bins) -> Self {
         BatchRead {
             key,
             bins,

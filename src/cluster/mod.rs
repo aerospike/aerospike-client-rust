@@ -215,11 +215,11 @@ impl Cluster {
             .map_err(|err| format!("Error during initial cluster tend: {:?}", err).into())
     }
 
-    pub fn cluster_name(&self) -> &Option<String> {
+    pub const fn cluster_name(&self) -> &Option<String> {
         &self.client_policy.cluster_name
     }
 
-    pub fn client_policy(&self) -> &ClientPolicy {
+    pub const fn client_policy(&self) -> &ClientPolicy {
         &self.client_policy
     }
 

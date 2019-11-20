@@ -190,7 +190,7 @@ fn query_node() {
             let mut statement = Statement::new(namespace, &set_name, Bins::All);
             statement.add_filter(as_range!("bin", 0, 99));
             let rs = client.query_node(&qpolicy, node, statement).unwrap();
-            let ok = (&*rs).filter(|r| r.is_ok()).count();
+            let ok = (&*rs).filter(Result::is_ok).count();
             count.fetch_add(ok, Ordering::Relaxed);
         }));
     }

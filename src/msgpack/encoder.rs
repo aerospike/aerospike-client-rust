@@ -213,27 +213,31 @@ fn pack_geo_json(buf: &mut Option<&mut Buffer>, val: &str) -> Result<usize> {
 fn pack_integer(buf: &mut Option<&mut Buffer>, val: i64) -> Result<usize> {
     match val {
         val if val >= 0 && val < 2 ^ 7 => pack_half_byte(buf, val as u8),
-        val if val >= 2 ^ 7 && val < i8::MAX as i64 => pack_byte(buf, MSGPACK_MARKER_I8, val as u8),
-        val if val >= i8::MAX as i64 && val < i16::MAX as i64 => {
+        val if val >= 2 ^ 7 && val < i64::from(i8::max_value()) => {
+            pack_byte(buf, MSGPACK_MARKER_I8, val as u8)
+        }
+        val if val >= i64::from(i8::max_value()) && val < i64::from(i16::max_value()) => {
             pack_i16(buf, MSGPACK_MARKER_I16, val as i16)
         }
-        val if val >= i16::MAX as i64 && val < i32::MAX as i64 => {
+        val if val >= i64::from(i16::max_value()) && val < i64::from(i32::max_value()) => {
             pack_i32(buf, MSGPACK_MARKER_I32, val as i32)
         }
-        val if val >= i32::MAX as i64 => pack_i64(buf, MSGPACK_MARKER_I32, val),
+        val if val >= i64::from(i32::max_value()) => pack_i64(buf, MSGPACK_MARKER_I32, val),
 
         // Negative values
         val if val >= -32 && val < 0 => {
             pack_half_byte(buf, 0xe0 | ((Wrapping(val as u8) + Wrapping(32)).0))
         }
-        val if val >= i8::MIN as i64 && val < -32 => pack_byte(buf, MSGPACK_MARKER_NI8, val as u8),
-        val if val >= i16::MIN as i64 && val < i8::MIN as i64 => {
+        val if val >= i64::from(i8::min_value()) && val < -32 => {
+            pack_byte(buf, MSGPACK_MARKER_NI8, val as u8)
+        }
+        val if val >= i64::from(i16::min_value()) && val < i64::from(i8::min_value()) => {
             pack_i16(buf, MSGPACK_MARKER_NI16, val as i16)
         }
-        val if val >= i32::MIN as i64 && val < i16::MIN as i64 => {
+        val if val >= i64::from(i32::min_value()) && val < i64::from(i16::min_value()) => {
             pack_i32(buf, MSGPACK_MARKER_NI32, val as i32)
         }
-        val if val < i32::MIN as i64 => pack_i64(buf, MSGPACK_MARKER_NI64, val),
+        val if val < i64::from(i32::min_value()) => pack_i64(buf, MSGPACK_MARKER_NI64, val),
         _ => unreachable!(),
     }
 }
@@ -263,7 +267,7 @@ fn pack_i64(buf: &mut Option<&mut Buffer>, marker: u8, val: i64) -> Result<usize
 }
 
 fn pack_u64(buf: &mut Option<&mut Buffer>, val: u64) -> Result<usize> {
-    if val <= i64::MAX as u64 {
+    if val <= i64::max_value() as u64 {
         return pack_integer(buf, val as i64);
     }
 

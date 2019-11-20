@@ -22,6 +22,24 @@
     allow(dead_code),
     deny(warnings)
 )))]
+#![warn(clippy::all, clippy::pedantic, clippy::nursery)]
+#![allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_possible_wrap,
+    clippy::cast_sign_loss,
+    clippy::checked_conversions,
+    clippy::copy_iterator,
+    clippy::fallible_impl_from,
+    clippy::module_name_repetitions,
+    clippy::must_use_candidate,
+    clippy::needless_pass_by_value,
+    clippy::similar_names,
+    clippy::too_many_lines,
+    clippy::unknown_clippy_lints,
+    clippy::unseparated_literal_suffix,
+    clippy::unused_self,
+    clippy::use_self
+)]
 
 //! A pure-rust client for the Aerospike NoSQL database.
 //!

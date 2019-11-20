@@ -34,7 +34,7 @@ impl<'a> SingleCommand<'a> {
     pub fn new(cluster: Arc<Cluster>, key: &'a Key) -> Self {
         let partition = Partition::new_by_key(key);
         SingleCommand {
-            cluster: cluster.clone(),
+            cluster,
             key,
             partition,
         }
@@ -48,7 +48,7 @@ impl<'a> SingleCommand<'a> {
         // There should not be any more bytes.
         // Empty the socket to be safe.
         let sz = conn.buffer.read_i64(None)?;
-        let header_length = conn.buffer.read_u8(None)? as i64;
+        let header_length = i64::from(conn.buffer.read_u8(None)?);
         let receive_size = ((sz & 0xFFFF_FFFF_FFFF) - header_length) as usize;
 
         // Read remaining message bytes.

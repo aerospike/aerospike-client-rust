@@ -83,21 +83,17 @@ impl Statement {
     ///
     /// ```rust
     /// # use aerospike::*;
-    /// # fn main() {
+    ///
     /// let mut stmt = Statement::new("foo", "bar", Bins::from(["name", "age"]));
     /// stmt.add_filter(as_range!("baz", 0, 100));
-    /// # }
     /// ```
     pub fn add_filter(&mut self, filter: Filter) {
-        match self.filters {
-            Some(ref mut filters) => {
-                filters.push(filter.to_owned());
-            }
-            None => {
-                let mut filters = vec![];
-                filters.push(filter.to_owned());
-                self.filters = Some(filters);
-            }
+        if let Some(ref mut filters) = self.filters {
+            filters.push(filter);
+        } else {
+            let mut filters = vec![];
+            filters.push(filter);
+            self.filters = Some(filters);
         }
     }
 

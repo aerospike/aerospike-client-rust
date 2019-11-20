@@ -132,7 +132,7 @@ impl<'a> Command for ReadCommand<'a> {
         let expiration = conn.buffer.read_u32(Some(18))?;
         let field_count = conn.buffer.read_u16(Some(26))? as usize; // almost certainly 0
         let op_count = conn.buffer.read_u16(Some(28))? as usize;
-        let receive_size = ((sz & 0xFFFF_FFFF_FFFF) - header_length as u64) as usize;
+        let receive_size = ((sz & 0xFFFF_FFFF_FFFF) - u64::from(header_length)) as usize;
 
         // Read remaining message bytes
         if receive_size > 0 {
@@ -159,7 +159,7 @@ impl<'a> Command for ReadCommand<'a> {
                 let reason = record
                     .bins
                     .get("FAILURE")
-                    .map_or(String::from("UDF Error"), |v| v.to_string());
+                    .map_or(String::from("UDF Error"), ToString::to_string);
                 Err(ErrorKind::UdfBadResponse(reason).into())
             }
             rc => Err(ErrorKind::ServerError(rc).into()),

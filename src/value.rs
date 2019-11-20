@@ -21,8 +21,8 @@ use std::{f32, f64};
 
 use byteorder::{ByteOrder, NetworkEndian};
 
-use ripemd160::Ripemd160;
 use ripemd160::digest::Digest;
+use ripemd160::Ripemd160;
 
 use std::vec::Vec;
 
@@ -199,12 +199,11 @@ impl Hash for Value {
             Value::Int(ref val) => val.hash(state),
             Value::UInt(ref val) => val.hash(state),
             Value::Float(ref val) => val.hash(state),
-            Value::String(ref val) => val.hash(state),
+            Value::String(ref val) | Value::GeoJSON(ref val) => val.hash(state),
             Value::Blob(ref val) => val.hash(state),
             Value::List(ref val) => val.hash(state),
             Value::HashMap(_) => panic!("HashMaps cannot be used as map keys."),
             Value::OrderedMap(_) => panic!("OrderedMaps cannot be used as map keys."),
-            Value::GeoJSON(ref val) => val.hash(state),
         }
     }
 }
@@ -224,12 +223,11 @@ impl Value {
     pub fn particle_type(&self) -> ParticleType {
         match *self {
             Value::Nil => ParticleType::NULL,
-            Value::Int(_) => ParticleType::INTEGER,
+            Value::Int(_) | Value::Bool(_) => ParticleType::INTEGER,
             Value::UInt(_) => panic!(
                 "Aerospike does not support u64 natively on server-side. Use casting to \
                  store and retrieve u64 values."
             ),
-            Value::Bool(_) => ParticleType::INTEGER,
             Value::Float(_) => ParticleType::FLOAT,
             Value::String(_) => ParticleType::STRING,
             Value::Blob(_) => ParticleType::BLOB,
@@ -248,12 +246,11 @@ impl Value {
             Value::UInt(ref val) => val.to_string(),
             Value::Bool(ref val) => val.to_string(),
             Value::Float(ref val) => val.to_string(),
-            Value::String(ref val) => val.to_string(),
+            Value::String(ref val) | Value::GeoJSON(ref val) => val.to_string(),
             Value::Blob(ref val) => format!("{:?}", val),
             Value::List(ref val) => format!("{:?}", val),
             Value::HashMap(ref val) => format!("{:?}", val),
             Value::OrderedMap(ref val) => format!("{:?}", val),
-            Value::GeoJSON(ref val) => val.to_string(),
         }
     }
 
@@ -263,17 +260,14 @@ impl Value {
     pub fn estimate_size(&self) -> Result<usize> {
         match *self {
             Value::Nil => Ok(0),
-            Value::Int(_) => Ok(8),
+            Value::Int(_) | Value::Bool(_) | Value::Float(_) => Ok(8),
             Value::UInt(_) => panic!(
                 "Aerospike does not support u64 natively on server-side. Use casting to \
                  store and retrieve u64 values."
             ),
-            Value::Bool(_) => Ok(8),
-            Value::Float(_) => Ok(8),
             Value::String(ref s) => Ok(s.len()),
             Value::Blob(ref b) => Ok(b.len()),
-            Value::List(_) => encoder::pack_value(&mut None, self),
-            Value::HashMap(_) => encoder::pack_value(&mut None, self),
+            Value::List(_) | Value::HashMap(_) => encoder::pack_value(&mut None, self),
             Value::OrderedMap(_) => panic!("The library never passes ordered maps to the server."),
             Value::GeoJSON(ref s) => Ok(1 + 2 + s.len()), // flags + ncells + jsonstr
         }
@@ -410,37 +404,37 @@ impl From<bool> for Value {
 
 impl From<i8> for Value {
     fn from(val: i8) -> Value {
-        Value::Int(val as i64)
+        Value::Int(i64::from(val))
     }
 }
 
 impl From<u8> for Value {
     fn from(val: u8) -> Value {
-        Value::Int(val as i64)
+        Value::Int(i64::from(val))
     }
 }
 
 impl From<i16> for Value {
     fn from(val: i16) -> Value {
-        Value::Int(val as i64)
+        Value::Int(i64::from(val))
     }
 }
 
 impl From<u16> for Value {
     fn from(val: u16) -> Value {
-        Value::Int(val as i64)
+        Value::Int(i64::from(val))
     }
 }
 
 impl From<i32> for Value {
     fn from(val: i32) -> Value {
-        Value::Int(val as i64)
+        Value::Int(i64::from(val))
     }
 }
 
 impl From<u32> for Value {
     fn from(val: u32) -> Value {
-        Value::Int(val as i64)
+        Value::Int(i64::from(val))
     }
 }
 
@@ -470,37 +464,37 @@ impl From<usize> for Value {
 
 impl<'a> From<&'a i8> for Value {
     fn from(val: &'a i8) -> Value {
-        Value::Int(*val as i64)
+        Value::Int(i64::from(*val))
     }
 }
 
 impl<'a> From<&'a u8> for Value {
     fn from(val: &'a u8) -> Value {
-        Value::Int(*val as i64)
+        Value::Int(i64::from(*val))
     }
 }
 
 impl<'a> From<&'a i16> for Value {
     fn from(val: &'a i16) -> Value {
-        Value::Int(*val as i64)
+        Value::Int(i64::from(*val))
     }
 }
 
 impl<'a> From<&'a u16> for Value {
     fn from(val: &'a u16) -> Value {
-        Value::Int(*val as i64)
+        Value::Int(i64::from(*val))
     }
 }
 
 impl<'a> From<&'a i32> for Value {
     fn from(val: &'a i32) -> Value {
-        Value::Int(*val as i64)
+        Value::Int(i64::from(*val))
     }
 }
 
 impl<'a> From<&'a u32> for Value {
     fn from(val: &'a u32) -> Value {
-        Value::Int(*val as i64)
+        Value::Int(i64::from(*val))
     }
 }
 
@@ -601,7 +595,7 @@ macro_rules! as_val {
     }};
 }
 
-/// Constructs a new GeoJSON Value from one of the supported native data types.
+/// Constructs a new `GeoJSON` Value from one of the supported native data types.
 #[macro_export]
 macro_rules! as_geo {
     ($val:expr) => {{

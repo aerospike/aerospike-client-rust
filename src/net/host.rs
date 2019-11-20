@@ -86,7 +86,7 @@ impl ToHosts for String {
 
 impl<'a> ToHosts for &'a str {
     fn to_hosts(&self) -> Result<Vec<Host>> {
-        self.to_string().to_hosts()
+        (*self).to_string().to_hosts()
     }
 }
 

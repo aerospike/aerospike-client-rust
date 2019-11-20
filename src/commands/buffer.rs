@@ -143,8 +143,8 @@ impl Buffer {
 
     pub fn end(&mut self) -> Result<()> {
         let size = ((self.data_offset - 8) as i64)
-            | (((CL_MSG_VERSION as i64) << 56) as i64)
-            | ((AS_MSG_TYPE as i64) << 48);
+            | ((i64::from(CL_MSG_VERSION) << 56) as i64)
+            | (i64::from(AS_MSG_TYPE) << 48);
 
         // reset data offset
         self.reset_offset()?;
@@ -239,14 +239,14 @@ impl Buffer {
                 self.begin()?;
                 let field_count = self.estimate_key_size(key, false)?;
                 for bin_name in bin_names {
-                    self.estimate_operation_size_for_bin_name(&bin_name)?;
+                    self.estimate_operation_size_for_bin_name(bin_name)?;
                 }
 
                 self.size_buffer()?;
                 self.write_header(policy, INFO1_READ, 0, field_count, bin_names.len() as u16)?;
                 self.write_key(key, false)?;
                 for bin_name in bin_names {
-                    self.write_operation_for_bin_name(&bin_name, OperationType::Read)?;
+                    self.write_operation_for_bin_name(bin_name, OperationType::Read)?;
                 }
                 self.end()?;
                 Ok(())
@@ -305,7 +305,7 @@ impl Buffer {
                     }
                     if let Bins::Some(ref bin_names) = batch_read.bins {
                         for name in bin_names {
-                            self.estimate_operation_size_for_bin_name(&name)?;
+                            self.estimate_operation_size_for_bin_name(name)?;
                         }
                     }
                 }
@@ -339,7 +339,7 @@ impl Buffer {
             self.write_u32(*idx as u32)?;
             self.write_bytes(&key.digest)?;
             match prev {
-                Some(ref prev) if batch_read.match_header(&prev, policy.send_set_name) => {
+                Some(prev) if batch_read.match_header(prev, policy.send_set_name) => {
                     self.write_u8(1)?;
                 }
                 _ => {
@@ -372,7 +372,7 @@ impl Buffer {
                                 self.write_field_string(&key.set_name, FieldType::Table)?;
                             }
                             for bin in bin_names {
-                                self.write_operation_for_bin_name(&bin, OperationType::Read)?;
+                                self.write_operation_for_bin_name(bin, OperationType::Read)?;
                             }
                         }
                     }
@@ -417,8 +417,8 @@ impl Buffer {
                 Operation {
                     op: OperationType::Read,
                     ..
-                } => read_attr |= INFO1_READ,
-                Operation {
+                }
+                | Operation {
                     op: OperationType::CdtRead,
                     ..
                 } => read_attr |= INFO1_READ,
@@ -440,17 +440,17 @@ impl Buffer {
 
         self.size_buffer()?;
 
-        if write_attr != 0 {
-            self.write_header_with_policy(
-                policy,
+        if write_attr == 0 {
+            self.write_header(
+                &policy.base_policy,
                 read_attr,
                 write_attr,
                 field_count,
                 operations.len() as u16,
             )?;
         } else {
-            self.write_header(
-                &policy.base_policy,
+            self.write_header_with_policy(
+                policy,
                 read_attr,
                 write_attr,
                 field_count,
@@ -523,11 +523,10 @@ impl Buffer {
         field_count += 1;
 
         let bin_count = match *bins {
-            Bins::All => 0,
-            Bins::None => 0,
+            Bins::All | Bins::None => 0,
             Bins::Some(ref bin_names) => {
                 for bin_name in bin_names {
-                    self.estimate_operation_size_for_bin_name(&bin_name)?;
+                    self.estimate_operation_size_for_bin_name(bin_name)?;
                 }
                 bin_names.len()
             }
@@ -577,7 +576,7 @@ impl Buffer {
 
         if let Bins::Some(ref bin_names) = *bins {
             for bin_name in bin_names {
-                self.write_operation_for_bin_name(&bin_name, OperationType::Read)?;
+                self.write_operation_for_bin_name(bin_name, OperationType::Read)?;
             }
         }
 
@@ -659,7 +658,7 @@ impl Buffer {
             self.data_offset += aggregation.function_name.len() + FIELD_HEADER_SIZE as usize;
 
             if let Some(ref args) = aggregation.function_args {
-                self.estimate_args_size(Some(&args))?;
+                self.estimate_args_size(Some(args))?;
             } else {
                 self.estimate_args_size(None)?;
             }
@@ -669,7 +668,7 @@ impl Buffer {
         if statement.is_scan() {
             if let Bins::Some(ref bin_names) = statement.bins {
                 for bin_name in bin_names {
-                    self.estimate_operation_size_for_bin_name(&bin_name)?;
+                    self.estimate_operation_size_for_bin_name(bin_name)?;
                 }
             }
         }
@@ -704,7 +703,7 @@ impl Buffer {
 
         if let Some(ref index_name) = statement.index_name {
             if !index_name.is_empty() {
-                self.write_field_string(&index_name, FieldType::IndexName)?;
+                self.write_field_string(index_name, FieldType::IndexName)?;
             }
         }
 
@@ -735,7 +734,7 @@ impl Buffer {
 
                     for bin_name in bin_names {
                         self.write_u8(bin_name.len() as u8)?;
-                        self.write_str(&bin_name)?;
+                        self.write_str(bin_name)?;
                     }
                 }
             }
@@ -768,7 +767,7 @@ impl Buffer {
         if statement.is_scan() {
             if let Bins::Some(ref bin_names) = statement.bins {
                 for bin_name in bin_names {
-                    self.write_operation_for_bin_name(&bin_name, OperationType::Read)?;
+                    self.write_operation_for_bin_name(bin_name, OperationType::Read)?;
                 }
             }
         }
@@ -1045,7 +1044,7 @@ impl Buffer {
 
     // Data buffer implementations
 
-    pub fn data_offset(&self) -> usize {
+    pub const fn data_offset(&self) -> usize {
         self.data_offset
     }
 
@@ -1063,38 +1062,35 @@ impl Buffer {
     }
 
     pub fn read_u8(&mut self, pos: Option<usize>) -> Result<u8> {
-        match pos {
-            Some(pos) => Ok(self.data_buffer[pos]),
-            None => {
-                let res = self.data_buffer[self.data_offset];
-                self.data_offset += 1;
-                Ok(res)
-            }
+        if let Some(pos) = pos {
+            Ok(self.data_buffer[pos])
+        } else {
+            let res = self.data_buffer[self.data_offset];
+            self.data_offset += 1;
+            Ok(res)
         }
     }
 
     pub fn read_i8(&mut self, pos: Option<usize>) -> Result<i8> {
-        match pos {
-            Some(pos) => Ok(self.data_buffer[pos] as i8),
-            None => {
-                let res = self.data_buffer[self.data_offset] as i8;
-                self.data_offset += 1;
-                Ok(res)
-            }
+        if let Some(pos) = pos {
+            Ok(self.data_buffer[pos] as i8)
+        } else {
+            let res = self.data_buffer[self.data_offset] as i8;
+            self.data_offset += 1;
+            Ok(res)
         }
     }
 
     pub fn read_u16(&mut self, pos: Option<usize>) -> Result<u16> {
         let len = 2;
-        match pos {
-            Some(pos) => Ok(NetworkEndian::read_u16(&self.data_buffer[pos..pos + len])),
-            None => {
-                let res = NetworkEndian::read_u16(
-                    &self.data_buffer[self.data_offset..self.data_offset + len],
-                );
-                self.data_offset += len;
-                Ok(res)
-            }
+        if let Some(pos) = pos {
+            Ok(NetworkEndian::read_u16(&self.data_buffer[pos..pos + len]))
+        } else {
+            let res = NetworkEndian::read_u16(
+                &self.data_buffer[self.data_offset..self.data_offset + len],
+            );
+            self.data_offset += len;
+            Ok(res)
         }
     }
 
@@ -1105,15 +1101,14 @@ impl Buffer {
 
     pub fn read_u32(&mut self, pos: Option<usize>) -> Result<u32> {
         let len = 4;
-        match pos {
-            Some(pos) => Ok(NetworkEndian::read_u32(&self.data_buffer[pos..pos + len])),
-            None => {
-                let res = NetworkEndian::read_u32(
-                    &self.data_buffer[self.data_offset..self.data_offset + len],
-                );
-                self.data_offset += len;
-                Ok(res)
-            }
+        if let Some(pos) = pos {
+            Ok(NetworkEndian::read_u32(&self.data_buffer[pos..pos + len]))
+        } else {
+            let res = NetworkEndian::read_u32(
+                &self.data_buffer[self.data_offset..self.data_offset + len],
+            );
+            self.data_offset += len;
+            Ok(res)
         }
     }
 
@@ -1124,15 +1119,14 @@ impl Buffer {
 
     pub fn read_u64(&mut self, pos: Option<usize>) -> Result<u64> {
         let len = 8;
-        match pos {
-            Some(pos) => Ok(NetworkEndian::read_u64(&self.data_buffer[pos..pos + len])),
-            None => {
-                let res = NetworkEndian::read_u64(
-                    &self.data_buffer[self.data_offset..self.data_offset + len],
-                );
-                self.data_offset += len;
-                Ok(res)
-            }
+        if let Some(pos) = pos {
+            Ok(NetworkEndian::read_u64(&self.data_buffer[pos..pos + len]))
+        } else {
+            let res = NetworkEndian::read_u64(
+                &self.data_buffer[self.data_offset..self.data_offset + len],
+            );
+            self.data_offset += len;
+            Ok(res)
         }
     }
 
@@ -1149,29 +1143,27 @@ impl Buffer {
 
     pub fn read_f32(&mut self, pos: Option<usize>) -> Result<f32> {
         let len = 4;
-        match pos {
-            Some(pos) => Ok(NetworkEndian::read_f32(&self.data_buffer[pos..pos + len])),
-            None => {
-                let res = NetworkEndian::read_f32(
-                    &self.data_buffer[self.data_offset..self.data_offset + len],
-                );
-                self.data_offset += len;
-                Ok(res)
-            }
+        if let Some(pos) = pos {
+            Ok(NetworkEndian::read_f32(&self.data_buffer[pos..pos + len]))
+        } else {
+            let res = NetworkEndian::read_f32(
+                &self.data_buffer[self.data_offset..self.data_offset + len],
+            );
+            self.data_offset += len;
+            Ok(res)
         }
     }
 
     pub fn read_f64(&mut self, pos: Option<usize>) -> Result<f64> {
         let len = 8;
-        match pos {
-            Some(pos) => Ok(NetworkEndian::read_f64(&self.data_buffer[pos..pos + len])),
-            None => {
-                let res = NetworkEndian::read_f64(
-                    &self.data_buffer[self.data_offset..self.data_offset + len],
-                );
-                self.data_offset += len;
-                Ok(res)
-            }
+        if let Some(pos) = pos {
+            Ok(NetworkEndian::read_f64(&self.data_buffer[pos..pos + len]))
+        } else {
+            let res = NetworkEndian::read_f64(
+                &self.data_buffer[self.data_offset..self.data_offset + len],
+            );
+            self.data_offset += len;
+            Ok(res)
         }
     }
 

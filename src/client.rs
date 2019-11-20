@@ -154,7 +154,7 @@ impl Client {
     ///
     /// ```rust
     /// # use aerospike::*;
-    /// # fn main() {
+    ///
     /// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap();
     /// # let client = Client::new(&ClientPolicy::default(), &hosts).unwrap();
     /// let key = as_key!("test", "test", "mykey");
@@ -166,14 +166,13 @@ impl Client {
     ///     Err(err)
     ///         => println!("Error fetching record: {}", err),
     /// }
-    /// # }
     /// ```
     ///
     /// Determine the remaining time-to-live of a record.
     ///
     /// ```rust
     /// # use aerospike::*;
-    /// # fn main() {
+    ///
     /// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap();
     /// # let client = Client::new(&ClientPolicy::default(), &hosts).unwrap();
     /// let key = as_key!("test", "test", "mykey");
@@ -189,7 +188,6 @@ impl Client {
     ///     Err(err)
     ///         => println!("Error fetching record: {}", err),
     /// }
-    /// # }
     /// ```
     pub fn get<T>(&self, policy: &ReadPolicy, key: &Key, bins: T) -> Result<Record>
     where
@@ -213,7 +211,7 @@ impl Client {
     ///
     /// ```rust
     /// # use aerospike::*;
-    /// # fn main() {
+    ///
     /// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap();
     /// # let client = Client::new(&ClientPolicy::default(), &hosts).unwrap();
     /// let bins = Bins::from(["name", "age"]);
@@ -234,7 +232,6 @@ impl Client {
     ///     Err(err)
     ///         => println!("Error executing batch request: {}", err),
     /// }
-    /// # }
     /// ```
     pub fn batch_get<'a>(
         &self,
@@ -254,7 +251,7 @@ impl Client {
     ///
     /// ```rust
     /// # use aerospike::*;
-    /// # fn main() {
+    ///
     /// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap();
     /// # let client = Client::new(&ClientPolicy::default(), &hosts).unwrap();
     /// let key = as_key!("test", "test", "mykey");
@@ -263,14 +260,13 @@ impl Client {
     ///     Ok(()) => println!("Record written"),
     ///     Err(err) => println!("Error writing record: {}", err),
     /// }
-    /// # }
     /// ```
     ///
     /// Write a record with an expiration of 10 seconds.
     ///
     /// ```rust
     /// # use aerospike::*;
-    /// # fn main() {
+    ///
     /// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap();
     /// # let client = Client::new(&ClientPolicy::default(), &hosts).unwrap();
     /// let key = as_key!("test", "test", "mykey");
@@ -281,7 +277,6 @@ impl Client {
     ///     Ok(()) => println!("Record written"),
     ///     Err(err) => println!("Error writing record: {}", err),
     /// }
-    /// # }
     /// ```
     pub fn put<'a, 'b, A: AsRef<Bin<'b>>>(
         &self,
@@ -309,7 +304,7 @@ impl Client {
     ///
     /// ```rust
     /// # use aerospike::*;
-    /// # fn main() {
+    ///
     /// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap();
     /// # let client = Client::new(&ClientPolicy::default(), &hosts).unwrap();
     /// let key = as_key!("test", "test", "mykey");
@@ -320,7 +315,6 @@ impl Client {
     ///     Ok(()) => println!("Record updated"),
     ///     Err(err) => println!("Error writing record: {}", err),
     /// }
-    /// # }
     /// ```
     pub fn add<'a, 'b, A: AsRef<Bin<'b>>>(
         &self,
@@ -380,7 +374,7 @@ impl Client {
     ///
     /// ```rust
     /// # use aerospike::*;
-    /// # fn main() {
+    ///
     /// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap();
     /// # let client = Client::new(&ClientPolicy::default(), &hosts).unwrap();
     /// let key = as_key!("test", "test", "mykey");
@@ -389,7 +383,6 @@ impl Client {
     ///     Ok(false) => println!("Record did not exist"),
     ///     Err(err) => println!("Error deleting record: {}", err),
     /// }
-    /// # }
     /// ```
     pub fn delete(&self, policy: &WritePolicy, key: &Key) -> Result<bool> {
         let mut command = DeleteCommand::new(policy, self.cluster.clone(), key);
@@ -406,7 +399,7 @@ impl Client {
     ///
     /// ```rust
     /// # use aerospike::*;
-    /// # fn main() {
+    ///
     /// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap();
     /// # let client = Client::new(&ClientPolicy::default(), &hosts).unwrap();
     /// let key = as_key!("test", "test", "mykey");
@@ -416,7 +409,6 @@ impl Client {
     ///     Ok(()) => println!("Record expiration updated"),
     ///     Err(err) => println!("Error writing record: {}", err),
     /// }
-    /// # }
     /// ```
     pub fn touch(&self, policy: &WritePolicy, key: &Key) -> Result<()> {
         let mut command = TouchCommand::new(policy, self.cluster.clone(), key);
@@ -443,7 +435,7 @@ impl Client {
     ///
     /// ```rust
     /// # use aerospike::*;
-    /// # fn main() {
+    ///
     /// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap();
     /// # let client = Client::new(&ClientPolicy::default(), &hosts).unwrap();
     /// let key = as_key!("test", "test", "mykey");
@@ -456,7 +448,6 @@ impl Client {
     ///     Ok(record) => println!("The new value is {}", record.bins.get("a").unwrap()),
     ///     Err(err) => println!("Error writing record: {}", err),
     /// }
-    /// # }
     /// ```
     pub fn operate(&self, policy: &WritePolicy, key: &Key, ops: &[Operation]) -> Result<Record> {
         let mut command = OperateCommand::new(policy, self.cluster.clone(), key, ops);
@@ -476,7 +467,7 @@ impl Client {
     /// ```rust
     /// # extern crate aerospike;
     /// # use aerospike::*;
-    /// # fn main() {
+    ///
     /// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap();
     /// # let client = Client::new(&ClientPolicy::default(), &hosts).unwrap();
     /// let code = r#"
@@ -505,7 +496,6 @@ impl Client {
     ///
     /// client.register_udf(&WritePolicy::default(), code.as_bytes(),
     ///                     "example.lua", UDFLang::Lua).unwrap();
-    /// # }
     /// ```
     pub fn register_udf(
         &self,
@@ -629,7 +619,7 @@ impl Client {
     /// ```rust
     /// # extern crate aerospike;
     /// # use aerospike::*;
-    /// # fn main() {
+    ///
     /// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap();
     /// # let client = Client::new(&ClientPolicy::default(), &hosts).unwrap();
     /// match client.scan(&ScanPolicy::default(), "test", "demo", Bins::All) {
@@ -645,7 +635,6 @@ impl Client {
     ///     },
     ///     Err(err) => println!("Failed to execute scan: {}", err),
     /// }
-    /// # }
     /// ```
     pub fn scan<T>(
         &self,
@@ -718,7 +707,7 @@ impl Client {
     /// ```rust
     /// # extern crate aerospike;
     /// # use aerospike::*;
-    /// # fn main() {
+    ///
     /// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap();
     /// # let client = Client::new(&ClientPolicy::default(), &hosts).unwrap();
     /// let stmt = Statement::new("test", "test", Bins::All);
@@ -730,7 +719,6 @@ impl Client {
     ///     },
     ///     Err(err) => println!("Error fetching record: {}", err),
     /// }
-    /// # }
     /// ```
     pub fn query(&self, policy: &QueryPolicy, statement: Statement) -> Result<Arc<Recordset>> {
         statement.validate()?;
@@ -766,7 +754,7 @@ impl Client {
         let recordset = Arc::new(Recordset::new(policy.record_queue_size, 1));
         let t_recordset = recordset.clone();
         let policy = policy.to_owned();
-        let statement = Arc::new(statement).clone();
+        let statement = Arc::new(statement);
 
         self.thread_pool.spawn(move || {
             let mut command = QueryCommand::new(&policy, node, statement, t_recordset);
@@ -780,7 +768,7 @@ impl Client {
     ///
     /// This method is many orders of magnitude faster than deleting records one at a time. It
     /// requires Aerospike Server version 3.12 or later. See
-    /// https://www.aerospike.com/docs/reference/info#truncate for further info.
+    /// <https://www.aerospike.com/docs/reference/info#truncate> for further info.
     ///
     /// The `set_name` is optional; set to `""` to delete all sets in `namespace`.
     ///
@@ -824,7 +812,7 @@ impl Client {
     /// ```rust
     /// # extern crate aerospike;
     /// # use aerospike::*;
-    /// # fn main() {
+    ///
     /// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap();
     /// # let client = Client::new(&ClientPolicy::default(), &hosts).unwrap();
     /// match client.create_index(&WritePolicy::default(), "foo", "bar", "baz",
@@ -832,7 +820,6 @@ impl Client {
     ///     Err(err) => println!("Failed to create index: {}", err),
     ///     _ => {}
     /// }
-    /// # }
     /// ```
     pub fn create_index(
         &self,
@@ -902,7 +889,7 @@ impl Client {
 
     fn send_info_cmd(&self, cmd: &str, policy: &WritePolicy) -> Result<()> {
         let node = self.cluster.get_random_node()?;
-        let response = node.info(policy.base_policy.timeout, &[&cmd])?;
+        let response = node.info(policy.base_policy.timeout, &[cmd])?;
 
         if let Some(v) = response.values().next() {
             if v.to_uppercase() == "OK" {
