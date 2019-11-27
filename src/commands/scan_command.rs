@@ -12,17 +12,17 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use std::str;
 use std::sync::Arc;
 use std::time::Duration;
-use std::str;
 
-use errors::*;
-use Bins;
-use Recordset;
 use cluster::Node;
 use commands::{Command, SingleCommand, StreamCommand};
+use errors::*;
 use net::Connection;
 use policy::ScanPolicy;
+use Bins;
+use Recordset;
 
 pub struct ScanCommand<'a> {
     stream_command: StreamCommand,
@@ -43,10 +43,10 @@ impl<'a> ScanCommand<'a> {
     ) -> Self {
         ScanCommand {
             stream_command: StreamCommand::new(node, recordset),
-            policy: policy,
-            namespace: namespace,
-            set_name: set_name,
-            bins: bins,
+            policy,
+            namespace,
+            set_name,
+            bins,
         }
     }
 

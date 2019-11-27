@@ -18,10 +18,10 @@ use std::net::{Shutdown, TcpStream, ToSocketAddrs};
 use std::ops::Add;
 use std::time::{Duration, Instant};
 
+use commands::admin_command::AdminCommand;
+use commands::buffer::Buffer;
 use errors::*;
 use policy::ClientPolicy;
-use commands::buffer::Buffer;
-use commands::admin_command::AdminCommand;
 
 #[derive(Debug)]
 pub struct Connection {
@@ -131,7 +131,7 @@ impl Connection {
         self.bytes_read = 0;
     }
 
-    pub fn bytes_read(&self) -> usize {
+    pub const fn bytes_read(&self) -> usize {
         self.bytes_read
     }
 }

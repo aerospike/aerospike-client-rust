@@ -17,12 +17,12 @@ use std::collections::HashMap;
 use std::fmt;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use Value;
 use Key;
+use Value;
 
 lazy_static! {
   // Fri Jan  1 00:00:00 UTC 2010
-  pub static ref CITRUSLEAF_EPOCH: SystemTime = UNIX_EPOCH + Duration::new(1262304000, 0);
+  pub static ref CITRUSLEAF_EPOCH: SystemTime = UNIX_EPOCH + Duration::new(1_262_304_000, 0);
 }
 
 /// Container object for a database record.
@@ -45,17 +45,17 @@ pub struct Record {
 impl Record {
     /// Construct a new Record. For internal use only.
     #[doc(hidden)]
-    pub fn new(
+    pub const fn new(
         key: Option<Key>,
         bins: HashMap<String, Value>,
         generation: u32,
         expiration: u32,
     ) -> Self {
         Record {
-            key: key,
-            bins: bins,
-            generation: generation,
-            expiration: expiration,
+            key,
+            bins,
+            generation,
+            expiration,
         }
     }
 
@@ -65,7 +65,7 @@ impl Record {
         match self.expiration {
             0 => None,
             secs_since_epoch => {
-                let expiration = *CITRUSLEAF_EPOCH + Duration::new(secs_since_epoch as u64, 0);
+                let expiration = *CITRUSLEAF_EPOCH + Duration::new(u64::from(secs_since_epoch), 0);
                 match expiration.duration_since(SystemTime::now()) {
                     Ok(d) => Some(d),
                     // Record was not expired at server but it looks expired at client
@@ -79,16 +79,16 @@ impl Record {
 
 impl fmt::Display for Record {
     fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
-        try!(write!(f, "key: {:?}", self.key));
-        try!(write!(f, ", bins: {{"));
+        write!(f, "key: {:?}", self.key)?;
+        write!(f, ", bins: {{")?;
         for (i, (k, v)) in self.bins.iter().enumerate() {
             if i > 0 {
-                try!(write!(f, ", "))
+                write!(f, ", ")?
             }
-            try!(write!(f, "{}: {}", k, v));
+            write!(f, "{}: {}", k, v)?;
         }
-        try!(write!(f, "}}, generation: {}", self.generation));
-        try!(write!(f, ", ttl: "));
+        write!(f, "}}, generation: {}", self.generation)?;
+        write!(f, ", ttl: ")?;
         match self.time_to_live() {
             None => "none".fmt(f),
             Some(duration) => duration.as_secs().fmt(f),
@@ -99,8 +99,8 @@ impl fmt::Display for Record {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::time::{Duration, SystemTime};
     use std::collections::HashMap;
+    use std::time::{Duration, SystemTime};
 
     #[test]
     fn ttl_expiration_future() {
@@ -117,7 +117,7 @@ mod tests {
 
     #[test]
     fn ttl_expiration_past() {
-        let record = Record::new(None, HashMap::new(), 0, 0x0d00d21c);
+        let record = Record::new(None, HashMap::new(), 0, 0x0d00_d21c);
         assert_eq!(record.time_to_live(), Some(Duration::new(1u64, 0)));
     }
 

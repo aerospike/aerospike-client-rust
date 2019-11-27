@@ -28,12 +28,12 @@
 //! * Index -3, Count 3: Last three items in list.
 //! * Index -5, Count 4: Range between fifth to last item to second to last item inclusive.
 //!
-//! If an index is out of bounds, a paramter error will be returned. If a range is partially out of
+//! If an index is out of bounds, a parameter error will be returned. If a range is partially out of
 //! bounds, the valid part of the range will be returned.
 
-use Value;
-use operations::{Operation, OperationBin, OperationData, OperationType};
 use operations::cdt::{CdtArgument, CdtOpType, CdtOperation};
+use operations::{Operation, OperationBin, OperationData, OperationType};
+use Value;
 
 /// Create list append operation. Server appends value to the end of list bin. Server returns
 /// list size.
@@ -52,7 +52,7 @@ pub fn append<'a>(bin: &'a str, value: &'a Value) -> Operation<'a> {
 /// Create list append items operation. Server appends each input list item to the end of list
 /// bin. Server returns list size.
 pub fn append_items<'a>(bin: &'a str, values: &'a [Value]) -> Operation<'a> {
-    assert!(values.len() > 0);
+    assert!(!values.is_empty());
 
     let cdt_op = CdtOperation {
         op: CdtOpType::ListAppendItems,
@@ -82,7 +82,7 @@ pub fn insert<'a>(bin: &'a str, index: i64, value: &'a Value) -> Operation<'a> {
 /// Create list insert items operation. Server inserts each input list item starting at the
 /// specified index of the list bin. Server returns list size.
 pub fn insert_items<'a>(bin: &'a str, index: i64, values: &'a [Value]) -> Operation<'a> {
-    assert!(values.len() > 0);
+    assert!(!values.is_empty());
 
     let cdt_op = CdtOperation {
         op: CdtOpType::ListInsertItems,

@@ -42,9 +42,9 @@
 
 use std::collections::HashMap;
 
-use Value;
-use operations::{Operation, OperationBin, OperationData, OperationType};
 use operations::cdt::{CdtArgument, CdtOpType, CdtOperation};
+use operations::{Operation, OperationBin, OperationData, OperationType};
+use Value;
 
 /// Map storage order.
 #[derive(Debug, Clone, Copy)]
@@ -133,11 +133,8 @@ pub struct MapPolicy {
 
 impl MapPolicy {
     /// Create a new map policy given the ordering for the map and the write mode.
-    pub fn new(order: MapOrder, write_mode: MapWriteMode) -> Self {
-        MapPolicy {
-            order: order,
-            write_mode: write_mode,
-        }
+    pub const fn new(order: MapOrder, write_mode: MapWriteMode) -> Self {
+        MapPolicy { order, write_mode }
     }
 }
 
@@ -216,7 +213,7 @@ pub fn put_item<'a>(
     }
     let cdt_op = CdtOperation {
         op: map_write_op(policy, false),
-        args: args,
+        args,
     };
     Operation {
         op: OperationType::CdtWrite,
@@ -230,6 +227,7 @@ pub fn put_item<'a>(
 ///
 /// The required map policy dictates the type of map to create when it does not exist. The map
 /// policy also specifies the mode used when writing items to the map.
+#[allow(clippy::implicit_hasher)]
 pub fn put_items<'a>(
     policy: &'a MapPolicy,
     bin: &'a str,
@@ -241,7 +239,7 @@ pub fn put_items<'a>(
     }
     let cdt_op = CdtOperation {
         op: map_write_op(policy, true),
-        args: args,
+        args,
     };
     Operation {
         op: OperationType::CdtWrite,
@@ -270,7 +268,7 @@ pub fn increment_value<'a>(
     }
     let cdt_op = CdtOperation {
         op: CdtOpType::MapIncrement,
-        args: args,
+        args,
     };
     Operation {
         op: OperationType::CdtWrite,
@@ -299,7 +297,7 @@ pub fn decrement_value<'a>(
     }
     let cdt_op = CdtOperation {
         op: CdtOpType::MapDecrement,
-        args: args,
+        args,
     };
     Operation {
         op: OperationType::CdtWrite,
@@ -383,7 +381,7 @@ pub fn remove_by_key_range<'a>(
     }
     let cdt_op = CdtOperation {
         op: CdtOpType::MapRemoveByKeyInterval,
-        args: args,
+        args,
     };
     Operation {
         op: OperationType::CdtWrite,
@@ -453,7 +451,7 @@ pub fn remove_by_value_range<'a>(
     }
     let cdt_op = CdtOperation {
         op: CdtOpType::MapRemoveByValueInterval,
-        args: args,
+        args,
     };
     Operation {
         op: OperationType::CdtWrite,
@@ -583,7 +581,7 @@ pub fn size(bin: &str) -> Operation {
     }
 }
 
-/// Create map get by key operation. Server selects the map item idenfieid by the key and
+/// Create map get by key operation. Server selects the map item identified by the key and
 /// returns the selected data specified by `return_type`.
 pub fn get_by_key<'a>(bin: &'a str, key: &'a Value, return_type: MapReturnType) -> Operation<'a> {
     let cdt_op = CdtOperation {
@@ -619,7 +617,7 @@ pub fn get_by_key_range<'a>(
     }
     let cdt_op = CdtOperation {
         op: CdtOpType::MapGetByKeyInterval,
-        args: args,
+        args,
     };
     Operation {
         op: OperationType::CdtRead,
@@ -668,7 +666,7 @@ pub fn get_by_value_range<'a>(
     }
     let cdt_op = CdtOperation {
         op: CdtOpType::MapGetByValueInterval,
-        args: args,
+        args,
     };
     Operation {
         op: OperationType::CdtRead,
@@ -735,7 +733,7 @@ pub fn get_by_index_range_from(bin: &str, index: i64, return_type: MapReturnType
     }
 }
 
-/// Create map get by rank operation. Server selects the mamp item identified by rank and
+/// Create map get by rank operation. Server selects the map item identified by rank and
 /// returns the selected data specified by `return_type`.
 pub fn get_by_rank(bin: &str, rank: i64, return_type: MapReturnType) -> Operation {
     let cdt_op = CdtOperation {
@@ -749,7 +747,7 @@ pub fn get_by_rank(bin: &str, rank: i64, return_type: MapReturnType) -> Operatio
     }
 }
 
-/// Create map get ranke range operation. Server selects `count` map items at the specified
+/// Create map get rank range operation. Server selects `count` map items at the specified
 /// rank and returns the selected data specified by `return_type`.
 pub fn get_by_rank_range(
     bin: &str,

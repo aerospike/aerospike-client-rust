@@ -13,10 +13,10 @@
 // License for the specific language governing permissions and limitations under
 // the License.
 
-use Host;
 use errors::*;
-use std::str::Chars;
 use std::iter::Peekable;
+use std::str::Chars;
+use Host;
 
 pub struct Parser<'a> {
     s: Peekable<Chars<'a>>,
@@ -27,14 +27,14 @@ impl<'a> Parser<'a> {
     pub fn new(s: &'a str, default_port: u16) -> Self {
         Parser {
             s: s.chars().peekable(),
-            default_port: default_port,
+            default_port,
         }
     }
 
     pub fn read_hosts(&mut self) -> Result<Vec<Host>> {
         let mut hosts = Vec::new();
         loop {
-            let addr = try!(self.read_addr_tuple());
+            let addr = self.read_addr_tuple()?;
             let (host, _tls_name, port) = match addr.len() {
                 3 => (addr[0].clone(), Some(addr[1].clone()), addr[2].parse()?),
                 2 => {
@@ -64,7 +64,7 @@ impl<'a> Parser<'a> {
     fn read_addr_tuple(&mut self) -> Result<Vec<String>> {
         let mut parts = Vec::new();
         loop {
-            let part = try!(self.read_addr_part());
+            let part = self.read_addr_part()?;
             parts.push(part);
             match self.peek() {
                 Some(&c) if c == ':' => self.next_char(),

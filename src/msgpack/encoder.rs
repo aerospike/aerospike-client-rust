@@ -13,13 +13,13 @@
 // License for the specific language governing permissions and limitations under
 // the License.
 
-use std::{i16, i32, i64, i8};
 use std::collections::HashMap;
 use std::num::Wrapping;
+use std::{i16, i32, i64, i8};
 
-use errors::*;
-use commands::ParticleType;
 use commands::buffer::Buffer;
+use commands::ParticleType;
+use errors::*;
 use operations::cdt::{CdtArgument, CdtOperation};
 use value::*;
 
@@ -44,24 +44,24 @@ pub fn pack_value(buf: &mut Option<&mut Buffer>, val: &Value) -> Result<usize> {
 
 pub fn pack_empty_args_array(buf: &mut Option<&mut Buffer>) -> Result<usize> {
     let mut size = 0;
-    size += try!(pack_array_begin(buf, 0));
+    size += pack_array_begin(buf, 0)?;
 
     Ok(size)
 }
 
 pub fn pack_cdt_op(buf: &mut Option<&mut Buffer>, cdt_op: &CdtOperation) -> Result<usize> {
     let mut size: usize = 0;
-    size += try!(pack_raw_u16(buf, cdt_op.op as u16));
+    size += pack_raw_u16(buf, cdt_op.op as u16)?;
 
     if !cdt_op.args.is_empty() {
-        size += try!(pack_array_begin(buf, cdt_op.args.len()));
+        size += pack_array_begin(buf, cdt_op.args.len())?;
         for arg in &cdt_op.args {
             size += match *arg {
-                CdtArgument::Byte(byte) => try!(pack_value(buf, &Value::from(byte))),
-                CdtArgument::Int(int) => try!(pack_value(buf, &Value::from(int))),
-                CdtArgument::Value(value) => try!(pack_value(buf, value)),
-                CdtArgument::List(list) => try!(pack_array(buf, list)),
-                CdtArgument::Map(map) => try!(pack_map(buf, map)),
+                CdtArgument::Byte(byte) => pack_value(buf, &Value::from(byte))?,
+                CdtArgument::Int(int) => pack_value(buf, &Value::from(int))?,
+                CdtArgument::Value(value) => pack_value(buf, value)?,
+                CdtArgument::List(list) => pack_array(buf, list)?,
+                CdtArgument::Map(map) => pack_map(buf, map)?,
             }
         }
     }
@@ -72,9 +72,9 @@ pub fn pack_cdt_op(buf: &mut Option<&mut Buffer>, cdt_op: &CdtOperation) -> Resu
 pub fn pack_array(buf: &mut Option<&mut Buffer>, values: &[Value]) -> Result<usize> {
     let mut size = 0;
 
-    size += try!(pack_array_begin(buf, values.len()));
+    size += pack_array_begin(buf, values.len())?;
     for val in values {
-        size += try!(pack_value(buf, val));
+        size += pack_value(buf, val)?;
     }
 
     Ok(size)
@@ -83,10 +83,10 @@ pub fn pack_array(buf: &mut Option<&mut Buffer>, values: &[Value]) -> Result<usi
 fn pack_map(buf: &mut Option<&mut Buffer>, map: &HashMap<Value, Value>) -> Result<usize> {
     let mut size = 0;
 
-    size += try!(pack_map_begin(buf, map.len()));
+    size += pack_map_begin(buf, map.len())?;
     for (key, val) in map.iter() {
-        size += try!(pack_value(buf, key));
-        size += try!(pack_value(buf, val));
+        size += pack_value(buf, key)?;
+        size += pack_value(buf, val)?;
     }
 
     Ok(size)
@@ -112,29 +112,29 @@ const MSGPACK_MARKER_NI64: u8 = 0xd3;
 // for wire transfer only
 fn pack_raw_u16(buf: &mut Option<&mut Buffer>, val: u16) -> Result<usize> {
     if let Some(ref mut buf) = *buf {
-        try!(buf.write_u16(val));
+        buf.write_u16(val)?;
     }
     Ok(2)
 }
 
 fn pack_half_byte(buf: &mut Option<&mut Buffer>, val: u8) -> Result<usize> {
     if let Some(ref mut buf) = *buf {
-        try!(buf.write_u8(val));
+        buf.write_u8(val)?;
     }
     Ok(1)
 }
 
 fn pack_byte(buf: &mut Option<&mut Buffer>, marker: u8, val: u8) -> Result<usize> {
     if let Some(ref mut buf) = *buf {
-        try!(buf.write_u8(marker));
-        try!(buf.write_u8(val));
+        buf.write_u8(marker)?;
+        buf.write_u8(val)?;
     }
     Ok(2)
 }
 
 fn pack_nil(buf: &mut Option<&mut Buffer>) -> Result<usize> {
     if let Some(ref mut buf) = *buf {
-        try!(buf.write_u8(MSGPACK_MARKER_NIL));
+        buf.write_u8(MSGPACK_MARKER_NIL)?;
     }
     Ok(1)
 }
@@ -142,9 +142,9 @@ fn pack_nil(buf: &mut Option<&mut Buffer>) -> Result<usize> {
 fn pack_bool(buf: &mut Option<&mut Buffer>, val: bool) -> Result<usize> {
     if let Some(ref mut buf) = *buf {
         if val {
-            try!(buf.write_u8(MSGPACK_MARKER_BOOL_TRUE));
+            buf.write_u8(MSGPACK_MARKER_BOOL_TRUE)?;
         } else {
-            try!(buf.write_u8(MSGPACK_MARKER_BOOL_FALSE));
+            buf.write_u8(MSGPACK_MARKER_BOOL_FALSE)?;
         }
     }
     Ok(1)
@@ -177,10 +177,10 @@ fn pack_byte_array_begin(buf: &mut Option<&mut Buffer>, length: usize) -> Result
 fn pack_blob(buf: &mut Option<&mut Buffer>, val: &[u8]) -> Result<usize> {
     let mut size = val.len() + 1;
 
-    size += try!(pack_byte_array_begin(buf, size));
+    size += pack_byte_array_begin(buf, size)?;
     if let Some(ref mut buf) = *buf {
-        try!(buf.write_u8(ParticleType::BLOB as u8));
-        try!(buf.write_bytes(val));
+        buf.write_u8(ParticleType::BLOB as u8)?;
+        buf.write_bytes(val)?;
     }
 
     Ok(size)
@@ -189,10 +189,10 @@ fn pack_blob(buf: &mut Option<&mut Buffer>, val: &[u8]) -> Result<usize> {
 fn pack_string(buf: &mut Option<&mut Buffer>, val: &str) -> Result<usize> {
     let mut size = val.len() + 1;
 
-    size += try!(pack_byte_array_begin(buf, size));
+    size += pack_byte_array_begin(buf, size)?;
     if let Some(ref mut buf) = *buf {
-        try!(buf.write_u8(ParticleType::STRING as u8));
-        try!(buf.write_str(val));
+        buf.write_u8(ParticleType::STRING as u8)?;
+        buf.write_str(val)?;
     }
 
     Ok(size)
@@ -201,10 +201,10 @@ fn pack_string(buf: &mut Option<&mut Buffer>, val: &str) -> Result<usize> {
 fn pack_geo_json(buf: &mut Option<&mut Buffer>, val: &str) -> Result<usize> {
     let mut size = val.len() + 1;
 
-    size += try!(pack_byte_array_begin(buf, size));
+    size += pack_byte_array_begin(buf, size)?;
     if let Some(ref mut buf) = *buf {
-        try!(buf.write_u8(ParticleType::GEOJSON as u8));
-        try!(buf.write_str(val));
+        buf.write_u8(ParticleType::GEOJSON as u8)?;
+        buf.write_str(val)?;
     }
 
     Ok(size)
@@ -213,79 +213,83 @@ fn pack_geo_json(buf: &mut Option<&mut Buffer>, val: &str) -> Result<usize> {
 fn pack_integer(buf: &mut Option<&mut Buffer>, val: i64) -> Result<usize> {
     match val {
         val if val >= 0 && val < 2 ^ 7 => pack_half_byte(buf, val as u8),
-        val if val >= 2 ^ 7 && val < i8::MAX as i64 => pack_byte(buf, MSGPACK_MARKER_I8, val as u8),
-        val if val >= i8::MAX as i64 && val < i16::MAX as i64 => {
+        val if val >= 2 ^ 7 && val < i64::from(i8::max_value()) => {
+            pack_byte(buf, MSGPACK_MARKER_I8, val as u8)
+        }
+        val if val >= i64::from(i8::max_value()) && val < i64::from(i16::max_value()) => {
             pack_i16(buf, MSGPACK_MARKER_I16, val as i16)
         }
-        val if val >= i16::MAX as i64 && val < i32::MAX as i64 => {
+        val if val >= i64::from(i16::max_value()) && val < i64::from(i32::max_value()) => {
             pack_i32(buf, MSGPACK_MARKER_I32, val as i32)
         }
-        val if val >= i32::MAX as i64 => pack_i64(buf, MSGPACK_MARKER_I32, val),
+        val if val >= i64::from(i32::max_value()) => pack_i64(buf, MSGPACK_MARKER_I32, val),
 
         // Negative values
         val if val >= -32 && val < 0 => {
             pack_half_byte(buf, 0xe0 | ((Wrapping(val as u8) + Wrapping(32)).0))
         }
-        val if val >= i8::MIN as i64 && val < -32 => pack_byte(buf, MSGPACK_MARKER_NI8, val as u8),
-        val if val >= i16::MIN as i64 && val < i8::MIN as i64 => {
+        val if val >= i64::from(i8::min_value()) && val < -32 => {
+            pack_byte(buf, MSGPACK_MARKER_NI8, val as u8)
+        }
+        val if val >= i64::from(i16::min_value()) && val < i64::from(i8::min_value()) => {
             pack_i16(buf, MSGPACK_MARKER_NI16, val as i16)
         }
-        val if val >= i32::MIN as i64 && val < i16::MIN as i64 => {
+        val if val >= i64::from(i32::min_value()) && val < i64::from(i16::min_value()) => {
             pack_i32(buf, MSGPACK_MARKER_NI32, val as i32)
         }
-        val if val < i32::MIN as i64 => pack_i64(buf, MSGPACK_MARKER_NI64, val),
+        val if val < i64::from(i32::min_value()) => pack_i64(buf, MSGPACK_MARKER_NI64, val),
         _ => unreachable!(),
     }
 }
 
 fn pack_i16(buf: &mut Option<&mut Buffer>, marker: u8, val: i16) -> Result<usize> {
     if let Some(ref mut buf) = *buf {
-        try!(buf.write_u8(marker));
-        try!(buf.write_i16(val));
+        buf.write_u8(marker)?;
+        buf.write_i16(val)?;
     }
     Ok(3)
 }
 
 fn pack_i32(buf: &mut Option<&mut Buffer>, marker: u8, val: i32) -> Result<usize> {
     if let Some(ref mut buf) = *buf {
-        try!(buf.write_u8(marker));
-        try!(buf.write_i32(val));
+        buf.write_u8(marker)?;
+        buf.write_i32(val)?;
     }
     Ok(5)
 }
 
 fn pack_i64(buf: &mut Option<&mut Buffer>, marker: u8, val: i64) -> Result<usize> {
     if let Some(ref mut buf) = *buf {
-        try!(buf.write_u8(marker));
-        try!(buf.write_i64(val));
+        buf.write_u8(marker)?;
+        buf.write_i64(val)?;
     }
     Ok(9)
 }
 
 fn pack_u64(buf: &mut Option<&mut Buffer>, val: u64) -> Result<usize> {
-    if val <= i64::MAX as u64 {
+    if val <= i64::max_value() as u64 {
         return pack_integer(buf, val as i64);
     }
 
     if let Some(ref mut buf) = *buf {
-        try!(buf.write_u8(0xcf));
-        try!(buf.write_u64(val));
+        buf.write_u8(0xcf)?;
+        buf.write_u64(val)?;
     }
     Ok(9)
 }
 
 fn pack_f32(buf: &mut Option<&mut Buffer>, val: f32) -> Result<usize> {
     if let Some(ref mut buf) = *buf {
-        try!(buf.write_u8(0xca));
-        try!(buf.write_f32(val));
+        buf.write_u8(0xca)?;
+        buf.write_f32(val)?;
     }
     Ok(5)
 }
 
 fn pack_f64(buf: &mut Option<&mut Buffer>, val: f64) -> Result<usize> {
     if let Some(ref mut buf) = *buf {
-        try!(buf.write_u8(0xcb));
-        try!(buf.write_f64(val));
+        buf.write_u8(0xcb)?;
+        buf.write_f64(val)?;
     }
     Ok(9)
 }

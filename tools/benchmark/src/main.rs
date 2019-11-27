@@ -25,22 +25,22 @@ extern crate log;
 extern crate num_cpus;
 extern crate rand;
 
-mod percent;
 mod cli;
-mod workers;
-mod stats;
 mod generator;
+mod percent;
+mod stats;
+mod workers;
 
+use std::sync::mpsc;
 use std::sync::Arc;
 use std::thread;
-use std::sync::mpsc;
 
 use aerospike::{Client, ClientPolicy};
 
 use cli::Options;
+use generator::KeyPartitions;
 use stats::Collector;
 use workers::Worker;
-use generator::KeyPartitions;
 
 fn main() {
     env_logger::init().unwrap();

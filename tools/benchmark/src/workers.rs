@@ -13,20 +13,20 @@
 // License for the specific language governing permissions and limitations under
 // the License.
 
-use std::str::FromStr;
-use std::sync::Arc;
-use std::sync::mpsc::Sender;
 use std::boxed::Box;
+use std::str::FromStr;
+use std::sync::mpsc::Sender;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use rand::prelude::*;
 
-use aerospike::{Client, ErrorKind, Key, ReadPolicy, ResultCode, WritePolicy};
-use aerospike::Result as asResult;
 use aerospike::Error as asError;
+use aerospike::Result as asResult;
+use aerospike::{Client, ErrorKind, Key, ReadPolicy, ResultCode, WritePolicy};
 
-use percent::Percent;
 use generator::KeyRange;
+use percent::Percent;
 use stats::Histogram;
 
 lazy_static! {

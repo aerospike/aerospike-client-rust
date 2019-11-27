@@ -14,21 +14,20 @@
 // the License.
 
 use std::cell::UnsafeCell;
+use std::cmp;
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::mem::transmute;
-use std::cmp;
 
-use scoped_pool::Pool;
 use parking_lot::Mutex;
+use scoped_pool::Pool;
 
-use errors::*;
-use Key;
 use batch::BatchRead;
 use cluster::partition::Partition;
 use cluster::{Cluster, Node};
 use commands::BatchReadCommand;
+use errors::*;
 use policy::{BatchPolicy, Concurrency};
+use Key;
 
 pub struct BatchExecutor {
     cluster: Arc<Cluster>,
@@ -38,8 +37,8 @@ pub struct BatchExecutor {
 impl BatchExecutor {
     pub fn new(cluster: Arc<Cluster>, thread_pool: Pool) -> Self {
         BatchExecutor {
-            cluster: cluster,
-            thread_pool: thread_pool,
+            cluster,
+            thread_pool,
         }
     }
 
@@ -95,7 +94,7 @@ impl BatchExecutor {
 
     fn get_batch_nodes<'a>(
         &self,
-        batch_reads: &Vec<BatchRead<'a>>,
+        batch_reads: &[BatchRead<'a>],
     ) -> Result<HashMap<Arc<Node>, Vec<usize>>> {
         let mut map = HashMap::new();
         for (idx, batch_read) in batch_reads.iter().enumerate() {
@@ -144,7 +143,7 @@ impl<T> SharedSlice<T> {
 
     // Like slice.get_mut but does not require a mutable reference!
     pub fn get_mut(&self, idx: usize) -> Option<&mut T> {
-        unsafe { transmute::<*mut Vec<T>, &mut Vec<T>>(self.value.get()).get_mut(idx) }
+        unsafe { (&mut *self.value.get()).get_mut(idx) }
     }
 
     pub fn len(&self) -> usize {

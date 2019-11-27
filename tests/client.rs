@@ -35,14 +35,14 @@ fn cluster_name() {
 fn node_names() {
     let client = common::client();
     let names = client.node_names();
-    assert!(names.len() >= 1);
+    assert!(!names.is_empty());
 }
 
 #[test]
 fn nodes() {
     let client = common::client();
     let nodes = client.nodes();
-    assert!(nodes.len() >= 1);
+    assert!(!nodes.is_empty());
 }
 
 #[test]

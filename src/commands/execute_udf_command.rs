@@ -12,18 +12,18 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use std::str;
 use std::sync::Arc;
 use std::time::Duration;
-use std::str;
 
+use cluster::{Cluster, Node};
+use commands::{Command, ReadCommand, SingleCommand};
 use errors::*;
+use net::Connection;
+use policy::WritePolicy;
 use Bins;
 use Key;
 use Value;
-use cluster::{Cluster, Node};
-use commands::{Command, ReadCommand, SingleCommand};
-use net::Connection;
-use policy::WritePolicy;
 
 pub struct ExecuteUDFCommand<'a> {
     pub read_command: ReadCommand<'a>,
@@ -44,10 +44,10 @@ impl<'a> ExecuteUDFCommand<'a> {
     ) -> Self {
         ExecuteUDFCommand {
             read_command: ReadCommand::new(&policy.base_policy, cluster, key, Bins::All),
-            policy: policy,
-            package_name: package_name,
-            function_name: function_name,
-            args: args,
+            policy,
+            package_name,
+            function_name,
+            args,
         }
     }
 

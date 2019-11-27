@@ -13,12 +13,12 @@
 // License for the specific language governing permissions and limitations under
 // the License.
 
-use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
 use std::thread;
 
-use env_logger;
 use common;
+use env_logger;
 
 use aerospike::{Bins, ScanPolicy, WritePolicy};
 
@@ -54,7 +54,7 @@ fn scan_single_consumer() {
         .scan(&spolicy, namespace, &set_name, Bins::All)
         .unwrap();
 
-    let count = (&*rs).filter(|r| r.is_ok()).count();
+    let count = (&*rs).filter(Result::is_ok).count();
     assert_eq!(count, EXPECTED);
 }
 
@@ -79,7 +79,7 @@ fn scan_multi_consumer() {
         let count = count.clone();
         let rs = rs.clone();
         threads.push(thread::spawn(move || {
-            let ok = (&*rs).filter(|r| r.is_ok()).count();
+            let ok = (&*rs).filter(Result::is_ok).count();
             count.fetch_add(ok, Ordering::Relaxed);
         }));
     }
@@ -111,7 +111,7 @@ fn scan_node() {
             let rs = client
                 .scan_node(&spolicy, node, namespace, &set_name, Bins::All)
                 .unwrap();
-            let ok = (&*rs).filter(|r| r.is_ok()).count();
+            let ok = (&*rs).filter(Result::is_ok).count();
             count.fetch_add(ok, Ordering::Relaxed);
         }));
     }

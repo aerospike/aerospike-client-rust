@@ -13,16 +13,16 @@
 // License for the specific language governing permissions and limitations under
 // the License.
 
-pub mod node_validator;
 pub mod node;
+pub mod node_validator;
 pub mod partition;
 pub mod partition_tokenizer;
 
 use std::collections::HashMap;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicIsize, Ordering};
-use std::sync::mpsc::{Receiver, Sender, TryRecvError};
 use std::sync::mpsc;
+use std::sync::mpsc::{Receiver, Sender, TryRecvError};
+use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
 use std::vec::Vec;
@@ -215,11 +215,11 @@ impl Cluster {
             .map_err(|err| format!("Error during initial cluster tend: {:?}", err).into())
     }
 
-    pub fn cluster_name(&self) -> &Option<String> {
+    pub const fn cluster_name(&self) -> &Option<String> {
         &self.client_policy.cluster_name
     }
 
-    pub fn client_policy(&self) -> &ClientPolicy {
+    pub const fn client_policy(&self) -> &ClientPolicy {
         &self.client_policy
     }
 

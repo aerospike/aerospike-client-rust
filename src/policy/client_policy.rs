@@ -12,11 +12,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::time::Duration;
 use std::collections::HashMap;
+use std::time::Duration;
 
-use errors::*;
 use commands::admin_command::AdminCommand;
+use errors::*;
 
 /// `ClientPolicy` encapsulates parameters for client policy command.
 #[derive(Debug, Clone)]

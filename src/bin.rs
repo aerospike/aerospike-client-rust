@@ -28,11 +28,8 @@ pub struct Bin<'a> {
 
 impl<'a> Bin<'a> {
     /// Construct a new bin given a name and a value.
-    pub fn new(name: &'a str, val: Value) -> Self {
-        Bin {
-            name: name,
-            value: val,
-        }
+    pub const fn new(name: &'a str, val: Value) -> Self {
+        Bin { name, value: val }
     }
 }
 

@@ -16,13 +16,13 @@ use std::sync::Arc;
 use std::thread;
 use std::time::Instant;
 
-use errors::*;
-use Key;
 use cluster::partition::Partition;
 use cluster::{Cluster, Node};
 use commands::{self, Command};
+use errors::*;
 use net::Connection;
 use policy::Policy;
+use Key;
 
 pub struct SingleCommand<'a> {
     cluster: Arc<Cluster>,
@@ -34,9 +34,9 @@ impl<'a> SingleCommand<'a> {
     pub fn new(cluster: Arc<Cluster>, key: &'a Key) -> Self {
         let partition = Partition::new_by_key(key);
         SingleCommand {
-            cluster: cluster.clone(),
-            key: key,
-            partition: partition,
+            cluster,
+            key,
+            partition,
         }
     }
 
@@ -47,14 +47,14 @@ impl<'a> SingleCommand<'a> {
     pub fn empty_socket(conn: &mut Connection) -> Result<()> {
         // There should not be any more bytes.
         // Empty the socket to be safe.
-        let sz = try!(conn.buffer.read_i64(None));
-        let header_length = try!(conn.buffer.read_u8(None)) as i64;
-        let receive_size = ((sz & 0xFFFFFFFFFFFF) - header_length) as usize;
+        let sz = conn.buffer.read_i64(None)?;
+        let header_length = i64::from(conn.buffer.read_u8(None)?);
+        let receive_size = ((sz & 0xFFFF_FFFF_FFFF) - header_length) as usize;
 
         // Read remaining message bytes.
         if receive_size > 0 {
-            try!(conn.buffer.resize_buffer(receive_size));
-            try!(conn.read_buffer(receive_size));
+            conn.buffer.resize_buffer(receive_size)?;
+            conn.read_buffer(receive_size)?;
         }
 
         Ok(())
@@ -63,7 +63,7 @@ impl<'a> SingleCommand<'a> {
     // EXECUTE
     //
 
-    pub fn execute(policy: &Policy, cmd: &'a mut Command) -> Result<()> {
+    pub fn execute(policy: &dyn Policy, cmd: &'a mut dyn Command) -> Result<()> {
         let mut iterations = 0;
 
         // set timeout outside the loop

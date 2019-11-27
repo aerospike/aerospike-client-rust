@@ -18,17 +18,17 @@ use std::fmt;
 use std::hash::{Hash, Hasher};
 use std::result::Result as StdResult;
 use std::str::FromStr;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicIsize, AtomicUsize, Ordering};
+use std::sync::Arc;
 use std::time::Duration;
 
 use parking_lot::RwLock;
 
+use cluster::node_validator::NodeValidator;
+use commands::Message;
 use errors::*;
 use net::{ConnectionPool, Host, PooledConnection};
-use commands::Message;
 use policy::ClientPolicy;
-use cluster::node_validator::NodeValidator;
 
 pub const PARTITIONS: usize = 4096;
 
@@ -89,7 +89,7 @@ impl Node {
         &self.name
     }
 
-    pub fn client_policy(&self) -> &ClientPolicy {
+    pub const fn client_policy(&self) -> &ClientPolicy {
         &self.client_policy
     }
 
@@ -120,12 +120,14 @@ impl Node {
             "partition-generation",
             self.services_name(),
         ];
-        let info_map = self.info(None, &commands)
+        let info_map = self
+            .info(None, &commands)
             .chain_err(|| "Info command failed")?;
         self.validate_node(&info_map)
             .chain_err(|| "Failed to validate node")?;
         self.responded.store(true, Ordering::Relaxed);
-        let friends = self.add_friends(current_aliases, &info_map)
+        let friends = self
+            .add_friends(current_aliases, &info_map)
             .chain_err(|| "Failed to add friends")?;
         self.update_partitions(&info_map)
             .chain_err(|| "Failed to update partitions")?;
@@ -157,7 +159,8 @@ impl Node {
                 Err(ErrorKind::InvalidNode(format!(
                     "Node name has changed: '{}' => '{}'",
                     self.name, info_name
-                )).into())
+                ))
+                .into())
             }
         }
     }
@@ -174,7 +177,8 @@ impl Node {
                         "Cluster name mismatch: expected={},
                                                            got={}",
                         expected, info_name
-                    )).into())
+                    ))
+                    .into())
                 }
             },
         }
@@ -206,7 +210,7 @@ impl Node {
             }
 
             let host = friend_info.next().unwrap();
-            let port = try!(u16::from_str(friend_info.next().unwrap()));
+            let port = u16::from_str(friend_info.next().unwrap())?;
             let alias = match self.client_policy.ip_map {
                 Some(ref ip_map) if ip_map.contains_key(host) => {
                     Host::new(ip_map.get(host).unwrap(), port)
@@ -230,7 +234,7 @@ impl Node {
                 "Missing partition generation".to_string()
             )),
             Some(gen_string) => {
-                let gen = try!(gen_string.parse::<isize>());
+                let gen = gen_string.parse::<isize>()?;
                 self.partition_generation.store(gen, Ordering::Relaxed);
             }
         }

@@ -13,23 +13,22 @@
 // License for the specific language governing permissions and limitations under
 // the License.
 
-use std::{f32, f64};
-use std::fmt;
-use std::mem;
 use std::collections::HashMap;
+use std::fmt;
 use std::hash::{Hash, Hasher};
 use std::result::Result as StdResult;
+use std::{f32, f64};
 
 use byteorder::{ByteOrder, NetworkEndian};
 
-use ripemd160::Ripemd160;
 use ripemd160::digest::Digest;
+use ripemd160::Ripemd160;
 
 use std::vec::Vec;
 
-use errors::*;
-use commands::ParticleType;
 use commands::buffer::Buffer;
+use commands::ParticleType;
+use errors::*;
 use msgpack::{decoder, encoder};
 
 /// Container for floating point bin values stored in the Aerospike database.
@@ -48,7 +47,7 @@ impl From<FloatValue> for f64 {
                 "This library does not automatically convert f32 -> f64 to be used in keys \
                  or bins."
             ),
-            FloatValue::F64(val) => unsafe { mem::transmute(val) },
+            FloatValue::F64(val) => f64::from_bits(val),
         }
     }
 }
@@ -60,7 +59,7 @@ impl<'a> From<&'a FloatValue> for f64 {
                 "This library does not automatically convert f32 -> f64 to be used in keys \
                  or bins."
             ),
-            FloatValue::F64(val) => unsafe { mem::transmute(val) },
+            FloatValue::F64(val) => f64::from_bits(val),
         }
     }
 }
@@ -71,7 +70,7 @@ impl From<f64> for FloatValue {
         if val.is_nan() {
             val = f64::NAN
         } // make all NaNs have the same representation
-        unsafe { FloatValue::F64(mem::transmute(val)) }
+        FloatValue::F64(val.to_bits())
     }
 }
 
@@ -81,15 +80,15 @@ impl<'a> From<&'a f64> for FloatValue {
         if val.is_nan() {
             val = f64::NAN
         } // make all NaNs have the same representation
-        unsafe { FloatValue::F64(mem::transmute(val)) }
+        FloatValue::F64(val.to_bits())
     }
 }
 
 impl From<FloatValue> for f32 {
     fn from(val: FloatValue) -> f32 {
         match val {
-            FloatValue::F32(val) => unsafe { mem::transmute(val) },
-            FloatValue::F64(val) => unsafe { mem::transmute(val as u32) },
+            FloatValue::F32(val) => f32::from_bits(val),
+            FloatValue::F64(val) => f32::from_bits(val as u32),
         }
     }
 }
@@ -97,8 +96,8 @@ impl From<FloatValue> for f32 {
 impl<'a> From<&'a FloatValue> for f32 {
     fn from(val: &FloatValue) -> f32 {
         match *val {
-            FloatValue::F32(val) => unsafe { mem::transmute(val) },
-            FloatValue::F64(val) => unsafe { mem::transmute(val as u32) },
+            FloatValue::F32(val) => f32::from_bits(val),
+            FloatValue::F64(val) => f32::from_bits(val as u32),
         }
     }
 }
@@ -109,7 +108,7 @@ impl From<f32> for FloatValue {
         if val.is_nan() {
             val = f32::NAN
         } // make all NaNs have the same representation
-        unsafe { FloatValue::F32(mem::transmute(val)) }
+        FloatValue::F32(val.to_bits())
     }
 }
 
@@ -119,7 +118,7 @@ impl<'a> From<&'a f32> for FloatValue {
         if val.is_nan() {
             val = f32::NAN
         } // make all NaNs have the same representation
-        unsafe { FloatValue::F32(mem::transmute(val)) }
+        FloatValue::F32(val.to_bits())
     }
 }
 
@@ -127,11 +126,11 @@ impl fmt::Display for FloatValue {
     fn fmt(&self, f: &mut fmt::Formatter) -> StdResult<(), fmt::Error> {
         match *self {
             FloatValue::F32(val) => {
-                let val: f32 = unsafe { mem::transmute(val) };
+                let val: f32 = f32::from_bits(val);
                 write!(f, "{}", val)
             }
             FloatValue::F64(val) => {
-                let val: f64 = unsafe { mem::transmute(val) };
+                let val: f64 = f64::from_bits(val);
                 write!(f, "{}", val)
             }
         }
@@ -188,6 +187,7 @@ pub enum Value {
     GeoJSON(String),
 }
 
+#[allow(clippy::derive_hash_xor_eq)]
 impl Hash for Value {
     fn hash<H: Hasher>(&self, state: &mut H) {
         match *self {
@@ -199,12 +199,11 @@ impl Hash for Value {
             Value::Int(ref val) => val.hash(state),
             Value::UInt(ref val) => val.hash(state),
             Value::Float(ref val) => val.hash(state),
-            Value::String(ref val) => val.hash(state),
+            Value::String(ref val) | Value::GeoJSON(ref val) => val.hash(state),
             Value::Blob(ref val) => val.hash(state),
             Value::List(ref val) => val.hash(state),
             Value::HashMap(_) => panic!("HashMaps cannot be used as map keys."),
             Value::OrderedMap(_) => panic!("OrderedMaps cannot be used as map keys."),
-            Value::GeoJSON(ref val) => val.hash(state),
         }
     }
 }
@@ -224,12 +223,11 @@ impl Value {
     pub fn particle_type(&self) -> ParticleType {
         match *self {
             Value::Nil => ParticleType::NULL,
-            Value::Int(_) => ParticleType::INTEGER,
+            Value::Int(_) | Value::Bool(_) => ParticleType::INTEGER,
             Value::UInt(_) => panic!(
                 "Aerospike does not support u64 natively on server-side. Use casting to \
                  store and retrieve u64 values."
             ),
-            Value::Bool(_) => ParticleType::INTEGER,
             Value::Float(_) => ParticleType::FLOAT,
             Value::String(_) => ParticleType::STRING,
             Value::Blob(_) => ParticleType::BLOB,
@@ -248,12 +246,11 @@ impl Value {
             Value::UInt(ref val) => val.to_string(),
             Value::Bool(ref val) => val.to_string(),
             Value::Float(ref val) => val.to_string(),
-            Value::String(ref val) => val.to_string(),
+            Value::String(ref val) | Value::GeoJSON(ref val) => val.to_string(),
             Value::Blob(ref val) => format!("{:?}", val),
             Value::List(ref val) => format!("{:?}", val),
             Value::HashMap(ref val) => format!("{:?}", val),
             Value::OrderedMap(ref val) => format!("{:?}", val),
-            Value::GeoJSON(ref val) => val.to_string(),
         }
     }
 
@@ -263,17 +260,14 @@ impl Value {
     pub fn estimate_size(&self) -> Result<usize> {
         match *self {
             Value::Nil => Ok(0),
-            Value::Int(_) => Ok(8),
+            Value::Int(_) | Value::Bool(_) | Value::Float(_) => Ok(8),
             Value::UInt(_) => panic!(
                 "Aerospike does not support u64 natively on server-side. Use casting to \
                  store and retrieve u64 values."
             ),
-            Value::Bool(_) => Ok(8),
-            Value::Float(_) => Ok(8),
             Value::String(ref s) => Ok(s.len()),
             Value::Blob(ref b) => Ok(b.len()),
-            Value::List(_) => encoder::pack_value(&mut None, self),
-            Value::HashMap(_) => encoder::pack_value(&mut None, self),
+            Value::List(_) | Value::HashMap(_) => encoder::pack_value(&mut None, self),
             Value::OrderedMap(_) => panic!("The library never passes ordered maps to the server."),
             Value::GeoJSON(ref s) => Ok(1 + 2 + s.len()), // flags + ncells + jsonstr
         }
@@ -410,37 +404,37 @@ impl From<bool> for Value {
 
 impl From<i8> for Value {
     fn from(val: i8) -> Value {
-        Value::Int(val as i64)
+        Value::Int(i64::from(val))
     }
 }
 
 impl From<u8> for Value {
     fn from(val: u8) -> Value {
-        Value::Int(val as i64)
+        Value::Int(i64::from(val))
     }
 }
 
 impl From<i16> for Value {
     fn from(val: i16) -> Value {
-        Value::Int(val as i64)
+        Value::Int(i64::from(val))
     }
 }
 
 impl From<u16> for Value {
     fn from(val: u16) -> Value {
-        Value::Int(val as i64)
+        Value::Int(i64::from(val))
     }
 }
 
 impl From<i32> for Value {
     fn from(val: i32) -> Value {
-        Value::Int(val as i64)
+        Value::Int(i64::from(val))
     }
 }
 
 impl From<u32> for Value {
     fn from(val: u32) -> Value {
-        Value::Int(val as i64)
+        Value::Int(i64::from(val))
     }
 }
 
@@ -470,37 +464,37 @@ impl From<usize> for Value {
 
 impl<'a> From<&'a i8> for Value {
     fn from(val: &'a i8) -> Value {
-        Value::Int(*val as i64)
+        Value::Int(i64::from(*val))
     }
 }
 
 impl<'a> From<&'a u8> for Value {
     fn from(val: &'a u8) -> Value {
-        Value::Int(*val as i64)
+        Value::Int(i64::from(*val))
     }
 }
 
 impl<'a> From<&'a i16> for Value {
     fn from(val: &'a i16) -> Value {
-        Value::Int(*val as i64)
+        Value::Int(i64::from(*val))
     }
 }
 
 impl<'a> From<&'a u16> for Value {
     fn from(val: &'a u16) -> Value {
-        Value::Int(*val as i64)
+        Value::Int(i64::from(*val))
     }
 }
 
 impl<'a> From<&'a i32> for Value {
     fn from(val: &'a i32) -> Value {
-        Value::Int(*val as i64)
+        Value::Int(i64::from(*val))
     }
 }
 
 impl<'a> From<&'a u32> for Value {
     fn from(val: &'a u32) -> Value {
-        Value::Int(*val as i64)
+        Value::Int(i64::from(*val))
     }
 }
 
@@ -559,33 +553,33 @@ pub fn bytes_to_particle(ptype: u8, buf: &mut Buffer, len: usize) -> Result<Valu
     match ParticleType::from(ptype) {
         ParticleType::NULL => Ok(Value::Nil),
         ParticleType::INTEGER => {
-            let val = try!(buf.read_i64(None));
+            let val = buf.read_i64(None)?;
             Ok(Value::Int(val))
         }
         ParticleType::FLOAT => {
-            let val = try!(buf.read_f64(None));
+            let val = buf.read_f64(None)?;
             Ok(Value::Float(FloatValue::from(val)))
         }
         ParticleType::STRING => {
-            let val = try!(buf.read_str(len));
+            let val = buf.read_str(len)?;
             Ok(Value::String(val))
         }
         ParticleType::GEOJSON => {
-            try!(buf.skip(1));
-            let ncells = try!(buf.read_i16(None)) as usize;
+            buf.skip(1)?;
+            let ncells = buf.read_i16(None)? as usize;
             let header_size: usize = ncells * 8;
 
-            try!(buf.skip(header_size));
-            let val = try!(buf.read_str(len - header_size - 3));
+            buf.skip(header_size)?;
+            let val = buf.read_str(len - header_size - 3)?;
             Ok(Value::GeoJSON(val))
         }
-        ParticleType::BLOB => Ok(Value::Blob(try!(buf.read_blob(len)))),
+        ParticleType::BLOB => Ok(Value::Blob(buf.read_blob(len)?)),
         ParticleType::LIST => {
-            let val = try!(decoder::unpack_value_list(buf));
+            let val = decoder::unpack_value_list(buf)?;
             Ok(val)
         }
         ParticleType::MAP => {
-            let val = try!(decoder::unpack_value_map(buf));
+            let val = decoder::unpack_value_map(buf)?;
             Ok(val)
         }
         ParticleType::DIGEST => Ok(Value::from("A DIGEST, NOT IMPLEMENTED YET!")),
@@ -596,19 +590,25 @@ pub fn bytes_to_particle(ptype: u8, buf: &mut Buffer, len: usize) -> Result<Valu
 /// Constructs a new Value from one of the supported native data types.
 #[macro_export]
 macro_rules! as_val {
-    ($val:expr) => {{ $crate::Value::from($val) }}
+    ($val:expr) => {{
+        $crate::Value::from($val)
+    }};
 }
 
-/// Constructs a new GeoJSON Value from one of the supported native data types.
+/// Constructs a new `GeoJSON` Value from one of the supported native data types.
 #[macro_export]
 macro_rules! as_geo {
-    ($val:expr) => {{ $crate::Value::GeoJSON($val.to_owned()) }}
+    ($val:expr) => {{
+        $crate::Value::GeoJSON($val.to_owned())
+    }};
 }
 
 /// Constructs a new Blob Value from one of the supported native data types.
 #[macro_export]
 macro_rules! as_blob {
-    ($val:expr) => {{ $crate::Value::Blob($val) }}
+    ($val:expr) => {{
+        $crate::Value::Blob($val)
+    }};
 }
 
 /// Constructs a new List Value from a list of one or more native data types.
@@ -715,11 +715,11 @@ mod tests {
         assert_eq!(Value::Nil.as_string(), String::from("<null>"));
         assert_eq!(Value::Int(42).as_string(), String::from("42"));
         assert_eq!(
-            Value::UInt(9223372036854775808).as_string(),
+            Value::UInt(9_223_372_036_854_775_808).as_string(),
             String::from("9223372036854775808")
         );
         assert_eq!(Value::Bool(true).as_string(), String::from("true"));
-        assert_eq!(Value::from(3.1416).as_string(), String::from("3.1416"));
+        assert_eq!(Value::from(4.1416).as_string(), String::from("4.1416"));
         assert_eq!(
             as_geo!(r#"{"type":"Point"}"#).as_string(),
             String::from(r#"{"type":"Point"}"#)

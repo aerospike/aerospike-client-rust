@@ -13,12 +13,12 @@
 // License for the specific language governing permissions and limitations under
 // the License.
 
-use env_logger;
 use common;
+use env_logger;
 
-use aerospike::{Bins, ReadPolicy, Value, WritePolicy};
 use aerospike::operations;
 use aerospike::operations::lists;
+use aerospike::{Bins, ReadPolicy, Value, WritePolicy};
 
 #[test]
 fn cdt_list() {

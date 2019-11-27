@@ -13,13 +13,13 @@
 // License for the specific language governing permissions and limitations under
 // the License.
 
-pub use self::host::Host;
-pub use self::host::ToHosts;
 pub use self::connection::Connection;
 pub use self::connection_pool::ConnectionPool;
 pub use self::connection_pool::PooledConnection;
+pub use self::host::Host;
+pub use self::host::ToHosts;
 
-pub mod host;
 mod connection;
 mod connection_pool;
+pub mod host;
 mod parser;

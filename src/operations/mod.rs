@@ -17,18 +17,18 @@
 
 #[doc(hidden)]
 pub mod cdt;
-pub mod scalar;
 pub mod lists;
 pub mod maps;
+pub mod scalar;
 
+use self::cdt::CdtOperation;
 pub use self::maps::{MapOrder, MapPolicy, MapReturnType, MapWriteMode};
 pub use self::scalar::*;
-use self::cdt::CdtOperation;
 
+use commands::buffer::Buffer;
+use commands::ParticleType;
 use errors::*;
 use Value;
-use commands::ParticleType;
-use commands::buffer::Buffer;
 
 #[derive(Debug, Clone, Copy)]
 #[doc(hidden)]
@@ -86,9 +86,9 @@ impl<'a> Operation<'a> {
         };
         size += match self.data {
             OperationData::None => 0,
-            OperationData::Value(value) => try!(value.estimate_size()),
+            OperationData::Value(value) => value.estimate_size()?,
             OperationData::CdtListOp(ref cdt_op) | OperationData::CdtMapOp(ref cdt_op) => {
-                try!(cdt_op.estimate_size())
+                cdt_op.estimate_size()?
             }
         };
 
@@ -100,22 +100,22 @@ impl<'a> Operation<'a> {
         let mut size: usize = 0;
 
         // remove the header size from the estimate
-        let op_size = try!(self.estimate_size());
+        let op_size = self.estimate_size()?;
 
-        size += try!(buffer.write_u32(op_size as u32 + 4));
-        size += try!(buffer.write_u8(self.op as u8));
+        size += buffer.write_u32(op_size as u32 + 4)?;
+        size += buffer.write_u8(self.op as u8)?;
 
         match self.data {
             OperationData::None => {
-                size += try!(self.write_op_header_to(buffer, ParticleType::NULL as u8));
+                size += self.write_op_header_to(buffer, ParticleType::NULL as u8)?;
             }
             OperationData::Value(value) => {
-                size += try!(self.write_op_header_to(buffer, value.particle_type() as u8));
-                size += try!(value.write_to(buffer));
+                size += self.write_op_header_to(buffer, value.particle_type() as u8)?;
+                size += value.write_to(buffer)?;
             }
             OperationData::CdtListOp(ref cdt_op) | OperationData::CdtMapOp(ref cdt_op) => {
-                size += try!(self.write_op_header_to(buffer, cdt_op.particle_type() as u8));
-                size += try!(cdt_op.write_to(buffer));
+                size += self.write_op_header_to(buffer, cdt_op.particle_type() as u8)?;
+                size += cdt_op.write_to(buffer)?;
             }
         };
 
@@ -124,15 +124,15 @@ impl<'a> Operation<'a> {
 
     #[doc(hidden)]
     fn write_op_header_to(&self, buffer: &mut Buffer, particle_type: u8) -> Result<usize> {
-        let mut size = try!(buffer.write_u8(particle_type as u8));
-        size += try!(buffer.write_u8(0));
+        let mut size = buffer.write_u8(particle_type as u8)?;
+        size += buffer.write_u8(0)?;
         match self.bin {
             OperationBin::Name(bin) => {
-                size += try!(buffer.write_u8(bin.len() as u8));
-                size += try!(buffer.write_str(bin));
+                size += buffer.write_u8(bin.len() as u8)?;
+                size += buffer.write_str(bin)?;
             }
             OperationBin::None | OperationBin::All => {
-                size += try!(buffer.write_u8(0));
+                size += buffer.write_u8(0)?;
             }
         }
         Ok(size)

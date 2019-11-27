@@ -24,7 +24,16 @@ use std::vec::Vec;
 use base64;
 use scoped_pool::Pool;
 
+use batch::BatchExecutor;
+use cluster::{Cluster, Node};
+use commands::{
+    DeleteCommand, ExecuteUDFCommand, ExistsCommand, OperateCommand, QueryCommand, ReadCommand,
+    ScanCommand, TouchCommand, WriteCommand,
+};
 use errors::*;
+use net::ToHosts;
+use operations::{Operation, OperationType};
+use policy::{BatchPolicy, ClientPolicy, QueryPolicy, ReadPolicy, ScanPolicy, WritePolicy};
 use BatchRead;
 use Bin;
 use Bins;
@@ -37,13 +46,6 @@ use ResultCode;
 use Statement;
 use UDFLang;
 use Value;
-use batch::BatchExecutor;
-use cluster::{Cluster, Node};
-use commands::{DeleteCommand, ExecuteUDFCommand, ExistsCommand, OperateCommand, QueryCommand,
-               ReadCommand, ScanCommand, TouchCommand, WriteCommand};
-use net::ToHosts;
-use operations::{Operation, OperationType};
-use policy::{BatchPolicy, ClientPolicy, QueryPolicy, ReadPolicy, ScanPolicy, WritePolicy};
 
 /// Instantiate a Client instance to access an Aerospike database cluster and perform database
 /// operations.
@@ -100,14 +102,14 @@ impl Client {
     /// let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap();
     /// let client = Client::new(&ClientPolicy::default(), &hosts).unwrap();
     /// ```
-    pub fn new(policy: &ClientPolicy, hosts: &ToHosts) -> Result<Self> {
-        let hosts = try!(hosts.to_hosts());
-        let cluster = try!(Cluster::new(policy.clone(), &hosts));
+    pub fn new(policy: &ClientPolicy, hosts: &dyn ToHosts) -> Result<Self> {
+        let hosts = hosts.to_hosts()?;
+        let cluster = Cluster::new(policy.clone(), &hosts)?;
         let thread_pool = Pool::new(policy.thread_pool_size);
 
         Ok(Client {
-            cluster: cluster,
-            thread_pool: thread_pool,
+            cluster,
+            thread_pool,
         })
     }
 
@@ -152,7 +154,7 @@ impl Client {
     ///
     /// ```rust
     /// # use aerospike::*;
-    /// # fn main() {
+    ///
     /// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap();
     /// # let client = Client::new(&ClientPolicy::default(), &hosts).unwrap();
     /// let key = as_key!("test", "test", "mykey");
@@ -164,14 +166,13 @@ impl Client {
     ///     Err(err)
     ///         => println!("Error fetching record: {}", err),
     /// }
-    /// # }
     /// ```
     ///
     /// Determine the remaining time-to-live of a record.
     ///
     /// ```rust
     /// # use aerospike::*;
-    /// # fn main() {
+    ///
     /// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap();
     /// # let client = Client::new(&ClientPolicy::default(), &hosts).unwrap();
     /// let key = as_key!("test", "test", "mykey");
@@ -187,7 +188,6 @@ impl Client {
     ///     Err(err)
     ///         => println!("Error fetching record: {}", err),
     /// }
-    /// # }
     /// ```
     pub fn get<T>(&self, policy: &ReadPolicy, key: &Key, bins: T) -> Result<Record>
     where
@@ -211,7 +211,7 @@ impl Client {
     ///
     /// ```rust
     /// # use aerospike::*;
-    /// # fn main() {
+    ///
     /// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap();
     /// # let client = Client::new(&ClientPolicy::default(), &hosts).unwrap();
     /// let bins = Bins::from(["name", "age"]);
@@ -232,7 +232,6 @@ impl Client {
     ///     Err(err)
     ///         => println!("Error executing batch request: {}", err),
     /// }
-    /// # }
     /// ```
     pub fn batch_get<'a>(
         &self,
@@ -252,7 +251,7 @@ impl Client {
     ///
     /// ```rust
     /// # use aerospike::*;
-    /// # fn main() {
+    ///
     /// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap();
     /// # let client = Client::new(&ClientPolicy::default(), &hosts).unwrap();
     /// let key = as_key!("test", "test", "mykey");
@@ -261,14 +260,13 @@ impl Client {
     ///     Ok(()) => println!("Record written"),
     ///     Err(err) => println!("Error writing record: {}", err),
     /// }
-    /// # }
     /// ```
     ///
     /// Write a record with an expiration of 10 seconds.
     ///
     /// ```rust
     /// # use aerospike::*;
-    /// # fn main() {
+    ///
     /// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap();
     /// # let client = Client::new(&ClientPolicy::default(), &hosts).unwrap();
     /// let key = as_key!("test", "test", "mykey");
@@ -279,7 +277,6 @@ impl Client {
     ///     Ok(()) => println!("Record written"),
     ///     Err(err) => println!("Error writing record: {}", err),
     /// }
-    /// # }
     /// ```
     pub fn put<'a, 'b, A: AsRef<Bin<'b>>>(
         &self,
@@ -307,7 +304,7 @@ impl Client {
     ///
     /// ```rust
     /// # use aerospike::*;
-    /// # fn main() {
+    ///
     /// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap();
     /// # let client = Client::new(&ClientPolicy::default(), &hosts).unwrap();
     /// let key = as_key!("test", "test", "mykey");
@@ -318,7 +315,6 @@ impl Client {
     ///     Ok(()) => println!("Record updated"),
     ///     Err(err) => println!("Error writing record: {}", err),
     /// }
-    /// # }
     /// ```
     pub fn add<'a, 'b, A: AsRef<Bin<'b>>>(
         &self,
@@ -378,7 +374,7 @@ impl Client {
     ///
     /// ```rust
     /// # use aerospike::*;
-    /// # fn main() {
+    ///
     /// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap();
     /// # let client = Client::new(&ClientPolicy::default(), &hosts).unwrap();
     /// let key = as_key!("test", "test", "mykey");
@@ -387,11 +383,10 @@ impl Client {
     ///     Ok(false) => println!("Record did not exist"),
     ///     Err(err) => println!("Error deleting record: {}", err),
     /// }
-    /// # }
     /// ```
     pub fn delete(&self, policy: &WritePolicy, key: &Key) -> Result<bool> {
         let mut command = DeleteCommand::new(policy, self.cluster.clone(), key);
-        try!(command.execute());
+        command.execute()?;
         Ok(command.existed)
     }
 
@@ -404,7 +399,7 @@ impl Client {
     ///
     /// ```rust
     /// # use aerospike::*;
-    /// # fn main() {
+    ///
     /// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap();
     /// # let client = Client::new(&ClientPolicy::default(), &hosts).unwrap();
     /// let key = as_key!("test", "test", "mykey");
@@ -414,7 +409,6 @@ impl Client {
     ///     Ok(()) => println!("Record expiration updated"),
     ///     Err(err) => println!("Error writing record: {}", err),
     /// }
-    /// # }
     /// ```
     pub fn touch(&self, policy: &WritePolicy, key: &Key) -> Result<()> {
         let mut command = TouchCommand::new(policy, self.cluster.clone(), key);
@@ -424,7 +418,7 @@ impl Client {
     /// Determine if a record key exists. The policy can be used to specify timeouts.
     pub fn exists(&self, policy: &WritePolicy, key: &Key) -> Result<bool> {
         let mut command = ExistsCommand::new(policy, self.cluster.clone(), key);
-        try!(command.execute());
+        command.execute()?;
         Ok(command.exists)
     }
 
@@ -441,7 +435,7 @@ impl Client {
     ///
     /// ```rust
     /// # use aerospike::*;
-    /// # fn main() {
+    ///
     /// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap();
     /// # let client = Client::new(&ClientPolicy::default(), &hosts).unwrap();
     /// let key = as_key!("test", "test", "mykey");
@@ -454,11 +448,10 @@ impl Client {
     ///     Ok(record) => println!("The new value is {}", record.bins.get("a").unwrap()),
     ///     Err(err) => println!("Error writing record: {}", err),
     /// }
-    /// # }
     /// ```
     pub fn operate(&self, policy: &WritePolicy, key: &Key, ops: &[Operation]) -> Result<Record> {
         let mut command = OperateCommand::new(policy, self.cluster.clone(), key, ops);
-        try!(command.execute());
+        command.execute()?;
         Ok(command.read_command.record.unwrap())
     }
 
@@ -474,7 +467,7 @@ impl Client {
     /// ```rust
     /// # extern crate aerospike;
     /// # use aerospike::*;
-    /// # fn main() {
+    ///
     /// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap();
     /// # let client = Client::new(&ClientPolicy::default(), &hosts).unwrap();
     /// let code = r#"
@@ -503,7 +496,6 @@ impl Client {
     ///
     /// client.register_udf(&WritePolicy::default(), code.as_bytes(),
     ///                     "example.lua", UDFLang::Lua).unwrap();
-    /// # }
     /// ```
     pub fn register_udf(
         &self,
@@ -521,12 +513,12 @@ impl Client {
             udf_body.len(),
             language
         );
-        let node = try!(self.cluster.get_random_node());
-        let response = try!(node.info(policy.base_policy.timeout, &[&cmd]));
+        let node = self.cluster.get_random_node()?;
+        let response = node.info(policy.base_policy.timeout, &[&cmd])?;
 
         if let Some(msg) = response.get("error") {
             let msg = base64::decode(msg)?;
-            let msg = try!(str::from_utf8(&msg));
+            let msg = str::from_utf8(&msg)?;
             bail!(
                 "UDF Registration failed: {}, file: {}, line: {}, message: {}",
                 response.get("error").unwrap_or(&"-".to_string()),
@@ -553,9 +545,9 @@ impl Client {
         language: UDFLang,
     ) -> Result<()> {
         let path = Path::new(client_path);
-        let mut file = try!(File::open(&path));
+        let mut file = File::open(&path)?;
         let mut udf_body: Vec<u8> = vec![];
-        try!(file.read_to_end(&mut udf_body));
+        file.read_to_end(&mut udf_body)?;
 
         self.register_udf(policy, &udf_body, udf_name, language)
     }
@@ -568,8 +560,8 @@ impl Client {
         language: UDFLang,
     ) -> Result<()> {
         let cmd = format!("udf-remove:filename={}.{};", udf_name, language);
-        let node = try!(self.cluster.get_random_node());
-        let response = try!(node.info(policy.base_policy.timeout, &[&cmd]));
+        let node = self.cluster.get_random_node()?;
+        let response = node.info(policy.base_policy.timeout, &[&cmd])?;
 
         if response.get("ok").is_some() {
             return Ok(());
@@ -596,7 +588,7 @@ impl Client {
             function_name,
             args,
         );
-        try!(command.execute());
+        command.execute()?;
 
         let record = command.read_command.record.unwrap();
 
@@ -627,7 +619,7 @@ impl Client {
     /// ```rust
     /// # extern crate aerospike;
     /// # use aerospike::*;
-    /// # fn main() {
+    ///
     /// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap();
     /// # let client = Client::new(&ClientPolicy::default(), &hosts).unwrap();
     /// match client.scan(&ScanPolicy::default(), "test", "demo", Bins::All) {
@@ -643,7 +635,6 @@ impl Client {
     ///     },
     ///     Err(err) => println!("Failed to execute scan: {}", err),
     /// }
-    /// # }
     /// ```
     pub fn scan<T>(
         &self,
@@ -716,7 +707,7 @@ impl Client {
     /// ```rust
     /// # extern crate aerospike;
     /// # use aerospike::*;
-    /// # fn main() {
+    ///
     /// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap();
     /// # let client = Client::new(&ClientPolicy::default(), &hosts).unwrap();
     /// let stmt = Statement::new("test", "test", Bins::All);
@@ -728,10 +719,9 @@ impl Client {
     ///     },
     ///     Err(err) => println!("Error fetching record: {}", err),
     /// }
-    /// # }
     /// ```
     pub fn query(&self, policy: &QueryPolicy, statement: Statement) -> Result<Arc<Recordset>> {
-        try!(statement.validate());
+        statement.validate()?;
         let statement = Arc::new(statement);
 
         let nodes = self.cluster.nodes();
@@ -759,12 +749,12 @@ impl Client {
         node: Arc<Node>,
         statement: Statement,
     ) -> Result<Arc<Recordset>> {
-        try!(statement.validate());
+        statement.validate()?;
 
         let recordset = Arc::new(Recordset::new(policy.record_queue_size, 1));
         let t_recordset = recordset.clone();
         let policy = policy.to_owned();
-        let statement = Arc::new(statement).clone();
+        let statement = Arc::new(statement);
 
         self.thread_pool.spawn(move || {
             let mut command = QueryCommand::new(&policy, node, statement, t_recordset);
@@ -778,7 +768,7 @@ impl Client {
     ///
     /// This method is many orders of magnitude faster than deleting records one at a time. It
     /// requires Aerospike Server version 3.12 or later. See
-    /// https://www.aerospike.com/docs/reference/info#truncate for further info.
+    /// <https://www.aerospike.com/docs/reference/info#truncate> for further info.
     ///
     /// The `set_name` is optional; set to `""` to delete all sets in `namespace`.
     ///
@@ -822,7 +812,7 @@ impl Client {
     /// ```rust
     /// # extern crate aerospike;
     /// # use aerospike::*;
-    /// # fn main() {
+    ///
     /// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap();
     /// # let client = Client::new(&ClientPolicy::default(), &hosts).unwrap();
     /// match client.create_index(&WritePolicy::default(), "foo", "bar", "baz",
@@ -830,7 +820,6 @@ impl Client {
     ///     Err(err) => println!("Failed to create index: {}", err),
     ///     _ => {}
     /// }
-    /// # }
     /// ```
     pub fn create_index(
         &self,
@@ -854,6 +843,7 @@ impl Client {
 
     /// Create a complex secondary index on a bin containing scalar, list or map values. This
     /// asynchronous server call returns before the command is complete.
+    #[allow(clippy::too_many_arguments)]
     pub fn create_complex_index(
         &self,
         policy: &WritePolicy,
@@ -899,16 +889,14 @@ impl Client {
 
     fn send_info_cmd(&self, cmd: &str, policy: &WritePolicy) -> Result<()> {
         let node = self.cluster.get_random_node()?;
-        let response = node.info(policy.base_policy.timeout, &[&cmd])?;
+        let response = node.info(policy.base_policy.timeout, &[cmd])?;
 
-        for v in response.values() {
+        if let Some(v) = response.values().next() {
             if v.to_uppercase() == "OK" {
                 return Ok(());
             } else if v.starts_with("FAIL:") {
-                let result = v.split(':').skip(1).next().unwrap().parse::<u8>()?;
+                let result = v.split(':').nth(1).unwrap().parse::<u8>()?;
                 bail!(ErrorKind::ServerError(ResultCode::from(result)));
-            } else {
-                break;
             }
         }
 

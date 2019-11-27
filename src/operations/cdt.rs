@@ -15,11 +15,11 @@
 
 use std::collections::HashMap;
 
-use errors::*;
-use Value;
-use msgpack::encoder;
-use commands::ParticleType;
 use commands::buffer::Buffer;
+use commands::ParticleType;
+use errors::*;
+use msgpack::encoder;
+use Value;
 
 #[derive(Debug, Clone, Copy)]
 #[doc(hidden)]
@@ -88,17 +88,17 @@ pub struct CdtOperation<'a> {
 }
 
 impl<'a> CdtOperation<'a> {
-    pub fn particle_type(&self) -> ParticleType {
+    pub const fn particle_type(&self) -> ParticleType {
         ParticleType::BLOB
     }
 
     pub fn estimate_size(&self) -> Result<usize> {
-        let size: usize = try!(encoder::pack_cdt_op(&mut None, self));
+        let size: usize = encoder::pack_cdt_op(&mut None, self)?;
         Ok(size)
     }
 
     pub fn write_to(&self, buffer: &mut Buffer) -> Result<usize> {
-        let size: usize = try!(encoder::pack_cdt_op(&mut Some(buffer), self));
+        let size: usize = encoder::pack_cdt_op(&mut Some(buffer), self)?;
         Ok(size)
     }
 }

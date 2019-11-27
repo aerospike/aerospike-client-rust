@@ -14,8 +14,32 @@
 // the License.
 
 #![warn(missing_docs)]
-#![doc(test(attr(allow(unused_variables), allow(unused_assignments), allow(unused_mut),
-                 allow(unused_attributes), allow(dead_code), deny(warnings))))]
+#![doc(test(attr(
+    allow(unused_variables),
+    allow(unused_assignments),
+    allow(unused_mut),
+    allow(unused_attributes),
+    allow(dead_code),
+    deny(warnings)
+)))]
+#![warn(clippy::all, clippy::pedantic, clippy::nursery)]
+#![allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_possible_wrap,
+    clippy::cast_sign_loss,
+    clippy::checked_conversions,
+    clippy::copy_iterator,
+    clippy::fallible_impl_from,
+    clippy::module_name_repetitions,
+    clippy::must_use_candidate,
+    clippy::needless_pass_by_value,
+    clippy::similar_names,
+    clippy::too_many_lines,
+    clippy::unknown_clippy_lints,
+    clippy::unseparated_literal_suffix,
+    clippy::unused_self,
+    clippy::use_self
+)]
 
 //! A pure-rust client for the Aerospike NoSQL database.
 //!
@@ -132,9 +156,11 @@ pub use errors::{Error, ErrorKind, Result};
 pub use key::Key;
 pub use net::Host;
 pub use operations::{MapPolicy, MapReturnType, MapWriteMode};
-pub use policy::{BatchPolicy, ClientPolicy, CommitLevel, Concurrency, ConsistencyLevel,
-                 Expiration, GenerationPolicy, Policy, Priority, QueryPolicy, ReadPolicy,
-                 RecordExistsAction, ScanPolicy, WritePolicy};
+pub use policy::{
+    BatchPolicy, ClientPolicy, CommitLevel, Concurrency, ConsistencyLevel, Expiration,
+    GenerationPolicy, Policy, Priority, QueryPolicy, ReadPolicy, RecordExistsAction, ScanPolicy,
+    WritePolicy,
+};
 pub use query::{CollectionIndexType, IndexType, Recordset, Statement, UDFLang};
 pub use record::Record;
 pub use result_code::ResultCode;

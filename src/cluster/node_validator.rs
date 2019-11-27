@@ -12,13 +12,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::vec::Vec;
 use std::net::ToSocketAddrs;
 use std::str;
+use std::vec::Vec;
 
-use errors::*;
 use cluster::Cluster;
 use commands::Message;
+use errors::*;
 use net::{Connection, Host};
 use policy::ClientPolicy;
 
@@ -57,7 +57,7 @@ impl NodeValidator {
             .chain_err(|| "Failed to resolve host aliases")?;
 
         let mut last_err = None;
-        for ref alias in self.aliases() {
+        for alias in &self.aliases() {
             match self.validate_alias(cluster, alias) {
                 Ok(_) => return Ok(()),
                 Err(err) => {
