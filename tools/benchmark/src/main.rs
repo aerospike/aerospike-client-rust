@@ -43,7 +43,7 @@ use stats::Collector;
 use workers::Worker;
 
 fn main() {
-    env_logger::init().unwrap();
+    let _ = env_logger::try_init();
     let options = cli::parse_options();
     info!("{:?}", options);
     let client = connect(&options);

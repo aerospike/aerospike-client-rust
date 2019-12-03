@@ -62,7 +62,7 @@ impl FromStr for Workload {
 pub struct Worker {
     histogram: Histogram,
     collector: Sender<Histogram>,
-    task: Box<Task>,
+    task: Box<dyn Task>,
 }
 
 impl Worker {
@@ -71,7 +71,7 @@ impl Worker {
         client: Arc<Client>,
         sender: Sender<Histogram>,
     ) -> Self {
-        let task: Box<Task> = match *workload {
+        let task: Box<dyn Task> = match *workload {
             Workload::Initialize => Box::new(InsertTask::new(client)),
             Workload::ReadUpdate { read_pct } => Box::new(ReadUpdateTask::new(client, read_pct)),
         };
