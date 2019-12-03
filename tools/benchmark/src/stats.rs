@@ -72,7 +72,7 @@ impl Collector {
              ms        < 8 ms       < 16 ms      >= 16 ms"
         );
         println!(
-            "       {:>8.3} {:>8.3} {:>8.3} ms | {:>7}/{:>4.1}% {:>7}/{:>4.1}% \
+            "       {:>8.0} {:>8.0} {:>8.0} μs | {:>7}/{:>4.1}% {:>7}/{:>4.1}% \
              {:>7}/{:>4.1}% {:>7}/{:>4.1}% {:>7}/{:>4.1}% {:>7}/{:>4.1}%",
             hist.min(),
             hist.avg(),
@@ -105,16 +105,16 @@ impl Collector {
 
 #[derive(Debug, Copy, Clone)]
 pub struct Histogram {
-    buckets: [u64; HIST_BUCKETS],
-    min: f64,
-    max: f64,
-    sum: f64,
-    count: u64,
-    timeouts: u64,
-    errors: u64,
+    buckets: [u128; HIST_BUCKETS],
+    min: u128,
+    max: u128,
+    sum: u128,
+    count: u128,
+    timeouts: u128,
+    errors: u128,
     interval: Instant,
     start: Instant,
-    total: u64,
+    total: u128,
 }
 
 impl Histogram {
@@ -122,9 +122,9 @@ impl Histogram {
         let now = Instant::now();
         Histogram {
             buckets: [0; HIST_BUCKETS],
-            min: f64::INFINITY,
-            max: f64::NEG_INFINITY,
-            sum: 0.0,
+            min: u128::max_value(),
+            max: u128::min_value(),
+            sum: 0,
             count: 0,
             timeouts: 0,
             errors: 0,
@@ -134,35 +134,35 @@ impl Histogram {
         }
     }
 
-    pub fn min(&self) -> f64 {
+    pub fn min(&self) -> u128 {
         self.min
     }
 
-    pub fn max(&self) -> f64 {
+    pub fn max(&self) -> u128 {
         self.max
     }
 
-    pub fn avg(&self) -> f64 {
-        self.sum / self.count as f64
+    pub fn avg(&self) -> u128 {
+        self.sum / self.count
     }
 
     pub fn tps(&self) -> f64 {
         self.count as f64 / self.interval_as_secs()
     }
 
-    pub fn count(&self) -> u64 {
+    pub fn count(&self) -> u128 {
         self.count
     }
 
-    pub fn timeouts(&self) -> u64 {
+    pub fn timeouts(&self) -> u128 {
         self.timeouts
     }
 
-    pub fn errors(&self) -> u64 {
+    pub fn errors(&self) -> u128 {
         self.errors
     }
 
-    pub fn latencies(&self) -> Vec<(u64, f64)> {
+    pub fn latencies(&self) -> Vec<(u128, f64)> {
         self.buckets
             .iter()
             .map(|&c| {
@@ -172,7 +172,7 @@ impl Histogram {
             .collect()
     }
 
-    pub fn total(&self) -> u64 {
+    pub fn total(&self) -> u128 {
         self.total
     }
 
@@ -186,21 +186,21 @@ impl Histogram {
     }
 
     pub fn add(&mut self, latency: Duration, status: Status) {
-        let millis = latency.as_millis();
-        if millis < self.min {
-            self.min = millis;
+        let micros = latency.as_micros();
+        if micros < self.min {
+            self.min = micros;
         }
 
-        if millis > self.max {
-            self.max = millis;
+        if micros > self.max {
+            self.max = micros;
         }
 
         self.count += 1;
-        self.sum += millis;
+        self.sum += micros;
 
-        let mut upper = 1;
+        let mut upper = 1_000;
         for (i, bucket) in self.buckets.iter_mut().enumerate() {
-            if ((millis as u64) < upper) || (i == HIST_BUCKETS - 1) {
+            if (micros < upper) || (i == HIST_BUCKETS - 1) {
                 *bucket += 1;
                 break;
             }
@@ -243,9 +243,9 @@ impl Histogram {
             *bucket = 0;
         }
         self.total += self.count;
-        self.min = f64::INFINITY;
-        self.max = f64::NEG_INFINITY;
-        self.sum = 0.0;
+        self.min = u128::max_value();
+        self.max = u128::min_value();
+        self.sum = 0;
         self.count = 0;
         self.timeouts = 0;
         self.errors = 0;
@@ -255,18 +255,6 @@ impl Histogram {
     fn interval_as_secs(&self) -> f64 {
         let elapsed = self.interval.elapsed();
         elapsed.as_secs() as f64 + elapsed.subsec_nanos() as f64 / 1_000_000_000.0
-    }
-}
-
-trait DurationExt {
-    fn as_millis(&self) -> f64;
-}
-
-impl DurationExt for Duration {
-    fn as_millis(&self) -> f64 {
-        let secs = self.as_secs() as f64;
-        let nanos = self.subsec_nanos() as f64;
-        secs * 1_000.0 + nanos / 1_000_000.0
     }
 }
 
