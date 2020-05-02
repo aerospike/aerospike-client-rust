@@ -15,13 +15,12 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use cluster::Node;
-use commands::{Command, SingleCommand, StreamCommand};
-use errors::*;
-use net::Connection;
-use policy::QueryPolicy;
-use Recordset;
-use Statement;
+use crate::cluster::Node;
+use crate::commands::{Command, SingleCommand, StreamCommand};
+use crate::errors::Result;
+use crate::net::Connection;
+use crate::policy::QueryPolicy;
+use crate::{Statement, Recordset};
 
 pub struct QueryCommand<'a> {
     stream_command: StreamCommand,

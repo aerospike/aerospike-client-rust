@@ -18,8 +18,8 @@ use std::io;
 use std::net::{SocketAddr, ToSocketAddrs};
 use std::vec::IntoIter;
 
-use errors::*;
-use net::parser::Parser;
+use crate::errors::{ErrorKind, Result, ResultExt};
+use crate::net::parser::Parser;
 
 /// Host name/port of database server.
 #[derive(Debug, PartialEq, Eq, Hash, Clone)]
@@ -92,7 +92,7 @@ impl<'a> ToHosts for &'a str {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::{Host, ToHosts};
 
     #[test]
     fn to_hosts() {

@@ -16,13 +16,14 @@ use std::net::ToSocketAddrs;
 use std::str;
 use std::vec::Vec;
 
-use cluster::Cluster;
-use commands::Message;
-use errors::*;
-use net::{Connection, Host};
-use policy::ClientPolicy;
+use crate::cluster::Cluster;
+use crate::commands::Message;
+use crate::errors::{ErrorKind, Result, ResultExt};
+use crate::net::{Connection, Host};
+use crate::policy::ClientPolicy;
 
 // Validates a Database server node
+#[allow(clippy::struct_excessive_bools)]
 #[derive(Clone)]
 pub struct NodeValidator {
     pub name: String,

@@ -15,11 +15,11 @@
 
 use std::collections::HashMap;
 
-use common;
+use crate::common;
 use env_logger;
 
 use aerospike::operations::maps;
-use aerospike::{Bins, MapPolicy, MapReturnType, ReadPolicy, WritePolicy};
+use aerospike::{Bins, MapPolicy, MapReturnType, ReadPolicy, WritePolicy, as_list, as_val, as_key, as_map, as_bin};
 
 #[test]
 fn map_operations() {

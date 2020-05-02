@@ -13,7 +13,7 @@
 // License for the specific language governing permissions and limitations under
 // the License.
 
-use policy::{BasePolicy, Concurrency, PolicyLike};
+use crate::policy::{BasePolicy, Concurrency, PolicyLike};
 
 /// `BatchPolicy` encapsulates parameters for all batch operations.
 pub struct BatchPolicy {

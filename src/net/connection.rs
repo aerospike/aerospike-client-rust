@@ -18,10 +18,10 @@ use std::net::{Shutdown, TcpStream, ToSocketAddrs};
 use std::ops::Add;
 use std::time::{Duration, Instant};
 
-use commands::admin_command::AdminCommand;
-use commands::buffer::Buffer;
-use errors::*;
-use policy::ClientPolicy;
+use crate::commands::admin_command::AdminCommand;
+use crate::commands::buffer::Buffer;
+use crate::errors::Result;
+use crate::policy::ClientPolicy;
 
 #[derive(Debug)]
 pub struct Connection {

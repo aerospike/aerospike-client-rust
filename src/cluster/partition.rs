@@ -17,8 +17,8 @@ use std::io::Cursor;
 
 use byteorder::{LittleEndian, ReadBytesExt};
 
-use cluster::node;
-use Key;
+use crate::cluster::node;
+use crate::Key;
 
 // Validates a Database server node
 #[derive(Debug, Clone)]

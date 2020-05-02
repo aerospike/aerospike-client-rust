@@ -17,11 +17,11 @@ use std::collections::HashMap;
 use std::num::Wrapping;
 use std::{i16, i32, i64, i8};
 
-use commands::buffer::Buffer;
-use commands::ParticleType;
-use errors::*;
-use operations::cdt::{CdtArgument, CdtOperation};
-use value::*;
+use crate::commands::buffer::Buffer;
+use crate::commands::ParticleType;
+use crate::errors::Result;
+use crate::operations::cdt::{CdtArgument, CdtOperation};
+use crate::value::{FloatValue, Value};
 
 pub fn pack_value(buf: &mut Option<&mut Buffer>, val: &Value) -> Result<usize> {
     match *val {

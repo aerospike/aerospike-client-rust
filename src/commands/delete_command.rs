@@ -15,14 +15,12 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use cluster::{Cluster, Node};
-use commands::buffer;
-use commands::{Command, SingleCommand};
-use errors::*;
-use net::Connection;
-use policy::WritePolicy;
-use Key;
-use ResultCode;
+use crate::cluster::{Cluster, Node};
+use crate::commands::{Command, SingleCommand, buffer};
+use crate::errors::{ErrorKind, Result};
+use crate::net::Connection;
+use crate::policy::WritePolicy;
+use crate::{ResultCode, Key};
 
 pub struct DeleteCommand<'a> {
     single_command: SingleCommand<'a>,

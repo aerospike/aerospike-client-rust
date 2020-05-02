@@ -377,7 +377,7 @@ impl fmt::Display for ResultCode {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::ResultCode;
 
     #[test]
     fn from_result_code() {

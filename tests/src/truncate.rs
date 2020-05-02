@@ -15,7 +15,7 @@
 
 use aerospike::WritePolicy;
 
-use common;
+use crate::common;
 use env_logger;
 
 #[test]

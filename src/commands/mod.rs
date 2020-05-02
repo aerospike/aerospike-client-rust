@@ -49,10 +49,10 @@ pub use self::stream_command::StreamCommand;
 pub use self::touch_command::TouchCommand;
 pub use self::write_command::WriteCommand;
 
-use cluster::Node;
-use errors::*;
-use net::Connection;
-use ResultCode;
+use crate::cluster::Node;
+use crate::errors::{Error, ErrorKind, Result};
+use crate::net::Connection;
+use crate::ResultCode;
 
 // Command interface describes all commands available
 pub trait Command {

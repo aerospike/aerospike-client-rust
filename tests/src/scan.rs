@@ -17,10 +17,10 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::thread;
 
-use common;
+use crate::common;
 use env_logger;
 
-use aerospike::{Bins, ScanPolicy, WritePolicy};
+use aerospike::{Bins, ScanPolicy, WritePolicy, as_key, as_bin};
 
 const EXPECTED: usize = 1000;
 

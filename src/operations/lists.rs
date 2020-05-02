@@ -31,9 +31,9 @@
 //! If an index is out of bounds, a parameter error will be returned. If a range is partially out of
 //! bounds, the valid part of the range will be returned.
 
-use operations::cdt::{CdtArgument, CdtOpType, CdtOperation};
-use operations::{Operation, OperationBin, OperationData, OperationType};
-use Value;
+use crate::operations::cdt::{CdtArgument, CdtOpType, CdtOperation};
+use crate::operations::{Operation, OperationBin, OperationData, OperationType};
+use crate::Value;
 
 /// Create list append operation. Server appends value to the end of list bin. Server returns
 /// list size.

@@ -16,7 +16,7 @@
 use std::thread;
 use std::time::Duration;
 
-use common;
+use crate::common;
 use env_logger;
 
 use aerospike::*;

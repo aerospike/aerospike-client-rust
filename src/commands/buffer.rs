@@ -17,73 +17,66 @@ use std::time::Duration;
 
 use byteorder::{ByteOrder, NetworkEndian};
 
-use batch::batch_executor::SharedSlice;
-use commands::field_type::FieldType;
-use errors::*;
-use msgpack::encoder;
-use operations::{Operation, OperationBin, OperationData, OperationType};
-use policy::{
+use crate::batch::batch_executor::SharedSlice;
+use crate::commands::field_type::FieldType;
+use crate::errors::Result;
+use crate::policy::{
     BatchPolicy, CommitLevel, ConsistencyLevel, GenerationPolicy, QueryPolicy, ReadPolicy,
-    RecordExistsAction, ScanPolicy, WritePolicy,
-};
-use BatchRead;
-use Bin;
-use Bins;
-use CollectionIndexType;
-use Key;
-use Statement;
-use Value;
+    RecordExistsAction, ScanPolicy, WritePolicy};
+use crate::{Key, Value, Statement, CollectionIndexType, Bins, Bin, BatchRead}; 
+use crate::operations::{Operation, OperationBin, OperationData, OperationType};
+use crate::msgpack::encoder;
 
 // Contains a read operation.
 const INFO1_READ: u8 = 1;
 
 // Get all bins.
-const INFO1_GET_ALL: u8 = (1 << 1);
+const INFO1_GET_ALL: u8 = 1 << 1;
 
 // Batch read or exists.
-const INFO1_BATCH: u8 = (1 << 3);
+const INFO1_BATCH: u8 = 1 << 3;
 
 // Do not read the bins
-const INFO1_NOBINDATA: u8 = (1 << 5);
+const INFO1_NOBINDATA: u8 = 1 << 5;
 
 // Involve all replicas in read operation.
-const INFO1_CONSISTENCY_ALL: u8 = (1 << 6);
+const INFO1_CONSISTENCY_ALL: u8 = 1 << 6;
 
 // Create or update record
 const INFO2_WRITE: u8 = 1;
 
 // Fling a record into the belly of Moloch.
-const INFO2_DELETE: u8 = (1 << 1);
+const INFO2_DELETE: u8 = 1 << 1;
 
 // Update if expected generation == old.
-const INFO2_GENERATION: u8 = (1 << 2);
+const INFO2_GENERATION: u8 = 1 << 2;
 
 // Update if new generation >= old, good for restore.
-const INFO2_GENERATION_GT: u8 = (1 << 3);
+const INFO2_GENERATION_GT: u8 = 1 << 3;
 
 // Transaction resulting in record deletion leaves tombstone (Enterprise only).
-const INFO2_DURABLE_DELETE: u8 = (1 << 4);
+const INFO2_DURABLE_DELETE: u8 = 1 << 4;
 
 // Create only. Fail if record already exists.
-const INFO2_CREATE_ONLY: u8 = (1 << 5);
+const INFO2_CREATE_ONLY: u8 = 1 << 5;
 
 // Return a result for every operation.
-const INFO2_RESPOND_ALL_OPS: u8 = (1 << 7);
+const INFO2_RESPOND_ALL_OPS: u8 = 1 << 7;
 
 // This is the last of a multi-part message.
 pub const INFO3_LAST: u8 = 1;
 
 // Commit to master only before declaring success.
-const INFO3_COMMIT_MASTER: u8 = (1 << 1);
+const INFO3_COMMIT_MASTER: u8 = 1 << 1;
 
 // Update only. Merge bins.
-const INFO3_UPDATE_ONLY: u8 = (1 << 3);
+const INFO3_UPDATE_ONLY: u8 = 1 << 3;
 
 // Create or completely replace record.
-const INFO3_CREATE_OR_REPLACE: u8 = (1 << 4);
+const INFO3_CREATE_OR_REPLACE: u8 = 1 << 4;
 
 // Completely replace existing record only.
-const INFO3_REPLACE_ONLY: u8 = (1 << 5);
+const INFO3_REPLACE_ONLY: u8 = 1 << 5;
 
 pub const MSG_TOTAL_HEADER_SIZE: u8 = 30;
 const FIELD_HEADER_SIZE: u8 = 5;

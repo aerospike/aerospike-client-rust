@@ -26,10 +26,10 @@ use ripemd160::Ripemd160;
 
 use std::vec::Vec;
 
-use commands::buffer::Buffer;
-use commands::ParticleType;
-use errors::*;
-use msgpack::{decoder, encoder};
+use crate::commands::buffer::Buffer;
+use crate::commands::ParticleType;
+use crate::errors::Result;
+use crate::msgpack::{decoder, encoder};
 
 /// Container for floating point bin values stored in the Aerospike database.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -708,7 +708,7 @@ macro_rules! as_map {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::Value;
 
     #[test]
     fn as_string() {

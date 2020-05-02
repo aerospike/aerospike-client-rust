@@ -15,11 +15,11 @@
 
 use std::collections::HashMap;
 
-use commands::buffer::Buffer;
-use commands::ParticleType;
-use errors::*;
-use msgpack::encoder;
-use Value;
+use crate::commands::buffer::Buffer;
+use crate::commands::ParticleType;
+use crate::errors::Result;
+use crate::msgpack::encoder;
+use crate::Value;
 
 #[derive(Debug, Clone, Copy)]
 #[doc(hidden)]

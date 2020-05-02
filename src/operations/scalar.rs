@@ -15,8 +15,8 @@
 
 //! String/number bin operations. Create operations used by the client's `operate()` method.
 
-use operations::*;
-use Bin;
+use crate::operations::{Operation, OperationBin, OperationData, OperationType};
+use crate::Bin;
 
 /// Create read all record bins database operation.
 pub const fn get<'a>() -> Operation<'a> {

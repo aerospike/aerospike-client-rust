@@ -16,13 +16,13 @@ use std::sync::Arc;
 use std::thread;
 use std::time::Instant;
 
-use cluster::partition::Partition;
-use cluster::{Cluster, Node};
-use commands::{self, Command};
-use errors::*;
-use net::Connection;
-use policy::Policy;
-use Key;
+use crate::cluster::partition::Partition;
+use crate::cluster::{Cluster, Node};
+use crate::commands::{self};
+use crate::errors::{ErrorKind, Result, ResultExt};
+use crate::net::Connection;
+use crate::policy::Policy;
+use crate::Key;
 
 pub struct SingleCommand<'a> {
     cluster: Arc<Cluster>,
@@ -63,7 +63,7 @@ impl<'a> SingleCommand<'a> {
     // EXECUTE
     //
 
-    pub fn execute(policy: &dyn Policy, cmd: &'a mut dyn Command) -> Result<()> {
+    pub fn execute(policy: &dyn Policy, cmd: &'a mut dyn commands::Command) -> Result<()> {
         let mut iterations = 0;
 
         // set timeout outside the loop

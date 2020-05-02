@@ -14,8 +14,6 @@
 // the License.
 
 #[macro_use]
-extern crate aerospike;
-#[macro_use]
 extern crate bencher;
 #[macro_use]
 extern crate lazy_static;
@@ -24,6 +22,7 @@ extern crate rand;
 use aerospike::{Bins, ReadPolicy, WritePolicy};
 
 use bencher::Bencher;
+use aerospike::{as_bin, as_key};
 
 #[path = "../tests/common/mod.rs"]
 mod common;

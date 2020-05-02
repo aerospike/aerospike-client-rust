@@ -13,11 +13,9 @@
 // License for the specific language governing permissions and limitations under
 // the License.
 
-use commands::buffer::Buffer;
-use commands::ParticleType;
-use errors::*;
-use CollectionIndexType;
-use Value;
+use crate::commands::{buffer::Buffer, ParticleType};
+use crate::errors::Result;
+use crate::{Value, CollectionIndexType};
 
 /// Query filter definition. Currently, only one filter is allowed in a Statement, and must be on a
 /// bin which has a secondary index defined.
@@ -246,7 +244,7 @@ macro_rules! as_regions_containing_point {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::CollectionIndexType;
 
     #[test]
     fn geo_filter_macros() {

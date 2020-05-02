@@ -16,8 +16,8 @@
 use std::fmt;
 use std::result::Result as StdResult;
 
-use errors::*;
-use Value;
+use crate::errors::Result;
+use crate::Value;
 
 use ripemd160::digest::Digest;
 use ripemd160::Ripemd160;
