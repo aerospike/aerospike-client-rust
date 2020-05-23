@@ -149,12 +149,6 @@ impl<'a, 'b> BatchReadCommand<'a, 'b> {
                         .get_mut(batch_record.batch_index)
                         .expect("Invalid batch index");
                     let record = batch_record.record;
-                    if let Some(Record {
-                        key: Some(ref key), ..
-                    }) = record
-                    {
-                        assert_eq!(batch_read.key.digest, key.digest);
-                    }
                     batch_read.record = record;
                 }
             }
