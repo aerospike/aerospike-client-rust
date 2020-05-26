@@ -18,8 +18,8 @@ use std::collections::HashMap;
 use std::io::{Cursor, Write};
 use std::str;
 
-use errors::*;
-use net::Connection;
+use crate::errors::Result;
+use crate::net::Connection;
 
 #[derive(Debug, Clone)]
 pub struct Message {
@@ -80,8 +80,8 @@ impl Message {
 
         for tuple in response.split('\n') {
             let mut kv = tuple.split('\t');
-            let key = kv.nth(0);
-            let val = kv.nth(0);
+            let key = kv.next();
+            let val = kv.next();
 
             match (key, val) {
                 (Some(key), Some(val)) => result.insert(key.to_string(), val.to_string()),

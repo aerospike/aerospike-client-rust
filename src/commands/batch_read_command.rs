@@ -17,17 +17,13 @@ use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
 
-use batch::batch_executor::SharedSlice;
-use cluster::Node;
-use commands::{self, buffer, Command, StreamCommand};
-use errors::*;
-use net::Connection;
-use policy::{BatchPolicy, Policy, PolicyLike};
-use value;
-use BatchRead;
-use Record;
-use ResultCode;
-use Value;
+use crate::batch::batch_executor::SharedSlice;
+use crate::cluster::Node;
+use crate::commands::{self, Command};
+use crate::errors::{ErrorKind, Result, ResultExt};
+use crate::net::Connection;
+use crate::policy::{BatchPolicy, Policy, PolicyLike};
+use crate::{BatchRead, Record, ResultCode, Value, value};
 
 struct BatchRecord {
     batch_index: usize,
@@ -140,7 +136,7 @@ impl<'a, 'b> BatchReadCommand<'a, 'b> {
 
     fn parse_group(&mut self, conn: &mut Connection, size: usize) -> Result<bool> {
         while conn.bytes_read() < size {
-            conn.read_buffer(buffer::MSG_REMAINING_HEADER_SIZE as usize)?;
+            conn.read_buffer(commands::buffer::MSG_REMAINING_HEADER_SIZE as usize)?;
             match self.parse_record(conn)? {
                 None => return Ok(false),
                 Some(batch_record) => {
@@ -171,7 +167,7 @@ impl<'a, 'b> BatchReadCommand<'a, 'b> {
 
         // if cmd is the end marker of the response, do not proceed further
         let info3 = conn.buffer.read_u8(Some(3))?;
-        if info3 & buffer::INFO3_LAST == buffer::INFO3_LAST {
+        if info3 & commands::buffer::INFO3_LAST == commands::buffer::INFO3_LAST {
             return Ok(None);
         }
 
@@ -182,7 +178,7 @@ impl<'a, 'b> BatchReadCommand<'a, 'b> {
         let field_count = conn.buffer.read_u16(None)? as usize; // almost certainly 0
         let op_count = conn.buffer.read_u16(None)? as usize;
 
-        let key = StreamCommand::parse_key(conn, field_count)?;
+        let key = commands::StreamCommand::parse_key(conn, field_count)?;
 
         let record = if found_key {
             let mut bins: HashMap<String, Value> = HashMap::with_capacity(op_count);
@@ -214,7 +210,7 @@ impl<'a, 'b> BatchReadCommand<'a, 'b> {
     }
 }
 
-impl<'a, 'b> Command for BatchReadCommand<'a, 'b> {
+impl<'a, 'b> commands::Command for BatchReadCommand<'a, 'b> {
     fn write_timeout(&mut self, conn: &mut Connection, timeout: Option<Duration>) -> Result<()> {
         conn.buffer.write_timeout(timeout);
         Ok(())

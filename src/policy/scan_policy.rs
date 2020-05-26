@@ -13,7 +13,7 @@
 // License for the specific language governing permissions and limitations under
 // the License.
 
-use policy::{BasePolicy, PolicyLike};
+use crate::policy::{BasePolicy, PolicyLike};
 
 /// `ScanPolicy` encapsulates optional parameters used in scan operations.
 #[derive(Debug, Clone)]

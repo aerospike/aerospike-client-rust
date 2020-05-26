@@ -35,9 +35,9 @@ use self::node_validator::NodeValidator;
 use self::partition::Partition;
 use self::partition_tokenizer::PartitionTokenizer;
 
-use errors::*;
-use net::Host;
-use policy::ClientPolicy;
+use crate::errors::{ErrorKind, Result};
+use crate::net::Host;
+use crate::policy::ClientPolicy;
 
 // Cluster encapsulates the aerospike cluster nodes and manages
 // them.

@@ -15,7 +15,7 @@
 
 use std::convert::From;
 
-use value::Value;
+use crate::value::Value;
 
 /// Container object for a record bin, comprising a name and a value.
 pub struct Bin<'a> {
@@ -132,7 +132,7 @@ impl<'a> From<[&'a str; 6]> for Bins {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::{Bins, From};
 
     #[test]
     fn into_bins() {

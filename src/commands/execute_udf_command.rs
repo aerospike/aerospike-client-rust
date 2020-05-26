@@ -16,14 +16,12 @@ use std::str;
 use std::sync::Arc;
 use std::time::Duration;
 
-use cluster::{Cluster, Node};
-use commands::{Command, ReadCommand, SingleCommand};
-use errors::*;
-use net::Connection;
-use policy::WritePolicy;
-use Bins;
-use Key;
-use Value;
+use crate::cluster::{Cluster, Node};
+use crate::commands::{Command, ReadCommand, SingleCommand};
+use crate::errors::Result;
+use crate::net::Connection;
+use crate::policy::WritePolicy;
+use crate::{Value, Key, Bins};
 
 pub struct ExecuteUDFCommand<'a> {
     pub read_command: ReadCommand<'a>,

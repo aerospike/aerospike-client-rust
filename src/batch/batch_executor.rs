@@ -21,13 +21,13 @@ use std::sync::Arc;
 use parking_lot::Mutex;
 use scoped_pool::Pool;
 
-use batch::BatchRead;
-use cluster::partition::Partition;
-use cluster::{Cluster, Node};
-use commands::BatchReadCommand;
-use errors::*;
-use policy::{BatchPolicy, Concurrency};
-use Key;
+use crate::batch::BatchRead;
+use crate::cluster::partition::Partition;
+use crate::cluster::{Cluster, Node};
+use crate::commands::BatchReadCommand;
+use crate::errors::{Error, Result};
+use crate::policy::{BatchPolicy, Concurrency};
+use crate::Key;
 
 pub struct BatchExecutor {
     cluster: Arc<Cluster>,

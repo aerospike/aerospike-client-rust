@@ -15,11 +15,11 @@
 
 use aerospike::BatchRead;
 use aerospike::Bins;
-use aerospike::{BatchPolicy, Concurrency, WritePolicy};
+use aerospike::{BatchPolicy, Concurrency, WritePolicy, as_bin, as_key};
 
 use env_logger;
 
-use common;
+use crate::common;
 
 #[test]
 fn batch_get() {

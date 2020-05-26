@@ -21,9 +21,9 @@ use std::time::Duration;
 
 use parking_lot::Mutex;
 
-use errors::*;
-use net::{Connection, Host};
-use policy::ClientPolicy;
+use crate::errors::{Error, ErrorKind, Result};
+use crate::net::{Connection, Host};
+use crate::policy::ClientPolicy;
 
 #[derive(Debug)]
 struct IdleConnection(Connection);

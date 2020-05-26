@@ -13,9 +13,9 @@
 // License for the specific language governing permissions and limitations under
 // the License.
 
-use Bins;
-use Key;
-use Record;
+use crate::Bins;
+use crate::Key;
+use crate::Record;
 
 /// Key and bin names used in batch read commands where variable bins are needed for each key.
 pub struct BatchRead<'a> {

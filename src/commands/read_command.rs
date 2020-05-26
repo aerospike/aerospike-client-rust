@@ -17,18 +17,14 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
-use cluster::{Cluster, Node};
-use commands::buffer;
-use commands::{Command, SingleCommand};
-use errors::*;
-use net::Connection;
-use policy::ReadPolicy;
-use value::bytes_to_particle;
-use Bins;
-use Key;
-use Record;
-use ResultCode;
-use Value;
+use crate::cluster::{Cluster, Node};
+use crate::commands::buffer;
+use crate::commands::{Command, SingleCommand};
+use crate::errors::{ErrorKind, Result};
+use crate::net::Connection;
+use crate::policy::ReadPolicy;
+use crate::value::bytes_to_particle;
+use crate::{Bins, Record, Value, ResultCode, Key};
 
 pub struct ReadCommand<'a> {
     pub single_command: SingleCommand<'a>,
