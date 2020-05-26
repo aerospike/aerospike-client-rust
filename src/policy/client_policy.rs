@@ -15,8 +15,8 @@
 use std::collections::HashMap;
 use std::time::Duration;
 
-use commands::admin_command::AdminCommand;
-use errors::*;
+use crate::commands::admin_command::AdminCommand;
+use crate::errors::Result;
 
 /// `ClientPolicy` encapsulates parameters for client policy command.
 #[derive(Debug, Clone)]

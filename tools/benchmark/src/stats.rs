@@ -275,9 +275,9 @@ mod test {
             hist.add(Duration::from_millis(i), status);
         }
         assert_eq!(hist.buckets, [1, 1, 2, 4, 2, 0]);
-        assert_eq!(hist.min, 0.0);
-        assert_eq!(hist.max, 9.0);
-        assert_eq!(hist.sum, 45.0);
+        assert_eq!(hist.min, 0);
+        assert_eq!(hist.max, 9);
+        assert_eq!(hist.sum, 45);
         assert_eq!(hist.count, 10);
         assert_eq!(hist.errors, 3);
         assert_eq!(hist.timeouts, 3);
@@ -310,8 +310,8 @@ mod test {
 
         hist1.merge(hist2);
         assert_eq!(hist1.buckets, [1, 1, 4, 8, 2, 0]);
-        assert_eq!(hist1.min, 0.0);
-        assert_eq!(hist1.max, 9.0);
+        assert_eq!(hist1.min, 0);
+        assert_eq!(hist1.max, 9);
         assert_eq!(hist1.timeouts, 3);
         assert_eq!(hist1.errors, 2);
     }

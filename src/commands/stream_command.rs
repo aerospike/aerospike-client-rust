@@ -17,18 +17,15 @@ use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
 
-use cluster::Node;
-use commands::buffer;
-use commands::field_type::FieldType;
-use commands::Command;
-use errors::*;
-use net::Connection;
-use query::Recordset;
-use value::bytes_to_particle;
-use Key;
-use Record;
-use ResultCode;
-use Value;
+use crate::cluster::Node;
+use crate::commands::buffer;
+use crate::commands::field_type::FieldType;
+use crate::commands::Command;
+use crate::errors::{ErrorKind, Result};
+use crate::net::Connection;
+use crate::query::Recordset;
+use crate::value::bytes_to_particle;
+use crate::{Record, Value, ResultCode, Key};
 
 pub struct StreamCommand {
     node: Arc<Node>,

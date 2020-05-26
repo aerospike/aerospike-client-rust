@@ -16,13 +16,12 @@ use std::str;
 use std::sync::Arc;
 use std::time::Duration;
 
-use cluster::Node;
-use commands::{Command, SingleCommand, StreamCommand};
-use errors::*;
-use net::Connection;
-use policy::ScanPolicy;
-use Bins;
-use Recordset;
+use crate::cluster::Node;
+use crate::commands::{Command, SingleCommand, StreamCommand};
+use crate::errors::Result;
+use crate::net::Connection;
+use crate::policy::ScanPolicy;
+use crate::{Recordset, Bins};
 
 pub struct ScanCommand<'a> {
     stream_command: StreamCommand,

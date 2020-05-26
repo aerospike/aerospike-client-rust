@@ -13,10 +13,10 @@
 // License for the specific language governing permissions and limitations under
 // the License.
 
-use errors::*;
-use query::Filter;
-use Bins;
-use Value;
+use crate::errors::{ErrorKind, Result};
+use crate::query::Filter;
+use crate::Bins;
+use crate::Value;
 
 #[derive(Clone)]
 pub struct Aggregation {

@@ -16,13 +16,13 @@
 use std::thread;
 use std::time::Duration;
 
-use common;
+use crate::common;
 use env_logger;
 
 use aerospike::UDFLang;
 use aerospike::Value;
 use aerospike::WritePolicy;
-use aerospike::{Error, ErrorKind};
+use aerospike::{Error, ErrorKind, as_key, as_bin, as_val};
 
 #[test]
 fn execute_udf() {

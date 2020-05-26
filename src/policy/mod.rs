@@ -14,6 +14,7 @@
 // the License.
 
 //! Policy types encapsulate optional parameters for various client operations.
+#![allow(clippy::missing_errors_doc)]
 
 mod admin_policy;
 mod batch_policy;

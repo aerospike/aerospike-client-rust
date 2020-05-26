@@ -13,10 +13,9 @@
 // License for the specific language governing permissions and limitations under
 // the License.
 
-use policy::BasePolicy;
+use crate::policy::BasePolicy;
 use std::time::Duration;
-use ConsistencyLevel;
-use Priority;
+use crate::{Priority, ConsistencyLevel};
 
 /// `ReadPolicy` excapsulates parameters for transaction policy attributes
 /// used in all database operation calls.

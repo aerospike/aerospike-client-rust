@@ -25,10 +25,10 @@ use self::cdt::CdtOperation;
 pub use self::maps::{MapOrder, MapPolicy, MapReturnType, MapWriteMode};
 pub use self::scalar::*;
 
-use commands::buffer::Buffer;
-use commands::ParticleType;
-use errors::*;
-use Value;
+use crate::commands::buffer::Buffer;
+use crate::commands::ParticleType;
+use crate::errors::Result;
+use crate::Value;
 
 #[derive(Debug, Clone, Copy)]
 #[doc(hidden)]

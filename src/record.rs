@@ -17,8 +17,8 @@ use std::collections::HashMap;
 use std::fmt;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use Key;
-use Value;
+use crate::Key;
+use crate::Value;
 
 lazy_static! {
   // Fri Jan  1 00:00:00 UTC 2010
@@ -98,7 +98,7 @@ impl fmt::Display for Record {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::{CITRUSLEAF_EPOCH, Record};
     use std::collections::HashMap;
     use std::time::{Duration, SystemTime};
 

@@ -42,9 +42,9 @@
 
 use std::collections::HashMap;
 
-use operations::cdt::{CdtArgument, CdtOpType, CdtOperation};
-use operations::{Operation, OperationBin, OperationData, OperationType};
-use Value;
+use crate::operations::cdt::{CdtArgument, CdtOpType, CdtOperation};
+use crate::operations::{Operation, OperationBin, OperationData, OperationType};
+use crate::Value;
 
 /// Map storage order.
 #[derive(Debug, Clone, Copy)]

@@ -13,10 +13,10 @@
 // License for the specific language governing permissions and limitations under
 // the License.
 
-use errors::*;
+use crate::errors::{ErrorKind, Result};
 use std::iter::Peekable;
 use std::str::Chars;
-use Host;
+use crate::Host;
 
 pub struct Parser<'a> {
     s: Peekable<Chars<'a>>,
@@ -106,8 +106,7 @@ impl<'a> Parser<'a> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use Host;
+    use super::{Host, Parser};
 
     #[test]
     fn read_addr_part() {

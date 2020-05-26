@@ -16,10 +16,10 @@
 use std::collections::HashMap;
 use std::vec::Vec;
 
-use commands::buffer::Buffer;
-use commands::ParticleType;
-use errors::*;
-use value::*;
+use crate::commands::buffer::Buffer;
+use crate::commands::ParticleType;
+use crate::errors::{ErrorKind, Result};
+use crate::value::Value;
 
 pub fn unpack_value_list(buf: &mut Buffer) -> Result<Value> {
     if buf.data_buffer.is_empty() {

@@ -15,16 +15,14 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use cluster::{Cluster, Node};
-use commands::buffer;
-use commands::{Command, SingleCommand};
-use errors::*;
-use net::Connection;
-use operations::OperationType;
-use policy::WritePolicy;
-use Bin;
-use Key;
-use ResultCode;
+use crate::cluster::{Cluster, Node};
+use crate::commands::buffer;
+use crate::commands::{Command, SingleCommand};
+use crate::errors::{ErrorKind, Result};
+use crate::net::Connection;
+use crate::operations::OperationType;
+use crate::policy::WritePolicy;
+use crate::{Bin, ResultCode, Key};
 
 pub struct WriteCommand<'a, A: 'a> {
     single_command: SingleCommand<'a>,

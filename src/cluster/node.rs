@@ -24,11 +24,11 @@ use std::time::Duration;
 
 use parking_lot::RwLock;
 
-use cluster::node_validator::NodeValidator;
-use commands::Message;
-use errors::*;
-use net::{ConnectionPool, Host, PooledConnection};
-use policy::ClientPolicy;
+use crate::cluster::node_validator::NodeValidator;
+use crate::commands::Message;
+use crate::errors::{ErrorKind, Result, ResultExt};
+use crate::net::{ConnectionPool, Host, PooledConnection};
+use crate::policy::ClientPolicy;
 
 pub const PARTITIONS: usize = 4096;
 

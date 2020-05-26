@@ -13,11 +13,8 @@
 // License for the specific language governing permissions and limitations under
 // the License.
 
-use policy::{BasePolicy, PolicyLike};
-use CommitLevel;
-use Expiration;
-use GenerationPolicy;
-use RecordExistsAction;
+use crate::policy::{BasePolicy, PolicyLike};
+use crate::{CommitLevel, Expiration, GenerationPolicy, RecordExistsAction};
 
 /// `WritePolicy` encapsulates parameters for all write operations.
 pub struct WritePolicy {

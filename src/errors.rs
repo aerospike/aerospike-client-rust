@@ -52,7 +52,7 @@
 
 #![allow(missing_docs)]
 
-use ResultCode;
+use crate::ResultCode;
 
 error_chain! {
 

@@ -21,31 +21,19 @@ use std::sync::Arc;
 use std::thread;
 use std::vec::Vec;
 
-use base64;
 use scoped_pool::Pool;
 
-use batch::BatchExecutor;
-use cluster::{Cluster, Node};
-use commands::{
+use crate::batch::BatchExecutor;
+use crate::cluster::{Cluster, Node};
+use crate::commands::{
     DeleteCommand, ExecuteUDFCommand, ExistsCommand, OperateCommand, QueryCommand, ReadCommand,
     ScanCommand, TouchCommand, WriteCommand,
 };
-use errors::*;
-use net::ToHosts;
-use operations::{Operation, OperationType};
-use policy::{BatchPolicy, ClientPolicy, QueryPolicy, ReadPolicy, ScanPolicy, WritePolicy};
-use BatchRead;
-use Bin;
-use Bins;
-use CollectionIndexType;
-use IndexType;
-use Key;
-use Record;
-use Recordset;
-use ResultCode;
-use Statement;
-use UDFLang;
-use Value;
+use crate::errors::{ErrorKind, Result, ResultExt};
+use crate::net::ToHosts;
+use crate::operations::{Operation, OperationType};
+use crate::policy::{BatchPolicy, ClientPolicy, QueryPolicy, ReadPolicy, ScanPolicy, WritePolicy};
+use crate::{BatchRead, Bin, Bins, CollectionIndexType, IndexType, Key, Record, Recordset, ResultCode, Statement, Value, UDFLang};
 
 /// Instantiate a Client instance to access an Aerospike database cluster and perform database
 /// operations.
@@ -854,9 +842,10 @@ impl Client {
         index_type: IndexType,
         collection_index_type: CollectionIndexType,
     ) -> Result<()> {
-        let cit_str: String = match collection_index_type {
-            CollectionIndexType::Default => "".to_string(),
-            _ => format!("indextype={};", collection_index_type),
+        let cit_str: String = if let CollectionIndexType::Default = collection_index_type { 
+            "".to_string() 
+        } else { 
+            format!("indextype={};", collection_index_type) 
         };
         let cmd = format!(
             "sindex-create:ns={};set={};indexname={};numbins=1;{}indexdata={},{};\
@@ -875,9 +864,10 @@ impl Client {
         set_name: &str,
         index_name: &str,
     ) -> Result<()> {
-        let set_name: String = match set_name {
-            "" => "".to_string(),
-            _ => format!("set={};", set_name),
+        let set_name: String = if let "" = set_name { 
+            "".to_string() 
+        } else { 
+            format!("set={};", set_name) 
         };
         let cmd = format!(
             "sindex-delete:ns={};{}indexname={}",

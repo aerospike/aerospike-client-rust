@@ -12,15 +12,13 @@
 // WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
 // License for the specific language governing permissions and limitations under
 // the License.
-
 use std::collections::HashMap;
-
 use aerospike::operations;
-use aerospike::{Bins, ReadPolicy, Value, WritePolicy};
+use aerospike::{Bins, ReadPolicy, Value, WritePolicy, as_map, as_geo, as_val, as_list, as_blob, as_key, as_bin};
 
 use env_logger;
 
-use common;
+use crate::common;
 
 #[test]
 fn connect() {

@@ -18,14 +18,13 @@ use std::str;
 use std::sync::Arc;
 use std::vec::Vec;
 
-use base64;
 use parking_lot::RwLock;
 
-use cluster::node;
-use cluster::Node;
-use commands::Message;
-use errors::*;
-use net::Connection;
+use crate::cluster::node;
+use crate::cluster::Node;
+use crate::commands::Message;
+use crate::errors::{ErrorKind, Result};
+use crate::net::Connection;
 
 const REPLICAS_NAME: &str = "replicas-master";
 
