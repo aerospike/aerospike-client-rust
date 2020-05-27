@@ -818,7 +818,7 @@ impl Client {
         bin_name: &str,
         index_name: &str,
         index_type: IndexType,
-    ) -> Result<(IndexTask)> {
+    ) -> Result<IndexTask> {
         self.create_complex_index(
             policy,
             namespace,
@@ -827,7 +827,7 @@ impl Client {
             index_name,
             index_type,
             CollectionIndexType::Default,
-        );
+        )?;
         return IndexTask::new(
             Arc::clone(&self.cluster),
             namespace.to_string(),
