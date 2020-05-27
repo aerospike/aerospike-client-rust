@@ -23,6 +23,7 @@ use std::vec::Vec;
 
 use scoped_pool::Pool;
 
+use crate::query::IndexTask;
 use crate::batch::BatchExecutor;
 use crate::cluster::{Cluster, Node};
 use crate::commands::{
@@ -817,7 +818,7 @@ impl Client {
         bin_name: &str,
         index_name: &str,
         index_type: IndexType,
-    ) -> Result<()> {
+    ) -> Result<(IndexTask)> {
         self.create_complex_index(
             policy,
             namespace,
@@ -826,7 +827,12 @@ impl Client {
             index_name,
             index_type,
             CollectionIndexType::Default,
-        )
+        );
+        return IndexTask::new(
+            Arc::clone(&self.cluster),
+            namespace.to_string(),
+            index_name.to_string()
+        );
     }
 
     /// Create a complex secondary index on a bin containing scalar, list or map values. This

@@ -21,9 +21,11 @@ pub use self::index_types::{CollectionIndexType, IndexType};
 pub use self::recordset::Recordset;
 pub use self::statement::Statement;
 pub use self::udf::UDFLang;
+pub use self::index_task::IndexTask;
 
 mod filter;
 mod index_types;
 mod recordset;
 mod statement;
 mod udf;
+mod index_task;
