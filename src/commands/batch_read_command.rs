@@ -144,8 +144,7 @@ impl<'a, 'b> BatchReadCommand<'a, 'b> {
                         .batch_reads
                         .get_mut(batch_record.batch_index)
                         .expect("Invalid batch index");
-                    let record = batch_record.record;
-                    batch_read.record = record;
+                    batch_read.record = batch_record.record;
                 }
             }
         }
