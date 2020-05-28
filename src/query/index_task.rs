@@ -72,7 +72,6 @@ impl IndexTask {
     }
 
 	fn parse_response(response: &str) -> Result<IndexTaskResult> {
-		println!("superjack response {:?}", response);
         match response.find(SUCCESS_PATTERN) {
             None => {
                 match (response.find(FAIL_PATTERN_201), response.find(FAIL_PATTERN_203)) {
