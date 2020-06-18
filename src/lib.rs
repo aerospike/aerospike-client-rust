@@ -163,6 +163,7 @@ pub use policy::{
     WritePolicy,
 };
 pub use query::{CollectionIndexType, IndexType, Recordset, Statement, UDFLang};
+pub use task::{IndexTask, RegisterTask};
 pub use record::Record;
 pub use result_code::ResultCode;
 pub use user::User;
@@ -185,6 +186,7 @@ mod net;
 pub mod operations;
 pub mod policy;
 pub mod query;
+pub mod task;
 mod record;
 mod result_code;
 mod user;

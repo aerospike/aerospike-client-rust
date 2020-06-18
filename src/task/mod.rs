@@ -13,17 +13,14 @@
 // License for the specific language governing permissions and limitations under
 // the License.
 
-//! Types and methods used for database queries and scans.
+//! Types and methods used for long running status queries.
 #![allow(clippy::missing_errors_doc)]
 
-pub use self::filter::Filter;
-pub use self::index_types::{CollectionIndexType, IndexType};
-pub use self::recordset::Recordset;
-pub use self::statement::Statement;
-pub use self::udf::UDFLang;
+pub use self::index_task::IndexTask;
+pub use self::register_task::RegisterTask;
+pub use self::task::Status;
+pub use self::task::Task;
 
-mod filter;
-mod index_types;
-mod recordset;
-mod statement;
-mod udf;
+mod index_task;
+mod register_task;
+mod task;

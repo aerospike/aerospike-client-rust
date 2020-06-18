@@ -23,7 +23,7 @@ use std::vec::Vec;
 
 use scoped_pool::Pool;
 
-use crate::query::IndexTask;
+use crate::task::{IndexTask, RegisterTask};
 use crate::batch::BatchExecutor;
 use crate::cluster::{Cluster, Node};
 use crate::commands::{
@@ -492,7 +492,7 @@ impl Client {
         udf_body: &[u8],
         udf_name: &str,
         language: UDFLang,
-    ) -> Result<()> {
+    ) -> Result<RegisterTask> {
         let udf_body = base64::encode(udf_body);
 
         let cmd = format!(
@@ -517,7 +517,10 @@ impl Client {
             );
         }
 
-        Ok(())
+        Ok(RegisterTask::new(
+            Arc::clone(&self.cluster),
+            udf_name.to_string()
+        ))
     }
 
     /// Register a package containing user-defined functions (UDF) with the cluster. This
@@ -532,7 +535,7 @@ impl Client {
         client_path: &str,
         udf_name: &str,
         language: UDFLang,
-    ) -> Result<()> {
+    ) -> Result<RegisterTask> {
         let path = Path::new(client_path);
         let mut file = File::open(&path)?;
         let mut udf_body: Vec<u8> = vec![];
@@ -569,6 +572,7 @@ impl Client {
         function_name: &str,
         args: Option<&[Value]>,
     ) -> Result<Option<Value>> {
+
         let mut command = ExecuteUDFCommand::new(
             policy,
             self.cluster.clone(),
@@ -577,6 +581,7 @@ impl Client {
             function_name,
             args,
         );
+
         command.execute()?;
 
         let record = command.read_command.record.unwrap();
@@ -828,11 +833,11 @@ impl Client {
             index_type,
             CollectionIndexType::Default,
         )?;
-        return IndexTask::new(
+        return Ok(IndexTask::new(
             Arc::clone(&self.cluster),
             namespace.to_string(),
             index_name.to_string()
-        );
+        ));
     }
 
     /// Create a complex secondary index on a bin containing scalar, list or map values. This
