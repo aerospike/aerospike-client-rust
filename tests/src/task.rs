@@ -5,8 +5,18 @@ use aerospike::errors::{ErrorKind};
 use std::{thread};
 use std::time::{Duration};
 
+#[macro_export]
+macro_rules! matches_override {
+    ($expression:expr, $($pattern:tt)+) => {
+        match $expression {
+            $($pattern)+ => true,
+            _ => false
+        }
+    }
+}
+
 // If registering udf is successful, querying RegisterTask will return Status::Complete 
-// If udf does not exist, querying RegisterTask will return 
+// If udf does not exist, querying RegisterTask will return error
 #[test]
 fn register_task_test() {
     let client = common::client();
@@ -32,7 +42,7 @@ fn register_task_test() {
         &udf_file_name,
         UDFLang::Lua).unwrap();
 
-    assert!(matches!(register_task.wait_till_complete().unwrap(), Status::Complete));
+    assert!(matches_override!(register_task.wait_till_complete().unwrap(), Status::Complete));
 
     client.remove_udf(
         &WritePolicy::default(),
@@ -45,7 +55,7 @@ fn register_task_test() {
 
     match register_task.wait_till_complete() {
         Err(e) => {
-            assert!(matches!(e.kind(), ErrorKind::Connection(_err_string)));
+            assert!(matches_override!(e.kind(), ErrorKind::Connection(_err_string)));
         },
         _ => {
             panic!("error");
@@ -81,7 +91,7 @@ fn index_task_test() {
         IndexType::Numeric,
     ).unwrap();
 
-    assert!(matches!(index_task.wait_till_complete().unwrap(), Status::Complete));
+    assert!(matches_override!(index_task.wait_till_complete().unwrap(), Status::Complete));
 }
 
 
