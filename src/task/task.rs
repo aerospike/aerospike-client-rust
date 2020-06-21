@@ -1,7 +1,6 @@
 
 use std::time::{Duration, Instant};
 use std::{thread};
-use crate::{ResultCode};
 use crate::errors::{ErrorKind, Result};
 
 
@@ -36,7 +35,7 @@ pub trait Task {
         while now.elapsed().as_secs() < self.get_timeout()?.as_secs() {
             match self.query_status() {
                 Ok(Status::NotFound) => {
-                    bail!(ErrorKind::ServerError(ResultCode::ServerError))
+                    bail!(ErrorKind::BadResponse("task status not found".to_string()))
                 },
                 Ok(Status::InProgress) => {
                     // do nothing and wait
@@ -47,7 +46,7 @@ pub trait Task {
         }
 
         // Timeout
-        bail!(ErrorKind::ServerError(ResultCode::ServerError)) 
+        bail!(ErrorKind::Connection("query status timeout".to_string()))
     }
 }
 

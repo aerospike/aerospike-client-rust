@@ -553,9 +553,10 @@ impl Client {
     ) -> Result<()> {
         let cmd = format!("udf-remove:filename={}.{};", udf_name, language);
         let node = self.cluster.get_random_node()?;
+        // Sample response: {"udf-remove:filename=file_name.LUA;": "ok"}
         let response = node.info(policy.base_policy.timeout, &[&cmd])?;
 
-        if response.get("ok").is_some() {
+        if response.get(&cmd).is_some() && response.get(&cmd).unwrap() == "ok" {
             return Ok(());
         }
 

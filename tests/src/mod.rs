@@ -22,3 +22,4 @@ mod query;
 mod scan;
 mod truncate;
 mod udf;
+mod task;

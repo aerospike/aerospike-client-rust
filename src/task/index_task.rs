@@ -1,12 +1,11 @@
 use crate::cluster::{Cluster};
 use std::sync::Arc;
 use crate::errors::{ErrorKind, Result};
-use crate::{ResultCode};
 use std::time::{Duration};
 use crate::task::{Status, Task};
 
 
-/// Index task creation status
+/// Struct for querying index creation status
 #[derive(Debug, Clone)]
 pub struct IndexTask {
     cluster: Arc<Cluster>,
@@ -21,7 +20,6 @@ static FAIL_PATTERN_203: &'static str = "FAIL:203";
 static DELMITER: &'static str = ";";
 
 impl IndexTask {
-    // TODO: enforce access of this only to Client
     /// Initializes IndexTask from client, creation should only be expose to Client
     pub fn new(cluster: Arc<Cluster>, namespace: String, index_name: String) -> Self {
         IndexTask {
@@ -39,8 +37,7 @@ impl IndexTask {
         match response.find(SUCCESS_PATTERN) {
             None => {
                 match (response.find(FAIL_PATTERN_201), response.find(FAIL_PATTERN_203)) {
-                    // TODO: what error should this be?
-                    (None, None) => bail!(ErrorKind::ServerError(ResultCode::ServerError)),
+                    (None, None) => bail!(ErrorKind::BadResponse(format!("Code 201 and 203 missing. Response: {}", response))),
                     (_, _) => return Ok(Status::NotFound)
                 }
             },
@@ -48,8 +45,7 @@ impl IndexTask {
                 let percent_begin = pattern_index + SUCCESS_PATTERN.len();
 
                 let percent_end = match response[percent_begin..].find(DELMITER) {
-                    // TODO: what error should this be?
-                    None =>  bail!(ErrorKind::ServerError(ResultCode::ServerError)),
+                    None =>  bail!(ErrorKind::BadResponse(format!("delimiter missing in response. Response: {}", response))),
                     Some(percent_end) => percent_end
                 };
                 let percent_str = &response[percent_begin..percent_begin+percent_end];
@@ -69,8 +65,7 @@ impl Task for IndexTask {
         let nodes = self.cluster.nodes();
 
         if nodes.len() == 0 {
-            // TODO: what error should this be
-            bail!(ErrorKind::ServerError(ResultCode::ServerError))
+            bail!(ErrorKind::Connection("No connected node".to_string()))
         }
 
         for node in nodes.iter() {
@@ -99,7 +94,7 @@ impl Task for IndexTask {
                 return Ok(duration);
             }
             _ => {
-                bail!(ErrorKind::ServerError(ResultCode::ServerError)) 
+                bail!(ErrorKind::InvalidArgument("Timeout missing in client policy".to_string()))
             }
             
         }

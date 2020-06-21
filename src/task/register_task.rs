@@ -2,7 +2,6 @@ use crate::cluster::{Cluster};
 use std::sync::Arc;
 use crate::task::{Status, Task};
 use crate::errors::{ErrorKind, Result};
-use crate::{ResultCode};
 use std::time::{Duration};
 
 /// Struct for querying udf register status
@@ -17,7 +16,6 @@ static RESPONSE_PATTERN: &'static str = "filename=";
 
 
 impl RegisterTask {
-    // TODO: enforce access of this only to Client
     /// Initializes RegisterTask from client, creation should only be expose to Client
     pub fn new(cluster: Arc<Cluster>, package_name: String) -> Self {
         RegisterTask {
@@ -34,7 +32,7 @@ impl Task for RegisterTask {
         let nodes = self.cluster.nodes();
 
         if nodes.len() == 0 {
-            bail!(ErrorKind::ServerError(ResultCode::ServerError))
+            bail!(ErrorKind::Connection("No connected node".to_string()))
         }
 
         for node in nodes.iter() {
@@ -65,7 +63,7 @@ impl Task for RegisterTask {
     			return Ok(duration);
     		}
     		_ => {
-    			bail!(ErrorKind::ServerError(ResultCode::ServerError)) 
+                bail!(ErrorKind::InvalidArgument("Timeout missing in client policy".to_string()))
     		}
     		
     	}
