@@ -5,6 +5,8 @@ use aerospike::errors::{ErrorKind};
 use std::{thread};
 use std::time::{Duration};
 
+
+// TODO: replace matches_override with matches when upgrade to 1.42.0
 #[macro_export]
 macro_rules! matches_override {
     ($expression:expr, $($pattern:tt)+) => {
