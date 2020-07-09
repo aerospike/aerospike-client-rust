@@ -30,15 +30,19 @@ impl IndexTask {
     }
 
     fn build_command(namespace: String, index_name: String) -> String {
-        return format!("{}{}{}{}", "sindex/", namespace, "/", index_name);
+        return format!("sindex/{}/{}", namespace, index_name);
     }
 
 	fn parse_response(response: &str) -> Result<Status> {
         match response.find(SUCCESS_PATTERN) {
             None => {
-                match (response.find(FAIL_PATTERN_201), response.find(FAIL_PATTERN_203)) {
-                    (None, None) => bail!(ErrorKind::BadResponse(format!("Code 201 and 203 missing. Response: {}", response))),
-                    (_, _) => return Ok(Status::NotFound)
+                if response.contains(FAIL_PATTERN_201) || response.contains(FAIL_PATTERN_203) {
+                    return Ok(Status::NotFound);
+                } else {
+                    bail!(ErrorKind::BadResponse(format!(
+                        "Code 201 and 203 missing. Response: {}",
+                        response
+                    )));
                 }
             },
             Some(pattern_index) => {
@@ -48,11 +52,13 @@ impl IndexTask {
                     None =>  bail!(ErrorKind::BadResponse(format!("delimiter missing in response. Response: {}", response))),
                     Some(percent_end) => percent_end
                 };
-                let percent_str = &response[percent_begin..percent_begin+percent_end];
-                if percent_str.parse::<isize>().unwrap() != 100 {
-                    return Ok(Status::InProgress);
-                } else {
-                    return Ok(Status::Complete);
+                let percent_str = &response[percent_begin..percent_begin + percent_end];
+                match percent_str.parse::<isize>() {
+                    Ok(100) => return Ok(Status::Complete),
+                    Ok(_) => return Ok(Status::InProgress),
+                    Err(_) => bail!(ErrorKind::BadResponse(
+                        "Unexpected load_pct value from server".to_string()
+                    )),
                 }
             }
         }
@@ -79,11 +85,7 @@ impl Task for IndexTask {
                 return Ok(Status::NotFound);
             }
 
-            match IndexTask::parse_response(&response[command]) {
-                Ok(Status::NotFound) => return Ok(Status::NotFound),
-                Ok(Status::InProgress) => return Ok(Status::InProgress),
-                error => return error
-            }
+            return IndexTask::parse_response(&response[command]);
         }
         return Ok(Status::Complete);
     }

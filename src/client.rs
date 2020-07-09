@@ -556,11 +556,10 @@ impl Client {
         // Sample response: {"udf-remove:filename=file_name.LUA;": "ok"}
         let response = node.info(policy.base_policy.timeout, &[&cmd])?;
 
-        if response.get(&cmd).is_some() && response.get(&cmd).unwrap() == "ok" {
-            return Ok(());
+        match response.get(&cmd).map(String::as_str) {
+            Some("ok") => return Ok(()),
+            _ => bail!("UDF Remove failed: {:?}", response),
         }
-
-        bail!("UDF Remove failed: {:?}", response)
     }
 
     /// Execute a user-defined function on the server and return the results. The function operates

@@ -55,15 +55,10 @@ fn register_task_test() {
 
     thread::sleep(Duration::from_secs(5));
 
-    match register_task.wait_till_complete() {
-        Err(e) => {
-            assert!(matches_override!(e.kind(), ErrorKind::Connection(_err_string)));
-        },
-        _ => {
-            panic!("error");
-        }
-
-    }
+    assert!(matches_override!(
+        register_task.wait_till_complete(),
+        Err(Error(ErrorKind::Connection(_), _))
+    ));
 }
 
 
@@ -93,7 +88,10 @@ fn index_task_test() {
         IndexType::Numeric,
     ).unwrap();
 
-    assert!(matches_override!(index_task.wait_till_complete().unwrap(), Status::Complete));
+    assert!(matches_override!(
+        index_task.wait_till_complete(),
+        Ok(Status::Complete)
+    ));
 }
 
 
