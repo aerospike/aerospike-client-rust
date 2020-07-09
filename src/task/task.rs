@@ -28,35 +28,34 @@ pub enum Status {
     Complete,
 }
 
-static POLL_INTERVAL: Duration = Duration::from_secs(5);
+static POLL_INTERVAL: Duration = Duration::from_secs(1);
 
 /// Base task interface
 pub trait Task {
     /// interface for query specific task status
     fn query_status(&self) -> Result<Status>;
 
-    /// interface for retrieving client timeout
-    fn get_timeout(&self) -> Result<Duration>;
-
-    // TODO: consider adding async and only support rust 1.39.0+
-    /// logic to wait until status query is completed
-    fn wait_till_complete(&self) -> Result<Status> {
+    /// Wait until query status is complete, an error occurs, or the timeout has elapsed.
+    fn wait_till_complete(&self, timeout: Option<Duration>) -> Result<Status> {
         let now = Instant::now();
+        let timeout_elapsed = |deadline| now.elapsed() + POLL_INTERVAL > deadline;
 
-        while now.elapsed().as_secs() < self.get_timeout()?.as_secs() {
+        loop {
+            // Sleep first to give task a chance to complete and help avoid case where task hasn't
+            // started yet.
+            thread::sleep(POLL_INTERVAL);
+
             match self.query_status() {
                 Ok(Status::NotFound) => {
                     bail!(ErrorKind::BadResponse("task status not found".to_string()))
                 }
-                Ok(Status::InProgress) => {
-                    // do nothing and wait
-                }
+                Ok(Status::InProgress) => {} // do nothing and wait
                 error_or_complete => return error_or_complete,
             }
-            thread::sleep(POLL_INTERVAL);
-        }
 
-        // Timeout
-        bail!(ErrorKind::Connection("query status timeout".to_string()))
+            if timeout.map_or(false, timeout_elapsed) {
+                bail!(ErrorKind::Timeout("Task timeout reached".to_string()))
+            }
+        }
     }
 }

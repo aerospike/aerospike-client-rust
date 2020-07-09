@@ -17,7 +17,6 @@ use crate::cluster::Cluster;
 use crate::errors::{ErrorKind, Result};
 use crate::task::{Status, Task};
 use std::sync::Arc;
-use std::time::Duration;
 
 /// Struct for querying udf register status
 #[derive(Debug, Clone)]
@@ -68,16 +67,5 @@ impl Task for RegisterTask {
             }
         }
         return Ok(Status::Complete);
-    }
-
-    fn get_timeout(&self) -> Result<Duration> {
-        match self.cluster.client_policy().timeout {
-            Some(duration) => {
-                return Ok(duration);
-            }
-            _ => bail!(ErrorKind::InvalidArgument(
-                "Timeout missing in client policy".to_string()
-            )),
-        }
     }
 }

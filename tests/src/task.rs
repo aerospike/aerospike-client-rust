@@ -61,19 +61,20 @@ fn register_task_test() {
         .unwrap();
 
     assert!(matches_override!(
-        register_task.wait_till_complete(),
+        register_task.wait_till_complete(None),
         Ok(Status::Complete)
     ));
 
     client
         .remove_udf(&WritePolicy::default(), &udf_name, UDFLang::Lua)
         .unwrap();
+    // Wait for some time to ensure UDF has been unregistered on all nodes.
+    thread::sleep(Duration::from_secs(2));
 
-    thread::sleep(Duration::from_secs(5));
-
+    let timeout = Duration::from_millis(100);
     assert!(matches_override!(
-        register_task.wait_till_complete(),
-        Err(Error(ErrorKind::Connection(_), _))
+        register_task.wait_till_complete(Some(timeout)),
+        Err(Error(ErrorKind::Timeout(_), _))
     ));
 }
 
@@ -106,7 +107,7 @@ fn index_task_test() {
         .unwrap();
 
     assert!(matches_override!(
-        index_task.wait_till_complete(),
+        index_task.wait_till_complete(None),
         Ok(Status::Complete)
     ));
 }

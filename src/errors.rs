@@ -120,6 +120,12 @@ error_chain! {
             description("UDF Bad Response")
             display("UDF Bad Response: {}", details)
         }
+
+/// Error returned when a tasked timeed out before it could be completed.
+        Timeout(details: String) {
+            description("Timeout")
+            display("Timeout: {}", details)
+        }
     }
 }
 
