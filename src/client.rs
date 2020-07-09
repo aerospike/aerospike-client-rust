@@ -23,7 +23,6 @@ use std::vec::Vec;
 
 use scoped_pool::Pool;
 
-use crate::task::{IndexTask, RegisterTask};
 use crate::batch::BatchExecutor;
 use crate::cluster::{Cluster, Node};
 use crate::commands::{
@@ -34,7 +33,11 @@ use crate::errors::{ErrorKind, Result, ResultExt};
 use crate::net::ToHosts;
 use crate::operations::{Operation, OperationType};
 use crate::policy::{BatchPolicy, ClientPolicy, QueryPolicy, ReadPolicy, ScanPolicy, WritePolicy};
-use crate::{BatchRead, Bin, Bins, CollectionIndexType, IndexType, Key, Record, Recordset, ResultCode, Statement, Value, UDFLang};
+use crate::task::{IndexTask, RegisterTask};
+use crate::{
+    BatchRead, Bin, Bins, CollectionIndexType, IndexType, Key, Record, Recordset, ResultCode,
+    Statement, UDFLang, Value,
+};
 
 /// Instantiate a Client instance to access an Aerospike database cluster and perform database
 /// operations.
@@ -519,7 +522,7 @@ impl Client {
 
         Ok(RegisterTask::new(
             Arc::clone(&self.cluster),
-            udf_name.to_string()
+            udf_name.to_string(),
         ))
     }
 
@@ -572,7 +575,6 @@ impl Client {
         function_name: &str,
         args: Option<&[Value]>,
     ) -> Result<Option<Value>> {
-
         let mut command = ExecuteUDFCommand::new(
             policy,
             self.cluster.clone(),
@@ -836,7 +838,7 @@ impl Client {
         return Ok(IndexTask::new(
             Arc::clone(&self.cluster),
             namespace.to_string(),
-            index_name.to_string()
+            index_name.to_string(),
         ));
     }
 
@@ -853,10 +855,10 @@ impl Client {
         index_type: IndexType,
         collection_index_type: CollectionIndexType,
     ) -> Result<()> {
-        let cit_str: String = if let CollectionIndexType::Default = collection_index_type { 
-            "".to_string() 
-        } else { 
-            format!("indextype={};", collection_index_type) 
+        let cit_str: String = if let CollectionIndexType::Default = collection_index_type {
+            "".to_string()
+        } else {
+            format!("indextype={};", collection_index_type)
         };
         let cmd = format!(
             "sindex-create:ns={};set={};indexname={};numbins=1;{}indexdata={},{};\
@@ -875,10 +877,10 @@ impl Client {
         set_name: &str,
         index_name: &str,
     ) -> Result<()> {
-        let set_name: String = if let "" = set_name { 
-            "".to_string() 
-        } else { 
-            format!("set={};", set_name) 
+        let set_name: String = if let "" = set_name {
+            "".to_string()
+        } else {
+            format!("set={};", set_name)
         };
         let cmd = format!(
             "sindex-delete:ns={};{}indexname={}",

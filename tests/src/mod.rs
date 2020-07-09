@@ -20,6 +20,6 @@ mod index;
 mod kv;
 mod query;
 mod scan;
+mod task;
 mod truncate;
 mod udf;
-mod task;

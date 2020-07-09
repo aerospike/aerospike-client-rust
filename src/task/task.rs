@@ -1,9 +1,7 @@
 
-use std::time::{Duration, Instant};
-use std::{thread};
 use crate::errors::{ErrorKind, Result};
-
-
+use std::thread;
+use std::time::{Duration, Instant};
 
 /// Status of task
 #[derive(Debug, Clone, Copy)]
@@ -13,11 +11,10 @@ pub enum Status {
     /// long running task in progress
     InProgress,
     /// long running task completed
-    Complete
+    Complete,
 }
 
 static POLL_INTERVAL: Duration = Duration::from_secs(5);
-
 
 /// Base task interface
 pub trait Task {
@@ -36,11 +33,11 @@ pub trait Task {
             match self.query_status() {
                 Ok(Status::NotFound) => {
                     bail!(ErrorKind::BadResponse("task status not found".to_string()))
-                },
+                }
                 Ok(Status::InProgress) => {
                     // do nothing and wait
-                },
-                error_or_complete => return error_or_complete
+                }
+                error_or_complete => return error_or_complete,
             }
             thread::sleep(POLL_INTERVAL);
         }
@@ -49,15 +46,3 @@ pub trait Task {
         bail!(ErrorKind::Connection("query status timeout".to_string()))
     }
 }
-
-
-
-
-
-
-
-
-
-
-
-

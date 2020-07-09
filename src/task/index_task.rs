@@ -1,18 +1,16 @@
 use crate::cluster::{Cluster};
-use std::sync::Arc;
 use crate::errors::{ErrorKind, Result};
-use std::time::{Duration};
 use crate::task::{Status, Task};
-
+use std::sync::Arc;
+use std::time::Duration;
 
 /// Struct for querying index creation status
 #[derive(Debug, Clone)]
 pub struct IndexTask {
     cluster: Arc<Cluster>,
     namespace: String,
-    index_name: String
+    index_name: String,
 }
-
 
 static SUCCESS_PATTERN: &'static str = "load_pct=";
 static FAIL_PATTERN_201: &'static str = "FAIL:201";
@@ -23,9 +21,9 @@ impl IndexTask {
     /// Initializes IndexTask from client, creation should only be expose to Client
     pub fn new(cluster: Arc<Cluster>, namespace: String, index_name: String) -> Self {
         IndexTask {
-        	cluster: cluster,
-        	namespace: namespace,
-            index_name: index_name
+            cluster: cluster,
+            namespace: namespace,
+            index_name: index_name,
         }
     }
 
@@ -33,7 +31,7 @@ impl IndexTask {
         return format!("sindex/{}/{}", namespace, index_name);
     }
 
-	fn parse_response(response: &str) -> Result<Status> {
+    fn parse_response(response: &str) -> Result<Status> {
         match response.find(SUCCESS_PATTERN) {
             None => {
                 if response.contains(FAIL_PATTERN_201) || response.contains(FAIL_PATTERN_203) {
@@ -44,13 +42,16 @@ impl IndexTask {
                         response
                     )));
                 }
-            },
+            }
             Some(pattern_index) => {
                 let percent_begin = pattern_index + SUCCESS_PATTERN.len();
 
                 let percent_end = match response[percent_begin..].find(DELMITER) {
-                    None =>  bail!(ErrorKind::BadResponse(format!("delimiter missing in response. Response: {}", response))),
-                    Some(percent_end) => percent_end
+                    None => bail!(ErrorKind::BadResponse(format!(
+                        "delimiter missing in response. Response: {}",
+                        response
+                    ))),
+                    Some(percent_end) => percent_end,
                 };
                 let percent_str = &response[percent_begin..percent_begin + percent_end];
                 match percent_str.parse::<isize>() {
@@ -75,10 +76,11 @@ impl Task for IndexTask {
         }
 
         for node in nodes.iter() {
-            let command = &IndexTask::build_command(self.namespace.to_owned(), self.index_name.to_owned());
+            let command =
+                &IndexTask::build_command(self.namespace.to_owned(), self.index_name.to_owned());
             let response = node.info(
                 Some(self.cluster.client_policy().timeout.unwrap()),
-                &[&command[..]]
+                &[&command[..]],
             )?;
 
             if !response.contains_key(command) {
@@ -95,17 +97,9 @@ impl Task for IndexTask {
             Some(duration) => {
                 return Ok(duration);
             }
-            _ => {
-                bail!(ErrorKind::InvalidArgument("Timeout missing in client policy".to_string()))
-            }
-            
+            _ => bail!(ErrorKind::InvalidArgument(
+                "Timeout missing in client policy".to_string()
+            )),
         }
     }
 }
-
-
-
-
-
-
-
