@@ -20,7 +20,7 @@ use std::thread;
 use crate::common;
 use env_logger;
 
-use aerospike::task::Task;
+use aerospike::Task;
 use aerospike::*;
 
 const EXPECTED: usize = 1000;

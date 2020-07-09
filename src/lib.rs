@@ -165,7 +165,7 @@ pub use policy::{
 pub use query::{CollectionIndexType, IndexType, Recordset, Statement, UDFLang};
 pub use record::Record;
 pub use result_code::ResultCode;
-pub use task::{IndexTask, RegisterTask};
+pub use task::{IndexTask, RegisterTask, Task};
 pub use user::User;
 pub use value::{FloatValue, Value};
 
