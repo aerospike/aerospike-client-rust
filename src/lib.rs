@@ -1,4 +1,4 @@
-// Copyright 2015-2018 Aerospike, Inc.
+// Copyright 2015-2020 Aerospike, Inc.
 //
 // Portions may be licensed to Aerospike, Inc. under one or more contributor
 // license agreements.
@@ -165,6 +165,7 @@ pub use policy::{
 pub use query::{CollectionIndexType, IndexType, Recordset, Statement, UDFLang};
 pub use record::Record;
 pub use result_code::ResultCode;
+pub use task::{IndexTask, RegisterTask, Task};
 pub use user::User;
 pub use value::{FloatValue, Value};
 
@@ -187,6 +188,7 @@ pub mod policy;
 pub mod query;
 mod record;
 mod result_code;
+pub mod task;
 mod user;
 
 #[cfg(test)]

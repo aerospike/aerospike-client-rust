@@ -1,4 +1,4 @@
-// Copyright 2015-2018 Aerospike, Inc.
+// Copyright 2015-2020 Aerospike, Inc.
 //
 // Portions may be licensed to Aerospike, Inc. under one or more contributor
 // license agreements.
@@ -13,16 +13,11 @@
 // License for the specific language governing permissions and limitations under
 // the License.
 
-use std::thread;
-use std::time::Duration;
-
 use crate::common;
 use env_logger;
 
-use aerospike::UDFLang;
-use aerospike::Value;
-use aerospike::WritePolicy;
-use aerospike::{Error, ErrorKind, as_key, as_bin, as_val};
+use aerospike::Task;
+use aerospike::*;
 
 #[test]
 fn execute_udf() {
@@ -56,7 +51,7 @@ function echo(rec, val)
 end
 "#;
 
-    client
+    let task = client
         .register_udf(
             &wpolicy,
             udf_body1.as_bytes(),
@@ -64,7 +59,9 @@ end
             UDFLang::Lua,
         )
         .unwrap();
-    client
+    task.wait_till_complete(None).unwrap();
+
+    let task = client
         .register_udf(
             &wpolicy,
             udf_body2.as_bytes(),
@@ -72,9 +69,7 @@ end
             UDFLang::Lua,
         )
         .unwrap();
-
-    // FIXME: replace sleep with wait task
-    thread::sleep(Duration::from_millis(3000));
+    task.wait_till_complete(None).unwrap();
 
     let res = client.execute_udf(
         &wpolicy,

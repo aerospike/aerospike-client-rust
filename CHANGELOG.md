@@ -4,6 +4,9 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+* **New Features**
+  * Add new Task interface to wait for long-running index & UDF tasks to complete. [#69](https://github.com/aerospike/aerospike-client-rust/pull/69) Thanks to [@jlr52](https://github.com/jlr52)!
+
 ## [0.4.0] - 2019-12-03
 
 * **Bug Fixes**

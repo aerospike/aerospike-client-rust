@@ -1,4 +1,4 @@
-// Copyright 2015-2018 Aerospike, Inc.
+// Copyright 2015-2020 Aerospike, Inc.
 //
 // Portions may be licensed to Aerospike, Inc. under one or more contributor
 // license agreements.
@@ -16,11 +16,11 @@
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::thread;
-use std::time::Duration;
 
 use crate::common;
 use env_logger;
 
+use aerospike::Task;
 use aerospike::*;
 
 const EXPECTED: usize = 1000;
@@ -39,8 +39,7 @@ fn create_test_set(no_records: usize) -> String {
         client.put(&wpolicy, &key, &bins).unwrap();
     }
 
-    // create an index
-    client
+    let task = client
         .create_index(
             &wpolicy,
             namespace,
@@ -50,9 +49,7 @@ fn create_test_set(no_records: usize) -> String {
             IndexType::Numeric,
         )
         .expect("Failed to create index");
-
-    // FIXME: replace sleep with wait task
-    thread::sleep(Duration::from_millis(3000));
+    task.wait_till_complete(None).unwrap();
 
     set_name
 }

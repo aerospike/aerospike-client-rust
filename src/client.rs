@@ -1,4 +1,4 @@
-// Copyright 2015-2018 Aerospike, Inc.
+// Copyright 2015-2020 Aerospike, Inc.
 //
 // Portions may be licensed to Aerospike, Inc. under one or more contributor
 // license agreements.
@@ -33,7 +33,11 @@ use crate::errors::{ErrorKind, Result, ResultExt};
 use crate::net::ToHosts;
 use crate::operations::{Operation, OperationType};
 use crate::policy::{BatchPolicy, ClientPolicy, QueryPolicy, ReadPolicy, ScanPolicy, WritePolicy};
-use crate::{BatchRead, Bin, Bins, CollectionIndexType, IndexType, Key, Record, Recordset, ResultCode, Statement, Value, UDFLang};
+use crate::task::{IndexTask, RegisterTask};
+use crate::{
+    BatchRead, Bin, Bins, CollectionIndexType, IndexType, Key, Record, Recordset, ResultCode,
+    Statement, UDFLang, Value,
+};
 
 /// Instantiate a Client instance to access an Aerospike database cluster and perform database
 /// operations.
@@ -491,7 +495,7 @@ impl Client {
         udf_body: &[u8],
         udf_name: &str,
         language: UDFLang,
-    ) -> Result<()> {
+    ) -> Result<RegisterTask> {
         let udf_body = base64::encode(udf_body);
 
         let cmd = format!(
@@ -516,7 +520,10 @@ impl Client {
             );
         }
 
-        Ok(())
+        Ok(RegisterTask::new(
+            Arc::clone(&self.cluster),
+            udf_name.to_string(),
+        ))
     }
 
     /// Register a package containing user-defined functions (UDF) with the cluster. This
@@ -531,7 +538,7 @@ impl Client {
         client_path: &str,
         udf_name: &str,
         language: UDFLang,
-    ) -> Result<()> {
+    ) -> Result<RegisterTask> {
         let path = Path::new(client_path);
         let mut file = File::open(&path)?;
         let mut udf_body: Vec<u8> = vec![];
@@ -549,13 +556,13 @@ impl Client {
     ) -> Result<()> {
         let cmd = format!("udf-remove:filename={}.{};", udf_name, language);
         let node = self.cluster.get_random_node()?;
+        // Sample response: {"udf-remove:filename=file_name.LUA;": "ok"}
         let response = node.info(policy.base_policy.timeout, &[&cmd])?;
 
-        if response.get("ok").is_some() {
-            return Ok(());
+        match response.get(&cmd).map(String::as_str) {
+            Some("ok") => return Ok(()),
+            _ => bail!("UDF Remove failed: {:?}", response),
         }
-
-        bail!("UDF Remove failed: {:?}", response)
     }
 
     /// Execute a user-defined function on the server and return the results. The function operates
@@ -576,6 +583,7 @@ impl Client {
             function_name,
             args,
         );
+
         command.execute()?;
 
         let record = command.read_command.record.unwrap();
@@ -817,7 +825,7 @@ impl Client {
         bin_name: &str,
         index_name: &str,
         index_type: IndexType,
-    ) -> Result<()> {
+    ) -> Result<IndexTask> {
         self.create_complex_index(
             policy,
             namespace,
@@ -826,7 +834,12 @@ impl Client {
             index_name,
             index_type,
             CollectionIndexType::Default,
-        )
+        )?;
+        return Ok(IndexTask::new(
+            Arc::clone(&self.cluster),
+            namespace.to_string(),
+            index_name.to_string(),
+        ));
     }
 
     /// Create a complex secondary index on a bin containing scalar, list or map values. This
@@ -842,10 +855,10 @@ impl Client {
         index_type: IndexType,
         collection_index_type: CollectionIndexType,
     ) -> Result<()> {
-        let cit_str: String = if let CollectionIndexType::Default = collection_index_type { 
-            "".to_string() 
-        } else { 
-            format!("indextype={};", collection_index_type) 
+        let cit_str: String = if let CollectionIndexType::Default = collection_index_type {
+            "".to_string()
+        } else {
+            format!("indextype={};", collection_index_type)
         };
         let cmd = format!(
             "sindex-create:ns={};set={};indexname={};numbins=1;{}indexdata={},{};\
@@ -864,10 +877,10 @@ impl Client {
         set_name: &str,
         index_name: &str,
     ) -> Result<()> {
-        let set_name: String = if let "" = set_name { 
-            "".to_string() 
-        } else { 
-            format!("set={};", set_name) 
+        let set_name: String = if let "" = set_name {
+            "".to_string()
+        } else {
+            format!("set={};", set_name)
         };
         let cmd = format!(
             "sindex-delete:ns={};{}indexname={}",

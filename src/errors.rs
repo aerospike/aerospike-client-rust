@@ -1,4 +1,4 @@
-// Copyright 2015-2018 Aerospike, Inc.
+// Copyright 2015-2020 Aerospike, Inc.
 //
 // Portions may be licensed to Aerospike, Inc. under one or more contributor
 // license agreements.
@@ -119,6 +119,12 @@ error_chain! {
         UdfBadResponse(details: String) {
             description("UDF Bad Response")
             display("UDF Bad Response: {}", details)
+        }
+
+/// Error returned when a tasked timeed out before it could be completed.
+        Timeout(details: String) {
+            description("Timeout")
+            display("Timeout: {}", details)
         }
     }
 }

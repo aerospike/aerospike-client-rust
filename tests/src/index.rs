@@ -1,4 +1,4 @@
-// Copyright 2015-2018 Aerospike, Inc.
+// Copyright 2015-2020 Aerospike, Inc.
 //
 // Portions may be licensed to Aerospike, Inc. under one or more contributor
 // license agreements.
@@ -19,6 +19,7 @@ use std::time::Duration;
 use crate::common;
 use env_logger;
 
+use aerospike::Task;
 use aerospike::*;
 
 const EXPECTED: usize = 100;
@@ -36,9 +37,6 @@ fn create_test_set(no_records: usize) -> String {
         client.delete(&wpolicy, &key).unwrap();
         client.put(&wpolicy, &key, &bins).unwrap();
     }
-
-    // FIXME: replace sleep with wait task
-    thread::sleep(Duration::from_millis(3000));
 
     set_name
 }
@@ -58,12 +56,13 @@ fn recreate_index() {
     let _ = client.drop_index(&policy, ns, &set, &index);
     thread::sleep(Duration::from_millis(1000));
 
-    client
+    let task = client
         .create_index(&policy, ns, &set, bin, &index, IndexType::Numeric)
         .expect("Failed to create index");
-    thread::sleep(Duration::from_millis(1000));
+    task.wait_till_complete(None).unwrap();
 
-    client
+    let task = client
         .create_index(&policy, ns, &set, bin, &index, IndexType::Numeric)
         .unwrap();
+    task.wait_till_complete(None).unwrap();
 }

@@ -1,4 +1,4 @@
-// Copyright 2015-2018 Aerospike, Inc.
+// Copyright 2015-2020 Aerospike, Inc.
 //
 // Portions may be licensed to Aerospike, Inc. under one or more contributor
 // license agreements.
@@ -13,13 +13,14 @@
 // License for the specific language governing permissions and limitations under
 // the License.
 
-mod batch;
-mod cdt_list;
-mod cdt_map;
-mod index;
-mod kv;
-mod query;
-mod scan;
+//! Types and methods used for long running status queries.
+#![allow(clippy::missing_errors_doc)]
+
+pub use self::index_task::IndexTask;
+pub use self::register_task::RegisterTask;
+pub use self::task::Status;
+pub use self::task::Task;
+
+mod index_task;
+mod register_task;
 mod task;
-mod truncate;
-mod udf;
