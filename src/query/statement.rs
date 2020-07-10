@@ -18,6 +18,7 @@ use crate::query::{Filter};
 use crate::Bins;
 use crate::Value;
 use crate::query::predexp::PredExp;
+use std::sync::Arc;
 
 #[derive(Clone)]
 pub struct Aggregation {
@@ -48,7 +49,7 @@ pub struct Statement {
     pub aggregation: Option<Aggregation>,
 
     /// Optional filter Predicate
-    pub predexp: Vec<Box<dyn PredExp>>,
+    pub predexp: Vec<Arc<Box<dyn PredExp>>>,
 }
 
 impl Statement {
@@ -101,8 +102,24 @@ impl Statement {
         }
     }
 
+    /// Add a Predicate filter to the statement.
+    ///
+    /// # Example
+    ///
+    /// This example uses a numeric index on bin _baz_ in namespace _foo_ within set _bar_ to find
+    /// all records using a filter with the range 0 to 100 inclusive:
+    ///
+    /// ```rust
+    /// # use aerospike::*;
+    /// use aerospike::query::PredExpAnd;
+    ///
+    /// let mut stmt = Statement::new("foo", "bar", Bins::from(["name", "age"]));
+    /// stmt.add_predicate(PredExpIntegerBin::new("age"));
+    /// stmt.add_predicate(PredExpIntegerValue::new(5));
+    /// stmt.add_predicate(PredExpIntegerEqual::new());
+    /// ```
     pub fn add_predicate<S: PredExp + 'static>(&mut self, predicate: S) {
-            self.predexp.push(Box::new(predicate));
+            self.predexp.push(Arc::new(Box::new(predicate)));
     }
 
     /// Set Lua aggregation function parameters.

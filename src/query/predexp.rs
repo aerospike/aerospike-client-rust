@@ -1,4 +1,4 @@
-//const AS_PREDEXP_UNKNOWN_BIN: u16 = u16::
+const AS_PREDEXP_UNKNOWN_BIN: u16 = std::u16::MAX;
 
 use crate::commands::buffer::Buffer;
 use crate::errors::Result;
@@ -47,14 +47,15 @@ const AS_PREDEXP_LIST_ITERATE_AND:   u16 = 253;
 const AS_PREDEXP_MAPKEY_ITERATE_AND: u16 = 254;
 const AS_PREDEXP_MAPVAL_ITERATE_AND: u16 = 255;
 
-pub trait PredExp{
+pub trait PredExp: Send + Sync{
     fn pred_string(&self) -> String;
     fn marshaled_size(&self) -> u32;
     fn write(&self, buffer: &mut Buffer) -> Result<()>;
 }
 
 #[derive(Debug, Clone)]
-struct PredExpBase {}
+#[doc(hidden)]
+pub struct PredExpBase {}
 
 impl PredExpBase {
     #[doc(hidden)]
@@ -70,9 +71,13 @@ impl PredExpBase {
     }
 }
 
+// ------------------------------------- PredExpAnd
+
+/// Predicate for And
 #[derive(Debug, Clone)]
 pub struct PredExpAnd {
-    pub pred_exp_base: PredExpBase,
+    pred_exp_base: PredExpBase,
+    #[doc(hidden)]
     pub nexpr: u16
 }
 
@@ -86,8 +91,112 @@ impl PredExp for PredExpAnd {
     }
 
     fn write(&self, buffer: &mut Buffer) -> Result<()> {
-        self.pred_exp_base.write(buffer, AS_PREDEXP_AND, 2);
-        buffer.write_u16(self.nexpr);
+        self.pred_exp_base.write(buffer, AS_PREDEXP_AND, 2)?;
+        buffer.write_u16(self.nexpr)?;
         Ok(())
+    }
+}
+
+/// Create "AND" Predicate
+#[macro_export]
+macro_rules! as_pred_and {
+    ($nexpr:expr) => {{
+        $crate::query::predexp::PredExpAnd{
+            pred_exp_base: $crate::query::predexp::PredExpBase{},
+            nexpr: $nexpr
+        }
+    }};
+}
+
+// ------------------------------------- PredExpOr
+
+/// Predicate for Or
+#[derive(Debug, Clone)]
+pub struct PredExpOr {
+    pred_exp_base: PredExpBase,
+    #[doc(hidden)]
+    pub nexpr: u16
+}
+
+impl PredExp for PredExpOr {
+    fn pred_string(&self) -> String {
+        String::from("OR")
+    }
+
+    fn marshaled_size(&self) -> u32 {
+        self.pred_exp_base.default_size() + 2
+    }
+
+    fn write(&self, buffer: &mut Buffer) -> Result<()> {
+        self.pred_exp_base.write(buffer, AS_PREDEXP_OR, 2)?;
+        buffer.write_u16(self.nexpr)?;
+        Ok(())
+    }
+}
+
+/// Create "OR" Predicate
+#[macro_export]
+macro_rules! as_pred_or {
+    ($nexpr:expr) => {{
+        $crate::query::predexp::PredExpOr{
+            pred_exp_base: $crate::query::predexp::PredExpBase{},
+            nexpr: $nexpr
+        }
+    }};
+}
+
+// ------------------------------------- PredExpNot
+
+/// Predicate for Negation
+#[derive(Debug, Clone)]
+pub struct PredExpNot {
+    pred_exp_base: PredExpBase,
+}
+
+impl PredExp for PredExpNot {
+    fn pred_string(&self) -> String {
+        String::from("NOT")
+    }
+
+    fn marshaled_size(&self) -> u32 {
+        self.pred_exp_base.default_size()
+    }
+
+    fn write(&self, buffer: &mut Buffer) -> Result<()> {
+        self.pred_exp_base.write(buffer, AS_PREDEXP_NOT, 0)?;
+        Ok(())
+    }
+}
+
+/// Create "NOT" Predicate
+#[macro_export]
+macro_rules! as_pred_not {
+    () => {{
+        $crate::query::predexp::PredExpNot{
+            pred_exp_base: $crate::query::predexp::PredExpBase{}
+        }
+    }};
+}
+
+// ------------------------------------- PredExpIntegerValue
+
+
+
+#[cfg(test)]
+mod tests {
+    use crate::query::predexp::PredExp;
+
+    #[test]
+    fn predicate_macros() {
+        let pred_and = as_pred_and!(2);
+        assert_eq!(pred_and.pred_string(), "AND");
+        assert_eq!(pred_and.nexpr, 2);
+
+        let pred_or = as_pred_or!(2);
+        assert_eq!(pred_or.pred_string(), "OR");
+        assert_eq!(pred_or.nexpr, 2);
+
+        let pred_not = as_pred_not!();
+        assert_eq!(pred_not.pred_string(), "NOT");
     }
 }
