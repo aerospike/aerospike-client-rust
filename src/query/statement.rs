@@ -14,9 +14,10 @@
 // the License.
 
 use crate::errors::{ErrorKind, Result};
-use crate::query::Filter;
+use crate::query::{Filter};
 use crate::Bins;
 use crate::Value;
+use crate::query::predexp::PredExp;
 
 #[derive(Clone)]
 pub struct Aggregation {
@@ -26,7 +27,6 @@ pub struct Aggregation {
 }
 
 /// Query statement parameters.
-#[derive(Clone)]
 pub struct Statement {
     /// Namespace
     pub namespace: String,
@@ -46,6 +46,9 @@ pub struct Statement {
 
     /// Optional Lua aggregation function parameters.
     pub aggregation: Option<Aggregation>,
+
+    /// Optional filter Predicate
+    pub predexp: Vec<Box<dyn PredExp>>,
 }
 
 impl Statement {
@@ -70,6 +73,7 @@ impl Statement {
             index_name: None,
             aggregation: None,
             filters: None,
+            predexp: Vec::new()
         }
     }
 
@@ -95,6 +99,10 @@ impl Statement {
             filters.push(filter);
             self.filters = Some(filters);
         }
+    }
+
+    pub fn add_predicate<S: PredExp + 'static>(&mut self, predicate: S) {
+            self.predexp.push(Box::new(predicate));
     }
 
     /// Set Lua aggregation function parameters.

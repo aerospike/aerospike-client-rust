@@ -22,8 +22,12 @@ pub use self::recordset::Recordset;
 pub use self::statement::Statement;
 pub use self::udf::UDFLang;
 
+// Predicates
+pub use self::predexp::PredExpAnd;
+
 mod filter;
 mod index_types;
 mod recordset;
 mod statement;
 mod udf;
+mod predexp;
