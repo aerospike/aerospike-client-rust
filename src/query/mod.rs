@@ -27,7 +27,7 @@ pub use self::predexp::PredExpAnd;
 
 mod filter;
 mod index_types;
+mod predexp;
 mod recordset;
 mod statement;
 mod udf;
-mod predexp;

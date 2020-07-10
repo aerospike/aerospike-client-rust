@@ -21,7 +21,7 @@ use crate::commands::{Command, SingleCommand};
 use crate::errors::{ErrorKind, Result};
 use crate::net::Connection;
 use crate::policy::WritePolicy;
-use crate::{ResultCode, Key};
+use crate::{Key, ResultCode};
 
 pub struct TouchCommand<'a> {
     single_command: SingleCommand<'a>,

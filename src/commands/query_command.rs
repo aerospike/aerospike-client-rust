@@ -20,7 +20,7 @@ use crate::commands::{Command, SingleCommand, StreamCommand};
 use crate::errors::Result;
 use crate::net::Connection;
 use crate::policy::QueryPolicy;
-use crate::{Statement, Recordset};
+use crate::{Recordset, Statement};
 
 pub struct QueryCommand<'a> {
     stream_command: StreamCommand,

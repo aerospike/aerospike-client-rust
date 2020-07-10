@@ -15,7 +15,7 @@
 
 use crate::commands::{buffer::Buffer, ParticleType};
 use crate::errors::Result;
-use crate::{Value, CollectionIndexType};
+use crate::{CollectionIndexType, Value};
 
 /// Query filter definition. Currently, only one filter is allowed in a Statement, and must be on a
 /// bin which has a secondary index defined.

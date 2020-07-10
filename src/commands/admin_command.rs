@@ -22,8 +22,8 @@ use crate::cluster::Cluster;
 use crate::errors::{ErrorKind, Result};
 use crate::net::Connection;
 use crate::net::PooledConnection;
-use crate::ResultCode;
 use crate::policy::AdminPolicy;
+use crate::ResultCode;
 
 // Commands
 const AUTHENTICATE: u8 = 0;

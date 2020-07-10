@@ -14,10 +14,10 @@
 // the License.
 
 use crate::errors::{ErrorKind, Result};
-use crate::query::{Filter};
+use crate::query::predexp::PredExp;
+use crate::query::Filter;
 use crate::Bins;
 use crate::Value;
-use crate::query::predexp::PredExp;
 use std::sync::Arc;
 
 #[derive(Clone)]
@@ -74,7 +74,7 @@ impl Statement {
             index_name: None,
             aggregation: None,
             filters: None,
-            predexp: Vec::new()
+            predexp: Vec::new(),
         }
     }
 
@@ -119,7 +119,7 @@ impl Statement {
     /// stmt.add_predicate(PredExpIntegerEqual::new());
     /// ```
     pub fn add_predicate<S: PredExp + 'static>(&mut self, predicate: S) {
-            self.predexp.push(Arc::new(Box::new(predicate)));
+        self.predexp.push(Arc::new(Box::new(predicate)));
     }
 
     /// Set Lua aggregation function parameters.
