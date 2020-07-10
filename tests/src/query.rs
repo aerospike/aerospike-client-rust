@@ -109,9 +109,9 @@ fn query_predexp(){
 
     // Filter Query
     let mut statement = Statement::new(namespace, &set_name, Bins::All);
-    statement.add_predicate(as_pred_int_bin!("bin".to_string()));
-    statement.add_predicate(as_pred_int_val!(19));
-    statement.add_predicate(as_pred_int_lteq!());
+    statement.add_predicate(as_predexp_integer_bin!("bin".to_string()));
+    statement.add_predicate(as_predexp_integer_value!(19));
+    statement.add_predicate(as_predexp_integer_lesseq!());
     let rs = client.query(&qpolicy, statement).unwrap();
     let mut count = 0;
     for res in &*rs {

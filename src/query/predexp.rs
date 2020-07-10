@@ -128,7 +128,7 @@ impl PredExp for PredExpAnd {
 
 /// Create "AND" Predicate
 #[macro_export]
-macro_rules! as_pred_and {
+macro_rules! as_predexp_and {
     ($nexpr:expr) => {{
         $crate::query::predexp::PredExpAnd {
             pred_exp_base: $crate::query::predexp::PredExpBase {},
@@ -166,7 +166,7 @@ impl PredExp for PredExpOr {
 
 /// Create "OR" Predicate
 #[macro_export]
-macro_rules! as_pred_or {
+macro_rules! as_predexp_or {
     ($nexpr:expr) => {{
         $crate::query::predexp::PredExpOr {
             pred_exp_base: $crate::query::predexp::PredExpBase {},
@@ -201,7 +201,7 @@ impl PredExp for PredExpNot {
 
 /// Create "NOT" Predicate
 #[macro_export]
-macro_rules! as_pred_not {
+macro_rules! as_predexp_not {
     () => {{
         $crate::query::predexp::PredExpNot {
             pred_exp_base: $crate::query::predexp::PredExpBase {},
@@ -239,7 +239,7 @@ impl PredExp for PredExpIntegerValue {
 
 /// Create Integer Value Predicate
 #[macro_export]
-macro_rules! as_pred_int_val {
+macro_rules! as_predexp_integer_value {
     ($val:expr) => {{
         $crate::query::predexp::PredExpIntegerValue {
             pred_exp_base: $crate::query::predexp::PredExpBase {},
@@ -278,7 +278,7 @@ impl PredExp for PredExpStringValue {
 
 /// Create String Value Predicate
 #[macro_export]
-macro_rules! as_pred_str_val {
+macro_rules! as_predexp_string_value {
     ($val:expr) => {{
         $crate::query::predexp::PredExpStringValue {
             pred_exp_base: $crate::query::predexp::PredExpBase {},
@@ -325,7 +325,7 @@ impl PredExp for PredExpGeoJSONValue {
 
 /// Create GeoJSON Value Predicate
 #[macro_export]
-macro_rules! as_pred_geojson_val {
+macro_rules! as_predexp_geojson_value {
     ($val:expr) => {{
         $crate::query::predexp::PredExpGeoJSONValue {
             pred_exp_base: $crate::query::predexp::PredExpBase {},
@@ -366,7 +366,7 @@ impl PredExp for PredExpBin {
 
 /// Create Unknown Bin Predicate
 #[macro_export]
-macro_rules! as_pred_unknown_bin {
+macro_rules! as_predexp_unknown_bin {
     ($name:expr) => {{
         $crate::query::predexp::PredExpBin {
             pred_exp_base: $crate::query::predexp::PredExpBase {},
@@ -378,7 +378,7 @@ macro_rules! as_pred_unknown_bin {
 
 /// Create Integer Bin Predicate
 #[macro_export]
-macro_rules! as_pred_int_bin {
+macro_rules! as_predexp_integer_bin {
     ($name:expr) => {{
         $crate::query::predexp::PredExpBin {
             pred_exp_base: $crate::query::predexp::PredExpBase {},
@@ -390,7 +390,7 @@ macro_rules! as_pred_int_bin {
 
 /// Create String Bin Predicate
 #[macro_export]
-macro_rules! as_pred_str_bin {
+macro_rules! as_predexp_string_bin {
     ($name:expr) => {{
         $crate::query::predexp::PredExpBin {
             pred_exp_base: $crate::query::predexp::PredExpBase {},
@@ -402,7 +402,7 @@ macro_rules! as_pred_str_bin {
 
 /// Create GeoJSON Bin Predicate
 #[macro_export]
-macro_rules! as_pred_geojson_bin {
+macro_rules! as_predexp_geojson_bin {
     ($name:expr) => {{
         $crate::query::predexp::PredExpBin {
             pred_exp_base: $crate::query::predexp::PredExpBase {},
@@ -414,7 +414,7 @@ macro_rules! as_pred_geojson_bin {
 
 /// Create List Bin Predicate
 #[macro_export]
-macro_rules! as_pred_list_bin {
+macro_rules! as_predexp_list_bin {
     ($name:expr) => {{
         $crate::query::predexp::PredExpBin {
             pred_exp_base: $crate::query::predexp::PredExpBase {},
@@ -426,7 +426,7 @@ macro_rules! as_pred_list_bin {
 
 /// Create Map Bin Predicate
 #[macro_export]
-macro_rules! as_pred_map_bin {
+macro_rules! as_predexp_map_bin {
     ($name:expr) => {{
         $crate::query::predexp::PredExpBin {
             pred_exp_base: $crate::query::predexp::PredExpBase {},
@@ -468,7 +468,7 @@ impl PredExp for PredExpVar {
 
 /// Create 64Bit Integer Var used in list/map iterations
 #[macro_export]
-macro_rules! as_pred_int_var {
+macro_rules! as_predexp_integer_var {
     ($name:expr) => {{
         $crate::query::predexp::PredExpVar {
             pred_exp_base: $crate::query::predexp::PredExpBase {},
@@ -480,7 +480,7 @@ macro_rules! as_pred_int_var {
 
 /// Create String Var used in list/map iterations
 #[macro_export]
-macro_rules! as_pred_str_var {
+macro_rules! as_predexp_string_var {
     ($name:expr) => {{
         $crate::query::predexp::PredExpVar {
             pred_exp_base: $crate::query::predexp::PredExpBase {},
@@ -492,7 +492,7 @@ macro_rules! as_pred_str_var {
 
 /// Create String Var used in list/map iterations
 #[macro_export]
-macro_rules! as_pred_geojson_var {
+macro_rules! as_predexp_geojson_var {
     ($name:expr) => {{
         $crate::query::predexp::PredExpVar {
             pred_exp_base: $crate::query::predexp::PredExpBase {},
@@ -536,7 +536,7 @@ impl PredExp for PredExpMD {
 
 /// Create Record Size on Disk Predicate
 #[macro_export]
-macro_rules! as_pred_rec_device_size {
+macro_rules! as_predexp_rec_device_size {
     () => {{
         $crate::query::predexp::PredExpMD {
             pred_exp_base: $crate::query::predexp::PredExpBase {},
@@ -547,7 +547,7 @@ macro_rules! as_pred_rec_device_size {
 
 /// Create Last Update Predicate
 #[macro_export]
-macro_rules! as_pred_rec_last_update {
+macro_rules! as_predexp_rec_last_update {
     () => {{
         $crate::query::predexp::PredExpMD {
             pred_exp_base: $crate::query::predexp::PredExpBase {},
@@ -558,7 +558,7 @@ macro_rules! as_pred_rec_last_update {
 
 /// Create Record Expiration Time Predicate in nanoseconds since 1970-01-01 epoch as 64 bit integer
 #[macro_export]
-macro_rules! as_pred_rec_void_time {
+macro_rules! as_predexp_rec_void_time {
     () => {{
         $crate::query::predexp::PredExpMD {
             pred_exp_base: $crate::query::predexp::PredExpBase {},
@@ -600,7 +600,7 @@ impl PredExp for PredExpMDDigestModulo {
 
 /// Creates a digest modulo record metadata value predicate expression.
 #[macro_export]
-macro_rules! as_pred_rec_digest_modulo {
+macro_rules! as_predexp_rec_digest_modulo {
     ($modulo:expr) => {{
         $crate::query::predexp::PredExpMDDigestModulo {
             pred_exp_base: $crate::query::predexp::PredExpBase {},
@@ -648,7 +648,7 @@ impl PredExp for PredExpCompare {
 
 /// Creates Equal predicate for integer values
 #[macro_export]
-macro_rules! as_pred_int_eq {
+macro_rules! as_predexp_integer_equal {
     () => {{
         $crate::query::predexp::PredExpCompare {
             pred_exp_base: $crate::query::predexp::PredExpBase {},
@@ -659,7 +659,7 @@ macro_rules! as_pred_int_eq {
 
 /// Creates NotEqual predicate for integer values
 #[macro_export]
-macro_rules! as_pred_int_uneq {
+macro_rules! as_predexp_integer_unequal {
     () => {{
         $crate::query::predexp::PredExpCompare {
             pred_exp_base: $crate::query::predexp::PredExpBase {},
@@ -670,7 +670,7 @@ macro_rules! as_pred_int_uneq {
 
 /// Creates Greater Than predicate for integer values
 #[macro_export]
-macro_rules! as_pred_int_gt {
+macro_rules! as_predexp_integer_greater {
     () => {{
         $crate::query::predexp::PredExpCompare {
             pred_exp_base: $crate::query::predexp::PredExpBase {},
@@ -681,7 +681,7 @@ macro_rules! as_pred_int_gt {
 
 /// Creates Greater Than Or Equal predicate for integer values
 #[macro_export]
-macro_rules! as_pred_int_gteq {
+macro_rules! as_predexp_integer_greatereq {
     () => {{
         $crate::query::predexp::PredExpCompare {
             pred_exp_base: $crate::query::predexp::PredExpBase {},
@@ -692,7 +692,7 @@ macro_rules! as_pred_int_gteq {
 
 /// Creates Less Than predicate for integer values
 #[macro_export]
-macro_rules! as_pred_int_lt {
+macro_rules! as_predexp_integer_less {
     () => {{
         $crate::query::predexp::PredExpCompare {
             pred_exp_base: $crate::query::predexp::PredExpBase {},
@@ -703,7 +703,7 @@ macro_rules! as_pred_int_lt {
 
 /// Creates Less Than Or Equal predicate for integer values
 #[macro_export]
-macro_rules! as_pred_int_lteq {
+macro_rules! as_predexp_integer_lesseq {
     () => {{
         $crate::query::predexp::PredExpCompare {
             pred_exp_base: $crate::query::predexp::PredExpBase {},
@@ -714,7 +714,7 @@ macro_rules! as_pred_int_lteq {
 
 /// Creates Equal predicate for string values
 #[macro_export]
-macro_rules! as_pred_str_eq {
+macro_rules! as_predexp_string_equal {
     () => {{
         $crate::query::predexp::PredExpCompare {
             pred_exp_base: $crate::query::predexp::PredExpBase {},
@@ -725,7 +725,7 @@ macro_rules! as_pred_str_eq {
 
 /// Creates Not Equal predicate for string values
 #[macro_export]
-macro_rules! as_pred_str_uneq {
+macro_rules! as_predexp_string_unequal {
     () => {{
         $crate::query::predexp::PredExpCompare {
             pred_exp_base: $crate::query::predexp::PredExpBase {},
@@ -736,7 +736,7 @@ macro_rules! as_pred_str_uneq {
 
 /// Creates Within Region predicate for GeoJSON values
 #[macro_export]
-macro_rules! as_pred_geojson_within {
+macro_rules! as_predexp_geojson_within {
     () => {{
         $crate::query::predexp::PredExpCompare {
             pred_exp_base: $crate::query::predexp::PredExpBase {},
@@ -747,7 +747,7 @@ macro_rules! as_pred_geojson_within {
 
 /// Creates Region Contains predicate for GeoJSON values
 #[macro_export]
-macro_rules! as_pred_geojson_contains {
+macro_rules! as_predexp_geojson_contains {
     () => {{
         $crate::query::predexp::PredExpCompare {
             pred_exp_base: $crate::query::predexp::PredExpBase {},
@@ -786,7 +786,7 @@ impl PredExp for PredExpStringRegex {
 
 /// Creates a Regex predicate
 #[macro_export]
-macro_rules! as_pred_string_regex {
+macro_rules! as_predexp_string_regex {
     ($cflags:expr) => {{
         $crate::query::predexp::PredExpStringRegex {
             pred_exp_base: $crate::query::predexp::PredExpBase {},
@@ -865,7 +865,7 @@ impl PredExp for PredExpIter {
 
 /// Creates an Or iterator predicate for list items
 #[macro_export]
-macro_rules! as_pred_list_iterate_or {
+macro_rules! as_predexp_list_iterate_or {
     ($name:expr) => {{
         $crate::query::predexp::PredExpIter {
             pred_exp_base: $crate::query::predexp::PredExpBase {},
@@ -877,7 +877,7 @@ macro_rules! as_pred_list_iterate_or {
 
 /// Creates an And iterator predicate for list items
 #[macro_export]
-macro_rules! as_pred_list_iterate_and {
+macro_rules! as_predexp_list_iterate_and {
     ($name:expr) => {{
         $crate::query::predexp::PredExpIter {
             pred_exp_base: $crate::query::predexp::PredExpBase {},
@@ -889,7 +889,7 @@ macro_rules! as_pred_list_iterate_and {
 
 /// Creates an Or iterator predicate on map keys
 #[macro_export]
-macro_rules! as_pred_mapkey_iterate_or {
+macro_rules! as_predexp_mapkey_iterate_or {
     ($name:expr) => {{
         $crate::query::predexp::PredExpIter {
             pred_exp_base: $crate::query::predexp::PredExpBase {},
@@ -901,7 +901,7 @@ macro_rules! as_pred_mapkey_iterate_or {
 
 /// Creates an And iterator predicate on map keys
 #[macro_export]
-macro_rules! as_pred_mapkey_iterate_and {
+macro_rules! as_predexp_mapkey_iterate_and {
     ($name:expr) => {{
         $crate::query::predexp::PredExpIter {
             pred_exp_base: $crate::query::predexp::PredExpBase {},
@@ -913,7 +913,7 @@ macro_rules! as_pred_mapkey_iterate_and {
 
 /// Creates an Or iterator predicate on map values
 #[macro_export]
-macro_rules! as_pred_mapval_iterate_or {
+macro_rules! as_predexp_mapval_iterate_or {
     ($name:expr) => {{
         $crate::query::predexp::PredExpIter {
             pred_exp_base: $crate::query::predexp::PredExpBase {},
@@ -925,7 +925,7 @@ macro_rules! as_pred_mapval_iterate_or {
 
 /// Creates an And iterator predicate on map values
 #[macro_export]
-macro_rules! as_pred_mapval_iterate_and {
+macro_rules! as_predexp_mapval_iterate_and {
     ($name:expr) => {{
         $crate::query::predexp::PredExpIter {
             pred_exp_base: $crate::query::predexp::PredExpBase {},
@@ -941,108 +941,108 @@ mod tests {
 
     #[test]
     fn predicate_macros() {
-        let pred_and = as_pred_and!(2);
+        let pred_and = as_predexp_and!(2);
         assert_eq!(pred_and.pred_string(), "AND");
         assert_eq!(pred_and.nexpr, 2);
 
-        let pred_or = as_pred_or!(2);
+        let pred_or = as_predexp_or!(2);
         assert_eq!(pred_or.pred_string(), "OR");
         assert_eq!(pred_or.nexpr, 2);
 
-        let pred_not = as_pred_not!();
+        let pred_not = as_predexp_not!();
         assert_eq!(pred_not.pred_string(), "NOT");
 
-        let pred_int_val = as_pred_int_val!(2);
+        let pred_int_val = as_predexp_integer_value!(2);
         assert_eq!(pred_int_val.pred_string(), "2");
         assert_eq!(pred_int_val.val, 2);
 
-        let pred_str_val = as_pred_str_val!(String::from("test"));
+        let pred_str_val = as_predexp_string_value!(String::from("test"));
         assert_eq!(pred_str_val.pred_string(), "test");
         assert_eq!(pred_str_val.val, "test");
 
-        let pred_geo_val = as_pred_geojson_val!(String::from("test"));
+        let pred_geo_val = as_predexp_geojson_value!(String::from("test"));
         assert_eq!(pred_geo_val.pred_string(), "test");
         assert_eq!(pred_geo_val.val, "test");
 
-        let bin_unknown = as_pred_unknown_bin!(String::from("test"));
+        let bin_unknown = as_predexp_unknown_bin!(String::from("test"));
         assert_eq!(bin_unknown.pred_string(), "test");
         assert_eq!(bin_unknown.tag, _AS_PREDEXP_UNKNOWN_BIN);
 
-        let int_bin = as_pred_int_bin!(String::from("test"));
+        let int_bin = as_predexp_integer_bin!(String::from("test"));
         assert_eq!(int_bin.pred_string(), "test");
         assert_eq!(int_bin.tag, _AS_PREDEXP_INTEGER_BIN);
 
-        let str_bin = as_pred_str_bin!(String::from("test"));
+        let str_bin = as_predexp_string_bin!(String::from("test"));
         assert_eq!(str_bin.pred_string(), "test");
         assert_eq!(str_bin.tag, _AS_PREDEXP_STRING_BIN);
 
-        let geo_bin = as_pred_geojson_bin!(String::from("test"));
+        let geo_bin = as_predexp_geojson_bin!(String::from("test"));
         assert_eq!(geo_bin.pred_string(), "test");
         assert_eq!(geo_bin.tag, _AS_PREDEXP_GEOJSON_BIN);
 
-        let list_bin = as_pred_list_bin!(String::from("test"));
+        let list_bin = as_predexp_list_bin!(String::from("test"));
         assert_eq!(list_bin.pred_string(), "test");
         assert_eq!(list_bin.tag, _AS_PREDEXP_LIST_BIN);
 
-        let map_bin = as_pred_map_bin!(String::from("test"));
+        let map_bin = as_predexp_map_bin!(String::from("test"));
         assert_eq!(map_bin.pred_string(), "test");
         assert_eq!(map_bin.tag, _AS_PREDEXP_MAP_BIN);
 
-        let int_var = as_pred_int_var!(String::from("test"));
+        let int_var = as_predexp_integer_var!(String::from("test"));
         assert_eq!(int_var.pred_string(), "test");
         assert_eq!(int_var.tag, _AS_PREDEXP_INTEGER_VAR);
 
-        let str_var = as_pred_str_var!(String::from("test"));
+        let str_var = as_predexp_string_var!(String::from("test"));
         assert_eq!(str_var.pred_string(), "test");
         assert_eq!(str_var.tag, _AS_PREDEXP_STRING_VAR);
 
-        let geo_var = as_pred_geojson_var!(String::from("test"));
+        let geo_var = as_predexp_geojson_var!(String::from("test"));
         assert_eq!(geo_var.pred_string(), "test");
         assert_eq!(geo_var.tag, _AS_PREDEXP_GEOJSON_VAR);
 
-        let dev_size = as_pred_rec_device_size!();
+        let dev_size = as_predexp_rec_device_size!();
         assert_eq!(dev_size.tag, _AS_PREDEXP_REC_DEVICE_SIZE);
 
-        let last_update = as_pred_rec_last_update!();
+        let last_update = as_predexp_rec_last_update!();
         assert_eq!(last_update.tag, _AS_PREDEXP_REC_LAST_UPDATE);
 
-        let void_time = as_pred_rec_void_time!();
+        let void_time = as_predexp_rec_void_time!();
         assert_eq!(void_time.tag, _AS_PREDEXP_REC_VOID_TIME);
 
-        let digest_modulo = as_pred_rec_digest_modulo!(10);
+        let digest_modulo = as_predexp_rec_digest_modulo!(10);
         assert_eq!(digest_modulo.modulo, 10);
 
-        let int_eq = as_pred_int_eq!();
+        let int_eq = as_predexp_integer_equal!();
         assert_eq!(int_eq.tag, _AS_PREDEXP_INTEGER_EQUAL);
 
-        let int_uneq = as_pred_int_uneq!();
+        let int_uneq = as_predexp_integer_unequal!();
         assert_eq!(int_uneq.tag, _AS_PREDEXP_INTEGER_UNEQUAL);
 
-        let int_gt = as_pred_int_gt!();
+        let int_gt = as_predexp_integer_greater!();
         assert_eq!(int_gt.tag, _AS_PREDEXP_INTEGER_GREATER);
 
-        let int_gteq = as_pred_int_gteq!();
+        let int_gteq = as_predexp_integer_greatereq!();
         assert_eq!(int_gteq.tag, _AS_PREDEXP_INTEGER_GREATEREQ);
 
-        let int_lt = as_pred_int_lt!();
+        let int_lt = as_predexp_integer_less!();
         assert_eq!(int_lt.tag, _AS_PREDEXP_INTEGER_LESS);
 
-        let int_lteq = as_pred_int_lteq!();
+        let int_lteq = as_predexp_integer_lesseq!();
         assert_eq!(int_lteq.tag, _AS_PREDEXP_INTEGER_LESSEQ);
 
-        let str_eq = as_pred_str_eq!();
+        let str_eq = as_predexp_string_equal!();
         assert_eq!(str_eq.tag, _AS_PREDEXP_STRING_EQUAL);
 
-        let str_uneq = as_pred_str_uneq!();
+        let str_uneq = as_predexp_string_unequal!();
         assert_eq!(str_uneq.tag, _AS_PREDEXP_STRING_UNEQUAL);
 
-        let geo_within = as_pred_geojson_within!();
+        let geo_within = as_predexp_geojson_within!();
         assert_eq!(geo_within.tag, _AS_PREDEXP_GEOJSON_WITHIN);
 
-        let geo_contains = as_pred_geojson_contains!();
+        let geo_contains = as_predexp_geojson_contains!();
         assert_eq!(geo_contains.tag, _AS_PREDEXP_GEOJSON_CONTAINS);
 
-        let string_reg = as_pred_string_regex!(5);
+        let string_reg = as_predexp_string_regex!(5);
         assert_eq!(string_reg.cflags, 5);
     }
 }

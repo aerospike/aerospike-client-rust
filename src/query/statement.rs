@@ -113,9 +113,9 @@ impl Statement {
     /// # use aerospike::*;
     ///
     /// let mut stmt = Statement::new("foo", "bar", Bins::from(["name", "age"]));
-    /// stmt.add_predicate(as_pred_int_bin!("age".to_string()));
-    /// stmt.add_predicate(as_pred_int_val!(32));
-    /// stmt.add_predicate(as_pred_int_eq!());
+    /// stmt.add_predicate(as_predexp_integer_bin!("age".to_string()));
+    /// stmt.add_predicate(as_predexp_integer_value!(32));
+    /// stmt.add_predicate(as_predexp_integer_equal!());
     /// ```
     pub fn add_predicate<S: PredExp + 'static>(&mut self, predicate: S) {
         self.predexp.push(Arc::new(Box::new(predicate)));
