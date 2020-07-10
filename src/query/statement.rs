@@ -14,8 +14,8 @@
 // the License.
 
 use crate::errors::{ErrorKind, Result};
-use crate::query::predexp::PredExp;
 use crate::query::Filter;
+use crate::query::predexp::PredExp;
 use crate::Bins;
 use crate::Value;
 use std::sync::Arc;
@@ -111,12 +111,11 @@ impl Statement {
     ///
     /// ```rust
     /// # use aerospike::*;
-    /// use aerospike::query::PredExpAnd;
     ///
     /// let mut stmt = Statement::new("foo", "bar", Bins::from(["name", "age"]));
-    /// stmt.add_predicate(PredExpIntegerBin::new("age"));
-    /// stmt.add_predicate(PredExpIntegerValue::new(5));
-    /// stmt.add_predicate(PredExpIntegerEqual::new());
+    /// stmt.add_predicate(as_pred_int_bin!("age".to_string()));
+    /// stmt.add_predicate(as_pred_int_val!(32));
+    /// stmt.add_predicate(as_pred_int_eq!());
     /// ```
     pub fn add_predicate<S: PredExp + 'static>(&mut self, predicate: S) {
         self.predexp.push(Arc::new(Box::new(predicate)));

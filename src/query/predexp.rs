@@ -1,52 +1,80 @@
 use crate::commands::buffer::Buffer;
 use crate::errors::Result;
 
-const _AS_PREDEXP_UNKNOWN_BIN: u16 = u16::max_value();
+#[doc(hidden)]
+pub const _AS_PREDEXP_UNKNOWN_BIN: u16 = u16::max_value();
+#[doc(hidden)]
+pub const _AS_PREDEXP_AND: u16 = 1;
+#[doc(hidden)]
+pub const _AS_PREDEXP_OR: u16 = 2;
+#[doc(hidden)]
+pub const _AS_PREDEXP_NOT: u16 = 3;
+#[doc(hidden)]
+pub const _AS_PREDEXP_INTEGER_VALUE: u16 = 10;
+#[doc(hidden)]
+pub const _AS_PREDEXP_STRING_VALUE: u16 = 11;
+#[doc(hidden)]
+pub const _AS_PREDEXP_GEOJSON_VALUE: u16 = 12;
+#[doc(hidden)]
+pub const _AS_PREDEXP_INTEGER_BIN: u16 = 100;
+#[doc(hidden)]
+pub const _AS_PREDEXP_STRING_BIN: u16 = 101;
+#[doc(hidden)]
+pub const _AS_PREDEXP_GEOJSON_BIN: u16 = 102;
+#[doc(hidden)]
+pub const _AS_PREDEXP_LIST_BIN: u16 = 103;
+#[doc(hidden)]
+pub const _AS_PREDEXP_MAP_BIN: u16 = 104;
+#[doc(hidden)]
+pub const _AS_PREDEXP_INTEGER_VAR: u16 = 120;
+#[doc(hidden)]
+pub const _AS_PREDEXP_STRING_VAR: u16 = 121;
+#[doc(hidden)]
+pub const _AS_PREDEXP_GEOJSON_VAR: u16 = 122;
+#[doc(hidden)]
+pub const _AS_PREDEXP_REC_DEVICE_SIZE: u16 = 150;
+#[doc(hidden)]
+pub const _AS_PREDEXP_REC_LAST_UPDATE: u16 = 151;
+#[doc(hidden)]
+pub const _AS_PREDEXP_REC_VOID_TIME: u16 = 152;
+#[doc(hidden)]
+pub const _AS_PREDEXP_REC_DIGEST_MODULO: u16 = 153;
+#[doc(hidden)]
+pub const _AS_PREDEXP_INTEGER_EQUAL: u16 = 200;
+#[doc(hidden)]
+pub const _AS_PREDEXP_INTEGER_UNEQUAL: u16 = 201;
+#[doc(hidden)]
+pub const _AS_PREDEXP_INTEGER_GREATER: u16 = 202;
+#[doc(hidden)]
+pub const _AS_PREDEXP_INTEGER_GREATEREQ: u16 = 203;
+#[doc(hidden)]
+pub const _AS_PREDEXP_INTEGER_LESS: u16 = 204;
+#[doc(hidden)]
+pub const _AS_PREDEXP_INTEGER_LESSEQ: u16 = 205;
+#[doc(hidden)]
+pub const _AS_PREDEXP_STRING_EQUAL: u16 = 210;
+#[doc(hidden)]
+pub const _AS_PREDEXP_STRING_UNEQUAL: u16 = 211;
+#[doc(hidden)]
+pub const _AS_PREDEXP_STRING_REGEX: u16 = 212;
+#[doc(hidden)]
+pub const _AS_PREDEXP_GEOJSON_WITHIN: u16 = 220;
+#[doc(hidden)]
+pub const _AS_PREDEXP_GEOJSON_CONTAINS: u16 = 221;
+#[doc(hidden)]
+pub const _AS_PREDEXP_LIST_ITERATE_OR: u16 = 250;
+#[doc(hidden)]
+pub const _AS_PREDEXP_MAPKEY_ITERATE_OR: u16 = 251;
+#[doc(hidden)]
+pub const _AS_PREDEXP_MAPVAL_ITERATE_OR: u16 = 252;
+#[doc(hidden)]
+pub const _AS_PREDEXP_LIST_ITERATE_AND: u16 = 253;
+#[doc(hidden)]
+pub const _AS_PREDEXP_MAPKEY_ITERATE_AND: u16 = 254;
+#[doc(hidden)]
+pub const _AS_PREDEXP_MAPVAL_ITERATE_AND: u16 = 255;
 
-const _AS_PREDEXP_AND: u16 = 1;
-const _AS_PREDEXP_OR: u16 = 2;
-const _AS_PREDEXP_NOT: u16 = 3;
-
-const _AS_PREDEXP_INTEGER_VALUE: u16 = 10;
-const _AS_PREDEXP_STRING_VALUE: u16 = 11;
-const _AS_PREDEXP_GEOJSON_VALUE: u16 = 12;
-
-const _AS_PREDEXP_INTEGER_BIN: u16 = 100;
-const _AS_PREDEXP_STRING_BIN: u16 = 101;
-const _AS_PREDEXP_GEOJSON_BIN: u16 = 102;
-const _AS_PREDEXP_LIST_BIN: u16 = 103;
-const _AS_PREDEXP_MAP_BIN: u16 = 104;
-
-const _AS_PREDEXP_INTEGER_VAR: u16 = 120;
-const _AS_PREDEXP_STRING_VAR: u16 = 121;
-const _AS_PREDEXP_GEOJSON_VAR: u16 = 122;
-
-const _AS_PREDEXP_REC_DEVICE_SIZE: u16 = 150;
-const _AS_PREDEXP_REC_LAST_UPDATE: u16 = 151;
-const _AS_PREDEXP_REC_VOID_TIME: u16 = 152;
-const _AS_PREDEXP_REC_DIGEST_MODULO: u16 = 153;
-
-const _AS_PREDEXP_INTEGER_EQUAL: u16 = 200;
-const _AS_PREDEXP_INTEGER_UNEQUAL: u16 = 201;
-const _AS_PREDEXP_INTEGER_GREATER: u16 = 202;
-const _AS_PREDEXP_INTEGER_GREATEREQ: u16 = 203;
-const _AS_PREDEXP_INTEGER_LESS: u16 = 204;
-const _AS_PREDEXP_INTEGER_LESSEQ: u16 = 205;
-
-const _AS_PREDEXP_STRING_EQUAL: u16 = 210;
-const _AS_PREDEXP_STRING_UNEQUAL: u16 = 211;
-const _AS_PREDEXP_STRING_REGEX: u16 = 212;
-
-const _AS_PREDEXP_GEOJSON_WITHIN: u16 = 220;
-const _AS_PREDEXP_GEOJSON_CONTAINS: u16 = 221;
-
-const _AS_PREDEXP_LIST_ITERATE_OR: u16 = 250;
-const _AS_PREDEXP_MAPKEY_ITERATE_OR: u16 = 251;
-const _AS_PREDEXP_MAPVAL_ITERATE_OR: u16 = 252;
-const _AS_PREDEXP_LIST_ITERATE_AND: u16 = 253;
-const _AS_PREDEXP_MAPKEY_ITERATE_AND: u16 = 254;
-const _AS_PREDEXP_MAPVAL_ITERATE_AND: u16 = 255;
-
+#[doc(hidden)]
 pub trait PredExp: Send + Sync {
     fn pred_string(&self) -> String;
     fn marshaled_size(&self) -> usize;
@@ -76,8 +104,9 @@ impl PredExpBase {
 /// Predicate for And
 #[derive(Debug, Clone)]
 pub struct PredExpAnd {
-    pred_exp_base: PredExpBase,
     #[doc(hidden)]
+    pub pred_exp_base: PredExpBase,
+    /// Number of Predicates
     pub nexpr: u16,
 }
 
@@ -113,8 +142,9 @@ macro_rules! as_pred_and {
 /// Predicate for Or
 #[derive(Debug, Clone)]
 pub struct PredExpOr {
-    pred_exp_base: PredExpBase,
     #[doc(hidden)]
+    pub pred_exp_base: PredExpBase,
+    /// Number of Predicates
     pub nexpr: u16,
 }
 
@@ -150,7 +180,8 @@ macro_rules! as_pred_or {
 /// Predicate for Negation
 #[derive(Debug, Clone)]
 pub struct PredExpNot {
-    pred_exp_base: PredExpBase,
+    #[doc(hidden)]
+    pub pred_exp_base: PredExpBase,
 }
 
 impl PredExp for PredExpNot {
@@ -183,7 +214,9 @@ macro_rules! as_pred_not {
 /// Predicate for Integer Values
 #[derive(Debug, Clone)]
 pub struct PredExpIntegerValue {
-    pred_exp_base: PredExpBase,
+    #[doc(hidden)]
+    pub pred_exp_base: PredExpBase,
+    /// Value
     pub val: i64,
 }
 
@@ -220,7 +253,9 @@ macro_rules! as_pred_int_val {
 /// Predicate for Integer Values
 #[derive(Debug, Clone)]
 pub struct PredExpStringValue {
-    pred_exp_base: PredExpBase,
+    #[doc(hidden)]
+    pub pred_exp_base: PredExpBase,
+    /// Value
     pub val: String,
 }
 
@@ -257,7 +292,9 @@ macro_rules! as_pred_str_val {
 /// Predicate for GeoJSON Values
 #[derive(Debug, Clone)]
 pub struct PredExpGeoJSONValue {
-    pred_exp_base: PredExpBase,
+    #[doc(hidden)]
+    pub pred_exp_base: PredExpBase,
+    /// Value
     pub val: String,
 }
 
@@ -302,8 +339,11 @@ macro_rules! as_pred_geojson_val {
 /// Predicate for Bins
 #[derive(Debug, Clone)]
 pub struct PredExpBin {
-    pred_exp_base: PredExpBase,
+    #[doc(hidden)]
+    pub pred_exp_base: PredExpBase,
+    /// Bin Name
     pub name: String,
+    /// Bin Type
     pub tag: u16,
 }
 
@@ -401,8 +441,11 @@ macro_rules! as_pred_map_bin {
 /// Predicate for Vars
 #[derive(Debug, Clone)]
 pub struct PredExpVar {
-    pred_exp_base: PredExpBase,
+    #[doc(hidden)]
+    pub pred_exp_base: PredExpBase,
+    /// Var Name
     pub name: String,
+    /// Var Type
     pub tag: u16,
 }
 
@@ -464,7 +507,9 @@ macro_rules! as_pred_geojson_var {
 /// Predicate for MetaData (RecDeviceSize, RecLastUpdate, RecVoidTime)
 #[derive(Debug, Clone)]
 pub struct PredExpMD {
-    pred_exp_base: PredExpBase,
+    #[doc(hidden)]
+    pub pred_exp_base: PredExpBase,
+    /// Predicate Type
     pub tag: u16, // not marshaled
 }
 
@@ -530,7 +575,9 @@ macro_rules! as_pred_rec_void_time {
 // This predicate is available in Aerospike server versions 3.12.1+
 #[derive(Debug, Clone)]
 pub struct PredExpMDDigestModulo {
-    pred_exp_base: PredExpBase,
+    #[doc(hidden)]
+    pub pred_exp_base: PredExpBase,
+    /// Modulo
     pub modulo: i32, // not marshaled
 }
 
@@ -567,7 +614,9 @@ macro_rules! as_pred_rec_digest_modulo {
 /// Predicate for comparing
 #[derive(Debug, Clone)]
 pub struct PredExpCompare {
-    pred_exp_base: PredExpBase,
+    #[doc(hidden)]
+    pub pred_exp_base: PredExpBase,
+    /// Compare Type
     pub tag: u16, // not marshaled
 }
 
@@ -712,7 +761,9 @@ macro_rules! as_pred_geojson_contains {
 /// Predicate for String Regex
 #[derive(Debug, Clone)]
 pub struct PredExpStringRegex {
-    pred_exp_base: PredExpBase,
+    #[doc(hidden)]
+    pub pred_exp_base: PredExpBase,
+    /// Flags
     pub cflags: u32, // not marshaled
 }
 
@@ -749,8 +800,11 @@ macro_rules! as_pred_string_regex {
 /// Predicate for Iterators
 #[derive(Debug, Clone)]
 pub struct PredExpIter {
-    pred_exp_base: PredExpBase,
+    #[doc(hidden)]
+    pub pred_exp_base: PredExpBase,
+    /// Name
     pub name: String,
+    /// Iter Type
     pub tag: u16, // not marshaled
 }
 

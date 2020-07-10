@@ -21,13 +21,12 @@ pub use self::index_types::{CollectionIndexType, IndexType};
 pub use self::recordset::Recordset;
 pub use self::statement::Statement;
 pub use self::udf::UDFLang;
-
-// Predicates
-pub use self::predexp::PredExpAnd;
+pub use self::predexp::*;
 
 mod filter;
 mod index_types;
-mod predexp;
+/// Predicate Filtering
+pub mod predexp;
 mod recordset;
 mod statement;
 mod udf;
