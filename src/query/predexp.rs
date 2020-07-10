@@ -1,51 +1,51 @@
 use crate::commands::buffer::Buffer;
 use crate::errors::Result;
 
-const AS_PREDEXP_UNKNOWN_BIN: u16 = u16::max_value();
+const _AS_PREDEXP_UNKNOWN_BIN: u16 = u16::max_value();
 
-const AS_PREDEXP_AND: u16 = 1;
-const AS_PREDEXP_OR: u16 = 2;
-const AS_PREDEXP_NOT: u16 = 3;
+const _AS_PREDEXP_AND: u16 = 1;
+const _AS_PREDEXP_OR: u16 = 2;
+const _AS_PREDEXP_NOT: u16 = 3;
 
-const AS_PREDEXP_INTEGER_VALUE: u16 = 10;
-const AS_PREDEXP_STRING_VALUE: u16 = 11;
-const AS_PREDEXP_GEOJSON_VALUE: u16 = 12;
+const _AS_PREDEXP_INTEGER_VALUE: u16 = 10;
+const _AS_PREDEXP_STRING_VALUE: u16 = 11;
+const _AS_PREDEXP_GEOJSON_VALUE: u16 = 12;
 
-const AS_PREDEXP_INTEGER_BIN: u16 = 100;
-const AS_PREDEXP_STRING_BIN: u16 = 101;
-const AS_PREDEXP_GEOJSON_BIN: u16 = 102;
-const AS_PREDEXP_LIST_BIN: u16 = 103;
-const AS_PREDEXP_MAP_BIN: u16 = 104;
+const _AS_PREDEXP_INTEGER_BIN: u16 = 100;
+const _AS_PREDEXP_STRING_BIN: u16 = 101;
+const _AS_PREDEXP_GEOJSON_BIN: u16 = 102;
+const _AS_PREDEXP_LIST_BIN: u16 = 103;
+const _AS_PREDEXP_MAP_BIN: u16 = 104;
 
-const AS_PREDEXP_INTEGER_VAR: u16 = 120;
-const AS_PREDEXP_STRING_VAR: u16 = 121;
-const AS_PREDEXP_GEOJSON_VAR: u16 = 122;
+const _AS_PREDEXP_INTEGER_VAR: u16 = 120;
+const _AS_PREDEXP_STRING_VAR: u16 = 121;
+const _AS_PREDEXP_GEOJSON_VAR: u16 = 122;
 
-const AS_PREDEXP_REC_DEVICE_SIZE: u16 = 150;
-const AS_PREDEXP_REC_LAST_UPDATE: u16 = 151;
-const AS_PREDEXP_REC_VOID_TIME: u16 = 152;
-const AS_PREDEXP_REC_DIGEST_MODULO: u16 = 153;
+const _AS_PREDEXP_REC_DEVICE_SIZE: u16 = 150;
+const _AS_PREDEXP_REC_LAST_UPDATE: u16 = 151;
+const _AS_PREDEXP_REC_VOID_TIME: u16 = 152;
+const _AS_PREDEXP_REC_DIGEST_MODULO: u16 = 153;
 
-const AS_PREDEXP_INTEGER_EQUAL: u16 = 200;
-const AS_PREDEXP_INTEGER_UNEQUAL: u16 = 201;
-const AS_PREDEXP_INTEGER_GREATER: u16 = 202;
-const AS_PREDEXP_INTEGER_GREATEREQ: u16 = 203;
-const AS_PREDEXP_INTEGER_LESS: u16 = 204;
-const AS_PREDEXP_INTEGER_LESSEQ: u16 = 205;
+const _AS_PREDEXP_INTEGER_EQUAL: u16 = 200;
+const _AS_PREDEXP_INTEGER_UNEQUAL: u16 = 201;
+const _AS_PREDEXP_INTEGER_GREATER: u16 = 202;
+const _AS_PREDEXP_INTEGER_GREATEREQ: u16 = 203;
+const _AS_PREDEXP_INTEGER_LESS: u16 = 204;
+const _AS_PREDEXP_INTEGER_LESSEQ: u16 = 205;
 
-const AS_PREDEXP_STRING_EQUAL: u16 = 210;
-const AS_PREDEXP_STRING_UNEQUAL: u16 = 211;
-const AS_PREDEXP_STRING_REGEX: u16 = 212;
+const _AS_PREDEXP_STRING_EQUAL: u16 = 210;
+const _AS_PREDEXP_STRING_UNEQUAL: u16 = 211;
+const _AS_PREDEXP_STRING_REGEX: u16 = 212;
 
-const AS_PREDEXP_GEOJSON_WITHIN: u16 = 220;
-const AS_PREDEXP_GEOJSON_CONTAINS: u16 = 221;
+const _AS_PREDEXP_GEOJSON_WITHIN: u16 = 220;
+const _AS_PREDEXP_GEOJSON_CONTAINS: u16 = 221;
 
-const AS_PREDEXP_LIST_ITERATE_OR: u16 = 250;
-const AS_PREDEXP_MAPKEY_ITERATE_OR: u16 = 251;
-const AS_PREDEXP_MAPVAL_ITERATE_OR: u16 = 252;
-const AS_PREDEXP_LIST_ITERATE_AND: u16 = 253;
-const AS_PREDEXP_MAPKEY_ITERATE_AND: u16 = 254;
-const AS_PREDEXP_MAPVAL_ITERATE_AND: u16 = 255;
+const _AS_PREDEXP_LIST_ITERATE_OR: u16 = 250;
+const _AS_PREDEXP_MAPKEY_ITERATE_OR: u16 = 251;
+const _AS_PREDEXP_MAPVAL_ITERATE_OR: u16 = 252;
+const _AS_PREDEXP_LIST_ITERATE_AND: u16 = 253;
+const _AS_PREDEXP_MAPKEY_ITERATE_AND: u16 = 254;
+const _AS_PREDEXP_MAPVAL_ITERATE_AND: u16 = 255;
 
 pub trait PredExp: Send + Sync {
     fn pred_string(&self) -> String;
@@ -91,7 +91,7 @@ impl PredExp for PredExpAnd {
     }
 
     fn write(&self, buffer: &mut Buffer) -> Result<()> {
-        self.pred_exp_base.write(buffer, AS_PREDEXP_AND, 2)?;
+        self.pred_exp_base.write(buffer, _AS_PREDEXP_AND, 2)?;
         buffer.write_u16(self.nexpr)?;
         Ok(())
     }
@@ -128,7 +128,7 @@ impl PredExp for PredExpOr {
     }
 
     fn write(&self, buffer: &mut Buffer) -> Result<()> {
-        self.pred_exp_base.write(buffer, AS_PREDEXP_OR, 2)?;
+        self.pred_exp_base.write(buffer, _AS_PREDEXP_OR, 2)?;
         buffer.write_u16(self.nexpr)?;
         Ok(())
     }
@@ -163,7 +163,7 @@ impl PredExp for PredExpNot {
     }
 
     fn write(&self, buffer: &mut Buffer) -> Result<()> {
-        self.pred_exp_base.write(buffer, AS_PREDEXP_NOT, 0)?;
+        self.pred_exp_base.write(buffer, _AS_PREDEXP_NOT, 0)?;
         Ok(())
     }
 }
@@ -198,7 +198,7 @@ impl PredExp for PredExpIntegerValue {
 
     fn write(&self, buffer: &mut Buffer) -> Result<()> {
         self.pred_exp_base
-            .write(buffer, AS_PREDEXP_INTEGER_VALUE, 8)?;
+            .write(buffer, _AS_PREDEXP_INTEGER_VALUE, 8)?;
         buffer.write_i64(self.val)?;
         Ok(())
     }
@@ -235,7 +235,7 @@ impl PredExp for PredExpStringValue {
 
     fn write(&self, buffer: &mut Buffer) -> Result<()> {
         self.pred_exp_base
-            .write(buffer, AS_PREDEXP_STRING_VALUE, self.val.len() as u32)?;
+            .write(buffer, _AS_PREDEXP_STRING_VALUE, self.val.len() as u32)?;
         buffer.write_str(&self.val)?;
         Ok(())
     }
@@ -276,7 +276,7 @@ impl PredExp for PredExpGeoJSONValue {
     fn write(&self, buffer: &mut Buffer) -> Result<()> {
         self.pred_exp_base.write(
             buffer,
-            AS_PREDEXP_GEOJSON_VALUE,
+            _AS_PREDEXP_GEOJSON_VALUE,
             (1 + 2 + self.val.len()) as u32,
         )?;
         buffer.write_u8(0u8)?;
@@ -331,7 +331,7 @@ macro_rules! as_pred_unknown_bin {
         $crate::query::predexp::PredExpBin {
             pred_exp_base: $crate::query::predexp::PredExpBase {},
             name: $name,
-            tag: $crate::query::predexp::AS_PREDEXP_UNKNOWN_BIN,
+            tag: $crate::query::predexp::_AS_PREDEXP_UNKNOWN_BIN,
         }
     }};
 }
@@ -343,7 +343,7 @@ macro_rules! as_pred_int_bin {
         $crate::query::predexp::PredExpBin {
             pred_exp_base: $crate::query::predexp::PredExpBase {},
             name: $name,
-            tag: $crate::query::predexp::AS_PREDEXP_INTEGER_BIN,
+            tag: $crate::query::predexp::_AS_PREDEXP_INTEGER_BIN,
         }
     }};
 }
@@ -355,7 +355,7 @@ macro_rules! as_pred_str_bin {
         $crate::query::predexp::PredExpBin {
             pred_exp_base: $crate::query::predexp::PredExpBase {},
             name: $name,
-            tag: $crate::query::predexp::AS_PREDEXP_STRING_BIN,
+            tag: $crate::query::predexp::_AS_PREDEXP_STRING_BIN,
         }
     }};
 }
@@ -367,7 +367,7 @@ macro_rules! as_pred_geojson_bin {
         $crate::query::predexp::PredExpBin {
             pred_exp_base: $crate::query::predexp::PredExpBase {},
             name: $name,
-            tag: $crate::query::predexp::AS_PREDEXP_GEOJSON_BIN,
+            tag: $crate::query::predexp::_AS_PREDEXP_GEOJSON_BIN,
         }
     }};
 }
@@ -379,7 +379,7 @@ macro_rules! as_pred_list_bin {
         $crate::query::predexp::PredExpBin {
             pred_exp_base: $crate::query::predexp::PredExpBase {},
             name: $name,
-            tag: $crate::query::predexp::AS_PREDEXP_LIST_BIN,
+            tag: $crate::query::predexp::_AS_PREDEXP_LIST_BIN,
         }
     }};
 }
@@ -391,7 +391,7 @@ macro_rules! as_pred_map_bin {
         $crate::query::predexp::PredExpBin {
             pred_exp_base: $crate::query::predexp::PredExpBase {},
             name: $name,
-            tag: $crate::query::predexp::AS_PREDEXP_MAP_BIN,
+            tag: $crate::query::predexp::_AS_PREDEXP_MAP_BIN,
         }
     }};
 }
@@ -430,7 +430,7 @@ macro_rules! as_pred_int_var {
         $crate::query::predexp::PredExpVar {
             pred_exp_base: $crate::query::predexp::PredExpBase {},
             name: $name,
-            tag: $crate::query::predexp::AS_PREDEXP_INTEGER_VAR,
+            tag: $crate::query::predexp::_AS_PREDEXP_INTEGER_VAR,
         }
     }};
 }
@@ -442,7 +442,7 @@ macro_rules! as_pred_str_var {
         $crate::query::predexp::PredExpVar {
             pred_exp_base: $crate::query::predexp::PredExpBase {},
             name: $name,
-            tag: $crate::query::predexp::AS_PREDEXP_STRING_VAR,
+            tag: $crate::query::predexp::_AS_PREDEXP_STRING_VAR,
         }
     }};
 }
@@ -454,7 +454,7 @@ macro_rules! as_pred_geojson_var {
         $crate::query::predexp::PredExpVar {
             pred_exp_base: $crate::query::predexp::PredExpBase {},
             name: $name,
-            tag: $crate::query::predexp::AS_PREDEXP_GEOJSON_VAR,
+            tag: $crate::query::predexp::_AS_PREDEXP_GEOJSON_VAR,
         }
     }};
 }
@@ -471,10 +471,10 @@ pub struct PredExpMD {
 impl PredExp for PredExpMD {
     fn pred_string(&self) -> String {
         match self.tag {
-            AS_PREDEXP_REC_DEVICE_SIZE => String::from("rec.DeviceSize"),
-            AS_PREDEXP_REC_LAST_UPDATE => String::from("rec.LastUpdate"),
-            AS_PREDEXP_REC_VOID_TIME => String::from("rec.Expiration"),
-            AS_PREDEXP_REC_DIGEST_MODULO => String::from("rec.DigestModulo"),
+            _AS_PREDEXP_REC_DEVICE_SIZE => String::from("rec.DeviceSize"),
+            _AS_PREDEXP_REC_LAST_UPDATE => String::from("rec.LastUpdate"),
+            _AS_PREDEXP_REC_VOID_TIME => String::from("rec.Expiration"),
+            _AS_PREDEXP_REC_DIGEST_MODULO => String::from("rec.DigestModulo"),
             _ => panic!("Invalid Metadata tag."),
         }
     }
@@ -495,7 +495,7 @@ macro_rules! as_pred_rec_device_size {
     () => {{
         $crate::query::predexp::PredExpMD {
             pred_exp_base: $crate::query::predexp::PredExpBase {},
-            tag: $crate::query::predexp::AS_PREDEXP_REC_DEVICE_SIZE,
+            tag: $crate::query::predexp::_AS_PREDEXP_REC_DEVICE_SIZE,
         }
     }};
 }
@@ -506,7 +506,7 @@ macro_rules! as_pred_rec_last_update {
     () => {{
         $crate::query::predexp::PredExpMD {
             pred_exp_base: $crate::query::predexp::PredExpBase {},
-            tag: $crate::query::predexp::AS_PREDEXP_REC_LAST_UPDATE,
+            tag: $crate::query::predexp::_AS_PREDEXP_REC_LAST_UPDATE,
         }
     }};
 }
@@ -517,7 +517,7 @@ macro_rules! as_pred_rec_void_time {
     () => {{
         $crate::query::predexp::PredExpMD {
             pred_exp_base: $crate::query::predexp::PredExpBase {},
-            tag: $crate::query::predexp::AS_PREDEXP_REC_VOID_TIME,
+            tag: $crate::query::predexp::_AS_PREDEXP_REC_VOID_TIME,
         }
     }};
 }
@@ -545,7 +545,7 @@ impl PredExp for PredExpMDDigestModulo {
 
     fn write(&self, buffer: &mut Buffer) -> Result<()> {
         self.pred_exp_base
-            .write(buffer, AS_PREDEXP_REC_DIGEST_MODULO, 4)?;
+            .write(buffer, _AS_PREDEXP_REC_DIGEST_MODULO, 4)?;
         buffer.write_i32(self.modulo)?;
         Ok(())
     }
@@ -574,15 +574,15 @@ pub struct PredExpCompare {
 impl PredExp for PredExpCompare {
     fn pred_string(&self) -> String {
         match self.tag {
-            AS_PREDEXP_INTEGER_EQUAL | AS_PREDEXP_STRING_EQUAL => String::from("="),
-            AS_PREDEXP_INTEGER_UNEQUAL | AS_PREDEXP_STRING_UNEQUAL => String::from("!="),
-            AS_PREDEXP_INTEGER_GREATER => String::from(">"),
-            AS_PREDEXP_INTEGER_GREATEREQ => String::from(">="),
-            AS_PREDEXP_INTEGER_LESS => String::from("<"),
-            AS_PREDEXP_INTEGER_LESSEQ => String::from("<="),
-            AS_PREDEXP_STRING_REGEX => String::from("~="),
-            AS_PREDEXP_GEOJSON_CONTAINS => String::from("CONTAINS"),
-            AS_PREDEXP_GEOJSON_WITHIN => String::from("WITHIN"),
+            _AS_PREDEXP_INTEGER_EQUAL | _AS_PREDEXP_STRING_EQUAL => String::from("="),
+            _AS_PREDEXP_INTEGER_UNEQUAL | _AS_PREDEXP_STRING_UNEQUAL => String::from("!="),
+            _AS_PREDEXP_INTEGER_GREATER => String::from(">"),
+            _AS_PREDEXP_INTEGER_GREATEREQ => String::from(">="),
+            _AS_PREDEXP_INTEGER_LESS => String::from("<"),
+            _AS_PREDEXP_INTEGER_LESSEQ => String::from("<="),
+            _AS_PREDEXP_STRING_REGEX => String::from("~="),
+            _AS_PREDEXP_GEOJSON_CONTAINS => String::from("CONTAINS"),
+            _AS_PREDEXP_GEOJSON_WITHIN => String::from("WITHIN"),
             _ => panic!("unexpected predicate tag"),
         }
     }
@@ -603,7 +603,7 @@ macro_rules! as_pred_int_eq {
     () => {{
         $crate::query::predexp::PredExpCompare {
             pred_exp_base: $crate::query::predexp::PredExpBase {},
-            tag: $crate::query::predexp::AS_PREDEXP_INTEGER_EQUAL,
+            tag: $crate::query::predexp::_AS_PREDEXP_INTEGER_EQUAL,
         }
     }};
 }
@@ -614,7 +614,7 @@ macro_rules! as_pred_int_uneq {
     () => {{
         $crate::query::predexp::PredExpCompare {
             pred_exp_base: $crate::query::predexp::PredExpBase {},
-            tag: $crate::query::predexp::AS_PREDEXP_INTEGER_UNEQUAL,
+            tag: $crate::query::predexp::_AS_PREDEXP_INTEGER_UNEQUAL,
         }
     }};
 }
@@ -625,7 +625,7 @@ macro_rules! as_pred_int_gt {
     () => {{
         $crate::query::predexp::PredExpCompare {
             pred_exp_base: $crate::query::predexp::PredExpBase {},
-            tag: $crate::query::predexp::AS_PREDEXP_INTEGER_GREATER,
+            tag: $crate::query::predexp::_AS_PREDEXP_INTEGER_GREATER,
         }
     }};
 }
@@ -636,7 +636,7 @@ macro_rules! as_pred_int_gteq {
     () => {{
         $crate::query::predexp::PredExpCompare {
             pred_exp_base: $crate::query::predexp::PredExpBase {},
-            tag: $crate::query::predexp::AS_PREDEXP_INTEGER_GREATEREQ,
+            tag: $crate::query::predexp::_AS_PREDEXP_INTEGER_GREATEREQ,
         }
     }};
 }
@@ -647,7 +647,7 @@ macro_rules! as_pred_int_lt {
     () => {{
         $crate::query::predexp::PredExpCompare {
             pred_exp_base: $crate::query::predexp::PredExpBase {},
-            tag: $crate::query::predexp::AS_PREDEXP_INTEGER_LESS,
+            tag: $crate::query::predexp::_AS_PREDEXP_INTEGER_LESS,
         }
     }};
 }
@@ -658,7 +658,7 @@ macro_rules! as_pred_int_lteq {
     () => {{
         $crate::query::predexp::PredExpCompare {
             pred_exp_base: $crate::query::predexp::PredExpBase {},
-            tag: $crate::query::predexp::AS_PREDEXP_INTEGER_LESSEQ,
+            tag: $crate::query::predexp::_AS_PREDEXP_INTEGER_LESSEQ,
         }
     }};
 }
@@ -669,7 +669,7 @@ macro_rules! as_pred_str_eq {
     () => {{
         $crate::query::predexp::PredExpCompare {
             pred_exp_base: $crate::query::predexp::PredExpBase {},
-            tag: $crate::query::predexp::AS_PREDEXP_STRING_EQUAL,
+            tag: $crate::query::predexp::_AS_PREDEXP_STRING_EQUAL,
         }
     }};
 }
@@ -680,7 +680,7 @@ macro_rules! as_pred_str_uneq {
     () => {{
         $crate::query::predexp::PredExpCompare {
             pred_exp_base: $crate::query::predexp::PredExpBase {},
-            tag: $crate::query::predexp::AS_PREDEXP_STRING_UNEQUAL,
+            tag: $crate::query::predexp::_AS_PREDEXP_STRING_UNEQUAL,
         }
     }};
 }
@@ -691,7 +691,7 @@ macro_rules! as_pred_geojson_within {
     () => {{
         $crate::query::predexp::PredExpCompare {
             pred_exp_base: $crate::query::predexp::PredExpBase {},
-            tag: $crate::query::predexp::AS_PREDEXP_GEOJSON_WITHIN,
+            tag: $crate::query::predexp::_AS_PREDEXP_GEOJSON_WITHIN,
         }
     }};
 }
@@ -702,7 +702,7 @@ macro_rules! as_pred_geojson_contains {
     () => {{
         $crate::query::predexp::PredExpCompare {
             pred_exp_base: $crate::query::predexp::PredExpBase {},
-            tag: $crate::query::predexp::AS_PREDEXP_GEOJSON_CONTAINS,
+            tag: $crate::query::predexp::_AS_PREDEXP_GEOJSON_CONTAINS,
         }
     }};
 }
@@ -727,7 +727,7 @@ impl PredExp for PredExpStringRegex {
 
     fn write(&self, buffer: &mut Buffer) -> Result<()> {
         self.pred_exp_base
-            .write(buffer, AS_PREDEXP_STRING_REGEX, 4)?;
+            .write(buffer, _AS_PREDEXP_STRING_REGEX, 4)?;
         buffer.write_u32(self.cflags)?;
         Ok(())
     }
@@ -757,37 +757,37 @@ pub struct PredExpIter {
 impl PredExp for PredExpIter {
     fn pred_string(&self) -> String {
         match self.tag {
-            AS_PREDEXP_LIST_ITERATE_OR => {
+            _AS_PREDEXP_LIST_ITERATE_OR => {
                 let mut tagname = String::from("list_iterate_or using \"");
                 tagname.push_str(&self.name);
                 tagname.push_str("\":");
                 tagname
             }
-            AS_PREDEXP_MAPKEY_ITERATE_OR => {
+            _AS_PREDEXP_MAPKEY_ITERATE_OR => {
                 let mut tagname = String::from("mapkey_iterate_or using \"");
                 tagname.push_str(&self.name);
                 tagname.push_str("\":");
                 tagname
             }
-            AS_PREDEXP_MAPVAL_ITERATE_OR => {
+            _AS_PREDEXP_MAPVAL_ITERATE_OR => {
                 let mut tagname = String::from("mapval_iterate_or using \"");
                 tagname.push_str(&self.name);
                 tagname.push_str("\":");
                 tagname
             }
-            AS_PREDEXP_LIST_ITERATE_AND => {
+            _AS_PREDEXP_LIST_ITERATE_AND => {
                 let mut tagname = String::from("list_iterate_and using \"");
                 tagname.push_str(&self.name);
                 tagname.push_str("\":");
                 tagname
             }
-            AS_PREDEXP_MAPKEY_ITERATE_AND => {
+            _AS_PREDEXP_MAPKEY_ITERATE_AND => {
                 let mut tagname = String::from("mapkey_iterate_and using \"");
                 tagname.push_str(&self.name);
                 tagname.push_str("\":");
                 tagname
             }
-            AS_PREDEXP_MAPVAL_ITERATE_AND => {
+            _AS_PREDEXP_MAPVAL_ITERATE_AND => {
                 let mut tagname = String::from("mapvalue_iterate_and using \"");
                 tagname.push_str(&self.name);
                 tagname.push_str("\":");
@@ -803,7 +803,7 @@ impl PredExp for PredExpIter {
 
     fn write(&self, buffer: &mut Buffer) -> Result<()> {
         self.pred_exp_base
-            .write(buffer, AS_PREDEXP_STRING_REGEX, self.name.len() as u32)?;
+            .write(buffer, _AS_PREDEXP_STRING_REGEX, self.name.len() as u32)?;
         buffer.write_str(&self.name)?;
         Ok(())
     }
@@ -816,7 +816,7 @@ macro_rules! as_pred_list_iterate_or {
         $crate::query::predexp::PredExpIter {
             pred_exp_base: $crate::query::predexp::PredExpBase {},
             name: $name,
-            tag: $crate::query::predexp::AS_PREDEXP_LIST_ITERATE_OR,
+            tag: $crate::query::predexp::_AS_PREDEXP_LIST_ITERATE_OR,
         }
     }};
 }
@@ -828,7 +828,7 @@ macro_rules! as_pred_list_iterate_and {
         $crate::query::predexp::PredExpIter {
             pred_exp_base: $crate::query::predexp::PredExpBase {},
             name: $name,
-            tag: $crate::query::predexp::AS_PREDEXP_LIST_ITERATE_AND,
+            tag: $crate::query::predexp::_AS_PREDEXP_LIST_ITERATE_AND,
         }
     }};
 }
@@ -840,7 +840,7 @@ macro_rules! as_pred_mapkey_iterate_or {
         $crate::query::predexp::PredExpIter {
             pred_exp_base: $crate::query::predexp::PredExpBase {},
             name: $name,
-            tag: $crate::query::predexp::AS_PREDEXP_MAPKEY_ITERATE_OR,
+            tag: $crate::query::predexp::_AS_PREDEXP_MAPKEY_ITERATE_OR,
         }
     }};
 }
@@ -852,7 +852,7 @@ macro_rules! as_pred_mapkey_iterate_and {
         $crate::query::predexp::PredExpIter {
             pred_exp_base: $crate::query::predexp::PredExpBase {},
             name: $name,
-            tag: $crate::query::predexp::AS_PREDEXP_MAPKEY_ITERATE_AND,
+            tag: $crate::query::predexp::_AS_PREDEXP_MAPKEY_ITERATE_AND,
         }
     }};
 }
@@ -864,7 +864,7 @@ macro_rules! as_pred_mapval_iterate_or {
         $crate::query::predexp::PredExpIter {
             pred_exp_base: $crate::query::predexp::PredExpBase {},
             name: $name,
-            tag: $crate::query::predexp::AS_PREDEXP_MAPVAL_ITERATE_OR,
+            tag: $crate::query::predexp::_AS_PREDEXP_MAPVAL_ITERATE_OR,
         }
     }};
 }
@@ -876,7 +876,7 @@ macro_rules! as_pred_mapval_iterate_and {
         $crate::query::predexp::PredExpIter {
             pred_exp_base: $crate::query::predexp::PredExpBase {},
             name: $name,
-            tag: $crate::query::predexp::AS_PREDEXP_MAPVAL_ITERATE_AND,
+            tag: $crate::query::predexp::_AS_PREDEXP_MAPVAL_ITERATE_AND,
         }
     }};
 }
@@ -912,81 +912,81 @@ mod tests {
 
         let bin_unknown = as_pred_unknown_bin!(String::from("test"));
         assert_eq!(bin_unknown.pred_string(), "test");
-        assert_eq!(bin_unknown.tag, AS_PREDEXP_UNKNOWN_BIN);
+        assert_eq!(bin_unknown.tag, _AS_PREDEXP_UNKNOWN_BIN);
 
         let int_bin = as_pred_int_bin!(String::from("test"));
         assert_eq!(int_bin.pred_string(), "test");
-        assert_eq!(int_bin.tag, AS_PREDEXP_INTEGER_BIN);
+        assert_eq!(int_bin.tag, _AS_PREDEXP_INTEGER_BIN);
 
         let str_bin = as_pred_str_bin!(String::from("test"));
         assert_eq!(str_bin.pred_string(), "test");
-        assert_eq!(str_bin.tag, AS_PREDEXP_STRING_BIN);
+        assert_eq!(str_bin.tag, _AS_PREDEXP_STRING_BIN);
 
         let geo_bin = as_pred_geojson_bin!(String::from("test"));
         assert_eq!(geo_bin.pred_string(), "test");
-        assert_eq!(geo_bin.tag, AS_PREDEXP_GEOJSON_BIN);
+        assert_eq!(geo_bin.tag, _AS_PREDEXP_GEOJSON_BIN);
 
         let list_bin = as_pred_list_bin!(String::from("test"));
         assert_eq!(list_bin.pred_string(), "test");
-        assert_eq!(list_bin.tag, AS_PREDEXP_LIST_BIN);
+        assert_eq!(list_bin.tag, _AS_PREDEXP_LIST_BIN);
 
         let map_bin = as_pred_map_bin!(String::from("test"));
         assert_eq!(map_bin.pred_string(), "test");
-        assert_eq!(map_bin.tag, AS_PREDEXP_MAP_BIN);
+        assert_eq!(map_bin.tag, _AS_PREDEXP_MAP_BIN);
 
         let int_var = as_pred_int_var!(String::from("test"));
         assert_eq!(int_var.pred_string(), "test");
-        assert_eq!(int_var.tag, AS_PREDEXP_INTEGER_VAR);
+        assert_eq!(int_var.tag, _AS_PREDEXP_INTEGER_VAR);
 
         let str_var = as_pred_str_var!(String::from("test"));
         assert_eq!(str_var.pred_string(), "test");
-        assert_eq!(str_var.tag, AS_PREDEXP_STRING_VAR);
+        assert_eq!(str_var.tag, _AS_PREDEXP_STRING_VAR);
 
         let geo_var = as_pred_geojson_var!(String::from("test"));
         assert_eq!(geo_var.pred_string(), "test");
-        assert_eq!(geo_var.tag, AS_PREDEXP_GEOJSON_VAR);
+        assert_eq!(geo_var.tag, _AS_PREDEXP_GEOJSON_VAR);
 
         let dev_size = as_pred_rec_device_size!();
-        assert_eq!(dev_size.tag, AS_PREDEXP_REC_DEVICE_SIZE);
+        assert_eq!(dev_size.tag, _AS_PREDEXP_REC_DEVICE_SIZE);
 
         let last_update = as_pred_rec_last_update!();
-        assert_eq!(last_update.tag, AS_PREDEXP_REC_LAST_UPDATE);
+        assert_eq!(last_update.tag, _AS_PREDEXP_REC_LAST_UPDATE);
 
         let void_time = as_pred_rec_void_time!();
-        assert_eq!(void_time.tag, AS_PREDEXP_REC_VOID_TIME);
+        assert_eq!(void_time.tag, _AS_PREDEXP_REC_VOID_TIME);
 
         let digest_modulo = as_pred_rec_digest_modulo!(10);
         assert_eq!(digest_modulo.modulo, 10);
 
         let int_eq = as_pred_int_eq!();
-        assert_eq!(int_eq.tag, AS_PREDEXP_INTEGER_EQUAL);
+        assert_eq!(int_eq.tag, _AS_PREDEXP_INTEGER_EQUAL);
 
         let int_uneq = as_pred_int_uneq!();
-        assert_eq!(int_uneq.tag, AS_PREDEXP_INTEGER_UNEQUAL);
+        assert_eq!(int_uneq.tag, _AS_PREDEXP_INTEGER_UNEQUAL);
 
         let int_gt = as_pred_int_gt!();
-        assert_eq!(int_gt.tag, AS_PREDEXP_INTEGER_GREATER);
+        assert_eq!(int_gt.tag, _AS_PREDEXP_INTEGER_GREATER);
 
         let int_gteq = as_pred_int_gteq!();
-        assert_eq!(int_gteq.tag, AS_PREDEXP_INTEGER_GREATEREQ);
+        assert_eq!(int_gteq.tag, _AS_PREDEXP_INTEGER_GREATEREQ);
 
         let int_lt = as_pred_int_lt!();
-        assert_eq!(int_lt.tag, AS_PREDEXP_INTEGER_LESS);
+        assert_eq!(int_lt.tag, _AS_PREDEXP_INTEGER_LESS);
 
         let int_lteq = as_pred_int_lteq!();
-        assert_eq!(int_lteq.tag, AS_PREDEXP_INTEGER_LESSEQ);
+        assert_eq!(int_lteq.tag, _AS_PREDEXP_INTEGER_LESSEQ);
 
         let str_eq = as_pred_str_eq!();
-        assert_eq!(str_eq.tag, AS_PREDEXP_STRING_EQUAL);
+        assert_eq!(str_eq.tag, _AS_PREDEXP_STRING_EQUAL);
 
         let str_uneq = as_pred_str_uneq!();
-        assert_eq!(str_uneq.tag, AS_PREDEXP_STRING_UNEQUAL);
+        assert_eq!(str_uneq.tag, _AS_PREDEXP_STRING_UNEQUAL);
 
         let geo_within = as_pred_geojson_within!();
-        assert_eq!(geo_within.tag, AS_PREDEXP_GEOJSON_WITHIN);
+        assert_eq!(geo_within.tag, _AS_PREDEXP_GEOJSON_WITHIN);
 
         let geo_contains = as_pred_geojson_contains!();
-        assert_eq!(geo_contains.tag, AS_PREDEXP_GEOJSON_CONTAINS);
+        assert_eq!(geo_contains.tag, _AS_PREDEXP_GEOJSON_CONTAINS);
 
         let string_reg = as_pred_string_regex!(5);
         assert_eq!(string_reg.cflags, 5);
