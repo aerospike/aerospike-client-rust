@@ -79,20 +79,16 @@ pub trait PredExp: Send + Sync {
     fn pred_string(&self) -> String;
     fn marshaled_size(&self) -> usize;
     fn write(&self, buffer: &mut Buffer) -> Result<()>;
-}
 
-#[derive(Debug, Clone)]
-#[doc(hidden)]
-pub struct PredExpBase {}
-
-impl PredExpBase {
+    // Default Header Size
     #[doc(hidden)]
     fn default_size(&self) -> usize {
         return 2 + 4; // size of TAG + size of LEN
     }
 
+    // Write tag und len to buffer
     #[doc(hidden)]
-    fn write(&self, buffer: &mut Buffer, tag: u16, len: u32) -> Result<()> {
+    fn write_head(&self, buffer: &mut Buffer, tag: u16, len: u32) -> Result<()> {
         buffer.write_u16(tag)?;
         buffer.write_u32(len)?;
         Ok(())
@@ -104,8 +100,6 @@ impl PredExpBase {
 /// Predicate for And
 #[derive(Debug, Clone)]
 pub struct PredExpAnd {
-    #[doc(hidden)]
-    pub pred_exp_base: PredExpBase,
     /// Number of Predicates
     pub nexpr: u16,
 }
@@ -116,11 +110,11 @@ impl PredExp for PredExpAnd {
     }
 
     fn marshaled_size(&self) -> usize {
-        self.pred_exp_base.default_size() + 2
+        self.default_size() + 2
     }
 
     fn write(&self, buffer: &mut Buffer) -> Result<()> {
-        self.pred_exp_base.write(buffer, _AS_PREDEXP_AND, 2)?;
+        self.write_head(buffer, _AS_PREDEXP_AND, 2)?;
         buffer.write_u16(self.nexpr)?;
         Ok(())
     }
@@ -130,10 +124,7 @@ impl PredExp for PredExpAnd {
 #[macro_export]
 macro_rules! as_predexp_and {
     ($nexpr:expr) => {{
-        $crate::query::predexp::PredExpAnd {
-            pred_exp_base: $crate::query::predexp::PredExpBase {},
-            nexpr: $nexpr,
-        }
+        $crate::query::predexp::PredExpAnd { nexpr: $nexpr }
     }};
 }
 
@@ -142,8 +133,6 @@ macro_rules! as_predexp_and {
 /// Predicate for Or
 #[derive(Debug, Clone)]
 pub struct PredExpOr {
-    #[doc(hidden)]
-    pub pred_exp_base: PredExpBase,
     /// Number of Predicates
     pub nexpr: u16,
 }
@@ -154,11 +143,11 @@ impl PredExp for PredExpOr {
     }
 
     fn marshaled_size(&self) -> usize {
-        self.pred_exp_base.default_size() + 2
+        self.default_size() + 2
     }
 
     fn write(&self, buffer: &mut Buffer) -> Result<()> {
-        self.pred_exp_base.write(buffer, _AS_PREDEXP_OR, 2)?;
+        self.write_head(buffer, _AS_PREDEXP_OR, 2)?;
         buffer.write_u16(self.nexpr)?;
         Ok(())
     }
@@ -168,10 +157,7 @@ impl PredExp for PredExpOr {
 #[macro_export]
 macro_rules! as_predexp_or {
     ($nexpr:expr) => {{
-        $crate::query::predexp::PredExpOr {
-            pred_exp_base: $crate::query::predexp::PredExpBase {},
-            nexpr: $nexpr,
-        }
+        $crate::query::predexp::PredExpOr { nexpr: $nexpr }
     }};
 }
 
@@ -179,10 +165,7 @@ macro_rules! as_predexp_or {
 
 /// Predicate for Negation
 #[derive(Debug, Clone)]
-pub struct PredExpNot {
-    #[doc(hidden)]
-    pub pred_exp_base: PredExpBase,
-}
+pub struct PredExpNot {}
 
 impl PredExp for PredExpNot {
     fn pred_string(&self) -> String {
@@ -190,11 +173,11 @@ impl PredExp for PredExpNot {
     }
 
     fn marshaled_size(&self) -> usize {
-        self.pred_exp_base.default_size()
+        self.default_size()
     }
 
     fn write(&self, buffer: &mut Buffer) -> Result<()> {
-        self.pred_exp_base.write(buffer, _AS_PREDEXP_NOT, 0)?;
+        self.write_head(buffer, _AS_PREDEXP_NOT, 0)?;
         Ok(())
     }
 }
@@ -203,9 +186,7 @@ impl PredExp for PredExpNot {
 #[macro_export]
 macro_rules! as_predexp_not {
     () => {{
-        $crate::query::predexp::PredExpNot {
-            pred_exp_base: $crate::query::predexp::PredExpBase {},
-        }
+        $crate::query::predexp::PredExpNot {}
     }};
 }
 
@@ -214,8 +195,6 @@ macro_rules! as_predexp_not {
 /// Predicate for Integer Values
 #[derive(Debug, Clone)]
 pub struct PredExpIntegerValue {
-    #[doc(hidden)]
-    pub pred_exp_base: PredExpBase,
     /// Value
     pub val: i64,
 }
@@ -226,12 +205,11 @@ impl PredExp for PredExpIntegerValue {
     }
 
     fn marshaled_size(&self) -> usize {
-        self.pred_exp_base.default_size() + 8
+        self.default_size() + 8
     }
 
     fn write(&self, buffer: &mut Buffer) -> Result<()> {
-        self.pred_exp_base
-            .write(buffer, _AS_PREDEXP_INTEGER_VALUE, 8)?;
+        self.write_head(buffer, _AS_PREDEXP_INTEGER_VALUE, 8)?;
         buffer.write_i64(self.val)?;
         Ok(())
     }
@@ -241,10 +219,7 @@ impl PredExp for PredExpIntegerValue {
 #[macro_export]
 macro_rules! as_predexp_integer_value {
     ($val:expr) => {{
-        $crate::query::predexp::PredExpIntegerValue {
-            pred_exp_base: $crate::query::predexp::PredExpBase {},
-            val: $val,
-        }
+        $crate::query::predexp::PredExpIntegerValue { val: $val }
     }};
 }
 
@@ -253,8 +228,6 @@ macro_rules! as_predexp_integer_value {
 /// Predicate for Integer Values
 #[derive(Debug, Clone)]
 pub struct PredExpStringValue {
-    #[doc(hidden)]
-    pub pred_exp_base: PredExpBase,
     /// Value
     pub val: String,
 }
@@ -265,12 +238,11 @@ impl PredExp for PredExpStringValue {
     }
 
     fn marshaled_size(&self) -> usize {
-        self.pred_exp_base.default_size() + self.val.len()
+        self.default_size() + self.val.len()
     }
 
     fn write(&self, buffer: &mut Buffer) -> Result<()> {
-        self.pred_exp_base
-            .write(buffer, _AS_PREDEXP_STRING_VALUE, self.val.len() as u32)?;
+        self.write_head(buffer, _AS_PREDEXP_STRING_VALUE, self.val.len() as u32)?;
         buffer.write_str(&self.val)?;
         Ok(())
     }
@@ -280,10 +252,7 @@ impl PredExp for PredExpStringValue {
 #[macro_export]
 macro_rules! as_predexp_string_value {
     ($val:expr) => {{
-        $crate::query::predexp::PredExpStringValue {
-            pred_exp_base: $crate::query::predexp::PredExpBase {},
-            val: $val,
-        }
+        $crate::query::predexp::PredExpStringValue { val: $val }
     }};
 }
 
@@ -292,8 +261,6 @@ macro_rules! as_predexp_string_value {
 /// Predicate for GeoJSON Values
 #[derive(Debug, Clone)]
 pub struct PredExpGeoJSONValue {
-    #[doc(hidden)]
-    pub pred_exp_base: PredExpBase,
     /// Value
     pub val: String,
 }
@@ -304,14 +271,14 @@ impl PredExp for PredExpGeoJSONValue {
     }
 
     fn marshaled_size(&self) -> usize {
-        self.pred_exp_base.default_size()
+        self.default_size()
             + 1 // flags
             + 2 // ncells
             + self.val.len()
     }
 
     fn write(&self, buffer: &mut Buffer) -> Result<()> {
-        self.pred_exp_base.write(
+        self.write_head(
             buffer,
             _AS_PREDEXP_GEOJSON_VALUE,
             (1 + 2 + self.val.len()) as u32,
@@ -327,10 +294,7 @@ impl PredExp for PredExpGeoJSONValue {
 #[macro_export]
 macro_rules! as_predexp_geojson_value {
     ($val:expr) => {{
-        $crate::query::predexp::PredExpGeoJSONValue {
-            pred_exp_base: $crate::query::predexp::PredExpBase {},
-            val: $val,
-        }
+        $crate::query::predexp::PredExpGeoJSONValue { val: $val }
     }};
 }
 
@@ -339,8 +303,6 @@ macro_rules! as_predexp_geojson_value {
 /// Predicate for Bins
 #[derive(Debug, Clone)]
 pub struct PredExpBin {
-    #[doc(hidden)]
-    pub pred_exp_base: PredExpBase,
     /// Bin Name
     pub name: String,
     /// Bin Type
@@ -353,12 +315,11 @@ impl PredExp for PredExpBin {
     }
 
     fn marshaled_size(&self) -> usize {
-        self.pred_exp_base.default_size() + self.name.len()
+        self.default_size() + self.name.len()
     }
 
     fn write(&self, buffer: &mut Buffer) -> Result<()> {
-        self.pred_exp_base
-            .write(buffer, self.tag, (self.name.len()) as u32)?;
+        self.write_head(buffer, self.tag, (self.name.len()) as u32)?;
         buffer.write_str(&self.name)?;
         Ok(())
     }
@@ -369,7 +330,6 @@ impl PredExp for PredExpBin {
 macro_rules! as_predexp_unknown_bin {
     ($name:expr) => {{
         $crate::query::predexp::PredExpBin {
-            pred_exp_base: $crate::query::predexp::PredExpBase {},
             name: $name,
             tag: $crate::query::predexp::_AS_PREDEXP_UNKNOWN_BIN,
         }
@@ -381,7 +341,6 @@ macro_rules! as_predexp_unknown_bin {
 macro_rules! as_predexp_integer_bin {
     ($name:expr) => {{
         $crate::query::predexp::PredExpBin {
-            pred_exp_base: $crate::query::predexp::PredExpBase {},
             name: $name,
             tag: $crate::query::predexp::_AS_PREDEXP_INTEGER_BIN,
         }
@@ -393,7 +352,6 @@ macro_rules! as_predexp_integer_bin {
 macro_rules! as_predexp_string_bin {
     ($name:expr) => {{
         $crate::query::predexp::PredExpBin {
-            pred_exp_base: $crate::query::predexp::PredExpBase {},
             name: $name,
             tag: $crate::query::predexp::_AS_PREDEXP_STRING_BIN,
         }
@@ -405,7 +363,6 @@ macro_rules! as_predexp_string_bin {
 macro_rules! as_predexp_geojson_bin {
     ($name:expr) => {{
         $crate::query::predexp::PredExpBin {
-            pred_exp_base: $crate::query::predexp::PredExpBase {},
             name: $name,
             tag: $crate::query::predexp::_AS_PREDEXP_GEOJSON_BIN,
         }
@@ -417,7 +374,6 @@ macro_rules! as_predexp_geojson_bin {
 macro_rules! as_predexp_list_bin {
     ($name:expr) => {{
         $crate::query::predexp::PredExpBin {
-            pred_exp_base: $crate::query::predexp::PredExpBase {},
             name: $name,
             tag: $crate::query::predexp::_AS_PREDEXP_LIST_BIN,
         }
@@ -429,7 +385,6 @@ macro_rules! as_predexp_list_bin {
 macro_rules! as_predexp_map_bin {
     ($name:expr) => {{
         $crate::query::predexp::PredExpBin {
-            pred_exp_base: $crate::query::predexp::PredExpBase {},
             name: $name,
             tag: $crate::query::predexp::_AS_PREDEXP_MAP_BIN,
         }
@@ -441,8 +396,6 @@ macro_rules! as_predexp_map_bin {
 /// Predicate for Vars
 #[derive(Debug, Clone)]
 pub struct PredExpVar {
-    #[doc(hidden)]
-    pub pred_exp_base: PredExpBase,
     /// Var Name
     pub name: String,
     /// Var Type
@@ -455,12 +408,11 @@ impl PredExp for PredExpVar {
     }
 
     fn marshaled_size(&self) -> usize {
-        self.pred_exp_base.default_size() + self.name.len()
+        self.default_size() + self.name.len()
     }
 
     fn write(&self, buffer: &mut Buffer) -> Result<()> {
-        self.pred_exp_base
-            .write(buffer, self.tag, (self.name.len()) as u32)?;
+        self.write_head(buffer, self.tag, (self.name.len()) as u32)?;
         buffer.write_str(&self.name)?;
         Ok(())
     }
@@ -471,7 +423,6 @@ impl PredExp for PredExpVar {
 macro_rules! as_predexp_integer_var {
     ($name:expr) => {{
         $crate::query::predexp::PredExpVar {
-            pred_exp_base: $crate::query::predexp::PredExpBase {},
             name: $name,
             tag: $crate::query::predexp::_AS_PREDEXP_INTEGER_VAR,
         }
@@ -483,7 +434,6 @@ macro_rules! as_predexp_integer_var {
 macro_rules! as_predexp_string_var {
     ($name:expr) => {{
         $crate::query::predexp::PredExpVar {
-            pred_exp_base: $crate::query::predexp::PredExpBase {},
             name: $name,
             tag: $crate::query::predexp::_AS_PREDEXP_STRING_VAR,
         }
@@ -495,7 +445,6 @@ macro_rules! as_predexp_string_var {
 macro_rules! as_predexp_geojson_var {
     ($name:expr) => {{
         $crate::query::predexp::PredExpVar {
-            pred_exp_base: $crate::query::predexp::PredExpBase {},
             name: $name,
             tag: $crate::query::predexp::_AS_PREDEXP_GEOJSON_VAR,
         }
@@ -507,8 +456,6 @@ macro_rules! as_predexp_geojson_var {
 /// Predicate for MetaData (RecDeviceSize, RecLastUpdate, RecVoidTime)
 #[derive(Debug, Clone)]
 pub struct PredExpMD {
-    #[doc(hidden)]
-    pub pred_exp_base: PredExpBase,
     /// Predicate Type
     pub tag: u16, // not marshaled
 }
@@ -525,11 +472,11 @@ impl PredExp for PredExpMD {
     }
 
     fn marshaled_size(&self) -> usize {
-        self.pred_exp_base.default_size()
+        self.default_size()
     }
 
     fn write(&self, buffer: &mut Buffer) -> Result<()> {
-        self.pred_exp_base.write(buffer, self.tag, 0)?;
+        self.write_head(buffer, self.tag, 0)?;
         Ok(())
     }
 }
@@ -539,7 +486,6 @@ impl PredExp for PredExpMD {
 macro_rules! as_predexp_rec_device_size {
     () => {{
         $crate::query::predexp::PredExpMD {
-            pred_exp_base: $crate::query::predexp::PredExpBase {},
             tag: $crate::query::predexp::_AS_PREDEXP_REC_DEVICE_SIZE,
         }
     }};
@@ -550,7 +496,6 @@ macro_rules! as_predexp_rec_device_size {
 macro_rules! as_predexp_rec_last_update {
     () => {{
         $crate::query::predexp::PredExpMD {
-            pred_exp_base: $crate::query::predexp::PredExpBase {},
             tag: $crate::query::predexp::_AS_PREDEXP_REC_LAST_UPDATE,
         }
     }};
@@ -561,7 +506,6 @@ macro_rules! as_predexp_rec_last_update {
 macro_rules! as_predexp_rec_void_time {
     () => {{
         $crate::query::predexp::PredExpMD {
-            pred_exp_base: $crate::query::predexp::PredExpBase {},
             tag: $crate::query::predexp::_AS_PREDEXP_REC_VOID_TIME,
         }
     }};
@@ -575,8 +519,6 @@ macro_rules! as_predexp_rec_void_time {
 // This predicate is available in Aerospike server versions 3.12.1+
 #[derive(Debug, Clone)]
 pub struct PredExpMDDigestModulo {
-    #[doc(hidden)]
-    pub pred_exp_base: PredExpBase,
     /// Modulo
     pub modulo: i32, // not marshaled
 }
@@ -587,12 +529,11 @@ impl PredExp for PredExpMDDigestModulo {
     }
 
     fn marshaled_size(&self) -> usize {
-        self.pred_exp_base.default_size() + 4
+        self.default_size() + 4
     }
 
     fn write(&self, buffer: &mut Buffer) -> Result<()> {
-        self.pred_exp_base
-            .write(buffer, _AS_PREDEXP_REC_DIGEST_MODULO, 4)?;
+        self.write_head(buffer, _AS_PREDEXP_REC_DIGEST_MODULO, 4)?;
         buffer.write_i32(self.modulo)?;
         Ok(())
     }
@@ -602,10 +543,7 @@ impl PredExp for PredExpMDDigestModulo {
 #[macro_export]
 macro_rules! as_predexp_rec_digest_modulo {
     ($modulo:expr) => {{
-        $crate::query::predexp::PredExpMDDigestModulo {
-            pred_exp_base: $crate::query::predexp::PredExpBase {},
-            modulo: $modulo,
-        }
+        $crate::query::predexp::PredExpMDDigestModulo { modulo: $modulo }
     }};
 }
 
@@ -614,8 +552,6 @@ macro_rules! as_predexp_rec_digest_modulo {
 /// Predicate for comparing
 #[derive(Debug, Clone)]
 pub struct PredExpCompare {
-    #[doc(hidden)]
-    pub pred_exp_base: PredExpBase,
     /// Compare Type
     pub tag: u16, // not marshaled
 }
@@ -637,11 +573,11 @@ impl PredExp for PredExpCompare {
     }
 
     fn marshaled_size(&self) -> usize {
-        self.pred_exp_base.default_size()
+        self.default_size()
     }
 
     fn write(&self, buffer: &mut Buffer) -> Result<()> {
-        self.pred_exp_base.write(buffer, self.tag, 0)?;
+        self.write_head(buffer, self.tag, 0)?;
         Ok(())
     }
 }
@@ -651,7 +587,6 @@ impl PredExp for PredExpCompare {
 macro_rules! as_predexp_integer_equal {
     () => {{
         $crate::query::predexp::PredExpCompare {
-            pred_exp_base: $crate::query::predexp::PredExpBase {},
             tag: $crate::query::predexp::_AS_PREDEXP_INTEGER_EQUAL,
         }
     }};
@@ -662,7 +597,6 @@ macro_rules! as_predexp_integer_equal {
 macro_rules! as_predexp_integer_unequal {
     () => {{
         $crate::query::predexp::PredExpCompare {
-            pred_exp_base: $crate::query::predexp::PredExpBase {},
             tag: $crate::query::predexp::_AS_PREDEXP_INTEGER_UNEQUAL,
         }
     }};
@@ -673,7 +607,6 @@ macro_rules! as_predexp_integer_unequal {
 macro_rules! as_predexp_integer_greater {
     () => {{
         $crate::query::predexp::PredExpCompare {
-            pred_exp_base: $crate::query::predexp::PredExpBase {},
             tag: $crate::query::predexp::_AS_PREDEXP_INTEGER_GREATER,
         }
     }};
@@ -684,7 +617,6 @@ macro_rules! as_predexp_integer_greater {
 macro_rules! as_predexp_integer_greatereq {
     () => {{
         $crate::query::predexp::PredExpCompare {
-            pred_exp_base: $crate::query::predexp::PredExpBase {},
             tag: $crate::query::predexp::_AS_PREDEXP_INTEGER_GREATEREQ,
         }
     }};
@@ -695,7 +627,6 @@ macro_rules! as_predexp_integer_greatereq {
 macro_rules! as_predexp_integer_less {
     () => {{
         $crate::query::predexp::PredExpCompare {
-            pred_exp_base: $crate::query::predexp::PredExpBase {},
             tag: $crate::query::predexp::_AS_PREDEXP_INTEGER_LESS,
         }
     }};
@@ -706,7 +637,6 @@ macro_rules! as_predexp_integer_less {
 macro_rules! as_predexp_integer_lesseq {
     () => {{
         $crate::query::predexp::PredExpCompare {
-            pred_exp_base: $crate::query::predexp::PredExpBase {},
             tag: $crate::query::predexp::_AS_PREDEXP_INTEGER_LESSEQ,
         }
     }};
@@ -717,7 +647,6 @@ macro_rules! as_predexp_integer_lesseq {
 macro_rules! as_predexp_string_equal {
     () => {{
         $crate::query::predexp::PredExpCompare {
-            pred_exp_base: $crate::query::predexp::PredExpBase {},
             tag: $crate::query::predexp::_AS_PREDEXP_STRING_EQUAL,
         }
     }};
@@ -728,7 +657,6 @@ macro_rules! as_predexp_string_equal {
 macro_rules! as_predexp_string_unequal {
     () => {{
         $crate::query::predexp::PredExpCompare {
-            pred_exp_base: $crate::query::predexp::PredExpBase {},
             tag: $crate::query::predexp::_AS_PREDEXP_STRING_UNEQUAL,
         }
     }};
@@ -739,7 +667,6 @@ macro_rules! as_predexp_string_unequal {
 macro_rules! as_predexp_geojson_within {
     () => {{
         $crate::query::predexp::PredExpCompare {
-            pred_exp_base: $crate::query::predexp::PredExpBase {},
             tag: $crate::query::predexp::_AS_PREDEXP_GEOJSON_WITHIN,
         }
     }};
@@ -750,7 +677,6 @@ macro_rules! as_predexp_geojson_within {
 macro_rules! as_predexp_geojson_contains {
     () => {{
         $crate::query::predexp::PredExpCompare {
-            pred_exp_base: $crate::query::predexp::PredExpBase {},
             tag: $crate::query::predexp::_AS_PREDEXP_GEOJSON_CONTAINS,
         }
     }};
@@ -761,8 +687,6 @@ macro_rules! as_predexp_geojson_contains {
 /// Predicate for String Regex
 #[derive(Debug, Clone)]
 pub struct PredExpStringRegex {
-    #[doc(hidden)]
-    pub pred_exp_base: PredExpBase,
     /// Flags
     pub cflags: u32, // not marshaled
 }
@@ -773,12 +697,11 @@ impl PredExp for PredExpStringRegex {
     }
 
     fn marshaled_size(&self) -> usize {
-        self.pred_exp_base.default_size() + 4
+        self.default_size() + 4
     }
 
     fn write(&self, buffer: &mut Buffer) -> Result<()> {
-        self.pred_exp_base
-            .write(buffer, _AS_PREDEXP_STRING_REGEX, 4)?;
+        self.write_head(buffer, _AS_PREDEXP_STRING_REGEX, 4)?;
         buffer.write_u32(self.cflags)?;
         Ok(())
     }
@@ -788,10 +711,7 @@ impl PredExp for PredExpStringRegex {
 #[macro_export]
 macro_rules! as_predexp_string_regex {
     ($cflags:expr) => {{
-        $crate::query::predexp::PredExpStringRegex {
-            pred_exp_base: $crate::query::predexp::PredExpBase {},
-            cflags: $cflags,
-        }
+        $crate::query::predexp::PredExpStringRegex { cflags: $cflags }
     }};
 }
 
@@ -800,8 +720,6 @@ macro_rules! as_predexp_string_regex {
 /// Predicate for Iterators
 #[derive(Debug, Clone)]
 pub struct PredExpIter {
-    #[doc(hidden)]
-    pub pred_exp_base: PredExpBase,
     /// Name
     pub name: String,
     /// Iter Type
@@ -852,12 +770,11 @@ impl PredExp for PredExpIter {
     }
 
     fn marshaled_size(&self) -> usize {
-        self.pred_exp_base.default_size() + self.name.len()
+        self.default_size() + self.name.len()
     }
 
     fn write(&self, buffer: &mut Buffer) -> Result<()> {
-        self.pred_exp_base
-            .write(buffer, _AS_PREDEXP_STRING_REGEX, self.name.len() as u32)?;
+        self.write_head(buffer, _AS_PREDEXP_STRING_REGEX, self.name.len() as u32)?;
         buffer.write_str(&self.name)?;
         Ok(())
     }
@@ -868,7 +785,6 @@ impl PredExp for PredExpIter {
 macro_rules! as_predexp_list_iterate_or {
     ($name:expr) => {{
         $crate::query::predexp::PredExpIter {
-            pred_exp_base: $crate::query::predexp::PredExpBase {},
             name: $name,
             tag: $crate::query::predexp::_AS_PREDEXP_LIST_ITERATE_OR,
         }
@@ -880,7 +796,6 @@ macro_rules! as_predexp_list_iterate_or {
 macro_rules! as_predexp_list_iterate_and {
     ($name:expr) => {{
         $crate::query::predexp::PredExpIter {
-            pred_exp_base: $crate::query::predexp::PredExpBase {},
             name: $name,
             tag: $crate::query::predexp::_AS_PREDEXP_LIST_ITERATE_AND,
         }
@@ -892,7 +807,6 @@ macro_rules! as_predexp_list_iterate_and {
 macro_rules! as_predexp_mapkey_iterate_or {
     ($name:expr) => {{
         $crate::query::predexp::PredExpIter {
-            pred_exp_base: $crate::query::predexp::PredExpBase {},
             name: $name,
             tag: $crate::query::predexp::_AS_PREDEXP_MAPKEY_ITERATE_OR,
         }
@@ -904,7 +818,6 @@ macro_rules! as_predexp_mapkey_iterate_or {
 macro_rules! as_predexp_mapkey_iterate_and {
     ($name:expr) => {{
         $crate::query::predexp::PredExpIter {
-            pred_exp_base: $crate::query::predexp::PredExpBase {},
             name: $name,
             tag: $crate::query::predexp::_AS_PREDEXP_MAPKEY_ITERATE_AND,
         }
@@ -916,7 +829,6 @@ macro_rules! as_predexp_mapkey_iterate_and {
 macro_rules! as_predexp_mapval_iterate_or {
     ($name:expr) => {{
         $crate::query::predexp::PredExpIter {
-            pred_exp_base: $crate::query::predexp::PredExpBase {},
             name: $name,
             tag: $crate::query::predexp::_AS_PREDEXP_MAPVAL_ITERATE_OR,
         }
@@ -928,7 +840,6 @@ macro_rules! as_predexp_mapval_iterate_or {
 macro_rules! as_predexp_mapval_iterate_and {
     ($name:expr) => {{
         $crate::query::predexp::PredExpIter {
-            pred_exp_base: $crate::query::predexp::PredExpBase {},
             name: $name,
             tag: $crate::query::predexp::_AS_PREDEXP_MAPVAL_ITERATE_AND,
         }

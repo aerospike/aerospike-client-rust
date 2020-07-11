@@ -26,8 +26,8 @@ use crate::policy::{
     BatchPolicy, CommitLevel, ConsistencyLevel, GenerationPolicy, QueryPolicy, ReadPolicy,
     RecordExistsAction, ScanPolicy, WritePolicy,
 };
-use crate::{BatchRead, Bin, Bins, CollectionIndexType, Key, Statement, Value};
 use crate::query::predexp::PredExp;
+use crate::{BatchRead, Bin, Bins, CollectionIndexType, Key, Statement, Value};
 use std::sync::Arc;
 
 // Contains a read operation.
@@ -782,13 +782,12 @@ impl Buffer {
         self.end()
     }
 
-    fn estimate_predexp_size(&mut self, predexp: &[Arc<Box<dyn PredExp>>]) -> usize{
+    fn estimate_predexp_size(&mut self, predexp: &[Arc<Box<dyn PredExp>>]) -> usize {
         let mut size: usize = 0;
-        for pred in predexp{
-
+        for pred in predexp {
             size += pred.marshaled_size();
         }
-        return size
+        return size;
     }
 
     fn estimate_key_size(&mut self, key: &Key, send_key: bool) -> Result<u16> {
@@ -1010,7 +1009,7 @@ impl Buffer {
         Ok(())
     }
 
-    fn write_predexp(&mut self, predexp: &[Arc<Box<dyn PredExp>>], size: usize) -> Result<()>{
+    fn write_predexp(&mut self, predexp: &[Arc<Box<dyn PredExp>>], size: usize) -> Result<()> {
         self.write_field_header(size, FieldType::Predicate)?;
         for pred in predexp {
             pred.write(self)?;

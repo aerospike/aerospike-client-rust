@@ -99,7 +99,7 @@ fn query_single_consumer() {
 }
 
 #[test]
-fn query_predexp(){
+fn query_predexp() {
     let _ = env_logger::try_init();
 
     let client = common::client();
