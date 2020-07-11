@@ -1012,6 +1012,7 @@ impl Buffer {
     fn write_predexp(&mut self, predexp: &[Arc<Box<dyn PredExp>>], size: usize) -> Result<()> {
         self.write_field_header(size, FieldType::Predicate)?;
         for pred in predexp {
+            // PredExp structs hold their own write function, varying on the predexp type.
             pred.write(self)?;
         }
 

@@ -48,7 +48,7 @@ pub struct Statement {
     /// Optional Lua aggregation function parameters.
     pub aggregation: Option<Aggregation>,
 
-    /// Optional filter Predicate
+    /// Predicate Filter
     pub predexp: Vec<Arc<Box<dyn PredExp>>>,
 }
 
@@ -106,8 +106,8 @@ impl Statement {
     ///
     /// # Example
     ///
-    /// This example uses a numeric index on bin _baz_ in namespace _foo_ within set _bar_ to find
-    /// all records using a filter with the range 0 to 100 inclusive:
+    /// This Example uses a simple predexp Filter to find all records in namespace _foo_ and set _bar_
+    /// where the _age_ Bin is equal to 32.
     ///
     /// ```rust
     /// # use aerospike::*;

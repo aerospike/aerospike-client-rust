@@ -76,8 +76,11 @@ pub const _AS_PREDEXP_MAPVAL_ITERATE_AND: u16 = 255;
 
 #[doc(hidden)]
 pub trait PredExp: Send + Sync {
+    // Returns String Value of the Predicate action
     fn pred_string(&self) -> String;
+    // Returns the absolute size of the Predicate (default_size + additional-size)
     fn marshaled_size(&self) -> usize;
+    // Writes the PredExp to the Command Buffer
     fn write(&self, buffer: &mut Buffer) -> Result<()>;
 
     // Default Header Size
