@@ -750,7 +750,7 @@ impl Buffer {
         }
 
         if statement.predexp.len() > 0 {
-            self.write_predexp(&statement.predexp, pred_size)?;
+            self.write_predexp(statement.predexp.as_slice(), pred_size)?;
         }
 
         if let Some(ref aggregation) = statement.aggregation {
@@ -1010,9 +1010,9 @@ impl Buffer {
         Ok(())
     }
 
-    fn write_predexp(&mut self, predexp: &Vec<Arc<Box<dyn PredExp>>>, size: usize) -> Result<()>{
+    fn write_predexp(&mut self, predexp: &[Arc<Box<dyn PredExp>>], size: usize) -> Result<()>{
         self.write_field_header(size, FieldType::Predicate)?;
-        for pred in predexp.iter() {
+        for pred in predexp {
             pred.write(self)?;
         }
 
