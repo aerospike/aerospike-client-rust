@@ -617,7 +617,7 @@ impl Buffer {
         }
 
         if statement.predexp.len() > 0 {
-            pred_size += self.estimate_predexp_size(statement.predexp.clone());
+            pred_size += self.estimate_predexp_size(statement.predexp.as_slice());
             self.data_offset += pred_size + FIELD_HEADER_SIZE as usize;
             field_count += 1;
         }
@@ -782,9 +782,9 @@ impl Buffer {
         self.end()
     }
 
-    fn estimate_predexp_size(&mut self, predexp: Vec<Arc<Box<dyn PredExp>>>) -> usize{
+    fn estimate_predexp_size(&mut self, predexp: &[Arc<Box<dyn PredExp>>]) -> usize{
         let mut size: usize = 0;
-        for pred in &predexp{
+        for pred in predexp{
 
             size += pred.marshaled_size();
         }
