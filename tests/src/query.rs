@@ -116,7 +116,7 @@ fn query_predexp() {
     let mut count = 0;
     for res in &*rs {
         match res {
-            Ok(rec) => {
+            Ok(_rec) => {
                 count += 1;
             }
             Err(err) => panic!(format!("{:?}", err)),
