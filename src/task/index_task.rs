@@ -101,7 +101,10 @@ impl Task for IndexTask {
                 return Ok(Status::NotFound);
             }
 
-            return IndexTask::parse_response(&response[command]);
+            match IndexTask::parse_response(&response[command]) {
+                Ok(Status::Complete) => {}
+                in_progress_or_error => return in_progress_or_error,
+            }
         }
         return Ok(Status::Complete);
     }
