@@ -20,17 +20,6 @@ use aerospike::*;
 use std::thread;
 use std::time::Duration;
 
-// TODO: replace matches_override with matches when upgrade to 1.42.0
-#[macro_export]
-macro_rules! matches_override {
-    ($expression:expr, $($pattern:tt)+) => {
-        match $expression {
-            $($pattern)+ => true,
-            _ => false
-        }
-    }
-}
-
 // If registering udf is successful, querying RegisterTask will return Status::Complete
 // If udf does not exist, querying RegisterTask will return error
 #[test]
@@ -60,7 +49,7 @@ fn register_task_test() {
         )
         .unwrap();
 
-    assert!(matches_override!(
+    assert!(matches!(
         register_task.wait_till_complete(None),
         Ok(Status::Complete)
     ));
@@ -72,7 +61,7 @@ fn register_task_test() {
     thread::sleep(Duration::from_secs(2));
 
     let timeout = Duration::from_millis(100);
-    assert!(matches_override!(
+    assert!(matches!(
         register_task.wait_till_complete(Some(timeout)),
         Err(Error(ErrorKind::Timeout(_), _))
     ));
@@ -106,7 +95,7 @@ fn index_task_test() {
         )
         .unwrap();
 
-    assert!(matches_override!(
+    assert!(matches!(
         index_task.wait_till_complete(None),
         Ok(Status::Complete)
     ));
