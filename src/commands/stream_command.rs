@@ -25,7 +25,7 @@ use crate::errors::{ErrorKind, Result};
 use crate::net::Connection;
 use crate::query::Recordset;
 use crate::value::bytes_to_particle;
-use crate::{Record, Value, ResultCode, Key};
+use crate::{Key, Record, ResultCode, Value};
 
 pub struct StreamCommand {
     node: Arc<Node>,

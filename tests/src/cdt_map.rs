@@ -19,7 +19,10 @@ use crate::common;
 use env_logger;
 
 use aerospike::operations::maps;
-use aerospike::{Bins, MapPolicy, MapReturnType, ReadPolicy, WritePolicy, as_list, as_val, as_key, as_map, as_bin};
+use aerospike::{
+    as_bin, as_key, as_list, as_map, as_val, Bins, MapPolicy, MapReturnType, ReadPolicy,
+    WritePolicy,
+};
 
 #[test]
 fn map_operations() {

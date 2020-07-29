@@ -98,7 +98,7 @@ impl fmt::Display for Record {
 
 #[cfg(test)]
 mod tests {
-    use super::{CITRUSLEAF_EPOCH, Record};
+    use super::{Record, CITRUSLEAF_EPOCH};
     use std::collections::HashMap;
     use std::time::{Duration, SystemTime};
 

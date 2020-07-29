@@ -21,8 +21,8 @@ extern crate rand;
 
 use aerospike::{Bins, ReadPolicy, WritePolicy};
 
-use bencher::Bencher;
 use aerospike::{as_bin, as_key};
+use bencher::Bencher;
 
 #[path = "../tests/common/mod.rs"]
 mod common;

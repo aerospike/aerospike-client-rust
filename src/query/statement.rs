@@ -14,9 +14,11 @@
 // the License.
 
 use crate::errors::{ErrorKind, Result};
+use crate::query::predexp::PredExp;
 use crate::query::Filter;
 use crate::Bins;
 use crate::Value;
+use std::sync::Arc;
 
 #[derive(Clone)]
 pub struct Aggregation {
@@ -26,7 +28,6 @@ pub struct Aggregation {
 }
 
 /// Query statement parameters.
-#[derive(Clone)]
 pub struct Statement {
     /// Namespace
     pub namespace: String,
@@ -46,6 +47,9 @@ pub struct Statement {
 
     /// Optional Lua aggregation function parameters.
     pub aggregation: Option<Aggregation>,
+
+    /// Predicate Filter
+    pub predexp: Vec<Arc<Box<dyn PredExp>>>,
 }
 
 impl Statement {
@@ -70,6 +74,7 @@ impl Statement {
             index_name: None,
             aggregation: None,
             filters: None,
+            predexp: Vec::new(),
         }
     }
 
@@ -95,6 +100,25 @@ impl Statement {
             filters.push(filter);
             self.filters = Some(filters);
         }
+    }
+
+    /// Add a Predicate filter to the statement.
+    ///
+    /// # Example
+    ///
+    /// This Example uses a simple predexp Filter to find all records in namespace _foo_ and set _bar_
+    /// where the _age_ Bin is equal to 32.
+    ///
+    /// ```rust
+    /// # use aerospike::*;
+    ///
+    /// let mut stmt = Statement::new("foo", "bar", Bins::from(["name", "age"]));
+    /// stmt.add_predicate(as_predexp_integer_bin!("age".to_string()));
+    /// stmt.add_predicate(as_predexp_integer_value!(32));
+    /// stmt.add_predicate(as_predexp_integer_equal!());
+    /// ```
+    pub fn add_predicate<S: PredExp + 'static>(&mut self, predicate: S) {
+        self.predexp.push(Arc::new(Box::new(predicate)));
     }
 
     /// Set Lua aggregation function parameters.

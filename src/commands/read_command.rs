@@ -24,7 +24,7 @@ use crate::errors::{ErrorKind, Result};
 use crate::net::Connection;
 use crate::policy::ReadPolicy;
 use crate::value::bytes_to_particle;
-use crate::{Bins, Record, Value, ResultCode, Key};
+use crate::{Bins, Key, Record, ResultCode, Value};
 
 pub struct ReadCommand<'a> {
     pub single_command: SingleCommand<'a>,

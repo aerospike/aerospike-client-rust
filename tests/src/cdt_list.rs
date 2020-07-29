@@ -18,7 +18,7 @@ use env_logger;
 
 use aerospike::operations;
 use aerospike::operations::lists;
-use aerospike::{Bins, ReadPolicy, Value, WritePolicy, as_key, as_list, as_bin, as_values, as_val};
+use aerospike::{as_bin, as_key, as_list, as_val, as_values, Bins, ReadPolicy, Value, WritePolicy};
 
 #[test]
 fn cdt_list() {

@@ -99,6 +99,33 @@ fn query_single_consumer() {
 }
 
 #[test]
+fn query_predexp() {
+    let _ = env_logger::try_init();
+
+    let client = common::client();
+    let namespace = common::namespace();
+    let set_name = create_test_set(EXPECTED);
+    let qpolicy = QueryPolicy::default();
+
+    // Filter Query
+    let mut statement = Statement::new(namespace, &set_name, Bins::All);
+    statement.add_predicate(as_predexp_integer_bin!("bin".to_string()));
+    statement.add_predicate(as_predexp_integer_value!(19));
+    statement.add_predicate(as_predexp_integer_lesseq!());
+    let rs = client.query(&qpolicy, statement).unwrap();
+    let mut count = 0;
+    for res in &*rs {
+        match res {
+            Ok(_rec) => {
+                count += 1;
+            }
+            Err(err) => panic!(format!("{:?}", err)),
+        }
+    }
+    assert_eq!(count, 20);
+}
+
+#[test]
 fn query_nobins() {
     let _ = env_logger::try_init();
 

@@ -21,7 +21,7 @@ use crate::commands::{Command, ReadCommand, SingleCommand};
 use crate::errors::Result;
 use crate::net::Connection;
 use crate::policy::WritePolicy;
-use crate::{Value, Key, Bins};
+use crate::{Bins, Key, Value};
 
 pub struct ExecuteUDFCommand<'a> {
     pub read_command: ReadCommand<'a>,

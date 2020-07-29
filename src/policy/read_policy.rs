@@ -14,8 +14,8 @@
 // the License.
 
 use crate::policy::BasePolicy;
+use crate::{ConsistencyLevel, Priority};
 use std::time::Duration;
-use crate::{Priority, ConsistencyLevel};
 
 /// `ReadPolicy` excapsulates parameters for transaction policy attributes
 /// used in all database operation calls.

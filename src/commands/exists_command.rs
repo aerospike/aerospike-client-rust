@@ -16,11 +16,11 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use crate::cluster::{Cluster, Node};
-use crate::commands::{Command, SingleCommand, buffer};
+use crate::commands::{buffer, Command, SingleCommand};
 use crate::errors::{ErrorKind, Result};
 use crate::net::Connection;
 use crate::policy::WritePolicy;
-use crate::{ResultCode, Key};
+use crate::{Key, ResultCode};
 
 pub struct ExistsCommand<'a> {
     single_command: SingleCommand<'a>,

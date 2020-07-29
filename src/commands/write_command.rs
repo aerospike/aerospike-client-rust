@@ -22,7 +22,7 @@ use crate::errors::{ErrorKind, Result};
 use crate::net::Connection;
 use crate::operations::OperationType;
 use crate::policy::WritePolicy;
-use crate::{Bin, ResultCode, Key};
+use crate::{Bin, Key, ResultCode};
 
 pub struct WriteCommand<'a, A: 'a> {
     single_command: SingleCommand<'a>,
