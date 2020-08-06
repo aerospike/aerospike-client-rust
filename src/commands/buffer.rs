@@ -616,7 +616,7 @@ impl Buffer {
             }
         }
 
-        if statement.predexp.len() > 0 {
+        if !statement.predexp.is_empty() {
             pred_size += self.estimate_predexp_size(statement.predexp.as_slice());
             self.data_offset += pred_size + FIELD_HEADER_SIZE as usize;
             field_count += 1;
@@ -749,7 +749,7 @@ impl Buffer {
             self.write_u8(100)?;
         }
 
-        if statement.predexp.len() > 0 {
+        if !statement.predexp.is_empty() {
             self.write_predexp(statement.predexp.as_slice(), pred_size)?;
         }
 
@@ -787,7 +787,7 @@ impl Buffer {
         for pred in predexp {
             size += pred.marshaled_size();
         }
-        return size;
+        size
     }
 
     fn estimate_key_size(&mut self, key: &Key, send_key: bool) -> Result<u16> {

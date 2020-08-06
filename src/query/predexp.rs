@@ -86,7 +86,7 @@ pub trait PredExp: Send + Sync {
     // Default Header Size
     #[doc(hidden)]
     fn default_size(&self) -> usize {
-        return 2 + 4; // size of TAG + size of LEN
+        2 + 4 // size of TAG + size of LEN
     }
 
     // Write tag und len to buffer
@@ -261,7 +261,7 @@ macro_rules! as_predexp_string_value {
 
 // ------------------------------------- PredExpGeoJSONValue
 
-/// Predicate for GeoJSON Values
+/// Predicate for `GeoJSON` Values
 #[derive(Debug, Clone)]
 pub struct PredExpGeoJSONValue {
     /// Value
@@ -456,7 +456,7 @@ macro_rules! as_predexp_geojson_var {
 
 // ------------------------------------- PredExpMD
 
-/// Predicate for MetaData (RecDeviceSize, RecLastUpdate, RecVoidTime)
+/// Predicate for `MetaData` (`RecDeviceSize`, `RecLastUpdate`, `RecVoidTime`)
 #[derive(Debug, Clone)]
 pub struct PredExpMD {
     /// Predicate Type
@@ -665,7 +665,7 @@ macro_rules! as_predexp_string_unequal {
     }};
 }
 
-/// Creates Within Region predicate for GeoJSON values
+/// Creates Within Region predicate for `GeoJSON` values
 #[macro_export]
 macro_rules! as_predexp_geojson_within {
     () => {{

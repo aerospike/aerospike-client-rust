@@ -23,4 +23,5 @@ pub use self::task::Task;
 
 mod index_task;
 mod register_task;
+#[allow(clippy::module_inception)]
 mod task;
