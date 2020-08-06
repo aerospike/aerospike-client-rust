@@ -56,23 +56,23 @@ pub fn pack_cdt_op(
     ctx: &[CdtContext],
 ) -> Result<usize> {
     let mut size: usize = 0;
-    if !ctx.is_empty() {
+    if ctx.is_empty() {
+        size += pack_raw_u16(buf, u16::from(cdt_op.op))?;
+        if !cdt_op.args.is_empty() {
+            size += pack_array_begin(buf, cdt_op.args.len())?;
+        }
+    } else {
         size += pack_array_begin(buf, 3)?;
         size += pack_integer(buf, 0xff)?;
         size += pack_array_begin(buf, ctx.len() * 2)?;
 
         for c in ctx {
-            size += pack_integer(buf, c.id as i64)?;
+            size += pack_integer(buf, i64::from(c.id))?;
             size += pack_value(buf, &c.value)?;
         }
 
         size += pack_array_begin(buf, cdt_op.args.len() + 1)?;
-        size += pack_integer(buf, cdt_op.op as i64)?;
-    } else {
-        size += pack_raw_u16(buf, u16::from(cdt_op.op))?;
-        if !cdt_op.args.is_empty() {
-            size += pack_array_begin(buf, cdt_op.args.len())?;
-        }
+        size += pack_integer(buf, i64::from(cdt_op.op))?;
     }
 
     if !cdt_op.args.is_empty() {

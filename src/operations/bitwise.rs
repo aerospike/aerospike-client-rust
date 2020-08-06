@@ -126,7 +126,7 @@ pub fn resize<'a>(
     ctx: &'a [CdtContext],
 ) -> Operation<'a> {
     let mut args = vec![CdtArgument::Int(byte_size)];
-    if let Some(policy) = policy{
+    if let Some(policy) = policy {
         args.push(CdtArgument::Byte(policy.flags));
     }
     if let Some(resize_flags) = resize_flags {
@@ -160,7 +160,7 @@ pub fn insert<'a>(
     ctx: &'a [CdtContext],
 ) -> Operation<'a> {
     let mut args = vec![CdtArgument::Int(byte_offset), CdtArgument::Value(value)];
-    if let Some(policy) = policy{
+    if let Some(policy) = policy {
         args.push(CdtArgument::Byte(policy.flags));
     }
 
@@ -193,7 +193,7 @@ pub fn remove<'a>(
     ctx: &'a [CdtContext],
 ) -> Operation<'a> {
     let mut args = vec![CdtArgument::Int(byte_offset), CdtArgument::Int(byte_size)];
-    if let Some(policy) = policy{
+    if let Some(policy) = policy {
         args.push(CdtArgument::Byte(policy.flags));
     }
     let cdt_op = CdtOperation {
@@ -231,7 +231,7 @@ pub fn set<'a>(
         CdtArgument::Int(bit_size),
         CdtArgument::Value(value),
     ];
-    if let Some(policy) = policy{
+    if let Some(policy) = policy {
         args.push(CdtArgument::Byte(policy.flags));
     }
     let cdt_op = CdtOperation {
@@ -269,7 +269,7 @@ pub fn or<'a>(
         CdtArgument::Int(bit_size),
         CdtArgument::Value(value),
     ];
-    if let Some(policy) = policy{
+    if let Some(policy) = policy {
         args.push(CdtArgument::Byte(policy.flags));
     }
     let cdt_op = CdtOperation {
@@ -307,7 +307,7 @@ pub fn xor<'a>(
         CdtArgument::Int(bit_size),
         CdtArgument::Value(value),
     ];
-    if let Some(policy) = policy{
+    if let Some(policy) = policy {
         args.push(CdtArgument::Byte(policy.flags));
     }
     let cdt_op = CdtOperation {
@@ -345,7 +345,7 @@ pub fn and<'a>(
         CdtArgument::Int(bit_size),
         CdtArgument::Value(value),
     ];
-    if let Some(policy) = policy{
+    if let Some(policy) = policy {
         args.push(CdtArgument::Byte(policy.flags));
     }
     let cdt_op = CdtOperation {
@@ -377,7 +377,7 @@ pub fn not<'a>(
     ctx: &'a [CdtContext],
 ) -> Operation<'a> {
     let mut args = vec![CdtArgument::Int(bit_offset), CdtArgument::Int(bit_size)];
-    if let Some(policy) = policy{
+    if let Some(policy) = policy {
         args.push(CdtArgument::Byte(policy.flags));
     }
     let cdt_op = CdtOperation {
@@ -415,7 +415,7 @@ pub fn lshift<'a>(
         CdtArgument::Int(bit_size),
         CdtArgument::Int(shift),
     ];
-    if let Some(policy) = policy{
+    if let Some(policy) = policy {
         args.push(CdtArgument::Byte(policy.flags));
     }
     let cdt_op = CdtOperation {
@@ -453,7 +453,7 @@ pub fn rshift<'a>(
         CdtArgument::Int(bit_size),
         CdtArgument::Int(shift),
     ];
-    if let Some(policy) = policy{
+    if let Some(policy) = policy {
         args.push(CdtArgument::Byte(policy.flags));
     }
     let cdt_op = CdtOperation {
@@ -470,7 +470,7 @@ pub fn rshift<'a>(
 }
 
 /// Creates bit "add" operation.
-/// Server adds value to byte[] bin starting at bitOffset for bitSize. BitSize must be <= 64.
+/// Server adds value to byte[] bin starting at bitOffset for bitSize. `BitSize` must be <= 64.
 /// Signed indicates if bits should be treated as a signed number.
 /// If add overflows/underflows, `CdtBitwiseOverflowAction` is used.
 /// Server does not return a value.
@@ -481,6 +481,7 @@ pub fn rshift<'a>(
 /// value = 128
 /// signed = false
 /// bin result = [0b00000001, 0b01000010, 0b00000011, 0b00000100, 0b10000101]
+#[allow(clippy::too_many_arguments)]
 pub fn add<'a>(
     bin: &'a str,
     bit_offset: i64,
@@ -500,7 +501,7 @@ pub fn add<'a>(
         CdtArgument::Int(bit_size),
         CdtArgument::Int(value),
     ];
-    if let Some(policy) = policy{
+    if let Some(policy) = policy {
         args.push(CdtArgument::Byte(policy.flags));
     }
     args.push(CdtArgument::Byte(action_flags));
@@ -530,6 +531,7 @@ pub fn add<'a>(
 /// value = 128
 /// signed = false
 /// bin result = [0b00000001, 0b01000010, 0b00000011, 0b0000011, 0b10000101]
+#[allow(clippy::too_many_arguments)]
 pub fn subtract<'a>(
     bin: &'a str,
     bit_offset: i64,
@@ -549,7 +551,7 @@ pub fn subtract<'a>(
         CdtArgument::Int(bit_size),
         CdtArgument::Int(value),
     ];
-    if let Some(policy) = policy{
+    if let Some(policy) = policy {
         args.push(CdtArgument::Byte(policy.flags));
     }
     args.push(CdtArgument::Byte(action_flags));
@@ -589,7 +591,7 @@ pub fn set_int<'a>(
         CdtArgument::Int(bit_size),
         CdtArgument::Int(value),
     ];
-    if let Some(policy) = policy{
+    if let Some(policy) = policy {
         args.push(CdtArgument::Byte(policy.flags));
     }
 
