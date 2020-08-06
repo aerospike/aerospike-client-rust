@@ -22,8 +22,10 @@ use crate::Bin;
 pub const fn get<'a>() -> Operation<'a> {
     Operation {
         op: OperationType::Read,
+        ctx: None,
         bin: OperationBin::All,
         data: OperationData::None,
+        header_only: false,
     }
 }
 
@@ -31,8 +33,10 @@ pub const fn get<'a>() -> Operation<'a> {
 pub const fn get_header<'a>() -> Operation<'a> {
     Operation {
         op: OperationType::Read,
+        ctx: None,
         bin: OperationBin::None,
         data: OperationData::None,
+        header_only: true,
     }
 }
 
@@ -40,8 +44,10 @@ pub const fn get_header<'a>() -> Operation<'a> {
 pub fn get_bin(bin_name: &str) -> Operation {
     Operation {
         op: OperationType::Read,
+        ctx: None,
         bin: OperationBin::Name(bin_name),
         data: OperationData::None,
+        header_only: false,
     }
 }
 
@@ -49,8 +55,10 @@ pub fn get_bin(bin_name: &str) -> Operation {
 pub fn put<'a>(bin: &'a Bin) -> Operation<'a> {
     Operation {
         op: OperationType::Write,
+        ctx: None,
         bin: OperationBin::Name(bin.name),
         data: OperationData::Value(&bin.value),
+        header_only: false,
     }
 }
 
@@ -58,8 +66,10 @@ pub fn put<'a>(bin: &'a Bin) -> Operation<'a> {
 pub fn append<'a>(bin: &'a Bin) -> Operation<'a> {
     Operation {
         op: OperationType::Append,
+        ctx: None,
         bin: OperationBin::Name(bin.name),
         data: OperationData::Value(&bin.value),
+        header_only: false,
     }
 }
 
@@ -67,8 +77,10 @@ pub fn append<'a>(bin: &'a Bin) -> Operation<'a> {
 pub fn prepend<'a>(bin: &'a Bin) -> Operation<'a> {
     Operation {
         op: OperationType::Prepend,
+        ctx: None,
         bin: OperationBin::Name(bin.name),
         data: OperationData::Value(&bin.value),
+        header_only: false,
     }
 }
 
@@ -76,8 +88,10 @@ pub fn prepend<'a>(bin: &'a Bin) -> Operation<'a> {
 pub fn add<'a>(bin: &'a Bin) -> Operation<'a> {
     Operation {
         op: OperationType::Incr,
+        ctx: None,
         bin: OperationBin::Name(bin.name),
         data: OperationData::Value(&bin.value),
+        header_only: false,
     }
 }
 
@@ -85,7 +99,19 @@ pub fn add<'a>(bin: &'a Bin) -> Operation<'a> {
 pub const fn touch<'a>() -> Operation<'a> {
     Operation {
         op: OperationType::Touch,
+        ctx: None,
         bin: OperationBin::None,
         data: OperationData::None,
+        header_only: false,
+    }
+}
+
+pub const fn delete<'a>() -> Operation<'a> {
+     Operation {
+        op: OperationType::Delete,
+        ctx: None,
+        bin: OperationBin::None,
+        data: OperationData::None,
+        header_only: false,
     }
 }

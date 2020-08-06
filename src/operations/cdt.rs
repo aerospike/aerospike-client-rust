@@ -19,56 +19,8 @@ use crate::commands::buffer::Buffer;
 use crate::commands::ParticleType;
 use crate::errors::Result;
 use crate::msgpack::encoder;
+use crate::operations::cdt_context::CdtContext;
 use crate::Value;
-
-#[derive(Debug, Clone, Copy)]
-#[doc(hidden)]
-pub enum CdtOpType {
-    ListAppend = 1,
-    ListAppendItems = 2,
-    ListInsert = 3,
-    ListInsertItems = 4,
-    ListPop = 5,
-    ListPopRange = 6,
-    ListRemove = 7,
-    ListRemoveRange = 8,
-    ListSet = 9,
-    ListTrim = 10,
-    ListClear = 11,
-    ListIncrement = 12,
-    ListSize = 16,
-    ListGet = 17,
-    ListGetRange = 18,
-    MapSetType = 64,
-    MapAdd = 65,
-    MapAddItems = 66,
-    MapPut = 67,
-    MapPutItems = 68,
-    MapReplace = 69,
-    MapReplaceItems = 70,
-    MapIncrement = 73,
-    MapDecrement = 74,
-    MapClear = 75,
-    MapRemoveByKey = 76,
-    MapRemoveByIndex = 77,
-    MapRemoveByValue = 78,
-    MapRemoveByRank = 79,
-    MapRemoveByKeyList = 81,
-    MapRemoveByValueList = 83,
-    MapRemoveByKeyInterval = 84,
-    MapRemoveByIndexRange = 85,
-    MapRemoveByValueInterval = 86,
-    MapRemoveByRankRange = 87,
-    MapSize = 96,
-    MapGetByKey = 97,
-    MapGetByIndex = 98,
-    MapGetByValue = 99,
-    MapGetByRank = 100,
-    MapGetByKeyInterval = 103,
-    MapGetByIndexRange = 104,
-    MapGetByValueInterval = 105,
-    MapGetByRankRange = 106,
-}
 
 #[derive(Debug)]
 #[doc(hidden)]
@@ -83,7 +35,7 @@ pub enum CdtArgument<'a> {
 #[derive(Debug)]
 #[doc(hidden)]
 pub struct CdtOperation<'a> {
-    pub op: CdtOpType,
+    pub op: u8,
     pub args: Vec<CdtArgument<'a>>,
 }
 

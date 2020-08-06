@@ -17,6 +17,7 @@
 
 #[doc(hidden)]
 pub mod cdt;
+pub mod cdt_context;
 pub mod lists;
 pub mod maps;
 pub mod scalar;
@@ -28,6 +29,7 @@ pub use self::scalar::*;
 use crate::commands::buffer::Buffer;
 use crate::commands::ParticleType;
 use crate::errors::Result;
+use crate::operations::cdt_context::CdtContext;
 use crate::Value;
 
 #[derive(Debug, Clone, Copy)]
@@ -41,6 +43,11 @@ pub enum OperationType {
     Append = 9,
     Prepend = 10,
     Touch = 11,
+    BitRead = 12,
+    BitWrite = 13,
+    Delete = 14,
+    HllRead = 15,
+    HllWrite = 16,
 }
 
 #[derive(Debug)]
@@ -67,6 +74,10 @@ pub struct Operation<'a> {
     #[doc(hidden)]
     pub op: OperationType,
 
+    // CDT context for nested types
+    #[doc(hidden)]
+    pub ctx: Option<&'a [CdtContext<'a>]>,
+
     // BinName (Optional) determines the name of bin used in operation.
     #[doc(hidden)]
     pub bin: OperationBin<'a>,
@@ -74,6 +85,9 @@ pub struct Operation<'a> {
     // BinData determines bin value used in operation.
     #[doc(hidden)]
     pub data: OperationData<'a>,
+
+    // will be true ONLY for GetHeader() operation
+    pub header_only: bool,
 }
 
 impl<'a> Operation<'a> {
