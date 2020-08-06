@@ -27,6 +27,7 @@ use crate::Value;
 pub enum CdtArgument<'a> {
     Byte(u8),
     Int(i64),
+    Bool(bool),
     Value(&'a Value),
     List(&'a [Value]),
     Map(&'a HashMap<Value, Value>),

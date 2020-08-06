@@ -1,6 +1,6 @@
+use crate::operations::lists::{list_order_flag, CdtListOrderType};
 use crate::operations::MapOrder;
 use crate::Value;
-use crate::operations::lists::{list_order_flag, CdtListOrderType};
 use std::borrow::Borrow;
 
 /// CdtContext defines Nested CDT context. Identifies the location of nested list/map to apply the operation.
@@ -32,7 +32,7 @@ pub fn ctx_list_index<'a>(index: i64) -> CdtContext<'a> {
 pub fn ctx_list_index_create<'a>(index: i64, order: CdtListOrderType, pad: bool) -> CdtContext<'a> {
     CdtContext {
         id: 0x10 | list_order_flag(order, pad),
-        value: &Value::Int(index)
+        value: &Value::Int(index),
     }
 }
 
@@ -50,7 +50,7 @@ pub fn ctx_list_rank<'a>(rank: i64) -> CdtContext<'a> {
 pub fn ctx_list_value(key: &Value) -> CdtContext {
     CdtContext {
         id: 0x13,
-        value: key
+        value: key,
     }
 }
 /// Defines Lookup map by index offset.

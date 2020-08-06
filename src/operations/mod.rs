@@ -15,6 +15,7 @@
 
 //! Functions used to create database operations used in the client's `operate()` method.
 
+pub mod bitwise;
 #[doc(hidden)]
 pub mod cdt;
 pub mod cdt_context;
@@ -57,6 +58,7 @@ pub enum OperationData<'a> {
     Value(&'a Value),
     CdtListOp(CdtOperation<'a>),
     CdtMapOp(CdtOperation<'a>),
+    CdtBitOp(CdtOperation<'a>),
 }
 
 #[derive(Debug)]
@@ -101,9 +103,9 @@ impl<'a> Operation<'a> {
         size += match self.data {
             OperationData::None => 0,
             OperationData::Value(value) => value.estimate_size()?,
-            OperationData::CdtListOp(ref cdt_op) | OperationData::CdtMapOp(ref cdt_op) => {
-                cdt_op.estimate_size()?
-            }
+            OperationData::CdtListOp(ref cdt_op)
+            | OperationData::CdtMapOp(ref cdt_op)
+            | OperationData::CdtBitOp(ref cdt_op) => cdt_op.estimate_size()?,
         };
 
         Ok(size)
@@ -127,7 +129,9 @@ impl<'a> Operation<'a> {
                 size += self.write_op_header_to(buffer, value.particle_type() as u8)?;
                 size += value.write_to(buffer)?;
             }
-            OperationData::CdtListOp(ref cdt_op) | OperationData::CdtMapOp(ref cdt_op) => {
+            OperationData::CdtListOp(ref cdt_op)
+            | OperationData::CdtMapOp(ref cdt_op)
+            | OperationData::CdtBitOp(ref cdt_op) => {
                 size += self.write_op_header_to(buffer, cdt_op.particle_type() as u8)?;
                 size += cdt_op.write_to(buffer)?;
             }

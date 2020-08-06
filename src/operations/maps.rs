@@ -367,7 +367,7 @@ pub fn decrement_value<'a>(
 
 /// Create map clear operation. Server removes all items in the map. Server does not return a
 /// result.
-pub fn clear<'a>(bin:&'a str, ctx: Option<&'a [CdtContext<'a>]>) -> Operation<'a> {
+pub fn clear<'a>(bin: &'a str, ctx: Option<&'a [CdtContext<'a>]>) -> Operation<'a> {
     let cdt_op = CdtOperation {
         op: CdtMapOpType::Clear as u8,
         args: vec![],

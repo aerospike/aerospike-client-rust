@@ -146,7 +146,6 @@ pub struct ListPolicy {
 }
 
 impl ListPolicy {
-    /// Create a new map policy given the ordering for the map and the write mode.
     pub const fn new(order: CdtListOrderType, write_mode: CdtListWriteFlags) -> Self {
         ListPolicy {
             attributes: order,

@@ -107,7 +107,7 @@ pub const fn touch<'a>() -> Operation<'a> {
 }
 
 pub const fn delete<'a>() -> Operation<'a> {
-     Operation {
+    Operation {
         op: OperationType::Delete,
         ctx: None,
         bin: OperationBin::None,
