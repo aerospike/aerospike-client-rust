@@ -45,13 +45,13 @@ impl<'a> CdtOperation<'a> {
         ParticleType::BLOB
     }
 
-    pub fn estimate_size(&self) -> Result<usize> {
-        let size: usize = encoder::pack_cdt_op(&mut None, self)?;
+    pub fn estimate_size(&self, ctx: &[CdtContext]) -> Result<usize> {
+        let size: usize = encoder::pack_cdt_op(&mut None, self, ctx)?;
         Ok(size)
     }
 
-    pub fn write_to(&self, buffer: &mut Buffer) -> Result<usize> {
-        let size: usize = encoder::pack_cdt_op(&mut Some(buffer), self)?;
+    pub fn write_to(&self, buffer: &mut Buffer, ctx: &[CdtContext]) -> Result<usize> {
+        let size: usize = encoder::pack_cdt_op(&mut Some(buffer), self, ctx)?;
         Ok(size)
     }
 }

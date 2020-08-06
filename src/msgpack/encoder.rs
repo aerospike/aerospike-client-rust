@@ -21,6 +21,7 @@ use crate::commands::buffer::Buffer;
 use crate::commands::ParticleType;
 use crate::errors::Result;
 use crate::operations::cdt::{CdtArgument, CdtOperation};
+use crate::operations::cdt_context::CdtContext;
 use crate::value::{FloatValue, Value};
 
 pub fn pack_value(buf: &mut Option<&mut Buffer>, val: &Value) -> Result<usize> {
@@ -49,12 +50,32 @@ pub fn pack_empty_args_array(buf: &mut Option<&mut Buffer>) -> Result<usize> {
     Ok(size)
 }
 
-pub fn pack_cdt_op(buf: &mut Option<&mut Buffer>, cdt_op: &CdtOperation) -> Result<usize> {
+pub fn pack_cdt_op(
+    buf: &mut Option<&mut Buffer>,
+    cdt_op: &CdtOperation,
+    ctx: &[CdtContext],
+) -> Result<usize> {
     let mut size: usize = 0;
-    size += pack_raw_u16(buf, cdt_op.op as u16)?;
+    if !ctx.is_empty() {
+        size += pack_array_begin(buf, 3)?;
+        size += pack_integer(buf, 0xff)?;
+        size += pack_array_begin(buf, ctx.len() * 2)?;
+
+        for c in ctx {
+            size += pack_integer(buf, c.id as i64)?;
+            size += pack_value(buf, &c.value)?;
+        }
+
+        size += pack_array_begin(buf, cdt_op.args.len() + 1)?;
+        size += pack_integer(buf, cdt_op.op as i64)?;
+    } else {
+        size += pack_raw_u16(buf, u16::from(cdt_op.op))?;
+        if !cdt_op.args.is_empty() {
+            size += pack_array_begin(buf, cdt_op.args.len())?;
+        }
+    }
 
     if !cdt_op.args.is_empty() {
-        size += pack_array_begin(buf, cdt_op.args.len())?;
         for arg in &cdt_op.args {
             size += match *arg {
                 CdtArgument::Byte(byte) => pack_value(buf, &Value::from(byte))?,
@@ -62,7 +83,7 @@ pub fn pack_cdt_op(buf: &mut Option<&mut Buffer>, cdt_op: &CdtOperation) -> Resu
                 CdtArgument::Value(value) => pack_value(buf, value)?,
                 CdtArgument::List(list) => pack_array(buf, list)?,
                 CdtArgument::Map(map) => pack_map(buf, map)?,
-                CdtArgument::Bool(bool_val) => pack_value(buf, &Value::from(bool_val))?
+                CdtArgument::Bool(bool_val) => pack_value(buf, &Value::from(bool_val))?,
             }
         }
     }

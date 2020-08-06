@@ -78,7 +78,7 @@ pub struct Operation<'a> {
 
     // CDT context for nested types
     #[doc(hidden)]
-    pub ctx: Option<&'a [CdtContext]>,
+    pub ctx: &'a [CdtContext],
 
     // BinName (Optional) determines the name of bin used in operation.
     #[doc(hidden)]
@@ -87,9 +87,6 @@ pub struct Operation<'a> {
     // BinData determines bin value used in operation.
     #[doc(hidden)]
     pub data: OperationData<'a>,
-
-    // will be true ONLY for GetHeader() operation
-    pub header_only: bool,
 }
 
 impl<'a> Operation<'a> {
@@ -105,7 +102,7 @@ impl<'a> Operation<'a> {
             OperationData::Value(value) => value.estimate_size()?,
             OperationData::CdtListOp(ref cdt_op)
             | OperationData::CdtMapOp(ref cdt_op)
-            | OperationData::CdtBitOp(ref cdt_op) => cdt_op.estimate_size()?,
+            | OperationData::CdtBitOp(ref cdt_op) => cdt_op.estimate_size(self.ctx)?,
         };
 
         Ok(size)
@@ -133,7 +130,7 @@ impl<'a> Operation<'a> {
             | OperationData::CdtMapOp(ref cdt_op)
             | OperationData::CdtBitOp(ref cdt_op) => {
                 size += self.write_op_header_to(buffer, cdt_op.particle_type() as u8)?;
-                size += cdt_op.write_to(buffer)?;
+                size += cdt_op.write_to(buffer, self.ctx)?;
             }
         };
 
