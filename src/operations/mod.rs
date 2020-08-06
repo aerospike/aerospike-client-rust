@@ -78,7 +78,7 @@ pub struct Operation<'a> {
 
     // CDT context for nested types
     #[doc(hidden)]
-    pub ctx: Option<&'a [CdtContext<'a>]>,
+    pub ctx: Option<&'a [CdtContext]>,
 
     // BinName (Optional) determines the name of bin used in operation.
     #[doc(hidden)]

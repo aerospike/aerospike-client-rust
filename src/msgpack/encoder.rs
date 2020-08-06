@@ -62,6 +62,7 @@ pub fn pack_cdt_op(buf: &mut Option<&mut Buffer>, cdt_op: &CdtOperation) -> Resu
                 CdtArgument::Value(value) => pack_value(buf, value)?,
                 CdtArgument::List(list) => pack_array(buf, list)?,
                 CdtArgument::Map(map) => pack_map(buf, map)?,
+                CdtArgument::Bool(bool_val) => pack_value(buf, &Value::from(bool_val))?
             }
         }
     }

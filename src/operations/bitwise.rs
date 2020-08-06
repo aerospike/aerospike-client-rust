@@ -78,7 +78,7 @@ impl BitPolicy {
 
 impl Default for BitPolicy {
     fn default() -> Self {
-        BitPolicy::new(flags: CdtBitwiseWriteFlags::Default)
+        BitPolicy::new(CdtBitwiseWriteFlags::Default as u8)
     }
 }
 
@@ -95,7 +95,7 @@ pub fn resize<'a>(
     byte_size: i64,
     resize_flags: Option<u8>,
     policy: Option<BitPolicy>,
-    ctx: Option<&'a [CdtContext<'a>]>,
+    ctx: Option<&'a [CdtContext]>,
 ) -> Operation<'a> {
     let mut args = vec![CdtArgument::Int(byte_size)];
     if policy.is_some() {
@@ -104,7 +104,7 @@ pub fn resize<'a>(
     }
     if resize_flags.is_some() {
         let flags = resize_flags.unwrap();
-        args.push(CdtArgument::Byte(u8));
+        args.push(CdtArgument::Byte(flags));
     }
     let cdt_op = CdtOperation {
         op: CdtBitwiseOpType::Resize as u8,
@@ -132,7 +132,7 @@ pub fn insert<'a>(
     byte_offset: i64,
     value: &'a Value,
     policy: Option<BitPolicy>,
-    ctx: Option<&'a [CdtContext<'a>]>,
+    ctx: Option<&'a [CdtContext]>,
 ) -> Operation<'a> {
     let mut args = vec![CdtArgument::Int(byte_offset), CdtArgument::Value(value)];
     if policy.is_some() {
@@ -167,7 +167,7 @@ pub fn remove<'a>(
     byte_offset: i64,
     byte_size: i64,
     policy: Option<BitPolicy>,
-    ctx: Option<&'a [CdtContext<'a>]>,
+    ctx: Option<&'a [CdtContext]>,
 ) -> Operation<'a> {
     let mut args = vec![CdtArgument::Int(byte_offset), CdtArgument::Int(byte_size)];
     if policy.is_some() {
@@ -203,7 +203,7 @@ pub fn set<'a>(
     bit_size: i64,
     value: &'a Value,
     policy: Option<BitPolicy>,
-    ctx: Option<&'a [CdtContext<'a>]>,
+    ctx: Option<&'a [CdtContext]>,
 ) -> Operation<'a> {
     let mut args = vec![
         CdtArgument::Int(bit_offset),
@@ -243,7 +243,7 @@ pub fn or<'a>(
     bit_size: i64,
     value: &'a Value,
     policy: Option<BitPolicy>,
-    ctx: Option<&'a [CdtContext<'a>]>,
+    ctx: Option<&'a [CdtContext]>,
 ) -> Operation<'a> {
     let mut args = vec![
         CdtArgument::Int(bit_offset),
@@ -283,7 +283,7 @@ pub fn xor<'a>(
     bit_size: i64,
     value: &'a Value,
     policy: Option<BitPolicy>,
-    ctx: Option<&'a [CdtContext<'a>]>,
+    ctx: Option<&'a [CdtContext]>,
 ) -> Operation<'a> {
     let mut args = vec![
         CdtArgument::Int(bit_offset),
@@ -323,7 +323,7 @@ pub fn and<'a>(
     bit_size: i64,
     value: &'a Value,
     policy: Option<BitPolicy>,
-    ctx: Option<&'a [CdtContext<'a>]>,
+    ctx: Option<&'a [CdtContext]>,
 ) -> Operation<'a> {
     let mut args = vec![
         CdtArgument::Int(bit_offset),
@@ -361,7 +361,7 @@ pub fn not<'a>(
     bit_offset: i64,
     bit_size: i64,
     policy: Option<BitPolicy>,
-    ctx: Option<&'a [CdtContext<'a>]>,
+    ctx: Option<&'a [CdtContext]>,
 ) -> Operation<'a> {
     let mut args = vec![CdtArgument::Int(bit_offset), CdtArgument::Int(bit_size)];
     if policy.is_some() {
@@ -397,7 +397,7 @@ pub fn lshift<'a>(
     bit_size: i64,
     shift: i64,
     policy: Option<BitPolicy>,
-    ctx: Option<&'a [CdtContext<'a>]>,
+    ctx: Option<&'a [CdtContext]>,
 ) -> Operation<'a> {
     let mut args = vec![
         CdtArgument::Int(bit_offset),
@@ -437,7 +437,7 @@ pub fn rshift<'a>(
     bit_size: i64,
     shift: i64,
     policy: Option<BitPolicy>,
-    ctx: Option<&'a [CdtContext<'a>]>,
+    ctx: Option<&'a [CdtContext]>,
 ) -> Operation<'a> {
     let mut args = vec![
         CdtArgument::Int(bit_offset),
@@ -482,7 +482,7 @@ pub fn add<'a>(
     signed: bool,
     action: CdtBitwiseOverflowActions,
     policy: Option<BitPolicy>,
-    ctx: Option<&'a [CdtContext<'a>]>,
+    ctx: Option<&'a [CdtContext]>,
 ) -> Operation<'a> {
     let mut action_flags = action as u8;
     if signed {
@@ -533,7 +533,7 @@ pub fn subtract<'a>(
     signed: bool,
     action: CdtBitwiseOverflowActions,
     policy: Option<BitPolicy>,
-    ctx: Option<&'a [CdtContext<'a>]>,
+    ctx: Option<&'a [CdtContext]>,
 ) -> Operation<'a> {
     let mut action_flags = action as u8;
     if signed {
@@ -579,7 +579,7 @@ pub fn set_int<'a>(
     bit_size: i64,
     value: i64,
     policy: Option<BitPolicy>,
-    ctx: Option<&'a [CdtContext<'a>]>,
+    ctx: Option<&'a [CdtContext]>,
 ) -> Operation<'a> {
     let mut args = vec![
         CdtArgument::Int(bit_offset),
@@ -616,14 +616,11 @@ pub fn get<'a>(
     bin: &'a str,
     bit_offset: i64,
     bit_size: i64,
-    ctx: Option<&'a [CdtContext<'a>]>,
+    ctx: Option<&'a [CdtContext]>,
 ) -> Operation<'a> {
     let cdt_op = CdtOperation {
         op: CdtBitwiseOpType::Get as u8,
-        args: vec![
-            CdtArgument::Int(bit_offset),
-            CdtArgument::Int(bit_size),
-        ]
+        args: vec![CdtArgument::Int(bit_offset), CdtArgument::Int(bit_size)],
     };
 
     Operation {
@@ -646,14 +643,11 @@ pub fn count<'a>(
     bin: &'a str,
     bit_offset: i64,
     bit_size: i64,
-    ctx: Option<&'a [CdtContext<'a>]>,
+    ctx: Option<&'a [CdtContext]>,
 ) -> Operation<'a> {
     let cdt_op = CdtOperation {
         op: CdtBitwiseOpType::Count as u8,
-        args: vec![
-            CdtArgument::Int(bit_offset),
-            CdtArgument::Int(bit_size),
-        ]
+        args: vec![CdtArgument::Int(bit_offset), CdtArgument::Int(bit_size)],
     };
 
     Operation {
@@ -679,15 +673,15 @@ pub fn lscan<'a>(
     bit_offset: i64,
     bit_size: i64,
     value: bool,
-    ctx: Option<&'a [CdtContext<'a>]>,
+    ctx: Option<&'a [CdtContext]>,
 ) -> Operation<'a> {
     let cdt_op = CdtOperation {
         op: CdtBitwiseOpType::LScan as u8,
         args: vec![
             CdtArgument::Int(bit_offset),
             CdtArgument::Int(bit_size),
-            CdtArgument::Bool(value)
-        ]
+            CdtArgument::Bool(value),
+        ],
     };
 
     Operation {
@@ -713,15 +707,15 @@ pub fn rscan<'a>(
     bit_offset: i64,
     bit_size: i64,
     value: bool,
-    ctx: Option<&'a [CdtContext<'a>]>,
+    ctx: Option<&'a [CdtContext]>,
 ) -> Operation<'a> {
     let cdt_op = CdtOperation {
         op: CdtBitwiseOpType::RScan as u8,
         args: vec![
             CdtArgument::Int(bit_offset),
             CdtArgument::Int(bit_size),
-            CdtArgument::Bool(value)
-        ]
+            CdtArgument::Bool(value),
+        ],
     };
 
     Operation {
@@ -747,7 +741,7 @@ pub fn get_int<'a>(
     bit_offset: i64,
     bit_size: i64,
     signed: bool,
-    ctx: Option<&'a [CdtContext<'a>]>,
+    ctx: Option<&'a [CdtContext]>,
 ) -> Operation<'a> {
     let mut args = vec![CdtArgument::Int(bit_offset), CdtArgument::Int(bit_size)];
     if signed {
@@ -755,7 +749,7 @@ pub fn get_int<'a>(
     }
     let cdt_op = CdtOperation {
         op: CdtBitwiseOpType::GetInt as u8,
-        args
+        args,
     };
 
     Operation {

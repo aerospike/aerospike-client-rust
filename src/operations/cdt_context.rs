@@ -8,9 +8,9 @@ use std::borrow::Borrow;
 /// An array of CTX identifies location of the list/map on multiple
 /// levels on nesting.
 #[derive(Debug)]
-pub struct CdtContext<'a> {
+pub struct CdtContext {
     id: u8,
-    value: &'a Value,
+    value: Value,
 }
 
 /// Defines Lookup list by index offset.
@@ -21,18 +21,18 @@ pub struct CdtContext<'a> {
 /// 4: Fifth item.
 /// -1: Last item.
 /// -3: Third to last item.
-pub fn ctx_list_index<'a>(index: i64) -> CdtContext<'a> {
+pub fn ctx_list_index<'a>(index: i64) -> CdtContext {
     CdtContext {
         id: 0x10,
-        value: &Value::Int(index),
+        value: Value::Int(index),
     }
 }
 
 /// list with given type at index offset, given an order and pad.
-pub fn ctx_list_index_create<'a>(index: i64, order: CdtListOrderType, pad: bool) -> CdtContext<'a> {
+pub fn ctx_list_index_create<'a>(index: i64, order: CdtListOrderType, pad: bool) -> CdtContext {
     CdtContext {
         id: 0x10 | list_order_flag(order, pad),
-        value: &Value::Int(index),
+        value: Value::Int(index),
     }
 }
 
@@ -40,14 +40,14 @@ pub fn ctx_list_index_create<'a>(index: i64, order: CdtListOrderType, pad: bool)
 /// 0 = smallest value
 /// N = Nth smallest value
 /// -1 = largest value
-pub fn ctx_list_rank<'a>(rank: i64) -> CdtContext<'a> {
+pub fn ctx_list_rank<'a>(rank: i64) -> CdtContext {
     CdtContext {
         id: 0x11,
-        value: &Value::Int(rank),
+        value: Value::Int(rank),
     }
 }
 
-pub fn ctx_list_value(key: &Value) -> CdtContext {
+pub fn ctx_list_value(key: Value) -> CdtContext {
     CdtContext {
         id: 0x13,
         value: key,
@@ -61,7 +61,7 @@ pub fn ctx_list_value(key: &Value) -> CdtContext {
 /// 4: Fifth item.
 /// -1: Last item.
 /// -3: Third to last item.
-pub fn ctx_map_index(key: &Value) -> CdtContext {
+pub fn ctx_map_index(key: Value) -> CdtContext {
     CdtContext {
         id: 0x20,
         value: key,
@@ -72,15 +72,15 @@ pub fn ctx_map_index(key: &Value) -> CdtContext {
 /// 0 = smallest value
 /// N = Nth smallest value
 /// -1 = largest value
-pub fn ctx_map_rank<'a>(rank: i64) -> CdtContext<'a> {
+pub fn ctx_map_rank<'a>(rank: i64) -> CdtContext {
     CdtContext {
         id: 0x21,
-        value: &Value::Int(rank),
+        value: Value::Int(rank),
     }
 }
 
 /// Defines Lookup map by key.
-pub fn ctx_map_key(key: &Value) -> CdtContext {
+pub fn ctx_map_key(key: Value) -> CdtContext {
     CdtContext {
         id: 0x22,
         value: key,
@@ -88,7 +88,7 @@ pub fn ctx_map_key(key: &Value) -> CdtContext {
 }
 
 /// Create map with given type at map key.
-pub fn ctx_map_key_create(key: &Value, order: MapOrder) -> CdtContext {
+pub fn ctx_map_key_create(key: Value, order: MapOrder) -> CdtContext {
     CdtContext {
         id: 0x22 | order as u8,
         value: key,
@@ -96,7 +96,7 @@ pub fn ctx_map_key_create(key: &Value, order: MapOrder) -> CdtContext {
 }
 
 /// CtxMapValue defines Lookup map by value.
-pub fn ctx_map_value(key: &Value) -> CdtContext {
+pub fn ctx_map_value(key: Value) -> CdtContext {
     CdtContext {
         id: 0x23,
         value: key,
