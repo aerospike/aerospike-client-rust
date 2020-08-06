@@ -1,4 +1,4 @@
-// Copyright 2015-2018 Aerospike, Inc.
+// Copyright 2015-2020 Aerospike, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -25,7 +25,7 @@ use crate::errors::{ErrorKind, Result};
 use crate::net::Connection;
 use crate::query::Recordset;
 use crate::value::bytes_to_particle;
-use crate::{Record, Value, ResultCode, Key};
+use crate::{Key, Record, ResultCode, Value};
 
 pub struct StreamCommand {
     node: Arc<Node>,
@@ -45,19 +45,17 @@ impl StreamCommand {
     }
 
     fn parse_record(conn: &mut Connection, size: usize) -> Result<Option<Record>> {
-        // A number of these are commented out because we just don't care enough to read
-        // that section of the header. If we do care, uncomment and check!
         let result_code = ResultCode::from(conn.buffer.read_u8(Some(5))?);
         if result_code != ResultCode::Ok {
-            if result_code == ResultCode::KeyNotFoundError {
-                if conn.bytes_read() < size {
-                    let remaining = size - conn.bytes_read();
-                    conn.read_buffer(remaining)?;
-                }
-                return Ok(None);
+            if conn.bytes_read() < size {
+                let remaining = size - conn.bytes_read();
+                conn.read_buffer(remaining)?;
             }
 
-            bail!(ErrorKind::ServerError(result_code));
+            match result_code {
+                ResultCode::KeyNotFoundError => return Ok(None),
+                _ => bail!(ErrorKind::ServerError(result_code)),
+            }
         }
 
         // if cmd is the end marker of the response, do not proceed further

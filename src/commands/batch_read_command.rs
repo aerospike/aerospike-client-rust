@@ -23,7 +23,7 @@ use crate::commands::{self, Command};
 use crate::errors::{ErrorKind, Result, ResultExt};
 use crate::net::Connection;
 use crate::policy::{BatchPolicy, Policy, PolicyLike};
-use crate::{BatchRead, Record, ResultCode, Value, value};
+use crate::{value, BatchRead, Record, ResultCode, Value};
 
 struct BatchRecord {
     batch_index: usize,

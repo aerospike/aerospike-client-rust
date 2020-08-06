@@ -15,7 +15,7 @@
 
 use aerospike::BatchRead;
 use aerospike::Bins;
-use aerospike::{BatchPolicy, Concurrency, WritePolicy, as_bin, as_key};
+use aerospike::{as_bin, as_key, BatchPolicy, Concurrency, WritePolicy};
 
 use env_logger;
 

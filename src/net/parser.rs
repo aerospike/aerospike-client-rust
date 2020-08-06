@@ -14,9 +14,9 @@
 // the License.
 
 use crate::errors::{ErrorKind, Result};
+use crate::Host;
 use std::iter::Peekable;
 use std::str::Chars;
-use crate::Host;
 
 pub struct Parser<'a> {
     s: Peekable<Chars<'a>>,

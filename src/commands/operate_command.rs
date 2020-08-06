@@ -21,7 +21,7 @@ use crate::errors::Result;
 use crate::net::Connection;
 use crate::operations::Operation;
 use crate::policy::WritePolicy;
-use crate::{Key, Bins};
+use crate::{Bins, Key};
 
 pub struct OperateCommand<'a> {
     pub read_command: ReadCommand<'a>,
