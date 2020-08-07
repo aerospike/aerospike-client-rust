@@ -49,7 +49,7 @@ fn cdt_list() {
 
     let values = vec![as_val!(9), as_val!(8), as_val!(7)];
     let ops = &vec![
-        lists::insert_items("bin", 1, &values, ListPolicy::default()),
+        lists::insert_items("bin", 1, &values, &ListPolicy::default()),
         operations::get_bin("bin"),
     ];
     let rec = client.operate(&wpolicy, &key, ops).unwrap();
