@@ -11,7 +11,7 @@
 //!
 
 use crate::operations::cdt::{CdtArgument, CdtOperation};
-use crate::operations::cdt_context::CdtContext;
+use crate::operations::cdt_context::DEFAULT_CTX;
 use crate::operations::{Operation, OperationBin, OperationData, OperationType};
 use crate::Value;
 
@@ -118,17 +118,11 @@ impl Default for BitPolicy {
 /// byteSize = 4
 /// resizeFlags = 0
 /// bin result = [0b00000001, 0b01000010, 0b00000000, 0b00000000]
-pub fn resize<'a>(
-    bin: &'a str,
-    byte_size: i64,
-    resize_flags: Option<u8>,
-    policy: Option<BitPolicy>,
-    ctx: &'a [CdtContext],
-) -> Operation<'a> {
-    let mut args = vec![CdtArgument::Int(byte_size)];
-    if let Some(policy) = policy {
-        args.push(CdtArgument::Byte(policy.flags));
-    }
+pub fn resize(bin: &str, byte_size: i64, resize_flags: Option<u8>, policy: BitPolicy) -> Operation {
+    let mut args = vec![
+        CdtArgument::Int(byte_size),
+        CdtArgument::Byte(policy.flags as u8),
+    ];
     if let Some(resize_flags) = resize_flags {
         args.push(CdtArgument::Byte(resize_flags));
     }
@@ -138,7 +132,7 @@ pub fn resize<'a>(
     };
     Operation {
         op: OperationType::BitWrite,
-        ctx,
+        ctx: DEFAULT_CTX,
         bin: OperationBin::Name(bin),
         data: OperationData::CdtBitOp(cdt_op),
     }
@@ -156,22 +150,20 @@ pub fn insert<'a>(
     bin: &'a str,
     byte_offset: i64,
     value: &'a Value,
-    policy: Option<BitPolicy>,
-    ctx: &'a [CdtContext],
+    policy: BitPolicy,
 ) -> Operation<'a> {
-    let mut args = vec![CdtArgument::Int(byte_offset), CdtArgument::Value(value)];
-    if let Some(policy) = policy {
-        args.push(CdtArgument::Byte(policy.flags));
-    }
-
     let cdt_op = CdtOperation {
         op: CdtBitwiseOpType::Insert as u8,
-        args,
+        args: vec![
+            CdtArgument::Int(byte_offset),
+            CdtArgument::Value(value),
+            CdtArgument::Byte(policy.flags as u8),
+        ],
     };
 
     Operation {
         op: OperationType::BitWrite,
-        ctx,
+        ctx: DEFAULT_CTX,
         bin: OperationBin::Name(bin),
         data: OperationData::CdtBitOp(cdt_op),
     }
@@ -185,25 +177,19 @@ pub fn insert<'a>(
 /// byteOffset = 2
 /// byteSize = 3
 /// bin result = [0b00000001, 0b01000010]
-pub fn remove<'a>(
-    bin: &'a str,
-    byte_offset: i64,
-    byte_size: i64,
-    policy: Option<BitPolicy>,
-    ctx: &'a [CdtContext],
-) -> Operation<'a> {
-    let mut args = vec![CdtArgument::Int(byte_offset), CdtArgument::Int(byte_size)];
-    if let Some(policy) = policy {
-        args.push(CdtArgument::Byte(policy.flags));
-    }
+pub fn remove(bin: &str, byte_offset: i64, byte_size: i64, policy: BitPolicy) -> Operation {
     let cdt_op = CdtOperation {
         op: CdtBitwiseOpType::Remove as u8,
-        args,
+        args: vec![
+            CdtArgument::Int(byte_offset),
+            CdtArgument::Int(byte_size),
+            CdtArgument::Byte(policy.flags as u8),
+        ],
     };
 
     Operation {
         op: OperationType::BitWrite,
-        ctx,
+        ctx: DEFAULT_CTX,
         bin: OperationBin::Name(bin),
         data: OperationData::CdtBitOp(cdt_op),
     }
@@ -223,25 +209,21 @@ pub fn set<'a>(
     bit_offset: i64,
     bit_size: i64,
     value: &'a Value,
-    policy: Option<BitPolicy>,
-    ctx: &'a [CdtContext],
+    policy: BitPolicy,
 ) -> Operation<'a> {
-    let mut args = vec![
-        CdtArgument::Int(bit_offset),
-        CdtArgument::Int(bit_size),
-        CdtArgument::Value(value),
-    ];
-    if let Some(policy) = policy {
-        args.push(CdtArgument::Byte(policy.flags));
-    }
     let cdt_op = CdtOperation {
         op: CdtBitwiseOpType::Set as u8,
-        args,
+        args: vec![
+            CdtArgument::Int(bit_offset),
+            CdtArgument::Int(bit_size),
+            CdtArgument::Value(value),
+            CdtArgument::Byte(policy.flags as u8),
+        ],
     };
 
     Operation {
         op: OperationType::BitWrite,
-        ctx,
+        ctx: DEFAULT_CTX,
         bin: OperationBin::Name(bin),
         data: OperationData::CdtBitOp(cdt_op),
     }
@@ -261,25 +243,21 @@ pub fn or<'a>(
     bit_offset: i64,
     bit_size: i64,
     value: &'a Value,
-    policy: Option<BitPolicy>,
-    ctx: &'a [CdtContext],
+    policy: BitPolicy,
 ) -> Operation<'a> {
-    let mut args = vec![
-        CdtArgument::Int(bit_offset),
-        CdtArgument::Int(bit_size),
-        CdtArgument::Value(value),
-    ];
-    if let Some(policy) = policy {
-        args.push(CdtArgument::Byte(policy.flags));
-    }
     let cdt_op = CdtOperation {
         op: CdtBitwiseOpType::Or as u8,
-        args,
+        args: vec![
+            CdtArgument::Int(bit_offset),
+            CdtArgument::Int(bit_size),
+            CdtArgument::Value(value),
+            CdtArgument::Byte(policy.flags as u8),
+        ],
     };
 
     Operation {
         op: OperationType::BitWrite,
-        ctx,
+        ctx: DEFAULT_CTX,
         bin: OperationBin::Name(bin),
         data: OperationData::CdtBitOp(cdt_op),
     }
@@ -299,25 +277,21 @@ pub fn xor<'a>(
     bit_offset: i64,
     bit_size: i64,
     value: &'a Value,
-    policy: Option<BitPolicy>,
-    ctx: &'a [CdtContext],
+    policy: BitPolicy,
 ) -> Operation<'a> {
-    let mut args = vec![
-        CdtArgument::Int(bit_offset),
-        CdtArgument::Int(bit_size),
-        CdtArgument::Value(value),
-    ];
-    if let Some(policy) = policy {
-        args.push(CdtArgument::Byte(policy.flags));
-    }
     let cdt_op = CdtOperation {
         op: CdtBitwiseOpType::Xor as u8,
-        args,
+        args: vec![
+            CdtArgument::Int(bit_offset),
+            CdtArgument::Int(bit_size),
+            CdtArgument::Value(value),
+            CdtArgument::Byte(policy.flags),
+        ],
     };
 
     Operation {
         op: OperationType::BitWrite,
-        ctx,
+        ctx: DEFAULT_CTX,
         bin: OperationBin::Name(bin),
         data: OperationData::CdtBitOp(cdt_op),
     }
@@ -337,25 +311,21 @@ pub fn and<'a>(
     bit_offset: i64,
     bit_size: i64,
     value: &'a Value,
-    policy: Option<BitPolicy>,
-    ctx: &'a [CdtContext],
+    policy: BitPolicy,
 ) -> Operation<'a> {
-    let mut args = vec![
-        CdtArgument::Int(bit_offset),
-        CdtArgument::Int(bit_size),
-        CdtArgument::Value(value),
-    ];
-    if let Some(policy) = policy {
-        args.push(CdtArgument::Byte(policy.flags));
-    }
     let cdt_op = CdtOperation {
         op: CdtBitwiseOpType::And as u8,
-        args,
+        args: vec![
+            CdtArgument::Int(bit_offset),
+            CdtArgument::Int(bit_size),
+            CdtArgument::Value(value),
+            CdtArgument::Byte(policy.flags as u8),
+        ],
     };
 
     Operation {
         op: OperationType::BitWrite,
-        ctx,
+        ctx: DEFAULT_CTX,
         bin: OperationBin::Name(bin),
         data: OperationData::CdtBitOp(cdt_op),
     }
@@ -369,25 +339,19 @@ pub fn and<'a>(
 /// bitOffset = 25
 /// bitSize = 6
 /// bin result = [0b00000001, 0b01000010, 0b00000011, 0b01111010, 0b00000101]
-pub fn not<'a>(
-    bin: &'a str,
-    bit_offset: i64,
-    bit_size: i64,
-    policy: Option<BitPolicy>,
-    ctx: &'a [CdtContext],
-) -> Operation<'a> {
-    let mut args = vec![CdtArgument::Int(bit_offset), CdtArgument::Int(bit_size)];
-    if let Some(policy) = policy {
-        args.push(CdtArgument::Byte(policy.flags));
-    }
+pub fn not(bin: &str, bit_offset: i64, bit_size: i64, policy: BitPolicy) -> Operation {
     let cdt_op = CdtOperation {
         op: CdtBitwiseOpType::Not as u8,
-        args,
+        args: vec![
+            CdtArgument::Int(bit_offset),
+            CdtArgument::Int(bit_size),
+            CdtArgument::Byte(policy.flags as u8),
+        ],
     };
 
     Operation {
         op: OperationType::BitWrite,
-        ctx,
+        ctx: DEFAULT_CTX,
         bin: OperationBin::Name(bin),
         data: OperationData::CdtBitOp(cdt_op),
     }
@@ -402,30 +366,26 @@ pub fn not<'a>(
 /// bitSize = 8
 /// shift = 3
 /// bin result = [0b00000001, 0b01000010, 0b00000011, 0b00000100, 0b00101000]
-pub fn lshift<'a>(
-    bin: &'a str,
+pub fn lshift(
+    bin: &str,
     bit_offset: i64,
     bit_size: i64,
     shift: i64,
-    policy: Option<BitPolicy>,
-    ctx: &'a [CdtContext],
-) -> Operation<'a> {
-    let mut args = vec![
-        CdtArgument::Int(bit_offset),
-        CdtArgument::Int(bit_size),
-        CdtArgument::Int(shift),
-    ];
-    if let Some(policy) = policy {
-        args.push(CdtArgument::Byte(policy.flags));
-    }
+    policy: BitPolicy,
+) -> Operation {
     let cdt_op = CdtOperation {
         op: CdtBitwiseOpType::LShift as u8,
-        args,
+        args: vec![
+            CdtArgument::Int(bit_offset),
+            CdtArgument::Int(bit_size),
+            CdtArgument::Int(shift),
+            CdtArgument::Byte(policy.flags as u8),
+        ],
     };
 
     Operation {
         op: OperationType::BitWrite,
-        ctx,
+        ctx: DEFAULT_CTX,
         bin: OperationBin::Name(bin),
         data: OperationData::CdtBitOp(cdt_op),
     }
@@ -440,30 +400,26 @@ pub fn lshift<'a>(
 /// bitSize = 9
 /// shift = 1
 /// bin result = [0b00000000, 0b11000010, 0b00000011, 0b00000100, 0b00000101]
-pub fn rshift<'a>(
-    bin: &'a str,
+pub fn rshift(
+    bin: &str,
     bit_offset: i64,
     bit_size: i64,
     shift: i64,
-    policy: Option<BitPolicy>,
-    ctx: &'a [CdtContext],
-) -> Operation<'a> {
-    let mut args = vec![
-        CdtArgument::Int(bit_offset),
-        CdtArgument::Int(bit_size),
-        CdtArgument::Int(shift),
-    ];
-    if let Some(policy) = policy {
-        args.push(CdtArgument::Byte(policy.flags));
-    }
+    policy: BitPolicy,
+) -> Operation {
     let cdt_op = CdtOperation {
         op: CdtBitwiseOpType::RShift as u8,
-        args,
+        args: vec![
+            CdtArgument::Int(bit_offset),
+            CdtArgument::Int(bit_size),
+            CdtArgument::Int(shift),
+            CdtArgument::Byte(policy.flags),
+        ],
     };
 
     Operation {
         op: OperationType::BitWrite,
-        ctx,
+        ctx: DEFAULT_CTX,
         bin: OperationBin::Name(bin),
         data: OperationData::CdtBitOp(cdt_op),
     }
@@ -481,39 +437,34 @@ pub fn rshift<'a>(
 /// value = 128
 /// signed = false
 /// bin result = [0b00000001, 0b01000010, 0b00000011, 0b00000100, 0b10000101]
-#[allow(clippy::too_many_arguments)]
-pub fn add<'a>(
-    bin: &'a str,
+pub fn add(
+    bin: &str,
     bit_offset: i64,
     bit_size: i64,
     value: i64,
     signed: bool,
     action: CdtBitwiseOverflowActions,
-    policy: Option<BitPolicy>,
-    ctx: &'a [CdtContext],
-) -> Operation<'a> {
+    policy: BitPolicy,
+) -> Operation {
     let mut action_flags = action as u8;
     if signed {
         action_flags |= 1;
     }
-    let mut args = vec![
-        CdtArgument::Int(bit_offset),
-        CdtArgument::Int(bit_size),
-        CdtArgument::Int(value),
-    ];
-    if let Some(policy) = policy {
-        args.push(CdtArgument::Byte(policy.flags));
-    }
-    args.push(CdtArgument::Byte(action_flags));
 
     let cdt_op = CdtOperation {
         op: CdtBitwiseOpType::Add as u8,
-        args,
+        args: vec![
+            CdtArgument::Int(bit_offset),
+            CdtArgument::Int(bit_size),
+            CdtArgument::Int(value),
+            CdtArgument::Byte(policy.flags as u8),
+            CdtArgument::Byte(action_flags),
+        ],
     };
 
     Operation {
         op: OperationType::BitWrite,
-        ctx,
+        ctx: DEFAULT_CTX,
         bin: OperationBin::Name(bin),
         data: OperationData::CdtBitOp(cdt_op),
     }
@@ -531,39 +482,34 @@ pub fn add<'a>(
 /// value = 128
 /// signed = false
 /// bin result = [0b00000001, 0b01000010, 0b00000011, 0b0000011, 0b10000101]
-#[allow(clippy::too_many_arguments)]
-pub fn subtract<'a>(
-    bin: &'a str,
+pub fn subtract(
+    bin: &str,
     bit_offset: i64,
     bit_size: i64,
     value: i64,
     signed: bool,
     action: CdtBitwiseOverflowActions,
-    policy: Option<BitPolicy>,
-    ctx: &'a [CdtContext],
-) -> Operation<'a> {
+    policy: BitPolicy,
+) -> Operation {
     let mut action_flags = action as u8;
     if signed {
         action_flags |= 1;
     }
-    let mut args = vec![
-        CdtArgument::Int(bit_offset),
-        CdtArgument::Int(bit_size),
-        CdtArgument::Int(value),
-    ];
-    if let Some(policy) = policy {
-        args.push(CdtArgument::Byte(policy.flags));
-    }
-    args.push(CdtArgument::Byte(action_flags));
 
     let cdt_op = CdtOperation {
         op: CdtBitwiseOpType::Subtract as u8,
-        args,
+        args: vec![
+            CdtArgument::Int(bit_offset),
+            CdtArgument::Int(bit_size),
+            CdtArgument::Int(value),
+            CdtArgument::Byte(policy.flags as u8),
+            CdtArgument::Byte(action_flags),
+        ],
     };
 
     Operation {
         op: OperationType::BitWrite,
-        ctx,
+        ctx: DEFAULT_CTX,
         bin: OperationBin::Name(bin),
         data: OperationData::CdtBitOp(cdt_op),
     }
@@ -578,31 +524,26 @@ pub fn subtract<'a>(
 /// bitSize = 8
 /// value = 127
 /// bin result = [0b00111111, 0b11000010, 0b00000011, 0b0000100, 0b00000101]
-pub fn set_int<'a>(
-    bin: &'a str,
+pub fn set_int(
+    bin: &str,
     bit_offset: i64,
     bit_size: i64,
     value: i64,
-    policy: Option<BitPolicy>,
-    ctx: &'a [CdtContext],
-) -> Operation<'a> {
-    let mut args = vec![
-        CdtArgument::Int(bit_offset),
-        CdtArgument::Int(bit_size),
-        CdtArgument::Int(value),
-    ];
-    if let Some(policy) = policy {
-        args.push(CdtArgument::Byte(policy.flags));
-    }
-
+    policy: BitPolicy,
+) -> Operation {
     let cdt_op = CdtOperation {
         op: CdtBitwiseOpType::SetInt as u8,
-        args,
+        args: vec![
+            CdtArgument::Int(bit_offset),
+            CdtArgument::Int(bit_size),
+            CdtArgument::Int(value),
+            CdtArgument::Byte(policy.flags),
+        ],
     };
 
     Operation {
         op: OperationType::BitWrite,
-        ctx,
+        ctx: DEFAULT_CTX,
         bin: OperationBin::Name(bin),
         data: OperationData::CdtBitOp(cdt_op),
     }
@@ -615,12 +556,7 @@ pub fn set_int<'a>(
 /// bitOffset = 9
 /// bitSize = 5
 /// returns [0b1000000]
-pub fn get<'a>(
-    bin: &'a str,
-    bit_offset: i64,
-    bit_size: i64,
-    ctx: &'a [CdtContext],
-) -> Operation<'a> {
+pub fn get(bin: &str, bit_offset: i64, bit_size: i64) -> Operation {
     let cdt_op = CdtOperation {
         op: CdtBitwiseOpType::Get as u8,
         args: vec![CdtArgument::Int(bit_offset), CdtArgument::Int(bit_size)],
@@ -628,7 +564,7 @@ pub fn get<'a>(
 
     Operation {
         op: OperationType::BitRead,
-        ctx,
+        ctx: DEFAULT_CTX,
         bin: OperationBin::Name(bin),
         data: OperationData::CdtBitOp(cdt_op),
     }
@@ -641,12 +577,7 @@ pub fn get<'a>(
 /// bitOffset = 20
 /// bitSize = 4
 /// returns 2
-pub fn count<'a>(
-    bin: &'a str,
-    bit_offset: i64,
-    bit_size: i64,
-    ctx: &'a [CdtContext],
-) -> Operation<'a> {
+pub fn count(bin: &str, bit_offset: i64, bit_size: i64) -> Operation {
     let cdt_op = CdtOperation {
         op: CdtBitwiseOpType::Count as u8,
         args: vec![CdtArgument::Int(bit_offset), CdtArgument::Int(bit_size)],
@@ -654,7 +585,7 @@ pub fn count<'a>(
 
     Operation {
         op: OperationType::BitRead,
-        ctx,
+        ctx: DEFAULT_CTX,
         bin: OperationBin::Name(bin),
         data: OperationData::CdtBitOp(cdt_op),
     }
@@ -669,13 +600,7 @@ pub fn count<'a>(
 /// bitSize = 8
 /// value = true
 /// returns 5
-pub fn lscan<'a>(
-    bin: &'a str,
-    bit_offset: i64,
-    bit_size: i64,
-    value: bool,
-    ctx: &'a [CdtContext],
-) -> Operation<'a> {
+pub fn lscan(bin: &str, bit_offset: i64, bit_size: i64, value: bool) -> Operation {
     let cdt_op = CdtOperation {
         op: CdtBitwiseOpType::LScan as u8,
         args: vec![
@@ -687,7 +612,7 @@ pub fn lscan<'a>(
 
     Operation {
         op: OperationType::BitRead,
-        ctx,
+        ctx: DEFAULT_CTX,
         bin: OperationBin::Name(bin),
         data: OperationData::CdtBitOp(cdt_op),
     }
@@ -702,13 +627,7 @@ pub fn lscan<'a>(
 /// bitSize = 8
 /// value = true
 /// returns 7
-pub fn rscan<'a>(
-    bin: &'a str,
-    bit_offset: i64,
-    bit_size: i64,
-    value: bool,
-    ctx: &'a [CdtContext],
-) -> Operation<'a> {
+pub fn rscan(bin: &str, bit_offset: i64, bit_size: i64, value: bool) -> Operation {
     let cdt_op = CdtOperation {
         op: CdtBitwiseOpType::RScan as u8,
         args: vec![
@@ -720,7 +639,7 @@ pub fn rscan<'a>(
 
     Operation {
         op: OperationType::BitRead,
-        ctx,
+        ctx: DEFAULT_CTX,
         bin: OperationBin::Name(bin),
         data: OperationData::CdtBitOp(cdt_op),
     }
@@ -735,13 +654,7 @@ pub fn rscan<'a>(
 /// bitSize = 16
 /// signed = false
 /// returns 16899
-pub fn get_int<'a>(
-    bin: &'a str,
-    bit_offset: i64,
-    bit_size: i64,
-    signed: bool,
-    ctx: &'a [CdtContext],
-) -> Operation<'a> {
+pub fn get_int(bin: &str, bit_offset: i64, bit_size: i64, signed: bool) -> Operation {
     let mut args = vec![CdtArgument::Int(bit_offset), CdtArgument::Int(bit_size)];
     if signed {
         args.push(CdtArgument::Byte(1));
@@ -753,7 +666,7 @@ pub fn get_int<'a>(
 
     Operation {
         op: OperationType::BitRead,
-        ctx,
+        ctx: DEFAULT_CTX,
         bin: OperationBin::Name(bin),
         data: OperationData::CdtBitOp(cdt_op),
     }

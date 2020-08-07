@@ -15,7 +15,7 @@
 
 //! String/number bin operations. Create operations used by the client's `operate()` method.
 
-use crate::operations::cdt_context::{DEFAULT_CTX};
+use crate::operations::cdt_context::DEFAULT_CTX;
 use crate::operations::{Operation, OperationBin, OperationData, OperationType};
 use crate::Bin;
 
