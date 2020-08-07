@@ -32,7 +32,7 @@
 //! bounds, the valid part of the range will be returned.
 
 use crate::operations::cdt::{CdtArgument, CdtOperation};
-use crate::operations::cdt_context::CdtContext;
+use crate::operations::cdt_context::{CdtContext, DEFAULT_CTX};
 use crate::operations::{Operation, OperationBin, OperationData, OperationType};
 use crate::Value;
 
@@ -187,15 +187,11 @@ pub fn list_order_flag(order: CdtListOrderType, pad: bool) -> u8 {
 /// Server creates list at given context level. The context is allowed to be beyond list
 /// boundaries only if pad is set to true.  In that case, nil list entries will be inserted to
 /// satisfy the context position.
-pub fn create<'a>(
-    bin: &'a str,
+pub fn create(
+    bin: &str,
     list_order: CdtListOrderType,
     pad: bool,
-    ctx: &'a [CdtContext],
-) -> Operation<'a> {
-    if ctx.is_empty() {
-        return set_order(bin, list_order, ctx);
-    }
+) -> Operation {
     let cdt_op = CdtOperation {
         op: CdtListOpType::SetType as u8,
         args: vec![
@@ -205,7 +201,7 @@ pub fn create<'a>(
     };
     Operation {
         op: OperationType::CdtWrite,
-        ctx,
+        ctx: DEFAULT_CTX,
         bin: OperationBin::Name(bin),
         data: OperationData::CdtListOp(cdt_op),
     }
@@ -232,10 +228,9 @@ pub fn set_order<'a>(
 /// Create list append operation. Server appends value to the end of list bin. Server returns
 /// list size.
 pub fn append<'a>(
-    policy: ListPolicy,
+    policy: &ListPolicy,
     bin: &'a str,
     value: &'a Value,
-    ctx: &'a [CdtContext],
 ) -> Operation<'a> {
     let mut args = vec![CdtArgument::Value(value)];
     args.push(CdtArgument::Byte(policy.attributes as u8));
@@ -247,7 +242,7 @@ pub fn append<'a>(
     };
     Operation {
         op: OperationType::CdtWrite,
-        ctx,
+        ctx: DEFAULT_CTX,
         bin: OperationBin::Name(bin),
         data: OperationData::CdtListOp(cdt_op),
     }
@@ -256,10 +251,9 @@ pub fn append<'a>(
 /// Create list append items operation. Server appends each input list item to the end of list
 /// bin. Server returns list size.
 pub fn append_items<'a>(
-    policy: ListPolicy,
+    policy: &ListPolicy,
     bin: &'a str,
     values: &'a [Value],
-    ctx: &'a [CdtContext],
 ) -> Operation<'a> {
     assert!(!values.is_empty());
 
@@ -273,7 +267,7 @@ pub fn append_items<'a>(
     };
     Operation {
         op: OperationType::CdtWrite,
-        ctx,
+        ctx: DEFAULT_CTX,
         bin: OperationBin::Name(bin),
         data: OperationData::CdtListOp(cdt_op),
     }
@@ -285,8 +279,7 @@ pub fn insert<'a>(
     bin: &'a str,
     index: i64,
     value: &'a Value,
-    policy: ListPolicy,
-    ctx: &'a [CdtContext],
+    policy: &ListPolicy,
 ) -> Operation<'a> {
     let mut args = vec![CdtArgument::Int(index), CdtArgument::Value(value)];
 
@@ -298,7 +291,7 @@ pub fn insert<'a>(
     };
     Operation {
         op: OperationType::CdtWrite,
-        ctx,
+        ctx: DEFAULT_CTX,
         bin: OperationBin::Name(bin),
         data: OperationData::CdtListOp(cdt_op),
     }
@@ -310,8 +303,7 @@ pub fn insert_items<'a>(
     bin: &'a str,
     index: i64,
     values: &'a [Value],
-    policy: ListPolicy,
-    ctx: &'a [CdtContext],
+    policy: &ListPolicy,
 ) -> Operation<'a> {
     assert!(!values.is_empty());
     let mut args = vec![CdtArgument::Int(index), CdtArgument::List(values)];
@@ -324,7 +316,7 @@ pub fn insert_items<'a>(
     };
     Operation {
         op: OperationType::CdtWrite,
-        ctx,
+        ctx: DEFAULT_CTX,
         bin: OperationBin::Name(bin),
         data: OperationData::CdtListOp(cdt_op),
     }
@@ -332,14 +324,14 @@ pub fn insert_items<'a>(
 
 /// Create list pop operation. Server returns the item at the specified index and removes the
 /// item from the list bin.
-pub fn pop<'a>(bin: &'a str, index: i64, ctx: &'a [CdtContext]) -> Operation<'a> {
+pub fn pop(bin: &str, index: i64) -> Operation {
     let cdt_op = CdtOperation {
         op: CdtListOpType::Pop as u8,
         args: vec![CdtArgument::Int(index)],
     };
     Operation {
         op: OperationType::CdtWrite,
-        ctx,
+        ctx: DEFAULT_CTX,
         bin: OperationBin::Name(bin),
         data: OperationData::CdtListOp(cdt_op),
     }
@@ -347,14 +339,14 @@ pub fn pop<'a>(bin: &'a str, index: i64, ctx: &'a [CdtContext]) -> Operation<'a>
 
 /// Create list pop range operation. Server returns `count` items starting at the specified
 /// index and removes the items from the list bin.
-pub fn pop_range<'a>(bin: &'a str, index: i64, count: i64, ctx: &'a [CdtContext]) -> Operation<'a> {
+pub fn pop_range(bin: &str, index: i64, count: i64) -> Operation {
     let cdt_op = CdtOperation {
         op: CdtListOpType::PopRange as u8,
         args: vec![CdtArgument::Int(index), CdtArgument::Int(count)],
     };
     Operation {
         op: OperationType::CdtWrite,
-        ctx,
+        ctx: DEFAULT_CTX,
         bin: OperationBin::Name(bin),
         data: OperationData::CdtListOp(cdt_op),
     }
@@ -362,14 +354,14 @@ pub fn pop_range<'a>(bin: &'a str, index: i64, count: i64, ctx: &'a [CdtContext]
 
 /// Create list pop range operation. Server returns the items starting at the specified index
 /// to the end of the list and removes those items from the list bin.
-pub fn pop_range_from<'a>(bin: &'a str, index: i64, ctx: &'a [CdtContext]) -> Operation<'a> {
+pub fn pop_range_from(bin: &str, index: i64) -> Operation {
     let cdt_op = CdtOperation {
         op: CdtListOpType::PopRange as u8,
         args: vec![CdtArgument::Int(index)],
     };
     Operation {
         op: OperationType::CdtWrite,
-        ctx,
+        ctx: DEFAULT_CTX,
         bin: OperationBin::Name(bin),
         data: OperationData::CdtListOp(cdt_op),
     }
@@ -377,14 +369,14 @@ pub fn pop_range_from<'a>(bin: &'a str, index: i64, ctx: &'a [CdtContext]) -> Op
 
 /// Create list remove operation. Server removes the item at the specified index from the list
 /// bin. Server returns the number of items removed.
-pub fn remove<'a>(bin: &'a str, index: i64, ctx: &'a [CdtContext]) -> Operation<'a> {
+pub fn remove(bin: &str, index: i64) -> Operation {
     let cdt_op = CdtOperation {
         op: CdtListOpType::Remove as u8,
         args: vec![CdtArgument::Int(index)],
     };
     Operation {
         op: OperationType::CdtWrite,
-        ctx,
+        ctx: DEFAULT_CTX,
         bin: OperationBin::Name(bin),
         data: OperationData::CdtListOp(cdt_op),
     }
@@ -392,19 +384,18 @@ pub fn remove<'a>(bin: &'a str, index: i64, ctx: &'a [CdtContext]) -> Operation<
 
 /// Create list remove range operation. Server removes `count` items starting at the specified
 /// index from the list bin. Server returns the number of items removed.
-pub fn remove_range<'a>(
-    bin: &'a str,
+pub fn remove_range(
+    bin: &str,
     index: i64,
     count: i64,
-    ctx: &'a [CdtContext],
-) -> Operation<'a> {
+) -> Operation {
     let cdt_op = CdtOperation {
         op: CdtListOpType::RemoveRange as u8,
         args: vec![CdtArgument::Int(index), CdtArgument::Int(count)],
     };
     Operation {
         op: OperationType::CdtWrite,
-        ctx,
+        ctx: DEFAULT_CTX,
         bin: OperationBin::Name(bin),
         data: OperationData::CdtListOp(cdt_op),
     }
@@ -412,14 +403,14 @@ pub fn remove_range<'a>(
 
 /// Create list remove range operation. Server removes the items starting at the specified
 /// index to the end of the list. Server returns the number of items removed.
-pub fn remove_range_from<'a>(bin: &'a str, index: i64, ctx: &'a [CdtContext]) -> Operation<'a> {
+pub fn remove_range_from(bin: &str, index: i64) -> Operation {
     let cdt_op = CdtOperation {
         op: CdtListOpType::RemoveRange as u8,
         args: vec![CdtArgument::Int(index)],
     };
     Operation {
         op: OperationType::CdtWrite,
-        ctx,
+        ctx: DEFAULT_CTX,
         bin: OperationBin::Name(bin),
         data: OperationData::CdtListOp(cdt_op),
     }
@@ -431,7 +422,6 @@ pub fn remove_by_value<'a>(
     bin: &'a str,
     value: &'a Value,
     return_type: CdtListReturnType,
-    ctx: &'a [CdtContext],
 ) -> Operation<'a> {
     let cdt_op = CdtOperation {
         op: CdtListOpType::RemoveByValue as u8,
@@ -442,7 +432,7 @@ pub fn remove_by_value<'a>(
     };
     Operation {
         op: OperationType::CdtWrite,
-        ctx,
+        ctx: DEFAULT_CTX,
         bin: OperationBin::Name(bin),
         data: OperationData::CdtListOp(cdt_op),
     }
@@ -454,7 +444,6 @@ pub fn remove_by_value_list<'a>(
     bin: &'a str,
     values: &'a [Value],
     return_type: CdtListReturnType,
-    ctx: &'a [CdtContext],
 ) -> Operation<'a> {
     let cdt_op = CdtOperation {
         op: CdtListOpType::RemoveByValueList as u8,
@@ -465,7 +454,7 @@ pub fn remove_by_value_list<'a>(
     };
     Operation {
         op: OperationType::CdtWrite,
-        ctx,
+        ctx: DEFAULT_CTX,
         bin: OperationBin::Name(bin),
         data: OperationData::CdtListOp(cdt_op),
     }
@@ -481,7 +470,6 @@ pub fn remove_by_value_range<'a>(
     return_type: CdtListReturnType,
     begin: &'a Value,
     end: &'a Value,
-    ctx: &'a [CdtContext],
 ) -> Operation<'a> {
     let cdt_op = CdtOperation {
         op: CdtListOpType::RemoveByValueInterval as u8,
@@ -493,7 +481,7 @@ pub fn remove_by_value_range<'a>(
     };
     Operation {
         op: OperationType::CdtWrite,
-        ctx,
+        ctx: DEFAULT_CTX,
         bin: OperationBin::Name(bin),
         data: OperationData::CdtListOp(cdt_op),
     }
@@ -517,8 +505,41 @@ pub fn remove_by_value_relative_rank_range<'a>(
     return_type: CdtListReturnType,
     value: &'a Value,
     rank: i64,
+) -> Operation<'a> {
+    let cdt_op = CdtOperation {
+        op: CdtListOpType::RemoveByValueRelRankRange as u8,
+        args: vec![
+            CdtArgument::Byte(return_type as u8),
+            CdtArgument::Value(value),
+            CdtArgument::Int(rank),
+        ],
+    };
+    Operation {
+        op: OperationType::CdtWrite,
+        ctx: DEFAULT_CTX,
+        bin: OperationBin::Name(bin),
+        data: OperationData::CdtListOp(cdt_op),
+    }
+}
+
+/// Creates a list remove by value relative to rank range operation.
+/// Server removes list items nearest to value and greater by relative rank with a count limit.
+/// Server returns removed data specified by returnType.
+/// Examples for ordered list [0,4,5,9,11,15]:
+///
+/// (value,rank,count) = [removed items]
+/// (5,0,2) = [5,9]
+/// (5,1,1) = [9]
+/// (5,-1,2) = [4,5]
+/// (3,0,1) = [4]
+/// (3,3,7) = [11,15]
+/// (3,-3,2) = []
+pub fn remove_by_value_relative_rank_range_count<'a>(
+    bin: &'a str,
+    return_type: CdtListReturnType,
+    value: &'a Value,
+    rank: i64,
     count: i64,
-    ctx: &'a [CdtContext],
 ) -> Operation<'a> {
     let cdt_op = CdtOperation {
         op: CdtListOpType::RemoveByValueRelRankRange as u8,
@@ -531,14 +552,107 @@ pub fn remove_by_value_relative_rank_range<'a>(
     };
     Operation {
         op: OperationType::CdtWrite,
-        ctx,
+        ctx: DEFAULT_CTX,
         bin: OperationBin::Name(bin),
         data: OperationData::CdtListOp(cdt_op),
     }
 }
+
+/// Creates a list remove operation.
+/// Server removes list item identified by index and returns removed data specified by returnType.
+pub fn remove_by_index(bin: &str, index: i64, return_type: CdtListReturnType) -> Operation{
+    let cdt_op = CdtOperation {
+        op: CdtListOpType::RemoveByIndex as u8,
+        args: vec![CdtArgument::Byte(return_type as u8), CdtArgument::Int(index)]
+    };
+    Operation {
+        op: OperationType::CdtWrite,
+        ctx: DEFAULT_CTX,
+        bin: OperationBin::Name(bin),
+        data: OperationData::CdtListOp(cdt_op)
+    }
+}
+
+/// Creates a list remove operation.
+/// Server removes list items starting at specified index to the end of list and returns removed
+/// data specified by returnType.
+pub fn remove_by_index_range(bin: &str, index: i64, return_type: CdtListReturnType,) -> Operation{
+    let cdt_op = CdtOperation {
+        op: CdtListOpType::RemoveByIndexRange as u8,
+        args: vec![CdtArgument::Byte(return_type as u8), CdtArgument::Int(index)]
+    };
+    Operation {
+        op: OperationType::CdtWrite,
+        ctx: DEFAULT_CTX,
+        bin: OperationBin::Name(bin),
+        data: OperationData::CdtListOp(cdt_op)
+    }
+}
+
+/// Creates a list remove operation.
+/// Server removes "count" list items starting at specified index and returns removed data specified by returnType.
+pub fn remove_by_index_range_count(bin: &str, index: i64, count: i64, return_type: CdtListReturnType) -> Operation {
+    let cdt_op = CdtOperation {
+        op: CdtListOpType::RemoveByIndexRange as u8,
+        args: vec![CdtArgument::Byte(return_type as u8), CdtArgument::Int(index), CdtArgument::Int(count)]
+    };
+    Operation {
+        op: OperationType::CdtWrite,
+        ctx: DEFAULT_CTX,
+        bin: OperationBin::Name(bin),
+        data: OperationData::CdtListOp(cdt_op)
+    }
+}
+
+/// Creates a list remove operation.
+/// Server removes list item identified by rank and returns removed data specified by returnType.
+pub fn remove_by_rank(bin: &str, rank: i64, return_type: CdtListReturnType) -> Operation {
+    let cdt_op = CdtOperation{
+        op: CdtListOpType::RemoveByRank as u8,
+        args: vec![CdtArgument::Byte(return_type as u8), CdtArgument::Int(rank)]
+    };
+    Operation{
+        op: OperationType::CdtWrite,
+        ctx: DEFAULT_CTX,
+        bin: OperationBin::Name(bin),
+        data: OperationData::CdtListOp(cdt_op)
+    }
+}
+
+/// Creates a list remove operation.
+/// Server removes list items starting at specified rank to the last ranked item and returns removed
+/// data specified by returnType.
+pub fn remove_by_rank_range(bin: &str, rank: i64, return_type: CdtListReturnType) -> Operation {
+    let cdt_op = CdtOperation{
+        op: CdtListOpType::RemoveByRankRange as u8,
+        args: vec![CdtArgument::Byte(return_type as u8), CdtArgument::Int(rank)]
+    };
+    Operation{
+        op: OperationType::CdtWrite,
+        ctx: DEFAULT_CTX,
+        bin: OperationBin::Name(bin),
+        data: OperationData::CdtListOp(cdt_op)
+    }
+}
+
+/// Creates a list remove operation.
+/// Server removes "count" list items starting at specified rank and returns removed data specified by returnType.
+pub fn remove_by_rank_range_count(bin: &str, rank: i64, count: i64, return_type: CdtListReturnType) -> Operation {
+    let cdt_op = CdtOperation{
+        op: CdtListOpType::RemoveByRankRange as u8,
+        args: vec![CdtArgument::Byte(return_type as u8), CdtArgument::Int(rank), CdtArgument::Int(count)]
+    };
+    Operation{
+        op: OperationType::CdtWrite,
+        ctx: DEFAULT_CTX,
+        bin: OperationBin::Name(bin),
+        data: OperationData::CdtListOp(cdt_op)
+    }
+}
+
 /// Create list set operation. Server sets the item value at the specified index in the list
 /// bin. Server does not return a result by default.
-pub fn set<'a>(bin: &'a str, index: i64, value: &'a Value, ctx: &'a [CdtContext]) -> Operation<'a> {
+pub fn set<'a>(bin: &'a str, index: i64, value: &'a Value) -> Operation<'a> {
     assert!(!value.is_nil());
 
     let cdt_op = CdtOperation {
@@ -547,7 +661,7 @@ pub fn set<'a>(bin: &'a str, index: i64, value: &'a Value, ctx: &'a [CdtContext]
     };
     Operation {
         op: OperationType::CdtWrite,
-        ctx,
+        ctx: DEFAULT_CTX,
         bin: OperationBin::Name(bin),
         data: OperationData::CdtListOp(cdt_op),
     }
@@ -556,14 +670,14 @@ pub fn set<'a>(bin: &'a str, index: i64, value: &'a Value, ctx: &'a [CdtContext]
 /// Create list trim operation. Server removes `count` items in the list bin that do not fall
 /// into the range specified by `index` and `count`. If the range is out of bounds, then all
 /// items will be removed. Server returns list size after trim.
-pub fn trim<'a>(bin: &'a str, index: i64, count: i64, ctx: &'a [CdtContext]) -> Operation<'a> {
+pub fn trim(bin: &str, index: i64, count: i64) -> Operation {
     let cdt_op = CdtOperation {
         op: CdtListOpType::Trim as u8,
         args: vec![CdtArgument::Int(index), CdtArgument::Int(count)],
     };
     Operation {
         op: OperationType::CdtWrite,
-        ctx,
+        ctx: DEFAULT_CTX,
         bin: OperationBin::Name(bin),
         data: OperationData::CdtListOp(cdt_op),
     }
@@ -571,14 +685,14 @@ pub fn trim<'a>(bin: &'a str, index: i64, count: i64, ctx: &'a [CdtContext]) -> 
 
 /// Create list clear operation. Server removes all items in the list bin. Server does not
 /// return a result by default.
-pub fn clear<'a>(bin: &'a str, ctx: &'a [CdtContext]) -> Operation<'a> {
+pub fn clear(bin: &str) -> Operation {
     let cdt_op = CdtOperation {
         op: CdtListOpType::Clear as u8,
         args: vec![],
     };
     Operation {
         op: OperationType::CdtWrite,
-        ctx,
+        ctx: DEFAULT_CTX,
         bin: OperationBin::Name(bin),
         data: OperationData::CdtListOp(cdt_op),
     }
@@ -586,13 +700,12 @@ pub fn clear<'a>(bin: &'a str, ctx: &'a [CdtContext]) -> Operation<'a> {
 
 /// Create list increment operation. Server increments the item value at the specified index by the
 /// given amount and returns the final result.
-pub fn increment<'a>(
-    policy: ListPolicy,
-    bin: &'a str,
+pub fn increment(
+    policy: &ListPolicy,
+    bin: &str,
     index: i64,
     value: i64,
-    ctx: &'a [CdtContext],
-) -> Operation<'a> {
+) -> Operation {
     let mut args = vec![CdtArgument::Int(index), CdtArgument::Int(value)];
 
     args.push(CdtArgument::Byte(policy.flags as u8));
@@ -603,35 +716,35 @@ pub fn increment<'a>(
     };
     Operation {
         op: OperationType::CdtWrite,
-        ctx,
+        ctx: DEFAULT_CTX,
         bin: OperationBin::Name(bin),
         data: OperationData::CdtListOp(cdt_op),
     }
 }
 
 /// Create list size operation. Server returns size of the list.
-pub fn size<'a>(bin: &'a str, ctx: &'a [CdtContext]) -> Operation<'a> {
+pub fn size(bin: &str) -> Operation {
     let cdt_op = CdtOperation {
         op: CdtListOpType::Size as u8,
         args: vec![],
     };
     Operation {
         op: OperationType::CdtRead,
-        ctx,
+        ctx: DEFAULT_CTX,
         bin: OperationBin::Name(bin),
         data: OperationData::CdtListOp(cdt_op),
     }
 }
 
 /// Create list get operation. Server returns the item at the specified index in the list bin.
-pub fn get<'a>(bin: &'a str, index: i64, ctx: &'a [CdtContext]) -> Operation<'a> {
+pub fn get(bin: &str, index: i64) -> Operation {
     let cdt_op = CdtOperation {
         op: CdtListOpType::Get as u8,
         args: vec![CdtArgument::Int(index)],
     };
     Operation {
         op: OperationType::CdtRead,
-        ctx,
+        ctx: DEFAULT_CTX,
         bin: OperationBin::Name(bin),
         data: OperationData::CdtListOp(cdt_op),
     }
@@ -639,14 +752,14 @@ pub fn get<'a>(bin: &'a str, index: i64, ctx: &'a [CdtContext]) -> Operation<'a>
 
 /// Create list get range operation. Server returns `count` items starting at the specified
 /// index in the list bin.
-pub fn get_range<'a>(bin: &'a str, index: i64, count: i64, ctx: &'a [CdtContext]) -> Operation<'a> {
+pub fn get_range(bin: &str, index: i64, count: i64) -> Operation {
     let cdt_op = CdtOperation {
         op: CdtListOpType::GetRange as u8,
         args: vec![CdtArgument::Int(index), CdtArgument::Int(count)],
     };
     Operation {
         op: OperationType::CdtRead,
-        ctx,
+        ctx: DEFAULT_CTX,
         bin: OperationBin::Name(bin),
         data: OperationData::CdtListOp(cdt_op),
     }
@@ -654,15 +767,229 @@ pub fn get_range<'a>(bin: &'a str, index: i64, count: i64, ctx: &'a [CdtContext]
 
 /// Create list get range operation. Server returns items starting at the index to the end of
 /// the list.
-pub fn get_range_from<'a>(bin: &'a str, index: i64, ctx: &'a [CdtContext]) -> Operation<'a> {
+pub fn get_range_from(bin: &str, index: i64) -> Operation {
     let cdt_op = CdtOperation {
         op: CdtListOpType::GetRange as u8,
         args: vec![CdtArgument::Int(index)],
     };
     Operation {
         op: OperationType::CdtRead,
-        ctx,
+        ctx: DEFAULT_CTX,
         bin: OperationBin::Name(bin),
         data: OperationData::CdtListOp(cdt_op),
     }
 }
+
+/// Creates a list get by value operation.
+/// Server selects list items identified by value and returns selected data specified by returnType.
+pub fn get_by_value<'a>(bin: &'a str, value: &'a Value, return_type: CdtListReturnType) -> Operation<'a> {
+    let cdt_op = CdtOperation {
+        op: CdtListOpType::GetByValue as u8,
+        args: vec![CdtArgument::Byte(return_type as u8), CdtArgument::Value(value)]
+    };
+
+    Operation {
+        op: OperationType::CdtRead,
+        ctx: DEFAULT_CTX,
+        bin: OperationBin::Name(bin),
+        data: OperationData::CdtListOp(cdt_op)
+    }
+}
+
+/// Creates list get by value list operation.
+/// Server selects list items identified by values and returns selected data specified by returnType.
+pub fn get_by_value_list<'a>(bin: &'a str, values: &'a [Value], return_type: CdtListReturnType) -> Operation<'a> {
+    let cdt_op = CdtOperation{
+        op: CdtListOpType::GetByValueList as u8,
+        args: vec![CdtArgument::Byte(return_type as u8), CdtArgument::List(values)]
+    };
+    Operation {
+        op: OperationType::CdtRead,
+        ctx: DEFAULT_CTX,
+        bin: OperationBin::Name(bin),
+        data: OperationData::CdtListOp(cdt_op)
+    }
+}
+
+/// Creates a list get by value range operation.
+/// Server selects list items identified by value range (valueBegin inclusive, valueEnd exclusive)
+/// If valueBegin is null, the range is less than valueEnd.
+/// If valueEnd is null, the range is greater than equal to valueBegin.
+/// Server returns selected data specified by returnType.
+pub fn get_by_value_range<'a>(bin: &'a str, begin: &'a Value, end: &'a Value, return_type: CdtListReturnType) -> Operation<'a> {
+    let cdt_op = CdtOperation {
+        op: CdtListOpType::GetByValueInterval as u8,
+        args: vec![CdtArgument::Byte(return_type as u8), CdtArgument::Value(begin), CdtArgument::Value(end)]
+    };
+    Operation {
+        op: OperationType::CdtRead,
+        ctx: DEFAULT_CTX,
+        bin: OperationBin::Name(bin),
+        data: OperationData::CdtListOp(cdt_op)
+    }
+}
+
+/// Creates list get by index operation.
+/// Server selects list item identified by index and returns selected data specified by returnType
+pub fn get_by_index(bin: & str, index: i64, return_type: CdtListReturnType) -> Operation {
+    let cdt_op = CdtOperation {
+        op: CdtListOpType::GetByIndex as u8,
+        args: vec![CdtArgument::Byte(return_type as u8), CdtArgument::Int(index)]
+    };
+
+    Operation {
+        op: OperationType::CdtRead,
+        ctx: DEFAULT_CTX,
+        bin: OperationBin::Name(bin),
+        data: OperationData::CdtListOp(cdt_op)
+    }
+}
+
+/// Creates list get by index range operation.
+/// Server selects list items starting at specified index to the end of list and returns selected
+/// data specified by returnType.
+pub fn get_by_index_range(bin: & str, index: i64, return_type: CdtListReturnType) -> Operation {
+    let cdt_op = CdtOperation {
+        op: CdtListOpType::GetByIndexRange as u8,
+        args: vec![CdtArgument::Byte(return_type as u8), CdtArgument::Int(index)]
+    };
+
+    Operation {
+        op: OperationType::CdtRead,
+        ctx: DEFAULT_CTX,
+        bin: OperationBin::Name(bin),
+        data: OperationData::CdtListOp(cdt_op)
+    }
+}
+
+/// Creates list get by index range operation.
+/// Server selects "count" list items starting at specified index and returns selected data specified
+/// by returnType.
+pub fn get_by_index_range_count(bin: & str, index: i64, count: i64, return_type: CdtListReturnType) -> Operation {
+    let cdt_op = CdtOperation {
+        op: CdtListOpType::GetByIndexRange as u8,
+        args: vec![CdtArgument::Byte(return_type as u8), CdtArgument::Int(index), CdtArgument::Int(count)]
+    };
+
+    Operation {
+        op: OperationType::CdtRead,
+        ctx: DEFAULT_CTX,
+        bin: OperationBin::Name(bin),
+        data: OperationData::CdtListOp(cdt_op)
+    }
+}
+
+/// Creates a list get by rank operation.
+/// Server selects list item identified by rank and returns selected data specified by returnType.
+pub fn get_by_rank(bin: &str, rank: i64, return_type: CdtListReturnType) -> Operation {
+    let cdt_op = CdtOperation {
+        op: CdtListOpType::GetByRank as u8,
+        args: vec![CdtArgument::Byte(return_type as u8), CdtArgument::Int(rank)]
+    };
+    Operation {
+        op: OperationType::CdtRead,
+        ctx: DEFAULT_CTX,
+        bin: OperationBin::Name(bin),
+        data: OperationData::CdtListOp(cdt_op)
+    }
+}
+
+/// Creates a list get by rank range operation.
+/// Server selects list items starting at specified rank to the last ranked item and returns selected
+/// data specified by returnType.
+pub fn get_by_rank_range(bin: &str, rank: i64, return_type: CdtListReturnType) -> Operation {
+    let cdt_op = CdtOperation {
+        op: CdtListOpType::GetByRankRange as u8,
+        args: vec![CdtArgument::Byte(return_type as u8), CdtArgument::Int(rank)]
+    };
+    Operation {
+        op: OperationType::CdtRead,
+        ctx: DEFAULT_CTX,
+        bin: OperationBin::Name(bin),
+        data: OperationData::CdtListOp(cdt_op)
+    }
+}
+
+/// Creates a list get by rank range operation.
+/// Server selects "count" list items starting at specified rank and returns selected data specified by returnType.
+pub fn get_by_rank_range_count(bin: &str, rank: i64, count: i64, return_type: CdtListReturnType) -> Operation {
+    let cdt_op = CdtOperation {
+        op: CdtListOpType::GetByRank as u8,
+        args: vec![CdtArgument::Byte(return_type as u8), CdtArgument::Int(rank), CdtArgument::Int(count)]
+    };
+    Operation {
+        op: OperationType::CdtRead,
+        ctx: DEFAULT_CTX,
+        bin: OperationBin::Name(bin),
+        data: OperationData::CdtListOp(cdt_op)
+    }
+}
+
+/// Creates a list get by value relative to rank range operation.
+/// Server selects list items nearest to value and greater by relative rank.
+/// Server returns selected data specified by returnType.
+///
+/// Examples for ordered list [0,4,5,9,11,15]:
+///
+/// (value,rank) = [selected items]
+/// (5,0) = [5,9,11,15]
+/// (5,1) = [9,11,15]
+/// (5,-1) = [4,5,9,11,15]
+/// (3,0) = [4,5,9,11,15]
+/// (3,3) = [11,15]
+/// (3,-3) = [0,4,5,9,11,15]
+pub fn get_by_value_relative_rank_range<'a>(bin: &'a str, value: &'a Value, rank: i64, return_type: CdtListReturnType) -> Operation<'a> {
+    let cdt_op = CdtOperation {
+        op: CdtListOpType::GetByValueRelRankRange as u8,
+        args: vec![CdtArgument::Byte(return_type as u8), CdtArgument::Value(value), CdtArgument::Int(rank)]
+    };
+    Operation{
+        op: OperationType::CdtRead,
+        ctx: DEFAULT_CTX,
+        bin: OperationBin::Name(bin),
+        data: OperationData::CdtListOp(cdt_op)
+    }
+}
+
+/// Creates a list get by value relative to rank range operation.
+/// Server selects list items nearest to value and greater by relative rank with a count limit.
+/// Server returns selected data specified by returnType.
+///
+/// Examples for ordered list [0,4,5,9,11,15]:
+///
+/// (value,rank,count) = [selected items]
+/// (5,0,2) = [5,9]
+/// (5,1,1) = [9]
+/// (5,-1,2) = [4,5]
+/// (3,0,1) = [4]
+/// (3,3,7) = [11,15]
+/// (3,-3,2) = []
+pub fn get_by_value_relative_rank_range_count<'a>(bin: &'a str, value: &'a Value, rank: i64, count: i64, return_type: CdtListReturnType) -> Operation<'a> {
+    let cdt_op = CdtOperation {
+        op: CdtListOpType::GetByValueRelRankRange as u8,
+        args: vec![CdtArgument::Byte(return_type as u8), CdtArgument::Value(value), CdtArgument::Int(rank), CdtArgument::Int(count)]
+    };
+    Operation{
+        op: OperationType::CdtRead,
+        ctx: DEFAULT_CTX,
+        bin: OperationBin::Name(bin),
+        data: OperationData::CdtListOp(cdt_op)
+    }
+}
+
+/// Creates list sort operation.
+/// Server sorts list according to sortFlags.
+/// Server does not return a result by default.
+pub fn list_sort(bin: &str, sort_flags: CdtListSortFlags) -> Operation {
+    let cdt_op = CdtOperation {
+        op: CdtListOpType::Sort as u8,
+        args: vec![CdtArgument::Byte(sort_flags as u8)]
+    };
+    Operation {
+        op: OperationType::CdtWrite,
+        ctx: DEFAULT_CTX,
+        bin: OperationBin::Name(bin),
+        data: OperationData::CdtListOp(cdt_op)
+    }
+}
+

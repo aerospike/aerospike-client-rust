@@ -152,4 +152,10 @@ impl<'a> Operation<'a> {
         }
         Ok(size)
     }
+
+    /// Set the context of the operation. Required for nested structures
+    pub const fn set_context(mut self, ctx: &'a [CdtContext]) -> Operation<'a> {
+        self.ctx = ctx;
+        self
+    }
 }

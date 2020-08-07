@@ -3,6 +3,10 @@ use crate::operations::lists::{list_order_flag, CdtListOrderType};
 use crate::operations::MapOrder;
 use crate::Value;
 
+#[doc(hidden)]
+// Empty Context for scalar operations
+pub const DEFAULT_CTX: &[CdtContext] = &[];
+
 /// `CdtContext` defines Nested CDT context. Identifies the location of nested list/map to apply the operation.
 /// for the current level.
 /// An array of CTX identifies location of the list/map on multiple
