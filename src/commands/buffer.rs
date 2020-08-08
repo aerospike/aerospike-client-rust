@@ -436,7 +436,14 @@ impl Buffer {
             self.data_offset += operation.estimate_size()? + OPERATION_HEADER_SIZE as usize;
         }
 
-        let field_count = self.estimate_key_size(key, policy.send_key && write_attr != 0)?;
+        let mut field_count = self.estimate_key_size(key, policy.send_key && write_attr != 0)?;
+
+        let mut pred_size = 0;
+        if !policy.predexp.is_empty() {
+            pred_size += self.estimate_predexp_size(policy.predexp.as_slice());
+            self.data_offset += pred_size + FIELD_HEADER_SIZE as usize;
+            field_count += 1;
+        }
 
         self.size_buffer()?;
 
@@ -458,6 +465,10 @@ impl Buffer {
             )?;
         }
         self.write_key(key, policy.send_key && write_attr != 0)?;
+
+        if !policy.predexp.is_empty() {
+            self.write_predexp(policy.predexp.as_slice(), pred_size)?;
+        }
 
         for operation in operations {
             operation.write_to(self)?;
@@ -500,6 +511,13 @@ impl Buffer {
         self.begin()?;
 
         let mut field_count = 0;
+
+        let mut pred_size = 0;
+        if !policy.predexp.is_empty() {
+            pred_size = self.estimate_predexp_size(policy.predexp.as_slice());
+            self.data_offset += pred_size + FIELD_HEADER_SIZE as usize;
+            field_count += 1;
+        }
         if namespace != "" {
             self.data_offset += namespace.len() + FIELD_HEADER_SIZE as usize;
             field_count += 1;
@@ -553,6 +571,10 @@ impl Buffer {
 
         if set_name != "" {
             self.write_field_string(set_name, FieldType::Table)?;
+        }
+
+        if !policy.predexp.is_empty() {
+            self.write_predexp(policy.predexp.as_slice(), pred_size)?;
         }
 
         self.write_field_header(2, FieldType::ScanOptions)?;
