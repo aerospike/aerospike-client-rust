@@ -91,6 +91,41 @@ pub fn pack_cdt_op(
     Ok(size)
 }
 
+pub fn pack_cdt_bit_op(
+    buf: &mut Option<&mut Buffer>,
+    cdt_op: &CdtOperation,
+    ctx: &[CdtContext],
+) -> Result<usize> {
+    let mut size: usize = 0;
+    if !ctx.is_empty() {
+        size += pack_array_begin(buf, 3)?;
+        size += pack_integer(buf, 0xff)?;
+        size += pack_array_begin(buf, ctx.len() * 2)?;
+
+        for c in ctx {
+            size += pack_integer(buf, i64::from(c.id))?;
+            size += pack_value(buf, &c.value)?;
+        }
+    }
+
+    size += pack_array_begin(buf, cdt_op.args.len() + 1)?;
+    size += pack_integer(buf, i64::from(cdt_op.op))?;
+
+    if !cdt_op.args.is_empty() {
+        for arg in &cdt_op.args {
+            size += match *arg {
+                CdtArgument::Byte(byte) => pack_value(buf, &Value::from(byte))?,
+                CdtArgument::Int(int) => pack_value(buf, &Value::from(int))?,
+                CdtArgument::Value(value) => pack_value(buf, value)?,
+                CdtArgument::List(list) => pack_array(buf, list)?,
+                CdtArgument::Map(map) => pack_map(buf, map)?,
+                CdtArgument::Bool(bool_val) => pack_value(buf, &Value::from(bool_val))?,
+            }
+        }
+    }
+    Ok(size)
+}
+
 pub fn pack_array(buf: &mut Option<&mut Buffer>, values: &[Value]) -> Result<usize> {
     let mut size = 0;
 

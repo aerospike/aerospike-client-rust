@@ -33,7 +33,7 @@ use crate::errors::Result;
 use crate::operations::cdt_context::CdtContext;
 use crate::Value;
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Clone, Copy)]
 #[doc(hidden)]
 pub enum OperationType {
     Read = 1,
@@ -51,7 +51,6 @@ pub enum OperationType {
     HllWrite = 16,
 }
 
-#[derive(Debug)]
 #[doc(hidden)]
 pub enum OperationData<'a> {
     None,
@@ -61,7 +60,6 @@ pub enum OperationData<'a> {
     CdtBitOp(CdtOperation<'a>),
 }
 
-#[derive(Debug)]
 #[doc(hidden)]
 pub enum OperationBin<'a> {
     None,
@@ -70,7 +68,6 @@ pub enum OperationBin<'a> {
 }
 
 /// Database operation definition. This data type is used in the client's `operate()` method.
-#[derive(Debug)]
 pub struct Operation<'a> {
     // OpType determines type of operation.
     #[doc(hidden)]

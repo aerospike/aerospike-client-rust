@@ -417,15 +417,20 @@ impl Buffer {
                 | Operation {
                     op: OperationType::CdtRead,
                     ..
+                }
+                | Operation {
+                    op: OperationType::BitRead,
+                    ..
                 } => read_attr |= INFO1_READ,
                 _ => write_attr |= INFO2_WRITE,
             }
 
-            let map_op = match operation.data {
+            let each_op = match operation.data {
                 OperationData::CdtMapOp(_) => true,
+                OperationData::CdtBitOp(_) => true,
                 _ => false,
             };
-            if policy.respond_per_each_op || map_op {
+            if policy.respond_per_each_op || each_op {
                 write_attr |= INFO2_RESPOND_ALL_OPS;
             }
 

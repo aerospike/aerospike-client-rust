@@ -10,6 +10,7 @@
 //! bin result = [[0b00000001, 0b01000010, 0b00000000],[0b01011010]]
 //!
 
+use crate::msgpack::encoder::pack_cdt_bit_op;
 use crate::operations::cdt::{CdtArgument, CdtOperation};
 use crate::operations::cdt_context::DEFAULT_CTX;
 use crate::operations::{Operation, OperationBin, OperationData, OperationType};
@@ -136,6 +137,7 @@ pub fn resize<'a>(
     }
     let cdt_op = CdtOperation {
         op: CdtBitwiseOpType::Resize as u8,
+        encoder: Box::new(pack_cdt_bit_op),
         args,
     };
     Operation {
@@ -162,6 +164,7 @@ pub fn insert<'a>(
 ) -> Operation<'a> {
     let cdt_op = CdtOperation {
         op: CdtBitwiseOpType::Insert as u8,
+        encoder: Box::new(pack_cdt_bit_op),
         args: vec![
             CdtArgument::Int(byte_offset),
             CdtArgument::Value(value),
@@ -193,6 +196,7 @@ pub fn remove<'a>(
 ) -> Operation<'a> {
     let cdt_op = CdtOperation {
         op: CdtBitwiseOpType::Remove as u8,
+        encoder: Box::new(pack_cdt_bit_op),
         args: vec![
             CdtArgument::Int(byte_offset),
             CdtArgument::Int(byte_size),
@@ -226,6 +230,7 @@ pub fn set<'a>(
 ) -> Operation<'a> {
     let cdt_op = CdtOperation {
         op: CdtBitwiseOpType::Set as u8,
+        encoder: Box::new(pack_cdt_bit_op),
         args: vec![
             CdtArgument::Int(bit_offset),
             CdtArgument::Int(bit_size),
@@ -260,6 +265,7 @@ pub fn or<'a>(
 ) -> Operation<'a> {
     let cdt_op = CdtOperation {
         op: CdtBitwiseOpType::Or as u8,
+        encoder: Box::new(pack_cdt_bit_op),
         args: vec![
             CdtArgument::Int(bit_offset),
             CdtArgument::Int(bit_size),
@@ -294,6 +300,7 @@ pub fn xor<'a>(
 ) -> Operation<'a> {
     let cdt_op = CdtOperation {
         op: CdtBitwiseOpType::Xor as u8,
+        encoder: Box::new(pack_cdt_bit_op),
         args: vec![
             CdtArgument::Int(bit_offset),
             CdtArgument::Int(bit_size),
@@ -328,6 +335,7 @@ pub fn and<'a>(
 ) -> Operation<'a> {
     let cdt_op = CdtOperation {
         op: CdtBitwiseOpType::And as u8,
+        encoder: Box::new(pack_cdt_bit_op),
         args: vec![
             CdtArgument::Int(bit_offset),
             CdtArgument::Int(bit_size),
@@ -360,6 +368,7 @@ pub fn not<'a>(
 ) -> Operation<'a> {
     let cdt_op = CdtOperation {
         op: CdtBitwiseOpType::Not as u8,
+        encoder: Box::new(pack_cdt_bit_op),
         args: vec![
             CdtArgument::Int(bit_offset),
             CdtArgument::Int(bit_size),
@@ -393,6 +402,7 @@ pub fn lshift<'a>(
 ) -> Operation<'a> {
     let cdt_op = CdtOperation {
         op: CdtBitwiseOpType::LShift as u8,
+        encoder: Box::new(pack_cdt_bit_op),
         args: vec![
             CdtArgument::Int(bit_offset),
             CdtArgument::Int(bit_size),
@@ -426,6 +436,7 @@ pub fn rshift<'a>(
     policy: &'a BitPolicy,
 ) -> Operation<'a> {
     let cdt_op = CdtOperation {
+        encoder: Box::new(pack_cdt_bit_op),
         op: CdtBitwiseOpType::RShift as u8,
         args: vec![
             CdtArgument::Int(bit_offset),
@@ -471,6 +482,7 @@ pub fn add<'a>(
 
     let cdt_op = CdtOperation {
         op: CdtBitwiseOpType::Add as u8,
+        encoder: Box::new(pack_cdt_bit_op),
         args: vec![
             CdtArgument::Int(bit_offset),
             CdtArgument::Int(bit_size),
@@ -516,6 +528,7 @@ pub fn subtract<'a>(
 
     let cdt_op = CdtOperation {
         op: CdtBitwiseOpType::Subtract as u8,
+        encoder: Box::new(pack_cdt_bit_op),
         args: vec![
             CdtArgument::Int(bit_offset),
             CdtArgument::Int(bit_size),
@@ -551,6 +564,7 @@ pub fn set_int<'a>(
 ) -> Operation<'a> {
     let cdt_op = CdtOperation {
         op: CdtBitwiseOpType::SetInt as u8,
+        encoder: Box::new(pack_cdt_bit_op),
         args: vec![
             CdtArgument::Int(bit_offset),
             CdtArgument::Int(bit_size),
@@ -577,6 +591,7 @@ pub fn set_int<'a>(
 pub fn get(bin: &str, bit_offset: i64, bit_size: i64) -> Operation {
     let cdt_op = CdtOperation {
         op: CdtBitwiseOpType::Get as u8,
+        encoder: Box::new(pack_cdt_bit_op),
         args: vec![CdtArgument::Int(bit_offset), CdtArgument::Int(bit_size)],
     };
 
@@ -598,6 +613,7 @@ pub fn get(bin: &str, bit_offset: i64, bit_size: i64) -> Operation {
 pub fn count(bin: &str, bit_offset: i64, bit_size: i64) -> Operation {
     let cdt_op = CdtOperation {
         op: CdtBitwiseOpType::Count as u8,
+        encoder: Box::new(pack_cdt_bit_op),
         args: vec![CdtArgument::Int(bit_offset), CdtArgument::Int(bit_size)],
     };
 
@@ -621,6 +637,7 @@ pub fn count(bin: &str, bit_offset: i64, bit_size: i64) -> Operation {
 pub fn lscan(bin: &str, bit_offset: i64, bit_size: i64, value: bool) -> Operation {
     let cdt_op = CdtOperation {
         op: CdtBitwiseOpType::LScan as u8,
+        encoder: Box::new(pack_cdt_bit_op),
         args: vec![
             CdtArgument::Int(bit_offset),
             CdtArgument::Int(bit_size),
@@ -648,6 +665,7 @@ pub fn lscan(bin: &str, bit_offset: i64, bit_size: i64, value: bool) -> Operatio
 pub fn rscan(bin: &str, bit_offset: i64, bit_size: i64, value: bool) -> Operation {
     let cdt_op = CdtOperation {
         op: CdtBitwiseOpType::RScan as u8,
+        encoder: Box::new(pack_cdt_bit_op),
         args: vec![
             CdtArgument::Int(bit_offset),
             CdtArgument::Int(bit_size),
@@ -679,6 +697,7 @@ pub fn get_int(bin: &str, bit_offset: i64, bit_size: i64, signed: bool) -> Opera
     }
     let cdt_op = CdtOperation {
         op: CdtBitwiseOpType::GetInt as u8,
+        encoder: Box::new(pack_cdt_bit_op),
         args,
     };
 

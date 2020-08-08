@@ -40,12 +40,12 @@
 //! * Rank 1 Count 2: Second and third lowest ranked items in map.
 //! * Rank -3 Count 3: Top three ranked items in map.
 
-use std::collections::HashMap;
-
+use crate::msgpack::encoder::pack_cdt_op;
 use crate::operations::cdt::{CdtArgument, CdtOperation};
 use crate::operations::cdt_context::DEFAULT_CTX;
 use crate::operations::{Operation, OperationBin, OperationData, OperationType};
 use crate::Value;
+use std::collections::HashMap;
 
 #[derive(Debug, Clone, Copy)]
 #[doc(hidden)]
@@ -228,6 +228,7 @@ fn map_order_arg(policy: &MapPolicy) -> Option<CdtArgument> {
 pub fn set_order(bin: &str, map_order: MapOrder) -> Operation {
     let cdt_op = CdtOperation {
         op: CdtMapOpType::SetType as u8,
+        encoder: Box::new(pack_cdt_op),
         args: vec![CdtArgument::Byte(map_order as u8)],
     };
     Operation {
@@ -258,6 +259,7 @@ pub fn put_item<'a>(
     }
     let cdt_op = CdtOperation {
         op: map_write_op(policy, false),
+        encoder: Box::new(pack_cdt_op),
         args,
     };
     Operation {
@@ -285,6 +287,7 @@ pub fn put_items<'a>(
     }
     let cdt_op = CdtOperation {
         op: map_write_op(policy, true),
+        encoder: Box::new(pack_cdt_op),
         args,
     };
     Operation {
@@ -315,6 +318,7 @@ pub fn increment_value<'a>(
     }
     let cdt_op = CdtOperation {
         op: CdtMapOpType::Increment as u8,
+        encoder: Box::new(pack_cdt_op),
         args,
     };
     Operation {
@@ -345,6 +349,7 @@ pub fn decrement_value<'a>(
     }
     let cdt_op = CdtOperation {
         op: CdtMapOpType::Decrement as u8,
+        encoder: Box::new(pack_cdt_op),
         args,
     };
     Operation {
@@ -360,6 +365,7 @@ pub fn decrement_value<'a>(
 pub fn clear(bin: &str) -> Operation {
     let cdt_op = CdtOperation {
         op: CdtMapOpType::Clear as u8,
+        encoder: Box::new(pack_cdt_op),
         args: vec![],
     };
     Operation {
@@ -379,6 +385,7 @@ pub fn remove_by_key<'a>(
 ) -> Operation<'a> {
     let cdt_op = CdtOperation {
         op: CdtMapOpType::RemoveByKey as u8,
+        encoder: Box::new(pack_cdt_op),
         args: vec![
             CdtArgument::Byte(return_type as u8),
             CdtArgument::Value(key),
@@ -401,6 +408,7 @@ pub fn remove_by_key_list<'a>(
 ) -> Operation<'a> {
     let cdt_op = CdtOperation {
         op: CdtMapOpType::RemoveKeyList as u8,
+        encoder: Box::new(pack_cdt_op),
         args: vec![
             CdtArgument::Byte(return_type as u8),
             CdtArgument::List(keys),
@@ -433,6 +441,7 @@ pub fn remove_by_key_range<'a>(
     }
     let cdt_op = CdtOperation {
         op: CdtMapOpType::RemoveByKeyInterval as u8,
+        encoder: Box::new(pack_cdt_op),
         args,
     };
     Operation {
@@ -452,6 +461,7 @@ pub fn remove_by_value<'a>(
 ) -> Operation<'a> {
     let cdt_op = CdtOperation {
         op: CdtMapOpType::RemoveByValue as u8,
+        encoder: Box::new(pack_cdt_op),
         args: vec![
             CdtArgument::Byte(return_type as u8),
             CdtArgument::Value(value),
@@ -474,6 +484,7 @@ pub fn remove_by_value_list<'a>(
 ) -> Operation<'a> {
     let cdt_op = CdtOperation {
         op: CdtMapOpType::RemoveValueList as u8,
+        encoder: Box::new(pack_cdt_op),
         args: vec![
             CdtArgument::Byte(return_type as u8),
             CdtArgument::List(values),
@@ -506,6 +517,7 @@ pub fn remove_by_value_range<'a>(
     }
     let cdt_op = CdtOperation {
         op: CdtMapOpType::RemoveByValueInterval as u8,
+        encoder: Box::new(pack_cdt_op),
         args,
     };
     Operation {
@@ -521,6 +533,7 @@ pub fn remove_by_value_range<'a>(
 pub fn remove_by_index(bin: &str, index: i64, return_type: MapReturnType) -> Operation {
     let cdt_op = CdtOperation {
         op: CdtMapOpType::RemoveByIndex as u8,
+        encoder: Box::new(pack_cdt_op),
         args: vec![
             CdtArgument::Byte(return_type as u8),
             CdtArgument::Int(index),
@@ -544,6 +557,7 @@ pub fn remove_by_index_range(
 ) -> Operation {
     let cdt_op = CdtOperation {
         op: CdtMapOpType::RemoveByIndexRange as u8,
+        encoder: Box::new(pack_cdt_op),
         args: vec![
             CdtArgument::Byte(return_type as u8),
             CdtArgument::Int(index),
@@ -563,6 +577,7 @@ pub fn remove_by_index_range(
 pub fn remove_by_index_range_from(bin: &str, index: i64, return_type: MapReturnType) -> Operation {
     let cdt_op = CdtOperation {
         op: CdtMapOpType::RemoveByIndexRange as u8,
+        encoder: Box::new(pack_cdt_op),
         args: vec![
             CdtArgument::Byte(return_type as u8),
             CdtArgument::Int(index),
@@ -581,6 +596,7 @@ pub fn remove_by_index_range_from(bin: &str, index: i64, return_type: MapReturnT
 pub fn remove_by_rank(bin: &str, rank: i64, return_type: MapReturnType) -> Operation {
     let cdt_op = CdtOperation {
         op: CdtMapOpType::RemoveByRank as u8,
+        encoder: Box::new(pack_cdt_op),
         args: vec![CdtArgument::Byte(return_type as u8), CdtArgument::Int(rank)],
     };
     Operation {
@@ -601,6 +617,7 @@ pub fn remove_by_rank_range(
 ) -> Operation {
     let cdt_op = CdtOperation {
         op: CdtMapOpType::RemoveByRankRange as u8,
+        encoder: Box::new(pack_cdt_op),
         args: vec![
             CdtArgument::Byte(return_type as u8),
             CdtArgument::Int(rank),
@@ -620,6 +637,7 @@ pub fn remove_by_rank_range(
 pub fn remove_by_rank_range_from(bin: &str, rank: i64, return_type: MapReturnType) -> Operation {
     let cdt_op = CdtOperation {
         op: CdtMapOpType::RemoveByRankRange as u8,
+        encoder: Box::new(pack_cdt_op),
         args: vec![CdtArgument::Byte(return_type as u8), CdtArgument::Int(rank)],
     };
     Operation {
@@ -634,6 +652,7 @@ pub fn remove_by_rank_range_from(bin: &str, rank: i64, return_type: MapReturnTyp
 pub fn size(bin: &str) -> Operation {
     let cdt_op = CdtOperation {
         op: CdtMapOpType::Size as u8,
+        encoder: Box::new(pack_cdt_op),
         args: vec![],
     };
     Operation {
@@ -649,6 +668,7 @@ pub fn size(bin: &str) -> Operation {
 pub fn get_by_key<'a>(bin: &'a str, key: &'a Value, return_type: MapReturnType) -> Operation<'a> {
     let cdt_op = CdtOperation {
         op: CdtMapOpType::GetByKey as u8,
+        encoder: Box::new(pack_cdt_op),
         args: vec![
             CdtArgument::Byte(return_type as u8),
             CdtArgument::Value(key),
@@ -681,6 +701,7 @@ pub fn get_by_key_range<'a>(
     }
     let cdt_op = CdtOperation {
         op: CdtMapOpType::GetByKeyInterval as u8,
+        encoder: Box::new(pack_cdt_op),
         args,
     };
     Operation {
@@ -700,6 +721,7 @@ pub fn get_by_value<'a>(
 ) -> Operation<'a> {
     let cdt_op = CdtOperation {
         op: CdtMapOpType::GetByValue as u8,
+        encoder: Box::new(pack_cdt_op),
         args: vec![
             CdtArgument::Byte(return_type as u8),
             CdtArgument::Value(value),
@@ -732,6 +754,7 @@ pub fn get_by_value_range<'a>(
     }
     let cdt_op = CdtOperation {
         op: CdtMapOpType::GetByValueInterval as u8,
+        encoder: Box::new(pack_cdt_op),
         args,
     };
     Operation {
@@ -747,6 +770,7 @@ pub fn get_by_value_range<'a>(
 pub fn get_by_index(bin: &str, index: i64, return_type: MapReturnType) -> Operation {
     let cdt_op = CdtOperation {
         op: CdtMapOpType::GetByIndex as u8,
+        encoder: Box::new(pack_cdt_op),
         args: vec![
             CdtArgument::Byte(return_type as u8),
             CdtArgument::Int(index),
@@ -770,6 +794,7 @@ pub fn get_by_index_range(
 ) -> Operation {
     let cdt_op = CdtOperation {
         op: CdtMapOpType::GetByIndexRange as u8,
+        encoder: Box::new(pack_cdt_op),
         args: vec![
             CdtArgument::Byte(return_type as u8),
             CdtArgument::Int(index),
@@ -790,6 +815,7 @@ pub fn get_by_index_range(
 pub fn get_by_index_range_from(bin: &str, index: i64, return_type: MapReturnType) -> Operation {
     let cdt_op = CdtOperation {
         op: CdtMapOpType::GetByIndexRange as u8,
+        encoder: Box::new(pack_cdt_op),
         args: vec![
             CdtArgument::Byte(return_type as u8),
             CdtArgument::Int(index),
@@ -808,6 +834,7 @@ pub fn get_by_index_range_from(bin: &str, index: i64, return_type: MapReturnType
 pub fn get_by_rank(bin: &str, rank: i64, return_type: MapReturnType) -> Operation {
     let cdt_op = CdtOperation {
         op: CdtMapOpType::GetByRank as u8,
+        encoder: Box::new(pack_cdt_op),
         args: vec![CdtArgument::Byte(return_type as u8), CdtArgument::Int(rank)],
     };
     Operation {
@@ -828,6 +855,7 @@ pub fn get_by_rank_range(
 ) -> Operation {
     let cdt_op = CdtOperation {
         op: CdtMapOpType::GetByRankRange as u8,
+        encoder: Box::new(pack_cdt_op),
         args: vec![
             CdtArgument::Byte(return_type as u8),
             CdtArgument::Int(rank),
@@ -848,6 +876,7 @@ pub fn get_by_rank_range(
 pub fn get_by_rank_range_from(bin: &str, rank: i64, return_type: MapReturnType) -> Operation {
     let cdt_op = CdtOperation {
         op: CdtMapOpType::GetByRankRange as u8,
+        encoder: Box::new(pack_cdt_op),
         args: vec![CdtArgument::Byte(return_type as u8), CdtArgument::Int(rank)],
     };
     Operation {
@@ -878,6 +907,7 @@ pub fn remove_by_key_relative_index_range<'a>(
 ) -> Operation<'a> {
     let cdt_op = CdtOperation {
         op: CdtMapOpType::RemoveByKeyRelIndexRange as u8,
+        encoder: Box::new(pack_cdt_op),
         args: vec![
             CdtArgument::Byte(return_type as u8),
             CdtArgument::Value(key),
@@ -913,6 +943,7 @@ pub fn remove_by_key_relative_index_range_count<'a>(
 ) -> Operation<'a> {
     let cdt_op = CdtOperation {
         op: CdtMapOpType::RemoveByKeyRelIndexRange as u8,
+        encoder: Box::new(pack_cdt_op),
         args: vec![
             CdtArgument::Byte(return_type as u8),
             CdtArgument::Value(key),
@@ -945,6 +976,7 @@ pub fn remove_by_value_relative_rank_range<'a>(
 ) -> Operation<'a> {
     let cdt_op = CdtOperation {
         op: CdtMapOpType::RemoveByValueRelRankRange as u8,
+        encoder: Box::new(pack_cdt_op),
         args: vec![
             CdtArgument::Byte(return_type as u8),
             CdtArgument::Value(value),
@@ -977,6 +1009,7 @@ pub fn remove_by_value_relative_rank_range_count<'a>(
 ) -> Operation<'a> {
     let cdt_op = CdtOperation {
         op: CdtMapOpType::RemoveByValueRelRankRange as u8,
+        encoder: Box::new(pack_cdt_op),
         args: vec![
             CdtArgument::Byte(return_type as u8),
             CdtArgument::Value(value),
@@ -1001,6 +1034,7 @@ pub fn get_by_key_list<'a>(
 ) -> Operation<'a> {
     let cdt_op = CdtOperation {
         op: CdtMapOpType::GetByKeyList as u8,
+        encoder: Box::new(pack_cdt_op),
         args: vec![
             CdtArgument::Byte(return_type as u8),
             CdtArgument::List(keys),
@@ -1023,6 +1057,7 @@ pub fn get_by_value_list<'a>(
 ) -> Operation<'a> {
     let cdt_op = CdtOperation {
         op: CdtMapOpType::GetByValueList as u8,
+        encoder: Box::new(pack_cdt_op),
         args: vec![
             CdtArgument::Byte(return_type as u8),
             CdtArgument::List(values),
@@ -1056,6 +1091,7 @@ pub fn get_by_key_relative_index_range<'a>(
 ) -> Operation<'a> {
     let cdt_op = CdtOperation {
         op: CdtMapOpType::GetByKeyRelIndexRange as u8,
+        encoder: Box::new(pack_cdt_op),
         args: vec![
             CdtArgument::Byte(return_type as u8),
             CdtArgument::Value(key),
@@ -1091,6 +1127,7 @@ pub fn get_by_key_relative_index_range_count<'a>(
 ) -> Operation<'a> {
     let cdt_op = CdtOperation {
         op: CdtMapOpType::GetByKeyRelIndexRange as u8,
+        encoder: Box::new(pack_cdt_op),
         args: vec![
             CdtArgument::Byte(return_type as u8),
             CdtArgument::Value(key),
@@ -1123,6 +1160,7 @@ pub fn get_by_value_relative_rank_range<'a>(
 ) -> Operation<'a> {
     let cdt_op = CdtOperation {
         op: CdtMapOpType::GetByValueRelRankRange as u8,
+        encoder: Box::new(pack_cdt_op),
         args: vec![
             CdtArgument::Byte(return_type as u8),
             CdtArgument::Value(value),
@@ -1155,6 +1193,7 @@ pub fn get_by_value_relative_rank_range_count<'a>(
 ) -> Operation<'a> {
     let cdt_op = CdtOperation {
         op: CdtMapOpType::GetByValueRelRankRange as u8,
+        encoder: Box::new(pack_cdt_op),
         args: vec![
             CdtArgument::Byte(return_type as u8),
             CdtArgument::Value(value),

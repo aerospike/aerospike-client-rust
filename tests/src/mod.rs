@@ -14,6 +14,7 @@
 // the License.
 
 mod batch;
+mod cdt_bitwise;
 mod cdt_list;
 mod cdt_map;
 mod index;
