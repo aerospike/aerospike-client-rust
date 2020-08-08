@@ -31,11 +31,11 @@ pub enum CdtArgument<'a> {
     Map(&'a HashMap<Value, Value>),
 }
 
+pub type OperationEncoder = Box<dyn Fn(&mut Option<&mut Buffer>, &CdtOperation, &[CdtContext]) -> Result<usize>>;
 #[doc(hidden)]
 pub struct CdtOperation<'a> {
     pub op: u8,
-    pub encoder:
-        Box<dyn Fn(&mut Option<&mut Buffer>, &CdtOperation, &[CdtContext]) -> Result<usize>>,
+    pub encoder: OperationEncoder,
     pub args: Vec<CdtArgument<'a>>,
 }
 

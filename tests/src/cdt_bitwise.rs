@@ -16,10 +16,9 @@
 use crate::common;
 use env_logger;
 
-use aerospike::operations;
 use aerospike::operations::bitwise;
 use aerospike::operations::bitwise::BitPolicy;
-use aerospike::{as_bin, as_key, as_list, as_val, as_values, Bins, ReadPolicy, Value, WritePolicy};
+use aerospike::{as_bin, as_key, Value, WritePolicy};
 
 #[test]
 fn cdt_bitwise() {
@@ -28,8 +27,6 @@ fn cdt_bitwise() {
     let client = common::client();
     let namespace = common::namespace();
     let set_name = &common::rand_str(10);
-
-    let policy = ReadPolicy::default();
 
     let wpolicy = WritePolicy::default();
     let key = as_key!(namespace, set_name, -1);
@@ -41,9 +38,7 @@ fn cdt_bitwise() {
     client.delete(&wpolicy, &key).unwrap();
 
     client.put(&wpolicy, &key, &bins).unwrap();
-    let ops = &vec![bitwise::insert("bin2", 0, &val ,&bpolicy)];
-    client.operate(&wpolicy, &key, ops);
-    let ops = &vec![bitwise::get("bin2", 0, 8)];
+    let ops = &vec![bitwise::insert("bin2", 0, &val ,&bpolicy), bitwise::get("bin2", 0, 8)];
     let rec = client.operate(&wpolicy, &key, ops).unwrap();
     assert_eq!(*rec.bins.get("bin2").unwrap(), Value::Blob(vec![0b00000101]));
 }

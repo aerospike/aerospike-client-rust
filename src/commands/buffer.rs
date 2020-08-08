@@ -426,8 +426,7 @@ impl Buffer {
             }
 
             let each_op = match operation.data {
-                OperationData::CdtMapOp(_) => true,
-                OperationData::CdtBitOp(_) => true,
+                OperationData::CdtMapOp(_) | OperationData::CdtBitOp(_) => true,
                 _ => false,
             };
             if policy.respond_per_each_op || each_op {
