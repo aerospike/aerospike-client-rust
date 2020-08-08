@@ -36,6 +36,7 @@ fn cdt_list() {
     let val = as_list!("0", 1, 2.1f64);
     let wbin = as_bin!("bin", val.clone());
     let bins = vec![&wbin];
+    let lpolicy = ListPolicy::default();
 
     client.delete(&wpolicy, &key).unwrap();
 
@@ -49,7 +50,7 @@ fn cdt_list() {
 
     let values = vec![as_val!(9), as_val!(8), as_val!(7)];
     let ops = &vec![
-        lists::insert_items("bin", 1, &values, &ListPolicy::default()),
+        lists::insert_items("bin", 1, &values, &lpolicy),
         operations::get_bin("bin"),
     ];
     let rec = client.operate(&wpolicy, &key, ops).unwrap();
@@ -82,7 +83,7 @@ fn cdt_list() {
     let values = as_values!["0", 9, 8, 7, 1, 2.1f64];
     let ops = &vec![
         lists::clear("bin"),
-        lists::append_items(&ListPolicy::default(), "bin", &values),
+        lists::append_items(&lpolicy, "bin", &values),
         operations::get_bin("bin"),
     ];
     let rec = client.operate(&wpolicy, &key, ops).unwrap();
@@ -91,7 +92,7 @@ fn cdt_list() {
         as_list!(6, as_list!("0", 9, 8, 7, 1, 2.1f64))
     );
 
-    let ops = &vec![lists::increment(&ListPolicy::default(), "bin", 1, 4)];
+    let ops = &vec![lists::increment(&lpolicy, "bin", 1, 4)];
     let rec = client.operate(&wpolicy, &key, ops).unwrap();
     assert_eq!(*rec.bins.get("bin").unwrap(), Value::from(13));
 
@@ -124,7 +125,7 @@ fn cdt_list() {
     let values = as_values!["0", 9, 8, 7, 1, 2.1f64, -1];
     let ops = &vec![
         lists::clear("bin"),
-        lists::append_items(&ListPolicy::default(), "bin", &values),
+        lists::append_items(&lpolicy, "bin", &values),
         operations::get_bin("bin"),
     ];
     let rec = client.operate(&wpolicy, &key, ops).unwrap();
@@ -140,7 +141,7 @@ fn cdt_list() {
     let values = as_values!["0", 9, 8, 7, 1, 2.1f64, -1];
     let ops = &vec![
         lists::clear("bin"),
-        lists::append_items(&ListPolicy::default(), "bin", &values),
+        lists::append_items(&lpolicy, "bin", &values),
         operations::get_bin("bin"),
     ];
     let rec = client.operate(&wpolicy, &key, ops).unwrap();

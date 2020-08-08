@@ -185,7 +185,12 @@ pub fn insert<'a>(
 /// byteOffset = 2
 /// byteSize = 3
 /// bin result = [0b00000001, 0b01000010]
-pub fn remove<'a>(bin: &'a str, byte_offset: i64, byte_size: i64, policy: &'a BitPolicy) -> Operation<'a> {
+pub fn remove<'a>(
+    bin: &'a str,
+    byte_offset: i64,
+    byte_size: i64,
+    policy: &'a BitPolicy,
+) -> Operation<'a> {
     let cdt_op = CdtOperation {
         op: CdtBitwiseOpType::Remove as u8,
         args: vec![
@@ -347,7 +352,12 @@ pub fn and<'a>(
 /// bitOffset = 25
 /// bitSize = 6
 /// bin result = [0b00000001, 0b01000010, 0b00000011, 0b01111010, 0b00000101]
-pub fn not<'a>(bin: &'a str, bit_offset: i64, bit_size: i64, policy: &'a BitPolicy) -> Operation<'a> {
+pub fn not<'a>(
+    bin: &'a str,
+    bit_offset: i64,
+    bit_size: i64,
+    policy: &'a BitPolicy,
+) -> Operation<'a> {
     let cdt_op = CdtOperation {
         op: CdtBitwiseOpType::Not as u8,
         args: vec![
