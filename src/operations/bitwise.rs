@@ -51,7 +51,7 @@ pub enum CdtBitwiseOpType {
 
 /// `CdtBitwiseResizeFlags` specifies the bitwise operation flags for resize.
 #[derive(Debug, Clone)]
-pub enum CdtBitwiseResizeFlags {
+pub enum BitwiseResizeFlags {
     /// Default specifies the defalt flag.
     Default = 0,
     /// FromFront Adds/removes bytes from the beginning instead of the end.
@@ -64,7 +64,7 @@ pub enum CdtBitwiseResizeFlags {
 
 /// `CdtBitwiseWriteFlags` specify bitwise operation policy write flags.
 #[derive(Debug, Clone)]
-pub enum CdtBitwiseWriteFlags {
+pub enum BitwiseWriteFlags {
     /// Default allows create or update.
     Default = 0,
     /// CreateOnly specifies that:
@@ -84,7 +84,7 @@ pub enum CdtBitwiseWriteFlags {
 
 /// `CdtBitwiseOverflowActions` specifies the action to take when bitwise add/subtract results in overflow/underflow.
 #[derive(Debug, Clone)]
-pub enum CdtBitwiseOverflowActions {
+pub enum BitwiseOverflowActions {
     /// Fail specifies to fail operation with error.
     Fail = 0,
     /// Saturate specifies that in add/subtract overflows/underflows, set to max/min value.
@@ -110,7 +110,7 @@ impl BitPolicy {
 impl Default for BitPolicy {
     /// Returns the default `BitPolicy`
     fn default() -> Self {
-        BitPolicy::new(CdtBitwiseWriteFlags::Default as u8)
+        BitPolicy::new(BitwiseWriteFlags::Default as u8)
     }
 }
 
@@ -472,7 +472,7 @@ pub fn add<'a>(
     bit_size: i64,
     value: i64,
     signed: bool,
-    action: CdtBitwiseOverflowActions,
+    action: BitwiseOverflowActions,
     policy: &'a BitPolicy,
 ) -> Operation<'a> {
     let mut action_flags = action as u8;
@@ -518,7 +518,7 @@ pub fn subtract<'a>(
     bit_size: i64,
     value: i64,
     signed: bool,
-    action: CdtBitwiseOverflowActions,
+    action: BitwiseOverflowActions,
     policy: &'a BitPolicy,
 ) -> Operation<'a> {
     let mut action_flags = action as u8;

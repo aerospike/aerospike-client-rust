@@ -18,7 +18,7 @@ use env_logger;
 
 use aerospike::operations;
 use aerospike::operations::lists;
-use aerospike::operations::lists::{CdtListReturnType, ListPolicy};
+use aerospike::operations::lists::{ListReturnType, ListPolicy};
 use aerospike::{as_bin, as_key, as_list, as_val, as_values, Bins, ReadPolicy, Value, WritePolicy};
 
 #[test]
@@ -169,7 +169,7 @@ fn cdt_list() {
     let ops = &vec![lists::remove_by_value(
         "bin",
         &rval,
-        CdtListReturnType::Count,
+        ListReturnType::Count,
     )];
     let rec = client.operate(&wpolicy, &key, ops).unwrap();
     assert_eq!(*rec.bins.get("bin").unwrap(), Value::from(1));

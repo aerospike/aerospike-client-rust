@@ -77,7 +77,7 @@ pub enum CdtListOpType {
 
 /// List storage order.
 #[derive(Debug, Clone, Copy)]
-pub enum CdtListOrderType {
+pub enum ListOrderType {
     /// List is not ordered. This is the default.
     Unordered = 0,
     /// List is ordered.
@@ -86,7 +86,7 @@ pub enum CdtListOrderType {
 
 /// `CdtListReturnType` determines the returned values in CDT List operations.
 #[derive(Debug, Clone, Copy)]
-pub enum CdtListReturnType {
+pub enum ListReturnType {
     /// Do not return a result.
     None = 0,
     /// Return index offset order.
@@ -121,7 +121,7 @@ pub enum CdtListReturnType {
 
 /// `CdtListSortFlags` determines sort flags for CDT lists
 #[derive(Debug, Clone, Copy)]
-pub enum CdtListSortFlags {
+pub enum ListSortFlags {
     /// Default is the default sort flag for CDT lists, and sort in Ascending order.
     Default = 0,
     /// Descending will sort the contents of the list in descending order.
@@ -132,7 +132,7 @@ pub enum CdtListSortFlags {
 
 /// `CdtListWriteFlags` determines write flags for CDT lists
 #[derive(Debug, Clone, Copy)]
-pub enum CdtListWriteFlags {
+pub enum ListWriteFlags {
     /// Default is the default behavior. It means:  Allow duplicate values and insertions at any index.
     Default = 0,
     /// AddUnique means: Only add unique values.
@@ -150,7 +150,7 @@ pub enum CdtListWriteFlags {
 /// `ListPolicy` directives when creating a list and writing list items.
 pub struct ListPolicy {
     /// CdtListOrderType
-    pub attributes: CdtListOrderType,
+    pub attributes: ListOrderType,
     /// CdtListWriteFlags
     pub flags: u8,
 }
@@ -158,7 +158,7 @@ pub struct ListPolicy {
 impl ListPolicy {
     /// Create unique key list with specified order when list does not exist.
     /// Use specified write mode when writing list items.
-    pub const fn new(order: CdtListOrderType, write_mode: CdtListWriteFlags) -> Self {
+    pub const fn new(order: ListOrderType, write_mode: ListWriteFlags) -> Self {
         ListPolicy {
             attributes: order,
             flags: write_mode as u8,
@@ -169,12 +169,12 @@ impl ListPolicy {
 impl Default for ListPolicy {
     /// Returns the default policy for CDT list operations.
     fn default() -> Self {
-        ListPolicy::new(CdtListOrderType::Unordered, CdtListWriteFlags::Default)
+        ListPolicy::new(ListOrderType::Unordered, ListWriteFlags::Default)
     }
 }
 
 #[doc(hidden)]
-pub fn list_order_flag(order: CdtListOrderType, pad: bool) -> u8 {
+pub fn list_order_flag(order: ListOrderType, pad: bool) -> u8 {
     if order as u8 == 1 {
         return 0xc0;
     }
@@ -188,7 +188,7 @@ pub fn list_order_flag(order: CdtListOrderType, pad: bool) -> u8 {
 /// Server creates list at given context level. The context is allowed to be beyond list
 /// boundaries only if pad is set to true.  In that case, nil list entries will be inserted to
 /// satisfy the context position.
-pub fn create(bin: &str, list_order: CdtListOrderType, pad: bool) -> Operation {
+pub fn create(bin: &str, list_order: ListOrderType, pad: bool) -> Operation {
     let cdt_op = CdtOperation {
         op: CdtListOpType::SetType as u8,
         encoder: Box::new(pack_cdt_op),
@@ -209,7 +209,7 @@ pub fn create(bin: &str, list_order: CdtListOrderType, pad: bool) -> Operation {
 /// Server sets list order.  Server returns null.
 pub fn set_order<'a>(
     bin: &'a str,
-    list_order: CdtListOrderType,
+    list_order: ListOrderType,
     ctx: &'a [CdtContext],
 ) -> Operation<'a> {
     let cdt_op = CdtOperation {
@@ -419,7 +419,7 @@ pub fn remove_range_from(bin: &str, index: i64) -> Operation {
 pub fn remove_by_value<'a>(
     bin: &'a str,
     value: &'a Value,
-    return_type: CdtListReturnType,
+    return_type: ListReturnType,
 ) -> Operation<'a> {
     let cdt_op = CdtOperation {
         op: CdtListOpType::RemoveByValue as u8,
@@ -442,7 +442,7 @@ pub fn remove_by_value<'a>(
 pub fn remove_by_value_list<'a>(
     bin: &'a str,
     values: &'a [Value],
-    return_type: CdtListReturnType,
+    return_type: ListReturnType,
 ) -> Operation<'a> {
     let cdt_op = CdtOperation {
         op: CdtListOpType::RemoveByValueList as u8,
@@ -467,7 +467,7 @@ pub fn remove_by_value_list<'a>(
 /// Server returns removed data specified by returnType
 pub fn remove_by_value_range<'a>(
     bin: &'a str,
-    return_type: CdtListReturnType,
+    return_type: ListReturnType,
     begin: &'a Value,
     end: &'a Value,
 ) -> Operation<'a> {
@@ -503,7 +503,7 @@ pub fn remove_by_value_range<'a>(
 /// (3,-3) = [0,4,5,9,11,15]
 pub fn remove_by_value_relative_rank_range<'a>(
     bin: &'a str,
-    return_type: CdtListReturnType,
+    return_type: ListReturnType,
     value: &'a Value,
     rank: i64,
 ) -> Operation<'a> {
@@ -538,7 +538,7 @@ pub fn remove_by_value_relative_rank_range<'a>(
 /// (3,-3,2) = []
 pub fn remove_by_value_relative_rank_range_count<'a>(
     bin: &'a str,
-    return_type: CdtListReturnType,
+    return_type: ListReturnType,
     value: &'a Value,
     rank: i64,
     count: i64,
@@ -563,7 +563,7 @@ pub fn remove_by_value_relative_rank_range_count<'a>(
 
 /// Creates a list remove operation.
 /// Server removes list item identified by index and returns removed data specified by returnType.
-pub fn remove_by_index(bin: &str, index: i64, return_type: CdtListReturnType) -> Operation {
+pub fn remove_by_index(bin: &str, index: i64, return_type: ListReturnType) -> Operation {
     let cdt_op = CdtOperation {
         op: CdtListOpType::RemoveByIndex as u8,
         encoder: Box::new(pack_cdt_op),
@@ -583,7 +583,7 @@ pub fn remove_by_index(bin: &str, index: i64, return_type: CdtListReturnType) ->
 /// Creates a list remove operation.
 /// Server removes list items starting at specified index to the end of list and returns removed
 /// data specified by returnType.
-pub fn remove_by_index_range(bin: &str, index: i64, return_type: CdtListReturnType) -> Operation {
+pub fn remove_by_index_range(bin: &str, index: i64, return_type: ListReturnType) -> Operation {
     let cdt_op = CdtOperation {
         op: CdtListOpType::RemoveByIndexRange as u8,
         encoder: Box::new(pack_cdt_op),
@@ -606,7 +606,7 @@ pub fn remove_by_index_range_count(
     bin: &str,
     index: i64,
     count: i64,
-    return_type: CdtListReturnType,
+    return_type: ListReturnType,
 ) -> Operation {
     let cdt_op = CdtOperation {
         op: CdtListOpType::RemoveByIndexRange as u8,
@@ -627,7 +627,7 @@ pub fn remove_by_index_range_count(
 
 /// Creates a list remove operation.
 /// Server removes list item identified by rank and returns removed data specified by returnType.
-pub fn remove_by_rank(bin: &str, rank: i64, return_type: CdtListReturnType) -> Operation {
+pub fn remove_by_rank(bin: &str, rank: i64, return_type: ListReturnType) -> Operation {
     let cdt_op = CdtOperation {
         op: CdtListOpType::RemoveByRank as u8,
         encoder: Box::new(pack_cdt_op),
@@ -644,7 +644,7 @@ pub fn remove_by_rank(bin: &str, rank: i64, return_type: CdtListReturnType) -> O
 /// Creates a list remove operation.
 /// Server removes list items starting at specified rank to the last ranked item and returns removed
 /// data specified by returnType.
-pub fn remove_by_rank_range(bin: &str, rank: i64, return_type: CdtListReturnType) -> Operation {
+pub fn remove_by_rank_range(bin: &str, rank: i64, return_type: ListReturnType) -> Operation {
     let cdt_op = CdtOperation {
         op: CdtListOpType::RemoveByRankRange as u8,
         encoder: Box::new(pack_cdt_op),
@@ -664,7 +664,7 @@ pub fn remove_by_rank_range_count(
     bin: &str,
     rank: i64,
     count: i64,
-    return_type: CdtListReturnType,
+    return_type: ListReturnType,
 ) -> Operation {
     let cdt_op = CdtOperation {
         op: CdtListOpType::RemoveByRankRange as u8,
@@ -826,7 +826,7 @@ pub fn get_range_from(bin: &str, index: i64) -> Operation {
 pub fn get_by_value<'a>(
     bin: &'a str,
     value: &'a Value,
-    return_type: CdtListReturnType,
+    return_type: ListReturnType,
 ) -> Operation<'a> {
     let cdt_op = CdtOperation {
         op: CdtListOpType::GetByValue as u8,
@@ -850,7 +850,7 @@ pub fn get_by_value<'a>(
 pub fn get_by_value_list<'a>(
     bin: &'a str,
     values: &'a [Value],
-    return_type: CdtListReturnType,
+    return_type: ListReturnType,
 ) -> Operation<'a> {
     let cdt_op = CdtOperation {
         op: CdtListOpType::GetByValueList as u8,
@@ -877,7 +877,7 @@ pub fn get_by_value_range<'a>(
     bin: &'a str,
     begin: &'a Value,
     end: &'a Value,
-    return_type: CdtListReturnType,
+    return_type: ListReturnType,
 ) -> Operation<'a> {
     let cdt_op = CdtOperation {
         op: CdtListOpType::GetByValueInterval as u8,
@@ -898,7 +898,7 @@ pub fn get_by_value_range<'a>(
 
 /// Creates list get by index operation.
 /// Server selects list item identified by index and returns selected data specified by returnType
-pub fn get_by_index(bin: &str, index: i64, return_type: CdtListReturnType) -> Operation {
+pub fn get_by_index(bin: &str, index: i64, return_type: ListReturnType) -> Operation {
     let cdt_op = CdtOperation {
         op: CdtListOpType::GetByIndex as u8,
         encoder: Box::new(pack_cdt_op),
@@ -919,7 +919,7 @@ pub fn get_by_index(bin: &str, index: i64, return_type: CdtListReturnType) -> Op
 /// Creates list get by index range operation.
 /// Server selects list items starting at specified index to the end of list and returns selected
 /// data specified by returnType.
-pub fn get_by_index_range(bin: &str, index: i64, return_type: CdtListReturnType) -> Operation {
+pub fn get_by_index_range(bin: &str, index: i64, return_type: ListReturnType) -> Operation {
     let cdt_op = CdtOperation {
         op: CdtListOpType::GetByIndexRange as u8,
         encoder: Box::new(pack_cdt_op),
@@ -944,7 +944,7 @@ pub fn get_by_index_range_count(
     bin: &str,
     index: i64,
     count: i64,
-    return_type: CdtListReturnType,
+    return_type: ListReturnType,
 ) -> Operation {
     let cdt_op = CdtOperation {
         op: CdtListOpType::GetByIndexRange as u8,
@@ -966,7 +966,7 @@ pub fn get_by_index_range_count(
 
 /// Creates a list get by rank operation.
 /// Server selects list item identified by rank and returns selected data specified by returnType.
-pub fn get_by_rank(bin: &str, rank: i64, return_type: CdtListReturnType) -> Operation {
+pub fn get_by_rank(bin: &str, rank: i64, return_type: ListReturnType) -> Operation {
     let cdt_op = CdtOperation {
         op: CdtListOpType::GetByRank as u8,
         encoder: Box::new(pack_cdt_op),
@@ -983,7 +983,7 @@ pub fn get_by_rank(bin: &str, rank: i64, return_type: CdtListReturnType) -> Oper
 /// Creates a list get by rank range operation.
 /// Server selects list items starting at specified rank to the last ranked item and returns selected
 /// data specified by returnType.
-pub fn get_by_rank_range(bin: &str, rank: i64, return_type: CdtListReturnType) -> Operation {
+pub fn get_by_rank_range(bin: &str, rank: i64, return_type: ListReturnType) -> Operation {
     let cdt_op = CdtOperation {
         op: CdtListOpType::GetByRankRange as u8,
         encoder: Box::new(pack_cdt_op),
@@ -1003,7 +1003,7 @@ pub fn get_by_rank_range_count(
     bin: &str,
     rank: i64,
     count: i64,
-    return_type: CdtListReturnType,
+    return_type: ListReturnType,
 ) -> Operation {
     let cdt_op = CdtOperation {
         op: CdtListOpType::GetByRank as u8,
@@ -1039,7 +1039,7 @@ pub fn get_by_value_relative_rank_range<'a>(
     bin: &'a str,
     value: &'a Value,
     rank: i64,
-    return_type: CdtListReturnType,
+    return_type: ListReturnType,
 ) -> Operation<'a> {
     let cdt_op = CdtOperation {
         op: CdtListOpType::GetByValueRelRankRange as u8,
@@ -1076,7 +1076,7 @@ pub fn get_by_value_relative_rank_range_count<'a>(
     value: &'a Value,
     rank: i64,
     count: i64,
-    return_type: CdtListReturnType,
+    return_type: ListReturnType,
 ) -> Operation<'a> {
     let cdt_op = CdtOperation {
         op: CdtListOpType::GetByValueRelRankRange as u8,
@@ -1099,7 +1099,7 @@ pub fn get_by_value_relative_rank_range_count<'a>(
 /// Creates list sort operation.
 /// Server sorts list according to sortFlags.
 /// Server does not return a result by default.
-pub fn list_sort(bin: &str, sort_flags: CdtListSortFlags) -> Operation {
+pub fn list_sort(bin: &str, sort_flags: ListSortFlags) -> Operation {
     let cdt_op = CdtOperation {
         op: CdtListOpType::Sort as u8,
         encoder: Box::new(pack_cdt_op),

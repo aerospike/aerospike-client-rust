@@ -1,5 +1,5 @@
 //! Operation Context for nested Operations
-use crate::operations::lists::{list_order_flag, CdtListOrderType};
+use crate::operations::lists::{list_order_flag, ListOrderType};
 use crate::operations::MapOrder;
 use crate::Value;
 
@@ -35,7 +35,7 @@ pub const fn ctx_list_index(index: i64) -> CdtContext {
 }
 
 /// list with given type at index offset, given an order and pad.
-pub fn ctx_list_index_create(index: i64, order: CdtListOrderType, pad: bool) -> CdtContext {
+pub fn ctx_list_index_create(index: i64, order: ListOrderType, pad: bool) -> CdtContext {
     CdtContext {
         id: 0x10 | list_order_flag(order, pad),
         value: Value::Int(index),

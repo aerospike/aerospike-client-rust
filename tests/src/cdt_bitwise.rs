@@ -17,7 +17,7 @@ use crate::common;
 use env_logger;
 
 use aerospike::operations::bitwise;
-use aerospike::operations::bitwise::{BitPolicy, CdtBitwiseOverflowActions};
+use aerospike::operations::bitwise::{BitPolicy, BitwiseOverflowActions};
 use aerospike::{as_key, Value, WritePolicy};
 
 #[test]
@@ -90,12 +90,12 @@ fn cdt_bitwise() {
     assert_eq!(*rec.bins.get("bin").unwrap(), Value::Blob(vec![0b01011110, 0b10000011]));
 
     // Verify Add command
-    let ops = &vec![bitwise::add("bin", 0, 8, 128,false,CdtBitwiseOverflowActions::Fail, &bpolicy), bitwise::get("bin", 0, 32)];
+    let ops = &vec![bitwise::add("bin", 0, 8, 128, false, BitwiseOverflowActions::Fail, &bpolicy), bitwise::get("bin", 0, 32)];
     let rec = client.operate(&wpolicy, &key, ops).unwrap();
     assert_eq!(*rec.bins.get("bin").unwrap(), Value::Blob(vec![0b11011110, 0b10000011, 0b00000100, 0b00101000]));
 
     // Verify Subtract command
-    let ops = &vec![bitwise::subtract("bin", 0, 8, 128,false,CdtBitwiseOverflowActions::Fail, &bpolicy), bitwise::get("bin", 0, 32)];
+    let ops = &vec![bitwise::subtract("bin", 0, 8, 128, false, BitwiseOverflowActions::Fail, &bpolicy), bitwise::get("bin", 0, 32)];
     let rec = client.operate(&wpolicy, &key, ops).unwrap();
     assert_eq!(*rec.bins.get("bin").unwrap(), Value::Blob(vec![0b01011110, 0b10000011, 0b00000100, 0b00101000]));
 
