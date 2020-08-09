@@ -1006,7 +1006,7 @@ pub fn get_by_rank_range_count(
     return_type: ListReturnType,
 ) -> Operation {
     let cdt_op = CdtOperation {
-        op: CdtListOpType::GetByRank as u8,
+        op: CdtListOpType::GetByRankRange as u8,
         encoder: Box::new(pack_cdt_op),
         args: vec![
             CdtArgument::Byte(return_type as u8),
@@ -1099,7 +1099,7 @@ pub fn get_by_value_relative_rank_range_count<'a>(
 /// Creates list sort operation.
 /// Server sorts list according to sortFlags.
 /// Server does not return a result by default.
-pub fn list_sort(bin: &str, sort_flags: ListSortFlags) -> Operation {
+pub fn sort(bin: &str, sort_flags: ListSortFlags) -> Operation {
     let cdt_op = CdtOperation {
         op: CdtListOpType::Sort as u8,
         encoder: Box::new(pack_cdt_op),
