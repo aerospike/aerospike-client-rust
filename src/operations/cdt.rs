@@ -31,7 +31,8 @@ pub enum CdtArgument<'a> {
     Map(&'a HashMap<Value, Value>),
 }
 
-pub type OperationEncoder = Box<dyn Fn(&mut Option<&mut Buffer>, &CdtOperation, &[CdtContext]) -> Result<usize>>;
+pub type OperationEncoder =
+    Box<dyn Fn(&mut Option<&mut Buffer>, &CdtOperation, &[CdtContext]) -> Result<usize>>;
 #[doc(hidden)]
 pub struct CdtOperation<'a> {
     pub op: u8,
@@ -46,13 +47,13 @@ impl<'a> CdtOperation<'a> {
 
     pub fn estimate_size(&self, ctx: &[CdtContext]) -> Result<usize> {
         //let size: usize = encoder::pack_cdt_op(&mut None, self, ctx)?;
-        let size: usize = (self.encoder)( &mut None, self, ctx)?;
+        let size: usize = (self.encoder)(&mut None, self, ctx)?;
         Ok(size)
     }
 
     pub fn write_to(&self, buffer: &mut Buffer, ctx: &[CdtContext]) -> Result<usize> {
         //let size: usize = encoder::pack_cdt_op(&mut Some(buffer), self, ctx)?;
-        let size: usize = (self.encoder)( &mut Some(buffer), self, ctx)?;
+        let size: usize = (self.encoder)(&mut Some(buffer), self, ctx)?;
         Ok(size)
     }
 }

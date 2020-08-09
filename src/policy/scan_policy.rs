@@ -14,8 +14,8 @@
 // the License.
 
 use crate::policy::{BasePolicy, PolicyLike};
-use std::sync::Arc;
 use crate::query::PredExp;
+use std::sync::Arc;
 
 /// `ScanPolicy` encapsulates optional parameters used in scan operations.
 #[derive(Clone)]

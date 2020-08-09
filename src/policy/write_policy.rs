@@ -14,9 +14,9 @@
 // the License.
 
 use crate::policy::{BasePolicy, PolicyLike};
+use crate::query::PredExp;
 use crate::{CommitLevel, Expiration, GenerationPolicy, RecordExistsAction};
 use std::sync::Arc;
-use crate::query::PredExp;
 
 /// `WritePolicy` encapsulates parameters for all write operations.
 pub struct WritePolicy {
