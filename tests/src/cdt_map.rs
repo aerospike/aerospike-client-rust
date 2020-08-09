@@ -23,7 +23,7 @@ use aerospike::{
     as_bin, as_key, as_list, as_map, as_val, Bins, MapPolicy, MapReturnType, ReadPolicy,
     WritePolicy,
 };
-use aerospike::operations::maps::MapReturnType::Value;
+use aerospike::operations::cdt_context::{ctx_map_key};
 
 #[test]
 fn map_operations() {
@@ -280,4 +280,15 @@ fn map_operations() {
     let op = maps::get_by_value_relative_rank_range_count(bin_name, &mkey, 1,    1,MapReturnType::Value);
     let rec = client.operate(&wpolicy, &key, &[op]).unwrap();
     assert_eq!(*rec.bins.get(bin_name).unwrap(), as_list!(3));
+
+    let mkey = as_val!("ctxtest");
+    let mval = as_map!("x" => 7, "y" => 8, "z" => 9);
+    let op = maps::put_item(&mpolicy, bin_name, &mkey, &mval);
+    client.operate(&wpolicy, &key, &[op]).unwrap();
+
+    let ctx = &vec![ctx_map_key(mkey)];
+    let xkey = as_val!("y");
+    let op = maps::get_by_key(bin_name, &xkey, MapReturnType::Value).set_context(ctx);
+    let rec = client.operate(&wpolicy, &key, &[op]).unwrap();
+    assert_eq!(*rec.bins.get(bin_name).unwrap(), as_val!(8));
 }

@@ -222,7 +222,7 @@ fn cdt_list() {
         "bin",
         ListSortFlags::Default,
     )];
-    let rec = client.operate(&wpolicy, &key, ops).unwrap();
+    client.operate(&wpolicy, &key, ops).unwrap();
 
     let ops = &vec![
         operations::get_bin("bin"),
