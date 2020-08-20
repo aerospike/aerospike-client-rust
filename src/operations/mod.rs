@@ -21,6 +21,14 @@ pub mod lists;
 pub mod maps;
 pub mod scalar;
 
+// Expression Filtering API (requires Aerospike > 5.2)
+#[doc(hidden)]
+pub mod bit_exp;
+pub mod list_exp;
+pub mod map_exp;
+pub mod exp;
+pub mod scalar_exp;
+
 use self::cdt::CdtOperation;
 pub use self::maps::{MapOrder, MapPolicy, MapReturnType, MapWriteMode};
 pub use self::scalar::*;
