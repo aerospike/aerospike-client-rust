@@ -893,7 +893,7 @@ pub fn get_by_rank_range_from(bin: &str, rank: i64, return_type: MapReturnType) 
 ///
 /// Examples for map [{0=17},{4=2},{5=15},{9=10}]:
 ///
-/// (value,index) = [removed items]
+/// (key,index) = [removed items]
 /// (5,0) = [{5=15},{9=10}]
 /// (5,1) = [{9=10}]
 /// (5,-1) = [{4=2},{5=15},{9=10}]
@@ -928,7 +928,7 @@ pub fn remove_by_key_relative_index_range<'a>(
 ///
 /// Examples for map [{0=17},{4=2},{5=15},{9=10}]:
 ///
-/// (value,index,count) = [removed items]
+/// (key,index,count) = [removed items]
 /// (5,0,1) = [{5=15}]
 /// (5,1,2) = [{9=10}]
 /// (5,-1,1) = [{4=2}]
@@ -1077,7 +1077,7 @@ pub fn get_by_value_list<'a>(
 ///
 /// Examples for ordered map [{0=17},{4=2},{5=15},{9=10}]:
 ///
-/// (value,index) = [selected items]
+/// (key,index) = [selected items]
 /// (5,0) = [{5=15},{9=10}]
 /// (5,1) = [{9=10}]
 /// (5,-1) = [{4=2},{5=15},{9=10}]
@@ -1112,7 +1112,7 @@ pub fn get_by_key_relative_index_range<'a>(
 ///
 /// Examples for ordered map [{0=17},{4=2},{5=15},{9=10}]:
 ///
-/// (value,index,count) = [selected items]
+/// (key,index,count) = [selected items]
 /// (5,0,1) = [{5=15}]
 /// (5,1,2) = [{9=10}]
 /// (5,-1,1) = [{4=2}]
