@@ -152,16 +152,16 @@ pub struct ListPolicy {
     /// CdtListOrderType
     pub attributes: ListOrderType,
     /// CdtListWriteFlags
-    pub flags: u8,
+    pub flags: ListWriteFlags,
 }
 
 impl ListPolicy {
     /// Create unique key list with specified order when list does not exist.
     /// Use specified write mode when writing list items.
-    pub const fn new(order: ListOrderType, write_mode: ListWriteFlags) -> Self {
+    pub const fn new(order: ListOrderType, write_flags: ListWriteFlags) -> Self {
         ListPolicy {
             attributes: order,
-            flags: write_mode as u8,
+            flags: write_flags,
         }
     }
 }
@@ -175,7 +175,7 @@ impl Default for ListPolicy {
 
 #[doc(hidden)]
 pub fn list_order_flag(order: ListOrderType, pad: bool) -> u8 {
-    if order as u8 == 1 {
+    if order as u8 == ListOrderType::Ordered as u8{
         return 0xc0;
     }
     if pad {

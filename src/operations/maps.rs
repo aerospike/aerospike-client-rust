@@ -84,7 +84,7 @@ pub enum CdtMapOpType {
     GetByKeyList = 107,
     GetByValueList = 108,
     GetByKeyRelIndexRange = 109,
-    GetByValueRelRankRange = 110, // m
+    GetByValueRelRankRange = 110,
 }
 /// Map storage order.
 #[derive(Debug, Clone, Copy)]
