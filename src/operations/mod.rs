@@ -28,6 +28,7 @@ pub mod list_exp;
 pub mod map_exp;
 pub mod exp;
 pub mod scalar_exp;
+pub mod expression;
 
 use self::cdt::CdtOperation;
 pub use self::maps::{MapOrder, MapPolicy, MapReturnType, MapWriteMode};
