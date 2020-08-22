@@ -16,16 +16,6 @@ use crate::operations::cdt_context::DEFAULT_CTX;
 use crate::operations::{Operation, OperationBin, OperationData, OperationType};
 use crate::Value;
 
-/// Bit operations. Create bit operations used by client operate command.
-/// Offset orientation is left-to-right.  Negative offsets are supported.
-/// If the offset is negative, the offset starts backwards from end of the bitmap.
-/// If an offset is out of bounds, a parameter error will be returned.
-///
-/// Nested CDT operations are supported by optional CTX context arguments.  Example:
-/// bin = [[0b00000001, 0b01000010],[0b01011010]]
-/// Resize first bitmap (in a list of bitmaps) to 3 bytes.
-/// bin result = [[0b00000001, 0b01000010, 0b00000000],[0b01011010]]
-///
 #[derive(Debug, Clone, Copy)]
 #[doc(hidden)]
 pub enum CdtBitwiseOpType {
