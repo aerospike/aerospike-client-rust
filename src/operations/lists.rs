@@ -737,7 +737,7 @@ pub fn clear(bin: &str) -> Operation {
 /// Create list increment operation. Server increments the item value at the specified index by the
 /// given amount and returns the final result.
 pub fn increment<'a>(
-    policy: &'a ListPolicy,
+    policy: &ListPolicy,
     bin: &'a str,
     index: i64,
     value: i64,
