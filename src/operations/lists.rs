@@ -175,7 +175,7 @@ impl Default for ListPolicy {
 
 #[doc(hidden)]
 pub fn list_order_flag(order: ListOrderType, pad: bool) -> u8 {
-    if order as u8 == ListOrderType::Ordered as u8{
+    if order as u8 == ListOrderType::Ordered as u8 {
         return 0xc0;
     }
     if pad {
@@ -269,10 +269,10 @@ pub fn append_items<'a>(policy: &ListPolicy, bin: &'a str, values: &'a [Value]) 
 /// Create list insert operation. Server inserts value to the specified index of the list bin.
 /// Server returns list size.
 pub fn insert<'a>(
+    policy: &ListPolicy,
     bin: &'a str,
     index: i64,
     value: &'a Value,
-    policy: &ListPolicy,
 ) -> Operation<'a> {
     let cdt_op = CdtOperation {
         op: CdtListOpType::Insert as u8,
@@ -294,10 +294,10 @@ pub fn insert<'a>(
 /// Create list insert items operation. Server inserts each input list item starting at the
 /// specified index of the list bin. Server returns list size.
 pub fn insert_items<'a>(
+    policy: &ListPolicy,
     bin: &'a str,
     index: i64,
     values: &'a [Value],
-    policy: &ListPolicy,
 ) -> Operation<'a> {
     assert!(!values.is_empty());
 
@@ -736,12 +736,7 @@ pub fn clear(bin: &str) -> Operation {
 
 /// Create list increment operation. Server increments the item value at the specified index by the
 /// given amount and returns the final result.
-pub fn increment<'a>(
-    policy: &ListPolicy,
-    bin: &'a str,
-    index: i64,
-    value: i64,
-) -> Operation<'a> {
+pub fn increment<'a>(policy: &ListPolicy, bin: &'a str, index: i64, value: i64) -> Operation<'a> {
     let cdt_op = CdtOperation {
         op: CdtListOpType::Increment as u8,
         encoder: Box::new(pack_cdt_op),
