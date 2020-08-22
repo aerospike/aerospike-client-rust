@@ -118,7 +118,7 @@ impl Default for BitPolicy {
 pub fn resize<'a>(
     bin: &'a str,
     byte_size: i64,
-    resize_flags: Option<u8>,
+    resize_flags: Option<BitwiseResizeFlags>,
     policy: &'a BitPolicy,
 ) -> Operation<'a> {
     let mut args = vec![
@@ -126,7 +126,7 @@ pub fn resize<'a>(
         CdtArgument::Byte(policy.flags as u8),
     ];
     if let Some(resize_flags) = resize_flags {
-        args.push(CdtArgument::Byte(resize_flags));
+        args.push(CdtArgument::Byte(resize_flags as u8));
     }
     let cdt_op = CdtOperation {
         op: CdtBitwiseOpType::Resize as u8,
