@@ -8,7 +8,7 @@
 //! use aerospike::operations::bitwise::{resize, BitwiseResizeFlags, BitPolicy};
 //! // bin = [[0b00000001, 0b01000010], [0b01011010]]
 //! // Resize first bitmap (in a list of bitmaps) to 3 bytes.
-//! resize("bin", 3, Some(BitwiseResizeFlags::Default as u8), &BitPolicy::default());
+//! resize("bin", 3, Some(BitwiseResizeFlags::Default), &BitPolicy::default());
 //! // bin result = [[0b00000001, 0b01000010, 0b00000000], [0b01011010]]
 //! ```
 //!
