@@ -5,10 +5,11 @@
 //!
 //! Nested CDT operations are supported by optional CTX context arguments.  Example:
 //! ```
-//! bin = [[0b00000001, 0b01000010], [0b01011010]]
-//! Resize first bitmap (in a list of bitmaps) to 3 bytes.
-//! BitOperation.resize("bin", 3, BitResizeFlags.DEFAULT, CTX.listIndex(0))
-//! bin result = [[0b00000001, 0b01000010, 0b00000000], [0b01011010]]
+//! use aerospike::operations::bitwise::{resize, BitwiseResizeFlags, BitPolicy};
+//! // bin = [[0b00000001, 0b01000010], [0b01011010]]
+//! // Resize first bitmap (in a list of bitmaps) to 3 bytes.
+//! resize("bin", 3, Some(BitwiseResizeFlags::Default as u8), &BitPolicy::default());
+//! // bin result = [[0b00000001, 0b01000010, 0b00000000], [0b01011010]]
 //! ```
 //!
 
