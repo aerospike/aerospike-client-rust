@@ -15,6 +15,9 @@ pub const DEFAULT_CTX: &[CdtContext] = &[];
 pub struct CdtContext {
     /// Context Type
     pub id: u8,
+
+    pub flags: u8,
+
     /// Context Value
     pub value: Value,
 }
@@ -30,6 +33,7 @@ pub struct CdtContext {
 pub const fn ctx_list_index(index: i64) -> CdtContext {
     CdtContext {
         id: 0x10,
+        flags: 0,
         value: Value::Int(index),
     }
 }
@@ -37,7 +41,8 @@ pub const fn ctx_list_index(index: i64) -> CdtContext {
 /// list with given type at index offset, given an order and pad.
 pub fn ctx_list_index_create(index: i64, order: ListOrderType, pad: bool) -> CdtContext {
     CdtContext {
-        id: 0x10 | list_order_flag(order, pad),
+        id: 0x10,
+        flags: list_order_flag(order, pad),
         value: Value::Int(index),
     }
 }
@@ -49,6 +54,7 @@ pub fn ctx_list_index_create(index: i64, order: ListOrderType, pad: bool) -> Cdt
 pub const fn ctx_list_rank(rank: i64) -> CdtContext {
     CdtContext {
         id: 0x11,
+        flags: 0,
         value: Value::Int(rank),
     }
 }
@@ -57,6 +63,7 @@ pub const fn ctx_list_rank(rank: i64) -> CdtContext {
 pub const fn ctx_list_value(key: Value) -> CdtContext {
     CdtContext {
         id: 0x13,
+        flags: 0,
         value: key,
     }
 }
@@ -71,6 +78,7 @@ pub const fn ctx_list_value(key: Value) -> CdtContext {
 pub const fn ctx_map_index(key: Value) -> CdtContext {
     CdtContext {
         id: 0x20,
+        flags: 0,
         value: key,
     }
 }
@@ -82,6 +90,7 @@ pub const fn ctx_map_index(key: Value) -> CdtContext {
 pub const fn ctx_map_rank(rank: i64) -> CdtContext {
     CdtContext {
         id: 0x21,
+        flags: 0,
         value: Value::Int(rank),
     }
 }
@@ -90,6 +99,7 @@ pub const fn ctx_map_rank(rank: i64) -> CdtContext {
 pub const fn ctx_map_key(key: Value) -> CdtContext {
     CdtContext {
         id: 0x22,
+        flags: 0,
         value: key,
     }
 }
@@ -97,7 +107,8 @@ pub const fn ctx_map_key(key: Value) -> CdtContext {
 /// Create map with given type at map key.
 pub const fn ctx_map_key_create(key: Value, order: MapOrder) -> CdtContext {
     CdtContext {
-        id: 0x22 | order as u8,
+        id: 0x22,
+        flags: order as u8,
         value: key,
     }
 }
@@ -106,6 +117,7 @@ pub const fn ctx_map_key_create(key: Value, order: MapOrder) -> CdtContext {
 pub const fn ctx_map_value(key: Value) -> CdtContext {
     CdtContext {
         id: 0x23,
+        flags: 0,
         value: key,
     }
 }
