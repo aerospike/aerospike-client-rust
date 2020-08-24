@@ -59,25 +59,6 @@ fn scan_single_consumer() {
 }
 
 #[test]
-fn scan_single_consumer_predexp() {
-    let _ = env_logger::try_init();
-
-    let client = common::client();
-    let namespace = common::namespace();
-    let set_name = create_test_set(EXPECTED);
-
-    let mut spolicy = ScanPolicy::default();
-    spolicy.add_predicate(as_predexp_integer_bin!("bin".to_string()));
-    spolicy.add_predicate(as_predexp_integer_value!(500));
-    spolicy.add_predicate(as_predexp_integer_less!());
-    let rs = client
-        .scan(&spolicy, namespace, &set_name, Bins::All)
-        .unwrap();
-    let count = (&*rs).filter(Result::is_ok).count();
-    assert_eq!(count, 500);
-}
-
-#[test]
 fn scan_multi_consumer() {
     let _ = env_logger::try_init();
 
