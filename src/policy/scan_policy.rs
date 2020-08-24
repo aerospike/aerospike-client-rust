@@ -44,9 +44,6 @@ pub struct ScanPolicy {
     /// performing an operation on the socket on the server side. Zero means there is no socket
     /// timeout. Default: 10,000 ms.
     pub socket_timeout: u32,
-
-    /// Predicate Expression Filters
-    pub predexp: Vec<Arc<Box<dyn PredExp>>>,
 }
 
 impl ScanPolicy {
@@ -55,17 +52,12 @@ impl ScanPolicy {
         ScanPolicy::default()
     }
 
-    /// Add a Predicate Filter to the Policy
-    pub fn add_predicate<S: PredExp + 'static>(&mut self, predicate: S) {
-        self.predexp.push(Arc::new(Box::new(predicate)));
-    }
 }
 
 impl Default for ScanPolicy {
     fn default() -> ScanPolicy {
         ScanPolicy {
             base_policy: BasePolicy::default(),
-            predexp: Vec::new(),
             scan_percent: 100,
             max_concurrent_nodes: 0,
             record_queue_size: 1024,

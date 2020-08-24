@@ -64,9 +64,6 @@ pub struct WritePolicy {
     /// prevents deleted records from reappearing after node failures.  Valid for Aerospike Server
     /// Enterprise Edition 3.10+ only.
     pub durable_delete: bool,
-
-    /// Predicate Expression Filters
-    pub predexp: Vec<Arc<Box<dyn PredExp>>>,
 }
 
 impl WritePolicy {
@@ -77,18 +74,12 @@ impl WritePolicy {
         wp.expiration = exp;
         wp
     }
-
-    /// Add a Predicate Filter to the Policy
-    pub fn add_predicate<S: PredExp + 'static>(&mut self, predicate: S) {
-        self.predexp.push(Arc::new(Box::new(predicate)));
-    }
 }
 
 impl Default for WritePolicy {
     fn default() -> WritePolicy {
         WritePolicy {
             base_policy: BasePolicy::default(),
-            predexp: Vec::new(),
             record_exists_action: RecordExistsAction::Update,
             generation_policy: GenerationPolicy::None,
             commit_level: CommitLevel::CommitAll,
