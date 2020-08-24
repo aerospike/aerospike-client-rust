@@ -513,11 +513,7 @@ impl Buffer {
         let mut field_count = 0;
 
         let mut pred_size = 0;
-        if !policy.predexp.is_empty() {
-            pred_size = self.estimate_predexp_size(policy.predexp.as_slice());
-            self.data_offset += pred_size + FIELD_HEADER_SIZE as usize;
-            field_count += 1;
-        }
+
         if namespace != "" {
             self.data_offset += namespace.len() + FIELD_HEADER_SIZE as usize;
             field_count += 1;
@@ -571,10 +567,6 @@ impl Buffer {
 
         if set_name != "" {
             self.write_field_string(set_name, FieldType::Table)?;
-        }
-
-        if !policy.predexp.is_empty() {
-            self.write_predexp(policy.predexp.as_slice(), pred_size)?;
         }
 
         self.write_field_header(2, FieldType::ScanOptions)?;
