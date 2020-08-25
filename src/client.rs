@@ -560,7 +560,7 @@ impl Client {
         let response = node.info(policy.base_policy.timeout, &[&cmd])?;
 
         match response.get(&cmd).map(String::as_str) {
-            Some("ok") => return Ok(()),
+            Some("ok") => Ok(()),
             _ => bail!("UDF Remove failed: {:?}", response),
         }
     }
@@ -835,11 +835,11 @@ impl Client {
             index_type,
             CollectionIndexType::Default,
         )?;
-        return Ok(IndexTask::new(
+        Ok(IndexTask::new(
             Arc::clone(&self.cluster),
             namespace.to_string(),
             index_name.to_string(),
-        ));
+        ))
     }
 
     /// Create a complex secondary index on a bin containing scalar, list or map values. This

@@ -1,4 +1,4 @@
-// Copyright 2015-2018 Aerospike, Inc.
+// Copyright 2015-2020 Aerospike, Inc.
 //
 // Portions may be licensed to Aerospike, Inc. under one or more contributor
 // license agreements.
@@ -14,6 +14,7 @@
 // the License.
 
 mod batch;
+mod cdt_bitwise;
 mod cdt_list;
 mod cdt_map;
 mod index;

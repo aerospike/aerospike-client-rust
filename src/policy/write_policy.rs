@@ -1,4 +1,4 @@
-// Copyright 2015-2018 Aerospike, Inc.
+// Copyright 2015-2020 Aerospike, Inc.
 //
 // Portions may be licensed to Aerospike, Inc. under one or more contributor
 // license agreements.
@@ -70,7 +70,6 @@ impl WritePolicy {
         let mut wp = WritePolicy::default();
         wp.generation = gen;
         wp.expiration = exp;
-
         wp
     }
 }
@@ -79,7 +78,6 @@ impl Default for WritePolicy {
     fn default() -> WritePolicy {
         WritePolicy {
             base_policy: BasePolicy::default(),
-
             record_exists_action: RecordExistsAction::Update,
             generation_policy: GenerationPolicy::None,
             commit_level: CommitLevel::CommitAll,

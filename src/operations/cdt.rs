@@ -1,4 +1,4 @@
-// Copyright 2015-2018 Aerospike, Inc.
+// Copyright 2015-2020 Aerospike, Inc.
 //
 // Portions may be licensed to Aerospike, Inc. under one or more contributor
 // license agreements.
@@ -18,72 +18,26 @@ use std::collections::HashMap;
 use crate::commands::buffer::Buffer;
 use crate::commands::ParticleType;
 use crate::errors::Result;
-use crate::msgpack::encoder;
+use crate::operations::cdt_context::CdtContext;
 use crate::Value;
 
-#[derive(Debug, Clone, Copy)]
-#[doc(hidden)]
-pub enum CdtOpType {
-    ListAppend = 1,
-    ListAppendItems = 2,
-    ListInsert = 3,
-    ListInsertItems = 4,
-    ListPop = 5,
-    ListPopRange = 6,
-    ListRemove = 7,
-    ListRemoveRange = 8,
-    ListSet = 9,
-    ListTrim = 10,
-    ListClear = 11,
-    ListIncrement = 12,
-    ListSize = 16,
-    ListGet = 17,
-    ListGetRange = 18,
-    MapSetType = 64,
-    MapAdd = 65,
-    MapAddItems = 66,
-    MapPut = 67,
-    MapPutItems = 68,
-    MapReplace = 69,
-    MapReplaceItems = 70,
-    MapIncrement = 73,
-    MapDecrement = 74,
-    MapClear = 75,
-    MapRemoveByKey = 76,
-    MapRemoveByIndex = 77,
-    MapRemoveByValue = 78,
-    MapRemoveByRank = 79,
-    MapRemoveByKeyList = 81,
-    MapRemoveByValueList = 83,
-    MapRemoveByKeyInterval = 84,
-    MapRemoveByIndexRange = 85,
-    MapRemoveByValueInterval = 86,
-    MapRemoveByRankRange = 87,
-    MapSize = 96,
-    MapGetByKey = 97,
-    MapGetByIndex = 98,
-    MapGetByValue = 99,
-    MapGetByRank = 100,
-    MapGetByKeyInterval = 103,
-    MapGetByIndexRange = 104,
-    MapGetByValueInterval = 105,
-    MapGetByRankRange = 106,
-}
-
-#[derive(Debug)]
 #[doc(hidden)]
 pub enum CdtArgument<'a> {
     Byte(u8),
     Int(i64),
+    Bool(bool),
     Value(&'a Value),
     List(&'a [Value]),
     Map(&'a HashMap<Value, Value>),
 }
 
-#[derive(Debug)]
+pub type OperationEncoder =
+    Box<dyn Fn(&mut Option<&mut Buffer>, &CdtOperation, &[CdtContext]) -> Result<usize>>;
+
 #[doc(hidden)]
 pub struct CdtOperation<'a> {
-    pub op: CdtOpType,
+    pub op: u8,
+    pub encoder: OperationEncoder,
     pub args: Vec<CdtArgument<'a>>,
 }
 
@@ -92,13 +46,13 @@ impl<'a> CdtOperation<'a> {
         ParticleType::BLOB
     }
 
-    pub fn estimate_size(&self) -> Result<usize> {
-        let size: usize = encoder::pack_cdt_op(&mut None, self)?;
+    pub fn estimate_size(&self, ctx: &[CdtContext]) -> Result<usize> {
+        let size: usize = (self.encoder)(&mut None, self, ctx)?;
         Ok(size)
     }
 
-    pub fn write_to(&self, buffer: &mut Buffer) -> Result<usize> {
-        let size: usize = encoder::pack_cdt_op(&mut Some(buffer), self)?;
+    pub fn write_to(&self, buffer: &mut Buffer, ctx: &[CdtContext]) -> Result<usize> {
+        let size: usize = (self.encoder)(&mut Some(buffer), self, ctx)?;
         Ok(size)
     }
 }

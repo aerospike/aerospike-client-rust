@@ -25,15 +25,15 @@ pub struct RegisterTask {
     package_name: String,
 }
 
-static COMMAND: &'static str = "udf-list";
-static RESPONSE_PATTERN: &'static str = "filename=";
+static COMMAND: &str = "udf-list";
+static RESPONSE_PATTERN: &str = "filename=";
 
 impl RegisterTask {
-    /// Initializes RegisterTask from client, creation should only be expose to Client
+    /// Initializes `RegisterTask` from client, creation should only be expose to Client
     pub fn new(cluster: Arc<Cluster>, package_name: String) -> Self {
         RegisterTask {
-            cluster: cluster,
-            package_name: package_name,
+            cluster,
+            package_name,
         }
     }
 }
@@ -43,11 +43,11 @@ impl Task for RegisterTask {
     fn query_status(&self) -> Result<Status> {
         let nodes = self.cluster.nodes();
 
-        if nodes.len() == 0 {
+        if nodes.is_empty() {
             bail!(ErrorKind::Connection("No connected node".to_string()))
         }
 
-        for node in nodes.iter() {
+        for node in &nodes {
             let response = node.info(
                 Some(self.cluster.client_policy().timeout.unwrap()),
                 &[&COMMAND[..]],
@@ -58,14 +58,10 @@ impl Task for RegisterTask {
             }
 
             let response_find = format!("{}{}", RESPONSE_PATTERN, self.package_name);
-
-            match response[COMMAND].find(&response_find) {
-                None => {
-                    return Ok(Status::InProgress);
-                }
-                _ => {}
+            if response[COMMAND].find(&response_find).is_none() {
+                return Ok(Status::InProgress);
             }
         }
-        return Ok(Status::Complete);
+        Ok(Status::Complete)
     }
 }

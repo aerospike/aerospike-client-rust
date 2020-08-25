@@ -1,4 +1,4 @@
-// Copyright 2015-2018 Aerospike, Inc.
+// Copyright 2015-2020 Aerospike, Inc.
 //
 // Portions may be licensed to Aerospike, Inc. under one or more contributor
 // license agreements.
@@ -16,7 +16,7 @@
 use crate::policy::{BasePolicy, PolicyLike};
 
 /// `ScanPolicy` encapsulates optional parameters used in scan operations.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct ScanPolicy {
     /// Base policy instance
     pub base_policy: BasePolicy,
