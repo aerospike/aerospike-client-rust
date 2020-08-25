@@ -1,4 +1,4 @@
-// Copyright 2015-2018 Aerospike, Inc.
+// Copyright 2015-2020 Aerospike, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -436,7 +436,7 @@ impl Buffer {
             self.data_offset += operation.estimate_size()? + OPERATION_HEADER_SIZE as usize;
         }
 
-        let mut field_count = self.estimate_key_size(key, policy.send_key && write_attr != 0)?;
+        let field_count = self.estimate_key_size(key, policy.send_key && write_attr != 0)?;
 
         self.size_buffer()?;
 
