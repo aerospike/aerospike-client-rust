@@ -1,4 +1,4 @@
-// Copyright 2015-2018 Aerospike, Inc.
+// Copyright 2015-2020 Aerospike, Inc.
 //
 // Portions may be licensed to Aerospike, Inc. under one or more contributor
 // license agreements.
@@ -14,8 +14,6 @@
 // the License.
 
 use crate::policy::{BasePolicy, PolicyLike};
-use crate::query::PredExp;
-use std::sync::Arc;
 
 /// `ScanPolicy` encapsulates optional parameters used in scan operations.
 #[derive(Clone)]
@@ -51,7 +49,6 @@ impl ScanPolicy {
     pub fn new() -> Self {
         ScanPolicy::default()
     }
-
 }
 
 impl Default for ScanPolicy {

@@ -1,4 +1,4 @@
-// Copyright 2015-2018 Aerospike, Inc.
+// Copyright 2015-2020 Aerospike, Inc.
 //
 // Portions may be licensed to Aerospike, Inc. under one or more contributor
 // license agreements.
@@ -14,9 +14,7 @@
 // the License.
 
 use crate::policy::{BasePolicy, PolicyLike};
-use crate::query::PredExp;
 use crate::{CommitLevel, Expiration, GenerationPolicy, RecordExistsAction};
-use std::sync::Arc;
 
 /// `WritePolicy` encapsulates parameters for all write operations.
 pub struct WritePolicy {

@@ -1,4 +1,4 @@
-// Copyright 2015-2018 Aerospike, Inc.
+// Copyright 2015-2020 Aerospike, Inc.
 //
 // Portions may be licensed to Aerospike, Inc. under one or more contributor
 // license agreements.
@@ -33,6 +33,7 @@ pub enum CdtArgument<'a> {
 
 pub type OperationEncoder =
     Box<dyn Fn(&mut Option<&mut Buffer>, &CdtOperation, &[CdtContext]) -> Result<usize>>;
+
 #[doc(hidden)]
 pub struct CdtOperation<'a> {
     pub op: u8,

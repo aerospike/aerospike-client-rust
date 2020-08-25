@@ -1,4 +1,4 @@
-// Copyright 2015-2018 Aerospike, Inc.
+// Copyright 2015-2020 Aerospike, Inc.
 //
 // Portions may be licensed to Aerospike, Inc. under one or more contributor
 // license agreements.
@@ -175,7 +175,7 @@ impl Default for ListPolicy {
 
 #[doc(hidden)]
 pub fn list_order_flag(order: ListOrderType, pad: bool) -> u8 {
-    if order as u8 == ListOrderType::Ordered as u8 {
+    if let ListOrderType::Ordered = order {
         return 0xc0;
     }
     if pad {
