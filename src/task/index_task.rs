@@ -26,18 +26,18 @@ pub struct IndexTask {
     index_name: String,
 }
 
-static SUCCESS_PATTERN: &'static str = "load_pct=";
-static FAIL_PATTERN_201: &'static str = "FAIL:201";
-static FAIL_PATTERN_203: &'static str = "FAIL:203";
-static DELMITER: &'static str = ";";
+static SUCCESS_PATTERN: &str = "load_pct=";
+static FAIL_PATTERN_201: &str = "FAIL:201";
+static FAIL_PATTERN_203: &str = "FAIL:203";
+static DELMITER: &str = ";";
 
 impl IndexTask {
-    /// Initializes IndexTask from client, creation should only be expose to Client
+    /// Initializes `IndexTask` from client, creation should only be expose to Client
     pub fn new(cluster: Arc<Cluster>, namespace: String, index_name: String) -> Self {
         IndexTask {
-            cluster: cluster,
-            namespace: namespace,
-            index_name: index_name,
+            cluster,
+            namespace,
+            index_name,
         }
     }
 
@@ -49,7 +49,7 @@ impl IndexTask {
         match response.find(SUCCESS_PATTERN) {
             None => {
                 if response.contains(FAIL_PATTERN_201) || response.contains(FAIL_PATTERN_203) {
-                    return Ok(Status::NotFound);
+                    Ok(Status::NotFound)
                 } else {
                     bail!(ErrorKind::BadResponse(format!(
                         "Code 201 and 203 missing. Response: {}",
@@ -69,8 +69,8 @@ impl IndexTask {
                 };
                 let percent_str = &response[percent_begin..percent_begin + percent_end];
                 match percent_str.parse::<isize>() {
-                    Ok(100) => return Ok(Status::Complete),
-                    Ok(_) => return Ok(Status::InProgress),
+                    Ok(100) => Ok(Status::Complete),
+                    Ok(_) => Ok(Status::InProgress),
                     Err(_) => bail!(ErrorKind::BadResponse(
                         "Unexpected load_pct value from server".to_string()
                     )),
@@ -85,11 +85,11 @@ impl Task for IndexTask {
     fn query_status(&self) -> Result<Status> {
         let nodes = self.cluster.nodes();
 
-        if nodes.len() == 0 {
+        if nodes.is_empty() {
             bail!(ErrorKind::Connection("No connected node".to_string()))
         }
 
-        for node in nodes.iter() {
+        for node in &nodes {
             let command =
                 &IndexTask::build_command(self.namespace.to_owned(), self.index_name.to_owned());
             let response = node.info(
@@ -106,6 +106,6 @@ impl Task for IndexTask {
                 in_progress_or_error => return in_progress_or_error,
             }
         }
-        return Ok(Status::Complete);
+        Ok(Status::Complete)
     }
 }

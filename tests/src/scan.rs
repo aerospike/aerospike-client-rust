@@ -1,4 +1,4 @@
-// Copyright 2015-2018 Aerospike, Inc.
+// Copyright 2015-2020 Aerospike, Inc.
 //
 // Portions may be licensed to Aerospike, Inc. under one or more contributor
 // license agreements.
@@ -20,7 +20,7 @@ use std::thread;
 use crate::common;
 use env_logger;
 
-use aerospike::{as_bin, as_key, Bins, ScanPolicy, WritePolicy};
+use aerospike::*;
 
 const EXPECTED: usize = 1000;
 

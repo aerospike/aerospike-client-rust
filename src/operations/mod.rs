@@ -1,4 +1,4 @@
-// Copyright 2015-2018 Aerospike, Inc.
+// Copyright 2015-2020 Aerospike, Inc.
 //
 // Portions may be licensed to Aerospike, Inc. under one or more contributor
 // license agreements.
@@ -15,8 +15,10 @@
 
 //! Functions used to create database operations used in the client's `operate()` method.
 
+pub mod bitwise;
 #[doc(hidden)]
 pub mod cdt;
+pub mod cdt_context;
 pub mod lists;
 pub mod maps;
 pub mod scalar;
@@ -37,9 +39,10 @@ pub use self::scalar::*;
 use crate::commands::buffer::Buffer;
 use crate::commands::ParticleType;
 use crate::errors::Result;
+use crate::operations::cdt_context::CdtContext;
 use crate::Value;
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Clone, Copy)]
 #[doc(hidden)]
 pub enum OperationType {
     Read = 1,
@@ -50,18 +53,22 @@ pub enum OperationType {
     Append = 9,
     Prepend = 10,
     Touch = 11,
+    BitRead = 12,
+    BitWrite = 13,
+    Delete = 14,
+    HllRead = 15,
+    HllWrite = 16,
 }
 
-#[derive(Debug)]
 #[doc(hidden)]
 pub enum OperationData<'a> {
     None,
     Value(&'a Value),
     CdtListOp(CdtOperation<'a>),
     CdtMapOp(CdtOperation<'a>),
+    CdtBitOp(CdtOperation<'a>),
 }
 
-#[derive(Debug)]
 #[doc(hidden)]
 pub enum OperationBin<'a> {
     None,
@@ -70,11 +77,14 @@ pub enum OperationBin<'a> {
 }
 
 /// Database operation definition. This data type is used in the client's `operate()` method.
-#[derive(Debug)]
 pub struct Operation<'a> {
     // OpType determines type of operation.
     #[doc(hidden)]
     pub op: OperationType,
+
+    // CDT context for nested types
+    #[doc(hidden)]
+    pub ctx: &'a [CdtContext],
 
     // BinName (Optional) determines the name of bin used in operation.
     #[doc(hidden)]
@@ -96,9 +106,9 @@ impl<'a> Operation<'a> {
         size += match self.data {
             OperationData::None => 0,
             OperationData::Value(value) => value.estimate_size()?,
-            OperationData::CdtListOp(ref cdt_op) | OperationData::CdtMapOp(ref cdt_op) => {
-                cdt_op.estimate_size()?
-            }
+            OperationData::CdtListOp(ref cdt_op)
+            | OperationData::CdtMapOp(ref cdt_op)
+            | OperationData::CdtBitOp(ref cdt_op) => cdt_op.estimate_size(self.ctx)?,
         };
 
         Ok(size)
@@ -122,9 +132,11 @@ impl<'a> Operation<'a> {
                 size += self.write_op_header_to(buffer, value.particle_type() as u8)?;
                 size += value.write_to(buffer)?;
             }
-            OperationData::CdtListOp(ref cdt_op) | OperationData::CdtMapOp(ref cdt_op) => {
+            OperationData::CdtListOp(ref cdt_op)
+            | OperationData::CdtMapOp(ref cdt_op)
+            | OperationData::CdtBitOp(ref cdt_op) => {
                 size += self.write_op_header_to(buffer, cdt_op.particle_type() as u8)?;
-                size += cdt_op.write_to(buffer)?;
+                size += cdt_op.write_to(buffer, self.ctx)?;
             }
         };
 
@@ -145,5 +157,11 @@ impl<'a> Operation<'a> {
             }
         }
         Ok(size)
+    }
+
+    /// Set the context of the operation. Required for nested structures
+    pub const fn set_context(mut self, ctx: &'a [CdtContext]) -> Operation<'a> {
+        self.ctx = ctx;
+        self
     }
 }

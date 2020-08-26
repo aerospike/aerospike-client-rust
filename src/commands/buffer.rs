@@ -1,4 +1,4 @@
-// Copyright 2015-2018 Aerospike, Inc.
+// Copyright 2015-2020 Aerospike, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -417,15 +417,19 @@ impl Buffer {
                 | Operation {
                     op: OperationType::CdtRead,
                     ..
+                }
+                | Operation {
+                    op: OperationType::BitRead,
+                    ..
                 } => read_attr |= INFO1_READ,
                 _ => write_attr |= INFO2_WRITE,
             }
 
-            let map_op = match operation.data {
-                OperationData::CdtMapOp(_) => true,
+            let each_op = match operation.data {
+                OperationData::CdtMapOp(_) | OperationData::CdtBitOp(_) => true,
                 _ => false,
             };
-            if policy.respond_per_each_op || map_op {
+            if policy.respond_per_each_op || each_op {
                 write_attr |= INFO2_RESPOND_ALL_OPS;
             }
 
@@ -496,6 +500,7 @@ impl Buffer {
         self.begin()?;
 
         let mut field_count = 0;
+
         if namespace != "" {
             self.data_offset += namespace.len() + FIELD_HEADER_SIZE as usize;
             field_count += 1;
@@ -616,7 +621,7 @@ impl Buffer {
             }
         }
 
-        if statement.predexp.len() > 0 {
+        if !statement.predexp.is_empty() {
             pred_size += self.estimate_predexp_size(statement.predexp.as_slice());
             self.data_offset += pred_size + FIELD_HEADER_SIZE as usize;
             field_count += 1;
@@ -749,7 +754,7 @@ impl Buffer {
             self.write_u8(100)?;
         }
 
-        if statement.predexp.len() > 0 {
+        if !statement.predexp.is_empty() {
             self.write_predexp(statement.predexp.as_slice(), pred_size)?;
         }
 
@@ -787,7 +792,7 @@ impl Buffer {
         for pred in predexp {
             size += pred.marshaled_size();
         }
-        return size;
+        size
     }
 
     fn estimate_key_size(&mut self, key: &Key, send_key: bool) -> Result<u16> {
