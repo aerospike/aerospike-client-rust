@@ -153,6 +153,7 @@ extern crate scoped_pool;
 pub use batch::BatchRead;
 pub use bin::{Bin, Bins};
 pub use client::Client;
+pub use commands::particle_type::ParticleType;
 pub use errors::{Error, ErrorKind, Result};
 pub use key::Key;
 pub use net::Host;
@@ -162,6 +163,7 @@ pub use policy::{
     GenerationPolicy, Policy, Priority, QueryPolicy, ReadPolicy, RecordExistsAction, ScanPolicy,
     WritePolicy,
 };
+pub use query::regex_flag::RegexFlag;
 pub use query::{CollectionIndexType, IndexType, Recordset, Statement, UDFLang};
 pub use record::Record;
 pub use result_code::ResultCode;

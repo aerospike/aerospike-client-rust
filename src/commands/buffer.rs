@@ -26,7 +26,6 @@ use crate::policy::{
     BatchPolicy, CommitLevel, ConsistencyLevel, GenerationPolicy, QueryPolicy, ReadPolicy,
     RecordExistsAction, ScanPolicy, WritePolicy,
 };
-use crate::query::predexp::PredExp;
 use crate::{BatchRead, Bin, Bins, CollectionIndexType, Key, Statement, Value};
 use std::sync::Arc;
 
@@ -621,12 +620,6 @@ impl Buffer {
             }
         }
 
-        if !statement.predexp.is_empty() {
-            pred_size += self.estimate_predexp_size(statement.predexp.as_slice());
-            self.data_offset += pred_size + FIELD_HEADER_SIZE as usize;
-            field_count += 1;
-        }
-
         // Allocate space for TaskId field.
         self.data_offset += 8 + FIELD_HEADER_SIZE as usize;
         field_count += 1;
@@ -754,10 +747,6 @@ impl Buffer {
             self.write_u8(100)?;
         }
 
-        if !statement.predexp.is_empty() {
-            self.write_predexp(statement.predexp.as_slice(), pred_size)?;
-        }
-
         if let Some(ref aggregation) = statement.aggregation {
             self.write_field_header(1, FieldType::UdfOp)?;
             if statement.bins.is_none() {
@@ -785,14 +774,6 @@ impl Buffer {
         }
 
         self.end()
-    }
-
-    fn estimate_predexp_size(&mut self, predexp: &[Arc<Box<dyn PredExp>>]) -> usize {
-        let mut size: usize = 0;
-        for pred in predexp {
-            size += pred.marshaled_size();
-        }
-        size
     }
 
     fn estimate_key_size(&mut self, key: &Key, send_key: bool) -> Result<u16> {
@@ -1010,16 +991,6 @@ impl Buffer {
         self.write_field_header(value.estimate_size()? + 1, ftype)?;
         self.write_u8(value.particle_type() as u8)?;
         value.write_to(self)?;
-
-        Ok(())
-    }
-
-    fn write_predexp(&mut self, predexp: &[Arc<Box<dyn PredExp>>], size: usize) -> Result<()> {
-        self.write_field_header(size, FieldType::Predicate)?;
-        for pred in predexp {
-            // PredExp structs hold their own write function, varying on the predexp type.
-            pred.write(self)?;
-        }
 
         Ok(())
     }

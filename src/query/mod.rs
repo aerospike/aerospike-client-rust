@@ -18,15 +18,13 @@
 
 pub use self::filter::Filter;
 pub use self::index_types::{CollectionIndexType, IndexType};
-pub use self::predexp::*;
 pub use self::recordset::Recordset;
 pub use self::statement::Statement;
 pub use self::udf::UDFLang;
 
 mod filter;
 mod index_types;
-/// Predicate Filtering
-pub mod predexp;
 mod recordset;
+pub mod regex_flag;
 mod statement;
 mod udf;
