@@ -126,7 +126,11 @@ impl Buffer {
             bail!("Invalid size for buffer: {}", size);
         }
 
+        let len = self.data_buffer.len();
         self.data_buffer.resize(size, 0);
+        if len > 8192 && size < len {
+            self.data_buffer.shrink_to_fit();
+        }
 
         Ok(())
     }
