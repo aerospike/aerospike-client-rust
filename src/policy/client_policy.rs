@@ -99,7 +99,7 @@ impl Default for ClientPolicy {
             use_services_alternate: false,
             thread_pool_size: 128,
             cluster_name: None,
-            buffer_reclaim_threshold: 8192,
+            buffer_reclaim_threshold: 65536,
         }
     }
 }
