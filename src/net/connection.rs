@@ -43,7 +43,7 @@ impl Connection {
     pub fn new<T: ToSocketAddrs>(addr: T, policy: &ClientPolicy) -> Result<Self> {
         let stream = TcpStream::connect(addr)?;
         let mut conn = Connection {
-            buffer: Buffer::new(),
+            buffer: Buffer::new(policy.buffer_reclaim_threshold),
             bytes_read: 0,
             timeout: policy.timeout,
             conn: stream,
