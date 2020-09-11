@@ -4,6 +4,22 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.6.0] - 2020-09-11
+
+* **Bug Fixes**
+  * Shrink connection buffers to avoid unbounded memory allocation. [(#83)](https://github.com/aerospike/aerospike-client-rust/pull/83) Thanks to [@soro](https://github.com/soro)!
+
+* **New Features**
+  * Big update for operations: [(#79)](https://github.com/aerospike/aerospike-client-rust/pull/71) Thanks to [@jonas32](https://github.com/jonas32)!
+    * Added operation contexts for nested operations.
+    * Added missing list operations, list policies, and ordered lists.
+    * Added missing map operations.
+    * Added bitwise operations.
+    * CAUTION: This is a breaking change. The policy and return types for Lists require additional parameters for the cdt op functions.
+
+* **Updates**
+  * Restrict Travis CI tests to stable/beta/nightly. [(#84)](https://github.com/aerospike/aerospike-client-rust/pull/84)
+
 ## [0.5.0] - 2020-07-30
 
 * **Bug Fixes**
