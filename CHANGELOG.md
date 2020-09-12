@@ -10,7 +10,7 @@ All notable changes to this project will be documented in this file.
   * Shrink connection buffers to avoid unbounded memory allocation. [(#83)](https://github.com/aerospike/aerospike-client-rust/pull/83) Thanks to [@soro](https://github.com/soro)!
 
 * **New Features**
-  * Big update for operations: [(#79)](https://github.com/aerospike/aerospike-client-rust/pull/71) Thanks to [@jonas32](https://github.com/jonas32)!
+  * Big update for operations: [(#79)](https://github.com/aerospike/aerospike-client-rust/pull/79) Thanks to [@jonas32](https://github.com/jonas32)!
     * Added operation contexts for nested operations.
     * Added missing list operations, list policies, and ordered lists.
     * Added missing map operations.
