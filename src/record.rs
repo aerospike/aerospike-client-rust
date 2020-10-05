@@ -16,9 +16,12 @@
 use std::collections::HashMap;
 use std::fmt;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use serde::{Serialize};
 
 use crate::Key;
 use crate::Value;
+
+
 
 lazy_static! {
   // Fri Jan  1 00:00:00 UTC 2010
@@ -26,7 +29,7 @@ lazy_static! {
 }
 
 /// Container object for a database record.
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 pub struct Record {
     /// Record key. When reading a record from the database, the key is not set in the returned
     /// Record struct.

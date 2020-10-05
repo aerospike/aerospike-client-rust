@@ -31,6 +31,9 @@ use crate::commands::ParticleType;
 use crate::errors::Result;
 use crate::msgpack::{decoder, encoder};
 
+use serde::ser::{SerializeMap, SerializeSeq};
+use serde::{Serialize, Serializer};
+
 /// Container for floating point bin values stored in the Aerospike database.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum FloatValue {
@@ -731,5 +734,48 @@ mod tests {
         let string = String::from(r#"{"type":"Point"}"#);
         let str = r#"{"type":"Point"}"#;
         assert_eq!(as_geo!(string), as_geo!(str));
+    }
+}
+
+impl Serialize for Value {
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<<S as Serializer>::Ok, <S as Serializer>::Error>
+        where
+            S: Serializer,
+    {
+
+        match &self {
+            Value::Nil => serializer.serialize_none(),
+            Value::Bool(b) => serializer.serialize_bool(*b),
+            Value::Int(i) => serializer.serialize_i64(*i),
+            Value::UInt(u) => serializer.serialize_u64(*u),
+            Value::Float(f) => match f {
+                FloatValue::F32(u) => serializer.serialize_u32(*u),
+                FloatValue::F64(u) => serializer.serialize_u64(*u),
+            },
+            Value::String(s) => serializer.serialize_str(s),
+            Value::Blob(b) => serializer.serialize_bytes(&b[..]),
+            Value::List(l) => {
+                let mut seq = serializer.serialize_seq(Some(l.len()))?;
+                for elem in l {
+                    seq.serialize_element(&elem)?;
+                }
+                seq.end()
+            }
+            Value::HashMap(m) => {
+                let mut map = serializer.serialize_map(Some(m.len()))?;
+                for (key, value) in m {
+                    map.serialize_entry(&key, &value)?;
+                }
+                map.end()
+            }
+            Value::OrderedMap(m) => {
+                let mut map = serializer.serialize_map(Some(m.len()))?;
+                for (key, value) in m {
+                    map.serialize_entry(&key, &value)?;
+                }
+                map.end()
+            }
+            Value::GeoJSON(s) => serializer.serialize_str(&s),
+        }
     }
 }

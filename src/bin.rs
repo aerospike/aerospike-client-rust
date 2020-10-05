@@ -14,7 +14,7 @@
 // the License.
 
 use std::convert::From;
-
+use serde::{Serialize};
 use crate::value::Value;
 
 /// Container object for a record bin, comprising a name and a value.
@@ -51,7 +51,7 @@ macro_rules! as_bin {
 }
 
 /// Specify which, if any, bins to return in read operations.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub enum Bins {
     /// Read all bins.
     All,
