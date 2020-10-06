@@ -17,7 +17,7 @@ use aerospike::{
     as_bin, as_blob, as_geo, as_key, as_list, as_map, as_val, Bins, ReadPolicy, Value, WritePolicy,
 };
 use std::collections::HashMap;
-
+use serde_json::json;
 use env_logger;
 
 use crate::common;
@@ -83,6 +83,13 @@ fn connect() {
     let bins = Bins::from(["bin999", "bin f64"]);
     let record = client.get(&policy, &key, bins).unwrap();
     assert_eq!(record.bins.len(), 2);
+
+    let json = serde_json::to_string(&record);
+    if json.is_err() {
+        assert!(false)
+    }
+    let json = serde_json::to_string(&record.bins.get("bin999"));
+    assert_eq!(json.unwrap(), "\"test string\"");
 
     let record = client.get(&policy, &key, Bins::None).unwrap();
     assert_eq!(record.bins.len(), 0);
