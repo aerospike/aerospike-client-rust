@@ -738,11 +738,13 @@ mod tests {
 }
 
 impl Serialize for Value {
-    fn serialize<S>(&self, serializer: S) -> std::result::Result<<S as Serializer>::Ok, <S as Serializer>::Error>
-        where
-            S: Serializer,
+    fn serialize<S>(
+        &self,
+        serializer: S,
+    ) -> std::result::Result<<S as Serializer>::Ok, <S as Serializer>::Error>
+    where
+        S: Serializer,
     {
-
         match &self {
             Value::Nil => serializer.serialize_none(),
             Value::Bool(b) => serializer.serialize_bool(*b),
@@ -752,7 +754,7 @@ impl Serialize for Value {
                 FloatValue::F32(u) => serializer.serialize_u32(*u),
                 FloatValue::F64(u) => serializer.serialize_u64(*u),
             },
-            Value::String(s) => serializer.serialize_str(s),
+            Value::String(s) |  Value::GeoJSON(s) => serializer.serialize_str(s),
             Value::Blob(b) => serializer.serialize_bytes(&b[..]),
             Value::List(l) => {
                 let mut seq = serializer.serialize_seq(Some(l.len()))?;
@@ -775,7 +777,6 @@ impl Serialize for Value {
                 }
                 map.end()
             }
-            Value::GeoJSON(s) => serializer.serialize_str(&s),
         }
     }
 }

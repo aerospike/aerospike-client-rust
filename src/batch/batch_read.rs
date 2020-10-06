@@ -16,7 +16,7 @@
 use crate::Bins;
 use crate::Key;
 use crate::Record;
-use serde::{Serialize};
+use serde::Serialize;
 
 /// Key and bin names used in batch read commands where variable bins are needed for each key.
 #[derive(Serialize)]

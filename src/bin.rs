@@ -13,9 +13,9 @@
 // License for the specific language governing permissions and limitations under
 // the License.
 
-use std::convert::From;
-use serde::{Serialize};
 use crate::value::Value;
+use serde::Serialize;
+use std::convert::From;
 
 /// Container object for a record bin, comprising a name and a value.
 pub struct Bin<'a> {

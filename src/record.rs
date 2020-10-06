@@ -13,15 +13,13 @@
 // License for the specific language governing permissions and limitations under
 // the License.
 
+use serde::Serialize;
 use std::collections::HashMap;
 use std::fmt;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
-use serde::{Serialize};
 
 use crate::Key;
 use crate::Value;
-
-
 
 lazy_static! {
   // Fri Jan  1 00:00:00 UTC 2010
