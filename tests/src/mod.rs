@@ -24,3 +24,5 @@ mod scan;
 mod task;
 mod truncate;
 mod udf;
+#[cfg(feature="serialization")]
+mod serialization;

@@ -13,7 +13,9 @@
 // License for the specific language governing permissions and limitations under
 // the License.
 
+#[cfg(feature="serialization")]
 use serde::Serialize;
+
 use std::collections::HashMap;
 use std::fmt;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -27,7 +29,8 @@ lazy_static! {
 }
 
 /// Container object for a database record.
-#[derive(Debug, Serialize)]
+#[derive(Debug)]
+#[cfg_attr(feature = "serialization", derive(Serialize))]
 pub struct Record {
     /// Record key. When reading a record from the database, the key is not set in the returned
     /// Record struct.

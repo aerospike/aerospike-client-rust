@@ -14,6 +14,7 @@
 // the License.
 
 use crate::value::Value;
+#[cfg(feature="serialization")]
 use serde::Serialize;
 use std::convert::From;
 
@@ -51,7 +52,8 @@ macro_rules! as_bin {
 }
 
 /// Specify which, if any, bins to return in read operations.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serialization", derive(Serialize))]
 pub enum Bins {
     /// Read all bins.
     All,

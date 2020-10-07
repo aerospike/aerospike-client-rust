@@ -31,7 +31,9 @@ use crate::commands::ParticleType;
 use crate::errors::Result;
 use crate::msgpack::{decoder, encoder};
 
+#[cfg(feature="serialization")]
 use serde::ser::{SerializeMap, SerializeSeq};
+#[cfg(feature="serialization")]
 use serde::{Serialize, Serializer};
 
 /// Container for floating point bin values stored in the Aerospike database.
@@ -700,7 +702,7 @@ macro_rules! as_values {
 macro_rules! as_map {
     ( $( $k:expr => $v:expr),* ) => {
         {
-            let mut temp_map = HashMap::new();
+            let mut temp_map = std::collections::HashMap::new();
             $(
                 temp_map.insert(as_val!($k), as_val!($v));
             )*
@@ -709,41 +711,14 @@ macro_rules! as_map {
     };
 }
 
-#[cfg(test)]
-mod tests {
-    use super::Value;
-
-    #[test]
-    fn as_string() {
-        assert_eq!(Value::Nil.as_string(), String::from("<null>"));
-        assert_eq!(Value::Int(42).as_string(), String::from("42"));
-        assert_eq!(
-            Value::UInt(9_223_372_036_854_775_808).as_string(),
-            String::from("9223372036854775808")
-        );
-        assert_eq!(Value::Bool(true).as_string(), String::from("true"));
-        assert_eq!(Value::from(4.1416).as_string(), String::from("4.1416"));
-        assert_eq!(
-            as_geo!(r#"{"type":"Point"}"#).as_string(),
-            String::from(r#"{"type":"Point"}"#)
-        );
-    }
-
-    #[test]
-    fn as_geo() {
-        let string = String::from(r#"{"type":"Point"}"#);
-        let str = r#"{"type":"Point"}"#;
-        assert_eq!(as_geo!(string), as_geo!(str));
-    }
-}
-
+#[cfg(feature = "serialization")]
 impl Serialize for Value {
     fn serialize<S>(
         &self,
         serializer: S,
     ) -> std::result::Result<<S as Serializer>::Ok, <S as Serializer>::Error>
-    where
-        S: Serializer,
+        where
+            S: Serializer,
     {
         match &self {
             Value::Nil => serializer.serialize_none(),
@@ -780,3 +755,46 @@ impl Serialize for Value {
         }
     }
 }
+
+
+#[cfg(test)]
+mod tests {
+    use super::Value;
+
+    #[test]
+    fn as_string() {
+        assert_eq!(Value::Nil.as_string(), String::from("<null>"));
+        assert_eq!(Value::Int(42).as_string(), String::from("42"));
+        assert_eq!(
+            Value::UInt(9_223_372_036_854_775_808).as_string(),
+            String::from("9223372036854775808")
+        );
+        assert_eq!(Value::Bool(true).as_string(), String::from("true"));
+        assert_eq!(Value::from(4.1416).as_string(), String::from("4.1416"));
+        assert_eq!(
+            as_geo!(r#"{"type":"Point"}"#).as_string(),
+            String::from(r#"{"type":"Point"}"#)
+        );
+    }
+
+    #[test]
+    fn as_geo() {
+        let string = String::from(r#"{"type":"Point"}"#);
+        let str = r#"{"type":"Point"}"#;
+        assert_eq!(as_geo!(string), as_geo!(str));
+    }
+
+    #[test]
+    #[cfg(feature = "serialization")]
+    fn serializer(){
+        let val: Value = as_list!("0", 9, 8, 7, 1, 2.1f64, -1, as_list!(5,6,7,8,"asd"));
+        let json = serde_json::to_string(&val);
+        assert_eq!(json.unwrap(), "[\"0\",9,8,7,1,4611911198408756429,-1,[5,6,7,8,\"asd\"]]", "List Serialization failed");
+
+        let val: Value = as_map!("a" => 1, "b" => 2, "c" => 3, "d" => 4, "e" => 5, "f" => as_map!("test"=>123));
+        let json = serde_json::to_string(&val);
+        // We only check for the len of the String because HashMap serialization does not keep the key order. Comparing like the list above is not possible.
+        assert_eq!(json.unwrap().len(), 48, "Map Serialization failed");
+    }
+}
+

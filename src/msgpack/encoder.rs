@@ -69,7 +69,7 @@ pub fn pack_cdt_op(
         for c in ctx {
             if c.id != 0 {
                 size += pack_integer(buf, i64::from(c.id | c.flags))?;
-            }else {
+            } else {
                 size += pack_integer(buf, i64::from(c.id))?;
             }
             size += pack_value(buf, &c.value)?;
@@ -109,7 +109,7 @@ pub fn pack_cdt_bit_op(
         for c in ctx {
             if c.id != 0 {
                 size += pack_integer(buf, i64::from(c.id | c.flags))?;
-            }else {
+            } else {
                 size += pack_integer(buf, i64::from(c.id))?;
             }
             size += pack_value(buf, &c.value)?;
