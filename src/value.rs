@@ -688,7 +688,6 @@ macro_rules! as_values {
 ///
 /// ```rust
 /// # use aerospike::*;
-/// # use std::collections::HashMap;
 /// # fn main() {
 /// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap();
 /// # let client = Client::new(&ClientPolicy::default(), &hosts).unwrap();
