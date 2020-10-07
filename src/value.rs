@@ -31,9 +31,9 @@ use crate::commands::ParticleType;
 use crate::errors::Result;
 use crate::msgpack::{decoder, encoder};
 
-#[cfg(feature="serialization")]
+#[cfg(feature = "serialization")]
 use serde::ser::{SerializeMap, SerializeSeq};
-#[cfg(feature="serialization")]
+#[cfg(feature = "serialization")]
 use serde::{Serialize, Serializer};
 
 /// Container for floating point bin values stored in the Aerospike database.
@@ -717,8 +717,8 @@ impl Serialize for Value {
         &self,
         serializer: S,
     ) -> std::result::Result<<S as Serializer>::Ok, <S as Serializer>::Error>
-        where
-            S: Serializer,
+    where
+        S: Serializer,
     {
         match &self {
             Value::Nil => serializer.serialize_none(),
@@ -729,7 +729,7 @@ impl Serialize for Value {
                 FloatValue::F32(u) => serializer.serialize_u32(*u),
                 FloatValue::F64(u) => serializer.serialize_u64(*u),
             },
-            Value::String(s) |  Value::GeoJSON(s) => serializer.serialize_str(s),
+            Value::String(s) | Value::GeoJSON(s) => serializer.serialize_str(s),
             Value::Blob(b) => serializer.serialize_bytes(&b[..]),
             Value::List(l) => {
                 let mut seq = serializer.serialize_seq(Some(l.len()))?;
@@ -755,7 +755,6 @@ impl Serialize for Value {
         }
     }
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -786,15 +785,19 @@ mod tests {
 
     #[test]
     #[cfg(feature = "serialization")]
-    fn serializer(){
-        let val: Value = as_list!("0", 9, 8, 7, 1, 2.1f64, -1, as_list!(5,6,7,8,"asd"));
+    fn serializer() {
+        let val: Value = as_list!("0", 9, 8, 7, 1, 2.1f64, -1, as_list!(5, 6, 7, 8, "asd"));
         let json = serde_json::to_string(&val);
-        assert_eq!(json.unwrap(), "[\"0\",9,8,7,1,4611911198408756429,-1,[5,6,7,8,\"asd\"]]", "List Serialization failed");
+        assert_eq!(
+            json.unwrap(),
+            "[\"0\",9,8,7,1,4611911198408756429,-1,[5,6,7,8,\"asd\"]]",
+            "List Serialization failed"
+        );
 
-        let val: Value = as_map!("a" => 1, "b" => 2, "c" => 3, "d" => 4, "e" => 5, "f" => as_map!("test"=>123));
+        let val: Value =
+            as_map!("a" => 1, "b" => 2, "c" => 3, "d" => 4, "e" => 5, "f" => as_map!("test"=>123));
         let json = serde_json::to_string(&val);
         // We only check for the len of the String because HashMap serialization does not keep the key order. Comparing like the list above is not possible.
         assert_eq!(json.unwrap().len(), 48, "Map Serialization failed");
     }
 }
-

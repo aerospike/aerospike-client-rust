@@ -57,5 +57,9 @@ fn serialize() {
         assert!(false, "JSON Parsing of the Record was not successful")
     }
     let json = serde_json::to_string(&record.bins.get("bin999"));
-    assert_eq!(json.unwrap(), "\"test string\"", "The Parsed JSON value for bin999 did not match");
+    assert_eq!(
+        json.unwrap(),
+        "\"test string\"",
+        "The Parsed JSON value for bin999 did not match"
+    );
 }

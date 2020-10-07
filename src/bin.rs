@@ -14,7 +14,7 @@
 // the License.
 
 use crate::value::Value;
-#[cfg(feature="serialization")]
+#[cfg(feature = "serialization")]
 use serde::Serialize;
 use std::convert::From;
 
