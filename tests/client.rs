@@ -52,3 +52,15 @@ fn get_node() {
         assert!(node.is_ok());
     }
 }
+
+#[test]
+fn close() {
+    let client = Client::new(common::client_policy(), &common::hosts()).unwrap();
+    assert_eq!(client.is_connected(), true);
+
+    if let Ok(()) = client.close() {
+        assert_eq!(client.is_connected(), false);
+    } else {
+        assert!(false, "Failed to close client");
+    }
+}
