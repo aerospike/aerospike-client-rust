@@ -40,7 +40,7 @@ lazy_static! {
         policy
     };
     static ref GLOBAL_CLIENT: Arc<Client> =
-        { Arc::new(Client::new(&GLOBAL_CLIENT_POLICY, &*AEROSPIKE_HOSTS).unwrap()) };
+        Arc::new(Client::new(&GLOBAL_CLIENT_POLICY, &*AEROSPIKE_HOSTS).unwrap());
 }
 
 pub fn hosts() -> &'static str {
