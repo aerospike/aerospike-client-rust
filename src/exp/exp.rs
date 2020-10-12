@@ -470,7 +470,7 @@ impl Expression {
     /// use aerospike::RegexFlag;
     /// // Select string bin "a" that starts with "prefix" and ends with "suffix".
     /// // Ignore case and do not match newline.
-    /// Expression::regex_compare("prefix.*suffix".to_string(), RegexFlag::ICASE | RegexFlag::NEWLINE, Expression::string_bin("a".to_string()));
+    /// Expression::regex_compare("prefix.*suffix".to_string(), RegexFlag::ICASE as i64 | RegexFlag::NEWLINE as i64, Expression::string_bin("a".to_string()));
     /// ```
     pub fn regex_compare(regex: String, flags: i64, bin: FilterCmd) -> FilterCmd {
         FilterCmd::new(
