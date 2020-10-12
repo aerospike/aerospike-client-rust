@@ -21,6 +21,8 @@ mod index;
 mod kv;
 mod query;
 mod scan;
+#[cfg(feature = "serialization")]
+mod serialization;
 mod task;
 mod truncate;
 mod udf;

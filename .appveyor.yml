@@ -120,3 +120,4 @@ build: false
 # environment variable.
 test_script:
   - cargo test --lib --verbose %cargoflags%
+  - cargo test --lib --features "serialization" --verbose %cargoflags%

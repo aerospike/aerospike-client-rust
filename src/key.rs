@@ -21,11 +21,13 @@ use crate::Value;
 
 use ripemd160::digest::Digest;
 use ripemd160::Ripemd160;
-
+#[cfg(feature = "serialization")]
+use serde::Serialize;
 /// Unique record identifier. Records can be identified using a specified namespace, an optional
 /// set name and a user defined key which must be uique within a set. Records can also be
 /// identified by namespace/digest, which is the combination used on the server.
 #[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "serialization", derive(Serialize))]
 pub struct Key {
     /// Namespace.
     pub namespace: String,
