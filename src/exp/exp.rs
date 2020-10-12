@@ -544,7 +544,7 @@ impl Expression {
     /// ```
     /// use aerospike::exp::exp::Expression;
     /// // ! (a == 0 || a == 10)
-    /// Expression::not(Expression::or(vec![Expression::eq(Expression::int_bin("a".to_string()), Expression::int_val(0)), Expression::eq(int_bin("a".to_string()), Expression::int_val(10))]));
+    /// Expression::not(Expression::or(vec![Expression::eq(Expression::int_bin("a".to_string()), Expression::int_val(0)), Expression::eq(Expression::int_bin("a".to_string()), Expression::int_val(10))]));
     /// ```
     pub fn not(exp: FilterCmd) -> FilterCmd {
         FilterCmd {
