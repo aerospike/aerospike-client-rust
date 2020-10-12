@@ -1,4 +1,5 @@
 //! Regex Bit Flags
+/// Used to change the Regex Mode in Filters
 pub enum RegexFlag {
     /// Use regex defaults.
     NONE = 0,

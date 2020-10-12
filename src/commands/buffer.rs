@@ -27,7 +27,6 @@ use crate::policy::{
     RecordExistsAction, ScanPolicy, WritePolicy,
 };
 use crate::{BatchRead, Bin, Bins, CollectionIndexType, Key, Statement, Value};
-use std::sync::Arc;
 
 // Contains a read operation.
 const INFO1_READ: u8 = 1;
@@ -601,7 +600,6 @@ impl Buffer {
         let mut field_count = 0;
         let mut filter_size = 0;
         let mut bin_name_size = 0;
-        let mut pred_size = 0;
 
         if statement.namespace != "" {
             self.data_offset += statement.namespace.len() + FIELD_HEADER_SIZE as usize;

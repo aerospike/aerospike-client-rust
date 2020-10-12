@@ -29,6 +29,7 @@ impl Default for ReadPolicy {
             max_retries: Some(2),
             sleep_between_retries: Some(Duration::new(0, 500_000_000)),
             consistency_level: ConsistencyLevel::ConsistencyOne,
+            filter_expression: None,
         }
     }
 }

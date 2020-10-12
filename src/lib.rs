@@ -183,6 +183,7 @@ mod batch;
 mod client;
 mod cluster;
 mod commands;
+pub mod exp;
 mod msgpack;
 mod net;
 pub mod operations;

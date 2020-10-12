@@ -44,7 +44,7 @@ impl QueryPolicy {
 }
 
 impl Default for QueryPolicy {
-    fn default() -> QueryPolicy {
+    fn default() -> Self {
         QueryPolicy {
             base_policy: BasePolicy::default(),
             max_concurrent_nodes: 0,

@@ -75,7 +75,7 @@ impl WritePolicy {
 }
 
 impl Default for WritePolicy {
-    fn default() -> WritePolicy {
+    fn default() -> Self {
         WritePolicy {
             base_policy: BasePolicy::default(),
             record_exists_action: RecordExistsAction::Update,

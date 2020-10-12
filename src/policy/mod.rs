@@ -46,6 +46,7 @@ pub use self::record_exists_action::RecordExistsAction;
 pub use self::scan_policy::ScanPolicy;
 pub use self::write_policy::WritePolicy;
 
+use crate::exp::exp::FilterCmd;
 use std::option::Option;
 use std::time::{Duration, Instant};
 
@@ -78,6 +79,9 @@ pub trait Policy {
     /// How replicas should be consulted in read operations to provide the desired consistency
     /// guarantee.
     fn consistency_level(&self) -> &ConsistencyLevel;
+
+    /// Optional filter expression.
+    fn filter_expression(&self) -> &Option<FilterCmd>;
 }
 
 #[doc(hidden)]
@@ -114,6 +118,10 @@ where
     fn sleep_between_retries(&self) -> Option<Duration> {
         self.base().sleep_between_retries()
     }
+
+    fn filter_expression(&self) -> &Option<FilterCmd> {
+        self.base().filter_expression()
+    }
 }
 
 /// Common parameters shared by all policy types.
@@ -143,15 +151,14 @@ pub struct BasePolicy {
     /// SleepBetweenReplies determines duration to sleep between retries if a
     /// transaction fails and the timeout was not exceeded.  Enter zero to skip sleep.
     pub sleep_between_retries: Option<Duration>,
+
+    /// Optional filter expression.
+    pub filter_expression: Option<FilterCmd>,
 }
 
 impl Policy for BasePolicy {
     fn priority(&self) -> &Priority {
         &self.priority
-    }
-
-    fn consistency_level(&self) -> &ConsistencyLevel {
-        &self.consistency_level
     }
 
     fn deadline(&self) -> Option<Instant> {
@@ -171,5 +178,13 @@ impl Policy for BasePolicy {
 
     fn sleep_between_retries(&self) -> Option<Duration> {
         self.sleep_between_retries
+    }
+
+    fn consistency_level(&self) -> &ConsistencyLevel {
+        &self.consistency_level
+    }
+
+    fn filter_expression(&self) -> &Option<FilterCmd> {
+        &self.filter_expression
     }
 }

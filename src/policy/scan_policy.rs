@@ -52,7 +52,7 @@ impl ScanPolicy {
 }
 
 impl Default for ScanPolicy {
-    fn default() -> ScanPolicy {
+    fn default() -> Self {
         ScanPolicy {
             base_policy: BasePolicy::default(),
             scan_percent: 100,

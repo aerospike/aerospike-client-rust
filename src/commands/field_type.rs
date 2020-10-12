@@ -40,5 +40,4 @@ pub enum FieldType {
     QueryBinList = 40,
     BatchIndex = 41,
     BatchIndexWithSet = 42,
-    Predicate = 43,
 }

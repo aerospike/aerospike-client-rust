@@ -17,7 +17,6 @@ use crate::errors::{ErrorKind, Result};
 use crate::query::Filter;
 use crate::Bins;
 use crate::Value;
-use std::sync::Arc;
 
 #[derive(Clone)]
 pub struct Aggregation {
