@@ -349,7 +349,7 @@ impl Expression {
     /// use aerospike::operations::lists::ListReturnType;
     /// use aerospike::exp::list_exp::ListExpression;
     /// // String bin a[2] == 3
-    /// Expression::eq(ListExpression::get_by_index(ListReturnType::Values, ExpType::INT, Expression::int_val(2), Expression::list_bin("a".to_string())), Expression::int_val(3));
+    /// Expression::eq(ListExpression::get_by_index(ListReturnType::Values, ExpType::INT, Expression::int_val(2), Expression::list_bin("a".to_string()), &[]), Expression::int_val(3));
     /// ```
     pub fn list_bin(name: String) -> FilterCmd {
         FilterCmd::new(
