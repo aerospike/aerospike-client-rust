@@ -25,7 +25,7 @@ pub const DEFAULT_CTX: &[CdtContext] = &[];
 /// for the current level.
 /// An array of CTX identifies location of the list/map on multiple
 /// levels on nesting.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct CdtContext {
     /// Context Type
     pub id: u8,

@@ -2,7 +2,10 @@
 //! This feature requires Aerospike Server Version >= 5.2
 use crate::commands::buffer::Buffer;
 use crate::errors::Result;
-use crate::msgpack::encoder::{pack_array_begin, pack_integer, pack_value};
+use crate::msgpack::encoder::{
+    pack_array, pack_array_begin, pack_byte, pack_i16, pack_integer, pack_value,
+};
+use crate::operations::cdt_context::CdtContext;
 use crate::Value;
 use std::collections::HashMap;
 use std::fmt::Debug;
@@ -64,6 +67,7 @@ pub const SERIAL_VERSION_ID: i64 = 1;
 pub enum ExpressionArgument {
     Value(Value),
     FilterCmd(FilterCmd),
+    Context(Vec<CdtContext>),
 }
 
 #[derive(Debug, Clone)]
@@ -142,7 +146,26 @@ impl FilterCmd {
                     size += pack_integer(buf, self.flags.unwrap())?;
                     size += pack_integer(buf, self.module.unwrap() as i64)?;
                     if let Some(args) = &self.arguments {
-                        size += pack_array_begin(buf, args.len())?;
+                        let mut len = 0;
+                        for arg in args {
+                            match arg {
+                                ExpressionArgument::Value(_) => len += 1,
+                                ExpressionArgument::FilterCmd(_) => len += 1,
+                                ExpressionArgument::Context(ctx) => {
+                                    if !ctx.is_empty() {
+                                        pack_array_begin(buf, 3)?;
+                                        pack_integer(buf, 0xff)?;
+                                        pack_array_begin(buf, ctx.len() * 2)?;
+
+                                        for c in ctx {
+                                            pack_integer(buf, c.id as i64)?;
+                                            pack_value(buf, &c.value)?;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        size += pack_array_begin(buf, len)?;
                         for arg in args {
                             match arg {
                                 ExpressionArgument::Value(val) => {
@@ -151,6 +174,7 @@ impl FilterCmd {
                                 ExpressionArgument::FilterCmd(cmd) => {
                                     size += cmd.pack(buf)?;
                                 }
+                                _ => {}
                             }
                         }
                     } else {
@@ -323,8 +347,9 @@ impl Expression {
     /// ```
     /// use aerospike::exp::exp::{Expression, ExpType};
     /// use aerospike::operations::lists::ListReturnType;
+    /// use aerospike::exp::list_exp::ListExpression;
     /// // String bin a[2] == 3
-    /// Expression::eq(list_exp::get_by_index(2, ListReturnType::Values, ExpType::INT, Expression::list_bin("a".to_string())), Expression::int_val(3));
+    /// Expression::eq(ListExpression::get_by_index(ListReturnType::Values, ExpType::INT, Expression::int_val(2), Expression::list_bin("a".to_string())), Expression::int_val(3));
     /// ```
     pub fn list_bin(name: String) -> FilterCmd {
         FilterCmd::new(
