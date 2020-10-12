@@ -779,11 +779,11 @@ impl Buffer {
             self.data_offset += 2 + FIELD_HEADER_SIZE as usize;
             field_count += 1;
         }
-        let mut filter_size = 0;
+        let mut filter_exp_size = 0;
 
-        if let Some(filter) = policy.base_policy.filter_expression() {
-            filter_size = filter.pack(&mut None)?;
-            self.data_offset += filter_size + FIELD_HEADER_SIZE as usize;
+        if let Some(filter_exp) = policy.base_policy.filter_expression() {
+            filter_exp_size = filter_exp.pack(&mut None)?;
+            self.data_offset += filter_exp_size + FIELD_HEADER_SIZE as usize;
             field_count += 1;
         }
         if let Some(ref aggregation) = statement.aggregation {
@@ -880,8 +880,8 @@ impl Buffer {
             self.write_u8(100)?;
         }
 
-        if let Some(filter) = policy.base_policy.filter_expression() {
-            self.write_filter_expression(filter, filter_size)?;
+        if let Some(filter_exp) = policy.base_policy.filter_expression() {
+            self.write_filter_expression(filter_exp, filter_exp_size)?;
         }
 
         if let Some(ref aggregation) = statement.aggregation {
