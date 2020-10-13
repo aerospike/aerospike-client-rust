@@ -20,7 +20,7 @@ use byteorder::{ByteOrder, NetworkEndian};
 use crate::batch::batch_executor::SharedSlice;
 use crate::commands::field_type::FieldType;
 use crate::errors::Result;
-use crate::exp::exp::FilterCmd;
+use crate::exp::exp::FilterExpression;
 use crate::msgpack::encoder;
 use crate::operations::{Operation, OperationBin, OperationData, OperationType};
 use crate::policy::{
@@ -1103,7 +1103,7 @@ impl Buffer {
         Ok(())
     }
 
-    fn write_filter_expression(&mut self, filter: &FilterCmd, size: usize) -> Result<()> {
+    fn write_filter_expression(&mut self, filter: &FilterExpression, size: usize) -> Result<()> {
         self.write_field_header(size, FieldType::FilterExp)?;
         filter.pack(&mut Some(self))?;
 

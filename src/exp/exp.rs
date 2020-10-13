@@ -1,5 +1,5 @@
-//! Aerospike Filter Expressions
-//! This feature requires Aerospike Server Version >= 5.2
+//! Basic Aerospike Filter Expressions.
+
 use crate::commands::buffer::Buffer;
 use crate::errors::Result;
 use crate::msgpack::encoder::{
@@ -11,7 +11,6 @@ use std::collections::HashMap;
 use std::fmt::Debug;
 
 #[derive(Debug, Clone, Copy)]
-#[doc(hidden)]
 pub enum ExpType {
     NIL = 0,
     BOOL = 1,
@@ -66,41 +65,41 @@ pub const SERIAL_VERSION_ID: i64 = 1;
 #[doc(hidden)]
 pub enum ExpressionArgument {
     Value(Value),
-    FilterCmd(FilterCmd),
+    FilterExpression(FilterExpression),
     Context(Vec<CdtContext>),
 }
 
 #[derive(Debug, Clone)]
 #[doc(hidden)]
-pub struct FilterCmd {
+pub struct FilterExpression {
     /// The Operation code
     pub cmd: Option<ExpOp>,
     /// The Primary Value of the Operation
     pub val: Option<Value>,
     /// The Bin to use it on (REGEX for example)
-    pub bin: Option<Box<FilterCmd>>,
+    pub bin: Option<Box<FilterExpression>>,
     /// The additional flags for the Operation (REGEX or return_type of Module for example)
     pub flags: Option<i64>,
     /// The optional Module flag for Module operations or Bin Types
     pub module: Option<ExpType>,
     /// Sub commands for the CmdExp operation
-    pub exps: Option<Vec<FilterCmd>>,
+    pub exps: Option<Vec<FilterExpression>>,
 
     pub arguments: Option<Vec<ExpressionArgument>>,
 }
 
 #[doc(hidden)]
-impl FilterCmd {
+impl FilterExpression {
     pub fn new(
         cmd: Option<ExpOp>,
         val: Option<Value>,
-        bin: Option<FilterCmd>,
+        bin: Option<FilterExpression>,
         flags: Option<i64>,
         module: Option<ExpType>,
-        exps: Option<Vec<FilterCmd>>,
-    ) -> FilterCmd {
+        exps: Option<Vec<FilterExpression>>,
+    ) -> FilterExpression {
         if let Some(bin) = bin {
-            FilterCmd {
+            FilterExpression {
                 cmd,
                 val,
                 bin: Some(Box::new(bin)),
@@ -110,7 +109,7 @@ impl FilterCmd {
                 arguments: None,
             }
         } else {
-            FilterCmd {
+            FilterExpression {
                 cmd,
                 val,
                 bin: None,
@@ -150,7 +149,7 @@ impl FilterCmd {
                         for arg in args {
                             match arg {
                                 ExpressionArgument::Value(_) => len += 1,
-                                ExpressionArgument::FilterCmd(_) => len += 1,
+                                ExpressionArgument::FilterExpression(_) => len += 1,
                                 ExpressionArgument::Context(ctx) => {
                                     if !ctx.is_empty() {
                                         pack_array_begin(buf, 3)?;
@@ -171,7 +170,7 @@ impl FilterCmd {
                                 ExpressionArgument::Value(val) => {
                                     size += pack_value(buf, val)?;
                                 }
-                                ExpressionArgument::FilterCmd(cmd) => {
+                                ExpressionArgument::FilterExpression(cmd) => {
                                     size += cmd.pack(buf)?;
                                 }
                                 _ => {}
@@ -217,8 +216,8 @@ impl Expression {
     /// // Integer record key >= 100000
     /// Expression::ge(Expression::key(ExpType::INT), Expression::int_val(10000));
     /// ```
-    pub fn key(exp_type: ExpType) -> FilterCmd {
-        FilterCmd::new(
+    pub fn key(exp_type: ExpType) -> FilterExpression {
+        FilterExpression::new(
             Some(ExpOp::KEY),
             Some(Value::from(exp_type as i64)),
             None,
@@ -235,8 +234,8 @@ impl Expression {
     /// // Key exists in record meta data
     /// Expression::key_exists();
     /// ```
-    pub fn key_exists() -> FilterCmd {
-        FilterCmd::new(Some(ExpOp::KeyExists), None, None, None, None, None)
+    pub fn key_exists() -> FilterExpression {
+        FilterExpression::new(Some(ExpOp::KeyExists), None, None, None, None, None)
     }
 
     /// Create bin expression of specified type.
@@ -245,8 +244,8 @@ impl Expression {
     /// // String bin "a" == "views"
     /// Expression::eq(Expression::bin("a".to_string(), ExpType::STRING), Expression::string_val("views".to_string()));
     /// ```
-    pub fn bin(name: String, exp_type: ExpType) -> FilterCmd {
-        FilterCmd::new(
+    pub fn bin(name: String, exp_type: ExpType) -> FilterExpression {
+        FilterExpression::new(
             Some(ExpOp::BIN),
             Some(Value::from(name)),
             None,
@@ -262,8 +261,8 @@ impl Expression {
     /// // Integer bin "a" == 500
     /// Expression::eq(Expression::int_bin("a".to_string()), Expression::int_val(500));
     /// ```
-    pub fn int_bin(name: String) -> FilterCmd {
-        FilterCmd::new(
+    pub fn int_bin(name: String) -> FilterExpression {
+        FilterExpression::new(
             Some(ExpOp::BIN),
             Some(Value::from(name)),
             None,
@@ -279,8 +278,8 @@ impl Expression {
     /// // String bin "a" == "views"
     /// Expression::eq(Expression::string_bin("a".to_string()), Expression::string_val("views".to_string()));
     /// ```
-    pub fn string_bin(name: String) -> FilterCmd {
-        FilterCmd::new(
+    pub fn string_bin(name: String) -> FilterExpression {
+        FilterExpression::new(
             Some(ExpOp::BIN),
             Some(Value::from(name)),
             None,
@@ -297,8 +296,8 @@ impl Expression {
     /// let blob: Vec<u8> = vec![1,2,3];
     /// Expression::eq(Expression::blob_bin("a".to_string()), Expression::blob_val(blob));
     /// ```
-    pub fn blob_bin(name: String) -> FilterCmd {
-        FilterCmd::new(
+    pub fn blob_bin(name: String) -> FilterExpression {
+        FilterExpression::new(
             Some(ExpOp::BIN),
             Some(Value::from(name)),
             None,
@@ -314,8 +313,8 @@ impl Expression {
     /// // Integer bin "a" == 500.5
     /// Expression::eq(Expression::float_bin("a".to_string()), Expression::float_val(500.5));
     /// ```
-    pub fn float_bin(name: String) -> FilterCmd {
-        FilterCmd::new(
+    pub fn float_bin(name: String) -> FilterExpression {
+        FilterExpression::new(
             Some(ExpOp::BIN),
             Some(Value::from(name)),
             None,
@@ -332,8 +331,8 @@ impl Expression {
     /// let region = "{ \"type\": \"AeroCircle\", \"coordinates\": [[-122.0, 37.5], 50000.0] }";
     /// Expression::eq(Expression::geo_bin("a".to_string()), Expression::string_val(region.to_string()));
     /// ```
-    pub fn geo_bin(name: String) -> FilterCmd {
-        FilterCmd::new(
+    pub fn geo_bin(name: String) -> FilterExpression {
+        FilterExpression::new(
             Some(ExpOp::BIN),
             Some(Value::from(name)),
             None,
@@ -351,8 +350,8 @@ impl Expression {
     /// // String bin a[2] == 3
     /// Expression::eq(ListExpression::get_by_index(ListReturnType::Values, ExpType::INT, Expression::int_val(2), Expression::list_bin("a".to_string()), &[]), Expression::int_val(3));
     /// ```
-    pub fn list_bin(name: String) -> FilterCmd {
-        FilterCmd::new(
+    pub fn list_bin(name: String) -> FilterExpression {
+        FilterExpression::new(
             Some(ExpOp::BIN),
             Some(Value::from(name)),
             None,
@@ -362,8 +361,8 @@ impl Expression {
         )
     }
 
-    pub fn map_bin(name: String) -> FilterCmd {
-        FilterCmd::new(
+    pub fn map_bin(name: String) -> FilterExpression {
+        FilterExpression::new(
             Some(ExpOp::BIN),
             Some(Value::from(name)),
             None,
@@ -373,8 +372,8 @@ impl Expression {
         )
     }
 
-    pub fn hll_bin(name: String) -> FilterCmd {
-        FilterCmd::new(
+    pub fn hll_bin(name: String) -> FilterExpression {
+        FilterExpression::new(
             Some(ExpOp::BIN),
             Some(Value::from(name)),
             None,
@@ -390,7 +389,7 @@ impl Expression {
     /// // Bin "a" exists in record
     /// Expression::bin_exists("a".to_string());
     /// ```
-    pub fn bin_exists(name: String) -> FilterCmd {
+    pub fn bin_exists(name: String) -> FilterExpression {
         Expression::ne(Expression::bin_type(name), Expression::int_val(0))
     }
 
@@ -401,8 +400,8 @@ impl Expression {
     /// // Bin "a" particle type is a list
     /// Expression::eq(Expression::bin_type("a".to_string()), Expression::int_val(ParticleType::LIST as i64));
     /// ```
-    pub fn bin_type(name: String) -> FilterCmd {
-        FilterCmd::new(
+    pub fn bin_type(name: String) -> FilterExpression {
+        FilterExpression::new(
             Some(ExpOp::BinType),
             Some(Value::from(name)),
             None,
@@ -418,8 +417,8 @@ impl Expression {
     /// // Record set name == "myset
     /// Expression::eq(Expression::set_name(), Expression::string_val("myset".to_string()));
     /// ```
-    pub fn set_name() -> FilterCmd {
-        FilterCmd::new(Some(ExpOp::SetName), None, None, None, None, None)
+    pub fn set_name() -> FilterExpression {
+        FilterExpression::new(Some(ExpOp::SetName), None, None, None, None, None)
     }
 
     /// Create function that returns record size on disk.
@@ -429,8 +428,8 @@ impl Expression {
     /// // Record device size >= 100 KB
     /// Expression::ge(Expression::device_size(), Expression::int_val(100*1024));
     /// ```
-    pub fn device_size() -> FilterCmd {
-        FilterCmd::new(Some(ExpOp::DeviceSize), None, None, None, None, None)
+    pub fn device_size() -> FilterExpression {
+        FilterExpression::new(Some(ExpOp::DeviceSize), None, None, None, None, None)
     }
 
     /// Create function that returns record last update time expressed as 64 bit integer
@@ -440,12 +439,12 @@ impl Expression {
     /// // Record last update time >=2020-08-01
     /// Expression::ge(Expression::last_update(), Expression::float_val(1.5962E+18));
     /// ```
-    pub fn last_update() -> FilterCmd {
-        FilterCmd::new(Some(ExpOp::LastUpdate), None, None, None, None, None)
+    pub fn last_update() -> FilterExpression {
+        FilterExpression::new(Some(ExpOp::LastUpdate), None, None, None, None, None)
     }
 
-    pub fn since_update() -> FilterCmd {
-        FilterCmd::new(Some(ExpOp::SinceUpdate), None, None, None, None, None)
+    pub fn since_update() -> FilterExpression {
+        FilterExpression::new(Some(ExpOp::SinceUpdate), None, None, None, None, None)
     }
 
     /// Create function that returns record expiration time expressed as 64 bit integer
@@ -455,8 +454,8 @@ impl Expression {
     /// // Expires on 2020-08-01
     /// Expression::and(vec![Expression::ge(Expression::last_update(), Expression::float_val(1.5962E+18)), Expression::lt(Expression::last_update(), Expression::float_val(1.5963E+18))]);
     /// ```
-    pub fn void_time() -> FilterCmd {
-        FilterCmd::new(Some(ExpOp::VoidTime), None, None, None, None, None)
+    pub fn void_time() -> FilterExpression {
+        FilterExpression::new(Some(ExpOp::VoidTime), None, None, None, None, None)
     }
 
     /// Create function that returns record expiration time (time to live) in integer seconds.
@@ -465,12 +464,12 @@ impl Expression {
     /// use aerospike::exp::exp::Expression;
     /// Expression::lt(Expression::ttl(), Expression::int_val(60*60));
     /// ```
-    pub fn ttl() -> FilterCmd {
-        FilterCmd::new(Some(ExpOp::TTL), None, None, None, None, None)
+    pub fn ttl() -> FilterExpression {
+        FilterExpression::new(Some(ExpOp::TTL), None, None, None, None, None)
     }
 
-    pub fn is_tombstone() -> FilterCmd {
-        FilterCmd::new(Some(ExpOp::IsTombstone), None, None, None, None, None)
+    pub fn is_tombstone() -> FilterExpression {
+        FilterExpression::new(Some(ExpOp::IsTombstone), None, None, None, None, None)
     }
     /// Create function that returns record digest modulo as integer.
     /// ```
@@ -478,8 +477,8 @@ impl Expression {
     /// use aerospike::exp::exp::Expression;
     /// Expression::eq(Expression::digest_modulo(3), Expression::int_val(1));
     /// ```
-    pub fn digest_modulo(modulo: i64) -> FilterCmd {
-        FilterCmd::new(
+    pub fn digest_modulo(modulo: i64) -> FilterExpression {
+        FilterExpression::new(
             Some(ExpOp::DigestModulo),
             Some(Value::from(modulo)),
             None,
@@ -497,8 +496,8 @@ impl Expression {
     /// // Ignore case and do not match newline.
     /// Expression::regex_compare("prefix.*suffix".to_string(), RegexFlag::ICASE as i64 | RegexFlag::NEWLINE as i64, Expression::string_bin("a".to_string()));
     /// ```
-    pub fn regex_compare(regex: String, flags: i64, bin: FilterCmd) -> FilterCmd {
-        FilterCmd::new(
+    pub fn regex_compare(regex: String, flags: i64, bin: FilterExpression) -> FilterExpression {
+        FilterExpression::new(
             Some(ExpOp::REGEX),
             Some(Value::from(regex)),
             Some(bin),
@@ -515,8 +514,8 @@ impl Expression {
     /// let region = "{\"type\": \"Polygon\", \"coordinates\": [ [[-122.500000, 37.000000],[-121.000000, 37.000000], [-121.000000, 38.080000],[-122.500000, 38.080000], [-122.500000, 37.000000]] ] }";
     /// Expression::geo_compare(Expression::geo_bin("a".to_string()), Expression::geo_val(region.to_string()));
     /// ```
-    pub fn geo_compare(left: FilterCmd, right: FilterCmd) -> FilterCmd {
-        FilterCmd::new(
+    pub fn geo_compare(left: FilterExpression, right: FilterExpression) -> FilterExpression {
+        FilterExpression::new(
             Some(ExpOp::GEO),
             None,
             None,
@@ -527,43 +526,43 @@ impl Expression {
     }
 
     /// Creates 64 bit integer value
-    pub fn int_val(val: i64) -> FilterCmd {
-        FilterCmd::new(None, Some(Value::from(val)), None, None, None, None)
+    pub fn int_val(val: i64) -> FilterExpression {
+        FilterExpression::new(None, Some(Value::from(val)), None, None, None, None)
     }
 
     /// Creates String bin value
-    pub fn string_val(val: String) -> FilterCmd {
-        FilterCmd::new(None, Some(Value::from(val)), None, None, None, None)
+    pub fn string_val(val: String) -> FilterExpression {
+        FilterExpression::new(None, Some(Value::from(val)), None, None, None, None)
     }
 
     /// Creates 64 bit float bin value
-    pub fn float_val(val: f64) -> FilterCmd {
-        FilterCmd::new(None, Some(Value::from(val)), None, None, None, None)
+    pub fn float_val(val: f64) -> FilterExpression {
+        FilterExpression::new(None, Some(Value::from(val)), None, None, None, None)
     }
 
     /// Creates Blob bin value
-    pub fn blob_val(val: Vec<u8>) -> FilterCmd {
-        FilterCmd::new(None, Some(Value::from(val)), None, None, None, None)
+    pub fn blob_val(val: Vec<u8>) -> FilterExpression {
+        FilterExpression::new(None, Some(Value::from(val)), None, None, None, None)
     }
 
     /// Create List bin Value
-    pub fn list_val(val: Vec<Value>) -> FilterCmd {
-        FilterCmd::new(None, Some(Value::from(val)), None, None, None, None)
+    pub fn list_val(val: Vec<Value>) -> FilterExpression {
+        FilterExpression::new(None, Some(Value::from(val)), None, None, None, None)
     }
 
     /// Create Map bin Value
-    pub fn map_val(val: HashMap<Value, Value>) -> FilterCmd {
-        FilterCmd::new(None, Some(Value::from(val)), None, None, None, None)
+    pub fn map_val(val: HashMap<Value, Value>) -> FilterExpression {
+        FilterExpression::new(None, Some(Value::from(val)), None, None, None, None)
     }
 
     /// Create geospatial json string value.
-    pub fn geo_val(val: String) -> FilterCmd {
-        FilterCmd::new(None, Some(Value::from(val)), None, None, None, None)
+    pub fn geo_val(val: String) -> FilterExpression {
+        FilterExpression::new(None, Some(Value::from(val)), None, None, None, None)
     }
 
     /// Create a Nil Value
-    pub fn nil() -> FilterCmd {
-        FilterCmd::new(None, Some(Value::Nil), None, None, None, None)
+    pub fn nil() -> FilterExpression {
+        FilterExpression::new(None, Some(Value::Nil), None, None, None, None)
     }
     /// Create "not" operator expression.
     /// ```
@@ -571,8 +570,8 @@ impl Expression {
     /// // ! (a == 0 || a == 10)
     /// Expression::not(Expression::or(vec![Expression::eq(Expression::int_bin("a".to_string()), Expression::int_val(0)), Expression::eq(Expression::int_bin("a".to_string()), Expression::int_val(10))]));
     /// ```
-    pub fn not(exp: FilterCmd) -> FilterCmd {
-        FilterCmd {
+    pub fn not(exp: FilterExpression) -> FilterExpression {
+        FilterExpression {
             cmd: Some(ExpOp::NOT),
             val: None,
             bin: None,
@@ -589,8 +588,8 @@ impl Expression {
     /// // (a > 5 || a == 0) && b < 3
     /// Expression::and(vec![Expression::or(vec![Expression::gt(Expression::int_bin("a".to_string()), Expression::int_val(5)), Expression::eq(Expression::int_bin("a".to_string()), Expression::int_val(0))]), Expression::lt(Expression::int_bin("b".to_string()), Expression::int_val(3))]);
     /// ```
-    pub fn and(exps: Vec<FilterCmd>) -> FilterCmd {
-        FilterCmd {
+    pub fn and(exps: Vec<FilterExpression>) -> FilterExpression {
+        FilterExpression {
             cmd: Some(ExpOp::AND),
             val: None,
             bin: None,
@@ -607,8 +606,8 @@ impl Expression {
     /// // a == 0 || b == 0
     /// Expression::or(vec![Expression::eq(Expression::int_bin("a".to_string()), Expression::int_val(0)), Expression::eq(Expression::int_bin("b".to_string()), Expression::int_val(0))]);
     /// ```
-    pub fn or(exps: Vec<FilterCmd>) -> FilterCmd {
-        FilterCmd {
+    pub fn or(exps: Vec<FilterExpression>) -> FilterExpression {
+        FilterExpression {
             cmd: Some(ExpOp::OR),
             val: None,
             bin: None,
@@ -625,8 +624,8 @@ impl Expression {
     /// // a == 11
     /// Expression::eq(Expression::int_bin("a".to_string()), Expression::int_val(11));
     /// ```
-    pub fn eq(left: FilterCmd, right: FilterCmd) -> FilterCmd {
-        FilterCmd {
+    pub fn eq(left: FilterExpression, right: FilterExpression) -> FilterExpression {
+        FilterExpression {
             cmd: Some(ExpOp::EQ),
             val: None,
             bin: None,
@@ -643,8 +642,8 @@ impl Expression {
     /// // a != 13
     /// Expression::ne(Expression::int_bin("a".to_string()), Expression::int_val(13));
     /// ```
-    pub fn ne(left: FilterCmd, right: FilterCmd) -> FilterCmd {
-        FilterCmd {
+    pub fn ne(left: FilterExpression, right: FilterExpression) -> FilterExpression {
+        FilterExpression {
             cmd: Some(ExpOp::NE),
             val: None,
             bin: None,
@@ -661,8 +660,8 @@ impl Expression {
     /// // a > 8
     /// Expression::gt(Expression::int_bin("a".to_string()), Expression::int_val(8));
     /// ```
-    pub fn gt(left: FilterCmd, right: FilterCmd) -> FilterCmd {
-        FilterCmd {
+    pub fn gt(left: FilterExpression, right: FilterExpression) -> FilterExpression {
+        FilterExpression {
             cmd: Some(ExpOp::GT),
             val: None,
             bin: None,
@@ -679,8 +678,8 @@ impl Expression {
     /// // a >= 88
     /// Expression::ge(Expression::int_bin("a".to_string()), Expression::int_val(88));
     /// ```
-    pub fn ge(left: FilterCmd, right: FilterCmd) -> FilterCmd {
-        FilterCmd {
+    pub fn ge(left: FilterExpression, right: FilterExpression) -> FilterExpression {
+        FilterExpression {
             cmd: Some(ExpOp::GE),
             val: None,
             bin: None,
@@ -697,8 +696,8 @@ impl Expression {
     /// // a < 1000
     /// Expression::lt(Expression::int_bin("a".to_string()), Expression::int_val(1000));
     /// ```
-    pub fn lt(left: FilterCmd, right: FilterCmd) -> FilterCmd {
-        FilterCmd {
+    pub fn lt(left: FilterExpression, right: FilterExpression) -> FilterExpression {
+        FilterExpression {
             cmd: Some(ExpOp::LT),
             val: None,
             bin: None,
@@ -715,8 +714,8 @@ impl Expression {
     /// // a <= 1
     /// Expression::le(Expression::int_bin("a".to_string()), Expression::int_val(1));
     /// ```
-    pub fn le(left: FilterCmd, right: FilterCmd) -> FilterCmd {
-        FilterCmd {
+    pub fn le(left: FilterExpression, right: FilterExpression) -> FilterExpression {
+        FilterExpression {
             cmd: Some(ExpOp::LE),
             val: None,
             bin: None,

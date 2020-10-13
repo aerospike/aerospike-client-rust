@@ -46,7 +46,7 @@ pub use self::record_exists_action::RecordExistsAction;
 pub use self::scan_policy::ScanPolicy;
 pub use self::write_policy::WritePolicy;
 
-use crate::exp::exp::FilterCmd;
+use crate::exp::exp::FilterExpression;
 use std::option::Option;
 use std::time::{Duration, Instant};
 
@@ -81,7 +81,7 @@ pub trait Policy {
     fn consistency_level(&self) -> &ConsistencyLevel;
 
     /// Optional filter expression.
-    fn filter_expression(&self) -> &Option<FilterCmd>;
+    fn filter_expression(&self) -> &Option<FilterExpression>;
 }
 
 #[doc(hidden)]
@@ -119,7 +119,7 @@ where
         self.base().sleep_between_retries()
     }
 
-    fn filter_expression(&self) -> &Option<FilterCmd> {
+    fn filter_expression(&self) -> &Option<FilterExpression> {
         self.base().filter_expression()
     }
 }
@@ -153,7 +153,7 @@ pub struct BasePolicy {
     pub sleep_between_retries: Option<Duration>,
 
     /// Optional filter expression.
-    pub filter_expression: Option<FilterCmd>,
+    pub filter_expression: Option<FilterExpression>,
 }
 
 impl Policy for BasePolicy {
@@ -184,7 +184,7 @@ impl Policy for BasePolicy {
         &self.consistency_level
     }
 
-    fn filter_expression(&self) -> &Option<FilterCmd> {
+    fn filter_expression(&self) -> &Option<FilterExpression> {
         &self.filter_expression
     }
 }

@@ -1,4 +1,5 @@
-use crate::exp::exp::{ExpOp, ExpType, ExpressionArgument, FilterCmd, MODIFY};
+//! Bitwise Aerospike Filter Expressions.
+use crate::exp::exp::{ExpOp, ExpType, ExpressionArgument, FilterExpression, MODIFY};
 use crate::operations::bitwise::{BitPolicy, BitwiseOverflowActions, BitwiseResizeFlags};
 use crate::Value;
 
@@ -31,13 +32,13 @@ pub struct BitExpression {}
 impl BitExpression {
     pub fn resize(
         policy: &BitPolicy,
-        byte_size: FilterCmd,
+        byte_size: FilterExpression,
         resize_flags: BitwiseResizeFlags,
-        bin: FilterCmd,
-    ) -> FilterCmd {
+        bin: FilterExpression,
+    ) -> FilterExpression {
         let args = vec![
             ExpressionArgument::Value(Value::from(BitExpOp::RESIZE as i64)),
-            ExpressionArgument::FilterCmd(byte_size),
+            ExpressionArgument::FilterExpression(byte_size),
             ExpressionArgument::Value(Value::from(policy.flags)),
             ExpressionArgument::Value(Value::from(resize_flags as u8)),
         ];
@@ -46,14 +47,14 @@ impl BitExpression {
 
     pub fn insert(
         policy: &BitPolicy,
-        byte_offset: FilterCmd,
-        value: FilterCmd,
-        bin: FilterCmd,
-    ) -> FilterCmd {
+        byte_offset: FilterExpression,
+        value: FilterExpression,
+        bin: FilterExpression,
+    ) -> FilterExpression {
         let args = vec![
             ExpressionArgument::Value(Value::from(BitExpOp::INSERT as i64)),
-            ExpressionArgument::FilterCmd(byte_offset),
-            ExpressionArgument::FilterCmd(value),
+            ExpressionArgument::FilterExpression(byte_offset),
+            ExpressionArgument::FilterExpression(value),
             ExpressionArgument::Value(Value::from(policy.flags)),
         ];
         add_write(bin, args)
@@ -61,14 +62,14 @@ impl BitExpression {
 
     pub fn remove(
         policy: &BitPolicy,
-        byte_offset: FilterCmd,
-        byte_size: FilterCmd,
-        bin: FilterCmd,
-    ) -> FilterCmd {
+        byte_offset: FilterExpression,
+        byte_size: FilterExpression,
+        bin: FilterExpression,
+    ) -> FilterExpression {
         let args = vec![
             ExpressionArgument::Value(Value::from(BitExpOp::INSERT as i64)),
-            ExpressionArgument::FilterCmd(byte_offset),
-            ExpressionArgument::FilterCmd(byte_size),
+            ExpressionArgument::FilterExpression(byte_offset),
+            ExpressionArgument::FilterExpression(byte_size),
             ExpressionArgument::Value(Value::from(policy.flags)),
         ];
         add_write(bin, args)
@@ -76,16 +77,16 @@ impl BitExpression {
 
     pub fn set(
         policy: &BitPolicy,
-        bit_offset: FilterCmd,
-        bit_size: FilterCmd,
-        value: FilterCmd,
-        bin: FilterCmd,
-    ) -> FilterCmd {
+        bit_offset: FilterExpression,
+        bit_size: FilterExpression,
+        value: FilterExpression,
+        bin: FilterExpression,
+    ) -> FilterExpression {
         let args = vec![
             ExpressionArgument::Value(Value::from(BitExpOp::INSERT as i64)),
-            ExpressionArgument::FilterCmd(bit_offset),
-            ExpressionArgument::FilterCmd(bit_size),
-            ExpressionArgument::FilterCmd(value),
+            ExpressionArgument::FilterExpression(bit_offset),
+            ExpressionArgument::FilterExpression(bit_size),
+            ExpressionArgument::FilterExpression(value),
             ExpressionArgument::Value(Value::from(policy.flags)),
         ];
         add_write(bin, args)
@@ -93,16 +94,16 @@ impl BitExpression {
 
     pub fn or(
         policy: &BitPolicy,
-        bit_offset: FilterCmd,
-        bit_size: FilterCmd,
-        value: FilterCmd,
-        bin: FilterCmd,
-    ) -> FilterCmd {
+        bit_offset: FilterExpression,
+        bit_size: FilterExpression,
+        value: FilterExpression,
+        bin: FilterExpression,
+    ) -> FilterExpression {
         let args = vec![
             ExpressionArgument::Value(Value::from(BitExpOp::OR as i64)),
-            ExpressionArgument::FilterCmd(bit_offset),
-            ExpressionArgument::FilterCmd(bit_size),
-            ExpressionArgument::FilterCmd(value),
+            ExpressionArgument::FilterExpression(bit_offset),
+            ExpressionArgument::FilterExpression(bit_size),
+            ExpressionArgument::FilterExpression(value),
             ExpressionArgument::Value(Value::from(policy.flags)),
         ];
         add_write(bin, args)
@@ -110,16 +111,16 @@ impl BitExpression {
 
     pub fn xor(
         policy: &BitPolicy,
-        bit_offset: FilterCmd,
-        bit_size: FilterCmd,
-        value: FilterCmd,
-        bin: FilterCmd,
-    ) -> FilterCmd {
+        bit_offset: FilterExpression,
+        bit_size: FilterExpression,
+        value: FilterExpression,
+        bin: FilterExpression,
+    ) -> FilterExpression {
         let args = vec![
             ExpressionArgument::Value(Value::from(BitExpOp::XOR as i64)),
-            ExpressionArgument::FilterCmd(bit_offset),
-            ExpressionArgument::FilterCmd(bit_size),
-            ExpressionArgument::FilterCmd(value),
+            ExpressionArgument::FilterExpression(bit_offset),
+            ExpressionArgument::FilterExpression(bit_size),
+            ExpressionArgument::FilterExpression(value),
             ExpressionArgument::Value(Value::from(policy.flags)),
         ];
         add_write(bin, args)
@@ -127,16 +128,16 @@ impl BitExpression {
 
     pub fn and(
         policy: &BitPolicy,
-        bit_offset: FilterCmd,
-        bit_size: FilterCmd,
-        value: FilterCmd,
-        bin: FilterCmd,
-    ) -> FilterCmd {
+        bit_offset: FilterExpression,
+        bit_size: FilterExpression,
+        value: FilterExpression,
+        bin: FilterExpression,
+    ) -> FilterExpression {
         let args = vec![
             ExpressionArgument::Value(Value::from(BitExpOp::AND as i64)),
-            ExpressionArgument::FilterCmd(bit_offset),
-            ExpressionArgument::FilterCmd(bit_size),
-            ExpressionArgument::FilterCmd(value),
+            ExpressionArgument::FilterExpression(bit_offset),
+            ExpressionArgument::FilterExpression(bit_size),
+            ExpressionArgument::FilterExpression(value),
             ExpressionArgument::Value(Value::from(policy.flags)),
         ];
         add_write(bin, args)
@@ -144,14 +145,14 @@ impl BitExpression {
 
     pub fn not(
         policy: &BitPolicy,
-        bit_offset: FilterCmd,
-        bit_size: FilterCmd,
-        bin: FilterCmd,
-    ) -> FilterCmd {
+        bit_offset: FilterExpression,
+        bit_size: FilterExpression,
+        bin: FilterExpression,
+    ) -> FilterExpression {
         let args = vec![
             ExpressionArgument::Value(Value::from(BitExpOp::NOT as i64)),
-            ExpressionArgument::FilterCmd(bit_offset),
-            ExpressionArgument::FilterCmd(bit_size),
+            ExpressionArgument::FilterExpression(bit_offset),
+            ExpressionArgument::FilterExpression(bit_size),
             ExpressionArgument::Value(Value::from(policy.flags)),
         ];
         add_write(bin, args)
@@ -159,16 +160,16 @@ impl BitExpression {
 
     pub fn lshift(
         policy: &BitPolicy,
-        bit_offset: FilterCmd,
-        bit_size: FilterCmd,
-        shift: FilterCmd,
-        bin: FilterCmd,
-    ) -> FilterCmd {
+        bit_offset: FilterExpression,
+        bit_size: FilterExpression,
+        shift: FilterExpression,
+        bin: FilterExpression,
+    ) -> FilterExpression {
         let args = vec![
             ExpressionArgument::Value(Value::from(BitExpOp::LSHIFT as i64)),
-            ExpressionArgument::FilterCmd(bit_offset),
-            ExpressionArgument::FilterCmd(bit_size),
-            ExpressionArgument::FilterCmd(shift),
+            ExpressionArgument::FilterExpression(bit_offset),
+            ExpressionArgument::FilterExpression(bit_size),
+            ExpressionArgument::FilterExpression(shift),
             ExpressionArgument::Value(Value::from(policy.flags)),
         ];
         add_write(bin, args)
@@ -176,16 +177,16 @@ impl BitExpression {
 
     pub fn rshift(
         policy: &BitPolicy,
-        bit_offset: FilterCmd,
-        bit_size: FilterCmd,
-        shift: FilterCmd,
-        bin: FilterCmd,
-    ) -> FilterCmd {
+        bit_offset: FilterExpression,
+        bit_size: FilterExpression,
+        shift: FilterExpression,
+        bin: FilterExpression,
+    ) -> FilterExpression {
         let args = vec![
             ExpressionArgument::Value(Value::from(BitExpOp::RSHIFT as i64)),
-            ExpressionArgument::FilterCmd(bit_offset),
-            ExpressionArgument::FilterCmd(bit_size),
-            ExpressionArgument::FilterCmd(shift),
+            ExpressionArgument::FilterExpression(bit_offset),
+            ExpressionArgument::FilterExpression(bit_size),
+            ExpressionArgument::FilterExpression(shift),
             ExpressionArgument::Value(Value::from(policy.flags)),
         ];
         add_write(bin, args)
@@ -193,18 +194,18 @@ impl BitExpression {
 
     pub fn add(
         policy: &BitPolicy,
-        bit_offset: FilterCmd,
-        bit_size: FilterCmd,
-        value: FilterCmd,
+        bit_offset: FilterExpression,
+        bit_size: FilterExpression,
+        value: FilterExpression,
         signed: bool,
         action: BitwiseOverflowActions,
-        bin: FilterCmd,
-    ) -> FilterCmd {
+        bin: FilterExpression,
+    ) -> FilterExpression {
         let mut args = vec![
             ExpressionArgument::Value(Value::from(BitExpOp::ADD as i64)),
-            ExpressionArgument::FilterCmd(bit_offset),
-            ExpressionArgument::FilterCmd(bit_size),
-            ExpressionArgument::FilterCmd(value),
+            ExpressionArgument::FilterExpression(bit_offset),
+            ExpressionArgument::FilterExpression(bit_size),
+            ExpressionArgument::FilterExpression(value),
             ExpressionArgument::Value(Value::from(policy.flags)),
         ];
         let mut flags = action as u8;
@@ -217,18 +218,18 @@ impl BitExpression {
 
     pub fn subtract(
         policy: &BitPolicy,
-        bit_offset: FilterCmd,
-        bit_size: FilterCmd,
-        value: FilterCmd,
+        bit_offset: FilterExpression,
+        bit_size: FilterExpression,
+        value: FilterExpression,
         signed: bool,
         action: BitwiseOverflowActions,
-        bin: FilterCmd,
-    ) -> FilterCmd {
+        bin: FilterExpression,
+    ) -> FilterExpression {
         let mut args = vec![
             ExpressionArgument::Value(Value::from(BitExpOp::SUBTRACT as i64)),
-            ExpressionArgument::FilterCmd(bit_offset),
-            ExpressionArgument::FilterCmd(bit_size),
-            ExpressionArgument::FilterCmd(value),
+            ExpressionArgument::FilterExpression(bit_offset),
+            ExpressionArgument::FilterExpression(bit_size),
+            ExpressionArgument::FilterExpression(value),
             ExpressionArgument::Value(Value::from(policy.flags)),
         ];
         let mut flags = action as u8;
@@ -241,78 +242,86 @@ impl BitExpression {
 
     pub fn set_int(
         policy: &BitPolicy,
-        bit_offset: FilterCmd,
-        bit_size: FilterCmd,
-        value: FilterCmd,
-        bin: FilterCmd,
-    ) -> FilterCmd {
+        bit_offset: FilterExpression,
+        bit_size: FilterExpression,
+        value: FilterExpression,
+        bin: FilterExpression,
+    ) -> FilterExpression {
         let args = vec![
             ExpressionArgument::Value(Value::from(BitExpOp::SetInt as i64)),
-            ExpressionArgument::FilterCmd(bit_offset),
-            ExpressionArgument::FilterCmd(bit_size),
-            ExpressionArgument::FilterCmd(value),
+            ExpressionArgument::FilterExpression(bit_offset),
+            ExpressionArgument::FilterExpression(bit_size),
+            ExpressionArgument::FilterExpression(value),
             ExpressionArgument::Value(Value::from(policy.flags)),
         ];
         add_write(bin, args)
     }
 
-    pub fn get(bit_offset: FilterCmd, bit_size: FilterCmd, bin: FilterCmd) -> FilterCmd {
+    pub fn get(
+        bit_offset: FilterExpression,
+        bit_size: FilterExpression,
+        bin: FilterExpression,
+    ) -> FilterExpression {
         let args = vec![
             ExpressionArgument::Value(Value::from(BitExpOp::GET as i64)),
-            ExpressionArgument::FilterCmd(bit_offset),
-            ExpressionArgument::FilterCmd(bit_size),
+            ExpressionArgument::FilterExpression(bit_offset),
+            ExpressionArgument::FilterExpression(bit_size),
         ];
         add_read(bin, ExpType::BLOB, args)
     }
 
-    pub fn count(bit_offset: FilterCmd, bit_size: FilterCmd, bin: FilterCmd) -> FilterCmd {
+    pub fn count(
+        bit_offset: FilterExpression,
+        bit_size: FilterExpression,
+        bin: FilterExpression,
+    ) -> FilterExpression {
         let args = vec![
             ExpressionArgument::Value(Value::from(BitExpOp::COUNT as i64)),
-            ExpressionArgument::FilterCmd(bit_offset),
-            ExpressionArgument::FilterCmd(bit_size),
+            ExpressionArgument::FilterExpression(bit_offset),
+            ExpressionArgument::FilterExpression(bit_size),
         ];
         add_read(bin, ExpType::INT, args)
     }
 
     pub fn lscan(
-        bit_offset: FilterCmd,
-        bit_size: FilterCmd,
-        value: FilterCmd,
-        bin: FilterCmd,
-    ) -> FilterCmd {
+        bit_offset: FilterExpression,
+        bit_size: FilterExpression,
+        value: FilterExpression,
+        bin: FilterExpression,
+    ) -> FilterExpression {
         let args = vec![
             ExpressionArgument::Value(Value::from(BitExpOp::LSCAN as i64)),
-            ExpressionArgument::FilterCmd(bit_offset),
-            ExpressionArgument::FilterCmd(bit_size),
-            ExpressionArgument::FilterCmd(value),
+            ExpressionArgument::FilterExpression(bit_offset),
+            ExpressionArgument::FilterExpression(bit_size),
+            ExpressionArgument::FilterExpression(value),
         ];
         add_read(bin, ExpType::INT, args)
     }
     pub fn rscan(
-        bit_offset: FilterCmd,
-        bit_size: FilterCmd,
-        value: FilterCmd,
-        bin: FilterCmd,
-    ) -> FilterCmd {
+        bit_offset: FilterExpression,
+        bit_size: FilterExpression,
+        value: FilterExpression,
+        bin: FilterExpression,
+    ) -> FilterExpression {
         let args = vec![
             ExpressionArgument::Value(Value::from(BitExpOp::RSCAN as i64)),
-            ExpressionArgument::FilterCmd(bit_offset),
-            ExpressionArgument::FilterCmd(bit_size),
-            ExpressionArgument::FilterCmd(value),
+            ExpressionArgument::FilterExpression(bit_offset),
+            ExpressionArgument::FilterExpression(bit_size),
+            ExpressionArgument::FilterExpression(value),
         ];
         add_read(bin, ExpType::INT, args)
     }
 
     pub fn get_int(
-        bit_offset: FilterCmd,
-        bit_size: FilterCmd,
+        bit_offset: FilterExpression,
+        bit_size: FilterExpression,
         signed: bool,
-        bin: FilterCmd,
-    ) -> FilterCmd {
+        bin: FilterExpression,
+    ) -> FilterExpression {
         let mut args = vec![
             ExpressionArgument::Value(Value::from(BitExpOp::GetInt as i64)),
-            ExpressionArgument::FilterCmd(bit_offset),
-            ExpressionArgument::FilterCmd(bit_size),
+            ExpressionArgument::FilterExpression(bit_offset),
+            ExpressionArgument::FilterExpression(bit_size),
         ];
         if signed {
             args.push(ExpressionArgument::Value(Value::from(INT_FLAGS_SIGNED)));
@@ -321,8 +330,8 @@ impl BitExpression {
     }
 }
 
-pub fn add_write(bin: FilterCmd, arguments: Vec<ExpressionArgument>) -> FilterCmd {
-    FilterCmd {
+pub fn add_write(bin: FilterExpression, arguments: Vec<ExpressionArgument>) -> FilterExpression {
+    FilterExpression {
         cmd: Some(ExpOp::Call),
         val: None,
         bin: Some(Box::new(bin)),
@@ -334,11 +343,11 @@ pub fn add_write(bin: FilterCmd, arguments: Vec<ExpressionArgument>) -> FilterCm
 }
 
 pub fn add_read(
-    bin: FilterCmd,
+    bin: FilterExpression,
     return_type: ExpType,
     arguments: Vec<ExpressionArgument>,
-) -> FilterCmd {
-    FilterCmd {
+) -> FilterExpression {
+    FilterExpression {
         cmd: Some(ExpOp::Call),
         val: None,
         bin: Some(Box::new(bin)),

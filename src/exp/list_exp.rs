@@ -1,4 +1,6 @@
-use crate::exp::exp::{ExpOp, ExpType, ExpressionArgument, FilterCmd, MODIFY, Expression};
+//! List Cdt Aerospike Filter Expressions.
+//!
+use crate::exp::exp::{ExpOp, ExpType, Expression, ExpressionArgument, FilterExpression, MODIFY};
 use crate::operations::cdt_context::CdtContext;
 use crate::operations::lists::{ListPolicy, ListReturnType, ListSortFlags};
 use crate::Value;
@@ -37,13 +39,13 @@ pub enum ListExpOp {
 impl ListExpression {
     pub fn append(
         policy: ListPolicy,
-        value: FilterCmd,
-        bin: FilterCmd,
+        value: FilterExpression,
+        bin: FilterExpression,
         ctx: &[CdtContext],
-    ) -> FilterCmd {
+    ) -> FilterExpression {
         let args = vec![
             ExpressionArgument::Value(Value::from(ListExpOp::APPEND as i64)),
-            ExpressionArgument::FilterCmd(value),
+            ExpressionArgument::FilterExpression(value),
             ExpressionArgument::Value(Value::from(policy.attributes as u8)),
             ExpressionArgument::Value(Value::from(policy.flags as u8)),
             ExpressionArgument::Context(ctx.to_vec()),
@@ -53,13 +55,13 @@ impl ListExpression {
 
     pub fn append_items(
         policy: ListPolicy,
-        list: FilterCmd,
-        bin: FilterCmd,
+        list: FilterExpression,
+        bin: FilterExpression,
         ctx: &[CdtContext],
-    ) -> FilterCmd {
+    ) -> FilterExpression {
         let args = vec![
             ExpressionArgument::Value(Value::from(ListExpOp::AppendItems as i64)),
-            ExpressionArgument::FilterCmd(list),
+            ExpressionArgument::FilterExpression(list),
             ExpressionArgument::Value(Value::from(policy.attributes as u8)),
             ExpressionArgument::Value(Value::from(policy.flags as u8)),
             ExpressionArgument::Context(ctx.to_vec()),
@@ -69,15 +71,15 @@ impl ListExpression {
 
     pub fn insert(
         policy: ListPolicy,
-        index: FilterCmd,
-        value: FilterCmd,
-        bin: FilterCmd,
+        index: FilterExpression,
+        value: FilterExpression,
+        bin: FilterExpression,
         ctx: &[CdtContext],
-    ) -> FilterCmd {
+    ) -> FilterExpression {
         let args = vec![
             ExpressionArgument::Value(Value::from(ListExpOp::INSERT as i64)),
-            ExpressionArgument::FilterCmd(index),
-            ExpressionArgument::FilterCmd(value),
+            ExpressionArgument::FilterExpression(index),
+            ExpressionArgument::FilterExpression(value),
             ExpressionArgument::Value(Value::from(policy.flags as u8)),
             ExpressionArgument::Context(ctx.to_vec()),
         ];
@@ -86,15 +88,15 @@ impl ListExpression {
 
     pub fn insert_items(
         policy: ListPolicy,
-        index: FilterCmd,
-        list: FilterCmd,
-        bin: FilterCmd,
+        index: FilterExpression,
+        list: FilterExpression,
+        bin: FilterExpression,
         ctx: &[CdtContext],
-    ) -> FilterCmd {
+    ) -> FilterExpression {
         let args = vec![
             ExpressionArgument::Value(Value::from(ListExpOp::InsertItems as i64)),
-            ExpressionArgument::FilterCmd(index),
-            ExpressionArgument::FilterCmd(list),
+            ExpressionArgument::FilterExpression(index),
+            ExpressionArgument::FilterExpression(list),
             ExpressionArgument::Value(Value::from(policy.flags as u8)),
             ExpressionArgument::Context(ctx.to_vec()),
         ];
@@ -103,15 +105,15 @@ impl ListExpression {
 
     pub fn increment(
         policy: ListPolicy,
-        index: FilterCmd,
-        value: FilterCmd,
-        bin: FilterCmd,
+        index: FilterExpression,
+        value: FilterExpression,
+        bin: FilterExpression,
         ctx: &[CdtContext],
-    ) -> FilterCmd {
+    ) -> FilterExpression {
         let args = vec![
             ExpressionArgument::Value(Value::from(ListExpOp::INCREMENT as i64)),
-            ExpressionArgument::FilterCmd(index),
-            ExpressionArgument::FilterCmd(value),
+            ExpressionArgument::FilterExpression(index),
+            ExpressionArgument::FilterExpression(value),
             ExpressionArgument::Value(Value::from(policy.attributes as u8)),
             ExpressionArgument::Value(Value::from(policy.flags as u8)),
             ExpressionArgument::Context(ctx.to_vec()),
@@ -121,22 +123,22 @@ impl ListExpression {
 
     pub fn set(
         policy: ListPolicy,
-        index: FilterCmd,
-        value: FilterCmd,
-        bin: FilterCmd,
+        index: FilterExpression,
+        value: FilterExpression,
+        bin: FilterExpression,
         ctx: &[CdtContext],
-    ) -> FilterCmd {
+    ) -> FilterExpression {
         let args = vec![
             ExpressionArgument::Value(Value::from(ListExpOp::SET as i64)),
-            ExpressionArgument::FilterCmd(index),
-            ExpressionArgument::FilterCmd(value),
+            ExpressionArgument::FilterExpression(index),
+            ExpressionArgument::FilterExpression(value),
             ExpressionArgument::Value(Value::from(policy.flags as u8)),
             ExpressionArgument::Context(ctx.to_vec()),
         ];
         ListExpression::add_write(bin, ctx, args)
     }
 
-    pub fn clear(bin: FilterCmd, ctx: &[CdtContext]) -> FilterCmd {
+    pub fn clear(bin: FilterExpression, ctx: &[CdtContext]) -> FilterExpression {
         let args = vec![
             ExpressionArgument::Value(Value::from(ListExpOp::CLEAR as i64)),
             ExpressionArgument::Context(ctx.to_vec()),
@@ -144,7 +146,11 @@ impl ListExpression {
         ListExpression::add_write(bin, ctx, args)
     }
 
-    pub fn sort(sort_flags: ListSortFlags, bin: FilterCmd, ctx: &[CdtContext]) -> FilterCmd {
+    pub fn sort(
+        sort_flags: ListSortFlags,
+        bin: FilterExpression,
+        ctx: &[CdtContext],
+    ) -> FilterExpression {
         let args = vec![
             ExpressionArgument::Value(Value::from(ListExpOp::SORT as i64)),
             ExpressionArgument::Value(Value::from(sort_flags as u8)),
@@ -153,163 +159,179 @@ impl ListExpression {
         ListExpression::add_write(bin, ctx, args)
     }
 
-    pub fn remove_by_value(value: FilterCmd, bin: FilterCmd, ctx: &[CdtContext]) -> FilterCmd {
+    pub fn remove_by_value(
+        value: FilterExpression,
+        bin: FilterExpression,
+        ctx: &[CdtContext],
+    ) -> FilterExpression {
         let args = vec![
             ExpressionArgument::Value(Value::from(ListExpOp::RemoveByValue as i64)),
             ExpressionArgument::Value(Value::from(ListReturnType::None as u8)),
-            ExpressionArgument::FilterCmd(value),
+            ExpressionArgument::FilterExpression(value),
             ExpressionArgument::Context(ctx.to_vec()),
         ];
         ListExpression::add_write(bin, ctx, args)
     }
 
     pub fn remove_by_value_list(
-        values: FilterCmd,
-        bin: FilterCmd,
+        values: FilterExpression,
+        bin: FilterExpression,
         ctx: &[CdtContext],
-    ) -> FilterCmd {
+    ) -> FilterExpression {
         let args = vec![
             ExpressionArgument::Value(Value::from(ListExpOp::RemoveByValueList as i64)),
             ExpressionArgument::Value(Value::from(ListReturnType::None as u8)),
-            ExpressionArgument::FilterCmd(values),
+            ExpressionArgument::FilterExpression(values),
             ExpressionArgument::Context(ctx.to_vec()),
         ];
         ListExpression::add_write(bin, ctx, args)
     }
 
     pub fn remove_by_value_range(
-        value_begin: Option<FilterCmd>,
-        value_end: Option<FilterCmd>,
-        bin: FilterCmd,
+        value_begin: Option<FilterExpression>,
+        value_end: Option<FilterExpression>,
+        bin: FilterExpression,
         ctx: &[CdtContext],
-    ) -> FilterCmd {
+    ) -> FilterExpression {
         let mut args = vec![
             ExpressionArgument::Context(ctx.to_vec()),
             ExpressionArgument::Value(Value::from(ListExpOp::RemoveByValueInterval as i64)),
             ExpressionArgument::Value(Value::from(ListReturnType::None as u8)),
         ];
         if let Some(val_beg) = value_begin {
-            args.push(ExpressionArgument::FilterCmd(val_beg));
-        }else{
-            args.push(ExpressionArgument::FilterCmd(Expression::nil()));
+            args.push(ExpressionArgument::FilterExpression(val_beg));
+        } else {
+            args.push(ExpressionArgument::FilterExpression(Expression::nil()));
         }
         if let Some(val_end) = value_end {
-            args.push(ExpressionArgument::FilterCmd(val_end));
+            args.push(ExpressionArgument::FilterExpression(val_end));
         }
         ListExpression::add_write(bin, ctx, args)
     }
 
     pub fn remove_by_value_relative_rank_range(
-        value: FilterCmd,
-        rank: FilterCmd,
-        bin: FilterCmd,
+        value: FilterExpression,
+        rank: FilterExpression,
+        bin: FilterExpression,
         ctx: &[CdtContext],
-    ) -> FilterCmd {
+    ) -> FilterExpression {
         let args = vec![
             ExpressionArgument::Value(Value::from(ListExpOp::RemoveByValueRelRankRange as i64)),
             ExpressionArgument::Value(Value::from(ListReturnType::None as u8)),
-            ExpressionArgument::FilterCmd(value),
-            ExpressionArgument::FilterCmd(rank),
+            ExpressionArgument::FilterExpression(value),
+            ExpressionArgument::FilterExpression(rank),
             ExpressionArgument::Context(ctx.to_vec()),
         ];
         ListExpression::add_write(bin, ctx, args)
     }
 
     pub fn remove_by_value_relative_rank_range_count(
-        value_begin: FilterCmd,
-        value_end: FilterCmd,
-        count: FilterCmd,
-        bin: FilterCmd,
+        value_begin: FilterExpression,
+        value_end: FilterExpression,
+        count: FilterExpression,
+        bin: FilterExpression,
         ctx: &[CdtContext],
-    ) -> FilterCmd {
+    ) -> FilterExpression {
         let args = vec![
             ExpressionArgument::Value(Value::from(ListExpOp::RemoveByValueRelRankRange as i64)),
             ExpressionArgument::Value(Value::from(ListReturnType::None as u8)),
-            ExpressionArgument::FilterCmd(value_begin),
-            ExpressionArgument::FilterCmd(value_end),
-            ExpressionArgument::FilterCmd(count),
+            ExpressionArgument::FilterExpression(value_begin),
+            ExpressionArgument::FilterExpression(value_end),
+            ExpressionArgument::FilterExpression(count),
             ExpressionArgument::Context(ctx.to_vec()),
         ];
         ListExpression::add_write(bin, ctx, args)
     }
 
-    pub fn remove_by_index(index: FilterCmd, bin: FilterCmd, ctx: &[CdtContext]) -> FilterCmd {
+    pub fn remove_by_index(
+        index: FilterExpression,
+        bin: FilterExpression,
+        ctx: &[CdtContext],
+    ) -> FilterExpression {
         let args = vec![
             ExpressionArgument::Value(Value::from(ListExpOp::RemoveByIndex as i64)),
             ExpressionArgument::Value(Value::from(ListReturnType::None as u8)),
-            ExpressionArgument::FilterCmd(index),
+            ExpressionArgument::FilterExpression(index),
             ExpressionArgument::Context(ctx.to_vec()),
         ];
         ListExpression::add_write(bin, ctx, args)
     }
 
     pub fn remove_by_index_range(
-        index: FilterCmd,
-        bin: FilterCmd,
+        index: FilterExpression,
+        bin: FilterExpression,
         ctx: &[CdtContext],
-    ) -> FilterCmd {
+    ) -> FilterExpression {
         let args = vec![
             ExpressionArgument::Value(Value::from(ListExpOp::RemoveByIndexRange as i64)),
             ExpressionArgument::Value(Value::from(ListReturnType::None as u8)),
-            ExpressionArgument::FilterCmd(index),
+            ExpressionArgument::FilterExpression(index),
             ExpressionArgument::Context(ctx.to_vec()),
         ];
         ListExpression::add_write(bin, ctx, args)
     }
 
     pub fn remove_by_index_range_count(
-        index: FilterCmd,
-        count: FilterCmd,
-        bin: FilterCmd,
+        index: FilterExpression,
+        count: FilterExpression,
+        bin: FilterExpression,
         ctx: &[CdtContext],
-    ) -> FilterCmd {
+    ) -> FilterExpression {
         let args = vec![
             ExpressionArgument::Value(Value::from(ListExpOp::RemoveByIndexRange as i64)),
             ExpressionArgument::Value(Value::from(ListReturnType::None as u8)),
-            ExpressionArgument::FilterCmd(index),
-            ExpressionArgument::FilterCmd(count),
+            ExpressionArgument::FilterExpression(index),
+            ExpressionArgument::FilterExpression(count),
             ExpressionArgument::Context(ctx.to_vec()),
         ];
         ListExpression::add_write(bin, ctx, args)
     }
 
-    pub fn remove_by_rank(rank: FilterCmd, bin: FilterCmd, ctx: &[CdtContext]) -> FilterCmd {
+    pub fn remove_by_rank(
+        rank: FilterExpression,
+        bin: FilterExpression,
+        ctx: &[CdtContext],
+    ) -> FilterExpression {
         let args = vec![
             ExpressionArgument::Value(Value::from(ListExpOp::RemoveByRank as i64)),
             ExpressionArgument::Value(Value::from(ListReturnType::None as u8)),
-            ExpressionArgument::FilterCmd(rank),
+            ExpressionArgument::FilterExpression(rank),
             ExpressionArgument::Context(ctx.to_vec()),
         ];
         ListExpression::add_write(bin, ctx, args)
     }
 
-    pub fn remove_by_rank_range(rank: FilterCmd, bin: FilterCmd, ctx: &[CdtContext]) -> FilterCmd {
+    pub fn remove_by_rank_range(
+        rank: FilterExpression,
+        bin: FilterExpression,
+        ctx: &[CdtContext],
+    ) -> FilterExpression {
         let args = vec![
             ExpressionArgument::Value(Value::from(ListExpOp::RemoveByRankRange as i64)),
             ExpressionArgument::Value(Value::from(ListReturnType::None as u8)),
-            ExpressionArgument::FilterCmd(rank),
+            ExpressionArgument::FilterExpression(rank),
             ExpressionArgument::Context(ctx.to_vec()),
         ];
         ListExpression::add_write(bin, ctx, args)
     }
 
     pub fn remove_by_rank_range_count(
-        rank: FilterCmd,
-        count: FilterCmd,
-        bin: FilterCmd,
+        rank: FilterExpression,
+        count: FilterExpression,
+        bin: FilterExpression,
         ctx: &[CdtContext],
-    ) -> FilterCmd {
+    ) -> FilterExpression {
         let args = vec![
             ExpressionArgument::Value(Value::from(ListExpOp::RemoveByRankRange as i64)),
             ExpressionArgument::Value(Value::from(ListReturnType::None as u8)),
-            ExpressionArgument::FilterCmd(rank),
-            ExpressionArgument::FilterCmd(count),
+            ExpressionArgument::FilterExpression(rank),
+            ExpressionArgument::FilterExpression(count),
             ExpressionArgument::Context(ctx.to_vec()),
         ];
         ListExpression::add_write(bin, ctx, args)
     }
 
-    pub fn size(bin: FilterCmd, ctx: &[CdtContext]) -> FilterCmd {
+    pub fn size(bin: FilterExpression, ctx: &[CdtContext]) -> FilterExpression {
         let args = vec![
             ExpressionArgument::Value(Value::from(ListExpOp::SIZE as i64)),
             ExpressionArgument::Context(ctx.to_vec()),
@@ -319,14 +341,14 @@ impl ListExpression {
 
     pub fn get_by_value(
         return_type: ListReturnType,
-        value: FilterCmd,
-        bin: FilterCmd,
+        value: FilterExpression,
+        bin: FilterExpression,
         ctx: &[CdtContext],
-    ) -> FilterCmd {
+    ) -> FilterExpression {
         let args = vec![
             ExpressionArgument::Value(Value::from(ListExpOp::GetByValue as i64)),
             ExpressionArgument::Value(Value::from(return_type as u8)),
-            ExpressionArgument::FilterCmd(value),
+            ExpressionArgument::FilterExpression(value),
             ExpressionArgument::Context(ctx.to_vec()),
         ];
         ListExpression::add_read(bin, ListExpression::get_value_type(return_type), args)
@@ -334,37 +356,37 @@ impl ListExpression {
 
     pub fn get_by_value_range(
         return_type: ListReturnType,
-        value_begin: Option<FilterCmd>,
-        value_end: Option<FilterCmd>,
-        bin: FilterCmd,
+        value_begin: Option<FilterExpression>,
+        value_end: Option<FilterExpression>,
+        bin: FilterExpression,
         ctx: &[CdtContext],
-    ) -> FilterCmd {
+    ) -> FilterExpression {
         let mut args = vec![
             ExpressionArgument::Context(ctx.to_vec()),
             ExpressionArgument::Value(Value::from(ListExpOp::GetByValueInterval as i64)),
             ExpressionArgument::Value(Value::from(return_type as u8)),
         ];
         if let Some(val_beg) = value_begin {
-            args.push(ExpressionArgument::FilterCmd(val_beg));
-        }else{
-            args.push(ExpressionArgument::FilterCmd(Expression::nil()));
+            args.push(ExpressionArgument::FilterExpression(val_beg));
+        } else {
+            args.push(ExpressionArgument::FilterExpression(Expression::nil()));
         }
         if let Some(val_end) = value_end {
-            args.push(ExpressionArgument::FilterCmd(val_end));
+            args.push(ExpressionArgument::FilterExpression(val_end));
         }
         ListExpression::add_read(bin, ListExpression::get_value_type(return_type), args)
     }
 
     pub fn get_by_value_list(
         return_type: ListReturnType,
-        values: FilterCmd,
-        bin: FilterCmd,
+        values: FilterExpression,
+        bin: FilterExpression,
         ctx: &[CdtContext],
-    ) -> FilterCmd {
+    ) -> FilterExpression {
         let args = vec![
             ExpressionArgument::Value(Value::from(ListExpOp::GetByValueList as i64)),
             ExpressionArgument::Value(Value::from(return_type as u8)),
-            ExpressionArgument::FilterCmd(values),
+            ExpressionArgument::FilterExpression(values),
             ExpressionArgument::Context(ctx.to_vec()),
         ];
         ListExpression::add_read(bin, ListExpression::get_value_type(return_type), args)
@@ -372,16 +394,16 @@ impl ListExpression {
 
     pub fn get_by_value_relative_rank_range(
         return_type: ListReturnType,
-        value: FilterCmd,
-        rank: FilterCmd,
-        bin: FilterCmd,
+        value: FilterExpression,
+        rank: FilterExpression,
+        bin: FilterExpression,
         ctx: &[CdtContext],
-    ) -> FilterCmd {
+    ) -> FilterExpression {
         let args = vec![
             ExpressionArgument::Value(Value::from(ListExpOp::GetByValueRelRankRange as i64)),
             ExpressionArgument::Value(Value::from(return_type as u8)),
-            ExpressionArgument::FilterCmd(value),
-            ExpressionArgument::FilterCmd(rank),
+            ExpressionArgument::FilterExpression(value),
+            ExpressionArgument::FilterExpression(rank),
             ExpressionArgument::Context(ctx.to_vec()),
         ];
         ListExpression::add_read(bin, ListExpression::get_value_type(return_type), args)
@@ -389,18 +411,18 @@ impl ListExpression {
 
     pub fn get_by_value_relative_rank_range_count(
         return_type: ListReturnType,
-        value: FilterCmd,
-        rank: FilterCmd,
-        count: FilterCmd,
-        bin: FilterCmd,
+        value: FilterExpression,
+        rank: FilterExpression,
+        count: FilterExpression,
+        bin: FilterExpression,
         ctx: &[CdtContext],
-    ) -> FilterCmd {
+    ) -> FilterExpression {
         let args = vec![
             ExpressionArgument::Value(Value::from(ListExpOp::GetByValueRelRankRange as i64)),
             ExpressionArgument::Value(Value::from(return_type as u8)),
-            ExpressionArgument::FilterCmd(value),
-            ExpressionArgument::FilterCmd(rank),
-            ExpressionArgument::FilterCmd(count),
+            ExpressionArgument::FilterExpression(value),
+            ExpressionArgument::FilterExpression(rank),
+            ExpressionArgument::FilterExpression(count),
             ExpressionArgument::Context(ctx.to_vec()),
         ];
         ListExpression::add_read(bin, ListExpression::get_value_type(return_type), args)
@@ -409,14 +431,14 @@ impl ListExpression {
     pub fn get_by_index(
         return_type: ListReturnType,
         value_type: ExpType,
-        index: FilterCmd,
-        bin: FilterCmd,
+        index: FilterExpression,
+        bin: FilterExpression,
         ctx: &[CdtContext],
-    ) -> FilterCmd {
+    ) -> FilterExpression {
         let args = vec![
             ExpressionArgument::Value(Value::from(ListExpOp::GetByIndex as i64)),
             ExpressionArgument::Value(Value::from(return_type as u8)),
-            ExpressionArgument::FilterCmd(index),
+            ExpressionArgument::FilterExpression(index),
             ExpressionArgument::Context(ctx.to_vec()),
         ];
         ListExpression::add_read(bin, value_type, args)
@@ -424,14 +446,14 @@ impl ListExpression {
 
     pub fn get_by_index_range(
         return_type: ListReturnType,
-        index: FilterCmd,
-        bin: FilterCmd,
+        index: FilterExpression,
+        bin: FilterExpression,
         ctx: &[CdtContext],
-    ) -> FilterCmd {
+    ) -> FilterExpression {
         let args = vec![
             ExpressionArgument::Value(Value::from(ListExpOp::GetByIndexRange as i64)),
             ExpressionArgument::Value(Value::from(return_type as u8)),
-            ExpressionArgument::FilterCmd(index),
+            ExpressionArgument::FilterExpression(index),
             ExpressionArgument::Context(ctx.to_vec()),
         ];
         ListExpression::add_read(bin, ListExpression::get_value_type(return_type), args)
@@ -439,16 +461,16 @@ impl ListExpression {
 
     pub fn get_by_index_range_count(
         return_type: ListReturnType,
-        index: FilterCmd,
-        count: FilterCmd,
-        bin: FilterCmd,
+        index: FilterExpression,
+        count: FilterExpression,
+        bin: FilterExpression,
         ctx: &[CdtContext],
-    ) -> FilterCmd {
+    ) -> FilterExpression {
         let args = vec![
             ExpressionArgument::Value(Value::from(ListExpOp::GetByIndexRange as i64)),
             ExpressionArgument::Value(Value::from(return_type as u8)),
-            ExpressionArgument::FilterCmd(index),
-            ExpressionArgument::FilterCmd(count),
+            ExpressionArgument::FilterExpression(index),
+            ExpressionArgument::FilterExpression(count),
             ExpressionArgument::Context(ctx.to_vec()),
         ];
         ListExpression::add_read(bin, ListExpression::get_value_type(return_type), args)
@@ -457,14 +479,14 @@ impl ListExpression {
     pub fn get_by_rank(
         return_type: ListReturnType,
         value_type: ExpType,
-        rank: FilterCmd,
-        bin: FilterCmd,
+        rank: FilterExpression,
+        bin: FilterExpression,
         ctx: &[CdtContext],
-    ) -> FilterCmd {
+    ) -> FilterExpression {
         let args = vec![
             ExpressionArgument::Value(Value::from(ListExpOp::GetByRank as i64)),
             ExpressionArgument::Value(Value::from(return_type as u8)),
-            ExpressionArgument::FilterCmd(rank),
+            ExpressionArgument::FilterExpression(rank),
             ExpressionArgument::Context(ctx.to_vec()),
         ];
         ListExpression::add_read(bin, value_type, args)
@@ -472,14 +494,14 @@ impl ListExpression {
 
     pub fn get_by_rank_range(
         return_type: ListReturnType,
-        rank: FilterCmd,
-        bin: FilterCmd,
+        rank: FilterExpression,
+        bin: FilterExpression,
         ctx: &[CdtContext],
-    ) -> FilterCmd {
+    ) -> FilterExpression {
         let args = vec![
             ExpressionArgument::Value(Value::from(ListExpOp::GetByRankRange as i64)),
             ExpressionArgument::Value(Value::from(return_type as u8)),
-            ExpressionArgument::FilterCmd(rank),
+            ExpressionArgument::FilterExpression(rank),
             ExpressionArgument::Context(ctx.to_vec()),
         ];
         ListExpression::add_read(bin, ListExpression::get_value_type(return_type), args)
@@ -487,27 +509,27 @@ impl ListExpression {
 
     pub fn get_by_rank_range_count(
         return_type: ListReturnType,
-        rank: FilterCmd,
-        count: FilterCmd,
-        bin: FilterCmd,
+        rank: FilterExpression,
+        count: FilterExpression,
+        bin: FilterExpression,
         ctx: &[CdtContext],
-    ) -> FilterCmd {
+    ) -> FilterExpression {
         let args = vec![
             ExpressionArgument::Value(Value::from(ListExpOp::GetByRankRange as i64)),
             ExpressionArgument::Value(Value::from(return_type as u8)),
-            ExpressionArgument::FilterCmd(rank),
-            ExpressionArgument::FilterCmd(count),
+            ExpressionArgument::FilterExpression(rank),
+            ExpressionArgument::FilterExpression(count),
             ExpressionArgument::Context(ctx.to_vec()),
         ];
         ListExpression::add_read(bin, ListExpression::get_value_type(return_type), args)
     }
 
     pub fn add_read(
-        bin: FilterCmd,
+        bin: FilterExpression,
         return_type: ExpType,
         arguments: Vec<ExpressionArgument>,
-    ) -> FilterCmd {
-        FilterCmd {
+    ) -> FilterExpression {
+        FilterExpression {
             cmd: Some(ExpOp::Call),
             val: None,
             bin: Some(Box::new(bin)),
@@ -519,10 +541,10 @@ impl ListExpression {
     }
 
     pub fn add_write(
-        bin: FilterCmd,
+        bin: FilterExpression,
         ctx: &[CdtContext],
         arguments: Vec<ExpressionArgument>,
-    ) -> FilterCmd {
+    ) -> FilterExpression {
         let mut return_type: ExpType;
         if ctx.is_empty() {
             return_type = ExpType::LIST
@@ -534,7 +556,7 @@ impl ListExpression {
             }
         }
 
-        FilterCmd {
+        FilterExpression {
             cmd: Some(ExpOp::Call),
             val: None,
             bin: Some(Box::new(bin)),

@@ -100,7 +100,7 @@ pub enum MapOrder {
 }
 
 /// Map return type. Type of data to return when selecting or removing items from the map.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub enum MapReturnType {
     /// Do not return a result.
     None = 0,
@@ -153,7 +153,7 @@ pub enum MapReturnType {
 }
 
 /// Unique key map write type.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub enum MapWriteMode {
     /// If the key already exists, the item will be overwritten.
     /// If the key does not exist, a new item will be created.
@@ -171,8 +171,10 @@ pub enum MapWriteMode {
 /// `MapPolicy` directives when creating a map and writing map items.
 #[derive(Debug)]
 pub struct MapPolicy {
-    order: MapOrder,
-    write_mode: MapWriteMode,
+    /// The Order of the Map
+    pub order: MapOrder,
+    /// The Map Write Mode
+    pub write_mode: MapWriteMode,
 }
 
 impl MapPolicy {
