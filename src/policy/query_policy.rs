@@ -14,6 +14,7 @@
 // the License.
 
 use crate::policy::{BasePolicy, PolicyLike};
+use crate::exp::exp::FilterExpression;
 
 /// `QueryPolicy` encapsulates parameters for query operations.
 #[derive(Debug, Clone)]
@@ -34,12 +35,20 @@ pub struct QueryPolicy {
 
     /// Terminate query if cluster is in fluctuating state.
     pub fail_on_cluster_change: bool,
+
+    /// Optional Filter Expression
+    pub filter_expression: Option<FilterExpression>
 }
 
 impl QueryPolicy {
     /// Create a new query policy instance with default parameters.
     pub fn new() -> Self {
         QueryPolicy::default()
+    }
+
+    /// Get the current Filter Expression
+    pub fn filter_expression(&self) -> &Option<FilterExpression> {
+        &self.filter_expression
     }
 }
 
@@ -50,6 +59,7 @@ impl Default for QueryPolicy {
             max_concurrent_nodes: 0,
             record_queue_size: 1024,
             fail_on_cluster_change: true,
+            filter_expression: None
         }
     }
 }

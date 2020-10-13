@@ -14,6 +14,7 @@
 // the License.
 
 use crate::policy::{BasePolicy, PolicyLike};
+use crate::exp::exp::FilterExpression;
 
 /// `ScanPolicy` encapsulates optional parameters used in scan operations.
 #[derive(Clone)]
@@ -42,12 +43,20 @@ pub struct ScanPolicy {
     /// performing an operation on the socket on the server side. Zero means there is no socket
     /// timeout. Default: 10,000 ms.
     pub socket_timeout: u32,
+
+    /// Optional Filter Expression
+    pub filter_expression: Option<FilterExpression>
 }
 
 impl ScanPolicy {
     /// Create a new scan policy instance with default parameters.
     pub fn new() -> Self {
         ScanPolicy::default()
+    }
+
+    /// Get the current Filter Expression
+    pub fn filter_expression(&self) -> &Option<FilterExpression> {
+        &self.filter_expression
     }
 }
 
@@ -60,6 +69,7 @@ impl Default for ScanPolicy {
             record_queue_size: 1024,
             fail_on_cluster_change: true,
             socket_timeout: 10000,
+            filter_expression:None
         }
     }
 }

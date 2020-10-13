@@ -16,6 +16,7 @@
 use crate::policy::BasePolicy;
 use crate::{ConsistencyLevel, Priority};
 use std::time::Duration;
+use crate::exp::exp::FilterExpression;
 
 /// `ReadPolicy` excapsulates parameters for transaction policy attributes
 /// used in all database operation calls.
@@ -31,5 +32,12 @@ impl Default for ReadPolicy {
             consistency_level: ConsistencyLevel::ConsistencyOne,
             filter_expression: None,
         }
+    }
+}
+
+impl ReadPolicy {
+    /// Get the Optional Filter Expression
+    pub fn filter_expression(&self) -> &Option<FilterExpression> {
+        &self.filter_expression
     }
 }

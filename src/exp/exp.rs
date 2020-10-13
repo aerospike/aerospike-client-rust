@@ -10,17 +10,28 @@ use crate::Value;
 use std::collections::HashMap;
 use std::fmt::Debug;
 
+/// Expression Data Types for usage in some FilterExpressions on for example Map and List
 #[derive(Debug, Clone, Copy)]
 pub enum ExpType {
+    /// NIL Expression Type
     NIL = 0,
+    /// BOOLEAN Expression Type
     BOOL = 1,
+    /// INTEGER Expression Type
     INT = 2,
+    /// STRING Expression Type
     STRING = 3,
+    /// LIST Expression Type
     LIST = 4,
+    /// MAP Expression Type
     MAP = 5,
+    /// BLOB Expression Type
     BLOB = 6,
+    /// FLOAT Expression Type
     FLOAT = 7,
+    /// GEO String Expression Type
     GEO = 8,
+    /// HLL Expression Type
     HLL = 9,
 }
 

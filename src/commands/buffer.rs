@@ -159,7 +159,7 @@ impl Buffer {
         self.begin()?;
         let mut field_count = self.estimate_key_size(key, policy.send_key)?;
         let mut filter_size = 0;
-        if let Some(filter) = policy.base_policy.filter_expression() {
+        if let Some(filter) = policy.filter_expression() {
             filter_size = filter.pack(&mut None)?;
             self.data_offset += filter_size + FIELD_HEADER_SIZE as usize;
             field_count += 1;
@@ -179,7 +179,7 @@ impl Buffer {
         )?;
         self.write_key(key, policy.send_key)?;
 
-        if let Some(filter) = policy.base_policy.filter_expression() {
+        if let Some(filter) = policy.filter_expression() {
             self.write_filter_expression(filter, filter_size)?;
         }
         for bin in bins {
@@ -195,7 +195,7 @@ impl Buffer {
         let mut field_count = self.estimate_key_size(key, false)?;
         let mut filter_size = 0;
 
-        if let Some(filter) = policy.base_policy.filter_expression() {
+        if let Some(filter) = policy.filter_expression() {
             filter_size = filter.pack(&mut None)?;
             self.data_offset += filter_size + FIELD_HEADER_SIZE as usize;
             field_count += 1;
@@ -211,7 +211,7 @@ impl Buffer {
         )?;
         self.write_key(key, false)?;
 
-        if let Some(filter) = policy.base_policy.filter_expression() {
+        if let Some(filter) = policy.filter_expression() {
             self.write_filter_expression(filter, filter_size)?;
         }
 
@@ -224,7 +224,7 @@ impl Buffer {
         let mut field_count = self.estimate_key_size(key, policy.send_key)?;
         let mut filter_size = 0;
 
-        if let Some(filter) = policy.base_policy.filter_expression() {
+        if let Some(filter) = policy.filter_expression() {
             filter_size = filter.pack(&mut None)?;
             self.data_offset += filter_size + FIELD_HEADER_SIZE as usize;
             field_count += 1;
@@ -234,7 +234,7 @@ impl Buffer {
         self.write_header_with_policy(policy, 0, INFO2_WRITE, field_count as u16, 1)?;
         self.write_key(key, policy.send_key)?;
 
-        if let Some(filter) = policy.base_policy.filter_expression() {
+        if let Some(filter) = policy.filter_expression() {
             self.write_filter_expression(filter, filter_size)?;
         }
 
@@ -248,7 +248,7 @@ impl Buffer {
         let mut field_count = self.estimate_key_size(key, false)?;
         let mut filter_size = 0;
 
-        if let Some(filter) = policy.base_policy.filter_expression() {
+        if let Some(filter) = policy.filter_expression() {
             filter_size = filter.pack(&mut None)?;
             self.data_offset += filter_size + FIELD_HEADER_SIZE as usize;
             field_count += 1;
@@ -264,7 +264,7 @@ impl Buffer {
         )?;
         self.write_key(key, false)?;
 
-        if let Some(filter) = policy.base_policy.filter_expression() {
+        if let Some(filter) = policy.filter_expression() {
             self.write_filter_expression(filter, filter_size)?;
         }
 
@@ -370,7 +370,7 @@ impl Buffer {
 
         let mut filter_size = 0;
 
-        if let Some(filter) = policy.base_policy.filter_expression() {
+        if let Some(filter) = policy.filter_expression() {
             filter_size = filter.pack(&mut None)?;
             self.data_offset += filter_size + FIELD_HEADER_SIZE as usize;
             field_count += 1;
@@ -534,7 +534,7 @@ impl Buffer {
         let mut field_count = self.estimate_key_size(key, policy.send_key && write_attr != 0)?;
         let mut filter_size = 0;
 
-        if let Some(filter) = policy.base_policy.filter_expression() {
+        if let Some(filter) = policy.filter_expression() {
             filter_size = filter.pack(&mut None)?;
             self.data_offset += filter_size + FIELD_HEADER_SIZE as usize;
             field_count += 1;
@@ -560,7 +560,7 @@ impl Buffer {
         }
         self.write_key(key, policy.send_key && write_attr != 0)?;
 
-        if let Some(filter) = policy.base_policy.filter_expression() {
+        if let Some(filter) = policy.filter_expression() {
             self.write_filter_expression(filter, filter_size)?;
         }
 
@@ -585,7 +585,7 @@ impl Buffer {
         field_count += self.estimate_udf_size(package_name, function_name, args)? as u16;
         let mut filter_size = 0;
 
-        if let Some(filter) = policy.base_policy.filter_expression() {
+        if let Some(filter) = policy.filter_expression() {
             filter_size = filter.pack(&mut None)?;
             self.data_offset += filter_size + FIELD_HEADER_SIZE as usize;
             field_count += 1;
@@ -595,7 +595,7 @@ impl Buffer {
         self.write_header(&policy.base_policy, 0, INFO2_WRITE, field_count, 0)?;
         self.write_key(key, policy.send_key)?;
 
-        if let Some(filter) = policy.base_policy.filter_expression() {
+        if let Some(filter) = policy.filter_expression() {
             self.write_filter_expression(filter, filter_size)?;
         }
 
@@ -618,7 +618,7 @@ impl Buffer {
         let mut field_count = 0;
         let mut filter_size = 0;
 
-        if let Some(filter) = policy.base_policy.filter_expression() {
+        if let Some(filter) = policy.filter_expression() {
             filter_size = filter.pack(&mut None)?;
             self.data_offset += filter_size + FIELD_HEADER_SIZE as usize;
             field_count += 1;
@@ -679,7 +679,7 @@ impl Buffer {
             self.write_field_string(set_name, FieldType::Table)?;
         }
 
-        if let Some(filter) = policy.base_policy.filter_expression() {
+        if let Some(filter) = policy.filter_expression() {
             self.write_filter_expression(filter, filter_size)?;
         }
 
@@ -781,7 +781,7 @@ impl Buffer {
         }
         let mut filter_exp_size = 0;
 
-        if let Some(filter_exp) = policy.base_policy.filter_expression() {
+        if let Some(filter_exp) = policy.filter_expression() {
             filter_exp_size = filter_exp.pack(&mut None)?;
             self.data_offset += filter_exp_size + FIELD_HEADER_SIZE as usize;
             field_count += 1;
@@ -880,7 +880,7 @@ impl Buffer {
             self.write_u8(100)?;
         }
 
-        if let Some(filter_exp) = policy.base_policy.filter_expression() {
+        if let Some(filter_exp) = policy.filter_expression() {
             self.write_filter_expression(filter_exp, filter_exp_size)?;
         }
 

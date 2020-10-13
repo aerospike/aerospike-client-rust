@@ -79,9 +79,6 @@ pub trait Policy {
     /// How replicas should be consulted in read operations to provide the desired consistency
     /// guarantee.
     fn consistency_level(&self) -> &ConsistencyLevel;
-
-    /// Optional filter expression.
-    fn filter_expression(&self) -> &Option<FilterExpression>;
 }
 
 #[doc(hidden)]
@@ -89,6 +86,7 @@ pub trait Policy {
 pub trait PolicyLike {
     /// Retrieve a reference to the base policy.
     fn base(&self) -> &BasePolicy;
+
 }
 
 impl<T> Policy for T
@@ -117,10 +115,6 @@ where
 
     fn sleep_between_retries(&self) -> Option<Duration> {
         self.base().sleep_between_retries()
-    }
-
-    fn filter_expression(&self) -> &Option<FilterExpression> {
-        self.base().filter_expression()
     }
 }
 
@@ -152,8 +146,9 @@ pub struct BasePolicy {
     /// transaction fails and the timeout was not exceeded.  Enter zero to skip sleep.
     pub sleep_between_retries: Option<Duration>,
 
-    /// Optional filter expression.
-    pub filter_expression: Option<FilterExpression>,
+    /// Optional FilterExpression
+    pub filter_expression: Option<FilterExpression>
+
 }
 
 impl Policy for BasePolicy {
@@ -184,7 +179,4 @@ impl Policy for BasePolicy {
         &self.consistency_level
     }
 
-    fn filter_expression(&self) -> &Option<FilterExpression> {
-        &self.filter_expression
-    }
 }
