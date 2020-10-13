@@ -590,7 +590,7 @@ impl MapExpression {
     /// use aerospike::exp::exp::Expression;
     /// use aerospike::exp::map_exp::MapExpression;
     /// use aerospike::MapReturnType;
-    /// Expression::gt(MapExpression::get_by_value(MapReturnType::Count, Expression::str_val("BBB"), Expression::map_bin("a".to_string()), &[]), Expression::int_val(0));
+    /// Expression::gt(MapExpression::get_by_value(MapReturnType::Count, Expression::string_val("BBB".to_string()), Expression::map_bin("a".to_string()), &[]), Expression::int_val(0));
     /// ```
     pub fn get_by_value(
         return_type: MapReturnType,
