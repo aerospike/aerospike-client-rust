@@ -13,9 +13,9 @@
 // License for the specific language governing permissions and limitations under
 // the License.
 
+use crate::exp::FilterExpression;
 use crate::policy::{BasePolicy, PolicyLike};
 use crate::{CommitLevel, Expiration, GenerationPolicy, RecordExistsAction};
-use crate::exp::exp::FilterExpression;
 
 /// `WritePolicy` encapsulates parameters for all write operations.
 pub struct WritePolicy {
@@ -65,7 +65,7 @@ pub struct WritePolicy {
     pub durable_delete: bool,
 
     /// Optional Filter Expression
-    pub filter_expression: Option<FilterExpression>
+    pub filter_expression: Option<FilterExpression>,
 }
 
 impl WritePolicy {
@@ -78,7 +78,7 @@ impl WritePolicy {
     }
 
     /// Get the current Filter expression
-    pub fn filter_expression(&self) -> &Option<FilterExpression> {
+    pub const fn filter_expression(&self) -> &Option<FilterExpression> {
         &self.filter_expression
     }
 }
@@ -95,7 +95,7 @@ impl Default for WritePolicy {
             send_key: false,
             respond_per_each_op: false,
             durable_delete: false,
-            filter_expression: None
+            filter_expression: None,
         }
     }
 }

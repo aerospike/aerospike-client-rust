@@ -20,14 +20,14 @@ use byteorder::{ByteOrder, NetworkEndian};
 use crate::batch::batch_executor::SharedSlice;
 use crate::commands::field_type::FieldType;
 use crate::errors::Result;
-use crate::exp::exp::FilterExpression;
+use crate::exp::FilterExpression;
 use crate::msgpack::encoder;
 use crate::operations::{Operation, OperationBin, OperationData, OperationType};
 use crate::policy::{
     BatchPolicy, CommitLevel, ConsistencyLevel, GenerationPolicy, QueryPolicy, ReadPolicy,
     RecordExistsAction, ScanPolicy, WritePolicy,
 };
-use crate::{BatchRead, Bin, Bins, CollectionIndexType, Key, Policy, Statement, Value};
+use crate::{BatchRead, Bin, Bins, CollectionIndexType, Key, Statement, Value};
 
 // Contains a read operation.
 const INFO1_READ: u8 = 1;

@@ -1,11 +1,12 @@
 //! Bitwise Aerospike Filter Expressions.
-use crate::exp::exp::{ExpOp, ExpType, ExpressionArgument, FilterExpression, MODIFY};
+use crate::exp::{ExpOp, ExpType, ExpressionArgument, FilterExpression, MODIFY};
 use crate::operations::bitwise::{BitPolicy, BitwiseOverflowActions, BitwiseResizeFlags};
 use crate::Value;
 
 const MODULE: i64 = 1;
 const INT_FLAGS_SIGNED: i64 = 1;
 
+#[doc(hidden)]
 pub enum BitExpOp {
     RESIZE = 0,
     INSERT = 1,
@@ -27,31 +28,30 @@ pub enum BitExpOp {
     GetInt = 54,
 }
 
- /// Bit expression generator.
- /// 
- /// The bin expression argument in these methods can be a reference to a bin or the
- /// result of another expression. Expressions that modify bin values are only used
- /// for temporary expression evaluation and are not permanently applied to the bin.
- /// Bit modify expressions return the blob bin's value.
- /// 
- /// Offset orientation is left-to-right.  Negative offsets are supported.
- /// If the offset is negative, the offset starts backwards from end of the bitmap.
- /// If an offset is out of bounds, a parameter error will be returned.
+/// Bit expression generator.
+///
+/// The bin expression argument in these methods can be a reference to a bin or the
+/// result of another expression. Expressions that modify bin values are only used
+/// for temporary expression evaluation and are not permanently applied to the bin.
+/// Bit modify expressions return the blob bin's value.
+///
+/// Offset orientation is left-to-right.  Negative offsets are supported.
+/// If the offset is negative, the offset starts backwards from end of the bitmap.
+/// If an offset is out of bounds, a parameter error will be returned.
 pub struct BitExpression {}
 
 impl BitExpression {
-
     /// Create expression that resizes byte[] to byteSize according to resizeFlags
     /// and returns byte[].
-    /// 
+    ///
     /// bin = [0b00000001, 0b01000010]
     /// byteSize = 4
     /// resizeFlags = 0
     /// returns [0b00000001, 0b01000010, 0b00000000, 0b00000000]
-    /// 
+    ///
     /// ```
     /// // Resize bin "a" and compare bit count
-    /// use aerospike::exp::exp::Expression;
+    /// use aerospike::exp::Expression;
     /// use aerospike::exp::bit_exp::BitExpression;
     /// use aerospike::operations::bitwise::{BitPolicy, BitwiseResizeFlags};
     /// Expression::eq(
@@ -75,17 +75,18 @@ impl BitExpression {
     }
 
     /// Create expression that inserts value bytes into byte[] bin at byteOffset and returns byte[].
-    /// 
+    ///
     /// bin = [0b00000001, 0b01000010, 0b00000011, 0b00000100, 0b00000101]
     /// byteOffset = 1
     /// value = [0b11111111, 0b11000111]
     /// bin result = [0b00000001, 0b11111111, 0b11000111, 0b01000010, 0b00000011, 0b00000100, 0b00000101]
-    /// 
+    ///
     /// ```
     /// // Insert bytes into bin "a" and compare bit count
-    /// use aerospike::exp::exp::Expression;
+    /// use aerospike::exp::Expression;
     /// use aerospike::exp::bit_exp::BitExpression;
     /// use aerospike::operations::bitwise::BitPolicy;
+    /// let bytes: Vec<u8> = vec![];
     /// Expression::eq(
     ///   BitExpression::count(Expression::int_val(0), Expression::int_val(3),
     ///     BitExpression::insert(&BitPolicy::default(), Expression::int_val(1), Expression::blob_val(bytes), Expression::blob_bin("a".to_string()))),
@@ -107,15 +108,15 @@ impl BitExpression {
     }
 
     /// Create expression that removes bytes from byte[] bin at byteOffset for byteSize and returns byte[].
-    /// 
+    ///
     /// bin = [0b00000001, 0b01000010, 0b00000011, 0b00000100, 0b00000101]
     /// byteOffset = 2
     /// byteSize = 3
     /// bin result = [0b00000001, 0b01000010]
-    /// 
+    ///
     /// ```
     /// // Remove bytes from bin "a" and compare bit count
-    /// use aerospike::exp::exp::Expression;
+    /// use aerospike::exp::Expression;
     /// use aerospike::exp::bit_exp::BitExpression;
     /// use aerospike::operations::bitwise::BitPolicy;
     /// Expression::eq(
@@ -139,18 +140,19 @@ impl BitExpression {
     }
 
     /// Create expression that sets value on byte[] bin at bitOffset for bitSize and returns byte[].
-    /// 
+    ///
     /// bin = [0b00000001, 0b01000010, 0b00000011, 0b00000100, 0b00000101]
     /// bitOffset = 13
     /// bitSize = 3
     /// value = [0b11100000]
     /// bin result = [0b00000001, 0b01000111, 0b00000011, 0b00000100, 0b00000101]
-    /// 
+    ///
     /// ```
     /// // Set bytes in bin "a" and compare bit count
-    /// use aerospike::exp::exp::Expression;
+    /// use aerospike::exp::Expression;
     /// use aerospike::exp::bit_exp::BitExpression;
     /// use aerospike::operations::bitwise::BitPolicy;
+    /// let bytes: Vec<u8> = vec![];
     /// Expression::eq(
     ///   BitExpression::count(Expression::int_val(0), Expression::int_val(3),
     ///     BitExpression::set(&BitPolicy::default(), Expression::int_val(13), Expression::int_val(3), Expression::blob_val(bytes), Expression::blob_bin("a".to_string()))),
@@ -175,13 +177,13 @@ impl BitExpression {
 
     /// Create expression that performs bitwise "or" on value and byte[] bin at bitOffset for bitSize
     /// and returns byte[].
-    /// 
+    ///
     /// bin = [0b00000001, 0b01000010, 0b00000011, 0b00000100, 0b00000101]
     /// bitOffset = 17
     /// bitSize = 6
     /// value = [0b10101000]
     /// bin result = [0b00000001, 0b01000010, 0b01010111, 0b00000100, 0b00000101]
-    /// 
+    ///
     pub fn or(
         policy: &BitPolicy,
         bit_offset: FilterExpression,
@@ -201,13 +203,13 @@ impl BitExpression {
 
     /// Create expression that performs bitwise "xor" on value and byte[] bin at bitOffset for bitSize
     /// and returns byte[].
-    /// 
+    ///
     /// bin = [0b00000001, 0b01000010, 0b00000011, 0b00000100, 0b00000101]
     /// bitOffset = 17
     /// bitSize = 6
     /// value = [0b10101100]
     /// bin result = [0b00000001, 0b01000010, 0b01010101, 0b00000100, 0b00000101]
-    /// 
+    ///
     pub fn xor(
         policy: &BitPolicy,
         bit_offset: FilterExpression,
@@ -227,13 +229,13 @@ impl BitExpression {
 
     /// Create expression that performs bitwise "and" on value and byte[] bin at bitOffset for bitSize
     /// and returns byte[].
-    /// 
+    ///
     /// bin = [0b00000001, 0b01000010, 0b00000011, 0b00000100, 0b00000101]
     /// bitOffset = 23
     /// bitSize = 9
     /// value = [0b00111100, 0b10000000]
     /// bin result = [0b00000001, 0b01000010, 0b00000010, 0b00000000, 0b00000101]
-    /// 
+    ///
     pub fn and(
         policy: &BitPolicy,
         bit_offset: FilterExpression,
@@ -252,12 +254,12 @@ impl BitExpression {
     }
 
     /// Create expression that negates byte[] bin starting at bitOffset for bitSize and returns byte[].
-    /// 
+    ///
     /// bin = [0b00000001, 0b01000010, 0b00000011, 0b00000100, 0b00000101]
     /// bitOffset = 25
     /// bitSize = 6
     /// bin result = [0b00000001, 0b01000010, 0b00000011, 0b01111010, 0b00000101]
-    /// 
+    ///
     pub fn not(
         policy: &BitPolicy,
         bit_offset: FilterExpression,
@@ -274,13 +276,13 @@ impl BitExpression {
     }
 
     /// Create expression that shifts left byte[] bin starting at bitOffset for bitSize and returns byte[].
-    /// 
+    ///
     /// bin = [0b00000001, 0b01000010, 0b00000011, 0b00000100, 0b00000101]
     /// bitOffset = 32
     /// bitSize = 8
     /// shift = 3
     /// bin result = [0b00000001, 0b01000010, 0b00000011, 0b00000100, 0b00101000]
-    /// 
+    ///
     pub fn lshift(
         policy: &BitPolicy,
         bit_offset: FilterExpression,
@@ -299,13 +301,13 @@ impl BitExpression {
     }
 
     /// Create expression that shifts right byte[] bin starting at bitOffset for bitSize and returns byte[].
-    /// 
+    ///
     /// bin = [0b00000001, 0b01000010, 0b00000011, 0b00000100, 0b00000101]
     /// bitOffset = 0
     /// bitSize = 9
     /// shift = 1
     /// bin result = [0b00000000, 0b11000010, 0b00000011, 0b00000100, 0b00000101]
-    /// 
+    ///
     pub fn rshift(
         policy: &BitPolicy,
         bit_offset: FilterExpression,
@@ -324,16 +326,16 @@ impl BitExpression {
     }
 
     /// Create expression that adds value to byte[] bin starting at bitOffset for bitSize and returns byte[].
-    /// BitSize must be <= 64. Signed indicates if bits should be treated as a signed number.
-    /// If add overflows/underflows, BitOverflowAction is used.
-    /// 
+    /// `BitSize` must be <= 64. Signed indicates if bits should be treated as a signed number.
+    /// If add overflows/underflows, `BitwiseOverflowActions` is used.
+    ///
     /// bin = [0b00000001, 0b01000010, 0b00000011, 0b00000100, 0b00000101]
     /// bitOffset = 24
     /// bitSize = 16
     /// value = 128
     /// signed = false
     /// bin result = [0b00000001, 0b01000010, 0b00000011, 0b00000100, 0b10000101]
-    /// 
+    ///
     pub fn add(
         policy: &BitPolicy,
         bit_offset: FilterExpression,
@@ -359,16 +361,16 @@ impl BitExpression {
     }
 
     /// Create expression that subtracts value from byte[] bin starting at bitOffset for bitSize and returns byte[].
-    /// BitSize must be <= 64. Signed indicates if bits should be treated as a signed number.
-    /// If add overflows/underflows, BitOverflowAction is used.
-    /// 
+    /// `BitSize` must be <= 64. Signed indicates if bits should be treated as a signed number.
+    /// If add overflows/underflows, `BitwiseOverflowActions` is used.
+    ///
     /// bin = [0b00000001, 0b01000010, 0b00000011, 0b00000100, 0b00000101]
     /// bitOffset = 24
     /// bitSize = 16
     /// value = 128
     /// signed = false
     /// bin result = [0b00000001, 0b01000010, 0b00000011, 0b0000011, 0b10000101]
-    /// 
+    ///
     pub fn subtract(
         policy: &BitPolicy,
         bit_offset: FilterExpression,
@@ -394,14 +396,14 @@ impl BitExpression {
     }
 
     /// Create expression that sets value to byte[] bin starting at bitOffset for bitSize and returns byte[].
-    /// BitSize must be <= 64.
-    /// 
+    /// `BitSize` must be <= 64.
+    ///
     /// bin = [0b00000001, 0b01000010, 0b00000011, 0b00000100, 0b00000101]
     /// bitOffset = 1
     /// bitSize = 8
     /// value = 127
     /// bin result = [0b00111111, 0b11000010, 0b00000011, 0b0000100, 0b00000101]
-    /// 
+    ///
     pub fn set_int(
         policy: &BitPolicy,
         bit_offset: FilterExpression,
@@ -420,15 +422,15 @@ impl BitExpression {
     }
 
     /// Create expression that returns bits from byte[] bin starting at bitOffset for bitSize.
-    /// 
+    ///
     /// bin = [0b00000001, 0b01000010, 0b00000011, 0b00000100, 0b00000101]
     /// bitOffset = 9
     /// bitSize = 5
     /// returns [0b10000000]
-    /// 
+    ///
     /// ```
     /// // Bin "a" bits = [0b10000000]
-    /// use aerospike::exp::exp::Expression;
+    /// use aerospike::exp::Expression;
     /// use aerospike::exp::bit_exp::BitExpression;
     /// Expression::eq(
     ///   BitExpression::get(Expression::int_val(9), Expression::int_val(5), Expression::blob_bin("a".to_string())),
@@ -449,15 +451,15 @@ impl BitExpression {
 
     /// Create expression that returns integer count of set bits from byte[] bin starting at
     /// bitOffset for bitSize.
-    /// 
+    ///
     /// bin = [0b00000001, 0b01000010, 0b00000011, 0b00000100, 0b00000101]
     /// bitOffset = 20
     /// bitSize = 4
     /// returns 2
-    /// 
+    ///
     /// ```
     /// // Bin "a" bit count <= 2
-    /// use aerospike::exp::exp::Expression;
+    /// use aerospike::exp::Expression;
     /// use aerospike::exp::bit_exp::BitExpression;
     /// Expression::le(BitExpression::count(Expression::int_val(0), Expression::int_val(5), Expression::blob_bin("a".to_string())), Expression::int_val(2));
     /// ```
@@ -476,16 +478,16 @@ impl BitExpression {
 
     /// Create expression that returns integer bit offset of the first specified value bit in byte[] bin
     /// starting at bitOffset for bitSize.
-    /// 
+    ///
     /// bin = [0b00000001, 0b01000010, 0b00000011, 0b00000100, 0b00000101]
     /// bitOffset = 24
     /// bitSize = 8
     /// value = true
     /// returns 5
-    /// 
+    ///
     /// ```
     /// // lscan(a) == 5
-    /// use aerospike::exp::exp::Expression;
+    /// use aerospike::exp::Expression;
     /// use aerospike::exp::bit_exp::BitExpression;
     /// Expression::eq(BitExpression::lscan(Expression::int_val(24), Expression::int_val(8), Expression::int_val(1), Expression::blob_bin("a".to_string())), Expression::int_val(5));
     /// ```
@@ -508,16 +510,16 @@ impl BitExpression {
     /// Create expression that returns integer bit offset of the last specified value bit in byte[] bin
     /// starting at bitOffset for bitSize.
     /// Example:
-    /// 
+    ///
     /// bin = [0b00000001, 0b01000010, 0b00000011, 0b00000100, 0b00000101]
     /// bitOffset = 32
     /// bitSize = 8
     /// value = true
     /// returns 7
-    /// 
+    ///
     /// ```
     /// // rscan(a) == 7
-    /// use aerospike::exp::exp::Expression;
+    /// use aerospike::exp::Expression;
     /// use aerospike::exp::bit_exp::BitExpression;
     /// Expression::eq(BitExpression::rscan(Expression::int_val(32), Expression::int_val(8), Expression::int_val(1), Expression::blob_bin("a".to_string())), Expression::int_val(7));
     /// ```
@@ -539,16 +541,16 @@ impl BitExpression {
 
     /// Create expression that returns integer from byte[] bin starting at bitOffset for bitSize.
     /// Signed indicates if bits should be treated as a signed number.
-    /// 
+    ///
     /// bin = [0b00000001, 0b01000010, 0b00000011, 0b00000100, 0b00000101]
     /// bitOffset = 8
     /// bitSize = 16
     /// signed = false
     /// returns 16899
-    /// 
+    ///
     /// ```
     /// // getInt(a) == 16899
-    /// use aerospike::exp::exp::Expression;
+    /// use aerospike::exp::Expression;
     /// use aerospike::exp::bit_exp::BitExpression;
     /// Expression::eq(BitExpression::get_int(Expression::int_val(8), Expression::int_val(16), false, Expression::blob_bin("a".to_string())), Expression::int_val(16899));
     /// ```
@@ -570,6 +572,7 @@ impl BitExpression {
     }
 }
 
+#[doc(hidden)]
 pub fn add_write(bin: FilterExpression, arguments: Vec<ExpressionArgument>) -> FilterExpression {
     FilterExpression {
         cmd: Some(ExpOp::Call),
@@ -582,6 +585,7 @@ pub fn add_write(bin: FilterExpression, arguments: Vec<ExpressionArgument>) -> F
     }
 }
 
+#[doc(hidden)]
 pub fn add_read(
     bin: FilterExpression,
     return_type: ExpType,

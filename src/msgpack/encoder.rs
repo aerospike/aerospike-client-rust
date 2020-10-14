@@ -70,10 +70,10 @@ pub fn pack_cdt_op(
         size += pack_array_begin(buf, ctx.len() * 2)?;
 
         for c in ctx {
-            if c.id != 0 {
-                size += pack_integer(buf, i64::from(c.id | c.flags))?;
-            } else {
+            if c.id == 0 {
                 size += pack_integer(buf, i64::from(c.id))?;
+            } else {
+                size += pack_integer(buf, i64::from(c.id | c.flags))?;
             }
             size += pack_value(buf, &c.value)?;
         }
@@ -111,10 +111,10 @@ pub fn pack_cdt_bit_op(
         size += pack_array_begin(buf, ctx.len() * 2)?;
 
         for c in ctx {
-            if c.id != 0 {
-                size += pack_integer(buf, i64::from(c.id | c.flags))?;
-            } else {
+            if c.id == 0 {
                 size += pack_integer(buf, i64::from(c.id))?;
+            } else {
+                size += pack_integer(buf, i64::from(c.id | c.flags))?;
             }
             size += pack_value(buf, &c.value)?;
         }

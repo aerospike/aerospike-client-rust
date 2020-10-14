@@ -1,11 +1,45 @@
 //! Map Cdt Aerospike Filter Expressions.
-use crate::exp::exp::{ExpOp, ExpType, Expression, ExpressionArgument, FilterExpression, MODIFY};
+use crate::exp::{ExpOp, ExpType, Expression, ExpressionArgument, FilterExpression, MODIFY};
 use crate::operations::cdt_context::CdtContext;
 use crate::operations::maps::CdtMapOpType;
-use crate::operations::OperationData::CdtMapOp;
 use crate::{MapPolicy, MapReturnType, MapWriteMode, Value};
 
-/// Map Cdt Filter Expressions
+/// Map expression generator.
+///
+/// The bin expression argument in these methods can be a reference to a bin or the
+/// result of another expression. Expressions that modify bin values are only used
+/// for temporary expression evaluation and are not permanently applied to the bin.
+///
+/// Map modify expressions return the bin's value. This value will be a map except
+/// when the map is nested within a list. In that case, a list is returned for the
+/// map modify expression.
+///
+/// All maps maintain an index and a rank.  The index is the item offset from the start of the map,
+/// for both unordered and ordered maps.  The rank is the sorted index of the value component.
+/// Map supports negative indexing for index and rank.
+///
+/// Index examples:
+///
+/// Index 0: First item in map.
+/// Index 4: Fifth item in map.
+/// Index -1: Last item in map.
+/// Index -3: Third to last item in map.
+/// Index 1 Count 2: Second and third items in map.
+/// Index -3 Count 3: Last three items in map.
+/// Index -5 Count 4: Range between fifth to last item to second to last item inclusive.
+///
+///
+/// Rank examples:
+///
+/// Rank 0: Item with lowest value rank in map.
+/// Rank 4: Fifth lowest ranked item in map.
+/// Rank -1: Item with highest ranked value in map.
+/// Rank -3: Item with third highest ranked value in map.
+/// Rank 1 Count 2: Second and third lowest ranked items in map.
+/// Rank -3 Count 3: Top three ranked items in map.
+///
+///
+/// Nested expressions are supported by optional CTX context arguments.
 pub struct MapExpression {}
 
 #[doc(hidden)]
@@ -55,7 +89,7 @@ impl MapExpression {
         bin: FilterExpression,
         ctx: &[CdtContext],
     ) -> FilterExpression {
-        let mut args: Vec<ExpressionArgument>;
+        let args: Vec<ExpressionArgument>;
         let pol = MapExpression::get_policy_value(policy.write_mode, false);
         if pol == CdtMapOpType::Replace as u8 {
             args = vec![
@@ -83,7 +117,7 @@ impl MapExpression {
         bin: FilterExpression,
         ctx: &[CdtContext],
     ) -> FilterExpression {
-        let mut args: Vec<ExpressionArgument>;
+        let args: Vec<ExpressionArgument>;
         let pol = MapExpression::get_policy_value(policy.write_mode, true);
         if pol == CdtMapOpType::Replace as u8 {
             args = vec![
@@ -193,7 +227,7 @@ impl MapExpression {
     /// (5,0) = [{5=15},{9=10}]
     /// (5,1) = [{9=10}]
     /// (5,-1) = [{4=2},{5=15},{9=10}]
-    /// (3,2) = [{9=10}]</li>
+    /// (3,2) = [{9=10}]
     /// (3,-2) = [{0=17},{4=2},{5=15},{9=10}]
     pub fn remove_by_key_relative_index_range(
         key: FilterExpression,
@@ -440,7 +474,7 @@ impl MapExpression {
     ///
     /// ```
     /// // Map bin "a" size > 7
-    /// use aerospike::exp::exp::Expression;
+    /// use aerospike::exp::Expression;
     /// use aerospike::exp::map_exp::MapExpression;
     ///
     /// Expression::gt(MapExpression::size(Expression::map_bin("a".to_string()), &[]), Expression::int_val(7));
@@ -459,7 +493,7 @@ impl MapExpression {
     ///
     /// ```
     /// // Map bin "a" contains key "B"
-    /// use aerospike::exp::exp::{Expression, ExpType};
+    /// use aerospike::exp::{Expression, ExpType};
     /// use aerospike::exp::map_exp::MapExpression;
     /// use aerospike::MapReturnType;
     /// Expression::gt(MapExpression::get_by_key(MapReturnType::Count, ExpType::INT, Expression::string_val("B".to_string()), Expression::map_bin("a".to_string()), &[]), Expression::int_val(0));
@@ -587,7 +621,7 @@ impl MapExpression {
     ///
     /// ```
     /// // Map bin "a" contains value "BBB"
-    /// use aerospike::exp::exp::Expression;
+    /// use aerospike::exp::Expression;
     /// use aerospike::exp::map_exp::MapExpression;
     /// use aerospike::MapReturnType;
     /// Expression::gt(MapExpression::get_by_value(MapReturnType::Count, Expression::string_val("BBB".to_string()), Expression::map_bin("a".to_string()), &[]), Expression::int_val(0));
@@ -835,12 +869,10 @@ impl MapExpression {
         let return_type: ExpType;
         if ctx.is_empty() {
             return_type = ExpType::MAP
+        } else if (ctx[0].id & 0x10) == 0 {
+            return_type = ExpType::MAP;
         } else {
-            if (ctx[0].id & 0x10) == 0 {
-                return_type = ExpType::MAP;
-            } else {
-                return_type = ExpType::LIST;
-            }
+            return_type = ExpType::LIST;
         }
 
         FilterExpression {
@@ -856,7 +888,7 @@ impl MapExpression {
 
     #[doc(hidden)]
     pub fn get_value_type(return_type: MapReturnType) -> ExpType {
-        let t = (return_type as u8 & !(MapReturnType::Inverted as u8));
+        let t = return_type as u8 & !(MapReturnType::Inverted as u8);
         if t <= MapReturnType::Count as u8 {
             ExpType::INT
         } else if t == MapReturnType::KeyValue as u8 {

@@ -13,10 +13,10 @@
 // License for the specific language governing permissions and limitations under
 // the License.
 
+use crate::exp::FilterExpression;
 use crate::policy::BasePolicy;
 use crate::{ConsistencyLevel, Priority};
 use std::time::Duration;
-use crate::exp::exp::FilterExpression;
 
 /// `ReadPolicy` excapsulates parameters for transaction policy attributes
 /// used in all database operation calls.
@@ -37,7 +37,7 @@ impl Default for ReadPolicy {
 
 impl ReadPolicy {
     /// Get the Optional Filter Expression
-    pub fn filter_expression(&self) -> &Option<FilterExpression> {
+    pub const fn filter_expression(&self) -> &Option<FilterExpression> {
         &self.filter_expression
     }
 }
