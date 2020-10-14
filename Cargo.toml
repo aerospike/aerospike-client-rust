@@ -1,6 +1,6 @@
 [package]
 name = "aerospike"
-version = "0.5.0"
+version = "0.6.0"
 edition = "2018"
 authors = ["Khosrow Afroozeh <khosrow@aerospike.com>", "Jan Hecking <jhecking@aerospike.com>"]
 description = "Aerospike Client for Rust"
@@ -34,11 +34,16 @@ lazy_static = "1.4"
 error-chain = "0.12"
 parking_lot = "0.9"
 pwhash = "0.3"
+serde = { version = "1.0", features = ["derive"], optional = true }
+
+[features]
+serialization = ["serde"]
 
 [dev-dependencies]
 env_logger = "0.7"
 hex = "0.4"
 bencher = "0.1"
+serde_json = "1.0"
 
 [[bench]]
 name = "client_server"

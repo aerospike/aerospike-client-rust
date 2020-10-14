@@ -13,9 +13,10 @@
 // License for the specific language governing permissions and limitations under
 // the License.
 
-use std::convert::From;
-
 use crate::value::Value;
+#[cfg(feature = "serialization")]
+use serde::Serialize;
+use std::convert::From;
 
 /// Container object for a record bin, comprising a name and a value.
 pub struct Bin<'a> {
@@ -52,6 +53,7 @@ macro_rules! as_bin {
 
 /// Specify which, if any, bins to return in read operations.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serialization", derive(Serialize))]
 pub enum Bins {
     /// Read all bins.
     All,

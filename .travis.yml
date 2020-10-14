@@ -4,7 +4,6 @@ rust:
   - nightly
   - beta
   - stable
-  - 1.38.0
 matrix:
   allow_failures:
     - rust: nightly
@@ -21,6 +20,10 @@ script:
   - rm -rf target/debug/deps/*aerospike*
   - cargo build
   - cargo test --verbose
+  - rustdoc -L target/debug/deps/ --test README.md
+  - rm -rf target/debug/deps/*aerospike*
+  - cargo build --features "serialization"
+  - cargo test --features "serialization" --verbose
   - rustdoc -L target/debug/deps/ --test README.md
 after_script:
 - tail -n +1 aerospike-server/instance?/var/log/aerospike.log

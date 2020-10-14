@@ -526,6 +526,7 @@ impl Cluster {
             // close tend by closing the channel
             let tx = self.tend_channel.lock();
             drop(tx);
+            self.closed.store(true, Ordering::Relaxed);
         }
 
         Ok(())

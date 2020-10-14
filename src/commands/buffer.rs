@@ -98,13 +98,15 @@ const MAX_BUFFER_SIZE: usize = 1024 * 1024 + 8; // 1 MB + header
 pub struct Buffer {
     pub data_buffer: Vec<u8>,
     pub data_offset: usize,
+    pub reclaim_threshold: usize,
 }
 
 impl Buffer {
-    pub fn new() -> Self {
+    pub fn new(reclaim_threshold: usize) -> Self {
         Buffer {
             data_buffer: Vec::with_capacity(1024),
             data_offset: 0,
+            reclaim_threshold,
         }
     }
 
@@ -125,7 +127,11 @@ impl Buffer {
             bail!("Invalid size for buffer: {}", size);
         }
 
+        let mem_size = self.data_buffer.capacity();
         self.data_buffer.resize(size, 0);
+        if mem_size > self.reclaim_threshold && size < mem_size {
+            self.data_buffer.shrink_to_fit();
+        }
 
         Ok(())
     }

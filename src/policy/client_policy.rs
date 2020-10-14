@@ -45,6 +45,13 @@ pub struct ClientPolicy {
     /// Throw exception if host connection fails during addHost().
     pub fail_if_not_connected: bool,
 
+    /// Threshold at which the buffer attached to the connection will be shrunk by deallocating
+    /// memory instead of just resetting the size of the underlying vec.
+    /// Should be set to a value that covers as large a percentile of payload sizes as possible,
+    /// while also being small enough not to occupy a significant amount of memory for the life
+    /// of the connection pool.
+    pub buffer_reclaim_threshold: usize,
+
     /// TendInterval determines interval for checking for cluster state changes.
     /// Minimum possible interval is 10 Milliseconds.
     pub tend_interval: Duration,
@@ -92,6 +99,7 @@ impl Default for ClientPolicy {
             use_services_alternate: false,
             thread_pool_size: 128,
             cluster_name: None,
+            buffer_reclaim_threshold: 65536,
         }
     }
 }
