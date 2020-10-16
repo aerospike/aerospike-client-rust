@@ -163,19 +163,28 @@ impl FilterExpression {
             if cmd as i64 == ExpOp::REGEX as i64 {
                 // Packing logic for Regex
                 size += pack_array_begin(buf, 4)?;
+                // The Operation
                 size += pack_integer(buf, cmd as i64)?;
+                // Regex Flags
                 size += pack_integer(buf, self.flags.unwrap())?;
+                // Raw String is needed instead of the msgpack String that the pack_value method would use.
                 size += pack_raw_string(buf, &self.val.clone().unwrap().to_string())?;
+                // The Bin
                 size += self.bin.clone().unwrap().pack(buf)?;
             } else if cmd as i64 == ExpOp::Call as i64 {
                 // Packing logic for Module
                 size += pack_array_begin(buf, 5)?;
+                // The Operation
                 size += pack_integer(buf, cmd as i64)?;
+                // The Module (List/Map or Bitwise)
                 size += pack_integer(buf, self.flags.unwrap())?;
+                // The Module Operation
                 size += pack_integer(buf, self.module.unwrap() as i64)?;
+                // Encoding the Arguments
                 if let Some(args) = &self.arguments {
                     let mut len = 0;
                     for arg in args {
+                        // First match to estimate the Size and write the Context
                         match arg {
                             ExpressionArgument::Value(_)
                             | ExpressionArgument::FilterExpression(_) => len += 1,
@@ -194,6 +203,7 @@ impl FilterExpression {
                         }
                     }
                     size += pack_array_begin(buf, len)?;
+                    // Second match to write the real values
                     for arg in args {
                         match arg {
                             ExpressionArgument::Value(val) => {
@@ -206,22 +216,40 @@ impl FilterExpression {
                         }
                     }
                 } else {
+                    // No Arguments
                     size += pack_value(buf, &self.val.clone().unwrap())?;
                 }
+                // Write the Bin
                 size += self.bin.clone().unwrap().pack(buf)?;
             } else if cmd as i64 == ExpOp::BIN as i64 {
+                // Bin Encoder
                 size += pack_array_begin(buf, 3)?;
+                // The Bin Operation
                 size += pack_integer(buf, cmd as i64)?;
+                // The Bin Type (INT/String etc.)
                 size += pack_integer(buf, self.module.unwrap() as i64)?;
+                // The name - Raw String is needed instead of the msgpack String that the pack_value method would use.
+                size += pack_raw_string(buf, &self.val.clone().unwrap().to_string())?;
+            } else if cmd as i64 == ExpOp::BinType as i64 {
+                // BinType encoder
+                size += pack_array_begin(buf, 2)?;
+                // BinType Operation
+                size += pack_integer(buf, cmd as i64)?;
+                // The name - Raw String is needed instead of the msgpack String that the pack_value method would use.
                 size += pack_raw_string(buf, &self.val.clone().unwrap().to_string())?;
             } else {
                 // Packing logic for all other Ops
                 if let Some(value) = &self.val {
+                    // Operation has a Value
                     size += pack_array_begin(buf, 2)?;
+                    // Write the Operation
                     size += pack_integer(buf, cmd as i64)?;
+                    // Write the Value
                     size += pack_value(buf, value)?;
                 } else {
+                    // Operation has no Value
                     size += pack_array_begin(buf, 1)?;
+                    // Write the Operation
                     size += pack_integer(buf, cmd as i64)?;
                 }
             }
