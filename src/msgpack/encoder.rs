@@ -280,6 +280,18 @@ pub fn pack_string(buf: &mut Option<&mut Buffer>, val: &str) -> Result<usize> {
 }
 
 #[doc(hidden)]
+pub fn pack_raw_string(buf: &mut Option<&mut Buffer>, val: &str) -> Result<usize> {
+    let mut size = val.len();
+
+    size += pack_byte_array_begin(buf, size)?;
+    if let Some(ref mut buf) = *buf {
+        buf.write_str(val)?;
+    }
+
+    Ok(size)
+}
+
+#[doc(hidden)]
 fn pack_geo_json(buf: &mut Option<&mut Buffer>, val: &str) -> Result<usize> {
     let mut size = val.len() + 1;
 

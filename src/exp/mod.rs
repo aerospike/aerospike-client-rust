@@ -21,7 +21,7 @@ pub mod map_exp;
 
 use crate::commands::buffer::Buffer;
 use crate::errors::Result;
-use crate::msgpack::encoder::{pack_array_begin, pack_integer, pack_value};
+use crate::msgpack::encoder::{pack_array_begin, pack_integer, pack_value, pack_string, pack_raw_string};
 use crate::operations::cdt_context::CdtContext;
 use crate::Value;
 use std::collections::HashMap;
@@ -165,7 +165,7 @@ impl FilterExpression {
                 size += pack_array_begin(buf, 4)?;
                 size += pack_integer(buf, cmd as i64)?;
                 size += pack_integer(buf, self.flags.unwrap())?;
-                size += pack_value(buf, &self.val.clone().unwrap())?;
+                size += pack_raw_string(buf, &self.val.clone().unwrap().to_string())?;
                 size += self.bin.clone().unwrap().pack(buf)?;
             } else if cmd as i64 == ExpOp::Call as i64 {
                 // Packing logic for Module
@@ -213,7 +213,7 @@ impl FilterExpression {
                 size += pack_array_begin(buf, 3)?;
                 size += pack_integer(buf, cmd as i64)?;
                 size += pack_integer(buf, self.module.unwrap() as i64)?;
-                size += pack_value(buf, &self.val.clone().unwrap())?;
+                size += pack_raw_string(buf, &self.val.clone().unwrap().to_string())?;
             } else {
                 // Packing logic for all other Ops
                 if let Some(value) = &self.val {
