@@ -15,9 +15,9 @@
 use crate::common;
 use env_logger;
 
+use aerospike::exp::Expression;
 use aerospike::Task;
 use aerospike::*;
-use aerospike::exp::Expression;
 
 const EXPECTED: usize = 1000;
 
@@ -58,7 +58,10 @@ fn query_exp() {
     let namespace = common::namespace();
     let set_name = create_test_set(EXPECTED);
     let mut qpolicy = QueryPolicy::default();
-    qpolicy.filter_expression = Some(Expression::eq(Expression::int_bin("bin".to_string()), Expression::int_val(1)));
+    qpolicy.filter_expression = Some(Expression::eq(
+        Expression::int_bin("bin".to_string()),
+        Expression::int_val(1),
+    ));
     // Filter Query
     let statement = Statement::new(namespace, &set_name, Bins::All);
     let rs = client.query(&qpolicy, statement).unwrap();
