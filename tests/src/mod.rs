@@ -27,3 +27,4 @@ mod serialization;
 mod task;
 mod truncate;
 mod udf;
+mod hll;
