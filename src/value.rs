@@ -190,6 +190,9 @@ pub enum Value {
 
     /// GeoJSON data type are JSON formatted strings to encode geospatial information.
     GeoJSON(String),
+
+    /// HLL value
+    HLL(Vec<u8>),
 }
 
 #[allow(clippy::derive_hash_xor_eq)]
@@ -209,6 +212,7 @@ impl Hash for Value {
             Value::List(ref val) => val.hash(state),
             Value::HashMap(_) => panic!("HashMaps cannot be used as map keys."),
             Value::OrderedMap(_) => panic!("OrderedMaps cannot be used as map keys."),
+            Value::HLL(ref val) => val.hash(state),
         }
     }
 }
@@ -240,6 +244,7 @@ impl Value {
             Value::HashMap(_) => ParticleType::MAP,
             Value::OrderedMap(_) => panic!("The library never passes ordered maps to the server."),
             Value::GeoJSON(_) => ParticleType::GEOJSON,
+            Value::HLL(_) => ParticleType::HLL,
         }
     }
 
@@ -256,6 +261,7 @@ impl Value {
             Value::List(ref val) => format!("{:?}", val),
             Value::HashMap(ref val) => format!("{:?}", val),
             Value::OrderedMap(ref val) => format!("{:?}", val),
+            Value::HLL(ref val) => format!("{:?}", val),
         }
     }
 
@@ -275,6 +281,7 @@ impl Value {
             Value::List(_) | Value::HashMap(_) => encoder::pack_value(&mut None, self),
             Value::OrderedMap(_) => panic!("The library never passes ordered maps to the server."),
             Value::GeoJSON(ref s) => Ok(1 + 2 + s.len()), // flags + ncells + jsonstr
+            Value::HLL(ref b) => Ok(b.len()),
         }
     }
 
@@ -296,6 +303,7 @@ impl Value {
             Value::List(_) | Value::HashMap(_) => encoder::pack_value(&mut Some(buf), self),
             Value::OrderedMap(_) => panic!("The library never passes ordered maps to the server."),
             Value::GeoJSON(ref val) => buf.write_geo(val),
+            Value::HLL(ref val) => buf.write_bytes(val),
         }
     }
 
@@ -589,6 +597,7 @@ pub fn bytes_to_particle(ptype: u8, buf: &mut Buffer, len: usize) -> Result<Valu
         }
         ParticleType::DIGEST => Ok(Value::from("A DIGEST, NOT IMPLEMENTED YET!")),
         ParticleType::LDT => Ok(Value::from("A LDT, NOT IMPLEMENTED YET!")),
+        ParticleType::HLL => Ok(Value::HLL(buf.read_blob(len)?)),
     }
 }
 
@@ -751,6 +760,7 @@ impl Serialize for Value {
                 }
                 map.end()
             }
+            Value::HLL(b) => serializer.serialize_bytes(&b[..]),
         }
     }
 }
