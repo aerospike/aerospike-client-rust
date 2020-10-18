@@ -36,12 +36,11 @@ pub fn pack_value(buf: &mut Option<&mut Buffer>, val: &Value) -> Result<usize> {
             FloatValue::F64(_) => pack_f64(buf, f64::from(val)),
             FloatValue::F32(_) => pack_f32(buf, f32::from(val)),
         },
-        Value::Blob(ref val) => pack_blob(buf, val),
+        Value::Blob(ref val) | Value::HLL(ref val) => pack_blob(buf, val),
         Value::List(ref val) => pack_array(buf, val),
         Value::HashMap(ref val) => pack_map(buf, val),
         Value::OrderedMap(_) => panic!("Ordered maps are not supported in this encoder."),
         Value::GeoJSON(ref val) => pack_geo_json(buf, val),
-        Value::HLL(ref val) => pack_blob(buf, val),
     }
 }
 

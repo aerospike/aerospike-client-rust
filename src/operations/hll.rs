@@ -13,8 +13,7 @@
 // License for the specific language governing permissions and limitations under
 // the License.
 
-//! HyperLogLog (HLL) operations.
-//! HyperLogLog operations on HLL items nested in lists/maps are not currently
+//! `HyperLogLog` operations on HLL items nested in lists/maps are not currently
 //! supported by the server.
 
 use crate::msgpack::encoder::pack_hll_op;
@@ -120,7 +119,7 @@ pub fn add<'a>(policy: &HLLPolicy, bin: &'a str, list: &'a [Value]) -> Operation
 }
 
 /// Create HLL add operation.
-/// Server adds values to HLL set. If HLL bin does not exist, use indexBitCount to create HLL bin.
+/// Server adds values to HLL set. If HLL bin does not exist, use `indexBitCount` to create HLL bin.
 /// Server returns number of entries that caused HLL to update a register.
 pub fn add_with_index<'a>(
     policy: &HLLPolicy,
@@ -132,7 +131,7 @@ pub fn add_with_index<'a>(
 }
 
 /// Create HLL add operation with minhash bits.
-/// Server adds values to HLL set. If HLL bin does not exist, use indexBitCount and minHashBitCount
+/// Server adds values to HLL set. If HLL bin does not exist, use `indexBitCount` and `minHashBitCount`
 /// to create HLL bin. Server returns number of entries that caused HLL to update a register.
 pub fn add_with_index_and_min_hash<'a>(
     policy: &HLLPolicy,
@@ -196,8 +195,8 @@ pub fn refresh_count(bin: &str) -> Operation {
 }
 
 /// Create HLL fold operation.
-/// Servers folds indexBitCount to the specified value.
-/// This can only be applied when minHashBitCount on the HLL bin is 0.
+/// Servers folds `indexBitCount` to the specified value.
+/// This can only be applied when `minHashBitCount` on the HLL bin is 0.
 /// Server does not return a value.
 pub fn fold(bin: &str, index_bit_count: i64) -> Operation {
     let cdt_op = CdtOperation {
@@ -246,7 +245,7 @@ pub fn get_union<'a>(bin: &'a str, list: &'a [Value]) -> Operation<'a> {
     }
 }
 
-/// Create HLL getUnionCount operation.
+/// Create HLL `get_union_count` operation.
 /// Server returns estimated number of elements that would be contained by the union of these
 /// HLL objects.
 pub fn get_union_count<'a>(bin: &'a str, list: &'a [Value]) -> Operation<'a> {
@@ -263,7 +262,7 @@ pub fn get_union_count<'a>(bin: &'a str, list: &'a [Value]) -> Operation<'a> {
     }
 }
 
-/// Create HLL getIntersectCount operation.
+/// Create HLL `get_intersect_count` operation.
 /// Server returns estimated number of elements that would be contained by the intersection of
 /// these HLL objects.
 pub fn get_intersect_count<'a>(bin: &'a str, list: &'a [Value]) -> Operation<'a> {
@@ -297,7 +296,7 @@ pub fn get_similarity<'a>(bin: &'a str, list: &'a [Value]) -> Operation<'a> {
 }
 
 /// Create HLL describe operation.
-/// Server returns indexBitCount and minHashBitCount used to create HLL bin in a list of longs.
+/// Server returns `indexBitCount` and `minHashBitCount` used to create HLL bin in a list of longs.
 /// The list size is 2.
 pub fn describe(bin: &str) -> Operation {
     let cdt_op = CdtOperation {

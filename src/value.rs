@@ -208,11 +208,10 @@ impl Hash for Value {
             Value::UInt(ref val) => val.hash(state),
             Value::Float(ref val) => val.hash(state),
             Value::String(ref val) | Value::GeoJSON(ref val) => val.hash(state),
-            Value::Blob(ref val) => val.hash(state),
+            Value::Blob(ref val) | Value::HLL(ref val)=> val.hash(state),
             Value::List(ref val) => val.hash(state),
             Value::HashMap(_) => panic!("HashMaps cannot be used as map keys."),
             Value::OrderedMap(_) => panic!("OrderedMaps cannot be used as map keys."),
-            Value::HLL(ref val) => val.hash(state),
         }
     }
 }
@@ -257,11 +256,10 @@ impl Value {
             Value::Bool(ref val) => val.to_string(),
             Value::Float(ref val) => val.to_string(),
             Value::String(ref val) | Value::GeoJSON(ref val) => val.to_string(),
-            Value::Blob(ref val) => format!("{:?}", val),
+            Value::Blob(ref val) | Value::HLL(ref val) => format!("{:?}", val),
             Value::List(ref val) => format!("{:?}", val),
             Value::HashMap(ref val) => format!("{:?}", val),
             Value::OrderedMap(ref val) => format!("{:?}", val),
-            Value::HLL(ref val) => format!("{:?}", val),
         }
     }
 
@@ -281,7 +279,7 @@ impl Value {
             Value::List(_) | Value::HashMap(_) => encoder::pack_value(&mut None, self),
             Value::OrderedMap(_) => panic!("The library never passes ordered maps to the server."),
             Value::GeoJSON(ref s) => Ok(1 + 2 + s.len()), // flags + ncells + jsonstr
-            Value::HLL(ref b) => Ok(b.len()),
+            Value::HLL(ref h) => Ok(h.len()),
         }
     }
 
@@ -299,11 +297,10 @@ impl Value {
             Value::Bool(ref val) => buf.write_bool(*val),
             Value::Float(ref val) => buf.write_f64(f64::from(val)),
             Value::String(ref val) => buf.write_str(val),
-            Value::Blob(ref val) => buf.write_bytes(val),
+            Value::Blob(ref val) | Value::HLL(ref val)=> buf.write_bytes(val),
             Value::List(_) | Value::HashMap(_) => encoder::pack_value(&mut Some(buf), self),
             Value::OrderedMap(_) => panic!("The library never passes ordered maps to the server."),
             Value::GeoJSON(ref val) => buf.write_geo(val),
-            Value::HLL(ref val) => buf.write_bytes(val),
         }
     }
 
