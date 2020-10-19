@@ -259,7 +259,7 @@ fn expression_rec_ops() {
 
     // dev size 0 because inmemory
     let rs = test_filter(
-        Expression::gt(Expression::device_size(), Expression::int_val(0)),
+        Expression::le(Expression::device_size(), Expression::int_val(0)),
         &set_name,
     );
     let count = count_results(rs);
@@ -281,14 +281,14 @@ fn expression_rec_ops() {
 
     // Records dont expire
     let rs = test_filter(
-        Expression::gt(Expression::void_time(), Expression::int_val(1500000000)),
+        Expression::le(Expression::void_time(), Expression::int_val(0)),
         &set_name,
     );
     let count = count_results(rs);
     assert_eq!(count, 100, "VOID TIME Test Failed");
 
     let rs = test_filter(
-        Expression::gt(Expression::ttl(), Expression::int_val(0)),
+        Expression::le(Expression::ttl(), Expression::int_val(0)),
         &set_name,
     );
     let count = count_results(rs);
@@ -332,13 +332,19 @@ fn expression_rec_ops() {
     // 0 because key is not saved
     assert_eq!(count, 0, "KEY EXISTS Test Failed");
 
-    /* let rs = test_filter(
+    let rs = test_filter(
         Expression::eq(Expression::nil(), Expression::nil()),
         &set_name,
     );
     let count = count_results(rs);
-    // 0 because key is not saved
-    assert_eq!(count, 0, "NIL Test Failed"); */
+    assert_eq!(count, 100, "NIL Test Failed");
+
+    let rs = test_filter(
+        Expression::regex_compare("[1-5]".to_string(), RegexFlag::ICASE as i64, Expression::string_bin("bin2".to_string())),
+        &set_name,
+    );
+    let count = count_results(rs);
+    assert_eq!(count, 75, "REGEX Test Failed");
 }
 
 fn test_filter(filter: FilterExpression, set_name: &str) -> Arc<Recordset> {
