@@ -42,18 +42,6 @@ fn create_test_set(no_records: usize) -> String {
         client.put(&wpolicy, &key, &bins).unwrap();
     }
 
-    let task = client
-        .create_index(
-            &wpolicy,
-            namespace,
-            &set_name,
-            "bin",
-            &format!("{}_{}_{}", namespace, set_name, "bin"),
-            IndexType::Numeric,
-        )
-        .expect("Failed to create index");
-    task.wait_till_complete(None).unwrap();
-
     set_name
 }
 

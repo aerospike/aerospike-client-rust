@@ -176,10 +176,10 @@ impl FilterExpression {
                 size += pack_array_begin(buf, 5)?;
                 // The Operation
                 size += pack_integer(buf, cmd as i64)?;
-                // The Module (List/Map or Bitwise)
-                size += pack_integer(buf, self.flags.unwrap())?;
                 // The Module Operation
                 size += pack_integer(buf, self.module.unwrap() as i64)?;
+                // The Module (List/Map or Bitwise)
+                size += pack_integer(buf, self.flags.unwrap())?;
                 // Encoding the Arguments
                 if let Some(args) = &self.arguments {
                     let mut len = 0;
