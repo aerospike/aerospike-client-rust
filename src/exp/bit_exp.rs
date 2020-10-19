@@ -146,7 +146,7 @@ impl BitExpression {
         bin: FilterExpression,
     ) -> FilterExpression {
         let args = vec![
-            ExpressionArgument::Value(Value::from(BitExpOp::INSERT as i64)),
+            ExpressionArgument::Value(Value::from(BitExpOp::REMOVE as i64)),
             ExpressionArgument::FilterExpression(byte_offset),
             ExpressionArgument::FilterExpression(byte_size),
             ExpressionArgument::Value(Value::from(policy.flags)),
@@ -181,7 +181,7 @@ impl BitExpression {
         bin: FilterExpression,
     ) -> FilterExpression {
         let args = vec![
-            ExpressionArgument::Value(Value::from(BitExpOp::INSERT as i64)),
+            ExpressionArgument::Value(Value::from(BitExpOp::SET as i64)),
             ExpressionArgument::FilterExpression(bit_offset),
             ExpressionArgument::FilterExpression(bit_size),
             ExpressionArgument::FilterExpression(value),
@@ -360,18 +360,18 @@ impl BitExpression {
         action: BitwiseOverflowActions,
         bin: FilterExpression,
     ) -> FilterExpression {
+        let mut flags = action as u8;
+        if signed {
+            flags |= INT_FLAGS_SIGNED as u8;
+        }
         let mut args = vec![
             ExpressionArgument::Value(Value::from(BitExpOp::ADD as i64)),
             ExpressionArgument::FilterExpression(bit_offset),
             ExpressionArgument::FilterExpression(bit_size),
             ExpressionArgument::FilterExpression(value),
             ExpressionArgument::Value(Value::from(policy.flags)),
+            ExpressionArgument::Value(Value::from(flags))
         ];
-        let mut flags = action as u8;
-        if signed {
-            flags |= INT_FLAGS_SIGNED as u8;
-        }
-        args.push(ExpressionArgument::Value(Value::from(flags)));
         add_write(bin, args)
     }
 
@@ -395,18 +395,18 @@ impl BitExpression {
         action: BitwiseOverflowActions,
         bin: FilterExpression,
     ) -> FilterExpression {
+        let mut flags = action as u8;
+        if signed {
+            flags |= INT_FLAGS_SIGNED as u8;
+        }
         let mut args = vec![
             ExpressionArgument::Value(Value::from(BitExpOp::SUBTRACT as i64)),
             ExpressionArgument::FilterExpression(bit_offset),
             ExpressionArgument::FilterExpression(bit_size),
             ExpressionArgument::FilterExpression(value),
             ExpressionArgument::Value(Value::from(policy.flags)),
+            ExpressionArgument::Value(Value::from(flags))
         ];
-        let mut flags = action as u8;
-        if signed {
-            flags |= INT_FLAGS_SIGNED as u8;
-        }
-        args.push(ExpressionArgument::Value(Value::from(flags)));
         add_write(bin, args)
     }
 
