@@ -368,13 +368,13 @@ impl BitExpression {
         if signed {
             flags |= INT_FLAGS_SIGNED as u8;
         }
-        let mut args = vec![
+        let args = vec![
             ExpressionArgument::Value(Value::from(BitExpOp::ADD as i64)),
             ExpressionArgument::FilterExpression(bit_offset),
             ExpressionArgument::FilterExpression(bit_size),
             ExpressionArgument::FilterExpression(value),
             ExpressionArgument::Value(Value::from(policy.flags)),
-            ExpressionArgument::Value(Value::from(flags))
+            ExpressionArgument::Value(Value::from(flags)),
         ];
         add_write(bin, args)
     }
@@ -404,13 +404,13 @@ impl BitExpression {
         if signed {
             flags |= INT_FLAGS_SIGNED as u8;
         }
-        let mut args = vec![
+        let args = vec![
             ExpressionArgument::Value(Value::from(BitExpOp::SUBTRACT as i64)),
             ExpressionArgument::FilterExpression(bit_offset),
             ExpressionArgument::FilterExpression(bit_size),
             ExpressionArgument::FilterExpression(value),
             ExpressionArgument::Value(Value::from(policy.flags)),
-            ExpressionArgument::Value(Value::from(flags))
+            ExpressionArgument::Value(Value::from(flags)),
         ];
         add_write(bin, args)
     }
