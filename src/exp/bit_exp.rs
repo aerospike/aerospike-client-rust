@@ -23,23 +23,23 @@ const INT_FLAGS_SIGNED: i64 = 1;
 
 #[doc(hidden)]
 pub enum BitExpOp {
-    RESIZE = 0,
-    INSERT = 1,
-    REMOVE = 2,
-    SET = 3,
-    OR = 4,
-    XOR = 5,
-    AND = 6,
-    NOT = 7,
-    LSHIFT = 8,
-    RSHIFT = 9,
-    ADD = 10,
-    SUBTRACT = 11,
+    Resize = 0,
+    Insert = 1,
+    Remove = 2,
+    Set = 3,
+    Or = 4,
+    Xor = 5,
+    And = 6,
+    Not = 7,
+    LShift = 8,
+    RShift = 9,
+    Add = 10,
+    Subtract = 11,
     SetInt = 12,
-    GET = 50,
-    COUNT = 51,
-    LSCAN = 52,
-    RSCAN = 53,
+    Get = 50,
+    Count = 51,
+    LScan = 52,
+    RScan = 53,
     GetInt = 54,
 }
 
@@ -82,7 +82,7 @@ impl BitExpression {
         bin: FilterExpression,
     ) -> FilterExpression {
         let args = vec![
-            ExpressionArgument::Value(Value::from(BitExpOp::RESIZE as i64)),
+            ExpressionArgument::Value(Value::from(BitExpOp::Resize as i64)),
             ExpressionArgument::FilterExpression(byte_size),
             ExpressionArgument::Value(Value::from(policy.flags)),
             ExpressionArgument::Value(Value::from(resize_flags as u8)),
@@ -115,7 +115,7 @@ impl BitExpression {
         bin: FilterExpression,
     ) -> FilterExpression {
         let args = vec![
-            ExpressionArgument::Value(Value::from(BitExpOp::INSERT as i64)),
+            ExpressionArgument::Value(Value::from(BitExpOp::Insert as i64)),
             ExpressionArgument::FilterExpression(byte_offset),
             ExpressionArgument::FilterExpression(value),
             ExpressionArgument::Value(Value::from(policy.flags)),
@@ -146,7 +146,7 @@ impl BitExpression {
         bin: FilterExpression,
     ) -> FilterExpression {
         let args = vec![
-            ExpressionArgument::Value(Value::from(BitExpOp::REMOVE as i64)),
+            ExpressionArgument::Value(Value::from(BitExpOp::Remove as i64)),
             ExpressionArgument::FilterExpression(byte_offset),
             ExpressionArgument::FilterExpression(byte_size),
             ExpressionArgument::Value(Value::from(policy.flags)),
@@ -180,7 +180,7 @@ impl BitExpression {
         bin: FilterExpression,
     ) -> FilterExpression {
         let args = vec![
-            ExpressionArgument::Value(Value::from(BitExpOp::SET as i64)),
+            ExpressionArgument::Value(Value::from(BitExpOp::Set as i64)),
             ExpressionArgument::FilterExpression(bit_offset),
             ExpressionArgument::FilterExpression(bit_size),
             ExpressionArgument::FilterExpression(value),
@@ -206,7 +206,7 @@ impl BitExpression {
         bin: FilterExpression,
     ) -> FilterExpression {
         let args = vec![
-            ExpressionArgument::Value(Value::from(BitExpOp::OR as i64)),
+            ExpressionArgument::Value(Value::from(BitExpOp::Or as i64)),
             ExpressionArgument::FilterExpression(bit_offset),
             ExpressionArgument::FilterExpression(bit_size),
             ExpressionArgument::FilterExpression(value),
@@ -233,7 +233,7 @@ impl BitExpression {
         bin: FilterExpression,
     ) -> FilterExpression {
         let args = vec![
-            ExpressionArgument::Value(Value::from(BitExpOp::XOR as i64)),
+            ExpressionArgument::Value(Value::from(BitExpOp::Xor as i64)),
             ExpressionArgument::FilterExpression(bit_offset),
             ExpressionArgument::FilterExpression(bit_size),
             ExpressionArgument::FilterExpression(value),
@@ -260,7 +260,7 @@ impl BitExpression {
         bin: FilterExpression,
     ) -> FilterExpression {
         let args = vec![
-            ExpressionArgument::Value(Value::from(BitExpOp::AND as i64)),
+            ExpressionArgument::Value(Value::from(BitExpOp::And as i64)),
             ExpressionArgument::FilterExpression(bit_offset),
             ExpressionArgument::FilterExpression(bit_size),
             ExpressionArgument::FilterExpression(value),
@@ -283,7 +283,7 @@ impl BitExpression {
         bin: FilterExpression,
     ) -> FilterExpression {
         let args = vec![
-            ExpressionArgument::Value(Value::from(BitExpOp::NOT as i64)),
+            ExpressionArgument::Value(Value::from(BitExpOp::Not as i64)),
             ExpressionArgument::FilterExpression(bit_offset),
             ExpressionArgument::FilterExpression(bit_size),
             ExpressionArgument::Value(Value::from(policy.flags)),
@@ -308,7 +308,7 @@ impl BitExpression {
         bin: FilterExpression,
     ) -> FilterExpression {
         let args = vec![
-            ExpressionArgument::Value(Value::from(BitExpOp::LSHIFT as i64)),
+            ExpressionArgument::Value(Value::from(BitExpOp::LShift as i64)),
             ExpressionArgument::FilterExpression(bit_offset),
             ExpressionArgument::FilterExpression(bit_size),
             ExpressionArgument::FilterExpression(shift),
@@ -334,7 +334,7 @@ impl BitExpression {
         bin: FilterExpression,
     ) -> FilterExpression {
         let args = vec![
-            ExpressionArgument::Value(Value::from(BitExpOp::RSHIFT as i64)),
+            ExpressionArgument::Value(Value::from(BitExpOp::RShift as i64)),
             ExpressionArgument::FilterExpression(bit_offset),
             ExpressionArgument::FilterExpression(bit_size),
             ExpressionArgument::FilterExpression(shift),
@@ -369,7 +369,7 @@ impl BitExpression {
             flags |= INT_FLAGS_SIGNED as u8;
         }
         let args = vec![
-            ExpressionArgument::Value(Value::from(BitExpOp::ADD as i64)),
+            ExpressionArgument::Value(Value::from(BitExpOp::Add as i64)),
             ExpressionArgument::FilterExpression(bit_offset),
             ExpressionArgument::FilterExpression(bit_size),
             ExpressionArgument::FilterExpression(value),
@@ -405,7 +405,7 @@ impl BitExpression {
             flags |= INT_FLAGS_SIGNED as u8;
         }
         let args = vec![
-            ExpressionArgument::Value(Value::from(BitExpOp::SUBTRACT as i64)),
+            ExpressionArgument::Value(Value::from(BitExpOp::Subtract as i64)),
             ExpressionArgument::FilterExpression(bit_offset),
             ExpressionArgument::FilterExpression(bit_size),
             ExpressionArgument::FilterExpression(value),
@@ -463,7 +463,7 @@ impl BitExpression {
         bin: FilterExpression,
     ) -> FilterExpression {
         let args = vec![
-            ExpressionArgument::Value(Value::from(BitExpOp::GET as i64)),
+            ExpressionArgument::Value(Value::from(BitExpOp::Get as i64)),
             ExpressionArgument::FilterExpression(bit_offset),
             ExpressionArgument::FilterExpression(bit_size),
         ];
@@ -490,7 +490,7 @@ impl BitExpression {
         bin: FilterExpression,
     ) -> FilterExpression {
         let args = vec![
-            ExpressionArgument::Value(Value::from(BitExpOp::COUNT as i64)),
+            ExpressionArgument::Value(Value::from(BitExpOp::Count as i64)),
             ExpressionArgument::FilterExpression(bit_offset),
             ExpressionArgument::FilterExpression(bit_size),
         ];
@@ -519,7 +519,7 @@ impl BitExpression {
         bin: FilterExpression,
     ) -> FilterExpression {
         let args = vec![
-            ExpressionArgument::Value(Value::from(BitExpOp::LSCAN as i64)),
+            ExpressionArgument::Value(Value::from(BitExpOp::LScan as i64)),
             ExpressionArgument::FilterExpression(bit_offset),
             ExpressionArgument::FilterExpression(bit_size),
             ExpressionArgument::FilterExpression(value),
@@ -551,7 +551,7 @@ impl BitExpression {
         bin: FilterExpression,
     ) -> FilterExpression {
         let args = vec![
-            ExpressionArgument::Value(Value::from(BitExpOp::RSCAN as i64)),
+            ExpressionArgument::Value(Value::from(BitExpOp::RScan as i64)),
             ExpressionArgument::FilterExpression(bit_offset),
             ExpressionArgument::FilterExpression(bit_size),
             ExpressionArgument::FilterExpression(value),

@@ -50,15 +50,15 @@ const MODULE: i64 = 0;
 
 #[doc(hidden)]
 pub enum ListExpOp {
-    APPEND = 1,
+    Append = 1,
     AppendItems = 2,
-    INSERT = 3,
+    Insert = 3,
     InsertItems = 4,
-    SET = 9,
-    CLEAR = 11,
-    INCREMENT = 12,
-    SORT = 13,
-    SIZE = 16,
+    Set = 9,
+    Clear = 11,
+    Increment = 12,
+    Sort = 13,
+    Size = 16,
     GetByIndex = 19,
     GetByRank = 21,
     GetByValue = 22, // GET_ALL_BY_VALUE on server.
@@ -85,7 +85,7 @@ impl ListExpression {
         ctx: &[CdtContext],
     ) -> FilterExpression {
         let args = vec![
-            ExpressionArgument::Value(Value::from(ListExpOp::APPEND as i64)),
+            ExpressionArgument::Value(Value::from(ListExpOp::Append as i64)),
             ExpressionArgument::FilterExpression(value),
             ExpressionArgument::Value(Value::from(policy.attributes as u8)),
             ExpressionArgument::Value(Value::from(policy.flags as u8)),
@@ -120,7 +120,7 @@ impl ListExpression {
         ctx: &[CdtContext],
     ) -> FilterExpression {
         let args = vec![
-            ExpressionArgument::Value(Value::from(ListExpOp::INSERT as i64)),
+            ExpressionArgument::Value(Value::from(ListExpOp::Insert as i64)),
             ExpressionArgument::FilterExpression(index),
             ExpressionArgument::FilterExpression(value),
             ExpressionArgument::Value(Value::from(policy.flags as u8)),
@@ -157,7 +157,7 @@ impl ListExpression {
         ctx: &[CdtContext],
     ) -> FilterExpression {
         let args = vec![
-            ExpressionArgument::Value(Value::from(ListExpOp::INCREMENT as i64)),
+            ExpressionArgument::Value(Value::from(ListExpOp::Increment as i64)),
             ExpressionArgument::FilterExpression(index),
             ExpressionArgument::FilterExpression(value),
             ExpressionArgument::Value(Value::from(policy.attributes as u8)),
@@ -176,7 +176,7 @@ impl ListExpression {
         ctx: &[CdtContext],
     ) -> FilterExpression {
         let args = vec![
-            ExpressionArgument::Value(Value::from(ListExpOp::SET as i64)),
+            ExpressionArgument::Value(Value::from(ListExpOp::Set as i64)),
             ExpressionArgument::FilterExpression(index),
             ExpressionArgument::FilterExpression(value),
             ExpressionArgument::Value(Value::from(policy.flags as u8)),
@@ -188,7 +188,7 @@ impl ListExpression {
     /// Create expression that removes all items in list.
     pub fn clear(bin: FilterExpression, ctx: &[CdtContext]) -> FilterExpression {
         let args = vec![
-            ExpressionArgument::Value(Value::from(ListExpOp::CLEAR as i64)),
+            ExpressionArgument::Value(Value::from(ListExpOp::Clear as i64)),
             ExpressionArgument::Context(ctx.to_vec()),
         ];
         ListExpression::add_write(bin, ctx, args)
@@ -201,7 +201,7 @@ impl ListExpression {
         ctx: &[CdtContext],
     ) -> FilterExpression {
         let args = vec![
-            ExpressionArgument::Value(Value::from(ListExpOp::SORT as i64)),
+            ExpressionArgument::Value(Value::from(ListExpOp::Sort as i64)),
             ExpressionArgument::Value(Value::from(sort_flags as u8)),
             ExpressionArgument::Context(ctx.to_vec()),
         ];
@@ -425,7 +425,7 @@ impl ListExpression {
     /// ```
     pub fn size(bin: FilterExpression, ctx: &[CdtContext]) -> FilterExpression {
         let args = vec![
-            ExpressionArgument::Value(Value::from(ListExpOp::SIZE as i64)),
+            ExpressionArgument::Value(Value::from(ListExpOp::Size as i64)),
             ExpressionArgument::Context(ctx.to_vec()),
         ];
         ListExpression::add_read(bin, ExpType::INT, args)

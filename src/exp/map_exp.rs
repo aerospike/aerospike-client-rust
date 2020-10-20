@@ -62,12 +62,12 @@ const MODULE: i64 = 0;
 
 #[doc(hidden)]
 pub enum MapExpOp {
-    PUT = 67,
+    Put = 67,
     PutItems = 68,
-    REPLACE = 69,
+    Replace = 69,
     ReplaceItems = 70,
-    INCREMENT = 73,
-    CLEAR = 75,
+    Increment = 73,
+    Clear = 75,
     RemoveByKey = 76,
     RemoveByIndex = 77,
     RemoveByRank = 79,
@@ -80,7 +80,7 @@ pub enum MapExpOp {
     RemoveByRankRange = 87,
     RemoveByKeyRelIndexRange = 88,
     RemoveByValueRelRankRange = 89,
-    SIZE = 96,
+    Size = 96,
     GetByKey = 97,
     GetByIndex = 98,
     GetByRank = 100,
@@ -161,7 +161,7 @@ impl MapExpression {
         ctx: &[CdtContext],
     ) -> FilterExpression {
         let args = vec![
-            ExpressionArgument::Value(Value::from(MapExpOp::INCREMENT as u8)),
+            ExpressionArgument::Value(Value::from(MapExpOp::Increment as u8)),
             ExpressionArgument::FilterExpression(key),
             ExpressionArgument::FilterExpression(incr),
             ExpressionArgument::Context(ctx.to_vec()),
@@ -173,7 +173,7 @@ impl MapExpression {
     /// Create expression that removes all items in map.
     pub fn clear(bin: FilterExpression, ctx: &[CdtContext]) -> FilterExpression {
         let args = vec![
-            ExpressionArgument::Value(Value::from(MapExpOp::CLEAR as u8)),
+            ExpressionArgument::Value(Value::from(MapExpOp::Clear as u8)),
             ExpressionArgument::Context(ctx.to_vec()),
         ];
         MapExpression::add_write(bin, ctx, args)
@@ -497,7 +497,7 @@ impl MapExpression {
     /// ```
     pub fn size(bin: FilterExpression, ctx: &[CdtContext]) -> FilterExpression {
         let args = vec![
-            ExpressionArgument::Value(Value::from(MapExpOp::SIZE as u8)),
+            ExpressionArgument::Value(Value::from(MapExpOp::Size as u8)),
             ExpressionArgument::Context(ctx.to_vec()),
         ];
         MapExpression::add_read(bin, ExpType::INT, args)
