@@ -543,14 +543,14 @@ impl ListExpression {
     /// and returns selected data specified by returnType.
     ///
     /// ```
-    /// /// Examples for ordered list [0,4,5,9,11,15]:
-    /// /// (value,rank,count) = [selected items]
-    /// /// (5,0,2) = [5,9]
-    /// /// (5,1,1) = [9]
-    /// /// (5,-1,2) = [4,5]
-    /// /// (3,0,1) = [4]
-    /// /// (3,3,7) = [11,15]
-    /// /// (3,-3,2) = []
+    /// // Examples for ordered list [0,4,5,9,11,15]:
+    /// // (value,rank,count) = [selected items]
+    /// // (5,0,2) = [5,9]
+    /// // (5,1,1) = [9]
+    /// // (5,-1,2) = [4,5]
+    /// // (3,0,1) = [4]
+    /// // (3,3,7) = [11,15]
+    /// // (3,-3,2) = []
     /// ```
     pub fn get_by_value_relative_rank_range_count(
         return_type: ListReturnType,
