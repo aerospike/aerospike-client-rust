@@ -304,8 +304,8 @@ impl ListExpression {
     /// // (3,-3,2) = []
     /// ```
     pub fn remove_by_value_relative_rank_range_count(
-        value_begin: FilterExpression,
-        value_end: FilterExpression,
+        value: FilterExpression,
+        rank: FilterExpression,
         count: FilterExpression,
         bin: FilterExpression,
         ctx: &[CdtContext],
@@ -313,8 +313,8 @@ impl ListExpression {
         let args = vec![
             ExpressionArgument::Value(Value::from(ListExpOp::RemoveByValueRelRankRange as i64)),
             ExpressionArgument::Value(Value::from(ListReturnType::None as u8)),
-            ExpressionArgument::FilterExpression(value_begin),
-            ExpressionArgument::FilterExpression(value_end),
+            ExpressionArgument::FilterExpression(value),
+            ExpressionArgument::FilterExpression(rank),
             ExpressionArgument::FilterExpression(count),
             ExpressionArgument::Context(ctx.to_vec()),
         ];
