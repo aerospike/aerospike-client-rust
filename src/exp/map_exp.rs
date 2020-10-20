@@ -35,23 +35,23 @@ use crate::{MapPolicy, MapReturnType, MapWriteMode, Value};
 ///
 /// Index examples:
 ///
-/// Index 0: First item in map.
-/// Index 4: Fifth item in map.
-/// Index -1: Last item in map.
-/// Index -3: Third to last item in map.
-/// Index 1 Count 2: Second and third items in map.
-/// Index -3 Count 3: Last three items in map.
-/// Index -5 Count 4: Range between fifth to last item to second to last item inclusive.
+/// * Index 0: First item in map.
+/// * Index 4: Fifth item in map.
+/// * Index -1: Last item in map.
+/// * Index -3: Third to last item in map.
+/// * Index 1 Count 2: Second and third items in map.
+/// * Index -3 Count 3: Last three items in map.
+/// * Index -5 Count 4: Range between fifth to last item to second to last item inclusive.
 ///
 ///
 /// Rank examples:
 ///
-/// Rank 0: Item with lowest value rank in map.
-/// Rank 4: Fifth lowest ranked item in map.
-/// Rank -1: Item with highest ranked value in map.
-/// Rank -3: Item with third highest ranked value in map.
-/// Rank 1 Count 2: Second and third lowest ranked items in map.
-/// Rank -3 Count 3: Top three ranked items in map.
+/// * Rank 0: Item with lowest value rank in map.
+/// * Rank 4: Fifth lowest ranked item in map.
+/// * Rank -1: Item with highest ranked value in map.
+/// * Rank -3: Item with third highest ranked value in map.
+/// * Rank 1 Count 2: Second and third lowest ranked items in map.
+/// * Rank -3 Count 3: Top three ranked items in map.
 ///
 ///
 /// Nested expressions are supported by optional CTX context arguments.
@@ -238,12 +238,12 @@ impl MapExpression {
     ///
     /// Examples for map [{0=17},{4=2},{5=15},{9=10}]:
     ///
-    /// (value,index) = [removed items]
-    /// (5,0) = [{5=15},{9=10}]
-    /// (5,1) = [{9=10}]
-    /// (5,-1) = [{4=2},{5=15},{9=10}]
-    /// (3,2) = [{9=10}]
-    /// (3,-2) = [{0=17},{4=2},{5=15},{9=10}]
+    /// * (value,index) = [removed items]
+    /// * (5,0) = [{5=15},{9=10}]
+    /// * (5,1) = [{9=10}]
+    /// * (5,-1) = [{4=2},{5=15},{9=10}]
+    /// * (3,2) = [{9=10}]
+    /// * (3,-2) = [{0=17},{4=2},{5=15},{9=10}]
     pub fn remove_by_key_relative_index_range(
         key: FilterExpression,
         index: FilterExpression,
@@ -265,11 +265,11 @@ impl MapExpression {
     /// Examples for map [{0=17},{4=2},{5=15},{9=10}]:
     ///
     /// (value,index,count) = [removed items]
-    /// (5,0,1) = [{5=15}]
-    /// (5,1,2) = [{9=10}]
-    /// (5,-1,1) = [{4=2}]
-    /// (3,2,1) = [{9=10}]
-    /// (3,-2,2) = [{0=17}]
+    /// * (5,0,1) = [{5=15}]
+    /// * (5,1,2) = [{9=10}]
+    /// * (5,-1,1) = [{4=2}]
+    /// * (3,2,1) = [{9=10}]
+    /// * (3,-2,2) = [{0=17}]
     pub fn remove_by_key_relative_index_range_count(
         key: FilterExpression,
         index: FilterExpression,
@@ -347,9 +347,9 @@ impl MapExpression {
     ///
     /// Examples for map [{4=2},{9=10},{5=15},{0=17}]:
     ///
-    /// (value,rank) = [removed items]
-    /// (11,1) = [{0=17}]
-    /// (11,-1) = [{9=10},{5=15},{0=17}]
+    /// * (value,rank) = [removed items]
+    /// * (11,1) = [{0=17}]
+    /// * (11,-1) = [{9=10},{5=15},{0=17}]
     pub fn remove_by_value_relative_rank_range(
         value: FilterExpression,
         rank: FilterExpression,
@@ -370,9 +370,9 @@ impl MapExpression {
     ///
     /// Examples for map [{4=2},{9=10},{5=15},{0=17}]:
     ///
-    /// (value,rank,count) = [removed items]
-    /// (11,1,1) = [{0=17}]
-    /// (11,-1,1) = [{9=10}]
+    /// * (value,rank,count) = [removed items]
+    /// * (11,1,1) = [{0=17}]
+    /// * (11,-1,1) = [{9=10}]
     pub fn remove_by_value_relative_rank_range_count(
         value: FilterExpression,
         rank: FilterExpression,
@@ -578,12 +578,12 @@ impl MapExpression {
     ///
     /// Examples for ordered map [{0=17},{4=2},{5=15},{9=10}]:
     ///
-    /// (value,index) = [selected items]
-    /// (5,0) = [{5=15},{9=10}]
-    /// (5,1) = [{9=10}]
-    /// (5,-1) = [{4=2},{5=15},{9=10}]
-    /// (3,2) = [{9=10}]
-    /// (3,-2) = [{0=17},{4=2},{5=15},{9=10}]
+    /// * (value,index) = [selected items]
+    /// * (5,0) = [{5=15},{9=10}]
+    /// * (5,1) = [{9=10}]
+    /// * (5,-1) = [{4=2},{5=15},{9=10}]
+    /// * (3,2) = [{9=10}]
+    /// * (3,-2) = [{0=17},{4=2},{5=15},{9=10}]
     pub fn get_by_key_relative_index_range(
         return_type: MapReturnType,
         key: FilterExpression,
@@ -606,12 +606,12 @@ impl MapExpression {
     ///
     /// Examples for ordered map [{0=17},{4=2},{5=15},{9=10}]:
     ///
-    /// (value,index,count) = [selected items]
-    /// (5,0,1) = [{5=15}]
-    /// (5,1,2) = [{9=10}]
-    /// (5,-1,1) = [{4=2}]
-    /// (3,2,1) = [{9=10}]
-    /// (3,-2,2) = [{0=17}]
+    /// * (value,index,count) = [selected items]
+    /// * (5,0,1) = [{5=15}]
+    /// * (5,1,2) = [{9=10}]
+    /// * (5,-1,1) = [{4=2}]
+    /// * (3,2,1) = [{9=10}]
+    /// * (3,-2,2) = [{0=17}]
     pub fn get_by_key_relative_index_range_count(
         return_type: MapReturnType,
         key: FilterExpression,
@@ -705,9 +705,9 @@ impl MapExpression {
     ///
     /// Examples for map [{4=2},{9=10},{5=15},{0=17}]:
     ///
-    /// (value,rank) = [selected items]
-    /// (11,1) = [{0=17}]
-    /// (11,-1) = [{9=10},{5=15},{0=17}]
+    /// * (value,rank) = [selected items]
+    /// * (11,1) = [{0=17}]
+    /// * (11,-1) = [{9=10},{5=15},{0=17}]
     pub fn get_by_value_relative_rank_range(
         return_type: MapReturnType,
         value: FilterExpression,
@@ -730,9 +730,9 @@ impl MapExpression {
     ///
     /// Examples for map [{4=2},{9=10},{5=15},{0=17}]:
     ///
-    /// (value,rank,count) = [selected items]
-    /// (11,1,1) = [{0=17}]
-    /// (11,-1,1) = [{9=10}]
+    /// * (value,rank,count) = [selected items]
+    /// * (11,1,1) = [{0=17}]
+    /// * (11,-1,1) = [{9=10}]
     pub fn get_by_value_relative_rank_range_count(
         return_type: MapReturnType,
         value: FilterExpression,
