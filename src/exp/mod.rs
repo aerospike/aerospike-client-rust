@@ -613,6 +613,11 @@ impl Expression {
         FilterExpression::new(None, Some(Value::from(val)), None, None, None, None)
     }
 
+    /// Creates a Boolean value
+    pub fn bool_val(val: bool) -> FilterExpression {
+        FilterExpression::new(None, Some(Value::from(val)), None, None, None, None)
+    }
+
     /// Creates String bin value
     pub fn string_val(val: String) -> FilterExpression {
         FilterExpression::new(None, Some(Value::from(val)), None, None, None, None)

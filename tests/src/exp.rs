@@ -16,7 +16,6 @@ use crate::common;
 use env_logger;
 
 use aerospike::exp::{ExpType, Expression, FilterExpression};
-use aerospike::Task;
 use aerospike::*;
 use std::sync::Arc;
 
@@ -328,7 +327,11 @@ fn expression_rec_ops() {
     assert_eq!(count, 100, "NIL Test Failed");
 
     let rs = test_filter(
-        Expression::regex_compare("[1-5]".to_string(), RegexFlag::ICASE as i64, Expression::string_bin("bin2".to_string())),
+        Expression::regex_compare(
+            "[1-5]".to_string(),
+            RegexFlag::ICASE as i64,
+            Expression::string_bin("bin2".to_string()),
+        ),
         &set_name,
     );
     let count = count_results(rs);
