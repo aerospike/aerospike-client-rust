@@ -338,6 +338,204 @@ fn expression_rec_ops() {
     assert_eq!(count, 75, "REGEX Test Failed");
 }
 
+#[test]
+fn expression_commands() {
+    let _ = env_logger::try_init();
+
+    let client = common::client();
+    let namespace = common::namespace();
+    let set_name = common::rand_str(10);
+
+    let wpolicy = WritePolicy::default();
+    for i in 0..EXPECTED as i64 {
+        let key = as_key!(namespace, &set_name, i);
+        let ibin = as_bin!("bin", i);
+
+        let bins = vec![&ibin];
+        client.delete(&wpolicy, &key).unwrap();
+        client.put(&wpolicy, &key, &bins).unwrap();
+    }
+    let mut wpolicy = WritePolicy::default();
+    let mut rpolicy = ReadPolicy::default();
+    let mut spolicy = ScanPolicy::default();
+    let mut bpolicy = BatchPolicy::default();
+
+    // DELETE
+    let key = as_key!(namespace, &set_name, 15);
+    wpolicy.filter_expression = Some(Expression::eq(
+        Expression::int_bin("bin".to_string()),
+        Expression::int_val(16),
+    ));
+    let test = client.delete(&wpolicy, &key);
+    assert_eq!(test.is_err(), true, "DELETE EXP Err Test Failed");
+
+    wpolicy.filter_expression = Some(Expression::eq(
+        Expression::int_bin("bin".to_string()),
+        Expression::int_val(15),
+    ));
+    let test = client.delete(&wpolicy, &key);
+    assert_eq!(test.is_ok(), true, "DELETE EXP Ok Test Failed");
+
+    // PUT
+    let key = as_key!(namespace, &set_name, 25);
+    wpolicy.filter_expression = Some(Expression::eq(
+        Expression::int_bin("bin".to_string()),
+        Expression::int_val(15),
+    ));
+    let test = client.put(&wpolicy, &key, &[as_bin!("bin", 26)]);
+    assert_eq!(test.is_err(), true, "PUT Err Test Failed");
+
+    wpolicy.filter_expression = Some(Expression::eq(
+        Expression::int_bin("bin".to_string()),
+        Expression::int_val(25),
+    ));
+    let test = client.put(&wpolicy, &key, &[as_bin!("bin", 26)]);
+    assert_eq!(test.is_ok(), true, "PUT Ok Test Failed");
+
+    // GET
+    let key = as_key!(namespace, &set_name, 35);
+    rpolicy.filter_expression = Some(Expression::eq(
+        Expression::int_bin("bin".to_string()),
+        Expression::int_val(15),
+    ));
+    let test = client.get(&rpolicy, &key, Bins::All);
+    assert_eq!(test.is_err(), true, "GET Err Test Failed");
+
+    rpolicy.filter_expression = Some(Expression::eq(
+        Expression::int_bin("bin".to_string()),
+        Expression::int_val(35),
+    ));
+    let test = client.get(&rpolicy, &key, Bins::All);
+    assert_eq!(test.is_ok(), true, "GET Ok Test Failed");
+
+    // EXISTS
+    let key = as_key!(namespace, &set_name, 45);
+    wpolicy.filter_expression = Some(Expression::eq(
+        Expression::int_bin("bin".to_string()),
+        Expression::int_val(15),
+    ));
+    let test = client.exists(&wpolicy, &key);
+    assert_eq!(test.is_err(), true, "EXISTS Err Test Failed");
+
+    wpolicy.filter_expression = Some(Expression::eq(
+        Expression::int_bin("bin".to_string()),
+        Expression::int_val(45),
+    ));
+    let test = client.exists(&wpolicy, &key);
+    assert_eq!(test.is_ok(), true, "EXISTS Ok Test Failed");
+
+    // APPEND
+    let key = as_key!(namespace, &set_name, 55);
+    wpolicy.filter_expression = Some(Expression::eq(
+        Expression::int_bin("bin".to_string()),
+        Expression::int_val(15),
+    ));
+    let test = client.add(&wpolicy, &key, &[as_bin!("test55", "test")]);
+    assert_eq!(test.is_err(), true, "APPEND Err Test Failed");
+
+    wpolicy.filter_expression = Some(Expression::eq(
+        Expression::int_bin("bin".to_string()),
+        Expression::int_val(55),
+    ));
+    let test = client.add(&wpolicy, &key, &[as_bin!("test55", "test")]);
+    assert_eq!(test.is_ok(), true, "APPEND Ok Test Failed");
+
+    // PREPEND
+    let key = as_key!(namespace, &set_name, 55);
+    wpolicy.filter_expression = Some(Expression::eq(
+        Expression::int_bin("bin".to_string()),
+        Expression::int_val(15),
+    ));
+    let test = client.prepend(&wpolicy, &key, &[as_bin!("test55", "test")]);
+    assert_eq!(test.is_err(), true, "PREPEND Err Test Failed");
+
+    wpolicy.filter_expression = Some(Expression::eq(
+        Expression::int_bin("bin".to_string()),
+        Expression::int_val(55),
+    ));
+    let test = client.prepend(&wpolicy, &key, &[as_bin!("test55", "test")]);
+    assert_eq!(test.is_ok(), true, "PREPEND Ok Test Failed");
+
+    // TOUCH
+    let key = as_key!(namespace, &set_name, 65);
+    wpolicy.filter_expression = Some(Expression::eq(
+        Expression::int_bin("bin".to_string()),
+        Expression::int_val(15),
+    ));
+    let test = client.touch(&wpolicy, &key);
+    assert_eq!(test.is_err(), true, "TOUCH Err Test Failed");
+
+    wpolicy.filter_expression = Some(Expression::eq(
+        Expression::int_bin("bin".to_string()),
+        Expression::int_val(65),
+    ));
+    let test = client.touch(&wpolicy, &key);
+    assert_eq!(test.is_ok(), true, "TOUCH Ok Test Failed");
+
+    // SCAN
+    spolicy.filter_expression = Some(Expression::eq(
+        Expression::int_bin("bin".to_string()),
+        Expression::int_val(75),
+    ));
+    match client.scan(&spolicy, namespace, &set_name, Bins::All) {
+        Ok(records) => {
+            let mut count = 0;
+            for record in &*records {
+                match record {
+                    Ok(_) => count += 1,
+                    Err(err) => panic!("Error executing scan: {}", err),
+                }
+            }
+            assert_eq!(count, 1, "SCAN Test Failed");
+        }
+        Err(err) => println!("Failed to execute scan: {}", err),
+    }
+
+    // OPERATE
+    let bin = as_bin!("test85", 85);
+    let ops = vec![operations::add(&bin)];
+
+    let key = as_key!(namespace, &set_name, 85);
+    wpolicy.filter_expression = Some(Expression::eq(
+        Expression::int_bin("bin".to_string()),
+        Expression::int_val(15),
+    ));
+    let op = client.operate(&wpolicy, &key, &ops);
+    assert_eq!(op.is_err(), true, "OPERATE Err Test Failed");
+
+    let key = as_key!(namespace, &set_name, 85);
+    wpolicy.filter_expression = Some(Expression::eq(
+        Expression::int_bin("bin".to_string()),
+        Expression::int_val(85),
+    ));
+    let op = client.operate(&wpolicy, &key, &ops);
+    assert_eq!(op.is_ok(), true, "OPERATE Ok Test Failed");
+
+    // BATCH GET
+    let mut batch_reads = vec![];
+    for i in 85..90 {
+        let key = as_key!(namespace, &set_name, i);
+        batch_reads.push(BatchRead::new(key, &Bins::All));
+    }
+    bpolicy.filter_expression = Some(Expression::eq(
+        Expression::int_bin("bin".to_string()),
+        Expression::int_val(91),
+    ));
+    match client.batch_get(&bpolicy, batch_reads) {
+        Ok(results) => {
+            for result in results {
+                let mut count = 0;
+                match result.record {
+                    Some(_) => count += 1,
+                    None => {}
+                }
+                assert_eq!(count, 1, "BATCH GET Ok Test Failed")
+            }
+        }
+        Err(err) => println!("Error executing batch request: {}", err),
+    }
+}
+
 fn test_filter(filter: FilterExpression, set_name: &str) -> Arc<Recordset> {
     let client = common::client();
     let namespace = common::namespace();
