@@ -16,7 +16,7 @@
 //! HLL Aerospike Filter Expressions.
 
 use crate::exp::{ExpOp, ExpType, Expression, ExpressionArgument, FilterExpression, MODIFY};
-use crate::operations::hll::{HLLPolicy};
+use crate::operations::hll::HLLPolicy;
 use crate::Value;
 
 /// `HyperLogLog` (HLL) expression generator.
@@ -121,7 +121,7 @@ impl HLLExpression {
                 ExpressionArgument::FilterExpression(list),
                 ExpressionArgument::FilterExpression(index_bit_count),
                 ExpressionArgument::FilterExpression(min_hash_count),
-                ExpressionArgument::Value(Value::from(policy.flags as u8)),
+                ExpressionArgument::Value(Value::from(policy.flags as i64)),
             ],
         )
     }

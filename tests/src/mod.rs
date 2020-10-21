@@ -18,6 +18,7 @@ mod cdt_bitwise;
 mod cdt_list;
 mod cdt_map;
 mod exp;
+mod exp_hll;
 mod hll;
 mod index;
 mod kv;
