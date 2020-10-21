@@ -1,14 +1,11 @@
 use crate::common;
 use env_logger;
 
-use aerospike::exp::bit_exp::BitExpression;
 use aerospike::exp::list_exp::ListExpression;
-use aerospike::exp::{Expression, FilterExpression, ExpType};
-use aerospike::operations::bitwise::{BitPolicy, BitwiseOverflowActions, BitwiseResizeFlags};
+use aerospike::exp::{ExpType, Expression, FilterExpression};
 use aerospike::operations::lists::{ListPolicy, ListReturnType};
 use aerospike::*;
 use std::sync::Arc;
-use aerospike::operations::lists::ListReturnType::Values;
 
 const EXPECTED: usize = 100;
 
@@ -142,18 +139,20 @@ fn expression_list() {
 
     let rs = test_filter(
         Expression::eq(
-           ListExpression::get_by_index(
-               ListReturnType::Values,
-               ExpType::INT,
-               Expression::int_val(3),
-               ListExpression::increment(
-                   ListPolicy::default(),
-                   Expression::int_val(3),
-                   Expression::int_val(100),
-                   Expression::list_bin("bin".to_string()),
-                   &[]),
-               &[]),
-            Expression::int_val(102)
+            ListExpression::get_by_index(
+                ListReturnType::Values,
+                ExpType::INT,
+                Expression::int_val(3),
+                ListExpression::increment(
+                    ListPolicy::default(),
+                    Expression::int_val(3),
+                    Expression::int_val(100),
+                    Expression::list_bin("bin".to_string()),
+                    &[],
+                ),
+                &[],
+            ),
+            Expression::int_val(102),
         ),
         &set_name,
     );
@@ -171,9 +170,11 @@ fn expression_list() {
                     Expression::int_val(3),
                     Expression::int_val(100),
                     Expression::list_bin("bin".to_string()),
-                    &[]),
-                &[]),
-            Expression::int_val(100)
+                    &[],
+                ),
+                &[],
+            ),
+            Expression::int_val(100),
         ),
         &set_name,
     );
@@ -187,8 +188,9 @@ fn expression_list() {
                 Expression::int_val(2),
                 Expression::int_val(2),
                 Expression::list_bin("bin".to_string()),
-                &[]),
-            Expression::list_val(vec![Value::from(3), Value::from(15)])
+                &[],
+            ),
+            Expression::list_val(vec![Value::from(3), Value::from(15)]),
         ),
         &set_name,
     );
@@ -201,8 +203,9 @@ fn expression_list() {
                 ListReturnType::Values,
                 Expression::int_val(2),
                 Expression::list_bin("bin".to_string()),
-                &[]),
-            Expression::list_val(vec![Value::from(3), Value::from(15)])
+                &[],
+            ),
+            Expression::list_val(vec![Value::from(3), Value::from(15)]),
         ),
         &set_name,
     );
@@ -216,8 +219,9 @@ fn expression_list() {
                 ExpType::INT,
                 Expression::int_val(3),
                 Expression::list_bin("bin".to_string()),
-                &[]),
-            Expression::int_val(25)
+                &[],
+            ),
+            Expression::int_val(25),
         ),
         &set_name,
     );
@@ -230,8 +234,9 @@ fn expression_list() {
                 ListReturnType::Values,
                 Expression::int_val(2),
                 Expression::list_bin("bin".to_string()),
-                &[]),
-            Expression::list_val(vec![Value::from(3), Value::from(25)])
+                &[],
+            ),
+            Expression::list_val(vec![Value::from(3), Value::from(25)]),
         ),
         &set_name,
     );
@@ -245,8 +250,9 @@ fn expression_list() {
                 Expression::int_val(2),
                 Expression::int_val(2),
                 Expression::list_bin("bin".to_string()),
-                &[]),
-            Expression::list_val(vec![Value::from(3), Value::from(3)])
+                &[],
+            ),
+            Expression::list_val(vec![Value::from(3), Value::from(3)]),
         ),
         &set_name,
     );
@@ -260,8 +266,9 @@ fn expression_list() {
                 Some(Expression::int_val(1)),
                 Some(Expression::int_val(3)),
                 Expression::list_bin("bin".to_string()),
-                &[]),
-            Expression::list_val(vec![ Value::from(1), Value::from(2)])
+                &[],
+            ),
+            Expression::list_val(vec![Value::from(1), Value::from(2)]),
         ),
         &set_name,
     );
@@ -275,8 +282,9 @@ fn expression_list() {
                 Expression::int_val(2),
                 Expression::int_val(0),
                 Expression::list_bin("bin".to_string()),
-                &[]),
-            Expression::int_val(3)
+                &[],
+            ),
+            Expression::int_val(3),
         ),
         &set_name,
     );
@@ -291,8 +299,9 @@ fn expression_list() {
                 Expression::int_val(1),
                 Expression::int_val(1),
                 Expression::list_bin("bin".to_string()),
-                &[]),
-            Expression::list_val(vec![Value::from(3)])
+                &[],
+            ),
+            Expression::list_val(vec![Value::from(3)]),
         ),
         &set_name,
     );
@@ -302,9 +311,14 @@ fn expression_list() {
     let rs = test_filter(
         Expression::eq(
             ListExpression::size(
-                ListExpression::remove_by_value(Expression::int_val(3), Expression::list_bin("bin".to_string()), &[]),
-                &[]),
-            Expression::int_val(3)
+                ListExpression::remove_by_value(
+                    Expression::int_val(3),
+                    Expression::list_bin("bin".to_string()),
+                    &[],
+                ),
+                &[],
+            ),
+            Expression::int_val(3),
         ),
         &set_name,
     );
@@ -314,9 +328,14 @@ fn expression_list() {
     let rs = test_filter(
         Expression::eq(
             ListExpression::size(
-                ListExpression::remove_by_value_list(Expression::list_val(vec![Value::from(1), Value::from(2)]), Expression::list_bin("bin".to_string()), &[]),
-                &[]),
-            Expression::int_val(2)
+                ListExpression::remove_by_value_list(
+                    Expression::list_val(vec![Value::from(1), Value::from(2)]),
+                    Expression::list_bin("bin".to_string()),
+                    &[],
+                ),
+                &[],
+            ),
+            Expression::int_val(2),
         ),
         &set_name,
     );
@@ -326,9 +345,15 @@ fn expression_list() {
     let rs = test_filter(
         Expression::eq(
             ListExpression::size(
-                ListExpression::remove_by_value_range(Some(Expression::int_val(1)), Some(Expression::int_val(3)),Expression::list_bin("bin".to_string()), &[]),
-                &[]),
-            Expression::int_val(2)
+                ListExpression::remove_by_value_range(
+                    Some(Expression::int_val(1)),
+                    Some(Expression::int_val(3)),
+                    Expression::list_bin("bin".to_string()),
+                    &[],
+                ),
+                &[],
+            ),
+            Expression::int_val(2),
         ),
         &set_name,
     );
@@ -338,9 +363,15 @@ fn expression_list() {
     let rs = test_filter(
         Expression::eq(
             ListExpression::size(
-                ListExpression::remove_by_value_relative_rank_range(Expression::int_val(3), Expression::int_val(1),Expression::list_bin("bin".to_string()), &[]),
-                &[]),
-            Expression::int_val(3)
+                ListExpression::remove_by_value_relative_rank_range(
+                    Expression::int_val(3),
+                    Expression::int_val(1),
+                    Expression::list_bin("bin".to_string()),
+                    &[],
+                ),
+                &[],
+            ),
+            Expression::int_val(3),
         ),
         &set_name,
     );
@@ -350,21 +381,36 @@ fn expression_list() {
     let rs = test_filter(
         Expression::eq(
             ListExpression::size(
-                ListExpression::remove_by_value_relative_rank_range_count(Expression::int_val(2), Expression::int_val(1),Expression::int_val(1),Expression::list_bin("bin".to_string()), &[]),
-                &[]),
-            Expression::int_val(3)
+                ListExpression::remove_by_value_relative_rank_range_count(
+                    Expression::int_val(2),
+                    Expression::int_val(1),
+                    Expression::int_val(1),
+                    Expression::list_bin("bin".to_string()),
+                    &[],
+                ),
+                &[],
+            ),
+            Expression::int_val(3),
         ),
         &set_name,
     );
     let count = count_results(rs);
-    assert_eq!(count, 100, "REMOVE BY VALUE REL RANK RANGE LIST Test Failed");
+    assert_eq!(
+        count, 100,
+        "REMOVE BY VALUE REL RANK RANGE LIST Test Failed"
+    );
 
     let rs = test_filter(
         Expression::eq(
             ListExpression::size(
-                ListExpression::remove_by_index(Expression::int_val(0), Expression::list_bin("bin".to_string()), &[]),
-                &[]),
-            Expression::int_val(3)
+                ListExpression::remove_by_index(
+                    Expression::int_val(0),
+                    Expression::list_bin("bin".to_string()),
+                    &[],
+                ),
+                &[],
+            ),
+            Expression::int_val(3),
         ),
         &set_name,
     );
@@ -374,9 +420,14 @@ fn expression_list() {
     let rs = test_filter(
         Expression::eq(
             ListExpression::size(
-                ListExpression::remove_by_index_range(Expression::int_val(2), Expression::list_bin("bin".to_string()), &[]),
-                &[]),
-            Expression::int_val(2)
+                ListExpression::remove_by_index_range(
+                    Expression::int_val(2),
+                    Expression::list_bin("bin".to_string()),
+                    &[],
+                ),
+                &[],
+            ),
+            Expression::int_val(2),
         ),
         &set_name,
     );
@@ -386,9 +437,15 @@ fn expression_list() {
     let rs = test_filter(
         Expression::eq(
             ListExpression::size(
-                ListExpression::remove_by_index_range_count(Expression::int_val(2), Expression::int_val(1), Expression::list_bin("bin".to_string()), &[]),
-                &[]),
-            Expression::int_val(3)
+                ListExpression::remove_by_index_range_count(
+                    Expression::int_val(2),
+                    Expression::int_val(1),
+                    Expression::list_bin("bin".to_string()),
+                    &[],
+                ),
+                &[],
+            ),
+            Expression::int_val(3),
         ),
         &set_name,
     );
@@ -398,9 +455,15 @@ fn expression_list() {
     let rs = test_filter(
         Expression::eq(
             ListExpression::size(
-                ListExpression::remove_by_index_range_count(Expression::int_val(2), Expression::int_val(1), Expression::list_bin("bin".to_string()), &[]),
-                &[]),
-            Expression::int_val(3)
+                ListExpression::remove_by_index_range_count(
+                    Expression::int_val(2),
+                    Expression::int_val(1),
+                    Expression::list_bin("bin".to_string()),
+                    &[],
+                ),
+                &[],
+            ),
+            Expression::int_val(3),
         ),
         &set_name,
     );
@@ -410,9 +473,14 @@ fn expression_list() {
     let rs = test_filter(
         Expression::eq(
             ListExpression::size(
-                ListExpression::remove_by_rank(Expression::int_val(2), Expression::list_bin("bin".to_string()), &[]),
-                &[]),
-            Expression::int_val(3)
+                ListExpression::remove_by_rank(
+                    Expression::int_val(2),
+                    Expression::list_bin("bin".to_string()),
+                    &[],
+                ),
+                &[],
+            ),
+            Expression::int_val(3),
         ),
         &set_name,
     );
@@ -422,9 +490,14 @@ fn expression_list() {
     let rs = test_filter(
         Expression::eq(
             ListExpression::size(
-                ListExpression::remove_by_rank_range(Expression::int_val(2), Expression::list_bin("bin".to_string()), &[]),
-                &[]),
-            Expression::int_val(2)
+                ListExpression::remove_by_rank_range(
+                    Expression::int_val(2),
+                    Expression::list_bin("bin".to_string()),
+                    &[],
+                ),
+                &[],
+            ),
+            Expression::int_val(2),
         ),
         &set_name,
     );
@@ -434,9 +507,15 @@ fn expression_list() {
     let rs = test_filter(
         Expression::eq(
             ListExpression::size(
-                ListExpression::remove_by_rank_range_count(Expression::int_val(2),Expression::int_val(1), Expression::list_bin("bin".to_string()), &[]),
-                &[]),
-            Expression::int_val(3)
+                ListExpression::remove_by_rank_range_count(
+                    Expression::int_val(2),
+                    Expression::int_val(1),
+                    Expression::list_bin("bin".to_string()),
+                    &[],
+                ),
+                &[],
+            ),
+            Expression::int_val(3),
         ),
         &set_name,
     );
