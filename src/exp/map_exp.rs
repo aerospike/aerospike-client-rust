@@ -476,7 +476,7 @@ impl MapExpression {
         ctx: &[CdtContext],
     ) -> FilterExpression {
         let args = vec![
-            ExpressionArgument::Value(Value::from(MapExpOp::RemoveByRank as u8)),
+            ExpressionArgument::Value(Value::from(MapExpOp::RemoveByRankRange as u8)),
             ExpressionArgument::Value(Value::from(MapReturnType::None as u8)),
             ExpressionArgument::FilterExpression(rank),
             ExpressionArgument::FilterExpression(count),
