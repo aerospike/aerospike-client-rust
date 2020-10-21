@@ -635,7 +635,14 @@ impl Expression {
 
     /// Create List bin Value
     pub fn list_val(val: Vec<Value>) -> FilterExpression {
-        FilterExpression::new(None, Some(Value::from(val)), None, None, None, None)
+        FilterExpression::new(
+            Some(ExpOp::Quoted),
+            Some(Value::from(val)),
+            None,
+            None,
+            None,
+            None,
+        )
     }
 
     /// Create Map bin Value

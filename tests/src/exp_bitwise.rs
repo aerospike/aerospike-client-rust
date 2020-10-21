@@ -17,7 +17,7 @@ use env_logger;
 
 use aerospike::exp::bit_exp::BitExpression;
 use aerospike::exp::{Expression, FilterExpression};
-use aerospike::operations::bitwise::{BitPolicy, BitwiseResizeFlags, BitwiseOverflowActions};
+use aerospike::operations::bitwise::{BitPolicy, BitwiseOverflowActions, BitwiseResizeFlags};
 use aerospike::*;
 use std::sync::Arc;
 
@@ -85,7 +85,12 @@ fn expression_bitwise() {
             BitExpression::count(
                 Expression::int_val(0),
                 Expression::int_val(16),
-                BitExpression::insert(&BitPolicy::default(), Expression::int_val(0), Expression::blob_val(vec![0b11111111]), Expression::blob_bin("bin".to_string())),
+                BitExpression::insert(
+                    &BitPolicy::default(),
+                    Expression::int_val(0),
+                    Expression::blob_val(vec![0b11111111]),
+                    Expression::blob_bin("bin".to_string()),
+                ),
             ),
             Expression::int_val(9),
         ),
@@ -99,7 +104,12 @@ fn expression_bitwise() {
             BitExpression::count(
                 Expression::int_val(0),
                 Expression::int_val(8),
-                BitExpression::remove(&BitPolicy::default(), Expression::int_val(0), Expression::int_val(1), Expression::blob_bin("bin".to_string())),
+                BitExpression::remove(
+                    &BitPolicy::default(),
+                    Expression::int_val(0),
+                    Expression::int_val(1),
+                    Expression::blob_bin("bin".to_string()),
+                ),
             ),
             Expression::int_val(2),
         ),
@@ -113,7 +123,13 @@ fn expression_bitwise() {
             BitExpression::count(
                 Expression::int_val(0),
                 Expression::int_val(8),
-                BitExpression::set(&BitPolicy::default(), Expression::int_val(0), Expression::int_val(8), Expression::blob_val(vec![0b10101010]), Expression::blob_bin("bin".to_string())),
+                BitExpression::set(
+                    &BitPolicy::default(),
+                    Expression::int_val(0),
+                    Expression::int_val(8),
+                    Expression::blob_val(vec![0b10101010]),
+                    Expression::blob_bin("bin".to_string()),
+                ),
             ),
             Expression::int_val(4),
         ),
@@ -127,7 +143,13 @@ fn expression_bitwise() {
             BitExpression::count(
                 Expression::int_val(0),
                 Expression::int_val(8),
-                BitExpression::or(&BitPolicy::default(), Expression::int_val(0), Expression::int_val(8), Expression::blob_val(vec![0b10101010]), Expression::blob_bin("bin".to_string())),
+                BitExpression::or(
+                    &BitPolicy::default(),
+                    Expression::int_val(0),
+                    Expression::int_val(8),
+                    Expression::blob_val(vec![0b10101010]),
+                    Expression::blob_bin("bin".to_string()),
+                ),
             ),
             Expression::int_val(5),
         ),
@@ -141,7 +163,13 @@ fn expression_bitwise() {
             BitExpression::count(
                 Expression::int_val(0),
                 Expression::int_val(8),
-                BitExpression::xor(&BitPolicy::default(), Expression::int_val(0), Expression::int_val(8), Expression::blob_val(vec![0b10101011]), Expression::blob_bin("bin".to_string())),
+                BitExpression::xor(
+                    &BitPolicy::default(),
+                    Expression::int_val(0),
+                    Expression::int_val(8),
+                    Expression::blob_val(vec![0b10101011]),
+                    Expression::blob_bin("bin".to_string()),
+                ),
             ),
             Expression::int_val(4),
         ),
@@ -155,7 +183,13 @@ fn expression_bitwise() {
             BitExpression::count(
                 Expression::int_val(0),
                 Expression::int_val(8),
-                BitExpression::and(&BitPolicy::default(), Expression::int_val(0), Expression::int_val(8), Expression::blob_val(vec![0b10101011]), Expression::blob_bin("bin".to_string())),
+                BitExpression::and(
+                    &BitPolicy::default(),
+                    Expression::int_val(0),
+                    Expression::int_val(8),
+                    Expression::blob_val(vec![0b10101011]),
+                    Expression::blob_bin("bin".to_string()),
+                ),
             ),
             Expression::int_val(1),
         ),
@@ -169,7 +203,12 @@ fn expression_bitwise() {
             BitExpression::count(
                 Expression::int_val(0),
                 Expression::int_val(8),
-                BitExpression::not(&BitPolicy::default(), Expression::int_val(0), Expression::int_val(8), Expression::blob_bin("bin".to_string())),
+                BitExpression::not(
+                    &BitPolicy::default(),
+                    Expression::int_val(0),
+                    Expression::int_val(8),
+                    Expression::blob_bin("bin".to_string()),
+                ),
             ),
             Expression::int_val(7),
         ),
@@ -183,7 +222,13 @@ fn expression_bitwise() {
             BitExpression::count(
                 Expression::int_val(0),
                 Expression::int_val(8),
-                BitExpression::lshift(&BitPolicy::default(), Expression::int_val(0), Expression::int_val(16), Expression::int_val(9), Expression::blob_bin("bin".to_string())),
+                BitExpression::lshift(
+                    &BitPolicy::default(),
+                    Expression::int_val(0),
+                    Expression::int_val(16),
+                    Expression::int_val(9),
+                    Expression::blob_bin("bin".to_string()),
+                ),
             ),
             Expression::int_val(2),
         ),
@@ -197,7 +242,13 @@ fn expression_bitwise() {
             BitExpression::count(
                 Expression::int_val(0),
                 Expression::int_val(8),
-                BitExpression::rshift(&BitPolicy::default(), Expression::int_val(0), Expression::int_val(8), Expression::int_val(3), Expression::blob_bin("bin".to_string())),
+                BitExpression::rshift(
+                    &BitPolicy::default(),
+                    Expression::int_val(0),
+                    Expression::int_val(8),
+                    Expression::int_val(3),
+                    Expression::blob_bin("bin".to_string()),
+                ),
             ),
             Expression::int_val(0),
         ),
@@ -211,7 +262,15 @@ fn expression_bitwise() {
             BitExpression::count(
                 Expression::int_val(0),
                 Expression::int_val(8),
-                BitExpression::add(&BitPolicy::default(), Expression::int_val(0), Expression::int_val(8), Expression::int_val(128), false, BitwiseOverflowActions::Wrap, Expression::blob_bin("bin".to_string())),
+                BitExpression::add(
+                    &BitPolicy::default(),
+                    Expression::int_val(0),
+                    Expression::int_val(8),
+                    Expression::int_val(128),
+                    false,
+                    BitwiseOverflowActions::Wrap,
+                    Expression::blob_bin("bin".to_string()),
+                ),
             ),
             Expression::int_val(2),
         ),
@@ -225,7 +284,15 @@ fn expression_bitwise() {
             BitExpression::count(
                 Expression::int_val(0),
                 Expression::int_val(8),
-                BitExpression::subtract(&BitPolicy::default(), Expression::int_val(0), Expression::int_val(8), Expression::int_val(1), false, BitwiseOverflowActions::Wrap, Expression::blob_bin("bin".to_string())),
+                BitExpression::subtract(
+                    &BitPolicy::default(),
+                    Expression::int_val(0),
+                    Expression::int_val(8),
+                    Expression::int_val(1),
+                    false,
+                    BitwiseOverflowActions::Wrap,
+                    Expression::blob_bin("bin".to_string()),
+                ),
             ),
             Expression::int_val(0),
         ),
@@ -239,7 +306,13 @@ fn expression_bitwise() {
             BitExpression::count(
                 Expression::int_val(0),
                 Expression::int_val(8),
-                BitExpression::set_int(&BitPolicy::default(), Expression::int_val(0), Expression::int_val(8), Expression::int_val(255),  Expression::blob_bin("bin".to_string())),
+                BitExpression::set_int(
+                    &BitPolicy::default(),
+                    Expression::int_val(0),
+                    Expression::int_val(8),
+                    Expression::int_val(255),
+                    Expression::blob_bin("bin".to_string()),
+                ),
             ),
             Expression::int_val(8),
         ),
@@ -250,7 +323,11 @@ fn expression_bitwise() {
 
     let rs = test_filter(
         Expression::eq(
-            BitExpression::get(Expression::int_val(0), Expression::int_val(8), Expression::blob_bin("bin".to_string())),
+            BitExpression::get(
+                Expression::int_val(0),
+                Expression::int_val(8),
+                Expression::blob_bin("bin".to_string()),
+            ),
             Expression::blob_val(vec![0b00000001]),
         ),
         &set_name,
@@ -260,7 +337,12 @@ fn expression_bitwise() {
 
     let rs = test_filter(
         Expression::eq(
-            BitExpression::lscan(Expression::int_val(8), Expression::int_val(8), Expression::bool_val(true), Expression::blob_bin("bin".to_string())),
+            BitExpression::lscan(
+                Expression::int_val(8),
+                Expression::int_val(8),
+                Expression::bool_val(true),
+                Expression::blob_bin("bin".to_string()),
+            ),
             Expression::int_val(1),
         ),
         &set_name,
@@ -270,7 +352,12 @@ fn expression_bitwise() {
 
     let rs = test_filter(
         Expression::eq(
-            BitExpression::rscan(Expression::int_val(8), Expression::int_val(8), Expression::bool_val(true), Expression::blob_bin("bin".to_string())),
+            BitExpression::rscan(
+                Expression::int_val(8),
+                Expression::int_val(8),
+                Expression::bool_val(true),
+                Expression::blob_bin("bin".to_string()),
+            ),
             Expression::int_val(6),
         ),
         &set_name,
@@ -280,7 +367,12 @@ fn expression_bitwise() {
 
     let rs = test_filter(
         Expression::eq(
-            BitExpression::get_int(Expression::int_val(0), Expression::int_val(8), false, Expression::blob_bin("bin".to_string())),
+            BitExpression::get_int(
+                Expression::int_val(0),
+                Expression::int_val(8),
+                false,
+                Expression::blob_bin("bin".to_string()),
+            ),
             Expression::int_val(1),
         ),
         &set_name,
