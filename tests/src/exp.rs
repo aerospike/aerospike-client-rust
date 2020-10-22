@@ -513,13 +513,14 @@ fn expression_commands() {
 
     // BATCH GET
     let mut batch_reads = vec![];
+    let b = Bins::from(["bin"]);
     for i in 85..90 {
         let key = as_key!(namespace, &set_name, i);
-        batch_reads.push(BatchRead::new(key, &Bins::All));
+        batch_reads.push(BatchRead::new(key, &b));
     }
-    bpolicy.filter_expression = Some(Expression::eq(
+    bpolicy.filter_expression = Some(Expression::gt(
         Expression::int_bin("bin".to_string()),
-        Expression::int_val(91),
+        Expression::int_val(84),
     ));
     match client.batch_get(&bpolicy, batch_reads) {
         Ok(results) => {

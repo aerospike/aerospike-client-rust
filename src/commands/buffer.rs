@@ -349,9 +349,10 @@ impl Buffer {
         batch_reads: SharedSlice<BatchRead<'a>>,
         offsets: &[usize],
     ) -> Result<()> {
-        let mut field_count = if policy.send_set_name { 2 } else { 1 };
+        let field_count_row = if policy.send_set_name { 2 } else { 1 };
 
         self.begin()?;
+        let mut field_count = 1;
         self.data_offset += FIELD_HEADER_SIZE as usize + 5;
 
         let filter_size = self.estimate_filter_size(policy.filter_expression())?;
@@ -421,7 +422,7 @@ impl Buffer {
                     match batch_read.bins {
                         Bins::None => {
                             self.write_u8(INFO1_READ | INFO1_NOBINDATA)?;
-                            self.write_u16(field_count)?;
+                            self.write_u16(field_count_row)?;
                             self.write_u16(0)?;
                             self.write_field_string(&key.namespace, FieldType::Namespace)?;
                             if policy.send_set_name {
@@ -430,7 +431,7 @@ impl Buffer {
                         }
                         Bins::All => {
                             self.write_u8(INFO1_READ | INFO1_GET_ALL)?;
-                            self.write_u16(field_count)?;
+                            self.write_u16(field_count_row)?;
                             self.write_u16(0)?;
                             self.write_field_string(&key.namespace, FieldType::Namespace)?;
                             if policy.send_set_name {
@@ -439,7 +440,7 @@ impl Buffer {
                         }
                         Bins::Some(ref bin_names) => {
                             self.write_u8(INFO1_READ)?;
-                            self.write_u16(field_count)?;
+                            self.write_u16(field_count_row)?;
                             self.write_u16(bin_names.len() as u16)?;
                             self.write_field_string(&key.namespace, FieldType::Namespace)?;
                             if policy.send_set_name {
