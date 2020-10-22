@@ -24,7 +24,7 @@ use crate::commands::buffer::Buffer;
 use crate::errors::Result;
 use crate::msgpack::encoder::{pack_array_begin, pack_integer, pack_raw_string, pack_value};
 use crate::operations::cdt_context::CdtContext;
-use crate::Value;
+use crate::{Value, ParticleType};
 use std::collections::HashMap;
 use std::fmt::Debug;
 
