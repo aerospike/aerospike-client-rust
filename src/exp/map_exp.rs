@@ -904,12 +904,12 @@ impl MapExpression {
     #[doc(hidden)]
     fn get_value_type(return_type: MapReturnType) -> ExpType {
         let t = return_type as u8 & !(MapReturnType::Inverted as u8);
-        if t <= MapReturnType::Count as u8 {
-            ExpType::INT
+        if t == MapReturnType::Key as u8 || t == MapReturnType::Value as u8 {
+            ExpType::LIST
         } else if t == MapReturnType::KeyValue as u8 {
             ExpType::MAP
         } else {
-            ExpType::LIST
+            ExpType::INT
         }
     }
 
