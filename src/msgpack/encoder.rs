@@ -36,7 +36,7 @@ pub fn pack_value(buf: &mut Option<&mut Buffer>, val: &Value) -> Result<usize> {
             FloatValue::F64(_) => pack_f64(buf, f64::from(val)),
             FloatValue::F32(_) => pack_f32(buf, f32::from(val)),
         },
-        Value::Blob(ref val) => pack_blob(buf, val),
+        Value::Blob(ref val) | Value::HLL(ref val) => pack_blob(buf, val),
         Value::List(ref val) => pack_array(buf, val),
         Value::HashMap(ref val) => pack_map(buf, val),
         Value::OrderedMap(_) => panic!("Ordered maps are not supported in this encoder."),
@@ -95,6 +95,30 @@ pub fn pack_cdt_op(
         }
     }
 
+    Ok(size)
+}
+
+#[doc(hidden)]
+pub fn pack_hll_op(
+    buf: &mut Option<&mut Buffer>,
+    hll_op: &CdtOperation,
+    _ctx: &[CdtContext],
+) -> Result<usize> {
+    let mut size: usize = 0;
+    size += pack_array_begin(buf, hll_op.args.len() + 1)?;
+    size += pack_integer(buf, i64::from(hll_op.op))?;
+    if !hll_op.args.is_empty() {
+        for arg in &hll_op.args {
+            size += match *arg {
+                CdtArgument::Byte(byte) => pack_value(buf, &Value::from(byte))?,
+                CdtArgument::Int(int) => pack_value(buf, &Value::from(int))?,
+                CdtArgument::Value(value) => pack_value(buf, value)?,
+                CdtArgument::List(list) => pack_array(buf, list)?,
+                CdtArgument::Map(map) => pack_map(buf, map)?,
+                CdtArgument::Bool(bool_val) => pack_value(buf, &Value::from(bool_val))?,
+            }
+        }
+    }
     Ok(size)
 }
 

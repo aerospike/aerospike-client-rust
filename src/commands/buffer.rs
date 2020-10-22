@@ -499,6 +499,10 @@ impl Buffer {
                 | Operation {
                     op: OperationType::BitRead,
                     ..
+                }
+                | Operation {
+                    op: OperationType::HllRead,
+                    ..
                 } => read_attr |= INFO1_READ,
                 _ => write_attr |= INFO2_WRITE,
             }

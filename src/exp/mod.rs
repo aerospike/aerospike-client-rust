@@ -16,6 +16,7 @@
 //! Functions used for Filter Expressions. This Module requires Aerospike Server Version >= 5.2
 
 pub mod bit_exp;
+pub mod hll_exp;
 pub mod list_exp;
 pub mod map_exp;
 
@@ -439,7 +440,19 @@ impl Expression {
         )
     }
 
-    /*pub fn hll_bin(name: String) -> FilterExpression {
+    /// Create a HLL bin expression
+    ///
+    /// ```
+    /// use aerospike::exp::Expression;
+    /// use aerospike::exp::hll_exp::HLLExpression;
+    /// use aerospike::operations::hll::HLLPolicy;
+    /// use aerospike::Value;
+    ///
+    /// // Add values to HLL bin "a" and check count > 7
+    /// let list = vec![Value::from(1)];
+    /// Expression::gt(HLLExpression::add(HLLPolicy::default(), Expression::list_val(list), Expression::hll_bin("a".to_string())), Expression::int_val(7));
+    /// ```
+    pub fn hll_bin(name: String) -> FilterExpression {
         FilterExpression::new(
             Some(ExpOp::BIN),
             Some(Value::from(name)),
@@ -448,7 +461,7 @@ impl Expression {
             Some(ExpType::HLL),
             None,
         )
-    }*/
+    }
 
     /// Create function that returns if bin of specified name exists.
     /// ```
