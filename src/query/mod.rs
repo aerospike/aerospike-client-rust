@@ -25,6 +25,5 @@ pub use self::udf::UDFLang;
 mod filter;
 mod index_types;
 mod recordset;
-pub mod regex_flag;
 mod statement;
 mod udf;

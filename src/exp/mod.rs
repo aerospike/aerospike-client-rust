@@ -19,12 +19,13 @@ pub mod bit_exp;
 pub mod hll_exp;
 pub mod list_exp;
 pub mod map_exp;
+pub mod regex_flag;
 
 use crate::commands::buffer::Buffer;
 use crate::errors::Result;
 use crate::msgpack::encoder::{pack_array_begin, pack_integer, pack_raw_string, pack_value};
 use crate::operations::cdt_context::CdtContext;
-use crate::{Value, ParticleType};
+use crate::{ParticleType, Value};
 use std::collections::HashMap;
 use std::fmt::Debug;
 
@@ -292,7 +293,6 @@ impl Expression {
         FilterExpression::new(Some(ExpOp::KeyExists), None, None, None, None, None)
     }
 
-
     /// Create 64 bit int bin expression.
     /// ```
     /// use aerospike::exp::Expression;
@@ -451,7 +451,10 @@ impl Expression {
     /// Expression::bin_exists("a".to_string());
     /// ```
     pub fn bin_exists(name: String) -> FilterExpression {
-        Expression::ne(Expression::bin_type(name), Expression::int_val(ParticleType::NULL as i64))
+        Expression::ne(
+            Expression::bin_type(name),
+            Expression::int_val(ParticleType::NULL as i64),
+        )
     }
 
     /// Create function that returns bin's integer particle type.

@@ -16,7 +16,7 @@
 //! List Cdt Aerospike Filter Expressions.
 
 use crate::exp::{ExpOp, ExpType, Expression, ExpressionArgument, FilterExpression, MODIFY};
-use crate::operations::cdt_context::CdtContext;
+use crate::operations::cdt_context::{CdtContext, CtxType};
 use crate::operations::lists::{ListPolicy, ListReturnType, ListSortFlags};
 use crate::Value;
 
@@ -724,7 +724,7 @@ impl ListExpression {
         let return_type: ExpType;
         if ctx.is_empty() {
             return_type = ExpType::LIST
-        } else if (ctx[0].id & 0x10) == 0 {
+        } else if (ctx[0].id & CtxType::ListIndex as u8) == 0 {
             return_type = ExpType::MAP;
         } else {
             return_type = ExpType::LIST;
