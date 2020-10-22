@@ -219,7 +219,7 @@ fn expression_data_types() {
 
     let rs = test_filter(
         Expression::eq(
-            Expression::bin("bin4".to_string(), ExpType::BLOB),
+            Expression::blob_bin("bin4".to_string()),
             Expression::blob_val(format!("{}{}", "blob", 5).into_bytes()),
         ),
         &set_name,

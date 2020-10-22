@@ -292,22 +292,6 @@ impl Expression {
         FilterExpression::new(Some(ExpOp::KeyExists), None, None, None, None, None)
     }
 
-    /// Create bin expression of specified type.
-    /// ```
-    /// use aerospike::exp::{Expression, ExpType};
-    /// // String bin "a" == "views"
-    /// Expression::eq(Expression::bin("a".to_string(), ExpType::STRING), Expression::string_val("views".to_string()));
-    /// ```
-    pub fn bin(name: String, exp_type: ExpType) -> FilterExpression {
-        FilterExpression::new(
-            Some(ExpOp::Bin),
-            Some(Value::from(name)),
-            None,
-            None,
-            Some(exp_type),
-            None,
-        )
-    }
 
     /// Create 64 bit int bin expression.
     /// ```
