@@ -283,7 +283,7 @@ impl HLLExpression {
     }
 
     #[doc(hidden)]
-    pub fn add_read(
+    fn add_read(
         bin: FilterExpression,
         return_type: ExpType,
         arguments: Vec<ExpressionArgument>,
@@ -300,10 +300,7 @@ impl HLLExpression {
     }
 
     #[doc(hidden)]
-    pub fn add_write(
-        bin: FilterExpression,
-        arguments: Vec<ExpressionArgument>,
-    ) -> FilterExpression {
+    fn add_write(bin: FilterExpression, arguments: Vec<ExpressionArgument>) -> FilterExpression {
         FilterExpression {
             cmd: Some(ExpOp::Call),
             val: None,

@@ -89,9 +89,6 @@ pub const MODIFY: i64 = 0x40;
 // Const for Calendar Exps. Not implemented yet!
 // const NANOS_PER_MILLIS: i64 = 1000000;
 
-#[doc(hidden)]
-pub const SERIAL_VERSION_ID: i64 = 1;
-
 #[derive(Debug, Clone)]
 #[doc(hidden)]
 pub enum ExpressionArgument {

@@ -859,7 +859,7 @@ impl MapExpression {
     }
 
     #[doc(hidden)]
-    pub fn add_read(
+    fn add_read(
         bin: FilterExpression,
         return_type: ExpType,
         arguments: Vec<ExpressionArgument>,
@@ -876,7 +876,7 @@ impl MapExpression {
     }
 
     #[doc(hidden)]
-    pub fn add_write(
+    fn add_write(
         bin: FilterExpression,
         ctx: &[CdtContext],
         arguments: Vec<ExpressionArgument>,
@@ -902,7 +902,7 @@ impl MapExpression {
     }
 
     #[doc(hidden)]
-    pub fn get_value_type(return_type: MapReturnType) -> ExpType {
+    fn get_value_type(return_type: MapReturnType) -> ExpType {
         let t = return_type as u8 & !(MapReturnType::Inverted as u8);
         if t <= MapReturnType::Count as u8 {
             ExpType::INT
@@ -914,7 +914,7 @@ impl MapExpression {
     }
 
     #[doc(hidden)]
-    pub fn get_policy_value(write_policy: MapWriteMode, multi: bool) -> u8 {
+    fn get_policy_value(write_policy: MapWriteMode, multi: bool) -> u8 {
         match write_policy {
             MapWriteMode::Update => {
                 if multi {

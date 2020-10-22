@@ -87,7 +87,7 @@ impl BitExpression {
             ExpressionArgument::Value(Value::from(policy.flags)),
             ExpressionArgument::Value(Value::from(resize_flags as u8)),
         ];
-        add_write(bin, args)
+        BitExpression::add_write(bin, args)
     }
 
     /// Create expression that inserts value bytes into byte[] bin at byteOffset and returns byte[].
@@ -120,7 +120,7 @@ impl BitExpression {
             ExpressionArgument::FilterExpression(value),
             ExpressionArgument::Value(Value::from(policy.flags)),
         ];
-        add_write(bin, args)
+        BitExpression::add_write(bin, args)
     }
 
     /// Create expression that removes bytes from byte[] bin at byteOffset for byteSize and returns byte[].
@@ -151,7 +151,7 @@ impl BitExpression {
             ExpressionArgument::FilterExpression(byte_size),
             ExpressionArgument::Value(Value::from(policy.flags)),
         ];
-        add_write(bin, args)
+        BitExpression::add_write(bin, args)
     }
 
     /// Create expression that sets value on byte[] bin at bitOffset for bitSize and returns byte[].
@@ -186,7 +186,7 @@ impl BitExpression {
             ExpressionArgument::FilterExpression(value),
             ExpressionArgument::Value(Value::from(policy.flags)),
         ];
-        add_write(bin, args)
+        BitExpression::add_write(bin, args)
     }
 
     /// Create expression that performs bitwise "or" on value and byte[] bin at bitOffset for bitSize
@@ -212,7 +212,7 @@ impl BitExpression {
             ExpressionArgument::FilterExpression(value),
             ExpressionArgument::Value(Value::from(policy.flags)),
         ];
-        add_write(bin, args)
+        BitExpression::add_write(bin, args)
     }
 
     /// Create expression that performs bitwise "xor" on value and byte[] bin at bitOffset for bitSize
@@ -239,7 +239,7 @@ impl BitExpression {
             ExpressionArgument::FilterExpression(value),
             ExpressionArgument::Value(Value::from(policy.flags)),
         ];
-        add_write(bin, args)
+        BitExpression::add_write(bin, args)
     }
 
     /// Create expression that performs bitwise "and" on value and byte[] bin at bitOffset for bitSize
@@ -266,7 +266,7 @@ impl BitExpression {
             ExpressionArgument::FilterExpression(value),
             ExpressionArgument::Value(Value::from(policy.flags)),
         ];
-        add_write(bin, args)
+        BitExpression::add_write(bin, args)
     }
 
     /// Create expression that negates byte[] bin starting at bitOffset for bitSize and returns byte[].
@@ -288,7 +288,7 @@ impl BitExpression {
             ExpressionArgument::FilterExpression(bit_size),
             ExpressionArgument::Value(Value::from(policy.flags)),
         ];
-        add_write(bin, args)
+        BitExpression::add_write(bin, args)
     }
 
     /// Create expression that shifts left byte[] bin starting at bitOffset for bitSize and returns byte[].
@@ -314,7 +314,7 @@ impl BitExpression {
             ExpressionArgument::FilterExpression(shift),
             ExpressionArgument::Value(Value::from(policy.flags)),
         ];
-        add_write(bin, args)
+        BitExpression::add_write(bin, args)
     }
 
     /// Create expression that shifts right byte[] bin starting at bitOffset for bitSize and returns byte[].
@@ -340,7 +340,7 @@ impl BitExpression {
             ExpressionArgument::FilterExpression(shift),
             ExpressionArgument::Value(Value::from(policy.flags)),
         ];
-        add_write(bin, args)
+        BitExpression::add_write(bin, args)
     }
 
     /// Create expression that adds value to byte[] bin starting at bitOffset for bitSize and returns byte[].
@@ -376,7 +376,7 @@ impl BitExpression {
             ExpressionArgument::Value(Value::from(policy.flags)),
             ExpressionArgument::Value(Value::from(flags)),
         ];
-        add_write(bin, args)
+        BitExpression::add_write(bin, args)
     }
 
     /// Create expression that subtracts value from byte[] bin starting at bitOffset for bitSize and returns byte[].
@@ -412,7 +412,7 @@ impl BitExpression {
             ExpressionArgument::Value(Value::from(policy.flags)),
             ExpressionArgument::Value(Value::from(flags)),
         ];
-        add_write(bin, args)
+        BitExpression::add_write(bin, args)
     }
 
     /// Create expression that sets value to byte[] bin starting at bitOffset for bitSize and returns byte[].
@@ -439,7 +439,7 @@ impl BitExpression {
             ExpressionArgument::FilterExpression(value),
             ExpressionArgument::Value(Value::from(policy.flags)),
         ];
-        add_write(bin, args)
+        BitExpression::add_write(bin, args)
     }
 
     /// Create expression that returns bits from byte[] bin starting at bitOffset for bitSize.
@@ -467,7 +467,7 @@ impl BitExpression {
             ExpressionArgument::FilterExpression(bit_offset),
             ExpressionArgument::FilterExpression(bit_size),
         ];
-        add_read(bin, ExpType::BLOB, args)
+        BitExpression::add_read(bin, ExpType::BLOB, args)
     }
 
     /// Create expression that returns integer count of set bits from byte[] bin starting at
@@ -494,7 +494,7 @@ impl BitExpression {
             ExpressionArgument::FilterExpression(bit_offset),
             ExpressionArgument::FilterExpression(bit_size),
         ];
-        add_read(bin, ExpType::INT, args)
+        BitExpression::add_read(bin, ExpType::INT, args)
     }
 
     /// Create expression that returns integer bit offset of the first specified value bit in byte[] bin
@@ -524,7 +524,7 @@ impl BitExpression {
             ExpressionArgument::FilterExpression(bit_size),
             ExpressionArgument::FilterExpression(value),
         ];
-        add_read(bin, ExpType::INT, args)
+        BitExpression::add_read(bin, ExpType::INT, args)
     }
 
     /// Create expression that returns integer bit offset of the last specified value bit in byte[] bin
@@ -556,7 +556,7 @@ impl BitExpression {
             ExpressionArgument::FilterExpression(bit_size),
             ExpressionArgument::FilterExpression(value),
         ];
-        add_read(bin, ExpType::INT, args)
+        BitExpression::add_read(bin, ExpType::INT, args)
     }
 
     /// Create expression that returns integer from byte[] bin starting at bitOffset for bitSize.
@@ -587,36 +587,36 @@ impl BitExpression {
         if signed {
             args.push(ExpressionArgument::Value(Value::from(INT_FLAGS_SIGNED)));
         }
-        add_read(bin, ExpType::INT, args)
+        BitExpression::add_read(bin, ExpType::INT, args)
     }
-}
 
-#[doc(hidden)]
-pub fn add_write(bin: FilterExpression, arguments: Vec<ExpressionArgument>) -> FilterExpression {
-    FilterExpression {
-        cmd: Some(ExpOp::Call),
-        val: None,
-        bin: Some(Box::new(bin)),
-        flags: Some(MODULE | MODIFY),
-        module: Some(ExpType::BLOB),
-        exps: None,
-        arguments: Some(arguments),
+    #[doc(hidden)]
+    fn add_write(bin: FilterExpression, arguments: Vec<ExpressionArgument>) -> FilterExpression {
+        FilterExpression {
+            cmd: Some(ExpOp::Call),
+            val: None,
+            bin: Some(Box::new(bin)),
+            flags: Some(MODULE | MODIFY),
+            module: Some(ExpType::BLOB),
+            exps: None,
+            arguments: Some(arguments),
+        }
     }
-}
 
-#[doc(hidden)]
-pub fn add_read(
-    bin: FilterExpression,
-    return_type: ExpType,
-    arguments: Vec<ExpressionArgument>,
-) -> FilterExpression {
-    FilterExpression {
-        cmd: Some(ExpOp::Call),
-        val: None,
-        bin: Some(Box::new(bin)),
-        flags: Some(MODULE),
-        module: Some(return_type),
-        exps: None,
-        arguments: Some(arguments),
+    #[doc(hidden)]
+    fn add_read(
+        bin: FilterExpression,
+        return_type: ExpType,
+        arguments: Vec<ExpressionArgument>,
+    ) -> FilterExpression {
+        FilterExpression {
+            cmd: Some(ExpOp::Call),
+            val: None,
+            bin: Some(Box::new(bin)),
+            flags: Some(MODULE),
+            module: Some(return_type),
+            exps: None,
+            arguments: Some(arguments),
+        }
     }
 }

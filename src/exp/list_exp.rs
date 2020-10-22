@@ -699,7 +699,7 @@ impl ListExpression {
     }
 
     #[doc(hidden)]
-    pub fn add_read(
+    fn add_read(
         bin: FilterExpression,
         return_type: ExpType,
         arguments: Vec<ExpressionArgument>,
@@ -716,7 +716,7 @@ impl ListExpression {
     }
 
     #[doc(hidden)]
-    pub fn add_write(
+    fn add_write(
         bin: FilterExpression,
         ctx: &[CdtContext],
         arguments: Vec<ExpressionArgument>,
@@ -742,7 +742,7 @@ impl ListExpression {
     }
 
     #[doc(hidden)]
-    pub fn get_value_type(return_type: ListReturnType) -> ExpType {
+    fn get_value_type(return_type: ListReturnType) -> ExpType {
         if (return_type as u8 & !(ListReturnType::Inverted as u8)) == ListReturnType::Values as u8 {
             ExpType::LIST
         } else {
