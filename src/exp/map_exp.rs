@@ -74,9 +74,9 @@ pub enum MapExpOp {
     RemoveByKeyList = 81,
     RemoveByValue = 82,
     RemoveByValueList = 83,
-    RemoveByKeyInterval = 84,
+    RemoveByKeyRange = 84,
     RemoveByIndexRange = 85,
-    RemoveByValueInterval = 86,
+    RemoveByValueRange = 86,
     RemoveByRankRange = 87,
     RemoveByKeyRelIndexRange = 88,
     RemoveByValueRelRankRange = 89,
@@ -85,7 +85,7 @@ pub enum MapExpOp {
     GetByIndex = 98,
     GetByRank = 100,
     GetByValue = 102, // GET_ALL_BY_VALUE on server.
-    GetByKeyInterval = 103,
+    GetByKeyRange = 103,
     GetByIndexRange = 104,
     GetByValueInterval = 105,
     GetByRankRange = 106,
@@ -220,7 +220,7 @@ impl MapExpression {
     ) -> FilterExpression {
         let mut args = vec![
             ExpressionArgument::Context(ctx.to_vec()),
-            ExpressionArgument::Value(Value::from(MapExpOp::RemoveByKeyInterval as u8)),
+            ExpressionArgument::Value(Value::from(MapExpOp::RemoveByKeyRange as u8)),
             ExpressionArgument::Value(Value::from(MapReturnType::None as u8)),
         ];
         if let Some(val_beg) = key_begin {
@@ -329,7 +329,7 @@ impl MapExpression {
     ) -> FilterExpression {
         let mut args = vec![
             ExpressionArgument::Context(ctx.to_vec()),
-            ExpressionArgument::Value(Value::from(MapExpOp::RemoveByValueInterval as u8)),
+            ExpressionArgument::Value(Value::from(MapExpOp::RemoveByValueRange as u8)),
             ExpressionArgument::Value(Value::from(MapReturnType::None as u8)),
         ];
         if let Some(val_beg) = value_begin {
@@ -543,7 +543,7 @@ impl MapExpression {
     ) -> FilterExpression {
         let mut args = vec![
             ExpressionArgument::Context(ctx.to_vec()),
-            ExpressionArgument::Value(Value::from(MapExpOp::GetByKeyInterval as u8)),
+            ExpressionArgument::Value(Value::from(MapExpOp::GetByKeyRange as u8)),
             ExpressionArgument::Value(Value::from(return_type as u8)),
         ];
         if let Some(val_beg) = key_begin {

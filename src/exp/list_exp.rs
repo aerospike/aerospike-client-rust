@@ -64,7 +64,7 @@ pub enum ListExpOp {
     GetByValue = 22, // GET_ALL_BY_VALUE on server.
     GetByValueList = 23,
     GetByIndexRange = 24,
-    GetByValueInterval = 25,
+    GetByValueRange = 25,
     GetByRankRange = 26,
     GetByValueRelRankRange = 27,
     RemoveByIndex = 32,
@@ -72,7 +72,7 @@ pub enum ListExpOp {
     RemoveByValue = 35,
     RemoveByValueList = 36,
     RemoveByIndexRange = 37,
-    RemoveByValueInterval = 38,
+    RemoveByValueRange = 38,
     RemoveByRankRange = 39,
     RemoveByValueRelRankRange = 40,
 }
@@ -249,7 +249,7 @@ impl ListExpression {
     ) -> FilterExpression {
         let mut args = vec![
             ExpressionArgument::Context(ctx.to_vec()),
-            ExpressionArgument::Value(Value::from(ListExpOp::RemoveByValueInterval as i64)),
+            ExpressionArgument::Value(Value::from(ListExpOp::RemoveByValueRange as i64)),
             ExpressionArgument::Value(Value::from(ListReturnType::None as u8)),
         ];
         if let Some(val_beg) = value_begin {
@@ -478,7 +478,7 @@ impl ListExpression {
     ) -> FilterExpression {
         let mut args = vec![
             ExpressionArgument::Context(ctx.to_vec()),
-            ExpressionArgument::Value(Value::from(ListExpOp::GetByValueInterval as i64)),
+            ExpressionArgument::Value(Value::from(ListExpOp::GetByValueRange as i64)),
             ExpressionArgument::Value(Value::from(return_type as u8)),
         ];
         if let Some(val_beg) = value_begin {
