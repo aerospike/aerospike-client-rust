@@ -467,7 +467,7 @@ impl Expression {
     /// Expression::bin_exists("a".to_string());
     /// ```
     pub fn bin_exists(name: String) -> FilterExpression {
-        Expression::ne(Expression::bin_type(name), Expression::int_val(0))
+        Expression::ne(Expression::bin_type(name), Expression::int_val(ParticleType::NULL as i64))
     }
 
     /// Create function that returns bin's integer particle type.
