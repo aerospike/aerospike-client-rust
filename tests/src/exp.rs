@@ -532,7 +532,7 @@ fn expression_commands() {
                 assert_eq!(count, 1, "BATCH GET Ok Test Failed")
             }
         }
-        Err(err) => println!("Error executing batch request: {}", err),
+        Err(err) => panic!("Error executing batch request: {}", err),
     }
 }
 

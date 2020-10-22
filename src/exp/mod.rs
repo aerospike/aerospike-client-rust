@@ -454,7 +454,7 @@ impl Expression {
     /// ```
     pub fn hll_bin(name: String) -> FilterExpression {
         FilterExpression::new(
-            Some(ExpOp::BIN),
+            Some(ExpOp::Bin),
             Some(Value::from(name)),
             None,
             None,
