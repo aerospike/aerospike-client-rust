@@ -35,14 +35,13 @@ use crate::Value;
 /// a parameter error will be returned. If a range is partially out of bounds, the
 /// valid part of the range will be returned. Index/Range examples:
 ///
-/// Index 0: First item in list.
-/// Index 4: Fifth item in list.
-/// Index -1: Last item in list.
-/// Index -3: Third to last item in list.
-/// Index 1 Count 2: Second and third items in list.
-/// Index -3 Count 3: Last three items in list.
-/// Index -5 Count 4: Range between fifth to last item to second to last item inclusive.
-///
+/// * Index 0: First item in list.
+/// * Index 4: Fifth item in list.
+/// * Index -1: Last item in list.
+/// * Index -3: Third to last item in list.
+/// * Index 1 Count 2: Second and third items in list.
+/// * Index -3 Count 3: Last three items in list.
+/// * Index -5 Count 4: Range between fifth to last item to second to last item inclusive.
 ///
 /// Nested expressions are supported by optional CTX context arguments.
 pub struct ListExpression {}
@@ -51,15 +50,15 @@ const MODULE: i64 = 0;
 
 #[doc(hidden)]
 pub enum ListExpOp {
-    APPEND = 1,
+    Append = 1,
     AppendItems = 2,
-    INSERT = 3,
+    Insert = 3,
     InsertItems = 4,
-    SET = 9,
-    CLEAR = 11,
-    INCREMENT = 12,
-    SORT = 13,
-    SIZE = 16,
+    Set = 9,
+    Clear = 11,
+    Increment = 12,
+    Sort = 13,
+    Size = 16,
     GetByIndex = 19,
     GetByRank = 21,
     GetByValue = 22, // GET_ALL_BY_VALUE on server.
@@ -86,7 +85,7 @@ impl ListExpression {
         ctx: &[CdtContext],
     ) -> FilterExpression {
         let args = vec![
-            ExpressionArgument::Value(Value::from(ListExpOp::APPEND as i64)),
+            ExpressionArgument::Value(Value::from(ListExpOp::Append as i64)),
             ExpressionArgument::FilterExpression(value),
             ExpressionArgument::Value(Value::from(policy.attributes as u8)),
             ExpressionArgument::Value(Value::from(policy.flags as u8)),
@@ -121,7 +120,7 @@ impl ListExpression {
         ctx: &[CdtContext],
     ) -> FilterExpression {
         let args = vec![
-            ExpressionArgument::Value(Value::from(ListExpOp::INSERT as i64)),
+            ExpressionArgument::Value(Value::from(ListExpOp::Insert as i64)),
             ExpressionArgument::FilterExpression(index),
             ExpressionArgument::FilterExpression(value),
             ExpressionArgument::Value(Value::from(policy.flags as u8)),
@@ -158,7 +157,7 @@ impl ListExpression {
         ctx: &[CdtContext],
     ) -> FilterExpression {
         let args = vec![
-            ExpressionArgument::Value(Value::from(ListExpOp::INCREMENT as i64)),
+            ExpressionArgument::Value(Value::from(ListExpOp::Increment as i64)),
             ExpressionArgument::FilterExpression(index),
             ExpressionArgument::FilterExpression(value),
             ExpressionArgument::Value(Value::from(policy.attributes as u8)),
@@ -177,7 +176,7 @@ impl ListExpression {
         ctx: &[CdtContext],
     ) -> FilterExpression {
         let args = vec![
-            ExpressionArgument::Value(Value::from(ListExpOp::SET as i64)),
+            ExpressionArgument::Value(Value::from(ListExpOp::Set as i64)),
             ExpressionArgument::FilterExpression(index),
             ExpressionArgument::FilterExpression(value),
             ExpressionArgument::Value(Value::from(policy.flags as u8)),
@@ -189,7 +188,7 @@ impl ListExpression {
     /// Create expression that removes all items in list.
     pub fn clear(bin: FilterExpression, ctx: &[CdtContext]) -> FilterExpression {
         let args = vec![
-            ExpressionArgument::Value(Value::from(ListExpOp::CLEAR as i64)),
+            ExpressionArgument::Value(Value::from(ListExpOp::Clear as i64)),
             ExpressionArgument::Context(ctx.to_vec()),
         ];
         ListExpression::add_write(bin, ctx, args)
@@ -202,7 +201,7 @@ impl ListExpression {
         ctx: &[CdtContext],
     ) -> FilterExpression {
         let args = vec![
-            ExpressionArgument::Value(Value::from(ListExpOp::SORT as i64)),
+            ExpressionArgument::Value(Value::from(ListExpOp::Sort as i64)),
             ExpressionArgument::Value(Value::from(sort_flags as u8)),
             ExpressionArgument::Context(ctx.to_vec()),
         ];
@@ -266,16 +265,16 @@ impl ListExpression {
 
     /// Create expression that removes list items nearest to value and greater by relative rank.
     ///
-    /// Examples for ordered list [0,4,5,9,11,15]:
-    ///
-    /// (value,rank) = [removed items]
-    /// (5,0) = [5,9,11,15]
-    /// (5,1) = [9,11,15]
-    /// (5,-1) = [4,5,9,11,15]
-    /// (3,0) = [4,5,9,11,15]
-    /// (3,3) = [11,15]
-    /// (3,-3) = [0,4,5,9,11,15]
-    ///
+    /// ```
+    /// // Examples for ordered list [0,4,5,9,11,15]:
+    /// // (value,rank) = [removed items]
+    /// // (5,0) = [5,9,11,15]
+    /// // (5,1) = [9,11,15]
+    /// // (5,-1) = [4,5,9,11,15]
+    /// // (3,0) = [4,5,9,11,15]
+    /// // (3,3) = [11,15]
+    /// // (3,-3) = [0,4,5,9,11,15]
+    /// ```
     pub fn remove_by_value_relative_rank_range(
         value: FilterExpression,
         rank: FilterExpression,
@@ -294,19 +293,19 @@ impl ListExpression {
 
     /// Create expression that removes list items nearest to value and greater by relative rank with a count limit.
     ///
-    /// Examples for ordered list [0,4,5,9,11,15]:
-    ///
-    /// (value,rank,count) = [removed items]
-    /// (5,0,2) = [5,9]
-    /// (5,1,1) = [9]
-    /// (5,-1,2) = [4,5]
-    /// (3,0,1) = [4]
-    /// (3,3,7) = [11,15]
-    /// (3,-3,2) = []
-    ///
+    /// ```
+    /// // Examples for ordered list [0,4,5,9,11,15]:
+    /// // (value,rank,count) = [removed items]
+    /// // (5,0,2) = [5,9]
+    /// // (5,1,1) = [9]
+    /// // (5,-1,2) = [4,5]
+    /// // (3,0,1) = [4]
+    /// // (3,3,7) = [11,15]
+    /// // (3,-3,2) = []
+    /// ```
     pub fn remove_by_value_relative_rank_range_count(
-        value_begin: FilterExpression,
-        value_end: FilterExpression,
+        value: FilterExpression,
+        rank: FilterExpression,
         count: FilterExpression,
         bin: FilterExpression,
         ctx: &[CdtContext],
@@ -314,8 +313,8 @@ impl ListExpression {
         let args = vec![
             ExpressionArgument::Value(Value::from(ListExpOp::RemoveByValueRelRankRange as i64)),
             ExpressionArgument::Value(Value::from(ListReturnType::None as u8)),
-            ExpressionArgument::FilterExpression(value_begin),
-            ExpressionArgument::FilterExpression(value_end),
+            ExpressionArgument::FilterExpression(value),
+            ExpressionArgument::FilterExpression(rank),
             ExpressionArgument::FilterExpression(count),
             ExpressionArgument::Context(ctx.to_vec()),
         ];
@@ -426,7 +425,7 @@ impl ListExpression {
     /// ```
     pub fn size(bin: FilterExpression, ctx: &[CdtContext]) -> FilterExpression {
         let args = vec![
-            ExpressionArgument::Value(Value::from(ListExpOp::SIZE as i64)),
+            ExpressionArgument::Value(Value::from(ListExpOp::Size as i64)),
             ExpressionArgument::Context(ctx.to_vec()),
         ];
         ListExpression::add_read(bin, ExpType::INT, args)
@@ -513,16 +512,16 @@ impl ListExpression {
     /// Create expression that selects list items nearest to value and greater by relative rank
     /// and returns selected data specified by returnType.
     ///
-    /// Examples for ordered list [0,4,5,9,11,15]:
-    ///
-    /// (value,rank) = [selected items]
-    /// (5,0) = [5,9,11,15]
-    /// (5,1) = [9,11,15]
-    /// (5,-1) = [4,5,9,11,15]
-    /// (3,0) = [4,5,9,11,15]
-    /// (3,3) = [11,15]
-    /// (3,-3) = [0,4,5,9,11,15]
-    ///
+    /// ```
+    /// // Examples for ordered list [0,4,5,9,11,15]:
+    /// // (value,rank) = [selected items]
+    /// // (5,0) = [5,9,11,15]
+    /// // (5,1) = [9,11,15]
+    /// // (5,-1) = [4,5,9,11,15]
+    /// // (3,0) = [4,5,9,11,15]
+    /// // (3,3) = [11,15]
+    /// // (3,-3) = [0,4,5,9,11,15]
+    /// ```
     pub fn get_by_value_relative_rank_range(
         return_type: ListReturnType,
         value: FilterExpression,
@@ -543,16 +542,16 @@ impl ListExpression {
     /// Create expression that selects list items nearest to value and greater by relative rank with a count limit
     /// and returns selected data specified by returnType.
     ///
-    /// Examples for ordered list [0,4,5,9,11,15]:
-    ///
-    /// (value,rank,count) = [selected items]
-    /// (5,0,2) = [5,9]
-    /// (5,1,1) = [9]
-    /// (5,-1,2) = [4,5]
-    /// (3,0,1) = [4]
-    /// (3,3,7) = [11,15]
-    /// (3,-3,2) = []
-    ///
+    /// ```
+    /// // Examples for ordered list [0,4,5,9,11,15]:
+    /// // (value,rank,count) = [selected items]
+    /// // (5,0,2) = [5,9]
+    /// // (5,1,1) = [9]
+    /// // (5,-1,2) = [4,5]
+    /// // (3,0,1) = [4]
+    /// // (3,3,7) = [11,15]
+    /// // (3,-3,2) = []
+    /// ```
     pub fn get_by_value_relative_rank_range_count(
         return_type: ListReturnType,
         value: FilterExpression,

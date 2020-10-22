@@ -164,10 +164,8 @@ impl Buffer {
     ) -> Result<()> {
         self.begin()?;
         let mut field_count = self.estimate_key_size(key, policy.send_key)?;
-        let mut filter_size = 0;
-        if let Some(filter) = policy.filter_expression() {
-            filter_size = filter.pack(&mut None)?;
-            self.data_offset += filter_size + FIELD_HEADER_SIZE as usize;
+        let filter_size = self.estimate_filter_size(policy.filter_expression())?;
+        if filter_size > 0 {
             field_count += 1;
         }
 
@@ -199,11 +197,8 @@ impl Buffer {
     pub fn set_delete(&mut self, policy: &WritePolicy, key: &Key) -> Result<()> {
         self.begin()?;
         let mut field_count = self.estimate_key_size(key, false)?;
-        let mut filter_size = 0;
-
-        if let Some(filter) = policy.filter_expression() {
-            filter_size = filter.pack(&mut None)?;
-            self.data_offset += filter_size + FIELD_HEADER_SIZE as usize;
+        let filter_size = self.estimate_filter_size(policy.filter_expression())?;
+        if filter_size > 0 {
             field_count += 1;
         }
 
@@ -228,11 +223,8 @@ impl Buffer {
     pub fn set_touch(&mut self, policy: &WritePolicy, key: &Key) -> Result<()> {
         self.begin()?;
         let mut field_count = self.estimate_key_size(key, policy.send_key)?;
-        let mut filter_size = 0;
-
-        if let Some(filter) = policy.filter_expression() {
-            filter_size = filter.pack(&mut None)?;
-            self.data_offset += filter_size + FIELD_HEADER_SIZE as usize;
+        let filter_size = self.estimate_filter_size(policy.filter_expression())?;
+        if filter_size > 0 {
             field_count += 1;
         }
         self.estimate_operation_size()?;
@@ -252,11 +244,8 @@ impl Buffer {
     pub fn set_exists(&mut self, policy: &WritePolicy, key: &Key) -> Result<()> {
         self.begin()?;
         let mut field_count = self.estimate_key_size(key, false)?;
-        let mut filter_size = 0;
-
-        if let Some(filter) = policy.filter_expression() {
-            filter_size = filter.pack(&mut None)?;
-            self.data_offset += filter_size + FIELD_HEADER_SIZE as usize;
+        let filter_size = self.estimate_filter_size(policy.filter_expression())?;
+        if filter_size > 0 {
             field_count += 1;
         }
 
@@ -285,11 +274,8 @@ impl Buffer {
             Bins::Some(ref bin_names) => {
                 self.begin()?;
                 let mut field_count = self.estimate_key_size(key, false)?;
-                let mut filter_size = 0;
-
-                if let Some(filter) = policy.filter_expression() {
-                    filter_size = filter.pack(&mut None)?;
-                    self.data_offset += filter_size + FIELD_HEADER_SIZE as usize;
+                let filter_size = self.estimate_filter_size(policy.filter_expression())?;
+                if filter_size > 0 {
                     field_count += 1;
                 }
                 for bin_name in bin_names {
@@ -318,11 +304,8 @@ impl Buffer {
     pub fn set_read_header(&mut self, policy: &ReadPolicy, key: &Key) -> Result<()> {
         self.begin()?;
         let mut field_count = self.estimate_key_size(key, false)?;
-        let mut filter_size = 0;
-
-        if let Some(filter) = policy.filter_expression() {
-            filter_size = filter.pack(&mut None)?;
-            self.data_offset += filter_size + FIELD_HEADER_SIZE as usize;
+        let filter_size = self.estimate_filter_size(policy.filter_expression())?;
+        if filter_size > 0 {
             field_count += 1;
         }
 
@@ -343,11 +326,8 @@ impl Buffer {
         self.begin()?;
 
         let mut field_count = self.estimate_key_size(key, false)?;
-        let mut filter_size = 0;
-
-        if let Some(filter) = policy.filter_expression() {
-            filter_size = filter.pack(&mut None)?;
-            self.data_offset += filter_size + FIELD_HEADER_SIZE as usize;
+        let filter_size = self.estimate_filter_size(policy.filter_expression())?;
+        if filter_size > 0 {
             field_count += 1;
         }
 
@@ -374,11 +354,8 @@ impl Buffer {
         self.begin()?;
         self.data_offset += FIELD_HEADER_SIZE as usize + 5;
 
-        let mut filter_size = 0;
-
-        if let Some(filter) = policy.filter_expression() {
-            filter_size = filter.pack(&mut None)?;
-            self.data_offset += filter_size + FIELD_HEADER_SIZE as usize;
+        let filter_size = self.estimate_filter_size(policy.filter_expression())?;
+        if filter_size > 0 {
             field_count += 1;
         }
 
@@ -542,11 +519,8 @@ impl Buffer {
         }
 
         let mut field_count = self.estimate_key_size(key, policy.send_key && write_attr != 0)?;
-        let mut filter_size = 0;
-
-        if let Some(filter) = policy.filter_expression() {
-            filter_size = filter.pack(&mut None)?;
-            self.data_offset += filter_size + FIELD_HEADER_SIZE as usize;
+        let filter_size = self.estimate_filter_size(policy.filter_expression())?;
+        if filter_size > 0 {
             field_count += 1;
         }
         self.size_buffer()?;
@@ -593,11 +567,8 @@ impl Buffer {
 
         let mut field_count = self.estimate_key_size(key, policy.send_key)?;
         field_count += self.estimate_udf_size(package_name, function_name, args)? as u16;
-        let mut filter_size = 0;
-
-        if let Some(filter) = policy.filter_expression() {
-            filter_size = filter.pack(&mut None)?;
-            self.data_offset += filter_size + FIELD_HEADER_SIZE as usize;
+        let filter_size = self.estimate_filter_size(policy.filter_expression())?;
+        if filter_size > 0 {
             field_count += 1;
         }
         self.size_buffer()?;
@@ -626,11 +597,8 @@ impl Buffer {
         self.begin()?;
 
         let mut field_count = 0;
-        let mut filter_size = 0;
-
-        if let Some(filter) = policy.filter_expression() {
-            filter_size = filter.pack(&mut None)?;
-            self.data_offset += filter_size + FIELD_HEADER_SIZE as usize;
+        let filter_size = self.estimate_filter_size(policy.filter_expression())?;
+        if filter_size > 0 {
             field_count += 1;
         }
 
@@ -789,11 +757,8 @@ impl Buffer {
             self.data_offset += 2 + FIELD_HEADER_SIZE as usize;
             field_count += 1;
         }
-        let mut filter_exp_size = 0;
-
-        if let Some(filter_exp) = policy.filter_expression() {
-            filter_exp_size = filter_exp.pack(&mut None)?;
-            self.data_offset += filter_exp_size + FIELD_HEADER_SIZE as usize;
+        let filter_exp_size = self.estimate_filter_size(policy.filter_expression())?;
+        if filter_exp_size > 0 {
             field_count += 1;
         }
         if let Some(ref aggregation) = statement.aggregation {
@@ -921,6 +886,16 @@ impl Buffer {
         }
 
         self.end()
+    }
+
+    fn estimate_filter_size(&mut self, filter: &Option<FilterExpression>) -> Result<usize> {
+        if let Some(filter) = filter {
+            let filter_size = filter.pack(&mut None)?;
+            self.data_offset += filter_size + FIELD_HEADER_SIZE as usize;
+            Ok(filter_size)
+        } else {
+            Ok(0)
+        }
     }
 
     fn estimate_key_size(&mut self, key: &Key, send_key: bool) -> Result<u16> {
