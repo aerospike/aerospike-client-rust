@@ -16,11 +16,11 @@
 use crate::common;
 use env_logger;
 
-use aerospike::exp::bit_exp::BitExpression;
 use aerospike::exp::hll_exp::HLLExpression;
-use aerospike::exp::{Expression, FilterExpression};
-use aerospike::operations::bitwise::{BitPolicy, BitwiseOverflowActions, BitwiseResizeFlags};
+use aerospike::exp::list_exp::ListExpression;
+use aerospike::exp::{ExpType, Expression, FilterExpression};
 use aerospike::operations::hll::HLLPolicy;
+use aerospike::operations::lists::ListReturnType;
 use aerospike::*;
 use std::sync::Arc;
 
@@ -57,7 +57,7 @@ fn create_test_set(no_records: usize) -> String {
                 0,
             ),
         ];
-        client.operate(&WritePolicy::default(), &key, &ops);
+        client.operate(&WritePolicy::default(), &key, &ops).unwrap();
     }
 
     set_name
@@ -73,29 +73,23 @@ fn expression_hll() {
         Expression::eq(
             HLLExpression::get_count(HLLExpression::add_with_index_and_min_hash(
                 HLLPolicy::default(),
-                Expression::list_val(vec![Value::from("test".to_string())]),
+                Expression::list_val(vec![Value::from(48715414)]),
                 Expression::int_val(8),
                 Expression::int_val(0),
                 Expression::hll_bin("hllbin".to_string()),
             )),
-            Expression::int_val(0),
+            Expression::int_val(3),
         ),
         &set_name,
     );
     let count = count_results(rs);
-    assert_eq!(count, 100, "HLL INIT Test Failed");
+    assert_eq!(count, 98, "HLL INIT Test Failed");
 
-    /*let rs = test_filter(
+    let rs = test_filter(
         Expression::eq(
             HLLExpression::may_contain(
-                HLLExpression::add_with_index_and_min_hash(
-                    HLLPolicy::default(),
-                    Expression::list_bin("lbin".to_string()),
-                    Expression::int_val(8),
-                    Expression::int_val(0),
-                    Expression::hll_bin("test".to_string()),
-                ),
-                Expression::int_val(55),
+                Expression::list_val(vec![Value::from(55)]),
+                Expression::hll_bin("hllbin".to_string()),
             ),
             Expression::int_val(1),
         ),
@@ -105,15 +99,15 @@ fn expression_hll() {
     assert_eq!(count, 1, "HLL MAY CONTAIN Test Failed");
 
     let rs = test_filter(
-        Expression::eq(
-            HLLExpression::describe(HLLExpression::add_with_index_and_min_hash(
-                HLLPolicy::default(),
-                Expression::list_bin("lbin".to_string()),
-                Expression::int_val(8),
+        Expression::lt(
+            ListExpression::get_by_index(
+                ListReturnType::Values,
+                ExpType::INT,
                 Expression::int_val(0),
-                Expression::hll_bin("test".to_string()),
-            )),
-            Expression::list_val(vec![Value::from(8), Value::from(0)]),
+                HLLExpression::describe(Expression::hll_bin("hllbin".to_string())),
+                &[],
+            ),
+            Expression::int_val(10),
         ),
         &set_name,
     );
@@ -122,13 +116,55 @@ fn expression_hll() {
 
     let rs = test_filter(
         Expression::eq(
-            HLLExpression::get_count(HLLExpression::get_union(Expression::hll_bin("hllbin".to_string()), Expression::hll_bin("hllbin2".to_string()))),
-            Expression::int_val(5),
+            HLLExpression::get_count(HLLExpression::get_union(
+                Expression::hll_bin("hllbin".to_string()),
+                Expression::hll_bin("hllbin2".to_string()),
+            )),
+            Expression::int_val(3),
         ),
         &set_name,
     );
     let count = count_results(rs);
-    assert_eq!(count, 100, "HLL GET UNION Test Failed");*/
+    assert_eq!(count, 97, "HLL GET UNION Test Failed");
+
+    let rs = test_filter(
+        Expression::eq(
+            HLLExpression::get_union_count(
+                Expression::hll_bin("hllbin".to_string()),
+                Expression::hll_bin("hllbin2".to_string()),
+            ),
+            Expression::int_val(3),
+        ),
+        &set_name,
+    );
+    let count = count_results(rs);
+    assert_eq!(count, 97, "HLL GET UNION COUNT Test Failed");
+
+    let rs = test_filter(
+        Expression::eq(
+            HLLExpression::get_intersect_count(
+                Expression::hll_bin("hllbin".to_string()),
+                Expression::hll_bin("hllbin2".to_string()),
+            ),
+            Expression::int_val(2),
+        ),
+        &set_name,
+    );
+    let count = count_results(rs);
+    assert_eq!(count, 99, "HLL GET INTERSECT COUNT Test Failed");
+
+    let rs = test_filter(
+        Expression::gt(
+            HLLExpression::get_similarity(
+                Expression::hll_bin("hllbin".to_string()),
+                Expression::hll_bin("hllbin2".to_string()),
+            ),
+            Expression::float_val(0.5f64),
+        ),
+        &set_name,
+    );
+    let count = count_results(rs);
+    assert_eq!(count, 99, "HLL GET INTERSECT COUNT Test Failed");
 }
 
 fn test_filter(filter: FilterExpression, set_name: &str) -> Arc<Recordset> {
