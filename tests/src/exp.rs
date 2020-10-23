@@ -18,6 +18,7 @@ use env_logger;
 use aerospike::exp::{ExpType, Expression, FilterExpression};
 use aerospike::*;
 use std::sync::Arc;
+use aerospike::ParticleType;
 
 const EXPECTED: usize = 100;
 
@@ -218,19 +219,9 @@ fn expression_data_types() {
     assert_eq!(count, 1, "BLOB Test Failed");
 
     let rs = test_filter(
-        Expression::eq(
-            Expression::blob_bin("bin4".to_string()),
-            Expression::blob_val(format!("{}{}", "blob", 5).into_bytes()),
-        ),
-        &set_name,
-    );
-    let count = count_results(rs);
-    assert_eq!(count, 1, "BLOB BIN Test Failed");
-
-    let rs = test_filter(
         Expression::ne(
             Expression::bin_type("bin".to_string()),
-            Expression::int_val(0),
+            Expression::int_val(ParticleType::NULL as i64),
         ),
         &set_name,
     );

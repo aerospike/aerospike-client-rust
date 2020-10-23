@@ -87,7 +87,7 @@ pub enum MapExpOp {
     GetByValue = 102, // GET_ALL_BY_VALUE on server.
     GetByKeyRange = 103,
     GetByIndexRange = 104,
-    GetByValueInterval = 105,
+    GetByValueRange = 105,
     GetByRankRange = 106,
     GetByKeyList = 107,
     GetByValueList = 108,
@@ -670,7 +670,7 @@ impl MapExpression {
     ) -> FilterExpression {
         let mut args = vec![
             ExpressionArgument::Context(ctx.to_vec()),
-            ExpressionArgument::Value(Value::from(MapExpOp::GetByValueInterval as u8)),
+            ExpressionArgument::Value(Value::from(MapExpOp::GetByValueRange as u8)),
             ExpressionArgument::Value(Value::from(return_type as u8)),
         ];
         if let Some(val_beg) = value_begin {
