@@ -16,9 +16,9 @@ use crate::common;
 use env_logger;
 
 use aerospike::exp::{ExpType, Expression, FilterExpression};
+use aerospike::ParticleType;
 use aerospike::*;
 use std::sync::Arc;
-use aerospike::ParticleType;
 
 const EXPECTED: usize = 100;
 

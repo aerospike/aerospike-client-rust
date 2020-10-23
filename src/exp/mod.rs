@@ -150,17 +150,21 @@ impl FilterExpression {
         }
     }
 
-    pub fn pack(&self, buf: &mut Option<&mut Buffer>) -> Result<usize> {
+    fn pack_expression(&self, exps: &Vec<FilterExpression>, buf: &mut Option<&mut Buffer>) -> Result<usize> {
         let mut size = 0;
-        if let Some(exps) = &self.exps {
-            size += pack_array_begin(buf, exps.len() + 1)?;
-            size += pack_integer(buf, self.cmd.unwrap() as i64)?;
-            for exp in exps {
-                size += exp.pack(buf)?;
-            }
-        } else if let Some(cmd) = self.cmd {
-            if cmd as i64 == ExpOp::Regex as i64 {
-                // Packing logic for Regex
+        size += pack_array_begin(buf, exps.len() + 1)?;
+        size += pack_integer(buf, self.cmd.unwrap() as i64)?;
+        for exp in exps {
+            size += exp.pack(buf)?;
+        }
+        Ok(size)
+    }
+
+    fn pack_command(&self, cmd: ExpOp, buf: &mut Option<&mut Buffer>) -> Result<usize> {
+        let mut size = 0;
+
+        match cmd {
+            ExpOp::Regex => {
                 size += pack_array_begin(buf, 4)?;
                 // The Operation
                 size += pack_integer(buf, cmd as i64)?;
@@ -170,7 +174,8 @@ impl FilterExpression {
                 size += pack_raw_string(buf, &self.val.clone().unwrap().to_string())?;
                 // The Bin
                 size += self.bin.clone().unwrap().pack(buf)?;
-            } else if cmd as i64 == ExpOp::Call as i64 {
+            }
+            ExpOp::Call => {
                 // Packing logic for Module
                 size += pack_array_begin(buf, 5)?;
                 // The Operation
@@ -220,7 +225,8 @@ impl FilterExpression {
                 }
                 // Write the Bin
                 size += self.bin.clone().unwrap().pack(buf)?;
-            } else if cmd as i64 == ExpOp::Bin as i64 {
+            }
+            ExpOp::Bin => {
                 // Bin Encoder
                 size += pack_array_begin(buf, 3)?;
                 // The Bin Operation
@@ -229,14 +235,16 @@ impl FilterExpression {
                 size += pack_integer(buf, self.module.unwrap() as i64)?;
                 // The name - Raw String is needed instead of the msgpack String that the pack_value method would use.
                 size += pack_raw_string(buf, &self.val.clone().unwrap().to_string())?;
-            } else if cmd as i64 == ExpOp::BinType as i64 {
+            }
+            ExpOp::BinType => {
                 // BinType encoder
                 size += pack_array_begin(buf, 2)?;
                 // BinType Operation
                 size += pack_integer(buf, cmd as i64)?;
                 // The name - Raw String is needed instead of the msgpack String that the pack_value method would use.
                 size += pack_raw_string(buf, &self.val.clone().unwrap().to_string())?;
-            } else {
+            }
+            _ => {
                 // Packing logic for all other Ops
                 if let Some(value) = &self.val {
                     // Operation has a Value
@@ -252,9 +260,24 @@ impl FilterExpression {
                     size += pack_integer(buf, cmd as i64)?;
                 }
             }
+        }
+
+        Ok(size)
+    }
+
+    fn pack_value(&self, buf: &mut Option<&mut Buffer>) -> Result<usize> {
+        // Packing logic for Value based Ops
+        pack_value(buf, &self.val.clone().unwrap())
+    }
+
+    pub fn pack(&self, buf: &mut Option<&mut Buffer>) -> Result<usize> {
+        let mut size = 0;
+        if let Some(exps) = &self.exps {
+            size += self.pack_expression(exps, buf)?;
+        } else if let Some(cmd) = self.cmd {
+            size += self.pack_command(cmd, buf)?;
         } else {
-            // Packing logic for Value based Ops
-            size += pack_value(buf, &self.val.clone().unwrap())?;
+            size += self.pack_value(buf)?;
         }
 
         Ok(size)
