@@ -244,7 +244,7 @@ fn expression_rec_ops() {
 
     let set_name = create_test_set(EXPECTED);
 
-    // dev size 0 because inmemory
+    // dev size 0 because in-memory
     let rs = test_filter(
         Expression::le(Expression::device_size(), Expression::int_val(0)),
         &set_name,
