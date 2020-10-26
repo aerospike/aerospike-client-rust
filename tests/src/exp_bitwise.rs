@@ -15,7 +15,8 @@
 use crate::common;
 use env_logger;
 
-use aerospike::exp::{BitExpression, Expression, FilterExpression};
+use aerospike::expressions::*;
+use aerospike::expressions::bitwise::*;
 use aerospike::operations::bitwise::{BitPolicy, BitwiseOverflowActions, BitwiseResizeFlags};
 use aerospike::*;
 use std::sync::Arc;
@@ -47,337 +48,337 @@ fn expression_bitwise() {
 
     // EQ
     let rs = test_filter(
-        Expression::eq(
-            BitExpression::count(
-                Expression::int_val(0),
-                Expression::int_val(16),
-                Expression::blob_bin("bin".to_string()),
+        eq(
+            count(
+                int_val(0),
+                int_val(16),
+                blob_bin("bin".to_string()),
             ),
-            Expression::int_val(3),
+            int_val(3),
         ),
         &set_name,
     );
-    let count = count_results(rs);
-    assert_eq!(count, 100, "COUNT Test Failed");
+    let item_count = count_results(rs);
+    assert_eq!(item_count, 100, "COUNT Test Failed");
 
     let rs = test_filter(
-        Expression::eq(
-            BitExpression::count(
-                Expression::int_val(0),
-                Expression::int_val(16),
-                BitExpression::resize(
+        eq(
+            count(
+                int_val(0),
+                int_val(16),
+                resize(
                     &BitPolicy::default(),
-                    Expression::int_val(4),
+                    int_val(4),
                     BitwiseResizeFlags::Default,
-                    Expression::blob_bin("bin".to_string()),
+                    blob_bin("bin".to_string()),
                 ),
             ),
-            Expression::int_val(3),
+            int_val(3),
         ),
         &set_name,
     );
-    let count = count_results(rs);
-    assert_eq!(count, 100, "RESIZE Test Failed");
+    let item_count = count_results(rs);
+    assert_eq!(item_count, 100, "RESIZE Test Failed");
 
     let rs = test_filter(
-        Expression::eq(
-            BitExpression::count(
-                Expression::int_val(0),
-                Expression::int_val(16),
-                BitExpression::insert(
+        eq(
+            count(
+                int_val(0),
+                int_val(16),
+                insert(
                     &BitPolicy::default(),
-                    Expression::int_val(0),
-                    Expression::blob_val(vec![0b11111111]),
-                    Expression::blob_bin("bin".to_string()),
+                    int_val(0),
+                    blob_val(vec![0b11111111]),
+                    blob_bin("bin".to_string()),
                 ),
             ),
-            Expression::int_val(9),
+            int_val(9),
         ),
         &set_name,
     );
-    let count = count_results(rs);
-    assert_eq!(count, 100, "INSERT Test Failed");
+    let item_count = count_results(rs);
+    assert_eq!(item_count, 100, "INSERT Test Failed");
 
     let rs = test_filter(
-        Expression::eq(
-            BitExpression::count(
-                Expression::int_val(0),
-                Expression::int_val(8),
-                BitExpression::remove(
+        eq(
+            count(
+                int_val(0),
+                int_val(8),
+                remove(
                     &BitPolicy::default(),
-                    Expression::int_val(0),
-                    Expression::int_val(1),
-                    Expression::blob_bin("bin".to_string()),
+                    int_val(0),
+                    int_val(1),
+                    blob_bin("bin".to_string()),
                 ),
             ),
-            Expression::int_val(2),
+            int_val(2),
         ),
         &set_name,
     );
-    let count = count_results(rs);
-    assert_eq!(count, 100, "REMOVE Test Failed");
+    let item_count = count_results(rs);
+    assert_eq!(item_count, 100, "REMOVE Test Failed");
 
     let rs = test_filter(
-        Expression::eq(
-            BitExpression::count(
-                Expression::int_val(0),
-                Expression::int_val(8),
-                BitExpression::set(
+        eq(
+            count(
+                int_val(0),
+                int_val(8),
+                set(
                     &BitPolicy::default(),
-                    Expression::int_val(0),
-                    Expression::int_val(8),
-                    Expression::blob_val(vec![0b10101010]),
-                    Expression::blob_bin("bin".to_string()),
+                    int_val(0),
+                    int_val(8),
+                    blob_val(vec![0b10101010]),
+                    blob_bin("bin".to_string()),
                 ),
             ),
-            Expression::int_val(4),
+            int_val(4),
         ),
         &set_name,
     );
-    let count = count_results(rs);
-    assert_eq!(count, 100, "SET Test Failed");
+    let item_count = count_results(rs);
+    assert_eq!(item_count, 100, "SET Test Failed");
 
     let rs = test_filter(
-        Expression::eq(
-            BitExpression::count(
-                Expression::int_val(0),
-                Expression::int_val(8),
-                BitExpression::or(
+        eq(
+            count(
+                int_val(0),
+                int_val(8),
+                bitwise::or(
                     &BitPolicy::default(),
-                    Expression::int_val(0),
-                    Expression::int_val(8),
-                    Expression::blob_val(vec![0b10101010]),
-                    Expression::blob_bin("bin".to_string()),
+                    int_val(0),
+                    int_val(8),
+                    blob_val(vec![0b10101010]),
+                    blob_bin("bin".to_string()),
                 ),
             ),
-            Expression::int_val(5),
+            int_val(5),
         ),
         &set_name,
     );
-    let count = count_results(rs);
-    assert_eq!(count, 100, "OR Test Failed");
+    let item_count = count_results(rs);
+    assert_eq!(item_count, 100, "OR Test Failed");
 
     let rs = test_filter(
-        Expression::eq(
-            BitExpression::count(
-                Expression::int_val(0),
-                Expression::int_val(8),
-                BitExpression::xor(
+        eq(
+            count(
+                int_val(0),
+                int_val(8),
+                xor(
                     &BitPolicy::default(),
-                    Expression::int_val(0),
-                    Expression::int_val(8),
-                    Expression::blob_val(vec![0b10101011]),
-                    Expression::blob_bin("bin".to_string()),
+                    int_val(0),
+                    int_val(8),
+                    blob_val(vec![0b10101011]),
+                    blob_bin("bin".to_string()),
                 ),
             ),
-            Expression::int_val(4),
+            int_val(4),
         ),
         &set_name,
     );
-    let count = count_results(rs);
-    assert_eq!(count, 100, "XOR Test Failed");
+    let item_count = count_results(rs);
+    assert_eq!(item_count, 100, "XOR Test Failed");
 
     let rs = test_filter(
-        Expression::eq(
-            BitExpression::count(
-                Expression::int_val(0),
-                Expression::int_val(8),
-                BitExpression::and(
+        eq(
+            count(
+                int_val(0),
+                int_val(8),
+                bitwise::and(
                     &BitPolicy::default(),
-                    Expression::int_val(0),
-                    Expression::int_val(8),
-                    Expression::blob_val(vec![0b10101011]),
-                    Expression::blob_bin("bin".to_string()),
+                    int_val(0),
+                    int_val(8),
+                    blob_val(vec![0b10101011]),
+                    blob_bin("bin".to_string()),
                 ),
             ),
-            Expression::int_val(1),
+            int_val(1),
         ),
         &set_name,
     );
-    let count = count_results(rs);
-    assert_eq!(count, 100, "AND Test Failed");
+    let item_count = count_results(rs);
+    assert_eq!(item_count, 100, "AND Test Failed");
 
     let rs = test_filter(
-        Expression::eq(
-            BitExpression::count(
-                Expression::int_val(0),
-                Expression::int_val(8),
-                BitExpression::not(
+        eq(
+            count(
+                int_val(0),
+                int_val(8),
+                bitwise::not(
                     &BitPolicy::default(),
-                    Expression::int_val(0),
-                    Expression::int_val(8),
-                    Expression::blob_bin("bin".to_string()),
+                    int_val(0),
+                    int_val(8),
+                    blob_bin("bin".to_string()),
                 ),
             ),
-            Expression::int_val(7),
+            int_val(7),
         ),
         &set_name,
     );
-    let count = count_results(rs);
-    assert_eq!(count, 100, "NOT Test Failed");
+    let item_count = count_results(rs);
+    assert_eq!(item_count, 100, "NOT Test Failed");
 
     let rs = test_filter(
-        Expression::eq(
-            BitExpression::count(
-                Expression::int_val(0),
-                Expression::int_val(8),
-                BitExpression::lshift(
+        eq(
+            count(
+                int_val(0),
+                int_val(8),
+                lshift(
                     &BitPolicy::default(),
-                    Expression::int_val(0),
-                    Expression::int_val(16),
-                    Expression::int_val(9),
-                    Expression::blob_bin("bin".to_string()),
+                    int_val(0),
+                    int_val(16),
+                    int_val(9),
+                    blob_bin("bin".to_string()),
                 ),
             ),
-            Expression::int_val(2),
+            int_val(2),
         ),
         &set_name,
     );
-    let count = count_results(rs);
-    assert_eq!(count, 100, "LSHIFT Test Failed");
+    let item_count = count_results(rs);
+    assert_eq!(item_count, 100, "LSHIFT Test Failed");
 
     let rs = test_filter(
-        Expression::eq(
-            BitExpression::count(
-                Expression::int_val(0),
-                Expression::int_val(8),
-                BitExpression::rshift(
+        eq(
+            count(
+                int_val(0),
+                int_val(8),
+                rshift(
                     &BitPolicy::default(),
-                    Expression::int_val(0),
-                    Expression::int_val(8),
-                    Expression::int_val(3),
-                    Expression::blob_bin("bin".to_string()),
+                    int_val(0),
+                    int_val(8),
+                    int_val(3),
+                    blob_bin("bin".to_string()),
                 ),
             ),
-            Expression::int_val(0),
+            int_val(0),
         ),
         &set_name,
     );
-    let count = count_results(rs);
-    assert_eq!(count, 100, "RSHIFT Test Failed");
+    let item_count = count_results(rs);
+    assert_eq!(item_count, 100, "RSHIFT Test Failed");
 
     let rs = test_filter(
-        Expression::eq(
-            BitExpression::count(
-                Expression::int_val(0),
-                Expression::int_val(8),
-                BitExpression::add(
+        eq(
+            count(
+                int_val(0),
+                int_val(8),
+                add(
                     &BitPolicy::default(),
-                    Expression::int_val(0),
-                    Expression::int_val(8),
-                    Expression::int_val(128),
+                    int_val(0),
+                    int_val(8),
+                    int_val(128),
                     false,
                     BitwiseOverflowActions::Wrap,
-                    Expression::blob_bin("bin".to_string()),
+                    blob_bin("bin".to_string()),
                 ),
             ),
-            Expression::int_val(2),
+            int_val(2),
         ),
         &set_name,
     );
-    let count = count_results(rs);
-    assert_eq!(count, 100, "ADD Test Failed");
+    let item_count = count_results(rs);
+    assert_eq!(item_count, 100, "ADD Test Failed");
 
     let rs = test_filter(
-        Expression::eq(
-            BitExpression::count(
-                Expression::int_val(0),
-                Expression::int_val(8),
-                BitExpression::subtract(
+        eq(
+            count(
+                int_val(0),
+                int_val(8),
+                subtract(
                     &BitPolicy::default(),
-                    Expression::int_val(0),
-                    Expression::int_val(8),
-                    Expression::int_val(1),
+                    int_val(0),
+                    int_val(8),
+                    int_val(1),
                     false,
                     BitwiseOverflowActions::Wrap,
-                    Expression::blob_bin("bin".to_string()),
+                    blob_bin("bin".to_string()),
                 ),
             ),
-            Expression::int_val(0),
+            int_val(0),
         ),
         &set_name,
     );
-    let count = count_results(rs);
-    assert_eq!(count, 100, "SUBTRACT Test Failed");
+    let item_count = count_results(rs);
+    assert_eq!(item_count, 100, "SUBTRACT Test Failed");
 
     let rs = test_filter(
-        Expression::eq(
-            BitExpression::count(
-                Expression::int_val(0),
-                Expression::int_val(8),
-                BitExpression::set_int(
+        eq(
+            count(
+                int_val(0),
+                int_val(8),
+                set_int(
                     &BitPolicy::default(),
-                    Expression::int_val(0),
-                    Expression::int_val(8),
-                    Expression::int_val(255),
-                    Expression::blob_bin("bin".to_string()),
+                    int_val(0),
+                    int_val(8),
+                    int_val(255),
+                    blob_bin("bin".to_string()),
                 ),
             ),
-            Expression::int_val(8),
+            int_val(8),
         ),
         &set_name,
     );
-    let count = count_results(rs);
-    assert_eq!(count, 100, "SET INT Test Failed");
+    let item_count = count_results(rs);
+    assert_eq!(item_count, 100, "SET INT Test Failed");
 
     let rs = test_filter(
-        Expression::eq(
-            BitExpression::get(
-                Expression::int_val(0),
-                Expression::int_val(8),
-                Expression::blob_bin("bin".to_string()),
+        eq(
+            get(
+                int_val(0),
+                int_val(8),
+                blob_bin("bin".to_string()),
             ),
-            Expression::blob_val(vec![0b00000001]),
+            blob_val(vec![0b00000001]),
         ),
         &set_name,
     );
-    let count = count_results(rs);
-    assert_eq!(count, 100, "GET Test Failed");
+    let item_count = count_results(rs);
+    assert_eq!(item_count, 100, "GET Test Failed");
 
     let rs = test_filter(
-        Expression::eq(
-            BitExpression::lscan(
-                Expression::int_val(8),
-                Expression::int_val(8),
-                Expression::bool_val(true),
-                Expression::blob_bin("bin".to_string()),
+        eq(
+            lscan(
+                int_val(8),
+                int_val(8),
+                bool_val(true),
+                blob_bin("bin".to_string()),
             ),
-            Expression::int_val(1),
+            int_val(1),
         ),
         &set_name,
     );
-    let count = count_results(rs);
-    assert_eq!(count, 100, "LSCAN Test Failed");
+    let item_count = count_results(rs);
+    assert_eq!(item_count, 100, "LSCAN Test Failed");
 
     let rs = test_filter(
-        Expression::eq(
-            BitExpression::rscan(
-                Expression::int_val(8),
-                Expression::int_val(8),
-                Expression::bool_val(true),
-                Expression::blob_bin("bin".to_string()),
+        eq(
+            rscan(
+                int_val(8),
+                int_val(8),
+                bool_val(true),
+                blob_bin("bin".to_string()),
             ),
-            Expression::int_val(6),
+            int_val(6),
         ),
         &set_name,
     );
-    let count = count_results(rs);
-    assert_eq!(count, 100, "RSCAN Test Failed");
+    let item_count = count_results(rs);
+    assert_eq!(item_count, 100, "RSCAN Test Failed");
 
     let rs = test_filter(
-        Expression::eq(
-            BitExpression::get_int(
-                Expression::int_val(0),
-                Expression::int_val(8),
+        eq(
+            get_int(
+                int_val(0),
+                int_val(8),
                 false,
-                Expression::blob_bin("bin".to_string()),
+                blob_bin("bin".to_string()),
             ),
-            Expression::int_val(1),
+            int_val(1),
         ),
         &set_name,
     );
-    let count = count_results(rs);
-    assert_eq!(count, 100, "RSCAN Test Failed");
+    let item_count = count_results(rs);
+    assert_eq!(item_count, 100, "RSCAN Test Failed");
 }
 
 fn test_filter(filter: FilterExpression, set_name: &str) -> Arc<Recordset> {

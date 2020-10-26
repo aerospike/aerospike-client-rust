@@ -13,7 +13,7 @@
 // License for the specific language governing permissions and limitations under
 // the License.
 
-use crate::exp::FilterExpression;
+use crate::expressions::FilterExpression;
 use crate::policy::BasePolicy;
 use crate::{ConsistencyLevel, Priority};
 use std::time::Duration;

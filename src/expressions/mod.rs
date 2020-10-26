@@ -15,10 +15,10 @@
 
 //! Functions used for Filter Expressions. This module requires Aerospike Server version >= 5.2
 
-pub mod bit_exp;
-pub mod hll_exp;
-pub mod list_exp;
-pub mod map_exp;
+pub mod bitwise;
+pub mod hll;
+pub mod lists;
+pub mod maps;
 pub mod regex_flag;
 
 use crate::commands::buffer::Buffer;
@@ -26,10 +26,6 @@ use crate::errors::Result;
 use crate::msgpack::encoder::{pack_array_begin, pack_integer, pack_raw_string, pack_value};
 use crate::operations::cdt_context::CdtContext;
 use crate::{ParticleType, Value};
-pub use bit_exp::BitExpression;
-pub use hll_exp::HLLExpression;
-pub use list_exp::ListExpression;
-pub use map_exp::MapExpression;
 use std::collections::HashMap;
 use std::fmt::Debug;
 
@@ -292,7 +288,7 @@ impl FilterExpression {
 
 /// Create a record key expression of specified type.
 /// ```
-/// use aerospike::exp::{ExpType, ge, int_val, key};
+/// use aerospike::expressions::{ExpType, ge, int_val, key};
 /// // Integer record key >= 100000
 /// ge(key(ExpType::INT), int_val(10000));
 /// ```
@@ -311,7 +307,7 @@ pub fn key(exp_type: ExpType) -> FilterExpression {
 /// as a boolean expression. This would occur when `send_key` is true on record write.
 /// ```
 /// // Key exists in record meta data
-/// use aerospike::exp::key_exists;
+/// use aerospike::expressions::key_exists;
 /// key_exists();
 /// ```
 pub fn key_exists() -> FilterExpression {
@@ -321,7 +317,7 @@ pub fn key_exists() -> FilterExpression {
 /// Create 64 bit int bin expression.
 /// ```
 /// // Integer bin "a" == 500
-/// use aerospike::exp::{int_bin, int_val, eq};
+/// use aerospike::expressions::{int_bin, int_val, eq};
 /// eq(int_bin("a".to_string()), int_val(500));
 /// ```
 pub fn int_bin(name: String) -> FilterExpression {
@@ -338,7 +334,7 @@ pub fn int_bin(name: String) -> FilterExpression {
 /// Create string bin expression.
 /// ```
 /// // String bin "a" == "views"
-/// use aerospike::exp::{eq, string_bin, string_val};
+/// use aerospike::expressions::{eq, string_bin, string_val};
 /// eq(string_bin("a".to_string()), string_val("views".to_string()));
 /// ```
 pub fn string_bin(name: String) -> FilterExpression {
@@ -355,7 +351,7 @@ pub fn string_bin(name: String) -> FilterExpression {
 /// Create blob bin expression.
 /// ```
 /// // String bin "a" == [1,2,3]
-/// use aerospike::exp::{eq, blob_bin, blob_val};
+/// use aerospike::expressions::{eq, blob_bin, blob_val};
 /// let blob: Vec<u8> = vec![1,2,3];
 /// eq(blob_bin("a".to_string()), blob_val(blob));
 /// ```
@@ -372,7 +368,7 @@ pub fn blob_bin(name: String) -> FilterExpression {
 
 /// Create 64 bit float bin expression.
 /// ```
-/// use aerospike::exp::{float_val, float_bin, eq};
+/// use aerospike::expressions::{float_val, float_bin, eq};
 /// // Integer bin "a" == 500.5
 /// eq(float_bin("a".to_string()), float_val(500.5));
 /// ```
@@ -390,7 +386,7 @@ pub fn float_bin(name: String) -> FilterExpression {
 /// Create geo bin expression.
 /// ```
 /// // String bin "a" == region
-/// use aerospike::exp::{eq, geo_bin, string_val};
+/// use aerospike::expressions::{eq, geo_bin, string_val};
 /// let region = "{ \"type\": \"AeroCircle\", \"coordinates\": [[-122.0, 37.5], 50000.0] }";
 /// eq(geo_bin("a".to_string()), string_val(region.to_string()));
 /// ```
@@ -407,11 +403,11 @@ pub fn geo_bin(name: String) -> FilterExpression {
 
 /// Create list bin expression.
 /// ```
-/// use aerospike::exp::{ExpType, eq, int_val, list_bin};
+/// use aerospike::expressions::{ExpType, eq, int_val, list_bin};
 /// use aerospike::operations::lists::ListReturnType;
-/// use aerospike::exp::list_exp::ListExpression;
+/// use aerospike::expressions::lists::get_by_index;
 /// // String bin a[2] == 3
-/// eq(ListExpression::get_by_index(ListReturnType::Values, ExpType::INT, int_val(2), list_bin("a".to_string()), &[]), int_val(3));
+/// eq(get_by_index(ListReturnType::Values, ExpType::INT, int_val(2), list_bin("a".to_string()), &[]), int_val(3));
 /// ```
 pub fn list_bin(name: String) -> FilterExpression {
     FilterExpression::new(
@@ -428,11 +424,12 @@ pub fn list_bin(name: String) -> FilterExpression {
 ///
 /// ```
 /// // Bin a["key"] == "value"
-/// use aerospike::exp::{ExpType, string_val, map_bin};
-/// use aerospike::exp::map_exp::MapExpression;
+/// use aerospike::expressions::{ExpType, string_val, map_bin, eq};
 /// use aerospike::MapReturnType;
-/// Expression::eq(
-///     MapExpression::get_by_key(MapReturnType::Value, ExpType::STRING, string_val("key".to_string()), map_bin("a".to_string()), &[]),
+/// use aerospike::expressions::maps::get_by_key;
+///
+/// eq(
+///     get_by_key(MapReturnType::Value, ExpType::STRING, string_val("key".to_string()), map_bin("a".to_string()), &[]),
 ///     string_val("value".to_string()));
 /// ```
 pub fn map_bin(name: String) -> FilterExpression {
@@ -449,14 +446,14 @@ pub fn map_bin(name: String) -> FilterExpression {
 /// Create a HLL bin expression
 ///
 /// ```
-/// use aerospike::exp::{gt, list_val, hll_bin, int_val};
-/// use aerospike::exp::hll_exp::HLLExpression;
+/// use aerospike::expressions::{gt, list_val, hll_bin, int_val};
 /// use aerospike::operations::hll::HLLPolicy;
 /// use aerospike::Value;
+/// use aerospike::expressions::hll::add;
 ///
 /// // Add values to HLL bin "a" and check count > 7
 /// let list = vec![Value::from(1)];
-/// gt(HLLExpression::add(HLLPolicy::default(), list_val(list), hll_bin("a".to_string())), int_val(7));
+/// gt(add(HLLPolicy::default(), list_val(list), hll_bin("a".to_string())), int_val(7));
 /// ```
 pub fn hll_bin(name: String) -> FilterExpression {
     FilterExpression::new(
@@ -472,7 +469,7 @@ pub fn hll_bin(name: String) -> FilterExpression {
 /// Create function that returns if bin of specified name exists.
 /// ```
 /// // Bin "a" exists in record
-/// use aerospike::exp::bin_exists;
+/// use aerospike::expressions::bin_exists;
 /// bin_exists("a".to_string());
 /// ```
 pub fn bin_exists(name: String) -> FilterExpression {
@@ -482,7 +479,7 @@ pub fn bin_exists(name: String) -> FilterExpression {
 /// Create function that returns bin's integer particle type.
 /// ```
 /// use aerospike::ParticleType;
-/// use aerospike::exp::{eq, bin_type, int_val};
+/// use aerospike::expressions::{eq, bin_type, int_val};
 /// // Bin "a" particle type is a list
 /// eq(bin_type("a".to_string()), int_val(ParticleType::LIST as i64));
 /// ```
@@ -499,7 +496,7 @@ pub fn bin_type(name: String) -> FilterExpression {
 
 /// Create function that returns record set name string.
 /// ```
-/// use aerospike::exp::{eq, set_name, string_val};
+/// use aerospike::expressions::{eq, set_name, string_val};
 /// // Record set name == "myset
 /// eq(set_name(), string_val("myset".to_string()));
 /// ```
@@ -510,7 +507,7 @@ pub fn set_name() -> FilterExpression {
 /// Create function that returns record size on disk.
 /// If server storage-engine is memory, then zero is returned.
 /// ```
-/// use aerospike::exp::{ge, device_size, int_val};
+/// use aerospike::expressions::{ge, device_size, int_val};
 /// // Record device size >= 100 KB
 /// ge(device_size(), int_val(100*1024));
 /// ```
@@ -522,7 +519,7 @@ pub fn device_size() -> FilterExpression {
 /// nanoseconds since 1970-01-01 epoch.
 /// ```
 /// // Record last update time >=2020-08-01
-/// use aerospike::exp::{ge, last_update, float_val};
+/// use aerospike::expressions::{ge, last_update, float_val};
 /// ge(last_update(), float_val(1.5962E+18));
 /// ```
 pub fn last_update() -> FilterExpression {
@@ -534,7 +531,7 @@ pub fn last_update() -> FilterExpression {
 ///
 /// ```
 /// // Record last updated more than 2 hours ago
-/// use aerospike::exp::{gt, int_val, since_update};
+/// use aerospike::expressions::{gt, int_val, since_update};
 /// gt(since_update(), int_val(2 * 60 * 60 * 1000));
 /// ```
 pub fn since_update() -> FilterExpression {
@@ -545,7 +542,7 @@ pub fn since_update() -> FilterExpression {
 /// nanoseconds since 1970-01-01 epoch.
 /// ```
 /// // Expires on 2020-08-01
-/// use aerospike::exp::{and, ge, last_update, float_val, lt};
+/// use aerospike::expressions::{and, ge, last_update, float_val, lt};
 /// and(vec![ge(last_update(), float_val(1.5962E+18)), lt(last_update(), float_val(1.5963E+18))]);
 /// ```
 pub fn void_time() -> FilterExpression {
@@ -555,7 +552,7 @@ pub fn void_time() -> FilterExpression {
 /// Create function that returns record expiration time (time to live) in integer seconds.
 /// ```
 /// // Record expires in less than 1 hour
-/// use aerospike::exp::{lt, ttl, int_val};
+/// use aerospike::expressions::{lt, ttl, int_val};
 /// lt(ttl(), int_val(60*60));
 /// ```
 pub fn ttl() -> FilterExpression {
@@ -567,7 +564,7 @@ pub fn ttl() -> FilterExpression {
 ///
 /// ```
 /// // Deleted records that are in tombstone state.
-/// use aerospike::exp::{Expression, is_tombstone};
+/// use aerospike::expressions::{is_tombstone};
 /// is_tombstone();
 /// ```
 pub fn is_tombstone() -> FilterExpression {
@@ -576,7 +573,7 @@ pub fn is_tombstone() -> FilterExpression {
 /// Create function that returns record digest modulo as integer.
 /// ```
 /// // Records that have digest(key) % 3 == 1
-/// use aerospike::exp::{Expression, int_val, eq, digest_modulo};
+/// use aerospike::expressions::{int_val, eq, digest_modulo};
 /// eq(digest_modulo(3), int_val(1));
 /// ```
 pub fn digest_modulo(modulo: i64) -> FilterExpression {
@@ -593,7 +590,7 @@ pub fn digest_modulo(modulo: i64) -> FilterExpression {
 /// Create function like regular expression string operation.
 /// ```
 /// use aerospike::RegexFlag;
-/// use aerospike::exp::{regex_compare, string_bin};
+/// use aerospike::expressions::{regex_compare, string_bin};
 /// // Select string bin "a" that starts with "prefix" and ends with "suffix".
 /// // Ignore case and do not match newline.
 /// regex_compare("prefix.*suffix".to_string(), RegexFlag::ICASE as i64 | RegexFlag::NEWLINE as i64, string_bin("a".to_string()));
@@ -611,7 +608,7 @@ pub fn regex_compare(regex: String, flags: i64, bin: FilterExpression) -> Filter
 
 /// Create compare geospatial operation.
 /// ```
-/// use aerospike::exp::{Expression, geo_compare, geo_bin, geo_val};
+/// use aerospike::expressions::{geo_compare, geo_bin, geo_val};
 /// // Query region within coordinates.
 /// let region = "{\"type\": \"Polygon\", \"coordinates\": [ [[-122.500000, 37.000000],[-121.000000, 37.000000], [-121.000000, 38.080000],[-122.500000, 38.080000], [-122.500000, 37.000000]] ] }";
 /// geo_compare(geo_bin("a".to_string()), geo_val(region.to_string()));
@@ -681,7 +678,7 @@ pub fn nil() -> FilterExpression {
 /// Create "not" operator expression.
 /// ```
 /// // ! (a == 0 || a == 10)
-/// use aerospike::exp::{not, or, eq, int_bin, int_val};
+/// use aerospike::expressions::{not, or, eq, int_bin, int_val};
 /// not(or(vec![eq(int_bin("a".to_string()), int_val(0)), eq(int_bin("a".to_string()), int_val(10))]));
 /// ```
 pub fn not(exp: FilterExpression) -> FilterExpression {
@@ -699,7 +696,7 @@ pub fn not(exp: FilterExpression) -> FilterExpression {
 /// Create "and" (&&) operator that applies to a variable number of expressions.
 /// ```
 /// // (a > 5 || a == 0) && b < 3
-/// use aerospike::exp::{and, or, gt, int_bin, int_val, eq, lt};
+/// use aerospike::expressions::{and, or, gt, int_bin, int_val, eq, lt};
 /// and(vec![or(vec![gt(int_bin("a".to_string()), int_val(5)), eq(int_bin("a".to_string()), int_val(0))]), lt(int_bin("b".to_string()), int_val(3))]);
 /// ```
 pub fn and(exps: Vec<FilterExpression>) -> FilterExpression {
@@ -717,7 +714,7 @@ pub fn and(exps: Vec<FilterExpression>) -> FilterExpression {
 /// Create "or" (||) operator that applies to a variable number of expressions.
 /// ```
 /// // a == 0 || b == 0
-/// use aerospike::exp::{or, eq, int_bin, int_val};
+/// use aerospike::expressions::{or, eq, int_bin, int_val};
 /// or(vec![eq(int_bin("a".to_string()), int_val(0)), eq(int_bin("b".to_string()), int_val(0))]);
 /// ```
 pub fn or(exps: Vec<FilterExpression>) -> FilterExpression {
@@ -735,7 +732,7 @@ pub fn or(exps: Vec<FilterExpression>) -> FilterExpression {
 /// Create equal (==) expression.
 /// ```
 /// // a == 11
-/// use aerospike::exp::{eq, int_bin, int_val};
+/// use aerospike::expressions::{eq, int_bin, int_val};
 /// eq(int_bin("a".to_string()), int_val(11));
 /// ```
 pub fn eq(left: FilterExpression, right: FilterExpression) -> FilterExpression {
@@ -753,7 +750,7 @@ pub fn eq(left: FilterExpression, right: FilterExpression) -> FilterExpression {
 /// Create not equal (!=) expression
 /// ```
 /// // a != 13
-/// use aerospike::exp::{ne, int_bin, int_val};
+/// use aerospike::expressions::{ne, int_bin, int_val};
 /// ne(int_bin("a".to_string()), int_val(13));
 /// ```
 pub fn ne(left: FilterExpression, right: FilterExpression) -> FilterExpression {
@@ -771,7 +768,7 @@ pub fn ne(left: FilterExpression, right: FilterExpression) -> FilterExpression {
 /// Create greater than (>) operation.
 /// ```
 /// // a > 8
-/// use aerospike::exp::{gt, int_bin, int_val};
+/// use aerospike::expressions::{gt, int_bin, int_val};
 /// gt(int_bin("a".to_string()), int_val(8));
 /// ```
 pub fn gt(left: FilterExpression, right: FilterExpression) -> FilterExpression {
@@ -788,7 +785,7 @@ pub fn gt(left: FilterExpression, right: FilterExpression) -> FilterExpression {
 
 /// Create greater than or equal (>=) operation.
 /// ```
-/// use aerospike::exp::{Expression, ge, int_bin, int_val};
+/// use aerospike::expressions::{ge, int_bin, int_val};
 /// // a >= 88
 /// ge(int_bin("a".to_string()), int_val(88));
 /// ```
@@ -807,7 +804,7 @@ pub fn ge(left: FilterExpression, right: FilterExpression) -> FilterExpression {
 /// Create less than (<) operation.
 /// ```
 /// // a < 1000
-/// use aerospike::exp::{lt, int_bin, int_val};
+/// use aerospike::expressions::{lt, int_bin, int_val};
 /// lt(int_bin("a".to_string()), int_val(1000));
 /// ```
 pub fn lt(left: FilterExpression, right: FilterExpression) -> FilterExpression {
@@ -824,7 +821,7 @@ pub fn lt(left: FilterExpression, right: FilterExpression) -> FilterExpression {
 
 /// Create less than or equals (<=) operation.
 /// ```
-/// use aerospike::exp::{le, int_bin, int_val};
+/// use aerospike::expressions::{le, int_bin, int_val};
 /// // a <= 1
 /// le(int_bin("a".to_string()), int_val(1));
 /// ```

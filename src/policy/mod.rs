@@ -46,7 +46,7 @@ pub use self::record_exists_action::RecordExistsAction;
 pub use self::scan_policy::ScanPolicy;
 pub use self::write_policy::WritePolicy;
 
-use crate::exp::FilterExpression;
+use crate::expressions::FilterExpression;
 use std::option::Option;
 use std::time::{Duration, Instant};
 

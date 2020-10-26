@@ -20,7 +20,7 @@ use byteorder::{ByteOrder, NetworkEndian};
 use crate::batch::batch_executor::SharedSlice;
 use crate::commands::field_type::FieldType;
 use crate::errors::Result;
-use crate::exp::FilterExpression;
+use crate::expressions::FilterExpression;
 use crate::msgpack::encoder;
 use crate::operations::{Operation, OperationBin, OperationData, OperationType};
 use crate::policy::{

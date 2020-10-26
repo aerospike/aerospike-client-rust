@@ -13,7 +13,7 @@
 // License for the specific language governing permissions and limitations under
 // the License.
 
-use crate::exp::FilterExpression;
+use crate::expressions::FilterExpression;
 use crate::policy::{BasePolicy, PolicyLike};
 
 /// `ScanPolicy` encapsulates optional parameters used in scan operations.

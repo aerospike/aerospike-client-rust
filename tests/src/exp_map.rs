@@ -1,7 +1,8 @@
 use crate::common;
 use env_logger;
 
-use aerospike::exp::{ExpType, Expression, FilterExpression, MapExpression};
+use aerospike::expressions::*;
+use aerospike::expressions::maps::*;
 use aerospike::*;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -32,21 +33,21 @@ fn expression_map() {
     let set_name = create_test_set(EXPECTED);
 
     let rs = test_filter(
-        Expression::eq(
-            MapExpression::get_by_key(
+        eq(
+            get_by_key(
                 MapReturnType::Value,
                 ExpType::INT,
-                Expression::string_val("test3".to_string()),
-                MapExpression::put(
+                string_val("test3".to_string()),
+                put(
                     &MapPolicy::default(),
-                    Expression::string_val("test3".to_string()),
-                    Expression::int_val(999),
-                    Expression::map_bin("bin".to_string()),
+                    string_val("test3".to_string()),
+                    int_val(999),
+                    map_bin("bin".to_string()),
                     &[],
                 ),
                 &[],
             ),
-            Expression::int_val(999),
+            int_val(999),
         ),
         &set_name,
     );
@@ -57,19 +58,19 @@ fn expression_map() {
     map.insert(Value::from("test4"), Value::from(333));
     map.insert(Value::from("test5"), Value::from(444));
     let rs = test_filter(
-        Expression::eq(
-            MapExpression::get_by_key_list(
+        eq(
+            get_by_key_list(
                 MapReturnType::Value,
-                Expression::list_val(vec![Value::from("test4"), Value::from("test5")]),
-                MapExpression::put_items(
+                list_val(vec![Value::from("test4"), Value::from("test5")]),
+                put_items(
                     &MapPolicy::default(),
-                    Expression::map_val(map),
-                    Expression::map_bin("bin".to_string()),
+                    map_val(map),
+                    map_bin("bin".to_string()),
                     &[],
                 ),
                 &[],
             ),
-            Expression::list_val(vec![Value::from(333), Value::from(444)]),
+            list_val(vec![Value::from(333), Value::from(444)]),
         ),
         &set_name,
     );
@@ -77,20 +78,20 @@ fn expression_map() {
     assert_eq!(count, 100, "GET BY KEY LIST AND APPEND LIST Test Failed");
 
     let rs = test_filter(
-        Expression::eq(
-            MapExpression::get_by_value(
+        eq(
+            get_by_value(
                 MapReturnType::Count,
-                Expression::int_val(5),
-                MapExpression::increment(
+                int_val(5),
+                increment(
                     &MapPolicy::default(),
-                    Expression::string_val("test".to_string()),
-                    Expression::int_val(1),
-                    Expression::map_bin("bin".to_string()),
+                    string_val("test".to_string()),
+                    int_val(1),
+                    map_bin("bin".to_string()),
                     &[],
                 ),
                 &[],
             ),
-            Expression::int_val(1),
+            int_val(1),
         ),
         &set_name,
     );
@@ -98,12 +99,12 @@ fn expression_map() {
     assert_eq!(count, 1, "GET BY VALUE AND INCREMENT Test Failed");
 
     let rs = test_filter(
-        Expression::eq(
-            MapExpression::size(
-                MapExpression::clear(Expression::map_bin("bin".to_string()), &[]),
+        eq(
+            size(
+                clear(map_bin("bin".to_string()), &[]),
                 &[],
             ),
-            Expression::int_val(0),
+            int_val(0),
         ),
         &set_name,
     );
@@ -111,14 +112,14 @@ fn expression_map() {
     assert_eq!(count, 100, "SIZE AND CLEAR Test Failed");
 
     let rs = test_filter(
-        Expression::eq(
-            MapExpression::get_by_value_list(
+        eq(
+            get_by_value_list(
                 MapReturnType::Count,
-                Expression::list_val(vec![Value::from(1), Value::from("a")]),
-                Expression::map_bin("bin".to_string()),
+                list_val(vec![Value::from(1), Value::from("a")]),
+                map_bin("bin".to_string()),
                 &[],
             ),
-            Expression::int_val(2),
+            int_val(2),
         ),
         &set_name,
     );
@@ -126,15 +127,15 @@ fn expression_map() {
     assert_eq!(count, 1, "GET BY VALUE LIST Test Failed");
 
     let rs = test_filter(
-        Expression::eq(
-            MapExpression::get_by_value_relative_rank_range(
+        eq(
+            get_by_value_relative_rank_range(
                 MapReturnType::Count,
-                Expression::int_val(1),
-                Expression::int_val(0),
-                Expression::map_bin("bin".to_string()),
+                int_val(1),
+                int_val(0),
+                map_bin("bin".to_string()),
                 &[],
             ),
-            Expression::int_val(2),
+            int_val(2),
         ),
         &set_name,
     );
@@ -142,16 +143,16 @@ fn expression_map() {
     assert_eq!(count, 99, "GET BY VALUE REL RANK RANGE Test Failed");
 
     let rs = test_filter(
-        Expression::eq(
-            MapExpression::get_by_value_relative_rank_range_count(
+        eq(
+            get_by_value_relative_rank_range_count(
                 MapReturnType::Count,
-                Expression::int_val(1),
-                Expression::int_val(0),
-                Expression::int_val(1),
-                Expression::map_bin("bin".to_string()),
+                int_val(1),
+                int_val(0),
+                int_val(1),
+                map_bin("bin".to_string()),
                 &[],
             ),
-            Expression::int_val(1),
+            int_val(1),
         ),
         &set_name,
     );
@@ -159,16 +160,16 @@ fn expression_map() {
     assert_eq!(count, 100, "GET BY VALUE REL RANK RANGE Test Failed");
 
     let rs = test_filter(
-        Expression::eq(
-            MapExpression::get_by_value_relative_rank_range_count(
+        eq(
+            get_by_value_relative_rank_range_count(
                 MapReturnType::Count,
-                Expression::int_val(1),
-                Expression::int_val(0),
-                Expression::int_val(1),
-                Expression::map_bin("bin".to_string()),
+                int_val(1),
+                int_val(0),
+                int_val(1),
+                map_bin("bin".to_string()),
                 &[],
             ),
-            Expression::int_val(1),
+            int_val(1),
         ),
         &set_name,
     );
@@ -176,16 +177,16 @@ fn expression_map() {
     assert_eq!(count, 100, "GET BY VALUE REL RANK RANGE COUNT Test Failed");
 
     let rs = test_filter(
-        Expression::eq(
-            MapExpression::get_by_value_relative_rank_range_count(
+        eq(
+            get_by_value_relative_rank_range_count(
                 MapReturnType::Count,
-                Expression::int_val(1),
-                Expression::int_val(0),
-                Expression::int_val(1),
-                Expression::map_bin("bin".to_string()),
+                int_val(1),
+                int_val(0),
+                int_val(1),
+                map_bin("bin".to_string()),
                 &[],
             ),
-            Expression::int_val(1),
+            int_val(1),
         ),
         &set_name,
     );
@@ -193,16 +194,16 @@ fn expression_map() {
     assert_eq!(count, 100, "GET BY VALUE REL RANK RANGE COUNT Test Failed");
 
     let rs = test_filter(
-        Expression::eq(
-            MapExpression::get_by_value_relative_rank_range_count(
+        eq(
+            get_by_value_relative_rank_range_count(
                 MapReturnType::Count,
-                Expression::int_val(1),
-                Expression::int_val(0),
-                Expression::int_val(1),
-                Expression::map_bin("bin".to_string()),
+                int_val(1),
+                int_val(0),
+                int_val(1),
+                map_bin("bin".to_string()),
                 &[],
             ),
-            Expression::int_val(1),
+            int_val(1),
         ),
         &set_name,
     );
@@ -210,15 +211,15 @@ fn expression_map() {
     assert_eq!(count, 100, "GET BY VALUE REL RANK RANGE COUNT Test Failed");
 
     let rs = test_filter(
-        Expression::eq(
-            MapExpression::get_by_index(
+        eq(
+            get_by_index(
                 MapReturnType::Value,
                 ExpType::INT,
-                Expression::int_val(0),
-                Expression::map_bin("bin".to_string()),
+                int_val(0),
+                map_bin("bin".to_string()),
                 &[],
             ),
-            Expression::int_val(1),
+            int_val(1),
         ),
         &set_name,
     );
@@ -226,14 +227,14 @@ fn expression_map() {
     assert_eq!(count, 1, "GET BY INDEX Test Failed");
 
     let rs = test_filter(
-        Expression::eq(
-            MapExpression::get_by_index_range(
+        eq(
+            get_by_index_range(
                 MapReturnType::Count,
-                Expression::int_val(0),
-                Expression::map_bin("bin".to_string()),
+                int_val(0),
+                map_bin("bin".to_string()),
                 &[],
             ),
-            Expression::int_val(2),
+            int_val(2),
         ),
         &set_name,
     );
@@ -241,15 +242,15 @@ fn expression_map() {
     assert_eq!(count, 100, "GET BY INDEX RANGE Test Failed");
 
     let rs = test_filter(
-        Expression::eq(
-            MapExpression::get_by_index_range_count(
+        eq(
+            get_by_index_range_count(
                 MapReturnType::Value,
-                Expression::int_val(0),
-                Expression::int_val(1),
-                Expression::map_bin("bin".to_string()),
+                int_val(0),
+                int_val(1),
+                map_bin("bin".to_string()),
                 &[],
             ),
-            Expression::list_val(vec![Value::from(2)]),
+            list_val(vec![Value::from(2)]),
         ),
         &set_name,
     );
@@ -257,15 +258,15 @@ fn expression_map() {
     assert_eq!(count, 1, "GET BY INDEX RANGE COUNT Test Failed");
 
     let rs = test_filter(
-        Expression::eq(
-            MapExpression::get_by_rank(
+        eq(
+            get_by_rank(
                 MapReturnType::Value,
                 ExpType::INT,
-                Expression::int_val(0),
-                Expression::map_bin("bin".to_string()),
+                int_val(0),
+                map_bin("bin".to_string()),
                 &[],
             ),
-            Expression::int_val(2),
+            int_val(2),
         ),
         &set_name,
     );
@@ -273,14 +274,14 @@ fn expression_map() {
     assert_eq!(count, 1, "GET BY RANK Test Failed");
 
     let rs = test_filter(
-        Expression::eq(
-            MapExpression::get_by_rank_range(
+        eq(
+            get_by_rank_range(
                 MapReturnType::Value,
-                Expression::int_val(1),
-                Expression::map_bin("bin".to_string()),
+                int_val(1),
+                map_bin("bin".to_string()),
                 &[],
             ),
-            Expression::list_val(vec![Value::from("a")]),
+            list_val(vec![Value::from("a")]),
         ),
         &set_name,
     );
@@ -288,15 +289,15 @@ fn expression_map() {
     assert_eq!(count, 100, "GET BY RANK RANGE Test Failed");
 
     let rs = test_filter(
-        Expression::eq(
-            MapExpression::get_by_rank_range_count(
+        eq(
+            get_by_rank_range_count(
                 MapReturnType::Value,
-                Expression::int_val(0),
-                Expression::int_val(1),
-                Expression::map_bin("bin".to_string()),
+                int_val(0),
+                int_val(1),
+                map_bin("bin".to_string()),
                 &[],
             ),
-            Expression::list_val(vec![Value::from(15)]),
+            list_val(vec![Value::from(15)]),
         ),
         &set_name,
     );
@@ -304,15 +305,15 @@ fn expression_map() {
     assert_eq!(count, 1, "GET BY RANK RANGE COUNT Test Failed");
 
     let rs = test_filter(
-        Expression::eq(
-            MapExpression::get_by_value_range(
+        eq(
+            get_by_value_range(
                 MapReturnType::Count,
-                Some(Expression::int_val(0)),
-                Some(Expression::int_val(18)),
-                Expression::map_bin("bin".to_string()),
+                Some(int_val(0)),
+                Some(int_val(18)),
+                map_bin("bin".to_string()),
                 &[],
             ),
-            Expression::int_val(1),
+            int_val(1),
         ),
         &set_name,
     );
@@ -320,15 +321,15 @@ fn expression_map() {
     assert_eq!(count, 18, "GET BY VALUE RANGE Test Failed");
 
     let rs = test_filter(
-        Expression::eq(
-            MapExpression::get_by_key_range(
+        eq(
+            get_by_key_range(
                 MapReturnType::Count,
                 None,
-                Some(Expression::string_val("test25".to_string())),
-                Expression::map_bin("bin".to_string()),
+                Some(string_val("test25".to_string())),
+                map_bin("bin".to_string()),
                 &[],
             ),
-            Expression::int_val(2),
+            int_val(2),
         ),
         &set_name,
     );
@@ -336,15 +337,15 @@ fn expression_map() {
     assert_eq!(count, 100, "GET BY KEY RANGE Test Failed");
 
     let rs = test_filter(
-        Expression::eq(
-            MapExpression::get_by_key_relative_index_range(
+        eq(
+            get_by_key_relative_index_range(
                 MapReturnType::Count,
-                Expression::string_val("test".to_string()),
-                Expression::int_val(0),
-                Expression::map_bin("bin".to_string()),
+                string_val("test".to_string()),
+                int_val(0),
+                map_bin("bin".to_string()),
                 &[],
             ),
-            Expression::int_val(2),
+            int_val(2),
         ),
         &set_name,
     );
@@ -352,16 +353,16 @@ fn expression_map() {
     assert_eq!(count, 100, "GET BY KEY REL INDEX RANGE Test Failed");
 
     let rs = test_filter(
-        Expression::eq(
-            MapExpression::get_by_key_relative_index_range_count(
+        eq(
+            get_by_key_relative_index_range_count(
                 MapReturnType::Count,
-                Expression::string_val("test".to_string()),
-                Expression::int_val(0),
-                Expression::int_val(1),
-                Expression::map_bin("bin".to_string()),
+                string_val("test".to_string()),
+                int_val(0),
+                int_val(1),
+                map_bin("bin".to_string()),
                 &[],
             ),
-            Expression::int_val(1),
+            int_val(1),
         ),
         &set_name,
     );
@@ -369,16 +370,16 @@ fn expression_map() {
     assert_eq!(count, 100, "GET BY KEY REL INDEX RANGE COUNT Test Failed");
 
     let rs = test_filter(
-        Expression::eq(
-            MapExpression::size(
-                MapExpression::remove_by_key(
-                    Expression::string_val("test".to_string()),
-                    Expression::map_bin("bin".to_string()),
+        eq(
+            size(
+                remove_by_key(
+                    string_val("test".to_string()),
+                    map_bin("bin".to_string()),
                     &[],
                 ),
                 &[],
             ),
-            Expression::int_val(1),
+            int_val(1),
         ),
         &set_name,
     );
@@ -386,16 +387,16 @@ fn expression_map() {
     assert_eq!(count, 100, "REMOVE BY KEY Test Failed");
 
     let rs = test_filter(
-        Expression::eq(
-            MapExpression::size(
-                MapExpression::remove_by_key_list(
-                    Expression::list_val(vec![Value::from("test"), Value::from("test2")]),
-                    Expression::map_bin("bin".to_string()),
+        eq(
+            size(
+                remove_by_key_list(
+                    list_val(vec![Value::from("test"), Value::from("test2")]),
+                    map_bin("bin".to_string()),
                     &[],
                 ),
                 &[],
             ),
-            Expression::int_val(0),
+            int_val(0),
         ),
         &set_name,
     );
@@ -403,17 +404,17 @@ fn expression_map() {
     assert_eq!(count, 100, "REMOVE BY KEY LIST Test Failed");
 
     let rs = test_filter(
-        Expression::eq(
-            MapExpression::size(
-                MapExpression::remove_by_key_range(
-                    Some(Expression::string_val("test".to_string())),
+        eq(
+            size(
+                remove_by_key_range(
+                    Some(string_val("test".to_string())),
                     None,
-                    Expression::map_bin("bin".to_string()),
+                    map_bin("bin".to_string()),
                     &[],
                 ),
                 &[],
             ),
-            Expression::int_val(0),
+            int_val(0),
         ),
         &set_name,
     );
@@ -421,17 +422,17 @@ fn expression_map() {
     assert_eq!(count, 100, "REMOVE BY KEY RANGE Test Failed");
 
     let rs = test_filter(
-        Expression::eq(
-            MapExpression::size(
-                MapExpression::remove_by_key_relative_index_range(
-                    Expression::string_val("test".to_string()),
-                    Expression::int_val(0),
-                    Expression::map_bin("bin".to_string()),
+        eq(
+            size(
+                remove_by_key_relative_index_range(
+                    string_val("test".to_string()),
+                    int_val(0),
+                    map_bin("bin".to_string()),
                     &[],
                 ),
                 &[],
             ),
-            Expression::int_val(0),
+            int_val(0),
         ),
         &set_name,
     );
@@ -439,18 +440,18 @@ fn expression_map() {
     assert_eq!(count, 100, "REMOVE BY KEY REL INDEX RANGE Test Failed");
 
     let rs = test_filter(
-        Expression::eq(
-            MapExpression::size(
-                MapExpression::remove_by_key_relative_index_range_count(
-                    Expression::string_val("test".to_string()),
-                    Expression::int_val(0),
-                    Expression::int_val(1),
-                    Expression::map_bin("bin".to_string()),
+        eq(
+            size(
+                remove_by_key_relative_index_range_count(
+                    string_val("test".to_string()),
+                    int_val(0),
+                    int_val(1),
+                    map_bin("bin".to_string()),
                     &[],
                 ),
                 &[],
             ),
-            Expression::int_val(1),
+            int_val(1),
         ),
         &set_name,
     );
@@ -461,16 +462,16 @@ fn expression_map() {
     );
 
     let rs = test_filter(
-        Expression::eq(
-            MapExpression::size(
-                MapExpression::remove_by_value(
-                    Expression::int_val(5),
-                    Expression::map_bin("bin".to_string()),
+        eq(
+            size(
+                remove_by_value(
+                    int_val(5),
+                    map_bin("bin".to_string()),
                     &[],
                 ),
                 &[],
             ),
-            Expression::int_val(1),
+            int_val(1),
         ),
         &set_name,
     );
@@ -478,16 +479,16 @@ fn expression_map() {
     assert_eq!(count, 1, "REMOVE BY VALUE Test Failed");
 
     let rs = test_filter(
-        Expression::eq(
-            MapExpression::size(
-                MapExpression::remove_by_value_list(
-                    Expression::list_val(vec![Value::from("a"), Value::from(15)]),
-                    Expression::map_bin("bin".to_string()),
+        eq(
+            size(
+                remove_by_value_list(
+                    list_val(vec![Value::from("a"), Value::from(15)]),
+                    map_bin("bin".to_string()),
                     &[],
                 ),
                 &[],
             ),
-            Expression::int_val(0),
+            int_val(0),
         ),
         &set_name,
     );
@@ -495,17 +496,17 @@ fn expression_map() {
     assert_eq!(count, 1, "REMOVE BY VALUE LIST Test Failed");
 
     let rs = test_filter(
-        Expression::eq(
-            MapExpression::size(
-                MapExpression::remove_by_value_range(
-                    Some(Expression::int_val(5)),
-                    Some(Expression::int_val(15)),
-                    Expression::map_bin("bin".to_string()),
+        eq(
+            size(
+                remove_by_value_range(
+                    Some(int_val(5)),
+                    Some(int_val(15)),
+                    map_bin("bin".to_string()),
                     &[],
                 ),
                 &[],
             ),
-            Expression::int_val(1),
+            int_val(1),
         ),
         &set_name,
     );
@@ -513,16 +514,16 @@ fn expression_map() {
     assert_eq!(count, 10, "REMOVE BY VALUE RANGE Test Failed");
 
     let rs = test_filter(
-        Expression::eq(
-            MapExpression::size(
-                MapExpression::remove_by_index(
-                    Expression::int_val(0),
-                    Expression::map_bin("bin".to_string()),
+        eq(
+            size(
+                remove_by_index(
+                    int_val(0),
+                    map_bin("bin".to_string()),
                     &[],
                 ),
                 &[],
             ),
-            Expression::int_val(1),
+            int_val(1),
         ),
         &set_name,
     );
@@ -530,16 +531,16 @@ fn expression_map() {
     assert_eq!(count, 100, "REMOVE BY INDEX Test Failed");
 
     let rs = test_filter(
-        Expression::eq(
-            MapExpression::size(
-                MapExpression::remove_by_index_range(
-                    Expression::int_val(0),
-                    Expression::map_bin("bin".to_string()),
+        eq(
+            size(
+                remove_by_index_range(
+                    int_val(0),
+                    map_bin("bin".to_string()),
                     &[],
                 ),
                 &[],
             ),
-            Expression::int_val(0),
+            int_val(0),
         ),
         &set_name,
     );
@@ -547,17 +548,17 @@ fn expression_map() {
     assert_eq!(count, 100, "REMOVE BY INDEX RANGE Test Failed");
 
     let rs = test_filter(
-        Expression::eq(
-            MapExpression::size(
-                MapExpression::remove_by_index_range_count(
-                    Expression::int_val(0),
-                    Expression::int_val(1),
-                    Expression::map_bin("bin".to_string()),
+        eq(
+            size(
+                remove_by_index_range_count(
+                    int_val(0),
+                    int_val(1),
+                    map_bin("bin".to_string()),
                     &[],
                 ),
                 &[],
             ),
-            Expression::int_val(1),
+            int_val(1),
         ),
         &set_name,
     );
@@ -565,16 +566,16 @@ fn expression_map() {
     assert_eq!(count, 100, "REMOVE BY INDEX RANGE COUNT Test Failed");
 
     let rs = test_filter(
-        Expression::eq(
-            MapExpression::size(
-                MapExpression::remove_by_rank(
-                    Expression::int_val(0),
-                    Expression::map_bin("bin".to_string()),
+        eq(
+            size(
+                remove_by_rank(
+                    int_val(0),
+                    map_bin("bin".to_string()),
                     &[],
                 ),
                 &[],
             ),
-            Expression::int_val(1),
+            int_val(1),
         ),
         &set_name,
     );
@@ -582,16 +583,16 @@ fn expression_map() {
     assert_eq!(count, 100, "REMOVE BY RANK Test Failed");
 
     let rs = test_filter(
-        Expression::eq(
-            MapExpression::size(
-                MapExpression::remove_by_rank_range(
-                    Expression::int_val(0),
-                    Expression::map_bin("bin".to_string()),
+        eq(
+            size(
+                remove_by_rank_range(
+                    int_val(0),
+                    map_bin("bin".to_string()),
                     &[],
                 ),
                 &[],
             ),
-            Expression::int_val(0),
+            int_val(0),
         ),
         &set_name,
     );
@@ -599,17 +600,17 @@ fn expression_map() {
     assert_eq!(count, 100, "REMOVE BY RANK RANGE Test Failed");
 
     let rs = test_filter(
-        Expression::eq(
-            MapExpression::size(
-                MapExpression::remove_by_rank_range_count(
-                    Expression::int_val(0),
-                    Expression::int_val(1),
-                    Expression::map_bin("bin".to_string()),
+        eq(
+            size(
+                remove_by_rank_range_count(
+                    int_val(0),
+                    int_val(1),
+                    map_bin("bin".to_string()),
                     &[],
                 ),
                 &[],
             ),
-            Expression::int_val(1),
+            int_val(1),
         ),
         &set_name,
     );

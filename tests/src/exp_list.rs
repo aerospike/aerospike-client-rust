@@ -1,7 +1,8 @@
 use crate::common;
 use env_logger;
 
-use aerospike::exp::{ExpType, Expression, FilterExpression, ListExpression};
+use aerospike::expressions::*;
+use aerospike::expressions::lists::*;
 use aerospike::operations::lists::{ListPolicy, ListReturnType};
 use aerospike::*;
 use std::sync::Arc;
@@ -33,17 +34,17 @@ fn expression_list() {
 
     // EQ
     let rs = test_filter(
-        Expression::eq(
-            ListExpression::size(
-                ListExpression::append(
+        eq(
+            size(
+                append(
                     ListPolicy::default(),
-                    Expression::int_val(999),
-                    Expression::list_bin("bin".to_string()),
+                    int_val(999),
+                    list_bin("bin".to_string()),
                     &[],
                 ),
                 &[],
             ),
-            Expression::int_val(5),
+            int_val(5),
         ),
         &set_name,
     );
@@ -51,17 +52,17 @@ fn expression_list() {
     assert_eq!(count, 100, "SIZE AND APPEND Test Failed");
 
     let rs = test_filter(
-        Expression::eq(
-            ListExpression::size(
-                ListExpression::append_items(
+        eq(
+            size(
+                append_items(
                     ListPolicy::default(),
-                    Expression::list_val(vec![Value::from(555), Value::from("asd")]),
-                    Expression::list_bin("bin".to_string()),
+                    list_val(vec![Value::from(555), Value::from("asd")]),
+                    list_bin("bin".to_string()),
                     &[],
                 ),
                 &[],
             ),
-            Expression::int_val(6),
+            int_val(6),
         ),
         &set_name,
     );
@@ -69,12 +70,12 @@ fn expression_list() {
     assert_eq!(count, 100, "SIZE AND APPEND ITEMS Test Failed");
 
     let rs = test_filter(
-        Expression::eq(
-            ListExpression::size(
-                ListExpression::clear(Expression::list_bin("bin".to_string()), &[]),
+        eq(
+            size(
+                clear(list_bin("bin".to_string()), &[]),
                 &[],
             ),
-            Expression::int_val(0),
+            int_val(0),
         ),
         &set_name,
     );
@@ -82,20 +83,20 @@ fn expression_list() {
     assert_eq!(count, 100, "CLEAR Test Failed");
 
     let rs = test_filter(
-        Expression::eq(
-            ListExpression::get_by_value(
+        eq(
+            get_by_value(
                 ListReturnType::Count,
-                Expression::int_val(234),
-                ListExpression::insert(
+                int_val(234),
+                insert(
                     ListPolicy::default(),
-                    Expression::int_val(1),
-                    Expression::int_val(234),
-                    Expression::list_bin("bin".to_string()),
+                    int_val(1),
+                    int_val(234),
+                    list_bin("bin".to_string()),
                     &[],
                 ),
                 &[],
             ),
-            Expression::int_val(1),
+            int_val(1),
         ),
         &set_name,
     );
@@ -103,14 +104,14 @@ fn expression_list() {
     assert_eq!(count, 100, "GET BY VALUE AND INSERT Test Failed");
 
     let rs = test_filter(
-        Expression::eq(
-            ListExpression::get_by_value_list(
+        eq(
+            get_by_value_list(
                 ListReturnType::Count,
-                Expression::list_val(vec![Value::from(51), Value::from(52)]),
-                Expression::list_bin("bin".to_string()),
+                list_val(vec![Value::from(51), Value::from(52)]),
+                list_bin("bin".to_string()),
                 &[],
             ),
-            Expression::int_val(1),
+            int_val(1),
         ),
         &set_name,
     );
@@ -118,18 +119,18 @@ fn expression_list() {
     assert_eq!(count, 2, "GET BY VALUE LIST Test Failed");
 
     let rs = test_filter(
-        Expression::eq(
-            ListExpression::size(
-                ListExpression::insert_items(
+        eq(
+            size(
+                insert_items(
                     ListPolicy::default(),
-                    Expression::int_val(4),
-                    Expression::list_val(vec![Value::from(222), Value::from(223)]),
-                    Expression::list_bin("bin".to_string()),
+                    int_val(4),
+                    list_val(vec![Value::from(222), Value::from(223)]),
+                    list_bin("bin".to_string()),
                     &[],
                 ),
                 &[],
             ),
-            Expression::int_val(6),
+            int_val(6),
         ),
         &set_name,
     );
@@ -137,21 +138,21 @@ fn expression_list() {
     assert_eq!(count, 100, "INSERT LIST Test Failed");
 
     let rs = test_filter(
-        Expression::eq(
-            ListExpression::get_by_index(
+        eq(
+            get_by_index(
                 ListReturnType::Values,
                 ExpType::INT,
-                Expression::int_val(3),
-                ListExpression::increment(
+                int_val(3),
+                increment(
                     ListPolicy::default(),
-                    Expression::int_val(3),
-                    Expression::int_val(100),
-                    Expression::list_bin("bin".to_string()),
+                    int_val(3),
+                    int_val(100),
+                    list_bin("bin".to_string()),
                     &[],
                 ),
                 &[],
             ),
-            Expression::int_val(102),
+            int_val(102),
         ),
         &set_name,
     );
@@ -159,21 +160,21 @@ fn expression_list() {
     assert_eq!(count, 1, "GET BY INDEX AND INCREMENT Test Failed");
 
     let rs = test_filter(
-        Expression::eq(
-            ListExpression::get_by_index(
+        eq(
+            get_by_index(
                 ListReturnType::Values,
                 ExpType::INT,
-                Expression::int_val(3),
-                ListExpression::set(
+                int_val(3),
+                set(
                     ListPolicy::default(),
-                    Expression::int_val(3),
-                    Expression::int_val(100),
-                    Expression::list_bin("bin".to_string()),
+                    int_val(3),
+                    int_val(100),
+                    list_bin("bin".to_string()),
                     &[],
                 ),
                 &[],
             ),
-            Expression::int_val(100),
+            int_val(100),
         ),
         &set_name,
     );
@@ -181,15 +182,15 @@ fn expression_list() {
     assert_eq!(count, 100, "GET BY INDEX AND SET Test Failed");
 
     let rs = test_filter(
-        Expression::eq(
-            ListExpression::get_by_index_range_count(
+        eq(
+            get_by_index_range_count(
                 ListReturnType::Values,
-                Expression::int_val(2),
-                Expression::int_val(2),
-                Expression::list_bin("bin".to_string()),
+                int_val(2),
+                int_val(2),
+                list_bin("bin".to_string()),
                 &[],
             ),
-            Expression::list_val(vec![Value::from(3), Value::from(15)]),
+            list_val(vec![Value::from(3), Value::from(15)]),
         ),
         &set_name,
     );
@@ -197,14 +198,14 @@ fn expression_list() {
     assert_eq!(count, 1, "GET BY INDEX RANGE COUNT Test Failed");
 
     let rs = test_filter(
-        Expression::eq(
-            ListExpression::get_by_index_range(
+        eq(
+            get_by_index_range(
                 ListReturnType::Values,
-                Expression::int_val(2),
-                Expression::list_bin("bin".to_string()),
+                int_val(2),
+                list_bin("bin".to_string()),
                 &[],
             ),
-            Expression::list_val(vec![Value::from(3), Value::from(15)]),
+            list_val(vec![Value::from(3), Value::from(15)]),
         ),
         &set_name,
     );
@@ -212,15 +213,15 @@ fn expression_list() {
     assert_eq!(count, 1, "GET BY INDEX RANGE Test Failed");
 
     let rs = test_filter(
-        Expression::eq(
-            ListExpression::get_by_rank(
+        eq(
+            get_by_rank(
                 ListReturnType::Values,
                 ExpType::INT,
-                Expression::int_val(3),
-                Expression::list_bin("bin".to_string()),
+                int_val(3),
+                list_bin("bin".to_string()),
                 &[],
             ),
-            Expression::int_val(25),
+            int_val(25),
         ),
         &set_name,
     );
@@ -228,14 +229,14 @@ fn expression_list() {
     assert_eq!(count, 1, "GET BY RANK Test Failed");
 
     let rs = test_filter(
-        Expression::eq(
-            ListExpression::get_by_rank_range(
+        eq(
+            get_by_rank_range(
                 ListReturnType::Values,
-                Expression::int_val(2),
-                Expression::list_bin("bin".to_string()),
+                int_val(2),
+                list_bin("bin".to_string()),
                 &[],
             ),
-            Expression::list_val(vec![Value::from(3), Value::from(25)]),
+            list_val(vec![Value::from(3), Value::from(25)]),
         ),
         &set_name,
     );
@@ -243,15 +244,15 @@ fn expression_list() {
     assert_eq!(count, 1, "GET BY RANK RANGE Test Failed");
 
     let rs = test_filter(
-        Expression::eq(
-            ListExpression::get_by_rank_range_count(
+        eq(
+            get_by_rank_range_count(
                 ListReturnType::Values,
-                Expression::int_val(2),
-                Expression::int_val(2),
-                Expression::list_bin("bin".to_string()),
+                int_val(2),
+                int_val(2),
+                list_bin("bin".to_string()),
                 &[],
             ),
-            Expression::list_val(vec![Value::from(3), Value::from(3)]),
+            list_val(vec![Value::from(3), Value::from(3)]),
         ),
         &set_name,
     );
@@ -259,15 +260,15 @@ fn expression_list() {
     assert_eq!(count, 1, "GET BY RANK RANGE COUNT Test Failed");
 
     let rs = test_filter(
-        Expression::eq(
-            ListExpression::get_by_value_range(
+        eq(
+            get_by_value_range(
                 ListReturnType::Values,
-                Some(Expression::int_val(1)),
-                Some(Expression::int_val(3)),
-                Expression::list_bin("bin".to_string()),
+                Some(int_val(1)),
+                Some(int_val(3)),
+                list_bin("bin".to_string()),
                 &[],
             ),
-            Expression::list_val(vec![Value::from(1), Value::from(2)]),
+            list_val(vec![Value::from(1), Value::from(2)]),
         ),
         &set_name,
     );
@@ -275,15 +276,15 @@ fn expression_list() {
     assert_eq!(count, 98, "GET BY VALUE RANGE Test Failed");
 
     let rs = test_filter(
-        Expression::eq(
-            ListExpression::get_by_value_relative_rank_range(
+        eq(
+            get_by_value_relative_rank_range(
                 ListReturnType::Count,
-                Expression::int_val(2),
-                Expression::int_val(0),
-                Expression::list_bin("bin".to_string()),
+                int_val(2),
+                int_val(0),
+                list_bin("bin".to_string()),
                 &[],
             ),
-            Expression::int_val(3),
+            int_val(3),
         ),
         &set_name,
     );
@@ -291,16 +292,16 @@ fn expression_list() {
     assert_eq!(count, 98, "GET BY VAL REL RANK RANGE Test Failed");
 
     let rs = test_filter(
-        Expression::eq(
-            ListExpression::get_by_value_relative_rank_range_count(
+        eq(
+            get_by_value_relative_rank_range_count(
                 ListReturnType::Values,
-                Expression::int_val(2),
-                Expression::int_val(1),
-                Expression::int_val(1),
-                Expression::list_bin("bin".to_string()),
+                int_val(2),
+                int_val(1),
+                int_val(1),
+                list_bin("bin".to_string()),
                 &[],
             ),
-            Expression::list_val(vec![Value::from(3)]),
+            list_val(vec![Value::from(3)]),
         ),
         &set_name,
     );
@@ -308,16 +309,16 @@ fn expression_list() {
     assert_eq!(count, 99, "GET BY VAL REL RANK RANGE COUNT Test Failed");
 
     let rs = test_filter(
-        Expression::eq(
-            ListExpression::size(
-                ListExpression::remove_by_value(
-                    Expression::int_val(3),
-                    Expression::list_bin("bin".to_string()),
+        eq(
+            size(
+                remove_by_value(
+                    int_val(3),
+                    list_bin("bin".to_string()),
                     &[],
                 ),
                 &[],
             ),
-            Expression::int_val(3),
+            int_val(3),
         ),
         &set_name,
     );
@@ -325,16 +326,16 @@ fn expression_list() {
     assert_eq!(count, 99, "REMOVE BY VALUE Test Failed");
 
     let rs = test_filter(
-        Expression::eq(
-            ListExpression::size(
-                ListExpression::remove_by_value_list(
-                    Expression::list_val(vec![Value::from(1), Value::from(2)]),
-                    Expression::list_bin("bin".to_string()),
+        eq(
+            size(
+                remove_by_value_list(
+                    list_val(vec![Value::from(1), Value::from(2)]),
+                    list_bin("bin".to_string()),
                     &[],
                 ),
                 &[],
             ),
-            Expression::int_val(2),
+            int_val(2),
         ),
         &set_name,
     );
@@ -342,17 +343,17 @@ fn expression_list() {
     assert_eq!(count, 98, "REMOVE BY VALUE LIST Test Failed");
 
     let rs = test_filter(
-        Expression::eq(
-            ListExpression::size(
-                ListExpression::remove_by_value_range(
-                    Some(Expression::int_val(1)),
-                    Some(Expression::int_val(3)),
-                    Expression::list_bin("bin".to_string()),
+        eq(
+            size(
+                remove_by_value_range(
+                    Some(int_val(1)),
+                    Some(int_val(3)),
+                    list_bin("bin".to_string()),
                     &[],
                 ),
                 &[],
             ),
-            Expression::int_val(2),
+            int_val(2),
         ),
         &set_name,
     );
@@ -360,17 +361,17 @@ fn expression_list() {
     assert_eq!(count, 98, "REMOVE BY VALUE RANGE Test Failed");
 
     let rs = test_filter(
-        Expression::eq(
-            ListExpression::size(
-                ListExpression::remove_by_value_relative_rank_range(
-                    Expression::int_val(3),
-                    Expression::int_val(1),
-                    Expression::list_bin("bin".to_string()),
+        eq(
+            size(
+                remove_by_value_relative_rank_range(
+                    int_val(3),
+                    int_val(1),
+                    list_bin("bin".to_string()),
                     &[],
                 ),
                 &[],
             ),
-            Expression::int_val(3),
+            int_val(3),
         ),
         &set_name,
     );
@@ -378,18 +379,18 @@ fn expression_list() {
     assert_eq!(count, 97, "REMOVE BY VALUE REL RANK RANGE Test Failed");
 
     let rs = test_filter(
-        Expression::eq(
-            ListExpression::size(
-                ListExpression::remove_by_value_relative_rank_range_count(
-                    Expression::int_val(2),
-                    Expression::int_val(1),
-                    Expression::int_val(1),
-                    Expression::list_bin("bin".to_string()),
+        eq(
+            size(
+                remove_by_value_relative_rank_range_count(
+                    int_val(2),
+                    int_val(1),
+                    int_val(1),
+                    list_bin("bin".to_string()),
                     &[],
                 ),
                 &[],
             ),
-            Expression::int_val(3),
+            int_val(3),
         ),
         &set_name,
     );
@@ -400,16 +401,16 @@ fn expression_list() {
     );
 
     let rs = test_filter(
-        Expression::eq(
-            ListExpression::size(
-                ListExpression::remove_by_index(
-                    Expression::int_val(0),
-                    Expression::list_bin("bin".to_string()),
+        eq(
+            size(
+                remove_by_index(
+                    int_val(0),
+                    list_bin("bin".to_string()),
                     &[],
                 ),
                 &[],
             ),
-            Expression::int_val(3),
+            int_val(3),
         ),
         &set_name,
     );
@@ -417,16 +418,16 @@ fn expression_list() {
     assert_eq!(count, 100, "REMOVE BY INDEX Test Failed");
 
     let rs = test_filter(
-        Expression::eq(
-            ListExpression::size(
-                ListExpression::remove_by_index_range(
-                    Expression::int_val(2),
-                    Expression::list_bin("bin".to_string()),
+        eq(
+            size(
+                remove_by_index_range(
+                    int_val(2),
+                    list_bin("bin".to_string()),
                     &[],
                 ),
                 &[],
             ),
-            Expression::int_val(2),
+            int_val(2),
         ),
         &set_name,
     );
@@ -434,17 +435,17 @@ fn expression_list() {
     assert_eq!(count, 100, "REMOVE BY INDEX RANGE Test Failed");
 
     let rs = test_filter(
-        Expression::eq(
-            ListExpression::size(
-                ListExpression::remove_by_index_range_count(
-                    Expression::int_val(2),
-                    Expression::int_val(1),
-                    Expression::list_bin("bin".to_string()),
+        eq(
+            size(
+                remove_by_index_range_count(
+                    int_val(2),
+                    int_val(1),
+                    list_bin("bin".to_string()),
                     &[],
                 ),
                 &[],
             ),
-            Expression::int_val(3),
+            int_val(3),
         ),
         &set_name,
     );
@@ -452,17 +453,17 @@ fn expression_list() {
     assert_eq!(count, 100, "REMOVE BY INDEX RANGE COUNT Test Failed");
 
     let rs = test_filter(
-        Expression::eq(
-            ListExpression::size(
-                ListExpression::remove_by_index_range_count(
-                    Expression::int_val(2),
-                    Expression::int_val(1),
-                    Expression::list_bin("bin".to_string()),
+        eq(
+            size(
+                remove_by_index_range_count(
+                    int_val(2),
+                    int_val(1),
+                    list_bin("bin".to_string()),
                     &[],
                 ),
                 &[],
             ),
-            Expression::int_val(3),
+            int_val(3),
         ),
         &set_name,
     );
@@ -470,16 +471,16 @@ fn expression_list() {
     assert_eq!(count, 100, "REMOVE BY INDEX RANGE COUNT Test Failed");
 
     let rs = test_filter(
-        Expression::eq(
-            ListExpression::size(
-                ListExpression::remove_by_rank(
-                    Expression::int_val(2),
-                    Expression::list_bin("bin".to_string()),
+        eq(
+            size(
+                remove_by_rank(
+                    int_val(2),
+                    list_bin("bin".to_string()),
                     &[],
                 ),
                 &[],
             ),
-            Expression::int_val(3),
+            int_val(3),
         ),
         &set_name,
     );
@@ -487,16 +488,16 @@ fn expression_list() {
     assert_eq!(count, 100, "REMOVE BY RANK Test Failed");
 
     let rs = test_filter(
-        Expression::eq(
-            ListExpression::size(
-                ListExpression::remove_by_rank_range(
-                    Expression::int_val(2),
-                    Expression::list_bin("bin".to_string()),
+        eq(
+            size(
+                remove_by_rank_range(
+                    int_val(2),
+                    list_bin("bin".to_string()),
                     &[],
                 ),
                 &[],
             ),
-            Expression::int_val(2),
+            int_val(2),
         ),
         &set_name,
     );
@@ -504,17 +505,17 @@ fn expression_list() {
     assert_eq!(count, 100, "REMOVE BY RANK RANGE Test Failed");
 
     let rs = test_filter(
-        Expression::eq(
-            ListExpression::size(
-                ListExpression::remove_by_rank_range_count(
-                    Expression::int_val(2),
-                    Expression::int_val(1),
-                    Expression::list_bin("bin".to_string()),
+        eq(
+            size(
+                remove_by_rank_range_count(
+                    int_val(2),
+                    int_val(1),
+                    list_bin("bin".to_string()),
                     &[],
                 ),
                 &[],
             ),
-            Expression::int_val(3),
+            int_val(3),
         ),
         &set_name,
     );
