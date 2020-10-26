@@ -246,7 +246,7 @@ pub fn set_order(bin: &str, map_order: MapOrder) -> Operation {
 ///
 /// The required map policy dictates the type of map to create when it does not exist. The map
 /// policy also specifies the mode used when writing items to the map.
-pub fn put_item<'a>(
+pub fn put<'a>(
     policy: &'a MapPolicy,
     bin: &'a str,
     key: &'a Value,
