@@ -15,8 +15,7 @@
 use crate::common;
 use env_logger;
 
-use aerospike::exp::bit_exp::BitExpression;
-use aerospike::exp::{Expression, FilterExpression};
+use aerospike::exp::{BitExpression, Expression, FilterExpression};
 use aerospike::operations::bitwise::{BitPolicy, BitwiseOverflowActions, BitwiseResizeFlags};
 use aerospike::*;
 use std::sync::Arc;

@@ -420,7 +420,7 @@ impl ListExpression {
     /// ```
     /// // List bin "a" size > 7
     /// use aerospike::exp::Expression;
-    /// use aerospike::exp::list_exp::ListExpression;
+    /// use aerospike::exp::ListExpression;
     /// Expression::gt(ListExpression::size(Expression::list_bin("a".to_string()), &[]), Expression::int_val(7));
     /// ```
     pub fn size(bin: FilterExpression, ctx: &[CdtContext]) -> FilterExpression {
@@ -437,7 +437,7 @@ impl ListExpression {
     /// ```
     /// // List bin "a" contains at least one item == "abc"
     /// use aerospike::exp::Expression;
-    /// use aerospike::exp::list_exp::ListExpression;
+    /// use aerospike::exp::ListExpression;
     /// use aerospike::operations::lists::ListReturnType;
     /// Expression::gt(
     ///   ListExpression::get_by_value(ListReturnType::Count, Expression::string_val("abc".to_string()), Expression::list_bin("a".to_string()), &[]),
@@ -464,7 +464,7 @@ impl ListExpression {
     ///
     /// ```
     /// // List bin "a" items >= 10 && items < 20
-    /// use aerospike::exp::list_exp::ListExpression;
+    /// use aerospike::exp::ListExpression;
     /// use aerospike::operations::lists::ListReturnType;
     /// use aerospike::exp::Expression;
     /// ListExpression::get_by_value_range(ListReturnType::Values, Some(Expression::int_val(10)), Some(Expression::int_val(20)), Expression::list_bin("a".to_string()), &[]);
@@ -577,7 +577,7 @@ impl ListExpression {
     /// ```
     /// // a[3] == 5
     /// use aerospike::exp::{Expression, ExpType};
-    /// use aerospike::exp::list_exp::ListExpression;
+    /// use aerospike::exp::ListExpression;
     /// use aerospike::operations::lists::ListReturnType;
     /// Expression::eq(
     ///   ListExpression::get_by_index(ListReturnType::Values, ExpType::INT, Expression::int_val(3), Expression::list_bin("a".to_string()), &[]),
@@ -641,7 +641,7 @@ impl ListExpression {
     ///
     /// ```
     /// // Player with lowest score.
-    /// use aerospike::exp::list_exp::ListExpression;
+    /// use aerospike::exp::ListExpression;
     /// use aerospike::operations::lists::ListReturnType;
     /// use aerospike::exp::{ExpType, Expression};
     /// ListExpression::get_by_rank(ListReturnType::Values, ExpType::STRING, Expression::int_val(0), Expression::list_bin("a".to_string()), &[]);

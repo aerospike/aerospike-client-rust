@@ -26,6 +26,10 @@ use crate::errors::Result;
 use crate::msgpack::encoder::{pack_array_begin, pack_integer, pack_raw_string, pack_value};
 use crate::operations::cdt_context::CdtContext;
 use crate::{ParticleType, Value};
+pub use bit_exp::BitExpression;
+pub use hll_exp::HLLExpression;
+pub use list_exp::ListExpression;
+pub use map_exp::MapExpression;
 use std::collections::HashMap;
 use std::fmt::Debug;
 
@@ -150,7 +154,11 @@ impl FilterExpression {
         }
     }
 
-    fn pack_expression(&self, exps: &Vec<FilterExpression>, buf: &mut Option<&mut Buffer>) -> Result<usize> {
+    fn pack_expression(
+        &self,
+        exps: &[FilterExpression],
+        buf: &mut Option<&mut Buffer>,
+    ) -> Result<usize> {
         let mut size = 0;
         size += pack_array_begin(buf, exps.len() + 1)?;
         size += pack_integer(buf, self.cmd.unwrap() as i64)?;
@@ -407,7 +415,7 @@ impl Expression {
     /// ```
     /// use aerospike::exp::{Expression, ExpType};
     /// use aerospike::operations::lists::ListReturnType;
-    /// use aerospike::exp::list_exp::ListExpression;
+    /// use aerospike::exp::ListExpression;
     /// // String bin a[2] == 3
     /// Expression::eq(ListExpression::get_by_index(ListReturnType::Values, ExpType::INT, Expression::int_val(2), Expression::list_bin("a".to_string()), &[]), Expression::int_val(3));
     /// ```
@@ -427,7 +435,7 @@ impl Expression {
     /// ```
     /// // Bin a["key"] == "value"
     /// use aerospike::exp::{Expression, ExpType};
-    /// use aerospike::exp::map_exp::MapExpression;
+    /// use aerospike::exp::MapExpression;
     /// use aerospike::MapReturnType;
     /// Expression::eq(
     ///     MapExpression::get_by_key(MapReturnType::Value, ExpType::STRING, Expression::string_val("key".to_string()), Expression::map_bin("a".to_string()), &[]),
@@ -448,7 +456,7 @@ impl Expression {
     ///
     /// ```
     /// use aerospike::exp::Expression;
-    /// use aerospike::exp::hll_exp::HLLExpression;
+    /// use aerospike::exp::HLLExpression;
     /// use aerospike::operations::hll::HLLPolicy;
     /// use aerospike::Value;
     ///

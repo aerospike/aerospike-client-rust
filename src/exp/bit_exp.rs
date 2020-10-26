@@ -68,7 +68,7 @@ impl BitExpression {
     /// // resizeFlags = 0
     /// // returns [0b00000001, 0b01000010, 0b00000000, 0b00000000]
     /// use aerospike::exp::Expression;
-    /// use aerospike::exp::bit_exp::BitExpression;
+    /// use aerospike::exp::BitExpression;
     /// use aerospike::operations::bitwise::{BitPolicy, BitwiseResizeFlags};
     /// Expression::eq(
     ///   BitExpression::count(Expression::int_val(0), Expression::int_val(3),
@@ -100,7 +100,7 @@ impl BitExpression {
     /// // value = [0b11111111, 0b11000111]
     /// // bin result = [0b00000001, 0b11111111, 0b11000111, 0b01000010, 0b00000011, 0b00000100, 0b00000101]
     /// use aerospike::exp::Expression;
-    /// use aerospike::exp::bit_exp::BitExpression;
+    /// use aerospike::exp::BitExpression;
     /// use aerospike::operations::bitwise::BitPolicy;
     /// let bytes: Vec<u8> = vec![];
     /// Expression::eq(
@@ -132,7 +132,7 @@ impl BitExpression {
     /// // byteSize = 3
     /// // bin result = [0b00000001, 0b01000010]
     /// use aerospike::exp::Expression;
-    /// use aerospike::exp::bit_exp::BitExpression;
+    /// use aerospike::exp::BitExpression;
     /// use aerospike::operations::bitwise::BitPolicy;
     /// Expression::eq(
     ///   BitExpression::count(Expression::int_val(0), Expression::int_val(3),
@@ -164,7 +164,7 @@ impl BitExpression {
     /// // value = [0b11100000]
     /// // bin result = [0b00000001, 0b01000111, 0b00000011, 0b00000100, 0b00000101]
     /// use aerospike::exp::Expression;
-    /// use aerospike::exp::bit_exp::BitExpression;
+    /// use aerospike::exp::BitExpression;
     /// use aerospike::operations::bitwise::BitPolicy;
     /// let bytes: Vec<u8> = vec![];
     /// Expression::eq(
@@ -452,7 +452,7 @@ impl BitExpression {
     /// // returns [0b10000000]
     ///
     /// use aerospike::exp::Expression;
-    /// use aerospike::exp::bit_exp::BitExpression;
+    /// use aerospike::exp::BitExpression;
     /// Expression::eq(
     ///   BitExpression::get(Expression::int_val(9), Expression::int_val(5), Expression::blob_bin("a".to_string())),
     ///   Expression::blob_val(vec![0b10000000]));
@@ -481,7 +481,7 @@ impl BitExpression {
     /// // returns 2
     ///
     /// use aerospike::exp::Expression;
-    /// use aerospike::exp::bit_exp::BitExpression;
+    /// use aerospike::exp::BitExpression;
     /// Expression::le(BitExpression::count(Expression::int_val(0), Expression::int_val(5), Expression::blob_bin("a".to_string())), Expression::int_val(2));
     /// ```
     pub fn count(
@@ -508,7 +508,7 @@ impl BitExpression {
     /// // value = true
     /// // returns 5
     /// use aerospike::exp::Expression;
-    /// use aerospike::exp::bit_exp::BitExpression;
+    /// use aerospike::exp::BitExpression;
     /// Expression::eq(BitExpression::lscan(Expression::int_val(24), Expression::int_val(8), Expression::int_val(1), Expression::blob_bin("a".to_string())), Expression::int_val(5));
     /// ```
     ///
@@ -540,7 +540,7 @@ impl BitExpression {
     /// // returns 7
     ///
     /// use aerospike::exp::Expression;
-    /// use aerospike::exp::bit_exp::BitExpression;
+    /// use aerospike::exp::BitExpression;
     /// Expression::eq(BitExpression::rscan(Expression::int_val(32), Expression::int_val(8), Expression::int_val(1), Expression::blob_bin("a".to_string())), Expression::int_val(7));
     /// ```
     ///
@@ -570,7 +570,7 @@ impl BitExpression {
     /// // signed = false
     /// // returns 16899
     /// use aerospike::exp::Expression;
-    /// use aerospike::exp::bit_exp::BitExpression;
+    /// use aerospike::exp::BitExpression;
     /// Expression::eq(BitExpression::get_int(Expression::int_val(8), Expression::int_val(16), false, Expression::blob_bin("a".to_string())), Expression::int_val(16899));
     /// ```
     pub fn get_int(

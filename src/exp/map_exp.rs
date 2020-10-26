@@ -490,7 +490,7 @@ impl MapExpression {
     /// ```
     /// // Map bin "a" size > 7
     /// use aerospike::exp::Expression;
-    /// use aerospike::exp::map_exp::MapExpression;
+    /// use aerospike::exp::MapExpression;
     ///
     /// Expression::gt(MapExpression::size(Expression::map_bin("a".to_string()), &[]), Expression::int_val(7));
     ///
@@ -509,7 +509,7 @@ impl MapExpression {
     /// ```
     /// // Map bin "a" contains key "B"
     /// use aerospike::exp::{Expression, ExpType};
-    /// use aerospike::exp::map_exp::MapExpression;
+    /// use aerospike::exp::MapExpression;
     /// use aerospike::MapReturnType;
     /// Expression::gt(MapExpression::get_by_key(MapReturnType::Count, ExpType::INT, Expression::string_val("B".to_string()), Expression::map_bin("a".to_string()), &[]), Expression::int_val(0));
     /// ```
@@ -637,7 +637,7 @@ impl MapExpression {
     /// ```
     /// // Map bin "a" contains value "BBB"
     /// use aerospike::exp::Expression;
-    /// use aerospike::exp::map_exp::MapExpression;
+    /// use aerospike::exp::MapExpression;
     /// use aerospike::MapReturnType;
     /// Expression::gt(MapExpression::get_by_value(MapReturnType::Count, Expression::string_val("BBB".to_string()), Expression::map_bin("a".to_string()), &[]), Expression::int_val(0));
     /// ```

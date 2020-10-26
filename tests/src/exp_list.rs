@@ -1,8 +1,7 @@
 use crate::common;
 use env_logger;
 
-use aerospike::exp::list_exp::ListExpression;
-use aerospike::exp::{ExpType, Expression, FilterExpression};
+use aerospike::exp::{ExpType, Expression, FilterExpression, ListExpression};
 use aerospike::operations::lists::{ListPolicy, ListReturnType};
 use aerospike::*;
 use std::sync::Arc;

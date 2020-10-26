@@ -46,7 +46,7 @@ impl HLLExpression {
     /// The function assumes HLL bin already exists.
     /// ```
     /// use aerospike::exp::Expression;
-    /// use aerospike::exp::hll_exp::HLLExpression;
+    /// use aerospike::exp::HLLExpression;
     /// use aerospike::operations::hll::HLLPolicy;
     /// use aerospike::Value;
     ///
@@ -72,7 +72,7 @@ impl HLLExpression {
     /// If HLL bin does not exist, use `indexBitCount` to create HLL bin.
     /// ```
     /// use aerospike::exp::Expression;
-    /// use aerospike::exp::hll_exp::HLLExpression;
+    /// use aerospike::exp::HLLExpression;
     /// use aerospike::operations::hll::HLLPolicy;
     /// use aerospike::Value;
     ///
@@ -99,7 +99,7 @@ impl HLLExpression {
     /// exist, use `indexBitCount` and `minHashBitCount` to create HLL set.
     /// ```
     /// use aerospike::exp::Expression;
-    /// use aerospike::exp::hll_exp::HLLExpression;
+    /// use aerospike::exp::HLLExpression;
     /// use aerospike::operations::hll::HLLPolicy;
     /// use aerospike::Value;
     ///
@@ -131,7 +131,7 @@ impl HLLExpression {
     /// ```
     /// // HLL bin "a" count > 7
     /// use aerospike::exp::Expression;
-    /// use aerospike::exp::hll_exp::HLLExpression;
+    /// use aerospike::exp::HLLExpression;
     /// Expression::gt(HLLExpression::get_count(Expression::hll_bin("a".to_string())), Expression::int_val(7));
     /// ```
     pub fn get_count(bin: FilterExpression) -> FilterExpression {
@@ -148,7 +148,7 @@ impl HLLExpression {
     /// in the list with the HLL bin.
     ///
     /// ```
-    /// use aerospike::exp::hll_exp::HLLExpression;
+    /// use aerospike::exp::HLLExpression;
     /// use aerospike::exp::Expression;
     ///
     /// // Union of HLL bins "a" and "b"
@@ -173,7 +173,7 @@ impl HLLExpression {
     /// the union of these HLL objects.
     ///
     /// ```
-    /// use aerospike::exp::hll_exp::HLLExpression;
+    /// use aerospike::exp::HLLExpression;
     /// use aerospike::exp::Expression;
     ///
     /// // Union count of HLL bins "a" and "b"
@@ -198,7 +198,7 @@ impl HLLExpression {
     /// the intersection of these HLL objects.
     ///
     /// ```
-    /// use aerospike::exp::hll_exp::HLLExpression;
+    /// use aerospike::exp::HLLExpression;
     /// use aerospike::exp::Expression;
     ///
     /// // Intersect count of HLL bins "a" and "b"
@@ -223,7 +223,7 @@ impl HLLExpression {
     ///
     /// ```
     /// use aerospike::exp::Expression;
-    /// use aerospike::exp::hll_exp::HLLExpression;
+    /// use aerospike::exp::HLLExpression;
     /// // Similarity of HLL bins "a" and "b" >= 0.75
     /// Expression::ge(HLLExpression::get_similarity(Expression::hll_bin("a".to_string()), Expression::hll_bin("b".to_string())), Expression::float_val(0.75));
     /// ```
@@ -243,9 +243,9 @@ impl HLLExpression {
     ///
     /// ```
     /// use aerospike::exp::{Expression, ExpType};
-    /// use aerospike::exp::list_exp::ListExpression;
+    /// use aerospike::exp::ListExpression;
     /// use aerospike::operations::lists::ListReturnType;
-    /// use aerospike::exp::hll_exp::HLLExpression;
+    /// use aerospike::exp::HLLExpression;
     ///
     /// // Bin "a" `indexBitCount` < 10
     /// Expression::lt(ListExpression::get_by_index(ListReturnType::Values, ExpType::INT, Expression::int_val(0), HLLExpression::describe(Expression::hll_bin("a".to_string())), &[]), Expression::int_val(10));
@@ -265,7 +265,7 @@ impl HLLExpression {
     /// ```
     /// use aerospike::Value;
     /// use aerospike::exp::Expression;
-    /// use aerospike::exp::hll_exp::HLLExpression;
+    /// use aerospike::exp::HLLExpression;
     /// let list: Vec<Value> = vec![Value::from("x")];
     ///
     /// // Bin "a" may contain value "x"

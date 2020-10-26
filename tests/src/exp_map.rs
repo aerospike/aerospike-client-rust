@@ -1,8 +1,7 @@
 use crate::common;
 use env_logger;
 
-use aerospike::exp::map_exp::MapExpression;
-use aerospike::exp::{ExpType, Expression, FilterExpression};
+use aerospike::exp::{ExpType, Expression, FilterExpression, MapExpression};
 use aerospike::*;
 use std::collections::HashMap;
 use std::sync::Arc;
