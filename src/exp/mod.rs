@@ -290,561 +290,554 @@ impl FilterExpression {
     }
 }
 
-/// Basic Expression functions and single Bin interaction
-pub struct Expression {}
+/// Create a record key expression of specified type.
+/// ```
+/// use aerospike::exp::{ExpType, ge, int_val, key};
+/// // Integer record key >= 100000
+/// ge(key(ExpType::INT), int_val(10000));
+/// ```
+pub fn key(exp_type: ExpType) -> FilterExpression {
+    FilterExpression::new(
+        Some(ExpOp::Key),
+        Some(Value::from(exp_type as i64)),
+        None,
+        None,
+        None,
+        None,
+    )
+}
 
-impl Expression {
-    /// Create a record key expression of specified type.
-    /// ```
-    /// use aerospike::exp::{Expression, ExpType};
-    /// // Integer record key >= 100000
-    /// Expression::ge(Expression::key(ExpType::INT), Expression::int_val(10000));
-    /// ```
-    pub fn key(exp_type: ExpType) -> FilterExpression {
-        FilterExpression::new(
-            Some(ExpOp::Key),
-            Some(Value::from(exp_type as i64)),
-            None,
-            None,
-            None,
-            None,
-        )
-    }
+/// Create function that returns if the primary key is stored in the record meta data
+/// as a boolean expression. This would occur when `send_key` is true on record write.
+/// ```
+/// // Key exists in record meta data
+/// use aerospike::exp::key_exists;
+/// key_exists();
+/// ```
+pub fn key_exists() -> FilterExpression {
+    FilterExpression::new(Some(ExpOp::KeyExists), None, None, None, None, None)
+}
 
-    /// Create function that returns if the primary key is stored in the record meta data
-    /// as a boolean expression. This would occur when `send_key` is true on record write.
-    /// ```
-    /// use aerospike::exp::Expression;
-    /// // Key exists in record meta data
-    /// Expression::key_exists();
-    /// ```
-    pub fn key_exists() -> FilterExpression {
-        FilterExpression::new(Some(ExpOp::KeyExists), None, None, None, None, None)
-    }
+/// Create 64 bit int bin expression.
+/// ```
+/// // Integer bin "a" == 500
+/// use aerospike::exp::{int_bin, int_val, eq};
+/// eq(int_bin("a".to_string()), int_val(500));
+/// ```
+pub fn int_bin(name: String) -> FilterExpression {
+    FilterExpression::new(
+        Some(ExpOp::Bin),
+        Some(Value::from(name)),
+        None,
+        None,
+        Some(ExpType::INT),
+        None,
+    )
+}
 
-    /// Create 64 bit int bin expression.
-    /// ```
-    /// use aerospike::exp::Expression;
-    /// // Integer bin "a" == 500
-    /// Expression::eq(Expression::int_bin("a".to_string()), Expression::int_val(500));
-    /// ```
-    pub fn int_bin(name: String) -> FilterExpression {
-        FilterExpression::new(
-            Some(ExpOp::Bin),
-            Some(Value::from(name)),
-            None,
-            None,
-            Some(ExpType::INT),
-            None,
-        )
-    }
+/// Create string bin expression.
+/// ```
+/// // String bin "a" == "views"
+/// use aerospike::exp::{eq, string_bin, string_val};
+/// eq(string_bin("a".to_string()), string_val("views".to_string()));
+/// ```
+pub fn string_bin(name: String) -> FilterExpression {
+    FilterExpression::new(
+        Some(ExpOp::Bin),
+        Some(Value::from(name)),
+        None,
+        None,
+        Some(ExpType::STRING),
+        None,
+    )
+}
 
-    /// Create string bin expression.
-    /// ```
-    /// use aerospike::exp::Expression;
-    /// // String bin "a" == "views"
-    /// Expression::eq(Expression::string_bin("a".to_string()), Expression::string_val("views".to_string()));
-    /// ```
-    pub fn string_bin(name: String) -> FilterExpression {
-        FilterExpression::new(
-            Some(ExpOp::Bin),
-            Some(Value::from(name)),
-            None,
-            None,
-            Some(ExpType::STRING),
-            None,
-        )
-    }
+/// Create blob bin expression.
+/// ```
+/// // String bin "a" == [1,2,3]
+/// use aerospike::exp::{eq, blob_bin, blob_val};
+/// let blob: Vec<u8> = vec![1,2,3];
+/// eq(blob_bin("a".to_string()), blob_val(blob));
+/// ```
+pub fn blob_bin(name: String) -> FilterExpression {
+    FilterExpression::new(
+        Some(ExpOp::Bin),
+        Some(Value::from(name)),
+        None,
+        None,
+        Some(ExpType::BLOB),
+        None,
+    )
+}
 
-    /// Create blob bin expression.
-    /// ```
-    /// use aerospike::exp::Expression;
-    /// // String bin "a" == [1,2,3]
-    /// let blob: Vec<u8> = vec![1,2,3];
-    /// Expression::eq(Expression::blob_bin("a".to_string()), Expression::blob_val(blob));
-    /// ```
-    pub fn blob_bin(name: String) -> FilterExpression {
-        FilterExpression::new(
-            Some(ExpOp::Bin),
-            Some(Value::from(name)),
-            None,
-            None,
-            Some(ExpType::BLOB),
-            None,
-        )
-    }
+/// Create 64 bit float bin expression.
+/// ```
+/// use aerospike::exp::{float_val, float_bin, eq};
+/// // Integer bin "a" == 500.5
+/// eq(float_bin("a".to_string()), float_val(500.5));
+/// ```
+pub fn float_bin(name: String) -> FilterExpression {
+    FilterExpression::new(
+        Some(ExpOp::Bin),
+        Some(Value::from(name)),
+        None,
+        None,
+        Some(ExpType::FLOAT),
+        None,
+    )
+}
 
-    /// Create 64 bit float bin expression.
-    /// ```
-    /// use aerospike::exp::Expression;
-    /// // Integer bin "a" == 500.5
-    /// Expression::eq(Expression::float_bin("a".to_string()), Expression::float_val(500.5));
-    /// ```
-    pub fn float_bin(name: String) -> FilterExpression {
-        FilterExpression::new(
-            Some(ExpOp::Bin),
-            Some(Value::from(name)),
-            None,
-            None,
-            Some(ExpType::FLOAT),
-            None,
-        )
-    }
+/// Create geo bin expression.
+/// ```
+/// // String bin "a" == region
+/// use aerospike::exp::{eq, geo_bin, string_val};
+/// let region = "{ \"type\": \"AeroCircle\", \"coordinates\": [[-122.0, 37.5], 50000.0] }";
+/// eq(geo_bin("a".to_string()), string_val(region.to_string()));
+/// ```
+pub fn geo_bin(name: String) -> FilterExpression {
+    FilterExpression::new(
+        Some(ExpOp::Bin),
+        Some(Value::from(name)),
+        None,
+        None,
+        Some(ExpType::GEO),
+        None,
+    )
+}
 
-    /// Create geo bin expression.
-    /// ```
-    /// use aerospike::exp::Expression;
-    /// // String bin "a" == region
-    /// let region = "{ \"type\": \"AeroCircle\", \"coordinates\": [[-122.0, 37.5], 50000.0] }";
-    /// Expression::eq(Expression::geo_bin("a".to_string()), Expression::string_val(region.to_string()));
-    /// ```
-    pub fn geo_bin(name: String) -> FilterExpression {
-        FilterExpression::new(
-            Some(ExpOp::Bin),
-            Some(Value::from(name)),
-            None,
-            None,
-            Some(ExpType::GEO),
-            None,
-        )
-    }
+/// Create list bin expression.
+/// ```
+/// use aerospike::exp::{ExpType, eq, int_val, list_bin};
+/// use aerospike::operations::lists::ListReturnType;
+/// use aerospike::exp::list_exp::ListExpression;
+/// // String bin a[2] == 3
+/// eq(ListExpression::get_by_index(ListReturnType::Values, ExpType::INT, int_val(2), list_bin("a".to_string()), &[]), int_val(3));
+/// ```
+pub fn list_bin(name: String) -> FilterExpression {
+    FilterExpression::new(
+        Some(ExpOp::Bin),
+        Some(Value::from(name)),
+        None,
+        None,
+        Some(ExpType::LIST),
+        None,
+    )
+}
 
-    /// Create list bin expression.
-    /// ```
-    /// use aerospike::exp::{Expression, ExpType};
-    /// use aerospike::operations::lists::ListReturnType;
-    /// use aerospike::exp::list_exp::ListExpression;
-    /// // String bin a[2] == 3
-    /// Expression::eq(ListExpression::get_by_index(ListReturnType::Values, ExpType::INT, Expression::int_val(2), Expression::list_bin("a".to_string()), &[]), Expression::int_val(3));
-    /// ```
-    pub fn list_bin(name: String) -> FilterExpression {
-        FilterExpression::new(
-            Some(ExpOp::Bin),
-            Some(Value::from(name)),
-            None,
-            None,
-            Some(ExpType::LIST),
-            None,
-        )
-    }
+/// Create map bin expression.
+///
+/// ```
+/// // Bin a["key"] == "value"
+/// use aerospike::exp::{ExpType, string_val, map_bin};
+/// use aerospike::exp::map_exp::MapExpression;
+/// use aerospike::MapReturnType;
+/// Expression::eq(
+///     MapExpression::get_by_key(MapReturnType::Value, ExpType::STRING, string_val("key".to_string()), map_bin("a".to_string()), &[]),
+///     string_val("value".to_string()));
+/// ```
+pub fn map_bin(name: String) -> FilterExpression {
+    FilterExpression::new(
+        Some(ExpOp::Bin),
+        Some(Value::from(name)),
+        None,
+        None,
+        Some(ExpType::MAP),
+        None,
+    )
+}
 
-    /// Create map bin expression.
-    ///
-    /// ```
-    /// // Bin a["key"] == "value"
-    /// use aerospike::exp::{Expression, ExpType};
-    /// use aerospike::exp::map_exp::MapExpression;
-    /// use aerospike::MapReturnType;
-    /// Expression::eq(
-    ///     MapExpression::get_by_key(MapReturnType::Value, ExpType::STRING, Expression::string_val("key".to_string()), Expression::map_bin("a".to_string()), &[]),
-    ///     Expression::string_val("value".to_string()));
-    /// ```
-    pub fn map_bin(name: String) -> FilterExpression {
-        FilterExpression::new(
-            Some(ExpOp::Bin),
-            Some(Value::from(name)),
-            None,
-            None,
-            Some(ExpType::MAP),
-            None,
-        )
-    }
+/// Create a HLL bin expression
+///
+/// ```
+/// use aerospike::exp::{gt, list_val, hll_bin, int_val};
+/// use aerospike::exp::hll_exp::HLLExpression;
+/// use aerospike::operations::hll::HLLPolicy;
+/// use aerospike::Value;
+///
+/// // Add values to HLL bin "a" and check count > 7
+/// let list = vec![Value::from(1)];
+/// gt(HLLExpression::add(HLLPolicy::default(), list_val(list), hll_bin("a".to_string())), int_val(7));
+/// ```
+pub fn hll_bin(name: String) -> FilterExpression {
+    FilterExpression::new(
+        Some(ExpOp::Bin),
+        Some(Value::from(name)),
+        None,
+        None,
+        Some(ExpType::HLL),
+        None,
+    )
+}
 
-    /// Create a HLL bin expression
-    ///
-    /// ```
-    /// use aerospike::exp::Expression;
-    /// use aerospike::exp::hll_exp::HLLExpression;
-    /// use aerospike::operations::hll::HLLPolicy;
-    /// use aerospike::Value;
-    ///
-    /// // Add values to HLL bin "a" and check count > 7
-    /// let list = vec![Value::from(1)];
-    /// Expression::gt(HLLExpression::add(HLLPolicy::default(), Expression::list_val(list), Expression::hll_bin("a".to_string())), Expression::int_val(7));
-    /// ```
-    pub fn hll_bin(name: String) -> FilterExpression {
-        FilterExpression::new(
-            Some(ExpOp::Bin),
-            Some(Value::from(name)),
-            None,
-            None,
-            Some(ExpType::HLL),
-            None,
-        )
-    }
+/// Create function that returns if bin of specified name exists.
+/// ```
+/// // Bin "a" exists in record
+/// use aerospike::exp::bin_exists;
+/// bin_exists("a".to_string());
+/// ```
+pub fn bin_exists(name: String) -> FilterExpression {
+    ne(bin_type(name), int_val(ParticleType::NULL as i64))
+}
 
-    /// Create function that returns if bin of specified name exists.
-    /// ```
-    /// use aerospike::exp::Expression;
-    /// // Bin "a" exists in record
-    /// Expression::bin_exists("a".to_string());
-    /// ```
-    pub fn bin_exists(name: String) -> FilterExpression {
-        Expression::ne(
-            Expression::bin_type(name),
-            Expression::int_val(ParticleType::NULL as i64),
-        )
-    }
+/// Create function that returns bin's integer particle type.
+/// ```
+/// use aerospike::ParticleType;
+/// use aerospike::exp::{eq, bin_type, int_val};
+/// // Bin "a" particle type is a list
+/// eq(bin_type("a".to_string()), int_val(ParticleType::LIST as i64));
+/// ```
+pub fn bin_type(name: String) -> FilterExpression {
+    FilterExpression::new(
+        Some(ExpOp::BinType),
+        Some(Value::from(name)),
+        None,
+        None,
+        None,
+        None,
+    )
+}
 
-    /// Create function that returns bin's integer particle type.
-    /// ```
-    /// use aerospike::exp::Expression;
-    /// use aerospike::ParticleType;
-    /// // Bin "a" particle type is a list
-    /// Expression::eq(Expression::bin_type("a".to_string()), Expression::int_val(ParticleType::LIST as i64));
-    /// ```
-    pub fn bin_type(name: String) -> FilterExpression {
-        FilterExpression::new(
-            Some(ExpOp::BinType),
-            Some(Value::from(name)),
-            None,
-            None,
-            None,
-            None,
-        )
-    }
+/// Create function that returns record set name string.
+/// ```
+/// use aerospike::exp::{eq, set_name, string_val};
+/// // Record set name == "myset
+/// eq(set_name(), string_val("myset".to_string()));
+/// ```
+pub fn set_name() -> FilterExpression {
+    FilterExpression::new(Some(ExpOp::SetName), None, None, None, None, None)
+}
 
-    /// Create function that returns record set name string.
-    /// ```
-    /// use aerospike::exp::Expression;
-    /// // Record set name == "myset
-    /// Expression::eq(Expression::set_name(), Expression::string_val("myset".to_string()));
-    /// ```
-    pub fn set_name() -> FilterExpression {
-        FilterExpression::new(Some(ExpOp::SetName), None, None, None, None, None)
-    }
+/// Create function that returns record size on disk.
+/// If server storage-engine is memory, then zero is returned.
+/// ```
+/// use aerospike::exp::{ge, device_size, int_val};
+/// // Record device size >= 100 KB
+/// ge(device_size(), int_val(100*1024));
+/// ```
+pub fn device_size() -> FilterExpression {
+    FilterExpression::new(Some(ExpOp::DeviceSize), None, None, None, None, None)
+}
 
-    /// Create function that returns record size on disk.
-    /// If server storage-engine is memory, then zero is returned.
-    /// ```
-    /// use aerospike::exp::Expression;
-    /// // Record device size >= 100 KB
-    /// Expression::ge(Expression::device_size(), Expression::int_val(100*1024));
-    /// ```
-    pub fn device_size() -> FilterExpression {
-        FilterExpression::new(Some(ExpOp::DeviceSize), None, None, None, None, None)
-    }
+/// Create function that returns record last update time expressed as 64 bit integer
+/// nanoseconds since 1970-01-01 epoch.
+/// ```
+/// // Record last update time >=2020-08-01
+/// use aerospike::exp::{ge, last_update, float_val};
+/// ge(last_update(), float_val(1.5962E+18));
+/// ```
+pub fn last_update() -> FilterExpression {
+    FilterExpression::new(Some(ExpOp::LastUpdate), None, None, None, None, None)
+}
 
-    /// Create function that returns record last update time expressed as 64 bit integer
-    /// nanoseconds since 1970-01-01 epoch.
-    /// ```
-    /// use aerospike::exp::Expression;
-    /// // Record last update time >=2020-08-01
-    /// Expression::ge(Expression::last_update(), Expression::float_val(1.5962E+18));
-    /// ```
-    pub fn last_update() -> FilterExpression {
-        FilterExpression::new(Some(ExpOp::LastUpdate), None, None, None, None, None)
-    }
+/// Create expression that returns milliseconds since the record was last updated.
+/// This expression usually evaluates quickly because record meta data is cached in memory.
+///
+/// ```
+/// // Record last updated more than 2 hours ago
+/// use aerospike::exp::{gt, int_val, since_update};
+/// gt(since_update(), int_val(2 * 60 * 60 * 1000));
+/// ```
+pub fn since_update() -> FilterExpression {
+    FilterExpression::new(Some(ExpOp::SinceUpdate), None, None, None, None, None)
+}
 
-    /// Create expression that returns milliseconds since the record was last updated.
-    /// This expression usually evaluates quickly because record meta data is cached in memory.
-    ///
-    /// ```
-    /// // Record last updated more than 2 hours ago
-    /// use aerospike::exp::Expression;
-    /// Expression::gt(Expression::since_update(), Expression::int_val(2 * 60 * 60 * 1000));
-    /// ```
-    pub fn since_update() -> FilterExpression {
-        FilterExpression::new(Some(ExpOp::SinceUpdate), None, None, None, None, None)
-    }
+/// Create function that returns record expiration time expressed as 64 bit integer
+/// nanoseconds since 1970-01-01 epoch.
+/// ```
+/// // Expires on 2020-08-01
+/// use aerospike::exp::{and, ge, last_update, float_val, lt};
+/// and(vec![ge(last_update(), float_val(1.5962E+18)), lt(last_update(), float_val(1.5963E+18))]);
+/// ```
+pub fn void_time() -> FilterExpression {
+    FilterExpression::new(Some(ExpOp::VoidTime), None, None, None, None, None)
+}
 
-    /// Create function that returns record expiration time expressed as 64 bit integer
-    /// nanoseconds since 1970-01-01 epoch.
-    /// ```
-    /// use aerospike::exp::Expression;
-    /// // Expires on 2020-08-01
-    /// Expression::and(vec![Expression::ge(Expression::last_update(), Expression::float_val(1.5962E+18)), Expression::lt(Expression::last_update(), Expression::float_val(1.5963E+18))]);
-    /// ```
-    pub fn void_time() -> FilterExpression {
-        FilterExpression::new(Some(ExpOp::VoidTime), None, None, None, None, None)
-    }
+/// Create function that returns record expiration time (time to live) in integer seconds.
+/// ```
+/// // Record expires in less than 1 hour
+/// use aerospike::exp::{lt, ttl, int_val};
+/// lt(ttl(), int_val(60*60));
+/// ```
+pub fn ttl() -> FilterExpression {
+    FilterExpression::new(Some(ExpOp::TTL), None, None, None, None, None)
+}
 
-    /// Create function that returns record expiration time (time to live) in integer seconds.
-    /// ```
-    /// // Record expires in less than 1 hour
-    /// use aerospike::exp::Expression;
-    /// Expression::lt(Expression::ttl(), Expression::int_val(60*60));
-    /// ```
-    pub fn ttl() -> FilterExpression {
-        FilterExpression::new(Some(ExpOp::TTL), None, None, None, None, None)
-    }
+/// Create expression that returns if record has been deleted and is still in tombstone state.
+/// This expression usually evaluates quickly because record meta data is cached in memory.
+///
+/// ```
+/// // Deleted records that are in tombstone state.
+/// use aerospike::exp::{Expression, is_tombstone};
+/// is_tombstone();
+/// ```
+pub fn is_tombstone() -> FilterExpression {
+    FilterExpression::new(Some(ExpOp::IsTombstone), None, None, None, None, None)
+}
+/// Create function that returns record digest modulo as integer.
+/// ```
+/// // Records that have digest(key) % 3 == 1
+/// use aerospike::exp::{Expression, int_val, eq, digest_modulo};
+/// eq(digest_modulo(3), int_val(1));
+/// ```
+pub fn digest_modulo(modulo: i64) -> FilterExpression {
+    FilterExpression::new(
+        Some(ExpOp::DigestModulo),
+        Some(Value::from(modulo)),
+        None,
+        None,
+        None,
+        None,
+    )
+}
 
-    /// Create expression that returns if record has been deleted and is still in tombstone state.
-    /// This expression usually evaluates quickly because record meta data is cached in memory.
-    ///
-    /// ```
-    /// // Deleted records that are in tombstone state.
-    /// use aerospike::exp::Expression;
-    /// Expression::is_tombstone();
-    /// ```
-    pub fn is_tombstone() -> FilterExpression {
-        FilterExpression::new(Some(ExpOp::IsTombstone), None, None, None, None, None)
-    }
-    /// Create function that returns record digest modulo as integer.
-    /// ```
-    /// // Records that have digest(key) % 3 == 1
-    /// use aerospike::exp::Expression;
-    /// Expression::eq(Expression::digest_modulo(3), Expression::int_val(1));
-    /// ```
-    pub fn digest_modulo(modulo: i64) -> FilterExpression {
-        FilterExpression::new(
-            Some(ExpOp::DigestModulo),
-            Some(Value::from(modulo)),
-            None,
-            None,
-            None,
-            None,
-        )
-    }
+/// Create function like regular expression string operation.
+/// ```
+/// use aerospike::RegexFlag;
+/// use aerospike::exp::{regex_compare, string_bin};
+/// // Select string bin "a" that starts with "prefix" and ends with "suffix".
+/// // Ignore case and do not match newline.
+/// regex_compare("prefix.*suffix".to_string(), RegexFlag::ICASE as i64 | RegexFlag::NEWLINE as i64, string_bin("a".to_string()));
+/// ```
+pub fn regex_compare(regex: String, flags: i64, bin: FilterExpression) -> FilterExpression {
+    FilterExpression::new(
+        Some(ExpOp::Regex),
+        Some(Value::from(regex)),
+        Some(bin),
+        Some(flags),
+        None,
+        None,
+    )
+}
 
-    /// Create function like regular expression string operation.
-    /// ```
-    /// use aerospike::exp::Expression;
-    /// use aerospike::RegexFlag;
-    /// // Select string bin "a" that starts with "prefix" and ends with "suffix".
-    /// // Ignore case and do not match newline.
-    /// Expression::regex_compare("prefix.*suffix".to_string(), RegexFlag::ICASE as i64 | RegexFlag::NEWLINE as i64, Expression::string_bin("a".to_string()));
-    /// ```
-    pub fn regex_compare(regex: String, flags: i64, bin: FilterExpression) -> FilterExpression {
-        FilterExpression::new(
-            Some(ExpOp::Regex),
-            Some(Value::from(regex)),
-            Some(bin),
-            Some(flags),
-            None,
-            None,
-        )
-    }
+/// Create compare geospatial operation.
+/// ```
+/// use aerospike::exp::{Expression, geo_compare, geo_bin, geo_val};
+/// // Query region within coordinates.
+/// let region = "{\"type\": \"Polygon\", \"coordinates\": [ [[-122.500000, 37.000000],[-121.000000, 37.000000], [-121.000000, 38.080000],[-122.500000, 38.080000], [-122.500000, 37.000000]] ] }";
+/// geo_compare(geo_bin("a".to_string()), geo_val(region.to_string()));
+/// ```
+pub fn geo_compare(left: FilterExpression, right: FilterExpression) -> FilterExpression {
+    FilterExpression::new(
+        Some(ExpOp::Geo),
+        None,
+        None,
+        None,
+        None,
+        Some(vec![left, right]),
+    )
+}
 
-    /// Create compare geospatial operation.
-    /// ```
-    /// use aerospike::exp::Expression;
-    /// // Query region within coordinates.
-    /// let region = "{\"type\": \"Polygon\", \"coordinates\": [ [[-122.500000, 37.000000],[-121.000000, 37.000000], [-121.000000, 38.080000],[-122.500000, 38.080000], [-122.500000, 37.000000]] ] }";
-    /// Expression::geo_compare(Expression::geo_bin("a".to_string()), Expression::geo_val(region.to_string()));
-    /// ```
-    pub fn geo_compare(left: FilterExpression, right: FilterExpression) -> FilterExpression {
-        FilterExpression::new(
-            Some(ExpOp::Geo),
-            None,
-            None,
-            None,
-            None,
-            Some(vec![left, right]),
-        )
-    }
+/// Creates 64 bit integer value
+pub fn int_val(val: i64) -> FilterExpression {
+    FilterExpression::new(None, Some(Value::from(val)), None, None, None, None)
+}
 
-    /// Creates 64 bit integer value
-    pub fn int_val(val: i64) -> FilterExpression {
-        FilterExpression::new(None, Some(Value::from(val)), None, None, None, None)
-    }
+/// Creates a Boolean value
+pub fn bool_val(val: bool) -> FilterExpression {
+    FilterExpression::new(None, Some(Value::from(val)), None, None, None, None)
+}
 
-    /// Creates a Boolean value
-    pub fn bool_val(val: bool) -> FilterExpression {
-        FilterExpression::new(None, Some(Value::from(val)), None, None, None, None)
-    }
+/// Creates String bin value
+pub fn string_val(val: String) -> FilterExpression {
+    FilterExpression::new(None, Some(Value::from(val)), None, None, None, None)
+}
 
-    /// Creates String bin value
-    pub fn string_val(val: String) -> FilterExpression {
-        FilterExpression::new(None, Some(Value::from(val)), None, None, None, None)
-    }
+/// Creates 64 bit float bin value
+pub fn float_val(val: f64) -> FilterExpression {
+    FilterExpression::new(None, Some(Value::from(val)), None, None, None, None)
+}
 
-    /// Creates 64 bit float bin value
-    pub fn float_val(val: f64) -> FilterExpression {
-        FilterExpression::new(None, Some(Value::from(val)), None, None, None, None)
-    }
+/// Creates Blob bin value
+pub fn blob_val(val: Vec<u8>) -> FilterExpression {
+    FilterExpression::new(None, Some(Value::from(val)), None, None, None, None)
+}
 
-    /// Creates Blob bin value
-    pub fn blob_val(val: Vec<u8>) -> FilterExpression {
-        FilterExpression::new(None, Some(Value::from(val)), None, None, None, None)
-    }
+/// Create List bin Value
+pub fn list_val(val: Vec<Value>) -> FilterExpression {
+    FilterExpression::new(
+        Some(ExpOp::Quoted),
+        Some(Value::from(val)),
+        None,
+        None,
+        None,
+        None,
+    )
+}
 
-    /// Create List bin Value
-    pub fn list_val(val: Vec<Value>) -> FilterExpression {
-        FilterExpression::new(
-            Some(ExpOp::Quoted),
-            Some(Value::from(val)),
-            None,
-            None,
-            None,
-            None,
-        )
-    }
+/// Create Map bin Value
+pub fn map_val(val: HashMap<Value, Value>) -> FilterExpression {
+    FilterExpression::new(None, Some(Value::from(val)), None, None, None, None)
+}
 
-    /// Create Map bin Value
-    pub fn map_val(val: HashMap<Value, Value>) -> FilterExpression {
-        FilterExpression::new(None, Some(Value::from(val)), None, None, None, None)
-    }
+/// Create geospatial json string value.
+pub fn geo_val(val: String) -> FilterExpression {
+    FilterExpression::new(None, Some(Value::from(val)), None, None, None, None)
+}
 
-    /// Create geospatial json string value.
-    pub fn geo_val(val: String) -> FilterExpression {
-        FilterExpression::new(None, Some(Value::from(val)), None, None, None, None)
-    }
-
-    /// Create a Nil Value
-    pub fn nil() -> FilterExpression {
-        FilterExpression::new(None, Some(Value::Nil), None, None, None, None)
-    }
-    /// Create "not" operator expression.
-    /// ```
-    /// use aerospike::exp::Expression;
-    /// // ! (a == 0 || a == 10)
-    /// Expression::not(Expression::or(vec![Expression::eq(Expression::int_bin("a".to_string()), Expression::int_val(0)), Expression::eq(Expression::int_bin("a".to_string()), Expression::int_val(10))]));
-    /// ```
-    pub fn not(exp: FilterExpression) -> FilterExpression {
-        FilterExpression {
-            cmd: Some(ExpOp::Not),
-            val: None,
-            bin: None,
-            flags: None,
-            module: None,
-            exps: Some(vec![exp]),
-            arguments: None,
-        }
-    }
-
-    /// Create "and" (&&) operator that applies to a variable number of expressions.
-    /// ```
-    /// use aerospike::exp::Expression;
-    /// // (a > 5 || a == 0) && b < 3
-    /// Expression::and(vec![Expression::or(vec![Expression::gt(Expression::int_bin("a".to_string()), Expression::int_val(5)), Expression::eq(Expression::int_bin("a".to_string()), Expression::int_val(0))]), Expression::lt(Expression::int_bin("b".to_string()), Expression::int_val(3))]);
-    /// ```
-    pub fn and(exps: Vec<FilterExpression>) -> FilterExpression {
-        FilterExpression {
-            cmd: Some(ExpOp::And),
-            val: None,
-            bin: None,
-            flags: None,
-            module: None,
-            exps: Some(exps),
-            arguments: None,
-        }
-    }
-
-    /// Create "or" (||) operator that applies to a variable number of expressions.
-    /// ```
-    /// use aerospike::exp::Expression;
-    /// // a == 0 || b == 0
-    /// Expression::or(vec![Expression::eq(Expression::int_bin("a".to_string()), Expression::int_val(0)), Expression::eq(Expression::int_bin("b".to_string()), Expression::int_val(0))]);
-    /// ```
-    pub fn or(exps: Vec<FilterExpression>) -> FilterExpression {
-        FilterExpression {
-            cmd: Some(ExpOp::Or),
-            val: None,
-            bin: None,
-            flags: None,
-            module: None,
-            exps: Some(exps),
-            arguments: None,
-        }
-    }
-
-    /// Create equal (==) expression.
-    /// ```
-    /// use aerospike::exp::Expression;
-    /// // a == 11
-    /// Expression::eq(Expression::int_bin("a".to_string()), Expression::int_val(11));
-    /// ```
-    pub fn eq(left: FilterExpression, right: FilterExpression) -> FilterExpression {
-        FilterExpression {
-            cmd: Some(ExpOp::EQ),
-            val: None,
-            bin: None,
-            flags: None,
-            module: None,
-            exps: Some(vec![left, right]),
-            arguments: None,
-        }
-    }
-
-    /// Create not equal (!=) expression
-    /// ```
-    /// use aerospike::exp::Expression;
-    /// // a != 13
-    /// Expression::ne(Expression::int_bin("a".to_string()), Expression::int_val(13));
-    /// ```
-    pub fn ne(left: FilterExpression, right: FilterExpression) -> FilterExpression {
-        FilterExpression {
-            cmd: Some(ExpOp::NE),
-            val: None,
-            bin: None,
-            flags: None,
-            module: None,
-            exps: Some(vec![left, right]),
-            arguments: None,
-        }
-    }
-
-    /// Create greater than (>) operation.
-    /// ```
-    /// use aerospike::exp::Expression;
-    /// // a > 8
-    /// Expression::gt(Expression::int_bin("a".to_string()), Expression::int_val(8));
-    /// ```
-    pub fn gt(left: FilterExpression, right: FilterExpression) -> FilterExpression {
-        FilterExpression {
-            cmd: Some(ExpOp::GT),
-            val: None,
-            bin: None,
-            flags: None,
-            module: None,
-            exps: Some(vec![left, right]),
-            arguments: None,
-        }
-    }
-
-    /// Create greater than or equal (>=) operation.
-    /// ```
-    /// use aerospike::exp::Expression;
-    /// // a >= 88
-    /// Expression::ge(Expression::int_bin("a".to_string()), Expression::int_val(88));
-    /// ```
-    pub fn ge(left: FilterExpression, right: FilterExpression) -> FilterExpression {
-        FilterExpression {
-            cmd: Some(ExpOp::GE),
-            val: None,
-            bin: None,
-            flags: None,
-            module: None,
-            exps: Some(vec![left, right]),
-            arguments: None,
-        }
-    }
-
-    /// Create less than (<) operation.
-    /// ```
-    /// use aerospike::exp::Expression;
-    /// // a < 1000
-    /// Expression::lt(Expression::int_bin("a".to_string()), Expression::int_val(1000));
-    /// ```
-    pub fn lt(left: FilterExpression, right: FilterExpression) -> FilterExpression {
-        FilterExpression {
-            cmd: Some(ExpOp::LT),
-            val: None,
-            bin: None,
-            flags: None,
-            module: None,
-            exps: Some(vec![left, right]),
-            arguments: None,
-        }
-    }
-
-    /// Create less than or equals (<=) operation.
-    /// ```
-    /// use aerospike::exp::Expression;
-    /// // a <= 1
-    /// Expression::le(Expression::int_bin("a".to_string()), Expression::int_val(1));
-    /// ```
-    pub fn le(left: FilterExpression, right: FilterExpression) -> FilterExpression {
-        FilterExpression {
-            cmd: Some(ExpOp::LE),
-            val: None,
-            bin: None,
-            flags: None,
-            module: None,
-            exps: Some(vec![left, right]),
-            arguments: None,
-        }
+/// Create a Nil Value
+pub fn nil() -> FilterExpression {
+    FilterExpression::new(None, Some(Value::Nil), None, None, None, None)
+}
+/// Create "not" operator expression.
+/// ```
+/// // ! (a == 0 || a == 10)
+/// use aerospike::exp::{not, or, eq, int_bin, int_val};
+/// not(or(vec![eq(int_bin("a".to_string()), int_val(0)), eq(int_bin("a".to_string()), int_val(10))]));
+/// ```
+pub fn not(exp: FilterExpression) -> FilterExpression {
+    FilterExpression {
+        cmd: Some(ExpOp::Not),
+        val: None,
+        bin: None,
+        flags: None,
+        module: None,
+        exps: Some(vec![exp]),
+        arguments: None,
     }
 }
+
+/// Create "and" (&&) operator that applies to a variable number of expressions.
+/// ```
+/// // (a > 5 || a == 0) && b < 3
+/// use aerospike::exp::{and, or, gt, int_bin, int_val, eq, lt};
+/// and(vec![or(vec![gt(int_bin("a".to_string()), int_val(5)), eq(int_bin("a".to_string()), int_val(0))]), lt(int_bin("b".to_string()), int_val(3))]);
+/// ```
+pub fn and(exps: Vec<FilterExpression>) -> FilterExpression {
+    FilterExpression {
+        cmd: Some(ExpOp::And),
+        val: None,
+        bin: None,
+        flags: None,
+        module: None,
+        exps: Some(exps),
+        arguments: None,
+    }
+}
+
+/// Create "or" (||) operator that applies to a variable number of expressions.
+/// ```
+/// // a == 0 || b == 0
+/// use aerospike::exp::{or, eq, int_bin, int_val};
+/// or(vec![eq(int_bin("a".to_string()), int_val(0)), eq(int_bin("b".to_string()), int_val(0))]);
+/// ```
+pub fn or(exps: Vec<FilterExpression>) -> FilterExpression {
+    FilterExpression {
+        cmd: Some(ExpOp::Or),
+        val: None,
+        bin: None,
+        flags: None,
+        module: None,
+        exps: Some(exps),
+        arguments: None,
+    }
+}
+
+/// Create equal (==) expression.
+/// ```
+/// // a == 11
+/// use aerospike::exp::{eq, int_bin, int_val};
+/// eq(int_bin("a".to_string()), int_val(11));
+/// ```
+pub fn eq(left: FilterExpression, right: FilterExpression) -> FilterExpression {
+    FilterExpression {
+        cmd: Some(ExpOp::EQ),
+        val: None,
+        bin: None,
+        flags: None,
+        module: None,
+        exps: Some(vec![left, right]),
+        arguments: None,
+    }
+}
+
+/// Create not equal (!=) expression
+/// ```
+/// // a != 13
+/// use aerospike::exp::{ne, int_bin, int_val};
+/// ne(int_bin("a".to_string()), int_val(13));
+/// ```
+pub fn ne(left: FilterExpression, right: FilterExpression) -> FilterExpression {
+    FilterExpression {
+        cmd: Some(ExpOp::NE),
+        val: None,
+        bin: None,
+        flags: None,
+        module: None,
+        exps: Some(vec![left, right]),
+        arguments: None,
+    }
+}
+
+/// Create greater than (>) operation.
+/// ```
+/// // a > 8
+/// use aerospike::exp::{gt, int_bin, int_val};
+/// gt(int_bin("a".to_string()), int_val(8));
+/// ```
+pub fn gt(left: FilterExpression, right: FilterExpression) -> FilterExpression {
+    FilterExpression {
+        cmd: Some(ExpOp::GT),
+        val: None,
+        bin: None,
+        flags: None,
+        module: None,
+        exps: Some(vec![left, right]),
+        arguments: None,
+    }
+}
+
+/// Create greater than or equal (>=) operation.
+/// ```
+/// use aerospike::exp::{Expression, ge, int_bin, int_val};
+/// // a >= 88
+/// ge(int_bin("a".to_string()), int_val(88));
+/// ```
+pub fn ge(left: FilterExpression, right: FilterExpression) -> FilterExpression {
+    FilterExpression {
+        cmd: Some(ExpOp::GE),
+        val: None,
+        bin: None,
+        flags: None,
+        module: None,
+        exps: Some(vec![left, right]),
+        arguments: None,
+    }
+}
+
+/// Create less than (<) operation.
+/// ```
+/// // a < 1000
+/// use aerospike::exp::{lt, int_bin, int_val};
+/// lt(int_bin("a".to_string()), int_val(1000));
+/// ```
+pub fn lt(left: FilterExpression, right: FilterExpression) -> FilterExpression {
+    FilterExpression {
+        cmd: Some(ExpOp::LT),
+        val: None,
+        bin: None,
+        flags: None,
+        module: None,
+        exps: Some(vec![left, right]),
+        arguments: None,
+    }
+}
+
+/// Create less than or equals (<=) operation.
+/// ```
+/// use aerospike::exp::{le, int_bin, int_val};
+/// // a <= 1
+/// le(int_bin("a".to_string()), int_val(1));
+/// ```
+pub fn le(left: FilterExpression, right: FilterExpression) -> FilterExpression {
+    FilterExpression {
+        cmd: Some(ExpOp::LE),
+        val: None,
+        bin: None,
+        flags: None,
+        module: None,
+        exps: Some(vec![left, right]),
+        arguments: None,
+    }
+}
+
 // ----------------------------------------------
