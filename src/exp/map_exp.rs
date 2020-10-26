@@ -60,41 +60,6 @@ pub struct MapExpression {}
 #[doc(hidden)]
 const MODULE: i64 = 0;
 
-#[doc(hidden)]
-pub enum MapExpOp {
-    Put = 67,
-    PutItems = 68,
-    Replace = 69,
-    ReplaceItems = 70,
-    Increment = 73,
-    Clear = 75,
-    RemoveByKey = 76,
-    RemoveByIndex = 77,
-    RemoveByRank = 79,
-    RemoveByKeyList = 81,
-    RemoveByValue = 82,
-    RemoveByValueList = 83,
-    RemoveByKeyRange = 84,
-    RemoveByIndexRange = 85,
-    RemoveByValueRange = 86,
-    RemoveByRankRange = 87,
-    RemoveByKeyRelIndexRange = 88,
-    RemoveByValueRelRankRange = 89,
-    Size = 96,
-    GetByKey = 97,
-    GetByIndex = 98,
-    GetByRank = 100,
-    GetByValue = 102, // GET_ALL_BY_VALUE on server.
-    GetByKeyRange = 103,
-    GetByIndexRange = 104,
-    GetByValueRange = 105,
-    GetByRankRange = 106,
-    GetByKeyList = 107,
-    GetByValueList = 108,
-    GetByKeyRelIndexRange = 109,
-    GetByValueRelRankRange = 110,
-}
-
 impl MapExpression {
     /// Create expression that writes key/value item to map bin.
     pub fn put(
@@ -105,18 +70,18 @@ impl MapExpression {
         ctx: &[CdtContext],
     ) -> FilterExpression {
         let args: Vec<ExpressionArgument>;
-        let pol = MapExpression::get_policy_value(policy.write_mode, false);
-        if pol == CdtMapOpType::Replace as u8 {
+        let op = MapExpression::get_op_for_write_mode(policy.write_mode, false);
+        if op as u8 == CdtMapOpType::Replace as u8 {
             args = vec![
                 ExpressionArgument::Context(ctx.to_vec()),
-                ExpressionArgument::Value(Value::from(pol)),
+                ExpressionArgument::Value(Value::from(op as u8)),
                 ExpressionArgument::FilterExpression(key),
                 ExpressionArgument::FilterExpression(value),
             ]
         } else {
             args = vec![
                 ExpressionArgument::Context(ctx.to_vec()),
-                ExpressionArgument::Value(Value::from(pol)),
+                ExpressionArgument::Value(Value::from(op as u8)),
                 ExpressionArgument::FilterExpression(key),
                 ExpressionArgument::FilterExpression(value),
                 ExpressionArgument::Value(Value::from(policy.order as u8)),
@@ -133,17 +98,17 @@ impl MapExpression {
         ctx: &[CdtContext],
     ) -> FilterExpression {
         let args: Vec<ExpressionArgument>;
-        let pol = MapExpression::get_policy_value(policy.write_mode, true);
-        if pol == CdtMapOpType::Replace as u8 {
+        let op = MapExpression::get_op_for_write_mode(policy.write_mode, true);
+        if op as u8 == CdtMapOpType::Replace as u8 {
             args = vec![
                 ExpressionArgument::Context(ctx.to_vec()),
-                ExpressionArgument::Value(Value::from(pol)),
+                ExpressionArgument::Value(Value::from(op as u8)),
                 ExpressionArgument::FilterExpression(map),
             ]
         } else {
             args = vec![
                 ExpressionArgument::Context(ctx.to_vec()),
-                ExpressionArgument::Value(Value::from(pol)),
+                ExpressionArgument::Value(Value::from(op as u8)),
                 ExpressionArgument::FilterExpression(map),
                 ExpressionArgument::Value(Value::from(policy.order as u8)),
             ]
@@ -161,7 +126,7 @@ impl MapExpression {
         ctx: &[CdtContext],
     ) -> FilterExpression {
         let args = vec![
-            ExpressionArgument::Value(Value::from(MapExpOp::Increment as u8)),
+            ExpressionArgument::Value(Value::from(CdtMapOpType::Increment as u8)),
             ExpressionArgument::FilterExpression(key),
             ExpressionArgument::FilterExpression(incr),
             ExpressionArgument::Context(ctx.to_vec()),
@@ -173,7 +138,7 @@ impl MapExpression {
     /// Create expression that removes all items in map.
     pub fn clear(bin: FilterExpression, ctx: &[CdtContext]) -> FilterExpression {
         let args = vec![
-            ExpressionArgument::Value(Value::from(MapExpOp::Clear as u8)),
+            ExpressionArgument::Value(Value::from(CdtMapOpType::Clear as u8)),
             ExpressionArgument::Context(ctx.to_vec()),
         ];
         MapExpression::add_write(bin, ctx, args)
@@ -186,7 +151,7 @@ impl MapExpression {
         ctx: &[CdtContext],
     ) -> FilterExpression {
         let args = vec![
-            ExpressionArgument::Value(Value::from(MapExpOp::RemoveByKey as u8)),
+            ExpressionArgument::Value(Value::from(CdtMapOpType::RemoveByKey as u8)),
             ExpressionArgument::Value(Value::from(MapReturnType::None as u8)),
             ExpressionArgument::FilterExpression(key),
             ExpressionArgument::Context(ctx.to_vec()),
@@ -201,7 +166,7 @@ impl MapExpression {
         ctx: &[CdtContext],
     ) -> FilterExpression {
         let args = vec![
-            ExpressionArgument::Value(Value::from(MapExpOp::RemoveByKeyList as u8)),
+            ExpressionArgument::Value(Value::from(CdtMapOpType::RemoveKeyList as u8)),
             ExpressionArgument::Value(Value::from(MapReturnType::None as u8)),
             ExpressionArgument::FilterExpression(keys),
             ExpressionArgument::Context(ctx.to_vec()),
@@ -220,7 +185,7 @@ impl MapExpression {
     ) -> FilterExpression {
         let mut args = vec![
             ExpressionArgument::Context(ctx.to_vec()),
-            ExpressionArgument::Value(Value::from(MapExpOp::RemoveByKeyRange as u8)),
+            ExpressionArgument::Value(Value::from(CdtMapOpType::RemoveByKeyInterval as u8)),
             ExpressionArgument::Value(Value::from(MapReturnType::None as u8)),
         ];
         if let Some(val_beg) = key_begin {
@@ -251,7 +216,7 @@ impl MapExpression {
         ctx: &[CdtContext],
     ) -> FilterExpression {
         let args = vec![
-            ExpressionArgument::Value(Value::from(MapExpOp::RemoveByKeyRelIndexRange as u8)),
+            ExpressionArgument::Value(Value::from(CdtMapOpType::RemoveByKeyRelIndexRange as u8)),
             ExpressionArgument::Value(Value::from(MapReturnType::None as u8)),
             ExpressionArgument::FilterExpression(key),
             ExpressionArgument::FilterExpression(index),
@@ -278,7 +243,7 @@ impl MapExpression {
         ctx: &[CdtContext],
     ) -> FilterExpression {
         let args = vec![
-            ExpressionArgument::Value(Value::from(MapExpOp::RemoveByKeyRelIndexRange as u8)),
+            ExpressionArgument::Value(Value::from(CdtMapOpType::RemoveByKeyRelIndexRange as u8)),
             ExpressionArgument::Value(Value::from(MapReturnType::None as u8)),
             ExpressionArgument::FilterExpression(key),
             ExpressionArgument::FilterExpression(index),
@@ -295,7 +260,7 @@ impl MapExpression {
         ctx: &[CdtContext],
     ) -> FilterExpression {
         let args = vec![
-            ExpressionArgument::Value(Value::from(MapExpOp::RemoveByValue as u8)),
+            ExpressionArgument::Value(Value::from(CdtMapOpType::RemoveByValue as u8)),
             ExpressionArgument::Value(Value::from(MapReturnType::None as u8)),
             ExpressionArgument::FilterExpression(value),
             ExpressionArgument::Context(ctx.to_vec()),
@@ -310,7 +275,7 @@ impl MapExpression {
         ctx: &[CdtContext],
     ) -> FilterExpression {
         let args = vec![
-            ExpressionArgument::Value(Value::from(MapExpOp::RemoveByValueList as u8)),
+            ExpressionArgument::Value(Value::from(CdtMapOpType::RemoveValueList as u8)),
             ExpressionArgument::Value(Value::from(MapReturnType::None as u8)),
             ExpressionArgument::FilterExpression(values),
             ExpressionArgument::Context(ctx.to_vec()),
@@ -329,7 +294,7 @@ impl MapExpression {
     ) -> FilterExpression {
         let mut args = vec![
             ExpressionArgument::Context(ctx.to_vec()),
-            ExpressionArgument::Value(Value::from(MapExpOp::RemoveByValueRange as u8)),
+            ExpressionArgument::Value(Value::from(CdtMapOpType::RemoveByValueInterval as u8)),
             ExpressionArgument::Value(Value::from(MapReturnType::None as u8)),
         ];
         if let Some(val_beg) = value_begin {
@@ -357,7 +322,7 @@ impl MapExpression {
         ctx: &[CdtContext],
     ) -> FilterExpression {
         let args = vec![
-            ExpressionArgument::Value(Value::from(MapExpOp::RemoveByValueRelRankRange as u8)),
+            ExpressionArgument::Value(Value::from(CdtMapOpType::RemoveByValueRelRankRange as u8)),
             ExpressionArgument::Value(Value::from(MapReturnType::None as u8)),
             ExpressionArgument::FilterExpression(value),
             ExpressionArgument::FilterExpression(rank),
@@ -381,7 +346,7 @@ impl MapExpression {
         ctx: &[CdtContext],
     ) -> FilterExpression {
         let args = vec![
-            ExpressionArgument::Value(Value::from(MapExpOp::RemoveByValueRelRankRange as u8)),
+            ExpressionArgument::Value(Value::from(CdtMapOpType::RemoveByValueRelRankRange as u8)),
             ExpressionArgument::Value(Value::from(MapReturnType::None as u8)),
             ExpressionArgument::FilterExpression(value),
             ExpressionArgument::FilterExpression(rank),
@@ -398,7 +363,7 @@ impl MapExpression {
         ctx: &[CdtContext],
     ) -> FilterExpression {
         let args = vec![
-            ExpressionArgument::Value(Value::from(MapExpOp::RemoveByIndex as u8)),
+            ExpressionArgument::Value(Value::from(CdtMapOpType::RemoveByIndex as u8)),
             ExpressionArgument::Value(Value::from(MapReturnType::None as u8)),
             ExpressionArgument::FilterExpression(index),
             ExpressionArgument::Context(ctx.to_vec()),
@@ -413,7 +378,7 @@ impl MapExpression {
         ctx: &[CdtContext],
     ) -> FilterExpression {
         let args = vec![
-            ExpressionArgument::Value(Value::from(MapExpOp::RemoveByIndexRange as u8)),
+            ExpressionArgument::Value(Value::from(CdtMapOpType::RemoveByIndexRange as u8)),
             ExpressionArgument::Value(Value::from(MapReturnType::None as u8)),
             ExpressionArgument::FilterExpression(index),
             ExpressionArgument::Context(ctx.to_vec()),
@@ -429,7 +394,7 @@ impl MapExpression {
         ctx: &[CdtContext],
     ) -> FilterExpression {
         let args = vec![
-            ExpressionArgument::Value(Value::from(MapExpOp::RemoveByIndexRange as u8)),
+            ExpressionArgument::Value(Value::from(CdtMapOpType::RemoveByIndexRange as u8)),
             ExpressionArgument::Value(Value::from(MapReturnType::None as u8)),
             ExpressionArgument::FilterExpression(index),
             ExpressionArgument::FilterExpression(count),
@@ -445,7 +410,7 @@ impl MapExpression {
         ctx: &[CdtContext],
     ) -> FilterExpression {
         let args = vec![
-            ExpressionArgument::Value(Value::from(MapExpOp::RemoveByRank as u8)),
+            ExpressionArgument::Value(Value::from(CdtMapOpType::RemoveByRank as u8)),
             ExpressionArgument::Value(Value::from(MapReturnType::None as u8)),
             ExpressionArgument::FilterExpression(rank),
             ExpressionArgument::Context(ctx.to_vec()),
@@ -460,7 +425,7 @@ impl MapExpression {
         ctx: &[CdtContext],
     ) -> FilterExpression {
         let args = vec![
-            ExpressionArgument::Value(Value::from(MapExpOp::RemoveByRankRange as u8)),
+            ExpressionArgument::Value(Value::from(CdtMapOpType::RemoveByRankRange as u8)),
             ExpressionArgument::Value(Value::from(MapReturnType::None as u8)),
             ExpressionArgument::FilterExpression(rank),
             ExpressionArgument::Context(ctx.to_vec()),
@@ -476,7 +441,7 @@ impl MapExpression {
         ctx: &[CdtContext],
     ) -> FilterExpression {
         let args = vec![
-            ExpressionArgument::Value(Value::from(MapExpOp::RemoveByRankRange as u8)),
+            ExpressionArgument::Value(Value::from(CdtMapOpType::RemoveByRankRange as u8)),
             ExpressionArgument::Value(Value::from(MapReturnType::None as u8)),
             ExpressionArgument::FilterExpression(rank),
             ExpressionArgument::FilterExpression(count),
@@ -497,7 +462,7 @@ impl MapExpression {
     /// ```
     pub fn size(bin: FilterExpression, ctx: &[CdtContext]) -> FilterExpression {
         let args = vec![
-            ExpressionArgument::Value(Value::from(MapExpOp::Size as u8)),
+            ExpressionArgument::Value(Value::from(CdtMapOpType::Size as u8)),
             ExpressionArgument::Context(ctx.to_vec()),
         ];
         MapExpression::add_read(bin, ExpType::INT, args)
@@ -522,7 +487,7 @@ impl MapExpression {
         ctx: &[CdtContext],
     ) -> FilterExpression {
         let args = vec![
-            ExpressionArgument::Value(Value::from(MapExpOp::GetByKey as u8)),
+            ExpressionArgument::Value(Value::from(CdtMapOpType::GetByKey as u8)),
             ExpressionArgument::Value(Value::from(return_type as u8)),
             ExpressionArgument::FilterExpression(key),
             ExpressionArgument::Context(ctx.to_vec()),
@@ -543,7 +508,7 @@ impl MapExpression {
     ) -> FilterExpression {
         let mut args = vec![
             ExpressionArgument::Context(ctx.to_vec()),
-            ExpressionArgument::Value(Value::from(MapExpOp::GetByKeyRange as u8)),
+            ExpressionArgument::Value(Value::from(CdtMapOpType::GetByKeyInterval as u8)),
             ExpressionArgument::Value(Value::from(return_type as u8)),
         ];
         if let Some(val_beg) = key_begin {
@@ -565,7 +530,7 @@ impl MapExpression {
         ctx: &[CdtContext],
     ) -> FilterExpression {
         let args = vec![
-            ExpressionArgument::Value(Value::from(MapExpOp::GetByKeyList as u8)),
+            ExpressionArgument::Value(Value::from(CdtMapOpType::GetByKeyList as u8)),
             ExpressionArgument::Value(Value::from(return_type as u8)),
             ExpressionArgument::FilterExpression(keys),
             ExpressionArgument::Context(ctx.to_vec()),
@@ -592,7 +557,7 @@ impl MapExpression {
         ctx: &[CdtContext],
     ) -> FilterExpression {
         let args = vec![
-            ExpressionArgument::Value(Value::from(MapExpOp::GetByKeyRelIndexRange as u8)),
+            ExpressionArgument::Value(Value::from(CdtMapOpType::GetByKeyRelIndexRange as u8)),
             ExpressionArgument::Value(Value::from(return_type as u8)),
             ExpressionArgument::FilterExpression(key),
             ExpressionArgument::FilterExpression(index),
@@ -621,7 +586,7 @@ impl MapExpression {
         ctx: &[CdtContext],
     ) -> FilterExpression {
         let args = vec![
-            ExpressionArgument::Value(Value::from(MapExpOp::GetByKeyRelIndexRange as u8)),
+            ExpressionArgument::Value(Value::from(CdtMapOpType::GetByKeyRelIndexRange as u8)),
             ExpressionArgument::Value(Value::from(return_type as u8)),
             ExpressionArgument::FilterExpression(key),
             ExpressionArgument::FilterExpression(index),
@@ -648,7 +613,7 @@ impl MapExpression {
         ctx: &[CdtContext],
     ) -> FilterExpression {
         let args = vec![
-            ExpressionArgument::Value(Value::from(MapExpOp::GetByValue as u8)),
+            ExpressionArgument::Value(Value::from(CdtMapOpType::GetByValue as u8)),
             ExpressionArgument::Value(Value::from(return_type as u8)),
             ExpressionArgument::FilterExpression(value),
             ExpressionArgument::Context(ctx.to_vec()),
@@ -670,7 +635,7 @@ impl MapExpression {
     ) -> FilterExpression {
         let mut args = vec![
             ExpressionArgument::Context(ctx.to_vec()),
-            ExpressionArgument::Value(Value::from(MapExpOp::GetByValueRange as u8)),
+            ExpressionArgument::Value(Value::from(CdtMapOpType::GetByValueInterval as u8)),
             ExpressionArgument::Value(Value::from(return_type as u8)),
         ];
         if let Some(val_beg) = value_begin {
@@ -692,7 +657,7 @@ impl MapExpression {
         ctx: &[CdtContext],
     ) -> FilterExpression {
         let args = vec![
-            ExpressionArgument::Value(Value::from(MapExpOp::GetByValueList as u8)),
+            ExpressionArgument::Value(Value::from(CdtMapOpType::GetByValueList as u8)),
             ExpressionArgument::Value(Value::from(return_type as u8)),
             ExpressionArgument::FilterExpression(values),
             ExpressionArgument::Context(ctx.to_vec()),
@@ -716,7 +681,7 @@ impl MapExpression {
         ctx: &[CdtContext],
     ) -> FilterExpression {
         let args = vec![
-            ExpressionArgument::Value(Value::from(MapExpOp::GetByValueRelRankRange as u8)),
+            ExpressionArgument::Value(Value::from(CdtMapOpType::GetByValueRelRankRange as u8)),
             ExpressionArgument::Value(Value::from(return_type as u8)),
             ExpressionArgument::FilterExpression(value),
             ExpressionArgument::FilterExpression(rank),
@@ -742,7 +707,7 @@ impl MapExpression {
         ctx: &[CdtContext],
     ) -> FilterExpression {
         let args = vec![
-            ExpressionArgument::Value(Value::from(MapExpOp::GetByValueRelRankRange as u8)),
+            ExpressionArgument::Value(Value::from(CdtMapOpType::GetByValueRelRankRange as u8)),
             ExpressionArgument::Value(Value::from(return_type as u8)),
             ExpressionArgument::FilterExpression(value),
             ExpressionArgument::FilterExpression(rank),
@@ -761,7 +726,7 @@ impl MapExpression {
         ctx: &[CdtContext],
     ) -> FilterExpression {
         let args = vec![
-            ExpressionArgument::Value(Value::from(MapExpOp::GetByIndex as u8)),
+            ExpressionArgument::Value(Value::from(CdtMapOpType::GetByIndex as u8)),
             ExpressionArgument::Value(Value::from(return_type as u8)),
             ExpressionArgument::FilterExpression(index),
             ExpressionArgument::Context(ctx.to_vec()),
@@ -778,7 +743,7 @@ impl MapExpression {
         ctx: &[CdtContext],
     ) -> FilterExpression {
         let args = vec![
-            ExpressionArgument::Value(Value::from(MapExpOp::GetByIndexRange as u8)),
+            ExpressionArgument::Value(Value::from(CdtMapOpType::GetByIndexRange as u8)),
             ExpressionArgument::Value(Value::from(return_type as u8)),
             ExpressionArgument::FilterExpression(index),
             ExpressionArgument::Context(ctx.to_vec()),
@@ -796,7 +761,7 @@ impl MapExpression {
         ctx: &[CdtContext],
     ) -> FilterExpression {
         let args = vec![
-            ExpressionArgument::Value(Value::from(MapExpOp::GetByIndexRange as u8)),
+            ExpressionArgument::Value(Value::from(CdtMapOpType::GetByIndexRange as u8)),
             ExpressionArgument::Value(Value::from(return_type as u8)),
             ExpressionArgument::FilterExpression(index),
             ExpressionArgument::FilterExpression(count),
@@ -814,7 +779,7 @@ impl MapExpression {
         ctx: &[CdtContext],
     ) -> FilterExpression {
         let args = vec![
-            ExpressionArgument::Value(Value::from(MapExpOp::GetByRank as u8)),
+            ExpressionArgument::Value(Value::from(CdtMapOpType::GetByRank as u8)),
             ExpressionArgument::Value(Value::from(return_type as u8)),
             ExpressionArgument::FilterExpression(rank),
             ExpressionArgument::Context(ctx.to_vec()),
@@ -831,7 +796,7 @@ impl MapExpression {
         ctx: &[CdtContext],
     ) -> FilterExpression {
         let args = vec![
-            ExpressionArgument::Value(Value::from(MapExpOp::GetByRankRange as u8)),
+            ExpressionArgument::Value(Value::from(CdtMapOpType::GetByRankRange as u8)),
             ExpressionArgument::Value(Value::from(return_type as u8)),
             ExpressionArgument::FilterExpression(rank),
             ExpressionArgument::Context(ctx.to_vec()),
@@ -849,7 +814,7 @@ impl MapExpression {
         ctx: &[CdtContext],
     ) -> FilterExpression {
         let args = vec![
-            ExpressionArgument::Value(Value::from(MapExpOp::GetByRankRange as u8)),
+            ExpressionArgument::Value(Value::from(CdtMapOpType::GetByRankRange as u8)),
             ExpressionArgument::Value(Value::from(return_type as u8)),
             ExpressionArgument::FilterExpression(rank),
             ExpressionArgument::FilterExpression(count),
@@ -914,27 +879,27 @@ impl MapExpression {
     }
 
     #[doc(hidden)]
-    fn get_policy_value(write_policy: MapWriteMode, multi: bool) -> u8 {
-        match write_policy {
+    fn get_op_for_write_mode(write_mode: MapWriteMode, multi: bool) -> CdtMapOpType {
+        match write_mode {
             MapWriteMode::Update => {
                 if multi {
-                    CdtMapOpType::PutItems as u8
+                    CdtMapOpType::PutItems
                 } else {
-                    CdtMapOpType::Put as u8
+                    CdtMapOpType::Put
                 }
             }
             MapWriteMode::UpdateOnly => {
                 if multi {
-                    CdtMapOpType::ReplaceItems as u8
+                    CdtMapOpType::ReplaceItems
                 } else {
-                    CdtMapOpType::Replace as u8
+                    CdtMapOpType::Replace
                 }
             }
             MapWriteMode::CreateOnly => {
                 if multi {
-                    CdtMapOpType::AddItems as u8
+                    CdtMapOpType::AddItems
                 } else {
-                    CdtMapOpType::Add as u8
+                    CdtMapOpType::Add
                 }
             }
         }

@@ -17,7 +17,7 @@
 
 use crate::exp::{ExpOp, ExpType, Expression, ExpressionArgument, FilterExpression, MODIFY};
 use crate::operations::cdt_context::{CdtContext, CtxType};
-use crate::operations::lists::{ListPolicy, ListReturnType, ListSortFlags};
+use crate::operations::lists::{CdtListOpType, ListPolicy, ListReturnType, ListSortFlags};
 use crate::Value;
 
 /// List expression generator.
@@ -48,34 +48,6 @@ pub struct ListExpression {}
 
 const MODULE: i64 = 0;
 
-#[doc(hidden)]
-pub enum ListExpOp {
-    Append = 1,
-    AppendItems = 2,
-    Insert = 3,
-    InsertItems = 4,
-    Set = 9,
-    Clear = 11,
-    Increment = 12,
-    Sort = 13,
-    Size = 16,
-    GetByIndex = 19,
-    GetByRank = 21,
-    GetByValue = 22, // GET_ALL_BY_VALUE on server.
-    GetByValueList = 23,
-    GetByIndexRange = 24,
-    GetByValueRange = 25,
-    GetByRankRange = 26,
-    GetByValueRelRankRange = 27,
-    RemoveByIndex = 32,
-    RemoveByRank = 34,
-    RemoveByValue = 35,
-    RemoveByValueList = 36,
-    RemoveByIndexRange = 37,
-    RemoveByValueRange = 38,
-    RemoveByRankRange = 39,
-    RemoveByValueRelRankRange = 40,
-}
 impl ListExpression {
     /// Create expression that appends value to end of list.
     pub fn append(
@@ -85,7 +57,7 @@ impl ListExpression {
         ctx: &[CdtContext],
     ) -> FilterExpression {
         let args = vec![
-            ExpressionArgument::Value(Value::from(ListExpOp::Append as i64)),
+            ExpressionArgument::Value(Value::from(CdtListOpType::Append as i64)),
             ExpressionArgument::FilterExpression(value),
             ExpressionArgument::Value(Value::from(policy.attributes as u8)),
             ExpressionArgument::Value(Value::from(policy.flags as u8)),
@@ -102,7 +74,7 @@ impl ListExpression {
         ctx: &[CdtContext],
     ) -> FilterExpression {
         let args = vec![
-            ExpressionArgument::Value(Value::from(ListExpOp::AppendItems as i64)),
+            ExpressionArgument::Value(Value::from(CdtListOpType::AppendItems as i64)),
             ExpressionArgument::FilterExpression(list),
             ExpressionArgument::Value(Value::from(policy.attributes as u8)),
             ExpressionArgument::Value(Value::from(policy.flags as u8)),
@@ -120,7 +92,7 @@ impl ListExpression {
         ctx: &[CdtContext],
     ) -> FilterExpression {
         let args = vec![
-            ExpressionArgument::Value(Value::from(ListExpOp::Insert as i64)),
+            ExpressionArgument::Value(Value::from(CdtListOpType::Insert as i64)),
             ExpressionArgument::FilterExpression(index),
             ExpressionArgument::FilterExpression(value),
             ExpressionArgument::Value(Value::from(policy.flags as u8)),
@@ -138,7 +110,7 @@ impl ListExpression {
         ctx: &[CdtContext],
     ) -> FilterExpression {
         let args = vec![
-            ExpressionArgument::Value(Value::from(ListExpOp::InsertItems as i64)),
+            ExpressionArgument::Value(Value::from(CdtListOpType::InsertItems as i64)),
             ExpressionArgument::FilterExpression(index),
             ExpressionArgument::FilterExpression(list),
             ExpressionArgument::Value(Value::from(policy.flags as u8)),
@@ -157,7 +129,7 @@ impl ListExpression {
         ctx: &[CdtContext],
     ) -> FilterExpression {
         let args = vec![
-            ExpressionArgument::Value(Value::from(ListExpOp::Increment as i64)),
+            ExpressionArgument::Value(Value::from(CdtListOpType::Increment as i64)),
             ExpressionArgument::FilterExpression(index),
             ExpressionArgument::FilterExpression(value),
             ExpressionArgument::Value(Value::from(policy.attributes as u8)),
@@ -176,7 +148,7 @@ impl ListExpression {
         ctx: &[CdtContext],
     ) -> FilterExpression {
         let args = vec![
-            ExpressionArgument::Value(Value::from(ListExpOp::Set as i64)),
+            ExpressionArgument::Value(Value::from(CdtListOpType::Set as i64)),
             ExpressionArgument::FilterExpression(index),
             ExpressionArgument::FilterExpression(value),
             ExpressionArgument::Value(Value::from(policy.flags as u8)),
@@ -188,7 +160,7 @@ impl ListExpression {
     /// Create expression that removes all items in list.
     pub fn clear(bin: FilterExpression, ctx: &[CdtContext]) -> FilterExpression {
         let args = vec![
-            ExpressionArgument::Value(Value::from(ListExpOp::Clear as i64)),
+            ExpressionArgument::Value(Value::from(CdtListOpType::Clear as i64)),
             ExpressionArgument::Context(ctx.to_vec()),
         ];
         ListExpression::add_write(bin, ctx, args)
@@ -201,7 +173,7 @@ impl ListExpression {
         ctx: &[CdtContext],
     ) -> FilterExpression {
         let args = vec![
-            ExpressionArgument::Value(Value::from(ListExpOp::Sort as i64)),
+            ExpressionArgument::Value(Value::from(CdtListOpType::Sort as i64)),
             ExpressionArgument::Value(Value::from(sort_flags as u8)),
             ExpressionArgument::Context(ctx.to_vec()),
         ];
@@ -215,7 +187,7 @@ impl ListExpression {
         ctx: &[CdtContext],
     ) -> FilterExpression {
         let args = vec![
-            ExpressionArgument::Value(Value::from(ListExpOp::RemoveByValue as i64)),
+            ExpressionArgument::Value(Value::from(CdtListOpType::RemoveByValue as i64)),
             ExpressionArgument::Value(Value::from(ListReturnType::None as u8)),
             ExpressionArgument::FilterExpression(value),
             ExpressionArgument::Context(ctx.to_vec()),
@@ -230,7 +202,7 @@ impl ListExpression {
         ctx: &[CdtContext],
     ) -> FilterExpression {
         let args = vec![
-            ExpressionArgument::Value(Value::from(ListExpOp::RemoveByValueList as i64)),
+            ExpressionArgument::Value(Value::from(CdtListOpType::RemoveByValueList as i64)),
             ExpressionArgument::Value(Value::from(ListReturnType::None as u8)),
             ExpressionArgument::FilterExpression(values),
             ExpressionArgument::Context(ctx.to_vec()),
@@ -249,7 +221,7 @@ impl ListExpression {
     ) -> FilterExpression {
         let mut args = vec![
             ExpressionArgument::Context(ctx.to_vec()),
-            ExpressionArgument::Value(Value::from(ListExpOp::RemoveByValueRange as i64)),
+            ExpressionArgument::Value(Value::from(CdtListOpType::RemoveByValueInterval as i64)),
             ExpressionArgument::Value(Value::from(ListReturnType::None as u8)),
         ];
         if let Some(val_beg) = value_begin {
@@ -282,7 +254,7 @@ impl ListExpression {
         ctx: &[CdtContext],
     ) -> FilterExpression {
         let args = vec![
-            ExpressionArgument::Value(Value::from(ListExpOp::RemoveByValueRelRankRange as i64)),
+            ExpressionArgument::Value(Value::from(CdtListOpType::RemoveByValueRelRankRange as i64)),
             ExpressionArgument::Value(Value::from(ListReturnType::None as u8)),
             ExpressionArgument::FilterExpression(value),
             ExpressionArgument::FilterExpression(rank),
@@ -311,7 +283,7 @@ impl ListExpression {
         ctx: &[CdtContext],
     ) -> FilterExpression {
         let args = vec![
-            ExpressionArgument::Value(Value::from(ListExpOp::RemoveByValueRelRankRange as i64)),
+            ExpressionArgument::Value(Value::from(CdtListOpType::RemoveByValueRelRankRange as i64)),
             ExpressionArgument::Value(Value::from(ListReturnType::None as u8)),
             ExpressionArgument::FilterExpression(value),
             ExpressionArgument::FilterExpression(rank),
@@ -328,7 +300,7 @@ impl ListExpression {
         ctx: &[CdtContext],
     ) -> FilterExpression {
         let args = vec![
-            ExpressionArgument::Value(Value::from(ListExpOp::RemoveByIndex as i64)),
+            ExpressionArgument::Value(Value::from(CdtListOpType::RemoveByIndex as i64)),
             ExpressionArgument::Value(Value::from(ListReturnType::None as u8)),
             ExpressionArgument::FilterExpression(index),
             ExpressionArgument::Context(ctx.to_vec()),
@@ -343,7 +315,7 @@ impl ListExpression {
         ctx: &[CdtContext],
     ) -> FilterExpression {
         let args = vec![
-            ExpressionArgument::Value(Value::from(ListExpOp::RemoveByIndexRange as i64)),
+            ExpressionArgument::Value(Value::from(CdtListOpType::RemoveByIndexRange as i64)),
             ExpressionArgument::Value(Value::from(ListReturnType::None as u8)),
             ExpressionArgument::FilterExpression(index),
             ExpressionArgument::Context(ctx.to_vec()),
@@ -359,7 +331,7 @@ impl ListExpression {
         ctx: &[CdtContext],
     ) -> FilterExpression {
         let args = vec![
-            ExpressionArgument::Value(Value::from(ListExpOp::RemoveByIndexRange as i64)),
+            ExpressionArgument::Value(Value::from(CdtListOpType::RemoveByIndexRange as i64)),
             ExpressionArgument::Value(Value::from(ListReturnType::None as u8)),
             ExpressionArgument::FilterExpression(index),
             ExpressionArgument::FilterExpression(count),
@@ -375,7 +347,7 @@ impl ListExpression {
         ctx: &[CdtContext],
     ) -> FilterExpression {
         let args = vec![
-            ExpressionArgument::Value(Value::from(ListExpOp::RemoveByRank as i64)),
+            ExpressionArgument::Value(Value::from(CdtListOpType::RemoveByRank as i64)),
             ExpressionArgument::Value(Value::from(ListReturnType::None as u8)),
             ExpressionArgument::FilterExpression(rank),
             ExpressionArgument::Context(ctx.to_vec()),
@@ -390,7 +362,7 @@ impl ListExpression {
         ctx: &[CdtContext],
     ) -> FilterExpression {
         let args = vec![
-            ExpressionArgument::Value(Value::from(ListExpOp::RemoveByRankRange as i64)),
+            ExpressionArgument::Value(Value::from(CdtListOpType::RemoveByRankRange as i64)),
             ExpressionArgument::Value(Value::from(ListReturnType::None as u8)),
             ExpressionArgument::FilterExpression(rank),
             ExpressionArgument::Context(ctx.to_vec()),
@@ -406,7 +378,7 @@ impl ListExpression {
         ctx: &[CdtContext],
     ) -> FilterExpression {
         let args = vec![
-            ExpressionArgument::Value(Value::from(ListExpOp::RemoveByRankRange as i64)),
+            ExpressionArgument::Value(Value::from(CdtListOpType::RemoveByRankRange as i64)),
             ExpressionArgument::Value(Value::from(ListReturnType::None as u8)),
             ExpressionArgument::FilterExpression(rank),
             ExpressionArgument::FilterExpression(count),
@@ -425,7 +397,7 @@ impl ListExpression {
     /// ```
     pub fn size(bin: FilterExpression, ctx: &[CdtContext]) -> FilterExpression {
         let args = vec![
-            ExpressionArgument::Value(Value::from(ListExpOp::Size as i64)),
+            ExpressionArgument::Value(Value::from(CdtListOpType::Size as i64)),
             ExpressionArgument::Context(ctx.to_vec()),
         ];
         ListExpression::add_read(bin, ExpType::INT, args)
@@ -451,7 +423,7 @@ impl ListExpression {
         ctx: &[CdtContext],
     ) -> FilterExpression {
         let args = vec![
-            ExpressionArgument::Value(Value::from(ListExpOp::GetByValue as i64)),
+            ExpressionArgument::Value(Value::from(CdtListOpType::GetByValue as i64)),
             ExpressionArgument::Value(Value::from(return_type as u8)),
             ExpressionArgument::FilterExpression(value),
             ExpressionArgument::Context(ctx.to_vec()),
@@ -478,7 +450,7 @@ impl ListExpression {
     ) -> FilterExpression {
         let mut args = vec![
             ExpressionArgument::Context(ctx.to_vec()),
-            ExpressionArgument::Value(Value::from(ListExpOp::GetByValueRange as i64)),
+            ExpressionArgument::Value(Value::from(CdtListOpType::GetByValueInterval as i64)),
             ExpressionArgument::Value(Value::from(return_type as u8)),
         ];
         if let Some(val_beg) = value_begin {
@@ -501,7 +473,7 @@ impl ListExpression {
         ctx: &[CdtContext],
     ) -> FilterExpression {
         let args = vec![
-            ExpressionArgument::Value(Value::from(ListExpOp::GetByValueList as i64)),
+            ExpressionArgument::Value(Value::from(CdtListOpType::GetByValueList as i64)),
             ExpressionArgument::Value(Value::from(return_type as u8)),
             ExpressionArgument::FilterExpression(values),
             ExpressionArgument::Context(ctx.to_vec()),
@@ -530,7 +502,7 @@ impl ListExpression {
         ctx: &[CdtContext],
     ) -> FilterExpression {
         let args = vec![
-            ExpressionArgument::Value(Value::from(ListExpOp::GetByValueRelRankRange as i64)),
+            ExpressionArgument::Value(Value::from(CdtListOpType::GetByValueRelRankRange as i64)),
             ExpressionArgument::Value(Value::from(return_type as u8)),
             ExpressionArgument::FilterExpression(value),
             ExpressionArgument::FilterExpression(rank),
@@ -561,7 +533,7 @@ impl ListExpression {
         ctx: &[CdtContext],
     ) -> FilterExpression {
         let args = vec![
-            ExpressionArgument::Value(Value::from(ListExpOp::GetByValueRelRankRange as i64)),
+            ExpressionArgument::Value(Value::from(CdtListOpType::GetByValueRelRankRange as i64)),
             ExpressionArgument::Value(Value::from(return_type as u8)),
             ExpressionArgument::FilterExpression(value),
             ExpressionArgument::FilterExpression(rank),
@@ -592,7 +564,7 @@ impl ListExpression {
         ctx: &[CdtContext],
     ) -> FilterExpression {
         let args = vec![
-            ExpressionArgument::Value(Value::from(ListExpOp::GetByIndex as i64)),
+            ExpressionArgument::Value(Value::from(CdtListOpType::GetByIndex as i64)),
             ExpressionArgument::Value(Value::from(return_type as u8)),
             ExpressionArgument::FilterExpression(index),
             ExpressionArgument::Context(ctx.to_vec()),
@@ -609,7 +581,7 @@ impl ListExpression {
         ctx: &[CdtContext],
     ) -> FilterExpression {
         let args = vec![
-            ExpressionArgument::Value(Value::from(ListExpOp::GetByIndexRange as i64)),
+            ExpressionArgument::Value(Value::from(CdtListOpType::GetByIndexRange as i64)),
             ExpressionArgument::Value(Value::from(return_type as u8)),
             ExpressionArgument::FilterExpression(index),
             ExpressionArgument::Context(ctx.to_vec()),
@@ -627,7 +599,7 @@ impl ListExpression {
         ctx: &[CdtContext],
     ) -> FilterExpression {
         let args = vec![
-            ExpressionArgument::Value(Value::from(ListExpOp::GetByIndexRange as i64)),
+            ExpressionArgument::Value(Value::from(CdtListOpType::GetByIndexRange as i64)),
             ExpressionArgument::Value(Value::from(return_type as u8)),
             ExpressionArgument::FilterExpression(index),
             ExpressionArgument::FilterExpression(count),
@@ -654,7 +626,7 @@ impl ListExpression {
         ctx: &[CdtContext],
     ) -> FilterExpression {
         let args = vec![
-            ExpressionArgument::Value(Value::from(ListExpOp::GetByRank as i64)),
+            ExpressionArgument::Value(Value::from(CdtListOpType::GetByRank as i64)),
             ExpressionArgument::Value(Value::from(return_type as u8)),
             ExpressionArgument::FilterExpression(rank),
             ExpressionArgument::Context(ctx.to_vec()),
@@ -671,7 +643,7 @@ impl ListExpression {
         ctx: &[CdtContext],
     ) -> FilterExpression {
         let args = vec![
-            ExpressionArgument::Value(Value::from(ListExpOp::GetByRankRange as i64)),
+            ExpressionArgument::Value(Value::from(CdtListOpType::GetByRankRange as i64)),
             ExpressionArgument::Value(Value::from(return_type as u8)),
             ExpressionArgument::FilterExpression(rank),
             ExpressionArgument::Context(ctx.to_vec()),
@@ -689,7 +661,7 @@ impl ListExpression {
         ctx: &[CdtContext],
     ) -> FilterExpression {
         let args = vec![
-            ExpressionArgument::Value(Value::from(ListExpOp::GetByRankRange as i64)),
+            ExpressionArgument::Value(Value::from(CdtListOpType::GetByRankRange as i64)),
             ExpressionArgument::Value(Value::from(return_type as u8)),
             ExpressionArgument::FilterExpression(rank),
             ExpressionArgument::FilterExpression(count),
