@@ -239,7 +239,7 @@ impl HLLExpression {
     }
 
     /// Create expression that returns `indexBitCount` and `minHashBitCount` used to create HLL bin
-    /// in a list of longs. list[0] is `indexBitCount` and list[1] is `minHashBitCount`.
+    /// in a list of longs. `list[0]` is `indexBitCount` and `list[1]` is `minHashBitCount`.
     ///
     /// ```
     /// use aerospike::exp::{Expression, ExpType};

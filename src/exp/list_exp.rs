@@ -147,7 +147,7 @@ impl ListExpression {
         ListExpression::add_write(bin, ctx, args)
     }
 
-    /// Create expression that increments list[index] by value.
+    /// Create expression that increments `list[index]` by value.
     /// Value expression should resolve to a number.
     pub fn increment(
         policy: ListPolicy,

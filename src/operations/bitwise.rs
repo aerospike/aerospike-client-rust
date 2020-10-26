@@ -124,11 +124,14 @@ impl Default for BitPolicy {
 /// Creates byte "resize" operation.
 /// Server resizes byte[] to byteSize according to resizeFlags.
 /// Server does not return a value.
+///
 /// Example:
+/// ```text
 /// bin = [0b00000001, 0b01000010]
 /// byteSize = 4
 /// resizeFlags = 0
 /// bin result = [0b00000001, 0b01000010, 0b00000000, 0b00000000]
+/// ```
 pub fn resize<'a>(
     bin: &'a str,
     byte_size: i64,
@@ -158,11 +161,14 @@ pub fn resize<'a>(
 /// Creates byte "insert" operation.
 /// Server inserts value bytes into byte[] bin at byteOffset.
 /// Server does not return a value.
+///
 /// Example:
+/// ```text
 /// bin = [0b00000001, 0b01000010, 0b00000011, 0b00000100, 0b00000101]
 /// byteOffset = 1
 /// value = [0b11111111, 0b11000111]
 /// bin result = [0b00000001, 0b11111111, 0b11000111, 0b01000010, 0b00000011, 0b00000100, 0b00000101]
+/// ```
 pub fn insert<'a>(
     bin: &'a str,
     byte_offset: i64,
@@ -190,11 +196,14 @@ pub fn insert<'a>(
 /// Creates byte "remove" operation.
 /// Server removes bytes from byte[] bin at byteOffset for byteSize.
 /// Server does not return a value.
+///
 /// Example:
+/// ```text
 /// bin = [0b00000001, 0b01000010, 0b00000011, 0b00000100, 0b00000101]
 /// byteOffset = 2
 /// byteSize = 3
 /// bin result = [0b00000001, 0b01000010]
+/// ```
 pub fn remove<'a>(
     bin: &'a str,
     byte_offset: i64,
@@ -222,12 +231,15 @@ pub fn remove<'a>(
 /// Creates bit "set" operation.
 /// Server sets value on byte[] bin at bitOffset for bitSize.
 /// Server does not return a value.
+///
 /// Example:
+/// ```text
 /// bin = [0b00000001, 0b01000010, 0b00000011, 0b00000100, 0b00000101]
 /// bitOffset = 13
 /// bitSize = 3
 /// value = [0b11100000]
 /// bin result = [0b00000001, 0b01000111, 0b00000011, 0b00000100, 0b00000101]
+/// ```
 pub fn set<'a>(
     bin: &'a str,
     bit_offset: i64,
@@ -257,12 +269,15 @@ pub fn set<'a>(
 /// Creates bit "or" operation.
 /// Server performs bitwise "or" on value and byte[] bin at bitOffset for bitSize.
 /// Server does not return a value.
+///
 /// Example:
+/// ```text
 /// bin = [0b00000001, 0b01000010, 0b00000011, 0b00000100, 0b00000101]
 /// bitOffset = 17
 /// bitSize = 6
 /// value = [0b10101000]
 /// bin result = [0b00000001, 0b01000010, 0b01010111, 0b00000100, 0b00000101]
+/// ```
 pub fn or<'a>(
     bin: &'a str,
     bit_offset: i64,
@@ -292,12 +307,15 @@ pub fn or<'a>(
 /// Creates bit "exclusive or" operation.
 /// Server performs bitwise "xor" on value and byte[] bin at bitOffset for bitSize.
 /// Server does not return a value.
+///
 /// Example:
+/// ```text
 /// bin = [0b00000001, 0b01000010, 0b00000011, 0b00000100, 0b00000101]
 /// bitOffset = 17
 /// bitSize = 6
 /// value = [0b10101100]
 /// bin result = [0b00000001, 0b01000010, 0b01010101, 0b00000100, 0b00000101]
+/// ```
 pub fn xor<'a>(
     bin: &'a str,
     bit_offset: i64,
@@ -327,12 +345,15 @@ pub fn xor<'a>(
 /// Creates bit "and" operation.
 /// Server performs bitwise "and" on value and byte[] bin at bitOffset for bitSize.
 /// Server does not return a value.
+///
 /// Example:
+/// ```text
 /// bin = [0b00000001, 0b01000010, 0b00000011, 0b00000100, 0b00000101]
 /// bitOffset = 23
 /// bitSize = 9
 /// value = [0b00111100, 0b10000000]
 /// bin result = [0b00000001, 0b01000010, 0b00000010, 0b00000000, 0b00000101]
+/// ```
 pub fn and<'a>(
     bin: &'a str,
     bit_offset: i64,
@@ -362,11 +383,14 @@ pub fn and<'a>(
 /// Creates bit "not" operation.
 /// Server negates byte[] bin starting at bitOffset for bitSize.
 /// Server does not return a value.
+///
 /// Example:
+/// ```text
 /// bin = [0b00000001, 0b01000010, 0b00000011, 0b00000100, 0b00000101]
 /// bitOffset = 25
 /// bitSize = 6
 /// bin result = [0b00000001, 0b01000010, 0b00000011, 0b01111010, 0b00000101]
+/// ```
 pub fn not<'a>(
     bin: &'a str,
     bit_offset: i64,
@@ -394,12 +418,15 @@ pub fn not<'a>(
 /// Creates bit "left shift" operation.
 /// Server shifts left byte[] bin starting at bitOffset for bitSize.
 /// Server does not return a value.
+///
 /// Example:
+/// ```text
 /// bin = [0b00000001, 0b01000010, 0b00000011, 0b00000100, 0b00000101]
 /// bitOffset = 32
 /// bitSize = 8
 /// shift = 3
 /// bin result = [0b00000001, 0b01000010, 0b00000011, 0b00000100, 0b00101000]
+/// ```
 pub fn lshift<'a>(
     bin: &'a str,
     bit_offset: i64,
@@ -429,12 +456,15 @@ pub fn lshift<'a>(
 /// Creates bit "right shift" operation.
 /// Server shifts right byte[] bin starting at bitOffset for bitSize.
 /// Server does not return a value.
+///
 /// Example:
+/// ```text
 /// bin = [0b00000001, 0b01000010, 0b00000011, 0b00000100, 0b00000101]
 /// bitOffset = 0
 /// bitSize = 9
 /// shift = 1
 /// bin result = [0b00000000, 0b11000010, 0b00000011, 0b00000100, 0b00000101]
+/// ```
 pub fn rshift<'a>(
     bin: &'a str,
     bit_offset: i64,
@@ -466,13 +496,16 @@ pub fn rshift<'a>(
 /// Signed indicates if bits should be treated as a signed number.
 /// If add overflows/underflows, `CdtBitwiseOverflowAction` is used.
 /// Server does not return a value.
+///
 /// Example:
+/// ```text
 /// bin = [0b00000001, 0b01000010, 0b00000011, 0b00000100, 0b00000101]
 /// bitOffset = 24
 /// bitSize = 16
 /// value = 128
 /// signed = false
 /// bin result = [0b00000001, 0b01000010, 0b00000011, 0b00000100, 0b10000101]
+/// ```
 pub fn add<'a>(
     bin: &'a str,
     bit_offset: i64,
@@ -512,13 +545,16 @@ pub fn add<'a>(
 /// Signed indicates if bits should be treated as a signed number.
 /// If add overflows/underflows, `CdtBitwiseOverflowAction` is used.
 /// Server does not return a value.
+///
 /// Example:
+/// ```text
 /// bin = [0b00000001, 0b01000010, 0b00000011, 0b00000100, 0b00000101]
 /// bitOffset = 24
 /// bitSize = 16
 /// value = 128
 /// signed = false
 /// bin result = [0b00000001, 0b01000010, 0b00000011, 0b0000011, 0b10000101]
+/// ```
 pub fn subtract<'a>(
     bin: &'a str,
     bit_offset: i64,
@@ -556,12 +592,15 @@ pub fn subtract<'a>(
 /// Creates bit "setInt" operation.
 /// Server sets value to byte[] bin starting at bitOffset for bitSize. Size must be <= 64.
 /// Server does not return a value.
+///
 /// Example:
+/// ```text
 /// bin = [0b00000001, 0b01000010, 0b00000011, 0b00000100, 0b00000101]
 /// bitOffset = 1
 /// bitSize = 8
 /// value = 127
 /// bin result = [0b00111111, 0b11000010, 0b00000011, 0b0000100, 0b00000101]
+/// ```
 pub fn set_int<'a>(
     bin: &'a str,
     bit_offset: i64,
@@ -590,11 +629,14 @@ pub fn set_int<'a>(
 
 /// Creates bit "get" operation.
 /// Server returns bits from byte[] bin starting at bitOffset for bitSize.
+///
 /// Example:
+/// ```text
 /// bin = [0b00000001, 0b01000010, 0b00000011, 0b00000100, 0b00000101]
 /// bitOffset = 9
 /// bitSize = 5
 /// returns [0b1000000]
+/// ```
 pub fn get(bin: &str, bit_offset: i64, bit_size: i64) -> Operation {
     let cdt_op = CdtOperation {
         op: CdtBitwiseOpType::Get as u8,
@@ -612,11 +654,14 @@ pub fn get(bin: &str, bit_offset: i64, bit_size: i64) -> Operation {
 
 /// Creates bit "count" operation.
 /// Server returns integer count of set bits from byte[] bin starting at bitOffset for bitSize.
+///
 /// Example:
+/// ```text
 /// bin = [0b00000001, 0b01000010, 0b00000011, 0b00000100, 0b00000101]
 /// bitOffset = 20
 /// bitSize = 4
 /// returns 2
+/// ```
 pub fn count(bin: &str, bit_offset: i64, bit_size: i64) -> Operation {
     let cdt_op = CdtOperation {
         op: CdtBitwiseOpType::Count as u8,
@@ -635,12 +680,15 @@ pub fn count(bin: &str, bit_offset: i64, bit_size: i64) -> Operation {
 /// Creates bit "left scan" operation.
 /// Server returns integer bit offset of the first specified value bit in byte[] bin
 /// starting at bitOffset for bitSize.
+///
 /// Example:
+/// ```text
 /// bin = [0b00000001, 0b01000010, 0b00000011, 0b00000100, 0b00000101]
 /// bitOffset = 24
 /// bitSize = 8
 /// value = true
 /// returns 5
+/// ```
 pub fn lscan(bin: &str, bit_offset: i64, bit_size: i64, value: bool) -> Operation {
     let cdt_op = CdtOperation {
         op: CdtBitwiseOpType::LScan as u8,
@@ -663,12 +711,15 @@ pub fn lscan(bin: &str, bit_offset: i64, bit_size: i64, value: bool) -> Operatio
 /// Creates bit "right scan" operation.
 /// Server returns integer bit offset of the last specified value bit in byte[] bin
 /// starting at bitOffset for bitSize.
+///
 /// Example:
+/// ```text
 /// bin = [0b00000001, 0b01000010, 0b00000011, 0b00000100, 0b00000101]
 /// bitOffset = 32
 /// bitSize = 8
 /// value = true
 /// returns 7
+/// ```
 pub fn rscan(bin: &str, bit_offset: i64, bit_size: i64, value: bool) -> Operation {
     let cdt_op = CdtOperation {
         op: CdtBitwiseOpType::RScan as u8,
@@ -691,12 +742,15 @@ pub fn rscan(bin: &str, bit_offset: i64, bit_size: i64, value: bool) -> Operatio
 /// Creates bit "get integer" operation.
 /// Server returns integer from byte[] bin starting at bitOffset for bitSize.
 /// Signed indicates if bits should be treated as a signed number.
+///
 /// Example:
+/// ```text
 /// bin = [0b00000001, 0b01000010, 0b00000011, 0b00000100, 0b00000101]
 /// bitOffset = 8
 /// bitSize = 16
 /// signed = false
 /// returns 16899
+/// ```
 pub fn get_int(bin: &str, bit_offset: i64, bit_size: i64, signed: bool) -> Operation {
     let mut args = vec![CdtArgument::Int(bit_offset), CdtArgument::Int(bit_size)];
     if signed {
