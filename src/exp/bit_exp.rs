@@ -59,8 +59,6 @@ impl BitExpression {
     /// Create expression that resizes byte[] to byteSize according to resizeFlags
     /// and returns byte[].
     ///
-    ///
-    ///
     /// ```
     /// // Resize bin "a" and compare bit count
     /// // bin = [0b00000001, 0b01000010]
@@ -191,12 +189,13 @@ impl BitExpression {
 
     /// Create expression that performs bitwise "or" on value and byte[] bin at bitOffset for bitSize
     /// and returns byte[].
-    /// ```
-    /// // bin = [0b00000001, 0b01000010, 0b00000011, 0b00000100, 0b00000101]
-    /// // bitOffset = 17
-    /// // bitSize = 6
-    /// // value = [0b10101000]
-    /// // bin result = [0b00000001, 0b01000010, 0b01010111, 0b00000100, 0b00000101]
+    ///
+    /// ```text
+    /// bin = [0b00000001, 0b01000010, 0b00000011, 0b00000100, 0b00000101]
+    /// bitOffset = 17
+    /// bitSize = 6
+    /// value = [0b10101000]
+    /// bin result = [0b00000001, 0b01000010, 0b01010111, 0b00000100, 0b00000101]
     /// ```
     pub fn or(
         policy: &BitPolicy,
@@ -218,12 +217,12 @@ impl BitExpression {
     /// Create expression that performs bitwise "xor" on value and byte[] bin at bitOffset for bitSize
     /// and returns byte[].
     ///
-    /// ```
-    /// // bin = [0b00000001, 0b01000010, 0b00000011, 0b00000100, 0b00000101]
-    /// // bitOffset = 17
-    /// // bitSize = 6
-    /// // value = [0b10101100]
-    /// // bin result = [0b00000001, 0b01000010, 0b01010101, 0b00000100, 0b00000101]
+    /// ```text
+    /// bin = [0b00000001, 0b01000010, 0b00000011, 0b00000100, 0b00000101]
+    /// bitOffset = 17
+    /// bitSize = 6
+    /// value = [0b10101100]
+    /// bin result = [0b00000001, 0b01000010, 0b01010101, 0b00000100, 0b00000101]
     /// ```
     pub fn xor(
         policy: &BitPolicy,
@@ -245,12 +244,12 @@ impl BitExpression {
     /// Create expression that performs bitwise "and" on value and byte[] bin at bitOffset for bitSize
     /// and returns byte[].
     ///
-    /// ```
-    /// // bin = [0b00000001, 0b01000010, 0b00000011, 0b00000100, 0b00000101]
-    /// // bitOffset = 23
-    /// // bitSize = 9
-    /// // value = [0b00111100, 0b10000000]
-    /// // bin result = [0b00000001, 0b01000010, 0b00000010, 0b00000000, 0b00000101]
+    /// ```text
+    /// bin = [0b00000001, 0b01000010, 0b00000011, 0b00000100, 0b00000101]
+    /// bitOffset = 23
+    /// bitSize = 9
+    /// value = [0b00111100, 0b10000000]
+    /// bin result = [0b00000001, 0b01000010, 0b00000010, 0b00000000, 0b00000101]
     /// ```
     pub fn and(
         policy: &BitPolicy,
@@ -270,11 +269,12 @@ impl BitExpression {
     }
 
     /// Create expression that negates byte[] bin starting at bitOffset for bitSize and returns byte[].
-    /// ```
-    /// // bin = [0b00000001, 0b01000010, 0b00000011, 0b00000100, 0b00000101]
-    /// // bitOffset = 25
-    /// // bitSize = 6
-    /// // bin result = [0b00000001, 0b01000010, 0b00000011, 0b01111010, 0b00000101]
+    ///
+    /// ```text
+    /// bin = [0b00000001, 0b01000010, 0b00000011, 0b00000100, 0b00000101]
+    /// bitOffset = 25
+    /// bitSize = 6
+    /// bin result = [0b00000001, 0b01000010, 0b00000011, 0b01111010, 0b00000101]
     /// ```
     pub fn not(
         policy: &BitPolicy,
@@ -293,12 +293,12 @@ impl BitExpression {
 
     /// Create expression that shifts left byte[] bin starting at bitOffset for bitSize and returns byte[].
     ///
-    /// ```
-    /// // bin = [0b00000001, 0b01000010, 0b00000011, 0b00000100, 0b00000101]
-    /// // bitOffset = 32
-    /// // bitSize = 8
-    /// // shift = 3
-    /// // bin result = [0b00000001, 0b01000010, 0b00000011, 0b00000100, 0b00101000]
+    /// ```text
+    /// bin = [0b00000001, 0b01000010, 0b00000011, 0b00000100, 0b00000101]
+    /// bitOffset = 32
+    /// bitSize = 8
+    /// shift = 3
+    /// bin result = [0b00000001, 0b01000010, 0b00000011, 0b00000100, 0b00101000]
     /// ```
     pub fn lshift(
         policy: &BitPolicy,
@@ -319,12 +319,12 @@ impl BitExpression {
 
     /// Create expression that shifts right byte[] bin starting at bitOffset for bitSize and returns byte[].
     ///
-    /// ```
-    /// // bin = [0b00000001, 0b01000010, 0b00000011, 0b00000100, 0b00000101]
-    /// // bitOffset = 0
-    /// // bitSize = 9
-    /// // shift = 1
-    /// // bin result = [0b00000000, 0b11000010, 0b00000011, 0b00000100, 0b00000101]
+    /// ```text
+    /// bin = [0b00000001, 0b01000010, 0b00000011, 0b00000100, 0b00000101]
+    /// bitOffset = 0
+    /// bitSize = 9
+    /// shift = 1
+    /// bin result = [0b00000000, 0b11000010, 0b00000011, 0b00000100, 0b00000101]
     /// ```
     pub fn rshift(
         policy: &BitPolicy,
@@ -347,13 +347,13 @@ impl BitExpression {
     /// `BitSize` must be <= 64. Signed indicates if bits should be treated as a signed number.
     /// If add overflows/underflows, `BitwiseOverflowActions` is used.
     ///
-    /// ```
-    /// // bin = [0b00000001, 0b01000010, 0b00000011, 0b00000100, 0b00000101]
-    /// // bitOffset = 24
-    /// // bitSize = 16
-    /// // value = 128
-    /// // signed = false
-    /// // bin result = [0b00000001, 0b01000010, 0b00000011, 0b00000100, 0b10000101]
+    /// ```text
+    /// bin = [0b00000001, 0b01000010, 0b00000011, 0b00000100, 0b00000101]
+    /// bitOffset = 24
+    /// bitSize = 16
+    /// value = 128
+    /// signed = false
+    /// bin result = [0b00000001, 0b01000010, 0b00000011, 0b00000100, 0b10000101]
     /// ```
     pub fn add(
         policy: &BitPolicy,
@@ -383,13 +383,13 @@ impl BitExpression {
     /// `BitSize` must be <= 64. Signed indicates if bits should be treated as a signed number.
     /// If add overflows/underflows, `BitwiseOverflowActions` is used.
     ///
-    /// ```
-    /// // bin = [0b00000001, 0b01000010, 0b00000011, 0b00000100, 0b00000101]
-    /// // bitOffset = 24
-    /// // bitSize = 16
-    /// // value = 128
-    /// // signed = false
-    /// // bin result = [0b00000001, 0b01000010, 0b00000011, 0b0000011, 0b10000101]
+    /// ```text
+    /// bin = [0b00000001, 0b01000010, 0b00000011, 0b00000100, 0b00000101]
+    /// bitOffset = 24
+    /// bitSize = 16
+    /// value = 128
+    /// signed = false
+    /// bin result = [0b00000001, 0b01000010, 0b00000011, 0b0000011, 0b10000101]
     /// ```
     pub fn subtract(
         policy: &BitPolicy,
@@ -418,12 +418,12 @@ impl BitExpression {
     /// Create expression that sets value to byte[] bin starting at bitOffset for bitSize and returns byte[].
     /// `BitSize` must be <= 64.
     ///
-    /// ```
-    /// // bin = [0b00000001, 0b01000010, 0b00000011, 0b00000100, 0b00000101]
-    /// // bitOffset = 1
-    /// // bitSize = 8
-    /// // value = 127
-    /// // bin result = [0b00111111, 0b11000010, 0b00000011, 0b0000100, 0b00000101]
+    /// ```text
+    /// bin = [0b00000001, 0b01000010, 0b00000011, 0b00000100, 0b00000101]
+    /// bitOffset = 1
+    /// bitSize = 8
+    /// value = 127
+    /// bin result = [0b00111111, 0b11000010, 0b00000011, 0b0000100, 0b00000101]
     /// ```
     pub fn set_int(
         policy: &BitPolicy,

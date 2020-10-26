@@ -147,7 +147,7 @@ impl ListExpression {
         ListExpression::add_write(bin, ctx, args)
     }
 
-    /// Create expression that increments list[index] by value.
+    /// Create expression that increments `list[index]` by value.
     /// Value expression should resolve to a number.
     pub fn increment(
         policy: ListPolicy,
@@ -265,15 +265,15 @@ impl ListExpression {
 
     /// Create expression that removes list items nearest to value and greater by relative rank.
     ///
-    /// ```
-    /// // Examples for ordered list [0,4,5,9,11,15]:
-    /// // (value,rank) = [removed items]
-    /// // (5,0) = [5,9,11,15]
-    /// // (5,1) = [9,11,15]
-    /// // (5,-1) = [4,5,9,11,15]
-    /// // (3,0) = [4,5,9,11,15]
-    /// // (3,3) = [11,15]
-    /// // (3,-3) = [0,4,5,9,11,15]
+    /// Examples for ordered list \[0, 4, 5, 9, 11, 15\]:
+    /// ```text
+    /// (value,rank) = [removed items]
+    /// (5,0) = [5,9,11,15]
+    /// (5,1) = [9,11,15]
+    /// (5,-1) = [4,5,9,11,15]
+    /// (3,0) = [4,5,9,11,15]
+    /// (3,3) = [11,15]
+    /// (3,-3) = [0,4,5,9,11,15]
     /// ```
     pub fn remove_by_value_relative_rank_range(
         value: FilterExpression,
@@ -293,15 +293,15 @@ impl ListExpression {
 
     /// Create expression that removes list items nearest to value and greater by relative rank with a count limit.
     ///
-    /// ```
-    /// // Examples for ordered list [0,4,5,9,11,15]:
-    /// // (value,rank,count) = [removed items]
-    /// // (5,0,2) = [5,9]
-    /// // (5,1,1) = [9]
-    /// // (5,-1,2) = [4,5]
-    /// // (3,0,1) = [4]
-    /// // (3,3,7) = [11,15]
-    /// // (3,-3,2) = []
+    /// Examples for ordered list \[0, 4, 5, 9, 11, 15\]:
+    /// ```text
+    /// (value,rank,count) = [removed items]
+    /// (5,0,2) = [5,9]
+    /// (5,1,1) = [9]
+    /// (5,-1,2) = [4,5]
+    /// (3,0,1) = [4]
+    /// (3,3,7) = [11,15]
+    /// (3,-3,2) = []
     /// ```
     pub fn remove_by_value_relative_rank_range_count(
         value: FilterExpression,
@@ -512,15 +512,15 @@ impl ListExpression {
     /// Create expression that selects list items nearest to value and greater by relative rank
     /// and returns selected data specified by returnType.
     ///
-    /// ```
-    /// // Examples for ordered list [0,4,5,9,11,15]:
-    /// // (value,rank) = [selected items]
-    /// // (5,0) = [5,9,11,15]
-    /// // (5,1) = [9,11,15]
-    /// // (5,-1) = [4,5,9,11,15]
-    /// // (3,0) = [4,5,9,11,15]
-    /// // (3,3) = [11,15]
-    /// // (3,-3) = [0,4,5,9,11,15]
+    /// Examples for ordered list \[0, 4, 5, 9, 11, 15\]:
+    /// ```text
+    /// (value,rank) = [selected items]
+    /// (5,0) = [5,9,11,15]
+    /// (5,1) = [9,11,15]
+    /// (5,-1) = [4,5,9,11,15]
+    /// (3,0) = [4,5,9,11,15]
+    /// (3,3) = [11,15]
+    /// (3,-3) = [0,4,5,9,11,15]
     /// ```
     pub fn get_by_value_relative_rank_range(
         return_type: ListReturnType,
@@ -542,15 +542,15 @@ impl ListExpression {
     /// Create expression that selects list items nearest to value and greater by relative rank with a count limit
     /// and returns selected data specified by returnType.
     ///
-    /// ```
-    /// // Examples for ordered list [0,4,5,9,11,15]:
-    /// // (value,rank,count) = [selected items]
-    /// // (5,0,2) = [5,9]
-    /// // (5,1,1) = [9]
-    /// // (5,-1,2) = [4,5]
-    /// // (3,0,1) = [4]
-    /// // (3,3,7) = [11,15]
-    /// // (3,-3,2) = []
+    /// Examples for ordered list \[0, 4, 5, 9, 11, 15\]:
+    /// ```text
+    /// (value,rank,count) = [selected items]
+    /// (5,0,2) = [5,9]
+    /// (5,1,1) = [9]
+    /// (5,-1,2) = [4,5]
+    /// (3,0,1) = [4]
+    /// (3,3,7) = [11,15]
+    /// (3,-3,2) = []
     /// ```
     pub fn get_by_value_relative_rank_range_count(
         return_type: ListReturnType,

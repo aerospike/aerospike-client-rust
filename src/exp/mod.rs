@@ -13,7 +13,7 @@
 // License for the specific language governing permissions and limitations under
 // the License.
 
-//! Functions used for Filter Expressions. This Module requires Aerospike Server Version >= 5.2
+//! Functions used for Filter Expressions. This module requires Aerospike Server version >= 5.2
 
 pub mod bit_exp;
 pub mod hll_exp;
@@ -91,9 +91,6 @@ pub enum ExpOp {
 #[doc(hidden)]
 pub const MODIFY: i64 = 0x40;
 
-// Const for Calendar Exps. Not implemented yet!
-// const NANOS_PER_MILLIS: i64 = 1000000;
-
 #[derive(Debug, Clone)]
 #[doc(hidden)]
 pub enum ExpressionArgument {
@@ -102,28 +99,29 @@ pub enum ExpressionArgument {
     Context(Vec<CdtContext>),
 }
 
+/// Filter expression, which can be applied to most commands, to control which records are
+/// affected by the command. Filter expression are created using [Expression] functions.
 #[derive(Debug, Clone)]
-#[doc(hidden)]
 pub struct FilterExpression {
     /// The Operation code
-    pub cmd: Option<ExpOp>,
+    cmd: Option<ExpOp>,
     /// The Primary Value of the Operation
-    pub val: Option<Value>,
+    val: Option<Value>,
     /// The Bin to use it on (REGEX for example)
-    pub bin: Option<Box<FilterExpression>>,
+    bin: Option<Box<FilterExpression>>,
     /// The additional flags for the Operation (REGEX or return_type of Module for example)
-    pub flags: Option<i64>,
+    flags: Option<i64>,
     /// The optional Module flag for Module operations or Bin Types
-    pub module: Option<ExpType>,
+    module: Option<ExpType>,
     /// Sub commands for the CmdExp operation
-    pub exps: Option<Vec<FilterExpression>>,
+    exps: Option<Vec<FilterExpression>>,
 
-    pub arguments: Option<Vec<ExpressionArgument>>,
+    arguments: Option<Vec<ExpressionArgument>>,
 }
 
 #[doc(hidden)]
 impl FilterExpression {
-    pub fn new(
+    fn new(
         cmd: Option<ExpOp>,
         val: Option<Value>,
         bin: Option<FilterExpression>,
@@ -415,7 +413,7 @@ impl Expression {
     /// ```
     /// use aerospike::exp::{Expression, ExpType};
     /// use aerospike::operations::lists::ListReturnType;
-    /// use aerospike::exp::ListExpression;
+    /// use aerospike::exp::list_exp::ListExpression;
     /// // String bin a[2] == 3
     /// Expression::eq(ListExpression::get_by_index(ListReturnType::Values, ExpType::INT, Expression::int_val(2), Expression::list_bin("a".to_string()), &[]), Expression::int_val(3));
     /// ```
@@ -435,7 +433,7 @@ impl Expression {
     /// ```
     /// // Bin a["key"] == "value"
     /// use aerospike::exp::{Expression, ExpType};
-    /// use aerospike::exp::MapExpression;
+    /// use aerospike::exp::map_exp::MapExpression;
     /// use aerospike::MapReturnType;
     /// Expression::eq(
     ///     MapExpression::get_by_key(MapReturnType::Value, ExpType::STRING, Expression::string_val("key".to_string()), Expression::map_bin("a".to_string()), &[]),
@@ -456,7 +454,7 @@ impl Expression {
     ///
     /// ```
     /// use aerospike::exp::Expression;
-    /// use aerospike::exp::HLLExpression;
+    /// use aerospike::exp::hll_exp::HLLExpression;
     /// use aerospike::operations::hll::HLLPolicy;
     /// use aerospike::Value;
     ///
