@@ -190,27 +190,29 @@ impl Default for MapPolicy {
     }
 }
 
-fn map_write_op(policy: &MapPolicy, multi: bool) -> u8 {
+/// Determines the correct operation to use when setting one or more map values, depending on the
+/// map policy.
+pub(crate) fn map_write_op(policy: &MapPolicy, multi: bool) -> CdtMapOpType {
     match policy.write_mode {
         MapWriteMode::Update => {
             if multi {
-                CdtMapOpType::PutItems as u8
+                CdtMapOpType::PutItems
             } else {
-                CdtMapOpType::Put as u8
+                CdtMapOpType::Put
             }
         }
         MapWriteMode::UpdateOnly => {
             if multi {
-                CdtMapOpType::ReplaceItems as u8
+                CdtMapOpType::ReplaceItems
             } else {
-                CdtMapOpType::Replace as u8
+                CdtMapOpType::Replace
             }
         }
         MapWriteMode::CreateOnly => {
             if multi {
-                CdtMapOpType::AddItems as u8
+                CdtMapOpType::AddItems
             } else {
-                CdtMapOpType::Add as u8
+                CdtMapOpType::Add
             }
         }
     }
@@ -260,7 +262,7 @@ pub fn put<'a>(
         args.push(arg);
     }
     let cdt_op = CdtOperation {
-        op: map_write_op(policy, false),
+        op: map_write_op(policy, false) as u8,
         encoder: Box::new(pack_cdt_op),
         args,
     };
@@ -288,7 +290,7 @@ pub fn put_items<'a>(
         args.push(arg);
     }
     let cdt_op = CdtOperation {
-        op: map_write_op(policy, true),
+        op: map_write_op(policy, true) as u8,
         encoder: Box::new(pack_cdt_op),
         args,
     };

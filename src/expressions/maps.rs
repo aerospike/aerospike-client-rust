@@ -14,10 +14,10 @@
 // the License.
 
 //! Map Cdt Aerospike Filter Expressions.
-use crate::expressions::{ExpOp, ExpType, ExpressionArgument, FilterExpression, MODIFY, nil};
+use crate::expressions::{nil, ExpOp, ExpType, ExpressionArgument, FilterExpression, MODIFY};
 use crate::operations::cdt_context::{CdtContext, CtxType};
-use crate::operations::maps::CdtMapOpType;
-use crate::{MapPolicy, MapReturnType, MapWriteMode, Value};
+use crate::operations::maps::{map_write_op, CdtMapOpType};
+use crate::{MapPolicy, MapReturnType, Value};
 
 #[doc(hidden)]
 const MODULE: i64 = 0;
@@ -31,7 +31,7 @@ pub fn put(
     ctx: &[CdtContext],
 ) -> FilterExpression {
     let args: Vec<ExpressionArgument>;
-    let op = get_op_for_write_mode(policy.write_mode, false);
+    let op = map_write_op(policy, false);
     if op as u8 == CdtMapOpType::Replace as u8 {
         args = vec![
             ExpressionArgument::Context(ctx.to_vec()),
@@ -59,7 +59,7 @@ pub fn put_items(
     ctx: &[CdtContext],
 ) -> FilterExpression {
     let args: Vec<ExpressionArgument>;
-    let op = get_op_for_write_mode(policy.write_mode, true);
+    let op = map_write_op(policy, true);
     if op as u8 == CdtMapOpType::Replace as u8 {
         args = vec![
             ExpressionArgument::Context(ctx.to_vec()),
@@ -838,32 +838,5 @@ fn get_value_type(return_type: MapReturnType) -> ExpType {
         ExpType::MAP
     } else {
         ExpType::INT
-    }
-}
-
-#[doc(hidden)]
-fn get_op_for_write_mode(write_mode: MapWriteMode, multi: bool) -> CdtMapOpType {
-    match write_mode {
-        MapWriteMode::Update => {
-            if multi {
-                CdtMapOpType::PutItems
-            } else {
-                CdtMapOpType::Put
-            }
-        }
-        MapWriteMode::UpdateOnly => {
-            if multi {
-                CdtMapOpType::ReplaceItems
-            } else {
-                CdtMapOpType::Replace
-            }
-        }
-        MapWriteMode::CreateOnly => {
-            if multi {
-                CdtMapOpType::AddItems
-            } else {
-                CdtMapOpType::Add
-            }
-        }
     }
 }
