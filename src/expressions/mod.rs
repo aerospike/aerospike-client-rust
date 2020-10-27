@@ -96,7 +96,8 @@ pub enum ExpressionArgument {
 }
 
 /// Filter expression, which can be applied to most commands, to control which records are
-/// affected by the command. Filter expression are created using [Expression] functions.
+/// affected by the command. Filter expression are created using the functions in the
+/// [expressions](crate::expressions) module and its submodules.
 #[derive(Debug, Clone)]
 pub struct FilterExpression {
     /// The Operation code
