@@ -4,10 +4,14 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.0.0] - 2020-10-29
+
 * **Bug Fixes**
   * Client.is_connected() returns true even after client.close() is called. [(#87)](https://github.com/aerospike/aerospike-client-rust/pull/87)
 
 * **New Features**
+  * BREAKING CHANGE: Replace predicate expressions with new Aerospike Expression filters. Aerospike Expression filters give access to the full data type APIs (List, Map, Bit, HyperLogLog, Geospatial) and expanded metadata based filtering, to increase the power of filters in selecting records. This feature requires server version 5.2.0.4 or later. See [API Changes](https://www.aerospike.com/docs/client/rust/usage/incompatible.html#version-1-0-0) for details. [(#80)](https://github.com/aerospike/aerospike-client-rust/issues/80) Thanks to [@jonas32](https://github.com/jonas32)!
+  * Support operations for the HyperLogLog (HLL) data type. [(#89)](https://github.com/aerospike/aerospike-client-rust/issues/89) Thanks to [@jonas32](https://github.com/jonas32)!
   * Serde Serializers for Record and Value objects. [(#85)](https://github.com/aerospike/aerospike-client-rust/pull/85) Thanks to [@jonas32](https://github.com/jonas32)!
 
 ## [0.6.0] - 2020-09-11
@@ -16,12 +20,13 @@ All notable changes to this project will be documented in this file.
   * Shrink connection buffers to avoid unbounded memory allocation. [(#83)](https://github.com/aerospike/aerospike-client-rust/pull/83) Thanks to [@soro](https://github.com/soro)!
 
 * **New Features**
+
   * Big update for operations: [(#79)](https://github.com/aerospike/aerospike-client-rust/pull/79) Thanks to [@jonas32](https://github.com/jonas32)!
     * Added operation contexts for nested operations.
     * Added missing list operations, list policies, and ordered lists.
     * Added missing map operations.
     * Added bitwise operations.
-    * CAUTION: This is a breaking change. The policy and return types for Lists require additional parameters for the cdt op functions.
+    * BREAKING CHANGE: The policy and return types for Lists require additional parameters for the cdt op functions.
 
 * **Updates**
   * Restrict Travis CI tests to stable/beta/nightly. [(#84)](https://github.com/aerospike/aerospike-client-rust/pull/84)

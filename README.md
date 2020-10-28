@@ -11,15 +11,12 @@
 
 An [Aerospike](https://www.aerospike.com/) client library for Rust.
 
-> Notice: This is a work in progress. Use with discretion. Feedback, bug reports and pull requests are welcome!
-
 This library is compatible with Rust v1.38+ and supports the following operating systems: Linux, Mac OS X, and Windows.
 
 - [Usage](#Usage)
 - [Known Limitations](#Limitations)
 - [Tests](#Tests)
 - [Benchmarks](#Benchmarks)
-
 
 <a name="Usage"></a>
 ## Usage:
@@ -84,22 +81,11 @@ fn main() {
 <a name="Limitations"></a>
 ## Known Limitations
 
-The client currently supports all single-key operations supported by Aerospike,
-incl. the operate command with full support of List and (Sorted) Map
-operations. The client also supports scan and query operations incl. support
-for User-Defined Functions in the Lua scripting language, as well as APIs
-to manage secondary indexes. For Aerospike Enterprise edition deployments the
-client supports managing users and roles.
+The following features are not yet supported in the Aerospike Rust client:
 
-However the following features are not yet supported in the Aerospike Rust
-client:
-
-- Query Aggregation using Lua User-Defined Functions (which requires
-  integrating the Lua run-time environment into the client)
-- Async Task operations (like execute UDF on scan/queries, index drop/create
-  operations, etc.)
-- Secure connections using TLS (requires AS 3.10+)
-- IPv6 support
+- Query Aggregation using Lua User-Defined Functions (UDF).
+- Secure connections using TLS.
+- IPv6 support.
 
 <a name="Tests"></a>
 ## Tests

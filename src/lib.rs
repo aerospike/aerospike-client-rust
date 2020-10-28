@@ -55,7 +55,7 @@
 //!
 //! ```text
 //! [dependencies]
-//! aerospike = "0.6.0"
+//! aerospike = "1.0.0"
 //! ```
 //!
 //! # Examples
