@@ -13,6 +13,7 @@
 // License for the specific language governing permissions and limitations under
 // the License.
 
+use crate::expressions::FilterExpression;
 use crate::policy::{BasePolicy, PolicyLike};
 use crate::{CommitLevel, Expiration, GenerationPolicy, RecordExistsAction};
 
@@ -62,6 +63,9 @@ pub struct WritePolicy {
     /// prevents deleted records from reappearing after node failures.  Valid for Aerospike Server
     /// Enterprise Edition 3.10+ only.
     pub durable_delete: bool,
+
+    /// Optional Filter Expression
+    pub filter_expression: Option<FilterExpression>,
 }
 
 impl WritePolicy {
@@ -72,10 +76,15 @@ impl WritePolicy {
         wp.expiration = exp;
         wp
     }
+
+    /// Get the current Filter expression
+    pub const fn filter_expression(&self) -> &Option<FilterExpression> {
+        &self.filter_expression
+    }
 }
 
 impl Default for WritePolicy {
-    fn default() -> WritePolicy {
+    fn default() -> Self {
         WritePolicy {
             base_policy: BasePolicy::default(),
             record_exists_action: RecordExistsAction::Update,
@@ -86,6 +95,7 @@ impl Default for WritePolicy {
             send_key: false,
             respond_per_each_op: false,
             durable_delete: false,
+            filter_expression: None,
         }
     }
 }

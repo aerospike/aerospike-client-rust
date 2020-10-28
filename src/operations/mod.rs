@@ -19,6 +19,7 @@ pub mod bitwise;
 #[doc(hidden)]
 pub mod cdt;
 pub mod cdt_context;
+pub mod hll;
 pub mod lists;
 pub mod maps;
 pub mod scalar;
@@ -58,6 +59,7 @@ pub enum OperationData<'a> {
     CdtListOp(CdtOperation<'a>),
     CdtMapOp(CdtOperation<'a>),
     CdtBitOp(CdtOperation<'a>),
+    HLLOp(CdtOperation<'a>),
 }
 
 #[doc(hidden)]
@@ -99,7 +101,8 @@ impl<'a> Operation<'a> {
             OperationData::Value(value) => value.estimate_size()?,
             OperationData::CdtListOp(ref cdt_op)
             | OperationData::CdtMapOp(ref cdt_op)
-            | OperationData::CdtBitOp(ref cdt_op) => cdt_op.estimate_size(self.ctx)?,
+            | OperationData::CdtBitOp(ref cdt_op)
+            | OperationData::HLLOp(ref cdt_op) => cdt_op.estimate_size(self.ctx)?,
         };
 
         Ok(size)
@@ -125,7 +128,8 @@ impl<'a> Operation<'a> {
             }
             OperationData::CdtListOp(ref cdt_op)
             | OperationData::CdtMapOp(ref cdt_op)
-            | OperationData::CdtBitOp(ref cdt_op) => {
+            | OperationData::CdtBitOp(ref cdt_op)
+            | OperationData::HLLOp(ref cdt_op) => {
                 size += self.write_op_header_to(buffer, cdt_op.particle_type() as u8)?;
                 size += cdt_op.write_to(buffer, self.ctx)?;
             }

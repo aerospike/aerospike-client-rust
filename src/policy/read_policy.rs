@@ -13,6 +13,7 @@
 // License for the specific language governing permissions and limitations under
 // the License.
 
+use crate::expressions::FilterExpression;
 use crate::policy::BasePolicy;
 use crate::{ConsistencyLevel, Priority};
 use std::time::Duration;
@@ -29,6 +30,14 @@ impl Default for ReadPolicy {
             max_retries: Some(2),
             sleep_between_retries: Some(Duration::new(0, 500_000_000)),
             consistency_level: ConsistencyLevel::ConsistencyOne,
+            filter_expression: None,
         }
+    }
+}
+
+impl ReadPolicy {
+    /// Get the Optional Filter Expression
+    pub const fn filter_expression(&self) -> &Option<FilterExpression> {
+        &self.filter_expression
     }
 }

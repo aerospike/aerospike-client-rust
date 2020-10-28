@@ -14,6 +14,7 @@
 // the License.
 
 #[derive(Debug, Clone)]
+#[doc(hidden)]
 pub enum ParticleType {
     // Server particle types. Unsupported types are commented out.
     NULL = 0,
@@ -35,6 +36,7 @@ pub enum ParticleType {
     // RTA_APPEND_DICT = 16,
     // RTA_APPEND_LIST = 17,
     // LUA_BLOB        = 18,
+    HLL = 18,
     MAP = 19,
     LIST = 20,
     LDT = 21,
@@ -63,6 +65,7 @@ impl From<u8> for ParticleType {
             // 16 => ParticleType::RTA_APPEND_DICT,
             // 17 => ParticleType::RTA_APPEND_LIST,
             // 18 => ParticleType::LUA_BLOB       ,
+            18 => ParticleType::HLL,
             19 => ParticleType::MAP,
             20 => ParticleType::LIST,
             21 => ParticleType::LDT,

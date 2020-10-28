@@ -13,6 +13,7 @@
 // License for the specific language governing permissions and limitations under
 // the License.
 
+use crate::expressions::FilterExpression;
 use crate::policy::{BasePolicy, PolicyLike};
 
 /// `ScanPolicy` encapsulates optional parameters used in scan operations.
@@ -42,6 +43,9 @@ pub struct ScanPolicy {
     /// performing an operation on the socket on the server side. Zero means there is no socket
     /// timeout. Default: 10,000 ms.
     pub socket_timeout: u32,
+
+    /// Optional Filter Expression
+    pub filter_expression: Option<FilterExpression>,
 }
 
 impl ScanPolicy {
@@ -49,10 +53,15 @@ impl ScanPolicy {
     pub fn new() -> Self {
         ScanPolicy::default()
     }
+
+    /// Get the current Filter Expression
+    pub const fn filter_expression(&self) -> &Option<FilterExpression> {
+        &self.filter_expression
+    }
 }
 
 impl Default for ScanPolicy {
-    fn default() -> ScanPolicy {
+    fn default() -> Self {
         ScanPolicy {
             base_policy: BasePolicy::default(),
             scan_percent: 100,
@@ -60,6 +69,7 @@ impl Default for ScanPolicy {
             record_queue_size: 1024,
             fail_on_cluster_change: true,
             socket_timeout: 10000,
+            filter_expression: None,
         }
     }
 }

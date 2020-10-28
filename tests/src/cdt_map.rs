@@ -50,7 +50,7 @@ fn map_operations() {
     client.put(&wpolicy, &key, &bins).unwrap();
 
     let (k, v) = (as_val!("c"), as_val!(3));
-    let op = maps::put_item(&mpolicy, bin_name, &k, &v);
+    let op = maps::put(&mpolicy, bin_name, &k, &v);
     let rec = client.operate(&wpolicy, &key, &[op]).unwrap();
     // returns size of map after put
     assert_eq!(*rec.bins.get(bin_name).unwrap(), as_val!(3));
@@ -292,7 +292,7 @@ fn map_operations() {
 
     let mkey = as_val!("ctxtest");
     let mval = as_map!("x" => 7, "y" => 8, "z" => 9);
-    let op = maps::put_item(&mpolicy, bin_name, &mkey, &mval);
+    let op = maps::put(&mpolicy, bin_name, &mkey, &mval);
     client.operate(&wpolicy, &key, &[op]).unwrap();
 
     let ctx = &vec![ctx_map_key(mkey)];

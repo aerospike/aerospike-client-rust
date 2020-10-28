@@ -100,7 +100,7 @@ pub enum MapOrder {
 }
 
 /// Map return type. Type of data to return when selecting or removing items from the map.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub enum MapReturnType {
     /// Do not return a result.
     None = 0,
@@ -153,7 +153,7 @@ pub enum MapReturnType {
 }
 
 /// Unique key map write type.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub enum MapWriteMode {
     /// If the key already exists, the item will be overwritten.
     /// If the key does not exist, a new item will be created.
@@ -171,8 +171,10 @@ pub enum MapWriteMode {
 /// `MapPolicy` directives when creating a map and writing map items.
 #[derive(Debug)]
 pub struct MapPolicy {
-    order: MapOrder,
-    write_mode: MapWriteMode,
+    /// The Order of the Map
+    pub order: MapOrder,
+    /// The Map Write Mode
+    pub write_mode: MapWriteMode,
 }
 
 impl MapPolicy {
@@ -188,27 +190,29 @@ impl Default for MapPolicy {
     }
 }
 
-fn map_write_op(policy: &MapPolicy, multi: bool) -> u8 {
+/// Determines the correct operation to use when setting one or more map values, depending on the
+/// map policy.
+pub(crate) fn map_write_op(policy: &MapPolicy, multi: bool) -> CdtMapOpType {
     match policy.write_mode {
         MapWriteMode::Update => {
             if multi {
-                CdtMapOpType::PutItems as u8
+                CdtMapOpType::PutItems
             } else {
-                CdtMapOpType::Put as u8
+                CdtMapOpType::Put
             }
         }
         MapWriteMode::UpdateOnly => {
             if multi {
-                CdtMapOpType::ReplaceItems as u8
+                CdtMapOpType::ReplaceItems
             } else {
-                CdtMapOpType::Replace as u8
+                CdtMapOpType::Replace
             }
         }
         MapWriteMode::CreateOnly => {
             if multi {
-                CdtMapOpType::AddItems as u8
+                CdtMapOpType::AddItems
             } else {
-                CdtMapOpType::Add as u8
+                CdtMapOpType::Add
             }
         }
     }
@@ -244,7 +248,7 @@ pub fn set_order(bin: &str, map_order: MapOrder) -> Operation {
 ///
 /// The required map policy dictates the type of map to create when it does not exist. The map
 /// policy also specifies the mode used when writing items to the map.
-pub fn put_item<'a>(
+pub fn put<'a>(
     policy: &'a MapPolicy,
     bin: &'a str,
     key: &'a Value,
@@ -258,7 +262,7 @@ pub fn put_item<'a>(
         args.push(arg);
     }
     let cdt_op = CdtOperation {
-        op: map_write_op(policy, false),
+        op: map_write_op(policy, false) as u8,
         encoder: Box::new(pack_cdt_op),
         args,
     };
@@ -286,7 +290,7 @@ pub fn put_items<'a>(
         args.push(arg);
     }
     let cdt_op = CdtOperation {
-        op: map_write_op(policy, true),
+        op: map_write_op(policy, true) as u8,
         encoder: Box::new(pack_cdt_op),
         args,
     };

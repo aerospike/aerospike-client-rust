@@ -13,6 +13,7 @@
 // License for the specific language governing permissions and limitations under
 // the License.
 
+use crate::expressions::FilterExpression;
 use crate::policy::{BasePolicy, Concurrency, PolicyLike};
 
 /// `BatchPolicy` encapsulates parameters for all batch operations.
@@ -43,12 +44,20 @@ pub struct BatchPolicy {
     ///
     /// Default: false
     pub send_set_name: bool,
+
+    /// Optional Filter Expression
+    pub filter_expression: Option<FilterExpression>,
 }
 
 impl BatchPolicy {
     /// Create a new batch policy instance.
     pub fn new() -> Self {
         BatchPolicy::default()
+    }
+
+    /// Get the current Filter Expression
+    pub const fn filter_expression(&self) -> &Option<FilterExpression> {
+        &self.filter_expression
     }
 }
 
@@ -59,6 +68,7 @@ impl Default for BatchPolicy {
             concurrency: Concurrency::Sequential,
             allow_inline: true,
             send_set_name: false,
+            filter_expression: None,
         }
     }
 }

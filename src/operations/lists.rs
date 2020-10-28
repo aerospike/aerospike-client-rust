@@ -492,8 +492,8 @@ pub fn remove_by_value_range<'a>(
 /// Server removes list items nearest to value and greater by relative rank.
 /// Server returns removed data specified by returnType.
 ///
-/// Examples for ordered list [0,4,5,9,11,15]:
-///
+/// Examples for ordered list \[0, 4, 5, 9, 11, 15\]:
+/// ```text
 /// (value,rank) = [removed items]
 /// (5,0) = [5,9,11,15]
 /// (5,1) = [9,11,15]
@@ -501,6 +501,7 @@ pub fn remove_by_value_range<'a>(
 /// (3,0) = [4,5,9,11,15]
 /// (3,3) = [11,15]
 /// (3,-3) = [0,4,5,9,11,15]
+/// ```
 pub fn remove_by_value_relative_rank_range<'a>(
     bin: &'a str,
     return_type: ListReturnType,
@@ -527,8 +528,9 @@ pub fn remove_by_value_relative_rank_range<'a>(
 /// Creates a list remove by value relative to rank range operation.
 /// Server removes list items nearest to value and greater by relative rank with a count limit.
 /// Server returns removed data specified by returnType.
-/// Examples for ordered list [0,4,5,9,11,15]:
 ///
+/// Examples for ordered list \[0, 4, 5, 9, 11, 15\]:
+/// ```text
 /// (value,rank,count) = [removed items]
 /// (5,0,2) = [5,9]
 /// (5,1,1) = [9]
@@ -536,6 +538,7 @@ pub fn remove_by_value_relative_rank_range<'a>(
 /// (3,0,1) = [4]
 /// (3,3,7) = [11,15]
 /// (3,-3,2) = []
+/// ```
 pub fn remove_by_value_relative_rank_range_count<'a>(
     bin: &'a str,
     return_type: ListReturnType,
@@ -1021,8 +1024,8 @@ pub fn get_by_rank_range_count(
 /// Server selects list items nearest to value and greater by relative rank.
 /// Server returns selected data specified by returnType.
 ///
-/// Examples for ordered list [0,4,5,9,11,15]:
-///
+/// Examples for ordered list \[0, 4, 5, 9, 11, 15\]:
+/// ```text
 /// (value,rank) = [selected items]
 /// (5,0) = [5,9,11,15]
 /// (5,1) = [9,11,15]
@@ -1030,6 +1033,7 @@ pub fn get_by_rank_range_count(
 /// (3,0) = [4,5,9,11,15]
 /// (3,3) = [11,15]
 /// (3,-3) = [0,4,5,9,11,15]
+/// ```
 pub fn get_by_value_relative_rank_range<'a>(
     bin: &'a str,
     value: &'a Value,
@@ -1057,8 +1061,8 @@ pub fn get_by_value_relative_rank_range<'a>(
 /// Server selects list items nearest to value and greater by relative rank with a count limit.
 /// Server returns selected data specified by returnType.
 ///
-/// Examples for ordered list [0,4,5,9,11,15]:
-///
+/// Examples for ordered list \[0, 4, 5, 9, 11, 15\]:
+/// ```text
 /// (value,rank,count) = [selected items]
 /// (5,0,2) = [5,9]
 /// (5,1,1) = [9]
@@ -1066,6 +1070,7 @@ pub fn get_by_value_relative_rank_range<'a>(
 /// (3,0,1) = [4]
 /// (3,3,7) = [11,15]
 /// (3,-3,2) = []
+/// ```
 pub fn get_by_value_relative_rank_range_count<'a>(
     bin: &'a str,
     value: &'a Value,

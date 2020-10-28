@@ -21,11 +21,21 @@ use crate::Value;
 // Empty Context for scalar operations
 pub const DEFAULT_CTX: &[CdtContext] = &[];
 
+#[doc(hidden)]
+pub enum CtxType {
+    ListIndex = 0x10,
+    ListRank = 0x11,
+    ListValue = 0x13,
+    MapIndex = 0x20,
+    MapRank = 0x21,
+    MapKey = 0x22,
+    MapValue = 0x23,
+}
 /// `CdtContext` defines Nested CDT context. Identifies the location of nested list/map to apply the operation.
 /// for the current level.
 /// An array of CTX identifies location of the list/map on multiple
 /// levels on nesting.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct CdtContext {
     /// Context Type
     pub id: u8,
@@ -47,7 +57,7 @@ pub struct CdtContext {
 /// -3: Third to last item.
 pub const fn ctx_list_index(index: i64) -> CdtContext {
     CdtContext {
-        id: 0x10,
+        id: CtxType::ListIndex as u8,
         flags: 0,
         value: Value::Int(index),
     }
@@ -56,7 +66,7 @@ pub const fn ctx_list_index(index: i64) -> CdtContext {
 /// list with given type at index offset, given an order and pad.
 pub fn ctx_list_index_create(index: i64, order: ListOrderType, pad: bool) -> CdtContext {
     CdtContext {
-        id: 0x10,
+        id: CtxType::ListIndex as u8,
         flags: list_order_flag(order, pad),
         value: Value::Int(index),
     }
@@ -68,7 +78,7 @@ pub fn ctx_list_index_create(index: i64, order: ListOrderType, pad: bool) -> Cdt
 /// -1 = largest value
 pub const fn ctx_list_rank(rank: i64) -> CdtContext {
     CdtContext {
-        id: 0x11,
+        id: CtxType::ListRank as u8,
         flags: 0,
         value: Value::Int(rank),
     }
@@ -77,7 +87,7 @@ pub const fn ctx_list_rank(rank: i64) -> CdtContext {
 /// Defines Lookup list by value.
 pub const fn ctx_list_value(key: Value) -> CdtContext {
     CdtContext {
-        id: 0x13,
+        id: CtxType::ListValue as u8,
         flags: 0,
         value: key,
     }
@@ -92,7 +102,7 @@ pub const fn ctx_list_value(key: Value) -> CdtContext {
 /// -3: Third to last item.
 pub const fn ctx_map_index(key: Value) -> CdtContext {
     CdtContext {
-        id: 0x20,
+        id: CtxType::MapIndex as u8,
         flags: 0,
         value: key,
     }
@@ -104,7 +114,7 @@ pub const fn ctx_map_index(key: Value) -> CdtContext {
 /// -1 = largest value
 pub const fn ctx_map_rank(rank: i64) -> CdtContext {
     CdtContext {
-        id: 0x21,
+        id: CtxType::MapRank as u8,
         flags: 0,
         value: Value::Int(rank),
     }
@@ -113,7 +123,7 @@ pub const fn ctx_map_rank(rank: i64) -> CdtContext {
 /// Defines Lookup map by key.
 pub const fn ctx_map_key(key: Value) -> CdtContext {
     CdtContext {
-        id: 0x22,
+        id: CtxType::MapKey as u8,
         flags: 0,
         value: key,
     }
@@ -122,7 +132,7 @@ pub const fn ctx_map_key(key: Value) -> CdtContext {
 /// Create map with given type at map key.
 pub const fn ctx_map_key_create(key: Value, order: MapOrder) -> CdtContext {
     CdtContext {
-        id: 0x22,
+        id: CtxType::MapKey as u8,
         flags: order as u8,
         value: key,
     }
@@ -131,7 +141,7 @@ pub const fn ctx_map_key_create(key: Value, order: MapOrder) -> CdtContext {
 /// Defines Lookup map by value.
 pub const fn ctx_map_value(key: Value) -> CdtContext {
     CdtContext {
-        id: 0x23,
+        id: CtxType::MapValue as u8,
         flags: 0,
         value: key,
     }
