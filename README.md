@@ -100,7 +100,7 @@ To run all the test cases:
 ```shell
 $ export AEROSPIKE_HOSTS=127.0.0.1:3000
 $ cargo test
-``
+```
 
 To enable debug logging for the `aerospike` crate:
 
