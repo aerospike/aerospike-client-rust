@@ -240,7 +240,16 @@ fn expression_rec_ops() {
         le(device_size(), int_val(0)),
         &set_name,
     );
-    let count = count_results(rs);
+    let mut count = count_results(rs);
+
+    if count == 0 {
+        // Not in-memory
+        let rs = test_filter(
+            le(device_size(), int_val(2000)),
+            &set_name,
+        );
+        count = count_results(rs);
+    }
     assert_eq!(count, 100, "DEVICE SIZE Test Failed");
 
     let rs = test_filter(
