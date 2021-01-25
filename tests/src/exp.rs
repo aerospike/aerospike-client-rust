@@ -260,7 +260,7 @@ fn expression_rec_ops() {
     assert_eq!(count, 100, "LAST UPDATE Test Failed");
 
     let rs = test_filter(
-        gt(since_update(), int_val(150)),
+        gt(since_update(), int_val(10)),
         &set_name,
     );
     let count = count_results(rs);
