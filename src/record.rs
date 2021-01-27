@@ -74,7 +74,7 @@ impl Record {
                     Ok(d) => Some(d),
                     // Record was not expired at server but it looks expired at client
                     // because of delay or clock difference, present it as not-expired.
-                    _ => Some(Duration::new(1u64, 0)),
+                    Err(_) => Some(Duration::new(1u64, 0)),
                 }
             }
         }

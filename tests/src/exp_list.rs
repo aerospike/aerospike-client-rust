@@ -1,8 +1,8 @@
 use crate::common;
 use env_logger;
 
-use aerospike::expressions::*;
 use aerospike::expressions::lists::*;
+use aerospike::expressions::*;
 use aerospike::operations::lists::{ListPolicy, ListReturnType};
 use aerospike::*;
 use std::sync::Arc;
@@ -71,10 +71,7 @@ fn expression_list() {
 
     let rs = test_filter(
         eq(
-            size(
-                clear(list_bin("bin".to_string()), &[]),
-                &[],
-            ),
+            size(clear(list_bin("bin".to_string()), &[]), &[]),
             int_val(0),
         ),
         &set_name,
@@ -311,11 +308,7 @@ fn expression_list() {
     let rs = test_filter(
         eq(
             size(
-                remove_by_value(
-                    int_val(3),
-                    list_bin("bin".to_string()),
-                    &[],
-                ),
+                remove_by_value(int_val(3), list_bin("bin".to_string()), &[]),
                 &[],
             ),
             int_val(3),
@@ -403,11 +396,7 @@ fn expression_list() {
     let rs = test_filter(
         eq(
             size(
-                remove_by_index(
-                    int_val(0),
-                    list_bin("bin".to_string()),
-                    &[],
-                ),
+                remove_by_index(int_val(0), list_bin("bin".to_string()), &[]),
                 &[],
             ),
             int_val(3),
@@ -420,11 +409,7 @@ fn expression_list() {
     let rs = test_filter(
         eq(
             size(
-                remove_by_index_range(
-                    int_val(2),
-                    list_bin("bin".to_string()),
-                    &[],
-                ),
+                remove_by_index_range(int_val(2), list_bin("bin".to_string()), &[]),
                 &[],
             ),
             int_val(2),
@@ -473,11 +458,7 @@ fn expression_list() {
     let rs = test_filter(
         eq(
             size(
-                remove_by_rank(
-                    int_val(2),
-                    list_bin("bin".to_string()),
-                    &[],
-                ),
+                remove_by_rank(int_val(2), list_bin("bin".to_string()), &[]),
                 &[],
             ),
             int_val(3),
@@ -490,11 +471,7 @@ fn expression_list() {
     let rs = test_filter(
         eq(
             size(
-                remove_by_rank_range(
-                    int_val(2),
-                    list_bin("bin".to_string()),
-                    &[],
-                ),
+                remove_by_rank_range(int_val(2), list_bin("bin".to_string()), &[]),
                 &[],
             ),
             int_val(2),

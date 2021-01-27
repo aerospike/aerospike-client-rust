@@ -508,10 +508,9 @@ impl Buffer {
                 _ => write_attr |= INFO2_WRITE,
             }
 
-            let each_op = match operation.data {
-                OperationData::CdtMapOp(_) | OperationData::CdtBitOp(_) => true,
-                _ => false,
-            };
+            let each_op =
+                matches!(operation.data, OperationData::CdtMapOp(_) | OperationData::CdtBitOp(_));
+
             if policy.respond_per_each_op || each_op {
                 write_attr |= INFO2_RESPOND_ALL_OPS;
             }
@@ -603,12 +602,12 @@ impl Buffer {
             field_count += 1;
         }
 
-        if namespace != "" {
+        if !namespace.is_empty() {
             self.data_offset += namespace.len() + FIELD_HEADER_SIZE as usize;
             field_count += 1;
         }
 
-        if set_name != "" {
+        if !set_name.is_empty() {
             self.data_offset += set_name.len() + FIELD_HEADER_SIZE as usize;
             field_count += 1;
         }
@@ -650,11 +649,11 @@ impl Buffer {
             bin_count as u16,
         )?;
 
-        if namespace != "" {
+        if !namespace.is_empty() {
             self.write_field_string(namespace, FieldType::Namespace)?;
         }
 
-        if set_name != "" {
+        if !set_name.is_empty() {
             self.write_field_string(set_name, FieldType::Table)?;
         }
 
@@ -709,18 +708,18 @@ impl Buffer {
         let mut filter_size = 0;
         let mut bin_name_size = 0;
 
-        if statement.namespace != "" {
+        if !statement.namespace.is_empty() {
             self.data_offset += statement.namespace.len() + FIELD_HEADER_SIZE as usize;
             field_count += 1;
         }
 
-        if statement.set_name != "" {
+        if !statement.set_name.is_empty() {
             self.data_offset += statement.set_name.len() + FIELD_HEADER_SIZE as usize;
             field_count += 1;
         }
 
         if let Some(ref index_name) = statement.index_name {
-            if index_name != "" {
+            if !index_name.is_empty() {
                 self.data_offset += index_name.len() + FIELD_HEADER_SIZE as usize;
                 field_count += 1;
             }
@@ -807,7 +806,7 @@ impl Buffer {
             operation_count as u16,
         )?;
 
-        if statement.namespace != "" {
+        if !statement.namespace.is_empty() {
             self.write_field_string(&statement.namespace, FieldType::Namespace)?;
         }
 
@@ -817,7 +816,7 @@ impl Buffer {
             }
         }
 
-        if statement.set_name != "" {
+        if !statement.set_name.is_empty() {
             self.write_field_string(&statement.set_name, FieldType::Table)?;
         }
 
@@ -902,12 +901,12 @@ impl Buffer {
     fn estimate_key_size(&mut self, key: &Key, send_key: bool) -> Result<u16> {
         let mut field_count: u16 = 0;
 
-        if key.namespace != "" {
+        if !key.namespace.is_empty() {
             self.data_offset += key.namespace.len() + FIELD_HEADER_SIZE as usize;
             field_count += 1;
         }
 
-        if key.set_name != "" {
+        if !key.set_name.is_empty() {
             self.data_offset += key.set_name.len() + FIELD_HEADER_SIZE as usize;
             field_count += 1;
         }
@@ -1070,11 +1069,11 @@ impl Buffer {
 
     fn write_key(&mut self, key: &Key, send_key: bool) -> Result<()> {
         // Write key into buffer.
-        if key.namespace != "" {
+        if !key.namespace.is_empty() {
             self.write_field_string(&key.namespace, FieldType::Namespace)?;
         }
 
-        if key.set_name != "" {
+        if !key.set_name.is_empty() {
             self.write_field_string(&key.set_name, FieldType::Table)?;
         }
 
@@ -1192,6 +1191,7 @@ impl Buffer {
         self.data_buffer[self.data_offset]
     }
 
+    #[allow(clippy::option_if_let_else)]
     pub fn read_u8(&mut self, pos: Option<usize>) -> Result<u8> {
         if let Some(pos) = pos {
             Ok(self.data_buffer[pos])
@@ -1202,6 +1202,7 @@ impl Buffer {
         }
     }
 
+    #[allow(clippy::option_if_let_else)]
     pub fn read_i8(&mut self, pos: Option<usize>) -> Result<i8> {
         if let Some(pos) = pos {
             Ok(self.data_buffer[pos] as i8)
@@ -1212,6 +1213,7 @@ impl Buffer {
         }
     }
 
+    #[allow(clippy::option_if_let_else)]
     pub fn read_u16(&mut self, pos: Option<usize>) -> Result<u16> {
         let len = 2;
         if let Some(pos) = pos {
@@ -1230,6 +1232,7 @@ impl Buffer {
         Ok(val as i16)
     }
 
+    #[allow(clippy::option_if_let_else)]
     pub fn read_u32(&mut self, pos: Option<usize>) -> Result<u32> {
         let len = 4;
         if let Some(pos) = pos {
@@ -1248,6 +1251,7 @@ impl Buffer {
         Ok(val as i32)
     }
 
+    #[allow(clippy::option_if_let_else)]
     pub fn read_u64(&mut self, pos: Option<usize>) -> Result<u64> {
         let len = 8;
         if let Some(pos) = pos {
@@ -1272,6 +1276,7 @@ impl Buffer {
         Ok(size as usize)
     }
 
+    #[allow(clippy::option_if_let_else)]
     pub fn read_f32(&mut self, pos: Option<usize>) -> Result<f32> {
         let len = 4;
         if let Some(pos) = pos {
@@ -1285,6 +1290,7 @@ impl Buffer {
         }
     }
 
+    #[allow(clippy::option_if_let_else)]
     pub fn read_f64(&mut self, pos: Option<usize>) -> Result<f64> {
         let len = 8;
         if let Some(pos) = pos {
@@ -1403,12 +1409,12 @@ impl Buffer {
         self.write_bytes(val.as_bytes())
     }
 
-    pub fn write_geo(&mut self, val: &str) -> Result<usize> {
+    pub fn write_geo(&mut self, value: &str) -> Result<usize> {
         self.write_u8(0)?;
         self.write_u8(0)?;
         self.write_u8(0)?;
-        self.write_bytes(val.as_bytes())?;
-        Ok(3 + val.len())
+        self.write_bytes(value.as_bytes())?;
+        Ok(3 + value.len())
     }
 
     pub fn write_timeout(&mut self, val: Option<Duration>) {

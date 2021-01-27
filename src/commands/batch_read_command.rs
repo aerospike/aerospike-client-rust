@@ -90,7 +90,7 @@ impl<'a, 'b> BatchReadCommand<'a, 'b> {
             // set command node, so when you return a record it has the node
             let node = match self.get_node() {
                 Ok(node) => node,
-                _ => continue, // Node is currently inactive. Retry.
+                Err(_) => continue, // Node is currently inactive. Retry.
             };
 
             let mut conn = match node.get_connection(base_policy.timeout()) {

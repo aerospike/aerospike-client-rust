@@ -16,9 +16,9 @@
 use crate::common;
 use env_logger;
 
-use aerospike::expressions::*;
 use aerospike::expressions::hll::*;
 use aerospike::expressions::lists::*;
+use aerospike::expressions::*;
 use aerospike::operations::hll::HLLPolicy;
 use aerospike::operations::lists::ListReturnType;
 use aerospike::*;
@@ -83,7 +83,7 @@ fn expression_hll() {
         &set_name,
     );
     let count = count_results(rs);
-    assert_eq!(count, 98, "HLL INIT Test Failed");
+    assert_eq!(count, 99, "HLL INIT Test Failed");
 
     let rs = test_filter(
         eq(
@@ -125,7 +125,7 @@ fn expression_hll() {
         &set_name,
     );
     let count = count_results(rs);
-    assert_eq!(count, 97, "HLL GET UNION Test Failed");
+    assert_eq!(count, 98, "HLL GET UNION Test Failed");
 
     let rs = test_filter(
         eq(
@@ -138,7 +138,7 @@ fn expression_hll() {
         &set_name,
     );
     let count = count_results(rs);
-    assert_eq!(count, 97, "HLL GET UNION COUNT Test Failed");
+    assert_eq!(count, 98, "HLL GET UNION COUNT Test Failed");
 
     let rs = test_filter(
         eq(

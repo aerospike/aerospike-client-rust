@@ -218,11 +218,8 @@ impl Hash for Value {
 
 impl Value {
     /// Returns true if this value is the empty value (nil).
-    pub fn is_nil(&self) -> bool {
-        match *self {
-            Value::Nil => true,
-            _ => false,
-        }
+    pub const fn is_nil(&self) -> bool {
+        matches!(*self, Value::Nil)
     }
 
     /// Return the particle type for the value used in the wire protocol.

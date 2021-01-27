@@ -830,7 +830,7 @@ fn add_write(
 }
 
 #[doc(hidden)]
-fn get_value_type(return_type: MapReturnType) -> ExpType {
+const fn get_value_type(return_type: MapReturnType) -> ExpType {
     let t = return_type as u8 & !(MapReturnType::Inverted as u8);
     if t == MapReturnType::Key as u8 || t == MapReturnType::Value as u8 {
         ExpType::LIST

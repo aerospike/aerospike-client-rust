@@ -71,10 +71,18 @@ pub struct WritePolicy {
 impl WritePolicy {
     /// Create a new write policy instance with the specified generation and expiration parameters.
     pub fn new(gen: u32, exp: Expiration) -> Self {
-        let mut wp = WritePolicy::default();
-        wp.generation = gen;
-        wp.expiration = exp;
-        wp
+        WritePolicy {
+            base_policy: BasePolicy::default(),
+            record_exists_action: RecordExistsAction::Update,
+            generation_policy: GenerationPolicy::None,
+            commit_level: CommitLevel::CommitAll,
+            generation: gen,
+            expiration: exp,
+            send_key: false,
+            respond_per_each_op: false,
+            durable_delete: false,
+            filter_expression: None,
+        }
     }
 
     /// Get the current Filter expression

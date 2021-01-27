@@ -67,19 +67,13 @@ pub enum Bins {
 
 impl Bins {
     /// Returns `true` if the bins selector is an `All` value.
-    pub fn is_all(&self) -> bool {
-        match *self {
-            Bins::All => true,
-            _ => false,
-        }
+    pub const fn is_all(&self) -> bool {
+        matches!(*self, Bins::All)
     }
 
     /// Returns `true` if the bins selector is a `None` value.
-    pub fn is_none(&self) -> bool {
-        match *self {
-            Bins::None => true,
-            _ => false,
-        }
+    pub const fn is_none(&self) -> bool {
+        matches!(*self, Bins::None)
     }
 }
 
