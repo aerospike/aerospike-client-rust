@@ -148,6 +148,7 @@ pub enum ListWriteFlags {
 }
 
 /// `ListPolicy` directives when creating a list and writing list items.
+#[derive(Debug, Clone, Copy)]
 pub struct ListPolicy {
     /// CdtListOrderType
     pub attributes: ListOrderType,

@@ -169,7 +169,7 @@ pub enum MapWriteMode {
 }
 
 /// `MapPolicy` directives when creating a map and writing map items.
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub struct MapPolicy {
     /// The Order of the Map
     pub order: MapOrder,

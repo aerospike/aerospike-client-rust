@@ -18,6 +18,7 @@ use crate::policy::{BasePolicy, PolicyLike};
 use crate::{CommitLevel, Expiration, GenerationPolicy, RecordExistsAction};
 
 /// `WritePolicy` encapsulates parameters for all write operations.
+#[derive(Debug, Clone)]
 pub struct WritePolicy {
     /// Base policy instance
     pub base_policy: BasePolicy,

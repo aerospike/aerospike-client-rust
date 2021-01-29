@@ -17,7 +17,7 @@ use crate::expressions::FilterExpression;
 use crate::policy::{BasePolicy, PolicyLike};
 
 /// `ScanPolicy` encapsulates optional parameters used in scan operations.
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct ScanPolicy {
     /// Base policy instance
     pub base_policy: BasePolicy,
