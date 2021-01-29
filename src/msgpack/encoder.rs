@@ -254,7 +254,7 @@ pub fn pack_bool(buf: &mut Option<&mut Buffer>, value: bool) -> Result<usize> {
 pub fn pack_map_begin(buf: &mut Option<&mut Buffer>, length: usize) -> Result<usize> {
     match length {
         val if val < 16 => pack_half_byte(buf, 0x80 | (length as u8)),
-        val if (16..1 << 16).contains(&val) => pack_i16(buf, 0xde, length as i16),
+        val if (16..(1 << 16)).contains(&val) => pack_i16(buf, 0xde, length as i16),
         _ => pack_i32(buf, 0xdf, length as i32),
     }
 }
@@ -263,7 +263,7 @@ pub fn pack_map_begin(buf: &mut Option<&mut Buffer>, length: usize) -> Result<us
 pub fn pack_array_begin(buf: &mut Option<&mut Buffer>, length: usize) -> Result<usize> {
     match length {
         val if val < 16 => pack_half_byte(buf, 0x90 | (length as u8)),
-        val if (16..1 << 16).contains(&val) => pack_i16(buf, 0xdc, length as i16),
+        val if (16..(1 << 16)).contains(&val) => pack_i16(buf, 0xdc, length as i16),
         _ => pack_i32(buf, 0xdd, length as i32),
     }
 }
@@ -272,7 +272,7 @@ pub fn pack_array_begin(buf: &mut Option<&mut Buffer>, length: usize) -> Result<
 pub fn pack_byte_array_begin(buf: &mut Option<&mut Buffer>, length: usize) -> Result<usize> {
     match length {
         val if val < 32 => pack_half_byte(buf, 0xa0 | (length as u8)),
-        val if (32..1 << 16).contains(&val) => pack_i16(buf, 0xda, length as i16),
+        val if (32..(1 << 16)).contains(&val) => pack_i16(buf, 0xda, length as i16),
         _ => pack_i32(buf, 0xdb, length as i32),
     }
 }
@@ -331,7 +331,7 @@ fn pack_geo_json(buf: &mut Option<&mut Buffer>, value: &str) -> Result<usize> {
 #[doc(hidden)]
 pub fn pack_integer(buf: &mut Option<&mut Buffer>, val: i64) -> Result<usize> {
     match val {
-        val if (0..1 << 7).contains(&val) => pack_half_byte(buf, val as u8),
+        val if (0..(1 << 7)).contains(&val) => pack_half_byte(buf, val as u8),
         val if val >= 1 << 7 && val < i64::from(i8::max_value()) => {
             pack_byte(buf, MSGPACK_MARKER_I8, val as u8)
         }
