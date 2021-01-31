@@ -1,10 +1,24 @@
 # ======================================================================
 # 
-#  Standardized commands 
+#  Setup
 # 
 # ======================================================================
 .DEFAULT_GOAL := help
 
+# Dotenv load
+VARS_OLD := $(.VARIABLES)
+DOTENV_FILE ?= ./.env
+ENV_FILE ?= $(DOTENV_FILE)
+ifneq (,$(wildcard $(ENV_FILE)))
+	include $(ENV_FILE)
+	export $(shell sed 's/=.*//' $(ENV_FILE))
+endif
+
+# ======================================================================
+# 
+#  Standard commands
+# 
+# ======================================================================
 aerospike: $(DOCKER)  ## Start aerospike docker instance
 	mkdir -p $(AEROSPIKE_DATA_PATH)
 	$(DOCKER) run --rm -it $(AEROSPIKE_DOCKER_RUN) --name aerospike $(AEROSPIKE_URL)
@@ -57,8 +71,9 @@ AEROSPIKE_NAMESPACE ?= test
 AEROSPIKE_STORAGE ?= 8
 AEROSPIKE_URL ?= $(AEROSPIKE_DOCKER_REPO):$(AEROSPIKE_VERSION)
 AEROSPIKE_VERSION ?= 5.4.0.2
+AEROSPIKE_PORT ?= 3000
 
-AEROSPIKE_DOCKER_RUN := -p 3000:3000 -p 3001:3001 -p 3002:3002
+AEROSPIKE_DOCKER_RUN := -p $(AEROSPIKE_PORT):3000
 ifneq "" "$(AEROSPIKE_DEFAULT_TTL)"
 AEROSPIKE_DOCKER_RUN += -e "DEFAULT_TTL=$(AEROSPIKE_DEFAULT_TTL)"
 endif
