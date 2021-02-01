@@ -19,22 +19,22 @@ use serde::Serialize;
 use std::convert::From;
 
 /// Container object for a record bin, comprising a name and a value.
-pub struct Bin<'a> {
+pub struct Bin {
     /// Bin name
-    pub name: &'a str,
+    pub name: String,
 
     /// Bin value
     pub value: Value,
 }
 
-impl<'a> Bin<'a> {
+impl Bin {
     /// Construct a new bin given a name and a value.
-    pub const fn new(name: &'a str, val: Value) -> Self {
-        Bin { name, value: val }
+    pub fn new(name: &str, val: Value) -> Self {
+        Bin { name: name.to_string(), value: val }
     }
 }
 
-impl<'a> AsRef<Bin<'a>> for Bin<'a> {
+impl AsRef<Bin> for Bin {
     fn as_ref(&self) -> &Self {
         self
     }
@@ -83,50 +83,50 @@ impl Bins {
     }
 }
 
-impl<'a> From<&'a [&'a str]> for Bins {
-    fn from(bins: &'a [&'a str]) -> Self {
+impl From<&[&str]> for Bins {
+    fn from(bins: &[&str]) -> Self {
         let bins = bins.iter().cloned().map(String::from).collect();
         Bins::Some(bins)
     }
 }
 
-impl<'a> From<[&'a str; 1]> for Bins {
-    fn from(bins: [&'a str; 1]) -> Self {
+impl From<[&str; 1]> for Bins {
+    fn from(bins: [&str; 1]) -> Self {
         let bins = bins.iter().cloned().map(String::from).collect();
         Bins::Some(bins)
     }
 }
 
-impl<'a> From<[&'a str; 2]> for Bins {
-    fn from(bins: [&'a str; 2]) -> Self {
+impl From<[&str; 2]> for Bins {
+    fn from(bins: [&str; 2]) -> Self {
         let bins = bins.iter().cloned().map(String::from).collect();
         Bins::Some(bins)
     }
 }
 
-impl<'a> From<[&'a str; 3]> for Bins {
-    fn from(bins: [&'a str; 3]) -> Self {
+impl From<[&str; 3]> for Bins {
+    fn from(bins: [&str; 3]) -> Self {
         let bins = bins.iter().cloned().map(String::from).collect();
         Bins::Some(bins)
     }
 }
 
-impl<'a> From<[&'a str; 4]> for Bins {
-    fn from(bins: [&'a str; 4]) -> Self {
+impl From<[&str; 4]> for Bins {
+    fn from(bins: [&str; 4]) -> Self {
         let bins = bins.iter().cloned().map(String::from).collect();
         Bins::Some(bins)
     }
 }
 
-impl<'a> From<[&'a str; 5]> for Bins {
-    fn from(bins: [&'a str; 5]) -> Self {
+impl From<[&str; 5]> for Bins {
+    fn from(bins: [&str; 5]) -> Self {
         let bins = bins.iter().cloned().map(String::from).collect();
         Bins::Some(bins)
     }
 }
 
-impl<'a> From<[&'a str; 6]> for Bins {
-    fn from(bins: [&'a str; 6]) -> Self {
+impl From<[&str; 6]> for Bins {
+    fn from(bins: [&str; 6]) -> Self {
         let bins = bins.iter().cloned().map(String::from).collect();
         Bins::Some(bins)
     }
