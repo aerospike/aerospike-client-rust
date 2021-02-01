@@ -35,13 +35,17 @@ build: $(CARGO)  ## Compiles crate workspace
 doc: $(CARGO)  ## Build documentation
 	$(CARGO) doc --no-deps
 
-help: ## Show this menu 
-	@awk 'BEGIN {FS = ":.*?## "} /^[a-zA-Z_-]+:.*?## / {printf "\033[36m%-30s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
+.PHONY: env
+env:  ## Shows Makefile variables and their values
+	$(foreach v, $(filter-out $(VARS_OLD) VARS_OLD,$(sort $(.VARIABLES))), $(info $(v) = $($(v))))
+
+help: 
+	@awk 'BEGIN {FS = ":.*?## "} /^[a-zA-Z_-]+:.*?## / {printf "\033[36m%-15s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
 
 lint: $(CARGO) clippy  ## Run style check
 	$(CARGO) clippy --all --all-features -- -D warnings
 
-release: $(CARGO) | style lint doc build test benchmark audit  ## Run everything needed for a release
+release: $(CARGO) | env style lint doc build test benchmark audit  ## Run everything needed for a release
 
 style: | $(CARGO) rustfmt ## Run style check
 	$(CARGO) fmt --all -- --check
@@ -109,11 +113,6 @@ $(AUDIT):
 # cargo command
 export CARGO
 $(CARGO): $(RUSTUP)
-
-# shows environment
-.PHONY: env
-env:
-	$(foreach v, $(filter-out $(VARS_OLD) VARS_OLD,$(sort $(.VARIABLES))), $(info $(v) = $($(v))))
 
 # cargo clippy - as a component, the file may be there but the toolchain installation may not
 clippy: $(RUSTUP)
