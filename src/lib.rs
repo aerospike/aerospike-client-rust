@@ -190,6 +190,10 @@ pub mod operations;
 pub mod policy;
 pub mod query;
 mod record;
+#[cfg(feature="serialization")]
+mod aerospike_record;
+#[cfg(feature="serialization")]
+pub use aerospike_record::*;
 mod result_code;
 pub mod task;
 mod user;
