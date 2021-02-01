@@ -11,7 +11,7 @@ DOTENV_FILE ?= ./.env
 ENV_FILE ?= $(DOTENV_FILE)
 ifneq (,$(wildcard $(ENV_FILE)))
 	include $(ENV_FILE)
-	export $(shell sed 's/=.*//' $(ENV_FILE))
+	export $(shell grep -v '^\s*\#.*' $(ENV_FILE) | grep -v '^\s*$$' | sed 's/=.*//' | sed 's/^\s*export//' )
 endif
 
 # ======================================================================
@@ -109,6 +109,11 @@ $(AUDIT):
 # cargo command
 export CARGO
 $(CARGO): $(RUSTUP)
+
+# shows environment
+.PHONY: env
+env:
+	$(foreach v, $(filter-out $(VARS_OLD) VARS_OLD,$(sort $(.VARIABLES))), $(info $(v) = $($(v))))
 
 # cargo clippy - as a component, the file may be there but the toolchain installation may not
 clippy: $(RUSTUP)
