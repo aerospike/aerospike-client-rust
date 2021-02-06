@@ -192,6 +192,7 @@ impl Default for MapPolicy {
 
 /// Determines the correct operation to use when setting one or more map values, depending on the
 /// map policy.
+#[allow(clippy::trivially_copy_pass_by_ref)]
 pub(crate) const fn map_write_op(policy: &MapPolicy, multi: bool) -> CdtMapOpType {
     match policy.write_mode {
         MapWriteMode::Update => {
@@ -217,7 +218,7 @@ pub(crate) const fn map_write_op(policy: &MapPolicy, multi: bool) -> CdtMapOpTyp
         }
     }
 }
-
+#[allow(clippy::trivially_copy_pass_by_ref)]
 const fn map_order_arg(policy: &MapPolicy) -> Option<CdtArgument> {
     match policy.write_mode {
         MapWriteMode::UpdateOnly => None,
