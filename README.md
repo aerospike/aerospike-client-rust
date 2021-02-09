@@ -11,7 +11,7 @@
 
 An [Aerospike](https://www.aerospike.com/) client library for Rust.
 
-This library is compatible with Rust v1.38+ and supports the following operating systems: Linux, Mac OS X, and Windows.
+This library is compatible with Rust 1.46+ and supports the following operating systems: Linux, Mac OS X, and Windows.
 
 - [Usage](#Usage)
 - [Known Limitations](#Limitations)
