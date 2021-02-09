@@ -169,7 +169,7 @@ pub enum MapWriteMode {
 }
 
 /// `MapPolicy` directives when creating a map and writing map items.
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub struct MapPolicy {
     /// The Order of the Map
     pub order: MapOrder,
@@ -192,7 +192,8 @@ impl Default for MapPolicy {
 
 /// Determines the correct operation to use when setting one or more map values, depending on the
 /// map policy.
-pub(crate) fn map_write_op(policy: &MapPolicy, multi: bool) -> CdtMapOpType {
+#[allow(clippy::trivially_copy_pass_by_ref)]
+pub(crate) const fn map_write_op(policy: &MapPolicy, multi: bool) -> CdtMapOpType {
     match policy.write_mode {
         MapWriteMode::Update => {
             if multi {
@@ -217,8 +218,8 @@ pub(crate) fn map_write_op(policy: &MapPolicy, multi: bool) -> CdtMapOpType {
         }
     }
 }
-
-fn map_order_arg(policy: &MapPolicy) -> Option<CdtArgument> {
+#[allow(clippy::trivially_copy_pass_by_ref)]
+const fn map_order_arg(policy: &MapPolicy) -> Option<CdtArgument> {
     match policy.write_mode {
         MapWriteMode::UpdateOnly => None,
         _ => Some(CdtArgument::Byte(policy.order as u8)),

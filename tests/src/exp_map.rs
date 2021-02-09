@@ -1,8 +1,8 @@
 use crate::common;
 use env_logger;
 
-use aerospike::expressions::*;
 use aerospike::expressions::maps::*;
+use aerospike::expressions::*;
 use aerospike::*;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -100,10 +100,7 @@ fn expression_map() {
 
     let rs = test_filter(
         eq(
-            size(
-                clear(map_bin("bin".to_string()), &[]),
-                &[],
-            ),
+            size(clear(map_bin("bin".to_string()), &[]), &[]),
             int_val(0),
         ),
         &set_name,
@@ -464,11 +461,7 @@ fn expression_map() {
     let rs = test_filter(
         eq(
             size(
-                remove_by_value(
-                    int_val(5),
-                    map_bin("bin".to_string()),
-                    &[],
-                ),
+                remove_by_value(int_val(5), map_bin("bin".to_string()), &[]),
                 &[],
             ),
             int_val(1),
@@ -516,11 +509,7 @@ fn expression_map() {
     let rs = test_filter(
         eq(
             size(
-                remove_by_index(
-                    int_val(0),
-                    map_bin("bin".to_string()),
-                    &[],
-                ),
+                remove_by_index(int_val(0), map_bin("bin".to_string()), &[]),
                 &[],
             ),
             int_val(1),
@@ -533,11 +522,7 @@ fn expression_map() {
     let rs = test_filter(
         eq(
             size(
-                remove_by_index_range(
-                    int_val(0),
-                    map_bin("bin".to_string()),
-                    &[],
-                ),
+                remove_by_index_range(int_val(0), map_bin("bin".to_string()), &[]),
                 &[],
             ),
             int_val(0),
@@ -568,11 +553,7 @@ fn expression_map() {
     let rs = test_filter(
         eq(
             size(
-                remove_by_rank(
-                    int_val(0),
-                    map_bin("bin".to_string()),
-                    &[],
-                ),
+                remove_by_rank(int_val(0), map_bin("bin".to_string()), &[]),
                 &[],
             ),
             int_val(1),
@@ -585,11 +566,7 @@ fn expression_map() {
     let rs = test_filter(
         eq(
             size(
-                remove_by_rank_range(
-                    int_val(0),
-                    map_bin("bin".to_string()),
-                    &[],
-                ),
+                remove_by_rank_range(int_val(0), map_bin("bin".to_string()), &[]),
                 &[],
             ),
             int_val(0),
@@ -602,12 +579,7 @@ fn expression_map() {
     let rs = test_filter(
         eq(
             size(
-                remove_by_rank_range_count(
-                    int_val(0),
-                    int_val(1),
-                    map_bin("bin".to_string()),
-                    &[],
-                ),
+                remove_by_rank_range_count(int_val(0), int_val(1), map_bin("bin".to_string()), &[]),
                 &[],
             ),
             int_val(1),

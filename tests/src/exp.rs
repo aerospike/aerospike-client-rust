@@ -52,68 +52,32 @@ fn expression_compare() {
     let set_name = create_test_set(EXPECTED);
 
     // EQ
-    let rs = test_filter(
-        eq(
-            int_bin("bin".to_string()),
-            int_val(1),
-        ),
-        &set_name,
-    );
+    let rs = test_filter(eq(int_bin("bin".to_string()), int_val(1)), &set_name);
     let count = count_results(rs);
     assert_eq!(count, 1, "EQ Test Failed");
 
     // NE
-    let rs = test_filter(
-        ne(
-            int_bin("bin".to_string()),
-            int_val(1),
-        ),
-        &set_name,
-    );
+    let rs = test_filter(ne(int_bin("bin".to_string()), int_val(1)), &set_name);
     let count = count_results(rs);
     assert_eq!(count, 99, "NE Test Failed");
 
     // LT
-    let rs = test_filter(
-        lt(
-            int_bin("bin".to_string()),
-            int_val(10),
-        ),
-        &set_name,
-    );
+    let rs = test_filter(lt(int_bin("bin".to_string()), int_val(10)), &set_name);
     let count = count_results(rs);
     assert_eq!(count, 10, "LT Test Failed");
 
     // LE
-    let rs = test_filter(
-        le(
-            int_bin("bin".to_string()),
-            int_val(10),
-        ),
-        &set_name,
-    );
+    let rs = test_filter(le(int_bin("bin".to_string()), int_val(10)), &set_name);
     let count = count_results(rs);
     assert_eq!(count, 11, "LE Test Failed");
 
     // GT
-    let rs = test_filter(
-        gt(
-            int_bin("bin".to_string()),
-            int_val(1),
-        ),
-        &set_name,
-    );
+    let rs = test_filter(gt(int_bin("bin".to_string()), int_val(1)), &set_name);
     let count = count_results(rs);
     assert_eq!(count, 98, "GT Test Failed");
 
     // GE
-    let rs = test_filter(
-        ge(
-            int_bin("bin".to_string()),
-            int_val(1),
-        ),
-        &set_name,
-    );
+    let rs = test_filter(ge(int_bin("bin".to_string()), int_val(1)), &set_name);
     let count = count_results(rs);
     assert_eq!(count, 99, "GT Test Failed");
 }
@@ -127,14 +91,8 @@ fn expression_condition() {
     // AND
     let rs = test_filter(
         and(vec![
-            eq(
-                int_bin("bin".to_string()),
-                int_val(1),
-            ),
-            eq(
-                string_bin("bin2".to_string()),
-                string_val("1".to_string()),
-            ),
+            eq(int_bin("bin".to_string()), int_val(1)),
+            eq(string_bin("bin2".to_string()), string_val("1".to_string())),
         ]),
         &set_name,
     );
@@ -144,14 +102,8 @@ fn expression_condition() {
     // OR
     let rs = test_filter(
         or(vec![
-            eq(
-                int_bin("bin".to_string()),
-                int_val(1),
-            ),
-            eq(
-                int_bin("bin".to_string()),
-                int_val(3),
-            ),
+            eq(int_bin("bin".to_string()), int_val(1)),
+            eq(int_bin("bin".to_string()), int_val(3)),
         ]),
         &set_name,
     );
@@ -159,13 +111,7 @@ fn expression_condition() {
     assert_eq!(count, 2, "OR Test Failed");
 
     // NOT
-    let rs = test_filter(
-        not(eq(
-            int_bin("bin".to_string()),
-            int_val(1),
-        )),
-        &set_name,
-    );
+    let rs = test_filter(not(eq(int_bin("bin".to_string()), int_val(1))), &set_name);
     let count = count_results(rs);
     assert_eq!(count, 99, "NOT Test Failed");
 }
@@ -177,32 +123,20 @@ fn expression_data_types() {
     let set_name = create_test_set(EXPECTED);
 
     // INT
-    let rs = test_filter(
-        eq(
-            int_bin("bin".to_string()),
-            int_val(1),
-        ),
-        &set_name,
-    );
+    let rs = test_filter(eq(int_bin("bin".to_string()), int_val(1)), &set_name);
     let count = count_results(rs);
     assert_eq!(count, 1, "INT Test Failed");
 
     // STRING
     let rs = test_filter(
-        eq(
-            string_bin("bin2".to_string()),
-            string_val("1".to_string()),
-        ),
+        eq(string_bin("bin2".to_string()), string_val("1".to_string())),
         &set_name,
     );
     let count = count_results(rs);
     assert_eq!(count, 1, "STRING Test Failed");
 
     let rs = test_filter(
-        eq(
-            float_bin("bin3".to_string()),
-            float_val(2f64),
-        ),
+        eq(float_bin("bin3".to_string()), float_val(2f64)),
         &set_name,
     );
     let count = count_results(rs);
@@ -235,49 +169,29 @@ fn expression_rec_ops() {
 
     let set_name = create_test_set(EXPECTED);
 
-    // dev size 0 because in-memory
-    let rs = test_filter(
-        le(device_size(), int_val(0)),
-        &set_name,
-    );
+    let rs = test_filter(le(device_size(), int_val(0)), &set_name);
     let mut count = count_results(rs);
-
     if count == 0 {
         // Not in-memory
-        let rs = test_filter(
-            le(device_size(), int_val(2000)),
-            &set_name,
-        );
+        let rs = test_filter(le(device_size(), int_val(2000)), &set_name);
         count = count_results(rs);
     }
     assert_eq!(count, 100, "DEVICE SIZE Test Failed");
 
-    let rs = test_filter(
-        gt(last_update(), int_val(15000)),
-        &set_name,
-    );
+    let rs = test_filter(gt(last_update(), int_val(15000)), &set_name);
     let count = count_results(rs);
     assert_eq!(count, 100, "LAST UPDATE Test Failed");
 
-    let rs = test_filter(
-        gt(since_update(), int_val(10)),
-        &set_name,
-    );
+    let rs = test_filter(gt(since_update(), int_val(10)), &set_name);
     let count = count_results(rs);
     assert_eq!(count, 100, "SINCE UPDATE Test Failed");
 
     // Records dont expire
-    let rs = test_filter(
-        le(void_time(), int_val(0)),
-        &set_name,
-    );
+    let rs = test_filter(le(void_time(), int_val(0)), &set_name);
     let count = count_results(rs);
     assert_eq!(count, 100, "VOID TIME Test Failed");
 
-    let rs = test_filter(
-        le(ttl(), int_val(0)),
-        &set_name,
-    );
+    let rs = test_filter(le(ttl(), int_val(0)), &set_name);
     let count = count_results(rs);
     assert_eq!(count, 100, "TTL Test Failed");
 
@@ -286,10 +200,7 @@ fn expression_rec_ops() {
     assert_eq!(count, 100, "TOMBSTONE Test Failed");
 
     let rs = test_filter(
-        eq(
-            expressions::set_name(),
-            string_val(set_name.clone()),
-        ),
+        eq(expressions::set_name(), string_val(set_name.clone())),
         &set_name,
     );
     let count = count_results(rs);
@@ -299,17 +210,11 @@ fn expression_rec_ops() {
     let count = count_results(rs);
     assert_eq!(count, 100, "BIN EXISTS Test Failed");
 
-    let rs = test_filter(
-        eq(digest_modulo(3), int_val(1)),
-        &set_name,
-    );
+    let rs = test_filter(eq(digest_modulo(3), int_val(1)), &set_name);
     let count = count_results(rs);
     assert_eq!(count > 0 && count < 100, true, "DIGEST MODULO Test Failed");
 
-    let rs = test_filter(
-        eq(key(ExpType::INT), int_val(50)),
-        &set_name,
-    );
+    let rs = test_filter(eq(key(ExpType::INT), int_val(50)), &set_name);
     let count = count_results(rs);
     // 0 because key is not saved
     assert_eq!(count, 0, "KEY Test Failed");
@@ -319,10 +224,7 @@ fn expression_rec_ops() {
     // 0 because key is not saved
     assert_eq!(count, 0, "KEY EXISTS Test Failed");
 
-    let rs = test_filter(
-        eq(nil(), nil()),
-        &set_name,
-    );
+    let rs = test_filter(eq(nil(), nil()), &set_name);
     let count = count_results(rs);
     assert_eq!(count, 100, "NIL Test Failed");
 
@@ -362,121 +264,76 @@ fn expression_commands() {
 
     // DELETE
     let key = as_key!(namespace, &set_name, 15);
-    wpolicy.filter_expression = Some(eq(
-        int_bin("bin".to_string()),
-        int_val(16),
-    ));
+    wpolicy.filter_expression = Some(eq(int_bin("bin".to_string()), int_val(16)));
     let test = client.delete(&wpolicy, &key);
     assert_eq!(test.is_err(), true, "DELETE EXP Err Test Failed");
 
-    wpolicy.filter_expression = Some(eq(
-        int_bin("bin".to_string()),
-        int_val(15),
-    ));
+    wpolicy.filter_expression = Some(eq(int_bin("bin".to_string()), int_val(15)));
     let test = client.delete(&wpolicy, &key);
     assert_eq!(test.is_ok(), true, "DELETE EXP Ok Test Failed");
 
     // PUT
     let key = as_key!(namespace, &set_name, 25);
-    wpolicy.filter_expression = Some(eq(
-        int_bin("bin".to_string()),
-        int_val(15),
-    ));
+    wpolicy.filter_expression = Some(eq(int_bin("bin".to_string()), int_val(15)));
     let test = client.put(&wpolicy, &key, &[as_bin!("bin", 26)]);
     assert_eq!(test.is_err(), true, "PUT Err Test Failed");
 
-    wpolicy.filter_expression = Some(eq(
-        int_bin("bin".to_string()),
-        int_val(25),
-    ));
+    wpolicy.filter_expression = Some(eq(int_bin("bin".to_string()), int_val(25)));
     let test = client.put(&wpolicy, &key, &[as_bin!("bin", 26)]);
     assert_eq!(test.is_ok(), true, "PUT Ok Test Failed");
 
     // GET
     let key = as_key!(namespace, &set_name, 35);
-    rpolicy.filter_expression = Some(eq(
-        int_bin("bin".to_string()),
-        int_val(15),
-    ));
+    rpolicy.filter_expression = Some(eq(int_bin("bin".to_string()), int_val(15)));
     let test = client.get(&rpolicy, &key, Bins::All);
     assert_eq!(test.is_err(), true, "GET Err Test Failed");
 
-    rpolicy.filter_expression = Some(eq(
-        int_bin("bin".to_string()),
-        int_val(35),
-    ));
+    rpolicy.filter_expression = Some(eq(int_bin("bin".to_string()), int_val(35)));
     let test = client.get(&rpolicy, &key, Bins::All);
     assert_eq!(test.is_ok(), true, "GET Ok Test Failed");
 
     // EXISTS
     let key = as_key!(namespace, &set_name, 45);
-    wpolicy.filter_expression = Some(eq(
-        int_bin("bin".to_string()),
-        int_val(15),
-    ));
+    wpolicy.filter_expression = Some(eq(int_bin("bin".to_string()), int_val(15)));
     let test = client.exists(&wpolicy, &key);
     assert_eq!(test.is_err(), true, "EXISTS Err Test Failed");
 
-    wpolicy.filter_expression = Some(eq(
-        int_bin("bin".to_string()),
-        int_val(45),
-    ));
+    wpolicy.filter_expression = Some(eq(int_bin("bin".to_string()), int_val(45)));
     let test = client.exists(&wpolicy, &key);
     assert_eq!(test.is_ok(), true, "EXISTS Ok Test Failed");
 
     // APPEND
     let key = as_key!(namespace, &set_name, 55);
-    wpolicy.filter_expression = Some(eq(
-        int_bin("bin".to_string()),
-        int_val(15),
-    ));
+    wpolicy.filter_expression = Some(eq(int_bin("bin".to_string()), int_val(15)));
     let test = client.add(&wpolicy, &key, &[as_bin!("test55", "test")]);
     assert_eq!(test.is_err(), true, "APPEND Err Test Failed");
 
-    wpolicy.filter_expression = Some(eq(
-        int_bin("bin".to_string()),
-        int_val(55),
-    ));
+    wpolicy.filter_expression = Some(eq(int_bin("bin".to_string()), int_val(55)));
     let test = client.add(&wpolicy, &key, &[as_bin!("test55", "test")]);
     assert_eq!(test.is_ok(), true, "APPEND Ok Test Failed");
 
     // PREPEND
     let key = as_key!(namespace, &set_name, 55);
-    wpolicy.filter_expression = Some(eq(
-        int_bin("bin".to_string()),
-        int_val(15),
-    ));
+    wpolicy.filter_expression = Some(eq(int_bin("bin".to_string()), int_val(15)));
     let test = client.prepend(&wpolicy, &key, &[as_bin!("test55", "test")]);
     assert_eq!(test.is_err(), true, "PREPEND Err Test Failed");
 
-    wpolicy.filter_expression = Some(eq(
-        int_bin("bin".to_string()),
-        int_val(55),
-    ));
+    wpolicy.filter_expression = Some(eq(int_bin("bin".to_string()), int_val(55)));
     let test = client.prepend(&wpolicy, &key, &[as_bin!("test55", "test")]);
     assert_eq!(test.is_ok(), true, "PREPEND Ok Test Failed");
 
     // TOUCH
     let key = as_key!(namespace, &set_name, 65);
-    wpolicy.filter_expression = Some(eq(
-        int_bin("bin".to_string()),
-        int_val(15),
-    ));
+    wpolicy.filter_expression = Some(eq(int_bin("bin".to_string()), int_val(15)));
     let test = client.touch(&wpolicy, &key);
     assert_eq!(test.is_err(), true, "TOUCH Err Test Failed");
 
-    wpolicy.filter_expression = Some(eq(
-        int_bin("bin".to_string()),
-        int_val(65),
-    ));
+    wpolicy.filter_expression = Some(eq(int_bin("bin".to_string()), int_val(65)));
     let test = client.touch(&wpolicy, &key);
     assert_eq!(test.is_ok(), true, "TOUCH Ok Test Failed");
 
     // SCAN
-    spolicy.filter_expression = Some(eq(
-        int_bin("bin".to_string()),
-        int_val(75),
-    ));
+    spolicy.filter_expression = Some(eq(int_bin("bin".to_string()), int_val(75)));
     match client.scan(&spolicy, namespace, &set_name, Bins::All) {
         Ok(records) => {
             let mut count = 0;
@@ -496,18 +353,12 @@ fn expression_commands() {
     let ops = vec![operations::add(&bin)];
 
     let key = as_key!(namespace, &set_name, 85);
-    wpolicy.filter_expression = Some(eq(
-        int_bin("bin".to_string()),
-        int_val(15),
-    ));
+    wpolicy.filter_expression = Some(eq(int_bin("bin".to_string()), int_val(15)));
     let op = client.operate(&wpolicy, &key, &ops);
     assert_eq!(op.is_err(), true, "OPERATE Err Test Failed");
 
     let key = as_key!(namespace, &set_name, 85);
-    wpolicy.filter_expression = Some(eq(
-        int_bin("bin".to_string()),
-        int_val(85),
-    ));
+    wpolicy.filter_expression = Some(eq(int_bin("bin".to_string()), int_val(85)));
     let op = client.operate(&wpolicy, &key, &ops);
     assert_eq!(op.is_ok(), true, "OPERATE Ok Test Failed");
 
@@ -518,10 +369,7 @@ fn expression_commands() {
         let key = as_key!(namespace, &set_name, i);
         batch_reads.push(BatchRead::new(key, &b));
     }
-    bpolicy.filter_expression = Some(gt(
-        int_bin("bin".to_string()),
-        int_val(84),
-    ));
+    bpolicy.filter_expression = Some(gt(int_bin("bin".to_string()), int_val(84)));
     match client.batch_get(&bpolicy, batch_reads) {
         Ok(results) => {
             for result in results {

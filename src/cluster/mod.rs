@@ -246,9 +246,9 @@ impl Cluster {
 
     pub fn update_partitions(&self, node: Arc<Node>) -> Result<()> {
         let mut conn = node.get_connection(self.client_policy.timeout)?;
-        let tokens = PartitionTokenizer::new(&mut conn).or_else(|e| {
+        let tokens = PartitionTokenizer::new(&mut conn).map_err(|e| {
             conn.invalidate();
-            Err(e)
+            e
         })?;
 
         let nmap = tokens.update_partition(self.partitions(), node)?;
@@ -321,7 +321,7 @@ impl Cluster {
                     self.add_alias(host, node.clone());
                     dup = true;
                 }
-                _ => {
+                Err(_) => {
                     if let Some(node) = list.iter().find(|n| n.name() == nv.name) {
                         self.add_alias(host, node.clone());
                         dup = true;

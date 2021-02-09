@@ -23,6 +23,7 @@ use crate::{MapPolicy, MapReturnType, Value};
 const MODULE: i64 = 0;
 
 /// Create expression that writes key/value item to map bin.
+#[allow(clippy::trivially_copy_pass_by_ref)]
 pub fn put(
     policy: &MapPolicy,
     key: FilterExpression,
@@ -52,6 +53,7 @@ pub fn put(
 }
 
 /// Create expression that writes each map item to map bin.
+#[allow(clippy::trivially_copy_pass_by_ref)]
 pub fn put_items(
     policy: &MapPolicy,
     map: FilterExpression,
@@ -79,6 +81,7 @@ pub fn put_items(
 
 /// Create expression that increments values by incr for all items identified by key.
 /// Valid only for numbers.
+#[allow(clippy::trivially_copy_pass_by_ref)]
 pub fn increment(
     policy: &MapPolicy,
     key: FilterExpression,
@@ -830,7 +833,7 @@ fn add_write(
 }
 
 #[doc(hidden)]
-fn get_value_type(return_type: MapReturnType) -> ExpType {
+const fn get_value_type(return_type: MapReturnType) -> ExpType {
     let t = return_type as u8 & !(MapReturnType::Inverted as u8);
     if t == MapReturnType::Key as u8 || t == MapReturnType::Value as u8 {
         ExpType::LIST

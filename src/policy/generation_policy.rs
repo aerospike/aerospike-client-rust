@@ -15,7 +15,7 @@
 //
 
 /// `GenerationPolicy` determines how to handle record writes based on record generation.
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub enum GenerationPolicy {
     /// None means: Do not use record generation to restrict writes.
     None = 0,

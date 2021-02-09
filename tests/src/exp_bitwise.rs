@@ -15,8 +15,8 @@
 use crate::common;
 use env_logger;
 
-use aerospike::expressions::*;
 use aerospike::expressions::bitwise::*;
+use aerospike::expressions::*;
 use aerospike::operations::bitwise::{BitPolicy, BitwiseOverflowActions, BitwiseResizeFlags};
 use aerospike::*;
 use std::sync::Arc;
@@ -49,11 +49,7 @@ fn expression_bitwise() {
     // EQ
     let rs = test_filter(
         eq(
-            count(
-                int_val(0),
-                int_val(16),
-                blob_bin("bin".to_string()),
-            ),
+            count(int_val(0), int_val(16), blob_bin("bin".to_string())),
             int_val(3),
         ),
         &set_name,
@@ -323,11 +319,7 @@ fn expression_bitwise() {
 
     let rs = test_filter(
         eq(
-            get(
-                int_val(0),
-                int_val(8),
-                blob_bin("bin".to_string()),
-            ),
+            get(int_val(0), int_val(8), blob_bin("bin".to_string())),
             blob_val(vec![0b00000001]),
         ),
         &set_name,
@@ -367,12 +359,7 @@ fn expression_bitwise() {
 
     let rs = test_filter(
         eq(
-            get_int(
-                int_val(0),
-                int_val(8),
-                false,
-                blob_bin("bin".to_string()),
-            ),
+            get_int(int_val(0), int_val(8), false, blob_bin("bin".to_string())),
             int_val(1),
         ),
         &set_name,

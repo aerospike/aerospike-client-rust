@@ -18,6 +18,7 @@ use crate::policy::{BasePolicy, PolicyLike};
 use crate::{CommitLevel, Expiration, GenerationPolicy, RecordExistsAction};
 
 /// `WritePolicy` encapsulates parameters for all write operations.
+#[derive(Debug, Clone)]
 pub struct WritePolicy {
     /// Base policy instance
     pub base_policy: BasePolicy,
@@ -71,10 +72,11 @@ pub struct WritePolicy {
 impl WritePolicy {
     /// Create a new write policy instance with the specified generation and expiration parameters.
     pub fn new(gen: u32, exp: Expiration) -> Self {
-        let mut wp = WritePolicy::default();
-        wp.generation = gen;
-        wp.expiration = exp;
-        wp
+        Self {
+            generation: gen,
+            expiration: exp,
+            ..WritePolicy::default()
+        }
     }
 
     /// Get the current Filter expression

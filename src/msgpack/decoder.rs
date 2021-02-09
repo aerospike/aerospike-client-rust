@@ -219,9 +219,6 @@ fn unpack_value(buf: &mut Buffer) -> Result<Value> {
     }
 }
 
-fn is_ext(byte: u8) -> bool {
-    match byte {
-        0xc7 | 0xc8 | 0xc9 | 0xd4 | 0xd5 | 0xd6 | 0xd7 | 0xd8 => true,
-        _ => false,
-    }
+const fn is_ext(byte: u8) -> bool {
+    matches!(byte, 0xc7 | 0xc8 | 0xc9 | 0xd4 | 0xd5 | 0xd6 | 0xd7 | 0xd8)
 }

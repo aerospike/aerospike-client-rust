@@ -64,7 +64,7 @@ pub const fn ctx_list_index(index: i64) -> CdtContext {
 }
 
 /// list with given type at index offset, given an order and pad.
-pub fn ctx_list_index_create(index: i64, order: ListOrderType, pad: bool) -> CdtContext {
+pub const fn ctx_list_index_create(index: i64, order: ListOrderType, pad: bool) -> CdtContext {
     CdtContext {
         id: CtxType::ListIndex as u8,
         flags: list_order_flag(order, pad),

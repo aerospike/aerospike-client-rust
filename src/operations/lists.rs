@@ -148,6 +148,7 @@ pub enum ListWriteFlags {
 }
 
 /// `ListPolicy` directives when creating a list and writing list items.
+#[derive(Debug, Clone, Copy)]
 pub struct ListPolicy {
     /// CdtListOrderType
     pub attributes: ListOrderType,
@@ -174,7 +175,7 @@ impl Default for ListPolicy {
 }
 
 #[doc(hidden)]
-pub fn list_order_flag(order: ListOrderType, pad: bool) -> u8 {
+pub const fn list_order_flag(order: ListOrderType, pad: bool) -> u8 {
     if let ListOrderType::Ordered = order {
         return 0xc0;
     }

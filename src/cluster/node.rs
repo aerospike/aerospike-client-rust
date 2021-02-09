@@ -136,7 +136,7 @@ impl Node {
         Ok(friends)
     }
 
-    fn services_name(&self) -> &'static str {
+    const fn services_name(&self) -> &'static str {
         if self.client_policy.use_services_alternate {
             "services-alternate"
         } else {
@@ -193,7 +193,7 @@ impl Node {
 
         let friend_string = match info_map.get(self.services_name()) {
             None => bail!(ErrorKind::BadResponse("Missing services list".to_string())),
-            Some(friend_string) if friend_string == "" => return Ok(friends),
+            Some(friend_string) if friend_string.is_empty() => return Ok(friends),
             Some(friend_string) => friend_string,
         };
 
@@ -287,9 +287,9 @@ impl Node {
         commands: &[&str],
     ) -> Result<HashMap<String, String>> {
         let mut conn = self.get_connection(timeout)?;
-        Message::info(&mut conn, commands).or_else(|e| {
+        Message::info(&mut conn, commands).map_err(|e| {
             conn.invalidate();
-            Err(e)
+            e
         })
     }
 

@@ -687,7 +687,7 @@ fn add_write(
 }
 
 #[doc(hidden)]
-fn get_value_type(return_type: ListReturnType) -> ExpType {
+const fn get_value_type(return_type: ListReturnType) -> ExpType {
     if (return_type as u8 & !(ListReturnType::Inverted as u8)) == ListReturnType::Values as u8 {
         ExpType::LIST
     } else {

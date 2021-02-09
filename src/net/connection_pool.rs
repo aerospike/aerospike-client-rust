@@ -82,10 +82,9 @@ impl Queue {
                 break;
             }
         }
-
-        connection.set_timeout(timeout).or_else(|err| {
+        connection.set_timeout(timeout).map_err(|err| {
             internals.num_conns -= 1;
-            Err(err)
+            err
         })?;
 
         Ok(PooledConnection {

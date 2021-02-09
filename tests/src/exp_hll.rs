@@ -16,9 +16,9 @@
 use crate::common;
 use env_logger;
 
-use aerospike::expressions::*;
 use aerospike::expressions::hll::*;
 use aerospike::expressions::lists::*;
+use aerospike::expressions::*;
 use aerospike::operations::hll::HLLPolicy;
 use aerospike::operations::lists::ListReturnType;
 use aerospike::*;

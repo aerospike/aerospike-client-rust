@@ -100,7 +100,7 @@ impl<'a> SingleCommand<'a> {
             // set command node, so when you return a record it has the node
             let node = match cmd.get_node() {
                 Ok(node) => node,
-                _ => continue, // Node is currently inactive. Retry.
+                Err(_) => continue, // Node is currently inactive. Retry.
             };
 
             let mut conn = match node.get_connection(policy.timeout()) {

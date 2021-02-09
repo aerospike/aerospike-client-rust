@@ -126,26 +126,15 @@ impl FilterExpression {
         module: Option<ExpType>,
         exps: Option<Vec<FilterExpression>>,
     ) -> FilterExpression {
-        if let Some(bin) = bin {
-            FilterExpression {
-                cmd,
-                val,
-                bin: Some(Box::new(bin)),
-                flags,
-                module,
-                exps,
-                arguments: None,
-            }
-        } else {
-            FilterExpression {
-                cmd,
-                val,
-                bin: None,
-                flags,
-                module,
-                exps,
-                arguments: None,
-            }
+        let bin = bin.map(Box::new);
+        FilterExpression {
+            cmd,
+            val,
+            bin,
+            flags,
+            module,
+            exps,
+            arguments: None,
         }
     }
 
@@ -663,6 +652,7 @@ pub fn list_val(val: Vec<Value>) -> FilterExpression {
 }
 
 /// Create Map bin Value
+#[allow(clippy::implicit_hasher)]
 pub fn map_val(val: HashMap<Value, Value>) -> FilterExpression {
     FilterExpression::new(None, Some(Value::from(val)), None, None, None, None)
 }
@@ -700,7 +690,7 @@ pub fn not(exp: FilterExpression) -> FilterExpression {
 /// use aerospike::expressions::{and, or, gt, int_bin, int_val, eq, lt};
 /// and(vec![or(vec![gt(int_bin("a".to_string()), int_val(5)), eq(int_bin("a".to_string()), int_val(0))]), lt(int_bin("b".to_string()), int_val(3))]);
 /// ```
-pub fn and(exps: Vec<FilterExpression>) -> FilterExpression {
+pub const fn and(exps: Vec<FilterExpression>) -> FilterExpression {
     FilterExpression {
         cmd: Some(ExpOp::And),
         val: None,
@@ -718,7 +708,7 @@ pub fn and(exps: Vec<FilterExpression>) -> FilterExpression {
 /// use aerospike::expressions::{or, eq, int_bin, int_val};
 /// or(vec![eq(int_bin("a".to_string()), int_val(0)), eq(int_bin("b".to_string()), int_val(0))]);
 /// ```
-pub fn or(exps: Vec<FilterExpression>) -> FilterExpression {
+pub const fn or(exps: Vec<FilterExpression>) -> FilterExpression {
     FilterExpression {
         cmd: Some(ExpOp::Or),
         val: None,

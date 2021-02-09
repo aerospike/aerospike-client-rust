@@ -97,11 +97,8 @@ impl Connection {
     }
 
     pub fn is_idle(&self) -> bool {
-        if let Some(idle_dl) = self.idle_deadline {
-            Instant::now() >= idle_dl
-        } else {
-            false
-        }
+        self.idle_deadline
+            .map_or(false, |idle_dl| Instant::now() >= idle_dl)
     }
 
     fn refresh(&mut self) {
