@@ -270,7 +270,7 @@ impl Client {
     ///     Err(err) => println!("Error writing record: {}", err),
     /// }
     /// ```
-    pub fn put<'a, 'b, A: AsRef<Bin<'b>>>(
+    pub fn put<'a, A: AsRef<Bin>>(
         &self,
         policy: &'a WritePolicy,
         key: &'a Key,
@@ -308,7 +308,7 @@ impl Client {
     ///     Err(err) => println!("Error writing record: {}", err),
     /// }
     /// ```
-    pub fn add<'a, 'b, A: AsRef<Bin<'b>>>(
+    pub fn add<'a, A: AsRef<Bin>>(
         &self,
         policy: &'a WritePolicy,
         key: &'a Key,
@@ -322,7 +322,7 @@ impl Client {
     /// Append bin string values to existing record bin values. The policy specifies the
     /// transaction timeout, record expiration and how the transaction is handled when the record
     /// already exists. This call only works for string values.
-    pub fn append<'a, 'b, A: AsRef<Bin<'b>>>(
+    pub fn append<'a, A: AsRef<Bin>>(
         &self,
         policy: &'a WritePolicy,
         key: &'a Key,
@@ -341,7 +341,7 @@ impl Client {
     /// Prepend bin string values to existing record bin values. The policy specifies the
     /// transaction timeout, record expiration and how the transaction is handled when the record
     /// already exists. This call only works for string values.
-    pub fn prepend<'a, 'b, A: AsRef<Bin<'b>>>(
+    pub fn prepend<'a, A: AsRef<Bin>>(
         &self,
         policy: &'a WritePolicy,
         key: &'a Key,
