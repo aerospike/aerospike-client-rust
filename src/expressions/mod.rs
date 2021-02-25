@@ -68,6 +68,31 @@ pub enum ExpOp {
     And = 16,
     Or = 17,
     Not = 18,
+    Xor = 19,
+    Add = 20,
+    Sub = 21,
+    Mul = 22,
+    Div = 23,
+    Pow = 24,
+    Log = 25,
+    Mod = 26,
+    Abs = 27,
+    Floor = 28,
+    Ceil = 29,
+    ToInt = 30,
+    ToFloat = 31,
+    IntAnd = 32,
+    IntOr = 33,
+    IntXor = 34,
+    IntNot = 35,
+    IntLshift = 36,
+    IntRshift = 37,
+    IntARshift = 38,
+    IntCount = 39,
+    IntLscan = 40,
+    IntRscan = 41,
+    Min = 50,
+    Max = 51,
     DigestModulo = 64,
     DeviceSize = 65,
     LastUpdate = 66,
@@ -80,6 +105,9 @@ pub enum ExpOp {
     Key = 80,
     Bin = 81,
     BinType = 82,
+    Cond = 123,
+    Var = 124,
+    Let = 125,
     Quoted = 126,
     Call = 127,
 }
@@ -112,7 +140,7 @@ pub struct FilterExpression {
     module: Option<ExpType>,
     /// Sub commands for the CmdExp operation
     exps: Option<Vec<FilterExpression>>,
-
+    /// Optional Arguments (CDT)
     arguments: Option<Vec<ExpressionArgument>>,
 }
 
@@ -144,10 +172,26 @@ impl FilterExpression {
         buf: &mut Option<&mut Buffer>,
     ) -> Result<usize> {
         let mut size = 0;
-        size += pack_array_begin(buf, exps.len() + 1)?;
-        size += pack_integer(buf, self.cmd.unwrap() as i64)?;
-        for exp in exps {
-            size += exp.pack(buf)?;
+        if let Some(val) = &self.val {
+            // DEF expression
+            size += pack_value(buf, val)?;
+            exps[0].pack(buf)?;
+        } else {
+            // Normal Expressions
+            match self.cmd.unwrap() {
+                ExpOp::Let => {
+                    // Let wire format: LET <defname1>, <defexp1>, <defname2>, <defexp2>, ..., <scope exp>
+                    let count = (exps.len() - 1) * 2 + 2;
+                    size += pack_array_begin(buf, count)?;
+                }
+                _ => {
+                    size += pack_array_begin(buf, exps.len() + 1)?;
+                }
+            }
+            size += pack_integer(buf, self.cmd.unwrap() as i64)?;
+            for exp in exps {
+                size += exp.pack(buf)?;
+            }
         }
         Ok(size)
     }
@@ -828,4 +872,568 @@ pub fn le(left: FilterExpression, right: FilterExpression) -> FilterExpression {
     }
 }
 
-// ----------------------------------------------
+/// Create "add" (+) operator that applies to a variable number of expressions.
+/// Return sum of all FilterExpressions given. All arguments must resolve to the same type (integer or float).
+/// Requires server version 5.6.0+.
+/// ```
+/// use aerospike::expressions::{eq, num_add, int_bin, int_val};
+/// // a + b + c == 10
+/// eq(num_add(vec![int_bin("a".to_string()), int_bin("b".to_string()), int_bin("c".to_string())]), int_val(10));
+/// ```
+pub fn num_add(exps: Vec<FilterExpression>) -> FilterExpression {
+    FilterExpression {
+        cmd: Some(ExpOp::Add),
+        val: None,
+        bin: None,
+        flags: None,
+        module: None,
+        exps: Some(exps),
+        arguments: None,
+    }
+}
+
+/// Create "subtract" (-) operator that applies to a variable number of expressions.
+/// If only one FilterExpression is provided, return the negation of that argument.
+/// Otherwise, return the sum of the 2nd to Nth FilterExpression subtracted from the 1st
+/// FilterExpression. All FilterExpressions must resolve to the same type (integer or float).
+/// Requires server version 5.6.0+.
+/// ```
+/// use aerospike::expressions::{gt, num_sub, int_bin, int_val};
+/// // a - b - c > 10
+/// gt(num_sub(vec![int_bin("a".to_string()), int_bin("b".to_string()), int_bin("c".to_string())]), int_val(10));
+/// ```
+pub fn num_sub(exps: Vec<FilterExpression>) -> FilterExpression {
+    FilterExpression {
+        cmd: Some(ExpOp::Sub),
+        val: None,
+        bin: None,
+        flags: None,
+        module: None,
+        exps: Some(exps),
+        arguments: None,
+    }
+}
+
+/// Create "multiply" (*) operator that applies to a variable number of expressions.
+/// Return the product of all FilterExpressions. If only one FilterExpressions is supplied, return
+/// that FilterExpressions. All FilterExpressions must resolve to the same type (integer or float).
+/// Requires server version 5.6.0+.
+/// ```
+/// use aerospike::expressions::{lt, num_mul, int_val, int_bin};
+/// // a * b * c < 100
+/// lt(num_mul(vec![int_bin("a".to_string()), int_bin("b".to_string()), int_bin("c".to_string())]), int_val(100));
+/// ```
+pub fn num_mul(exps: Vec<FilterExpression>) -> FilterExpression {
+    FilterExpression {
+        cmd: Some(ExpOp::Mul),
+        val: None,
+        bin: None,
+        flags: None,
+        module: None,
+        exps: Some(exps),
+        arguments: None,
+    }
+}
+
+/// Create "divide" (/) operator that applies to a variable number of expressions.
+/// If there is only one FilterExpressions, returns the reciprocal for that FilterExpressions.
+/// Otherwise, return the first FilterExpressions divided by the product of the rest.
+/// All FilterExpressions must resolve to the same type (integer or float).
+/// Requires server version 5.6.0+.
+/// ```
+/// use aerospike::expressions::{lt, int_val, int_bin, num_div};
+/// // a / b / c > 1
+/// lt(num_div(vec![int_bin("a".to_string()), int_bin("b".to_string()), int_bin("c".to_string())]), int_val(1));
+/// ```
+pub fn num_div(exps: Vec<FilterExpression>) -> FilterExpression {
+    FilterExpression {
+        cmd: Some(ExpOp::Div),
+        val: None,
+        bin: None,
+        flags: None,
+        module: None,
+        exps: Some(exps),
+        arguments: None,
+    }
+}
+
+/// Create "power" operator that raises a "base" to the "exponent" power.
+/// All arguments must resolve to floats.
+/// Requires server version 5.6.0+.
+/// ```
+/// // pow(a, 2.0) == 4.0
+/// use aerospike::expressions::{eq, num_pow, float_bin, float_val};
+/// eq(num_pow(float_bin("a".to_string()), float_val(2.0)), float_val(4.0));
+/// ```
+pub fn num_pow(base: FilterExpression, exponent: FilterExpression) -> FilterExpression {
+    FilterExpression {
+        cmd: Some(ExpOp::Pow),
+        val: None,
+        bin: None,
+        flags: None,
+        module: None,
+        exps: Some(vec![base, exponent]),
+        arguments: None,
+    }
+}
+
+/// Create "log" operator for logarithm of "num" with base "base".
+/// All arguments must resolve to floats.
+/// Requires server version 5.6.0+.
+/// ```
+/// // log(a, 2.0) == 4.0
+/// use aerospike::expressions::{eq, float_bin, float_val, num_log};
+/// eq(num_log(float_bin("a".to_string()), float_val(2.0)), float_val(4.0));
+/// ```
+pub fn num_log(num: FilterExpression, base: FilterExpression) -> FilterExpression {
+    FilterExpression {
+        cmd: Some(ExpOp::Log),
+        val: None,
+        bin: None,
+        flags: None,
+        module: None,
+        exps: Some(vec![num, base]),
+        arguments: None,
+    }
+}
+
+/// Create "modulo" (%) operator that determines the remainder of "numerator"
+/// divided by "denominator". All arguments must resolve to integers.
+/// Requires server version 5.6.0+.
+/// ```
+/// // a % 10 == 0
+/// use aerospike::expressions::{eq, num_mod, int_val, int_bin};
+/// eq(num_mod(int_bin("a".to_string()), int_val(10)), int_val(0));
+/// ```
+pub fn num_mod(numerator: FilterExpression, denominator: FilterExpression) -> FilterExpression {
+    FilterExpression {
+        cmd: Some(ExpOp::Mod),
+        val: None,
+        bin: None,
+        flags: None,
+        module: None,
+        exps: Some(vec![numerator, denominator]),
+        arguments: None,
+    }
+}
+
+/// Create operator that returns absolute value of a number.
+/// All arguments must resolve to integer or float.
+/// Requires server version 5.6.0+.
+/// ```
+/// // abs(a) == 1
+/// use aerospike::expressions::{eq, int_val, int_bin, num_abs};
+/// eq(num_abs(int_bin("a".to_string())), int_val(1));
+/// ```
+pub fn num_abs(value: FilterExpression) -> FilterExpression {
+    FilterExpression {
+        cmd: Some(ExpOp::Abs),
+        val: None,
+        bin: None,
+        flags: None,
+        module: None,
+        exps: Some(vec![value]),
+        arguments: None,
+    }
+}
+
+/// Create expression that rounds a floating point number down to the closest integer value.
+/// The return type is float.
+// Requires server version 5.6.0+.
+/// ```
+/// // floor(2.95) == 2.0
+/// use aerospike::expressions::{eq, num_floor, float_val};
+/// eq(num_floor(float_val(2.95)), float_val(2.0));
+/// ```
+pub fn num_floor(num: FilterExpression) -> FilterExpression {
+    FilterExpression {
+        cmd: Some(ExpOp::Floor),
+        val: None,
+        bin: None,
+        flags: None,
+        module: None,
+        exps: Some(vec![num]),
+        arguments: None,
+    }
+}
+
+/// Create expression that rounds a floating point number up to the closest integer value.
+/// The return type is float.
+/// Requires server version 5.6.0+.
+/// ```
+/// // ceil(2.15) == 3.0
+/// use aerospike::expressions::{float_val, num_ceil, ge};
+/// ge(num_ceil(float_val(2.15)), float_val(3.0));
+/// ```
+pub fn num_ceil(num: FilterExpression) -> FilterExpression {
+    FilterExpression {
+        cmd: Some(ExpOp::Ceil),
+        val: None,
+        bin: None,
+        flags: None,
+        module: None,
+        exps: Some(vec![num]),
+        arguments: None,
+    }
+}
+
+/// Create expression that converts an integer to a float.
+/// Requires server version 5.6.0+.
+/// ```
+/// // int(2.5) == 2
+/// use aerospike::expressions::{float_val, eq, to_int, int_val};
+/// eq(to_int(float_val(2.5)), int_val(2));
+/// ```
+pub fn to_int(num: FilterExpression) -> FilterExpression {
+    FilterExpression {
+        cmd: Some(ExpOp::ToInt),
+        val: None,
+        bin: None,
+        flags: None,
+        module: None,
+        exps: Some(vec![num]),
+        arguments: None,
+    }
+}
+
+/// Create expression that converts a float to an integer.
+/// Requires server version 5.6.0+.
+/// ```
+/// // float(2) == 2.0
+/// use aerospike::expressions::{float_val, eq, to_float, int_val};
+/// eq(to_float(int_val(2)), float_val(2.0));
+/// ```
+pub fn to_float(num: FilterExpression) -> FilterExpression {
+    FilterExpression {
+        cmd: Some(ExpOp::ToFloat),
+        val: None,
+        bin: None,
+        flags: None,
+        module: None,
+        exps: Some(vec![num]),
+        arguments: None,
+    }
+}
+
+/// Create integer "and" (&) operator that is applied to two or more integers.
+/// All arguments must resolve to integers.
+/// Requires server version 5.6.0+.
+/// ```
+/// // a & 0xff == 0x11
+/// use aerospike::expressions::{eq, int_val, int_and, int_bin};
+/// eq(int_and(vec![int_bin("a".to_string()), int_val(0xff)]), int_val(0x11));
+/// ```
+pub fn int_and(exps: Vec<FilterExpression>) -> FilterExpression {
+    FilterExpression {
+        cmd: Some(ExpOp::IntAnd),
+        val: None,
+        bin: None,
+        flags: None,
+        module: None,
+        exps: Some(exps),
+        arguments: None,
+    }
+}
+
+/// Create integer "xor" (^) operator that is applied to two or more integers.
+/// All arguments must resolve to integers.
+/// Requires server version 5.6.0+.
+/// ```
+/// // a ^ b == 16
+/// use aerospike::expressions::{eq, int_val, int_xor, int_bin};
+/// eq(int_xor(vec![int_bin("a".to_string()), int_bin("b".to_string())]), int_val(16));
+/// ```
+pub fn int_xor(exps: Vec<FilterExpression>) -> FilterExpression {
+    FilterExpression {
+        cmd: Some(ExpOp::IntXor),
+        val: None,
+        bin: None,
+        flags: None,
+        module: None,
+        exps: Some(exps),
+        arguments: None,
+    }
+}
+
+/// Create integer "not" (~) operator.
+/// Requires server version 5.6.0+.
+/// ```
+/// // ~a == 7
+/// use aerospike::expressions::{eq, int_val, int_not, int_bin};
+/// eq(int_not(int_bin("a".to_string())), int_val(7));
+/// ```
+pub fn int_not(exp: FilterExpression) -> FilterExpression {
+    FilterExpression {
+        cmd: Some(ExpOp::IntNot),
+        val: None,
+        bin: None,
+        flags: None,
+        module: None,
+        exps: Some(vec![exp]),
+        arguments: None,
+    }
+}
+
+/// Create integer "left shift" (<<) operator.
+/// Requires server version 5.6.0+.
+/// ```
+/// // a << 8 > 0xff
+/// use aerospike::expressions::{int_val, int_bin, gt, int_lshift};
+/// gt(int_lshift(int_bin("a".to_string()), int_val(8)), int_val(0xff));
+/// ```
+pub fn int_lshift(value: FilterExpression, shift: FilterExpression) -> FilterExpression {
+    FilterExpression {
+        cmd: Some(ExpOp::IntLshift),
+        val: None,
+        bin: None,
+        flags: None,
+        module: None,
+        exps: Some(vec![value, shift]),
+        arguments: None,
+    }
+}
+
+/// Create integer "logical right shift" (>>>) operator.
+/// Requires server version 5.6.0+.
+/// ```
+/// // a >> 8 > 0xff
+/// use aerospike::expressions::{int_val, int_bin, gt, int_rshift};
+/// gt(int_rshift(int_bin("a".to_string()), int_val(8)), int_val(0xff));
+/// ```
+pub fn int_rshift(value: FilterExpression, shift: FilterExpression) -> FilterExpression {
+    FilterExpression {
+        cmd: Some(ExpOp::IntRshift),
+        val: None,
+        bin: None,
+        flags: None,
+        module: None,
+        exps: Some(vec![value, shift]),
+        arguments: None,
+    }
+}
+
+/// Create integer "arithmetic right shift" (>>) operator.
+/// The sign bit is preserved and not shifted.
+/// Requires server version 5.6.0+.
+/// ```
+/// // a >>> 8 > 0xff
+/// use aerospike::expressions::{int_val, int_bin, gt, int_arshift};
+/// gt(int_arshift(int_bin("a".to_string()), int_val(8)), int_val(0xff));
+/// ```
+pub fn int_arshift(value: FilterExpression, shift: FilterExpression) -> FilterExpression {
+    FilterExpression {
+        cmd: Some(ExpOp::IntARshift),
+        val: None,
+        bin: None,
+        flags: None,
+        module: None,
+        exps: Some(vec![value, shift]),
+        arguments: None,
+    }
+}
+
+/// Create expression that returns count of integer bits that are set to 1.
+/// Requires server version 5.6.0+.
+/// ```
+/// // count(a) == 4
+/// use aerospike::expressions::{int_val, int_bin, int_count, eq};
+/// eq(int_count(int_bin("a".to_string())), int_val(4));
+/// ```
+pub fn int_count(exp: FilterExpression) -> FilterExpression {
+    FilterExpression {
+        cmd: Some(ExpOp::IntCount),
+        val: None,
+        bin: None,
+        flags: None,
+        module: None,
+        exps: Some(vec![exp]),
+        arguments: None,
+    }
+}
+
+/// Create expression that scans integer bits from left (most significant bit) to
+/// right (least significant bit), looking for a search bit value. When the
+/// search value is found, the index of that bit (where the most significant bit is
+/// index 0) is returned. If "search" is true, the scan will search for the bit
+/// value 1. If "search" is false it will search for bit value 0.
+/// Requires server version 5.6.0+.
+/// ```
+/// // lscan(a, true) == 4
+/// use aerospike::expressions::{int_val, int_bin, eq, int_lscan, bool_val};
+/// eq(int_lscan(int_bin("a".to_string()), bool_val(true)), int_val(4));
+/// ```
+pub fn int_lscan(value: FilterExpression, search: FilterExpression) -> FilterExpression {
+    FilterExpression {
+        cmd: Some(ExpOp::IntLscan),
+        val: None,
+        bin: None,
+        flags: None,
+        module: None,
+        exps: Some(vec![value, search]),
+        arguments: None,
+    }
+}
+
+/// Create expression that scans integer bits from right (least significant bit) to
+/// left (most significant bit), looking for a search bit value. When the
+/// search value is found, the index of that bit (where the most significant bit is
+/// index 0) is returned. If "search" is true, the scan will search for the bit
+/// value 1. If "search" is false it will search for bit value 0.
+/// Requires server version 5.6.0+.
+/// ```
+/// // rscan(a, true) == 4
+/// use aerospike::expressions::{int_val, int_bin, eq, int_rscan, bool_val};
+/// eq(int_rscan(int_bin("a".to_string()), bool_val(true)), int_val(4));
+/// ```
+pub fn int_rscan(value: FilterExpression, search: FilterExpression) -> FilterExpression {
+    FilterExpression {
+        cmd: Some(ExpOp::IntRscan),
+        val: None,
+        bin: None,
+        flags: None,
+        module: None,
+        exps: Some(vec![value, search]),
+        arguments: None,
+    }
+}
+
+/// Create expression that returns the minimum value in a variable number of expressions.
+/// All arguments must be the same type (integer or float).
+/// Requires server version 5.6.0+.
+/// ```
+/// // min(a, b, c) > 0
+/// use aerospike::expressions::{int_val, int_bin, gt, min};
+/// gt(min(vec![int_bin("a".to_string()),int_bin("b".to_string()),int_bin("c".to_string())]), int_val(0));
+/// ```
+pub fn min(exps: Vec<FilterExpression>) -> FilterExpression {
+    FilterExpression {
+        cmd: Some(ExpOp::Min),
+        val: None,
+        bin: None,
+        flags: None,
+        module: None,
+        exps: Some(exps),
+        arguments: None,
+    }
+}
+
+/// Create expression that returns the maximum value in a variable number of expressions.
+/// All arguments must be the same type (integer or float).
+/// Requires server version 5.6.0+.
+/// ```
+/// // max(a, b, c) > 100
+/// use aerospike::expressions::{int_val, int_bin, gt, max};
+/// gt(max(vec![int_bin("a".to_string()),int_bin("b".to_string()),int_bin("c".to_string())]), int_val(100));
+/// ```
+pub fn max(exps: Vec<FilterExpression>) -> FilterExpression {
+    FilterExpression {
+        cmd: Some(ExpOp::Max),
+        val: None,
+        bin: None,
+        flags: None,
+        module: None,
+        exps: Some(exps),
+        arguments: None,
+    }
+}
+
+//--------------------------------------------------
+// Variables
+//--------------------------------------------------
+
+/// Conditionally select an expression from a variable number of expression pairs
+/// followed by default expression action.
+/// Requires server version 5.6.0+.
+/// ```
+/// // Args Format: bool exp1, action exp1, bool exp2, action exp2, ..., action-default
+/// // Apply operator based on type.
+///
+/// use aerospike::expressions::{cond, int_bin, eq, int_val, num_add, num_sub, num_mul};
+/// cond(
+///   vec![
+///     eq(int_bin("type".to_string()), int_val(0)), num_add(vec![int_bin("val1".to_string()), int_bin("val2".to_string())]),
+///     eq(int_bin("type".to_string()), int_val(1)), num_sub(vec![int_bin("val1".to_string()), int_bin("val2".to_string())]),
+///     eq(int_bin("type".to_string()), int_val(2)), num_mul(vec![int_bin("val1".to_string()), int_bin("val2".to_string())]),
+///     int_val(-1)
+///   ]
+/// );
+/// ```
+pub fn cond(exps: Vec<FilterExpression>) -> FilterExpression {
+    FilterExpression {
+        cmd: Some(ExpOp::Cond),
+        val: None,
+        bin: None,
+        flags: None,
+        module: None,
+        exps: Some(exps),
+        arguments: None,
+    }
+}
+
+/// Define variables and expressions in scope.
+/// Requires server version 5.6.0+.
+/// ```
+/// // 5 < a < 10
+/// use aerospike::expressions::{exp_let, def, int_bin, and, lt, int_val, var};
+/// exp_let(
+///   vec![
+///     def("x".to_string(), int_bin("a".to_string())),
+///     and(vec![
+///       lt(int_val(5), var("x".to_string()),),
+///       lt(var("x".to_string()), int_val(10))
+///     ])
+///   ]
+/// );
+/// ```
+pub fn exp_let(exps: Vec<FilterExpression>) -> FilterExpression {
+    FilterExpression {
+        cmd: Some(ExpOp::Let),
+        val: None,
+        bin: None,
+        flags: None,
+        module: None,
+        exps: Some(exps),
+        arguments: None,
+    }
+}
+
+/// Assign variable to an expression that can be accessed later.
+/// Requires server version 5.6.0+.
+/// ```
+/// // 5 < a < 10
+/// use aerospike::expressions::{exp_let, def, int_bin, and, lt, int_val, var};
+/// exp_let(
+///   vec![
+///     def("x".to_string(), int_bin("a".to_string())),
+///     and(vec![
+///       lt(int_val(5), var("x".to_string()),),
+///       lt(var("x".to_string()), int_val(10))
+///     ])
+///   ]
+/// );
+/// ```
+pub fn def(name: String, value: FilterExpression) -> FilterExpression {
+    FilterExpression {
+        cmd: None,
+        val: Some(Value::from(name)),
+        bin: None,
+        flags: None,
+        module: None,
+        exps: Some(vec![value]),
+        arguments: None,
+    }
+}
+
+/// Retrieve expression value from a variable.
+/// Requires server version 5.6.0+.
+pub fn var(name: String) -> FilterExpression {
+    FilterExpression {
+        cmd: Some(ExpOp::Var),
+        val: Some(Value::from(name)),
+        bin: None,
+        flags: None,
+        module: None,
+        exps: None,
+        arguments: None,
+    }
+}
