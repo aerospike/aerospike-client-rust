@@ -23,6 +23,7 @@ const MODULE: i64 = 2;
 
 #[doc(hidden)]
 pub enum HllExpOp {
+    Init = 0,
     Add = 1,
     Count = 50,
     Union = 51,
@@ -31,6 +32,24 @@ pub enum HllExpOp {
     Similarity = 54,
     Describe = 55,
     MayContain = 56,
+}
+
+/// Create expression that creates a new HLL or resets an existing HLL.
+pub fn init(policy: HLLPolicy, index_bit_count: FilterExpression,  bin: FilterExpression) -> FilterExpression {
+    init_with_min_hash(policy, index_bit_count, int_val(-1), bin)
+}
+
+/// Create expression that creates a new HLL or resets an existing HLL with minhash bits.
+pub fn init_with_min_hash(policy: HLLPolicy, index_bit_count: FilterExpression, min_hash_count: FilterExpression, bin: FilterExpression) -> FilterExpression {
+    add_write(
+        bin,
+        vec![
+            ExpressionArgument::Value(Value::from(HllExpOp::Init as i64)),
+            ExpressionArgument::FilterExpression(index_bit_count),
+            ExpressionArgument::FilterExpression(min_hash_count),
+            ExpressionArgument::Value(Value::from(policy.flags as i64)),
+        ],
+    )
 }
 
 /// Create expression that adds list values to a HLL set and returns HLL set.
