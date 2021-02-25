@@ -23,6 +23,7 @@ pub mod hll;
 pub mod lists;
 pub mod maps;
 pub mod scalar;
+pub mod exp;
 
 use self::cdt::CdtOperation;
 pub use self::maps::{MapOrder, MapPolicy, MapReturnType, MapWriteMode};
@@ -33,6 +34,7 @@ use crate::commands::ParticleType;
 use crate::errors::Result;
 use crate::operations::cdt_context::CdtContext;
 use crate::Value;
+use crate::operations::exp::ExpOperation;
 
 #[derive(Clone, Copy)]
 #[doc(hidden)]
@@ -42,6 +44,8 @@ pub enum OperationType {
     CdtRead = 3,
     CdtWrite = 4,
     Incr = 5,
+    ExpRead = 6,
+    ExpWrite = 7,
     Append = 9,
     Prepend = 10,
     Touch = 11,
@@ -60,6 +64,7 @@ pub enum OperationData<'a> {
     CdtMapOp(CdtOperation<'a>),
     CdtBitOp(CdtOperation<'a>),
     HLLOp(CdtOperation<'a>),
+    EXPOp(ExpOperation<'a>)
 }
 
 #[doc(hidden)]
@@ -99,6 +104,7 @@ impl<'a> Operation<'a> {
         size += match self.data {
             OperationData::None => 0,
             OperationData::Value(value) => value.estimate_size()?,
+            OperationData::EXPOp(ref exp_op) => exp_op.estimate_size()?,
             OperationData::CdtListOp(ref cdt_op)
             | OperationData::CdtMapOp(ref cdt_op)
             | OperationData::CdtBitOp(ref cdt_op)
@@ -132,6 +138,10 @@ impl<'a> Operation<'a> {
             | OperationData::HLLOp(ref cdt_op) => {
                 size += self.write_op_header_to(buffer, cdt_op.particle_type() as u8)?;
                 size += cdt_op.write_to(buffer, self.ctx)?;
+            }
+            OperationData::EXPOp(ref exp) => {
+                size += self.write_op_header_to(buffer, exp.particle_type() as u8)?;
+                size += exp.write_to(buffer)?;
             }
         };
 

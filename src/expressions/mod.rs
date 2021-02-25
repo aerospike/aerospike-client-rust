@@ -20,7 +20,6 @@ pub mod hll;
 pub mod lists;
 pub mod maps;
 pub mod regex_flag;
-
 use crate::commands::buffer::Buffer;
 use crate::errors::Result;
 use crate::msgpack::encoder::{pack_array_begin, pack_integer, pack_raw_string, pack_value};
