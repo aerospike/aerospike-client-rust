@@ -99,10 +99,10 @@ pub fn write_exp<'a>(
 }
 
 /// Create operation that performs a read expression.
-pub fn read_exp(exp: &FilterExpression) -> Operation {
+pub fn read_exp(exp: &FilterExpression, flags: ExpReadFlags) -> Operation {
     let op = ExpOperation {
         encoder: Box::new(pack_read_exp),
-        policy: 0,
+        policy: flags as i64,
         exp,
     };
     Operation {
@@ -123,7 +123,8 @@ fn pack_write_exp(buf: &mut Option<&mut Buffer>, exp_op: &ExpOperation) -> Resul
 
 fn pack_read_exp(buf: &mut Option<&mut Buffer>, exp_op: &ExpOperation) -> Result<usize> {
     let mut size = 0;
-    size += pack_array_begin(buf, 1)?;
+    size += pack_array_begin(buf, 2)?;
     size += exp_op.exp.pack(buf)?;
+    size += pack_integer(buf, exp_op.policy)?;
     Ok(size)
 }

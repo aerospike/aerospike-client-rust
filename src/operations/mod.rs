@@ -140,7 +140,6 @@ impl<'a> Operation<'a> {
                 size += cdt_op.write_to(buffer, self.ctx)?;
             }
             OperationData::EXPOp(ref exp) => {
-                size += self.write_op_header_to(buffer, exp.particle_type() as u8)?;
                 size += exp.write_to(buffer)?;
             }
         };

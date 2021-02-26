@@ -554,7 +554,6 @@ impl Buffer {
         for operation in operations {
             operation.write_to(self)?;
         }
-
         self.end()
     }
 
