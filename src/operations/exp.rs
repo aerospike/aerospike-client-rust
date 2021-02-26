@@ -1,8 +1,26 @@
-use crate::expressions::FilterExpression;
-use crate::operations::{Operation, OperationType, OperationBin, OperationData};
+// Copyright 2015-2020 Aerospike, Inc.
+//
+// Portions may be licensed to Aerospike, Inc. under one or more contributor
+// license agreements.
+//
+// Licensed under the Apache License, Version 2.0 (the "License"); you may not
+// use this file except in compliance with the License. You may obtain a copy of
+// the License at http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
+// WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
+// License for the specific language governing permissions and limitations under
+// the License.
+
+//! Expression Operations.
+//! This functions allow users to run `FilterExpressions` as Operate commands.
+
 use crate::commands::buffer::Buffer;
 use crate::errors::Result;
+use crate::expressions::FilterExpression;
 use crate::msgpack::encoder::{pack_array_begin, pack_integer};
+use crate::operations::{Operation, OperationBin, OperationData, OperationType};
 use crate::ParticleType;
 
 /// Expression write Flags
@@ -23,27 +41,30 @@ pub enum ExpWriteFlags {
     /// Do not raise error if operation is denied.
     PolicyNoFail = 8,
     /// Ignore failures caused by the expression resolving to unknown or a non-bin type.
-    EvalNoFail = 16
+    EvalNoFail = 16,
 }
 
+#[doc(hidden)]
 pub type ExpressionEncoder = Box<dyn Fn(&mut Option<&mut Buffer>, &ExpOperation) -> Result<usize>>;
 
-pub struct ExpOperation<'a>{
+#[doc(hidden)]
+pub struct ExpOperation<'a> {
     pub encoder: ExpressionEncoder,
     pub policy: i64,
     pub exp: &'a FilterExpression,
 }
 
 impl<'a> ExpOperation<'a> {
+    #[doc(hidden)]
     pub const fn particle_type(&self) -> ParticleType {
         ParticleType::BLOB
     }
-
+    #[doc(hidden)]
     pub fn estimate_size(&self) -> Result<usize> {
         let size: usize = (self.encoder)(&mut None, self)?;
         Ok(size)
     }
-
+    #[doc(hidden)]
     pub fn write_to(&self, buffer: &mut Buffer) -> Result<usize> {
         let size: usize = (self.encoder)(&mut Some(buffer), self)?;
         Ok(size)
@@ -55,38 +76,44 @@ pub enum ExpReadFlags {
     /// Default
     Default = 0,
     /// Ignore failures caused by the expression resolving to unknown or a non-bin type.
-    EvalNoFail = 16
+    EvalNoFail = 16,
 }
 
-pub fn write<'a>(flags: ExpWriteFlags, bin: &'a str, exp: &'a FilterExpression) -> Operation<'a> {
-    let op = ExpOperation{
+/// Create operation that performs a expression that writes to record bin.
+pub fn write_exp<'a>(
+    flags: ExpWriteFlags,
+    bin: &'a str,
+    exp: &'a FilterExpression,
+) -> Operation<'a> {
+    let op = ExpOperation {
         encoder: Box::new(pack_write_exp),
         policy: flags as i64,
-        exp
+        exp,
     };
     Operation {
         op: OperationType::ExpWrite,
         ctx: &[],
         bin: OperationBin::Name(bin),
-        data: OperationData::EXPOp(op)
+        data: OperationData::EXPOp(op),
     }
 }
 
-pub fn read(exp: &FilterExpression) -> Operation {
+/// Create operation that performs a read expression.
+pub fn read_exp(exp: &FilterExpression) -> Operation {
     let op = ExpOperation {
         encoder: Box::new(pack_read_exp),
         policy: 0,
-        exp
+        exp,
     };
     Operation {
         op: OperationType::ExpRead,
         ctx: &[],
         bin: OperationBin::None,
-        data: OperationData::EXPOp(op)
+        data: OperationData::EXPOp(op),
     }
 }
 
-fn pack_write_exp(buf: &mut Option<&mut Buffer>, exp_op: &ExpOperation) -> Result<usize>{
+fn pack_write_exp(buf: &mut Option<&mut Buffer>, exp_op: &ExpOperation) -> Result<usize> {
     let mut size = 0;
     size += pack_array_begin(buf, 2)?;
     size += exp_op.exp.pack(buf)?;
@@ -94,7 +121,7 @@ fn pack_write_exp(buf: &mut Option<&mut Buffer>, exp_op: &ExpOperation) -> Resul
     Ok(size)
 }
 
-fn pack_read_exp(buf: &mut Option<&mut Buffer>, exp_op: &ExpOperation) -> Result<usize>{
+fn pack_read_exp(buf: &mut Option<&mut Buffer>, exp_op: &ExpOperation) -> Result<usize> {
     let mut size = 0;
     size += pack_array_begin(buf, 1)?;
     size += exp_op.exp.pack(buf)?;

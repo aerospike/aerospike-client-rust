@@ -872,14 +872,14 @@ pub fn le(left: FilterExpression, right: FilterExpression) -> FilterExpression {
 }
 
 /// Create "add" (+) operator that applies to a variable number of expressions.
-/// Return sum of all FilterExpressions given. All arguments must resolve to the same type (integer or float).
+/// Return sum of all `FilterExpressions` given. All arguments must resolve to the same type (integer or float).
 /// Requires server version 5.6.0+.
 /// ```
 /// use aerospike::expressions::{eq, num_add, int_bin, int_val};
 /// // a + b + c == 10
 /// eq(num_add(vec![int_bin("a".to_string()), int_bin("b".to_string()), int_bin("c".to_string())]), int_val(10));
 /// ```
-pub fn num_add(exps: Vec<FilterExpression>) -> FilterExpression {
+pub const fn num_add(exps: Vec<FilterExpression>) -> FilterExpression {
     FilterExpression {
         cmd: Some(ExpOp::Add),
         val: None,
@@ -892,16 +892,16 @@ pub fn num_add(exps: Vec<FilterExpression>) -> FilterExpression {
 }
 
 /// Create "subtract" (-) operator that applies to a variable number of expressions.
-/// If only one FilterExpression is provided, return the negation of that argument.
-/// Otherwise, return the sum of the 2nd to Nth FilterExpression subtracted from the 1st
-/// FilterExpression. All FilterExpressions must resolve to the same type (integer or float).
+/// If only one `FilterExpressions` is provided, return the negation of that argument.
+/// Otherwise, return the sum of the 2nd to Nth `FilterExpressions` subtracted from the 1st
+/// `FilterExpressions`. All `FilterExpressions` must resolve to the same type (integer or float).
 /// Requires server version 5.6.0+.
 /// ```
 /// use aerospike::expressions::{gt, num_sub, int_bin, int_val};
 /// // a - b - c > 10
 /// gt(num_sub(vec![int_bin("a".to_string()), int_bin("b".to_string()), int_bin("c".to_string())]), int_val(10));
 /// ```
-pub fn num_sub(exps: Vec<FilterExpression>) -> FilterExpression {
+pub const fn num_sub(exps: Vec<FilterExpression>) -> FilterExpression {
     FilterExpression {
         cmd: Some(ExpOp::Sub),
         val: None,
@@ -914,15 +914,15 @@ pub fn num_sub(exps: Vec<FilterExpression>) -> FilterExpression {
 }
 
 /// Create "multiply" (*) operator that applies to a variable number of expressions.
-/// Return the product of all FilterExpressions. If only one FilterExpressions is supplied, return
-/// that FilterExpressions. All FilterExpressions must resolve to the same type (integer or float).
+/// Return the product of all `FilterExpressions`. If only one `FilterExpressions` is supplied, return
+/// that `FilterExpressions`. All `FilterExpressions` must resolve to the same type (integer or float).
 /// Requires server version 5.6.0+.
 /// ```
 /// use aerospike::expressions::{lt, num_mul, int_val, int_bin};
 /// // a * b * c < 100
 /// lt(num_mul(vec![int_bin("a".to_string()), int_bin("b".to_string()), int_bin("c".to_string())]), int_val(100));
 /// ```
-pub fn num_mul(exps: Vec<FilterExpression>) -> FilterExpression {
+pub const fn num_mul(exps: Vec<FilterExpression>) -> FilterExpression {
     FilterExpression {
         cmd: Some(ExpOp::Mul),
         val: None,
@@ -935,16 +935,16 @@ pub fn num_mul(exps: Vec<FilterExpression>) -> FilterExpression {
 }
 
 /// Create "divide" (/) operator that applies to a variable number of expressions.
-/// If there is only one FilterExpressions, returns the reciprocal for that FilterExpressions.
-/// Otherwise, return the first FilterExpressions divided by the product of the rest.
-/// All FilterExpressions must resolve to the same type (integer or float).
+/// If there is only one `FilterExpressions`, returns the reciprocal for that `FilterExpressions`.
+/// Otherwise, return the first `FilterExpressions` divided by the product of the rest.
+/// All `FilterExpressions` must resolve to the same type (integer or float).
 /// Requires server version 5.6.0+.
 /// ```
 /// use aerospike::expressions::{lt, int_val, int_bin, num_div};
 /// // a / b / c > 1
 /// lt(num_div(vec![int_bin("a".to_string()), int_bin("b".to_string()), int_bin("c".to_string())]), int_val(1));
 /// ```
-pub fn num_div(exps: Vec<FilterExpression>) -> FilterExpression {
+pub const fn num_div(exps: Vec<FilterExpression>) -> FilterExpression {
     FilterExpression {
         cmd: Some(ExpOp::Div),
         val: None,
@@ -1122,7 +1122,7 @@ pub fn to_float(num: FilterExpression) -> FilterExpression {
 /// use aerospike::expressions::{eq, int_val, int_and, int_bin};
 /// eq(int_and(vec![int_bin("a".to_string()), int_val(0xff)]), int_val(0x11));
 /// ```
-pub fn int_and(exps: Vec<FilterExpression>) -> FilterExpression {
+pub const fn int_and(exps: Vec<FilterExpression>) -> FilterExpression {
     FilterExpression {
         cmd: Some(ExpOp::IntAnd),
         val: None,
@@ -1142,7 +1142,7 @@ pub fn int_and(exps: Vec<FilterExpression>) -> FilterExpression {
 /// use aerospike::expressions::{eq, int_val, int_xor, int_bin};
 /// eq(int_xor(vec![int_bin("a".to_string()), int_bin("b".to_string())]), int_val(16));
 /// ```
-pub fn int_xor(exps: Vec<FilterExpression>) -> FilterExpression {
+pub const fn int_xor(exps: Vec<FilterExpression>) -> FilterExpression {
     FilterExpression {
         cmd: Some(ExpOp::IntXor),
         val: None,
@@ -1304,7 +1304,7 @@ pub fn int_rscan(value: FilterExpression, search: FilterExpression) -> FilterExp
 /// use aerospike::expressions::{int_val, int_bin, gt, min};
 /// gt(min(vec![int_bin("a".to_string()),int_bin("b".to_string()),int_bin("c".to_string())]), int_val(0));
 /// ```
-pub fn min(exps: Vec<FilterExpression>) -> FilterExpression {
+pub const fn min(exps: Vec<FilterExpression>) -> FilterExpression {
     FilterExpression {
         cmd: Some(ExpOp::Min),
         val: None,
@@ -1324,7 +1324,7 @@ pub fn min(exps: Vec<FilterExpression>) -> FilterExpression {
 /// use aerospike::expressions::{int_val, int_bin, gt, max};
 /// gt(max(vec![int_bin("a".to_string()),int_bin("b".to_string()),int_bin("c".to_string())]), int_val(100));
 /// ```
-pub fn max(exps: Vec<FilterExpression>) -> FilterExpression {
+pub const fn max(exps: Vec<FilterExpression>) -> FilterExpression {
     FilterExpression {
         cmd: Some(ExpOp::Max),
         val: None,
@@ -1357,7 +1357,7 @@ pub fn max(exps: Vec<FilterExpression>) -> FilterExpression {
 ///   ]
 /// );
 /// ```
-pub fn cond(exps: Vec<FilterExpression>) -> FilterExpression {
+pub const fn cond(exps: Vec<FilterExpression>) -> FilterExpression {
     FilterExpression {
         cmd: Some(ExpOp::Cond),
         val: None,
@@ -1384,7 +1384,7 @@ pub fn cond(exps: Vec<FilterExpression>) -> FilterExpression {
 ///   ]
 /// );
 /// ```
-pub fn exp_let(exps: Vec<FilterExpression>) -> FilterExpression {
+pub const fn exp_let(exps: Vec<FilterExpression>) -> FilterExpression {
     FilterExpression {
         cmd: Some(ExpOp::Let),
         val: None,

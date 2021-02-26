@@ -19,11 +19,11 @@ pub mod bitwise;
 #[doc(hidden)]
 pub mod cdt;
 pub mod cdt_context;
+pub mod exp;
 pub mod hll;
 pub mod lists;
 pub mod maps;
 pub mod scalar;
-pub mod exp;
 
 use self::cdt::CdtOperation;
 pub use self::maps::{MapOrder, MapPolicy, MapReturnType, MapWriteMode};
@@ -33,8 +33,8 @@ use crate::commands::buffer::Buffer;
 use crate::commands::ParticleType;
 use crate::errors::Result;
 use crate::operations::cdt_context::CdtContext;
-use crate::Value;
 use crate::operations::exp::ExpOperation;
+use crate::Value;
 
 #[derive(Clone, Copy)]
 #[doc(hidden)]
@@ -64,7 +64,7 @@ pub enum OperationData<'a> {
     CdtMapOp(CdtOperation<'a>),
     CdtBitOp(CdtOperation<'a>),
     HLLOp(CdtOperation<'a>),
-    EXPOp(ExpOperation<'a>)
+    EXPOp(ExpOperation<'a>),
 }
 
 #[doc(hidden)]

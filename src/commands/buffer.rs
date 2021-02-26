@@ -512,8 +512,7 @@ impl Buffer {
                 _ => write_attr |= INFO2_WRITE,
             }
 
-            let each_op =
-                matches!(operation.data, OperationData::CdtMapOp(_) | OperationData::CdtBitOp(_) | OperationData::HLLOp(_) | OperationData::EXPOp(_));
+            let each_op = matches!(operation.data, OperationData::CdtMapOp(_) | OperationData::CdtBitOp(_) | OperationData::HLLOp(_) | OperationData::EXPOp(_));
 
             if policy.respond_per_each_op || each_op {
                 write_attr |= INFO2_RESPOND_ALL_OPS;

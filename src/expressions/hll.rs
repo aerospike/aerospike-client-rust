@@ -35,12 +35,21 @@ pub enum HllExpOp {
 }
 
 /// Create expression that creates a new HLL or resets an existing HLL.
-pub fn init(policy: HLLPolicy, index_bit_count: FilterExpression,  bin: FilterExpression) -> FilterExpression {
+pub fn init(
+    policy: HLLPolicy,
+    index_bit_count: FilterExpression,
+    bin: FilterExpression,
+) -> FilterExpression {
     init_with_min_hash(policy, index_bit_count, int_val(-1), bin)
 }
 
 /// Create expression that creates a new HLL or resets an existing HLL with minhash bits.
-pub fn init_with_min_hash(policy: HLLPolicy, index_bit_count: FilterExpression, min_hash_count: FilterExpression, bin: FilterExpression) -> FilterExpression {
+pub fn init_with_min_hash(
+    policy: HLLPolicy,
+    index_bit_count: FilterExpression,
+    min_hash_count: FilterExpression,
+    bin: FilterExpression,
+) -> FilterExpression {
     add_write(
         bin,
         vec![
