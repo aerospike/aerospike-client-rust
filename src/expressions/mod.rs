@@ -174,7 +174,7 @@ impl FilterExpression {
         if let Some(val) = &self.val {
             // DEF expression
             size += pack_value(buf, val)?;
-            exps[0].pack(buf)?;
+            size += exps[0].pack(buf)?;
         } else {
             // Normal Expressions
             match self.cmd.unwrap() {
