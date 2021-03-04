@@ -26,22 +26,22 @@ use crate::ParticleType;
 /// Expression write Flags
 pub enum ExpWriteFlags {
     /// Default. Allow create or update.
-    Default = 0,
+    Default =  0,
     /// If bin does not exist, a new bin will be created.
     /// If bin exists, the operation will be denied.
     /// If bin exists, fail with Bin Exists
-    CreateOnly = 1,
+    CreateOnly = 1 << 0,
     /// If bin exists, the bin will be overwritten.
     /// If bin does not exist, the operation will be denied.
     /// If bin does not exist, fail with Bin Not Found
-    UpdateOnly = 2,
+    UpdateOnly = 1 << 1,
     /// If expression results in nil value, then delete the bin.
     /// Otherwise, return OP Not Applicable when NoFail is not set
-    AllowDelete = 3,
+    AllowDelete = 1 << 2,
     /// Do not raise error if operation is denied.
-    PolicyNoFail = 8,
+    PolicyNoFail = 1 << 3,
     /// Ignore failures caused by the expression resolving to unknown or a non-bin type.
-    EvalNoFail = 16,
+    EvalNoFail = 1 << 4,
 }
 
 #[doc(hidden)]
@@ -76,7 +76,7 @@ pub enum ExpReadFlags {
     /// Default
     Default = 0,
     /// Ignore failures caused by the expression resolving to unknown or a non-bin type.
-    EvalNoFail = 16,
+    EvalNoFail = 1 << 4,
 }
 
 /// Create operation that performs a expression that writes to record bin.
