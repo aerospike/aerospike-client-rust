@@ -34,7 +34,7 @@ use crate::commands::ParticleType;
 use crate::errors::Result;
 use crate::operations::cdt_context::CdtContext;
 use crate::operations::exp::ExpOperation;
-use crate::Value;
+use crate::{Value};
 
 #[derive(Clone, Copy)]
 #[doc(hidden)]
@@ -44,8 +44,8 @@ pub enum OperationType {
     CdtRead = 3,
     CdtWrite = 4,
     Incr = 5,
-    ExpRead = 6,
-    ExpWrite = 7,
+    ExpRead = 7,
+    ExpWrite = 8,
     Append = 9,
     Prepend = 10,
     Touch = 11,
@@ -140,6 +140,7 @@ impl<'a> Operation<'a> {
                 size += cdt_op.write_to(buffer, self.ctx)?;
             }
             OperationData::EXPOp(ref exp) => {
+                size += self.write_op_header_to(buffer, ParticleType::BLOB as u8)?;
                 size += exp.write_to(buffer)?;
             }
         };

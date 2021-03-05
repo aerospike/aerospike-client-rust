@@ -1,7 +1,8 @@
 use crate::common;
 use aerospike::expressions::{int_bin, int_val, num_add};
-use aerospike::operations::exp::{read_exp, ExpReadFlags};
+use aerospike::operations::exp::{read_exp, ExpReadFlags, write_exp, ExpWriteFlags};
 use aerospike::{as_bin, as_key, as_val, Bins, ReadPolicy, Value, WritePolicy};
+use aerospike::operations::OperationType::ExpWrite;
 
 #[test]
 fn exp_ops() {
@@ -29,7 +30,15 @@ fn exp_ops() {
     ]);
     let ops = &vec![read_exp(&flt, ExpReadFlags::Default)];
     let rec = client.operate(&wpolicy, &key, ops);
-    println!("{:?}", rec);
     let rec = rec.unwrap();
-    assert_eq!(*rec.bins.get("bin").unwrap(), as_val!(35), "EXP OPs read failed");
+
+    assert_eq!(*rec.bins.get("").unwrap(), as_val!(29), "EXP OPs read failed");
+
+    let flt2 = int_bin("bin2".to_string());
+    let ops = &vec![write_exp(ExpWriteFlags::Default,"bin2", &flt), read_exp(&flt2, ExpReadFlags::Default)];
+
+    let rec = client.operate(&wpolicy, &key, ops);
+    let rec = rec.unwrap();
+
+    assert_eq!(*rec.bins.get("").unwrap(), as_val!(29), "EXP OPs write failed");
 }
