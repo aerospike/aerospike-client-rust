@@ -56,6 +56,7 @@ pub enum ExpType {
 #[derive(Debug, Clone, Copy)]
 #[doc(hidden)]
 pub enum ExpOp {
+    Unknown = 0,
     EQ = 1,
     NE = 2,
     GT = 3,
@@ -1434,5 +1435,34 @@ pub fn var(name: String) -> FilterExpression {
         module: None,
         exps: None,
         arguments: None,
+    }
+}
+
+/// Create unknown value. Used to intentionally fail an expression.
+/// The failure can be ignored with ExpWriteFlags EVAL_NO_FAIL
+/// or ExpReadFlags EVAL_NO_FAIL.
+/// Requires server version 5.6.0+.
+///
+/// ```
+/// // double v = balance - 100.0;
+/// // return (v > 0.0)? v : unknown;
+/// use aerospike::expressions::{exp_let, def, num_sub, float_bin, float_val, cond, ge, var, unknown};
+/// exp_let(
+///     vec![
+///         def("v".to_string(), num_sub(vec![float_bin("balance".to_string()), float_val(100.0)])),
+///         cond(vec![ge(var("v".to_string()), float_val(0.0)), var("v".to_string())]),
+///         unknown()
+///     ]
+/// );
+/// ```
+pub fn unknown() -> FilterExpression {
+    FilterExpression {
+        cmd: Some(ExpOp::Unknown),
+        val: None,
+        bin: None,
+        flags: None,
+        module: None,
+        exps: None,
+        arguments: None
     }
 }
