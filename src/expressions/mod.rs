@@ -1439,8 +1439,8 @@ pub fn var(name: String) -> FilterExpression {
 }
 
 /// Create unknown value. Used to intentionally fail an expression.
-/// The failure can be ignored with ExpWriteFlags EVAL_NO_FAIL
-/// or ExpReadFlags EVAL_NO_FAIL.
+/// The failure can be ignored with `ExpWriteFlags` `EVAL_NO_FAIL`
+/// or `ExpReadFlags` `EVAL_NO_FAIL`.
 /// Requires server version 5.6.0+.
 ///
 /// ```
@@ -1455,7 +1455,7 @@ pub fn var(name: String) -> FilterExpression {
 ///     ]
 /// );
 /// ```
-pub fn unknown() -> FilterExpression {
+pub const fn unknown() -> FilterExpression {
     FilterExpression {
         cmd: Some(ExpOp::Unknown),
         val: None,
@@ -1463,6 +1463,6 @@ pub fn unknown() -> FilterExpression {
         flags: None,
         module: None,
         exps: None,
-        arguments: None
+        arguments: None,
     }
 }

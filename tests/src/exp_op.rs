@@ -1,8 +1,8 @@
 use crate::common;
 use aerospike::expressions::{int_bin, int_val, num_add};
-use aerospike::operations::exp::{read_exp, ExpReadFlags, write_exp, ExpWriteFlags};
-use aerospike::{as_bin, as_key, as_val, Bins, ReadPolicy, Value, WritePolicy};
+use aerospike::operations::exp::{read_exp, write_exp, ExpReadFlags, ExpWriteFlags};
 use aerospike::operations::OperationType::ExpWrite;
+use aerospike::{as_bin, as_key, as_val, Bins, ReadPolicy, Value, WritePolicy};
 
 #[test]
 fn exp_ops() {
@@ -23,22 +23,34 @@ fn exp_ops() {
 
     client.put(&wpolicy, &key, &bins).unwrap();
     let rec = client.get(&policy, &key, Bins::All).unwrap();
-    assert_eq!(*rec.bins.get("bin").unwrap(), as_val!(25), "EXP OPs init failed");
-    let flt = num_add(vec![
-        int_bin("bin".to_string()),
-        int_val(4),
-    ]);
-    let ops = &vec![read_exp(&flt, ExpReadFlags::Default)];
+    assert_eq!(
+        *rec.bins.get("bin").unwrap(),
+        as_val!(25),
+        "EXP OPs init failed"
+    );
+    let flt = num_add(vec![int_bin("bin".to_string()), int_val(4)]);
+    let ops = &vec![read_exp("example", &flt, ExpReadFlags::Default)];
     let rec = client.operate(&wpolicy, &key, ops);
     let rec = rec.unwrap();
 
-    assert_eq!(*rec.bins.get("").unwrap(), as_val!(29), "EXP OPs read failed");
+    assert_eq!(
+        *rec.bins.get("example").unwrap(),
+        as_val!(29),
+        "EXP OPs read failed"
+    );
 
     let flt2 = int_bin("bin2".to_string());
-    let ops = &vec![write_exp(ExpWriteFlags::Default,"bin2", &flt), read_exp(&flt2, ExpReadFlags::Default)];
+    let ops = &vec![
+        write_exp("bin2", &flt, ExpWriteFlags::Default),
+        read_exp("example", &flt2, ExpReadFlags::Default),
+    ];
 
     let rec = client.operate(&wpolicy, &key, ops);
     let rec = rec.unwrap();
 
-    assert_eq!(*rec.bins.get("").unwrap(), as_val!(29), "EXP OPs write failed");
+    assert_eq!(
+        *rec.bins.get("example").unwrap(),
+        as_val!(29),
+        "EXP OPs write failed"
+    );
 }

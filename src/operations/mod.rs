@@ -34,7 +34,7 @@ use crate::commands::ParticleType;
 use crate::errors::Result;
 use crate::operations::cdt_context::CdtContext;
 use crate::operations::exp::ExpOperation;
-use crate::{Value};
+use crate::Value;
 
 #[derive(Clone, Copy)]
 #[doc(hidden)]

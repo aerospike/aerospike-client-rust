@@ -26,7 +26,7 @@ use crate::ParticleType;
 /// Expression write Flags
 pub enum ExpWriteFlags {
     /// Default. Allow create or update.
-    Default =  0,
+    Default = 0,
     /// If bin does not exist, a new bin will be created.
     /// If bin exists, the operation will be denied.
     /// If bin exists, fail with Bin Exists
@@ -81,9 +81,9 @@ pub enum ExpReadFlags {
 
 /// Create operation that performs a expression that writes to record bin.
 pub fn write_exp<'a>(
-    flags: ExpWriteFlags,
     bin: &'a str,
     exp: &'a FilterExpression,
+    flags: ExpWriteFlags,
 ) -> Operation<'a> {
     let op = ExpOperation {
         encoder: Box::new(pack_write_exp),
@@ -99,7 +99,11 @@ pub fn write_exp<'a>(
 }
 
 /// Create operation that performs a read expression.
-pub fn read_exp(exp: &FilterExpression, flags: ExpReadFlags) -> Operation {
+pub fn read_exp<'a>(
+    name: &'a str,
+    exp: &'a FilterExpression,
+    flags: ExpReadFlags,
+) -> Operation<'a> {
     let op = ExpOperation {
         encoder: Box::new(pack_read_exp),
         policy: flags as i64,
@@ -108,7 +112,7 @@ pub fn read_exp(exp: &FilterExpression, flags: ExpReadFlags) -> Operation {
     Operation {
         op: OperationType::ExpRead,
         ctx: &[],
-        bin: OperationBin::None,
+        bin: OperationBin::Name(name),
         data: OperationData::EXPOp(op),
     }
 }
