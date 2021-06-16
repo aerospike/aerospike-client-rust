@@ -22,6 +22,7 @@ mod exp_bitwise;
 mod exp_hll;
 mod exp_list;
 mod exp_map;
+mod exp_op;
 mod hll;
 mod index;
 mod kv;
