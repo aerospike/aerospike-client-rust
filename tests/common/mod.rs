@@ -61,5 +61,8 @@ pub fn client() -> Arc<Client> {
 
 pub fn rand_str(sz: usize) -> String {
     let rng = rand::thread_rng();
-    rng.sample_iter(&Alphanumeric).take(sz).collect()
+    rng.sample_iter(&Alphanumeric)
+        .map(char::from)
+        .take(sz)
+        .collect()
 }
