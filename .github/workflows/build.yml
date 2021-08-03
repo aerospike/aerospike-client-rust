@@ -29,6 +29,7 @@ jobs:
       uses: actions-rs/toolchain@v1
       with:
         toolchain: ${{ matrix.rust }}
+        override: true
     - run: rustc --version
     - name: Set up Aerospike Database
       uses: reugn/github-action-aerospike@v1
