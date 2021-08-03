@@ -15,7 +15,7 @@
 
 use crate::expressions::FilterExpression;
 use crate::policy::BasePolicy;
-use crate::{ConsistencyLevel, Priority};
+use crate::ConsistencyLevel;
 use std::time::Duration;
 
 /// `ReadPolicy` excapsulates parameters for transaction policy attributes
@@ -25,7 +25,6 @@ pub type ReadPolicy = BasePolicy;
 impl Default for ReadPolicy {
     fn default() -> ReadPolicy {
         ReadPolicy {
-            priority: Priority::Default,
             timeout: Some(Duration::new(30, 0)),
             max_retries: Some(2),
             sleep_between_retries: Some(Duration::new(0, 500_000_000)),

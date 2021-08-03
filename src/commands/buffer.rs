@@ -508,8 +508,10 @@ impl Buffer {
                 _ => write_attr |= INFO2_WRITE,
             }
 
-            let each_op =
-                matches!(operation.data, OperationData::CdtMapOp(_) | OperationData::CdtBitOp(_));
+            let each_op = matches!(
+                operation.data,
+                OperationData::CdtMapOp(_) | OperationData::CdtBitOp(_)
+            );
 
             if policy.respond_per_each_op || each_op {
                 write_attr |= INFO2_RESPOND_ALL_OPS;
@@ -612,10 +614,6 @@ impl Buffer {
             field_count += 1;
         }
 
-        // Estimate scan options size.
-        self.data_offset += 2 + FIELD_HEADER_SIZE as usize;
-        field_count += 1;
-
         // Estimate scan timeout size.
         self.data_offset += 4 + FIELD_HEADER_SIZE as usize;
         field_count += 1;
@@ -660,18 +658,6 @@ impl Buffer {
         if let Some(filter) = policy.filter_expression() {
             self.write_filter_expression(filter, filter_size)?;
         }
-
-        self.write_field_header(2, FieldType::ScanOptions)?;
-
-        let mut priority: u8 = policy.base_policy.priority.clone() as u8;
-        priority <<= 4;
-
-        if policy.fail_on_cluster_change {
-            priority |= 0x08;
-        }
-
-        self.write_u8(priority)?;
-        self.write_u8(policy.scan_percent)?;
 
         // Write scan timeout
         self.write_field_header(4, FieldType::ScanTimeout)?;
@@ -751,11 +737,6 @@ impl Buffer {
                 self.data_offset += bin_name_size;
                 field_count += 1;
             }
-        } else {
-            // Calling query with no filters is more efficiently handled by a primary index scan.
-            // Estimate scan options size.
-            self.data_offset += 2 + FIELD_HEADER_SIZE as usize;
-            field_count += 1;
         }
         let filter_exp_size = self.estimate_filter_size(policy.filter_expression())?;
         if filter_exp_size > 0 {
@@ -847,12 +828,6 @@ impl Buffer {
                     }
                 }
             }
-        } else {
-            // Calling query with no filters is more efficiently handled by a primary index scan.
-            self.write_field_header(2, FieldType::ScanOptions)?;
-            let priority: u8 = (policy.base_policy.priority.clone() as u8) << 4;
-            self.write_u8(priority)?;
-            self.write_u8(100)?;
         }
 
         if let Some(filter_exp) = policy.filter_expression() {
