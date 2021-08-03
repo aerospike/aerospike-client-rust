@@ -25,10 +25,11 @@ jobs:
 
     steps:
     - uses: actions/checkout@v2
-    - name: Install Rust toolchain
+    - name: Install Rust ${{ matrix.rust }} toolchain
       uses: actions-rs/toolchain@v1
       with:
         toolchain: ${{ matrix.rust }}
+    - run: rustc --version
     - name: Set up Aerospike Database
       uses: reugn/github-action-aerospike@v1
     - name: Clear cache
