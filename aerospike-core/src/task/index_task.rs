@@ -93,9 +93,7 @@ impl Task for IndexTask {
         for node in &nodes {
             let command =
                 &IndexTask::build_command(self.namespace.clone(), self.index_name.clone());
-            let response = node.info(
-                &[&command[..]],
-            ).await?;
+            let response = node.info(&[&command[..]]).await?;
 
             if !response.contains_key(command) {
                 return Ok(Status::NotFound);

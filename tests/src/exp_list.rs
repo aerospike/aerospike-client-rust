@@ -9,8 +9,8 @@ use std::sync::Arc;
 
 const EXPECTED: usize = 100;
 
-fn create_test_set(no_records: usize) -> String {
-    let client = common::client();
+async fn create_test_set(no_records: usize) -> String {
+    let client = common::client().await;
     let namespace = common::namespace();
     let set_name = common::rand_str(10);
 
@@ -18,19 +18,19 @@ fn create_test_set(no_records: usize) -> String {
     for i in 0..no_records as i64 {
         let key = as_key!(namespace, &set_name, i);
         let ibin = as_bin!("bin", as_list!(1, 2, 3, i));
-        let bins = vec![&ibin];
-        client.delete(&wpolicy, &key).unwrap();
-        client.put(&wpolicy, &key, &bins).unwrap();
+        let bins = vec![ibin];
+        client.delete(&wpolicy, &key).await.unwrap();
+        client.put(&wpolicy, &key, &bins).await.unwrap();
     }
 
     set_name
 }
 
-#[test]
-fn expression_list() {
+#[aerospike_macro::test]
+async fn expression_list() {
     let _ = env_logger::try_init();
 
-    let set_name = create_test_set(EXPECTED);
+    let set_name = create_test_set(EXPECTED).await;
 
     // EQ
     let rs = test_filter(
@@ -47,7 +47,8 @@ fn expression_list() {
             int_val(5),
         ),
         &set_name,
-    );
+    )
+    .await;
     let count = count_results(rs);
     assert_eq!(count, 100, "SIZE AND APPEND Test Failed");
 
@@ -65,7 +66,8 @@ fn expression_list() {
             int_val(6),
         ),
         &set_name,
-    );
+    )
+    .await;
     let count = count_results(rs);
     assert_eq!(count, 100, "SIZE AND APPEND ITEMS Test Failed");
 
@@ -75,7 +77,8 @@ fn expression_list() {
             int_val(0),
         ),
         &set_name,
-    );
+    )
+    .await;
     let count = count_results(rs);
     assert_eq!(count, 100, "CLEAR Test Failed");
 
@@ -96,7 +99,8 @@ fn expression_list() {
             int_val(1),
         ),
         &set_name,
-    );
+    )
+    .await;
     let count = count_results(rs);
     assert_eq!(count, 100, "GET BY VALUE AND INSERT Test Failed");
 
@@ -111,7 +115,8 @@ fn expression_list() {
             int_val(1),
         ),
         &set_name,
-    );
+    )
+    .await;
     let count = count_results(rs);
     assert_eq!(count, 2, "GET BY VALUE LIST Test Failed");
 
@@ -130,7 +135,8 @@ fn expression_list() {
             int_val(6),
         ),
         &set_name,
-    );
+    )
+    .await;
     let count = count_results(rs);
     assert_eq!(count, 100, "INSERT LIST Test Failed");
 
@@ -152,7 +158,8 @@ fn expression_list() {
             int_val(102),
         ),
         &set_name,
-    );
+    )
+    .await;
     let count = count_results(rs);
     assert_eq!(count, 1, "GET BY INDEX AND INCREMENT Test Failed");
 
@@ -174,7 +181,8 @@ fn expression_list() {
             int_val(100),
         ),
         &set_name,
-    );
+    )
+    .await;
     let count = count_results(rs);
     assert_eq!(count, 100, "GET BY INDEX AND SET Test Failed");
 
@@ -190,7 +198,8 @@ fn expression_list() {
             list_val(vec![Value::from(3), Value::from(15)]),
         ),
         &set_name,
-    );
+    )
+    .await;
     let count = count_results(rs);
     assert_eq!(count, 1, "GET BY INDEX RANGE COUNT Test Failed");
 
@@ -205,7 +214,8 @@ fn expression_list() {
             list_val(vec![Value::from(3), Value::from(15)]),
         ),
         &set_name,
-    );
+    )
+    .await;
     let count = count_results(rs);
     assert_eq!(count, 1, "GET BY INDEX RANGE Test Failed");
 
@@ -221,7 +231,8 @@ fn expression_list() {
             int_val(25),
         ),
         &set_name,
-    );
+    )
+    .await;
     let count = count_results(rs);
     assert_eq!(count, 1, "GET BY RANK Test Failed");
 
@@ -236,7 +247,8 @@ fn expression_list() {
             list_val(vec![Value::from(3), Value::from(25)]),
         ),
         &set_name,
-    );
+    )
+    .await;
     let count = count_results(rs);
     assert_eq!(count, 1, "GET BY RANK RANGE Test Failed");
 
@@ -252,7 +264,8 @@ fn expression_list() {
             list_val(vec![Value::from(3), Value::from(3)]),
         ),
         &set_name,
-    );
+    )
+    .await;
     let count = count_results(rs);
     assert_eq!(count, 1, "GET BY RANK RANGE COUNT Test Failed");
 
@@ -268,7 +281,8 @@ fn expression_list() {
             list_val(vec![Value::from(1), Value::from(2)]),
         ),
         &set_name,
-    );
+    )
+    .await;
     let count = count_results(rs);
     assert_eq!(count, 98, "GET BY VALUE RANGE Test Failed");
 
@@ -284,7 +298,8 @@ fn expression_list() {
             int_val(3),
         ),
         &set_name,
-    );
+    )
+    .await;
     let count = count_results(rs);
     assert_eq!(count, 98, "GET BY VAL REL RANK RANGE Test Failed");
 
@@ -301,7 +316,8 @@ fn expression_list() {
             list_val(vec![Value::from(3)]),
         ),
         &set_name,
-    );
+    )
+    .await;
     let count = count_results(rs);
     assert_eq!(count, 99, "GET BY VAL REL RANK RANGE COUNT Test Failed");
 
@@ -314,7 +330,8 @@ fn expression_list() {
             int_val(3),
         ),
         &set_name,
-    );
+    )
+    .await;
     let count = count_results(rs);
     assert_eq!(count, 99, "REMOVE BY VALUE Test Failed");
 
@@ -331,7 +348,8 @@ fn expression_list() {
             int_val(2),
         ),
         &set_name,
-    );
+    )
+    .await;
     let count = count_results(rs);
     assert_eq!(count, 98, "REMOVE BY VALUE LIST Test Failed");
 
@@ -349,7 +367,8 @@ fn expression_list() {
             int_val(2),
         ),
         &set_name,
-    );
+    )
+    .await;
     let count = count_results(rs);
     assert_eq!(count, 98, "REMOVE BY VALUE RANGE Test Failed");
 
@@ -367,7 +386,8 @@ fn expression_list() {
             int_val(3),
         ),
         &set_name,
-    );
+    )
+    .await;
     let count = count_results(rs);
     assert_eq!(count, 97, "REMOVE BY VALUE REL RANK RANGE Test Failed");
 
@@ -386,7 +406,8 @@ fn expression_list() {
             int_val(3),
         ),
         &set_name,
-    );
+    )
+    .await;
     let count = count_results(rs);
     assert_eq!(
         count, 100,
@@ -402,7 +423,8 @@ fn expression_list() {
             int_val(3),
         ),
         &set_name,
-    );
+    )
+    .await;
     let count = count_results(rs);
     assert_eq!(count, 100, "REMOVE BY INDEX Test Failed");
 
@@ -415,7 +437,8 @@ fn expression_list() {
             int_val(2),
         ),
         &set_name,
-    );
+    )
+    .await;
     let count = count_results(rs);
     assert_eq!(count, 100, "REMOVE BY INDEX RANGE Test Failed");
 
@@ -433,7 +456,8 @@ fn expression_list() {
             int_val(3),
         ),
         &set_name,
-    );
+    )
+    .await;
     let count = count_results(rs);
     assert_eq!(count, 100, "REMOVE BY INDEX RANGE COUNT Test Failed");
 
@@ -451,7 +475,8 @@ fn expression_list() {
             int_val(3),
         ),
         &set_name,
-    );
+    )
+    .await;
     let count = count_results(rs);
     assert_eq!(count, 100, "REMOVE BY INDEX RANGE COUNT Test Failed");
 
@@ -464,7 +489,8 @@ fn expression_list() {
             int_val(3),
         ),
         &set_name,
-    );
+    )
+    .await;
     let count = count_results(rs);
     assert_eq!(count, 100, "REMOVE BY RANK Test Failed");
 
@@ -477,7 +503,8 @@ fn expression_list() {
             int_val(2),
         ),
         &set_name,
-    );
+    )
+    .await;
     let count = count_results(rs);
     assert_eq!(count, 100, "REMOVE BY RANK RANGE Test Failed");
 
@@ -495,20 +522,21 @@ fn expression_list() {
             int_val(3),
         ),
         &set_name,
-    );
+    )
+    .await;
     let count = count_results(rs);
     assert_eq!(count, 100, "REMOVE BY RANK RANGE COUNT Test Failed");
 }
 
-fn test_filter(filter: FilterExpression, set_name: &str) -> Arc<Recordset> {
-    let client = common::client();
+async fn test_filter(filter: FilterExpression, set_name: &str) -> Arc<Recordset> {
+    let client = common::client().await;
     let namespace = common::namespace();
 
     let mut qpolicy = QueryPolicy::default();
     qpolicy.filter_expression = Some(filter);
 
     let statement = Statement::new(namespace, set_name, Bins::All);
-    client.query(&qpolicy, statement).unwrap()
+    client.query(&qpolicy, statement).await.unwrap()
 }
 
 fn count_results(rs: Arc<Recordset>) -> usize {

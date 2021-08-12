@@ -35,10 +35,10 @@ use crate::{
     BatchRead, Bin, Bins, CollectionIndexType, IndexType, Key, Record, Recordset, ResultCode,
     Statement, UDFLang, Value,
 };
-use futures::executor::block_on;
 use aerospike_rt::fs::File;
 #[cfg(all(any(feature = "rt-tokio"), not(feature = "rt-async-std")))]
 use aerospike_rt::io::AsyncReadExt;
+use futures::executor::block_on;
 #[cfg(all(any(feature = "rt-async-std"), not(feature = "rt-tokio")))]
 use futures::AsyncReadExt;
 
@@ -556,16 +556,11 @@ impl Client {
         let mut udf_body: Vec<u8> = vec![];
         file.read_to_end(&mut udf_body).await?;
 
-        self.register_udf(&udf_body, udf_name, language)
-            .await
+        self.register_udf(&udf_body, udf_name, language).await
     }
 
     /// Remove a user-defined function (UDF) module from the server.
-    pub async fn remove_udf(
-        &self,
-        udf_name: &str,
-        language: UDFLang,
-    ) -> Result<()> {
+    pub async fn remove_udf(&self, udf_name: &str, language: UDFLang) -> Result<()> {
         let cmd = format!("udf-remove:filename={}.{};", udf_name, language);
         let node = self.cluster.get_random_node().await?;
         // Sample response: {"udf-remove:filename=file_name.LUA;": "ok"}
@@ -803,12 +798,7 @@ impl Client {
     /// zero, only records with a lut less than `before_nanos` are deleted. Units are in
     /// nanoseconds since unix epoch (1970-01-01). Pass in zero to delete all records in the
     /// namespace/set recardless of last update time.
-    pub async fn truncate(
-        &self,
-        namespace: &str,
-        set_name: &str,
-        before_nanos: i64,
-    ) -> Result<()> {
+    pub async fn truncate(&self, namespace: &str, set_name: &str, before_nanos: i64) -> Result<()> {
         let mut cmd = String::with_capacity(160);
         cmd.push_str("truncate:namespace=");
         cmd.push_str(namespace);
@@ -922,7 +912,7 @@ impl Client {
 
     async fn send_info_cmd(&self, cmd: &str) -> Result<()> {
         let node = self.cluster.get_random_node().await?;
-        let response = node.info( &[cmd]).await?;
+        let response = node.info(&[cmd]).await?;
 
         if let Some(v) = response.values().next() {
             if v.to_uppercase() == "OK" {

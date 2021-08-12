@@ -21,8 +21,8 @@ use std::sync::Arc;
 use crate::errors::{Error, ErrorKind, Result};
 use crate::net::{Connection, Host};
 use crate::policy::ClientPolicy;
-use futures::lock::Mutex;
 use futures::executor::block_on;
+use futures::lock::Mutex;
 
 #[derive(Debug)]
 struct IdleConnection(Connection);

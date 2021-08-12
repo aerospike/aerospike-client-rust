@@ -26,8 +26,8 @@ use std::sync::Arc;
 
 const EXPECTED: usize = 100;
 
-fn create_test_set(no_records: usize) -> String {
-    let client = common::client();
+async fn create_test_set(no_records: usize) -> String {
+    let client = common::client().await;
     let namespace = common::namespace();
     let set_name = common::rand_str(10);
 
@@ -36,9 +36,9 @@ fn create_test_set(no_records: usize) -> String {
         let key = as_key!(namespace, &set_name, i);
         let ibin = as_bin!("bin", i);
         let lbin = as_bin!("lbin", as_list!(i, "a"));
-        let bins = vec![&ibin, &lbin];
-        client.delete(&wpolicy, &key).unwrap();
-        client.put(&wpolicy, &key, &bins).unwrap();
+        let bins = vec![ibin, lbin];
+        client.delete(&wpolicy, &key).await.unwrap();
+        client.put(&wpolicy, &key, &bins).await.unwrap();
         let data = vec![Value::from("asd"), Value::from(i)];
         let data2 = vec![Value::from("asd"), Value::from(i), Value::from(i + 1)];
         let ops = [
@@ -57,17 +57,20 @@ fn create_test_set(no_records: usize) -> String {
                 0,
             ),
         ];
-        client.operate(&WritePolicy::default(), &key, &ops).unwrap();
+        client
+            .operate(&WritePolicy::default(), &key, &ops)
+            .await
+            .unwrap();
     }
 
     set_name
 }
 
-#[test]
-fn expression_hll() {
+#[aerospike_macro::test]
+async fn expression_hll() {
     let _ = env_logger::try_init();
 
-    let set_name = create_test_set(EXPECTED);
+    let set_name = create_test_set(EXPECTED).await;
 
     let rs = test_filter(
         eq(
@@ -81,7 +84,8 @@ fn expression_hll() {
             int_val(3),
         ),
         &set_name,
-    );
+    )
+    .await;
     let count = count_results(rs);
     assert_eq!(count, 99, "HLL INIT Test Failed");
 
@@ -94,7 +98,8 @@ fn expression_hll() {
             int_val(1),
         ),
         &set_name,
-    );
+    )
+    .await;
     let count = count_results(rs);
     assert_eq!(count, 1, "HLL MAY CONTAIN Test Failed");
 
@@ -110,7 +115,8 @@ fn expression_hll() {
             int_val(10),
         ),
         &set_name,
-    );
+    )
+    .await;
     let count = count_results(rs);
     assert_eq!(count, 100, "HLL DESCRIBE Test Failed");
 
@@ -123,7 +129,8 @@ fn expression_hll() {
             int_val(3),
         ),
         &set_name,
-    );
+    )
+    .await;
     let count = count_results(rs);
     assert_eq!(count, 98, "HLL GET UNION Test Failed");
 
@@ -136,7 +143,8 @@ fn expression_hll() {
             int_val(3),
         ),
         &set_name,
-    );
+    )
+    .await;
     let count = count_results(rs);
     assert_eq!(count, 98, "HLL GET UNION COUNT Test Failed");
 
@@ -149,7 +157,8 @@ fn expression_hll() {
             int_val(2),
         ),
         &set_name,
-    );
+    )
+    .await;
     let count = count_results(rs);
     assert_eq!(count, 99, "HLL GET INTERSECT COUNT Test Failed");
 
@@ -162,20 +171,21 @@ fn expression_hll() {
             float_val(0.5f64),
         ),
         &set_name,
-    );
+    )
+    .await;
     let count = count_results(rs);
     assert_eq!(count, 99, "HLL GET INTERSECT COUNT Test Failed");
 }
 
-fn test_filter(filter: FilterExpression, set_name: &str) -> Arc<Recordset> {
-    let client = common::client();
+async fn test_filter(filter: FilterExpression, set_name: &str) -> Arc<Recordset> {
+    let client = common::client().await;
     let namespace = common::namespace();
 
     let mut qpolicy = QueryPolicy::default();
     qpolicy.filter_expression = Some(filter);
 
     let statement = Statement::new(namespace, set_name, Bins::All);
-    client.query(&qpolicy, statement).unwrap()
+    client.query(&qpolicy, statement).await.unwrap()
 }
 
 fn count_results(rs: Arc<Recordset>) -> usize {

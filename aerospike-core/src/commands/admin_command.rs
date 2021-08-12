@@ -148,11 +148,7 @@ impl AdminCommand {
         AdminCommand::execute(conn).await
     }
 
-    pub async fn set_password(
-        cluster: &Cluster,
-        user: &str,
-        password: &str,
-    ) -> Result<()> {
+    pub async fn set_password(cluster: &Cluster, user: &str, password: &str) -> Result<()> {
         let node = cluster.get_random_node().await?;
         let mut conn = node.get_connection().await?;
 
@@ -169,11 +165,7 @@ impl AdminCommand {
         AdminCommand::execute(conn).await
     }
 
-    pub async fn change_password(
-        cluster: &Cluster,
-        user: &str,
-        password: &str,
-    ) -> Result<()> {
+    pub async fn change_password(cluster: &Cluster, user: &str, password: &str) -> Result<()> {
         let node = cluster.get_random_node().await?;
         let mut conn = node.get_connection().await?;
 
@@ -202,11 +194,7 @@ impl AdminCommand {
         AdminCommand::execute(conn).await
     }
 
-    pub async fn grant_roles(
-        cluster: &Cluster,
-        user: &str,
-        roles: &[&str],
-    ) -> Result<()> {
+    pub async fn grant_roles(cluster: &Cluster, user: &str, roles: &[&str]) -> Result<()> {
         let node = cluster.get_random_node().await?;
         let mut conn = node.get_connection().await?;
 
@@ -219,11 +207,7 @@ impl AdminCommand {
         AdminCommand::execute(conn).await
     }
 
-    pub async fn revoke_roles(
-        cluster: &Cluster,
-        user: &str,
-        roles: &[&str],
-    ) -> Result<()> {
+    pub async fn revoke_roles(cluster: &Cluster, user: &str, roles: &[&str]) -> Result<()> {
         let node = cluster.get_random_node().await?;
         let mut conn = node.get_connection().await?;
 

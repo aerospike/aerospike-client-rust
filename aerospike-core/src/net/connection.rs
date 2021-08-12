@@ -19,14 +19,14 @@ use crate::commands::admin_command::AdminCommand;
 use crate::commands::buffer::Buffer;
 use crate::errors::Result;
 use crate::policy::ClientPolicy;
-use aerospike_rt::net::TcpStream;
-use aerospike_rt::time::{Duration, Instant};
-#[cfg(all(any(feature = "rt-tokio"), not(feature = "rt-async-std")))]
-use aerospike_rt::io::{AsyncWriteExt, AsyncReadExt};
-#[cfg(all(any(feature = "rt-async-std"), not(feature = "rt-tokio")))]
-use futures::{AsyncWriteExt, AsyncReadExt};
 #[cfg(all(any(feature = "rt-async-std"), not(feature = "rt-tokio")))]
 use aerospike_rt::async_std::net::Shutdown;
+#[cfg(all(any(feature = "rt-tokio"), not(feature = "rt-async-std")))]
+use aerospike_rt::io::{AsyncReadExt, AsyncWriteExt};
+use aerospike_rt::net::TcpStream;
+use aerospike_rt::time::{Duration, Instant};
+#[cfg(all(any(feature = "rt-async-std"), not(feature = "rt-tokio")))]
+use futures::{AsyncReadExt, AsyncWriteExt};
 
 #[derive(Debug)]
 pub struct Connection {
@@ -110,14 +110,12 @@ impl Connection {
     async fn authenticate(&mut self, user_password: &Option<(String, String)>) -> Result<()> {
         if let Some((ref user, ref password)) = *user_password {
             return match AdminCommand::authenticate(self, user, password).await {
-                Ok(()) => {
-                    Ok(())
-                }
+                Ok(()) => Ok(()),
                 Err(err) => {
                     self.close();
                     Err(err)
                 }
-            }
+            };
         }
 
         Ok(())

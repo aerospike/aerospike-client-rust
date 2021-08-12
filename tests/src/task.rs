@@ -22,9 +22,9 @@ use std::time::Duration;
 
 // If registering udf is successful, querying RegisterTask will return Status::Complete
 // If udf does not exist, querying RegisterTask will return error
-#[test]
-fn register_task_test() {
-    let client = common::client();
+#[aerospike_macro::test]
+async fn register_task_test() {
+    let client = common::client().await;
 
     let code = r#"
     local function putBin(r,name,value)
@@ -41,36 +41,30 @@ fn register_task_test() {
     let udf_file_name = udf_name.clone().to_owned() + ".LUA";
 
     let register_task = client
-        .register_udf(
-            &WritePolicy::default(),
-            code.as_bytes(),
-            &udf_file_name,
-            UDFLang::Lua,
-        )
+        .register_udf(code.as_bytes(), &udf_file_name, UDFLang::Lua)
+        .await
         .unwrap();
 
     assert!(matches!(
-        register_task.wait_till_complete(None),
+        register_task.wait_till_complete(None).await,
         Ok(Status::Complete)
     ));
 
-    client
-        .remove_udf(&WritePolicy::default(), &udf_name, UDFLang::Lua)
-        .unwrap();
+    client.remove_udf(&udf_name, UDFLang::Lua).await.unwrap();
     // Wait for some time to ensure UDF has been unregistered on all nodes.
     thread::sleep(Duration::from_secs(2));
 
     let timeout = Duration::from_millis(100);
     assert!(matches!(
-        register_task.wait_till_complete(Some(timeout)),
+        register_task.wait_till_complete(Some(timeout)).await,
         Err(Error(ErrorKind::Timeout(_), _))
     ));
 }
 
 // If creating index is successful, querying IndexTask will return Status::Complete
-#[test]
-fn index_task_test() {
-    let client = common::client();
+#[aerospike_macro::test]
+async fn index_task_test() {
+    let client = common::client().await;
     let namespace = common::namespace();
     let set_name = common::rand_str(10);
     let bin_name = common::rand_str(10);
@@ -80,23 +74,23 @@ fn index_task_test() {
     for i in 0..2 as i64 {
         let key = as_key!(namespace, &set_name, i);
         let wbin = as_bin!(&bin_name, i);
-        let bins = vec![&wbin];
-        client.put(&wpolicy, &key, &bins).unwrap();
+        let bins = vec![wbin];
+        client.put(&wpolicy, &key, &bins).await.unwrap();
     }
 
     let index_task = client
         .create_index(
-            &wpolicy,
             &namespace,
             &set_name,
             &bin_name,
             &index_name,
             IndexType::Numeric,
         )
+        .await
         .unwrap();
 
     assert!(matches!(
-        index_task.wait_till_complete(None),
+        index_task.wait_till_complete(None).await,
         Ok(Status::Complete)
     ));
 }

@@ -49,9 +49,7 @@ impl Task for RegisterTask {
         }
 
         for node in &nodes {
-            let response = node.info(
-                &[COMMAND],
-            ).await?;
+            let response = node.info(&[COMMAND]).await?;
 
             if !response.contains_key(COMMAND) {
                 return Ok(Status::NotFound);

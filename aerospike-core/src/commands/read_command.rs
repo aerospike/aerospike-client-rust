@@ -97,7 +97,11 @@ impl<'a> ReadCommand<'a> {
 
 #[async_trait::async_trait]
 impl<'a> Command for ReadCommand<'a> {
-    async fn write_timeout(&mut self, conn: &mut Connection, timeout: Option<Duration>) -> Result<()> {
+    async fn write_timeout(
+        &mut self,
+        conn: &mut Connection,
+        timeout: Option<Duration>,
+    ) -> Result<()> {
         conn.buffer.write_timeout(timeout);
         Ok(())
     }
@@ -116,7 +120,10 @@ impl<'a> Command for ReadCommand<'a> {
     }
 
     async fn parse_result(&mut self, conn: &mut Connection) -> Result<()> {
-        if let Err(err) = conn.read_buffer(buffer::MSG_TOTAL_HEADER_SIZE as usize).await {
+        if let Err(err) = conn
+            .read_buffer(buffer::MSG_TOTAL_HEADER_SIZE as usize)
+            .await
+        {
             warn!("Parse result error: {}", err);
             bail!(err);
         }

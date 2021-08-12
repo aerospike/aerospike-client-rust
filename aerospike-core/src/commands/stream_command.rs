@@ -99,7 +99,10 @@ impl StreamCommand {
     async fn parse_stream(&mut self, conn: &mut Connection, size: usize) -> Result<bool> {
         while self.recordset.is_active() && conn.bytes_read() < size {
             // Read header.
-            if let Err(err) = conn.read_buffer(buffer::MSG_REMAINING_HEADER_SIZE as usize).await {
+            if let Err(err) = conn
+                .read_buffer(buffer::MSG_REMAINING_HEADER_SIZE as usize)
+                .await
+            {
                 warn!("Parse result error: {}", err);
                 return Err(err);
             }
@@ -173,7 +176,11 @@ impl StreamCommand {
 
 #[async_trait::async_trait]
 impl Command for StreamCommand {
-    async fn write_timeout(&mut self, conn: &mut Connection, timeout: Option<Duration>) -> Result<()> {
+    async fn write_timeout(
+        &mut self,
+        conn: &mut Connection,
+        timeout: Option<Duration>,
+    ) -> Result<()> {
         conn.buffer.write_timeout(timeout);
         Ok(())
     }

@@ -119,7 +119,8 @@ impl Node {
             self.services_name(),
         ];
         let info_map = self
-            .info(&commands).await
+            .info(&commands)
+            .await
             .chain_err(|| "Info command failed")?;
         self.validate_node(&info_map)
             .chain_err(|| "Failed to validate node")?;
@@ -279,10 +280,7 @@ impl Node {
         self.connection_pool.close().await;
     }
 
-    pub async fn info(
-        &self,
-        commands: &[&str],
-    ) -> Result<HashMap<String, String>> {
+    pub async fn info(&self, commands: &[&str]) -> Result<HashMap<String, String>> {
         let mut conn = self.get_connection().await?;
         Message::info(&mut conn, commands).await.map_err(|e| {
             conn.invalidate();

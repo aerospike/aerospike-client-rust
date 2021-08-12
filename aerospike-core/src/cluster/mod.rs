@@ -35,7 +35,7 @@ use crate::net::Host;
 use crate::policy::ClientPolicy;
 use aerospike_rt::RwLock;
 use futures::channel::mpsc;
-use futures::channel::mpsc::{Receiver, Sender};
+use futures::channel::mpsc::{Receiver, Sender, TryRecvError};
 use futures::lock::Mutex;
 
 // Cluster encapsulates the aerospike cluster nodes and manages
@@ -79,7 +79,6 @@ impl Cluster {
             tend_channel: Mutex::new(tx),
             closed: AtomicBool::new(false),
         });
-
         // try to seed connections for first use
         Cluster::wait_till_stabilized(cluster.clone()).await?;
 
@@ -94,8 +93,7 @@ impl Cluster {
         }
 
         let cluster_for_tend = cluster.clone();
-        let _res = aerospike_rt::spawn(Cluster::tend_thread(cluster_for_tend, rx)).await;
-
+        let _res = aerospike_rt::spawn(Cluster::tend_thread(cluster_for_tend, rx));
         debug!("New cluster initialized and ready to be used...");
         Ok(cluster)
     }
@@ -103,14 +101,19 @@ impl Cluster {
     async fn tend_thread(cluster: Arc<Cluster>, mut rx: Receiver<()>) {
         let tend_interval = cluster.client_policy.tend_interval;
 
-        while let Ok(s) = rx.try_next() {
-            if s.is_none() {
-                if let Err(err) = cluster.tend().await {
-                    log_error_chain!(err, "Error tending cluster");
+        loop {
+            match rx.try_next() {
+                Ok(_) => {
+                    unreachable!()
                 }
+                Err(_) => {
+                    if let Err(err) = cluster.tend().await {
+                        log_error_chain!(err, "Error tending cluster");
+                    }
 
-                aerospike_rt::sleep(tend_interval).await;
-            }
+                    aerospike_rt::sleep(tend_interval).await;
+                }
+            };
         }
 
         // close all nodes
@@ -141,7 +144,7 @@ impl Cluster {
         for node in nodes {
             let old_gen = node.partition_generation();
             if node.is_active() {
-                match node.refresh(self.aliases().await).await{
+                match node.refresh(self.aliases().await).await {
                     Ok(friends) => {
                         refresh_count += 1;
 
@@ -204,7 +207,9 @@ impl Cluster {
         });
 
         #[cfg(all(feature = "rt-tokio", not(feature = "rt-async-std")))]
-        return handle.await.map_err(|err| format!("Error during initial cluster tend: {:?}", err).into());
+        return handle
+            .await
+            .map_err(|err| format!("Error during initial cluster tend: {:?}", err).into());
         #[cfg(all(feature = "rt-async-std", not(feature = "rt-tokio")))]
         return Ok(handle.await);
     }

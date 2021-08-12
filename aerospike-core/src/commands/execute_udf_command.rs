@@ -56,7 +56,11 @@ impl<'a> ExecuteUDFCommand<'a> {
 
 #[async_trait::async_trait]
 impl<'a> Command for ExecuteUDFCommand<'a> {
-    async fn write_timeout(&mut self, conn: &mut Connection, timeout: Option<Duration>) -> Result<()> {
+    async fn write_timeout(
+        &mut self,
+        conn: &mut Connection,
+        timeout: Option<Duration>,
+    ) -> Result<()> {
         conn.buffer.write_timeout(timeout);
         Ok(())
     }

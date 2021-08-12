@@ -103,7 +103,8 @@ impl<'a, 'b> BatchReadCommand<'a, 'b> {
 
             self.prepare_buffer(&mut conn)
                 .chain_err(|| "Failed to prepare send buffer")?;
-            self.write_timeout(&mut conn, base_policy.timeout()).await
+            self.write_timeout(&mut conn, base_policy.timeout())
+                .await
                 .chain_err(|| "Failed to set timeout for send buffer")?;
 
             // Send command.
@@ -136,7 +137,8 @@ impl<'a, 'b> BatchReadCommand<'a, 'b> {
 
     async fn parse_group(&mut self, conn: &mut Connection, size: usize) -> Result<bool> {
         while conn.bytes_read() < size {
-            conn.read_buffer(commands::buffer::MSG_REMAINING_HEADER_SIZE as usize).await?;
+            conn.read_buffer(commands::buffer::MSG_REMAINING_HEADER_SIZE as usize)
+                .await?;
             match self.parse_record(conn).await? {
                 None => return Ok(false),
                 Some(batch_record) => {
@@ -205,7 +207,11 @@ impl<'a, 'b> BatchReadCommand<'a, 'b> {
 
 #[async_trait::async_trait]
 impl<'a, 'b> commands::Command for BatchReadCommand<'a, 'b> {
-    async fn write_timeout(&mut self, conn: &mut Connection, timeout: Option<Duration>) -> Result<()> {
+    async fn write_timeout(
+        &mut self,
+        conn: &mut Connection,
+        timeout: Option<Duration>,
+    ) -> Result<()> {
         conn.buffer.write_timeout(timeout);
         Ok(())
     }

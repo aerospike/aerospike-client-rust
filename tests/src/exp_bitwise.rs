@@ -23,8 +23,8 @@ use std::sync::Arc;
 
 const EXPECTED: usize = 100;
 
-fn create_test_set(no_records: usize) -> String {
-    let client = common::client();
+async fn create_test_set(no_records: usize) -> String {
+    let client = common::client().await;
     let namespace = common::namespace();
     let set_name = common::rand_str(10);
 
@@ -32,19 +32,19 @@ fn create_test_set(no_records: usize) -> String {
     for i in 0..no_records as i64 {
         let key = as_key!(namespace, &set_name, i);
         let ibin = as_bin!("bin", as_blob!(vec![0b00000001, 0b01000010]));
-        let bins = vec![&ibin];
-        client.delete(&wpolicy, &key).unwrap();
-        client.put(&wpolicy, &key, &bins).unwrap();
+        let bins = vec![ibin];
+        client.delete(&wpolicy, &key).await.unwrap();
+        client.put(&wpolicy, &key, &bins).await.unwrap();
     }
 
     set_name
 }
 
-#[test]
-fn expression_bitwise() {
+#[aerospike_macro::test]
+async fn expression_bitwise() {
     let _ = env_logger::try_init();
 
-    let set_name = create_test_set(EXPECTED);
+    let set_name = create_test_set(EXPECTED).await;
 
     // EQ
     let rs = test_filter(
@@ -53,7 +53,8 @@ fn expression_bitwise() {
             int_val(3),
         ),
         &set_name,
-    );
+    )
+    .await;
     let item_count = count_results(rs);
     assert_eq!(item_count, 100, "COUNT Test Failed");
 
@@ -72,7 +73,8 @@ fn expression_bitwise() {
             int_val(3),
         ),
         &set_name,
-    );
+    )
+    .await;
     let item_count = count_results(rs);
     assert_eq!(item_count, 100, "RESIZE Test Failed");
 
@@ -91,7 +93,8 @@ fn expression_bitwise() {
             int_val(9),
         ),
         &set_name,
-    );
+    )
+    .await;
     let item_count = count_results(rs);
     assert_eq!(item_count, 100, "INSERT Test Failed");
 
@@ -110,7 +113,8 @@ fn expression_bitwise() {
             int_val(2),
         ),
         &set_name,
-    );
+    )
+    .await;
     let item_count = count_results(rs);
     assert_eq!(item_count, 100, "REMOVE Test Failed");
 
@@ -130,7 +134,8 @@ fn expression_bitwise() {
             int_val(4),
         ),
         &set_name,
-    );
+    )
+    .await;
     let item_count = count_results(rs);
     assert_eq!(item_count, 100, "SET Test Failed");
 
@@ -150,7 +155,8 @@ fn expression_bitwise() {
             int_val(5),
         ),
         &set_name,
-    );
+    )
+    .await;
     let item_count = count_results(rs);
     assert_eq!(item_count, 100, "OR Test Failed");
 
@@ -170,7 +176,8 @@ fn expression_bitwise() {
             int_val(4),
         ),
         &set_name,
-    );
+    )
+    .await;
     let item_count = count_results(rs);
     assert_eq!(item_count, 100, "XOR Test Failed");
 
@@ -190,7 +197,8 @@ fn expression_bitwise() {
             int_val(1),
         ),
         &set_name,
-    );
+    )
+    .await;
     let item_count = count_results(rs);
     assert_eq!(item_count, 100, "AND Test Failed");
 
@@ -209,7 +217,8 @@ fn expression_bitwise() {
             int_val(7),
         ),
         &set_name,
-    );
+    )
+    .await;
     let item_count = count_results(rs);
     assert_eq!(item_count, 100, "NOT Test Failed");
 
@@ -229,7 +238,8 @@ fn expression_bitwise() {
             int_val(2),
         ),
         &set_name,
-    );
+    )
+    .await;
     let item_count = count_results(rs);
     assert_eq!(item_count, 100, "LSHIFT Test Failed");
 
@@ -249,7 +259,8 @@ fn expression_bitwise() {
             int_val(0),
         ),
         &set_name,
-    );
+    )
+    .await;
     let item_count = count_results(rs);
     assert_eq!(item_count, 100, "RSHIFT Test Failed");
 
@@ -271,7 +282,8 @@ fn expression_bitwise() {
             int_val(2),
         ),
         &set_name,
-    );
+    )
+    .await;
     let item_count = count_results(rs);
     assert_eq!(item_count, 100, "ADD Test Failed");
 
@@ -293,7 +305,8 @@ fn expression_bitwise() {
             int_val(0),
         ),
         &set_name,
-    );
+    )
+    .await;
     let item_count = count_results(rs);
     assert_eq!(item_count, 100, "SUBTRACT Test Failed");
 
@@ -313,7 +326,8 @@ fn expression_bitwise() {
             int_val(8),
         ),
         &set_name,
-    );
+    )
+    .await;
     let item_count = count_results(rs);
     assert_eq!(item_count, 100, "SET INT Test Failed");
 
@@ -323,7 +337,8 @@ fn expression_bitwise() {
             blob_val(vec![0b00000001]),
         ),
         &set_name,
-    );
+    )
+    .await;
     let item_count = count_results(rs);
     assert_eq!(item_count, 100, "GET Test Failed");
 
@@ -338,7 +353,8 @@ fn expression_bitwise() {
             int_val(1),
         ),
         &set_name,
-    );
+    )
+    .await;
     let item_count = count_results(rs);
     assert_eq!(item_count, 100, "LSCAN Test Failed");
 
@@ -353,7 +369,8 @@ fn expression_bitwise() {
             int_val(6),
         ),
         &set_name,
-    );
+    )
+    .await;
     let item_count = count_results(rs);
     assert_eq!(item_count, 100, "RSCAN Test Failed");
 
@@ -363,20 +380,21 @@ fn expression_bitwise() {
             int_val(1),
         ),
         &set_name,
-    );
+    )
+    .await;
     let item_count = count_results(rs);
     assert_eq!(item_count, 100, "RSCAN Test Failed");
 }
 
-fn test_filter(filter: FilterExpression, set_name: &str) -> Arc<Recordset> {
-    let client = common::client();
+async fn test_filter(filter: FilterExpression, set_name: &str) -> Arc<Recordset> {
+    let client = common::client().await;
     let namespace = common::namespace();
 
     let mut qpolicy = QueryPolicy::default();
     qpolicy.filter_expression = Some(filter);
 
     let statement = Statement::new(namespace, set_name, Bins::All);
-    client.query(&qpolicy, statement).unwrap()
+    client.query(&qpolicy, statement).await.unwrap()
 }
 
 fn count_results(rs: Arc<Recordset>) -> usize {

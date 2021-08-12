@@ -20,18 +20,18 @@ use env_logger;
 
 use crate::common;
 
-#[test]
-fn connect() {
+#[aerospike_macro::test]
+async fn connect() {
     let _ = env_logger::try_init();
 
-    let client = common::client();
+    let client = common::client().await;
     let namespace: &str = common::namespace();
     let set_name = &common::rand_str(10);
     let policy = ReadPolicy::default();
     let wpolicy = WritePolicy::default();
     let key = as_key!(namespace, set_name, -1);
 
-    client.delete(&wpolicy, &key).unwrap();
+    client.delete(&wpolicy, &key).await.unwrap();
 
     let bins = [
         as_bin!("bin999", "test string"),
@@ -49,9 +49,9 @@ fn connect() {
         ),
         as_bin!("bin-name-len-15", "max. bin name length is 15 chars"),
     ];
-    client.put(&wpolicy, &key, &bins).unwrap();
+    client.put(&wpolicy, &key, &bins).await.unwrap();
 
-    let record = client.get(&policy, &key, Bins::All).unwrap();
+    let record = client.get(&policy, &key, Bins::All).await.unwrap();
     let bins = record.bins;
     assert_eq!(bins.len(), 7);
     assert_eq!(bins.get("bin999"), Some(&Value::from("test string")));
@@ -76,25 +76,25 @@ fn connect() {
         Some(&Value::from("max. bin name length is 15 chars"))
     );
 
-    client.touch(&wpolicy, &key).unwrap();
+    client.touch(&wpolicy, &key).await.unwrap();
 
     let bins = Bins::from(["bin999", "bin f64"]);
-    let record = client.get(&policy, &key, bins).unwrap();
+    let record = client.get(&policy, &key, bins).await.unwrap();
     assert_eq!(record.bins.len(), 2);
 
-    let record = client.get(&policy, &key, Bins::None).unwrap();
+    let record = client.get(&policy, &key, Bins::None).await.unwrap();
     assert_eq!(record.bins.len(), 0);
 
-    let exists = client.exists(&wpolicy, &key).unwrap();
+    let exists = client.exists(&wpolicy, &key).await.unwrap();
     assert!(exists);
 
     let bin = as_bin!("bin999", "test string");
     let ops = &vec![operations::put(&bin), operations::get()];
-    client.operate(&wpolicy, &key, ops).unwrap();
+    client.operate(&wpolicy, &key, ops).await.unwrap();
 
-    let existed = client.delete(&wpolicy, &key).unwrap();
+    let existed = client.delete(&wpolicy, &key).await.unwrap();
     assert!(existed);
 
-    let existed = client.delete(&wpolicy, &key).unwrap();
+    let existed = client.delete(&wpolicy, &key).await.unwrap();
     assert!(!existed);
 }

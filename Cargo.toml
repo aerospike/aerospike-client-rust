@@ -28,18 +28,18 @@ aerospike-sync = {path = "./aerospike-sync", optional = true}
 
 [features]
 default = ["async", "serialization"]
-serialization = ["aerospike-core/serde"]
+serialization = ["aerospike-core/serialization"]
 async = ["aerospike-core"]
 sync = ["aerospike-sync"]
-rt-tokio = ["aerospike-core/rt-tokio"]
-rt-async-std = ["aerospike-core/rt-async-std"]
+rt-tokio = ["aerospike-core/rt-tokio", "aerospike-macro/rt-tokio"]
+rt-async-std = ["aerospike-core/rt-async-std", "aerospike-macro/rt-async-std"]
 
 [[bench]]
 name = "client_server"
 harness = false
 
 [workspace]
-members = ["tools/benchmark", "aerospike-core", "aerospike-rt", "aerospike-sync"]
+members = ["tools/benchmark", "aerospike-core", "aerospike-rt", "aerospike-sync", "aerospike-macro"]
 
 [dev-dependencies]
 env_logger = "0.7"
@@ -48,3 +48,7 @@ bencher = "0.1"
 serde_json = "1.0"
 rand = "0.7"
 lazy_static = "1.4"
+aerospike-macro = {path = "./aerospike-macro"}
+aerospike-rt = {path = "./aerospike-rt"}
+futures = {version = "0.3.16" }
+async_once = "0.2.1"
