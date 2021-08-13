@@ -193,7 +193,7 @@ async fn expression_rec_ops() {
     assert_eq!(count, 100, "SINCE UPDATE Test Failed");
 
     // Records dont expire
-    let rs = test_filter(le(void_time(), int_val(0)), &set_name).await;
+    let rs = test_filter(ge(void_time(), int_val(0)), &set_name).await;
     let count = count_results(rs);
     assert_eq!(count, 100, "VOID TIME Test Failed");
 
