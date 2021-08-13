@@ -35,6 +35,7 @@ jobs:
       uses: reugn/github-action-aerospike@v1
       with:
         server-version: 5.5.0.2
+        config-file: .github/aerospike.conf
     - name: Clear cache
       run: rm -rf target/debug/deps/*aerospike*
     - name: Build with tokio
