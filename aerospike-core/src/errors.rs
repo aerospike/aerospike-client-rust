@@ -19,14 +19,14 @@
 //!
 //! Handling an error returned by the client.
 //!
-//! ```rust
+//! ```rust,edition2018
 //! use aerospike::*;
 //!
 //! let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap();
 //! let policy = ClientPolicy::default();
-//! let client = Client::new(&policy, &hosts).expect("Failed to connect to cluster");
+//! let client = Client::new(&policy, &hosts).expect("Failed to connect to cluster").await;
 //! let key = as_key!("test", "test", "someKey");
-//! match client.get(&ReadPolicy::default(), &key, Bins::None) {
+//! match client.get(&ReadPolicy::default(), &key, Bins::None).await {
 //!     Ok(record) => {
 //!         match record.time_to_live() {
 //!             None => println!("record never expires"),

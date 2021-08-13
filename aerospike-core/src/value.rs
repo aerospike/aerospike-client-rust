@@ -625,16 +625,16 @@ macro_rules! as_blob {
 ///
 /// Write a list value to a record bin.
 ///
-/// ```rust
+/// ```rust,edition2018
 /// # use aerospike::*;
 /// # use std::vec::Vec;
-/// # fn main() {
+/// # async fn main() {
 /// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap();
-/// # let client = Client::new(&ClientPolicy::default(), &hosts).unwrap();
+/// # let client = Client::new(&ClientPolicy::default(), &hosts).await.unwrap();
 /// # let key = as_key!("test", "test", "mykey");
 /// let list = as_list!("a", "b", "c");
 /// let bin = as_bin!("list", list);
-/// client.put(&WritePolicy::default(), &key, &vec![&bin]).unwrap();
+/// client.put(&WritePolicy::default(), &key, &vec![bin]).await.unwrap();
 /// # }
 /// ```
 #[macro_export]
@@ -656,18 +656,18 @@ macro_rules! as_list {
 ///
 /// Execute a user-defined function (UDF) with some arguments.
 ///
-/// ```rust,should_panic
+/// ```rust,should_panic,edition2018
 /// # use aerospike::*;
 /// # use std::vec::Vec;
-/// # fn main() {
+/// # async fn main() {
 /// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap();
-/// # let client = Client::new(&ClientPolicy::default(), &hosts).unwrap();
+/// # let client = Client::new(&ClientPolicy::default(), &hosts).await.unwrap();
 /// # let key = as_key!("test", "test", "mykey");
 /// let module = "myUDF";
 /// let func = "myFunction";
 /// let args = as_values!("a", "b", "c");
 /// client.execute_udf(&WritePolicy::default(), &key,
-///     &module, &func, Some(&args)).unwrap();
+///     &module, &func, Some(&args)).await.unwrap();
 /// # }
 /// ```
 #[macro_export]
@@ -689,15 +689,15 @@ macro_rules! as_values {
 ///
 /// Write a map value to a record bin.
 ///
-/// ```rust
+/// ```rust,edition2018
 /// # use aerospike::*;
-/// # fn main() {
+/// # async fn main() {
 /// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap();
-/// # let client = Client::new(&ClientPolicy::default(), &hosts).unwrap();
+/// # let client = Client::new(&ClientPolicy::default(), &hosts).await.unwrap();
 /// # let key = as_key!("test", "test", "mykey");
 /// let map = as_map!("a" => 1, "b" => 2);
 /// let bin = as_bin!("map", map);
-/// client.put(&WritePolicy::default(), &key, &vec![&bin]).unwrap();
+/// client.put(&WritePolicy::default(), &key, &vec![bin]).await.unwrap();
 /// # }
 /// ```
 #[macro_export]

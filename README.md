@@ -26,6 +26,7 @@ The following is a very simple example of CRUD operations in an Aerospike databa
 ```rust,edition2018
 #[macro_use]
 extern crate aerospike;
+extern crate tokio;
 
 use std::env;
 use std::time::Instant;
@@ -33,6 +34,7 @@ use std::time::Instant;
 use aerospike::{Bins, Client, ClientPolicy, ReadPolicy, WritePolicy};
 use aerospike::operations;
 
+#[tokio::main]
 async fn main() {
     let cpolicy = ClientPolicy::default();
     let hosts = env::var("AEROSPIKE_HOSTS")
