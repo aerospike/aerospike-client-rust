@@ -39,6 +39,8 @@ jobs:
       run: rm -rf target/debug/deps/*aerospike*
     - name: Build with tokio
       run: cargo build --verbose --features rt-tokio
+    - name: Clear cache
+      run: rm -rf target/debug/deps/*aerospike*
     - name: Run tests with tokio
       run: cargo test --verbose --features rt-tokio
     - name: Build docs with tokio
@@ -47,6 +49,8 @@ jobs:
       run: rm -rf target/debug/deps/*aerospike*
     - name: Build with async-std
       run: cargo build --verbose --features rt-async-std
+    - name: Clear cache
+      run: rm -rf target/debug/deps/*aerospike*
     - name: Run tests with async-std
       run: cargo test --verbose --features rt-async-std
     - name: Build docs with async-std
