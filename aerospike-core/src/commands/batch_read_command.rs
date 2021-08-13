@@ -30,18 +30,14 @@ struct BatchRecord {
 }
 
 #[derive(Clone, Debug)]
-pub struct BatchReadCommand{
+pub struct BatchReadCommand {
     policy: BatchPolicy,
     pub node: Arc<Node>,
     pub batch_reads: Vec<BatchRead>,
 }
 
 impl BatchReadCommand {
-    pub fn new(
-        policy: &BatchPolicy,
-        node: Arc<Node>,
-        batch_reads: Vec<BatchRead>,
-    ) -> Self {
+    pub fn new(policy: &BatchPolicy, node: Arc<Node>, batch_reads: Vec<BatchRead>) -> Self {
         BatchReadCommand {
             policy: policy.clone(),
             node,
@@ -218,10 +214,8 @@ impl commands::Command for BatchReadCommand {
     }
 
     fn prepare_buffer(&mut self, conn: &mut Connection) -> Result<()> {
-        conn.buffer.set_batch_read(
-            &self.policy,
-            self.batch_reads.clone(),
-        )
+        conn.buffer
+            .set_batch_read(&self.policy, self.batch_reads.clone())
     }
 
     async fn get_node(&self) -> Result<Arc<Node>> {

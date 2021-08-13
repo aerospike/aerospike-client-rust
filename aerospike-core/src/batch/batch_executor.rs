@@ -32,9 +32,7 @@ pub struct BatchExecutor {
 
 impl BatchExecutor {
     pub fn new(cluster: Arc<Cluster>) -> Self {
-        BatchExecutor {
-            cluster,
-        }
+        BatchExecutor { cluster }
     }
 
     pub async fn execute_batch_read<'a>(
@@ -45,9 +43,7 @@ impl BatchExecutor {
         let mut batch_nodes = self.get_batch_nodes(&batch_reads).await?;
         let jobs = batch_nodes
             .drain()
-            .map(|(node, reads)| {
-                BatchReadCommand::new(policy, node, reads)
-            })
+            .map(|(node, reads)| BatchReadCommand::new(policy, node, reads))
             .collect();
         let reads = self.execute_batch_jobs(jobs, &policy.concurrency).await?;
         let mut res: Vec<BatchRead> = vec![];
@@ -79,8 +75,8 @@ impl BatchExecutor {
                 thread_size += 1;
                 overhead -= 1;
             }
-            let slice = Vec::from(&jobs[slice_index..slice_index+thread_size]);
-            slice_index = thread_size+1;
+            let slice = Vec::from(&jobs[slice_index..slice_index + thread_size]);
+            slice_index = thread_size + 1;
             let last_err = last_err.clone();
             let res = res.clone();
             let handle = aerospike_rt::spawn(async move {
@@ -108,7 +104,9 @@ impl BatchExecutor {
         let mut map = HashMap::new();
         for (_, batch_read) in batch_reads.iter().enumerate() {
             let node = self.node_for_key(&batch_read.key).await?;
-            map.entry(node).or_insert_with(Vec::new).push(batch_read.clone());
+            map.entry(node)
+                .or_insert_with(Vec::new)
+                .push(batch_read.clone());
         }
         Ok(map)
     }

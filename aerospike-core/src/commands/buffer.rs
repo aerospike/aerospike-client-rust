@@ -361,7 +361,7 @@ impl Buffer {
         for batch_read in &batch_reads {
             self.data_offset += batch_read.key.digest.len() + 4;
             match prev {
-                Some(prev) if batch_read.match_header(&prev, policy.send_set_name) => {
+                Some(prev) if batch_read.match_header(prev, policy.send_set_name) => {
                     self.data_offset += 1;
                 }
                 _ => {
@@ -409,7 +409,7 @@ impl Buffer {
             self.write_u32(idx as u32)?;
             self.write_bytes(&key.digest)?;
             match prev {
-                Some(prev) if batch_read.match_header(&prev, policy.send_set_name) => {
+                Some(prev) if batch_read.match_header(prev, policy.send_set_name) => {
                     self.write_u8(1)?;
                 }
                 _ => {

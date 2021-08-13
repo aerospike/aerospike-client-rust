@@ -102,18 +102,15 @@ impl Cluster {
         let tend_interval = cluster.client_policy.tend_interval;
 
         loop {
-            match rx.try_next() {
-                Ok(_) => {
-                    unreachable!()
+            if rx.try_next().is_ok() {
+                unreachable!()
+            }else{
+                if let Err(err) = cluster.tend().await {
+                    log_error_chain!(err, "Error tending cluster");
                 }
-                Err(_) => {
-                    if let Err(err) = cluster.tend().await {
-                        log_error_chain!(err, "Error tending cluster");
-                    }
 
-                    aerospike_rt::sleep(tend_interval).await;
-                }
-            };
+                aerospike_rt::sleep(tend_interval).await;
+            }
         }
 
         // close all nodes

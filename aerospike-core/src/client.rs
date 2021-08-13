@@ -97,9 +97,7 @@ impl Client {
         let hosts = hosts.to_hosts()?;
         let cluster = Cluster::new(policy.clone(), &hosts).await?;
 
-        Ok(Client {
-            cluster,
-        })
+        Ok(Client { cluster })
     }
 
     /// Closes the connection to the Aerospike cluster.
@@ -663,7 +661,8 @@ impl Client {
                 let mut command =
                     ScanCommand::new(&policy, node, &namespace, &set_name, bins, recordset);
                 command.execute().await.unwrap();
-            }).await;
+            })
+            .await;
         }
         Ok(recordset)
     }
@@ -698,7 +697,8 @@ impl Client {
             let mut command =
                 ScanCommand::new(&policy, node, &namespace, &set_name, bins, t_recordset);
             command.execute().await.unwrap();
-        }).await;
+        })
+        .await;
 
         Ok(recordset)
     }
@@ -746,7 +746,8 @@ impl Client {
             aerospike_rt::spawn(async move {
                 let mut command = QueryCommand::new(&policy, node, statement, t_recordset);
                 command.execute().await.unwrap();
-            }).await;
+            })
+            .await;
         }
         Ok(recordset)
     }
@@ -773,7 +774,8 @@ impl Client {
         aerospike_rt::spawn(async move {
             let mut command = QueryCommand::new(&policy, node, statement, t_recordset);
             command.execute().await.unwrap();
-        }).await;
+        })
+        .await;
 
         Ok(recordset)
     }

@@ -19,7 +19,6 @@ extern crate lazy_static;
 extern crate rand;
 
 use aerospike::Client;
-use std::time::Duration;
 
 mod common;
 
