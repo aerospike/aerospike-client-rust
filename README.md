@@ -23,7 +23,7 @@ This library is compatible with Rust 1.46+ and supports the following operating 
 
 The following is a very simple example of CRUD operations in an Aerospike database.
 
-```rust
+```rust,edition2018
 #[macro_use]
 extern crate aerospike;
 
