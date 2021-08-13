@@ -13,7 +13,7 @@
 // License for the specific language governing permissions and limitations under
 // the License.
 
-mod batch;
+//mod batch;
 mod cdt_bitwise;
 mod cdt_list;
 mod cdt_map;

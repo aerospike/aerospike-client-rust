@@ -29,7 +29,7 @@ lazy_static! {
 }
 
 /// Container object for a database record.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 #[cfg_attr(feature = "serialization", derive(Serialize))]
 pub struct Record {
     /// Record key. When reading a record from the database, the key is not set in the returned

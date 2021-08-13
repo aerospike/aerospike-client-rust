@@ -18,9 +18,6 @@ use std::cmp;
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use parking_lot::Mutex;
-use scoped_pool::Pool;
-
 use crate::batch::BatchRead;
 use crate::cluster::partition::Partition;
 use crate::cluster::{Cluster, Node};
@@ -29,31 +26,30 @@ use crate::errors::{Error, Result};
 use crate::policy::{BatchPolicy, Concurrency};
 use crate::Key;
 use futures::executor::block_on;
+use futures::lock::Mutex;
 
 pub struct BatchExecutor {
     cluster: Arc<Cluster>,
-    thread_pool: Pool,
 }
 
 impl BatchExecutor {
-    pub fn new(cluster: Arc<Cluster>, thread_pool: Pool) -> Self {
+    pub fn new(cluster: Arc<Cluster>) -> Self {
         BatchExecutor {
             cluster,
-            thread_pool,
         }
     }
 
     pub async fn execute_batch_read<'a>(
         &self,
         policy: &BatchPolicy,
-        batch_reads: Vec<BatchRead<'a>>,
-    ) -> Result<Vec<BatchRead<'a>>> {
+        batch_reads: Vec<BatchRead>,
+    ) -> Result<Vec<BatchRead>> {
         let mut batch_nodes = self.get_batch_nodes(&batch_reads).await?;
         let batch_reads = SharedSlice::new(batch_reads);
         let jobs = batch_nodes
             .drain()
-            .map(|(node, offsets)| {
-                BatchReadCommand::new(policy, node, batch_reads.clone(), offsets)
+            .map(|(node, reads)| {
+                BatchReadCommand::new(policy, node, reads)
             })
             .collect();
         self.execute_batch_jobs(jobs, &policy.concurrency)?;
@@ -62,45 +58,44 @@ impl BatchExecutor {
 
     fn execute_batch_jobs(
         &self,
-        mut jobs: Vec<BatchReadCommand>,
+        jobs: Vec<BatchReadCommand>,
         concurrency: &Concurrency,
     ) -> Result<()> {
-        let threads = match *concurrency {
+        /*let threads = match *concurrency {
             Concurrency::Sequential => 1,
             Concurrency::Parallel => jobs.len(),
             Concurrency::MaxThreads(max) => cmp::min(max, jobs.len()),
         };
         let jobs = Arc::new(Mutex::new(jobs.iter_mut()));
         let last_err: Arc<Mutex<Option<Error>>> = Arc::default();
-        self.thread_pool.scoped(|scope| {
-            for _ in 0..threads {
-                let last_err = last_err.clone();
-                let jobs = jobs.clone();
-                scope.execute(move || {
-                    let next_job = || jobs.lock().next();
-                    while let Some(cmd) = next_job() {
-                        if let Err(err) = block_on(cmd.execute()) {
-                            *last_err.lock() = Some(err);
-                            jobs.lock().all(|_| true); // consume the remaining jobs
-                        };
-                    }
-                });
-            }
-        });
+        for _ in 0..threads {
+            let last_err = last_err.clone();
+            let jobs = jobs.clone();
+            aerospike_rt::spawn(async move {
+                //let next_job = async { jobs.lock().await.next().await};
+                while let Some(cmd) = jobs.lock().await.next() {
+                    if let Err(err) = cmd.execute().await {
+                        *last_err.lock().await = Some(err);
+                        jobs.lock().await.all(|_| true); // consume the remaining jobs
+                    };
+                }
+            });
+        }
         match Arc::try_unwrap(last_err).unwrap().into_inner() {
             None => Ok(()),
             Some(err) => Err(err),
-        }
+        }*/
+        Ok(())
     }
 
-    async fn get_batch_nodes<'a>(
+    async fn get_batch_nodes(
         &self,
-        batch_reads: &[BatchRead<'a>],
-    ) -> Result<HashMap<Arc<Node>, Vec<usize>>> {
+        batch_reads: &[BatchRead],
+    ) -> Result<HashMap<Arc<Node>, Vec<BatchRead>>> {
         let mut map = HashMap::new();
-        for (idx, batch_read) in batch_reads.iter().enumerate() {
+        for (_, batch_read) in batch_reads.iter().enumerate() {
             let node = self.node_for_key(&batch_read.key).await?;
-            map.entry(node).or_insert_with(Vec::new).push(idx);
+            map.entry(node).or_insert_with(Vec::new).push(batch_read.clone());
         }
         Ok(map)
     }

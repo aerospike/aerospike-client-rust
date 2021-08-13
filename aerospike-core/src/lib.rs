@@ -148,7 +148,6 @@ extern crate log;
 extern crate parking_lot;
 extern crate pwhash;
 extern crate rand;
-extern crate scoped_pool;
 
 pub use batch::BatchRead;
 pub use bin::{Bin, Bins};

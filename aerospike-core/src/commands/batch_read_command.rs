@@ -30,31 +30,28 @@ struct BatchRecord {
     record: Option<Record>,
 }
 
-pub struct BatchReadCommand<'a, 'b> {
-    policy: &'b BatchPolicy,
+pub struct BatchReadCommand{
+    policy: BatchPolicy,
     pub node: Arc<Node>,
-    batch_reads: SharedSlice<BatchRead<'a>>,
-    offsets: Vec<usize>,
+    batch_reads: Vec<BatchRead>,
 }
 
-impl<'a, 'b> BatchReadCommand<'a, 'b> {
+impl BatchReadCommand {
     pub fn new(
-        policy: &'b BatchPolicy,
+        policy: &BatchPolicy,
         node: Arc<Node>,
-        batch_reads: SharedSlice<BatchRead<'a>>,
-        offsets: Vec<usize>,
+        batch_reads: Vec<BatchRead>,
     ) -> Self {
         BatchReadCommand {
-            policy,
+            policy: policy.clone(),
             node,
             batch_reads,
-            offsets,
         }
     }
 
     pub async fn execute(&mut self) -> Result<()> {
         let mut iterations = 0;
-        let base_policy = self.policy.base();
+        let base_policy = self.policy.base().clone();
 
         // set timeout outside the loop
         let deadline = base_policy.deadline();
@@ -206,7 +203,7 @@ impl<'a, 'b> BatchReadCommand<'a, 'b> {
 }
 
 #[async_trait::async_trait]
-impl<'a, 'b> commands::Command for BatchReadCommand<'a, 'b> {
+impl commands::Command for BatchReadCommand {
     async fn write_timeout(
         &mut self,
         conn: &mut Connection,
@@ -222,9 +219,8 @@ impl<'a, 'b> commands::Command for BatchReadCommand<'a, 'b> {
 
     fn prepare_buffer(&mut self, conn: &mut Connection) -> Result<()> {
         conn.buffer.set_batch_read(
-            self.policy,
+            &self.policy,
             self.batch_reads.clone(),
-            self.offsets.as_slice(),
         )
     }
 

@@ -383,7 +383,7 @@ async fn expression_commands() {
     let b = Bins::from(["bin"]);
     for i in 85..90 {
         let key = as_key!(namespace, &set_name, i);
-        batch_reads.push(BatchRead::new(key, &b));
+        batch_reads.push(BatchRead::new(key, b.clone()));
     }
     bpolicy.filter_expression = Some(gt(int_bin("bin".to_string()), int_val(84)));
     match client.batch_get(&bpolicy, batch_reads).await {

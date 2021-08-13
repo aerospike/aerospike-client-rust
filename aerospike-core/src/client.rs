@@ -18,8 +18,6 @@ use std::str;
 use std::sync::Arc;
 use std::vec::Vec;
 
-use scoped_pool::Pool;
-
 use crate::batch::BatchExecutor;
 use crate::cluster::{Cluster, Node};
 use crate::commands::{
@@ -57,7 +55,6 @@ use futures::AsyncReadExt;
 /// relevant subset of bins.
 pub struct Client {
     cluster: Arc<Cluster>,
-    thread_pool: Pool,
 }
 
 unsafe impl Send for Client {}
@@ -100,18 +97,15 @@ impl Client {
     pub async fn new(policy: &ClientPolicy, hosts: &(dyn ToHosts + Send + Sync)) -> Result<Self> {
         let hosts = hosts.to_hosts()?;
         let cluster = Cluster::new(policy.clone(), &hosts).await?;
-        let thread_pool = Pool::new(policy.thread_pool_size);
 
         Ok(Client {
             cluster,
-            thread_pool,
         })
     }
 
     /// Closes the connection to the Aerospike cluster.
     pub async fn close(&self) -> Result<()> {
         self.cluster.close().await?;
-        self.thread_pool.shutdown();
         Ok(())
     }
 
@@ -217,7 +211,7 @@ impl Client {
     /// let mut batch_reads = vec![];
     /// for i in 0..10 {
     ///   let key = as_key!("test", "test", i);
-    ///   batch_reads.push(BatchRead::new(key, &bins));
+    ///   batch_reads.push(BatchRead::new(key, bins.clone()));
     /// }
     /// match client.batch_get(&BatchPolicy::default(), batch_reads) {
     ///     Ok(results) => {
@@ -232,12 +226,12 @@ impl Client {
     ///         => println!("Error executing batch request: {}", err),
     /// }
     /// ```
-    pub async fn batch_get<'a>(
+    pub async fn batch_get(
         &self,
         policy: &BatchPolicy,
-        batch_reads: Vec<BatchRead<'a>>,
-    ) -> Result<Vec<BatchRead<'a>>> {
-        let executor = BatchExecutor::new(self.cluster.clone(), self.thread_pool.clone());
+        batch_reads: Vec<BatchRead>,
+    ) -> Result<Vec<BatchRead>> {
+        let executor = BatchExecutor::new(self.cluster.clone());
         executor.execute_batch_read(policy, batch_reads).await
     }
 
@@ -670,7 +664,7 @@ impl Client {
                 let mut command =
                     ScanCommand::new(&policy, node, &namespace, &set_name, bins, recordset);
                 command.execute().await.unwrap();
-            });
+            }).await;
         }
         Ok(recordset)
     }
@@ -701,11 +695,11 @@ impl Client {
         let namespace = namespace.to_owned();
         let set_name = set_name.to_owned();
 
-        self.thread_pool.spawn(move || {
+        aerospike_rt::spawn(async move {
             let mut command =
                 ScanCommand::new(&policy, node, &namespace, &set_name, bins, t_recordset);
-            block_on(command.execute()).unwrap();
-        });
+            command.execute().await.unwrap();
+        }).await;
 
         Ok(recordset)
     }
@@ -750,11 +744,10 @@ impl Client {
             let t_recordset = recordset.clone();
             let policy = policy.clone();
             let statement = statement.clone();
-
-            self.thread_pool.spawn(move || {
+            aerospike_rt::spawn(async move {
                 let mut command = QueryCommand::new(&policy, node, statement, t_recordset);
-                block_on(command.execute()).unwrap();
-            });
+                command.execute().await.unwrap();
+            }).await;
         }
         Ok(recordset)
     }
@@ -778,10 +771,10 @@ impl Client {
         let policy = policy.clone();
         let statement = Arc::new(statement);
 
-        self.thread_pool.spawn(move || {
+        aerospike_rt::spawn(async move {
             let mut command = QueryCommand::new(&policy, node, statement, t_recordset);
-            block_on(command.execute()).unwrap();
-        });
+            command.execute().await.unwrap();
+        }).await;
 
         Ok(recordset)
     }

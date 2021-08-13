@@ -28,6 +28,7 @@ use crate::policy::{
     RecordExistsAction, ScanPolicy, WritePolicy,
 };
 use crate::{BatchRead, Bin, Bins, CollectionIndexType, Key, Statement, Value};
+use std::collections::HashMap;
 
 // Contains a read operation.
 const INFO1_READ: u8 = 1;
@@ -342,12 +343,13 @@ impl Buffer {
     }
 
     // Writes the command for batch read operations
-    pub fn set_batch_read<'a>(
+    pub fn set_batch_read(
         &mut self,
         policy: &BatchPolicy,
-        batch_reads: SharedSlice<BatchRead<'a>>,
-        offsets: &[usize],
+        batch_reads: Vec<BatchRead>,
     ) -> Result<()> {
+        // todo: Reimplement batch
+        return Ok(());
         let field_count_row = if policy.send_set_name { 2 } else { 1 };
 
         self.begin();
@@ -359,12 +361,11 @@ impl Buffer {
             field_count += 1;
         }
 
-        let mut prev: Option<&BatchRead> = None;
-        for idx in offsets {
-            let batch_read: &BatchRead = batch_reads.get(*idx).unwrap();
+        let mut prev: Option<BatchRead> = None;
+        for batch_read in batch_reads {
             self.data_offset += batch_read.key.digest.len() + 4;
             match prev {
-                Some(prev) if batch_read.match_header(prev, policy.send_set_name) => {
+                Some(prev) if batch_read.match_header(&prev, policy.send_set_name) => {
                     self.data_offset += 1;
                 }
                 _ => {
@@ -403,17 +404,16 @@ impl Buffer {
             FieldType::BatchIndex
         };
         self.write_field_header(0, field_type)?;
-        self.write_u32(offsets.len() as u32)?;
+        self.write_u32(batch_reads.clone().len() as u32)?;
         self.write_u8(if policy.allow_inline { 1 } else { 0 })?;
 
         prev = None;
-        for idx in offsets {
-            let batch_read = batch_reads.get(*idx).unwrap();
+        for (idx, batch_read) in batch_reads.iter().enumerate() {
             let key = &batch_read.key;
-            self.write_u32(*idx as u32)?;
+            self.write_u32(idx as u32)?;
             self.write_bytes(&key.digest)?;
             match prev {
-                Some(prev) if batch_read.match_header(prev, policy.send_set_name) => {
+                Some(prev) if batch_read.match_header(&prev, policy.send_set_name) => {
                     self.write_u8(1)?;
                 }
                 _ => {
@@ -452,7 +452,7 @@ impl Buffer {
                     }
                 }
             }
-            prev = Some(batch_read);
+            prev = Some(batch_read.clone());
         }
 
         let field_size = self.data_offset - MSG_TOTAL_HEADER_SIZE as usize - 4;
