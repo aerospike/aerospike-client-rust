@@ -35,7 +35,7 @@ use crate::net::Host;
 use crate::policy::ClientPolicy;
 use aerospike_rt::RwLock;
 use futures::channel::mpsc;
-use futures::channel::mpsc::{Receiver, Sender, TryRecvError};
+use futures::channel::mpsc::{Receiver, Sender};
 use futures::lock::Mutex;
 
 // Cluster encapsulates the aerospike cluster nodes and manages
@@ -117,13 +117,13 @@ impl Cluster {
         }
 
         // close all nodes
-        let nodes = cluster.nodes().await;
-        for mut node in nodes {
-            if let Some(node) = Arc::get_mut(&mut node) {
-                node.close().await;
-            }
-        }
-        cluster.set_nodes(vec![]).await;
+        //let nodes = cluster.nodes().await;
+        //for mut node in nodes {
+        //    if let Some(node) = Arc::get_mut(&mut node) {
+        //        node.close().await;
+        //    }
+        //}
+        //cluster.set_nodes(vec![]).await;
     }
 
     async fn tend(&self) -> Result<()> {

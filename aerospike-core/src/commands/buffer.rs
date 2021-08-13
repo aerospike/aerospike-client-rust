@@ -17,7 +17,6 @@ use std::time::Duration;
 
 use byteorder::{ByteOrder, NetworkEndian};
 
-use crate::batch::batch_executor::SharedSlice;
 use crate::commands::field_type::FieldType;
 use crate::errors::Result;
 use crate::expressions::FilterExpression;
@@ -28,7 +27,6 @@ use crate::policy::{
     RecordExistsAction, ScanPolicy, WritePolicy,
 };
 use crate::{BatchRead, Bin, Bins, CollectionIndexType, Key, Statement, Value};
-use std::collections::HashMap;
 
 // Contains a read operation.
 const INFO1_READ: u8 = 1;
@@ -348,8 +346,6 @@ impl Buffer {
         policy: &BatchPolicy,
         batch_reads: Vec<BatchRead>,
     ) -> Result<()> {
-        // todo: Reimplement batch
-        return Ok(());
         let field_count_row = if policy.send_set_name { 2 } else { 1 };
 
         self.begin();
@@ -361,8 +357,8 @@ impl Buffer {
             field_count += 1;
         }
 
-        let mut prev: Option<BatchRead> = None;
-        for batch_read in batch_reads {
+        let mut prev: Option<&BatchRead> = None;
+        for batch_read in &batch_reads {
             self.data_offset += batch_read.key.digest.len() + 4;
             match prev {
                 Some(prev) if batch_read.match_header(&prev, policy.send_set_name) => {
@@ -404,7 +400,7 @@ impl Buffer {
             FieldType::BatchIndex
         };
         self.write_field_header(0, field_type)?;
-        self.write_u32(batch_reads.clone().len() as u32)?;
+        self.write_u32(batch_reads.len() as u32)?;
         self.write_u8(if policy.allow_inline { 1 } else { 0 })?;
 
         prev = None;
@@ -452,7 +448,7 @@ impl Buffer {
                     }
                 }
             }
-            prev = Some(batch_read.clone());
+            prev = Some(batch_read);
         }
 
         let field_size = self.data_offset - MSG_TOTAL_HEADER_SIZE as usize - 4;

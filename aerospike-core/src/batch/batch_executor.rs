@@ -13,7 +13,6 @@
 // License for the specific language governing permissions and limitations under
 // the License.
 
-use std::cell::UnsafeCell;
 use std::cmp;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -25,7 +24,6 @@ use crate::commands::BatchReadCommand;
 use crate::errors::{Error, Result};
 use crate::policy::{BatchPolicy, Concurrency};
 use crate::Key;
-use futures::executor::block_on;
 use futures::lock::Mutex;
 
 pub struct BatchExecutor {
@@ -45,47 +43,62 @@ impl BatchExecutor {
         batch_reads: Vec<BatchRead>,
     ) -> Result<Vec<BatchRead>> {
         let mut batch_nodes = self.get_batch_nodes(&batch_reads).await?;
-        let batch_reads = SharedSlice::new(batch_reads);
         let jobs = batch_nodes
             .drain()
             .map(|(node, reads)| {
                 BatchReadCommand::new(policy, node, reads)
             })
             .collect();
-        self.execute_batch_jobs(jobs, &policy.concurrency)?;
-        batch_reads.into_inner()
+        let reads = self.execute_batch_jobs(jobs, &policy.concurrency).await?;
+        let mut res: Vec<BatchRead> = vec![];
+        for mut read in reads {
+            res.append(&mut read.batch_reads);
+        }
+        Ok(res)
     }
 
-    fn execute_batch_jobs(
+    async fn execute_batch_jobs(
         &self,
         jobs: Vec<BatchReadCommand>,
         concurrency: &Concurrency,
-    ) -> Result<()> {
-        /*let threads = match *concurrency {
+    ) -> Result<Vec<BatchReadCommand>> {
+        let threads = match *concurrency {
             Concurrency::Sequential => 1,
             Concurrency::Parallel => jobs.len(),
             Concurrency::MaxThreads(max) => cmp::min(max, jobs.len()),
         };
-        let jobs = Arc::new(Mutex::new(jobs.iter_mut()));
+        let size = jobs.len() / threads;
+        let mut overhead = jobs.len() % threads;
         let last_err: Arc<Mutex<Option<Error>>> = Arc::default();
+        let mut slice_index = 0;
+        let mut handles = vec![];
+        let res = Arc::new(Mutex::new(vec![]));
         for _ in 0..threads {
+            let mut thread_size = size;
+            if overhead >= 1 {
+                thread_size += 1;
+                overhead -= 1;
+            }
+            let slice = Vec::from(&jobs[slice_index..slice_index+thread_size]);
+            slice_index = thread_size+1;
             let last_err = last_err.clone();
-            let jobs = jobs.clone();
-            aerospike_rt::spawn(async move {
+            let res = res.clone();
+            let handle = aerospike_rt::spawn(async move {
                 //let next_job = async { jobs.lock().await.next().await};
-                while let Some(cmd) = jobs.lock().await.next() {
+                for mut cmd in slice {
                     if let Err(err) = cmd.execute().await {
                         *last_err.lock().await = Some(err);
-                        jobs.lock().await.all(|_| true); // consume the remaining jobs
                     };
+                    res.lock().await.push(cmd);
                 }
             });
+            handles.push(handle);
         }
+        futures::future::join_all(handles).await;
         match Arc::try_unwrap(last_err).unwrap().into_inner() {
-            None => Ok(()),
+            None => Ok(res.lock().await.to_vec()),
             Some(err) => Err(err),
-        }*/
-        Ok(())
+        }
     }
 
     async fn get_batch_nodes(
@@ -104,52 +117,5 @@ impl BatchExecutor {
         let partition = Partition::new_by_key(key);
         let node = self.cluster.get_node(&partition).await?;
         Ok(node)
-    }
-}
-
-// A slice with interior mutability, that can be shared across threads. The threads are required to
-// ensure that no member of the slice is accessed by more than one thread. No runtime checks are
-// performed by the slice to guarantee this.
-pub struct SharedSlice<T> {
-    value: Arc<UnsafeCell<Vec<T>>>,
-}
-
-unsafe impl<T> Send for SharedSlice<T> {}
-
-unsafe impl<T> Sync for SharedSlice<T> {}
-
-impl<T> Clone for SharedSlice<T> {
-    fn clone(&self) -> Self {
-        SharedSlice {
-            value: self.value.clone(),
-        }
-    }
-}
-
-impl<T> SharedSlice<T> {
-    pub fn new(value: Vec<T>) -> Self {
-        SharedSlice {
-            value: Arc::new(UnsafeCell::new(value)),
-        }
-    }
-
-    pub fn get(&self, idx: usize) -> Option<&T> {
-        unsafe { (*self.value.get()).get(idx) }
-    }
-
-    // Like slice.get_mut but does not require a mutable reference!
-    pub fn get_mut(&self, idx: usize) -> Option<&mut T> {
-        unsafe { (&mut *self.value.get()).get_mut(idx) }
-    }
-
-    pub fn len(&self) -> usize {
-        unsafe { (*self.value.get()).len() }
-    }
-
-    pub fn into_inner(self) -> Result<Vec<T>> {
-        match Arc::try_unwrap(self.value) {
-            Ok(cell) => Ok(cell.into_inner()),
-            Err(_) => Err("Unable to process batch request".into()),
-        }
     }
 }

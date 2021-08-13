@@ -53,10 +53,10 @@ async fn batch_get() {
     let none = Bins::None;
 
     let batch = vec![
-        BatchRead::new(key1.clone(), &selected),
-        BatchRead::new(key2.clone(), &all),
-        BatchRead::new(key3.clone(), &none),
-        BatchRead::new(key4.clone(), &none),
+        BatchRead::new(key1.clone(), selected),
+        BatchRead::new(key2.clone(), all),
+        BatchRead::new(key3.clone(), none.clone()),
+        BatchRead::new(key4.clone(), none),
     ];
     let mut results = client.batch_get(&bpolicy, batch).await.unwrap();
 

@@ -17,7 +17,6 @@ use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
 
-use crate::batch::batch_executor::SharedSlice;
 use crate::cluster::Node;
 use crate::commands::{self, Command};
 use crate::errors::{ErrorKind, Result, ResultExt};
@@ -30,10 +29,11 @@ struct BatchRecord {
     record: Option<Record>,
 }
 
+#[derive(Clone, Debug)]
 pub struct BatchReadCommand{
     policy: BatchPolicy,
     pub node: Arc<Node>,
-    batch_reads: Vec<BatchRead>,
+    pub batch_reads: Vec<BatchRead>,
 }
 
 impl BatchReadCommand {
