@@ -21,6 +21,22 @@ This library is compatible with Rust 1.46+ and supports the following operating 
 <a name="Usage"></a>
 ## Usage:
 
+Add one of the following to your cargo file
+```toml
+# Async API with tokio Runtime
+aerospike = { version = "<version>", features = ["rt-tokio"]}
+# Async API with async-std runtime
+aerospike = { version = "<version>", features = ["rt-async-std"]}
+
+# The library still supports the old sync interface, but it will be deprecated in the future.
+# This is only for compatibility reasons and will be removed in a later stage.
+
+# Sync API with tokio
+aerospike = { version = "<version>", default-features = false, features = ["rt-tokio", "sync"]}
+# Sync API with async-std
+aerospike = { version = "<version>", default-features = false, features = ["rt-async-std", "sync"]}
+```
+
 The following is a very simple example of CRUD operations in an Aerospike database.
 
 ```rust,edition2018
@@ -101,19 +117,19 @@ To run all the test cases:
 
 ```shell
 $ export AEROSPIKE_HOSTS=127.0.0.1:3000
-$ cargo test
+$ cargo test --features <runtime>
 ```
 
 To enable debug logging for the `aerospike` crate:
 
 ```shell
-$ RUST_LOG=aerospike=debug cargo test
+$ RUST_LOG=aerospike=debug cargo test --features <runtime>
 ```
 
 To enable backtraces set the `RUST_BACKTRACE` environment variable:
 
 ```shell
-$ RUST_BACKTRACE=1 cargo test
+$ RUST_BACKTRACE=1 cargo test --features <runtime>
 ```
 
 <a name="Benchmarks"></a>
