@@ -145,7 +145,6 @@ extern crate error_chain;
 extern crate lazy_static;
 #[macro_use]
 extern crate log;
-extern crate parking_lot;
 extern crate pwhash;
 extern crate rand;
 
