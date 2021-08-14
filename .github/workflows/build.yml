@@ -54,6 +54,6 @@ jobs:
       run: rm -rf target/debug/deps/* # Clear everything because duplicate libraries from the previous builds caused problems
     - name: Build with tokio
       run: cargo build --verbose --features rt-tokio # Use tokio for Doc tests since it makes no difference what runtime is selected
-    - name: Build docs with async-std
+    - name: Build docs
       run: rustdoc -L target/debug/deps/ --test README.md # Only tests the docs in the Readme file
 # Serialization steps are removed because serialization is now a default feature
