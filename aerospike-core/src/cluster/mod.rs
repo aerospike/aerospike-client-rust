@@ -104,7 +104,7 @@ impl Cluster {
         loop {
             if rx.try_next().is_ok() {
                 unreachable!()
-            }else{
+            } else {
                 if let Err(err) = cluster.tend().await {
                     log_error_chain!(err, "Error tending cluster");
                 }

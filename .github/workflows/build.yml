@@ -49,6 +49,11 @@ jobs:
       run: cargo build --verbose --features rt-async-std
     - name: Run tests with async-std
       run: cargo test --verbose --features rt-async-std
+# Start sync CI
+    - name: Clear cache before building sync API
+      run: rm -rf target/debug/deps/* # Clear everything because leftovers of the tokio build caused problems
+    - name: Build with sync API
+      run: cargo build --verbose --no-default-features --features rt-tokio,sync,serialization
 # Start docs CI
     - name: Clear cache before building tokio again as clean doc test
       run: rm -rf target/debug/deps/* # Clear everything because duplicate libraries from the previous builds caused problems

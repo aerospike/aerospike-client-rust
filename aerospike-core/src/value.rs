@@ -740,7 +740,7 @@ impl Serialize for Value {
                 }
                 seq.end()
             }
-            Value::HashMap(m)  => {
+            Value::HashMap(m) => {
                 let mut map = serializer.serialize_map(Some(m.len()))?;
                 for (key, value) in m {
                     map.serialize_entry(&key, &value)?;

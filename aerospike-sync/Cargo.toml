@@ -8,3 +8,10 @@ edition = "2018"
 [dependencies]
 aerospike-core = {path = "../aerospike-core"}
 futures = {version = "0.3.16" }
+
+[features]
+rt-tokio = ["aerospike-core/rt-tokio"]
+rt-async-std = ["aerospike-core/rt-async-std"]
+
+[dev-dependencies]
+aerospike = {path = "../"}
