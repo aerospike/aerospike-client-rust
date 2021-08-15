@@ -24,8 +24,7 @@ use aerospike::*;
 
 const EXPECTED: usize = 1000;
 
-async fn create_test_set(no_records: usize) -> String {
-    let client = common::client().await;
+async fn create_test_set(client: &Client, no_records: usize) -> String {
     let namespace = common::namespace();
     let set_name = common::rand_str(10);
 
@@ -47,7 +46,7 @@ async fn scan_single_consumer() {
 
     let client = common::client().await;
     let namespace = common::namespace();
-    let set_name = create_test_set(EXPECTED).await;
+    let set_name = create_test_set(&client, EXPECTED).await;
 
     let spolicy = ScanPolicy::default();
     let rs = client
@@ -57,6 +56,8 @@ async fn scan_single_consumer() {
 
     let count = (&*rs).filter(Result::is_ok).count();
     assert_eq!(count, EXPECTED);
+
+    client.close();
 }
 
 #[aerospike_macro::test]
@@ -65,7 +66,7 @@ async fn scan_multi_consumer() {
 
     let client = common::client().await;
     let namespace = common::namespace();
-    let set_name = create_test_set(EXPECTED).await;
+    let set_name = create_test_set(&client,EXPECTED).await;
 
     let mut spolicy = ScanPolicy::default();
     spolicy.record_queue_size = 4096;
@@ -91,6 +92,8 @@ async fn scan_multi_consumer() {
     }
 
     assert_eq!(count.load(Ordering::Relaxed), EXPECTED);
+
+    client.close().await;
 }
 
 #[aerospike_macro::test]
@@ -99,7 +102,7 @@ async fn scan_node() {
 
     let client = Arc::new(common::client().await);
     let namespace = common::namespace();
-    let set_name = create_test_set(EXPECTED).await;
+    let set_name = create_test_set(&client, EXPECTED).await;
 
     let count = Arc::new(AtomicUsize::new(0));
     let mut threads = vec![];
@@ -124,4 +127,6 @@ async fn scan_node() {
     }
 
     assert_eq!(count.load(Ordering::Relaxed), EXPECTED);
+
+    client.close().await;
 }

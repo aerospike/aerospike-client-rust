@@ -117,4 +117,6 @@ async fn hll() {
         Value::Float(FloatValue::F64(4602678819172646912)),
         "Similarity failed"
     );
+
+    client.close().await;
 }

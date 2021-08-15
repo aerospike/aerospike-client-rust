@@ -22,7 +22,7 @@ use std::sync::Arc;
 
 const EXPECTED: usize = 100;
 
-async fn create_test_set(no_records: usize) -> String {
+async fn create_test_set(client: &Client, no_records: usize) -> String {
     let client = common::client().await;
     let namespace = common::namespace();
     let set_name = common::rand_str(10);
@@ -41,55 +41,58 @@ async fn create_test_set(no_records: usize) -> String {
         client.delete(&wpolicy, &key).await.unwrap();
         client.put(&wpolicy, &key, &bins).await.unwrap();
     }
-
     set_name
 }
 
 #[aerospike_macro::test]
 async fn expression_compare() {
+    let client = common::client().await;
     let _ = env_logger::try_init();
 
-    let set_name = create_test_set(EXPECTED).await;
+    let set_name = create_test_set(&client, EXPECTED).await;
 
     // EQ
-    let rs = test_filter(eq(int_bin("bin".to_string()), int_val(1)), &set_name).await;
+    let rs = test_filter(&client, eq(int_bin("bin".to_string()), int_val(1)), &set_name).await;
     let count = count_results(rs);
     assert_eq!(count, 1, "EQ Test Failed");
 
     // NE
-    let rs = test_filter(ne(int_bin("bin".to_string()), int_val(1)), &set_name).await;
+    let rs = test_filter(&client,ne(int_bin("bin".to_string()), int_val(1)), &set_name).await;
     let count = count_results(rs);
     assert_eq!(count, 99, "NE Test Failed");
 
     // LT
-    let rs = test_filter(lt(int_bin("bin".to_string()), int_val(10)), &set_name).await;
+    let rs = test_filter(&client,lt(int_bin("bin".to_string()), int_val(10)), &set_name).await;
     let count = count_results(rs);
     assert_eq!(count, 10, "LT Test Failed");
 
     // LE
-    let rs = test_filter(le(int_bin("bin".to_string()), int_val(10)), &set_name).await;
+    let rs = test_filter(&client,le(int_bin("bin".to_string()), int_val(10)), &set_name).await;
     let count = count_results(rs);
     assert_eq!(count, 11, "LE Test Failed");
 
     // GT
-    let rs = test_filter(gt(int_bin("bin".to_string()), int_val(1)), &set_name).await;
+    let rs = test_filter(&client,gt(int_bin("bin".to_string()), int_val(1)), &set_name).await;
     let count = count_results(rs);
     assert_eq!(count, 98, "GT Test Failed");
 
     // GE
-    let rs = test_filter(ge(int_bin("bin".to_string()), int_val(1)), &set_name).await;
+    let rs = test_filter(&client,ge(int_bin("bin".to_string()), int_val(1)), &set_name).await;
     let count = count_results(rs);
     assert_eq!(count, 99, "GT Test Failed");
+
+    client.close().await;
 }
 
 #[aerospike_macro::test]
 async fn expression_condition() {
     let _ = env_logger::try_init();
+    let client = common::client().await;
 
-    let set_name = create_test_set(EXPECTED).await;
+    let set_name = create_test_set(&client, EXPECTED).await;
 
     // AND
-    let rs = test_filter(
+    let rs = test_filter(&client,
         and(vec![
             eq(int_bin("bin".to_string()), int_val(1)),
             eq(string_bin("bin2".to_string()), string_val("1".to_string())),
@@ -101,7 +104,7 @@ async fn expression_condition() {
     assert_eq!(count, 1, "AND Test Failed");
 
     // OR
-    let rs = test_filter(
+    let rs = test_filter(&client,
         or(vec![
             eq(int_bin("bin".to_string()), int_val(1)),
             eq(int_bin("bin".to_string()), int_val(3)),
@@ -113,24 +116,27 @@ async fn expression_condition() {
     assert_eq!(count, 2, "OR Test Failed");
 
     // NOT
-    let rs = test_filter(not(eq(int_bin("bin".to_string()), int_val(1))), &set_name).await;
+    let rs = test_filter(&client,not(eq(int_bin("bin".to_string()), int_val(1))), &set_name).await;
     let count = count_results(rs);
     assert_eq!(count, 99, "NOT Test Failed");
+
+    client.close().await;
 }
 
 #[aerospike_macro::test]
 async fn expression_data_types() {
+    let client = common::client().await;
     let _ = env_logger::try_init();
 
-    let set_name = create_test_set(EXPECTED).await;
+    let set_name = create_test_set(&client, EXPECTED).await;
 
     // INT
-    let rs = test_filter(eq(int_bin("bin".to_string()), int_val(1)), &set_name).await;
+    let rs = test_filter(&client,eq(int_bin("bin".to_string()), int_val(1)), &set_name).await;
     let count = count_results(rs);
     assert_eq!(count, 1, "INT Test Failed");
 
     // STRING
-    let rs = test_filter(
+    let rs = test_filter(&client,
         eq(string_bin("bin2".to_string()), string_val("1".to_string())),
         &set_name,
     )
@@ -138,7 +144,7 @@ async fn expression_data_types() {
     let count = count_results(rs);
     assert_eq!(count, 1, "STRING Test Failed");
 
-    let rs = test_filter(
+    let rs = test_filter(&client,
         eq(float_bin("bin3".to_string()), float_val(2f64)),
         &set_name,
     )
@@ -146,7 +152,7 @@ async fn expression_data_types() {
     let count = count_results(rs);
     assert_eq!(count, 1, "FLOAT Test Failed");
 
-    let rs = test_filter(
+    let rs = test_filter(&client,
         eq(
             blob_bin("bin4".to_string()),
             blob_val(format!("{}{}", "blob", 5).into_bytes()),
@@ -157,7 +163,7 @@ async fn expression_data_types() {
     let count = count_results(rs);
     assert_eq!(count, 1, "BLOB Test Failed");
 
-    let rs = test_filter(
+    let rs = test_filter(&client,
         ne(
             bin_type("bin".to_string()),
             int_val(ParticleType::NULL as i64),
@@ -167,45 +173,47 @@ async fn expression_data_types() {
     .await;
     let count = count_results(rs);
     assert_eq!(count, 100, "BIN TYPE Test Failed");
+    client.close().await;
 }
 
 #[aerospike_macro::test]
 async fn expression_rec_ops() {
+    let client = common::client().await;
     let _ = env_logger::try_init();
 
-    let set_name = create_test_set(EXPECTED).await;
+    let set_name = create_test_set(&client, EXPECTED).await;
 
-    let rs = test_filter(le(device_size(), int_val(0)), &set_name).await;
+    let rs = test_filter(&client,le(device_size(), int_val(0)), &set_name).await;
     let mut count = count_results(rs);
     if count == 0 {
         // Not in-memory
-        let rs = test_filter(le(device_size(), int_val(2000)), &set_name).await;
+        let rs = test_filter(&client,le(device_size(), int_val(2000)), &set_name).await;
         count = count_results(rs);
     }
     assert_eq!(count, 100, "DEVICE SIZE Test Failed");
 
-    let rs = test_filter(gt(last_update(), int_val(15000)), &set_name).await;
+    let rs = test_filter(&client,gt(last_update(), int_val(15000)), &set_name).await;
     let count = count_results(rs);
     assert_eq!(count, 100, "LAST UPDATE Test Failed");
 
-    let rs = test_filter(gt(since_update(), int_val(10)), &set_name).await;
+    let rs = test_filter(&client,gt(since_update(), int_val(10)), &set_name).await;
     let count = count_results(rs);
     assert_eq!(count, 100, "SINCE UPDATE Test Failed");
 
     // Records dont expire
-    let rs = test_filter(ge(void_time(), int_val(0)), &set_name).await;
+    let rs = test_filter(&client,ge(void_time(), int_val(0)), &set_name).await;
     let count = count_results(rs);
     assert_eq!(count, 100, "VOID TIME Test Failed");
 
-    let rs = test_filter(ge(ttl(), int_val(0)), &set_name).await;
+    let rs = test_filter(&client,ge(ttl(), int_val(0)), &set_name).await;
     let count = count_results(rs);
     assert_eq!(count, 100, "TTL Test Failed");
 
-    let rs = test_filter(not(is_tombstone()), &set_name).await;
+    let rs = test_filter(&client,not(is_tombstone()), &set_name).await;
     let count = count_results(rs);
     assert_eq!(count, 100, "TOMBSTONE Test Failed");
 
-    let rs = test_filter(
+    let rs = test_filter(&client,
         eq(expressions::set_name(), string_val(set_name.clone())),
         &set_name,
     )
@@ -213,29 +221,29 @@ async fn expression_rec_ops() {
     let count = count_results(rs);
     assert_eq!(count, 100, "SET NAME Test Failed");
 
-    let rs = test_filter(bin_exists("bin4".to_string()), &set_name).await;
+    let rs = test_filter(&client,bin_exists("bin4".to_string()), &set_name).await;
     let count = count_results(rs);
     assert_eq!(count, 100, "BIN EXISTS Test Failed");
 
-    let rs = test_filter(eq(digest_modulo(3), int_val(1)), &set_name).await;
+    let rs = test_filter(&client,eq(digest_modulo(3), int_val(1)), &set_name).await;
     let count = count_results(rs);
     assert_eq!(count > 0 && count < 100, true, "DIGEST MODULO Test Failed");
 
-    let rs = test_filter(eq(key(ExpType::INT), int_val(50)), &set_name).await;
+    let rs = test_filter(&client,eq(key(ExpType::INT), int_val(50)), &set_name).await;
     let count = count_results(rs);
     // 0 because key is not saved
     assert_eq!(count, 0, "KEY Test Failed");
 
-    let rs = test_filter(key_exists(), &set_name).await;
+    let rs = test_filter(&client,key_exists(), &set_name).await;
     let count = count_results(rs);
     // 0 because key is not saved
     assert_eq!(count, 0, "KEY EXISTS Test Failed");
 
-    let rs = test_filter(eq(nil(), nil()), &set_name).await;
+    let rs = test_filter(&client,eq(nil(), nil()), &set_name).await;
     let count = count_results(rs);
     assert_eq!(count, 100, "NIL Test Failed");
 
-    let rs = test_filter(
+    let rs = test_filter(&client,
         regex_compare(
             "[1-5]".to_string(),
             RegexFlag::ICASE as i64,
@@ -246,6 +254,8 @@ async fn expression_rec_ops() {
     .await;
     let count = count_results(rs);
     assert_eq!(count, 75, "REGEX Test Failed");
+
+    client.close().await;
 }
 
 #[aerospike_macro::test]
@@ -399,10 +409,11 @@ async fn expression_commands() {
         }
         Err(err) => panic!("Error executing batch request: {}", err),
     }
+
+    client.close().await;
 }
 
-async fn test_filter(filter: FilterExpression, set_name: &str) -> Arc<Recordset> {
-    let client = common::client().await;
+async fn test_filter(client: &Client, filter: FilterExpression, set_name: &str) -> Arc<Recordset> {
     let namespace = common::namespace();
 
     let mut qpolicy = QueryPolicy::default();

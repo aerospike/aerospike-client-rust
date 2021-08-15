@@ -62,4 +62,6 @@ async fn serialize() {
         "\"test string\"",
         "The Parsed JSON value for bin999 did not match"
     );
+
+    client.close().await;
 }

@@ -59,6 +59,8 @@ async fn register_task_test() {
         register_task.wait_till_complete(Some(timeout)).await,
         Err(Error(ErrorKind::Timeout(_), _))
     ));
+
+    client.close().await;
 }
 
 // If creating index is successful, querying IndexTask will return Status::Complete
@@ -93,4 +95,6 @@ async fn index_task_test() {
         index_task.wait_till_complete(None).await,
         Ok(Status::Complete)
     ));
+
+    client.close().await;
 }

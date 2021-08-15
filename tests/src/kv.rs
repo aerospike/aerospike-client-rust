@@ -97,4 +97,6 @@ async fn connect() {
 
     let existed = client.delete(&wpolicy, &key).await.unwrap();
     assert!(!existed);
+
+    client.close().await;
 }

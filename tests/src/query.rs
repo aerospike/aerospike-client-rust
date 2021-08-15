@@ -25,8 +25,7 @@ use aerospike::*;
 
 const EXPECTED: usize = 1000;
 
-async fn create_test_set(no_records: usize) -> String {
-    let client = common::client().await;
+async fn create_test_set(client: &Client, no_records: usize) -> String {
     let namespace = common::namespace();
     let set_name = common::rand_str(10);
 
@@ -60,7 +59,7 @@ async fn query_single_consumer() {
 
     let client = common::client().await;
     let namespace = common::namespace();
-    let set_name = create_test_set(EXPECTED).await;
+    let set_name = create_test_set(&client, EXPECTED).await;
     let qpolicy = QueryPolicy::default();
 
     // Filter Query
@@ -96,6 +95,8 @@ async fn query_single_consumer() {
         }
     }
     assert_eq!(count, 10);
+
+    client.close().await;
 }
 
 #[aerospike_macro::test]
@@ -104,7 +105,7 @@ async fn query_nobins() {
 
     let client = common::client().await;
     let namespace = common::namespace();
-    let set_name = create_test_set(EXPECTED).await;
+    let set_name = create_test_set(&client, EXPECTED).await;
     let qpolicy = QueryPolicy::default();
 
     let mut statement = Statement::new(namespace, &set_name, Bins::None);
@@ -122,6 +123,8 @@ async fn query_nobins() {
         }
     }
     assert_eq!(count, 10);
+
+    client.close().await;
 }
 
 #[aerospike_macro::test]
@@ -130,7 +133,7 @@ async fn query_multi_consumer() {
 
     let client = common::client().await;
     let namespace = common::namespace();
-    let set_name = create_test_set(EXPECTED).await;
+    let set_name = create_test_set(&client, EXPECTED).await;
     let qpolicy = QueryPolicy::default();
 
     // Range Query
@@ -165,6 +168,8 @@ async fn query_multi_consumer() {
     }
 
     assert_eq!(count.load(Ordering::Relaxed), 10);
+
+    client.close().await;
 }
 
 #[aerospike_macro::test]
@@ -173,7 +178,7 @@ async fn query_node() {
 
     let client = Arc::new(common::client().await);
     let namespace = common::namespace();
-    let set_name = create_test_set(EXPECTED).await;
+    let set_name = create_test_set(&client, EXPECTED).await;
 
     let count = Arc::new(AtomicUsize::new(0));
     let mut threads = vec![];
@@ -197,4 +202,6 @@ async fn query_node() {
     }
 
     assert_eq!(count.load(Ordering::Relaxed), 100);
+
+    client.close().await;
 }

@@ -26,4 +26,6 @@ async fn truncate() {
 
     let result = client.truncate(namespace, set_name, 0).await;
     assert!(result.is_ok());
+
+    client.close().await;
 }

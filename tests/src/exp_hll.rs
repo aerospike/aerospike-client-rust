@@ -26,8 +26,7 @@ use std::sync::Arc;
 
 const EXPECTED: usize = 100;
 
-async fn create_test_set(no_records: usize) -> String {
-    let client = common::client().await;
+async fn create_test_set(client: &Client, no_records: usize) -> String {
     let namespace = common::namespace();
     let set_name = common::rand_str(10);
 
@@ -62,17 +61,16 @@ async fn create_test_set(no_records: usize) -> String {
             .await
             .unwrap();
     }
-
     set_name
 }
 
 #[aerospike_macro::test]
 async fn expression_hll() {
     let _ = env_logger::try_init();
+    let client = common::client().await;
+    let set_name = create_test_set(&client, EXPECTED).await;
 
-    let set_name = create_test_set(EXPECTED).await;
-
-    let rs = test_filter(
+    let rs = test_filter(&client,
         eq(
             get_count(add_with_index_and_min_hash(
                 HLLPolicy::default(),
@@ -89,7 +87,7 @@ async fn expression_hll() {
     let count = count_results(rs);
     assert_eq!(count, 99, "HLL INIT Test Failed");
 
-    let rs = test_filter(
+    let rs = test_filter(&client,
         eq(
             may_contain(
                 list_val(vec![Value::from(55)]),
@@ -103,7 +101,7 @@ async fn expression_hll() {
     let count = count_results(rs);
     assert_eq!(count, 1, "HLL MAY CONTAIN Test Failed");
 
-    let rs = test_filter(
+    let rs = test_filter(&client,
         lt(
             get_by_index(
                 ListReturnType::Values,
@@ -120,7 +118,7 @@ async fn expression_hll() {
     let count = count_results(rs);
     assert_eq!(count, 100, "HLL DESCRIBE Test Failed");
 
-    let rs = test_filter(
+    let rs = test_filter(&client,
         eq(
             get_count(get_union(
                 hll_bin("hllbin".to_string()),
@@ -134,7 +132,7 @@ async fn expression_hll() {
     let count = count_results(rs);
     assert_eq!(count, 98, "HLL GET UNION Test Failed");
 
-    let rs = test_filter(
+    let rs = test_filter(&client,
         eq(
             get_union_count(
                 hll_bin("hllbin".to_string()),
@@ -148,7 +146,7 @@ async fn expression_hll() {
     let count = count_results(rs);
     assert_eq!(count, 98, "HLL GET UNION COUNT Test Failed");
 
-    let rs = test_filter(
+    let rs = test_filter(&client,
         eq(
             get_intersect_count(
                 hll_bin("hllbin".to_string()),
@@ -162,7 +160,7 @@ async fn expression_hll() {
     let count = count_results(rs);
     assert_eq!(count, 99, "HLL GET INTERSECT COUNT Test Failed");
 
-    let rs = test_filter(
+    let rs = test_filter(&client,
         gt(
             get_similarity(
                 hll_bin("hllbin".to_string()),
@@ -175,10 +173,11 @@ async fn expression_hll() {
     .await;
     let count = count_results(rs);
     assert_eq!(count, 99, "HLL GET INTERSECT COUNT Test Failed");
+
+    client.close().await;
 }
 
-async fn test_filter(filter: FilterExpression, set_name: &str) -> Arc<Recordset> {
-    let client = common::client().await;
+async fn test_filter(client: &Client, filter: FilterExpression, set_name: &str) -> Arc<Recordset> {
     let namespace = common::namespace();
 
     let mut qpolicy = QueryPolicy::default();

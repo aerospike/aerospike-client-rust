@@ -300,4 +300,5 @@ async fn map_operations() {
     let op = maps::get_by_key(bin_name, &xkey, MapReturnType::Value).set_context(ctx);
     let rec = client.operate(&wpolicy, &key, &[op]).await.unwrap();
     assert_eq!(*rec.bins.get(bin_name).unwrap(), as_val!(8));
+    client.close().await;
 }

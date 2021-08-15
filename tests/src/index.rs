@@ -24,8 +24,7 @@ use aerospike::*;
 
 const EXPECTED: usize = 100;
 
-async fn create_test_set(no_records: usize) -> String {
-    let client = common::client().await;
+async fn create_test_set(client: &Client, no_records: usize) -> String {
     let namespace = common::namespace();
     let set_name = common::rand_str(10);
     let wpolicy = WritePolicy::default();
@@ -48,7 +47,7 @@ async fn recreate_index() {
 
     let client = common::client().await;
     let ns = common::namespace();
-    let set = create_test_set(EXPECTED).await;
+    let set = create_test_set(&client, EXPECTED).await;
     let bin = "bin";
     let index = format!("{}_{}_{}", ns, set, bin);
 
@@ -66,4 +65,6 @@ async fn recreate_index() {
         .await
         .unwrap();
     task.wait_till_complete(None).await.unwrap();
+
+    client.close().await;
 }

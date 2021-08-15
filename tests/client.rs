@@ -35,6 +35,7 @@ async fn node_names() {
     let client = common::client().await;
     let names = client.node_names().await;
     assert!(!names.is_empty());
+    client.close().await;
 }
 
 #[aerospike_macro::test]
@@ -42,6 +43,7 @@ async fn nodes() {
     let client = common::client().await;
     let nodes = client.nodes().await;
     assert!(!nodes.is_empty());
+    client.close().await;
 }
 
 #[aerospike_macro::test]
@@ -51,6 +53,7 @@ async fn get_node() {
         let node = client.get_node(&name).await;
         assert!(node.is_ok());
     }
+    client.close().await;
 }
 
 #[aerospike_macro::test]
