@@ -48,7 +48,7 @@ jobs:
     - name: Build with async-std
       run: cargo build --verbose --features rt-async-std
     - name: Run tests with async-std
-      run: cargo test --verbose --features rt-async-std
+      run: RUST_LOG=aerospike=debug cargo test --verbose --features rt-async-std -- --nocapture
 # Start sync CI
     - name: Clear cache before building sync API
       run: rm -rf target/debug/deps/* # Clear everything because leftovers of the tokio build caused problems
