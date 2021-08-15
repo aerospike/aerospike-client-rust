@@ -66,7 +66,7 @@ async fn scan_multi_consumer() {
 
     let client = common::client().await;
     let namespace = common::namespace();
-    let set_name = create_test_set(&client,EXPECTED).await;
+    let set_name = create_test_set(&client, EXPECTED).await;
 
     let mut spolicy = ScanPolicy::default();
     spolicy.record_queue_size = 4096;

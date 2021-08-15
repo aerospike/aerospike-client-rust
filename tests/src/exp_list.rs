@@ -30,10 +30,11 @@ async fn expression_list() {
     let _ = env_logger::try_init();
     let client = common::client().await;
 
-    let set_name = create_test_set(&client,EXPECTED).await;
+    let set_name = create_test_set(&client, EXPECTED).await;
 
     // EQ
-    let rs = test_filter(&client,
+    let rs = test_filter(
+        &client,
         eq(
             size(
                 append(
@@ -52,7 +53,8 @@ async fn expression_list() {
     let count = count_results(rs);
     assert_eq!(count, 100, "SIZE AND APPEND Test Failed");
 
-    let rs = test_filter(&client,
+    let rs = test_filter(
+        &client,
         eq(
             size(
                 append_items(
@@ -71,7 +73,8 @@ async fn expression_list() {
     let count = count_results(rs);
     assert_eq!(count, 100, "SIZE AND APPEND ITEMS Test Failed");
 
-    let rs = test_filter(&client,
+    let rs = test_filter(
+        &client,
         eq(
             size(clear(list_bin("bin".to_string()), &[]), &[]),
             int_val(0),
@@ -82,7 +85,8 @@ async fn expression_list() {
     let count = count_results(rs);
     assert_eq!(count, 100, "CLEAR Test Failed");
 
-    let rs = test_filter(&client,
+    let rs = test_filter(
+        &client,
         eq(
             get_by_value(
                 ListReturnType::Count,
@@ -104,7 +108,8 @@ async fn expression_list() {
     let count = count_results(rs);
     assert_eq!(count, 100, "GET BY VALUE AND INSERT Test Failed");
 
-    let rs = test_filter(&client,
+    let rs = test_filter(
+        &client,
         eq(
             get_by_value_list(
                 ListReturnType::Count,
@@ -120,7 +125,8 @@ async fn expression_list() {
     let count = count_results(rs);
     assert_eq!(count, 2, "GET BY VALUE LIST Test Failed");
 
-    let rs = test_filter(&client,
+    let rs = test_filter(
+        &client,
         eq(
             size(
                 insert_items(
@@ -140,7 +146,8 @@ async fn expression_list() {
     let count = count_results(rs);
     assert_eq!(count, 100, "INSERT LIST Test Failed");
 
-    let rs = test_filter(&client,
+    let rs = test_filter(
+        &client,
         eq(
             get_by_index(
                 ListReturnType::Values,
@@ -163,7 +170,8 @@ async fn expression_list() {
     let count = count_results(rs);
     assert_eq!(count, 1, "GET BY INDEX AND INCREMENT Test Failed");
 
-    let rs = test_filter(&client,
+    let rs = test_filter(
+        &client,
         eq(
             get_by_index(
                 ListReturnType::Values,
@@ -186,7 +194,8 @@ async fn expression_list() {
     let count = count_results(rs);
     assert_eq!(count, 100, "GET BY INDEX AND SET Test Failed");
 
-    let rs = test_filter(&client,
+    let rs = test_filter(
+        &client,
         eq(
             get_by_index_range_count(
                 ListReturnType::Values,
@@ -203,7 +212,8 @@ async fn expression_list() {
     let count = count_results(rs);
     assert_eq!(count, 1, "GET BY INDEX RANGE COUNT Test Failed");
 
-    let rs = test_filter(&client,
+    let rs = test_filter(
+        &client,
         eq(
             get_by_index_range(
                 ListReturnType::Values,
@@ -219,7 +229,8 @@ async fn expression_list() {
     let count = count_results(rs);
     assert_eq!(count, 1, "GET BY INDEX RANGE Test Failed");
 
-    let rs = test_filter(&client,
+    let rs = test_filter(
+        &client,
         eq(
             get_by_rank(
                 ListReturnType::Values,
@@ -236,7 +247,8 @@ async fn expression_list() {
     let count = count_results(rs);
     assert_eq!(count, 1, "GET BY RANK Test Failed");
 
-    let rs = test_filter(&client,
+    let rs = test_filter(
+        &client,
         eq(
             get_by_rank_range(
                 ListReturnType::Values,
@@ -252,7 +264,8 @@ async fn expression_list() {
     let count = count_results(rs);
     assert_eq!(count, 1, "GET BY RANK RANGE Test Failed");
 
-    let rs = test_filter(&client,
+    let rs = test_filter(
+        &client,
         eq(
             get_by_rank_range_count(
                 ListReturnType::Values,
@@ -269,7 +282,8 @@ async fn expression_list() {
     let count = count_results(rs);
     assert_eq!(count, 1, "GET BY RANK RANGE COUNT Test Failed");
 
-    let rs = test_filter(&client,
+    let rs = test_filter(
+        &client,
         eq(
             get_by_value_range(
                 ListReturnType::Values,
@@ -286,7 +300,8 @@ async fn expression_list() {
     let count = count_results(rs);
     assert_eq!(count, 98, "GET BY VALUE RANGE Test Failed");
 
-    let rs = test_filter(&client,
+    let rs = test_filter(
+        &client,
         eq(
             get_by_value_relative_rank_range(
                 ListReturnType::Count,
@@ -303,7 +318,8 @@ async fn expression_list() {
     let count = count_results(rs);
     assert_eq!(count, 98, "GET BY VAL REL RANK RANGE Test Failed");
 
-    let rs = test_filter(&client,
+    let rs = test_filter(
+        &client,
         eq(
             get_by_value_relative_rank_range_count(
                 ListReturnType::Values,
@@ -321,7 +337,8 @@ async fn expression_list() {
     let count = count_results(rs);
     assert_eq!(count, 99, "GET BY VAL REL RANK RANGE COUNT Test Failed");
 
-    let rs = test_filter(&client,
+    let rs = test_filter(
+        &client,
         eq(
             size(
                 remove_by_value(int_val(3), list_bin("bin".to_string()), &[]),
@@ -335,7 +352,8 @@ async fn expression_list() {
     let count = count_results(rs);
     assert_eq!(count, 99, "REMOVE BY VALUE Test Failed");
 
-    let rs = test_filter(&client,
+    let rs = test_filter(
+        &client,
         eq(
             size(
                 remove_by_value_list(
@@ -353,7 +371,8 @@ async fn expression_list() {
     let count = count_results(rs);
     assert_eq!(count, 98, "REMOVE BY VALUE LIST Test Failed");
 
-    let rs = test_filter(&client,
+    let rs = test_filter(
+        &client,
         eq(
             size(
                 remove_by_value_range(
@@ -372,7 +391,8 @@ async fn expression_list() {
     let count = count_results(rs);
     assert_eq!(count, 98, "REMOVE BY VALUE RANGE Test Failed");
 
-    let rs = test_filter(&client,
+    let rs = test_filter(
+        &client,
         eq(
             size(
                 remove_by_value_relative_rank_range(
@@ -391,7 +411,8 @@ async fn expression_list() {
     let count = count_results(rs);
     assert_eq!(count, 97, "REMOVE BY VALUE REL RANK RANGE Test Failed");
 
-    let rs = test_filter(&client,
+    let rs = test_filter(
+        &client,
         eq(
             size(
                 remove_by_value_relative_rank_range_count(
@@ -414,7 +435,8 @@ async fn expression_list() {
         "REMOVE BY VALUE REL RANK RANGE LIST Test Failed"
     );
 
-    let rs = test_filter(&client,
+    let rs = test_filter(
+        &client,
         eq(
             size(
                 remove_by_index(int_val(0), list_bin("bin".to_string()), &[]),
@@ -428,7 +450,8 @@ async fn expression_list() {
     let count = count_results(rs);
     assert_eq!(count, 100, "REMOVE BY INDEX Test Failed");
 
-    let rs = test_filter(&client,
+    let rs = test_filter(
+        &client,
         eq(
             size(
                 remove_by_index_range(int_val(2), list_bin("bin".to_string()), &[]),
@@ -442,7 +465,8 @@ async fn expression_list() {
     let count = count_results(rs);
     assert_eq!(count, 100, "REMOVE BY INDEX RANGE Test Failed");
 
-    let rs = test_filter(&client,
+    let rs = test_filter(
+        &client,
         eq(
             size(
                 remove_by_index_range_count(
@@ -461,7 +485,8 @@ async fn expression_list() {
     let count = count_results(rs);
     assert_eq!(count, 100, "REMOVE BY INDEX RANGE COUNT Test Failed");
 
-    let rs = test_filter(&client,
+    let rs = test_filter(
+        &client,
         eq(
             size(
                 remove_by_index_range_count(
@@ -480,7 +505,8 @@ async fn expression_list() {
     let count = count_results(rs);
     assert_eq!(count, 100, "REMOVE BY INDEX RANGE COUNT Test Failed");
 
-    let rs = test_filter(&client,
+    let rs = test_filter(
+        &client,
         eq(
             size(
                 remove_by_rank(int_val(2), list_bin("bin".to_string()), &[]),
@@ -494,7 +520,8 @@ async fn expression_list() {
     let count = count_results(rs);
     assert_eq!(count, 100, "REMOVE BY RANK Test Failed");
 
-    let rs = test_filter(&client,
+    let rs = test_filter(
+        &client,
         eq(
             size(
                 remove_by_rank_range(int_val(2), list_bin("bin".to_string()), &[]),
@@ -508,7 +535,8 @@ async fn expression_list() {
     let count = count_results(rs);
     assert_eq!(count, 100, "REMOVE BY RANK RANGE Test Failed");
 
-    let rs = test_filter(&client,
+    let rs = test_filter(
+        &client,
         eq(
             size(
                 remove_by_rank_range_count(

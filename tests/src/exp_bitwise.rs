@@ -46,7 +46,8 @@ async fn expression_bitwise() {
     let set_name = create_test_set(&client, EXPECTED).await;
 
     // EQ
-    let rs = test_filter(&client,
+    let rs = test_filter(
+        &client,
         eq(
             count(int_val(0), int_val(16), blob_bin("bin".to_string())),
             int_val(3),
@@ -57,7 +58,8 @@ async fn expression_bitwise() {
     let item_count = count_results(rs);
     assert_eq!(item_count, 100, "COUNT Test Failed");
 
-    let rs = test_filter(&client,
+    let rs = test_filter(
+        &client,
         eq(
             count(
                 int_val(0),
@@ -77,7 +79,8 @@ async fn expression_bitwise() {
     let item_count = count_results(rs);
     assert_eq!(item_count, 100, "RESIZE Test Failed");
 
-    let rs = test_filter(&client,
+    let rs = test_filter(
+        &client,
         eq(
             count(
                 int_val(0),
@@ -97,7 +100,8 @@ async fn expression_bitwise() {
     let item_count = count_results(rs);
     assert_eq!(item_count, 100, "INSERT Test Failed");
 
-    let rs = test_filter(&client,
+    let rs = test_filter(
+        &client,
         eq(
             count(
                 int_val(0),
@@ -117,7 +121,8 @@ async fn expression_bitwise() {
     let item_count = count_results(rs);
     assert_eq!(item_count, 100, "REMOVE Test Failed");
 
-    let rs = test_filter(&client,
+    let rs = test_filter(
+        &client,
         eq(
             count(
                 int_val(0),
@@ -138,7 +143,8 @@ async fn expression_bitwise() {
     let item_count = count_results(rs);
     assert_eq!(item_count, 100, "SET Test Failed");
 
-    let rs = test_filter(&client,
+    let rs = test_filter(
+        &client,
         eq(
             count(
                 int_val(0),
@@ -159,7 +165,8 @@ async fn expression_bitwise() {
     let item_count = count_results(rs);
     assert_eq!(item_count, 100, "OR Test Failed");
 
-    let rs = test_filter(&client,
+    let rs = test_filter(
+        &client,
         eq(
             count(
                 int_val(0),
@@ -180,7 +187,8 @@ async fn expression_bitwise() {
     let item_count = count_results(rs);
     assert_eq!(item_count, 100, "XOR Test Failed");
 
-    let rs = test_filter(&client,
+    let rs = test_filter(
+        &client,
         eq(
             count(
                 int_val(0),
@@ -201,7 +209,8 @@ async fn expression_bitwise() {
     let item_count = count_results(rs);
     assert_eq!(item_count, 100, "AND Test Failed");
 
-    let rs = test_filter(&client,
+    let rs = test_filter(
+        &client,
         eq(
             count(
                 int_val(0),
@@ -221,7 +230,8 @@ async fn expression_bitwise() {
     let item_count = count_results(rs);
     assert_eq!(item_count, 100, "NOT Test Failed");
 
-    let rs = test_filter(&client,
+    let rs = test_filter(
+        &client,
         eq(
             count(
                 int_val(0),
@@ -242,7 +252,8 @@ async fn expression_bitwise() {
     let item_count = count_results(rs);
     assert_eq!(item_count, 100, "LSHIFT Test Failed");
 
-    let rs = test_filter(&client,
+    let rs = test_filter(
+        &client,
         eq(
             count(
                 int_val(0),
@@ -263,7 +274,8 @@ async fn expression_bitwise() {
     let item_count = count_results(rs);
     assert_eq!(item_count, 100, "RSHIFT Test Failed");
 
-    let rs = test_filter(&client,
+    let rs = test_filter(
+        &client,
         eq(
             count(
                 int_val(0),
@@ -286,7 +298,8 @@ async fn expression_bitwise() {
     let item_count = count_results(rs);
     assert_eq!(item_count, 100, "ADD Test Failed");
 
-    let rs = test_filter(&client,
+    let rs = test_filter(
+        &client,
         eq(
             count(
                 int_val(0),
@@ -309,7 +322,8 @@ async fn expression_bitwise() {
     let item_count = count_results(rs);
     assert_eq!(item_count, 100, "SUBTRACT Test Failed");
 
-    let rs = test_filter(&client,
+    let rs = test_filter(
+        &client,
         eq(
             count(
                 int_val(0),
@@ -330,7 +344,8 @@ async fn expression_bitwise() {
     let item_count = count_results(rs);
     assert_eq!(item_count, 100, "SET INT Test Failed");
 
-    let rs = test_filter(&client,
+    let rs = test_filter(
+        &client,
         eq(
             get(int_val(0), int_val(8), blob_bin("bin".to_string())),
             blob_val(vec![0b00000001]),
@@ -341,7 +356,8 @@ async fn expression_bitwise() {
     let item_count = count_results(rs);
     assert_eq!(item_count, 100, "GET Test Failed");
 
-    let rs = test_filter(&client,
+    let rs = test_filter(
+        &client,
         eq(
             lscan(
                 int_val(8),
@@ -357,7 +373,8 @@ async fn expression_bitwise() {
     let item_count = count_results(rs);
     assert_eq!(item_count, 100, "LSCAN Test Failed");
 
-    let rs = test_filter(&client,
+    let rs = test_filter(
+        &client,
         eq(
             rscan(
                 int_val(8),
@@ -373,7 +390,8 @@ async fn expression_bitwise() {
     let item_count = count_results(rs);
     assert_eq!(item_count, 100, "RSCAN Test Failed");
 
-    let rs = test_filter(&client,
+    let rs = test_filter(
+        &client,
         eq(
             get_int(int_val(0), int_val(8), false, blob_bin("bin".to_string())),
             int_val(1),

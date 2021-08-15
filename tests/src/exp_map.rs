@@ -30,9 +30,10 @@ async fn create_test_set(client: &Client, no_records: usize) -> String {
 fn expression_map() {
     let _ = env_logger::try_init();
     let client = common::client().await;
-    let set_name = create_test_set(&client,EXPECTED).await;
+    let set_name = create_test_set(&client, EXPECTED).await;
 
-    let rs = test_filter(&client, 
+    let rs = test_filter(
+        &client,
         eq(
             get_by_key(
                 MapReturnType::Value,
@@ -58,7 +59,8 @@ fn expression_map() {
     let mut map: HashMap<Value, Value> = HashMap::new();
     map.insert(Value::from("test4"), Value::from(333));
     map.insert(Value::from("test5"), Value::from(444));
-    let rs = test_filter(&client, 
+    let rs = test_filter(
+        &client,
         eq(
             get_by_key_list(
                 MapReturnType::Value,
@@ -79,7 +81,8 @@ fn expression_map() {
     let count = count_results(rs);
     assert_eq!(count, 100, "GET BY KEY LIST AND APPEND LIST Test Failed");
 
-    let rs = test_filter(&client, 
+    let rs = test_filter(
+        &client,
         eq(
             get_by_value(
                 MapReturnType::Count,
@@ -101,7 +104,8 @@ fn expression_map() {
     let count = count_results(rs);
     assert_eq!(count, 1, "GET BY VALUE AND INCREMENT Test Failed");
 
-    let rs = test_filter(&client, 
+    let rs = test_filter(
+        &client,
         eq(
             size(clear(map_bin("bin".to_string()), &[]), &[]),
             int_val(0),
@@ -112,7 +116,8 @@ fn expression_map() {
     let count = count_results(rs);
     assert_eq!(count, 100, "SIZE AND CLEAR Test Failed");
 
-    let rs = test_filter(&client, 
+    let rs = test_filter(
+        &client,
         eq(
             get_by_value_list(
                 MapReturnType::Count,
@@ -128,7 +133,8 @@ fn expression_map() {
     let count = count_results(rs);
     assert_eq!(count, 1, "GET BY VALUE LIST Test Failed");
 
-    let rs = test_filter(&client, 
+    let rs = test_filter(
+        &client,
         eq(
             get_by_value_relative_rank_range(
                 MapReturnType::Count,
@@ -145,7 +151,8 @@ fn expression_map() {
     let count = count_results(rs);
     assert_eq!(count, 99, "GET BY VALUE REL RANK RANGE Test Failed");
 
-    let rs = test_filter(&client, 
+    let rs = test_filter(
+        &client,
         eq(
             get_by_value_relative_rank_range_count(
                 MapReturnType::Count,
@@ -163,7 +170,8 @@ fn expression_map() {
     let count = count_results(rs);
     assert_eq!(count, 100, "GET BY VALUE REL RANK RANGE Test Failed");
 
-    let rs = test_filter(&client, 
+    let rs = test_filter(
+        &client,
         eq(
             get_by_value_relative_rank_range_count(
                 MapReturnType::Count,
@@ -181,7 +189,8 @@ fn expression_map() {
     let count = count_results(rs);
     assert_eq!(count, 100, "GET BY VALUE REL RANK RANGE COUNT Test Failed");
 
-    let rs = test_filter(&client, 
+    let rs = test_filter(
+        &client,
         eq(
             get_by_value_relative_rank_range_count(
                 MapReturnType::Count,
@@ -199,7 +208,8 @@ fn expression_map() {
     let count = count_results(rs);
     assert_eq!(count, 100, "GET BY VALUE REL RANK RANGE COUNT Test Failed");
 
-    let rs = test_filter(&client, 
+    let rs = test_filter(
+        &client,
         eq(
             get_by_value_relative_rank_range_count(
                 MapReturnType::Count,
@@ -217,7 +227,8 @@ fn expression_map() {
     let count = count_results(rs);
     assert_eq!(count, 100, "GET BY VALUE REL RANK RANGE COUNT Test Failed");
 
-    let rs = test_filter(&client, 
+    let rs = test_filter(
+        &client,
         eq(
             get_by_index(
                 MapReturnType::Value,
@@ -234,7 +245,8 @@ fn expression_map() {
     let count = count_results(rs);
     assert_eq!(count, 1, "GET BY INDEX Test Failed");
 
-    let rs = test_filter(&client, 
+    let rs = test_filter(
+        &client,
         eq(
             get_by_index_range(
                 MapReturnType::Count,
@@ -250,7 +262,8 @@ fn expression_map() {
     let count = count_results(rs);
     assert_eq!(count, 100, "GET BY INDEX RANGE Test Failed");
 
-    let rs = test_filter(&client, 
+    let rs = test_filter(
+        &client,
         eq(
             get_by_index_range_count(
                 MapReturnType::Value,
@@ -267,7 +280,8 @@ fn expression_map() {
     let count = count_results(rs);
     assert_eq!(count, 1, "GET BY INDEX RANGE COUNT Test Failed");
 
-    let rs = test_filter(&client, 
+    let rs = test_filter(
+        &client,
         eq(
             get_by_rank(
                 MapReturnType::Value,
@@ -284,7 +298,8 @@ fn expression_map() {
     let count = count_results(rs);
     assert_eq!(count, 1, "GET BY RANK Test Failed");
 
-    let rs = test_filter(&client, 
+    let rs = test_filter(
+        &client,
         eq(
             get_by_rank_range(
                 MapReturnType::Value,
@@ -300,7 +315,8 @@ fn expression_map() {
     let count = count_results(rs);
     assert_eq!(count, 100, "GET BY RANK RANGE Test Failed");
 
-    let rs = test_filter(&client, 
+    let rs = test_filter(
+        &client,
         eq(
             get_by_rank_range_count(
                 MapReturnType::Value,
@@ -317,7 +333,8 @@ fn expression_map() {
     let count = count_results(rs);
     assert_eq!(count, 1, "GET BY RANK RANGE COUNT Test Failed");
 
-    let rs = test_filter(&client, 
+    let rs = test_filter(
+        &client,
         eq(
             get_by_value_range(
                 MapReturnType::Count,
@@ -334,7 +351,8 @@ fn expression_map() {
     let count = count_results(rs);
     assert_eq!(count, 18, "GET BY VALUE RANGE Test Failed");
 
-    let rs = test_filter(&client, 
+    let rs = test_filter(
+        &client,
         eq(
             get_by_key_range(
                 MapReturnType::Count,
@@ -351,7 +369,8 @@ fn expression_map() {
     let count = count_results(rs);
     assert_eq!(count, 100, "GET BY KEY RANGE Test Failed");
 
-    let rs = test_filter(&client, 
+    let rs = test_filter(
+        &client,
         eq(
             get_by_key_relative_index_range(
                 MapReturnType::Count,
@@ -368,7 +387,8 @@ fn expression_map() {
     let count = count_results(rs);
     assert_eq!(count, 100, "GET BY KEY REL INDEX RANGE Test Failed");
 
-    let rs = test_filter(&client, 
+    let rs = test_filter(
+        &client,
         eq(
             get_by_key_relative_index_range_count(
                 MapReturnType::Count,
@@ -386,7 +406,8 @@ fn expression_map() {
     let count = count_results(rs);
     assert_eq!(count, 100, "GET BY KEY REL INDEX RANGE COUNT Test Failed");
 
-    let rs = test_filter(&client, 
+    let rs = test_filter(
+        &client,
         eq(
             size(
                 remove_by_key(
@@ -404,7 +425,8 @@ fn expression_map() {
     let count = count_results(rs);
     assert_eq!(count, 100, "REMOVE BY KEY Test Failed");
 
-    let rs = test_filter(&client, 
+    let rs = test_filter(
+        &client,
         eq(
             size(
                 remove_by_key_list(
@@ -422,7 +444,8 @@ fn expression_map() {
     let count = count_results(rs);
     assert_eq!(count, 100, "REMOVE BY KEY LIST Test Failed");
 
-    let rs = test_filter(&client, 
+    let rs = test_filter(
+        &client,
         eq(
             size(
                 remove_by_key_range(
@@ -441,7 +464,8 @@ fn expression_map() {
     let count = count_results(rs);
     assert_eq!(count, 100, "REMOVE BY KEY RANGE Test Failed");
 
-    let rs = test_filter(&client, 
+    let rs = test_filter(
+        &client,
         eq(
             size(
                 remove_by_key_relative_index_range(
@@ -460,7 +484,8 @@ fn expression_map() {
     let count = count_results(rs);
     assert_eq!(count, 100, "REMOVE BY KEY REL INDEX RANGE Test Failed");
 
-    let rs = test_filter(&client, 
+    let rs = test_filter(
+        &client,
         eq(
             size(
                 remove_by_key_relative_index_range_count(
@@ -483,7 +508,8 @@ fn expression_map() {
         "REMOVE BY KEY REL INDEX RANGE COUNT Test Failed"
     );
 
-    let rs = test_filter(&client, 
+    let rs = test_filter(
+        &client,
         eq(
             size(
                 remove_by_value(int_val(5), map_bin("bin".to_string()), &[]),
@@ -497,7 +523,8 @@ fn expression_map() {
     let count = count_results(rs);
     assert_eq!(count, 1, "REMOVE BY VALUE Test Failed");
 
-    let rs = test_filter(&client, 
+    let rs = test_filter(
+        &client,
         eq(
             size(
                 remove_by_value_list(
@@ -515,7 +542,8 @@ fn expression_map() {
     let count = count_results(rs);
     assert_eq!(count, 1, "REMOVE BY VALUE LIST Test Failed");
 
-    let rs = test_filter(&client, 
+    let rs = test_filter(
+        &client,
         eq(
             size(
                 remove_by_value_range(
@@ -534,7 +562,8 @@ fn expression_map() {
     let count = count_results(rs);
     assert_eq!(count, 10, "REMOVE BY VALUE RANGE Test Failed");
 
-    let rs = test_filter(&client, 
+    let rs = test_filter(
+        &client,
         eq(
             size(
                 remove_by_index(int_val(0), map_bin("bin".to_string()), &[]),
@@ -548,7 +577,8 @@ fn expression_map() {
     let count = count_results(rs);
     assert_eq!(count, 100, "REMOVE BY INDEX Test Failed");
 
-    let rs = test_filter(&client, 
+    let rs = test_filter(
+        &client,
         eq(
             size(
                 remove_by_index_range(int_val(0), map_bin("bin".to_string()), &[]),
@@ -562,7 +592,8 @@ fn expression_map() {
     let count = count_results(rs);
     assert_eq!(count, 100, "REMOVE BY INDEX RANGE Test Failed");
 
-    let rs = test_filter(&client, 
+    let rs = test_filter(
+        &client,
         eq(
             size(
                 remove_by_index_range_count(
@@ -581,7 +612,8 @@ fn expression_map() {
     let count = count_results(rs);
     assert_eq!(count, 100, "REMOVE BY INDEX RANGE COUNT Test Failed");
 
-    let rs = test_filter(&client, 
+    let rs = test_filter(
+        &client,
         eq(
             size(
                 remove_by_rank(int_val(0), map_bin("bin".to_string()), &[]),
@@ -595,7 +627,8 @@ fn expression_map() {
     let count = count_results(rs);
     assert_eq!(count, 100, "REMOVE BY RANK Test Failed");
 
-    let rs = test_filter(&client, 
+    let rs = test_filter(
+        &client,
         eq(
             size(
                 remove_by_rank_range(int_val(0), map_bin("bin".to_string()), &[]),
@@ -609,7 +642,8 @@ fn expression_map() {
     let count = count_results(rs);
     assert_eq!(count, 100, "REMOVE BY RANK RANGE Test Failed");
 
-    let rs = test_filter(&client, 
+    let rs = test_filter(
+        &client,
         eq(
             size(
                 remove_by_rank_range_count(int_val(0), int_val(1), map_bin("bin".to_string()), &[]),

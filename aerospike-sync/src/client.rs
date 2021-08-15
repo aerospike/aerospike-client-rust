@@ -20,7 +20,11 @@ use std::vec::Vec;
 
 use aerospike_core::errors::{ErrorKind, Result, ResultExt};
 use aerospike_core::operations::Operation;
-use aerospike_core::{BatchPolicy, BatchRead, Bin, Bins, ClientPolicy, CollectionIndexType, IndexTask, IndexType, Key, QueryPolicy, ReadPolicy, Record, Recordset, RegisterTask, ScanPolicy, Statement, UDFLang, Value, WritePolicy, Node, ToHosts};
+use aerospike_core::{
+    BatchPolicy, BatchRead, Bin, Bins, ClientPolicy, CollectionIndexType, IndexTask, IndexType,
+    Key, Node, QueryPolicy, ReadPolicy, Record, Recordset, RegisterTask, ScanPolicy, Statement,
+    ToHosts, UDFLang, Value, WritePolicy,
+};
 use futures::executor::block_on;
 
 /// Instantiate a Client instance to access an Aerospike database cluster and perform database

@@ -151,11 +151,13 @@ extern crate rand;
 pub use batch::BatchRead;
 pub use bin::{Bin, Bins};
 pub use client::Client;
+pub use cluster::Node;
 pub use commands::particle_type::ParticleType;
 pub use errors::{Error, ErrorKind, Result};
 pub use expressions::regex_flag::RegexFlag;
 pub use key::Key;
 pub use net::Host;
+pub use net::ToHosts;
 pub use operations::{MapPolicy, MapReturnType, MapWriteMode};
 pub use policy::{
     BatchPolicy, ClientPolicy, CommitLevel, Concurrency, ConsistencyLevel, Expiration,
@@ -168,8 +170,6 @@ pub use result_code::ResultCode;
 pub use task::{IndexTask, RegisterTask, Task};
 pub use user::User;
 pub use value::{FloatValue, Value};
-pub use cluster::Node;
-pub use net::ToHosts;
 
 #[macro_use]
 pub mod errors;
