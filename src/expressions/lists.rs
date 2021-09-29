@@ -389,14 +389,14 @@ pub fn size(bin: FilterExpression, ctx: &[CdtContext]) -> FilterExpression {
 /// ```
 ///
 pub fn get_by_value(
-    return_type: ListReturnType,
+    return_type: u64,
     value: FilterExpression,
     bin: FilterExpression,
     ctx: &[CdtContext],
 ) -> FilterExpression {
     let args = vec![
         ExpressionArgument::Value(Value::from(CdtListOpType::GetByValue as i64)),
-        ExpressionArgument::Value(Value::from(return_type as u8)),
+        ExpressionArgument::Value(Value::from(return_type)),
         ExpressionArgument::FilterExpression(value),
         ExpressionArgument::Context(ctx.to_vec()),
     ];
@@ -415,7 +415,7 @@ pub fn get_by_value(
 /// get_by_value_range(ListReturnType::Values, Some(int_val(10)), Some(int_val(20)), list_bin("a".to_string()), &[]);
 /// ```
 pub fn get_by_value_range(
-    return_type: ListReturnType,
+    return_type: u64,
     value_begin: Option<FilterExpression>,
     value_end: Option<FilterExpression>,
     bin: FilterExpression,
@@ -424,7 +424,7 @@ pub fn get_by_value_range(
     let mut args = vec![
         ExpressionArgument::Context(ctx.to_vec()),
         ExpressionArgument::Value(Value::from(CdtListOpType::GetByValueInterval as i64)),
-        ExpressionArgument::Value(Value::from(return_type as u8)),
+        ExpressionArgument::Value(Value::from(return_type)),
     ];
     if let Some(val_beg) = value_begin {
         args.push(ExpressionArgument::FilterExpression(val_beg));
@@ -440,14 +440,14 @@ pub fn get_by_value_range(
 /// Create expression that selects list items identified by values and returns selected data
 /// specified by returnType.
 pub fn get_by_value_list(
-    return_type: ListReturnType,
+    return_type: u64,
     values: FilterExpression,
     bin: FilterExpression,
     ctx: &[CdtContext],
 ) -> FilterExpression {
     let args = vec![
         ExpressionArgument::Value(Value::from(CdtListOpType::GetByValueList as i64)),
-        ExpressionArgument::Value(Value::from(return_type as u8)),
+        ExpressionArgument::Value(Value::from(return_type)),
         ExpressionArgument::FilterExpression(values),
         ExpressionArgument::Context(ctx.to_vec()),
     ];
@@ -468,7 +468,7 @@ pub fn get_by_value_list(
 /// (3,-3) = [0,4,5,9,11,15]
 /// ```
 pub fn get_by_value_relative_rank_range(
-    return_type: ListReturnType,
+    return_type: u64,
     value: FilterExpression,
     rank: FilterExpression,
     bin: FilterExpression,
@@ -476,7 +476,7 @@ pub fn get_by_value_relative_rank_range(
 ) -> FilterExpression {
     let args = vec![
         ExpressionArgument::Value(Value::from(CdtListOpType::GetByValueRelRankRange as i64)),
-        ExpressionArgument::Value(Value::from(return_type as u8)),
+        ExpressionArgument::Value(Value::from(return_type)),
         ExpressionArgument::FilterExpression(value),
         ExpressionArgument::FilterExpression(rank),
         ExpressionArgument::Context(ctx.to_vec()),
@@ -498,7 +498,7 @@ pub fn get_by_value_relative_rank_range(
 /// (3,-3,2) = []
 /// ```
 pub fn get_by_value_relative_rank_range_count(
-    return_type: ListReturnType,
+    return_type: u64,
     value: FilterExpression,
     rank: FilterExpression,
     count: FilterExpression,
@@ -507,7 +507,7 @@ pub fn get_by_value_relative_rank_range_count(
 ) -> FilterExpression {
     let args = vec![
         ExpressionArgument::Value(Value::from(CdtListOpType::GetByValueRelRankRange as i64)),
-        ExpressionArgument::Value(Value::from(return_type as u8)),
+        ExpressionArgument::Value(Value::from(return_type)),
         ExpressionArgument::FilterExpression(value),
         ExpressionArgument::FilterExpression(rank),
         ExpressionArgument::FilterExpression(count),
@@ -530,7 +530,7 @@ pub fn get_by_value_relative_rank_range_count(
 /// ```
 ///
 pub fn get_by_index(
-    return_type: ListReturnType,
+    return_type: u64,
     value_type: ExpType,
     index: FilterExpression,
     bin: FilterExpression,
@@ -538,7 +538,7 @@ pub fn get_by_index(
 ) -> FilterExpression {
     let args = vec![
         ExpressionArgument::Value(Value::from(CdtListOpType::GetByIndex as i64)),
-        ExpressionArgument::Value(Value::from(return_type as u8)),
+        ExpressionArgument::Value(Value::from(return_type)),
         ExpressionArgument::FilterExpression(index),
         ExpressionArgument::Context(ctx.to_vec()),
     ];
@@ -548,14 +548,14 @@ pub fn get_by_index(
 /// Create expression that selects list items starting at specified index to the end of list
 /// and returns selected data specified by returnType .
 pub fn get_by_index_range(
-    return_type: ListReturnType,
+    return_type: u64,
     index: FilterExpression,
     bin: FilterExpression,
     ctx: &[CdtContext],
 ) -> FilterExpression {
     let args = vec![
         ExpressionArgument::Value(Value::from(CdtListOpType::GetByIndexRange as i64)),
-        ExpressionArgument::Value(Value::from(return_type as u8)),
+        ExpressionArgument::Value(Value::from(return_type)),
         ExpressionArgument::FilterExpression(index),
         ExpressionArgument::Context(ctx.to_vec()),
     ];
@@ -565,7 +565,7 @@ pub fn get_by_index_range(
 /// Create expression that selects "count" list items starting at specified index
 /// and returns selected data specified by returnType.
 pub fn get_by_index_range_count(
-    return_type: ListReturnType,
+    return_type: u64,
     index: FilterExpression,
     count: FilterExpression,
     bin: FilterExpression,
@@ -573,7 +573,7 @@ pub fn get_by_index_range_count(
 ) -> FilterExpression {
     let args = vec![
         ExpressionArgument::Value(Value::from(CdtListOpType::GetByIndexRange as i64)),
-        ExpressionArgument::Value(Value::from(return_type as u8)),
+        ExpressionArgument::Value(Value::from(return_type)),
         ExpressionArgument::FilterExpression(index),
         ExpressionArgument::FilterExpression(count),
         ExpressionArgument::Context(ctx.to_vec()),
@@ -592,7 +592,7 @@ pub fn get_by_index_range_count(
 /// get_by_rank(ListReturnType::Values, ExpType::STRING, int_val(0), list_bin("a".to_string()), &[]);
 /// ```
 pub fn get_by_rank(
-    return_type: ListReturnType,
+    return_type: u64,
     value_type: ExpType,
     rank: FilterExpression,
     bin: FilterExpression,
@@ -600,7 +600,7 @@ pub fn get_by_rank(
 ) -> FilterExpression {
     let args = vec![
         ExpressionArgument::Value(Value::from(CdtListOpType::GetByRank as i64)),
-        ExpressionArgument::Value(Value::from(return_type as u8)),
+        ExpressionArgument::Value(Value::from(return_type)),
         ExpressionArgument::FilterExpression(rank),
         ExpressionArgument::Context(ctx.to_vec()),
     ];
@@ -610,14 +610,14 @@ pub fn get_by_rank(
 /// Create expression that selects list items starting at specified rank to the last ranked item
 /// and returns selected data specified by returnType.
 pub fn get_by_rank_range(
-    return_type: ListReturnType,
+    return_type: u64,
     rank: FilterExpression,
     bin: FilterExpression,
     ctx: &[CdtContext],
 ) -> FilterExpression {
     let args = vec![
         ExpressionArgument::Value(Value::from(CdtListOpType::GetByRankRange as i64)),
-        ExpressionArgument::Value(Value::from(return_type as u8)),
+        ExpressionArgument::Value(Value::from(return_type)),
         ExpressionArgument::FilterExpression(rank),
         ExpressionArgument::Context(ctx.to_vec()),
     ];
@@ -627,7 +627,7 @@ pub fn get_by_rank_range(
 /// Create expression that selects "count" list items starting at specified rank and returns
 /// selected data specified by returnType.
 pub fn get_by_rank_range_count(
-    return_type: ListReturnType,
+    return_type: u64,
     rank: FilterExpression,
     count: FilterExpression,
     bin: FilterExpression,
@@ -635,7 +635,7 @@ pub fn get_by_rank_range_count(
 ) -> FilterExpression {
     let args = vec![
         ExpressionArgument::Value(Value::from(CdtListOpType::GetByRankRange as i64)),
-        ExpressionArgument::Value(Value::from(return_type as u8)),
+        ExpressionArgument::Value(Value::from(return_type)),
         ExpressionArgument::FilterExpression(rank),
         ExpressionArgument::FilterExpression(count),
         ExpressionArgument::Context(ctx.to_vec()),
@@ -687,8 +687,8 @@ fn add_write(
 }
 
 #[doc(hidden)]
-const fn get_value_type(return_type: ListReturnType) -> ExpType {
-    if (return_type as u8 & !(ListReturnType::Inverted as u8)) == ListReturnType::Values as u8 {
+const fn get_value_type(return_type: u64) -> ExpType {
+    if (return_type & !(ListReturnType::Inverted as u64)) == ListReturnType::Values as u64 {
         ExpType::LIST
     } else {
         ExpType::INT

@@ -84,7 +84,7 @@ pub enum ListOrderType {
     Ordered = 1,
 }
 
-/// `CdtListReturnType` determines the returned values in CDT List operations.
+/// `Cdtu64` determines the returned values in CDT List operations.
 #[derive(Debug, Clone, Copy)]
 pub enum ListReturnType {
     /// Do not return a result.
@@ -420,13 +420,13 @@ pub fn remove_range_from(bin: &str, index: i64) -> Operation {
 pub fn remove_by_value<'a>(
     bin: &'a str,
     value: &'a Value,
-    return_type: ListReturnType,
+    return_type: u64,
 ) -> Operation<'a> {
     let cdt_op = CdtOperation {
         op: CdtListOpType::RemoveByValue as u8,
         encoder: Box::new(pack_cdt_op),
         args: vec![
-            CdtArgument::Byte(return_type as u8),
+            CdtArgument::Int(return_type as i64),
             CdtArgument::Value(value),
         ],
     };
@@ -443,13 +443,13 @@ pub fn remove_by_value<'a>(
 pub fn remove_by_value_list<'a>(
     bin: &'a str,
     values: &'a [Value],
-    return_type: ListReturnType,
+    return_type: u64,
 ) -> Operation<'a> {
     let cdt_op = CdtOperation {
         op: CdtListOpType::RemoveByValueList as u8,
         encoder: Box::new(pack_cdt_op),
         args: vec![
-            CdtArgument::Byte(return_type as u8),
+            CdtArgument::Int(return_type as i64),
             CdtArgument::List(values),
         ],
     };
@@ -468,7 +468,7 @@ pub fn remove_by_value_list<'a>(
 /// Server returns removed data specified by returnType
 pub fn remove_by_value_range<'a>(
     bin: &'a str,
-    return_type: ListReturnType,
+    return_type: u64,
     begin: &'a Value,
     end: &'a Value,
 ) -> Operation<'a> {
@@ -476,7 +476,7 @@ pub fn remove_by_value_range<'a>(
         op: CdtListOpType::RemoveByValueInterval as u8,
         encoder: Box::new(pack_cdt_op),
         args: vec![
-            CdtArgument::Byte(return_type as u8),
+            CdtArgument::Int(return_type as i64),
             CdtArgument::Value(begin),
             CdtArgument::Value(end),
         ],
@@ -505,7 +505,7 @@ pub fn remove_by_value_range<'a>(
 /// ```
 pub fn remove_by_value_relative_rank_range<'a>(
     bin: &'a str,
-    return_type: ListReturnType,
+    return_type: u64,
     value: &'a Value,
     rank: i64,
 ) -> Operation<'a> {
@@ -513,7 +513,7 @@ pub fn remove_by_value_relative_rank_range<'a>(
         op: CdtListOpType::RemoveByValueRelRankRange as u8,
         encoder: Box::new(pack_cdt_op),
         args: vec![
-            CdtArgument::Byte(return_type as u8),
+            CdtArgument::Int(return_type as i64),
             CdtArgument::Value(value),
             CdtArgument::Int(rank),
         ],
@@ -542,7 +542,7 @@ pub fn remove_by_value_relative_rank_range<'a>(
 /// ```
 pub fn remove_by_value_relative_rank_range_count<'a>(
     bin: &'a str,
-    return_type: ListReturnType,
+    return_type: u64,
     value: &'a Value,
     rank: i64,
     count: i64,
@@ -551,7 +551,7 @@ pub fn remove_by_value_relative_rank_range_count<'a>(
         op: CdtListOpType::RemoveByValueRelRankRange as u8,
         encoder: Box::new(pack_cdt_op),
         args: vec![
-            CdtArgument::Byte(return_type as u8),
+            CdtArgument::Int(return_type as i64),
             CdtArgument::Value(value),
             CdtArgument::Int(rank),
             CdtArgument::Int(count),
@@ -567,12 +567,12 @@ pub fn remove_by_value_relative_rank_range_count<'a>(
 
 /// Creates a list remove operation.
 /// Server removes list item identified by index and returns removed data specified by returnType.
-pub fn remove_by_index(bin: &str, index: i64, return_type: ListReturnType) -> Operation {
+pub fn remove_by_index(bin: &str, index: i64, return_type: u64) -> Operation {
     let cdt_op = CdtOperation {
         op: CdtListOpType::RemoveByIndex as u8,
         encoder: Box::new(pack_cdt_op),
         args: vec![
-            CdtArgument::Byte(return_type as u8),
+            CdtArgument::Int(return_type as i64),
             CdtArgument::Int(index),
         ],
     };
@@ -587,12 +587,12 @@ pub fn remove_by_index(bin: &str, index: i64, return_type: ListReturnType) -> Op
 /// Creates a list remove operation.
 /// Server removes list items starting at specified index to the end of list and returns removed
 /// data specified by returnType.
-pub fn remove_by_index_range(bin: &str, index: i64, return_type: ListReturnType) -> Operation {
+pub fn remove_by_index_range(bin: &str, index: i64, return_type: u64) -> Operation {
     let cdt_op = CdtOperation {
         op: CdtListOpType::RemoveByIndexRange as u8,
         encoder: Box::new(pack_cdt_op),
         args: vec![
-            CdtArgument::Byte(return_type as u8),
+            CdtArgument::Int(return_type as i64),
             CdtArgument::Int(index),
         ],
     };
@@ -610,13 +610,13 @@ pub fn remove_by_index_range_count(
     bin: &str,
     index: i64,
     count: i64,
-    return_type: ListReturnType,
+    return_type: u64,
 ) -> Operation {
     let cdt_op = CdtOperation {
         op: CdtListOpType::RemoveByIndexRange as u8,
         encoder: Box::new(pack_cdt_op),
         args: vec![
-            CdtArgument::Byte(return_type as u8),
+            CdtArgument::Int(return_type as i64),
             CdtArgument::Int(index),
             CdtArgument::Int(count),
         ],
@@ -631,11 +631,11 @@ pub fn remove_by_index_range_count(
 
 /// Creates a list remove operation.
 /// Server removes list item identified by rank and returns removed data specified by returnType.
-pub fn remove_by_rank(bin: &str, rank: i64, return_type: ListReturnType) -> Operation {
+pub fn remove_by_rank(bin: &str, rank: i64, return_type: u64) -> Operation {
     let cdt_op = CdtOperation {
         op: CdtListOpType::RemoveByRank as u8,
         encoder: Box::new(pack_cdt_op),
-        args: vec![CdtArgument::Byte(return_type as u8), CdtArgument::Int(rank)],
+        args: vec![CdtArgument::Int(return_type as i64), CdtArgument::Int(rank)],
     };
     Operation {
         op: OperationType::CdtWrite,
@@ -648,11 +648,11 @@ pub fn remove_by_rank(bin: &str, rank: i64, return_type: ListReturnType) -> Oper
 /// Creates a list remove operation.
 /// Server removes list items starting at specified rank to the last ranked item and returns removed
 /// data specified by returnType.
-pub fn remove_by_rank_range(bin: &str, rank: i64, return_type: ListReturnType) -> Operation {
+pub fn remove_by_rank_range(bin: &str, rank: i64, return_type: u64) -> Operation {
     let cdt_op = CdtOperation {
         op: CdtListOpType::RemoveByRankRange as u8,
         encoder: Box::new(pack_cdt_op),
-        args: vec![CdtArgument::Byte(return_type as u8), CdtArgument::Int(rank)],
+        args: vec![CdtArgument::Int(return_type as i64), CdtArgument::Int(rank)],
     };
     Operation {
         op: OperationType::CdtWrite,
@@ -668,13 +668,13 @@ pub fn remove_by_rank_range_count(
     bin: &str,
     rank: i64,
     count: i64,
-    return_type: ListReturnType,
+    return_type: u64,
 ) -> Operation {
     let cdt_op = CdtOperation {
         op: CdtListOpType::RemoveByRankRange as u8,
         encoder: Box::new(pack_cdt_op),
         args: vec![
-            CdtArgument::Byte(return_type as u8),
+            CdtArgument::Int(return_type as i64),
             CdtArgument::Int(rank),
             CdtArgument::Int(count),
         ],
@@ -825,13 +825,13 @@ pub fn get_range_from(bin: &str, index: i64) -> Operation {
 pub fn get_by_value<'a>(
     bin: &'a str,
     value: &'a Value,
-    return_type: ListReturnType,
+    return_type: u64,
 ) -> Operation<'a> {
     let cdt_op = CdtOperation {
         op: CdtListOpType::GetByValue as u8,
         encoder: Box::new(pack_cdt_op),
         args: vec![
-            CdtArgument::Byte(return_type as u8),
+            CdtArgument::Int(return_type as i64),
             CdtArgument::Value(value),
         ],
     };
@@ -849,13 +849,13 @@ pub fn get_by_value<'a>(
 pub fn get_by_value_list<'a>(
     bin: &'a str,
     values: &'a [Value],
-    return_type: ListReturnType,
+    return_type: u64,
 ) -> Operation<'a> {
     let cdt_op = CdtOperation {
         op: CdtListOpType::GetByValueList as u8,
         encoder: Box::new(pack_cdt_op),
         args: vec![
-            CdtArgument::Byte(return_type as u8),
+            CdtArgument::Int(return_type as i64),
             CdtArgument::List(values),
         ],
     };
@@ -876,13 +876,13 @@ pub fn get_by_value_range<'a>(
     bin: &'a str,
     begin: &'a Value,
     end: &'a Value,
-    return_type: ListReturnType,
+    return_type: u64,
 ) -> Operation<'a> {
     let cdt_op = CdtOperation {
         op: CdtListOpType::GetByValueInterval as u8,
         encoder: Box::new(pack_cdt_op),
         args: vec![
-            CdtArgument::Byte(return_type as u8),
+            CdtArgument::Int(return_type as i64),
             CdtArgument::Value(begin),
             CdtArgument::Value(end),
         ],
@@ -897,12 +897,12 @@ pub fn get_by_value_range<'a>(
 
 /// Creates list get by index operation.
 /// Server selects list item identified by index and returns selected data specified by returnType
-pub fn get_by_index(bin: &str, index: i64, return_type: ListReturnType) -> Operation {
+pub fn get_by_index(bin: &str, index: i64, return_type: u64) -> Operation {
     let cdt_op = CdtOperation {
         op: CdtListOpType::GetByIndex as u8,
         encoder: Box::new(pack_cdt_op),
         args: vec![
-            CdtArgument::Byte(return_type as u8),
+            CdtArgument::Int(return_type as i64),
             CdtArgument::Int(index),
         ],
     };
@@ -918,12 +918,12 @@ pub fn get_by_index(bin: &str, index: i64, return_type: ListReturnType) -> Opera
 /// Creates list get by index range operation.
 /// Server selects list items starting at specified index to the end of list and returns selected
 /// data specified by returnType.
-pub fn get_by_index_range(bin: &str, index: i64, return_type: ListReturnType) -> Operation {
+pub fn get_by_index_range(bin: &str, index: i64, return_type: u64) -> Operation {
     let cdt_op = CdtOperation {
         op: CdtListOpType::GetByIndexRange as u8,
         encoder: Box::new(pack_cdt_op),
         args: vec![
-            CdtArgument::Byte(return_type as u8),
+            CdtArgument::Int(return_type as i64),
             CdtArgument::Int(index),
         ],
     };
@@ -943,13 +943,13 @@ pub fn get_by_index_range_count(
     bin: &str,
     index: i64,
     count: i64,
-    return_type: ListReturnType,
+    return_type: u64,
 ) -> Operation {
     let cdt_op = CdtOperation {
         op: CdtListOpType::GetByIndexRange as u8,
         encoder: Box::new(pack_cdt_op),
         args: vec![
-            CdtArgument::Byte(return_type as u8),
+            CdtArgument::Int(return_type as i64),
             CdtArgument::Int(index),
             CdtArgument::Int(count),
         ],
@@ -965,11 +965,11 @@ pub fn get_by_index_range_count(
 
 /// Creates a list get by rank operation.
 /// Server selects list item identified by rank and returns selected data specified by returnType.
-pub fn get_by_rank(bin: &str, rank: i64, return_type: ListReturnType) -> Operation {
+pub fn get_by_rank(bin: &str, rank: i64, return_type: u64) -> Operation {
     let cdt_op = CdtOperation {
         op: CdtListOpType::GetByRank as u8,
         encoder: Box::new(pack_cdt_op),
-        args: vec![CdtArgument::Byte(return_type as u8), CdtArgument::Int(rank)],
+        args: vec![CdtArgument::Int(return_type as i64), CdtArgument::Int(rank)],
     };
     Operation {
         op: OperationType::CdtRead,
@@ -982,11 +982,11 @@ pub fn get_by_rank(bin: &str, rank: i64, return_type: ListReturnType) -> Operati
 /// Creates a list get by rank range operation.
 /// Server selects list items starting at specified rank to the last ranked item and returns selected
 /// data specified by returnType.
-pub fn get_by_rank_range(bin: &str, rank: i64, return_type: ListReturnType) -> Operation {
+pub fn get_by_rank_range(bin: &str, rank: i64, return_type: u64) -> Operation {
     let cdt_op = CdtOperation {
         op: CdtListOpType::GetByRankRange as u8,
         encoder: Box::new(pack_cdt_op),
-        args: vec![CdtArgument::Byte(return_type as u8), CdtArgument::Int(rank)],
+        args: vec![CdtArgument::Int(return_type as i64), CdtArgument::Int(rank)],
     };
     Operation {
         op: OperationType::CdtRead,
@@ -1002,13 +1002,13 @@ pub fn get_by_rank_range_count(
     bin: &str,
     rank: i64,
     count: i64,
-    return_type: ListReturnType,
+    return_type: u64,
 ) -> Operation {
     let cdt_op = CdtOperation {
         op: CdtListOpType::GetByRankRange as u8,
         encoder: Box::new(pack_cdt_op),
         args: vec![
-            CdtArgument::Byte(return_type as u8),
+            CdtArgument::Int(return_type as i64),
             CdtArgument::Int(rank),
             CdtArgument::Int(count),
         ],
@@ -1039,13 +1039,13 @@ pub fn get_by_value_relative_rank_range<'a>(
     bin: &'a str,
     value: &'a Value,
     rank: i64,
-    return_type: ListReturnType,
+    return_type: u64,
 ) -> Operation<'a> {
     let cdt_op = CdtOperation {
         op: CdtListOpType::GetByValueRelRankRange as u8,
         encoder: Box::new(pack_cdt_op),
         args: vec![
-            CdtArgument::Byte(return_type as u8),
+            CdtArgument::Int(return_type as i64),
             CdtArgument::Value(value),
             CdtArgument::Int(rank),
         ],
@@ -1077,13 +1077,13 @@ pub fn get_by_value_relative_rank_range_count<'a>(
     value: &'a Value,
     rank: i64,
     count: i64,
-    return_type: ListReturnType,
+    return_type: u64,
 ) -> Operation<'a> {
     let cdt_op = CdtOperation {
         op: CdtListOpType::GetByValueRelRankRange as u8,
         encoder: Box::new(pack_cdt_op),
         args: vec![
-            CdtArgument::Byte(return_type as u8),
+            CdtArgument::Int(return_type as i64),
             CdtArgument::Value(value),
             CdtArgument::Int(rank),
             CdtArgument::Int(count),
