@@ -244,6 +244,24 @@ impl Cluster {
         self.partition_write_map.clone()
     }
 
+    pub fn node_partitions(&self, node: &Node, namespace: &str) -> Vec<u16> {
+        let mut res = vec![];
+        let partitions = self.partitions();
+        let partitions = partitions.read();
+
+        if let Some(node_array) = partitions.get(namespace) {
+            let mut i = 0;
+            for tnode in node_array {
+                if node == tnode.as_ref() {
+                    res.push(i);
+                }
+                i += 1;
+            }
+        }
+
+        res
+    }
+
     pub fn update_partitions(&self, node: Arc<Node>) -> Result<()> {
         let mut conn = node.get_connection(self.client_policy.timeout)?;
         let tokens = PartitionTokenizer::new(&mut conn).map_err(|e| {

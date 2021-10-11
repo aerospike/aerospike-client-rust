@@ -27,6 +27,7 @@ pub enum FieldType {
     TranId = 7, // user supplied transaction id, which is simply passed back,
     ScanOptions = 8,
     ScanTimeout = 9,
+    PIDArray = 11,
     IndexName = 21,
     IndexRange = 22,
     // IndexFilter = 23,
