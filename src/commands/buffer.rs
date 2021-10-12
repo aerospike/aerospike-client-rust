@@ -18,7 +18,6 @@ use std::time::Duration;
 use byteorder::{ByteOrder, LittleEndian, NetworkEndian};
 
 use crate::batch::batch_executor::SharedSlice;
-use crate::cluster::node;
 use crate::commands::field_type::FieldType;
 use crate::errors::Result;
 use crate::expressions::FilterExpression;

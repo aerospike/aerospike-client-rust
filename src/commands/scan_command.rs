@@ -16,7 +16,6 @@ use std::str;
 use std::sync::Arc;
 use std::time::Duration;
 
-use crate::cluster;
 use crate::cluster::Node;
 use crate::commands::{Command, SingleCommand, StreamCommand};
 use crate::errors::Result;
