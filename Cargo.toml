@@ -1,6 +1,6 @@
 [package]
 name = "aerospike"
-version = "1.0.0"
+version = "1.0.1"
 edition = "2018"
 authors = ["Khosrow Afroozeh <khosrow@aerospike.com>", "Jan Hecking <jhecking@aerospike.com>"]
 description = "Aerospike Client for Rust"
