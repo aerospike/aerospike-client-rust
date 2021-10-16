@@ -40,5 +40,5 @@ jobs:
     - name: Build client
       run: cargo build --verbose --no-default-features --features serialization,${{ matrix.version }},${{ matrix.runtime }} # Turn off default features since async is default and this also builds sync
     - name: Run tests
-      if: matrix.version == "async" # Unit tests only include the async interface
+      if: matrix.version == 'async' # Unit tests only include the async interface
       run: cargo test --verbose --no-default-features --features serialization,${{ matrix.version }},${{ matrix.runtime }} # Turn off default features since async is default and this also builds sync
