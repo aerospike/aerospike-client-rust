@@ -30,6 +30,8 @@ use aerospike_rt::RwLock;
 
 pub const PARTITIONS: usize = 4096;
 
+/// The node instance holding connections and node settings.
+/// Exposed for usage in the sync client interface.
 #[derive(Debug)]
 pub struct Node {
     client_policy: ClientPolicy,
@@ -55,6 +57,7 @@ pub struct Node {
 }
 
 impl Node {
+    #![allow(missing_docs)]
     pub fn new(client_policy: ClientPolicy, nv: Arc<NodeValidator>) -> Self {
         Node {
             client_policy: client_policy.clone(),
@@ -78,15 +81,17 @@ impl Node {
             supports_geo: AtomicBool::new(nv.supports_geo),
         }
     }
-
+    // Returns the Node address
     pub fn address(&self) -> &str {
         &self.address
     }
 
+    // Returns the Node name
     pub fn name(&self) -> &str {
         &self.name
     }
 
+    // Returns the active client policy
     pub const fn client_policy(&self) -> &ClientPolicy {
         &self.client_policy
     }
@@ -95,18 +100,22 @@ impl Node {
         self.host.clone()
     }
 
+    // Returns true if the Node supports floats
     pub fn supports_float(&self) -> bool {
         self.supports_float.load(Ordering::Relaxed)
     }
 
+    // Returns true if the Node supports geo
     pub fn supports_geo(&self) -> bool {
         self.supports_geo.load(Ordering::Relaxed)
     }
 
+    // Returns the reference count
     pub fn reference_count(&self) -> usize {
         self.reference_count.load(Ordering::Relaxed)
     }
 
+    // Refresh the node
     pub async fn refresh(&self, current_aliases: HashMap<Host, Arc<Node>>) -> Result<Vec<Host>> {
         self.reference_count.store(0, Ordering::Relaxed);
         self.responded.store(false, Ordering::Relaxed);
@@ -135,6 +144,7 @@ impl Node {
         Ok(friends)
     }
 
+    // Returns the services that the client should use for the cluster tend
     const fn services_name(&self) -> &'static str {
         if self.client_policy.use_services_alternate {
             "services-alternate"
@@ -241,10 +251,12 @@ impl Node {
         Ok(())
     }
 
+    // Get a connection to the node from the connection pool
     pub async fn get_connection(&self) -> Result<PooledConnection> {
         self.connection_pool.get().await
     }
 
+    // Amount of failures
     pub fn failures(&self) -> usize {
         self.failures.load(Ordering::Relaxed)
     }
@@ -253,6 +265,7 @@ impl Node {
         self.failures.store(0, Ordering::Relaxed)
     }
 
+    // Adds a failure to the failure count
     pub fn increase_failures(&self) -> usize {
         self.failures.fetch_add(1, Ordering::Relaxed)
     }
@@ -261,25 +274,30 @@ impl Node {
         self.active.store(false, Ordering::Relaxed);
     }
 
+    // Returns true if the node is active
     pub fn is_active(&self) -> bool {
         self.active.load(Ordering::Relaxed)
     }
 
+    // Get a list of aliases to the node
     pub async fn aliases(&self) -> Vec<Host> {
         self.aliases.read().await.to_vec()
     }
 
+    // Add an alias to the node
     pub async fn add_alias(&self, alias: Host) {
         let mut aliases = self.aliases.write().await;
         aliases.push(alias);
         self.reference_count.fetch_add(1, Ordering::Relaxed);
     }
 
+    // Set the node inactive and close all connections in the pool
     pub async fn close(&mut self) {
         self.inactivate();
         self.connection_pool.close().await;
     }
 
+    // Send info commands to this node
     pub async fn info(&self, commands: &[&str]) -> Result<HashMap<String, String>> {
         let mut conn = self.get_connection().await?;
         Message::info(&mut conn, commands).await.map_err(|e| {
@@ -288,6 +306,7 @@ impl Node {
         })
     }
 
+    // Get the partition generation
     pub fn partition_generation(&self) -> isize {
         self.partition_generation.load(Ordering::Relaxed)
     }

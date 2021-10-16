@@ -585,7 +585,7 @@ impl Buffer {
         set_name: &str,
         bins: &Bins,
         task_id: u64,
-        partitions: &Vec<u16>,
+        partitions: &[u16],
     ) -> Result<()> {
         self.begin();
 
@@ -698,7 +698,7 @@ impl Buffer {
         statement: &Statement,
         write: bool,
         task_id: u64,
-        partitions: &Vec<u16>,
+        partitions: &[u16],
     ) -> Result<()> {
         let filter = statement.filters.as_ref().map(|filters| &filters[0]);
 

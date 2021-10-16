@@ -659,8 +659,9 @@ impl Client {
             let bins = bins.clone();
 
             aerospike_rt::spawn(async move {
-                let mut command =
-                    ScanCommand::new(&policy, node, &namespace, &set_name, bins, recordset, partitions);
+                let mut command = ScanCommand::new(
+                    &policy, node, &namespace, &set_name, bins, recordset, partitions,
+                );
                 command.execute().await.unwrap();
             })
             .await;
@@ -696,8 +697,15 @@ impl Client {
         let set_name = set_name.to_owned();
 
         aerospike_rt::spawn(async move {
-            let mut command =
-                ScanCommand::new(&policy, node, &namespace, &set_name, bins, t_recordset, partitions);
+            let mut command = ScanCommand::new(
+                &policy,
+                node,
+                &namespace,
+                &set_name,
+                bins,
+                t_recordset,
+                partitions,
+            );
             command.execute().await.unwrap();
         })
         .await;
@@ -743,13 +751,15 @@ impl Client {
         for node in nodes {
             let partitions = self
                 .cluster
-                .node_partitions(node.as_ref(), &statement.namespace).await;
+                .node_partitions(node.as_ref(), &statement.namespace)
+                .await;
             let node = node.clone();
             let t_recordset = recordset.clone();
             let policy = policy.clone();
             let statement = statement.clone();
             aerospike_rt::spawn(async move {
-                let mut command = QueryCommand::new(&policy, node, statement, t_recordset, partitions);
+                let mut command =
+                    QueryCommand::new(&policy, node, statement, t_recordset, partitions);
                 command.execute().await.unwrap();
             })
             .await;
@@ -777,7 +787,8 @@ impl Client {
         let statement = Arc::new(statement);
         let partitions = self
             .cluster
-            .node_partitions(node.as_ref(), &statement.namespace).await;
+            .node_partitions(node.as_ref(), &statement.namespace)
+            .await;
 
         aerospike_rt::spawn(async move {
             let mut command = QueryCommand::new(&policy, node, statement, t_recordset, partitions);

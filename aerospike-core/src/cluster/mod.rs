@@ -208,7 +208,10 @@ impl Cluster {
             .await
             .map_err(|err| format!("Error during initial cluster tend: {:?}", err).into());
         #[cfg(all(feature = "rt-async-std", not(feature = "rt-tokio")))]
-        return Ok(handle.await);
+        return {
+            handle.await;
+            Ok(())
+        };
     }
 
     pub const fn cluster_name(&self) -> &Option<String> {
@@ -241,17 +244,15 @@ impl Cluster {
     }
 
     pub async fn node_partitions(&self, node: &Node, namespace: &str) -> Vec<u16> {
-        let mut res = vec![];
+        let mut res: Vec<u16> = vec![];
         let partitions = self.partitions();
         let partitions = partitions.read().await;
 
         if let Some(node_array) = partitions.get(namespace) {
-            let mut i = 0;
-            for tnode in node_array {
+            for (i, tnode) in node_array.iter().enumerate() {
                 if node == tnode.as_ref() {
-                    res.push(i);
+                    res.push(i as u16);
                 }
-                i += 1;
             }
         }
 

@@ -44,7 +44,7 @@ impl StreamCommand {
         StreamCommand { node, recordset }
     }
 
-   async fn parse_record(conn: &mut Connection, size: usize) -> Result<(Option<Record>, bool)> {
+    async fn parse_record(conn: &mut Connection, size: usize) -> Result<(Option<Record>, bool)> {
         let result_code = ResultCode::from(conn.buffer.read_u8(Some(5))?);
         if result_code != ResultCode::Ok {
             if conn.bytes_read() < size {

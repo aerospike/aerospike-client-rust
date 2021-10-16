@@ -13,12 +13,11 @@
 // License for the specific language governing permissions and limitations under
 // the License.
 
-use std::path::Path;
 use std::str;
 use std::sync::Arc;
 use std::vec::Vec;
 
-use aerospike_core::errors::{ErrorKind, Result, ResultExt};
+use aerospike_core::errors::Result;
 use aerospike_core::operations::Operation;
 use aerospike_core::{
     BatchPolicy, BatchRead, Bin, Bins, ClientPolicy, CollectionIndexType, IndexTask, IndexType,
