@@ -23,7 +23,7 @@ jobs:
       matrix:
         rust: [stable, nightly]
         runtime: [rt-tokio, rt-async-std]
-        versions: [async, sync]
+        version: [async, sync]
 
     steps:
     - uses: actions/checkout@v2
