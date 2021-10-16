@@ -22,6 +22,8 @@ jobs:
     strategy:
       matrix:
         rust: [stable, nightly]
+        runtime: [rt-tokio, rt-async-std]
+        versions: [async, sync]
 
     steps:
     - uses: actions/checkout@v2
@@ -33,32 +35,9 @@ jobs:
     - run: rustc --version
     - name: Set up Aerospike Database
       uses: reugn/github-action-aerospike@v1
-      with:
-        server-version: 5.5.0.2
-# Start tokio CI
-    - name: Clear cache before building with tokio
-      run: rm -rf target/debug/deps/* # Clean everything before starting at all
-    - name: Build with tokio
-      run: cargo build --verbose --features rt-tokio
-    - name: Run tests with tokio
-      run: cargo test --verbose --features rt-tokio
-# Start async-std CI
-    - name: Clear cache before building with async-std
-      run: rm -rf target/debug/deps/* # Clear everything because leftovers of the tokio build caused problems
-    - name: Build with async-std
-      run: cargo build --verbose --features rt-async-std
-    - name: Run tests with async-std
-      run: cargo test --verbose --features rt-async-std -- --nocapture
-# Start sync CI
-    - name: Clear cache before building sync API
-      run: rm -rf target/debug/deps/* # Clear everything because leftovers of the tokio build caused problems
-    - name: Build with sync API
-      run: cargo build --verbose --no-default-features --features rt-tokio,sync,serialization
-# Start docs CI
-    - name: Clear cache before building tokio again as clean doc test
-      run: rm -rf target/debug/deps/* # Clear everything because duplicate libraries from the previous builds caused problems
-    - name: Build with tokio
-      run: cargo build --verbose --features rt-tokio # Use tokio for Doc tests since it makes no difference what runtime is selected
-    - name: Build docs
-      run: rustdoc -L target/debug/deps/ --test README.md # Only tests the docs in the Readme file
-# Serialization steps are removed because serialization is now a default feature
+    - name: Clear cache before building
+      run: rm -rf target/debug/deps/*
+    - name: Build client
+      run: cargo build --verbose --no-default-features --features serialization,${{ matrix.version }},${{ matrix.runtime }} # Turn off default features since async is default and this also builds sync
+    - name: Run tests
+      run: cargo test --verbose --no-default-features --features serialization,${{ matrix.version }},${{ matrix.runtime }} # Turn off default features since async is default and this also builds sync
