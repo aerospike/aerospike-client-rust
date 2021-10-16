@@ -240,10 +240,10 @@ impl Cluster {
         self.partition_write_map.clone()
     }
 
-    pub fn node_partitions(&self, node: &Node, namespace: &str) -> Vec<u16> {
+    pub async fn node_partitions(&self, node: &Node, namespace: &str) -> Vec<u16> {
         let mut res = vec![];
         let partitions = self.partitions();
-        let partitions = partitions.read();
+        let partitions = partitions.read().await;
 
         if let Some(node_array) = partitions.get(namespace) {
             let mut i = 0;

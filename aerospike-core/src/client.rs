@@ -650,7 +650,7 @@ impl Client {
         let nodes = self.cluster.nodes().await;
         let recordset = Arc::new(Recordset::new(policy.record_queue_size, nodes.len()));
         for node in nodes {
-            let partitions = self.cluster.node_partitions(node.as_ref(), namespace);
+            let partitions = self.cluster.node_partitions(node.as_ref(), namespace).await;
             let node = node.clone();
             let recordset = recordset.clone();
             let policy = policy.clone();
@@ -687,7 +687,7 @@ impl Client {
     where
         T: Into<Bins> + Send + Sync + 'static,
     {
-        let partitions = self.cluster.node_partitions(node.as_ref(), namespace);
+        let partitions = self.cluster.node_partitions(node.as_ref(), namespace).await;
         let bins = bins.into();
         let recordset = Arc::new(Recordset::new(policy.record_queue_size, 1));
         let t_recordset = recordset.clone();
@@ -743,7 +743,7 @@ impl Client {
         for node in nodes {
             let partitions = self
                 .cluster
-                .node_partitions(node.as_ref(), &statement.namespace);
+                .node_partitions(node.as_ref(), &statement.namespace).await;
             let node = node.clone();
             let t_recordset = recordset.clone();
             let policy = policy.clone();
@@ -777,7 +777,7 @@ impl Client {
         let statement = Arc::new(statement);
         let partitions = self
             .cluster
-            .node_partitions(node.as_ref(), &statement.namespace);
+            .node_partitions(node.as_ref(), &statement.namespace).await;
 
         aerospike_rt::spawn(async move {
             let mut command = QueryCommand::new(&policy, node, statement, t_recordset, partitions);

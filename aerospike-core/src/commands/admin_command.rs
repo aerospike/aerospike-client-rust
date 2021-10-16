@@ -98,8 +98,8 @@ impl AdminCommand {
         conn.buffer.reset_offset()?;
         AdminCommand::write_size(conn, size as i64)?;
 
-        conn.flush()?;
-        conn.read_buffer(HEADER_SIZE)?;
+        conn.flush().await?;
+        conn.read_buffer(HEADER_SIZE).await?;
         let result_code = conn.buffer.read_u8(Some(RESULT_CODE))?;
         let result_code = ResultCode::from(result_code);
         if ResultCode::SecurityNotEnabled != result_code && ResultCode::Ok != result_code {
@@ -109,7 +109,7 @@ impl AdminCommand {
         // consume the rest of the buffer
         let sz = conn.buffer.read_u64(Some(0))?;
         let receive_size = (sz & 0xFFFF_FFFF_FFFF) - HEADER_REMAINING as u64;
-        conn.read_buffer(receive_size as usize)?;
+        conn.read_buffer(receive_size as usize).await?;
 
         Ok(())
     }
