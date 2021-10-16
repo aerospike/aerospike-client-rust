@@ -34,6 +34,7 @@ const GRANT_ROLES: u8 = 5;
 const REVOKE_ROLES: u8 = 6;
 const REPLACE_ROLES: u8 = 7;
 const QUERY_USERS: u8 = 9;
+const LOGIN: u8 = 20;
 
 // Field IDs
 const USER: u8 = 0;
@@ -87,28 +88,28 @@ impl AdminCommand {
     }
 
     pub async fn authenticate(conn: &mut Connection, user: &str, password: &str) -> Result<()> {
-        AdminCommand::set_authenticate(conn, user, password)?;
-        conn.flush().await?;
-        conn.read_buffer(HEADER_SIZE).await?;
-        let result_code = conn.buffer.read_u8(Some(RESULT_CODE))?;
-        let result_code = ResultCode::from(result_code);
-        if result_code != ResultCode::Ok {
-            bail!(ErrorKind::ServerError(result_code));
-        }
-
-        Ok(())
-    }
-
-    fn set_authenticate(conn: &mut Connection, user: &str, password: &str) -> Result<()> {
         conn.buffer.resize_buffer(1024)?;
         conn.buffer.reset_offset()?;
-        AdminCommand::write_header(conn, AUTHENTICATE, 2)?;
+        AdminCommand::write_header(conn, LOGIN, 2)?;
         AdminCommand::write_field_str(conn, USER, user)?;
         AdminCommand::write_field_bytes(conn, CREDENTIAL, password.as_bytes())?;
         conn.buffer.size_buffer()?;
         let size = conn.buffer.data_offset;
         conn.buffer.reset_offset()?;
         AdminCommand::write_size(conn, size as i64)?;
+
+        conn.flush()?;
+        conn.read_buffer(HEADER_SIZE)?;
+        let result_code = conn.buffer.read_u8(Some(RESULT_CODE))?;
+        let result_code = ResultCode::from(result_code);
+        if ResultCode::SecurityNotEnabled != result_code && ResultCode::Ok != result_code {
+            bail!(ErrorKind::ServerError(result_code));
+        }
+
+        // consume the rest of the buffer
+        let sz = conn.buffer.read_u64(Some(0))?;
+        let receive_size = (sz & 0xFFFF_FFFF_FFFF) - HEADER_REMAINING as u64;
+        conn.read_buffer(receive_size as usize)?;
 
         Ok(())
     }

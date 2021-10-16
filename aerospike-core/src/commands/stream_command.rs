@@ -44,7 +44,7 @@ impl StreamCommand {
         StreamCommand { node, recordset }
     }
 
-    async fn parse_record(conn: &mut Connection, size: usize) -> Result<Option<Record>> {
+   async fn parse_record(conn: &mut Connection, size: usize) -> Result<(Option<Record>, bool)> {
         let result_code = ResultCode::from(conn.buffer.read_u8(Some(5))?);
         if result_code != ResultCode::Ok {
             if conn.bytes_read() < size {
@@ -53,7 +53,7 @@ impl StreamCommand {
             }
 
             match result_code {
-                ResultCode::KeyNotFoundError => return Ok(None),
+                ResultCode::KeyNotFoundError => return Ok((None, false)),
                 _ => bail!(ErrorKind::ServerError(result_code)),
             }
         }
@@ -61,7 +61,7 @@ impl StreamCommand {
         // if cmd is the end marker of the response, do not proceed further
         let info3 = conn.buffer.read_u8(Some(3))?;
         if info3 & buffer::INFO3_LAST == buffer::INFO3_LAST {
-            return Ok(None);
+            return Ok((None, false));
         }
 
         conn.buffer.skip(6)?;
@@ -72,6 +72,11 @@ impl StreamCommand {
         let op_count = conn.buffer.read_u16(None)? as usize;
 
         let key = StreamCommand::parse_key(conn, field_count).await?;
+
+        // Partition is done, don't go further
+        if info3 & buffer::_INFO3_PARTITION_DONE != 0 {
+            return Ok((None, true));
+        }
 
         let mut bins: HashMap<String, Value> = HashMap::with_capacity(op_count);
 
@@ -93,7 +98,7 @@ impl StreamCommand {
         }
 
         let record = Record::new(Some(key), bins, generation, expiration);
-        Ok(Some(record))
+        Ok((Some(record), true))
     }
 
     async fn parse_stream(&mut self, conn: &mut Connection, size: usize) -> Result<bool> {
@@ -109,7 +114,7 @@ impl StreamCommand {
 
             let res = StreamCommand::parse_record(conn, size).await;
             match res {
-                Ok(Some(mut rec)) => loop {
+                Ok((Some(mut rec), _)) => loop {
                     let result = self.recordset.push(Ok(rec));
                     match result {
                         None => break,
@@ -119,7 +124,7 @@ impl StreamCommand {
                         }
                     }
                 },
-                Ok(None) => return Ok(false),
+                Ok((None, cont)) => return Ok(cont),
                 Err(err) => {
                     self.recordset.push(Err(err));
                     return Ok(false);
