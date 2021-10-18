@@ -1,0 +1,51 @@
+name: Aerospike Node.js Client Tests
+
+on:
+  push:
+    branches:
+      - master
+      - gh-actions
+  pull_request:
+    branches: 
+      - master
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+  AEROSPIKE_HOSTS: 127.0.0.1:3000
+
+jobs:
+  build:
+
+    runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        rust: [stable, nightly]
+
+    steps:
+    - uses: actions/checkout@v2
+    - name: Install Rust ${{ matrix.rust }} toolchain
+      uses: actions-rs/toolchain@v1
+      with:
+        toolchain: ${{ matrix.rust }}
+        override: true
+    - run: rustc --version
+    - name: Set up Aerospike Database
+      uses: reugn/github-action-aerospike@v1
+    - name: Clear cache
+      run: rm -rf target/debug/deps/*aerospike*
+    - name: Build
+      run: cargo build --verbose
+    - name: Run tests
+      run: cargo test --verbose
+    - name: Build docs
+      run: rustdoc -L target/debug/deps/ --test README.md
+    - name: Clear cache
+      run: rm -rf target/debug/deps/*aerospike*
+    - name: Build - with serialization
+      run: cargo build --verbose --features "serialization"
+    - name: Run tests - with serialization
+      run: cargo test --verbose --features "serialization"
+    - name: Build docs - with serialization
+      run: rustdoc -L target/debug/deps/ --test README.md

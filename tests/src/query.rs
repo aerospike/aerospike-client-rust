@@ -74,7 +74,7 @@ fn query_single_consumer() {
                 assert_eq!(rec.bins["bin"], as_val!(1));
                 count += 1;
             }
-            Err(err) => panic!(format!("{:?}", err)),
+            Err(err) => panic!("{:?}", err),
         }
     }
     assert_eq!(count, 1);
@@ -92,7 +92,7 @@ fn query_single_consumer() {
                 assert!(v >= 0);
                 assert!(v < 10);
             }
-            Err(err) => panic!(format!("{:?}", err)),
+            Err(err) => panic!("{:?}", err),
         }
     }
     assert_eq!(count, 10);
@@ -118,7 +118,7 @@ fn query_nobins() {
                 assert!(rec.generation > 0);
                 assert_eq!(0, rec.bins.len());
             }
-            Err(err) => panic!(format!("{:?}", err)),
+            Err(err) => panic!("{:?}", err),
         }
     }
     assert_eq!(count, 10);
@@ -154,7 +154,7 @@ fn query_multi_consumer() {
                         assert!(v >= 0);
                         assert!(v < 10);
                     }
-                    Err(err) => panic!(format!("{:?}", err)),
+                    Err(err) => panic!("{:?}", err),
                 }
             }
         }));

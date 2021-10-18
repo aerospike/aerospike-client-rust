@@ -387,7 +387,7 @@ fn count_results(rs: Arc<Recordset>) -> usize {
             Ok(_) => {
                 count += 1;
             }
-            Err(err) => panic!(format!("{:?}", err)),
+            Err(err) => panic!("{:?}", err),
         }
     }
 
