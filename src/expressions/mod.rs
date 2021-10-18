@@ -230,13 +230,13 @@ impl FilterExpression {
                             | ExpressionArgument::FilterExpression(_) => len += 1,
                             ExpressionArgument::Context(ctx) => {
                                 if !ctx.is_empty() {
-                                    pack_array_begin(buf, 3)?;
-                                    pack_integer(buf, 0xff)?;
-                                    pack_array_begin(buf, ctx.len() * 2)?;
+                                    size += pack_array_begin(buf, 3)?;
+                                    size += pack_integer(buf, 0xff)?;
+                                    size += pack_array_begin(buf, ctx.len() * 2)?;
 
                                     for c in ctx {
-                                        pack_integer(buf, i64::from(c.id))?;
-                                        pack_value(buf, &c.value)?;
+                                        size += pack_integer(buf, i64::from(c.id))?;
+                                        size += pack_value(buf, &c.value)?;
                                     }
                                 }
                             }
