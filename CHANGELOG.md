@@ -4,6 +4,14 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.2.0] - 2021-10-22
+
+* **New Features**
+  * Support Aerospike server v5.6+ expressions in Operate API.
+
+* **Bug Fixes**
+  * Fix for buffer size when using CDT contexts.
+
 ## [1.1.0] - 2021-10-12
 This version of the client drops support for the older server versions without changing the API. `ScanPolicy.fail_on_cluster_change`, `ScanPolicy.scan_percent` and `BasePolicy.priority` are deprected for the Scan operations and will not be sent to the server. They remain in the API to avoid breaking the API.
 

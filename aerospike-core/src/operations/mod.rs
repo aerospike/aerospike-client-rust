@@ -19,6 +19,7 @@ pub mod bitwise;
 #[doc(hidden)]
 pub mod cdt;
 pub mod cdt_context;
+pub mod exp;
 pub mod hll;
 pub mod lists;
 pub mod maps;
@@ -32,6 +33,7 @@ use crate::commands::buffer::Buffer;
 use crate::commands::ParticleType;
 use crate::errors::Result;
 use crate::operations::cdt_context::CdtContext;
+use crate::operations::exp::ExpOperation;
 use crate::Value;
 
 #[derive(Clone, Copy)]
@@ -42,6 +44,8 @@ pub enum OperationType {
     CdtRead = 3,
     CdtWrite = 4,
     Incr = 5,
+    ExpRead = 7,
+    ExpWrite = 8,
     Append = 9,
     Prepend = 10,
     Touch = 11,
@@ -60,6 +64,7 @@ pub enum OperationData<'a> {
     CdtMapOp(CdtOperation<'a>),
     CdtBitOp(CdtOperation<'a>),
     HLLOp(CdtOperation<'a>),
+    EXPOp(ExpOperation<'a>),
 }
 
 #[doc(hidden)]
@@ -99,6 +104,7 @@ impl<'a> Operation<'a> {
         size += match self.data {
             OperationData::None => 0,
             OperationData::Value(value) => value.estimate_size()?,
+            OperationData::EXPOp(ref exp_op) => exp_op.estimate_size()?,
             OperationData::CdtListOp(ref cdt_op)
             | OperationData::CdtMapOp(ref cdt_op)
             | OperationData::CdtBitOp(ref cdt_op)
@@ -132,6 +138,10 @@ impl<'a> Operation<'a> {
             | OperationData::HLLOp(ref cdt_op) => {
                 size += self.write_op_header_to(buffer, cdt_op.particle_type() as u8)?;
                 size += cdt_op.write_to(buffer, self.ctx)?;
+            }
+            OperationData::EXPOp(ref exp) => {
+                size += self.write_op_header_to(buffer, ParticleType::BLOB as u8)?;
+                size += exp.write_to(buffer)?;
             }
         };
 
