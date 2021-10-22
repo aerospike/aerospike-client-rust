@@ -1,8 +1,7 @@
 use crate::common;
 use aerospike::expressions::{int_bin, int_val, num_add};
 use aerospike::operations::exp::{read_exp, write_exp, ExpReadFlags, ExpWriteFlags};
-use aerospike::operations::OperationType::ExpWrite;
-use aerospike::{as_bin, as_key, as_val, Bins, ReadPolicy, Value, WritePolicy};
+use aerospike::{as_bin, as_key, as_val, Bins, ReadPolicy, WritePolicy};
 
 #[test]
 fn exp_ops() {
