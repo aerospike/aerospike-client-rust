@@ -507,13 +507,20 @@ impl Buffer {
                 | Operation {
                     op: OperationType::HllRead,
                     ..
+                }
+                | Operation {
+                    op: OperationType::ExpRead,
+                    ..
                 } => read_attr |= INFO1_READ,
                 _ => write_attr |= INFO2_WRITE,
             }
 
             let each_op = matches!(
                 operation.data,
-                OperationData::CdtMapOp(_) | OperationData::CdtBitOp(_)
+                OperationData::CdtMapOp(_)
+                    | OperationData::CdtBitOp(_)
+                    | OperationData::HLLOp(_)
+                    | OperationData::EXPOp(_)
             );
 
             if policy.respond_per_each_op || each_op {
@@ -556,7 +563,6 @@ impl Buffer {
         for operation in operations {
             operation.write_to(self)?;
         }
-
         self.end()
     }
 
