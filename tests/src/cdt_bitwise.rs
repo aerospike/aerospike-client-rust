@@ -189,5 +189,5 @@ async fn cdt_bitwise() {
     let ops = &vec![bitwise::rscan("bin", 19, 8, true)];
     let rec = client.operate(&wpolicy, &key, ops).await.unwrap();
     assert_eq!(*rec.bins.get("bin").unwrap(), Value::Int(7));
-    client.close().await;
+    client.close().await.unwrap();
 }

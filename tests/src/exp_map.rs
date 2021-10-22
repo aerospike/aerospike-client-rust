@@ -10,7 +10,6 @@ use std::sync::Arc;
 const EXPECTED: usize = 100;
 
 async fn create_test_set(client: &Client, no_records: usize) -> String {
-    let client = common::client().await;
     let namespace = common::namespace();
     let set_name = common::rand_str(10);
 
@@ -656,7 +655,7 @@ fn expression_map() {
     .await;
     let count = count_results(rs);
     assert_eq!(count, 100, "REMOVE BY RANK RANGE COUNT Test Failed");
-    client.close().await;
+    client.close().await.unwrap();
 }
 
 async fn test_filter(client: &Client, filter: FilterExpression, set_name: &str) -> Arc<Recordset> {

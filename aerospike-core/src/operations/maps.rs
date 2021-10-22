@@ -231,7 +231,7 @@ pub const fn map_order_flag(order: MapOrder) -> u8 {
     match order {
         MapOrder::KeyOrdered => 0x80,
         MapOrder::Unordered => 0x40,
-        MapOrder::KeyValueOrdered => 0xc0
+        MapOrder::KeyValueOrdered => 0xc0,
     }
 }
 

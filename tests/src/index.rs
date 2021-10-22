@@ -66,5 +66,5 @@ async fn recreate_index() {
         .unwrap();
     task.wait_till_complete(None).await.unwrap();
 
-    client.close().await;
+    client.close().await.unwrap();
 }

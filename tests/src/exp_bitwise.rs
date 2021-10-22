@@ -402,7 +402,7 @@ async fn expression_bitwise() {
     let item_count = count_results(rs);
     assert_eq!(item_count, 100, "RSCAN Test Failed");
 
-    client.close().await;
+    client.close().await.unwrap();
 }
 
 async fn test_filter(client: &Client, filter: FilterExpression, set_name: &str) -> Arc<Recordset> {

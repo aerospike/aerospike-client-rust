@@ -92,5 +92,5 @@ end
         panic!("UDF function did not return the expected error");
     }
 
-    client.close().await;
+    client.close().await.unwrap();
 }

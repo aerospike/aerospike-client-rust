@@ -96,7 +96,7 @@ async fn query_single_consumer() {
     }
     assert_eq!(count, 10);
 
-    client.close().await;
+    client.close().await.unwrap();
 }
 
 #[aerospike_macro::test]
@@ -124,7 +124,7 @@ async fn query_nobins() {
     }
     assert_eq!(count, 10);
 
-    client.close().await;
+    client.close().await.unwrap();
 }
 
 #[aerospike_macro::test]
@@ -169,7 +169,7 @@ async fn query_multi_consumer() {
 
     assert_eq!(count.load(Ordering::Relaxed), 10);
 
-    client.close().await;
+    client.close().await.unwrap();
 }
 
 #[aerospike_macro::test]
@@ -203,5 +203,5 @@ async fn query_node() {
 
     assert_eq!(count.load(Ordering::Relaxed), 100);
 
-    client.close().await;
+    client.close().await.unwrap();
 }

@@ -23,7 +23,6 @@ use std::sync::Arc;
 const EXPECTED: usize = 100;
 
 async fn create_test_set(client: &Client, no_records: usize) -> String {
-    let client = common::client().await;
     let namespace = common::namespace();
     let set_name = common::rand_str(10);
 
@@ -111,7 +110,7 @@ async fn expression_compare() {
     let count = count_results(rs);
     assert_eq!(count, 99, "GT Test Failed");
 
-    client.close().await;
+    client.close().await.unwrap();
 }
 
 #[aerospike_macro::test]
@@ -157,7 +156,7 @@ async fn expression_condition() {
     let count = count_results(rs);
     assert_eq!(count, 99, "NOT Test Failed");
 
-    client.close().await;
+    client.close().await.unwrap();
 }
 
 #[aerospike_macro::test]
@@ -219,224 +218,270 @@ async fn expression_data_types() {
     .await;
     let count = count_results(rs);
     assert_eq!(count, 100, "BIN TYPE Test Failed");
-    client.close().await;
+    client.close().await.unwrap();
 }
-
 
 #[aerospike_macro::test]
 fn expression_aero_5_6() {
     let client = common::client().await;
     let _ = env_logger::try_init();
 
-    let set_name = create_test_set(EXPECTED).await;
+    let set_name = create_test_set(&client, EXPECTED).await;
 
     let rs = test_filter(
+        &client,
         eq(
             num_add(vec![int_bin("bin".to_string()), int_val(10)]),
             int_val(20),
         ),
         &set_name,
-    ).await;
+    )
+    .await;
     let count = count_results(rs);
     assert_eq!(count, 1, "NUM_ADD Test Failed");
 
     let rs = test_filter(
+        &client,
         eq(
             num_sub(vec![int_bin("bin".to_string()), int_val(10)]),
             int_val(20),
         ),
         &set_name,
-    ).await;
+    )
+    .await;
     let count = count_results(rs);
     assert_eq!(count, 1, "NUM_SUB Test Failed");
 
     let rs = test_filter(
+        &client,
         eq(
             num_mul(vec![int_bin("bin".to_string()), int_val(10)]),
             int_val(20),
         ),
         &set_name,
-    ).await;
+    )
+    .await;
     let count = count_results(rs);
     assert_eq!(count, 1, "NUM_MUL Test Failed");
 
     let rs = test_filter(
+        &client,
         gt(
             num_div(vec![int_bin("bin".to_string()), int_val(5)]),
             int_val(10),
         ),
         &set_name,
-    ).await;
+    )
+    .await;
     let count = count_results(rs);
     assert_eq!(count, 45, "NUM_DIV Test Failed");
 
     let rs = test_filter(
+        &client,
         eq(
             num_pow(float_bin("bin3".to_string()), float_val(2.0)),
             float_val(4.0),
         ),
         &set_name,
-    ).await;
+    )
+    .await;
     let count = count_results(rs);
     assert_eq!(count, 1, "NUM_POW Test Failed");
 
     let rs = test_filter(
+        &client,
         eq(
             num_log(float_bin("bin3".to_string()), float_val(2.0)),
             float_val(4.0),
         ),
         &set_name,
-    ).await;
+    )
+    .await;
     let count = count_results(rs);
     assert_eq!(count, 1, "NUM_LOG Test Failed");
 
     let rs = test_filter(
+        &client,
         eq(num_mod(int_bin("bin".to_string()), int_val(10)), int_val(0)),
         &set_name,
-    ).await;
+    )
+    .await;
     let count = count_results(rs);
     assert_eq!(count, 10, "NUM_MOD Test Failed");
 
     let rs = test_filter(
+        &client,
         eq(num_abs(int_bin("bin".to_string())), int_val(1)),
         &set_name,
-    ).await;
+    )
+    .await;
     let count = count_results(rs);
     assert_eq!(count, 1, "NUM_ABS Test Failed");
 
     let rs = test_filter(
+        &client,
         eq(num_floor(float_bin("bin3".to_string())), float_val(2.0)),
         &set_name,
-    ).await;
+    )
+    .await;
     let count = count_results(rs);
     assert_eq!(count, 3, "NUM_FLOOR Test Failed");
 
     let rs = test_filter(
+        &client,
         eq(num_ceil(float_bin("bin3".to_string())), float_val(2.0)),
         &set_name,
-    ).await;
+    )
+    .await;
     let count = count_results(rs);
     assert_eq!(count, 3, "NUM_CEIL Test Failed");
 
     let rs = test_filter(
+        &client,
         eq(to_int(float_bin("bin3".to_string())), int_val(2)),
         &set_name,
-    ).await;
+    )
+    .await;
     let count = count_results(rs);
     assert_eq!(count, 3, "TO_INT Test Failed");
 
     let rs = test_filter(
+        &client,
         eq(to_float(int_bin("bin".to_string())), float_val(2.0)),
         &set_name,
-    ).await;
+    )
+    .await;
     let count = count_results(rs);
     assert_eq!(count, 1, "TO_FLOAT Test Failed");
 
     let rs = test_filter(
+        &client,
         eq(
             int_and(vec![int_bin("bin".to_string()), int_val(0xff)]),
             int_val(0x11),
         ),
         &set_name,
-    ).await;
+    )
+    .await;
     let count = count_results(rs);
     assert_eq!(count, 1, "INT_AND Test Failed");
 
     let rs = test_filter(
+        &client,
         eq(
             int_xor(vec![int_bin("bin".to_string()), int_val(10)]),
             int_val(16),
         ),
         &set_name,
-    ).await;
+    )
+    .await;
     let count = count_results(rs);
     assert_eq!(count, 1, "INT_XOR Test Failed");
 
     let rs = test_filter(
+        &client,
         eq(int_not(int_bin("bin".to_string())), int_val(-50)),
         &set_name,
-    ).await;
+    )
+    .await;
     let count = count_results(rs);
     assert_eq!(count, 1, "INT_NOT Test Failed");
 
     let rs = test_filter(
+        &client,
         gt(
             int_lshift(int_bin("bin".to_string()), int_val(8)),
             int_val(0xff),
         ),
         &set_name,
-    ).await;
+    )
+    .await;
     let count = count_results(rs);
     assert_eq!(count, 99, "INT_LSHIFT Test Failed");
 
     let rs = test_filter(
+        &client,
         gt(
             int_rshift(int_bin("bin".to_string()), int_val(1)),
             int_val(0x2a),
         ),
         &set_name,
-    ).await;
+    )
+    .await;
     let count = count_results(rs);
     assert_eq!(count, 14, "INT_RSHIFT Test Failed");
 
     let rs = test_filter(
+        &client,
         gt(
             int_arshift(int_bin("bin".to_string()), int_val(1)),
             int_val(0x2a),
         ),
         &set_name,
-    ).await;
+    )
+    .await;
     let count = count_results(rs);
     assert_eq!(count, 14, "INT_ARSHIFT Test Failed");
 
     let rs = test_filter(
+        &client,
         eq(int_count(int_bin("bin".to_string())), int_val(3)),
         &set_name,
-    ).await;
+    )
+    .await;
     let count = count_results(rs);
     assert_eq!(count, 32, "INT_COUNT Test Failed");
 
     let rs = test_filter(
+        &client,
         gt(
             int_lscan(int_bin("bin".to_string()), bool_val(true)),
             int_val(60),
         ),
         &set_name,
-    ).await;
+    )
+    .await;
     let count = count_results(rs);
     assert_eq!(count, 7, "INT_LSCAN Test Failed");
 
     let rs = test_filter(
+        &client,
         gt(
             int_rscan(int_bin("bin".to_string()), bool_val(true)),
             int_val(60),
         ),
         &set_name,
-    ).await;
+    )
+    .await;
     let count = count_results(rs);
     assert_eq!(count, 87, "INT_RSCAN Test Failed");
 
     let rs = test_filter(
+        &client,
         eq(
             min(vec![int_bin("bin".to_string()), int_val(10)]),
             int_val(10),
         ),
         &set_name,
-    ).await;
+    )
+    .await;
     let count = count_results(rs);
     assert_eq!(count, 90, "MIN Test Failed");
 
     let rs = test_filter(
+        &client,
         eq(
             max(vec![int_bin("bin".to_string()), int_val(10)]),
             int_val(10),
         ),
         &set_name,
-    ).await;
+    )
+    .await;
     let count = count_results(rs);
     assert_eq!(count, 11, "MAX Test Failed");
 
     let rs = test_filter(
+        &client,
         gt(
             cond(vec![
                 eq(num_mod(int_bin("bin".to_string()), int_val(2)), int_val(0)),
@@ -448,11 +493,13 @@ fn expression_aero_5_6() {
             int_val(100),
         ),
         &set_name,
-    ).await;
+    )
+    .await;
     let count = count_results(rs);
     assert_eq!(count, 54, "COND Test Failed");
 
     let rs = test_filter(
+        &client,
         exp_let(vec![
             def("x".to_string(), int_bin("bin".to_string())),
             and(vec![
@@ -461,10 +508,13 @@ fn expression_aero_5_6() {
             ]),
         ]),
         &set_name,
-    ).await;
+    )
+    .await;
 
     let count = count_results(rs);
     assert_eq!(count, 4, "LET/DEF/VAR Test Failed");
+
+    client.close().await.unwrap();
 }
 
 #[aerospike_macro::test]
@@ -548,7 +598,7 @@ fn expression_rec_ops() {
     let count = count_results(rs);
     assert_eq!(count, 75, "REGEX Test Failed");
 
-    client.close().await;
+    client.close().await.unwrap();
 }
 
 #[aerospike_macro::test]
@@ -703,7 +753,7 @@ async fn expression_commands() {
         Err(err) => panic!("Error executing batch request: {}", err),
     }
 
-    client.close().await;
+    client.close().await.unwrap();
 }
 
 async fn test_filter(client: &Client, filter: FilterExpression, set_name: &str) -> Arc<Recordset> {

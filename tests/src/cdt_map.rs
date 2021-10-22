@@ -306,13 +306,16 @@ async fn map_operations() {
     let xkey = as_val!("y");
     let xval = as_val!(8);
     let op = [maps::put(&mpolicy, bin_name, &xkey, &xval).set_context(ctx)];
-    client.operate(&wpolicy, &key, &op).unwrap();
+    client.operate(&wpolicy, &key, &op).await.unwrap();
     let op = [maps::get_by_key(bin_name, &xkey, MapReturnType::Value).set_context(ctx)];
-    let rec = client.operate(&wpolicy, &key, &op).unwrap();
+    let rec = client.operate(&wpolicy, &key, &op).await.unwrap();
     assert_eq!(*rec.bins.get(bin_name).unwrap(), as_val!(8));
 
     let mkey2 = as_val!("ctxtest3");
-    let ctx = &vec![ctx_map_key(mkey), ctx_map_key_create(mkey2, MapOrder::Unordered)];
+    let ctx = &vec![
+        ctx_map_key(mkey),
+        ctx_map_key_create(mkey2, MapOrder::Unordered),
+    ];
     let xkey = as_val!("c");
     let xval = as_val!(9);
     let op = [maps::put(&mpolicy, bin_name, &xkey, &xval).set_context(ctx)];
@@ -321,5 +324,5 @@ async fn map_operations() {
     let rec = client.operate(&wpolicy, &key, &op).await.unwrap();
     assert_eq!(*rec.bins.get(bin_name).unwrap(), as_val!(9));
 
-    client.close().await;
+    client.close().await.unwrap();
 }

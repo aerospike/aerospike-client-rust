@@ -118,5 +118,5 @@ async fn hll() {
         "Similarity failed"
     );
 
-    client.close().await;
+    client.close().await.unwrap();
 }

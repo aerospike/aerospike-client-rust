@@ -14,9 +14,9 @@
 
 //! Operation Context for nested Operations
 use crate::operations::lists::{list_order_flag, ListOrderType};
+use crate::operations::maps::map_order_flag;
 use crate::operations::MapOrder;
 use crate::Value;
-use crate::operations::maps::map_order_flag;
 
 #[doc(hidden)]
 // Empty Context for scalar operations

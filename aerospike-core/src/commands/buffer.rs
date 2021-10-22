@@ -492,11 +492,8 @@ impl Buffer {
                         OperationType::Read
                         | OperationType::CdtRead
                         | OperationType::BitRead
-                        | OperationType::HllRead,
-                    ..
-                }
-                | Operation {
-                    op: OperationType::ExpRead,
+                        | OperationType::HllRead
+                        | OperationType::ExpRead,
                     ..
                 } => read_attr |= INFO1_READ,
                 _ => write_attr |= INFO2_WRITE,

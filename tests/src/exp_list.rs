@@ -555,7 +555,7 @@ async fn expression_list() {
     let count = count_results(rs);
     assert_eq!(count, 100, "REMOVE BY RANK RANGE COUNT Test Failed");
 
-    client.close().await;
+    client.close().await.unwrap();
 }
 
 async fn test_filter(client: &Client, filter: FilterExpression, set_name: &str) -> Arc<Recordset> {

@@ -57,7 +57,7 @@ async fn scan_single_consumer() {
     let count = (&*rs).filter(Result::is_ok).count();
     assert_eq!(count, EXPECTED);
 
-    client.close();
+    client.close().await.unwrap();
 }
 
 #[aerospike_macro::test]
@@ -93,7 +93,7 @@ async fn scan_multi_consumer() {
 
     assert_eq!(count.load(Ordering::Relaxed), EXPECTED);
 
-    client.close().await;
+    client.close().await.unwrap();
 }
 
 #[aerospike_macro::test]
@@ -128,5 +128,5 @@ async fn scan_node() {
 
     assert_eq!(count.load(Ordering::Relaxed), EXPECTED);
 
-    client.close().await;
+    client.close().await.unwrap();
 }
