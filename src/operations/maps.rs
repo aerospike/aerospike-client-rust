@@ -226,6 +226,15 @@ const fn map_order_arg(policy: &MapPolicy) -> Option<CdtArgument> {
     }
 }
 
+#[doc(hidden)]
+pub const fn map_order_flag(order: MapOrder) -> u8 {
+    match order {
+        MapOrder::KeyOrdered => 0x80,
+        MapOrder::Unordered => 0x40,
+        MapOrder::KeyValueOrdered => 0xc0
+    }
+}
+
 /// Create set map policy operation. Server set the map policy attributes. Server does not
 /// return a result.
 ///
