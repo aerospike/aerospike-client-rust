@@ -174,7 +174,7 @@ impl FilterExpression {
         let mut size = 0;
         if let Some(val) = &self.val {
             // DEF expression
-            size += pack_value(buf, val)?;
+            size += pack_raw_string(buf, &val.to_string())?;
             size += exps[0].pack(buf)?;
         } else {
             // Normal Expressions
@@ -272,10 +272,10 @@ impl FilterExpression {
                 // The name - Raw String is needed instead of the msgpack String that the pack_value method would use.
                 size += pack_raw_string(buf, &self.val.clone().unwrap().to_string())?;
             }
-            ExpOp::BinType => {
-                // BinType encoder
+            ExpOp::BinType | ExpOp::Var => {
+                // BinType/Var encoder
                 size += pack_array_begin(buf, 2)?;
-                // BinType Operation
+                // BinType/Var Operation
                 size += pack_integer(buf, cmd as i64)?;
                 // The name - Raw String is needed instead of the msgpack String that the pack_value method would use.
                 size += pack_raw_string(buf, &self.val.clone().unwrap().to_string())?;
