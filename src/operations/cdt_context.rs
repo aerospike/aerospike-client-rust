@@ -16,6 +16,7 @@
 use crate::operations::lists::{list_order_flag, ListOrderType};
 use crate::operations::MapOrder;
 use crate::Value;
+use crate::operations::maps::map_order_flag;
 
 #[doc(hidden)]
 // Empty Context for scalar operations
@@ -133,7 +134,7 @@ pub const fn ctx_map_key(key: Value) -> CdtContext {
 pub const fn ctx_map_key_create(key: Value, order: MapOrder) -> CdtContext {
     CdtContext {
         id: CtxType::MapKey as u8,
-        flags: order as u8,
+        flags: map_order_flag(order),
         value: key,
     }
 }
