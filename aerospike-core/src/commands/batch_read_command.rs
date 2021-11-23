@@ -14,7 +14,6 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::thread;
 use std::time::{Duration, Instant};
 
 use crate::cluster::Node;
@@ -23,6 +22,7 @@ use crate::errors::{ErrorKind, Result, ResultExt};
 use crate::net::Connection;
 use crate::policy::{BatchPolicy, Policy, PolicyLike};
 use crate::{value, BatchRead, Record, ResultCode, Value};
+use aerospike_rt::sleep;
 
 struct BatchRecord {
     batch_index: usize,
@@ -69,7 +69,7 @@ impl BatchReadCommand {
             // Sleep before trying again, after the first iteration
             if iterations > 1 {
                 if let Some(sleep_between_retries) = base_policy.sleep_between_retries() {
-                    thread::sleep(sleep_between_retries);
+                    sleep(sleep_between_retries).await;
                 }
             }
 

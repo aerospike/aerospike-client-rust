@@ -13,7 +13,6 @@
 // limitations under the License.
 
 use std::sync::Arc;
-use std::thread;
 use std::time::Instant;
 
 use crate::cluster::partition::Partition;
@@ -23,6 +22,7 @@ use crate::errors::{ErrorKind, Result, ResultExt};
 use crate::net::Connection;
 use crate::policy::Policy;
 use crate::Key;
+use aerospike_rt::sleep;
 
 pub struct SingleCommand<'a> {
     cluster: Arc<Cluster>,
@@ -89,7 +89,7 @@ impl<'a> SingleCommand<'a> {
             // Sleep before trying again, after the first iteration
             if iterations > 1 {
                 if let Some(sleep_between_retries) = policy.sleep_between_retries() {
-                    thread::sleep(sleep_between_retries);
+                    sleep(sleep_between_retries).await;
                 }
             }
 
