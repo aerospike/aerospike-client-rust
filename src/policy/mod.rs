@@ -122,6 +122,7 @@ where
 pub struct BasePolicy {
     /// Priority of request relative to other transactions.
     /// Currently, only used for scans.
+    /// This is deprected for Scan/Query commands and will not be sent to the server.
     pub priority: Priority,
 
     /// How replicas should be consulted in a read operation to provide the desired

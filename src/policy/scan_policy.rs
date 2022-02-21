@@ -23,6 +23,7 @@ pub struct ScanPolicy {
     pub base_policy: BasePolicy,
 
     /// Percent of data to scan. Valid integer range is 1 to 100. Default is 100.
+    /// This is deprected and won't be sent to the server.
     pub scan_percent: u8,
 
     /// Maximum number of concurrent requests to server nodes at any point in time. If there are 16
@@ -37,6 +38,7 @@ pub struct ScanPolicy {
     pub record_queue_size: usize,
 
     /// Terminate scan if cluster is in fluctuating state.
+    /// This is deprected and won't be sent to the server.
     pub fail_on_cluster_change: bool,
 
     /// Maximum time in milliseconds to wait when polling socket for availability prior to

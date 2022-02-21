@@ -26,6 +26,7 @@ pub struct QueryCommand<'a> {
     stream_command: StreamCommand,
     policy: &'a QueryPolicy,
     statement: Arc<Statement>,
+    partitions: Vec<u16>,
 }
 
 impl<'a> QueryCommand<'a> {
@@ -34,11 +35,13 @@ impl<'a> QueryCommand<'a> {
         node: Arc<Node>,
         statement: Arc<Statement>,
         recordset: Arc<Recordset>,
+        partitions: Vec<u16>,
     ) -> Self {
         QueryCommand {
             stream_command: StreamCommand::new(node, recordset),
             policy,
             statement,
+            partitions,
         }
     }
 
@@ -63,6 +66,7 @@ impl<'a> Command for QueryCommand<'a> {
             &self.statement,
             false,
             self.stream_command.recordset.task_id(),
+            &self.partitions,
         )
     }
 

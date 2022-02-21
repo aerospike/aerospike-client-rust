@@ -646,6 +646,7 @@ impl Client {
         let nodes = self.cluster.nodes();
         let recordset = Arc::new(Recordset::new(policy.record_queue_size, nodes.len()));
         for node in nodes {
+            let partitions = self.cluster.node_partitions(node.as_ref(), namespace);
             let node = node.clone();
             let recordset = recordset.clone();
             let policy = policy.to_owned();
@@ -654,8 +655,9 @@ impl Client {
             let bins = bins.clone();
 
             thread::spawn(move || {
-                let mut command =
-                    ScanCommand::new(&policy, node, &namespace, &set_name, bins, recordset);
+                let mut command = ScanCommand::new(
+                    &policy, node, &namespace, &set_name, bins, recordset, partitions,
+                );
                 command.execute().unwrap();
             });
         }
@@ -678,6 +680,7 @@ impl Client {
     where
         T: Into<Bins>,
     {
+        let partitions = self.cluster.node_partitions(node.as_ref(), namespace);
         let bins = bins.into();
         let recordset = Arc::new(Recordset::new(policy.record_queue_size, 1));
         let t_recordset = recordset.clone();
@@ -686,8 +689,15 @@ impl Client {
         let set_name = set_name.to_owned();
 
         self.thread_pool.spawn(move || {
-            let mut command =
-                ScanCommand::new(&policy, node, &namespace, &set_name, bins, t_recordset);
+            let mut command = ScanCommand::new(
+                &policy,
+                node,
+                &namespace,
+                &set_name,
+                bins,
+                t_recordset,
+                partitions,
+            );
             command.execute().unwrap();
         });
 
@@ -723,13 +733,17 @@ impl Client {
         let nodes = self.cluster.nodes();
         let recordset = Arc::new(Recordset::new(policy.record_queue_size, nodes.len()));
         for node in nodes {
+            let partitions = self
+                .cluster
+                .node_partitions(node.as_ref(), &statement.namespace);
             let node = node.clone();
             let t_recordset = recordset.clone();
             let policy = policy.to_owned();
             let statement = statement.clone();
 
             self.thread_pool.spawn(move || {
-                let mut command = QueryCommand::new(&policy, node, statement, t_recordset);
+                let mut command =
+                    QueryCommand::new(&policy, node, statement, t_recordset, partitions);
                 command.execute().unwrap();
             });
         }
@@ -751,9 +765,12 @@ impl Client {
         let t_recordset = recordset.clone();
         let policy = policy.to_owned();
         let statement = Arc::new(statement);
+        let partitions = self
+            .cluster
+            .node_partitions(node.as_ref(), &statement.namespace);
 
         self.thread_pool.spawn(move || {
-            let mut command = QueryCommand::new(&policy, node, statement, t_recordset);
+            let mut command = QueryCommand::new(&policy, node, statement, t_recordset, partitions);
             command.execute().unwrap();
         });
 
