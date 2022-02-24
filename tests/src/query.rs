@@ -205,3 +205,36 @@ async fn query_node() {
 
     client.close().await.unwrap();
 }
+
+// https://github.com/aerospike/aerospike-client-rust/issues/115
+#[test]
+fn query_large_i64() {
+    const SET: &str = "large_i64";
+    const BIN: &str = "val";
+
+    let client = common::client();
+    let value = Value::from(i64::max_value());
+    let key = Key::new(common::namespace(), SET, value.clone()).unwrap();
+    let wpolicy = WritePolicy::default();
+
+    let res = client.put(&wpolicy, &key, &[aerospike::Bin::new(BIN, value)]);
+
+    assert!(res.is_ok());
+
+    let mut qpolicy = aerospike::QueryPolicy::new();
+    let bin_name = aerospike::expressions::int_bin(BIN.into());
+    let bin_val = aerospike::expressions::int_val(i64::max_value());
+    qpolicy
+        .filter_expression
+        .replace(aerospike::expressions::eq(bin_name, bin_val));
+    let stmt = aerospike::Statement::new(common::namespace(), SET, aerospike::Bins::All);
+    let recordset = client.query(&qpolicy, stmt).unwrap();
+
+    for r in &*recordset {
+        assert!(r.is_ok());
+        let int = r.unwrap().bins.remove(BIN).unwrap();
+        assert_eq!(int, Value::Int(i64::max_value()));
+    }
+
+    let _ = client.truncate(&wpolicy, common::namespace(), SET, 0);
+}
