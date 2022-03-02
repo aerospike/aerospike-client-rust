@@ -153,7 +153,7 @@ pub struct ListPolicy {
     /// CdtListOrderType
     pub attributes: ListOrderType,
     /// CdtListWriteFlags
-    pub flags: ListWriteFlags,
+    pub flags: u8,
 }
 
 impl ListPolicy {
@@ -162,7 +162,7 @@ impl ListPolicy {
     pub const fn new(order: ListOrderType, write_flags: ListWriteFlags) -> Self {
         ListPolicy {
             attributes: order,
-            flags: write_flags,
+            flags: write_flags as u8,
         }
     }
 }
