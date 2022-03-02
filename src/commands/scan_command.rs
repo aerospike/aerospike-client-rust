@@ -29,6 +29,7 @@ pub struct ScanCommand<'a> {
     namespace: &'a str,
     set_name: &'a str,
     bins: Bins,
+    partitions: Vec<u16>,
 }
 
 impl<'a> ScanCommand<'a> {
@@ -39,6 +40,7 @@ impl<'a> ScanCommand<'a> {
         set_name: &'a str,
         bins: Bins,
         recordset: Arc<Recordset>,
+        partitions: Vec<u16>,
     ) -> Self {
         ScanCommand {
             stream_command: StreamCommand::new(node, recordset),
@@ -46,6 +48,7 @@ impl<'a> ScanCommand<'a> {
             namespace,
             set_name,
             bins,
+            partitions,
         }
     }
 
@@ -71,6 +74,7 @@ impl<'a> Command for ScanCommand<'a> {
             self.set_name,
             &self.bins,
             self.stream_command.recordset.task_id(),
+            &self.partitions,
         )
     }
 

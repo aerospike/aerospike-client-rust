@@ -15,7 +15,7 @@
 use std::str;
 use std::time::Duration;
 
-use byteorder::{ByteOrder, NetworkEndian};
+use byteorder::{ByteOrder, LittleEndian, NetworkEndian};
 
 use crate::batch::batch_executor::SharedSlice;
 use crate::commands::field_type::FieldType;
@@ -70,6 +70,9 @@ pub const INFO3_LAST: u8 = 1;
 
 // Commit to master only before declaring success.
 const INFO3_COMMIT_MASTER: u8 = 1 << 1;
+
+// Partition is complete response in scan.
+pub const _INFO3_PARTITION_DONE: u8 = 1 << 2;
 
 // Update only. Merge bins.
 const INFO3_UPDATE_ONLY: u8 = 1 << 3;
@@ -504,12 +507,21 @@ impl Buffer {
                 | Operation {
                     op: OperationType::HllRead,
                     ..
+                }
+                | Operation {
+                    op: OperationType::ExpRead,
+                    ..
                 } => read_attr |= INFO1_READ,
                 _ => write_attr |= INFO2_WRITE,
             }
 
-            let each_op =
-                matches!(operation.data, OperationData::CdtMapOp(_) | OperationData::CdtBitOp(_));
+            let each_op = matches!(
+                operation.data,
+                OperationData::CdtMapOp(_)
+                    | OperationData::CdtBitOp(_)
+                    | OperationData::HLLOp(_)
+                    | OperationData::EXPOp(_)
+            );
 
             if policy.respond_per_each_op || each_op {
                 write_attr |= INFO2_RESPOND_ALL_OPS;
@@ -551,7 +563,6 @@ impl Buffer {
         for operation in operations {
             operation.write_to(self)?;
         }
-
         self.end()
     }
 
@@ -593,6 +604,7 @@ impl Buffer {
         set_name: &str,
         bins: &Bins,
         task_id: u64,
+        partitions: &Vec<u16>,
     ) -> Result<()> {
         self.begin()?;
 
@@ -612,8 +624,12 @@ impl Buffer {
             field_count += 1;
         }
 
-        // Estimate scan options size.
-        self.data_offset += 2 + FIELD_HEADER_SIZE as usize;
+        // // Estimate scan options size.
+        // self.data_offset += 2 + FIELD_HEADER_SIZE as usize;
+        // field_count += 1;
+
+        // Estimate pid size
+        self.data_offset += partitions.len() * 2 + FIELD_HEADER_SIZE as usize;
         field_count += 1;
 
         // Estimate scan timeout size.
@@ -657,21 +673,26 @@ impl Buffer {
             self.write_field_string(set_name, FieldType::Table)?;
         }
 
+        self.write_field_header(partitions.len() * 2, FieldType::PIDArray)?;
+        for pid in partitions {
+            self.write_u16_little_endian(*pid)?;
+        }
+
         if let Some(filter) = policy.filter_expression() {
             self.write_filter_expression(filter, filter_size)?;
         }
 
-        self.write_field_header(2, FieldType::ScanOptions)?;
+        // self.write_field_header(2, FieldType::ScanOptions)?;
 
-        let mut priority: u8 = policy.base_policy.priority.clone() as u8;
-        priority <<= 4;
+        // let mut priority: u8 = policy.base_policy.priority.clone() as u8;
+        // priority <<= 4;
 
-        if policy.fail_on_cluster_change {
-            priority |= 0x08;
-        }
+        // if policy.fail_on_cluster_change {
+        //     priority |= 0x08;
+        // }
 
-        self.write_u8(priority)?;
-        self.write_u8(policy.scan_percent)?;
+        // self.write_u8(priority)?;
+        // self.write_u8(policy.scan_percent)?;
 
         // Write scan timeout
         self.write_field_header(4, FieldType::ScanTimeout)?;
@@ -696,6 +717,7 @@ impl Buffer {
         statement: &Statement,
         write: bool,
         task_id: u64,
+        partitions: &Vec<u16>,
     ) -> Result<()> {
         let filter = match statement.filters {
             Some(ref filters) => Some(&filters[0]),
@@ -754,7 +776,10 @@ impl Buffer {
         } else {
             // Calling query with no filters is more efficiently handled by a primary index scan.
             // Estimate scan options size.
-            self.data_offset += 2 + FIELD_HEADER_SIZE as usize;
+            // self.data_offset += 2 + FIELD_HEADER_SIZE as usize;
+            // field_count += 1;
+            // Estimate pid size
+            self.data_offset += partitions.len() * 2 + FIELD_HEADER_SIZE as usize;
             field_count += 1;
         }
         let filter_exp_size = self.estimate_filter_size(policy.filter_expression())?;
@@ -848,11 +873,15 @@ impl Buffer {
                 }
             }
         } else {
-            // Calling query with no filters is more efficiently handled by a primary index scan.
-            self.write_field_header(2, FieldType::ScanOptions)?;
-            let priority: u8 = (policy.base_policy.priority.clone() as u8) << 4;
-            self.write_u8(priority)?;
-            self.write_u8(100)?;
+            // // Calling query with no filters is more efficiently handled by a primary index scan.
+            // self.write_field_header(2, FieldType::ScanOptions)?;
+            // let priority: u8 = (policy.base_policy.priority.clone() as u8) << 4;
+            // self.write_u8(priority)?;
+            // self.write_u8(100)?;
+            self.write_field_header(partitions.len() * 2, FieldType::PIDArray)?;
+            for pid in partitions {
+                self.write_u16_little_endian(*pid)?;
+            }
         }
 
         if let Some(filter_exp) = policy.filter_expression() {
@@ -1338,6 +1367,15 @@ impl Buffer {
 
     pub fn write_u16(&mut self, val: u16) -> Result<usize> {
         NetworkEndian::write_u16(
+            &mut self.data_buffer[self.data_offset..self.data_offset + 2],
+            val,
+        );
+        self.data_offset += 2;
+        Ok(2)
+    }
+
+    pub fn write_u16_little_endian(&mut self, val: u16) -> Result<usize> {
+        LittleEndian::write_u16(
             &mut self.data_buffer[self.data_offset..self.data_offset + 2],
             val,
         );
