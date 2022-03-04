@@ -35,7 +35,7 @@ impl BatchExecutor {
         BatchExecutor { cluster }
     }
 
-    pub async fn execute_batch_read<'a>(
+    pub async fn execute_batch_read(
         &self,
         policy: &BatchPolicy,
         batch_reads: Vec<BatchRead>,
