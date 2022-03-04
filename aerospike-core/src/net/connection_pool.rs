@@ -13,7 +13,6 @@
 // License for the specific language governing permissions and limitations under
 // the License.
 
-use std::collections::VecDeque;
 use std::ops::{Deref, DerefMut, Drop};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
@@ -23,6 +22,8 @@ use crate::net::{Connection, Host};
 use crate::policy::ClientPolicy;
 use futures::executor::block_on;
 use futures::lock::Mutex;
+use std::collections::VecDeque;
+use std::time::Duration;
 
 #[derive(Debug)]
 struct IdleConnection(Connection);
@@ -66,17 +67,39 @@ impl Queue {
             if let Some(IdleConnection(mut conn)) = internals.connections.pop_front() {
                 if conn.is_idle() {
                     internals.num_conns -= 1;
-                    conn.close();
+                    conn.close().await;
                     continue;
                 }
                 connection = conn;
                 break;
             }
+
             if internals.num_conns >= self.0.capacity {
                 bail!(ErrorKind::NoMoreConnections);
             }
-            let conn = Connection::new(&self.0.host.address(), &self.0.policy).await?;
+
             internals.num_conns += 1;
+
+            // Free the lock to prevent deadlocking
+            drop(internals);
+
+            let conn = aerospike_rt::timeout(
+                Duration::from_secs(5),
+                Connection::new(&self.0.host.address(), &self.0.policy),
+            )
+            .await;
+
+            if conn.is_err() {
+                let mut internals = self.0.internals.lock().await;
+                internals.num_conns -= 1;
+                drop(internals);
+                bail!(ErrorKind::Connection(
+                    "Could not open network connection".to_string()
+                ));
+            }
+
+            let conn = conn.unwrap()?;
+
             connection = conn;
             break;
         }
@@ -92,7 +115,7 @@ impl Queue {
         if internals.num_conns < self.0.capacity {
             internals.connections.push_back(IdleConnection(conn));
         } else {
-            conn.close();
+            conn.close().await;
             internals.num_conns -= 1;
         }
     }
@@ -102,13 +125,13 @@ impl Queue {
             let mut internals = self.0.internals.lock().await;
             internals.num_conns -= 1;
         }
-        conn.close();
+        conn.close().await;
     }
 
     pub async fn clear(&mut self) {
         let mut internals = self.0.internals.lock().await;
         for mut conn in internals.connections.drain(..) {
-            conn.0.close();
+            conn.0.close().await;
         }
         internals.num_conns = 0;
     }

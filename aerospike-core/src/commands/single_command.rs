@@ -13,7 +13,6 @@
 // limitations under the License.
 
 use std::sync::Arc;
-use std::time::Instant;
 
 use crate::cluster::partition::Partition;
 use crate::cluster::{Cluster, Node};
@@ -23,6 +22,7 @@ use crate::net::Connection;
 use crate::policy::Policy;
 use crate::Key;
 use aerospike_rt::sleep;
+use aerospike_rt::time::Instant;
 
 pub struct SingleCommand<'a> {
     cluster: Arc<Cluster>,
@@ -76,20 +76,13 @@ impl<'a> SingleCommand<'a> {
         loop {
             iterations += 1;
 
-            // too many retries
-            if let Some(max_retries) = policy.max_retries() {
-                if iterations > max_retries + 1 {
-                    bail!(ErrorKind::Connection(format!(
-                        "Timeout after {} tries",
-                        iterations
-                    )));
-                }
-            }
-
             // Sleep before trying again, after the first iteration
             if iterations > 1 {
                 if let Some(sleep_between_retries) = policy.sleep_between_retries() {
                     sleep(sleep_between_retries).await;
+                } else {
+                    // yield to free space for the runtime to execute other futures between runs because the loop would block the thread
+                    aerospike_rt::task::yield_now().await;
                 }
             }
 
