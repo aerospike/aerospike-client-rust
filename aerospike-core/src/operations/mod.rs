@@ -31,7 +31,6 @@ pub use self::scalar::*;
 
 use crate::commands::buffer::Buffer;
 use crate::commands::ParticleType;
-use crate::errors::Result;
 use crate::operations::cdt_context::CdtContext;
 use crate::operations::exp::ExpOperation;
 use crate::Value;
@@ -95,7 +94,7 @@ pub struct Operation<'a> {
 
 impl<'a> Operation<'a> {
     #[doc(hidden)]
-    pub fn estimate_size(&self) -> Result<usize> {
+    pub fn estimate_size(&self) -> usize {
         let mut size: usize = 0;
         size += match self.bin {
             OperationBin::Name(bin) => bin.len(),
@@ -103,65 +102,65 @@ impl<'a> Operation<'a> {
         };
         size += match self.data {
             OperationData::None => 0,
-            OperationData::Value(value) => value.estimate_size()?,
-            OperationData::EXPOp(ref exp_op) => exp_op.estimate_size()?,
+            OperationData::Value(value) => value.estimate_size(),
+            OperationData::EXPOp(ref exp_op) => exp_op.estimate_size(),
             OperationData::CdtListOp(ref cdt_op)
             | OperationData::CdtMapOp(ref cdt_op)
             | OperationData::CdtBitOp(ref cdt_op)
-            | OperationData::HLLOp(ref cdt_op) => cdt_op.estimate_size(self.ctx)?,
+            | OperationData::HLLOp(ref cdt_op) => cdt_op.estimate_size(self.ctx),
         };
 
-        Ok(size)
+        size
     }
 
     #[doc(hidden)]
-    pub fn write_to(&self, buffer: &mut Buffer) -> Result<usize> {
+    pub fn write_to(&self, buffer: &mut Buffer) -> usize {
         let mut size: usize = 0;
 
         // remove the header size from the estimate
-        let op_size = self.estimate_size()?;
+        let op_size = self.estimate_size();
 
-        size += buffer.write_u32(op_size as u32 + 4)?;
-        size += buffer.write_u8(self.op as u8)?;
+        size += buffer.write_u32(op_size as u32 + 4);
+        size += buffer.write_u8(self.op as u8);
 
         match self.data {
             OperationData::None => {
-                size += self.write_op_header_to(buffer, ParticleType::NULL as u8)?;
+                size += self.write_op_header_to(buffer, ParticleType::NULL as u8);
             }
             OperationData::Value(value) => {
-                size += self.write_op_header_to(buffer, value.particle_type() as u8)?;
-                size += value.write_to(buffer)?;
+                size += self.write_op_header_to(buffer, value.particle_type() as u8);
+                size += value.write_to(buffer);
             }
             OperationData::CdtListOp(ref cdt_op)
             | OperationData::CdtMapOp(ref cdt_op)
             | OperationData::CdtBitOp(ref cdt_op)
             | OperationData::HLLOp(ref cdt_op) => {
-                size += self.write_op_header_to(buffer, cdt_op.particle_type() as u8)?;
-                size += cdt_op.write_to(buffer, self.ctx)?;
+                size += self.write_op_header_to(buffer, cdt_op.particle_type() as u8);
+                size += cdt_op.write_to(buffer, self.ctx);
             }
             OperationData::EXPOp(ref exp) => {
-                size += self.write_op_header_to(buffer, ParticleType::BLOB as u8)?;
-                size += exp.write_to(buffer)?;
+                size += self.write_op_header_to(buffer, ParticleType::BLOB as u8);
+                size += exp.write_to(buffer);
             }
         };
 
-        Ok(size)
+        size
     }
 
     #[doc(hidden)]
-    fn write_op_header_to(&self, buffer: &mut Buffer, particle_type: u8) -> Result<usize> {
-        let mut size = buffer.write_u8(particle_type as u8)?;
-        size += buffer.write_u8(0)?;
+    fn write_op_header_to(&self, buffer: &mut Buffer, particle_type: u8) -> usize {
+        let mut size = buffer.write_u8(particle_type as u8);
+        size += buffer.write_u8(0);
         match self.bin {
             OperationBin::Name(bin) => {
-                size += buffer.write_u8(bin.len() as u8)?;
-                size += buffer.write_str(bin)?;
+                size += buffer.write_u8(bin.len() as u8);
+                size += buffer.write_str(bin);
             }
             OperationBin::None | OperationBin::All => {
-                size += buffer.write_u8(0)?;
+                size += buffer.write_u8(0);
             }
         }
-        Ok(size)
+        size
     }
 
     /// Set the context of the operation. Required for nested structures

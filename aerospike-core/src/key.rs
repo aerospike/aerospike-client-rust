@@ -71,7 +71,7 @@ impl Key {
             hash.input(&[user_key.particle_type() as u8]);
             user_key.write_key_bytes(&mut hash)?;
         } else {
-            unreachable!()
+            unreachable!();
         }
         self.digest = hash.result().into();
 

@@ -17,7 +17,6 @@ use std::collections::HashMap;
 
 use crate::commands::buffer::Buffer;
 use crate::commands::ParticleType;
-use crate::errors::Result;
 use crate::operations::cdt_context::CdtContext;
 use crate::Value;
 
@@ -32,10 +31,7 @@ pub enum CdtArgument<'a> {
 }
 
 pub type OperationEncoder = Box<
-    dyn Fn(&mut Option<&mut Buffer>, &CdtOperation, &[CdtContext]) -> Result<usize>
-        + Send
-        + Sync
-        + 'static,
+    dyn Fn(&mut Option<&mut Buffer>, &CdtOperation, &[CdtContext]) -> usize + Send + Sync + 'static,
 >;
 
 #[doc(hidden)]
@@ -50,13 +46,13 @@ impl<'a> CdtOperation<'a> {
         ParticleType::BLOB
     }
 
-    pub fn estimate_size(&self, ctx: &[CdtContext]) -> Result<usize> {
-        let size: usize = (self.encoder)(&mut None, self, ctx)?;
-        Ok(size)
+    pub fn estimate_size(&self, ctx: &[CdtContext]) -> usize {
+        let size: usize = (self.encoder)(&mut None, self, ctx);
+        size
     }
 
-    pub fn write_to(&self, buffer: &mut Buffer, ctx: &[CdtContext]) -> Result<usize> {
-        let size: usize = (self.encoder)(&mut Some(buffer), self, ctx)?;
-        Ok(size)
+    pub fn write_to(&self, buffer: &mut Buffer, ctx: &[CdtContext]) -> usize {
+        let size: usize = (self.encoder)(&mut Some(buffer), self, ctx);
+        size
     }
 }

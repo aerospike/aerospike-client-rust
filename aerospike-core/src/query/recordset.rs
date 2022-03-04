@@ -55,7 +55,7 @@ impl Recordset {
 
     /// Close the query.
     pub fn close(&self) {
-        self.active.store(false, Ordering::Relaxed)
+        self.active.store(false, Ordering::Relaxed);
     }
 
     /// Check whether the query is still active.
@@ -83,7 +83,7 @@ impl Recordset {
     #[doc(hidden)]
     pub fn signal_end(&self) {
         if self.instances.fetch_sub(1, Ordering::Relaxed) == 1 {
-            self.close()
+            self.close();
         };
     }
 }

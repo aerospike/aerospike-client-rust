@@ -17,7 +17,6 @@
 //! This functions allow users to run `FilterExpressions` as Operate commands.
 
 use crate::commands::buffer::Buffer;
-use crate::errors::Result;
 use crate::expressions::FilterExpression;
 use crate::msgpack::encoder::{pack_array_begin, pack_integer};
 use crate::operations::{Operation, OperationBin, OperationData, OperationType};
@@ -46,7 +45,7 @@ pub enum ExpWriteFlags {
 
 #[doc(hidden)]
 pub type ExpressionEncoder =
-    Box<dyn Fn(&mut Option<&mut Buffer>, &ExpOperation) -> Result<usize> + Send + Sync + 'static>;
+    Box<dyn Fn(&mut Option<&mut Buffer>, &ExpOperation) -> usize + Send + Sync + 'static>;
 
 #[doc(hidden)]
 pub struct ExpOperation<'a> {
@@ -61,14 +60,14 @@ impl<'a> ExpOperation<'a> {
         ParticleType::BLOB
     }
     #[doc(hidden)]
-    pub fn estimate_size(&self) -> Result<usize> {
-        let size: usize = (self.encoder)(&mut None, self)?;
-        Ok(size)
+    pub fn estimate_size(&self) -> usize {
+        let size: usize = (self.encoder)(&mut None, self);
+        size
     }
     #[doc(hidden)]
-    pub fn write_to(&self, buffer: &mut Buffer) -> Result<usize> {
-        let size: usize = (self.encoder)(&mut Some(buffer), self)?;
-        Ok(size)
+    pub fn write_to(&self, buffer: &mut Buffer) -> usize {
+        let size: usize = (self.encoder)(&mut Some(buffer), self);
+        size
     }
 }
 
@@ -118,18 +117,18 @@ pub fn read_exp<'a>(
     }
 }
 
-fn pack_write_exp(buf: &mut Option<&mut Buffer>, exp_op: &ExpOperation) -> Result<usize> {
+fn pack_write_exp(buf: &mut Option<&mut Buffer>, exp_op: &ExpOperation) -> usize {
     let mut size = 0;
-    size += pack_array_begin(buf, 2)?;
-    size += exp_op.exp.pack(buf)?;
-    size += pack_integer(buf, exp_op.policy)?;
-    Ok(size)
+    size += pack_array_begin(buf, 2);
+    size += exp_op.exp.pack(buf);
+    size += pack_integer(buf, exp_op.policy);
+    size
 }
 
-fn pack_read_exp(buf: &mut Option<&mut Buffer>, exp_op: &ExpOperation) -> Result<usize> {
+fn pack_read_exp(buf: &mut Option<&mut Buffer>, exp_op: &ExpOperation) -> usize {
     let mut size = 0;
-    size += pack_array_begin(buf, 2)?;
-    size += exp_op.exp.pack(buf)?;
-    size += pack_integer(buf, exp_op.policy)?;
-    Ok(size)
+    size += pack_array_begin(buf, 2);
+    size += exp_op.exp.pack(buf);
+    size += pack_integer(buf, exp_op.policy);
+    size
 }

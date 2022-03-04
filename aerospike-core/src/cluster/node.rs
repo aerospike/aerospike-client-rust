@@ -120,7 +120,6 @@ impl Node {
         self.reference_count.store(0, Ordering::Relaxed);
         self.responded.store(false, Ordering::Relaxed);
         self.refresh_count.fetch_add(1, Ordering::Relaxed);
-
         let commands = vec![
             "node",
             "cluster-name",
@@ -140,7 +139,6 @@ impl Node {
         self.update_partitions(&info_map)
             .chain_err(|| "Failed to update partitions")?;
         self.reset_failures();
-
         Ok(friends)
     }
 
@@ -262,7 +260,7 @@ impl Node {
     }
 
     fn reset_failures(&self) {
-        self.failures.store(0, Ordering::Relaxed)
+        self.failures.store(0, Ordering::Relaxed);
     }
 
     // Adds a failure to the failure count

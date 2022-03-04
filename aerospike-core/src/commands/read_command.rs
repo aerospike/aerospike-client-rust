@@ -60,16 +60,16 @@ impl<'a> ReadCommand<'a> {
         // There can be fields in the response (setname etc). For now, ignore them. Expose them to
         // the API if needed in the future.
         for _ in 0..field_count {
-            let field_size = conn.buffer.read_u32(None)? as usize;
-            conn.buffer.skip(4 + field_size)?;
+            let field_size = conn.buffer.read_u32(None) as usize;
+            conn.buffer.skip(4 + field_size);
         }
 
         for _ in 0..op_count {
-            let op_size = conn.buffer.read_u32(None)? as usize;
-            conn.buffer.skip(1)?;
-            let particle_type = conn.buffer.read_u8(None)?;
-            conn.buffer.skip(1)?;
-            let name_size = conn.buffer.read_u8(None)? as usize;
+            let op_size = conn.buffer.read_u32(None) as usize;
+            conn.buffer.skip(1);
+            let particle_type = conn.buffer.read_u8(None);
+            conn.buffer.skip(1);
+            let name_size = conn.buffer.read_u8(None) as usize;
             let name: String = conn.buffer.read_str(name_size)?;
 
             let particle_bytes_size = op_size - (4 + name_size);
@@ -128,14 +128,14 @@ impl<'a> Command for ReadCommand<'a> {
             bail!(err);
         }
 
-        conn.buffer.reset_offset()?;
-        let sz = conn.buffer.read_u64(Some(0))?;
-        let header_length = conn.buffer.read_u8(Some(8))?;
-        let result_code = conn.buffer.read_u8(Some(13))?;
-        let generation = conn.buffer.read_u32(Some(14))?;
-        let expiration = conn.buffer.read_u32(Some(18))?;
-        let field_count = conn.buffer.read_u16(Some(26))? as usize; // almost certainly 0
-        let op_count = conn.buffer.read_u16(Some(28))? as usize;
+        conn.buffer.reset_offset();
+        let sz = conn.buffer.read_u64(Some(0));
+        let header_length = conn.buffer.read_u8(Some(8));
+        let result_code = conn.buffer.read_u8(Some(13));
+        let generation = conn.buffer.read_u32(Some(14));
+        let expiration = conn.buffer.read_u32(Some(18));
+        let field_count = conn.buffer.read_u16(Some(26)) as usize; // almost certainly 0
+        let op_count = conn.buffer.read_u16(Some(28)) as usize;
         let receive_size = ((sz & 0xFFFF_FFFF_FFFF) - u64::from(header_length)) as usize;
 
         // Read remaining message bytes

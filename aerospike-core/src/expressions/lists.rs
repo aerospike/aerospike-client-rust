@@ -668,7 +668,7 @@ fn add_write(
 ) -> FilterExpression {
     let return_type: ExpType;
     if ctx.is_empty() {
-        return_type = ExpType::LIST
+        return_type = ExpType::LIST;
     } else if (ctx[0].id & CtxType::ListIndex as u8) == 0 {
         return_type = ExpType::MAP;
     } else {

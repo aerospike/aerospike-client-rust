@@ -18,10 +18,10 @@ pub mod node_validator;
 pub mod partition;
 pub mod partition_tokenizer;
 
+use aerospike_rt::time::{Duration, Instant};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicIsize, Ordering};
 use std::sync::Arc;
-use std::time::{Duration, Instant};
 use std::vec::Vec;
 
 pub use self::node::Node;
@@ -103,14 +103,11 @@ impl Cluster {
 
         loop {
             if rx.try_next().is_ok() {
-                unreachable!()
-            } else {
-                if let Err(err) = cluster.tend().await {
-                    log_error_chain!(err, "Error tending cluster");
-                }
-
-                aerospike_rt::sleep(tend_interval).await;
+                unreachable!();
+            } else if let Err(err) = cluster.tend().await {
+                log_error_chain!(err, "Error tending cluster");
             }
+            aerospike_rt::sleep(tend_interval).await;
         }
 
         // close all nodes
@@ -380,7 +377,7 @@ impl Cluster {
 
                 // Two node clusters require at least one successful refresh before removing.
                 2 if refresh_count == 1 && node.reference_count() == 0 && node.failures() > 0 => {
-                    remove_list.push(node)
+                    remove_list.push(node);
                 }
 
                 _ => {
@@ -456,7 +453,7 @@ impl Cluster {
 
         let mut nodes = self.nodes().await;
         nodes.extend(friend_list.iter().cloned());
-        self.set_nodes(nodes).await
+        self.set_nodes(nodes).await;
     }
 
     async fn remove_nodes(&self, nodes_to_remove: &[Arc<Node>]) {
@@ -473,7 +470,7 @@ impl Cluster {
             }
         }
 
-        self.set_nodes(node_array).await
+        self.set_nodes(node_array).await;
     }
 
     pub async fn is_connected(&self) -> bool {

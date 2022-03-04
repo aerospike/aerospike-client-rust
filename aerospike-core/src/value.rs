@@ -17,7 +17,6 @@ use std::collections::HashMap;
 use std::fmt;
 use std::hash::{Hash, Hasher};
 use std::result::Result as StdResult;
-use std::{f32, f64};
 
 use byteorder::{ByteOrder, NetworkEndian};
 
@@ -73,7 +72,7 @@ impl From<f64> for FloatValue {
     fn from(val: f64) -> FloatValue {
         let mut val = val;
         if val.is_nan() {
-            val = f64::NAN
+            val = f64::NAN;
         } // make all NaNs have the same representation
         FloatValue::F64(val.to_bits())
     }
@@ -83,7 +82,7 @@ impl<'a> From<&'a f64> for FloatValue {
     fn from(val: &f64) -> FloatValue {
         let mut val = *val;
         if val.is_nan() {
-            val = f64::NAN
+            val = f64::NAN;
         } // make all NaNs have the same representation
         FloatValue::F64(val.to_bits())
     }
@@ -111,7 +110,7 @@ impl From<f32> for FloatValue {
     fn from(val: f32) -> FloatValue {
         let mut val = val;
         if val.is_nan() {
-            val = f32::NAN
+            val = f32::NAN;
         } // make all NaNs have the same representation
         FloatValue::F32(val.to_bits())
     }
@@ -121,7 +120,7 @@ impl<'a> From<&'a f32> for FloatValue {
     fn from(val: &f32) -> FloatValue {
         let mut val = *val;
         if val.is_nan() {
-            val = f32::NAN
+            val = f32::NAN;
         } // make all NaNs have the same representation
         FloatValue::F32(val.to_bits())
     }
@@ -201,7 +200,7 @@ impl Hash for Value {
         match *self {
             Value::Nil => {
                 let v: Option<u8> = None;
-                v.hash(state)
+                v.hash(state);
             }
             Value::Bool(ref val) => val.hash(state),
             Value::Int(ref val) => val.hash(state),
@@ -263,29 +262,29 @@ impl Value {
     /// Calculate the size in bytes that the representation on wire for this value will require.
     /// For internal use only.
     #[doc(hidden)]
-    pub fn estimate_size(&self) -> Result<usize> {
+    pub fn estimate_size(&self) -> usize {
         match *self {
-            Value::Nil => Ok(0),
-            Value::Int(_) | Value::Bool(_) | Value::Float(_) => Ok(8),
+            Value::Nil => 0,
+            Value::Int(_) | Value::Bool(_) | Value::Float(_) => 8,
             Value::UInt(_) => panic!(
                 "Aerospike does not support u64 natively on server-side. Use casting to \
                  store and retrieve u64 values."
             ),
-            Value::String(ref s) => Ok(s.len()),
-            Value::Blob(ref b) => Ok(b.len()),
+            Value::String(ref s) => s.len(),
+            Value::Blob(ref b) => b.len(),
             Value::List(_) | Value::HashMap(_) => encoder::pack_value(&mut None, self),
             Value::OrderedMap(_) => panic!("The library never passes ordered maps to the server."),
-            Value::GeoJSON(ref s) => Ok(1 + 2 + s.len()), // flags + ncells + jsonstr
-            Value::HLL(ref h) => Ok(h.len()),
+            Value::GeoJSON(ref s) => 1 + 2 + s.len(), // flags + ncells + jsonstr
+            Value::HLL(ref h) => h.len(),
         }
     }
 
     /// Serialize the value into the given buffer.
     /// For internal use only.
     #[doc(hidden)]
-    pub fn write_to(&self, buf: &mut Buffer) -> Result<usize> {
+    pub fn write_to(&self, buf: &mut Buffer) -> usize {
         match *self {
-            Value::Nil => Ok(0),
+            Value::Nil => 0,
             Value::Int(ref val) => buf.write_i64(*val),
             Value::UInt(_) => panic!(
                 "Aerospike does not support u64 natively on server-side. Use casting to \
@@ -560,11 +559,11 @@ pub fn bytes_to_particle(ptype: u8, buf: &mut Buffer, len: usize) -> Result<Valu
     match ParticleType::from(ptype) {
         ParticleType::NULL => Ok(Value::Nil),
         ParticleType::INTEGER => {
-            let val = buf.read_i64(None)?;
+            let val = buf.read_i64(None);
             Ok(Value::Int(val))
         }
         ParticleType::FLOAT => {
-            let val = buf.read_f64(None)?;
+            let val = buf.read_f64(None);
             Ok(Value::Float(FloatValue::from(val)))
         }
         ParticleType::STRING => {
@@ -572,15 +571,15 @@ pub fn bytes_to_particle(ptype: u8, buf: &mut Buffer, len: usize) -> Result<Valu
             Ok(Value::String(val))
         }
         ParticleType::GEOJSON => {
-            buf.skip(1)?;
-            let ncells = buf.read_i16(None)? as usize;
+            buf.skip(1);
+            let ncells = buf.read_i16(None) as usize;
             let header_size: usize = ncells * 8;
 
-            buf.skip(header_size)?;
+            buf.skip(header_size);
             let val = buf.read_str(len - header_size - 3)?;
             Ok(Value::GeoJSON(val))
         }
-        ParticleType::BLOB => Ok(Value::Blob(buf.read_blob(len)?)),
+        ParticleType::BLOB => Ok(Value::Blob(buf.read_blob(len))),
         ParticleType::LIST => {
             let val = decoder::unpack_value_list(buf)?;
             Ok(val)
@@ -591,7 +590,7 @@ pub fn bytes_to_particle(ptype: u8, buf: &mut Buffer, len: usize) -> Result<Valu
         }
         ParticleType::DIGEST => Ok(Value::from("A DIGEST, NOT IMPLEMENTED YET!")),
         ParticleType::LDT => Ok(Value::from("A LDT, NOT IMPLEMENTED YET!")),
-        ParticleType::HLL => Ok(Value::HLL(buf.read_blob(len)?)),
+        ParticleType::HLL => Ok(Value::HLL(buf.read_blob(len))),
     }
 }
 

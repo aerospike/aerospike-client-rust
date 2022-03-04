@@ -90,13 +90,12 @@ impl<'a, 'b> Command for WriteCommand<'a> {
             return Err(err);
         }
 
-        conn.buffer.reset_offset()?;
-
-        let result_code = ResultCode::from(conn.buffer.read_u8(Some(13))?);
+        conn.buffer.reset_offset();
+        let result_code = ResultCode::from(conn.buffer.read_u8(Some(13)));
         if result_code != ResultCode::Ok {
             bail!(ErrorKind::ServerError(result_code));
         }
-
-        SingleCommand::empty_socket(conn).await
+        let res = SingleCommand::empty_socket(conn).await;
+        res
     }
 }

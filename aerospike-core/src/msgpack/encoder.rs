@@ -19,13 +19,12 @@ use std::{i16, i32, i64, i8};
 
 use crate::commands::buffer::Buffer;
 use crate::commands::ParticleType;
-use crate::errors::Result;
 use crate::operations::cdt::{CdtArgument, CdtOperation};
 use crate::operations::cdt_context::CdtContext;
 use crate::value::{FloatValue, Value};
 
 #[doc(hidden)]
-pub fn pack_value(buf: &mut Option<&mut Buffer>, val: &Value) -> Result<usize> {
+pub fn pack_value(buf: &mut Option<&mut Buffer>, val: &Value) -> usize {
     match *val {
         Value::Nil => pack_nil(buf),
         Value::Int(ref val) => pack_integer(buf, *val),
@@ -45,11 +44,11 @@ pub fn pack_value(buf: &mut Option<&mut Buffer>, val: &Value) -> Result<usize> {
 }
 
 #[doc(hidden)]
-pub fn pack_empty_args_array(buf: &mut Option<&mut Buffer>) -> Result<usize> {
+pub fn pack_empty_args_array(buf: &mut Option<&mut Buffer>) -> usize {
     let mut size = 0;
-    size += pack_array_begin(buf, 0)?;
+    size += pack_array_begin(buf, 0);
 
-    Ok(size)
+    size
 }
 
 #[doc(hidden)]
@@ -57,45 +56,45 @@ pub fn pack_cdt_op(
     buf: &mut Option<&mut Buffer>,
     cdt_op: &CdtOperation,
     ctx: &[CdtContext],
-) -> Result<usize> {
+) -> usize {
     let mut size: usize = 0;
     if ctx.is_empty() {
-        size += pack_raw_u16(buf, u16::from(cdt_op.op))?;
+        size += pack_raw_u16(buf, u16::from(cdt_op.op));
         if !cdt_op.args.is_empty() {
-            size += pack_array_begin(buf, cdt_op.args.len())?;
+            size += pack_array_begin(buf, cdt_op.args.len());
         }
     } else {
-        size += pack_array_begin(buf, 3)?;
-        size += pack_integer(buf, 0xff)?;
-        size += pack_array_begin(buf, ctx.len() * 2)?;
+        size += pack_array_begin(buf, 3);
+        size += pack_integer(buf, 0xff);
+        size += pack_array_begin(buf, ctx.len() * 2);
 
         for c in ctx {
             if c.id == 0 {
-                size += pack_integer(buf, i64::from(c.id))?;
+                size += pack_integer(buf, i64::from(c.id));
             } else {
-                size += pack_integer(buf, i64::from(c.id | c.flags))?;
+                size += pack_integer(buf, i64::from(c.id | c.flags));
             }
-            size += pack_value(buf, &c.value)?;
+            size += pack_value(buf, &c.value);
         }
 
-        size += pack_array_begin(buf, cdt_op.args.len() + 1)?;
-        size += pack_integer(buf, i64::from(cdt_op.op))?;
+        size += pack_array_begin(buf, cdt_op.args.len() + 1);
+        size += pack_integer(buf, i64::from(cdt_op.op));
     }
 
     if !cdt_op.args.is_empty() {
         for arg in &cdt_op.args {
             size += match *arg {
-                CdtArgument::Byte(byte) => pack_value(buf, &Value::from(byte))?,
-                CdtArgument::Int(int) => pack_value(buf, &Value::from(int))?,
-                CdtArgument::Value(value) => pack_value(buf, value)?,
-                CdtArgument::List(list) => pack_array(buf, list)?,
-                CdtArgument::Map(map) => pack_map(buf, map)?,
-                CdtArgument::Bool(bool_val) => pack_value(buf, &Value::from(bool_val))?,
+                CdtArgument::Byte(byte) => pack_value(buf, &Value::from(byte)),
+                CdtArgument::Int(int) => pack_value(buf, &Value::from(int)),
+                CdtArgument::Value(value) => pack_value(buf, value),
+                CdtArgument::List(list) => pack_array(buf, list),
+                CdtArgument::Map(map) => pack_map(buf, map),
+                CdtArgument::Bool(bool_val) => pack_value(buf, &Value::from(bool_val)),
             }
         }
     }
 
-    Ok(size)
+    size
 }
 
 #[doc(hidden)]
@@ -103,23 +102,23 @@ pub fn pack_hll_op(
     buf: &mut Option<&mut Buffer>,
     hll_op: &CdtOperation,
     _ctx: &[CdtContext],
-) -> Result<usize> {
+) -> usize {
     let mut size: usize = 0;
-    size += pack_array_begin(buf, hll_op.args.len() + 1)?;
-    size += pack_integer(buf, i64::from(hll_op.op))?;
+    size += pack_array_begin(buf, hll_op.args.len() + 1);
+    size += pack_integer(buf, i64::from(hll_op.op));
     if !hll_op.args.is_empty() {
         for arg in &hll_op.args {
             size += match *arg {
-                CdtArgument::Byte(byte) => pack_value(buf, &Value::from(byte))?,
-                CdtArgument::Int(int) => pack_value(buf, &Value::from(int))?,
-                CdtArgument::Value(value) => pack_value(buf, value)?,
-                CdtArgument::List(list) => pack_array(buf, list)?,
-                CdtArgument::Map(map) => pack_map(buf, map)?,
-                CdtArgument::Bool(bool_val) => pack_value(buf, &Value::from(bool_val))?,
+                CdtArgument::Byte(byte) => pack_value(buf, &Value::from(byte)),
+                CdtArgument::Int(int) => pack_value(buf, &Value::from(int)),
+                CdtArgument::Value(value) => pack_value(buf, value),
+                CdtArgument::List(list) => pack_array(buf, list),
+                CdtArgument::Map(map) => pack_map(buf, map),
+                CdtArgument::Bool(bool_val) => pack_value(buf, &Value::from(bool_val)),
             }
         }
     }
-    Ok(size)
+    size
 }
 
 #[doc(hidden)]
@@ -127,64 +126,64 @@ pub fn pack_cdt_bit_op(
     buf: &mut Option<&mut Buffer>,
     cdt_op: &CdtOperation,
     ctx: &[CdtContext],
-) -> Result<usize> {
+) -> usize {
     let mut size: usize = 0;
     if !ctx.is_empty() {
-        size += pack_array_begin(buf, 3)?;
-        size += pack_integer(buf, 0xff)?;
-        size += pack_array_begin(buf, ctx.len() * 2)?;
+        size += pack_array_begin(buf, 3);
+        size += pack_integer(buf, 0xff);
+        size += pack_array_begin(buf, ctx.len() * 2);
 
         for c in ctx {
             if c.id == 0 {
-                size += pack_integer(buf, i64::from(c.id))?;
+                size += pack_integer(buf, i64::from(c.id));
             } else {
-                size += pack_integer(buf, i64::from(c.id | c.flags))?;
+                size += pack_integer(buf, i64::from(c.id | c.flags));
             }
-            size += pack_value(buf, &c.value)?;
+            size += pack_value(buf, &c.value);
         }
     }
 
-    size += pack_array_begin(buf, cdt_op.args.len() + 1)?;
-    size += pack_integer(buf, i64::from(cdt_op.op))?;
+    size += pack_array_begin(buf, cdt_op.args.len() + 1);
+    size += pack_integer(buf, i64::from(cdt_op.op));
 
     if !cdt_op.args.is_empty() {
         for arg in &cdt_op.args {
             size += match *arg {
-                CdtArgument::Byte(byte) => pack_value(buf, &Value::from(byte))?,
-                CdtArgument::Int(int) => pack_value(buf, &Value::from(int))?,
-                CdtArgument::Value(value) => pack_value(buf, value)?,
-                CdtArgument::List(list) => pack_array(buf, list)?,
-                CdtArgument::Map(map) => pack_map(buf, map)?,
-                CdtArgument::Bool(bool_val) => pack_value(buf, &Value::from(bool_val))?,
+                CdtArgument::Byte(byte) => pack_value(buf, &Value::from(byte)),
+                CdtArgument::Int(int) => pack_value(buf, &Value::from(int)),
+                CdtArgument::Value(value) => pack_value(buf, value),
+                CdtArgument::List(list) => pack_array(buf, list),
+                CdtArgument::Map(map) => pack_map(buf, map),
+                CdtArgument::Bool(bool_val) => pack_value(buf, &Value::from(bool_val)),
             }
         }
     }
-    Ok(size)
+    size
 }
 
 #[doc(hidden)]
-pub fn pack_array(buf: &mut Option<&mut Buffer>, values: &[Value]) -> Result<usize> {
+pub fn pack_array(buf: &mut Option<&mut Buffer>, values: &[Value]) -> usize {
     let mut size = 0;
 
-    size += pack_array_begin(buf, values.len())?;
+    size += pack_array_begin(buf, values.len());
     for val in values {
-        size += pack_value(buf, val)?;
+        size += pack_value(buf, val);
     }
 
-    Ok(size)
+    size
 }
 
 #[doc(hidden)]
-pub fn pack_map(buf: &mut Option<&mut Buffer>, map: &HashMap<Value, Value>) -> Result<usize> {
+pub fn pack_map(buf: &mut Option<&mut Buffer>, map: &HashMap<Value, Value>) -> usize {
     let mut size = 0;
 
-    size += pack_map_begin(buf, map.len())?;
+    size += pack_map_begin(buf, map.len());
     for (key, val) in map.iter() {
-        size += pack_value(buf, key)?;
-        size += pack_value(buf, val)?;
+        size += pack_value(buf, key);
+        size += pack_value(buf, val);
     }
 
-    Ok(size)
+    size
 }
 
 /// ///////////////////////////////////////////////////////////////////
@@ -206,52 +205,52 @@ const MSGPACK_MARKER_NI64: u8 = 0xd3;
 // This method is not compatible with MsgPack specs and is only used by aerospike client<->server
 // for wire transfer only
 #[doc(hidden)]
-pub fn pack_raw_u16(buf: &mut Option<&mut Buffer>, value: u16) -> Result<usize> {
+pub fn pack_raw_u16(buf: &mut Option<&mut Buffer>, value: u16) -> usize {
     if let Some(ref mut buf) = *buf {
-        buf.write_u16(value)?;
+        buf.write_u16(value);
     }
-    Ok(2)
+    2
 }
 
 #[doc(hidden)]
-pub fn pack_half_byte(buf: &mut Option<&mut Buffer>, value: u8) -> Result<usize> {
+pub fn pack_half_byte(buf: &mut Option<&mut Buffer>, value: u8) -> usize {
     if let Some(ref mut buf) = *buf {
-        buf.write_u8(value)?;
+        buf.write_u8(value);
     }
-    Ok(1)
+    1
 }
 
 #[doc(hidden)]
-pub fn pack_byte(buf: &mut Option<&mut Buffer>, marker: u8, value: u8) -> Result<usize> {
+pub fn pack_byte(buf: &mut Option<&mut Buffer>, marker: u8, value: u8) -> usize {
     if let Some(ref mut buf) = *buf {
-        buf.write_u8(marker)?;
-        buf.write_u8(value)?;
+        buf.write_u8(marker);
+        buf.write_u8(value);
     }
-    Ok(2)
+    2
 }
 
 #[doc(hidden)]
-pub fn pack_nil(buf: &mut Option<&mut Buffer>) -> Result<usize> {
+pub fn pack_nil(buf: &mut Option<&mut Buffer>) -> usize {
     if let Some(ref mut buf) = *buf {
-        buf.write_u8(MSGPACK_MARKER_NIL)?;
+        buf.write_u8(MSGPACK_MARKER_NIL);
     }
-    Ok(1)
+    1
 }
 
 #[doc(hidden)]
-pub fn pack_bool(buf: &mut Option<&mut Buffer>, value: bool) -> Result<usize> {
+pub fn pack_bool(buf: &mut Option<&mut Buffer>, value: bool) -> usize {
     if let Some(ref mut buf) = *buf {
         if value {
-            buf.write_u8(MSGPACK_MARKER_BOOL_TRUE)?;
+            buf.write_u8(MSGPACK_MARKER_BOOL_TRUE);
         } else {
-            buf.write_u8(MSGPACK_MARKER_BOOL_FALSE)?;
+            buf.write_u8(MSGPACK_MARKER_BOOL_FALSE);
         }
     }
-    Ok(1)
+    1
 }
 
 #[doc(hidden)]
-pub fn pack_map_begin(buf: &mut Option<&mut Buffer>, length: usize) -> Result<usize> {
+pub fn pack_map_begin(buf: &mut Option<&mut Buffer>, length: usize) -> usize {
     match length {
         val if val < 16 => pack_half_byte(buf, 0x80 | (length as u8)),
         val if (16..(1 << 16)).contains(&val) => pack_i16(buf, 0xde, length as i16),
@@ -260,7 +259,7 @@ pub fn pack_map_begin(buf: &mut Option<&mut Buffer>, length: usize) -> Result<us
 }
 
 #[doc(hidden)]
-pub fn pack_array_begin(buf: &mut Option<&mut Buffer>, length: usize) -> Result<usize> {
+pub fn pack_array_begin(buf: &mut Option<&mut Buffer>, length: usize) -> usize {
     match length {
         val if val < 16 => pack_half_byte(buf, 0x90 | (length as u8)),
         val if (16..(1 << 16)).contains(&val) => pack_i16(buf, 0xdc, length as i16),
@@ -269,7 +268,7 @@ pub fn pack_array_begin(buf: &mut Option<&mut Buffer>, length: usize) -> Result<
 }
 
 #[doc(hidden)]
-pub fn pack_byte_array_begin(buf: &mut Option<&mut Buffer>, length: usize) -> Result<usize> {
+pub fn pack_byte_array_begin(buf: &mut Option<&mut Buffer>, length: usize) -> usize {
     match length {
         val if val < 32 => pack_half_byte(buf, 0xa0 | (length as u8)),
         val if (32..(1 << 16)).contains(&val) => pack_i16(buf, 0xda, length as i16),
@@ -278,58 +277,58 @@ pub fn pack_byte_array_begin(buf: &mut Option<&mut Buffer>, length: usize) -> Re
 }
 
 #[doc(hidden)]
-pub fn pack_blob(buf: &mut Option<&mut Buffer>, value: &[u8]) -> Result<usize> {
+pub fn pack_blob(buf: &mut Option<&mut Buffer>, value: &[u8]) -> usize {
     let mut size = value.len() + 1;
 
-    size += pack_byte_array_begin(buf, size)?;
+    size += pack_byte_array_begin(buf, size);
     if let Some(ref mut buf) = *buf {
-        buf.write_u8(ParticleType::BLOB as u8)?;
-        buf.write_bytes(value)?;
+        buf.write_u8(ParticleType::BLOB as u8);
+        buf.write_bytes(value);
     }
 
-    Ok(size)
+    size
 }
 
 #[doc(hidden)]
-pub fn pack_string(buf: &mut Option<&mut Buffer>, value: &str) -> Result<usize> {
+pub fn pack_string(buf: &mut Option<&mut Buffer>, value: &str) -> usize {
     let mut size = value.len() + 1;
 
-    size += pack_byte_array_begin(buf, size)?;
+    size += pack_byte_array_begin(buf, size);
     if let Some(ref mut buf) = *buf {
-        buf.write_u8(ParticleType::STRING as u8)?;
-        buf.write_str(value)?;
+        buf.write_u8(ParticleType::STRING as u8);
+        buf.write_str(value);
     }
 
-    Ok(size)
+    size
 }
 
 #[doc(hidden)]
-pub fn pack_raw_string(buf: &mut Option<&mut Buffer>, value: &str) -> Result<usize> {
+pub fn pack_raw_string(buf: &mut Option<&mut Buffer>, value: &str) -> usize {
     let mut size = value.len();
 
-    size += pack_byte_array_begin(buf, size)?;
+    size += pack_byte_array_begin(buf, size);
     if let Some(ref mut buf) = *buf {
-        buf.write_str(value)?;
+        buf.write_str(value);
     }
 
-    Ok(size)
+    size
 }
 
 #[doc(hidden)]
-fn pack_geo_json(buf: &mut Option<&mut Buffer>, value: &str) -> Result<usize> {
+fn pack_geo_json(buf: &mut Option<&mut Buffer>, value: &str) -> usize {
     let mut size = value.len() + 1;
 
-    size += pack_byte_array_begin(buf, size)?;
+    size += pack_byte_array_begin(buf, size);
     if let Some(ref mut buf) = *buf {
-        buf.write_u8(ParticleType::GEOJSON as u8)?;
-        buf.write_str(value)?;
+        buf.write_u8(ParticleType::GEOJSON as u8);
+        buf.write_str(value);
     }
 
-    Ok(size)
+    size
 }
 
 #[doc(hidden)]
-pub fn pack_integer(buf: &mut Option<&mut Buffer>, val: i64) -> Result<usize> {
+pub fn pack_integer(buf: &mut Option<&mut Buffer>, val: i64) -> usize {
     match val {
         val if (0..(1 << 7)).contains(&val) => pack_half_byte(buf, val as u8),
         val if val >= 1 << 7 && val < i64::from(i8::max_value()) => {
@@ -362,59 +361,59 @@ pub fn pack_integer(buf: &mut Option<&mut Buffer>, val: i64) -> Result<usize> {
 }
 
 #[doc(hidden)]
-pub fn pack_i16(buf: &mut Option<&mut Buffer>, marker: u8, value: i16) -> Result<usize> {
+pub fn pack_i16(buf: &mut Option<&mut Buffer>, marker: u8, value: i16) -> usize {
     if let Some(ref mut buf) = *buf {
-        buf.write_u8(marker)?;
-        buf.write_i16(value)?;
+        buf.write_u8(marker);
+        buf.write_i16(value);
     }
-    Ok(3)
+    3
 }
 
 #[doc(hidden)]
-pub fn pack_i32(buf: &mut Option<&mut Buffer>, marker: u8, value: i32) -> Result<usize> {
+pub fn pack_i32(buf: &mut Option<&mut Buffer>, marker: u8, value: i32) -> usize {
     if let Some(ref mut buf) = *buf {
-        buf.write_u8(marker)?;
-        buf.write_i32(value)?;
+        buf.write_u8(marker);
+        buf.write_i32(value);
     }
-    Ok(5)
+    5
 }
 
 #[doc(hidden)]
-pub fn pack_i64(buf: &mut Option<&mut Buffer>, marker: u8, value: i64) -> Result<usize> {
+pub fn pack_i64(buf: &mut Option<&mut Buffer>, marker: u8, value: i64) -> usize {
     if let Some(ref mut buf) = *buf {
-        buf.write_u8(marker)?;
-        buf.write_i64(value)?;
+        buf.write_u8(marker);
+        buf.write_i64(value);
     }
-    Ok(9)
+    9
 }
 
 #[doc(hidden)]
-pub fn pack_u64(buf: &mut Option<&mut Buffer>, value: u64) -> Result<usize> {
+pub fn pack_u64(buf: &mut Option<&mut Buffer>, value: u64) -> usize {
     if value <= i64::max_value() as u64 {
         return pack_integer(buf, value as i64);
     }
 
     if let Some(ref mut buf) = *buf {
-        buf.write_u8(0xcf)?;
-        buf.write_u64(value)?;
+        buf.write_u8(0xcf);
+        buf.write_u64(value);
     }
-    Ok(9)
+    9
 }
 
 #[doc(hidden)]
-pub fn pack_f32(buf: &mut Option<&mut Buffer>, value: f32) -> Result<usize> {
+pub fn pack_f32(buf: &mut Option<&mut Buffer>, value: f32) -> usize {
     if let Some(ref mut buf) = *buf {
-        buf.write_u8(0xca)?;
-        buf.write_f32(value)?;
+        buf.write_u8(0xca);
+        buf.write_f32(value);
     }
-    Ok(5)
+    5
 }
 
 #[doc(hidden)]
-pub fn pack_f64(buf: &mut Option<&mut Buffer>, value: f64) -> Result<usize> {
+pub fn pack_f64(buf: &mut Option<&mut Buffer>, value: f64) -> usize {
     if let Some(ref mut buf) = *buf {
-        buf.write_u8(0xcb)?;
-        buf.write_f64(value)?;
+        buf.write_u8(0xcb);
+        buf.write_f64(value);
     }
-    Ok(9)
+    9
 }

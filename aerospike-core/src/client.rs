@@ -72,7 +72,7 @@ impl Client {
     /// added as future seeds in case of a complete network failure.
     ///
     /// If one connection succeeds, the client is ready to process database requests. If all
-    /// connections fail and the policy's `fail_
+    /// connections fail and the policy's `fail_`
     ///
     /// The seed hosts to connect to (one or more) can be specified as a comma-separated list of
     /// hostnames or IP addresses with optional port numbers, e.g.

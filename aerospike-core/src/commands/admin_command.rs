@@ -63,8 +63,8 @@ impl AdminCommand {
         // Write the message header
         conn.buffer.size_buffer()?;
         let size = conn.buffer.data_offset;
-        conn.buffer.reset_offset()?;
-        AdminCommand::write_size(&mut conn, size as i64)?;
+        conn.buffer.reset_offset();
+        AdminCommand::write_size(&mut conn, size as i64);
 
         // Send command.
         if let Err(err) = conn.flush().await {
@@ -78,7 +78,7 @@ impl AdminCommand {
             return Err(err);
         }
 
-        let result_code = conn.buffer.read_u8(Some(RESULT_CODE))?;
+        let result_code = conn.buffer.read_u8(Some(RESULT_CODE));
         let result_code = ResultCode::from(result_code);
         if result_code != ResultCode::Ok {
             bail!(ErrorKind::ServerError(result_code));
@@ -89,25 +89,25 @@ impl AdminCommand {
 
     pub async fn authenticate(conn: &mut Connection, user: &str, password: &str) -> Result<()> {
         conn.buffer.resize_buffer(1024)?;
-        conn.buffer.reset_offset()?;
-        AdminCommand::write_header(conn, LOGIN, 2)?;
-        AdminCommand::write_field_str(conn, USER, user)?;
-        AdminCommand::write_field_bytes(conn, CREDENTIAL, password.as_bytes())?;
+        conn.buffer.reset_offset();
+        AdminCommand::write_header(conn, LOGIN, 2);
+        AdminCommand::write_field_str(conn, USER, user);
+        AdminCommand::write_field_bytes(conn, CREDENTIAL, password.as_bytes());
         conn.buffer.size_buffer()?;
         let size = conn.buffer.data_offset;
-        conn.buffer.reset_offset()?;
-        AdminCommand::write_size(conn, size as i64)?;
+        conn.buffer.reset_offset();
+        AdminCommand::write_size(conn, size as i64);
 
         conn.flush().await?;
         conn.read_buffer(HEADER_SIZE).await?;
-        let result_code = conn.buffer.read_u8(Some(RESULT_CODE))?;
+        let result_code = conn.buffer.read_u8(Some(RESULT_CODE));
         let result_code = ResultCode::from(result_code);
         if ResultCode::SecurityNotEnabled != result_code && ResultCode::Ok != result_code {
             bail!(ErrorKind::ServerError(result_code));
         }
 
         // consume the rest of the buffer
-        let sz = conn.buffer.read_u64(Some(0))?;
+        let sz = conn.buffer.read_u64(Some(0));
         let receive_size = (sz & 0xFFFF_FFFF_FFFF) - HEADER_REMAINING as u64;
         conn.read_buffer(receive_size as usize).await?;
 
@@ -124,15 +124,11 @@ impl AdminCommand {
         let mut conn = node.get_connection().await?;
 
         conn.buffer.resize_buffer(1024)?;
-        conn.buffer.reset_offset()?;
-        AdminCommand::write_header(&mut conn, CREATE_USER, 3)?;
-        AdminCommand::write_field_str(&mut conn, USER, user)?;
-        AdminCommand::write_field_str(
-            &mut conn,
-            PASSWORD,
-            &AdminCommand::hash_password(password)?,
-        )?;
-        AdminCommand::write_roles(&mut conn, roles)?;
+        conn.buffer.reset_offset();
+        AdminCommand::write_header(&mut conn, CREATE_USER, 3);
+        AdminCommand::write_field_str(&mut conn, USER, user);
+        AdminCommand::write_field_str(&mut conn, PASSWORD, &AdminCommand::hash_password(password)?);
+        AdminCommand::write_roles(&mut conn, roles);
 
         AdminCommand::execute(conn).await
     }
@@ -142,9 +138,9 @@ impl AdminCommand {
         let mut conn = node.get_connection().await?;
 
         conn.buffer.resize_buffer(1024)?;
-        conn.buffer.reset_offset()?;
-        AdminCommand::write_header(&mut conn, DROP_USER, 1)?;
-        AdminCommand::write_field_str(&mut conn, USER, user)?;
+        conn.buffer.reset_offset();
+        AdminCommand::write_header(&mut conn, DROP_USER, 1);
+        AdminCommand::write_field_str(&mut conn, USER, user);
 
         AdminCommand::execute(conn).await
     }
@@ -154,14 +150,10 @@ impl AdminCommand {
         let mut conn = node.get_connection().await?;
 
         conn.buffer.resize_buffer(1024)?;
-        conn.buffer.reset_offset()?;
-        AdminCommand::write_header(&mut conn, SET_PASSWORD, 2)?;
-        AdminCommand::write_field_str(&mut conn, USER, user)?;
-        AdminCommand::write_field_str(
-            &mut conn,
-            PASSWORD,
-            &AdminCommand::hash_password(password)?,
-        )?;
+        conn.buffer.reset_offset();
+        AdminCommand::write_header(&mut conn, SET_PASSWORD, 2);
+        AdminCommand::write_field_str(&mut conn, USER, user);
+        AdminCommand::write_field_str(&mut conn, PASSWORD, &AdminCommand::hash_password(password)?);
 
         AdminCommand::execute(conn).await
     }
@@ -171,26 +163,22 @@ impl AdminCommand {
         let mut conn = node.get_connection().await?;
 
         conn.buffer.resize_buffer(1024)?;
-        conn.buffer.reset_offset()?;
-        AdminCommand::write_header(&mut conn, CHANGE_PASSWORD, 3)?;
-        AdminCommand::write_field_str(&mut conn, USER, user)?;
+        conn.buffer.reset_offset();
+        AdminCommand::write_header(&mut conn, CHANGE_PASSWORD, 3);
+        AdminCommand::write_field_str(&mut conn, USER, user);
         match cluster.client_policy().user_password {
             Some((_, ref password)) => {
                 AdminCommand::write_field_str(
                     &mut conn,
                     OLD_PASSWORD,
                     &AdminCommand::hash_password(password)?,
-                )?;
+                );
             }
 
-            None => AdminCommand::write_field_str(&mut conn, OLD_PASSWORD, "")?,
+            None => AdminCommand::write_field_str(&mut conn, OLD_PASSWORD, ""),
         };
 
-        AdminCommand::write_field_str(
-            &mut conn,
-            PASSWORD,
-            &AdminCommand::hash_password(password)?,
-        )?;
+        AdminCommand::write_field_str(&mut conn, PASSWORD, &AdminCommand::hash_password(password)?);
 
         AdminCommand::execute(conn).await
     }
@@ -200,10 +188,10 @@ impl AdminCommand {
         let mut conn = node.get_connection().await?;
 
         conn.buffer.resize_buffer(1024)?;
-        conn.buffer.reset_offset()?;
-        AdminCommand::write_header(&mut conn, GRANT_ROLES, 2)?;
-        AdminCommand::write_field_str(&mut conn, USER, user)?;
-        AdminCommand::write_roles(&mut conn, roles)?;
+        conn.buffer.reset_offset();
+        AdminCommand::write_header(&mut conn, GRANT_ROLES, 2);
+        AdminCommand::write_field_str(&mut conn, USER, user);
+        AdminCommand::write_roles(&mut conn, roles);
 
         AdminCommand::execute(conn).await
     }
@@ -213,71 +201,62 @@ impl AdminCommand {
         let mut conn = node.get_connection().await?;
 
         conn.buffer.resize_buffer(1024)?;
-        conn.buffer.reset_offset()?;
-        AdminCommand::write_header(&mut conn, REVOKE_ROLES, 2)?;
-        AdminCommand::write_field_str(&mut conn, USER, user)?;
-        AdminCommand::write_roles(&mut conn, roles)?;
+        conn.buffer.reset_offset();
+        AdminCommand::write_header(&mut conn, REVOKE_ROLES, 2);
+        AdminCommand::write_field_str(&mut conn, USER, user);
+        AdminCommand::write_roles(&mut conn, roles);
 
         AdminCommand::execute(conn).await
     }
 
     // Utility methods
 
-    fn write_size(conn: &mut Connection, size: i64) -> Result<()> {
+    fn write_size(conn: &mut Connection, size: i64) {
         // Write total size of message which is the current offset.
         let size = (size - 8) | (MSG_VERSION << 56) | (MSG_TYPE << 48);
-        conn.buffer.write_i64(size)?;
-
-        Ok(())
+        conn.buffer.write_i64(size);
     }
 
-    fn write_header(conn: &mut Connection, command: u8, field_count: u8) -> Result<()> {
+    fn write_header(conn: &mut Connection, command: u8, field_count: u8) {
         conn.buffer.data_offset = 8;
-        conn.buffer.write_u8(0)?;
-        conn.buffer.write_u8(0)?;
-        conn.buffer.write_u8(command)?;
-        conn.buffer.write_u8(field_count)?;
+        conn.buffer.write_u8(0);
+        conn.buffer.write_u8(0);
+        conn.buffer.write_u8(command);
+        conn.buffer.write_u8(field_count);
 
         // Authenticate header is almost all zeros
         for _ in 0..(16 - 4) {
-            conn.buffer.write_u8(0)?;
+            conn.buffer.write_u8(0);
         }
-
-        Ok(())
     }
 
-    fn write_field_header(conn: &mut Connection, id: u8, size: usize) -> Result<()> {
-        conn.buffer.write_u32(size as u32 + 1)?;
-        conn.buffer.write_u8(id)?;
-        Ok(())
+    fn write_field_header(conn: &mut Connection, id: u8, size: usize) {
+        conn.buffer.write_u32(size as u32 + 1);
+        conn.buffer.write_u8(id);
     }
 
-    fn write_field_str(conn: &mut Connection, id: u8, s: &str) -> Result<()> {
-        AdminCommand::write_field_header(conn, id, s.len())?;
-        conn.buffer.write_str(s)?;
-        Ok(())
+    fn write_field_str(conn: &mut Connection, id: u8, s: &str) {
+        AdminCommand::write_field_header(conn, id, s.len());
+        conn.buffer.write_str(s);
     }
 
-    fn write_field_bytes(conn: &mut Connection, id: u8, b: &[u8]) -> Result<()> {
-        AdminCommand::write_field_header(conn, id, b.len())?;
-        conn.buffer.write_bytes(b)?;
-        Ok(())
+    fn write_field_bytes(conn: &mut Connection, id: u8, b: &[u8]) {
+        AdminCommand::write_field_header(conn, id, b.len());
+        conn.buffer.write_bytes(b);
     }
 
-    fn write_roles(conn: &mut Connection, roles: &[&str]) -> Result<()> {
+    fn write_roles(conn: &mut Connection, roles: &[&str]) {
         let mut size = 0;
         for role in roles {
             size += role.len() + 1; // size + len
         }
 
-        AdminCommand::write_field_header(conn, ROLES, size)?;
-        conn.buffer.write_u8(roles.len() as u8)?;
+        AdminCommand::write_field_header(conn, ROLES, size);
+        conn.buffer.write_u8(roles.len() as u8);
         for role in roles {
-            conn.buffer.write_u8(role.len() as u8)?;
-            conn.buffer.write_str(role)?;
+            conn.buffer.write_u8(role.len() as u8);
+            conn.buffer.write_str(role);
         }
-
-        Ok(())
     }
 
     pub fn hash_password(password: &str) -> Result<String> {

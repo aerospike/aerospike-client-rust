@@ -39,7 +39,7 @@ pub fn put(
             ExpressionArgument::Value(Value::from(op as u8)),
             ExpressionArgument::FilterExpression(key),
             ExpressionArgument::FilterExpression(value),
-        ]
+        ];
     } else {
         args = vec![
             ExpressionArgument::Context(ctx.to_vec()),
@@ -47,7 +47,7 @@ pub fn put(
             ExpressionArgument::FilterExpression(key),
             ExpressionArgument::FilterExpression(value),
             ExpressionArgument::Value(Value::from(policy.order as u8)),
-        ]
+        ];
     }
     add_write(bin, ctx, args)
 }
@@ -67,14 +67,14 @@ pub fn put_items(
             ExpressionArgument::Context(ctx.to_vec()),
             ExpressionArgument::Value(Value::from(op as u8)),
             ExpressionArgument::FilterExpression(map),
-        ]
+        ];
     } else {
         args = vec![
             ExpressionArgument::Context(ctx.to_vec()),
             ExpressionArgument::Value(Value::from(op as u8)),
             ExpressionArgument::FilterExpression(map),
             ExpressionArgument::Value(Value::from(policy.order as u8)),
-        ]
+        ];
     }
     add_write(bin, ctx, args)
 }
@@ -812,14 +812,11 @@ fn add_write(
     ctx: &[CdtContext],
     arguments: Vec<ExpressionArgument>,
 ) -> FilterExpression {
-    let return_type: ExpType;
-    if ctx.is_empty() {
-        return_type = ExpType::MAP
-    } else if (ctx[0].id & CtxType::ListIndex as u8) == 0 {
-        return_type = ExpType::MAP;
+    let return_type = if ctx.is_empty() || (ctx[0].id & CtxType::ListIndex as u8) == 0 {
+        ExpType::MAP
     } else {
-        return_type = ExpType::LIST;
-    }
+        ExpType::LIST
+    };
 
     FilterExpression {
         cmd: Some(ExpOp::Call),

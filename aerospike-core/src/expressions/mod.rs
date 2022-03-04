@@ -21,7 +21,6 @@ pub mod lists;
 pub mod maps;
 pub mod regex_flag;
 use crate::commands::buffer::Buffer;
-use crate::errors::Result;
 use crate::msgpack::encoder::{pack_array_begin, pack_integer, pack_raw_string, pack_value};
 use crate::operations::cdt_context::CdtContext;
 use crate::{ParticleType, Value};
@@ -166,60 +165,56 @@ impl FilterExpression {
         }
     }
 
-    fn pack_expression(
-        &self,
-        exps: &[FilterExpression],
-        buf: &mut Option<&mut Buffer>,
-    ) -> Result<usize> {
+    fn pack_expression(&self, exps: &[FilterExpression], buf: &mut Option<&mut Buffer>) -> usize {
         let mut size = 0;
         if let Some(val) = &self.val {
             // DEF expression
-            size += pack_raw_string(buf, &val.to_string())?;
-            size += exps[0].pack(buf)?;
+            size += pack_raw_string(buf, &val.to_string());
+            size += exps[0].pack(buf);
         } else {
             // Normal Expressions
             match self.cmd.unwrap() {
                 ExpOp::Let => {
                     // Let wire format: LET <defname1>, <defexp1>, <defname2>, <defexp2>, ..., <scope exp>
                     let count = (exps.len() - 1) * 2 + 2;
-                    size += pack_array_begin(buf, count)?;
+                    size += pack_array_begin(buf, count);
                 }
                 _ => {
-                    size += pack_array_begin(buf, exps.len() + 1)?;
+                    size += pack_array_begin(buf, exps.len() + 1);
                 }
             }
-            size += pack_integer(buf, self.cmd.unwrap() as i64)?;
+            size += pack_integer(buf, self.cmd.unwrap() as i64);
             for exp in exps {
-                size += exp.pack(buf)?;
+                size += exp.pack(buf);
             }
         }
-        Ok(size)
+        size
     }
 
-    fn pack_command(&self, cmd: ExpOp, buf: &mut Option<&mut Buffer>) -> Result<usize> {
+    fn pack_command(&self, cmd: ExpOp, buf: &mut Option<&mut Buffer>) -> usize {
         let mut size = 0;
 
         match cmd {
             ExpOp::Regex => {
-                size += pack_array_begin(buf, 4)?;
+                size += pack_array_begin(buf, 4);
                 // The Operation
-                size += pack_integer(buf, cmd as i64)?;
+                size += pack_integer(buf, cmd as i64);
                 // Regex Flags
-                size += pack_integer(buf, self.flags.unwrap())?;
+                size += pack_integer(buf, self.flags.unwrap());
                 // Raw String is needed instead of the msgpack String that the pack_value method would use.
-                size += pack_raw_string(buf, &self.val.clone().unwrap().to_string())?;
+                size += pack_raw_string(buf, &self.val.clone().unwrap().to_string());
                 // The Bin
-                size += self.bin.clone().unwrap().pack(buf)?;
+                size += self.bin.clone().unwrap().pack(buf);
             }
             ExpOp::Call => {
                 // Packing logic for Module
-                size += pack_array_begin(buf, 5)?;
+                size += pack_array_begin(buf, 5);
                 // The Operation
-                size += pack_integer(buf, cmd as i64)?;
+                size += pack_integer(buf, cmd as i64);
                 // The Module Operation
-                size += pack_integer(buf, self.module.unwrap() as i64)?;
+                size += pack_integer(buf, self.module.unwrap() as i64);
                 // The Module (List/Map or Bitwise)
-                size += pack_integer(buf, self.flags.unwrap())?;
+                size += pack_integer(buf, self.flags.unwrap());
                 // Encoding the Arguments
                 if let Some(args) = &self.arguments {
                     let mut len = 0;
@@ -230,93 +225,93 @@ impl FilterExpression {
                             | ExpressionArgument::FilterExpression(_) => len += 1,
                             ExpressionArgument::Context(ctx) => {
                                 if !ctx.is_empty() {
-                                    size += pack_array_begin(buf, 3)?;
-                                    size += pack_integer(buf, 0xff)?;
-                                    size += pack_array_begin(buf, ctx.len() * 2)?;
+                                    size += pack_array_begin(buf, 3);
+                                    size += pack_integer(buf, 0xff);
+                                    size += pack_array_begin(buf, ctx.len() * 2);
 
                                     for c in ctx {
-                                        size += pack_integer(buf, i64::from(c.id))?;
-                                        size += pack_value(buf, &c.value)?;
+                                        size += pack_integer(buf, i64::from(c.id));
+                                        size += pack_value(buf, &c.value);
                                     }
                                 }
                             }
                         }
                     }
-                    size += pack_array_begin(buf, len)?;
+                    size += pack_array_begin(buf, len);
                     // Second match to write the real values
                     for arg in args {
                         match arg {
                             ExpressionArgument::Value(val) => {
-                                size += pack_value(buf, val)?;
+                                size += pack_value(buf, val);
                             }
                             ExpressionArgument::FilterExpression(cmd) => {
-                                size += cmd.pack(buf)?;
+                                size += cmd.pack(buf);
                             }
                             ExpressionArgument::Context(_) => {}
                         }
                     }
                 } else {
                     // No Arguments
-                    size += pack_value(buf, &self.val.clone().unwrap())?;
+                    size += pack_value(buf, &self.val.clone().unwrap());
                 }
                 // Write the Bin
-                size += self.bin.clone().unwrap().pack(buf)?;
+                size += self.bin.clone().unwrap().pack(buf);
             }
             ExpOp::Bin => {
                 // Bin Encoder
-                size += pack_array_begin(buf, 3)?;
+                size += pack_array_begin(buf, 3);
                 // The Bin Operation
-                size += pack_integer(buf, cmd as i64)?;
+                size += pack_integer(buf, cmd as i64);
                 // The Bin Type (INT/String etc.)
-                size += pack_integer(buf, self.module.unwrap() as i64)?;
+                size += pack_integer(buf, self.module.unwrap() as i64);
                 // The name - Raw String is needed instead of the msgpack String that the pack_value method would use.
-                size += pack_raw_string(buf, &self.val.clone().unwrap().to_string())?;
+                size += pack_raw_string(buf, &self.val.clone().unwrap().to_string());
             }
             ExpOp::BinType | ExpOp::Var => {
                 // BinType/Var encoder
-                size += pack_array_begin(buf, 2)?;
+                size += pack_array_begin(buf, 2);
                 // BinType/Var Operation
-                size += pack_integer(buf, cmd as i64)?;
+                size += pack_integer(buf, cmd as i64);
                 // The name - Raw String is needed instead of the msgpack String that the pack_value method would use.
-                size += pack_raw_string(buf, &self.val.clone().unwrap().to_string())?;
+                size += pack_raw_string(buf, &self.val.clone().unwrap().to_string());
             }
             _ => {
                 // Packing logic for all other Ops
                 if let Some(value) = &self.val {
                     // Operation has a Value
-                    size += pack_array_begin(buf, 2)?;
+                    size += pack_array_begin(buf, 2);
                     // Write the Operation
-                    size += pack_integer(buf, cmd as i64)?;
+                    size += pack_integer(buf, cmd as i64);
                     // Write the Value
-                    size += pack_value(buf, value)?;
+                    size += pack_value(buf, value);
                 } else {
                     // Operation has no Value
-                    size += pack_array_begin(buf, 1)?;
+                    size += pack_array_begin(buf, 1);
                     // Write the Operation
-                    size += pack_integer(buf, cmd as i64)?;
+                    size += pack_integer(buf, cmd as i64);
                 }
             }
         }
 
-        Ok(size)
+        size
     }
 
-    fn pack_value(&self, buf: &mut Option<&mut Buffer>) -> Result<usize> {
+    fn pack_value(&self, buf: &mut Option<&mut Buffer>) -> usize {
         // Packing logic for Value based Ops
         pack_value(buf, &self.val.clone().unwrap())
     }
 
-    pub fn pack(&self, buf: &mut Option<&mut Buffer>) -> Result<usize> {
+    pub fn pack(&self, buf: &mut Option<&mut Buffer>) -> usize {
         let mut size = 0;
         if let Some(exps) = &self.exps {
-            size += self.pack_expression(exps, buf)?;
+            size += self.pack_expression(exps, buf);
         } else if let Some(cmd) = self.cmd {
-            size += self.pack_command(cmd, buf)?;
+            size += self.pack_command(cmd, buf);
         } else {
-            size += self.pack_value(buf)?;
+            size += self.pack_value(buf);
         }
 
-        Ok(size)
+        size
     }
 }
 

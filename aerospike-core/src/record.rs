@@ -87,7 +87,7 @@ impl fmt::Display for Record {
         write!(f, ", bins: {{")?;
         for (i, (k, v)) in self.bins.iter().enumerate() {
             if i > 0 {
-                write!(f, ", ")?
+                write!(f, ", ")?;
             }
             write!(f, "{}: {}", k, v)?;
         }
