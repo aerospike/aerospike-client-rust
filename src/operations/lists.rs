@@ -123,7 +123,7 @@ pub enum ListReturnType {
 /// Inverts the returned values in CDT List operations.
 pub struct InvertedListReturn(ListReturnType);
 
-/// Something that can be resolved into a set of ExpWriteFlags. Either a single ExpWriteFlag, Option<ExpWriteFlag>, [ExpWriteFlag], etc.
+/// Something that can be resolved into a set of ListReturnType. Either a single ListReturnType, or InvertedListReturn(ListReturnType).
 pub trait ToListReturnTypeBitmask {
     /// Convert to an u64 bitmask
     fn to_bitmask(self) -> i64;
@@ -180,7 +180,7 @@ pub struct ListPolicy {
 }
 
 
-/// Something that can be resolved into a set of ExpWriteFlags. Either a single ExpWriteFlag, Option<ExpWriteFlag>, [ExpWriteFlag], etc.
+/// Something that can be resolved into a set of ExpWriteFlags. Either a single ListWriteFlags, Option<ListWriteFlags>, [ListWriteFlags], etc.
 pub trait ToListWriteFlagsBitmask {
     /// Convert to an u8 bitmask potentially containing multiple flags
     fn to_bitmask(self) -> u8;

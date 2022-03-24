@@ -156,7 +156,7 @@ pub enum MapReturnType {
 /// Inverts the returned values in CDT List operations.
 pub struct InvertedMapReturn(MapReturnType);
 
-/// Something that can be resolved into a set of ExpWriteFlags. Either a single ExpWriteFlag, Option<ExpWriteFlag>, [ExpWriteFlag], etc.
+/// Something that can be resolved into a set of MapReturnType. Either a single MapReturnType, or InvertedMapReturn(MapReturnType).
 pub trait ToMapReturnTypeBitmask {
     /// Convert to an u64 bitmask
     fn to_bitmask(self) -> i64;
