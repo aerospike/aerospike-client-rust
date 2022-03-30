@@ -727,8 +727,8 @@ impl Serialize for Value {
             Value::Int(i) => serializer.serialize_i64(*i),
             Value::UInt(u) => serializer.serialize_u64(*u),
             Value::Float(f) => match f {
-                FloatValue::F32(u) => serializer.serialize_u32(*u),
-                FloatValue::F64(u) => serializer.serialize_u64(*u),
+                FloatValue::F32(u) => serializer.serialize_f32(f32::from_bits(*u)),
+                FloatValue::F64(u) => serializer.serialize_f64(f64::from_bits(*u)),
             },
             Value::String(s) | Value::GeoJSON(s) => serializer.serialize_str(s),
             Value::Blob(b) | Value::HLL(b) => serializer.serialize_bytes(&b[..]),
@@ -791,7 +791,7 @@ mod tests {
         let json = serde_json::to_string(&val);
         assert_eq!(
             json.unwrap(),
-            "[\"0\",9,8,7,1,4611911198408756429,-1,[5,6,7,8,\"asd\"]]",
+            "[\"0\",9,8,7,1,2.1,-1,[5,6,7,8,\"asd\"]]",
             "List Serialization failed"
         );
 
