@@ -19,18 +19,18 @@ use env_logger;
 
 use crate::common;
 
-#[test]
-fn serialize() {
+#[aerospike_macro::test]
+async fn serialize() {
     let _ = env_logger::try_init();
 
-    let client = common::client();
+    let client = common::client().await;
     let namespace: &str = common::namespace();
     let set_name = &common::rand_str(10);
     let policy = ReadPolicy::default();
     let wpolicy = WritePolicy::default();
     let key = as_key!(namespace, set_name, -1);
 
-    client.delete(&wpolicy, &key).unwrap();
+    client.delete(&wpolicy, &key).await.unwrap();
 
     let bins = [
         as_bin!("bin999", "test string"),
@@ -48,9 +48,9 @@ fn serialize() {
         ),
         as_bin!("bin-name-len-15", "max. bin name length is 15 chars"),
     ];
-    client.put(&wpolicy, &key, &bins).unwrap();
+    client.put(&wpolicy, &key, &bins).await.unwrap();
 
-    let record = client.get(&policy, &key, Bins::All).unwrap();
+    let record = client.get(&policy, &key, Bins::All).await.unwrap();
 
     let json = serde_json::to_string(&record);
     if json.is_err() {
@@ -62,4 +62,6 @@ fn serialize() {
         "\"test string\"",
         "The Parsed JSON value for bin999 did not match"
     );
+
+    client.close().await.unwrap();
 }

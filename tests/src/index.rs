@@ -24,8 +24,7 @@ use aerospike::*;
 
 const EXPECTED: usize = 100;
 
-fn create_test_set(no_records: usize) -> String {
-    let client = common::client();
+async fn create_test_set(client: &Client, no_records: usize) -> String {
     let namespace = common::namespace();
     let set_name = common::rand_str(10);
     let wpolicy = WritePolicy::default();
@@ -33,36 +32,39 @@ fn create_test_set(no_records: usize) -> String {
     for i in 0..no_records as i64 {
         let key = as_key!(namespace, &set_name, i);
         let wbin = as_bin!("bin", i);
-        let bins = vec![&wbin];
-        client.delete(&wpolicy, &key).unwrap();
-        client.put(&wpolicy, &key, &bins).unwrap();
+        let bins = vec![wbin];
+        client.delete(&wpolicy, &key).await.unwrap();
+        client.put(&wpolicy, &key, &bins).await.unwrap();
     }
 
     set_name
 }
 
-#[test]
+#[aerospike_macro::test]
 #[should_panic(expected = "IndexFound")]
-fn recreate_index() {
+async fn recreate_index() {
     let _ = env_logger::try_init();
 
-    let client = common::client();
+    let client = common::client().await;
     let ns = common::namespace();
-    let set = create_test_set(EXPECTED);
+    let set = create_test_set(&client, EXPECTED).await;
     let bin = "bin";
     let index = format!("{}_{}_{}", ns, set, bin);
-    let policy = WritePolicy::default();
 
-    let _ = client.drop_index(&policy, ns, &set, &index);
+    let _ = client.drop_index(ns, &set, &index).await;
     thread::sleep(Duration::from_millis(1000));
 
     let task = client
-        .create_index(&policy, ns, &set, bin, &index, IndexType::Numeric)
+        .create_index(ns, &set, bin, &index, IndexType::Numeric)
+        .await
         .expect("Failed to create index");
-    task.wait_till_complete(None).unwrap();
+    task.wait_till_complete(None).await.unwrap();
 
     let task = client
-        .create_index(&policy, ns, &set, bin, &index, IndexType::Numeric)
+        .create_index(ns, &set, bin, &index, IndexType::Numeric)
+        .await
         .unwrap();
-    task.wait_till_complete(None).unwrap();
+    task.wait_till_complete(None).await.unwrap();
+
+    client.close().await.unwrap();
 }

@@ -1,0 +1,18 @@
+[package]
+name = "aerospike-macro"
+version = "0.1.0"
+edition = "2018"
+
+[lib]
+proc-macro = true
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+proc-macro2 = "1.0.28"
+syn = {version = "1.0.30", default-features = false, features = ["full"]}
+quote = {version = "1.0.6"}
+aerospike-rt = {path = "../aerospike-rt"}
+
+[features]
+rt-tokio = ["aerospike-rt/rt-tokio"]
+rt-async-std = ["aerospike-rt/rt-async-std"]
