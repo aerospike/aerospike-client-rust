@@ -30,6 +30,8 @@ use crate::errors::{ErrorKind, Result, ResultExt};
 use crate::net::{ConnectionPool, Host, PooledConnection};
 use crate::policy::ClientPolicy;
 
+use super::peers::parse_peers_info;
+
 pub const PARTITIONS: usize = 4096;
 
 #[derive(Debug)]
@@ -138,9 +140,9 @@ impl Node {
 
     const fn services_name(&self) -> &'static str {
         if self.client_policy.use_services_alternate {
-            "services-alternate"
+            "peers-clear-alt"
         } else {
-            "services"
+            "peers-clear-std"
         }
     }
 
@@ -197,35 +199,7 @@ impl Node {
             Some(friend_string) => friend_string,
         };
 
-        let friend_names = friend_string.split(';');
-        for friend in friend_names {
-            let mut friend_info = friend.split(':');
-            if friend_info.clone().count() != 2 {
-                error!(
-                    "Node info from asinfo:services is malformed. Expected HOST:PORT, but got \
-                     '{}'",
-                    friend
-                );
-                continue;
-            }
-
-            let host = friend_info.next().unwrap();
-            let port = u16::from_str(friend_info.next().unwrap())?;
-            let alias = match self.client_policy.ip_map {
-                Some(ref ip_map) if ip_map.contains_key(host) => {
-                    Host::new(ip_map.get(host).unwrap(), port)
-                }
-                _ => Host::new(host, port),
-            };
-
-            if current_aliases.contains_key(&alias) {
-                self.reference_count.fetch_add(1, Ordering::Relaxed);
-            } else if !friends.contains(&alias) {
-                friends.push(alias);
-            }
-        }
-
-        Ok(friends)
+        parse_peers_info(friend_string)
     }
 
     fn update_partitions(&self, info_map: &HashMap<String, String>) -> Result<()> {
