@@ -1,4 +1,4 @@
-name: Aerospike Node.js Client Tests
+name: Aerospike Rust Client Tests
 
 on:
   push:
@@ -22,6 +22,8 @@ jobs:
     strategy:
       matrix:
         rust: [stable, nightly]
+        runtime: [rt-tokio, rt-async-std]
+        version: [async, sync]
 
     steps:
     - uses: actions/checkout@v2
@@ -33,19 +35,10 @@ jobs:
     - run: rustc --version
     - name: Set up Aerospike Database
       uses: reugn/github-action-aerospike@v1
-    - name: Clear cache
-      run: rm -rf target/debug/deps/*aerospike*
-    - name: Build
-      run: cargo build --verbose
+    - name: Clear cache before building
+      run: rm -rf target/debug/deps/*
+    - name: Build client
+      run: cargo build --verbose --no-default-features --features serialization,${{ matrix.version }},${{ matrix.runtime }} # Turn off default features since async is default and this also builds sync
     - name: Run tests
-      run: cargo test --verbose
-    - name: Build docs
-      run: rustdoc -L target/debug/deps/ --test README.md
-    - name: Clear cache
-      run: rm -rf target/debug/deps/*aerospike*
-    - name: Build - with serialization
-      run: cargo build --verbose --features "serialization"
-    - name: Run tests - with serialization
-      run: cargo test --verbose --features "serialization"
-    - name: Build docs - with serialization
-      run: rustdoc -L target/debug/deps/ --test README.md
+      if: matrix.version == 'async' # Unit tests only include the async interface
+      run: cargo test --verbose --no-default-features --features serialization,${{ matrix.version }},${{ matrix.runtime }} # Turn off default features since async is default and this also builds sync

@@ -16,22 +16,21 @@
 use crate::common;
 use env_logger;
 
-use aerospike::Task;
 use aerospike::*;
 
-#[test]
-fn execute_udf() {
+#[aerospike_macro::test]
+async fn execute_udf() {
     let _ = env_logger::try_init();
 
-    let client = common::client();
+    let client = common::client().await;
     let namespace = common::namespace();
     let set_name = &common::rand_str(10);
 
     let wpolicy = WritePolicy::default();
     let key = as_key!(namespace, set_name, 1);
     let wbin = as_bin!("bin", 10);
-    let bins = vec![&wbin];
-    client.put(&wpolicy, &key, &bins).unwrap();
+    let bins = vec![wbin];
+    client.put(&wpolicy, &key, &bins).await.unwrap();
 
     let udf_body1 = r#"
 function func_div(rec, div)
@@ -52,35 +51,31 @@ end
 "#;
 
     let task = client
-        .register_udf(
-            &wpolicy,
-            udf_body1.as_bytes(),
-            "test_udf1.lua",
-            UDFLang::Lua,
-        )
+        .register_udf(udf_body1.as_bytes(), "test_udf1.lua", UDFLang::Lua)
+        .await
         .unwrap();
-    task.wait_till_complete(None).unwrap();
+    task.wait_till_complete(None).await.unwrap();
 
     let task = client
-        .register_udf(
-            &wpolicy,
-            udf_body2.as_bytes(),
-            "test_udf2.lua",
-            UDFLang::Lua,
-        )
+        .register_udf(udf_body2.as_bytes(), "test_udf2.lua", UDFLang::Lua)
+        .await
         .unwrap();
-    task.wait_till_complete(None).unwrap();
+    task.wait_till_complete(None).await.unwrap();
 
-    let res = client.execute_udf(
-        &wpolicy,
-        &key,
-        "test_udf2",
-        "echo",
-        Some(&[as_val!("ha ha...")]),
-    );
+    let res = client
+        .execute_udf(
+            &wpolicy,
+            &key,
+            "test_udf2",
+            "echo",
+            Some(&[as_val!("ha ha...")]),
+        )
+        .await;
     assert_eq!(Some(as_val!("ha ha...")), res.unwrap());
 
-    let res = client.execute_udf(&wpolicy, &key, "test_udf1", "func_div", Some(&[as_val!(2)]));
+    let res = client
+        .execute_udf(&wpolicy, &key, "test_udf1", "func_div", Some(&[as_val!(2)]))
+        .await;
     if let Ok(Some(Value::HashMap(values))) = res {
         assert_eq!(values.get(&as_val!("status")), Some(&as_val!("OK")));
         assert_eq!(values.get(&as_val!("res")), Some(&as_val!(5)));
@@ -88,10 +83,14 @@ end
         panic!("UDF function did not return expected value");
     }
 
-    let res = client.execute_udf(&wpolicy, &key, "test_udf1", "no_such_function", None);
+    let res = client
+        .execute_udf(&wpolicy, &key, "test_udf1", "no_such_function", None)
+        .await;
     if let Err(Error(ErrorKind::UdfBadResponse(response), _)) = res {
         assert_eq!(response, "function not found".to_string());
     } else {
         panic!("UDF function did not return the expected error");
     }
+
+    client.close().await.unwrap();
 }

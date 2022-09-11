@@ -22,11 +22,28 @@ The current release supports Aerospike version v5.6 and later. Take a look at th
 <a name="Usage"></a>
 ## Usage:
 
+Add one of the following to your cargo file
+```toml
+# Async API with tokio Runtime
+aerospike = { version = "<version>", features = ["rt-tokio"]}
+# Async API with async-std runtime
+aerospike = { version = "<version>", features = ["rt-async-std"]}
+
+# The library still supports the old sync interface, but it will be deprecated in the future.
+# This is only for compatibility reasons and will be removed in a later stage.
+
+# Sync API with tokio
+aerospike = { version = "<version>", default-features = false, features = ["rt-tokio", "sync"]}
+# Sync API with async-std
+aerospike = { version = "<version>", default-features = false, features = ["rt-async-std", "sync"]}
+```
+
 The following is a very simple example of CRUD operations in an Aerospike database.
 
-```rust
+```rust,edition2018
 #[macro_use]
 extern crate aerospike;
+extern crate tokio;
 
 use std::env;
 use std::time::Instant;
@@ -34,11 +51,12 @@ use std::time::Instant;
 use aerospike::{Bins, Client, ClientPolicy, ReadPolicy, WritePolicy};
 use aerospike::operations;
 
-fn main() {
+#[tokio::main]
+async fn main() {
     let cpolicy = ClientPolicy::default();
     let hosts = env::var("AEROSPIKE_HOSTS")
         .unwrap_or(String::from("127.0.0.1:3000"));
-    let client = Client::new(&cpolicy, &hosts)
+    let client = Client::new(&cpolicy, &hosts).await
         .expect("Failed to connect to cluster");
 
     let now = Instant::now();
@@ -50,29 +68,29 @@ fn main() {
         as_bin!("int", 999),
         as_bin!("str", "Hello, World!"),
     ];
-    client.put(&wpolicy, &key, &bins).unwrap();
-    let rec = client.get(&rpolicy, &key, Bins::All);
+    client.put(&wpolicy, &key, &bins).await.unwrap();
+    let rec = client.get(&rpolicy, &key, Bins::All).await;
     println!("Record: {}", rec.unwrap());
 
-    client.touch(&wpolicy, &key).unwrap();
-    let rec = client.get(&rpolicy, &key, Bins::All);
+    client.touch(&wpolicy, &key).await.unwrap();
+    let rec = client.get(&rpolicy, &key, Bins::All).await;
     println!("Record: {}", rec.unwrap());
 
-    let rec = client.get(&rpolicy, &key, Bins::None);
+    let rec = client.get(&rpolicy, &key, Bins::None).await;
     println!("Record Header: {}", rec.unwrap());
 
-    let exists = client.exists(&wpolicy, &key).unwrap();
+    let exists = client.exists(&wpolicy, &key).await.unwrap();
     println!("exists: {}", exists);
 
     let bin = as_bin!("int", "123");
     let ops = &vec![operations::put(&bin), operations::get()];
-    let op_rec = client.operate(&wpolicy, &key, ops);
+    let op_rec = client.operate(&wpolicy, &key, ops).await;
     println!("operate: {}", op_rec.unwrap());
 
-    let existed = client.delete(&wpolicy, &key).unwrap();
+    let existed = client.delete(&wpolicy, &key).await.unwrap();
     println!("existed (should be true): {}", existed);
 
-    let existed = client.delete(&wpolicy, &key).unwrap();
+    let existed = client.delete(&wpolicy, &key).await.unwrap();
     println!("existed (should be false): {}", existed);
 
     println!("total time: {:?}", now.elapsed());
@@ -100,19 +118,19 @@ To run all the test cases:
 
 ```shell
 $ export AEROSPIKE_HOSTS=127.0.0.1:3000
-$ cargo test
+$ cargo test --features <runtime>
 ```
 
 To enable debug logging for the `aerospike` crate:
 
 ```shell
-$ RUST_LOG=aerospike=debug cargo test
+$ RUST_LOG=aerospike=debug cargo test --features <runtime>
 ```
 
 To enable backtraces set the `RUST_BACKTRACE` environment variable:
 
 ```shell
-$ RUST_BACKTRACE=1 cargo test
+$ RUST_BACKTRACE=1 cargo test --features <runtime>
 ```
 
 <a name="Benchmarks"></a>

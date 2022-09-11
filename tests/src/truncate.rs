@@ -13,20 +13,19 @@
 // License for the specific language governing permissions and limitations under
 // the License.
 
-use aerospike::WritePolicy;
-
 use crate::common;
 use env_logger;
 
-#[test]
-fn truncate() {
+#[aerospike_macro::test]
+async fn truncate() {
     let _ = env_logger::try_init();
 
-    let client = common::client();
+    let client = common::client().await;
     let namespace: &str = common::namespace();
     let set_name = &common::rand_str(10);
-    let wpolicy = WritePolicy::default();
 
-    let result = client.truncate(&wpolicy, namespace, set_name, 0);
+    let result = client.truncate(namespace, set_name, 0).await;
     assert!(result.is_ok());
+
+    client.close().await.unwrap();
 }

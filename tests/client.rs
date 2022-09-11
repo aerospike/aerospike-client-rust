@@ -22,44 +22,57 @@ use aerospike::Client;
 
 mod common;
 
-#[test]
+#[aerospike_macro::test]
 #[should_panic(expected = "Failed to connect to host(s).")]
-fn cluster_name() {
+async fn cluster_name() {
     let policy = &mut common::client_policy().clone();
     policy.cluster_name = Some(String::from("notTheRealClusterName"));
-    Client::new(policy, &common::hosts()).unwrap();
+    Client::new(policy, &common::hosts()).await.unwrap();
 }
 
-#[test]
-fn node_names() {
-    let client = common::client();
-    let names = client.node_names();
+#[aerospike_macro::test]
+async fn node_names() {
+    let client = common::client().await;
+    let names = client.node_names().await;
     assert!(!names.is_empty());
+    client.close().await.unwrap();
 }
 
-#[test]
-fn nodes() {
-    let client = common::client();
-    let nodes = client.nodes();
+#[aerospike_macro::test]
+async fn nodes() {
+    let client = common::client().await;
+    let nodes = client.nodes().await;
     assert!(!nodes.is_empty());
+    client.close().await.unwrap();
 }
 
-#[test]
-fn get_node() {
-    let client = common::client();
-    for name in client.node_names() {
-        let node = client.get_node(&name);
+#[aerospike_macro::test]
+async fn get_node() {
+    let client = common::client().await;
+    for name in client.node_names().await {
+        let node = client.get_node(&name).await;
         assert!(node.is_ok());
     }
+    client.close().await.unwrap();
 }
 
-#[test]
-fn close() {
-    let client = Client::new(common::client_policy(), &common::hosts()).unwrap();
-    assert_eq!(client.is_connected(), true);
+#[aerospike_macro::test]
+async fn close() {
+    let client = Client::new(common::client_policy(), &common::hosts())
+        .await
+        .unwrap();
+    assert_eq!(
+        client.is_connected().await,
+        true,
+        "The client is not connected"
+    );
 
-    if let Ok(()) = client.close() {
-        assert_eq!(client.is_connected(), false);
+    if let Ok(()) = client.close().await {
+        assert_eq!(
+            client.is_connected().await,
+            false,
+            "The client did not disconnect"
+        );
     } else {
         assert!(false, "Failed to close client");
     }
