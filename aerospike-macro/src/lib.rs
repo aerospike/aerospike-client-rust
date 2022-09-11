@@ -1,12 +1,10 @@
-extern crate proc_macro;
-use proc_macro::TokenStream;
 use quote::{quote, quote_spanned};
 use syn::{parse_macro_input, DeriveInput, Generics, GenericParam, parse_quote, Data, Fields};
 use syn::spanned::Spanned;
 
 #[doc(hidden)]
 #[proc_macro_attribute]
-pub fn test(_attr: TokenStream, input: TokenStream) -> TokenStream {
+pub fn test(_attr: proc_macro::TokenStream, input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     let input = syn::parse_macro_input!(input as syn::ItemFn);
 
     let ret = &input.sig.output;
@@ -38,7 +36,7 @@ pub fn test(_attr: TokenStream, input: TokenStream) -> TokenStream {
 }
 
 #[proc_macro_derive(ToBins)]
-pub fn aerospike_bins(input: TokenStream) -> TokenStream {
+pub fn aerospike_bins(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
     let name = input.ident;
     let generics = add_bins_trait_bounds(input.generics);
@@ -56,7 +54,7 @@ pub fn aerospike_bins(input: TokenStream) -> TokenStream {
             }
         }
     };
-    TokenStream::from(expanded)
+    proc_macro::TokenStream::from(expanded)
 }
 
 fn add_bins_trait_bounds(mut generics: Generics) -> Generics {
@@ -94,7 +92,7 @@ fn convert_bin_source(data: &Data) -> proc_macro2::TokenStream {
 
 
 #[proc_macro_derive(ToValue)]
-pub fn aerospike_value(input: TokenStream) -> TokenStream {
+pub fn aerospike_value(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
     let name = input.ident;
     let generics = add_value_trait_bounds(input.generics);
@@ -102,18 +100,17 @@ pub fn aerospike_value(input: TokenStream) -> TokenStream {
     let vals = convert_value_source(&input.data);
 
     let expanded = quote! {
-        use std::collections::HashMap as AVHashMap;
         impl #impl_generics ToValue for #name #ty_generics #where_clause {
             fn to_value(&self) -> Value {
                 // HashMap to collect the fields. Custom type name to not overlap with users imports
-                let mut map: AVHashMap<aerospike::Value, aerospike::Value> = AVHashMap::new();
+                let mut map: HashMap<aerospike::Value, aerospike::Value> = HashMap::new();
                 // Values Token Stream
                 #vals
                 Value::from(map)
             }
         }
     };
-    TokenStream::from(expanded)
+    proc_macro::TokenStream::from(expanded)
 }
 
 fn add_value_trait_bounds(mut generics: Generics) -> Generics {
