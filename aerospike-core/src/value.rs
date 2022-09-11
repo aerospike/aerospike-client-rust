@@ -713,7 +713,7 @@ macro_rules! as_map {
 }
 
 // ToValue Derive Macro
-pub use aerospike_macro::{ToValue};
+pub use aerospike_macro::ToValue;
 
 /// Makes a Struct convertable to a Value instance.
 /// Currently only usable by manually calling the `to_value` function
@@ -835,22 +835,35 @@ impl ToValue for bool {
     }
 }
 
-
-impl<T> ToValue for [T] where T: ToValue + NoToValueVec{
+impl<T> ToValue for [T]
+where
+    T: ToValue + NoToValueVec,
+{
     fn to_value(&self) -> Value {
         Value::from(self.iter().map(|e| e.to_value()).collect::<Vec<Value>>())
     }
 }
 
-impl<T> ToValue for Vec<T> where T: ToValue + NoToValueVec{
+impl<T> ToValue for Vec<T>
+where
+    T: ToValue + NoToValueVec,
+{
     fn to_value(&self) -> Value {
         Value::from(self.iter().map(|e| e.to_value()).collect::<Vec<Value>>())
     }
 }
 
-impl<T, U> ToValue for HashMap<T, U> where T: ToValue, U: ToValue{
+impl<T, U> ToValue for HashMap<T, U>
+where
+    T: ToValue,
+    U: ToValue,
+{
     fn to_value(&self) -> Value {
-        Value::from(self.iter().map(|(k, v)| (k.to_value(), v.to_value())).collect::<HashMap<Value, Value>>())
+        Value::from(
+            self.iter()
+                .map(|(k, v)| (k.to_value(), v.to_value()))
+                .collect::<HashMap<Value, Value>>(),
+        )
     }
 }
 

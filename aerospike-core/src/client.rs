@@ -29,7 +29,10 @@ use crate::net::ToHosts;
 use crate::operations::{Operation, OperationType};
 use crate::policy::{BatchPolicy, ClientPolicy, QueryPolicy, ReadPolicy, ScanPolicy, WritePolicy};
 use crate::task::{IndexTask, RegisterTask};
-use crate::{BatchRead, Bin, Bins, CollectionIndexType, IndexType, Key, Record, Recordset, ResultCode, Statement, ToBins, UDFLang, Value};
+use crate::{
+    BatchRead, Bin, Bins, CollectionIndexType, IndexType, Key, Record, Recordset, ResultCode,
+    Statement, ToBins, UDFLang, Value,
+};
 use aerospike_rt::fs::File;
 #[cfg(all(any(feature = "rt-tokio"), not(feature = "rt-async-std")))]
 use aerospike_rt::io::AsyncReadExt;
@@ -316,7 +319,10 @@ impl Client {
         policy: &'a WritePolicy,
         key: &'a Key,
         bins_struct: T,
-    ) -> Result<()> where T: ToBins {
+    ) -> Result<()>
+    where
+        T: ToBins,
+    {
         let bins = bins_struct.to_bins();
         let mut command = WriteCommand::new(
             policy,
