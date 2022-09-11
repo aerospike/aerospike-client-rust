@@ -19,7 +19,7 @@ use serde::Serialize;
 use std::convert::From;
 
 /// Container object for a record bin, comprising a name and a value.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Bin<'a> {
     /// Bin name
     pub name: &'a str,
@@ -125,6 +125,13 @@ impl<'a> From<[&'a str; 6]> for Bins {
         let bins = bins.iter().copied().map(String::from).collect();
         Bins::Some(bins)
     }
+}
+
+pub use aerospike_macro::ToBins;
+/// Makes the struct convertable to a `Bin` Array to use with Aerospike Commands
+pub trait ToBins {
+    /// Convert the struct to a `Bin` Array
+    fn to_bins(&self) -> Vec<Bin>;
 }
 
 #[cfg(test)]

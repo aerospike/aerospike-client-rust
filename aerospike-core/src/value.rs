@@ -712,6 +712,148 @@ macro_rules! as_map {
     };
 }
 
+// ToValue Derive Macro
+pub use aerospike_macro::{ToValue};
+
+/// Makes a Struct convertable to a Value instance.
+/// Currently only usable by manually calling the `to_value` function
+pub trait ToValue {
+    /// Convert the struct to a Value instance
+    fn to_value(&self) -> Value;
+}
+
+pub trait NoToValueVec {}
+
+impl NoToValueVec for [u8] {}
+impl NoToValueVec for Vec<u8> {}
+
+impl ToValue for std::string::String {
+    fn to_value(&self) -> Value {
+        Value::from(self)
+    }
+}
+
+impl ToValue for &str {
+    fn to_value(&self) -> Value {
+        Value::from(*self)
+    }
+}
+
+impl ToValue for Value {
+    fn to_value(&self) -> Value {
+        self.clone()
+    }
+}
+
+impl ToValue for f32 {
+    fn to_value(&self) -> Value {
+        Value::from(self)
+    }
+}
+
+impl ToValue for f64 {
+    fn to_value(&self) -> Value {
+        Value::from(self)
+    }
+}
+
+impl ToValue for u8 {
+    fn to_value(&self) -> Value {
+        Value::from(self)
+    }
+}
+
+impl ToValue for [u8] {
+    fn to_value(&self) -> Value {
+        Value::from(self)
+    }
+}
+
+impl ToValue for Vec<u8> {
+    fn to_value(&self) -> Value {
+        Value::from(self)
+    }
+}
+
+impl ToValue for u16 {
+    fn to_value(&self) -> Value {
+        Value::from(self)
+    }
+}
+
+impl ToValue for u32 {
+    fn to_value(&self) -> Value {
+        Value::from(self)
+    }
+}
+
+impl ToValue for u64 {
+    fn to_value(&self) -> Value {
+        Value::from(self)
+    }
+}
+
+impl ToValue for usize {
+    fn to_value(&self) -> Value {
+        Value::from(self)
+    }
+}
+
+impl ToValue for i8 {
+    fn to_value(&self) -> Value {
+        Value::from(self)
+    }
+}
+
+impl ToValue for i16 {
+    fn to_value(&self) -> Value {
+        Value::from(self)
+    }
+}
+
+impl ToValue for i32 {
+    fn to_value(&self) -> Value {
+        Value::from(self)
+    }
+}
+
+impl ToValue for isize {
+    fn to_value(&self) -> Value {
+        Value::from(self)
+    }
+}
+
+impl ToValue for i64 {
+    fn to_value(&self) -> Value {
+        Value::from(self)
+    }
+}
+
+impl ToValue for bool {
+    fn to_value(&self) -> Value {
+        Value::from(self)
+    }
+}
+
+
+impl<T> ToValue for [T] where T: ToValue + NoToValueVec{
+    fn to_value(&self) -> Value {
+        Value::from(self.iter().map(|e| e.to_value()).collect::<Vec<Value>>())
+    }
+}
+
+impl<T> ToValue for Vec<T> where T: ToValue + NoToValueVec{
+    fn to_value(&self) -> Value {
+        Value::from(self.iter().map(|e| e.to_value()).collect::<Vec<Value>>())
+    }
+}
+
+impl<T, U> ToValue for HashMap<T, U> where T: ToValue, U: ToValue{
+    fn to_value(&self) -> Value {
+        Value::from(self.iter().map(|(k, v)| (k.to_value(), v.to_value())).collect::<HashMap<Value, Value>>())
+    }
+}
+
 #[cfg(feature = "serialization")]
 impl Serialize for Value {
     fn serialize<S>(

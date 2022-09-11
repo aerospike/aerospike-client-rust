@@ -149,7 +149,7 @@ extern crate pwhash;
 extern crate rand;
 
 pub use batch::BatchRead;
-pub use bin::{Bin, Bins};
+pub use bin::{Bin, Bins, ToBins};
 pub use client::Client;
 pub use cluster::Node;
 pub use commands::particle_type::ParticleType;
@@ -169,7 +169,7 @@ pub use record::Record;
 pub use result_code::ResultCode;
 pub use task::{IndexTask, RegisterTask, Task};
 pub use user::User;
-pub use value::{FloatValue, Value};
+pub use value::{FloatValue, Value, ToValue};
 
 #[macro_use]
 pub mod errors;

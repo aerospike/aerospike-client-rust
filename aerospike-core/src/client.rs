@@ -29,10 +29,7 @@ use crate::net::ToHosts;
 use crate::operations::{Operation, OperationType};
 use crate::policy::{BatchPolicy, ClientPolicy, QueryPolicy, ReadPolicy, ScanPolicy, WritePolicy};
 use crate::task::{IndexTask, RegisterTask};
-use crate::{
-    BatchRead, Bin, Bins, CollectionIndexType, IndexType, Key, Record, Recordset, ResultCode,
-    Statement, UDFLang, Value,
-};
+use crate::{BatchRead, Bin, Bins, CollectionIndexType, IndexType, Key, Record, Recordset, ResultCode, Statement, ToBins, UDFLang, Value};
 use aerospike_rt::fs::File;
 #[cfg(all(any(feature = "rt-tokio"), not(feature = "rt-async-std")))]
 use aerospike_rt::io::AsyncReadExt;
@@ -279,6 +276,53 @@ impl Client {
             self.cluster.clone(),
             key,
             bins,
+            OperationType::Write,
+        );
+        command.execute().await
+    }
+
+    /// Write record bin(s) from Struct. The policy specifies the transaction timeout, record expiration and
+    /// how the transaction is handled when the record already exists.
+    ///
+    /// # Examples
+    ///
+    /// Write a record with bins from a Struct.
+    ///
+    /// ```rust,edition2018
+    /// # use aerospike::*;
+    ///
+    /// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap();
+    /// # let client = Client::new(&ClientPolicy::default(), &hosts).await.unwrap();
+    /// let key = as_key!("test", "test", "mykey");
+    ///
+    /// #[derive(ToBins)]
+    /// struct ExampleBins {
+    ///     pub name: String,
+    ///     pub age: i64
+    /// }
+    ///
+    /// let instance = ExampleBins {
+    ///     name: "Example User".to_string(),
+    ///     age: 35
+    /// };
+    ///
+    /// match client.put_struct(&WritePolicy::default(), &key, instance).await {
+    ///     Ok(()) => println!("Record written"),
+    ///     Err(err) => println!("Error writing record: {}", err),
+    /// }
+    /// ```
+    pub async fn put_struct<'a, 'b, T>(
+        &self,
+        policy: &'a WritePolicy,
+        key: &'a Key,
+        bins_struct: T,
+    ) -> Result<()> where T: ToBins {
+        let bins = bins_struct.to_bins();
+        let mut command = WriteCommand::new(
+            policy,
+            self.cluster.clone(),
+            key,
+            &bins,
             OperationType::Write,
         );
         command.execute().await
