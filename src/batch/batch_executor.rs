@@ -19,7 +19,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use parking_lot::Mutex;
-use scoped_pool::Pool;
+use crate::pool::Pool;
 
 use crate::batch::BatchRead;
 use crate::cluster::partition::Partition;

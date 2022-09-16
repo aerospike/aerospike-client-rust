@@ -138,7 +138,7 @@
 extern crate base64;
 extern crate byteorder;
 extern crate crossbeam_queue;
-extern crate ripemd160;
+extern crate ripemd;
 #[macro_use]
 extern crate error_chain;
 #[macro_use]
@@ -148,7 +148,6 @@ extern crate log;
 extern crate parking_lot;
 extern crate pwhash;
 extern crate rand;
-extern crate scoped_pool;
 
 pub use batch::BatchRead;
 pub use bin::{Bin, Bins};
@@ -188,6 +187,7 @@ mod msgpack;
 mod net;
 pub mod operations;
 pub mod policy;
+mod pool;
 pub mod query;
 mod record;
 mod result_code;

@@ -21,8 +21,7 @@ use std::sync::Arc;
 use std::thread;
 use std::vec::Vec;
 
-use scoped_pool::Pool;
-
+use crate::pool::Pool;
 use crate::batch::BatchExecutor;
 use crate::cluster::{Cluster, Node};
 use crate::commands::{
