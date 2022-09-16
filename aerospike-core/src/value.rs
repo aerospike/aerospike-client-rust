@@ -21,8 +21,8 @@ use std::result::Result as StdResult;
 
 use byteorder::{ByteOrder, NetworkEndian};
 
-use ripemd160::digest::Digest;
-use ripemd160::Ripemd160;
+use ripemd::digest::Digest;
+use ripemd::Ripemd160;
 
 use std::vec::Vec;
 
@@ -311,15 +311,15 @@ impl Value {
             Value::Int(ref val) => {
                 let mut buf = [0; 8];
                 NetworkEndian::write_i64(&mut buf, *val);
-                h.input(&buf);
+                h.update(&buf);
                 Ok(())
             }
             Value::String(ref val) => {
-                h.input(val.as_bytes());
+                h.update(val.as_bytes());
                 Ok(())
             }
             Value::Blob(ref val) => {
-                h.input(val);
+                h.update(val);
                 Ok(())
             }
             _ => panic!("Data type is not supported as Key value."),
