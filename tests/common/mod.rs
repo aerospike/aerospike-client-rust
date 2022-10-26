@@ -16,7 +16,6 @@
 #![allow(dead_code)]
 
 use std::env;
-use std::sync::Arc;
 
 use rand;
 use rand::distributions::Alphanumeric;
@@ -39,8 +38,6 @@ lazy_static! {
         policy.cluster_name = AEROSPIKE_CLUSTER.clone();
         policy
     };
-    static ref GLOBAL_CLIENT: Arc<Client> =
-        Arc::new(Client::new(&GLOBAL_CLIENT_POLICY, &*AEROSPIKE_HOSTS).unwrap());
 }
 
 pub fn hosts() -> &'static str {
@@ -55,8 +52,10 @@ pub fn client_policy() -> &'static ClientPolicy {
     &*GLOBAL_CLIENT_POLICY
 }
 
-pub fn client() -> Arc<Client> {
-    GLOBAL_CLIENT.clone()
+pub async fn client() -> Client {
+    Client::new(&GLOBAL_CLIENT_POLICY, &*AEROSPIKE_HOSTS)
+        .await
+        .unwrap()
 }
 
 pub fn rand_str(sz: usize) -> String {
