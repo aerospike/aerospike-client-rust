@@ -332,26 +332,26 @@ pub fn pack_integer(buf: &mut Option<&mut Buffer>, value: i64) -> usize {
         pack_half_byte(buf, 0xe0 | ((Wrapping(value as u8) + Wrapping(32)).0))
     } else if value >= i64::from(i8::MIN) {
         if let Some(ref mut buf) = *buf {
-            buf.write_u8(MSGPACK_MARKER_I8)?;
-            buf.write_i8(value as i8)?;gpack/encoder.rs
+            buf.write_u8(MSGPACK_MARKER_I8);
+            buf.write_i8(value as i8);
         }
         2
     } else if value >= i64::from(i16::MIN) {
         if let Some(ref mut buf) = *buf {
-            buf.write_u8(MSGPACK_MARKER_I16)?;
-            buf.write_i16(value as i16)?;
+            buf.write_u8(MSGPACK_MARKER_I16);
+            buf.write_i16(value as i16);
         }
         3
     } else if value >= i64::from(i32::MIN) {
         if let Some(ref mut buf) = *buf {
-            buf.write_u8(MSGPACK_MARKER_I32)?;
-            buf.write_i32(value as i32)?;
+            buf.write_u8(MSGPACK_MARKER_I32);
+            buf.write_i32(value as i32);
         }
         5
     } else {
         if let Some(ref mut buf) = *buf {
-            buf.write_u8(MSGPACK_MARKER_I64)?;
-            buf.write_i64(value)?;
+            buf.write_u8(MSGPACK_MARKER_I64);
+            buf.write_i64(value);
         }
         9
     }
@@ -359,8 +359,8 @@ pub fn pack_integer(buf: &mut Option<&mut Buffer>, value: i64) -> usize {
 #[doc(hidden)]
 fn pack_type_u16(buf: &mut Option<&mut Buffer>, marker: u8, value: u16) -> usize {
     if let Some(ref mut buf) = *buf {
-        buf.write_u8(marker)?;
-        buf.write_u16(value)?;
+        buf.write_u8(marker);
+        buf.write_u16(value);
     }
     3
 }
@@ -380,8 +380,8 @@ pub fn pack_u64(buf: &mut Option<&mut Buffer>, value: u64) -> usize {
         pack_half_byte(buf, value as u8)
     } else if value < u64::from(u8::MAX) {
         if let Some(ref mut buf) = *buf {
-            buf.write_u8(MSGPACK_MARKER_U8)?;
-            buf.write_u8(value as u8)?;
+            buf.write_u8(MSGPACK_MARKER_U8);
+            buf.write_u8(value as u8);
         }
         2
     } else if value < u64::from(u16::MAX) {
@@ -390,8 +390,8 @@ pub fn pack_u64(buf: &mut Option<&mut Buffer>, value: u64) -> usize {
         pack_type_u32(buf, MSGPACK_MARKER_U32, value as u32)
     } else {
         if let Some(ref mut buf) = *buf {
-            buf.write_u8(MSGPACK_MARKER_U64)?;
-            buf.write_u64(value)?;
+            buf.write_u8(MSGPACK_MARKER_U64);
+            buf.write_u64(value);
         }
         9
     }
