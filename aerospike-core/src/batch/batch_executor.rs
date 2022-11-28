@@ -45,56 +45,24 @@ impl BatchExecutor {
             .into_iter()
             .map(|(node, reads)| BatchReadCommand::new(policy, node, reads))
             .collect();
-        let reads = self.execute_batch_jobs(jobs, &policy.concurrency).await?;
-        let mut res: Vec<BatchRead> = vec![];
-        for mut read in reads {
-            res.append(&mut read.batch_reads);
-        }
-        Ok(res)
+        let reads = self.execute_batch_jobs(jobs).await?;
+        Ok(reads.into_iter().flat_map(|cmd|cmd.batch_reads).collect())
     }
 
     async fn execute_batch_jobs(
         &self,
         jobs: Vec<BatchReadCommand>,
-        concurrency: &Concurrency,
     ) -> Result<Vec<BatchReadCommand>> {
-        let threads = match *concurrency {
-            Concurrency::Sequential => 1,
-            Concurrency::Parallel => jobs.len(),
-            Concurrency::MaxThreads(max) => cmp::min(max, jobs.len()),
-        };
-        let size = jobs.len() / threads;
-        let mut overhead = jobs.len() % threads;
-        let last_err: Arc<Mutex<Option<Error>>> = Arc::default();
-        let mut slice_index = 0;
-        let mut handles = vec![];
-        let res = Arc::new(Mutex::new(vec![]));
-        for _ in 0..threads {
-            let mut thread_size = size;
-            if overhead >= 1 {
-                thread_size += 1;
-                overhead -= 1;
+        let handles = jobs.into_iter().map(|mut cmd|async move {
+            //let next_job = async { jobs.lock().await.next().await};
+            if let Err(err) = cmd.execute().await {
+                Err(err)
+            } else {
+                Ok(cmd)
             }
-            let slice = Vec::from(&jobs[slice_index..slice_index + thread_size]);
-            slice_index = thread_size + 1;
-            let last_err = last_err.clone();
-            let res = res.clone();
-            let handle = aerospike_rt::spawn(async move {
-                //let next_job = async { jobs.lock().await.next().await};
-                for mut cmd in slice {
-                    if let Err(err) = cmd.execute().await {
-                        *last_err.lock().await = Some(err);
-                    };
-                    res.lock().await.push(cmd);
-                }
-            });
-            handles.push(handle);
-        }
-        futures::future::join_all(handles).await;
-        match Arc::try_unwrap(last_err).unwrap().into_inner() {
-            None => Ok(res.lock().await.to_vec()),
-            Some(err) => Err(err),
-        }
+        });
+        let responses = futures::future::join_all(handles).await;
+        responses.into_iter().collect()
     }
 
     async fn get_batch_nodes(
