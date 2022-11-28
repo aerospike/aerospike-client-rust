@@ -25,9 +25,9 @@ use aerospike::{Client, ClientPolicy};
 
 lazy_static! {
     static ref AEROSPIKE_HOSTS: String =
-        env::var("AEROSPIKE_HOSTS").unwrap_or_else(|_| String::from("127.0.0.1"));
+        env::var("AEROSPIKE_HOSTS").unwrap_or_else(|_| String::from("10.22.3.8:3000,10.22.3.6:3000,10.22.3.4:3000"));
     static ref AEROSPIKE_NAMESPACE: String =
-        env::var("AEROSPIKE_NAMESPACE").unwrap_or_else(|_| String::from("test"));
+        env::var("AEROSPIKE_NAMESPACE").unwrap_or_else(|_| String::from("fingerprint"));
     static ref AEROSPIKE_CLUSTER: Option<String> = env::var("AEROSPIKE_CLUSTER").ok();
     static ref GLOBAL_CLIENT_POLICY: ClientPolicy = {
         let mut policy = ClientPolicy::default();

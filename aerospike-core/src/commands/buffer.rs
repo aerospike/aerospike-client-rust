@@ -344,7 +344,7 @@ impl Buffer {
     pub fn set_batch_read(
         &mut self,
         policy: &BatchPolicy,
-        batch_reads: Vec<BatchRead>,
+        batch_reads: &[(BatchRead, usize)],
     ) -> Result<()> {
         let field_count_row = if policy.send_set_name { 2 } else { 1 };
 
@@ -358,7 +358,7 @@ impl Buffer {
         }
 
         let mut prev: Option<&BatchRead> = None;
-        for batch_read in &batch_reads {
+        for (batch_read, _) in batch_reads {
             self.data_offset += batch_read.key.digest.len() + 4;
             match prev {
                 Some(prev) if batch_read.match_header(prev, policy.send_set_name) => {
@@ -404,7 +404,7 @@ impl Buffer {
         self.write_u8(if policy.allow_inline { 1 } else { 0 });
 
         prev = None;
-        for (idx, batch_read) in batch_reads.iter().enumerate() {
+        for (idx, (batch_read, _)) in batch_reads.iter().enumerate() {
             let key = &batch_read.key;
             self.write_u32(idx as u32);
             self.write_bytes(&key.digest);

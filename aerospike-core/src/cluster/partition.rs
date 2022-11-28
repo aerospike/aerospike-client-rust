@@ -36,7 +36,7 @@ impl<'a> Partition<'a> {
     }
 
     pub fn new_by_key(key: &'a Key) -> Self {
-        let mut rdr = Cursor::new(&key.digest[0..4]);
+        let mut rdr = Cursor::new(&key.digest[0..2]);
 
         Partition {
             namespace: &key.namespace,
@@ -44,7 +44,7 @@ impl<'a> Partition<'a> {
             // CAN'T USE MOD directly - mod will give negative numbers.
             // First AND makes positive and negative correctly, then mod.
             // For any x, y : x % 2^y = x & (2^y - 1); the second method is twice as fast
-            partition_id: rdr.read_u32::<LittleEndian>().unwrap() as usize & (node::PARTITIONS - 1),
+            partition_id: rdr.read_u16::<LittleEndian>().unwrap() as usize & (node::PARTITIONS - 1),
         }
     }
 }
