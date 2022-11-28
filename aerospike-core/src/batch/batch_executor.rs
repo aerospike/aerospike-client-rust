@@ -46,7 +46,9 @@ impl BatchExecutor {
             .map(|(node, reads)| BatchReadCommand::new(policy, node, reads))
             .collect();
         let reads = self.execute_batch_jobs(jobs).await?;
-        Ok(reads.into_iter().flat_map(|cmd|cmd.batch_reads).collect())
+        let mut all_results: Vec<_> = reads.into_iter().flat_map(|cmd|cmd.batch_reads).collect();
+        all_results.sort_by_key(|(_, i)|*i);
+        Ok(all_results.into_iter().map(|(b, _)|b).collect())
     }
 
     async fn execute_batch_jobs(
@@ -68,13 +70,13 @@ impl BatchExecutor {
     async fn get_batch_nodes(
         &self,
         batch_reads: &[BatchRead],
-    ) -> Result<HashMap<Arc<Node>, Vec<BatchRead>>> {
+    ) -> Result<HashMap<Arc<Node>, Vec<(BatchRead, usize)>>> {
         let mut map = HashMap::new();
-        for batch_read in batch_reads.iter() {
+        for (index, batch_read) in batch_reads.iter().enumerate() {
             let node = self.node_for_key(&batch_read.key).await?;
             map.entry(node)
                 .or_insert_with(Vec::new)
-                .push(batch_read.clone());
+                .push((batch_read.clone(), index));
         }
         Ok(map)
     }

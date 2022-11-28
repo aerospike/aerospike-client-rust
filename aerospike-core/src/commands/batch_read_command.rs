@@ -33,11 +33,11 @@ struct BatchRecord {
 pub struct BatchReadCommand {
     policy: BatchPolicy,
     pub node: Arc<Node>,
-    pub batch_reads: Vec<BatchRead>,
+    pub batch_reads: Vec<(BatchRead, usize)>,
 }
 
 impl BatchReadCommand {
-    pub fn new(policy: &BatchPolicy, node: Arc<Node>, batch_reads: Vec<BatchRead>) -> Self {
+    pub fn new(policy: &BatchPolicy, node: Arc<Node>, batch_reads: Vec<(BatchRead, usize)>) -> Self {
         BatchReadCommand {
             policy: policy.clone(),
             node,
@@ -140,7 +140,7 @@ impl BatchReadCommand {
                         .batch_reads
                         .get_mut(batch_record.batch_index)
                         .expect("Invalid batch index");
-                    batch_read.record = batch_record.record;
+                    batch_read.0.record = batch_record.record;
                 }
             }
         }
@@ -148,17 +148,20 @@ impl BatchReadCommand {
     }
 
     async fn parse_record(&mut self, conn: &mut Connection) -> Result<Option<BatchRecord>> {
-        let found_key = match ResultCode::from(conn.buffer.read_u8(Some(5))) {
-            ResultCode::Ok => true,
-            ResultCode::KeyNotFoundError => false,
-            rc => bail!(ErrorKind::ServerError(rc)),
-        };
-
         // if cmd is the end marker of the response, do not proceed further
         let info3 = conn.buffer.read_u8(Some(3));
         if info3 & commands::buffer::INFO3_LAST == commands::buffer::INFO3_LAST {
             return Ok(None);
         }
+
+        let found_key = match ResultCode::from(conn.buffer.read_u8(Some(5))) {
+            ResultCode::Ok => true,
+            ResultCode::KeyNotFoundError => {
+                warn!("Key not found!");
+                false
+            },
+            rc => bail!(ErrorKind::ServerError(rc)),
+        };
 
         conn.buffer.skip(6);
         let generation = conn.buffer.read_u32(None);
@@ -216,7 +219,7 @@ impl commands::Command for BatchReadCommand {
 
     fn prepare_buffer(&mut self, conn: &mut Connection) -> Result<()> {
         conn.buffer
-            .set_batch_read(&self.policy, self.batch_reads.clone())
+            .set_batch_read(&self.policy, &self.batch_reads)
     }
 
     async fn get_node(&self) -> Result<Arc<Node>> {
