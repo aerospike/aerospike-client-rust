@@ -45,7 +45,7 @@ impl BatchExecutor {
             .into_iter()
             .map(|(node, reads)| BatchReadCommand::new(policy, node, reads))
             .collect();
-        let reads = self.execute_batch_jobs(jobs).await?;
+        let reads = self.execute_batch_jobs(jobs, &policy.concurrency).await?;
         let mut all_results: Vec<_> = reads.into_iter().flat_map(|cmd|cmd.batch_reads).collect();
         all_results.sort_by_key(|(_, i)|*i);
         Ok(all_results.into_iter().map(|(b, _)|b).collect())
@@ -54,17 +54,13 @@ impl BatchExecutor {
     async fn execute_batch_jobs(
         &self,
         jobs: Vec<BatchReadCommand>,
+        concurrency: &Concurrency,
     ) -> Result<Vec<BatchReadCommand>> {
-        let handles = jobs.into_iter().map(|mut cmd|async move {
-            //let next_job = async { jobs.lock().await.next().await};
-            if let Err(err) = cmd.execute().await {
-                Err(err)
-            } else {
-                Ok(cmd)
-            }
-        });
-        let responses = futures::future::join_all(handles).await;
-        responses.into_iter().collect()
+        let handles = jobs.into_iter().map(BatchReadCommand::execute);
+        match concurrency {
+            Concurrency::Sequential => futures::future::join_all(handles).await.into_iter().collect(),
+            Concurrency::Parallel => futures::future::join_all(handles.map(aerospike_rt::spawn)).await.into_iter().map(|value|value.map_err(|e|e.to_string())?).collect(),
+        }
     }
 
     async fn get_batch_nodes(
