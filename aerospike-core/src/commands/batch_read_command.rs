@@ -122,6 +122,7 @@ impl BatchReadCommand {
             }
 
             // command has completed successfully.  Exit method.
+            warn!("Node {}: finished batch read", node);
             return Ok(());
         }
 
