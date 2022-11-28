@@ -45,7 +45,7 @@ impl BatchReadCommand {
         }
     }
 
-    pub async fn execute(&mut self) -> Result<()> {
+    pub async fn execute(mut self) -> Result<Self> {
         let mut iterations = 0;
         let base_policy = self.policy.base().clone();
 
@@ -122,7 +122,7 @@ impl BatchReadCommand {
             }
 
             // command has completed successfully.  Exit method.
-            return Ok(());
+            return Ok(self);
         }
 
         bail!(ErrorKind::Connection("Timeout".to_string()))
