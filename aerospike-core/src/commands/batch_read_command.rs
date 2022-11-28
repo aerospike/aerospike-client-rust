@@ -122,7 +122,6 @@ impl BatchReadCommand {
             }
 
             // command has completed successfully.  Exit method.
-            warn!("Node {}: finished batch read", node);
             return Ok(());
         }
 
@@ -156,10 +155,7 @@ impl BatchReadCommand {
 
         let found_key = match ResultCode::from(conn.buffer.read_u8(Some(5))) {
             ResultCode::Ok => true,
-            ResultCode::KeyNotFoundError => {
-                warn!("Key not found!");
-                false
-            },
+            ResultCode::KeyNotFoundError => false,
             rc => bail!(ErrorKind::ServerError(rc)),
         };
 
