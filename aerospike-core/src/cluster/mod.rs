@@ -51,8 +51,8 @@ pub struct Cluster {
     // Active nodes in cluster.
     nodes: Arc<RwLock<Vec<Arc<Node>>>>,
 
-    // Hints for best node for a partition
-    partition_write_map: Arc<RwLock<HashMap<String, Vec<Arc<Node>>>>>,
+    // Which partition contains the key.
+    partition_write_map: RwLock<HashMap<String, [Option<Arc<Node>>; node::PARTITIONS]>>,
 
     // Random node index.
     node_index: AtomicIsize,
@@ -73,7 +73,7 @@ impl Cluster {
             aliases: Arc::new(RwLock::new(HashMap::new())),
             nodes: Arc::new(RwLock::new(vec![])),
 
-            partition_write_map: Arc::new(RwLock::new(HashMap::new())),
+            partition_write_map: RwLock::new(HashMap::new()),
             node_index: AtomicIsize::new(0),
 
             tend_channel: Mutex::new(tx),
@@ -231,23 +231,14 @@ impl Cluster {
         Ok(aliases.contains_key(host))
     }
 
-    async fn set_partitions(&self, partitions: HashMap<String, Vec<Arc<Node>>>) {
-        let mut partition_map = self.partition_write_map.write().await;
-        *partition_map = partitions;
-    }
-
-    fn partitions(&self) -> Arc<RwLock<HashMap<String, Vec<Arc<Node>>>>> {
-        self.partition_write_map.clone()
-    }
 
     pub async fn node_partitions(&self, node: &Node, namespace: &str) -> Vec<u16> {
         let mut res: Vec<u16> = vec![];
-        let partitions = self.partitions();
-        let partitions = partitions.read().await;
+        let partitions = self.partition_write_map.read().await;
 
         if let Some(node_array) = partitions.get(namespace) {
             for (i, tnode) in node_array.iter().enumerate() {
-                if node == tnode.as_ref() {
+                if tnode.as_ref().map_or(false, |tnode|tnode.as_ref() == node) {
                     res.push(i as u16);
                 }
             }
@@ -263,8 +254,8 @@ impl Cluster {
             e
         })?;
 
-        let nmap = tokens.update_partition(self.partitions(), node).await?;
-        self.set_partitions(nmap).await;
+        let mut partitions = self.partition_write_map.write().await;
+        tokens.update_partition(&mut partitions, node)?;
 
         Ok(())
     }
@@ -440,6 +431,7 @@ impl Cluster {
     }
 
     async fn find_node_in_partition_map(&self, filter: Arc<Node>) -> bool {
+        let filter = Some(filter);
         let partitions = self.partition_write_map.read().await;
         (*partitions)
             .values()
@@ -493,16 +485,13 @@ impl Cluster {
     }
 
     pub async fn get_node(&self, partition: &Partition<'_>) -> Result<Arc<Node>> {
-        let partitions = self.partitions();
-        let partitions = partitions.read().await;
+        let partitions = self.partition_write_map.read().await;
 
-        if let Some(node_array) = partitions.get(partition.namespace) {
-            if let Some(node) = node_array.get(partition.partition_id) {
-                return Ok(node.clone());
-            }
-        }
-
-        self.get_random_node().await
+        partitions
+            .get(partition.namespace)
+            .map_or_else(|| Err(format!("Cannot get appropriate node for namespace: {}", partition.namespace).into()), |node_array| node_array[partition.partition_id]
+                .clone()
+                .ok_or_else(||format!("Cannot get appropriate node for namespace: {} partition: {}", partition.namespace, partition.partition_id).into()))
     }
 
     pub async fn get_random_node(&self) -> Result<Arc<Node>> {

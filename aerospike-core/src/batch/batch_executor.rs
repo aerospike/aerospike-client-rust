@@ -40,9 +40,9 @@ impl BatchExecutor {
         policy: &BatchPolicy,
         batch_reads: Vec<BatchRead>,
     ) -> Result<Vec<BatchRead>> {
-        let mut batch_nodes = self.get_batch_nodes(&batch_reads).await?;
+        let batch_nodes = self.get_batch_nodes(&batch_reads).await?;
         let jobs = batch_nodes
-            .drain()
+            .into_iter()
             .map(|(node, reads)| BatchReadCommand::new(policy, node, reads))
             .collect();
         let reads = self.execute_batch_jobs(jobs, &policy.concurrency).await?;
@@ -102,7 +102,7 @@ impl BatchExecutor {
         batch_reads: &[BatchRead],
     ) -> Result<HashMap<Arc<Node>, Vec<BatchRead>>> {
         let mut map = HashMap::new();
-        for (_, batch_read) in batch_reads.iter().enumerate() {
+        for batch_read in batch_reads.iter() {
             let node = self.node_for_key(&batch_read.key).await?;
             map.entry(node)
                 .or_insert_with(Vec::new)

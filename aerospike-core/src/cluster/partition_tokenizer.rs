@@ -12,7 +12,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::collections::hash_map::Entry::{Occupied, Vacant};
 use std::collections::HashMap;
 use std::str;
 use std::sync::Arc;
@@ -23,7 +22,6 @@ use crate::cluster::Node;
 use crate::commands::Message;
 use crate::errors::{ErrorKind, Result};
 use crate::net::Connection;
-use aerospike_rt::RwLock;
 
 const REPLICAS_NAME: &str = "replicas-master";
 
@@ -31,8 +29,6 @@ const REPLICAS_NAME: &str = "replicas-master";
 #[derive(Debug, Clone)]
 pub struct PartitionTokenizer {
     buffer: Vec<u8>,
-    length: usize,
-    offset: usize,
 }
 
 impl PartitionTokenizer {
@@ -40,48 +36,36 @@ impl PartitionTokenizer {
         let info_map = Message::info(conn, &[REPLICAS_NAME]).await?;
         if let Some(buf) = info_map.get(REPLICAS_NAME) {
             return Ok(PartitionTokenizer {
-                length: info_map.len(),
                 buffer: buf.as_bytes().to_owned(),
-                offset: 0,
             });
         }
         bail!(ErrorKind::BadResponse("Missing replicas info".to_string()))
     }
 
-    pub async fn update_partition(
+    pub fn update_partition(
         &self,
-        nmap: Arc<RwLock<HashMap<String, Vec<Arc<Node>>>>>,
+        nmap: &mut HashMap<String, [Option<Arc<Node>>; node::PARTITIONS]>,
         node: Arc<Node>,
-    ) -> Result<HashMap<String, Vec<Arc<Node>>>> {
-        let mut amap = nmap.read().await.clone();
-
+    ) -> Result<()> {
         // <ns>:<base64-encoded partition map>;<ns>:<base64-encoded partition map>; ...
         let part_str = str::from_utf8(&self.buffer)?;
-        let mut parts = part_str.trim_end().split(|c| c == ':' || c == ';');
-        loop {
-            match (parts.next(), parts.next()) {
-                (Some(ns), Some(part)) => {
+        for part in part_str.trim_end().split(';') {
+            match part.split_once(':') {
+                Some((ns, part)) => {
                     let restore_buffer = base64::decode(part)?;
-                    match amap.entry(ns.to_string()) {
-                        Vacant(entry) => {
-                            entry.insert(vec![node.clone(); node::PARTITIONS]);
-                        }
-                        Occupied(mut entry) => {
-                            for (idx, item) in entry.get_mut().iter_mut().enumerate() {
-                                if restore_buffer[idx >> 3] & (0x80 >> (idx & 7) as u8) != 0 {
-                                    *item = node.clone();
-                                }
-                            }
+                    let entry = nmap.entry(ns.to_string()).or_insert_with(||[(); node::PARTITIONS].map(|_|None));
+                    for (idx, item) in entry.iter_mut().enumerate() {
+                        if restore_buffer[idx >> 3] & (0x80 >> (idx & 7) as u8) != 0 {
+                            *item = Some(node.clone());
                         }
                     }
                 }
-                (None, None) => break,
                 _ => bail!(ErrorKind::BadResponse(
                     "Error parsing partition info".to_string()
                 )),
             }
         }
 
-        Ok(amap)
+        Ok(())
     }
 }
