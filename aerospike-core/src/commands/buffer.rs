@@ -23,7 +23,7 @@ use crate::expressions::FilterExpression;
 use crate::msgpack::encoder;
 use crate::operations::{Operation, OperationBin, OperationData, OperationType};
 use crate::policy::{
-    BatchPolicy, CommitLevel, ConsistencyLevel, GenerationPolicy, QueryPolicy, ReadPolicy,
+    BatchPolicy, CommitLevel, ConsistencyLevel, GenerationPolicy, QueryPolicy, BasePolicy,
     RecordExistsAction, ScanPolicy, WritePolicy,
 };
 use crate::{BatchRead, Bin, Bins, CollectionIndexType, Key, Statement, Value};
@@ -263,7 +263,7 @@ impl Buffer {
     }
 
     // Writes the command for get operations
-    pub fn set_read(&mut self, policy: &ReadPolicy, key: &Key, bins: &Bins) -> Result<()> {
+    pub fn set_read(&mut self, policy: &BasePolicy, key: &Key, bins: &Bins) -> Result<()> {
         match bins {
             Bins::None => self.set_read_header(policy, key),
             Bins::All => self.set_read_for_key_only(policy, key),
@@ -297,7 +297,7 @@ impl Buffer {
     }
 
     // Writes the command for getting metadata operations
-    pub fn set_read_header(&mut self, policy: &ReadPolicy, key: &Key) -> Result<()> {
+    pub fn set_read_header(&mut self, policy: &BasePolicy, key: &Key) -> Result<()> {
         self.begin();
         let mut field_count = self.estimate_key_size(key, false);
         let filter_size = self.estimate_filter_size(policy.filter_expression());
@@ -319,7 +319,7 @@ impl Buffer {
         Ok(())
     }
 
-    pub fn set_read_for_key_only(&mut self, policy: &ReadPolicy, key: &Key) -> Result<()> {
+    pub fn set_read_for_key_only(&mut self, policy: &BasePolicy, key: &Key) -> Result<()> {
         self.begin();
 
         let mut field_count = self.estimate_key_size(key, false);
@@ -971,7 +971,7 @@ impl Buffer {
 
     fn write_header(
         &mut self,
-        policy: &ReadPolicy,
+        policy: &BasePolicy,
         read_attr: u8,
         write_attr: u8,
         field_count: u16,

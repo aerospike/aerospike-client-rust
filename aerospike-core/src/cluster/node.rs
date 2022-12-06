@@ -13,7 +13,7 @@
 // License for the specific language governing permissions and limitations under
 // the License.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::hash::{Hash, Hasher};
 use std::result::Result as StdResult;
@@ -21,7 +21,7 @@ use std::str::FromStr;
 use std::sync::atomic::{AtomicBool, AtomicIsize, AtomicUsize, Ordering};
 use std::sync::Arc;
 
-use crate::cluster::node_validator::NodeValidator;
+use crate::cluster::node_validator::{NodeValidator, NodeFeatures};
 use crate::commands::Message;
 use crate::errors::{ErrorKind, Result, ResultExt};
 use crate::net::{ConnectionPool, Host, PooledConnection};
@@ -29,6 +29,8 @@ use crate::policy::ClientPolicy;
 use aerospike_rt::RwLock;
 
 pub const PARTITIONS: usize = 4096;
+pub const PARTITION_GENERATION: &str = "partition-generation";
+pub const REBALANCE_GENERATION: &str = "rebalance-generation";
 
 /// The node instance holding connections and node settings.
 /// Exposed for usage in the sync client interface.
@@ -44,13 +46,15 @@ pub struct Node {
     failures: AtomicUsize,
 
     partition_generation: AtomicIsize,
+    rebalance_generation: AtomicIsize,
+    // Which racks are these things part of
+    rack_ids: std::sync::Mutex<HashMap<String, usize>>,
     refresh_count: AtomicUsize,
     reference_count: AtomicUsize,
     responded: AtomicBool,
     active: AtomicBool,
 
-    supports_float: AtomicBool,
-    supports_geo: AtomicBool,
+    features: NodeFeatures,
 }
 
 impl Node {
@@ -63,6 +67,7 @@ impl Node {
             address: nv.address.clone(),
 
             host: nv.aliases[0].clone(),
+            rebalance_generation: AtomicIsize::new(if client_policy.rack_ids.is_some() {-1} else {0}),
             connection_pool: ConnectionPool::new(nv.aliases[0].clone(), client_policy),
             failures: AtomicUsize::new(0),
             partition_generation: AtomicIsize::new(-1),
@@ -70,9 +75,8 @@ impl Node {
             reference_count: AtomicUsize::new(0),
             responded: AtomicBool::new(false),
             active: AtomicBool::new(true),
-
-            supports_float: AtomicBool::new(nv.supports_float),
-            supports_geo: AtomicBool::new(nv.supports_geo),
+            features: nv.features,
+            rack_ids: std::sync::Mutex::new(HashMap::new()),
         }
     }
     // Returns the Node address
@@ -95,15 +99,11 @@ impl Node {
     }
 
     // Returns true if the Node supports floats
-    pub fn supports_float(&self) -> bool {
-        self.supports_float.load(Ordering::Relaxed)
+    pub const fn features(&self) -> &NodeFeatures {
+        &self.features
     }
 
     // Returns true if the Node supports geo
-    pub fn supports_geo(&self) -> bool {
-        self.supports_geo.load(Ordering::Relaxed)
-    }
-
     // Returns the reference count
     pub fn reference_count(&self) -> usize {
         self.reference_count.load(Ordering::Relaxed)
@@ -114,12 +114,17 @@ impl Node {
         self.reference_count.store(0, Ordering::Relaxed);
         self.responded.store(false, Ordering::Relaxed);
         self.refresh_count.fetch_add(1, Ordering::Relaxed);
-        let commands = vec![
+        let mut commands = vec![
             "node",
             "cluster-name",
-            "partition-generation",
+            PARTITION_GENERATION,
             self.services_name(),
         ];
+
+        if self.client_policy.rack_ids.is_some() {
+            commands.push(REBALANCE_GENERATION);
+        }
+
         let info_map = self
             .info(&commands)
             .await
@@ -131,7 +136,9 @@ impl Node {
             .add_friends(current_aliases, &info_map)
             .chain_err(|| "Failed to add friends")?;
         self.update_partitions(&info_map)
-            .chain_err(|| "Failed to update partitions")?;
+            .chain_err(|| "Failed to update partition generation")?;
+        self.update_rebalance_generation(&info_map)
+            .chain_err(|| "Failed to update rebalance generation")?;
         self.reset_failures();
         Ok(friends)
     }
@@ -229,8 +236,8 @@ impl Node {
         Ok(friends)
     }
 
-    fn update_partitions(&self, info_map: &HashMap<String, String>) -> Result<()> {
-        match info_map.get("partition-generation") {
+    pub(crate) fn update_partitions(&self, info_map: &HashMap<String, String>) -> Result<()> {
+        match info_map.get(PARTITION_GENERATION) {
             None => bail!(ErrorKind::BadResponse(
                 "Missing partition generation".to_string()
             )),
@@ -240,6 +247,33 @@ impl Node {
             }
         }
 
+        Ok(())
+    }
+
+    pub fn update_rebalance_generation(&self, info_map: &HashMap<String, String>) -> Result<()> {
+        if let Some(gen_string) = info_map.get(REBALANCE_GENERATION) {
+            let gen = gen_string.parse::<isize>()?;
+            self.rebalance_generation.store(gen, Ordering::Relaxed);
+        }
+
+        Ok(())
+    }
+
+    pub fn is_in_rack(&self, namespace: &str, rack_ids: &HashSet<usize>) -> bool {
+        if let Ok(locked) = self.rack_ids.lock() {
+            locked.get(namespace).map_or(false, |r|rack_ids.contains(r))
+        } else {
+            false
+        }
+    }
+
+    pub fn parse_rack(&self, buf: &str) -> Result<()> {
+        let new_table = buf.split(';').map(|entry|{
+            let (key, val) = entry.split_once(':').ok_or("Invalid rack entry")?;
+            Ok((key.to_string(), val.parse::<usize>()?))
+        }).collect::<Result<HashMap<_, _>>>()?;
+
+        *self.rack_ids.lock().map_err(|err|err.to_string())? = new_table;
         Ok(())
     }
 
@@ -301,6 +335,11 @@ impl Node {
     // Get the partition generation
     pub fn partition_generation(&self) -> isize {
         self.partition_generation.load(Ordering::Relaxed)
+    }
+
+    // Get the rebalance generation
+    pub fn rebalance_generation(&self) -> isize {
+        self.rebalance_generation.load(Ordering::Relaxed)
     }
 }
 

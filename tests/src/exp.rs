@@ -645,11 +645,11 @@ async fn expression_commands() {
 
     // GET
     let key = as_key!(namespace, &set_name, 35);
-    rpolicy.filter_expression = Some(eq(int_bin("bin".to_string()), int_val(15)));
+    rpolicy.base_policy.filter_expression = Some(eq(int_bin("bin".to_string()), int_val(15)));
     let test = client.get(&rpolicy, &key, Bins::All).await;
     assert_eq!(test.is_err(), true, "GET Err Test Failed");
 
-    rpolicy.filter_expression = Some(eq(int_bin("bin".to_string()), int_val(35)));
+    rpolicy.base_policy.filter_expression = Some(eq(int_bin("bin".to_string()), int_val(35)));
     let test = client.get(&rpolicy, &key, Bins::All).await;
     assert_eq!(test.is_ok(), true, "GET Ok Test Failed");
 

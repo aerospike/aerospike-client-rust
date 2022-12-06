@@ -13,18 +13,16 @@
 // License for the specific language governing permissions and limitations under
 // the License.
 
-use std::cmp;
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, Weak};
 
 use crate::batch::BatchRead;
 use crate::cluster::partition::Partition;
 use crate::cluster::{Cluster, Node};
 use crate::commands::BatchReadCommand;
-use crate::errors::{Error, Result};
+use crate::errors::Result;
 use crate::policy::{BatchPolicy, Concurrency};
 use crate::Key;
-use futures::lock::Mutex;
 
 pub struct BatchExecutor {
     cluster: Arc<Cluster>,
@@ -40,12 +38,12 @@ impl BatchExecutor {
         policy: &BatchPolicy,
         batch_reads: Vec<BatchRead>,
     ) -> Result<Vec<BatchRead>> {
-        let batch_nodes = self.get_batch_nodes(&batch_reads).await?;
+        let batch_nodes = self.get_batch_nodes(&batch_reads, policy.replica).await?;
         let jobs = batch_nodes
             .into_iter()
             .map(|(node, reads)| BatchReadCommand::new(policy, node, reads))
             .collect();
-        let reads = self.execute_batch_jobs(jobs, &policy.concurrency).await?;
+        let reads = self.execute_batch_jobs(jobs, policy.concurrency).await?;
         let mut all_results: Vec<_> = reads.into_iter().flat_map(|cmd|cmd.batch_reads).collect();
         all_results.sort_by_key(|(_, i)|*i);
         Ok(all_results.into_iter().map(|(b, _)|b).collect())
@@ -54,9 +52,9 @@ impl BatchExecutor {
     async fn execute_batch_jobs(
         &self,
         jobs: Vec<BatchReadCommand>,
-        concurrency: &Concurrency,
+        concurrency: Concurrency,
     ) -> Result<Vec<BatchReadCommand>> {
-        let handles = jobs.into_iter().map(BatchReadCommand::execute);
+        let handles = jobs.into_iter().map(|job|job.execute(self.cluster.clone()));
         match concurrency {
             Concurrency::Sequential => futures::future::join_all(handles).await.into_iter().collect(),
             Concurrency::Parallel => futures::future::join_all(handles.map(aerospike_rt::spawn)).await.into_iter().map(|value|value.map_err(|e|e.to_string())?).collect(),
@@ -66,10 +64,11 @@ impl BatchExecutor {
     async fn get_batch_nodes(
         &self,
         batch_reads: &[BatchRead],
+        replica: crate::policy::Replica,
     ) -> Result<HashMap<Arc<Node>, Vec<(BatchRead, usize)>>> {
         let mut map = HashMap::new();
         for (index, batch_read) in batch_reads.iter().enumerate() {
-            let node = self.node_for_key(&batch_read.key).await?;
+            let node = self.node_for_key(&batch_read.key, replica).await?;
             map.entry(node)
                 .or_insert_with(Vec::new)
                 .push((batch_read.clone(), index));
@@ -77,9 +76,9 @@ impl BatchExecutor {
         Ok(map)
     }
 
-    async fn node_for_key(&self, key: &Key) -> Result<Arc<Node>> {
+    async fn node_for_key(&self, key: &Key, replica: crate::policy::Replica) -> Result<Arc<Node>> {
         let partition = Partition::new_by_key(key);
-        let node = self.cluster.get_node(&partition).await?;
+        let node = self.cluster.get_node(&partition, replica, Weak::new()).await?;
         Ok(node)
     }
 }
