@@ -117,6 +117,24 @@ where
     }
 }
 
+
+/// Defines algorithm used to determine the target node for a command. The replica algorithm only affects single record and batch commands.
+#[derive(Debug, Copy, Clone)]
+pub enum Replica {
+    /// Use node containing key's master partition.
+    Master,
+    /// Try node containing master partition first. If connection fails, all commands try nodes containing replicated partitions. If socketTimeout is reached, reads also try nodes containing replicated partitions, but writes remain on master node.
+    Sequence,
+    /// Try node on the same rack as the client first. If there are no nodes on the same rack, use SEQUENCE instead. 
+    PreferRack,
+}
+
+impl Default for Replica {
+    fn default() -> Self {
+        Replica::Sequence
+    }
+}
+
 /// Common parameters shared by all policy types.
 #[derive(Debug, Clone)]
 pub struct BasePolicy {

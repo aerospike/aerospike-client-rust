@@ -22,6 +22,17 @@ use crate::errors::{ErrorKind, Result, ResultExt};
 use crate::net::{Connection, Host};
 use crate::policy::ClientPolicy;
 
+
+#[allow(clippy::struct_excessive_bools)]
+#[derive(Copy, Clone, Default, Debug)]
+pub struct NodeFeatures {
+    pub supports_float: bool,
+    pub supports_batch_index: bool,
+    pub supports_replicas_all: bool,
+    pub supports_replicas: bool,
+    pub supports_geo: bool,
+}
+
 // Validates a Database server node
 #[allow(clippy::struct_excessive_bools)]
 #[derive(Clone)]
@@ -31,10 +42,7 @@ pub struct NodeValidator {
     pub address: String,
     pub client_policy: ClientPolicy,
     pub use_new_info: bool,
-    pub supports_float: bool,
-    pub supports_batch_index: bool,
-    pub supports_replicas_all: bool,
-    pub supports_geo: bool,
+    pub features: NodeFeatures,
 }
 
 // Generates a node validator
@@ -46,10 +54,7 @@ impl NodeValidator {
             address: "".to_string(),
             client_policy: cluster.client_policy().clone(),
             use_new_info: true,
-            supports_float: false,
-            supports_batch_index: false,
-            supports_replicas_all: false,
-            supports_geo: false,
+            features: NodeFeatures::default(),
         }
     }
 
@@ -114,12 +119,15 @@ impl NodeValidator {
         self.address = alias.address();
 
         if let Some(features) = info_map.get("features") {
-            self.set_features(features);
+            self.features.set_features(features);
         }
 
         Ok(())
     }
 
+}
+
+impl NodeFeatures {
     fn set_features(&mut self, features: &str) {
         let features = features.split(';');
         for feature in features {
@@ -128,6 +136,7 @@ impl NodeValidator {
                 "batch-index" => self.supports_batch_index = true,
                 "replicas-all" => self.supports_replicas_all = true,
                 "geo" => self.supports_geo = true,
+                "replicas" => self.supports_replicas = true,
                 _ => (),
             }
         }

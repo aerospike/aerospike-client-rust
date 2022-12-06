@@ -83,7 +83,7 @@ impl<'a> Command for ScanCommand<'a> {
         )
     }
 
-    async fn get_node(&self) -> Result<Arc<Node>> {
+    async fn get_node(&mut self) -> Result<Arc<Node>> {
         self.stream_command.get_node().await
     }
 

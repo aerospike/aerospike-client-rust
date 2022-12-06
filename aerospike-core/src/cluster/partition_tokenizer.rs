@@ -12,7 +12,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::collections::HashMap;
 use std::str;
 use std::sync::Arc;
 use std::vec::Vec;
@@ -23,40 +22,104 @@ use crate::commands::Message;
 use crate::errors::{ErrorKind, Result};
 use crate::net::Connection;
 
-const REPLICAS_NAME: &str = "replicas-master";
+use super::{PartitionTable, PartitionForNamespace};
 
 // Validates a Database server node
 #[derive(Debug, Clone)]
 pub struct PartitionTokenizer {
     buffer: Vec<u8>,
+    request_type: RequestedReplicas,
+}
+
+#[derive(Debug, Clone)]
+enum RequestedReplicas {
+    ReplicasMaster, // Ancient
+    ReplicasAll, // Old
+    Replicas, // Modern,
+}
+
+impl RequestedReplicas {
+    const fn command(&self) -> &'static str {
+        match self {
+            RequestedReplicas::ReplicasMaster => "replicas-master",
+            RequestedReplicas::ReplicasAll => "replicas-all",
+            RequestedReplicas::Replicas => "replicas",
+        }
+    }
 }
 
 impl PartitionTokenizer {
-    pub async fn new(conn: &mut Connection) -> Result<Self> {
-        let info_map = Message::info(conn, &[REPLICAS_NAME]).await?;
-        if let Some(buf) = info_map.get(REPLICAS_NAME) {
+    pub async fn new(conn: &mut Connection, node: &Arc<Node>) -> Result<Self> {
+        let request_type = match (node.features().supports_replicas, node.features().supports_replicas_all) {
+            (true, _) => RequestedReplicas::Replicas,
+            (false, true) => RequestedReplicas::ReplicasAll,
+            (false, false) => RequestedReplicas::ReplicasMaster,
+        };
+
+        let command = request_type.command();
+        let info_map = Message::info(conn, &[command, node::PARTITION_GENERATION]).await?;
+        if let Some(buf) = info_map.get(command) {
             return Ok(PartitionTokenizer {
                 buffer: buf.as_bytes().to_owned(),
+                request_type,
             });
         }
+
+        // We re-update the partitions right now (in case its changed since it was last polled)
+        node.update_partitions(&info_map)?;
+
         bail!(ErrorKind::BadResponse("Missing replicas info".to_string()))
     }
 
     pub fn update_partition(
         &self,
-        nmap: &mut HashMap<String, [Option<Arc<Node>>; node::PARTITIONS]>,
-        node: Arc<Node>,
+        nmap: &mut PartitionTable,
+        node: &Arc<Node>,
     ) -> Result<()> {
         // <ns>:<base64-encoded partition map>;<ns>:<base64-encoded partition map>; ...
         let part_str = str::from_utf8(&self.buffer)?;
         for part in part_str.trim_end().split(';') {
             match part.split_once(':') {
-                Some((ns, part)) => {
-                    let restore_buffer = base64::decode(part)?;
-                    let entry = nmap.entry(ns.to_string()).or_insert_with(||[(); node::PARTITIONS].map(|_|None));
-                    for (idx, item) in entry.iter_mut().enumerate() {
-                        if restore_buffer[idx >> 3] & (0x80 >> (idx & 7) as u8) != 0 {
-                            *item = Some(node.clone());
+                Some((ns, info)) => {
+                    let mut info_section = info.split(',');
+                    let reigime = if matches!(self.request_type, RequestedReplicas::Replicas) {
+                        info_section
+                        .next()
+                        .ok_or_else(||ErrorKind::BadResponse("Missing reigime".to_string()))?
+                        .parse()
+                        .map_err(|err|ErrorKind::BadResponse(format!("Invalid reigime: {err}")))?
+                    } else {
+                        0
+                    };
+
+                    let n_replicas = if matches!(self.request_type, RequestedReplicas::Replicas | RequestedReplicas::ReplicasAll) {
+                        info_section
+                        .next()
+                        .ok_or_else(||ErrorKind::BadResponse("Missing replicas count".to_string()))?
+                        .parse()
+                        .map_err(|err|ErrorKind::BadResponse(format!("Invalid replicas count: {err}")))?
+                    } else {
+                        1
+                    };
+
+                    let entry = nmap.entry(ns.to_string()).or_insert_with(PartitionForNamespace::default);
+
+                    if entry.replicas != n_replicas && reigime >= entry.reigimes.iter().copied().max().unwrap() {
+                        let wanted_size = n_replicas * node::PARTITIONS;
+                        entry.nodes.resize_with(wanted_size, ||None);
+                        entry.replicas = n_replicas;
+                    }
+
+                    for (section, replica) in info_section.zip(entry.nodes.chunks_mut(node::PARTITIONS)) {
+                        let restore_buffer = base64::decode(section)?;
+                        for (idx, item) in replica.iter_mut().enumerate() {
+                            if reigime >= entry.reigimes[idx] {
+                                if restore_buffer[idx >> 3] & (0x80 >> (idx & 7) as u8) != 0 {
+                                    *item = Some(node.clone());
+                                } else if item.as_ref().map_or(false, |val|val == node) {
+                                    *item = None;
+                                }
+                            }
                         }
                     }
                 }

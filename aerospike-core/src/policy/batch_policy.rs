@@ -16,6 +16,8 @@
 use crate::expressions::FilterExpression;
 use crate::policy::{BasePolicy, Concurrency, PolicyLike};
 
+use super::Replica;
+
 /// `BatchPolicy` encapsulates parameters for all batch operations.
 #[derive(Debug, Clone)]
 pub struct BatchPolicy {
@@ -48,6 +50,9 @@ pub struct BatchPolicy {
 
     /// Optional Filter Expression
     pub filter_expression: Option<FilterExpression>,
+
+    /// Defines algorithm used to determine the target node for a command. The replica algorithm only affects single record and batch commands.
+    pub replica: Replica,
 }
 
 impl BatchPolicy {
@@ -70,6 +75,7 @@ impl Default for BatchPolicy {
             allow_inline: true,
             send_set_name: false,
             filter_expression: None,
+            replica: Replica::default(),
         }
     }
 }

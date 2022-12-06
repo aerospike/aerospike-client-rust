@@ -40,7 +40,7 @@ impl<'a, 'b> WriteCommand<'a> {
         operation: OperationType,
     ) -> Self {
         WriteCommand {
-            single_command: SingleCommand::new(cluster, key),
+            single_command: SingleCommand::new(cluster, key, crate::policy::Replica::Master),
             bins,
             policy,
             operation,
@@ -76,7 +76,7 @@ impl<'a, 'b> Command for WriteCommand<'a> {
         )
     }
 
-    async fn get_node(&self) -> Result<Arc<Node>> {
+    async fn get_node(&mut self) -> Result<Arc<Node>> {
         self.single_command.get_node().await
     }
 

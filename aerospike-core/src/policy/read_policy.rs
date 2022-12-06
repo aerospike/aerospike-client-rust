@@ -18,13 +18,22 @@ use crate::policy::BasePolicy;
 use crate::{ConsistencyLevel, Priority};
 use std::time::Duration;
 
+use super::{Replica, PolicyLike};
+
 /// `ReadPolicy` excapsulates parameters for transaction policy attributes
 /// used in all database operation calls.
-pub type ReadPolicy = BasePolicy;
+#[derive(Debug, Default)]
+pub struct ReadPolicy {
+    /// Base policy instance
+    pub base_policy: BasePolicy,
 
-impl Default for ReadPolicy {
-    fn default() -> ReadPolicy {
-        ReadPolicy {
+    /// Defines algorithm used to determine the target node for a command. The replica algorithm only affects single record and batch commands.
+    pub replica: Replica,
+}
+
+impl Default for BasePolicy {
+    fn default() -> BasePolicy {
+        BasePolicy {
             priority: Priority::Default,
             timeout: Some(Duration::new(30, 0)),
             max_retries: Some(2),
@@ -35,9 +44,15 @@ impl Default for ReadPolicy {
     }
 }
 
-impl ReadPolicy {
+impl BasePolicy {
     /// Get the Optional Filter Expression
     pub const fn filter_expression(&self) -> &Option<FilterExpression> {
         &self.filter_expression
+    }
+}
+
+impl PolicyLike for ReadPolicy {
+    fn base(&self) -> &BasePolicy {
+        &self.base_policy
     }
 }

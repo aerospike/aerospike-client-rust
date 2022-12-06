@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::sync::Arc;
+use std::sync::{Arc, Weak};
 
 use crate::cluster::partition::Partition;
 use crate::cluster::{Cluster, Node};
@@ -28,20 +28,26 @@ pub struct SingleCommand<'a> {
     cluster: Arc<Cluster>,
     pub key: &'a Key,
     partition: Partition<'a>,
+    last_tried: Weak<Node>,
+    replica: crate::policy::Replica,
 }
 
 impl<'a> SingleCommand<'a> {
-    pub fn new(cluster: Arc<Cluster>, key: &'a Key) -> Self {
+    pub fn new(cluster: Arc<Cluster>, key: &'a Key, replica: crate::policy::Replica,) -> Self {
         let partition = Partition::new_by_key(key);
         SingleCommand {
             cluster,
             key,
             partition,
+            last_tried: Weak::new(),
+            replica,
         }
     }
 
-    pub async fn get_node(&self) -> Result<Arc<Node>> {
-        self.cluster.get_node(&self.partition).await
+    pub async fn get_node(&mut self) -> Result<Arc<Node>> {
+        let this_time = self.cluster.get_node(&self.partition, self.replica, self.last_tried.clone()).await?;
+        self.last_tried = Arc::downgrade(&this_time);
+        Ok(this_time)
     }
 
     pub async fn empty_socket(conn: &mut Connection) -> Result<()> {
