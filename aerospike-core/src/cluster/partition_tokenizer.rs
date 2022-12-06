@@ -104,21 +104,18 @@ impl PartitionTokenizer {
 
                     let entry = nmap.entry(ns.to_string()).or_insert_with(PartitionForNamespace::default);
 
-                    if entry.replicas != n_replicas && reigime >= entry.reigimes.iter().copied().max().unwrap() {
+                    if entry.replicas != n_replicas && reigime >= entry.nodes.iter().map(|(r, _)|*r).max().unwrap_or_default() {
                         let wanted_size = n_replicas * node::PARTITIONS;
-                        entry.nodes.resize_with(wanted_size, ||None);
+                        entry.nodes.resize_with(wanted_size, ||(0, None));
                         entry.replicas = n_replicas;
                     }
 
                     for (section, replica) in info_section.zip(entry.nodes.chunks_mut(node::PARTITIONS)) {
                         let restore_buffer = base64::decode(section)?;
-                        for (idx, item) in replica.iter_mut().enumerate() {
-                            if reigime >= entry.reigimes[idx] {
-                                if restore_buffer[idx >> 3] & (0x80 >> (idx & 7) as u8) != 0 {
-                                    *item = Some(node.clone());
-                                } else if item.as_ref().map_or(false, |val|val == node) {
-                                    *item = None;
-                                }
+                        for (idx, (this_reigimes, item)) in replica.iter_mut().enumerate() {
+                            if restore_buffer[idx >> 3] & (0x80 >> (idx & 7) as u8) != 0 && reigime >= *this_reigimes {
+                                *item = Some(node.clone());
+                                *this_reigimes = reigime;
                             }
                         }
                     }
