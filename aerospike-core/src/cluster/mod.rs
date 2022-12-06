@@ -41,21 +41,20 @@ use futures::lock::Mutex;
 
 #[derive(Debug)]
 pub struct PartitionForNamespace {
-    reigimes: [u32; node::PARTITIONS],
-    nodes: Vec<Option<Arc<Node>>>,
+    nodes: Vec<(u32, Option<Arc<Node>>)>,
     replicas: usize,
 }
 type PartitionTable = HashMap<String, PartitionForNamespace>;
 
 impl Default for PartitionForNamespace {
     fn default() -> Self {
-        Self { reigimes: [0; node::PARTITIONS], nodes: Vec::default(), replicas: 0 }
+        Self { nodes: Vec::default(), replicas: 0 }
     }
 }
 
 impl PartitionForNamespace {
     fn all_replicas(&self, index: usize) -> impl Iterator<Item = Option<Arc<Node>>> + '_ {
-        (0..self.replicas).map(move |i|self.nodes.get(i * node::PARTITIONS + index).and_then(Option::clone))
+        (0..self.replicas).map(move |i|self.nodes.get(i * node::PARTITIONS + index).and_then(|(_, item)|item.clone()))
     }
 
     async fn get_node(&self, cluster: &Cluster, partition: &Partition<'_>, replica: crate::policy::Replica, last_tried: Weak<Node>) -> Result<Arc<Node>> {
@@ -303,7 +302,7 @@ impl Cluster {
         let partitions = self.partition_write_map.read().await;
 
         if let Some(node_array) = partitions.get(namespace) {
-            for (i, tnode) in node_array.nodes.iter().enumerate().take(node::PARTITIONS) {
+            for (i, (_, tnode)) in node_array.nodes.iter().enumerate().take(node::PARTITIONS) {
                 if tnode.as_ref().map_or(false, |tnode|tnode.as_ref() == node) {
                     res.push(i as u16);
                 }
@@ -515,7 +514,7 @@ impl Cluster {
         let partitions = self.partition_write_map.read().await;
         (*partitions)
             .values()
-            .any(|map| map.nodes.iter().any(|node| *node == filter))
+            .any(|map| map.nodes.iter().any(|(_, node)| *node == filter))
     }
 
     async fn add_nodes(&self, friend_list: &[Arc<Node>]) {
