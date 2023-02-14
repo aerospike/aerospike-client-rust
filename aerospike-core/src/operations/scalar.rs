@@ -40,7 +40,7 @@ pub const fn get_header<'a>() -> Operation<'a> {
 }
 
 /// Create read bin database operation.
-pub const fn get_bin(bin_name: &str) -> Operation {
+pub fn get_bin(bin_name: &str) -> Operation {
     Operation {
         op: OperationType::Read,
         ctx: DEFAULT_CTX,
@@ -50,41 +50,41 @@ pub const fn get_bin(bin_name: &str) -> Operation {
 }
 
 /// Create set database operation.
-pub const fn put<'a>(bin: &'a Bin) -> Operation<'a> {
+pub fn put<'a>(bin: &'a Bin) -> Operation<'a> {
     Operation {
         op: OperationType::Write,
         ctx: DEFAULT_CTX,
-        bin: OperationBin::Name(bin.name),
+        bin: OperationBin::Name(&bin.name),
         data: OperationData::Value(&bin.value),
     }
 }
 
 /// Create string append database operation.
-pub const fn append<'a>(bin: &'a Bin) -> Operation<'a> {
+pub fn append<'a>(bin: &'a Bin) -> Operation<'a> {
     Operation {
         op: OperationType::Append,
         ctx: DEFAULT_CTX,
-        bin: OperationBin::Name(bin.name),
+        bin: OperationBin::Name(&bin.name),
         data: OperationData::Value(&bin.value),
     }
 }
 
 /// Create string prepend database operation.
-pub const fn prepend<'a>(bin: &'a Bin) -> Operation<'a> {
+pub fn prepend<'a>(bin: &'a Bin) -> Operation<'a> {
     Operation {
         op: OperationType::Prepend,
         ctx: DEFAULT_CTX,
-        bin: OperationBin::Name(bin.name),
+        bin: OperationBin::Name(&bin.name),
         data: OperationData::Value(&bin.value),
     }
 }
 
 /// Create integer add database operation.
-pub const fn add<'a>(bin: &'a Bin) -> Operation<'a> {
+pub fn add<'a>(bin: &'a Bin) -> Operation<'a> {
     Operation {
         op: OperationType::Incr,
         ctx: DEFAULT_CTX,
-        bin: OperationBin::Name(bin.name),
+        bin: OperationBin::Name(&bin.name),
         data: OperationData::Value(&bin.value),
     }
 }

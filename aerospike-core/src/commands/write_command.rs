@@ -27,16 +27,16 @@ use crate::{Bin, Key, ResultCode};
 pub struct WriteCommand<'a> {
     single_command: SingleCommand<'a>,
     policy: &'a WritePolicy,
-    bins: &'a [Bin<'a>],
+    bins: &'a [Bin],
     operation: OperationType,
 }
 
-impl<'a, 'b> WriteCommand<'a> {
+impl<'a> WriteCommand<'a> {
     pub fn new(
         policy: &'a WritePolicy,
         cluster: Arc<Cluster>,
         key: &'a Key,
-        bins: &'a [Bin<'b>],
+        bins: &'a [Bin],
         operation: OperationType,
     ) -> Self {
         WriteCommand {
@@ -53,7 +53,7 @@ impl<'a, 'b> WriteCommand<'a> {
 }
 
 #[async_trait::async_trait]
-impl<'a, 'b> Command for WriteCommand<'a> {
+impl<'a> Command for WriteCommand<'a> {
     async fn write_timeout(
         &mut self,
         conn: &mut Connection,

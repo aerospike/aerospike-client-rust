@@ -268,12 +268,7 @@ impl Client {
     ///     Err(err) => println!("Error writing record: {}", err),
     /// }
     /// ```
-    pub async fn put<'a, 'b>(
-        &self,
-        policy: &'a WritePolicy,
-        key: &'a Key,
-        bins: &'a [Bin<'b>],
-    ) -> Result<()> {
+    pub async fn put(&self, policy: &WritePolicy, key: &Key, bins: &[Bin]) -> Result<()> {
         let mut command = WriteCommand::new(
             policy,
             self.cluster.clone(),
@@ -306,12 +301,7 @@ impl Client {
     ///     Err(err) => println!("Error writing record: {}", err),
     /// }
     /// ```
-    pub async fn add<'a, 'b>(
-        &self,
-        policy: &'a WritePolicy,
-        key: &'a Key,
-        bins: &'a [Bin<'b>],
-    ) -> Result<()> {
+    pub async fn add(&self, policy: &WritePolicy, key: &Key, bins: &[Bin]) -> Result<()> {
         let mut command =
             WriteCommand::new(policy, self.cluster.clone(), key, bins, OperationType::Incr);
         command.execute().await
@@ -320,12 +310,7 @@ impl Client {
     /// Append bin string values to existing record bin values. The policy specifies the
     /// transaction timeout, record expiration and how the transaction is handled when the record
     /// already exists. This call only works for string values.
-    pub async fn append<'a, 'b>(
-        &self,
-        policy: &'a WritePolicy,
-        key: &'a Key,
-        bins: &'a [Bin<'b>],
-    ) -> Result<()> {
+    pub async fn append(&self, policy: &WritePolicy, key: &Key, bins: &[Bin]) -> Result<()> {
         let mut command = WriteCommand::new(
             policy,
             self.cluster.clone(),
@@ -339,12 +324,7 @@ impl Client {
     /// Prepend bin string values to existing record bin values. The policy specifies the
     /// transaction timeout, record expiration and how the transaction is handled when the record
     /// already exists. This call only works for string values.
-    pub async fn prepend<'a, 'b>(
-        &self,
-        policy: &'a WritePolicy,
-        key: &'a Key,
-        bins: &'a [Bin<'b>],
-    ) -> Result<()> {
+    pub async fn prepend(&self, policy: &WritePolicy, key: &Key, bins: &[Bin]) -> Result<()> {
         let mut command = WriteCommand::new(
             policy,
             self.cluster.clone(),

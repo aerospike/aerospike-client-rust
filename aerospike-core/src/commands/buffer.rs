@@ -153,12 +153,12 @@ impl Buffer {
     }
 
     // Writes the command for write operations
-    pub fn set_write<'b, A: AsRef<Bin<'b>>>(
+    pub fn set_write(
         &mut self,
         policy: &WritePolicy,
         op_type: OperationType,
         key: &Key,
-        bins: &[A],
+        bins: &[Bin],
     ) -> Result<()> {
         self.begin();
         let mut field_count = self.estimate_key_size(key, policy.send_key);
@@ -1133,7 +1133,7 @@ impl Buffer {
         self.write_u8(bin.value.particle_type() as u8);
         self.write_u8(0);
         self.write_u8(name_length as u8);
-        self.write_str(bin.name);
+        self.write_str(&bin.name);
         bin.value.write_to(self);
     }
 
