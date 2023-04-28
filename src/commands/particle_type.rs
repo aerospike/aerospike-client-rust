@@ -13,6 +13,9 @@
 // License for the specific language governing permissions and limitations under
 // the License.
 
+use std::fmt;
+use std::result::Result as StdResult;
+
 #[derive(Debug, Clone)]
 #[doc(hidden)]
 pub enum ParticleType {
@@ -22,20 +25,7 @@ pub enum ParticleType {
     FLOAT = 2,
     STRING = 3,
     BLOB = 4,
-    // TIMESTAMP       = 5,
     DIGEST = 6,
-    // JBLOB  = 7,
-    // CSHARP_BLOB     = 8,
-    // PYTHON_BLOB     = 9,
-    // RUBY_BLOB       = 10,
-    // PHP_BLOB        = 11,
-    // ERLANG_BLOB     = 12,
-    // SEGMENT_POINTER = 13,
-    // RTA_LIST        = 14,
-    // RTA_DICT        = 15,
-    // RTA_APPEND_DICT = 16,
-    // RTA_APPEND_LIST = 17,
-    // LUA_BLOB        = 18,
     BOOL = 17,
     HLL = 18,
     MAP = 19,
@@ -52,20 +42,7 @@ impl From<u8> for ParticleType {
             2 => ParticleType::FLOAT,
             3 => ParticleType::STRING,
             4 => ParticleType::BLOB,
-            // 5 => ParticleType::TIMESTAMP      ,
             6 => ParticleType::DIGEST,
-            // 7 => ParticleType::JBLOB ,
-            // 8 => ParticleType::CSHARP_BLOB    ,
-            // 9 => ParticleType::PYTHON_BLOB    ,
-            // 10 => ParticleType::RUBY_BLOB      ,
-            // 11 => ParticleType::PHP_BLOB       ,
-            // 12 => ParticleType::ERLANG_BLOB    ,
-            // 13 => ParticleType::SEGMENT_POINTER,
-            // 14 => ParticleType::RTA_LIST       ,
-            // 15 => ParticleType::RTA_DICT       ,
-            // 16 => ParticleType::RTA_APPEND_DICT,
-            // 17 => ParticleType::RTA_APPEND_LIST,
-            // 18 => ParticleType::LUA_BLOB       ,
             17 => ParticleType::BOOL,
             18 => ParticleType::HLL,
             19 => ParticleType::MAP,
@@ -73,6 +50,25 @@ impl From<u8> for ParticleType {
             21 => ParticleType::LDT,
             23 => ParticleType::GEOJSON,
             _ => unreachable!(),
+        }
+    }
+}
+
+impl fmt::Display for ParticleType {
+    fn fmt(&self, f: &mut fmt::Formatter) -> StdResult<(), fmt::Error> {
+        match self {
+            ParticleType::NULL => write!(f, "NULL"),
+            ParticleType::INTEGER => write!(f, "INTEGER"),
+            ParticleType::FLOAT => write!(f, "FLOAT"),
+            ParticleType::STRING => write!(f, "STRING"),
+            ParticleType::BLOB => write!(f, "BLOB"),
+            ParticleType::DIGEST => write!(f, "DIGEST"),
+            ParticleType::BOOL => write!(f, "BOOL"),
+            ParticleType::HLL => write!(f, "HLL"),
+            ParticleType::MAP => write!(f, "MAP"),
+            ParticleType::LIST => write!(f, "LIST"),
+            ParticleType::LDT => write!(f, "LDT"),
+            ParticleType::GEOJSON => write!(f, "GEOJSON"),
         }
     }
 }
