@@ -227,7 +227,7 @@ impl Value {
     pub fn particle_type(&self) -> ParticleType {
         match *self {
             Value::Nil => ParticleType::NULL,
-            Value::Int(_) | Value::Bool(_) => ParticleType::INTEGER,
+            Value::Int(_) => ParticleType::INTEGER,
             Value::UInt(_) => panic!(
                 "Aerospike does not support u64 natively on server-side. Use casting to \
                  store and retrieve u64 values."
@@ -235,6 +235,7 @@ impl Value {
             Value::Float(_) => ParticleType::FLOAT,
             Value::String(_) => ParticleType::STRING,
             Value::Blob(_) => ParticleType::BLOB,
+            Value::Bool(_) => ParticleType::BOOL,
             Value::List(_) => ParticleType::LIST,
             Value::HashMap(_) => ParticleType::MAP,
             Value::OrderedMap(_) => panic!("The library never passes ordered maps to the server."),
@@ -265,13 +266,14 @@ impl Value {
     pub fn estimate_size(&self) -> usize {
         match *self {
             Value::Nil => 0,
-            Value::Int(_) | Value::Bool(_) | Value::Float(_) => 8,
+            Value::Int(_) | Value::Float(_) => 8,
             Value::UInt(_) => panic!(
                 "Aerospike does not support u64 natively on server-side. Use casting to \
                  store and retrieve u64 values."
             ),
             Value::String(ref s) => s.len(),
             Value::Blob(ref b) => b.len(),
+            Value::Bool(ref b) => 1,
             Value::List(_) | Value::HashMap(_) => encoder::pack_value(&mut None, self),
             Value::OrderedMap(_) => panic!("The library never passes ordered maps to the server."),
             Value::GeoJSON(ref s) => 1 + 2 + s.len(), // flags + ncells + jsonstr
@@ -591,6 +593,7 @@ pub fn bytes_to_particle(ptype: u8, buf: &mut Buffer, len: usize) -> Result<Valu
         ParticleType::DIGEST => Ok(Value::from("A DIGEST, NOT IMPLEMENTED YET!")),
         ParticleType::LDT => Ok(Value::from("A LDT, NOT IMPLEMENTED YET!")),
         ParticleType::HLL => Ok(Value::HLL(buf.read_blob(len))),
+        ParticleType::BOOL => Ok(Value::Bool(buf.read_bool(len))),
     }
 }
 
@@ -787,11 +790,23 @@ mod tests {
     #[test]
     #[cfg(feature = "serialization")]
     fn serializer() {
-        let val: Value = as_list!("0", 9, 8, 7, 1, 2.1f64, -1, as_list!(5, 6, 7, 8, "asd"));
+        let val: Value = as_list!(
+            Value::Nil,
+            "0",
+            9,
+            8,
+            7,
+            1,
+            2.1f64,
+            -1,
+            as_list!(5, 6, 7, 8, "asd"),
+            true,
+            false
+        );
         let json = serde_json::to_string(&val);
         assert_eq!(
             json.unwrap(),
-            "[\"0\",9,8,7,1,2.1,-1,[5,6,7,8,\"asd\"]]",
+            "[null,\"0\",9,8,7,1,4611911198408756429,-1,[5,6,7,8,\"asd\"],true,false]",
             "List Serialization failed"
         );
 
