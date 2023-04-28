@@ -29,7 +29,7 @@ use std::vec::Vec;
 
 use crate::commands::buffer::Buffer;
 use crate::commands::ParticleType;
-use crate::errors::{Error, Result};
+use crate::errors::Result;
 use crate::msgpack::{decoder, encoder};
 
 #[cfg(feature = "serialization")]
@@ -275,7 +275,7 @@ impl Value {
             ),
             Value::String(ref s) => Ok(s.len()),
             Value::Blob(ref b) => Ok(b.len()),
-            Value::Bool(ref b) => Ok(1),
+            Value::Bool(_) => Ok(1),
             Value::List(_) | Value::HashMap(_) => encoder::pack_value(&mut None, self),
             Value::OrderedMap(_) => panic!("The library never passes ordered maps to the server."),
             Value::GeoJSON(ref s) => Ok(1 + 2 + s.len()), // flags + ncells + jsonstr

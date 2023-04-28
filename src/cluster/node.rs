@@ -47,12 +47,9 @@ pub struct Node {
     refresh_count: AtomicUsize,
     reference_count: AtomicUsize,
     responded: AtomicBool,
-    use_new_info: bool,
     active: AtomicBool,
 
     supports_float: AtomicBool,
-    supports_batch_index: AtomicBool,
-    supports_replicas_all: AtomicBool,
     supports_geo: AtomicBool,
 }
 
@@ -63,7 +60,6 @@ impl Node {
             name: nv.name.clone(),
             aliases: RwLock::new(nv.aliases.to_vec()),
             address: nv.address.to_owned(),
-            use_new_info: nv.use_new_info,
 
             host: nv.aliases[0].clone(),
             connection_pool: ConnectionPool::new(nv.aliases[0].clone(), client_policy),
@@ -75,8 +71,6 @@ impl Node {
             active: AtomicBool::new(true),
 
             supports_float: AtomicBool::new(nv.supports_float),
-            supports_batch_index: AtomicBool::new(nv.supports_batch_index),
-            supports_replicas_all: AtomicBool::new(nv.supports_replicas_all),
             supports_geo: AtomicBool::new(nv.supports_geo),
         }
     }

@@ -32,8 +32,6 @@ const REPLICAS_NAME: &str = "replicas-master";
 #[derive(Debug, Clone)]
 pub struct PartitionTokenizer {
     buffer: Vec<u8>,
-    length: usize,
-    offset: usize,
 }
 
 impl PartitionTokenizer {
@@ -41,9 +39,7 @@ impl PartitionTokenizer {
         let info_map = Message::info(conn, &[REPLICAS_NAME])?;
         if let Some(buf) = info_map.get(REPLICAS_NAME) {
             return Ok(PartitionTokenizer {
-                length: info_map.len(),
                 buffer: buf.as_bytes().to_owned(),
-                offset: 0,
             });
         }
         bail!(ErrorKind::BadResponse("Missing replicas info".to_string()));
