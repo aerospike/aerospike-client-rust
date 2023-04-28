@@ -124,7 +124,8 @@ impl StreamCommand {
                         }
                     }
                 },
-                Ok((None, cont)) => return Ok(cont),
+                Ok((None, false)) => return Ok(false),
+                Ok((None, true)) => continue, // handle partition done
                 Err(err) => {
                     self.recordset.push(Err(err));
                     return Ok(false);
