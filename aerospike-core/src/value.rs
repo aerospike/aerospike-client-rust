@@ -14,6 +14,7 @@
 // the License.
 
 use std::collections::HashMap;
+use std::convert::TryFrom;
 use std::fmt;
 use std::hash::{Hash, Hasher};
 use std::result::Result as StdResult;
@@ -27,7 +28,7 @@ use std::vec::Vec;
 
 use crate::commands::buffer::Buffer;
 use crate::commands::ParticleType;
-use crate::errors::Result;
+use crate::errors::{Error, Result};
 use crate::msgpack::{decoder, encoder};
 
 #[cfg(feature = "serialization")]
@@ -556,6 +557,102 @@ impl<'a> From<&'a Value> for i64 {
     }
 }
 
+impl TryFrom<Value> for String {
+    type Error = String;
+    fn try_from(val: Value) -> std::result::Result<Self, Self::Error> {
+        match val {
+            Value::String(v) => Ok(v),
+            Value::GeoJSON(v) => Ok(v),
+            _ => bail!(format!(
+                "Invalid type conversion from Value::{} to {}",
+                val.particle_type(),
+                std::any::type_name::<Self>()
+            )),
+        }
+    }
+}
+
+impl TryFrom<Value> for Vec<u8> {
+    type Error = String;
+    fn try_from(val: Value) -> std::result::Result<Self, Self::Error> {
+        match val {
+            Value::Blob(v) => Ok(v),
+            Value::HLL(v) => Ok(v),
+            _ => bail!(format!(
+                "Invalid type conversion from Value::{} to {}",
+                val.particle_type(),
+                std::any::type_name::<Self>()
+            )),
+        }
+    }
+}
+
+impl TryFrom<Value> for Vec<Value> {
+    type Error = String;
+    fn try_from(val: Value) -> std::result::Result<Self, Self::Error> {
+        match val {
+            Value::List(v) => Ok(v),
+            _ => bail!(format!(
+                "Invalid type conversion from Value::{} to {}",
+                val.particle_type(),
+                std::any::type_name::<Self>()
+            )),
+        }
+    }
+}
+
+impl TryFrom<Value> for HashMap<Value, Value> {
+    type Error = String;
+    fn try_from(val: Value) -> std::result::Result<Self, Self::Error> {
+        match val {
+            Value::HashMap(v) => Ok(v),
+            _ => bail!(format!(
+                "Invalid type conversion from Value::{} to {}",
+                val.particle_type(),
+                std::any::type_name::<Self>()
+            )),
+        }
+    }
+}
+
+impl TryFrom<Value> for Vec<(Value, Value)> {
+    type Error = String;
+    fn try_from(val: Value) -> std::result::Result<Self, Self::Error> {
+        match val {
+            Value::OrderedMap(v) => Ok(v),
+            _ => bail!(format!(
+                "Invalid type conversion from Value::{} to {}",
+                val.particle_type(),
+                std::any::type_name::<Self>()
+            )),
+        }
+    }
+}
+
+impl TryFrom<Value> for f64 {
+    type Error = String;
+    fn try_from(val: Value) -> std::result::Result<Self, Self::Error> {
+        match val {
+            Value::Float(v) => Ok(f64::from(v)),
+            _ => bail!(format!(
+                "Invalid type conversion from Value::{} to {}",
+                val.particle_type(),
+                std::any::type_name::<Self>()
+            )),
+        }
+    }
+}
+
+impl TryFrom<Value> for bool {
+    type Error = String;
+    fn try_from(val: Value) -> std::result::Result<Self, Self::Error> {
+        match val {
+            Value::Bool(v) => Ok(v),
+            _ => bail!("Invalid type bool"),
+        }
+    }
+}
+
 #[doc(hidden)]
 pub fn bytes_to_particle(ptype: u8, buf: &mut Buffer, len: usize) -> Result<Value> {
     match ParticleType::from(ptype) {
@@ -763,6 +860,23 @@ impl Serialize for Value {
 #[cfg(test)]
 mod tests {
     use super::Value;
+    use std::collections::HashMap;
+    use std::convert::TryInto;
+
+    #[test]
+    fn try_into() {
+        let _: i64 = Value::Int(42).try_into().unwrap();
+        let _: f64 = Value::from(42.1).try_into().unwrap();
+        let _: String = Value::String("hello".into()).try_into().unwrap();
+        let _: String = Value::GeoJSON(r#"{"type":"Point"}"#.into())
+            .try_into()
+            .unwrap();
+        let _: Vec<u8> = Value::Blob("hello!".into()).try_into().unwrap();
+        let _: Vec<u8> = Value::HLL("hello!".into()).try_into().unwrap();
+        let _: bool = Value::Bool(false).try_into().unwrap();
+        let _: HashMap<Value, Value> = Value::HashMap(HashMap::new()).try_into().unwrap();
+        let _: Vec<(Value, Value)> = Value::OrderedMap(Vec::new()).try_into().unwrap();
+    }
 
     #[test]
     fn as_string() {
