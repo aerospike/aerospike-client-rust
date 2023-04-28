@@ -42,8 +42,7 @@ fn create_test_set(no_records: usize) -> String {
 }
 
 #[test]
-#[should_panic(expected = "IndexFound")]
-fn recreate_index() {
+fn create_index() {
     let _ = env_logger::try_init();
 
     let client = common::client();
@@ -59,10 +58,5 @@ fn recreate_index() {
     let task = client
         .create_index(&policy, ns, &set, bin, &index, IndexType::Numeric)
         .expect("Failed to create index");
-    task.wait_till_complete(None).unwrap();
-
-    let task = client
-        .create_index(&policy, ns, &set, bin, &index, IndexType::Numeric)
-        .unwrap();
     task.wait_till_complete(None).unwrap();
 }

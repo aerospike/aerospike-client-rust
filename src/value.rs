@@ -729,7 +729,7 @@ macro_rules! as_blob {
 /// # use aerospike::*;
 /// # use std::vec::Vec;
 /// # fn main() {
-/// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap();
+/// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap_or("localhost".into());
 /// # let client = Client::new(&ClientPolicy::default(), &hosts).unwrap();
 /// # let key = as_key!("test", "test", "mykey");
 /// let list = as_list!("a", "b", "c");
@@ -760,7 +760,7 @@ macro_rules! as_list {
 /// # use aerospike::*;
 /// # use std::vec::Vec;
 /// # fn main() {
-/// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap();
+/// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap_or("localhost".into());
 /// # let client = Client::new(&ClientPolicy::default(), &hosts).unwrap();
 /// # let key = as_key!("test", "test", "mykey");
 /// let module = "myUDF";
@@ -792,7 +792,7 @@ macro_rules! as_values {
 /// ```rust
 /// # use aerospike::*;
 /// # fn main() {
-/// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap();
+/// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap_or("localhost".into());
 /// # let client = Client::new(&ClientPolicy::default(), &hosts).unwrap();
 /// # let key = as_key!("test", "test", "mykey");
 /// let map = as_map!("a" => 1, "b" => 2);

@@ -22,7 +22,7 @@
 //! ```rust
 //! use aerospike::*;
 //!
-//! let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap();
+//! let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap_or("localhost".into());
 //! let policy = ClientPolicy::default();
 //! let client = Client::new(&policy, &hosts).expect("Failed to connect to cluster");
 //! let key = as_key!("test", "test", "someKey");
