@@ -1353,6 +1353,16 @@ impl Buffer {
         Ok(val)
     }
 
+    pub fn read_bool(&mut self, len: usize) -> Result<bool> {
+        if len <= 0 {
+            Ok(false)
+        } else {
+            let val = self.data_buffer[self.data_offset];
+            self.data_offset += len;
+            Ok(val != 0)
+        }
+    }
+
     pub fn write_u8(&mut self, val: u8) -> Result<usize> {
         self.data_buffer[self.data_offset] = val;
         self.data_offset += 1;
@@ -1415,7 +1425,7 @@ impl Buffer {
 
     pub fn write_bool(&mut self, val: bool) -> Result<usize> {
         let val = if val { 1 } else { 0 };
-        self.write_i64(val)
+        self.write_i8(val)
     }
 
     pub fn write_f32(&mut self, val: f32) -> Result<usize> {
