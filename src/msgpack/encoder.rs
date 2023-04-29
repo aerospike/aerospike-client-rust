@@ -196,7 +196,7 @@ const MSGPACK_MARKER_BOOL_FALSE: u8 = 0xc2;
 const MSGPACK_MARKER_I8: u8 = 0xcc;
 const MSGPACK_MARKER_I16: u8 = 0xcd;
 const MSGPACK_MARKER_I32: u8 = 0xce;
-// const MSGPACK_MARKER_I64: u8 = 0xd3;
+const MSGPACK_MARKER_I64: u8 = 0xd3;
 
 const MSGPACK_MARKER_NI8: u8 = 0xd0;
 const MSGPACK_MARKER_NI16: u8 = 0xd1;
@@ -341,7 +341,7 @@ pub fn pack_integer(buf: &mut Option<&mut Buffer>, val: i64) -> Result<usize> {
         val if val >= i64::from(i16::max_value()) && val < i64::from(i32::max_value()) => {
             pack_i32(buf, MSGPACK_MARKER_I32, val as i32)
         }
-        val if val >= i64::from(i32::max_value()) => pack_i64(buf, MSGPACK_MARKER_I32, val),
+        val if val >= i64::from(i32::max_value()) => pack_i64(buf, MSGPACK_MARKER_I64, val),
 
         // Negative values
         val if val >= -32 && val < 0 => {
