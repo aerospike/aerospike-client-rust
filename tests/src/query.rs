@@ -207,17 +207,19 @@ async fn query_node() {
 }
 
 // https://github.com/aerospike/aerospike-client-rust/issues/115
-#[test]
-fn query_large_i64() {
+#[aerospike_macro::test]
+async fn query_large_i64() {
     const SET: &str = "large_i64";
     const BIN: &str = "val";
 
-    let client = common::client();
+    let client = Arc::new(common::client().await);
     let value = Value::from(i64::max_value());
     let key = Key::new(common::namespace(), SET, value.clone()).unwrap();
     let wpolicy = WritePolicy::default();
 
-    let res = client.put(&wpolicy, &key, &[aerospike::Bin::new(BIN, value)]);
+    let res = client
+        .put(&wpolicy, &key, &[aerospike::Bin::new(BIN.into(), value)])
+        .await;
 
     assert!(res.is_ok());
 
@@ -228,7 +230,7 @@ fn query_large_i64() {
         .filter_expression
         .replace(aerospike::expressions::eq(bin_name, bin_val));
     let stmt = aerospike::Statement::new(common::namespace(), SET, aerospike::Bins::All);
-    let recordset = client.query(&qpolicy, stmt).unwrap();
+    let recordset = client.query(&qpolicy, stmt).await.unwrap();
 
     for r in &*recordset {
         assert!(r.is_ok());
@@ -236,5 +238,5 @@ fn query_large_i64() {
         assert_eq!(int, Value::Int(i64::max_value()));
     }
 
-    let _ = client.truncate(&wpolicy, common::namespace(), SET, 0);
+    let _ = client.truncate(common::namespace(), SET, 0).await;
 }
