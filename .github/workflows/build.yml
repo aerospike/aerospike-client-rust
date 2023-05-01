@@ -1,4 +1,4 @@
-name: Aerospike Node.js Client Tests
+name: Aerospike Rust Client Tests
 
 on:
   push:
@@ -6,7 +6,7 @@ on:
       - master
       - gh-actions
   pull_request:
-    branches: 
+    branches:
       - master
 
 env:
@@ -21,7 +21,7 @@ jobs:
 
     strategy:
       matrix:
-        rust: [stable, nightly]
+        rust: [stable]
 
     steps:
     - uses: actions/checkout@v2
