@@ -4,6 +4,21 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.3.0] - 2023-05-01
+
+* **New Features**
+  * [CLIENT-2099] Support boolean particle type.
+  * [CLIENT-2320] Implement `std::convert::TryFrom<aerospike::Value>` for each variant. Resolves #124. Refer to the mentioned ticket for the use case.
+  * [CLIENT-2321] Support queries and scans not sending a fresh message header per partition in server v6+.
+
+* **Bug Fixes**
+  * Fixed large integers packing when encoding to messagepack. Thanks to [Babur Makhmudov](https://github.com/bobs4462)
+  * Fixed Float serialization. Thanks to [Jonas Breuer](https://github.com/jonas32)
+
+* **Improvements**
+  * Fix tests failing without the `AEROSPIKE_HOSTS` environment variable set. Now they use `localhost` by default.
+  * Fix a few compiler warnings and remove a few unused struct fields.
+
 ## [1.2.0] - 2021-10-22
 
 * **New Features**
@@ -13,7 +28,7 @@ All notable changes to this project will be documented in this file.
   * Fix for buffer size when using CDT contexts. Thanks to [Jonas Breuer](https://github.com/jonas32)
 
 ## [1.1.0] - 2021-10-12
-This version of the client drops support for the older server versions without changing the API. `ScanPolicy.fail_on_cluster_change`, `ScanPolicy.scan_percent` and `BasePolicy.priority` are deprected for the Scan operations and will not be sent to the server. They remain in the API to avoid breaking the API.
+This version of the client drops support for the older server versions without changing the API. `ScanPolicy.fail_on_cluster_change`, `ScanPolicy.scan_percent` and `BasePolicy.priority` are deprecated for the Scan operations and will not be sent to the server. They remain in the API to avoid breaking the API.
 
 * **New Features**
   * Support Aerospike server v5.6+ server authentication.
