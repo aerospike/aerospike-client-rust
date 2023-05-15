@@ -759,6 +759,24 @@ pub const fn or(exps: Vec<FilterExpression>) -> FilterExpression {
     }
 }
 
+/// Create "xor" (^) operator that applies to a variable number of expressions.
+/// ```
+/// // a == 0 ^ b == 0
+/// use aerospike::expressions::{xor, eq, int_bin, int_val};
+/// xor(vec![eq(int_bin("a".to_string()), int_val(0)), eq(int_bin("b".to_string()), int_val(0))]);
+/// ```
+pub const fn xor(exps: Vec<FilterExpression>) -> FilterExpression {
+    FilterExpression {
+        cmd: Some(ExpOp::Xor),
+        val: None,
+        bin: None,
+        flags: None,
+        module: None,
+        exps: Some(exps),
+        arguments: None,
+    }
+}
+
 /// Create equal (==) expression.
 /// ```
 /// // a == 11
@@ -1121,6 +1139,26 @@ pub fn to_float(num: FilterExpression) -> FilterExpression {
 pub const fn int_and(exps: Vec<FilterExpression>) -> FilterExpression {
     FilterExpression {
         cmd: Some(ExpOp::IntAnd),
+        val: None,
+        bin: None,
+        flags: None,
+        module: None,
+        exps: Some(exps),
+        arguments: None,
+    }
+}
+
+/// Create integer "or" (|) operator that is applied to two or more integers.
+/// All arguments must resolve to integers.
+/// Requires server version 5.6.0+.
+/// ```
+/// // a | 0xff == 0xff
+/// use aerospike::expressions::{eq, int_val, int_or, int_bin};
+/// eq(int_or(vec![int_bin("a".to_string()), int_val(0xFF)]), int_val(0xFF));
+/// ```
+pub const fn int_or(exps: Vec<FilterExpression>) -> FilterExpression {
+    FilterExpression {
+        cmd: Some(ExpOp::IntOr),
         val: None,
         bin: None,
         flags: None,

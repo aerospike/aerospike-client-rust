@@ -171,7 +171,7 @@ async fn expression_bitwise() {
             count(
                 int_val(0),
                 int_val(8),
-                xor(
+                bitwise::xor(
                     &BitPolicy::default(),
                     int_val(0),
                     int_val(8),
