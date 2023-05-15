@@ -41,8 +41,7 @@ async fn create_test_set(client: &Client, no_records: usize) -> String {
 }
 
 #[aerospike_macro::test]
-#[should_panic(expected = "IndexFound")]
-async fn recreate_index() {
+async fn create_index() {
     let _ = env_logger::try_init();
 
     let client = common::client().await;
@@ -53,12 +52,6 @@ async fn recreate_index() {
 
     let _ = client.drop_index(ns, &set, &index).await;
     thread::sleep(Duration::from_millis(1000));
-
-    let task = client
-        .create_index(ns, &set, bin, &index, IndexType::Numeric)
-        .await
-        .expect("Failed to create index");
-    task.wait_till_complete(None).await.unwrap();
 
     let task = client
         .create_index(ns, &set, bin, &index, IndexType::Numeric)

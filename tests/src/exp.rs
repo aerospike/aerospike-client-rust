@@ -26,7 +26,7 @@ async fn create_test_set(client: &Client, no_records: usize) -> String {
     let namespace = common::namespace();
     let set_name = common::rand_str(10);
 
-    let wpolicy = WritePolicy::default();
+    let wpolicy = WritePolicy::new(0, Expiration::Seconds(60));
     for i in 0..no_records as i64 {
         let key = as_key!(namespace, &set_name, i);
         let ibin = as_bin!("bin", i);
@@ -541,8 +541,8 @@ fn expression_rec_ops() {
     let count = count_results(rs);
     assert_eq!(count, 100, "SINCE UPDATE Test Failed");
 
-    // Records dont expire
-    let rs = test_filter(&client, ge(void_time(), int_val(0)), &set_name).await;
+    // Records don't expire
+    let rs = test_filter(&client, ge(void_time(), int_val(50)), &set_name).await;
     let count = count_results(rs);
     assert_eq!(count, 100, "VOID TIME Test Failed");
 

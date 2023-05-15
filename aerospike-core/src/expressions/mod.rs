@@ -54,7 +54,7 @@ pub enum ExpType {
 
 #[derive(Debug, Clone, Copy)]
 #[doc(hidden)]
-pub enum ExpOp {
+pub(crate) enum ExpOp {
     Unknown = 0,
     EQ = 1,
     NE = 2,
