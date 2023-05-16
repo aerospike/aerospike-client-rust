@@ -17,7 +17,7 @@ use std::sync::Arc;
 use crate::cluster::partition::Partition;
 use crate::cluster::{Cluster, Node};
 use crate::commands::{self};
-use crate::errors::{ErrorKind, Result, ResultExt};
+use crate::errors::{Error, Result};
 use crate::net::Connection;
 use crate::policy::Policy;
 use crate::Key;
@@ -139,6 +139,6 @@ impl<'a> SingleCommand<'a> {
             return Ok(());
         }
 
-        bail!(ErrorKind::Connection("Timeout".to_string()))
+        return Err(Error::Connection("Timeout".to_string()))
     }
 }

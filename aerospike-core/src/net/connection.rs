@@ -15,7 +15,7 @@
 
 use crate::commands::admin_command::AdminCommand;
 use crate::commands::buffer::Buffer;
-use crate::errors::{ErrorKind, Result};
+use crate::errors::{Error, Result};
 use crate::policy::ClientPolicy;
 #[cfg(all(any(feature = "rt-async-std"), not(feature = "rt-tokio")))]
 use aerospike_rt::async_std::net::Shutdown;
@@ -47,7 +47,7 @@ impl Connection {
     pub async fn new(addr: &str, policy: &ClientPolicy) -> Result<Self> {
         let stream = aerospike_rt::timeout(Duration::from_secs(10), TcpStream::connect(addr)).await;
         if stream.is_err() {
-            bail!(ErrorKind::Connection(
+            return Err(Error::Connection(
                 "Could not open network connection".to_string()
             ));
         }

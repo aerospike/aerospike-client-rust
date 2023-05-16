@@ -23,7 +23,7 @@ use std::sync::Arc;
 
 use crate::cluster::node_validator::NodeValidator;
 use crate::commands::Message;
-use crate::errors::{ErrorKind, Result, ResultExt};
+use crate::errors::{Error, Result};
 use crate::net::{ConnectionPool, Host, PooledConnection};
 use crate::policy::ClientPolicy;
 use aerospike_rt::RwLock;
@@ -159,11 +159,11 @@ impl Node {
 
     fn verify_node_name(&self, info_map: &HashMap<String, String>) -> Result<()> {
         match info_map.get("node") {
-            None => Err(ErrorKind::InvalidNode("Missing node name".to_string()).into()),
+            None => Err(Error::InvalidNode("Missing node name".to_string()).into()),
             Some(info_name) if info_name == &self.name => Ok(()),
             Some(info_name) => {
                 self.inactivate();
-                Err(ErrorKind::InvalidNode(format!(
+                Err(Error::InvalidNode(format!(
                     "Node name has changed: '{}' => '{}'",
                     self.name, info_name
                 ))
@@ -176,11 +176,11 @@ impl Node {
         match self.client_policy.cluster_name {
             None => Ok(()),
             Some(ref expected) => match info_map.get("cluster-name") {
-                None => Err(ErrorKind::InvalidNode("Missing cluster name".to_string()).into()),
+                None => Err(Error::InvalidNode("Missing cluster name".to_string()).into()),
                 Some(info_name) if info_name == expected => Ok(()),
                 Some(info_name) => {
                     self.inactivate();
-                    Err(ErrorKind::InvalidNode(format!(
+                    Err(Error::InvalidNode(format!(
                         "Cluster name mismatch: expected={},
                                                            got={}",
                         expected, info_name
@@ -199,7 +199,7 @@ impl Node {
         let mut friends: Vec<Host> = vec![];
 
         let friend_string = match info_map.get(self.services_name()) {
-            None => bail!(ErrorKind::BadResponse("Missing services list".to_string())),
+            None => return Err(Error::BadResponse("Missing services list".to_string())),
             Some(friend_string) if friend_string.is_empty() => return Ok(friends),
             Some(friend_string) => friend_string,
         };
@@ -237,7 +237,7 @@ impl Node {
 
     fn update_partitions(&self, info_map: &HashMap<String, String>) -> Result<()> {
         match info_map.get("partition-generation") {
-            None => bail!(ErrorKind::BadResponse(
+            None => return Err(Error::BadResponse(
                 "Missing partition generation".to_string()
             )),
             Some(gen_string) => {

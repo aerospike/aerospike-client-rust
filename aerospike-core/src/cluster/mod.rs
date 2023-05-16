@@ -30,7 +30,7 @@ use self::node_validator::NodeValidator;
 use self::partition::Partition;
 use self::partition_tokenizer::PartitionTokenizer;
 
-use crate::errors::{ErrorKind, Result};
+use crate::errors::{Error, Result};
 use crate::net::Host;
 use crate::policy::ClientPolicy;
 use aerospike_rt::RwLock;
@@ -84,7 +84,7 @@ impl Cluster {
 
         // apply policy rules
         if cluster.client_policy.fail_if_not_connected && !cluster.is_connected().await {
-            bail!(ErrorKind::Connection(
+            return Err(Error::Connection(
                 "Failed to connect to host(s). The network \
                  connection(s) to cluster nodes may have timed out, or \
                  the cluster may be in a state of flux."
@@ -518,7 +518,7 @@ impl Cluster {
             }
         }
 
-        bail!("No active node")
+        return Err(Error::Connection("No active node".into()))
     }
 
     pub async fn get_node_by_name(&self, node_name: &str) -> Result<Arc<Node>> {
@@ -530,7 +530,7 @@ impl Cluster {
             }
         }
 
-        bail!("Requested node `{}` not found.", node_name)
+        return Err(Error::InvalidNode(format!("Requested node `{node_name}` not found.")))
     }
 
     pub async fn close(&self) -> Result<()> {

@@ -13,7 +13,7 @@
 // License for the specific language governing permissions and limitations under
 // the License.
 
-use crate::errors::{ErrorKind, Result};
+use crate::errors::{Error, Result};
 use crate::Host;
 use std::iter::Peekable;
 use std::str::Chars;
@@ -45,7 +45,7 @@ impl<'a> Parser<'a> {
                     }
                 }
                 1 => (addr[0].clone(), None, self.default_port),
-                _ => bail!(ErrorKind::InvalidArgument(
+                _ => return Err(Error::InvalidArgument(
                     "Invalid address string".to_string()
                 )),
             };
@@ -84,7 +84,7 @@ impl<'a> Parser<'a> {
                 }
                 _ => {
                     return if substr.is_empty() {
-                        bail!(ErrorKind::InvalidArgument(
+                        return Err(Error::InvalidArgument(
                             "Invalid address string".to_string()
                         ))
                     } else {

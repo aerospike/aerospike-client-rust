@@ -24,7 +24,7 @@ use crate::commands::{
     DeleteCommand, ExecuteUDFCommand, ExistsCommand, OperateCommand, QueryCommand, ReadCommand,
     ScanCommand, TouchCommand, WriteCommand,
 };
-use crate::errors::{ErrorKind, Result, ResultExt};
+use crate::errors::{Error, Result};
 use crate::net::ToHosts;
 use crate::operations::{Operation, OperationType};
 use crate::policy::{BatchPolicy, ClientPolicy, QueryPolicy, ReadPolicy, ScanPolicy, WritePolicy};
@@ -36,6 +36,7 @@ use crate::{
 use aerospike_rt::fs::File;
 #[cfg(all(any(feature = "rt-tokio"), not(feature = "rt-async-std")))]
 use aerospike_rt::io::AsyncReadExt;
+use anyhow::Context;
 #[cfg(all(any(feature = "rt-async-std"), not(feature = "rt-tokio")))]
 use futures::AsyncReadExt;
 
@@ -148,7 +149,7 @@ impl Client {
     /// match client.get(&ReadPolicy::default(), &key, ["a", "b"]).await {
     ///     Ok(record)
     ///         => println!("a={:?}", record.bins.get("a")),
-    ///     Err(Error(ErrorKind::ServerError(ResultCode::KeyNotFoundError), _))
+    ///     Err(Error::ServerError(ResultCode::KeyNotFoundError))
     ///         => println!("No such record: {}", key),
     ///     Err(err)
     ///         => println!("Error fetching record: {}", err),
@@ -170,7 +171,7 @@ impl Client {
     ///             Some(duration) => println!("ttl: {} secs", duration.as_secs()),
     ///         }
     ///     },
-    ///     Err(Error(ErrorKind::ServerError(ResultCode::KeyNotFoundError), _))
+    ///     Err(Error::ServerError(ResultCode::KeyNotFoundError))
     ///         => println!("No such record: {}", key),
     ///     Err(err)
     ///         => println!("Error fetching record: {}", err),
@@ -495,13 +496,13 @@ impl Client {
         if let Some(msg) = response.get("error") {
             let msg = base64::decode(msg)?;
             let msg = str::from_utf8(&msg)?;
-            bail!(
+            return Err(Error::UdfBadResponse(format!(
                 "UDF Registration failed: {}, file: {}, line: {}, message: {}",
                 response.get("error").unwrap_or(&"-".to_string()),
                 response.get("file").unwrap_or(&"-".to_string()),
                 response.get("line").unwrap_or(&"-".to_string()),
                 msg
-            );
+            )));
         }
 
         Ok(RegisterTask::new(
@@ -539,7 +540,7 @@ impl Client {
 
         match response.get(&cmd).map(String::as_str) {
             Some("ok") => Ok(()),
-            _ => bail!("UDF Remove failed: {:?}", response),
+            _ => return Err(Error::UdfBadResponse(format!("UDF Remove failed: {:?}", response))),
         }
     }
 
@@ -578,11 +579,11 @@ impl Client {
             if key.contains("SUCCESS") {
                 return Ok(Some(value.clone()));
             } else if key.contains("FAILURE") {
-                bail!("{:?}", value);
+                return Err(Error::UdfBadResponse(value.to_string()));
             }
         }
 
-        Err("Invalid UDF return value".into())
+        Err(Error::UdfBadResponse("Invalid UDF return value".into()))
     }
 
     /// Read all records in the specified namespace and set and return a record iterator. The scan
@@ -912,11 +913,11 @@ impl Client {
                 return Ok(());
             } else if v.starts_with("FAIL:") {
                 let result = v.split(':').nth(1).unwrap().parse::<u8>()?;
-                bail!(ErrorKind::ServerError(ResultCode::from(result)));
+                return Err(Error::ServerError(ResultCode::from(result)));
             }
         }
 
-        bail!(ErrorKind::BadResponse(
+        return Err(Error::BadResponse(
             "Unexpected sindex info command response".to_string()
         ))
     }
