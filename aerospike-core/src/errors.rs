@@ -102,7 +102,7 @@ pub type Result<T> = ::std::result::Result<T, Error>;
 macro_rules! log_error_chain {
     ($err:expr, $($arg:tt)*) => {
         error!($($arg)*);
-        // error!("Error: {}", $err);
+        error!("Error: {}", $err);
         // for e in $err.iter().skip(1) {
         //     error!("caused by: {}", e);
         // }

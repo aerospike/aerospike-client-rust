@@ -36,7 +36,6 @@ use crate::{
 use aerospike_rt::fs::File;
 #[cfg(all(any(feature = "rt-tokio"), not(feature = "rt-async-std")))]
 use aerospike_rt::io::AsyncReadExt;
-use anyhow::Context;
 #[cfg(all(any(feature = "rt-async-std"), not(feature = "rt-tokio")))]
 use futures::AsyncReadExt;
 
