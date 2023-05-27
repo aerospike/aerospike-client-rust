@@ -47,13 +47,7 @@ pub struct Node {
     refresh_count: AtomicUsize,
     reference_count: AtomicUsize,
     responded: AtomicBool,
-    use_new_info: bool,
     active: AtomicBool,
-
-    supports_float: AtomicBool,
-    supports_batch_index: AtomicBool,
-    supports_replicas_all: AtomicBool,
-    supports_geo: AtomicBool,
 }
 
 impl Node {
@@ -64,7 +58,6 @@ impl Node {
             name: nv.name.clone(),
             aliases: RwLock::new(nv.aliases.clone()),
             address: nv.address.clone(),
-            use_new_info: nv.use_new_info,
 
             host: nv.aliases[0].clone(),
             connection_pool: ConnectionPool::new(nv.aliases[0].clone(), client_policy),
@@ -74,11 +67,6 @@ impl Node {
             reference_count: AtomicUsize::new(0),
             responded: AtomicBool::new(false),
             active: AtomicBool::new(true),
-
-            supports_float: AtomicBool::new(nv.supports_float),
-            supports_batch_index: AtomicBool::new(nv.supports_batch_index),
-            supports_replicas_all: AtomicBool::new(nv.supports_replicas_all),
-            supports_geo: AtomicBool::new(nv.supports_geo),
         }
     }
     // Returns the Node address
@@ -98,16 +86,6 @@ impl Node {
 
     pub fn host(&self) -> Host {
         self.host.clone()
-    }
-
-    // Returns true if the Node supports floats
-    pub fn supports_float(&self) -> bool {
-        self.supports_float.load(Ordering::Relaxed)
-    }
-
-    // Returns true if the Node supports geo
-    pub fn supports_geo(&self) -> bool {
-        self.supports_geo.load(Ordering::Relaxed)
     }
 
     // Returns the reference count

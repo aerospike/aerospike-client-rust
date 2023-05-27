@@ -29,8 +29,6 @@ use std::ops::Add;
 
 #[derive(Debug)]
 pub struct Connection {
-    timeout: Option<Duration>,
-
     // duration after which connection is considered idle
     idle_timeout: Option<Duration>,
     idle_deadline: Option<Instant>,
@@ -54,7 +52,6 @@ impl Connection {
         let mut conn = Connection {
             buffer: Buffer::new(policy.buffer_reclaim_threshold),
             bytes_read: 0,
-            timeout: policy.timeout,
             conn: stream.unwrap()?,
             idle_timeout: policy.idle_timeout,
             idle_deadline: policy.idle_timeout.map(|timeout| Instant::now() + timeout),
