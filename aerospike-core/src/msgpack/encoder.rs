@@ -22,6 +22,7 @@ use crate::commands::ParticleType;
 use crate::operations::cdt::{CdtArgument, CdtOperation};
 use crate::operations::cdt_context::CdtContext;
 use crate::value::{FloatValue, Value};
+use crate::WritableValue;
 
 #[doc(hidden)]
 pub fn pack_value(buf: &mut Option<&mut Buffer>, val: &Value) -> usize {

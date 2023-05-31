@@ -183,8 +183,12 @@ mod batch;
 mod client;
 mod cluster;
 mod commands;
+
+
+pub use commands::buffer::Buffer;
+
 pub mod expressions;
-mod msgpack;
+pub mod msgpack;
 mod net;
 pub mod operations;
 pub mod policy;
@@ -193,6 +197,9 @@ mod record;
 mod result_code;
 pub mod task;
 mod user;
+
+mod traits;
+pub use traits::{WritableValue, WritableBins};
 
 #[cfg(test)]
 extern crate hex;

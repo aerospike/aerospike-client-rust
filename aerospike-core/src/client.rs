@@ -29,10 +29,7 @@ use crate::net::ToHosts;
 use crate::operations::{Operation, OperationType};
 use crate::policy::{BatchPolicy, ClientPolicy, QueryPolicy, ReadPolicy, ScanPolicy, WritePolicy};
 use crate::task::{IndexTask, RegisterTask};
-use crate::{
-    BatchRead, Bin, Bins, CollectionIndexType, IndexType, Key, Record, Recordset, ResultCode,
-    Statement, UDFLang, Value,
-};
+use crate::{BatchRead, Bin, Bins, CollectionIndexType, IndexType, Key, Record, Recordset, ResultCode, Statement, UDFLang, Value, WritableBins};
 use aerospike_rt::fs::File;
 #[cfg(all(any(feature = "rt-tokio"), not(feature = "rt-async-std")))]
 use aerospike_rt::io::AsyncReadExt;
@@ -268,7 +265,7 @@ impl Client {
     ///     Err(err) => println!("Error writing record: {}", err),
     /// }
     /// ```
-    pub async fn put(&self, policy: &WritePolicy, key: &Key, bins: &[Bin]) -> Result<()> {
+    pub async fn put<T: WritableBins>(&self, policy: &WritePolicy, key: &Key, bins: &T) -> Result<()> {
         let mut command = WriteCommand::new(
             policy,
             self.cluster.clone(),
@@ -301,7 +298,7 @@ impl Client {
     ///     Err(err) => println!("Error writing record: {}", err),
     /// }
     /// ```
-    pub async fn add(&self, policy: &WritePolicy, key: &Key, bins: &[Bin]) -> Result<()> {
+    pub async fn add<T: WritableBins>(&self, policy: &WritePolicy, key: &Key, bins: &T) -> Result<()> {
         let mut command =
             WriteCommand::new(policy, self.cluster.clone(), key, bins, OperationType::Incr);
         command.execute().await
@@ -310,7 +307,7 @@ impl Client {
     /// Append bin string values to existing record bin values. The policy specifies the
     /// transaction timeout, record expiration and how the transaction is handled when the record
     /// already exists. This call only works for string values.
-    pub async fn append(&self, policy: &WritePolicy, key: &Key, bins: &[Bin]) -> Result<()> {
+    pub async fn append<T: WritableBins>(&self, policy: &WritePolicy, key: &Key, bins: &T) -> Result<()> {
         let mut command = WriteCommand::new(
             policy,
             self.cluster.clone(),
@@ -324,7 +321,7 @@ impl Client {
     /// Prepend bin string values to existing record bin values. The policy specifies the
     /// transaction timeout, record expiration and how the transaction is handled when the record
     /// already exists. This call only works for string values.
-    pub async fn prepend(&self, policy: &WritePolicy, key: &Key, bins: &[Bin]) -> Result<()> {
+    pub async fn prepend<T: WritableBins>(&self, policy: &WritePolicy, key: &Key, bins: &T) -> Result<()> {
         let mut command = WriteCommand::new(
             policy,
             self.cluster.clone(),

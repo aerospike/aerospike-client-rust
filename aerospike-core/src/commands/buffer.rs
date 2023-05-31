@@ -26,7 +26,7 @@ use crate::policy::{
     BatchPolicy, CommitLevel, ConsistencyLevel, GenerationPolicy, QueryPolicy, ReadPolicy,
     RecordExistsAction, ScanPolicy, WritePolicy,
 };
-use crate::{BatchRead, Bin, Bins, CollectionIndexType, Key, Statement, Value};
+use crate::{BatchRead, Bin, Bins, CollectionIndexType, Key, Statement, Value, WritableBins};
 
 // Contains a read operation.
 const INFO1_READ: u8 = 1;
@@ -153,12 +153,12 @@ impl Buffer {
     }
 
     // Writes the command for write operations
-    pub fn set_write(
+    pub fn set_write<T: WritableBins>(
         &mut self,
         policy: &WritePolicy,
         op_type: OperationType,
         key: &Key,
-        bins: &[Bin],
+        bins: &T,
     ) -> Result<()> {
         self.begin();
         let mut field_count = self.estimate_key_size(key, policy.send_key);
@@ -167,9 +167,10 @@ impl Buffer {
             field_count += 1;
         }
 
-        for bin in bins {
-            self.estimate_operation_size_for_bin(bin.as_ref());
-        }
+        self.data_offset += bins.writable_bins_size();
+        //for bin in bins {
+        //    self.estimate_operation_size_for_bin(bin.as_ref());
+        //}
 
         self.size_buffer()?;
         self.write_header_with_policy(
@@ -177,16 +178,17 @@ impl Buffer {
             0,
             INFO2_WRITE,
             field_count as u16,
-            bins.len() as u16,
+            bins.writable_bins_count() as u16,
         );
         self.write_key(key, policy.send_key);
 
         if let Some(filter) = policy.filter_expression() {
             self.write_filter_expression(filter, filter_size);
         }
-        for bin in bins {
+        bins.write_as_bins(self, op_type as u8)?;
+        /*for bin in bins {
             self.write_operation_for_bin(bin.as_ref(), op_type);
-        }
+        }*/
 
         self.end();
         Ok(())
