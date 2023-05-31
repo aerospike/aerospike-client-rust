@@ -2,7 +2,7 @@
 //
 // Commonly used Traits for Data input and output handling
 
-use crate::errors::{ErrorKind, Result, ResultExt};
+use crate::errors::{Result};
 use crate::commands::buffer::Buffer;
 use crate::{Bin, ParticleType};
 
@@ -95,68 +95,18 @@ impl WritableValue for &str {
         ParticleType::STRING
     }
 }
-
-// Legacy Implementations to not fully break the interface
-impl WritableBins for [Bin] {
-    fn write_as_bins(&self, buffer: &mut Buffer, op_type: u8) -> Result<()>{ legacy_bins_slice_write_wire(&self, buffer, op_type) }
-    fn writable_bins_size(&self) -> usize { legacy_bins_slice_writable_size(&self) }
+impl<const COUNT: usize> WritableBins for [Bin; COUNT] {
+    fn write_as_bins(&self, buffer: &mut Buffer, op_type: u8) -> Result<()>{ legacy_bins_slice_write_wire(self.as_slice(), buffer, op_type) }
+    fn writable_bins_size(&self) -> usize { legacy_bins_slice_writable_size(self.as_slice()) }
     fn writable_bins_count(&self) -> usize { self.len() }
 }
+
 impl WritableBins for &[Bin] {
     fn write_as_bins(&self, buffer: &mut Buffer, op_type: u8) -> Result<()>{ legacy_bins_slice_write_wire(&self, buffer, op_type) }
     fn writable_bins_size(&self) -> usize { legacy_bins_slice_writable_size(&self) }
     fn writable_bins_count(&self) -> usize { self.len() }
 }
-impl WritableBins for [Bin; 1] {
-    fn write_as_bins(&self, buffer: &mut Buffer, op_type: u8) -> Result<()>{ legacy_bins_slice_write_wire(self.as_slice(), buffer, op_type) }
-    fn writable_bins_size(&self) -> usize { legacy_bins_slice_writable_size(self.as_slice()) }
-    fn writable_bins_count(&self) -> usize { self.len() }
-}
-impl WritableBins for [Bin; 2] {
-    fn write_as_bins(&self, buffer: &mut Buffer, op_type: u8) -> Result<()> { legacy_bins_slice_write_wire(self.as_slice(), buffer, op_type) }
-    fn writable_bins_size(&self) -> usize { legacy_bins_slice_writable_size(self.as_slice()) }
-    fn writable_bins_count(&self) -> usize { self.len() }
-}
-impl WritableBins for [Bin; 3] {
-    fn write_as_bins(&self, buffer: &mut Buffer, op_type: u8) -> Result<()> { legacy_bins_slice_write_wire(self.as_slice(), buffer, op_type) }
-    fn writable_bins_size(&self) -> usize { legacy_bins_slice_writable_size(self.as_slice()) }
-    fn writable_bins_count(&self) -> usize { self.len() }
-}
-impl WritableBins for [Bin; 4] {
-    fn write_as_bins(&self, buffer: &mut Buffer, op_type: u8) -> Result<()> { legacy_bins_slice_write_wire(self.as_slice(), buffer, op_type) }
-    fn writable_bins_size(&self) -> usize { legacy_bins_slice_writable_size(self.as_slice()) }
-    fn writable_bins_count(&self) -> usize { self.len() }
-}
-impl WritableBins for [Bin; 5] {
-    fn write_as_bins(&self, buffer: &mut Buffer, op_type: u8) -> Result<()> { legacy_bins_slice_write_wire(self.as_slice(), buffer, op_type) }
-    fn writable_bins_size(&self) -> usize { legacy_bins_slice_writable_size(self.as_slice()) }
-    fn writable_bins_count(&self) -> usize { self.len() }
-}
-impl WritableBins for [Bin; 6] {
-    fn write_as_bins(&self, buffer: &mut Buffer, op_type: u8) -> Result<()> { legacy_bins_slice_write_wire(self.as_slice(), buffer, op_type) }
-    fn writable_bins_size(&self) -> usize { legacy_bins_slice_writable_size(self.as_slice()) }
-    fn writable_bins_count(&self) -> usize { self.len() }
-}
-impl WritableBins for [Bin; 7] {
-    fn write_as_bins(&self, buffer: &mut Buffer, op_type: u8) -> Result<()> { legacy_bins_slice_write_wire(self.as_slice(), buffer, op_type) }
-    fn writable_bins_size(&self) -> usize { legacy_bins_slice_writable_size(self.as_slice()) }
-    fn writable_bins_count(&self) -> usize { self.len() }
-}
-impl WritableBins for [Bin; 8] {
-    fn write_as_bins(&self, buffer: &mut Buffer, op_type: u8) -> Result<()> { legacy_bins_slice_write_wire(self.as_slice(), buffer, op_type) }
-    fn writable_bins_size(&self) -> usize { legacy_bins_slice_writable_size(self.as_slice()) }
-    fn writable_bins_count(&self) -> usize { self.len() }
-}
-impl WritableBins for [Bin; 9] {
-    fn write_as_bins(&self, buffer: &mut Buffer, op_type: u8) -> Result<()> { legacy_bins_slice_write_wire(self.as_slice(), buffer, op_type) }
-    fn writable_bins_size(&self) -> usize { legacy_bins_slice_writable_size(self.as_slice()) }
-    fn writable_bins_count(&self) -> usize { self.len() }
-}
-impl WritableBins for [Bin; 10] {
-    fn write_as_bins(&self, buffer: &mut Buffer, op_type: u8) -> Result<()> { legacy_bins_slice_write_wire(self.as_slice(), buffer, op_type) }
-    fn writable_bins_size(&self) -> usize { legacy_bins_slice_writable_size(self.as_slice()) }
-    fn writable_bins_count(&self) -> usize { self.len() }
-}
+
 impl WritableBins for Vec<Bin> {
     fn write_as_bins(&self, buffer: &mut Buffer, op_type: u8) -> Result<()> { legacy_bins_slice_write_wire(self.as_slice(), buffer, op_type) }
     fn writable_bins_size(&self) -> usize { legacy_bins_slice_writable_size(self.as_slice()) }

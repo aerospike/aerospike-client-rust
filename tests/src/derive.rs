@@ -21,11 +21,14 @@ async fn derive_writable() {
 
     #[derive(WritableBins)]
     struct TestData<'a> {
+        #[aerospike(rename = "renamed_int32")]
         int32: i32,
         string: String,
         refstr: &'a str,
         uint16: u16,
-        test: TestValue
+        test: TestValue,
+        #[aerospike(skip)]
+        no_write: i32
     }
     let testv = TestValue {
         string: "asd".to_string(),
@@ -36,7 +39,8 @@ async fn derive_writable() {
         string: "string".to_string(),
         refstr: "str",
         uint16: 7,
-        test: testv
+        test: testv,
+        no_write: 123
     };
 
     let res = client.put(&WritePolicy::default(), &key, &test).await;
@@ -50,8 +54,12 @@ async fn derive_writable() {
     ]);
     let bins = res.unwrap().bins;
 
-    assert_eq!(bins.get("int32").unwrap(), &as_val!(65521), "Derive Bin encoding failed for int32");
-    assert_eq!(bins.get("uint16").unwrap(), &as_val!(7), "Derive Bin encoding failed for uint16");
-    assert_eq!(bins.get("string").unwrap(), &as_val!("string"), "Derive Bin encoding failed for string");
-    assert_eq!(bins.get("refstr").unwrap(), &as_val!("str"), "Derive Bin encoding failed for refstr");
+    assert_eq!(bins.get("int32"), None, "Derive Bin renaming failed");
+    assert_eq!(bins.get("renamed_int32"), Some(&as_val!(65521)), "Derive Bin renaming failed");
+
+    assert_eq!(bins.get("no_write"), None, "Derive Bin skipping failed");
+
+    assert_eq!(bins.get("uint16"), Some(&as_val!(7)), "Derive Bin encoding failed for uint16");
+    assert_eq!(bins.get("string"), Some(&as_val!("string")), "Derive Bin encoding failed for string");
+    assert_eq!(bins.get("refstr"), Some(&as_val!("str")), "Derive Bin encoding failed for refstr");
 }

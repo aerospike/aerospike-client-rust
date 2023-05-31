@@ -1,7 +1,6 @@
-use quote::{quote, quote_spanned, ToTokens};
-use syn::{parse_macro_input, DeriveInput, Generics, GenericParam, parse_quote, Data, Fields};
-use syn::spanned::Spanned;
-use crate::traits::writable::{convert_writable_source, convert_writable_value_source, writable_operation_count, writable_source_length};
+use quote::{quote};
+use syn::{parse_macro_input, DeriveInput, GenericParam, parse_quote};
+use crate::traits::writable::{build_writable,  convert_writable_value_source};
 
 mod traits;
 
@@ -39,7 +38,7 @@ pub fn test(_attr: proc_macro::TokenStream, input: proc_macro::TokenStream) -> p
 }
 
 
-#[proc_macro_derive(WritableBins)]
+#[proc_macro_derive(WritableBins, attributes(aerospike))]
 pub fn writable_bins(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     let mut input = parse_macro_input!(input as DeriveInput);
     let name = input.ident;
@@ -49,35 +48,17 @@ pub fn writable_bins(input: proc_macro::TokenStream) -> proc_macro::TokenStream 
         }
     }
     let (impl_generics, ty_generics, where_clause) = input.generics.split_for_impl();
-    let vals = convert_writable_source(&input.data);
-    let lengths = writable_source_length(&input.data);
-    let op_count = writable_operation_count(&input.data);
+    let ops = build_writable(&input.data);
 
     let expanded = quote! {
         impl #impl_generics WritableBins for #name #ty_generics #where_clause {
-            fn write_as_bins(&self, buffer: &mut aerospike::Buffer, op_type: u8) -> aerospike::errors::Result<()>{
-                // Vec for bin Values
-                // Bins token Stream
-                #vals
-
-                Ok(())
-            }
-
-            fn writable_bins_size(&self) -> usize {
-                let mut size: usize = 0;
-                #lengths
-                size
-            }
-
-            fn writable_bins_count(&self) -> usize {
-                #op_count
-            }
+            #ops
         }
     };
     proc_macro::TokenStream::from(expanded)
 }
 
-#[proc_macro_derive(WritableValue)]
+#[proc_macro_derive(WritableValue, attributes(aerospike))]
 pub fn writable_value(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     let mut input = parse_macro_input!(input as DeriveInput);
     let name = input.ident;
