@@ -16,7 +16,14 @@ async fn derive_writable() {
     #[derive(WritableValue)]
     struct TestValue {
         string: String,
+        no_val_cdt: Option<String>,
+        has_val_cdt: Option<i32>,
+        #[aerospike(default = 1.231f64)]
+        default_val_cdt: Option<f64>,
+        #[aerospike(rename = "int32")]
         int: i32,
+        #[aerospike(skip)]
+        skipped_bool: bool
     }
 
     #[derive(WritableBins)]
@@ -37,7 +44,11 @@ async fn derive_writable() {
 
     let testv = TestValue {
         string: "asd".to_string(),
-        int: 1234
+        no_val_cdt: None,
+        has_val_cdt: Some(123456),
+        default_val_cdt: None,
+        int: 1234,
+        skipped_bool: true
     };
 
     let test = TestData {
@@ -71,4 +82,22 @@ async fn derive_writable() {
     assert_eq!(bins.get("uint16"), Some(&as_val!(7)), "Derive Bin encoding failed for uint16");
     assert_eq!(bins.get("string"), Some(&as_val!("string")), "Derive Bin encoding failed for string");
     assert_eq!(bins.get("refstr"), Some(&as_val!("str")), "Derive Bin encoding failed for refstr");
+
+    assert_eq!(bins.get("test").is_some(), true, "Derive Bin encoding failed for cdt map");
+
+    if let Some(bin) = bins.get("test") {
+        match bin {
+            Value::HashMap(m) => {
+                assert_eq!(m.get(&as_val!("string")), Some(&as_val!("asd")), "Derive Value encoding failed for string");
+                assert_eq!(m.get(&as_val!("no_val_cdt")), None, "Derive Value encoding failed for no_val_cdt");
+                assert_eq!(m.get(&as_val!("default_val_cdt")), Some(&as_val!(1.231f64)), "Derive Value encoding failed for default_val_cdt");
+                assert_eq!(m.get(&as_val!("int32")), Some(&as_val!(1234)), "Derive Value encoding failed for renamed int");
+                assert_eq!(m.get(&as_val!("has_val_cdt")), Some(&as_val!(123456)), "Derive Value encoding failed for has_val_cdt");
+                assert_eq!(m.get(&as_val!("skipped_bool")), None, "Derive Value encoding failed for skipped_bool");
+            }
+            _ => panic!("Derive Bin encoding for map returned wrong type")
+        }
+    } else {
+        panic!("Derive Bin encoding for map undefined")
+    }
 }

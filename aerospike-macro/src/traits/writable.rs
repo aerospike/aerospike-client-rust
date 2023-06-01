@@ -51,6 +51,45 @@ impl<'a> WritableFieldAttributes<'a> {
             _ => {panic!("Aerospike Default value is not supported for the value on {}", &self.name)}
         }
     }
+
+    pub fn default_write_value_cdt_token_stream(&self) -> TokenStream {
+        // Unwarp is fine since this function can only get called if default is Some.
+        let default = self.default.clone().unwrap();
+        match default {
+            syn::Lit::Str(s) => {
+                let val = &s.value();
+                return quote! {
+                    size += aerospike::msgpack::encoder::pack_string(buffer, #val);
+                }
+            }
+            syn::Lit::Int(i) => {
+                if let Ok(val) = i.base10_parse::<i64>() {
+                    return quote! {
+                        size += aerospike::msgpack::encoder::pack_integer(buffer, #val);
+                    }
+                } else {
+                    panic!("Aerospike Default value could not be parsed as i64")
+                }
+            }
+            syn::Lit::Float(f) => {
+                if let Ok(val) = f.base10_parse::<f64>() {
+                    // Default Values are always encoded as f64
+                    return quote! {
+                        size += aerospike::msgpack::encoder::pack_f64(buffer, #val);
+                    }
+                } else {
+                    panic!("Aerospike Default value could not be parsed as f64")
+                }
+            }
+            syn::Lit::Bool(b) => {
+                let val = b.value();
+                return quote! {
+                    size += aerospike::msgpack::encoder::pack_bool(buffer, #val);
+                }
+            }
+            _ => {panic!("Aerospike Default value is not supported for the value on {}", &self.name)}
+        }
+    }
 }
 
 fn writable_field_arguments(field: &Field) -> WritableFieldAttributes {
@@ -111,7 +150,9 @@ fn writable_field_arguments(field: &Field) -> WritableFieldAttributes {
             _ => { panic!("Invalid Aerospike Derive Attribute") }
         }
     }
-
+    if attributes.name.len() > 15 {
+        panic!("Aerospike Derive Bin Names can not be longer than 15 bytes!")
+    }
     attributes
 }
 
@@ -131,6 +172,7 @@ pub (crate) fn build_writable(data: &Data) -> TokenStream {
                         let name = f.ident;
                         let skip = f.skip;
                         let name_str = &f.name;
+
                         let has_default = f.default.is_some();
                         // Build the bin Token Stream.
                         if has_default {
@@ -138,6 +180,7 @@ pub (crate) fn build_writable(data: &Data) -> TokenStream {
                             let default_writer = default.0;
                             let default_length = default.1;
                             let default_type = default.2;
+
                             quote_spanned! {f.field.span()=>
                                 if !#skip {
                                     {
@@ -253,10 +296,10 @@ pub (crate) fn build_writable(data: &Data) -> TokenStream {
 
                     }
                 }
-                _ => unimplemented!()
+                _ => panic!("Aerospike Bin Derive is not supported for unnamed Structs")
             }
         }
-        Data::Enum(_) | Data::Union(_) => unimplemented!(),
+        Data::Enum(_) | Data::Union(_) => panic!("Aerospike Bin Derive is only supported for Enum and Union"),
     }
 }
 
@@ -267,18 +310,53 @@ pub(crate) fn convert_writable_value_source(data: &Data) -> proc_macro2::TokenSt
         Data::Struct(ref data) => {
             match data.fields {
                 Fields::Named(ref fields) => {
-                    let len = fields.named.len();
-                    let recurse = fields.named.iter().map(|f| {
-                        let name = &f.ident;
-                        let name_str = &name.clone().unwrap().to_string();
-                        // Build the bin Token Stream.
-                        quote_spanned! {f.span()=>
-                            size += aerospike::msgpack::encoder::pack_string(buffer, #name_str);
-                            size += aerospike::WritableValue::write_as_cdt_value(&self.#name, buffer);
+
+                    let field_args = fields.named.iter().map(|f| {
+                        writable_field_arguments(&f)
+                    }).collect::<Vec<WritableFieldAttributes>>();
+
+                    let recurse = field_args.iter().map(|f| {
+                        let name = f.ident;
+                        let name_str = &f.name;
+                        let skip = &f.skip;
+                        let has_default = f.default.is_some();
+
+                        if has_default {
+                            let default_writer = f.default_write_value_cdt_token_stream();
+                            quote_spanned! {f.field.span()=>
+                                if !#skip {
+                                    size += aerospike::msgpack::encoder::pack_string(buffer, #name_str);
+                                    if aerospike::WritableValue::writable_value_encodable(&self.#name) {
+                                        size += aerospike::WritableValue::write_as_cdt_value(&self.#name, buffer);
+                                    } else {
+                                        #default_writer
+                                    }
+                                }
+                            }
+                        } else {
+                            quote_spanned! {f.field.span()=>
+                                if !#skip && aerospike::WritableValue::writable_value_encodable(&self.#name) {
+                                    size += aerospike::msgpack::encoder::pack_string(buffer, #name_str);
+                                    size += aerospike::WritableValue::write_as_cdt_value(&self.#name, buffer);
+                                }
+                            }
+                        }
+                    });
+                    let len_recurse = field_args.iter().map(|f| {
+                        let skip = f.skip;
+                        let name = f.ident;
+                        let has_default = f.default.is_some();
+                        quote_spanned! {f.field.span()=>
+                            if !#skip && (#has_default || aerospike::WritableValue::writable_value_encodable(&self.#name)) {
+                                len += 1;
+                            }
                         }
                     });
                     quote! {
-                        size += aerospike::msgpack::encoder::pack_map_begin(buffer, #len);
+                        let mut len = 0;
+                        #(#len_recurse)*
+
+                        size += aerospike::msgpack::encoder::pack_map_begin(buffer, len);
                         #(#recurse)*
                     }
                 }

@@ -54,6 +54,24 @@ macro_rules! impl_writable_value_for_num {
     };
 }
 
+macro_rules! impl_writable_value_for_float {
+    ($ty:ident) => {
+        impl WritableValue for $ty {
+            fn write_as_value(&self, buffer: &mut Option<&mut Buffer>) -> usize {
+                if let Some(ref mut buf) = *buffer {
+                    buf.write_f64(f64::from(*self));
+                }
+                8
+            }
+            fn write_as_cdt_value(&self, buffer: &mut Option<&mut Buffer>) -> usize {
+                crate::msgpack::encoder::pack_f64(buffer, f64::from(*self))
+            }
+
+            fn writable_value_particle_type(&self) -> ParticleType { ParticleType::FLOAT }
+        }
+    };
+}
+
 impl_writable_value_for_num!(u8);
 impl_writable_value_for_num!(i8);
 impl_writable_value_for_num!(u16);
@@ -64,11 +82,20 @@ impl_writable_value_for_num!(u64);
 impl_writable_value_for_num!(i64);
 impl_writable_value_for_num!(usize);
 impl_writable_value_for_num!(isize);
+impl_writable_value_for_float!(f64);
+impl_writable_value_for_float!(f32);
 
 impl<T: WritableValue> WritableValue for Option<T> {
     fn write_as_value(&self, buffer: &mut Option<&mut Buffer>) -> usize {
         if let Some(v) = self {
             return v.write_as_value(buffer)
+        }
+        0
+    }
+
+    fn write_as_cdt_value(&self, buffer: &mut Option<&mut Buffer>) -> usize {
+        if let Some(v) = self {
+            return v.write_as_cdt_value(buffer)
         }
         0
     }
@@ -105,6 +132,24 @@ impl WritableValue for String {
         !self.is_empty()
     }
 }
+
+impl WritableValue for bool {
+    fn write_as_value(&self, buffer: &mut Option<&mut Buffer>) -> usize {
+        if let Some(ref mut buf) = *buffer {
+            buf.write_bool(*self);
+        }
+        1
+    }
+
+    fn write_as_cdt_value(&self, buffer: &mut Option<&mut Buffer>) -> usize {
+        crate::msgpack::encoder::pack_bool(buffer, *self)
+    }
+
+    fn writable_value_particle_type(&self) -> ParticleType {
+        ParticleType::BOOL
+    }
+}
+
 impl WritableValue for &str {
     fn write_as_value(&self, buffer: &mut Option<&mut Buffer>) -> usize {
         if let Some(ref mut buf) = *buffer {
