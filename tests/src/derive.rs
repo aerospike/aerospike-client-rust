@@ -28,34 +28,43 @@ async fn derive_writable() {
         uint16: u16,
         test: TestValue,
         #[aerospike(skip)]
-        no_write: i32
+        no_write: i32,
+        #[aerospike(default = "test")]
+        default_value: Option<String>,
+        no_value: Option<i64>,
+        has_value: Option<i64>,
     }
+
     let testv = TestValue {
         string: "asd".to_string(),
         int: 1234
     };
+
     let test = TestData {
         int32: 65521,
         string: "string".to_string(),
         refstr: "str",
         uint16: 7,
         test: testv,
-        no_write: 123
+        no_write: 123,
+        default_value: None,
+        no_value: None,
+        has_value: Some(12345),
     };
 
     let res = client.put(&WritePolicy::default(), &key, &test).await;
-    println!("{:?}", res);
+    assert_eq!(res.is_ok(), true, "Derive writer failed");
     let res = client.get(&ReadPolicy::default(), &key, Bins::All).await;
-    let reference_bins: HashMap<String, Value> = HashMap::from([
-        ("int32".to_string(), as_val!(65521)),
-        ("uint16".to_string(), as_val!(8)),
-        ("refstr".to_string(), as_val!("str")),
-        ("string".to_string(), as_val!("string"))
-    ]);
-    let bins = res.unwrap().bins;
 
+    let bins = res.unwrap().bins;
+    println!("{:?}", bins);
     assert_eq!(bins.get("int32"), None, "Derive Bin renaming failed");
     assert_eq!(bins.get("renamed_int32"), Some(&as_val!(65521)), "Derive Bin renaming failed");
+
+    assert_eq!(bins.get("no_value"), None, "Derive Bin empty Option failed");
+    assert_eq!(bins.get("has_value"), Some(&as_val!(12345)), "Derive Bin filled Option failed");
+
+    assert_eq!(bins.get("default_value"), Some(&as_val!("test")), "Derive Bin default value failed");
 
     assert_eq!(bins.get("no_write"), None, "Derive Bin skipping failed");
 

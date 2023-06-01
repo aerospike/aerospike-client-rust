@@ -32,6 +32,8 @@ pub trait WritableValue: Sync {
     fn write_as_cdt_value(&self, buffer: &mut Option<&mut Buffer>) -> usize { self.write_as_value(buffer) }
     // The particle Type of the value to write.
     fn writable_value_particle_type(&self) -> ParticleType;
+    // Defines if the Object can be encoded
+    fn writable_value_encodable(&self) -> bool { true }
 }
 
 macro_rules! impl_writable_value_for_num {
@@ -63,6 +65,26 @@ impl_writable_value_for_num!(i64);
 impl_writable_value_for_num!(usize);
 impl_writable_value_for_num!(isize);
 
+impl<T: WritableValue> WritableValue for Option<T> {
+    fn write_as_value(&self, buffer: &mut Option<&mut Buffer>) -> usize {
+        if let Some(v) = self {
+            return v.write_as_value(buffer)
+        }
+        0
+    }
+
+    fn writable_value_particle_type(&self) -> ParticleType {
+        if let Some(v) = self {
+            return v.writable_value_particle_type()
+        }
+        ParticleType::NULL
+    }
+
+    fn writable_value_encodable(&self) -> bool {
+        self.is_some()
+    }
+}
+
 impl WritableValue for String {
     fn write_as_value(&self, buffer: &mut Option<&mut Buffer>) -> usize {
         if let Some(ref mut buf) = *buffer {
@@ -77,6 +99,10 @@ impl WritableValue for String {
 
     fn writable_value_particle_type(&self) -> ParticleType {
         ParticleType::STRING
+    }
+
+    fn writable_value_encodable(&self) -> bool {
+        !self.is_empty()
     }
 }
 impl WritableValue for &str {
@@ -93,6 +119,10 @@ impl WritableValue for &str {
 
     fn writable_value_particle_type(&self) -> ParticleType {
         ParticleType::STRING
+    }
+
+    fn writable_value_encodable(&self) -> bool {
+        !self.is_empty()
     }
 }
 impl<const COUNT: usize> WritableBins for [Bin; COUNT] {

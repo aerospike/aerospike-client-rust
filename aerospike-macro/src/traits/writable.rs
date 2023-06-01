@@ -1,6 +1,6 @@
 use proc_macro2::{TokenStream};
-use quote::{quote, quote_spanned};
-use syn::{Ident, Data, Fields, Expr, Field};
+use quote::{quote, quote_spanned, ToTokens};
+use syn::{Ident, Data, Fields, Expr, Field, ExprLit};
 use syn::Expr::{Assign, Lit, Path};
 use syn::spanned::Spanned;
 
@@ -8,7 +8,49 @@ pub struct WritableFieldAttributes<'a> {
     field: &'a Field,
     ident: &'a Option<Ident>,
     name: String,
-    skip: bool
+    default: Option<syn::Lit>,
+    skip: bool,
+}
+
+impl<'a> WritableFieldAttributes<'a> {
+    pub fn default_write_value_token_stream(&self) -> (TokenStream, usize, u8) {
+        // Unwarp is fine since this function can only get called if default is Some.
+        let default = self.default.clone().unwrap();
+        match default {
+            syn::Lit::Str(s) => {
+                let val = &s.value();
+                return (quote! {
+                    buffer.write_str(#val);
+                },
+                val.len(), 3)
+            }
+            syn::Lit::Int(i) => {
+                if let Ok(val) = i.base10_parse::<i64>() {
+                    return (quote! {
+                        buffer.write_i64(#val);
+                    }, 8, 1)
+                } else {
+                    panic!("Aerospike Default value could not be parsed as i64")
+                }
+            }
+            syn::Lit::Float(f) => {
+                if let Ok(val) = f.base10_parse::<f64>() {
+                    return (quote! {
+                        buffer.write_f64(#val);
+                    }, 8, 2)
+                } else {
+                    panic!("Aerospike Default value could not be parsed as f64")
+                }
+            }
+            syn::Lit::Bool(b) => {
+                let val = b.value();
+                return (quote! {
+                    buffer.write_bool(#val);
+                }, 1, 17)
+            }
+            _ => {panic!("Aerospike Default value is not supported for the value on {}", &self.name)}
+        }
+    }
 }
 
 fn writable_field_arguments(field: &Field) -> WritableFieldAttributes {
@@ -17,6 +59,7 @@ fn writable_field_arguments(field: &Field) -> WritableFieldAttributes {
         field,
         ident: &field.ident,
         name: field.ident.clone().unwrap().to_string(),
+        default: None,
         skip: false,
     };
 
@@ -43,6 +86,12 @@ fn writable_field_arguments(field: &Field) -> WritableFieldAttributes {
                                 }else{
                                     panic!("Invalid Aerospike Rename Value")
                                 }
+                            }else{
+                                panic!("Invalid Aerospike Rename Value")
+                            }
+                        } else if path.path.is_ident("default") {
+                            if let Lit(lit) = *assign.right {
+                                attributes.default = Some(lit.lit);
                             }
                         }
                     }
@@ -72,8 +121,6 @@ pub (crate) fn build_writable(data: &Data) -> TokenStream {
         Data::Struct(ref data) => {
             match data.fields {
                 Fields::Named(ref fields) => {
-                    let mut count = 0;
-
                     // Collect all the Field Info
                     let field_args = fields.named.iter().map(|f| {
                         writable_field_arguments(&f)
@@ -84,19 +131,55 @@ pub (crate) fn build_writable(data: &Data) -> TokenStream {
                         let name = f.ident;
                         let skip = f.skip;
                         let name_str = &f.name;
-                        if !skip {count += 1}
+                        let has_default = f.default.is_some();
                         // Build the bin Token Stream.
-                        quote_spanned! {f.field.span()=>
-                            if !#skip {
-                                buffer.write_i32((#name_str.len() + aerospike::WritableValue::write_as_value(&self.#name, &mut None) + 4) as i32);
-                                buffer.write_u8(op_type);
-                                buffer.write_u8(aerospike::WritableValue::writable_value_particle_type(&self.#name) as u8);
-                                buffer.write_u8(0);
-                                buffer.write_u8(#name_str.len() as u8);
-                                buffer.write_str(#name_str);
-                                aerospike::WritableValue::write_as_value(&self.#name, &mut Some(buffer));
+                        if has_default {
+                            let default = f.default_write_value_token_stream();
+                            let default_writer = default.0;
+                            let default_length = default.1;
+                            let default_type = default.2;
+                            quote_spanned! {f.field.span()=>
+                                if !#skip {
+                                    {
+                                        let encodable = aerospike::WritableValue::writable_value_encodable(&self.#name);
+                                        if encodable {
+                                        buffer.write_i32((#name_str.len() + aerospike::WritableValue::write_as_value(&self.#name, &mut None) + 4) as i32);
+                                        } else {
+                                            buffer.write_i32((#name_str.len() + #default_length + 4) as i32);
+                                        }
+                                        buffer.write_u8(op_type);
+
+                                        if encodable {
+                                            buffer.write_u8(aerospike::WritableValue::writable_value_particle_type(&self.#name) as u8);
+                                        } else {
+                                            buffer.write_u8(#default_type);
+                                        }
+                                        buffer.write_u8(0);
+                                        buffer.write_u8(#name_str.len() as u8);
+                                        buffer.write_str(#name_str);
+                                        if encodable {
+                                            aerospike::WritableValue::write_as_value(&self.#name, &mut Some(buffer));
+                                        } else {
+                                            #default_writer
+                                        }
+                                    }
+                                }
+                            }
+
+                        } else {
+                            quote_spanned! {f.field.span()=>
+                                if !#skip && aerospike::WritableValue::writable_value_encodable(&self.#name) {
+                                    buffer.write_i32((#name_str.len() + aerospike::WritableValue::write_as_value(&self.#name, &mut None) + 4) as i32);
+                                    buffer.write_u8(op_type);
+                                    buffer.write_u8(aerospike::WritableValue::writable_value_particle_type(&self.#name) as u8);
+                                    buffer.write_u8(0);
+                                    buffer.write_u8(#name_str.len() as u8);
+                                    buffer.write_str(#name_str);
+                                    aerospike::WritableValue::write_as_value(&self.#name, &mut Some(buffer));
+                                }
                             }
                         }
+
                     });
 
                     // Build the `writable_bins_size` function
@@ -104,22 +187,52 @@ pub (crate) fn build_writable(data: &Data) -> TokenStream {
                         let name = f.ident;
                         let name_len = f.name.len();
                         let skip = f.skip;
+                        let has_default = f.default.is_some();
                         // Build the bin Token Stream.
-                        quote_spanned! {f.field.span()=>
-                            if !#skip {
-                                size += #name_len + aerospike::WritableValue::write_as_value(&self.#name, &mut None) + 8;
+                        if has_default {
+                            let default = f.default_write_value_token_stream();
+                            let default_length = default.1;
+
+                            quote_spanned! {f.field.span()=>
+                                if !#skip {
+                                    if aerospike::WritableValue::writable_value_encodable(&self.#name) {
+                                        size += #name_len + aerospike::WritableValue::write_as_value(&self.#name, &mut None) + 8;
+                                    } else {
+                                        size += #name_len + #default_length + 8;
+                                    }
+                                }
+                            }
+                        } else {
+                            quote_spanned! {f.field.span()=>
+                                if !#skip && aerospike::WritableValue::writable_value_encodable(&self.#name) {
+                                    size += #name_len + aerospike::WritableValue::write_as_value(&self.#name, &mut None) + 8;
+                                }
                             }
                         }
                     });
 
-                    // Calculate the Operation Count
-                    let op_count: usize = field_args.iter().fold(0, |a, b| {
-                        if b.skip {
-                            return a
+                    // Build the `writable_bins_count` function
+                    let op_count_recurse = field_args.iter().map(|f| {
+                        let name = f.ident;
+                        let skip = f.skip;
+                        let has_default = f.default.is_some();
+                        if has_default {
+                            quote_spanned! {f.field.span()=>
+                                if !#skip {
+                                    count += 1;
+                                }
+                            }
+                        } else {
+                            quote_spanned! {f.field.span()=>
+                                if !#skip && aerospike::WritableValue::writable_value_encodable(&self.#name) {
+                                    count += 1;
+                                }
+                            }
                         }
-                        a+1
+
                     });
 
+                    // Build the final functions for the Trait impl
                     quote! {
                         fn write_as_bins(&self, buffer: &mut aerospike::Buffer, op_type: u8) -> aerospike::errors::Result<()>{
                             #(#writer_recurse)*
@@ -133,7 +246,9 @@ pub (crate) fn build_writable(data: &Data) -> TokenStream {
                         }
 
                         fn writable_bins_count(&self) -> usize {
-                            #op_count
+                            let mut count: usize = 0;
+                            #(#op_count_recurse)*
+                            count
                         }
 
                     }
