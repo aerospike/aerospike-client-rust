@@ -23,7 +23,7 @@ use crate::cluster::{Cluster, Node};
 use crate::commands::BatchReadCommand;
 use crate::errors::{Error, Result};
 use crate::policy::{BatchPolicy, Concurrency};
-use crate::Key;
+use crate::{Key, ReadableBins};
 use futures::lock::Mutex;
 
 pub struct BatchExecutor {
@@ -35,29 +35,29 @@ impl BatchExecutor {
         BatchExecutor { cluster }
     }
 
-    pub async fn execute_batch_read(
+    pub async fn execute_batch_read<T: ReadableBins + 'static>(
         &self,
         policy: &BatchPolicy,
-        batch_reads: Vec<BatchRead>,
-    ) -> Result<Vec<BatchRead>> {
+        batch_reads: Vec<BatchRead<T>>,
+    ) -> Result<Vec<BatchRead<T>>> {
         let mut batch_nodes = self.get_batch_nodes(&batch_reads).await?;
         let jobs = batch_nodes
             .drain()
             .map(|(node, reads)| BatchReadCommand::new(policy, node, reads))
             .collect();
         let reads = self.execute_batch_jobs(jobs, &policy.concurrency).await?;
-        let mut res: Vec<BatchRead> = vec![];
+        let mut res: Vec<BatchRead<T>> = vec![];
         for mut read in reads {
             res.append(&mut read.batch_reads);
         }
         Ok(res)
     }
 
-    async fn execute_batch_jobs(
+    async fn execute_batch_jobs<T: ReadableBins + 'static>(
         &self,
-        jobs: Vec<BatchReadCommand>,
+        jobs: Vec<BatchReadCommand<T>>,
         concurrency: &Concurrency,
-    ) -> Result<Vec<BatchReadCommand>> {
+    ) -> Result<Vec<BatchReadCommand<T>>> {
         let threads = match *concurrency {
             Concurrency::Sequential => 1,
             Concurrency::Parallel => jobs.len(),
@@ -97,12 +97,12 @@ impl BatchExecutor {
         }
     }
 
-    async fn get_batch_nodes(
+    async fn get_batch_nodes<T: ReadableBins>(
         &self,
-        batch_reads: &[BatchRead],
-    ) -> Result<HashMap<Arc<Node>, Vec<BatchRead>>> {
+        batch_reads: &[BatchRead<T>],
+    ) -> Result<HashMap<Arc<Node>, Vec<BatchRead<T>>>> {
         let mut map = HashMap::new();
-        for (_, batch_read) in batch_reads.iter().enumerate() {
+        for batch_read in batch_reads {
             let node = self.node_for_key(&batch_read.key).await?;
             map.entry(node)
                 .or_insert_with(Vec::new)

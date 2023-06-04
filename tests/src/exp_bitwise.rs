@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 // Copyright 2015-2020 Aerospike, Inc.
 //
 // Portions may be licensed to Aerospike, Inc. under one or more contributor
@@ -46,7 +47,7 @@ async fn expression_bitwise() {
     let set_name = create_test_set(&client, EXPECTED).await;
 
     // EQ
-    let rs = test_filter(
+    let rs: Arc<Recordset<HashMap<String, Value>>> = test_filter(
         &client,
         eq(
             count(int_val(0), int_val(16), blob_bin("bin".to_string())),
@@ -58,7 +59,7 @@ async fn expression_bitwise() {
     let item_count = count_results(rs);
     assert_eq!(item_count, 100, "COUNT Test Failed");
 
-    let rs = test_filter(
+    let rs: Arc<Recordset<HashMap<String, Value>>> = test_filter(
         &client,
         eq(
             count(
@@ -79,7 +80,7 @@ async fn expression_bitwise() {
     let item_count = count_results(rs);
     assert_eq!(item_count, 100, "RESIZE Test Failed");
 
-    let rs = test_filter(
+    let rs: Arc<Recordset<HashMap<String, Value>>> = test_filter(
         &client,
         eq(
             count(
@@ -100,7 +101,7 @@ async fn expression_bitwise() {
     let item_count = count_results(rs);
     assert_eq!(item_count, 100, "INSERT Test Failed");
 
-    let rs = test_filter(
+    let rs: Arc<Recordset<HashMap<String, Value>>> = test_filter(
         &client,
         eq(
             count(
@@ -121,7 +122,7 @@ async fn expression_bitwise() {
     let item_count = count_results(rs);
     assert_eq!(item_count, 100, "REMOVE Test Failed");
 
-    let rs = test_filter(
+    let rs: Arc<Recordset<HashMap<String, Value>>> = test_filter(
         &client,
         eq(
             count(
@@ -143,7 +144,7 @@ async fn expression_bitwise() {
     let item_count = count_results(rs);
     assert_eq!(item_count, 100, "SET Test Failed");
 
-    let rs = test_filter(
+    let rs: Arc<Recordset<HashMap<String, Value>>> = test_filter(
         &client,
         eq(
             count(
@@ -165,7 +166,7 @@ async fn expression_bitwise() {
     let item_count = count_results(rs);
     assert_eq!(item_count, 100, "OR Test Failed");
 
-    let rs = test_filter(
+    let rs: Arc<Recordset<HashMap<String, Value>>> = test_filter(
         &client,
         eq(
             count(
@@ -187,7 +188,7 @@ async fn expression_bitwise() {
     let item_count = count_results(rs);
     assert_eq!(item_count, 100, "XOR Test Failed");
 
-    let rs = test_filter(
+    let rs: Arc<Recordset<HashMap<String, Value>>> = test_filter(
         &client,
         eq(
             count(
@@ -209,7 +210,7 @@ async fn expression_bitwise() {
     let item_count = count_results(rs);
     assert_eq!(item_count, 100, "AND Test Failed");
 
-    let rs = test_filter(
+    let rs: Arc<Recordset<HashMap<String, Value>>> = test_filter(
         &client,
         eq(
             count(
@@ -230,7 +231,7 @@ async fn expression_bitwise() {
     let item_count = count_results(rs);
     assert_eq!(item_count, 100, "NOT Test Failed");
 
-    let rs = test_filter(
+    let rs: Arc<Recordset<HashMap<String, Value>>> = test_filter(
         &client,
         eq(
             count(
@@ -252,7 +253,7 @@ async fn expression_bitwise() {
     let item_count = count_results(rs);
     assert_eq!(item_count, 100, "LSHIFT Test Failed");
 
-    let rs = test_filter(
+    let rs: Arc<Recordset<HashMap<String, Value>>> = test_filter(
         &client,
         eq(
             count(
@@ -274,7 +275,7 @@ async fn expression_bitwise() {
     let item_count = count_results(rs);
     assert_eq!(item_count, 100, "RSHIFT Test Failed");
 
-    let rs = test_filter(
+    let rs: Arc<Recordset<HashMap<String, Value>>> = test_filter(
         &client,
         eq(
             count(
@@ -298,7 +299,7 @@ async fn expression_bitwise() {
     let item_count = count_results(rs);
     assert_eq!(item_count, 100, "ADD Test Failed");
 
-    let rs = test_filter(
+    let rs: Arc<Recordset<HashMap<String, Value>>> = test_filter(
         &client,
         eq(
             count(
@@ -322,7 +323,7 @@ async fn expression_bitwise() {
     let item_count = count_results(rs);
     assert_eq!(item_count, 100, "SUBTRACT Test Failed");
 
-    let rs = test_filter(
+    let rs: Arc<Recordset<HashMap<String, Value>>> = test_filter(
         &client,
         eq(
             count(
@@ -344,7 +345,7 @@ async fn expression_bitwise() {
     let item_count = count_results(rs);
     assert_eq!(item_count, 100, "SET INT Test Failed");
 
-    let rs = test_filter(
+    let rs: Arc<Recordset<HashMap<String, Value>>> = test_filter(
         &client,
         eq(
             get(int_val(0), int_val(8), blob_bin("bin".to_string())),
@@ -356,7 +357,7 @@ async fn expression_bitwise() {
     let item_count = count_results(rs);
     assert_eq!(item_count, 100, "GET Test Failed");
 
-    let rs = test_filter(
+    let rs: Arc<Recordset<HashMap<String, Value>>> = test_filter(
         &client,
         eq(
             lscan(
@@ -373,7 +374,7 @@ async fn expression_bitwise() {
     let item_count = count_results(rs);
     assert_eq!(item_count, 100, "LSCAN Test Failed");
 
-    let rs = test_filter(
+    let rs: Arc<Recordset<HashMap<String, Value>>> = test_filter(
         &client,
         eq(
             rscan(
@@ -390,7 +391,7 @@ async fn expression_bitwise() {
     let item_count = count_results(rs);
     assert_eq!(item_count, 100, "RSCAN Test Failed");
 
-    let rs = test_filter(
+    let rs: Arc<Recordset<HashMap<String, Value>>> = test_filter(
         &client,
         eq(
             get_int(int_val(0), int_val(8), false, blob_bin("bin".to_string())),
@@ -405,7 +406,11 @@ async fn expression_bitwise() {
     client.close().await.unwrap();
 }
 
-async fn test_filter(client: &Client, filter: FilterExpression, set_name: &str) -> Arc<Recordset> {
+async fn test_filter(
+    client: &Client,
+    filter: FilterExpression,
+    set_name: &str,
+) -> Arc<Recordset<HashMap<String, Value>>> {
     let namespace = common::namespace();
 
     let mut qpolicy = QueryPolicy::default();
@@ -415,7 +420,7 @@ async fn test_filter(client: &Client, filter: FilterExpression, set_name: &str) 
     client.query(&qpolicy, statement).await.unwrap()
 }
 
-fn count_results(rs: Arc<Recordset>) -> usize {
+fn count_results(rs: Arc<Recordset<HashMap<String, Value>>>) -> usize {
     let mut count = 0;
 
     for res in &*rs {

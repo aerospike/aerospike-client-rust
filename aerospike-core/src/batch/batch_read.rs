@@ -13,16 +13,16 @@
 // License for the specific language governing permissions and limitations under
 // the License.
 
-use crate::Bins;
 use crate::Key;
 use crate::Record;
+use crate::{Bins, ReadableBins};
 #[cfg(feature = "serialization")]
 use serde::Serialize;
 
 /// Key and bin names used in batch read commands where variable bins are needed for each key.
 #[cfg_attr(feature = "serialization", derive(Serialize))]
 #[derive(Debug, Clone)]
-pub struct BatchRead {
+pub struct BatchRead<T: ReadableBins> {
     /// Key.
     pub key: Key,
 
@@ -30,10 +30,10 @@ pub struct BatchRead {
     pub bins: Bins,
 
     /// Will contain the record after the batch read operation.
-    pub record: Option<Record>,
+    pub record: Option<Record<T>>,
 }
 
-impl BatchRead {
+impl<T: ReadableBins> BatchRead<T> {
     /// Create a new `BatchRead` instance for the given key and bin selector.
     pub const fn new(key: Key, bins: Bins) -> Self {
         BatchRead {
@@ -44,7 +44,7 @@ impl BatchRead {
     }
 
     #[doc(hidden)]
-    pub fn match_header(&self, other: &BatchRead, match_set: bool) -> bool {
+    pub fn match_header(&self, other: &BatchRead<T>, match_set: bool) -> bool {
         let key = &self.key;
         let other_key = &other.key;
         (key.namespace == other_key.namespace)

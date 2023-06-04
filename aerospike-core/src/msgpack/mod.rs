@@ -13,5 +13,7 @@
 // License for the specific language governing permissions and limitations under
 // the License.
 
+/// General Functions to Decode Aerospike Wire Data
 pub mod decoder;
+/// General Functions to Encode Aerospike Wire Data
 pub mod encoder;

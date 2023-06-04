@@ -1,5 +1,6 @@
 use crate::common;
 use env_logger;
+use std::collections::HashMap;
 
 use aerospike::expressions::lists::*;
 use aerospike::expressions::*;
@@ -558,7 +559,11 @@ async fn expression_list() {
     client.close().await.unwrap();
 }
 
-async fn test_filter(client: &Client, filter: FilterExpression, set_name: &str) -> Arc<Recordset> {
+async fn test_filter(
+    client: &Client,
+    filter: FilterExpression,
+    set_name: &str,
+) -> Arc<Recordset<HashMap<String, Value>>> {
     let namespace = common::namespace();
 
     let mut qpolicy = QueryPolicy::default();
@@ -568,7 +573,7 @@ async fn test_filter(client: &Client, filter: FilterExpression, set_name: &str) 
     client.query(&qpolicy, statement).await.unwrap()
 }
 
-fn count_results(rs: Arc<Recordset>) -> usize {
+fn count_results(rs: Arc<Recordset<HashMap<String, Value>>>) -> usize {
     let mut count = 0;
 
     for res in &*rs {

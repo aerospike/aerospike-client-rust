@@ -1,8 +1,8 @@
-use proc_macro2::{TokenStream};
-use quote::{quote, quote_spanned, ToTokens};
-use syn::{Ident, Data, Fields, Expr, Field, ExprLit};
-use syn::Expr::{Assign, Lit, Path};
+use proc_macro2::TokenStream;
+use quote::{quote, quote_spanned};
 use syn::spanned::Spanned;
+use syn::Expr::{Assign, Lit, Path};
+use syn::{Data, Expr, Field, Fields, Ident};
 
 pub struct WritableFieldAttributes<'a> {
     field: &'a Field,
@@ -19,36 +19,56 @@ impl<'a> WritableFieldAttributes<'a> {
         match default {
             syn::Lit::Str(s) => {
                 let val = &s.value();
-                return (quote! {
-                    buffer.write_str(#val);
-                },
-                val.len(), 3)
+                return (
+                    quote! {
+                        buffer.write_str(#val);
+                    },
+                    val.len(),
+                    3,
+                );
             }
             syn::Lit::Int(i) => {
                 if let Ok(val) = i.base10_parse::<i64>() {
-                    return (quote! {
-                        buffer.write_i64(#val);
-                    }, 8, 1)
+                    return (
+                        quote! {
+                            buffer.write_i64(#val);
+                        },
+                        8,
+                        1,
+                    );
                 } else {
                     panic!("Aerospike Default value could not be parsed as i64")
                 }
             }
             syn::Lit::Float(f) => {
                 if let Ok(val) = f.base10_parse::<f64>() {
-                    return (quote! {
-                        buffer.write_f64(#val);
-                    }, 8, 2)
+                    return (
+                        quote! {
+                            buffer.write_f64(#val);
+                        },
+                        8,
+                        2,
+                    );
                 } else {
                     panic!("Aerospike Default value could not be parsed as f64")
                 }
             }
             syn::Lit::Bool(b) => {
                 let val = b.value();
-                return (quote! {
-                    buffer.write_bool(#val);
-                }, 1, 17)
+                return (
+                    quote! {
+                        buffer.write_bool(#val);
+                    },
+                    1,
+                    17,
+                );
             }
-            _ => {panic!("Aerospike Default value is not supported for the value on {}", &self.name)}
+            _ => {
+                panic!(
+                    "Aerospike Default value is not supported for the value on {}",
+                    &self.name
+                )
+            }
         }
     }
 
@@ -60,13 +80,13 @@ impl<'a> WritableFieldAttributes<'a> {
                 let val = &s.value();
                 return quote! {
                     size += aerospike::msgpack::encoder::pack_string(buffer, #val);
-                }
+                };
             }
             syn::Lit::Int(i) => {
                 if let Ok(val) = i.base10_parse::<i64>() {
                     return quote! {
                         size += aerospike::msgpack::encoder::pack_integer(buffer, #val);
-                    }
+                    };
                 } else {
                     panic!("Aerospike Default value could not be parsed as i64")
                 }
@@ -76,7 +96,7 @@ impl<'a> WritableFieldAttributes<'a> {
                     // Default Values are always encoded as f64
                     return quote! {
                         size += aerospike::msgpack::encoder::pack_f64(buffer, #val);
-                    }
+                    };
                 } else {
                     panic!("Aerospike Default value could not be parsed as f64")
                 }
@@ -85,9 +105,14 @@ impl<'a> WritableFieldAttributes<'a> {
                 let val = b.value();
                 return quote! {
                     size += aerospike::msgpack::encoder::pack_bool(buffer, #val);
-                }
+                };
             }
-            _ => {panic!("Aerospike Default value is not supported for the value on {}", &self.name)}
+            _ => {
+                panic!(
+                    "Aerospike Default value is not supported for the value on {}",
+                    &self.name
+                )
+            }
         }
     }
 }
@@ -122,10 +147,10 @@ fn writable_field_arguments(field: &Field) -> WritableFieldAttributes {
                                 // Currently only accepts Strings as Field Name
                                 if let syn::Lit::Str(ls) = lit.lit {
                                     attributes.name = ls.value();
-                                }else{
+                                } else {
                                     panic!("Invalid Aerospike Rename Value")
                                 }
-                            }else{
+                            } else {
                                 panic!("Invalid Aerospike Rename Value")
                             }
                         } else if path.path.is_ident("default") {
@@ -134,7 +159,9 @@ fn writable_field_arguments(field: &Field) -> WritableFieldAttributes {
                             }
                         }
                     }
-                    _ => { panic!("Invalid Aerospike Derive Attribute") }
+                    _ => {
+                        panic!("Invalid Aerospike Derive Attribute")
+                    }
                 }
             }
             // Path based Attributes that just serve as markers
@@ -143,11 +170,15 @@ fn writable_field_arguments(field: &Field) -> WritableFieldAttributes {
                     match ident.to_string().as_ref() {
                         // Ignore Attribute with skip as alias
                         "ignore" | "skip" => attributes.skip = true,
-                        _ => { panic!("Invalid Aerospike Derive Attribute") }
+                        _ => {
+                            panic!("Invalid Aerospike Derive Attribute")
+                        }
                     }
                 }
             }
-            _ => { panic!("Invalid Aerospike Derive Attribute") }
+            _ => {
+                panic!("Invalid Aerospike Derive Attribute")
+            }
         }
     }
     if attributes.name.len() > 15 {
@@ -156,16 +187,17 @@ fn writable_field_arguments(field: &Field) -> WritableFieldAttributes {
     attributes
 }
 
-
-pub (crate) fn build_writable(data: &Data) -> TokenStream {
+pub(crate) fn build_writable(data: &Data) -> TokenStream {
     match *data {
         Data::Struct(ref data) => {
             match data.fields {
                 Fields::Named(ref fields) => {
                     // Collect all the Field Info
-                    let field_args = fields.named.iter().map(|f| {
-                        writable_field_arguments(&f)
-                    }).collect::<Vec<WritableFieldAttributes>>();
+                    let field_args = fields
+                        .named
+                        .iter()
+                        .map(|f| writable_field_arguments(&f))
+                        .collect::<Vec<WritableFieldAttributes>>();
 
                     // Build the `write_as_bins` function
                     let writer_recurse = field_args.iter().map(|f| {
@@ -296,26 +328,27 @@ pub (crate) fn build_writable(data: &Data) -> TokenStream {
 
                     }
                 }
-                _ => panic!("Aerospike Bin Derive is not supported for unnamed Structs")
+                _ => panic!("Aerospike Bin Derive is not supported for unnamed Structs"),
             }
         }
-        Data::Enum(_) | Data::Union(_) => panic!("Aerospike Bin Derive is only supported for Enum and Union"),
+        Data::Enum(_) | Data::Union(_) => {
+            panic!("Aerospike Bin Derive is only supported for Enum and Union")
+        }
     }
 }
-
 
 // WritableValue
 pub(crate) fn convert_writable_value_source(data: &Data) -> proc_macro2::TokenStream {
     match *data {
-        Data::Struct(ref data) => {
-            match data.fields {
-                Fields::Named(ref fields) => {
+        Data::Struct(ref data) => match data.fields {
+            Fields::Named(ref fields) => {
+                let field_args = fields
+                    .named
+                    .iter()
+                    .map(|f| writable_field_arguments(&f))
+                    .collect::<Vec<WritableFieldAttributes>>();
 
-                    let field_args = fields.named.iter().map(|f| {
-                        writable_field_arguments(&f)
-                    }).collect::<Vec<WritableFieldAttributes>>();
-
-                    let recurse = field_args.iter().map(|f| {
+                let recurse = field_args.iter().map(|f| {
                         let name = f.ident;
                         let name_str = &f.name;
                         let skip = &f.skip;
@@ -342,7 +375,7 @@ pub(crate) fn convert_writable_value_source(data: &Data) -> proc_macro2::TokenSt
                             }
                         }
                     });
-                    let len_recurse = field_args.iter().map(|f| {
+                let len_recurse = field_args.iter().map(|f| {
                         let skip = f.skip;
                         let name = f.ident;
                         let has_default = f.default.is_some();
@@ -352,17 +385,16 @@ pub(crate) fn convert_writable_value_source(data: &Data) -> proc_macro2::TokenSt
                             }
                         }
                     });
-                    quote! {
-                        let mut len = 0;
-                        #(#len_recurse)*
+                quote! {
+                    let mut len = 0;
+                    #(#len_recurse)*
 
-                        size += aerospike::msgpack::encoder::pack_map_begin(buffer, len);
-                        #(#recurse)*
-                    }
+                    size += aerospike::msgpack::encoder::pack_map_begin(buffer, len);
+                    #(#recurse)*
                 }
-                _ => unimplemented!()
             }
-        }
+            _ => unimplemented!(),
+        },
         Data::Enum(_) | Data::Union(_) => unimplemented!(),
     }
 }

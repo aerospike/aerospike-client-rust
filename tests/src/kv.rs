@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 // Copyright 2015-2018 Aerospike, Inc.
 //
 // Portions may be licensed to Aerospike, Inc. under one or more contributor
@@ -16,6 +17,7 @@ use aerospike::operations;
 use aerospike::{
     as_bin, as_blob, as_geo, as_key, as_list, as_map, as_val, Bins, ReadPolicy, Value, WritePolicy,
 };
+use aerospike_core::Record;
 use env_logger;
 
 use crate::common;
@@ -52,7 +54,8 @@ async fn connect() {
     ];
     client.put(&wpolicy, &key, &bins).await.unwrap();
 
-    let record = client.get(&policy, &key, Bins::All).await.unwrap();
+    let record: Record<HashMap<String, Value>> =
+        client.get(&policy, &key, Bins::All).await.unwrap();
     let bins = record.bins;
     assert_eq!(bins.len(), 8);
     assert_eq!(bins.get("bin bool"), Some(&Value::Bool(true)));
@@ -81,10 +84,11 @@ async fn connect() {
     client.touch(&wpolicy, &key).await.unwrap();
 
     let bins = Bins::from(["bin999", "bin f64"]);
-    let record = client.get(&policy, &key, bins).await.unwrap();
+    let record: Record<HashMap<String, Value>> = client.get(&policy, &key, bins).await.unwrap();
     assert_eq!(record.bins.len(), 2);
 
-    let record = client.get(&policy, &key, Bins::None).await.unwrap();
+    let record: Record<HashMap<String, Value>> =
+        client.get(&policy, &key, Bins::None).await.unwrap();
     assert_eq!(record.bins.len(), 0);
 
     let exists = client.exists(&wpolicy, &key).await.unwrap();
@@ -92,7 +96,10 @@ async fn connect() {
 
     let bin = as_bin!("bin999", "test string");
     let ops = &vec![operations::put(&bin), operations::get()];
-    client.operate(&wpolicy, &key, ops).await.unwrap();
+    client
+        .operate::<HashMap<String, Value>>(&wpolicy, &key, ops)
+        .await
+        .unwrap();
 
     let existed = client.delete(&wpolicy, &key).await.unwrap();
     assert!(existed);

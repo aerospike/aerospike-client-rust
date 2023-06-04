@@ -22,22 +22,25 @@ use crossbeam_queue::SegQueue;
 use rand::Rng;
 
 use crate::errors::Result;
-use crate::Record;
+use crate::{ReadableBins, Record};
 
 /// Virtual collection of records retrieved through queries and scans. During a query/scan,
 /// multiple threads will retrieve records from the server nodes and put these records on an
 /// internal queue managed by the recordset. The single user thread consumes these records from the
 /// queue.
-pub struct Recordset {
+pub struct Recordset<T>
+where
+    T: ReadableBins,
+{
     instances: AtomicUsize,
     record_queue_count: AtomicUsize,
     record_queue_size: AtomicUsize,
-    record_queue: SegQueue<Result<Record>>,
+    record_queue: SegQueue<Result<Record<T>>>,
     active: AtomicBool,
     task_id: AtomicUsize,
 }
 
-impl Recordset {
+impl<T: ReadableBins> Recordset<T> {
     #[doc(hidden)]
     pub fn new(rec_queue_size: usize, nodes: usize) -> Self {
         let mut rng = rand::thread_rng();
@@ -64,7 +67,7 @@ impl Recordset {
     }
 
     #[doc(hidden)]
-    pub fn push(&self, record: Result<Record>) -> Option<Result<Record>> {
+    pub fn push(&self, record: Result<Record<T>>) -> Option<Result<Record<T>>> {
         if self.record_queue_count.fetch_add(1, Ordering::Relaxed)
             < self.record_queue_size.load(Ordering::Relaxed)
         {
@@ -88,10 +91,10 @@ impl Recordset {
     }
 }
 
-impl<'a> Iterator for &'a Recordset {
-    type Item = Result<Record>;
+impl<'a, T: ReadableBins> Iterator for &'a Recordset<T> {
+    type Item = Result<Record<T>>;
 
-    fn next(&mut self) -> Option<Result<Record>> {
+    fn next(&mut self) -> Option<Result<Record<T>>> {
         loop {
             if self.is_active() || !self.record_queue.is_empty() {
                 let result = self.record_queue.pop().ok();

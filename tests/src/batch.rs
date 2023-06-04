@@ -15,7 +15,8 @@
 
 use aerospike::BatchRead;
 use aerospike::Bins;
-use aerospike::{as_bin, as_key, BatchPolicy, Concurrency, WritePolicy};
+use aerospike::{as_bin, as_key, BatchPolicy, Concurrency, Value, WritePolicy};
+use std::collections::HashMap;
 
 use env_logger;
 
@@ -58,7 +59,8 @@ async fn batch_get() {
         BatchRead::new(key3.clone(), none.clone()),
         BatchRead::new(key4.clone(), none),
     ];
-    let mut results = client.batch_get(&bpolicy, batch).await.unwrap();
+    let mut results: Vec<BatchRead<HashMap<String, Value>>> =
+        client.batch_get(&bpolicy, batch).await.unwrap();
 
     let result = results.remove(0);
     assert_eq!(result.key, key1);

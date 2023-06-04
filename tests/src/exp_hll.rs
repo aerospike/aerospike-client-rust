@@ -15,6 +15,7 @@
 
 use crate::common;
 use env_logger;
+use std::collections::HashMap;
 
 use aerospike::expressions::hll::*;
 use aerospike::expressions::lists::*;
@@ -57,7 +58,7 @@ async fn create_test_set(client: &Client, no_records: usize) -> String {
             ),
         ];
         client
-            .operate(&WritePolicy::default(), &key, &ops)
+            .operate::<HashMap<String, Value>>(&WritePolicy::default(), &key, &ops)
             .await
             .unwrap();
     }
@@ -70,7 +71,7 @@ async fn expression_hll() {
     let client = common::client().await;
     let set_name = create_test_set(&client, EXPECTED).await;
 
-    let rs = test_filter(
+    let rs: Arc<Recordset<HashMap<String, Value>>> = test_filter(
         &client,
         eq(
             get_count(add_with_index_and_min_hash(
@@ -88,7 +89,7 @@ async fn expression_hll() {
     let count = count_results(rs);
     assert_eq!(count, 99, "HLL INIT Test Failed");
 
-    let rs = test_filter(
+    let rs: Arc<Recordset<HashMap<String, Value>>> = test_filter(
         &client,
         eq(
             may_contain(
@@ -103,7 +104,7 @@ async fn expression_hll() {
     let count = count_results(rs);
     assert_eq!(count, 1, "HLL MAY CONTAIN Test Failed");
 
-    let rs = test_filter(
+    let rs: Arc<Recordset<HashMap<String, Value>>> = test_filter(
         &client,
         lt(
             get_by_index(
@@ -121,7 +122,7 @@ async fn expression_hll() {
     let count = count_results(rs);
     assert_eq!(count, 100, "HLL DESCRIBE Test Failed");
 
-    let rs = test_filter(
+    let rs: Arc<Recordset<HashMap<String, Value>>> = test_filter(
         &client,
         eq(
             get_count(get_union(
@@ -136,7 +137,7 @@ async fn expression_hll() {
     let count = count_results(rs);
     assert_eq!(count, 98, "HLL GET UNION Test Failed");
 
-    let rs = test_filter(
+    let rs: Arc<Recordset<HashMap<String, Value>>> = test_filter(
         &client,
         eq(
             get_union_count(
@@ -151,7 +152,7 @@ async fn expression_hll() {
     let count = count_results(rs);
     assert_eq!(count, 98, "HLL GET UNION COUNT Test Failed");
 
-    let rs = test_filter(
+    let rs: Arc<Recordset<HashMap<String, Value>>> = test_filter(
         &client,
         eq(
             get_intersect_count(
@@ -166,7 +167,7 @@ async fn expression_hll() {
     let count = count_results(rs);
     assert_eq!(count, 99, "HLL GET INTERSECT COUNT Test Failed");
 
-    let rs = test_filter(
+    let rs: Arc<Recordset<HashMap<String, Value>>> = test_filter(
         &client,
         gt(
             get_similarity(
@@ -184,7 +185,11 @@ async fn expression_hll() {
     client.close().await.unwrap();
 }
 
-async fn test_filter(client: &Client, filter: FilterExpression, set_name: &str) -> Arc<Recordset> {
+async fn test_filter(
+    client: &Client,
+    filter: FilterExpression,
+    set_name: &str,
+) -> Arc<Recordset<HashMap<String, Value>>> {
     let namespace = common::namespace();
 
     let mut qpolicy = QueryPolicy::default();
@@ -194,7 +199,7 @@ async fn test_filter(client: &Client, filter: FilterExpression, set_name: &str) 
     client.query(&qpolicy, statement).await.unwrap()
 }
 
-fn count_results(rs: Arc<Recordset>) -> usize {
+fn count_results(rs: Arc<Recordset<HashMap<String, Value>>>) -> usize {
     let mut count = 0;
 
     for res in &*rs {

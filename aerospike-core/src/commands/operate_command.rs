@@ -21,15 +21,15 @@ use crate::errors::Result;
 use crate::net::Connection;
 use crate::operations::Operation;
 use crate::policy::WritePolicy;
-use crate::{Bins, Key};
+use crate::{Bins, Key, ReadableBins};
 
-pub struct OperateCommand<'a> {
-    pub read_command: ReadCommand<'a>,
+pub struct OperateCommand<'a, T: ReadableBins> {
+    pub read_command: ReadCommand<'a, T>,
     policy: &'a WritePolicy,
     operations: &'a [Operation<'a>],
 }
 
-impl<'a> OperateCommand<'a> {
+impl<'a, T: ReadableBins> OperateCommand<'a, T> {
     pub fn new(
         policy: &'a WritePolicy,
         cluster: Arc<Cluster>,
@@ -49,7 +49,7 @@ impl<'a> OperateCommand<'a> {
 }
 
 #[async_trait::async_trait]
-impl<'a> Command for OperateCommand<'a> {
+impl<'a, T: ReadableBins> Command for OperateCommand<'a, T> {
     async fn write_timeout(
         &mut self,
         conn: &mut Connection,
@@ -57,10 +57,6 @@ impl<'a> Command for OperateCommand<'a> {
     ) -> Result<()> {
         conn.buffer.write_timeout(timeout);
         Ok(())
-    }
-
-    async fn write_buffer(&mut self, conn: &mut Connection) -> Result<()> {
-        conn.flush().await
     }
 
     fn prepare_buffer(&mut self, conn: &mut Connection) -> Result<()> {
@@ -77,5 +73,9 @@ impl<'a> Command for OperateCommand<'a> {
 
     async fn parse_result(&mut self, conn: &mut Connection) -> Result<()> {
         self.read_command.parse_result(conn).await
+    }
+
+    async fn write_buffer(&mut self, conn: &mut Connection) -> Result<()> {
+        conn.flush().await
     }
 }

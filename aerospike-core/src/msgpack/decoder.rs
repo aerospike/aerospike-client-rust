@@ -21,7 +21,7 @@ use crate::commands::ParticleType;
 use crate::errors::{ErrorKind, Result};
 use crate::value::Value;
 
-pub fn unpack_value_list(buf: &mut Buffer) -> Result<Value> {
+pub(crate) fn unpack_value_list(buf: &mut Buffer) -> Result<Value> {
     if buf.data_buffer.is_empty() {
         return Ok(Value::List(vec![]));
     }
@@ -32,13 +32,17 @@ pub fn unpack_value_list(buf: &mut Buffer) -> Result<Value> {
         0x90..=0x9f => (ltype & 0x0f) as usize,
         0xdc => buf.read_u16(None) as usize,
         0xdd => buf.read_u32(None) as usize,
-        _ => unreachable!(),
+        x => {
+            println!("x: {:#04x}@{}", x, buf.data_offset);
+            buf.dump_hex();
+            unreachable!()
+        }
     };
 
     unpack_list(buf, count)
 }
 
-pub fn unpack_value_map(buf: &mut Buffer) -> Result<Value> {
+pub(crate) fn unpack_value_map(buf: &mut Buffer) -> Result<Value> {
     if buf.data_buffer.is_empty() {
         return Ok(Value::from(HashMap::with_capacity(0)));
     }

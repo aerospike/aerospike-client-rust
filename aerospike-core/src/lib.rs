@@ -184,10 +184,10 @@ mod client;
 mod cluster;
 mod commands;
 
-
 pub use commands::buffer::Buffer;
 
 pub mod expressions;
+/// General Functions for Aerospike Wire encoding and decoding
 pub mod msgpack;
 mod net;
 pub mod operations;
@@ -199,7 +199,7 @@ pub mod task;
 mod user;
 
 mod traits;
-pub use traits::{WritableValue, WritableBins};
+pub use traits::{ReadableBins, ReadableValue, WritableBins, WritableValue};
 
 #[cfg(test)]
 extern crate hex;

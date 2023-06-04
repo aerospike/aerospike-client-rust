@@ -13,6 +13,7 @@
 // License for the specific language governing permissions and limitations under
 // the License.
 
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::thread;
@@ -49,7 +50,7 @@ async fn scan_single_consumer() {
     let set_name = create_test_set(&client, EXPECTED).await;
 
     let spolicy = ScanPolicy::default();
-    let rs = client
+    let rs: Arc<Recordset<HashMap<String, Value>>> = client
         .scan(&spolicy, namespace, &set_name, Bins::All)
         .await
         .unwrap();
@@ -70,7 +71,7 @@ async fn scan_multi_consumer() {
 
     let mut spolicy = ScanPolicy::default();
     spolicy.record_queue_size = 4096;
-    let rs = client
+    let rs: Arc<Recordset<HashMap<String, Value>>> = client
         .scan(&spolicy, namespace, &set_name, Bins::All)
         .await
         .unwrap();
@@ -113,7 +114,7 @@ async fn scan_node() {
         let set_name = set_name.clone();
         threads.push(aerospike_rt::spawn(async move {
             let spolicy = ScanPolicy::default();
-            let rs = client
+            let rs: Arc<Recordset<HashMap<String, Value>>> = client
                 .scan_node(&spolicy, node, namespace, &set_name, Bins::All)
                 .await
                 .unwrap();
