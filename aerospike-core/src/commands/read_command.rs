@@ -61,8 +61,8 @@ impl<'a, T: ReadableBins> ReadCommand<'a, T> {
             conn.buffer.skip(field_size);
         }
 
-        let pre_data = conn.pre_parse_stream_bins(op_count).await?;
-        let bins = T::read_bins_from_bytes(pre_data)?;
+        let mut pre_data = conn.pre_parse_stream_bins(op_count).await?;
+        let bins = T::read_bins_from_bytes(&mut pre_data)?;
         Ok(Record::new(None, bins, generation, expiration))
     }
 

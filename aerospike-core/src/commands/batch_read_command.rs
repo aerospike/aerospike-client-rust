@@ -168,8 +168,8 @@ impl<T: ReadableBins> BatchReadCommand<T> {
         let key = commands::StreamCommand::<T>::parse_key(conn, field_count).await?;
 
         let record = if found_key {
-            let data_points = conn.pre_parse_stream_bins(op_count).await?;
-            let bins = T::read_bins_from_bytes(data_points)?;
+            let mut data_points = conn.pre_parse_stream_bins(op_count).await?;
+            let bins = T::read_bins_from_bytes(&mut data_points)?;
 
             Some(Record::new(Some(key), bins, generation, expiration))
         } else {

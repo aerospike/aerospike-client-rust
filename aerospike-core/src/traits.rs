@@ -7,6 +7,7 @@ use crate::errors::Result;
 use crate::{Bin, ParticleType, Value};
 use std::collections::HashMap;
 
+use crate::operations::lists;
 use crate::value::bytes_to_particle;
 pub use aerospike_macro::{ReadableBins, WritableBins, WritableValue};
 
@@ -32,7 +33,7 @@ pub trait ReadableBins: Sync + Sized + Send + Clone {
     /// Convert the pre-parsed Bins to a compatible Object
     /// The String in `data_points` is the field name returned by the Server.
     /// This can vary from the actual name in the Object if the rename attribute is used.
-    fn read_bins_from_bytes(data_points: HashMap<String, PreParsedBin>) -> Result<Self>;
+    fn read_bins_from_bytes(data_points: &mut HashMap<String, PreParsedBin>) -> Result<Self>;
     /// Default Fallback for Empty Bins
     /// Should be implemented for Types like Options and Lists.
     /// Defaults to throwing an Error
@@ -45,7 +46,9 @@ pub trait ReadableBins: Sync + Sized + Send + Clone {
 pub trait ReadableValue: Sync + Sized + Send + Clone {
     /// Read the data from the Wire Buffer.
     /// Option will be None if no data for the bin name was found. Otherwise it consists of (particle type, location, size of the data)
-    fn read_value_from_bytes(data_point: Option<PreParsedBin>) -> Result<Self>;
+    fn read_value_from_bytes(data_point: &mut PreParsedBin) -> Result<Self>;
+    fn parse_value(data_point: &mut PreParsedValue) -> Result<Self>;
+    fn parse_cdt_value(buff: &mut Buffer) -> Result<Self>;
 }
 
 /// Before giving data to the Readable Traits, the client pre-parses the wire data into this format#[derive(Debug)]
@@ -170,6 +173,25 @@ impl<T: WritableValue> WritableValue for Option<T> {
     }
 }
 
+impl<T: WritableValue> WritableValue for Vec<T> {
+    fn write_as_value(&self, buffer: &mut Option<&mut Buffer>) -> usize {
+        let mut size = 0;
+        size += crate::msgpack::encoder::pack_array_begin(buffer, self.len());
+        for v in self {
+            size += v.write_as_cdt_value(buffer)
+        }
+        size
+    }
+
+    fn writable_value_particle_type(&self) -> ParticleType {
+        ParticleType::LIST
+    }
+
+    fn writable_value_encodable(&self) -> bool {
+        !self.is_empty()
+    }
+}
+
 impl WritableValue for String {
     fn write_as_value(&self, buffer: &mut Option<&mut Buffer>) -> usize {
         if let Some(ref mut buf) = *buffer {
@@ -286,38 +308,40 @@ fn legacy_bins_slice_writable_size(bins: &[Bin]) -> usize {
 }
 
 impl ReadableValue for Value {
-    fn read_value_from_bytes(data_point: Option<PreParsedBin>) -> Result<Self> {
-        if let Some(mut dp) = data_point {
-            //buff.data_offset = dp.value.buffer_offset;
-            let mut val = bytes_to_particle(
-                dp.value.particle_type,
-                &mut dp.value.buffer,
-                dp.value.byte_length,
-            )?;
+    fn read_value_from_bytes(data_point: &mut PreParsedBin) -> Result<Self> {
+        let mut val = Value::parse_value(&mut data_point.value)?;
 
-            for mut sv in dp.sub_values {
-                //buff.data_offset = sv.buffer_offset;
-                let sval = bytes_to_particle(sv.particle_type, &mut sv.buffer, sv.byte_length)?;
-                match val {
-                    Value::List(ref mut list) => list.push(sval),
-                    ref mut prev => {
-                        *prev = as_list!(prev.clone(), sval);
-                    }
+        for sv in &mut data_point.sub_values {
+            let sval = Value::parse_value(sv)?;
+            match val {
+                Value::List(ref mut list) => list.push(sval),
+                ref mut prev => {
+                    *prev = as_list!(prev.clone(), sval);
                 }
             }
-
-            return Ok(val);
         }
-        bail!("Could not parse Value data from wire")
+        return Ok(val);
+    }
+
+    fn parse_value(data_point: &mut PreParsedValue) -> Result<Self> {
+        bytes_to_particle(
+            data_point.particle_type,
+            &mut data_point.buffer,
+            data_point.byte_length,
+        )
+    }
+
+    fn parse_cdt_value(buff: &mut Buffer) -> Result<Self> {
+        crate::msgpack::decoder::unpack_value(buff)
     }
 }
 
 impl ReadableBins for HashMap<String, Value> {
-    fn read_bins_from_bytes(data_points: HashMap<String, PreParsedBin>) -> Result<Self> {
+    fn read_bins_from_bytes(data_points: &mut HashMap<String, PreParsedBin>) -> Result<Self> {
         let mut hm = HashMap::new();
-        for (k, d) in data_points {
-            let x = Value::read_value_from_bytes(Some(d))?;
-            hm.insert(k, x);
+        for (k, mut d) in data_points {
+            let x = Value::read_value_from_bytes(d)?;
+            hm.insert(k.to_string(), x);
         }
 
         Ok(hm)
@@ -325,5 +349,237 @@ impl ReadableBins for HashMap<String, Value> {
 
     fn new_empty() -> Result<Self> {
         Ok(HashMap::new())
+    }
+}
+
+impl ReadableValue for i64 {
+    fn read_value_from_bytes(data_point: &mut PreParsedBin) -> Result<Self> {
+        if data_point.value.particle_type == 0 {
+            bail!("No Value received for Integer")
+        }
+        if !data_point.sub_values.is_empty() {
+            bail!("Multiple Values received for Integer")
+        }
+        return Self::parse_value(&mut data_point.value);
+    }
+
+    fn parse_value(data_point: &mut PreParsedValue) -> Result<Self> {
+        return Ok(data_point.buffer.read_i64(None));
+    }
+
+    fn parse_cdt_value(buff: &mut Buffer) -> Result<Self> {
+        let ptype = buff.read_u8(None);
+        match ptype {
+            0x00..=0x7f => Ok(i64::from(ptype) as i64),
+            0xcc => Ok(buff.read_u8(None) as i64),
+            0xcd => Ok(buff.read_u16(None) as i64),
+            0xce => Ok(buff.read_u32(None) as i64),
+            0xcf => Ok(buff.read_u64(None) as i64),
+            0xd0 => Ok(buff.read_i8(None) as i64),
+            0xd1 => Ok(buff.read_i16(None) as i64),
+            0xd2 => Ok(buff.read_i32(None) as i64),
+            0xd3 => Ok(buff.read_i64(None) as i64),
+            _ => bail!("Invalid Data Type for derive i64 CDT Value"),
+        }
+    }
+}
+
+impl ReadableValue for usize {
+    fn read_value_from_bytes(data_point: &mut PreParsedBin) -> Result<Self> {
+        if data_point.value.particle_type == 0 {
+            bail!("No Value received for Integer")
+        }
+        if !data_point.sub_values.is_empty() {
+            bail!("Multiple Values received for Integer")
+        }
+        return Self::parse_value(&mut data_point.value);
+    }
+
+    fn parse_value(data_point: &mut PreParsedValue) -> Result<Self> {
+        return Ok(data_point.buffer.read_i64(None) as usize);
+    }
+
+    fn parse_cdt_value(buff: &mut Buffer) -> Result<Self> {
+        let ptype = buff.read_u8(None);
+        match ptype {
+            0x00..=0x7f => Ok(i64::from(ptype) as usize),
+            0xcc => Ok(buff.read_u8(None) as usize),
+            0xcd => Ok(buff.read_u16(None) as usize),
+            0xce => Ok(buff.read_u32(None) as usize),
+            0xcf => Ok(buff.read_u64(None) as usize),
+            0xd0 => Ok(buff.read_i8(None) as usize),
+            0xd1 => Ok(buff.read_i16(None) as usize),
+            0xd2 => Ok(buff.read_i32(None) as usize),
+            0xd3 => Ok(buff.read_i64(None) as usize),
+            _ => bail!("Invalid Data Type for derive usize CDT Value"),
+        }
+    }
+}
+
+impl ReadableValue for isize {
+    fn read_value_from_bytes(data_point: &mut PreParsedBin) -> Result<Self> {
+        if data_point.value.particle_type == 0 {
+            bail!("No Value received for Integer")
+        }
+        if !data_point.sub_values.is_empty() {
+            bail!("Multiple Values received for Integer")
+        }
+        return Self::parse_value(&mut data_point.value);
+    }
+
+    fn parse_value(data_point: &mut PreParsedValue) -> Result<Self> {
+        return Ok(data_point.buffer.read_i64(None) as isize);
+    }
+
+    fn parse_cdt_value(buff: &mut Buffer) -> Result<Self> {
+        let ptype = buff.read_u8(None);
+        match ptype {
+            0x00..=0x7f => Ok(i64::from(ptype) as isize),
+            0xcc => Ok(buff.read_u8(None) as isize),
+            0xcd => Ok(buff.read_u16(None) as isize),
+            0xce => Ok(buff.read_u32(None) as isize),
+            0xcf => Ok(buff.read_u64(None) as isize),
+            0xd0 => Ok(buff.read_i8(None) as isize),
+            0xd1 => Ok(buff.read_i16(None) as isize),
+            0xd2 => Ok(buff.read_i32(None) as isize),
+            0xd3 => Ok(buff.read_i64(None) as isize),
+            _ => bail!("Invalid Data Type for derive isize CDT Value"),
+        }
+    }
+}
+
+impl ReadableValue for u64 {
+    fn read_value_from_bytes(data_point: &mut PreParsedBin) -> Result<Self> {
+        if data_point.value.particle_type == 0 {
+            bail!("No Value received for Integer")
+        }
+        if !data_point.sub_values.is_empty() {
+            bail!("Multiple Values received for Integer")
+        }
+        return Self::parse_value(&mut data_point.value);
+    }
+
+    fn parse_value(data_point: &mut PreParsedValue) -> Result<Self> {
+        return Ok(data_point.buffer.read_i64(None) as u64);
+    }
+
+    fn parse_cdt_value(buff: &mut Buffer) -> Result<Self> {
+        let ptype = buff.read_u8(None);
+        match ptype {
+            0x00..=0x7f => Ok(i64::from(ptype) as u64),
+            0xcc => Ok(buff.read_u8(None) as u64),
+            0xcd => Ok(buff.read_u16(None) as u64),
+            0xce => Ok(buff.read_u32(None) as u64),
+            0xcf => Ok(buff.read_u64(None)),
+            0xd0 => Ok(buff.read_i8(None) as u64),
+            0xd1 => Ok(buff.read_i16(None) as u64),
+            0xd2 => Ok(buff.read_i32(None) as u64),
+            0xd3 => Ok(buff.read_i64(None) as u64),
+            _ => bail!("Invalid Data Type for derive u64 CDT Value"),
+        }
+    }
+}
+
+impl ReadableValue for f64 {
+    fn read_value_from_bytes(data_point: &mut PreParsedBin) -> Result<Self> {
+        if data_point.value.particle_type == 0 {
+            bail!("No Value received for Float")
+        }
+        if !data_point.sub_values.is_empty() {
+            bail!("Multiple Values received for Float")
+        }
+        return Self::parse_value(&mut data_point.value);
+    }
+
+    fn parse_value(data_point: &mut PreParsedValue) -> Result<Self> {
+        return Ok(data_point.buffer.read_f64(None));
+    }
+
+    fn parse_cdt_value(buff: &mut Buffer) -> Result<Self> {
+        let ptype = buff.read_u8(None);
+        match ptype {
+            0xca => Ok(buff.read_f32(None) as f64),
+            0xcb => Ok(buff.read_f64(None)),
+            _ => bail!("Invalid Data Type for derive float CDT Value"),
+        }
+    }
+}
+
+impl ReadableValue for String {
+    fn read_value_from_bytes(data_point: &mut PreParsedBin) -> Result<Self> {
+        if data_point.value.particle_type == 0 {
+            bail!("No Value received for String")
+        }
+        if !data_point.sub_values.is_empty() {
+            bail!("Multiple Values received for string")
+        }
+        return Self::parse_value(&mut data_point.value);
+    }
+
+    fn parse_value(data_point: &mut PreParsedValue) -> Result<Self> {
+        return data_point.buffer.read_str(data_point.byte_length);
+    }
+
+    fn parse_cdt_value(buff: &mut Buffer) -> Result<Self> {
+        let len = (buff.read_u8(None) & 0x1f) as usize;
+        let ptype = buff.read_u8(None);
+        if ptype != ParticleType::STRING as u8 {
+            bail!("Invalid Data Type for derive string CDT Value")
+        }
+        return buff.read_str(len - 1);
+    }
+}
+
+impl<T: ReadableValue> ReadableValue for Option<T> {
+    fn read_value_from_bytes(data_point: &mut PreParsedBin) -> Result<Self> {
+        if data_point.value.particle_type == 0 {
+            return Ok(None);
+        }
+        Ok(Some(T::read_value_from_bytes(data_point)?))
+    }
+
+    fn parse_value(data_point: &mut PreParsedValue) -> Result<Self> {
+        Ok(Some(T::parse_value(data_point)?))
+    }
+
+    fn parse_cdt_value(buff: &mut Buffer) -> Result<Self> {
+        Ok(Some(T::parse_cdt_value(buff)?))
+    }
+}
+
+impl<T: ReadableValue> ReadableValue for Vec<T> {
+    fn read_value_from_bytes(data_point: &mut PreParsedBin) -> Result<Self> {
+        let mut v: Vec<T> = Vec::with_capacity(data_point.sub_values.len() + 1);
+        v.extend(Self::parse_value(&mut data_point.value)?);
+        for sv in &mut data_point.sub_values {
+            v.extend(Self::parse_value(sv)?)
+        }
+        return Ok(v);
+    }
+
+    fn parse_value(data_point: &mut PreParsedValue) -> Result<Self> {
+        if data_point.particle_type == ParticleType::LIST as u8 {
+            Self::parse_cdt_value(&mut data_point.buffer)
+        } else {
+            bail!("Invalid Data Type for derive List CDT Type")
+        }
+    }
+
+    fn parse_cdt_value(buff: &mut Buffer) -> Result<Self> {
+        let ltype = buff.read_u8(None);
+        let mut count: usize = match ltype {
+            0x90..=0x9f => (ltype & 0x0f) as usize,
+            0xdc => buff.read_u16(None) as usize,
+            0xdd => buff.read_u32(None) as usize,
+            x => {
+                bail!("Invalid Data Type for derive List CDT Type")
+            }
+        };
+
+        let mut list = Vec::with_capacity(count);
+        for _ in 0..count {
+            list.push(T::parse_cdt_value(buff)?);
+        }
+        return Ok(list);
     }
 }

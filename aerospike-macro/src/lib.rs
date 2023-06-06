@@ -111,7 +111,7 @@ pub fn readable_bins(input: proc_macro::TokenStream) -> proc_macro::TokenStream 
 
     let expanded = quote! {
         impl #impl_generics ReadableBins for #name #ty_generics #where_clause {
-            fn read_bins_from_bytes(data_points: HashMap<String, PreParsedBin>) -> Result<Self>{
+            fn read_bins_from_bytes(data_points: &mut HashMap<String, aerospike::PreParsedBin>) -> aerospike::errors::Result<Self>{
                 #vals
             }
 

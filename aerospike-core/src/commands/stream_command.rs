@@ -80,8 +80,8 @@ impl<T: ReadableBins> StreamCommand<T> {
             return Ok((None, true));
         }
 
-        let data_points = conn.pre_parse_stream_bins(op_count).await?;
-        let bins = T::read_bins_from_bytes(data_points)?;
+        let mut data_points = conn.pre_parse_stream_bins(op_count).await?;
+        let bins = T::read_bins_from_bytes(&mut data_points)?;
 
         let record = Record::new(Some(key), bins, generation, expiration);
         Ok((Some(record), true))

@@ -383,7 +383,6 @@ pub fn pack_integer(buf: &mut Option<&mut Buffer>, val: i64) -> usize {
     }
 }
 
-
 #[doc(hidden)]
 pub(crate) fn pack_i16(buf: &mut Option<&mut Buffer>, marker: u8, value: i16) -> usize {
     if let Some(ref mut buf) = *buf {

@@ -33,8 +33,6 @@ pub(crate) fn unpack_value_list(buf: &mut Buffer) -> Result<Value> {
         0xdc => buf.read_u16(None) as usize,
         0xdd => buf.read_u32(None) as usize,
         x => {
-            println!("x: {:#04x}@{}", x, buf.data_offset);
-            buf.dump_hex();
             unreachable!()
         }
     };
@@ -115,7 +113,7 @@ fn unpack_blob(buf: &mut Buffer, count: usize) -> Result<Value> {
     }
 }
 
-fn unpack_value(buf: &mut Buffer) -> Result<Value> {
+pub(crate) fn unpack_value(buf: &mut Buffer) -> Result<Value> {
     let obj_type = buf.read_u8(None);
 
     match obj_type {
@@ -223,6 +221,6 @@ fn unpack_value(buf: &mut Buffer) -> Result<Value> {
     }
 }
 
-const fn is_ext(byte: u8) -> bool {
+pub(crate) const fn is_ext(byte: u8) -> bool {
     matches!(byte, 0xc7 | 0xc8 | 0xc9 | 0xd4 | 0xd5 | 0xd6 | 0xd7 | 0xd8)
 }

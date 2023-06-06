@@ -199,7 +199,9 @@ pub mod task;
 mod user;
 
 mod traits;
-pub use traits::{ReadableBins, ReadableValue, WritableBins, WritableValue};
+pub use traits::{
+    PreParsedBin, PreParsedValue, ReadableBins, ReadableValue, WritableBins, WritableValue,
+};
 
 #[cfg(test)]
 extern crate hex;

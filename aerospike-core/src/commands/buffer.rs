@@ -1168,11 +1168,13 @@ impl Buffer {
         self.data_offset += count;
     }
 
-    pub(crate) fn skip(&mut self, count: usize) {
+    /// Skips the amount of next bytes
+    pub fn skip(&mut self, count: usize) {
         self.data_offset += count;
     }
 
-    pub(crate) fn peek(&self) -> u8 {
+    /// Returns the current byte without moving the index
+    pub fn peek(&self) -> u8 {
         self.data_buffer[self.data_offset]
     }
 
