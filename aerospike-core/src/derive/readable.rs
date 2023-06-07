@@ -144,38 +144,6 @@ impl ReadableValue for i64 {
     }
 }
 
-impl ReadableValue for usize {
-    fn read_value_from_bytes(data_point: &mut PreParsedBin) -> Result<Self> {
-        if data_point.value.particle_type == 0 {
-            bail!("No Value received for Integer")
-        }
-        if !data_point.sub_values.is_empty() {
-            bail!("Multiple Values received for Integer")
-        }
-        return Self::parse_value(&mut data_point.value);
-    }
-
-    fn parse_value(data_point: &mut PreParsedValue) -> Result<Self> {
-        return Ok(data_point.buffer.read_i64(None) as usize);
-    }
-
-    fn parse_cdt_value(buff: &mut Buffer) -> Result<Self> {
-        let ptype = buff.read_u8(None);
-        match ptype {
-            0x00..=0x7f => Ok(i64::from(ptype) as usize),
-            0xcc => Ok(buff.read_u8(None) as usize),
-            0xcd => Ok(buff.read_u16(None) as usize),
-            0xce => Ok(buff.read_u32(None) as usize),
-            0xcf => Ok(buff.read_u64(None) as usize),
-            0xd0 => Ok(buff.read_i8(None) as usize),
-            0xd1 => Ok(buff.read_i16(None) as usize),
-            0xd2 => Ok(buff.read_i32(None) as usize),
-            0xd3 => Ok(buff.read_i64(None) as usize),
-            _ => bail!("Invalid Data Type for derive usize CDT Value"),
-        }
-    }
-}
-
 impl ReadableValue for isize {
     fn read_value_from_bytes(data_point: &mut PreParsedBin) -> Result<Self> {
         if data_point.value.particle_type == 0 {
@@ -208,37 +176,6 @@ impl ReadableValue for isize {
     }
 }
 
-impl ReadableValue for u64 {
-    fn read_value_from_bytes(data_point: &mut PreParsedBin) -> Result<Self> {
-        if data_point.value.particle_type == 0 {
-            bail!("No Value received for Integer")
-        }
-        if !data_point.sub_values.is_empty() {
-            bail!("Multiple Values received for Integer")
-        }
-        return Self::parse_value(&mut data_point.value);
-    }
-
-    fn parse_value(data_point: &mut PreParsedValue) -> Result<Self> {
-        return Ok(data_point.buffer.read_i64(None) as u64);
-    }
-
-    fn parse_cdt_value(buff: &mut Buffer) -> Result<Self> {
-        let ptype = buff.read_u8(None);
-        match ptype {
-            0x00..=0x7f => Ok(i64::from(ptype) as u64),
-            0xcc => Ok(buff.read_u8(None) as u64),
-            0xcd => Ok(buff.read_u16(None) as u64),
-            0xce => Ok(buff.read_u32(None) as u64),
-            0xcf => Ok(buff.read_u64(None)),
-            0xd0 => Ok(buff.read_i8(None) as u64),
-            0xd1 => Ok(buff.read_i16(None) as u64),
-            0xd2 => Ok(buff.read_i32(None) as u64),
-            0xd3 => Ok(buff.read_i64(None) as u64),
-            _ => bail!("Invalid Data Type for derive u64 CDT Value"),
-        }
-    }
-}
 
 impl ReadableValue for f64 {
     fn read_value_from_bytes(data_point: &mut PreParsedBin) -> Result<Self> {
