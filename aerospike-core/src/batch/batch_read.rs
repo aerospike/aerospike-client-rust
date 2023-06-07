@@ -15,9 +15,10 @@
 
 use crate::Key;
 use crate::Record;
-use crate::{Bins, ReadableBins};
+use crate::{Bins};
 #[cfg(feature = "serialization")]
 use serde::Serialize;
+use crate::derive::readable::ReadableBins;
 
 /// Key and bin names used in batch read commands where variable bins are needed for each key.
 #[cfg_attr(feature = "serialization", derive(Serialize))]

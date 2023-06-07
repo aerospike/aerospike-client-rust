@@ -71,7 +71,7 @@ pub fn writable_value(input: proc_macro::TokenStream) -> proc_macro::TokenStream
         if let GenericParam::Type(ref mut type_param) = *param {
             type_param
                 .bounds
-                .push(parse_quote!(aerospike::WritableValue));
+                .push(parse_quote!(aerospike::derive::writable::WritableValue));
         }
     }
     let (impl_generics, ty_generics, where_clause) = input.generics.split_for_impl();
@@ -103,7 +103,7 @@ pub fn readable_bins(input: proc_macro::TokenStream) -> proc_macro::TokenStream 
         if let GenericParam::Type(ref mut type_param) = *param {
             type_param
                 .bounds
-                .push(parse_quote!(aerospike::ReadableValue));
+                .push(parse_quote!(aerospike::derive::readable::ReadableValue));
         }
     }
     let (impl_generics, ty_generics, where_clause) = input.generics.split_for_impl();
@@ -111,7 +111,7 @@ pub fn readable_bins(input: proc_macro::TokenStream) -> proc_macro::TokenStream 
 
     let expanded = quote! {
         impl #impl_generics ReadableBins for #name #ty_generics #where_clause {
-            fn read_bins_from_bytes(data_points: &mut HashMap<String, aerospike::PreParsedBin>) -> aerospike::errors::Result<Self>{
+            fn read_bins_from_bytes(data_points: &mut HashMap<String, aerospike::derive::readable::PreParsedBin>) -> aerospike::errors::Result<Self>{
                 #vals
             }
 

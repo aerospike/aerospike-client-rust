@@ -1,9 +1,10 @@
 use crate::common;
 use aerospike::as_key;
 use aerospike::as_val;
+use aerospike::derive::readable::ReadableBins;
+use aerospike::derive::writable::{WritableBins, WritableValue};
 use aerospike::WritePolicy;
 use aerospike::{Bins, ReadPolicy, Record, Value};
-use aerospike::{ReadableBins, WritableBins, WritableValue};
 use std::collections::HashMap;
 
 #[aerospike_macro::test]

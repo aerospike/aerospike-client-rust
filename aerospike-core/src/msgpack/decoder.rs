@@ -13,6 +13,8 @@
 // License for the specific language governing permissions and limitations under
 // the License.
 
+//! General Functions to Decode Aerospike Wire Data
+
 use std::collections::HashMap;
 use std::vec::Vec;
 

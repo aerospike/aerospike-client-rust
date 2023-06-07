@@ -13,6 +13,8 @@
 // License for the specific language governing permissions and limitations under
 // the License.
 
+//! General Functions to Encode Aerospike Wire Data
+
 use std::collections::HashMap;
 use std::num::Wrapping;
 use std::{i16, i32, i64, i8};

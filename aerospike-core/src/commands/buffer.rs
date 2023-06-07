@@ -27,8 +27,10 @@ use crate::policy::{
     RecordExistsAction, ScanPolicy, WritePolicy,
 };
 use crate::{
-    BatchRead, Bin, Bins, CollectionIndexType, Key, ReadableBins, Statement, Value, WritableBins,
+    BatchRead, Bin, Bins, CollectionIndexType, Key, Statement, Value,
 };
+use crate::derive::readable::ReadableBins;
+use crate::derive::writable::WritableBins;
 
 // Contains a read operation.
 const INFO1_READ: u8 = 1;

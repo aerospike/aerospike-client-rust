@@ -17,7 +17,7 @@ use crate::commands::admin_command::AdminCommand;
 use crate::commands::buffer::Buffer;
 use crate::errors::{ErrorKind, Result};
 use crate::policy::ClientPolicy;
-use crate::traits::{PreParsedBin, PreParsedValue};
+use crate::derive::readable::{PreParsedBin, PreParsedValue};
 #[cfg(all(any(feature = "rt-async-std"), not(feature = "rt-tokio")))]
 use aerospike_rt::async_std::net::Shutdown;
 #[cfg(all(any(feature = "rt-tokio"), not(feature = "rt-async-std")))]

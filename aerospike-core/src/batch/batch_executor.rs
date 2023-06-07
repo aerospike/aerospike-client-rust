@@ -23,8 +23,9 @@ use crate::cluster::{Cluster, Node};
 use crate::commands::BatchReadCommand;
 use crate::errors::{Error, Result};
 use crate::policy::{BatchPolicy, Concurrency};
-use crate::{Key, ReadableBins};
+use crate::{Key};
 use futures::lock::Mutex;
+use crate::derive::readable::ReadableBins;
 
 pub struct BatchExecutor {
     cluster: Arc<Cluster>,

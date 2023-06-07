@@ -20,7 +20,8 @@ use crate::commands::{Command, SingleCommand, StreamCommand};
 use crate::errors::Result;
 use crate::net::Connection;
 use crate::policy::QueryPolicy;
-use crate::{ReadableBins, Recordset, Statement};
+use crate::{Recordset, Statement};
+use crate::derive::readable::ReadableBins;
 
 pub struct QueryCommand<'a, T: ReadableBins> {
     stream_command: StreamCommand<T>,

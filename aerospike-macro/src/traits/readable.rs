@@ -84,7 +84,7 @@ pub(crate) fn convert_readable_bins(data: &Data, name: &Ident) -> proc_macro2::T
                         let field_name = &f.name;
                         let name = f.ident;
                         quote_spanned! {f.field.span()=>
-                            #name: aerospike::ReadableValue::read_value_from_bytes(data_points.get_mut(#field_name).unwrap_or(&mut aerospike::PreParsedBin {sub_values: vec![], value: aerospike::PreParsedValue { particle_type: 0, buffer: Default::default(), byte_length: 0 }}))?,
+                            #name: aerospike::derive::readable::ReadableValue::read_value_from_bytes(data_points.get_mut(#field_name).unwrap_or(&mut aerospike::derive::readable::PreParsedBin {sub_values: vec![], value: aerospike::derive::readable::PreParsedValue { particle_type: 0, buffer: Default::default(), byte_length: 0 }}))?,
                         }
                     });
                     quote! {

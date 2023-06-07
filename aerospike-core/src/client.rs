@@ -25,14 +25,16 @@ use crate::commands::{
     DeleteCommand, ExecuteUDFCommand, ExistsCommand, OperateCommand, QueryCommand, ReadCommand,
     ScanCommand, TouchCommand, WriteCommand,
 };
+use crate::derive::writable::WritableBins;
+use crate::derive::readable::ReadableBins;
 use crate::errors::{ErrorKind, Result, ResultExt};
 use crate::net::ToHosts;
 use crate::operations::{Operation, OperationType};
 use crate::policy::{BatchPolicy, ClientPolicy, QueryPolicy, ReadPolicy, ScanPolicy, WritePolicy};
 use crate::task::{IndexTask, RegisterTask};
 use crate::{
-    BatchRead, Bins, CollectionIndexType, IndexType, Key, ReadableBins, Record, Recordset,
-    ResultCode, Statement, UDFLang, Value, WritableBins,
+    BatchRead, Bins, CollectionIndexType, IndexType, Key, Record, Recordset,
+    ResultCode, Statement, UDFLang, Value,
 };
 use aerospike_rt::fs::File;
 #[cfg(all(any(feature = "rt-tokio"), not(feature = "rt-async-std")))]

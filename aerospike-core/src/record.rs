@@ -17,9 +17,9 @@
 use serde::Serialize;
 
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use crate::derive::readable::ReadableBins;
 
 use crate::Key;
-use crate::ReadableBins;
 
 lazy_static! {
   // Fri Jan  1 00:00:00 UTC 2010

@@ -21,7 +21,8 @@ use crate::commands::{Command, SingleCommand, StreamCommand};
 use crate::errors::Result;
 use crate::net::Connection;
 use crate::policy::ScanPolicy;
-use crate::{Bins, ReadableBins, Recordset};
+use crate::{Bins, Recordset};
+use crate::derive::readable::ReadableBins;
 
 pub struct ScanCommand<'a, T: ReadableBins> {
     stream_command: StreamCommand<T>,

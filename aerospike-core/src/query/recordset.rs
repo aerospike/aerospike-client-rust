@@ -22,7 +22,8 @@ use crossbeam_queue::SegQueue;
 use rand::Rng;
 
 use crate::errors::Result;
-use crate::{ReadableBins, Record};
+use crate::{Record};
+use crate::derive::readable::ReadableBins;
 
 /// Virtual collection of records retrieved through queries and scans. During a query/scan,
 /// multiple threads will retrieve records from the server nodes and put these records on an

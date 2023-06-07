@@ -216,16 +216,16 @@ pub(crate) fn build_writable(data: &Data) -> TokenStream {
                             quote_spanned! {f.field.span()=>
                                 if !#skip {
                                     {
-                                        let encodable = aerospike::WritableValue::writable_value_encodable(&self.#name);
+                                        let encodable = aerospike::derive::writable::WritableValue::writable_value_encodable(&self.#name);
                                         if encodable {
-                                        buffer.write_i32((#name_str.len() + aerospike::WritableValue::write_as_value(&self.#name, &mut None) + 4) as i32);
+                                        buffer.write_i32((#name_str.len() + aerospike::derive::writable::WritableValue::write_as_value(&self.#name, &mut None) + 4) as i32);
                                         } else {
                                             buffer.write_i32((#name_str.len() + #default_length + 4) as i32);
                                         }
                                         buffer.write_u8(op_type);
 
                                         if encodable {
-                                            buffer.write_u8(aerospike::WritableValue::writable_value_particle_type(&self.#name) as u8);
+                                            buffer.write_u8(aerospike::derive::writable::WritableValue::writable_value_particle_type(&self.#name) as u8);
                                         } else {
                                             buffer.write_u8(#default_type);
                                         }
@@ -233,7 +233,7 @@ pub(crate) fn build_writable(data: &Data) -> TokenStream {
                                         buffer.write_u8(#name_str.len() as u8);
                                         buffer.write_str(#name_str);
                                         if encodable {
-                                            aerospike::WritableValue::write_as_value(&self.#name, &mut Some(buffer));
+                                            aerospike::derive::writable::WritableValue::write_as_value(&self.#name, &mut Some(buffer));
                                         } else {
                                             #default_writer
                                         }
@@ -243,14 +243,14 @@ pub(crate) fn build_writable(data: &Data) -> TokenStream {
 
                         } else {
                             quote_spanned! {f.field.span()=>
-                                if !#skip && aerospike::WritableValue::writable_value_encodable(&self.#name) {
-                                    buffer.write_i32((#name_str.len() + aerospike::WritableValue::write_as_value(&self.#name, &mut None) + 4) as i32);
+                                if !#skip && aerospike::derive::writable::WritableValue::writable_value_encodable(&self.#name) {
+                                    buffer.write_i32((#name_str.len() + aerospike::derive::writable::WritableValue::write_as_value(&self.#name, &mut None) + 4) as i32);
                                     buffer.write_u8(op_type);
-                                    buffer.write_u8(aerospike::WritableValue::writable_value_particle_type(&self.#name) as u8);
+                                    buffer.write_u8(aerospike::derive::writable::WritableValue::writable_value_particle_type(&self.#name) as u8);
                                     buffer.write_u8(0);
                                     buffer.write_u8(#name_str.len() as u8);
                                     buffer.write_str(#name_str);
-                                    aerospike::WritableValue::write_as_value(&self.#name, &mut Some(buffer));
+                                    aerospike::derive::writable::WritableValue::write_as_value(&self.#name, &mut Some(buffer));
                                 }
                             }
                         }
@@ -270,8 +270,8 @@ pub(crate) fn build_writable(data: &Data) -> TokenStream {
 
                             quote_spanned! {f.field.span()=>
                                 if !#skip {
-                                    if aerospike::WritableValue::writable_value_encodable(&self.#name) {
-                                        size += #name_len + aerospike::WritableValue::write_as_value(&self.#name, &mut None) + 8;
+                                    if aerospike::derive::writable::WritableValue::writable_value_encodable(&self.#name) {
+                                        size += #name_len + aerospike::derive::writable::WritableValue::write_as_value(&self.#name, &mut None) + 8;
                                     } else {
                                         size += #name_len + #default_length + 8;
                                     }
@@ -279,8 +279,8 @@ pub(crate) fn build_writable(data: &Data) -> TokenStream {
                             }
                         } else {
                             quote_spanned! {f.field.span()=>
-                                if !#skip && aerospike::WritableValue::writable_value_encodable(&self.#name) {
-                                    size += #name_len + aerospike::WritableValue::write_as_value(&self.#name, &mut None) + 8;
+                                if !#skip && aerospike::derive::writable::WritableValue::writable_value_encodable(&self.#name) {
+                                    size += #name_len + aerospike::derive::writable::WritableValue::write_as_value(&self.#name, &mut None) + 8;
                                 }
                             }
                         }
@@ -299,7 +299,7 @@ pub(crate) fn build_writable(data: &Data) -> TokenStream {
                             }
                         } else {
                             quote_spanned! {f.field.span()=>
-                                if !#skip && aerospike::WritableValue::writable_value_encodable(&self.#name) {
+                                if !#skip && aerospike::derive::writable::WritableValue::writable_value_encodable(&self.#name) {
                                     count += 1;
                                 }
                             }
@@ -359,8 +359,8 @@ pub(crate) fn convert_writable_value_source(data: &Data) -> proc_macro2::TokenSt
                             quote_spanned! {f.field.span()=>
                                 if !#skip {
                                     size += aerospike::msgpack::encoder::pack_string(buffer, #name_str);
-                                    if aerospike::WritableValue::writable_value_encodable(&self.#name) {
-                                        size += aerospike::WritableValue::write_as_cdt_value(&self.#name, buffer);
+                                    if aerospike::derive::writable::WritableValue::writable_value_encodable(&self.#name) {
+                                        size += aerospike::derive::writable::WritableValue::write_as_cdt_value(&self.#name, buffer);
                                     } else {
                                         #default_writer
                                     }
@@ -368,9 +368,9 @@ pub(crate) fn convert_writable_value_source(data: &Data) -> proc_macro2::TokenSt
                             }
                         } else {
                             quote_spanned! {f.field.span()=>
-                                if !#skip && aerospike::WritableValue::writable_value_encodable(&self.#name) {
+                                if !#skip && aerospike::derive::writable::WritableValue::writable_value_encodable(&self.#name) {
                                     size += aerospike::msgpack::encoder::pack_string(buffer, #name_str);
-                                    size += aerospike::WritableValue::write_as_cdt_value(&self.#name, buffer);
+                                    size += aerospike::derive::writable::WritableValue::write_as_cdt_value(&self.#name, buffer);
                                 }
                             }
                         }
@@ -380,7 +380,7 @@ pub(crate) fn convert_writable_value_source(data: &Data) -> proc_macro2::TokenSt
                         let name = f.ident;
                         let has_default = f.default.is_some();
                         quote_spanned! {f.field.span()=>
-                            if !#skip && (#has_default || aerospike::WritableValue::writable_value_encodable(&self.#name)) {
+                            if !#skip && (#has_default || aerospike::derive::writable::WritableValue::writable_value_encodable(&self.#name)) {
                                 len += 1;
                             }
                         }

@@ -21,7 +21,8 @@ use crate::commands::{Command, SingleCommand};
 use crate::errors::{ErrorKind, Result};
 use crate::net::Connection;
 use crate::policy::ReadPolicy;
-use crate::{Bins, Key, ReadableBins, Record, ResultCode};
+use crate::{Bins, Key, Record, ResultCode};
+use crate::derive::readable::ReadableBins;
 
 pub struct ReadCommand<'a, T: ReadableBins> {
     pub single_command: SingleCommand<'a>,
