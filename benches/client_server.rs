@@ -17,12 +17,12 @@
 extern crate lazy_static;
 extern crate rand;
 
+use aerospike::{as_bin, as_key};
+use aerospike::{Bins, Client, Key, ReadPolicy, Value, WritePolicy};
+use criterion::{criterion_group, criterion_main, Criterion};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
-use aerospike::{Bins, ReadPolicy, WritePolicy, Value, Client, Key};
-use aerospike::{as_bin, as_key};
-use criterion::{criterion_group, criterion_main, Criterion};
 
 #[path = "../tests/common/mod.rs"]
 mod common;
@@ -33,7 +33,10 @@ lazy_static! {
 
 async fn single_key_read(client: Arc<Client>, key: &Key) {
     let rpolicy = ReadPolicy::default();
-    client.get::<HashMap<String, Value>, Bins>(&rpolicy, &key, Bins::All).await.unwrap();
+    client
+        .get::<HashMap<String, Value>, Bins>(&rpolicy, &key, Bins::All)
+        .await
+        .unwrap();
 }
 
 fn run_single_key_read(bench: &mut Criterion) {
@@ -51,14 +54,18 @@ fn run_single_key_read(bench: &mut Criterion) {
     rt.block_on(client.put(&wpolicy, &key2, &bins)).unwrap();
 
     let mut group = bench.benchmark_group("single operations");
-    group.sample_size(1000).measurement_time(Duration::from_secs(40));
+    group
+        .sample_size(1000)
+        .measurement_time(Duration::from_secs(40));
 
     group.bench_function("single_key_read", |b| {
-        b.to_async(&rt).iter(|| single_key_read(client.clone(), &key))
+        b.to_async(&rt)
+            .iter(|| single_key_read(client.clone(), &key))
     });
 
     group.bench_function("single_key_read_header", |b| {
-        b.to_async(&rt).iter(|| single_key_read_header(client.clone(), &key2))
+        b.to_async(&rt)
+            .iter(|| single_key_read_header(client.clone(), &key2))
     });
 
     group.bench_function("single_key_write", |b| {
@@ -70,7 +77,10 @@ fn run_single_key_read(bench: &mut Criterion) {
 
 async fn single_key_read_header(client: Arc<Client>, key: &Key) {
     let rpolicy = ReadPolicy::default();
-    client.get::<HashMap<String, Value>, Bins>(&rpolicy, &key, Bins::None).await.unwrap();
+    client
+        .get::<HashMap<String, Value>, Bins>(&rpolicy, &key, Bins::None)
+        .await
+        .unwrap();
 }
 
 async fn single_key_write(client: Arc<Client>) {
@@ -86,8 +96,6 @@ async fn single_key_write(client: Arc<Client>) {
 
     client.put(&wpolicy, &key, &bins).await.unwrap();
 }
-
-
 
 criterion_group!(
     benches,

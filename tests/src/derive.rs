@@ -184,7 +184,7 @@ async fn derive_readable() {
         list: Vec<String>,
         list_i: Vec<i64>,
         no_val: Option<String>,
-        nested_list: Vec<Vec<i64>>
+        nested_list: Vec<Vec<i64>>,
     }
 
     let write_data = TestData {
@@ -195,7 +195,7 @@ async fn derive_readable() {
         list_i: vec![1, 5, 8, 9, 15],
         list: vec!["asd".to_string(), "ase".to_string(), "asf".to_string()],
         no_val: None,
-        nested_list: vec![vec![1,2,3], vec![4,5,6]],
+        nested_list: vec![vec![1, 2, 3], vec![4, 5, 6]],
     };
 
     let res = client.put(&WritePolicy::default(), &key, &write_data).await;
@@ -203,12 +203,37 @@ async fn derive_readable() {
         client.get(&ReadPolicy::default(), &key, Bins::All).await;
     assert_eq!(res.is_ok(), true, "Aerospike derive reader failed");
     let res = res.unwrap().bins;
-    assert_eq!(res.string, "asdfsd", "Aerospike derive reader failed for String");
+    assert_eq!(
+        res.string, "asdfsd",
+        "Aerospike derive reader failed for String"
+    );
     assert_eq!(res.int, 1234, "Aerospike derive reader failed for Int");
-    assert_eq!(res.float, 123.456, "Aerospike derive reader failed for Float");
-    assert_eq!(res.option, Some("asd".to_string()), "Aerospike derive reader failed for Option Some");
-    assert_eq!(res.no_val, None, "Aerospike derive reader failed for Option None");
-    assert_eq!(res.list_i, vec![1, 5, 8, 9, 15], "Aerospike derive reader failed for Int List");
-    assert_eq!(res.nested_list, vec![vec![1,2,3], vec![4,5,6]], "Aerospike derive reader failed for Nested List");
-    assert_eq!(res.list, vec!["asd".to_string(), "ase".to_string(), "asf".to_string()], "Aerospike derive reader failed for String List");
+    assert_eq!(
+        res.float, 123.456,
+        "Aerospike derive reader failed for Float"
+    );
+    assert_eq!(
+        res.option,
+        Some("asd".to_string()),
+        "Aerospike derive reader failed for Option Some"
+    );
+    assert_eq!(
+        res.no_val, None,
+        "Aerospike derive reader failed for Option None"
+    );
+    assert_eq!(
+        res.list_i,
+        vec![1, 5, 8, 9, 15],
+        "Aerospike derive reader failed for Int List"
+    );
+    assert_eq!(
+        res.nested_list,
+        vec![vec![1, 2, 3], vec![4, 5, 6]],
+        "Aerospike derive reader failed for Nested List"
+    );
+    assert_eq!(
+        res.list,
+        vec!["asd".to_string(), "ase".to_string(), "asf".to_string()],
+        "Aerospike derive reader failed for String List"
+    );
 }

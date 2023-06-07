@@ -32,7 +32,7 @@ pub(crate) fn unpack_value_list(buf: &mut Buffer) -> Result<Value> {
         0x90..=0x9f => (ltype & 0x0f) as usize,
         0xdc => buf.read_u16(None) as usize,
         0xdd => buf.read_u32(None) as usize,
-        x => {
+        _ => {
             unreachable!()
         }
     };

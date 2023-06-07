@@ -71,8 +71,6 @@ impl<'a, T: ReadableBins> ReadCommand<'a, T> {
         conn: &mut Connection,
         op_count: usize,
         field_count: usize,
-        generation: u32,
-        expiration: u32,
     ) -> Result<String> {
         // There can be fields in the response (setname etc). For now, ignore them. Expose them to
         // the API if needed in the future.
@@ -142,9 +140,7 @@ impl<'a, T: ReadableBins> Command for ReadCommand<'a, T> {
             }
             ResultCode::UdfBadResponse => {
                 // record bin "FAILURE" contains details about the UDF error
-                let reason = self
-                    .parse_udf_error(conn, op_count, field_count, generation, expiration)
-                    .await?;
+                let reason = self.parse_udf_error(conn, op_count, field_count).await?;
                 Err(ErrorKind::UdfBadResponse(reason).into())
             }
             rc => Err(ErrorKind::ServerError(rc).into()),

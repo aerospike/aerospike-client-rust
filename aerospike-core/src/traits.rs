@@ -7,7 +7,6 @@ use crate::errors::Result;
 use crate::{Bin, ParticleType, Value};
 use std::collections::HashMap;
 
-use crate::operations::lists;
 use crate::value::bytes_to_particle;
 pub use aerospike_macro::{ReadableBins, WritableBins, WritableValue};
 
@@ -45,9 +44,11 @@ pub trait ReadableBins: Sync + Sized + Send + Clone {
 /// The ReadableValue Trait is used to convert Aerospike Wire Data into the Value of Objects
 pub trait ReadableValue: Sync + Sized + Send + Clone {
     /// Read the data from the Wire Buffer.
-    /// Option will be None if no data for the bin name was found. Otherwise it consists of (particle type, location, size of the data)
+    /// This method is primarily used for pre-parsing checks
     fn read_value_from_bytes(data_point: &mut PreParsedBin) -> Result<Self>;
+    /// Actual conversion of the bytes to the value
     fn parse_value(data_point: &mut PreParsedValue) -> Result<Self>;
+    /// CDT values are parsed differently from normal Values. This buffer is not a copy, so modifications can cause wrong behavior.
     fn parse_cdt_value(buff: &mut Buffer) -> Result<Self>;
 }
 
@@ -339,7 +340,7 @@ impl ReadableValue for Value {
 impl ReadableBins for HashMap<String, Value> {
     fn read_bins_from_bytes(data_points: &mut HashMap<String, PreParsedBin>) -> Result<Self> {
         let mut hm = HashMap::new();
-        for (k, mut d) in data_points {
+        for (k, d) in data_points {
             let x = Value::read_value_from_bytes(d)?;
             hm.insert(k.to_string(), x);
         }
@@ -567,11 +568,11 @@ impl<T: ReadableValue> ReadableValue for Vec<T> {
 
     fn parse_cdt_value(buff: &mut Buffer) -> Result<Self> {
         let ltype = buff.read_u8(None);
-        let mut count: usize = match ltype {
+        let count: usize = match ltype {
             0x90..=0x9f => (ltype & 0x0f) as usize,
             0xdc => buff.read_u16(None) as usize,
             0xdd => buff.read_u32(None) as usize,
-            x => {
+            _ => {
                 bail!("Invalid Data Type for derive List CDT Type")
             }
         };
