@@ -14,15 +14,15 @@
 // the License.
 
 #[macro_use]
-extern crate bencher;
-#[macro_use]
 extern crate lazy_static;
 extern crate rand;
 
-use aerospike::{Bins, ReadPolicy, WritePolicy};
-
+use std::collections::HashMap;
+use std::sync::Arc;
+use std::time::Duration;
+use aerospike::{Bins, ReadPolicy, WritePolicy, Value, Client, Key};
 use aerospike::{as_bin, as_key};
-use bencher::Bencher;
+use criterion::{criterion_group, criterion_main, Criterion};
 
 #[path = "../tests/common/mod.rs"]
 mod common;
@@ -31,34 +31,49 @@ lazy_static! {
     static ref TEST_SET: String = common::rand_str(10);
 }
 
-fn single_key_read(bench: &mut Bencher) {
-    let client = common::client();
+async fn single_key_read(client: Arc<Client>, key: &Key) {
+    let rpolicy = ReadPolicy::default();
+    client.get::<HashMap<String, Value>, Bins>(&rpolicy, &key, Bins::All).await.unwrap();
+}
+
+fn run_single_key_read(bench: &mut Criterion) {
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let client = Arc::new(rt.block_on(common::client()));
     let namespace = common::namespace();
     let key = as_key!(namespace, &TEST_SET, common::rand_str(10));
     let wbin = as_bin!("i", 1);
-    let bins = vec![&wbin];
-    let rpolicy = ReadPolicy::default();
-    let wpolicy = WritePolicy::default();
-    client.put(&wpolicy, &key, &bins).unwrap();
+    let bins = vec![wbin];
 
-    bench.iter(|| client.get(&rpolicy, &key, Bins::All).unwrap());
+    let wpolicy = WritePolicy::default();
+    rt.block_on(client.put(&wpolicy, &key, &bins)).unwrap();
+
+    let key2 = as_key!(namespace, &TEST_SET, common::rand_str(10));
+    rt.block_on(client.put(&wpolicy, &key2, &bins)).unwrap();
+
+    let mut group = bench.benchmark_group("single operations");
+    group.sample_size(1000).measurement_time(Duration::from_secs(40));
+
+    group.bench_function("single_key_read", |b| {
+        b.to_async(&rt).iter(|| single_key_read(client.clone(), &key))
+    });
+
+    group.bench_function("single_key_read_header", |b| {
+        b.to_async(&rt).iter(|| single_key_read_header(client.clone(), &key2))
+    });
+
+    group.bench_function("single_key_write", |b| {
+        b.to_async(&rt).iter(|| single_key_write(client.clone()))
+    });
+
+    group.finish()
 }
 
-fn single_key_read_header(bench: &mut Bencher) {
-    let client = common::client();
-    let namespace = common::namespace();
-    let key = as_key!(namespace, &TEST_SET, common::rand_str(10));
-    let wbin = as_bin!("i", 1);
-    let bins = vec![&wbin];
+async fn single_key_read_header(client: Arc<Client>, key: &Key) {
     let rpolicy = ReadPolicy::default();
-    let wpolicy = WritePolicy::default();
-    client.put(&wpolicy, &key, &bins).unwrap();
-
-    bench.iter(|| client.get(&rpolicy, &key, Bins::None).unwrap());
+    client.get::<HashMap<String, Value>, Bins>(&rpolicy, &key, Bins::None).await.unwrap();
 }
 
-fn single_key_write(bench: &mut Bencher) {
-    let client = common::client();
+async fn single_key_write(client: Arc<Client>) {
     let namespace = common::namespace();
     let key = as_key!(namespace, &TEST_SET, common::rand_str(10));
     let wpolicy = WritePolicy::default();
@@ -69,15 +84,15 @@ fn single_key_write(bench: &mut Bencher) {
     let bin4 = as_bin!("str1", common::rand_str(256));
     let bins = [bin1, bin2, bin3, bin4];
 
-    bench.iter(|| {
-        client.put(&wpolicy, &key, &bins).unwrap();
-    });
+    client.put(&wpolicy, &key, &bins).await.unwrap();
 }
 
-benchmark_group!(
+
+
+criterion_group!(
     benches,
-    single_key_read,
-    single_key_read_header,
-    single_key_write,
+    run_single_key_read,
+    //single_key_read_header,
+    //single_key_write,
 );
-benchmark_main!(benches);
+criterion_main!(benches);
