@@ -152,7 +152,7 @@ pub use batch::BatchRead;
 pub use bin::{Bin, Bins};
 pub use client::Client;
 pub use cluster::Node;
-pub use commands::particle_type::ParticleType;
+pub use commands::{self, particle_type::ParticleType};
 pub use errors::{Error, ErrorKind, Result};
 pub use expressions::regex_flag::RegexFlag;
 pub use key::Key;
