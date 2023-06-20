@@ -92,7 +92,7 @@ impl AdminCommand {
         conn.buffer.reset_offset();
         AdminCommand::write_header(conn, LOGIN, 2);
         AdminCommand::write_field_str(conn, USER, user);
-        AdminCommand::write_field_bytes(conn, CREDENTIAL, password.as_bytes());
+        AdminCommand::write_field_bytes(conn, CREDENTIAL, AdminCommand::hash_password(password)?.as_bytes());
         conn.buffer.size_buffer()?;
         let size = conn.buffer.data_offset;
         conn.buffer.reset_offset();
