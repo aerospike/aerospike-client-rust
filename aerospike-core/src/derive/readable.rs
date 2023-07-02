@@ -534,7 +534,6 @@ pub fn skip_map_value_bytes(buff: &mut Buffer) -> Result<()> {
     let vtype = buff.read_u8(None);
     match vtype as usize {
         0x00..=0x7f | 0xc2 | 0xc3 | 0xe0..=0xff => {}
-        // todo: this is wrong, parse element lengths instead
         0x80..=0x8f => {
             let len = (vtype & 0x0f) as usize;
             for _ in 0..len {

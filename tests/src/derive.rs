@@ -182,7 +182,6 @@ async fn derive_readable() {
         int: i64,
         float: f64,
         option: Option<String>,
-        // todo: fix vec str and vec vec
         list: Vec<String>,
         list_i: Vec<i64>,
         no_val: Option<String>,
