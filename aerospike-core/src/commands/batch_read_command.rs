@@ -17,12 +17,12 @@ use std::sync::Arc;
 
 use crate::cluster::Node;
 use crate::commands::{self, Command};
+use crate::derive::readable::ReadableBins;
 use crate::errors::{ErrorKind, Result, ResultExt};
 use crate::net::Connection;
 use crate::policy::{BatchPolicy, Policy, PolicyLike};
 use crate::{BatchRead, Record, ResultCode};
 use aerospike_rt::sleep;
-use crate::derive::readable::ReadableBins;
 
 struct BatchRecord<T: ReadableBins> {
     batch_index: usize,

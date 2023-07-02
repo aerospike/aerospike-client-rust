@@ -17,12 +17,12 @@ use std::time::Duration;
 
 use crate::cluster::{Cluster, Node};
 use crate::commands::{Command, ReadCommand, SingleCommand};
+use crate::derive::readable::ReadableBins;
 use crate::errors::Result;
 use crate::net::Connection;
 use crate::operations::Operation;
 use crate::policy::WritePolicy;
 use crate::{Bins, Key};
-use crate::derive::readable::ReadableBins;
 
 pub struct OperateCommand<'a, T: ReadableBins> {
     pub read_command: ReadCommand<'a, T>,

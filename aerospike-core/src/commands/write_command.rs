@@ -18,12 +18,12 @@ use std::time::Duration;
 use crate::cluster::{Cluster, Node};
 use crate::commands::buffer;
 use crate::commands::{Command, SingleCommand};
+use crate::derive::writable::WritableBins;
 use crate::errors::{ErrorKind, Result};
 use crate::net::Connection;
 use crate::operations::OperationType;
 use crate::policy::WritePolicy;
 use crate::{Key, ResultCode};
-use crate::derive::writable::WritableBins;
 
 pub struct WriteCommand<'a, T: WritableBins> {
     single_command: SingleCommand<'a>,

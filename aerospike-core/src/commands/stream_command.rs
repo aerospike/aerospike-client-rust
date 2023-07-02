@@ -20,12 +20,12 @@ use crate::cluster::Node;
 use crate::commands::buffer;
 use crate::commands::field_type::FieldType;
 use crate::commands::Command;
+use crate::derive::readable::ReadableBins;
 use crate::errors::{ErrorKind, Result};
 use crate::net::Connection;
 use crate::query::Recordset;
 use crate::value::bytes_to_particle;
 use crate::{Key, Record, ResultCode, Value};
-use crate::derive::readable::ReadableBins;
 
 pub struct StreamCommand<T: ReadableBins> {
     node: Arc<Node>,

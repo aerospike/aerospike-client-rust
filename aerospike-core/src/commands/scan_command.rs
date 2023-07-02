@@ -18,11 +18,11 @@ use std::time::Duration;
 
 use crate::cluster::Node;
 use crate::commands::{Command, SingleCommand, StreamCommand};
+use crate::derive::readable::ReadableBins;
 use crate::errors::Result;
 use crate::net::Connection;
 use crate::policy::ScanPolicy;
 use crate::{Bins, Recordset};
-use crate::derive::readable::ReadableBins;
 
 pub struct ScanCommand<'a, T: ReadableBins> {
     stream_command: StreamCommand<T>,

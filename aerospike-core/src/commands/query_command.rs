@@ -17,11 +17,11 @@ use std::time::Duration;
 
 use crate::cluster::Node;
 use crate::commands::{Command, SingleCommand, StreamCommand};
+use crate::derive::readable::ReadableBins;
 use crate::errors::Result;
 use crate::net::Connection;
 use crate::policy::QueryPolicy;
 use crate::{Recordset, Statement};
-use crate::derive::readable::ReadableBins;
 
 pub struct QueryCommand<'a, T: ReadableBins> {
     stream_command: StreamCommand<T>,

@@ -18,11 +18,11 @@ use std::time::Duration;
 use crate::cluster::{Cluster, Node};
 use crate::commands::buffer;
 use crate::commands::{Command, SingleCommand};
+use crate::derive::readable::ReadableBins;
 use crate::errors::{ErrorKind, Result};
 use crate::net::Connection;
 use crate::policy::ReadPolicy;
 use crate::{Bins, Key, Record, ResultCode};
-use crate::derive::readable::ReadableBins;
 
 pub struct ReadCommand<'a, T: ReadableBins> {
     pub single_command: SingleCommand<'a>,

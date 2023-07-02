@@ -15,7 +15,8 @@
 
 //! Traits and Implementations for writing data from structs and variables
 
-use crate::errors::Result;
+use std::collections::HashMap;
+use crate::errors::{ErrorKind, Result};
 use crate::{Bin, Buffer, ParticleType};
 
 pub use aerospike_macro::{WritableBins, WritableValue};
@@ -153,6 +154,24 @@ impl<T: WritableValue> WritableValue for Vec<T> {
         ParticleType::LIST
     }
 
+    fn writable_value_encodable(&self) -> bool {
+        !self.is_empty()
+    }
+}
+
+impl<S: WritableValue, T: WritableValue> WritableValue for HashMap<S, T> {
+    fn write_as_value(&self, buffer: &mut Option<&mut Buffer>) -> usize {
+        let mut size = 0;
+        size += crate::msgpack::encoder::pack_map_begin(buffer, self.len());
+        for (k, v) in self {
+            size += k.write_as_cdt_value(buffer);
+            size += v.write_as_cdt_value(buffer);
+        }
+        size
+    }
+    fn writable_value_particle_type(&self) -> ParticleType {
+        ParticleType::MAP
+    }
     fn writable_value_encodable(&self) -> bool {
         !self.is_empty()
     }

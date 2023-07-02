@@ -16,8 +16,8 @@
 #[cfg(feature = "serialization")]
 use serde::Serialize;
 
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use crate::derive::readable::ReadableBins;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use crate::Key;
 

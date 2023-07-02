@@ -18,6 +18,8 @@ use std::time::Duration;
 use byteorder::{ByteOrder, LittleEndian, NetworkEndian};
 
 use crate::commands::field_type::FieldType;
+use crate::derive::readable::ReadableBins;
+use crate::derive::writable::WritableBins;
 use crate::errors::Result;
 use crate::expressions::FilterExpression;
 use crate::msgpack::encoder;
@@ -26,11 +28,7 @@ use crate::policy::{
     BatchPolicy, CommitLevel, ConsistencyLevel, GenerationPolicy, QueryPolicy, ReadPolicy,
     RecordExistsAction, ScanPolicy, WritePolicy,
 };
-use crate::{
-    BatchRead, Bin, Bins, CollectionIndexType, Key, Statement, Value,
-};
-use crate::derive::readable::ReadableBins;
-use crate::derive::writable::WritableBins;
+use crate::{BatchRead, Bin, Bins, CollectionIndexType, Key, Statement, Value};
 
 // Contains a read operation.
 const INFO1_READ: u8 = 1;
@@ -102,13 +100,14 @@ const MAX_BUFFER_SIZE: usize = 1024 * 1024 + 8; // 1 MB + header
 /// Aerospike Wire Buffer. This holds the raw communication Buffer for the commands to read and write.
 #[derive(Debug, Default, Clone)]
 pub struct Buffer {
-    pub(crate) data_buffer: Vec<u8>,
-    pub(crate) data_offset: usize,
+    pub data_buffer: Vec<u8>,
+    pub data_offset: usize,
     pub(crate) reclaim_threshold: usize,
 }
 
 impl Buffer {
-    pub(crate) fn new(reclaim_threshold: usize) -> Self {
+    /// Create new Buffer Instance
+    pub fn new(reclaim_threshold: usize) -> Self {
         Buffer {
             data_buffer: Vec::with_capacity(1024),
             data_offset: 0,
@@ -125,7 +124,8 @@ impl Buffer {
         self.resize_buffer(offset)
     }
 
-    pub(crate) fn resize_buffer(&mut self, size: usize) -> Result<()> {
+    /// Size the Buffer Byte Vec to the given length
+    pub fn resize_buffer(&mut self, size: usize) -> Result<()> {
         // Corrupted data streams can result in a huge length.
         // Do a sanity check here.
         if size > MAX_BUFFER_SIZE {
@@ -141,7 +141,8 @@ impl Buffer {
         Ok(())
     }
 
-    pub(crate) fn reset_offset(&mut self) {
+    /// Reset the Buffer Offset to 0
+    pub fn reset_offset(&mut self) {
         // reset data offset
         self.data_offset = 0;
     }
@@ -1162,7 +1163,8 @@ impl Buffer {
 
     // Data buffer implementations
 
-    pub(crate) const fn data_offset(&self) -> usize {
+    /// Get the current Data Offset
+    pub const fn data_offset(&self) -> usize {
         self.data_offset
     }
 

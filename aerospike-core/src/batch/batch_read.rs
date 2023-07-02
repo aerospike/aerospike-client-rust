@@ -13,12 +13,12 @@
 // License for the specific language governing permissions and limitations under
 // the License.
 
+use crate::derive::readable::ReadableBins;
+use crate::Bins;
 use crate::Key;
 use crate::Record;
-use crate::{Bins};
 #[cfg(feature = "serialization")]
 use serde::Serialize;
-use crate::derive::readable::ReadableBins;
 
 /// Key and bin names used in batch read commands where variable bins are needed for each key.
 #[cfg_attr(feature = "serialization", derive(Serialize))]

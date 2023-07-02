@@ -1,4 +1,4 @@
-use crate::traits::readable::convert_readable_bins;
+use crate::traits::readable::{convert_readable_bins, convert_readable_value_source};
 use crate::traits::writable::{build_writable, convert_writable_value_source};
 use quote::quote;
 use syn::{parse_macro_input, parse_quote, DeriveInput, GenericParam};
@@ -115,6 +115,28 @@ pub fn readable_bins(input: proc_macro::TokenStream) -> proc_macro::TokenStream 
                 #vals
             }
 
+        }
+    };
+    proc_macro::TokenStream::from(expanded)
+}
+
+#[proc_macro_derive(ReadableValue, attributes(aerospike))]
+pub fn readable_value(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
+    let mut input = parse_macro_input!(input as DeriveInput);
+    let name = input.ident;
+    for param in &mut input.generics.params {
+        if let GenericParam::Type(ref mut type_param) = *param {
+            type_param
+                .bounds
+                .push(parse_quote!(aerospike::derive::readable::ReadableValue));
+        }
+    }
+    let (impl_generics, ty_generics, where_clause) = input.generics.split_for_impl();
+    let vals = convert_readable_value_source(&input.data, &name);
+
+    let expanded = quote! {
+        impl #impl_generics ReadableValue for #name #ty_generics #where_clause {
+            #vals
         }
     };
     proc_macro::TokenStream::from(expanded)

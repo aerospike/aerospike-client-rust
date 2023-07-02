@@ -1,7 +1,7 @@
 use crate::common;
 use aerospike::as_key;
 use aerospike::as_val;
-use aerospike::derive::readable::ReadableBins;
+use aerospike::derive::readable::{ReadableBins, ReadableValue};
 use aerospike::derive::writable::{WritableBins, WritableValue};
 use aerospike::WritePolicy;
 use aerospike::{Bins, ReadPolicy, Record, Value};
@@ -176,6 +176,20 @@ async fn derive_readable() {
     let set_name = &common::rand_str(10);
     let key = as_key!(namespace, set_name, "derive_struct");
 
+    #[derive(ReadableValue, WritableValue, Clone, Debug)]
+    struct TestValue {
+        string: String,
+        int: i64,
+        float: f64,
+        option: Option<String>,
+        // todo: fix vec str and vec vec
+        list: Vec<String>,
+        list_i: Vec<i64>,
+        no_val: Option<String>,
+        map: HashMap<String, i64>,
+        nested_list: Vec<Vec<i64>>,
+    }
+
     #[derive(ReadableBins, WritableBins, Clone, Debug)]
     struct TestData {
         string: String,
@@ -186,7 +200,21 @@ async fn derive_readable() {
         list_i: Vec<i64>,
         no_val: Option<String>,
         nested_list: Vec<Vec<i64>>,
+        test: TestValue,
+        map: HashMap<String, i64>
     }
+
+    let tv = TestValue {
+        string: "eeeeeeee".to_string(),
+        int: 56789,
+        float: 567.765,
+        option: Some("ffffff".to_string()),
+        list_i: vec![5, 2, 1, 11, 15],
+        list: vec!["eee".to_string(), "fff".to_string(), "ggg".to_string()],
+        no_val: None,
+        map: HashMap::from([("asdasd".to_string(), 1), ("sdfsdf".to_string(), 1234567890)]),
+        nested_list: vec![vec![3, 2, 1], vec![6, 5, 4]],
+    };
 
     let write_data = TestData {
         string: "asdfsd".to_string(),
@@ -197,11 +225,14 @@ async fn derive_readable() {
         list: vec!["asd".to_string(), "ase".to_string(), "asf".to_string()],
         no_val: None,
         nested_list: vec![vec![1, 2, 3], vec![4, 5, 6]],
+        test: tv.clone(),
+        map: HashMap::from([("testasd".to_string(), 1), ("testfgh".to_string(), 1234567890)])
     };
 
     let res = client.put(&WritePolicy::default(), &key, &write_data).await;
     let res: aerospike::errors::Result<Record<TestData>> =
         client.get(&ReadPolicy::default(), &key, Bins::All).await;
+    println!("{:?}", res);
     assert_eq!(res.is_ok(), true, "Aerospike derive reader failed");
     let res = res.unwrap().bins;
     assert_eq!(
@@ -236,5 +267,13 @@ async fn derive_readable() {
         res.list,
         vec!["asd".to_string(), "ase".to_string(), "asf".to_string()],
         "Aerospike derive reader failed for String List"
+    );
+    assert_eq!(
+        res.test.string, tv.string,
+        "Aerospike derive reader failed for ReadableValue string"
+    );
+    assert_eq!(
+        res.test.int, tv.int,
+        "Aerospike derive reader failed for ReadableValue int"
     );
 }

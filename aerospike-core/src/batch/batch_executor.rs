@@ -21,11 +21,11 @@ use crate::batch::BatchRead;
 use crate::cluster::partition::Partition;
 use crate::cluster::{Cluster, Node};
 use crate::commands::BatchReadCommand;
+use crate::derive::readable::ReadableBins;
 use crate::errors::{Error, Result};
 use crate::policy::{BatchPolicy, Concurrency};
-use crate::{Key};
+use crate::Key;
 use futures::lock::Mutex;
-use crate::derive::readable::ReadableBins;
 
 pub struct BatchExecutor {
     cluster: Arc<Cluster>,
