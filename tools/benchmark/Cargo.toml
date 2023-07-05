@@ -8,7 +8,7 @@ repository = "https://github.com/aerospike/aerospike-client-rust/"
 license = "Apache-2.0"
 
 [dependencies]
-clap = "4.0"
+clap = "2.33"
 log = "0.4"
 env_logger = "0.9"
 lazy_static = "1.4"
