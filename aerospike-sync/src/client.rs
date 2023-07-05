@@ -250,7 +250,7 @@ impl Client {
         &self,
         policy: &'a WritePolicy,
         key: &'a Key,
-        bins: &'a [Bin<'b>],
+        bins: &'a [Bin],
     ) -> Result<()> {
         block_on(self.async_client.put(policy, key, bins))
     }
@@ -281,7 +281,7 @@ impl Client {
         &self,
         policy: &'a WritePolicy,
         key: &'a Key,
-        bins: &'a [Bin<'b>],
+        bins: &'a [Bin],
     ) -> Result<()> {
         block_on(self.async_client.add(policy, key, bins))
     }
@@ -293,7 +293,7 @@ impl Client {
         &self,
         policy: &'a WritePolicy,
         key: &'a Key,
-        bins: &'a [Bin<'b>],
+        bins: &'a [Bin],
     ) -> Result<()> {
         block_on(self.async_client.append(policy, key, bins))
     }
@@ -305,7 +305,7 @@ impl Client {
         &self,
         policy: &'a WritePolicy,
         key: &'a Key,
-        bins: &'a [Bin<'b>],
+        bins: &'a [Bin],
     ) -> Result<()> {
         block_on(self.async_client.prepend(policy, key, bins))
     }
