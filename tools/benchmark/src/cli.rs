@@ -22,7 +22,7 @@ use num_cpus;
 
 use workers::Workload;
 
-const AFTER_HELP: &'static str = r###"
+const AFTER_HELP: &str = r###"
 
 SETTING SEED HOSTS:
 

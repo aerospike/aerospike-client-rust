@@ -89,16 +89,14 @@ impl Queue {
             )
             .await;
 
-            if conn.is_err() {
+            let Ok(Ok(conn)) = conn else {
                 let mut internals = self.0.internals.lock().await;
                 internals.num_conns -= 1;
                 drop(internals);
                 bail!(ErrorKind::Connection(
                     "Could not open network connection".to_string()
                 ));
-            }
-
-            let conn = conn.unwrap()?;
+            };
 
             connection = conn;
             break;
