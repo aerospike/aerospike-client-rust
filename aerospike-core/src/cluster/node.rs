@@ -98,12 +98,11 @@ impl Node {
         self.host.clone()
     }
 
-    // Returns true if the Node supports floats
+    // Returns what the node can do
     pub const fn features(&self) -> &NodeFeatures {
         &self.features
     }
 
-    // Returns true if the Node supports geo
     // Returns the reference count
     pub fn reference_count(&self) -> usize {
         self.reference_count.load(Ordering::Relaxed)
@@ -174,9 +173,7 @@ impl Node {
     }
 
     fn verify_cluster_name(&self, info_map: &HashMap<String, String>) -> Result<()> {
-        match self.client_policy.cluster_name {
-            None => Ok(()),
-            Some(ref expected) => match info_map.get("cluster-name") {
+        self.client_policy.cluster_name.as_ref().map_or_else(|| Ok(()), |expected| match info_map.get("cluster-name") {
                 None => Err(ErrorKind::InvalidNode("Missing cluster name".to_string()).into()),
                 Some(info_name) if info_name == expected => Ok(()),
                 Some(info_name) => {
@@ -188,8 +185,7 @@ impl Node {
                     ))
                     .into())
                 }
-            },
-        }
+            })
     }
 
     fn add_friends(
@@ -219,12 +215,7 @@ impl Node {
 
             let host = friend_info.next().unwrap();
             let port = u16::from_str(friend_info.next().unwrap())?;
-            let alias = match self.client_policy.ip_map {
-                Some(ref ip_map) if ip_map.contains_key(host) => {
-                    Host::new(ip_map.get(host).unwrap(), port)
-                }
-                _ => Host::new(host, port),
-            };
+            let alias = Host::new(self.client_policy.ip_map.as_ref().and_then(|ip_map|ip_map.get(host)).map_or(host, String::as_str), port);
 
             if current_aliases.contains_key(&alias) {
                 self.reference_count.fetch_add(1, Ordering::Relaxed);
@@ -260,11 +251,7 @@ impl Node {
     }
 
     pub fn is_in_rack(&self, namespace: &str, rack_ids: &HashSet<usize>) -> bool {
-        if let Ok(locked) = self.rack_ids.lock() {
-            locked.get(namespace).map_or(false, |r|rack_ids.contains(r))
-        } else {
-            false
-        }
+        self.rack_ids.lock().map_or(false, |locked| locked.get(namespace).map_or(false, |r|rack_ids.contains(r)))
     }
 
     pub fn parse_rack(&self, buf: &str) -> Result<()> {
