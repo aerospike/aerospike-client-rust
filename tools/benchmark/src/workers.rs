@@ -28,6 +28,7 @@ use aerospike::{Client, ErrorKind, Key, ReadPolicy, ResultCode, WritePolicy};
 use generator::KeyRange;
 use percent::Percent;
 use stats::Histogram;
+use futures::executor::block_on;
 
 lazy_static! {
     // How frequently workers send stats to the collector
@@ -138,7 +139,7 @@ impl Task for InsertTask {
     fn execute(&self, key: &Key) -> Status {
         let bin = as_bin!("int", random::<i64>());
         trace!("Inserting {}", key);
-        self.status(self.client.put(&self.policy, key, &[&bin]))
+        self.status(block_on(self.client.put(&self.policy, key, &[&bin])))
     }
 }
 
@@ -168,7 +169,7 @@ impl Task for ReadUpdateTask {
         } else {
             trace!("Writing {}", key);
             let bin = as_bin!("int", random::<i64>());
-            self.status(self.client.put(&self.wpolicy, key, &[&bin]))
+            self.status(self.client.put(&self.wpolicy, key, &[bin]))
         }
     }
 }

@@ -27,38 +27,40 @@ use bencher::Bencher;
 #[path = "../tests/common/mod.rs"]
 mod common;
 
+use futures::executor::block_on;
+
 lazy_static! {
     static ref TEST_SET: String = common::rand_str(10);
 }
 
 fn single_key_read(bench: &mut Bencher) {
-    let client = common::client();
+    let client = block_on(common::client());
     let namespace = common::namespace();
     let key = as_key!(namespace, &TEST_SET, common::rand_str(10));
     let wbin = as_bin!("i", 1);
-    let bins = vec![&wbin];
+    let bins = vec![wbin];
     let rpolicy = ReadPolicy::default();
     let wpolicy = WritePolicy::default();
-    client.put(&wpolicy, &key, &bins).unwrap();
+    block_on(client.put(&wpolicy, &key, &bins)).unwrap();
 
-    bench.iter(|| client.get(&rpolicy, &key, Bins::All).unwrap());
+    bench.iter(|| block_on(client.get(&rpolicy, &key, Bins::All)).unwrap());
 }
 
 fn single_key_read_header(bench: &mut Bencher) {
-    let client = common::client();
+    let client = block_on(common::client());
     let namespace = common::namespace();
     let key = as_key!(namespace, &TEST_SET, common::rand_str(10));
     let wbin = as_bin!("i", 1);
-    let bins = vec![&wbin];
+    let bins = vec![wbin];
     let rpolicy = ReadPolicy::default();
     let wpolicy = WritePolicy::default();
-    client.put(&wpolicy, &key, &bins).unwrap();
+    block_on(client.put(&wpolicy, &key, &bins)).unwrap();
 
-    bench.iter(|| client.get(&rpolicy, &key, Bins::None).unwrap());
+    bench.iter(|| block_on(client.get(&rpolicy, &key, Bins::None)).unwrap());
 }
 
 fn single_key_write(bench: &mut Bencher) {
-    let client = common::client();
+    let client = block_on(common::client());
     let namespace = common::namespace();
     let key = as_key!(namespace, &TEST_SET, common::rand_str(10));
     let wpolicy = WritePolicy::default();
@@ -70,7 +72,7 @@ fn single_key_write(bench: &mut Bencher) {
     let bins = [bin1, bin2, bin3, bin4];
 
     bench.iter(|| {
-        client.put(&wpolicy, &key, &bins).unwrap();
+        block_on(client.put(&wpolicy, &key, &bins)).unwrap();
     });
 }
 

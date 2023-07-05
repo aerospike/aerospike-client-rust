@@ -15,6 +15,7 @@ lazy_static = "1.4"
 num_cpus = "1.11"
 rand = "0.8"
 aerospike = { path = "../.." }
+futures = {version = "0.3.16" }
 
 [[bin]]
 path = "src/main.rs"
