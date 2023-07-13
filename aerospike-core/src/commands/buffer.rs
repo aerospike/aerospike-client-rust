@@ -1424,7 +1424,16 @@ impl Buffer {
         }
     }
 
-    pub fn dump_buffer(&self) {
-        println!(">>>>>>>>>>>>>>> {:?}", self.data_buffer.clone());
+    pub fn dump(&self) {
+        use pretty_hex::*;
+
+        let cfg = HexConfig {
+            title: false,
+            width: 16,
+            group: 8,
+            ..HexConfig::default()
+        };
+
+        println!("{:?}", self.data_buffer.hex_conf(cfg));
     }
 }

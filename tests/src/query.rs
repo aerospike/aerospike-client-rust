@@ -19,11 +19,12 @@ use std::thread;
 
 use crate::common;
 use env_logger;
+use futures::StreamExt;
 
 use aerospike::Task;
 use aerospike::*;
 
-const EXPECTED: usize = 1000;
+const EXPECTED: usize = 1200;
 
 async fn create_test_set(client: &Client, no_records: usize) -> String {
     let namespace = common::namespace();
@@ -67,7 +68,7 @@ async fn query_single_consumer() {
     statement.add_filter(as_eq!("bin", 1));
     let rs = client.query(&qpolicy, statement).await.unwrap();
     let mut count = 0;
-    for res in &*rs {
+    while let Some(res) = rs.next().await {
         match res {
             Ok(rec) => {
                 assert_eq!(rec.bins["bin"], as_val!(1));
@@ -173,6 +174,35 @@ async fn query_multi_consumer() {
 }
 
 #[aerospike_macro::test]
+async fn recordset_as_stream() {
+    let _ = env_logger::try_init();
+
+    let client = common::client().await;
+    let namespace = common::namespace();
+    let set_name = create_test_set(&client, EXPECTED).await;
+    let qpolicy = QueryPolicy::default();
+
+    // Range Query
+    let statement = Statement::new(namespace, &set_name, Bins::All);
+    let rs = client.query(&qpolicy, statement).await.unwrap();
+
+    let count = Arc::new(AtomicUsize::new(0));
+    let mut stream = rs.to_stream();
+    while let Some(res) = stream.next().await {
+        match res {
+            Ok(_) => {
+                count.fetch_add(1, Ordering::Relaxed);
+            }
+            Err(err) => panic!("{:?}", err),
+        }
+    }
+
+    assert_eq!(count.load(Ordering::Relaxed), EXPECTED);
+
+    client.close().await.unwrap();
+}
+
+#[aerospike_macro::test]
 async fn query_node() {
     let _ = env_logger::try_init();
 
@@ -198,7 +228,7 @@ async fn query_node() {
     }
 
     for t in threads {
-        t.await;
+        t.await.unwrap();
     }
 
     assert_eq!(count.load(Ordering::Relaxed), 100);

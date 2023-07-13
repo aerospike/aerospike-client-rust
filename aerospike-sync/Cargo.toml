@@ -7,11 +7,11 @@ edition = "2018"
 
 [dependencies]
 aerospike-core = {path = "../aerospike-core"}
-futures = {version = "0.3.16" }
+tokio = { version = "1.28.2", features = ["fs", "net", "rt", "rt-multi-thread", "time", "io-util", "sync"]}
+futures = {version = "0.3", features = ["executor"] }
 
 [features]
-rt-tokio = ["aerospike-core/rt-tokio"]
-rt-async-std = ["aerospike-core/rt-async-std"]
+default = ["aerospike-core/rt-tokio"]
 
 [dev-dependencies]
 aerospike = {path = "../"}

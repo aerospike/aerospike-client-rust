@@ -14,7 +14,6 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::thread;
 use std::time::Duration;
 
 use crate::cluster::Node;
@@ -26,10 +25,12 @@ use crate::net::Connection;
 use crate::query::Recordset;
 use crate::value::bytes_to_particle;
 use crate::{Key, Record, ResultCode, Value};
+use async_channel::Sender;
 
 pub struct StreamCommand {
     node: Arc<Node>,
     pub recordset: Arc<Recordset>,
+    sender: Sender<Result<Record>>,
 }
 
 impl Drop for StreamCommand {
@@ -41,7 +42,12 @@ impl Drop for StreamCommand {
 
 impl StreamCommand {
     pub fn new(node: Arc<Node>, recordset: Arc<Recordset>) -> Self {
-        StreamCommand { node, recordset }
+        let sender = recordset.record_sendr.clone();
+        StreamCommand {
+            node,
+            recordset,
+            sender,
+        }
     }
 
     async fn parse_record(conn: &mut Connection, size: usize) -> Result<(Option<Record>, bool)> {
@@ -114,20 +120,14 @@ impl StreamCommand {
 
             let res = StreamCommand::parse_record(conn, size).await;
             match res {
-                Ok((Some(mut rec), _)) => loop {
-                    let result = self.recordset.push(Ok(rec));
-                    match result {
-                        None => break,
-                        Some(returned) => {
-                            rec = returned?;
-                            thread::yield_now();
-                        }
-                    }
+                Ok((Some(rec), _)) => match self.sender.send(Ok(rec)).await {
+                    Ok(()) => (),
+                    Err(_) => return Ok(false),
                 },
                 Ok((None, false)) => return Ok(false),
                 Ok((None, true)) => continue, // handle partition done
                 Err(err) => {
-                    self.recordset.push(Err(err));
+                    let _ = self.sender.send(Err(err)).await;
                     return Ok(false);
                 }
             };

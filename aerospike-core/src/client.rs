@@ -638,13 +638,13 @@ impl Client {
             let set_name = set_name.to_owned();
             let bins = bins.clone();
 
-            aerospike_rt::spawn(async move {
+            let _ = aerospike_rt::spawn(async move {
                 let mut command = ScanCommand::new(
                     &policy, node, &namespace, &set_name, bins, recordset, partitions,
                 );
                 command.execute().await.unwrap();
-            })
-            .await;
+            });
+            // .await;
         }
         Ok(recordset)
     }
@@ -676,7 +676,7 @@ impl Client {
         let namespace = namespace.to_owned();
         let set_name = set_name.to_owned();
 
-        aerospike_rt::spawn(async move {
+        let _ = aerospike_rt::spawn(async move {
             let mut command = ScanCommand::new(
                 &policy,
                 node,
@@ -737,12 +737,12 @@ impl Client {
             let t_recordset = recordset.clone();
             let policy = policy.clone();
             let statement = statement.clone();
-            aerospike_rt::spawn(async move {
+            let _ = aerospike_rt::spawn(async move {
                 let mut command =
                     QueryCommand::new(&policy, node, statement, t_recordset, partitions);
                 command.execute().await.unwrap();
-            })
-            .await;
+            });
+            // .await;
         }
         Ok(recordset)
     }
@@ -770,7 +770,7 @@ impl Client {
             .node_partitions(node.as_ref(), &statement.namespace)
             .await;
 
-        aerospike_rt::spawn(async move {
+        let _ = aerospike_rt::spawn(async move {
             let mut command = QueryCommand::new(&policy, node, statement, t_recordset, partitions);
             command.execute().await.unwrap();
         })
@@ -866,7 +866,7 @@ impl Client {
         index_name: &str,
         index_type: IndexType,
         collection_index_type: CollectionIndexType,
-    ) -> Result<()> {
+    ) -> Result<IndexTask> {
         let cit_str: String = if let CollectionIndexType::Default = collection_index_type {
             "".to_string()
         } else {
@@ -879,7 +879,13 @@ impl Client {
         );
         self.send_info_cmd(&cmd)
             .await
-            .chain_err(|| "Error creating index")
+            .chain_err(|| "Error creating index")?;
+
+        Ok(IndexTask::new(
+            Arc::clone(&self.cluster),
+            namespace.to_string(),
+            index_name.to_string(),
+        ))
     }
 
     /// Delete secondary index.

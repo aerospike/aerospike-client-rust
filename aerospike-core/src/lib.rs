@@ -188,11 +188,17 @@ mod msgpack;
 mod net;
 pub mod operations;
 pub mod policy;
+pub mod privilege;
+pub mod privilege_code;
 pub mod query;
 mod record;
 mod result_code;
+pub mod role;
 pub mod task;
 mod user;
 
 #[cfg(test)]
 extern crate hex;
+
+// #[cfg(test)]
+extern crate pretty_hex;

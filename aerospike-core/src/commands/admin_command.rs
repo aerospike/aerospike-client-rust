@@ -22,6 +22,7 @@ use crate::cluster::Cluster;
 use crate::errors::{ErrorKind, Result};
 use crate::net::Connection;
 use crate::net::PooledConnection;
+use crate::privilege::{self, Privilege};
 use crate::ResultCode;
 
 // Commands
@@ -34,6 +35,13 @@ const GRANT_ROLES: u8 = 5;
 const REVOKE_ROLES: u8 = 6;
 const REPLACE_ROLES: u8 = 7;
 const QUERY_USERS: u8 = 9;
+const CREATE_ROLE: u8 = 10;
+const DROP_ROLE: u8 = 11;
+const GRANT_PRIVILEGES: u8 = 12;
+const REVOKE_PRIVILEGES: u8 = 13;
+const SET_WHITELIST: u8 = 14;
+const SET_QUOTAS: u8 = 15;
+const QUERY_ROLES: u8 = 16;
 const LOGIN: u8 = 20;
 
 // Field IDs
@@ -41,7 +49,18 @@ const USER: u8 = 0;
 const PASSWORD: u8 = 1;
 const OLD_PASSWORD: u8 = 2;
 const CREDENTIAL: u8 = 3;
+const CLEAR_PASSWORD: u8 = 4;
+const SESSION_TOKEN: u8 = 5;
+const SESSION_TTL: u8 = 6;
 const ROLES: u8 = 10;
+const ROLE: u8 = 11;
+const PRIVILEGES: u8 = 12;
+const ALLOW_LIST: u8 = 13;
+const READ_QUOTA: u8 = 14;
+const WRITE_QUOTA: u8 = 15;
+const READ_INFO: u8 = 16;
+const WRITE_INFO: u8 = 17;
+const CONNECTIONS: u8 = 18;
 
 // Misc
 const MSG_VERSION: i64 = 0;
@@ -209,6 +228,64 @@ impl AdminCommand {
         AdminCommand::execute(conn).await
     }
 
+    // pub async fn create_role(
+    //     cluster: &Cluster,
+    //     user: &str,
+    //     role_name: &str,
+    //     privileges: &[Privilege],
+    //     allow_list: &[&str],
+    //     read_quota: Option<u32>,
+    //     write_quota: Option<u32>,
+    // ) -> Result<()> {
+    //     let node = cluster.get_random_node().await?;
+    //     let mut conn = node.get_connection().await?;
+
+    //     let mut field_count = 1;
+    //     if privileges.len() > 1 {
+    //         field_count += 1;
+    //     }
+
+    //     if allow_list.len() > 1 {
+    //         field_count += 1;
+    //     }
+
+    //     match read_quota {
+    //         Some(rq) if rq > 0 => field_count += 1,
+    //         _ => (),
+    //     }
+
+    //     match write_quota {
+    //         Some(wq) if wq > 0 => field_count += 1,
+    //         _ => (),
+    //     }
+
+    //     conn.buffer.resize_buffer(1024)?;
+    //     conn.buffer.reset_offset();
+
+    //     AdminCommand::write_header(&mut conn, CREATE_ROLE, field_count);
+    //     AdminCommand::write_field_str(&mut conn, ROLE, role_name);
+
+    //     if privileges.len() > 0 {
+    //         AdminCommand::write_privileges(&mut conn, privileges);
+    //     }
+
+    //     if allow_list.len() > 0 {
+    //         AdminCommand::write_allow_list(&mut conn, allow_list);
+    //     }
+
+    //     match read_quota {
+    //         Some(rq) if rq > 0 => AdminCommand::write_field_u32(&mut conn, READ_QUOTA, rq),
+    //         _ => (),
+    //     }
+
+    //     match write_quota {
+    //         Some(wq) if wq > 0 => AdminCommand::write_field_u32(&mut conn, WRITE_QUOTA, wq),
+    //         _ => (),
+    //     }
+
+    //     AdminCommand::execute(conn).await
+    // }
+
     // Utility methods
 
     fn write_size(conn: &mut Connection, size: i64) {
@@ -245,6 +322,11 @@ impl AdminCommand {
         conn.buffer.write_bytes(b);
     }
 
+    fn write_field_u32(conn: &mut Connection, id: u8, v: u32) {
+        AdminCommand::write_field_header(conn, id, 4);
+        conn.buffer.write_u32(v);
+    }
+
     fn write_roles(conn: &mut Connection, roles: &[&str]) {
         let mut size = 0;
         for role in roles {
@@ -258,6 +340,44 @@ impl AdminCommand {
             conn.buffer.write_str(role);
         }
     }
+
+    fn write_allow_list(conn: &mut Connection, l: &[&str]) {
+        let mut size = 0;
+        l.iter().enumerate().for_each(|(i, item)| {
+            size += item.len(); // size + len
+            if i > 0 {
+                size += 1; // comma
+            }
+        });
+
+        AdminCommand::write_field_header(conn, ALLOW_LIST, size);
+        l.iter().enumerate().for_each(|(i, item)| {
+            conn.buffer.write_str(item);
+            conn.buffer.write_str(",");
+        });
+    }
+
+    // fn write_privileges(conn: &mut Connection, p: &[Privilege]) -> Result<()> {
+    //     let mut size = 0;
+
+    //     p.iter().enumerate().for_each(|(i, item)| {
+    //         conn.buffer.write_u8(item as u8);
+    //         if item.can_scope() {
+    //             match (item.set_name, item.namespace) {
+    //                 (Some(set_name), None) if set_name.len() > 0 => bail!(format!(
+    //                     "Admin privilege {} has a set scope with an empty namespace",
+    //                     item
+    //                 )),
+    //             }
+    //         }
+    //     });
+
+    //     AdminCommand::write_field_header(conn, ALLOW_LIST, size);
+    //     p.iter().enumerate().for_each(|(i, item)| {
+    //         conn.buffer.write_str(item);
+    //         conn.buffer.write_str(",");
+    //     });
+    // }
 
     pub fn hash_password(password: &str) -> Result<String> {
         bcrypt::hash_with(

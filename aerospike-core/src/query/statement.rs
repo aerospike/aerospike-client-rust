@@ -26,6 +26,7 @@ pub struct Aggregation {
 }
 
 /// Query statement parameters.
+#[derive(Clone)]
 pub struct Statement {
     /// Namespace
     pub namespace: String,

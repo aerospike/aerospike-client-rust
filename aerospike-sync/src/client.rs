@@ -15,7 +15,6 @@
 
 use std::str;
 use std::sync::Arc;
-use std::vec::Vec;
 
 use aerospike_core::errors::Result;
 use aerospike_core::operations::Operation;
@@ -24,7 +23,8 @@ use aerospike_core::{
     Key, Node, QueryPolicy, ReadPolicy, Record, Recordset, RegisterTask, ScanPolicy, Statement,
     ToHosts, UDFLang, Value, WritePolicy,
 };
-use futures::executor::block_on;
+
+use tokio::runtime::Runtime;
 
 /// Instantiate a Client instance to access an Aerospike database cluster and perform database
 /// operations.
@@ -41,6 +41,8 @@ use futures::executor::block_on;
 /// relevant subset of bins.
 pub struct Client {
     async_client: aerospike_core::Client,
+
+    rt: Runtime,
 }
 
 unsafe impl Send for Client {}
@@ -81,36 +83,43 @@ impl Client {
     /// let client = Client::new(&ClientPolicy::default(), &hosts).unwrap();
     /// ```
     pub fn new(policy: &ClientPolicy, hosts: &(dyn ToHosts + Send + Sync)) -> Result<Self> {
-        let client = block_on(aerospike_core::Client::new(policy, hosts))?;
+        let rt = tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()?;
+
+        let client = rt
+            .handle()
+            .block_on(aerospike_core::Client::new(policy, hosts))?;
         Ok(Client {
             async_client: client,
+            rt: rt,
         })
     }
 
     /// Closes the connection to the Aerospike cluster.
     pub fn close(&self) -> Result<()> {
-        block_on(self.async_client.close())?;
+        self.rt.handle().block_on(self.async_client.close())?;
         Ok(())
     }
 
     /// Returns `true` if the client is connected to any cluster nodes.
     pub fn is_connected(&self) -> bool {
-        block_on(self.async_client.is_connected())
+        self.rt.handle().block_on(self.async_client.is_connected())
     }
 
     /// Returns a list of the names of the active server nodes in the cluster.
     pub fn node_names(&self) -> Vec<String> {
-        block_on(self.async_client.node_names())
+        self.rt.handle().block_on(self.async_client.node_names())
     }
 
     /// Return node given its name.
     pub fn get_node(&self, name: &str) -> Result<Arc<Node>> {
-        block_on(self.async_client.get_node(name))
+        self.rt.handle().block_on(self.async_client.get_node(name))
     }
 
     /// Returns a list of active server nodes in the cluster.
     pub fn nodes(&self) -> Vec<Arc<Node>> {
-        block_on(self.async_client.nodes())
+        self.rt.handle().block_on(self.async_client.nodes())
     }
 
     /// Read record for the specified key. Depending on the bins value provided, all record bins,
@@ -165,7 +174,9 @@ impl Client {
     where
         T: Into<Bins> + Send + Sync + 'static,
     {
-        block_on(self.async_client.get(policy, key, bins))
+        self.rt
+            .handle()
+            .block_on(self.async_client.get(policy, key, bins))
     }
 
     /// Read multiple record for specified batch keys in one batch call. This method allows
@@ -207,7 +218,9 @@ impl Client {
         policy: &BatchPolicy,
         batch_reads: Vec<BatchRead>,
     ) -> Result<Vec<BatchRead>> {
-        block_on(self.async_client.batch_get(policy, batch_reads))
+        self.rt
+            .handle()
+            .block_on(self.async_client.batch_get(policy, batch_reads))
     }
 
     /// Write record bin(s). The policy specifies the transaction timeout, record expiration and
@@ -246,13 +259,10 @@ impl Client {
     ///     Err(err) => println!("Error writing record: {}", err),
     /// }
     /// ```
-    pub fn put<'a, 'b>(
-        &self,
-        policy: &'a WritePolicy,
-        key: &'a Key,
-        bins: &'a [Bin<'b>],
-    ) -> Result<()> {
-        block_on(self.async_client.put(policy, key, bins))
+    pub fn put(&self, policy: &WritePolicy, key: &Key, bins: &[Bin]) -> Result<()> {
+        self.rt
+            .handle()
+            .block_on(self.async_client.put(policy, key, bins))
     }
 
     /// Add integer bin values to existing record bin values. The policy specifies the transaction
@@ -277,37 +287,28 @@ impl Client {
     ///     Err(err) => println!("Error writing record: {}", err),
     /// }
     /// ```
-    pub fn add<'a, 'b>(
-        &self,
-        policy: &'a WritePolicy,
-        key: &'a Key,
-        bins: &'a [Bin<'b>],
-    ) -> Result<()> {
-        block_on(self.async_client.add(policy, key, bins))
+    pub fn add(&self, policy: &WritePolicy, key: &Key, bins: &[Bin]) -> Result<()> {
+        self.rt
+            .handle()
+            .block_on(self.async_client.add(policy, key, bins))
     }
 
     /// Append bin string values to existing record bin values. The policy specifies the
     /// transaction timeout, record expiration and how the transaction is handled when the record
     /// already exists. This call only works for string values.
-    pub fn append<'a, 'b>(
-        &self,
-        policy: &'a WritePolicy,
-        key: &'a Key,
-        bins: &'a [Bin<'b>],
-    ) -> Result<()> {
-        block_on(self.async_client.append(policy, key, bins))
+    pub fn append(&self, policy: &WritePolicy, key: &Key, bins: &[Bin]) -> Result<()> {
+        self.rt
+            .handle()
+            .block_on(self.async_client.append(policy, key, bins))
     }
 
     /// Prepend bin string values to existing record bin values. The policy specifies the
     /// transaction timeout, record expiration and how the transaction is handled when the record
     /// already exists. This call only works for string values.
-    pub fn prepend<'a, 'b>(
-        &self,
-        policy: &'a WritePolicy,
-        key: &'a Key,
-        bins: &'a [Bin<'b>],
-    ) -> Result<()> {
-        block_on(self.async_client.prepend(policy, key, bins))
+    pub fn prepend(&self, policy: &WritePolicy, key: &Key, bins: &[Bin]) -> Result<()> {
+        self.rt
+            .handle()
+            .block_on(self.async_client.prepend(policy, key, bins))
     }
 
     /// Delete record for specified key. The policy specifies the transaction timeout.
@@ -330,7 +331,9 @@ impl Client {
     /// }
     /// ```
     pub fn delete(&self, policy: &WritePolicy, key: &Key) -> Result<bool> {
-        block_on(self.async_client.delete(policy, key))
+        self.rt
+            .handle()
+            .block_on(self.async_client.delete(policy, key))
     }
 
     /// Reset record's time to expiration using the policy's expiration. Fail if the record does
@@ -354,12 +357,16 @@ impl Client {
     /// }
     /// ```
     pub fn touch(&self, policy: &WritePolicy, key: &Key) -> Result<()> {
-        block_on(self.async_client.touch(policy, key))
+        self.rt
+            .handle()
+            .block_on(self.async_client.touch(policy, key))
     }
 
     /// Determine if a record key exists. The policy can be used to specify timeouts.
     pub fn exists(&self, policy: &WritePolicy, key: &Key) -> Result<bool> {
-        block_on(self.async_client.exists(policy, key))
+        self.rt
+            .handle()
+            .block_on(self.async_client.exists(policy, key))
     }
 
     /// Perform multiple read/write operations on a single key in one batch call.
@@ -397,7 +404,9 @@ impl Client {
         key: &Key,
         ops: &[Operation<'_>],
     ) -> Result<Record> {
-        block_on(self.async_client.operate(policy, key, ops))
+        self.rt
+            .handle()
+            .block_on(self.async_client.operate(policy, key, ops))
     }
 
     /// Register a package containing user-defined functions (UDF) with the cluster. This
@@ -448,7 +457,9 @@ impl Client {
         udf_name: &str,
         language: UDFLang,
     ) -> Result<RegisterTask> {
-        block_on(self.async_client.register_udf(udf_body, udf_name, language))
+        self.rt
+            .handle()
+            .block_on(self.async_client.register_udf(udf_body, udf_name, language))
     }
 
     /// Register a package containing user-defined functions (UDF) with the cluster. This
@@ -463,15 +474,19 @@ impl Client {
         udf_name: &str,
         language: UDFLang,
     ) -> Result<RegisterTask> {
-        block_on(
-            self.async_client
-                .register_udf_from_file(client_path, udf_name, language),
-        )
+        self.rt
+            .handle()
+            .block_on(
+                self.async_client
+                    .register_udf_from_file(client_path, udf_name, language),
+            )
     }
 
     /// Remove a user-defined function (UDF) module from the server.
     pub fn remove_udf(&self, udf_name: &str, language: UDFLang) -> Result<()> {
-        block_on(self.async_client.remove_udf(udf_name, language))
+        self.rt
+            .handle()
+            .block_on(self.async_client.remove_udf(udf_name, language))
     }
 
     /// Execute a user-defined function on the server and return the results. The function operates
@@ -487,10 +502,13 @@ impl Client {
         function_name: &str,
         args: Option<&[Value]>,
     ) -> Result<Option<Value>> {
-        block_on(
-            self.async_client
-                .execute_udf(policy, key, udf_name, function_name, args),
-        )
+        self.rt.handle().block_on(self.async_client.execute_udf(
+            policy,
+            key,
+            udf_name,
+            function_name,
+            args,
+        ))
     }
 
     /// Read all records in the specified namespace and set and return a record iterator. The scan
@@ -534,7 +552,9 @@ impl Client {
     where
         T: Into<Bins> + Send + Sync + 'static,
     {
-        block_on(self.async_client.scan(policy, namespace, set_name, bins))
+        self.rt
+            .handle()
+            .block_on(self.async_client.scan(policy, namespace, set_name, bins))
     }
 
     /// Read all records in the specified namespace and set for one node only and return a record
@@ -556,7 +576,7 @@ impl Client {
     where
         T: Into<Bins> + Send + Sync + 'static,
     {
-        block_on(
+        self.rt.handle().block_on(
             self.async_client
                 .scan_node(policy, node, namespace, set_name, bins),
         )
@@ -588,7 +608,9 @@ impl Client {
     /// # Panics
     /// Panics if the async block fails
     pub fn query(&self, policy: &QueryPolicy, statement: Statement) -> Result<Arc<Recordset>> {
-        block_on(self.async_client.query(policy, statement))
+        self.rt
+            .handle()
+            .block_on(self.async_client.query(policy, statement))
     }
 
     /// Execute a query on a single server node and return a record iterator. The query executor
@@ -603,7 +625,9 @@ impl Client {
         node: Arc<Node>,
         statement: Statement,
     ) -> Result<Arc<Recordset>> {
-        block_on(self.async_client.query_node(policy, node, statement))
+        self.rt
+            .handle()
+            .block_on(self.async_client.query_node(policy, node, statement))
     }
 
     /// Removes all records in the specified namespace/set efficiently.
@@ -619,7 +643,7 @@ impl Client {
     /// nanoseconds since unix epoch (1970-01-01). Pass in zero to delete all records in the
     /// namespace/set recardless of last update time.
     pub fn truncate(&self, namespace: &str, set_name: &str, before_nanos: i64) -> Result<()> {
-        block_on(
+        self.rt.handle().block_on(
             self.async_client
                 .truncate(namespace, set_name, before_nanos),
         )
@@ -653,7 +677,7 @@ impl Client {
         index_name: &str,
         index_type: IndexType,
     ) -> Result<IndexTask> {
-        block_on(
+        self.rt.handle().block_on(
             self.async_client
                 .create_index(namespace, set_name, bin_name, index_name, index_type),
         )
@@ -670,20 +694,22 @@ impl Client {
         index_name: &str,
         index_type: IndexType,
         collection_index_type: CollectionIndexType,
-    ) -> Result<()> {
-        block_on(self.async_client.create_complex_index(
-            namespace,
-            set_name,
-            bin_name,
-            index_name,
-            index_type,
-            collection_index_type,
-        ))
+    ) -> Result<IndexTask> {
+        self.rt
+            .handle()
+            .block_on(self.async_client.create_complex_index(
+                namespace,
+                set_name,
+                bin_name,
+                index_name,
+                index_type,
+                collection_index_type,
+            ))
     }
 
     /// Delete secondary index.
     pub fn drop_index(&self, namespace: &str, set_name: &str, index_name: &str) -> Result<()> {
-        block_on(
+        self.rt.handle().block_on(
             self.async_client
                 .drop_index(namespace, set_name, index_name),
         )

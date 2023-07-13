@@ -31,15 +31,15 @@ lazy_static! {
     static ref TEST_SET: String = common::rand_str(10);
 }
 
-fn single_key_read(bench: &mut Bencher) {
-    let client = common::client();
+async fn single_key_read(bench: &mut Bencher) {
+    let client = common::client().await;
     let namespace = common::namespace();
     let key = as_key!(namespace, &TEST_SET, common::rand_str(10));
     let wbin = as_bin!("i", 1);
-    let bins = vec![&wbin];
+    let bins = [wbin];
     let rpolicy = ReadPolicy::default();
     let wpolicy = WritePolicy::default();
-    client.put(&wpolicy, &key, &bins).unwrap();
+    client.put(&wpolicy, &key, &bins).await.unwrap();
 
     bench.iter(|| client.get(&rpolicy, &key, Bins::All).unwrap());
 }
