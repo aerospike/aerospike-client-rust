@@ -135,19 +135,16 @@ fn unpack_value(buf: &mut Buffer) -> Result<Value> {
             Ok(unpack_blob(buf, count as usize)?)
         }
         0xc7 => {
-            warn!("Skipping over type extension with 8 bit header and bytes");
             let count = 1 + buf.read_u8(None);
             buf.skip_bytes(count as usize);
             Ok(Value::Nil)
         }
         0xc8 => {
-            warn!("Skipping over type extension with 16 bit header and bytes");
             let count = 1 + buf.read_u16(None);
             buf.skip_bytes(count as usize);
             Ok(Value::Nil)
         }
         0xc9 => {
-            warn!("Skipping over type extension with 32 bit header and bytes");
             let count = 1 + buf.read_u32(None);
             buf.skip_bytes(count as usize);
             Ok(Value::Nil)
@@ -163,31 +160,26 @@ fn unpack_value(buf: &mut Buffer) -> Result<Value> {
         0xd2 => Ok(Value::from(buf.read_i32(None))),
         0xd3 => Ok(Value::from(buf.read_i64(None))),
         0xd4 => {
-            warn!("Skipping over type extension with 1 byte");
             let count = (1 + 1) as usize;
             buf.skip_bytes(count);
             Ok(Value::Nil)
         }
         0xd5 => {
-            warn!("Skipping over type extension with 2 bytes");
             let count = (1 + 2) as usize;
             buf.skip_bytes(count);
             Ok(Value::Nil)
         }
         0xd6 => {
-            warn!("Skipping over type extension with 4 bytes");
             let count = (1 + 4) as usize;
             buf.skip_bytes(count);
             Ok(Value::Nil)
         }
         0xd7 => {
-            warn!("Skipping over type extension with 8 bytes");
             let count = (1 + 8) as usize;
             buf.skip_bytes(count);
             Ok(Value::Nil)
         }
         0xd8 => {
-            warn!("Skipping over type extension with 16 bytes");
             let count = (1 + 16) as usize;
             buf.skip_bytes(count);
             Ok(Value::Nil)
