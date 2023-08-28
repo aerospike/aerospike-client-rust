@@ -93,7 +93,7 @@ const AS_MSG_TYPE: u8 = 3;
 // MAX_BUFFER_SIZE protects against allocating massive memory blocks
 // for buffers. Tweak this number if you are returning a lot of
 // LDT elements in your queries.
-const MAX_BUFFER_SIZE: usize = 1024 * 1024 + 8; // 1 MB + header
+const MAX_BUFFER_SIZE: usize = 16 * 1024 * 1024 + 8; // 16 MB + header
 
 // Holds data buffer for the command
 #[derive(Debug, Default)]
