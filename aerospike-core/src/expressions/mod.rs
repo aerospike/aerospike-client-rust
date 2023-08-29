@@ -54,7 +54,7 @@ pub enum ExpType {
 
 #[derive(Debug, Clone, Copy)]
 #[doc(hidden)]
-pub(crate) enum ExpOp {
+pub enum ExpOp {
     Unknown = 0,
     EQ = 1,
     NE = 2,
@@ -145,7 +145,7 @@ pub struct FilterExpression {
 
 #[doc(hidden)]
 impl FilterExpression {
-    fn new(
+    pub fn new(
         cmd: Option<ExpOp>,
         val: Option<Value>,
         bin: Option<FilterExpression>,
