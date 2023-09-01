@@ -181,7 +181,7 @@ macro_rules! as_within_radius {
         let lng = as_val!($lng as f64);
         let radius = as_val!($radius as f64);
         let geo_json = format!(
-            "{{ \"type\": \"Aeroircle\", \"coordinates\": [[{:.8}, {:.8}], {}] }}",
+            "{{ \"type\": \"AeroCircle\", \"coordinates\": [[{:.8}, {:.8}], {}] }}",
             lng, lat, radius
         );
         let geo_json = as_geo!(geo_json);
@@ -198,7 +198,7 @@ macro_rules! as_within_radius {
         let lng = as_val!($lng as f64);
         let radius = as_val!($radius as f64);
         let geo_json = format!(
-            "{{ \"type\": \"Aeroircle\", \"coordinates\": [[{:.8}, {:.8}], {}] }}",
+            "{{ \"type\": \"AeroCircle\", \"coordinates\": [[{:.8}, {:.8}], {}] }}",
             lng, lat, radius
         );
         let geo_json = as_geo!(geo_json);
