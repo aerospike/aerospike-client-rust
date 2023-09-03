@@ -150,13 +150,14 @@ macro_rules! as_contains_range {
 macro_rules! as_within_region {
     ($bin_name:expr, $region:expr) => {{
         let cit = $crate::CollectionIndexType::Default;
+        let region_string = as_val!($region);
         let region = as_geo!(String::from($region));
         $crate::query::Filter::new(
             $bin_name,
             cit,
             region.particle_type(),
-            region.clone(),
-            region.clone(),
+            region_string.clone(),
+            region_string.clone(),
         )
     }};
     ($bin_name:expr, $region:expr, $cit:expr) => {{
@@ -184,13 +185,14 @@ macro_rules! as_within_radius {
             "{{ \"type\": \"AeroCircle\", \"coordinates\": [[{:.8}, {:.8}], {}] }}",
             lng, lat, radius
         );
+        let geo_string = as_val!(geo_json);
         let geo_json = as_geo!(geo_json);
         $crate::query::Filter::new(
             $bin_name,
             cit,
             geo_json.particle_type(),
-            geo_json.clone(),
-            geo_json.clone(),
+            geo_string.clone(),
+            geo_string.clone(),
         )
     }};
     ($bin_name:expr, $lat:expr, $lng:expr, $radius:expr, $cit:expr) => {{
@@ -201,13 +203,15 @@ macro_rules! as_within_radius {
             "{{ \"type\": \"AeroCircle\", \"coordinates\": [[{:.8}, {:.8}], {}] }}",
             lng, lat, radius
         );
+        let geo_string = as_val!(geo_json);
         let geo_json = as_geo!(geo_json);
+        
         $crate::query::Filter::new(
             $bin_name,
             $cit,
             geo_json.particle_type(),
-            geo_json.clone(),
-            geo_json.clone(),
+            geo_string.clone(),
+            geo_string.clone(),
         )
     }};
 }
@@ -219,22 +223,24 @@ macro_rules! as_regions_containing_point {
     ($bin_name:expr, $point:expr) => {{
         let cit = $crate::CollectionIndexType::Default;
         let point = as_geo!(String::from($point));
+        let point_string = as_val!($point);
         $crate::query::Filter::new(
             $bin_name,
             cit,
             point.particle_type(),
-            point.clone(),
-            point.clone(),
+            point_string.clone(),
+            point_string.clone(),
         )
     }};
     ($bin_name:expr, $point:expr, $cit:expr) => {{
         let point = as_geo!(String::from($point));
+        let point_string = as_val!($point);
         $crate::query::Filter::new(
             $bin_name,
             $cit,
             point.particle_type(),
-            point.clone(),
-            point.clone(),
+            point_string.clone(),
+            point_string.clone(),
         )
     }};
 }
