@@ -185,8 +185,7 @@ macro_rules! as_within_radius {
             "{{ \"type\": \"AeroCircle\", \"coordinates\": [[{:.8}, {:.8}], {}] }}",
             lng, lat, radius
         );
-        let geo_copy = geo_json.clone();
-        let geo_string = as_val!(geo_copy);
+        let geo_string = as_val!(geo_json.clone());
         let geo_json = as_geo!(geo_json);
         $crate::query::Filter::new(
             $bin_name,
@@ -205,8 +204,7 @@ macro_rules! as_within_radius {
             lng, lat, radius
         );
 
-        let geo_copy = geo_json.clone();
-        let geo_string = as_val!(geo_copy);
+        let geo_string = as_val!(geo_json.clone());
         let geo_json = as_geo!(geo_json);
         
         $crate::query::Filter::new(
