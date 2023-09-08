@@ -154,7 +154,7 @@ macro_rules! as_within_region {
         $crate::query::Filter::new(
             $bin_name,
             cit,
-            $crate::commands::ParticleType::GEOJSON,
+            $crate::ParticleType::GEOJSON,
             region.clone(),
             region.clone(),
         )
@@ -164,7 +164,7 @@ macro_rules! as_within_region {
         $crate::query::Filter::new(
             $bin_name,
             $cit,
-            $crate::commands::ParticleType::GEOJSON,
+            $crate::ParticleType::GEOJSON,
             region.clone(),
             region.clone(),
         )
@@ -188,7 +188,7 @@ macro_rules! as_within_radius {
         $crate::query::Filter::new(
             $bin_name,
             cit,
-            $crate::commands::ParticleType::GEOJSON,
+            $crate::ParticleType::GEOJSON,
             geo_json.clone(),
             geo_json.clone(),
         )
@@ -205,7 +205,7 @@ macro_rules! as_within_radius {
         $crate::query::Filter::new(
             $bin_name,
             $cit,
-            $crate::commands::ParticleType::GEOJSON,
+            $crate::ParticleType::GEOJSON,
             geo_json.clone(),
             geo_json.clone(),
         )
@@ -222,7 +222,7 @@ macro_rules! as_regions_containing_point {
         $crate::query::Filter::new(
             $bin_name,
             cit,
-            $crate::commands::ParticleType::GEOJSON,
+            $crate::ParticleType::GEOJSON,
             point.clone(),
             point.clone(),
         )
@@ -232,7 +232,7 @@ macro_rules! as_regions_containing_point {
         $crate::query::Filter::new(
             $bin_name,
             $cit,
-            $crate::commands::ParticleType::GEOJSON,
+            $crate::ParticleType::GEOJSON,
             point.clone(),
             point.clone(),
         )
