@@ -395,6 +395,24 @@ pub fn blob_bin(name: String) -> FilterExpression {
     )
 }
 
+/// Create boolean bin expression.
+/// ```
+/// // String bin "a" == [1,2,3]
+/// use aerospike::expressions::{eq, bool_bin, bool_val};
+/// let b: bool = true;
+/// eq(bool_bin("a".to_string()), bool_val(b));
+/// ```
+pub fn bool_bin(name: String) -> FilterExpression {
+    FilterExpression::new(
+        Some(ExpOp::Bin),
+        Some(Value::from(name)),
+        None,
+        None,
+        Some(ExpType::BOOL),
+        None,
+    )
+}
+
 /// Create 64 bit float bin expression.
 /// ```
 /// use aerospike::expressions::{float_val, float_bin, eq};
