@@ -279,7 +279,7 @@ impl Client {
         command.execute().await
     }
 
-    /// Add integer bin values to existing record bin values. The policy specifies the transaction
+    /// Add integer or float bin values to existing or new record bin values. The policy specifies the transaction
     /// timeout, record expiration and how the transaction is handled when the record already
     /// exists. This call only works for integer values.
     ///
@@ -307,7 +307,7 @@ impl Client {
         command.execute().await
     }
 
-    /// Append bin string values to existing record bin values. The policy specifies the
+    /// Append bin string or blob values to existing or new record bin values. The policy specifies the
     /// transaction timeout, record expiration and how the transaction is handled when the record
     /// already exists. This call only works for string values.
     pub async fn append(&self, policy: &WritePolicy, key: &Key, bins: &[Bin]) -> Result<()> {
@@ -321,7 +321,7 @@ impl Client {
         command.execute().await
     }
 
-    /// Prepend bin string values to existing record bin values. The policy specifies the
+    /// Prepend bin string or blob values to existing or new record bin values. The policy specifies the
     /// transaction timeout, record expiration and how the transaction is handled when the record
     /// already exists. This call only works for string values.
     pub async fn prepend(&self, policy: &WritePolicy, key: &Key, bins: &[Bin]) -> Result<()> {
