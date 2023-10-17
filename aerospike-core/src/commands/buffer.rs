@@ -236,7 +236,7 @@ impl Buffer {
     }
 
     // Writes the command for exist operations
-    pub fn set_exists(&mut self, policy: &WritePolicy, key: &Key) -> Result<()> {
+    pub fn set_exists(&mut self, policy: &ReadPolicy, key: &Key) -> Result<()> {
         self.begin();
         let mut field_count = self.estimate_key_size(key, false);
         let filter_size = self.estimate_filter_size(policy.filter_expression());
@@ -245,13 +245,7 @@ impl Buffer {
         }
 
         self.size_buffer()?;
-        self.write_header(
-            &policy.base_policy,
-            INFO1_READ | INFO1_NOBINDATA,
-            0,
-            field_count,
-            0,
-        );
+        self.write_header(&policy, INFO1_READ | INFO1_NOBINDATA, 0, field_count, 0);
         self.write_key(key, false);
 
         if let Some(filter) = policy.filter_expression() {

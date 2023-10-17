@@ -87,7 +87,7 @@ async fn connect() {
     let record = client.get(&policy, &key, Bins::None).await.unwrap();
     assert_eq!(record.bins.len(), 0);
 
-    let exists = client.exists(&wpolicy, &key).await.unwrap();
+    let exists = client.exists(&policy, &key).await.unwrap();
     assert!(exists);
 
     let bin = as_bin!("bin999", "test string");
