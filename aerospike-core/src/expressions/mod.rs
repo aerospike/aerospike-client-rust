@@ -1090,7 +1090,7 @@ pub fn num_ceil(num: FilterExpression) -> FilterExpression {
     }
 }
 
-/// Create expression that converts an integer to a float.
+/// Create expression that converts a float to an integer.
 /// Requires server version 5.6.0+.
 /// ```
 /// // int(2.5) == 2
@@ -1109,7 +1109,7 @@ pub fn to_int(num: FilterExpression) -> FilterExpression {
     }
 }
 
-/// Create expression that converts a float to an integer.
+/// Create expression that converts an integer to a float.
 /// Requires server version 5.6.0+.
 /// ```
 /// // float(2) == 2.0
