@@ -363,7 +363,7 @@ impl Client {
     }
 
     /// Determine if a record key exists. The policy can be used to specify timeouts.
-    pub fn exists(&self, policy: &WritePolicy, key: &Key) -> Result<bool> {
+    pub fn exists(&self, policy: &ReadPolicy, key: &Key) -> Result<bool> {
         self.rt
             .handle()
             .block_on(self.async_client.exists(policy, key))
