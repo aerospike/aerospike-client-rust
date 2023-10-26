@@ -61,26 +61,31 @@ impl Queue {
     }
 
     pub async fn get(&self) -> Result<PooledConnection> {
-        let mut conn = {
+        let mut connections_to_free = Vec::new();
+        let mut conn: Option<Connection> = None;
+        {
             let mut internals = self.0.internals.lock().unwrap();
-            if let Some(IdleConnection(conn)) = internals.connections.pop_front() {
-                Some(conn)
-            } else {
+            while let Some(IdleConnection(this_conn)) = internals.connections.pop_front() {
+                if this_conn.is_idle() {
+                    connections_to_free.push(this_conn);
+                    internals.num_conns -= 1;
+                } else {
+                    conn = Some(this_conn);
+                    break;
+                }
+            }
+
+            if conn.is_none() {
                 if internals.num_conns >= self.0.capacity {
                     bail!(ErrorKind::NoMoreConnections);
                 }
     
                 internals.num_conns += 1;
-                None
             }
-        };
+        }
 
-        if let Some(current_con) = conn.as_mut() {
-            if current_con.is_idle() {
-                current_con.close().await;
-                conn = None;
-                // We will replace this connection, don't touch the count
-            }
+        for mut connection in connections_to_free {
+            connection.close().await;
         }
 
         if conn.is_none() {
@@ -91,9 +96,7 @@ impl Queue {
             .await;
 
             let Ok(Ok(new_conn)) = new_conn else {
-                let mut internals = self.0.internals.lock().unwrap();
-                internals.num_conns -= 1;
-                drop(internals);
+                self.0.internals.lock().unwrap().num_conns -= 1;
                 bail!(ErrorKind::Connection(
                     "Could not open network connection".to_string()
                 ));
