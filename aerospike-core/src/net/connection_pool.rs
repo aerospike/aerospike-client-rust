@@ -20,8 +20,7 @@ use std::sync::Arc;
 use crate::errors::{Error, ErrorKind, Result};
 use crate::net::{Connection, Host};
 use crate::policy::ClientPolicy;
-use futures::executor::block_on;
-use futures::lock::Mutex;
+use std::sync::Mutex;
 use std::collections::VecDeque;
 use std::time::Duration;
 
@@ -36,6 +35,7 @@ struct QueueInternals {
 
 #[derive(Debug)]
 struct SharedQueue {
+    // SYNCHRONOUS LOCK! Do not hold across an await point or it _will_ deadlock.
     internals: Mutex<QueueInternals>,
     capacity: usize,
     host: Host,
@@ -61,36 +61,37 @@ impl Queue {
     }
 
     pub async fn get(&self) -> Result<PooledConnection> {
-        let mut internals = self.0.internals.lock().await;
-        let connection;
-        loop {
-            if let Some(IdleConnection(mut conn)) = internals.connections.pop_front() {
-                if conn.is_idle() {
-                    internals.num_conns -= 1;
-                    conn.close().await;
-                    continue;
+        let mut conn = {
+            let mut internals = self.0.internals.lock().unwrap();
+            if let Some(IdleConnection(conn)) = internals.connections.pop_front() {
+                Some(conn)
+            } else {
+                if internals.num_conns >= self.0.capacity {
+                    bail!(ErrorKind::NoMoreConnections);
                 }
-                connection = conn;
-                break;
+    
+                internals.num_conns += 1;
+                None
             }
+        };
 
-            if internals.num_conns >= self.0.capacity {
-                bail!(ErrorKind::NoMoreConnections);
+        if let Some(current_con) = conn.as_mut() {
+            if current_con.is_idle() {
+                current_con.close().await;
+                conn = None;
+                // We will replace this connection, don't touch the count
             }
+        }
 
-            internals.num_conns += 1;
-
-            // Free the lock to prevent deadlocking
-            drop(internals);
-
-            let conn = aerospike_rt::timeout(
+        if conn.is_none() {
+            let new_conn = aerospike_rt::timeout(
                 Duration::from_secs(5),
                 Connection::new(&self.0.host.address(), &self.0.policy),
             )
             .await;
 
-            let Ok(Ok(conn)) = conn else {
-                let mut internals = self.0.internals.lock().await;
+            let Ok(Ok(new_conn)) = new_conn else {
+                let mut internals = self.0.internals.lock().unwrap();
                 internals.num_conns -= 1;
                 drop(internals);
                 bail!(ErrorKind::Connection(
@@ -98,40 +99,42 @@ impl Queue {
                 ));
             };
 
-            connection = conn;
-            break;
+            conn = Some(new_conn);
         }
 
         Ok(PooledConnection {
             queue: self.clone(),
-            conn: Some(connection),
+            conn,
         })
     }
 
-    pub async fn put_back(&self, mut conn: Connection) {
-        let mut internals = self.0.internals.lock().await;
+    pub fn put_back(&self, mut conn: Connection) {
+        let mut internals = self.0.internals.lock().unwrap();
         if internals.num_conns < self.0.capacity {
             internals.connections.push_back(IdleConnection(conn));
         } else {
-            conn.close().await;
+            aerospike_rt::spawn(async move { conn.close().await });
             internals.num_conns -= 1;
         }
     }
 
-    pub async fn drop_conn(&self, mut conn: Connection) {
+    pub fn drop_conn(&self, mut conn: Connection) {
         {
-            let mut internals = self.0.internals.lock().await;
+            let mut internals = self.0.internals.lock().unwrap();
             internals.num_conns -= 1;
         }
-        conn.close().await;
+        aerospike_rt::spawn(async move { conn.close().await });
     }
 
     pub async fn clear(&mut self) {
-        let mut internals = self.0.internals.lock().await;
-        for mut conn in internals.connections.drain(..) {
+        let connections = {
+            let mut internals = self.0.internals.lock().unwrap();
+            internals.num_conns = 0;
+            std::mem::take(&mut internals.connections)
+        };
+        for mut conn in connections {
             conn.0.close().await;
         }
-        internals.num_conns = 0;
     }
 }
 
@@ -215,14 +218,14 @@ pub struct PooledConnection {
 impl PooledConnection {
     pub fn invalidate(mut self) {
         let conn = self.conn.take().unwrap();
-        block_on(self.queue.drop_conn(conn));
+        self.queue.drop_conn(conn);
     }
 }
 
 impl Drop for PooledConnection {
     fn drop(&mut self) {
         if let Some(conn) = self.conn.take() {
-            block_on(self.queue.put_back(conn));
+            self.queue.put_back(conn);
         }
     }
 }

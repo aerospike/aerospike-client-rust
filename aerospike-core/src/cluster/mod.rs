@@ -244,36 +244,26 @@ impl Cluster {
         let deadline = Instant::now() + timeout;
         let sleep_between_tend = Duration::from_millis(1);
 
-        let handle = aerospike_rt::spawn(async move {
-            let mut count: isize = -1;
-            loop {
-                if Instant::now() > deadline {
-                    break;
-                }
-
-                if let Err(err) = cluster.tend().await {
-                    log_error_chain!(err, "Error during initial cluster tend");
-                }
-
-                let old_count = count;
-                count = cluster.nodes().await.len() as isize;
-                if count == old_count {
-                    break;
-                }
-
-                aerospike_rt::sleep(sleep_between_tend).await;
+        let mut count: isize = -1;
+        loop {
+            if Instant::now() > deadline {
+                break;
             }
-        });
 
-        #[cfg(all(feature = "rt-tokio", not(feature = "rt-async-std")))]
-        return handle
-            .await
-            .map_err(|err| format!("Error during initial cluster tend: {:?}", err).into());
-        #[cfg(all(feature = "rt-async-std", not(feature = "rt-tokio")))]
-        return {
-            handle.await;
-            Ok(())
-        };
+            if let Err(err) = cluster.tend().await {
+                log_error_chain!(err, "Error during initial cluster tend");
+            }
+
+            let old_count = count;
+            count = cluster.nodes().await.len() as isize;
+            if count == old_count {
+                break;
+            }
+
+            aerospike_rt::sleep(sleep_between_tend).await;
+        }
+        
+        Ok(())
     }
 
     pub const fn cluster_name(&self) -> &Option<String> {
