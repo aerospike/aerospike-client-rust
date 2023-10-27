@@ -28,7 +28,7 @@ aerospike-sync = {path = "./aerospike-sync", optional = true}
 aerospike-macro = {path = "./aerospike-macro", optional = true}
 
 [features]
-default = ["async", "serialization"]
+default = ["async", "serialization", "rt-tokio"]
 serialization = ["aerospike-core/serialization"]
 async = ["aerospike-core"]
 sync = ["aerospike-sync"]
@@ -50,6 +50,7 @@ bencher = "0.1"
 serde_json = "1.0"
 rand = "0.7"
 lazy_static = "1.4"
+ripemd = "0.1"
 aerospike-macro = {path = "./aerospike-macro"}
 aerospike-rt = {path = "./aerospike-rt"}
 futures = {version = "0.3.16" }

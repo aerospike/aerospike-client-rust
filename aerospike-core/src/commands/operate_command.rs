@@ -37,7 +37,7 @@ impl<'a> OperateCommand<'a> {
         operations: &'a [Operation<'a>],
     ) -> Self {
         OperateCommand {
-            read_command: ReadCommand::new(&policy.base_policy, cluster, key, Bins::All),
+            read_command: ReadCommand::new(&policy.base_policy, cluster, key, Bins::All, crate::policy::Replica::Master),
             policy,
             operations,
         }
@@ -71,7 +71,7 @@ impl<'a> Command for OperateCommand<'a> {
         )
     }
 
-    async fn get_node(&self) -> Result<Arc<Node>> {
+    async fn get_node(&mut self) -> Result<Arc<Node>> {
         self.read_command.get_node().await
     }
 

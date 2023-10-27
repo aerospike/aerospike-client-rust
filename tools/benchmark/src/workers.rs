@@ -28,6 +28,7 @@ use aerospike::{Client, ErrorKind, Key, ReadPolicy, ResultCode, WritePolicy};
 use generator::KeyRange;
 use percent::Percent;
 use stats::Histogram;
+use futures::executor::block_on;
 
 lazy_static! {
     // How frequently workers send stats to the collector
@@ -51,7 +52,7 @@ impl FromStr for Workload {
         match parts.next() {
             Some("RU") => {
                 let read_pct = Percent::from_str(parts.next().unwrap_or("100"))?;
-                Ok(Workload::ReadUpdate { read_pct: read_pct })
+                Ok(Workload::ReadUpdate { read_pct })
             }
             Some("I") => Ok(Workload::Initialize),
             _ => Err(String::from("Invalid workload definition")),
@@ -78,7 +79,7 @@ impl Worker {
         Worker {
             histogram: Histogram::new(),
             collector: sender,
-            task: task,
+            task,
         }
     }
 
@@ -128,7 +129,7 @@ pub struct InsertTask {
 impl InsertTask {
     pub fn new(client: Arc<Client>) -> Self {
         InsertTask {
-            client: client,
+            client,
             policy: WritePolicy::default(),
         }
     }
@@ -138,7 +139,7 @@ impl Task for InsertTask {
     fn execute(&self, key: &Key) -> Status {
         let bin = as_bin!("int", random::<i64>());
         trace!("Inserting {}", key);
-        self.status(self.client.put(&self.policy, key, &[&bin]))
+        self.status(block_on(self.client.put(&self.policy, key, &[bin])))
     }
 }
 
@@ -152,10 +153,10 @@ pub struct ReadUpdateTask {
 impl ReadUpdateTask {
     pub fn new(client: Arc<Client>, reads: Percent) -> Self {
         ReadUpdateTask {
-            client: client,
+            client,
             rpolicy: ReadPolicy::default(),
             wpolicy: WritePolicy::default(),
-            reads: reads,
+            reads,
         }
     }
 }
@@ -164,11 +165,11 @@ impl Task for ReadUpdateTask {
     fn execute(&self, key: &Key) -> Status {
         if self.reads >= random() {
             trace!("Reading {}", key);
-            self.status(self.client.get(&self.rpolicy, key, ["int"]).map(|_| ()))
+            self.status(block_on(self.client.get(&self.rpolicy, key, ["int"])).map(|_| ()))
         } else {
             trace!("Writing {}", key);
             let bin = as_bin!("int", random::<i64>());
-            self.status(self.client.put(&self.wpolicy, key, &[&bin]))
+            self.status(block_on(self.client.put(&self.wpolicy, key, &[bin])))
         }
     }
 }

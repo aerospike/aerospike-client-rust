@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::time::Duration;
 
 use crate::commands::admin_command::AdminCommand;
@@ -83,6 +83,15 @@ pub struct ClientPolicy {
     /// to join the client's view of the cluster. Should only be set when connecting to servers
     /// that support the "cluster-name" info command.
     pub cluster_name: Option<String>,
+
+    /// Mark this client as belonging to a rack, and track server rack data.  This field is useful when directing read commands to 
+	/// the server node that contains the key and exists on the same rack as the client.
+    /// This serves to lower cloud provider costs when nodes are distributed across different
+	/// racks/data centers.
+	///
+	/// Replica.PreferRack and server rack configuration must
+	/// also be set to enable this functionality.
+    pub rack_ids: Option<HashSet<usize>>,
 }
 
 impl Default for ClientPolicy {
@@ -100,6 +109,7 @@ impl Default for ClientPolicy {
             thread_pool_size: 128,
             cluster_name: None,
             buffer_reclaim_threshold: 65536,
+            rack_ids: None,
         }
     }
 }

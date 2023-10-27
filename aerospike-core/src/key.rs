@@ -19,8 +19,8 @@ use std::result::Result as StdResult;
 use crate::errors::Result;
 use crate::Value;
 
-use ripemd160::digest::Digest;
-use ripemd160::Ripemd160;
+use ripemd::digest::Digest;
+use ripemd::Ripemd160;
 #[cfg(feature = "serialization")]
 use serde::Serialize;
 /// Unique record identifier. Records can be identified using a specified namespace, an optional
@@ -66,14 +66,14 @@ impl Key {
 
     fn compute_digest(&mut self) -> Result<()> {
         let mut hash = Ripemd160::new();
-        hash.input(self.set_name.as_bytes());
+        hash.update(self.set_name.as_bytes());
         if let Some(ref user_key) = self.user_key {
-            hash.input(&[user_key.particle_type() as u8]);
+            hash.update(&[user_key.particle_type() as u8]);
             user_key.write_key_bytes(&mut hash)?;
         } else {
             unreachable!();
         }
-        self.digest = hash.result().into();
+        self.digest = hash.finalize().into();
 
         Ok(())
     }
