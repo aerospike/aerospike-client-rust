@@ -52,8 +52,7 @@ pub struct Node {
     refresh_count: AtomicUsize,
     reference_count: AtomicUsize,
     responded: AtomicBool,
-    active: AtomicBool,
-
+    active: AtomicBool
     features: NodeFeatures,
 }
 
@@ -97,7 +96,6 @@ impl Node {
     pub fn host(&self) -> Host {
         self.host.clone()
     }
-
     // Returns what the node can do
     pub const fn features(&self) -> &NodeFeatures {
         &self.features
