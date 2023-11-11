@@ -42,7 +42,7 @@ pub struct Connection {
 }
 
 impl Connection {
-    pub async fn new(addr: &str, policy: &ClientPolicy) -> Result<Self> {
+    pub async fn new(addr: &str, policy: &mut ClientPolicy) -> Result<Self> {
         let stream = aerospike_rt::timeout(Duration::from_secs(10), TcpStream::connect(addr)).await;
         if stream.is_err() {
             bail!(ErrorKind::Connection(
@@ -56,7 +56,12 @@ impl Connection {
             idle_timeout: policy.idle_timeout,
             idle_deadline: policy.idle_timeout.map(|timeout| Instant::now() + timeout),
         };
-        conn.authenticate(&policy.user_password).await?;
+        if policy.requires_auth(){
+            if let Some(password) = &policy.password {
+                let hashed_password = AdminCommand::hash_password(password)?;
+                conn.authenticate(policy.username.clone(), Some(hashed_password)).await?;
+            }
+        }
         conn.refresh();
         Ok(conn)
     }
@@ -108,18 +113,18 @@ impl Connection {
         };
     }
 
-    async fn authenticate(&mut self, user_password: &Option<(String, String)>) -> Result<()> {
-        if let Some((ref user, ref password)) = *user_password {
-            return match AdminCommand::authenticate(self, user, password).await {
+    async fn authenticate(&mut self, username: Option<String>, password: Option<String>) -> Result<()> {
+        if let (Some(user), Some(pass)) = (username.as_ref(), password.as_ref()) {
+            match AdminCommand::authenticate(self, user, pass).await {
                 Ok(()) => Ok(()),
                 Err(err) => {
                     self.close().await;
                     Err(err)
                 }
-            };
+            }
+        } else {
+            Ok(())
         }
-
-        Ok(())
     }
 
     pub fn bookmark(&mut self) {

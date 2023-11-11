@@ -17,12 +17,17 @@ use std::time::Duration;
 
 use crate::commands::admin_command::AdminCommand;
 use crate::errors::Result;
+use crate::user;
 
 /// `ClientPolicy` encapsulates parameters for client policy command.
 #[derive(Debug, Clone)]
 pub struct ClientPolicy {
     /// User authentication to cluster. Leave empty for clusters running without restricted access.
-    pub user_password: Option<(String, String)>,
+    pub username: Option<String>,
+
+    // Password authentication to cluster. The password will be stored by the client and sent to server
+	// in hashed format. Leave empty for clusters running without restricted access.
+    pub password: Option<String>,
 
     /// Initial host connection timeout in milliseconds.  The timeout when opening a connection
     /// to the server host for the first time.
@@ -88,7 +93,8 @@ pub struct ClientPolicy {
 impl Default for ClientPolicy {
     fn default() -> ClientPolicy {
         ClientPolicy {
-            user_password: None,
+            username: None,
+            password: None,
             timeout: Some(Duration::new(30, 0)),
             idle_timeout: Some(Duration::new(5, 0)),
             max_conns_per_node: 256,
@@ -106,9 +112,10 @@ impl Default for ClientPolicy {
 
 impl ClientPolicy {
     /// Set username and password to use when authenticating to the cluster.
-    pub fn set_user_password(&mut self, username: String, password: String) -> Result<()> {
-        let password = AdminCommand::hash_password(&password)?;
-        self.user_password = Some((username, password));
-        Ok(())
+    pub fn requires_auth(&mut self) -> bool {
+        if self.username == None || self.password == None {
+            return false;
+        }
+        return true;
     }
 }
