@@ -14,7 +14,7 @@
 // the License.
 
 use crate::common;
-use env_logger;
+
 
 use aerospike::expressions::hll::*;
 use aerospike::expressions::lists::*;

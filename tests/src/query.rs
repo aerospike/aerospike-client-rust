@@ -18,7 +18,7 @@ use std::sync::Arc;
 use std::thread;
 
 use crate::common;
-use env_logger;
+
 
 use aerospike::Task;
 use aerospike::*;

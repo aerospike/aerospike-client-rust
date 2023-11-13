@@ -14,7 +14,7 @@
 // the License.
 
 use crate::common;
-use env_logger;
+
 
 use aerospike::operations::bitwise;
 use aerospike::operations::bitwise::{BitPolicy, BitwiseOverflowActions};

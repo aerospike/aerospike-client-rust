@@ -15,7 +15,7 @@
 use aerospike::{
     as_bin, as_blob, as_geo, as_key, as_list, as_map, as_val, Bins, ReadPolicy, WritePolicy,
 };
-use env_logger;
+
 
 use crate::common;
 

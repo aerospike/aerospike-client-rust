@@ -73,7 +73,7 @@ async fn index_task_test() {
     let index_name = common::rand_str(10);
 
     let wpolicy = WritePolicy::default();
-    for i in 0..2 as i64 {
+    for i in 0..2_i64 {
         let key = as_key!(namespace, &set_name, i);
         let wbin = as_bin!(&bin_name, i);
         let bins = vec![wbin];
@@ -82,7 +82,7 @@ async fn index_task_test() {
 
     let index_task = client
         .create_index(
-            &namespace,
+            namespace,
             &set_name,
             &bin_name,
             &index_name,

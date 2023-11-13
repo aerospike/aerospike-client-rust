@@ -1,5 +1,5 @@
 use crate::common;
-use env_logger;
+
 
 use aerospike::expressions::maps::*;
 use aerospike::expressions::*;

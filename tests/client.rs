@@ -61,16 +61,14 @@ async fn close() {
     let client = Client::new(common::client_policy(), &common::hosts())
         .await
         .unwrap();
-    assert_eq!(
+    assert!(
         client.is_connected().await,
-        true,
         "The client is not connected"
     );
 
     if let Ok(()) = client.close().await {
-        assert_eq!(
-            client.is_connected().await,
-            false,
+        assert!(
+            !(client.is_connected().await),
             "The client did not disconnect"
         );
     } else {

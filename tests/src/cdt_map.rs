@@ -16,7 +16,7 @@
 use std::collections::HashMap;
 
 use crate::common;
-use env_logger;
+
 
 use aerospike::operations::cdt_context::{ctx_map_key, ctx_map_key_create};
 use aerospike::operations::{maps, MapOrder};
@@ -111,7 +111,7 @@ async fn map_operations() {
     let bin = as_bin!(bin_name, val);
     let bins = vec![bin];
 
-    client.put(&wpolicy, &key, &bins.as_slice()).await.unwrap();
+    client.put(&wpolicy, &key, bins.as_slice()).await.unwrap();
 
     let op = maps::get_by_index(bin_name, 0, MapReturnType::Value);
     let rec = client.operate(&wpolicy, &key, &[op]).await.unwrap();

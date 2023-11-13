@@ -17,7 +17,7 @@
 
 use std::env;
 
-use rand;
+
 use rand::distributions::Alphanumeric;
 use rand::Rng;
 
@@ -41,15 +41,15 @@ lazy_static! {
 }
 
 pub fn hosts() -> &'static str {
-    &*AEROSPIKE_HOSTS
+    &AEROSPIKE_HOSTS
 }
 
 pub fn namespace() -> &'static str {
-    &*AEROSPIKE_NAMESPACE
+    &AEROSPIKE_NAMESPACE
 }
 
 pub fn client_policy() -> &'static ClientPolicy {
-    &*GLOBAL_CLIENT_POLICY
+    &GLOBAL_CLIENT_POLICY
 }
 
 pub async fn client() -> Client {
