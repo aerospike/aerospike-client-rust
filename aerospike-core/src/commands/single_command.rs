@@ -32,6 +32,17 @@ pub struct SingleCommand<'a> {
     replica: crate::policy::Replica,
 }
 
+pub async fn try_with_timeout<O, F: futures::Future<Output = Result<O>>> (deadline: Option<Instant>, future: F) -> Result<O> {
+    if let Some(deadline) = deadline {
+        aerospike_rt::timeout_at(deadline, future).await.unwrap_or_else(
+            move |_|{
+                Err(ErrorKind::Connection("Timeout".to_string()).into())
+        })
+    } else {
+        future.await
+    }
+}
+
 impl<'a> SingleCommand<'a> {
     pub fn new(cluster: Arc<Cluster>, key: &'a Key, replica: crate::policy::Replica,) -> Self {
         let partition = Partition::new_by_key(key);
@@ -113,46 +124,34 @@ impl<'a> SingleCommand<'a> {
                 }
             };
 
-            let try_once = async {
-                if let Err(e) = cmd.prepare_buffer(&mut conn)
-                    .chain_err(|| "Failed to prepare send buffer") {
-                    Some(Err(e))
-                }
-                else if let Err(e) = cmd.write_timeout(&mut conn, policy.timeout()).await
-                    .chain_err(|| "Failed to set timeout for send buffer") {
-                    Some(Err(e))
-                }
-                // Send command.
-                else if let Err(err) = cmd.write_buffer(&mut conn).await {
-                    // IO errors are considered temporary anomalies. Retry.
-                    // Close socket to flush out possible garbage. Do not put back in pool.
-                    conn.invalidate();
-                    warn!("Node {}: {}", node, err);
-                    None
-                }
-                // Parse results.
-                else if let Err(err) = cmd.parse_result(&mut conn).await {
-                    // close the connection
-                    // cancelling/closing the batch/multi commands will return an error, which will
-                    // close the connection to throw away its data and signal the server about the
-                    // situation. We will not put back the connection in the buffer.
-                    if !commands::keep_connection(&err) {
-                        conn.invalidate();
-                    }
-                    Some(Err(err))
-                } else {
-                    Some(Ok(()))
-                }
-            };
+            cmd.prepare_buffer(&mut conn)
+                .chain_err(|| "Failed to prepare send buffer")?;
 
-            let result = if let Some(deadline) = deadline {
-                aerospike_rt::timeout_at(deadline, try_once).await.unwrap_or_else(|_|Some(Err(ErrorKind::Connection("Timeout".to_string()).into())))
+            try_with_timeout(deadline, cmd.write_timeout(&mut conn, policy.timeout()))
+                .await
+                .chain_err(|| "Failed to set timeout for send buffer")?;
+
+            // Send command.
+            if let Err(err) = try_with_timeout(deadline, cmd.write_buffer(&mut conn)).await {
+                // IO errors are considered temporary anomalies. Retry.
+                // Close socket to flush out possible garbage. Do not put back in pool.
+                conn.invalidate();
+                warn!("Node {}: {}", node, err);
+                continue;
+            }
+
+            // Parse results.
+            if let Err(err) = try_with_timeout(deadline, cmd.parse_result(&mut conn)).await {
+                // close the connection
+                // cancelling/closing the batch/multi commands will return an error, which will
+                // close the connection to throw away its data and signal the server about the
+                // situation. We will not put back the connection in the buffer.
+                if !commands::keep_connection(&err) {
+                    conn.invalidate();
+                }
+                return Err(err);
             } else {
-                try_once.await
-            };
-            
-            if let Some(result) = result {
-                return result;
+                return Ok(());
             }
         }
 

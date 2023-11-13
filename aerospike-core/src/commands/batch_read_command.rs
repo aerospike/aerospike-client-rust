@@ -57,12 +57,7 @@ impl BatchReadCommand {
         loop {
             let success = if iterations & 1 == 0 || matches!(self.policy.replica, Replica::Master) {
                 // For even iterations, we request all keys from the same node for efficiency.
-                let try_once = Self::request_group(&mut self.batch_reads, &self.policy, self.node.clone());
-                if let Some(deadline) = deadline {
-                    aerospike_rt::timeout_at(deadline, try_once).await.unwrap_or_else(|_|Err(ErrorKind::Connection("Timeout".to_string()).into()))
-                } else {
-                    try_once.await
-                }?
+                Self::request_group(&mut self.batch_reads, &self.policy, self.node.clone(), deadline).await?
             } else {
                 // However, for odd iterations try the second choice for each. Instead of re-sharding the batch (as the second choice may not correspond to the first), just try each by itself.
                 let mut all_successful = true;
@@ -71,15 +66,7 @@ impl BatchReadCommand {
                     let partition = Partition::new_by_key(&individual_read[0].0.key);
                     let node = cluster.get_node(&partition, self.policy.replica, Arc::downgrade(&self.node))?;
 
-                    let try_once = Self::request_group(individual_read, &self.policy, node);
-
-                    let result = if let Some(deadline) = deadline {
-                        aerospike_rt::timeout_at(deadline, try_once).await.unwrap_or_else(|_|Err(ErrorKind::Connection("Timeout".to_string()).into()))
-                    } else {
-                        try_once.await
-                    }?;
-
-                    if !result {
+                    if !Self::request_group(individual_read, &self.policy, node, deadline).await? {
                         all_successful = false;
                         break;
                     }
@@ -118,7 +105,7 @@ impl BatchReadCommand {
         }
     }
 
-    async fn request_group(batch_reads: &mut [(BatchRead, usize)], policy: &BatchPolicy, node: Arc<Node>) -> Result<bool> {
+    async fn request_group(batch_reads: &mut [(BatchRead, usize)], policy: &BatchPolicy, node: Arc<Node>, deadline: Option<Instant>) -> Result<bool> {
         let mut conn = match node.get_connection().await {
             Ok(conn) => conn,
             Err(err) => {
@@ -134,7 +121,7 @@ impl BatchReadCommand {
         conn.buffer.write_timeout(policy.base().timeout());
 
         // Send command.
-        if let Err(err) = conn.flush().await {
+        if let Err(err) = commands::single_command::try_with_timeout(deadline, conn.flush()).await {
             // IO errors are considered temporary anomalies. Retry.
             // Close socket to flush out possible garbage. Do not put back in pool.
             conn.invalidate();
@@ -143,7 +130,7 @@ impl BatchReadCommand {
         }
 
         // Parse results.
-        if let Err(err) = Self::parse_result(batch_reads, &mut conn).await {
+        if let Err(err) = commands::single_command::try_with_timeout(deadline, Self::parse_result(batch_reads, &mut conn)).await {
             // close the connection
             // cancelling/closing the batch/multi commands will return an error, which will
             // close the connection to throw away its data and signal the server about the
