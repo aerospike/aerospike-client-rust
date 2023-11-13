@@ -42,7 +42,7 @@ impl RegisterTask {
 impl Task for RegisterTask {
     /// Query the status of index creation across all nodes
     async fn query_status(&self) -> Result<Status> {
-        let nodes = self.cluster.nodes().await;
+        let nodes = self.cluster.nodes();
 
         if nodes.is_empty() {
             bail!(ErrorKind::Connection("No connected node".to_string()))

@@ -115,8 +115,8 @@ impl<'a> Command for ReadCommand<'a> {
             .set_read(self.policy, self.single_command.key, &self.bins)
     }
 
-    async fn get_node(&mut self) -> Result<Arc<Node>> {
-        self.single_command.get_node().await
+    fn get_node(&mut self) -> Result<Arc<Node>> {
+        self.single_command.get_node()
     }
 
     async fn parse_result(&mut self, conn: &mut Connection) -> Result<()> {

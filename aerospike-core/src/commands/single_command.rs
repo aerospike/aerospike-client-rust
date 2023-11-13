@@ -44,8 +44,8 @@ impl<'a> SingleCommand<'a> {
         }
     }
 
-    pub async fn get_node(&mut self) -> Result<Arc<Node>> {
-        let this_time = self.cluster.get_node(&self.partition, self.replica, self.last_tried.clone()).await?;
+    pub fn get_node(&mut self) -> Result<Arc<Node>> {
+        let this_time = self.cluster.get_node(&self.partition, self.replica, self.last_tried.clone())?;
         self.last_tried = Arc::downgrade(&this_time);
         Ok(this_time)
     }
@@ -100,8 +100,7 @@ impl<'a> SingleCommand<'a> {
             }
 
             // set command node, so when you return a record it has the node
-            let node_future = cmd.get_node();
-            let node = match node_future.await {
+            let node = match cmd.get_node() {
                 Ok(node) => node,
                 Err(_) => continue, // Node is currently inactive. Retry.
             };

@@ -200,7 +200,7 @@ impl Command for StreamCommand {
         unreachable!()
     }
 
-    async fn get_node(&mut self) -> Result<Arc<Node>> {
+    fn get_node(&mut self) -> Result<Arc<Node>> {
         Ok(self.node.clone())
     }
 

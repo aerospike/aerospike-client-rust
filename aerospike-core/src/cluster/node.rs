@@ -26,7 +26,6 @@ use crate::commands::Message;
 use crate::errors::{ErrorKind, Result, ResultExt};
 use crate::net::{ConnectionPool, Host, PooledConnection};
 use crate::policy::ClientPolicy;
-use aerospike_rt::RwLock;
 
 pub const PARTITIONS: usize = 4096;
 pub const PARTITION_GENERATION: &str = "partition-generation";
@@ -39,7 +38,7 @@ pub struct Node {
     client_policy: ClientPolicy,
     name: String,
     host: Host,
-    aliases: RwLock<Vec<Host>>,
+    aliases: std::sync::Mutex<Vec<Host>>,
     address: String,
 
     connection_pool: ConnectionPool,
@@ -63,7 +62,7 @@ impl Node {
         Node {
             client_policy: client_policy.clone(),
             name: nv.name.clone(),
-            aliases: RwLock::new(nv.aliases.clone()),
+            aliases: std::sync::Mutex::new(nv.aliases.clone()),
             address: nv.address.clone(),
 
             host: nv.aliases[0].clone(),
@@ -306,13 +305,13 @@ impl Node {
     }
 
     // Get a list of aliases to the node
-    pub async fn aliases(&self) -> Vec<Host> {
-        self.aliases.read().await.to_vec()
+    pub fn aliases(&self) -> Vec<Host> {
+        self.aliases.lock().unwrap().to_vec()
     }
 
     // Add an alias to the node
-    pub async fn add_alias(&self, alias: Host) {
-        let mut aliases = self.aliases.write().await;
+    pub fn add_alias(&self, alias: Host) {
+        let mut aliases = self.aliases.lock().unwrap();
         aliases.push(alias);
         self.reference_count.fetch_add(1, Ordering::Relaxed);
     }

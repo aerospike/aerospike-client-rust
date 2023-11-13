@@ -38,7 +38,7 @@ impl BatchExecutor {
         policy: &BatchPolicy,
         batch_reads: Vec<BatchRead>,
     ) -> Result<Vec<BatchRead>> {
-        let batch_nodes = self.get_batch_nodes(&batch_reads, policy.replica).await?;
+        let batch_nodes = self.get_batch_nodes(&batch_reads, policy.replica)?;
         let jobs = batch_nodes
             .into_iter()
             .map(|(node, reads)| BatchReadCommand::new(policy, node, reads))
@@ -61,14 +61,14 @@ impl BatchExecutor {
         }
     }
 
-    async fn get_batch_nodes(
+    fn get_batch_nodes(
         &self,
         batch_reads: &[BatchRead],
         replica: crate::policy::Replica,
     ) -> Result<HashMap<Arc<Node>, Vec<(BatchRead, usize)>>> {
         let mut map = HashMap::new();
         for (index, batch_read) in batch_reads.iter().enumerate() {
-            let node = self.node_for_key(&batch_read.key, replica).await?;
+            let node = self.node_for_key(&batch_read.key, replica)?;
             map.entry(node)
                 .or_insert_with(Vec::new)
                 .push((batch_read.clone(), index));
@@ -76,9 +76,9 @@ impl BatchExecutor {
         Ok(map)
     }
 
-    async fn node_for_key(&self, key: &Key, replica: crate::policy::Replica) -> Result<Arc<Node>> {
+    fn node_for_key(&self, key: &Key, replica: crate::policy::Replica) -> Result<Arc<Node>> {
         let partition = Partition::new_by_key(key);
-        let node = self.cluster.get_node(&partition, replica, Weak::new()).await?;
+        let node = self.cluster.get_node(&partition, replica, Weak::new())?;
         Ok(node)
     }
 }

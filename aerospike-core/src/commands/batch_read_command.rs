@@ -69,7 +69,7 @@ impl BatchReadCommand {
                 for individual_read in self.batch_reads.chunks_mut(1) {
                     // Find somewhere else to try.
                     let partition = Partition::new_by_key(&individual_read[0].0.key);
-                    let node = cluster.get_node(&partition, self.policy.replica, Arc::downgrade(&self.node)).await?;
+                    let node = cluster.get_node(&partition, self.policy.replica, Arc::downgrade(&self.node))?;
 
                     let try_once = Self::request_group(individual_read, &self.policy, node);
 
