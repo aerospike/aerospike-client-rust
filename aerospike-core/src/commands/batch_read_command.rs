@@ -57,7 +57,12 @@ impl BatchReadCommand {
         loop {
             let success = if iterations & 1 == 0 || matches!(self.policy.replica, Replica::Master) {
                 // For even iterations, we request all keys from the same node for efficiency.
-                Self::request_group(&mut self.batch_reads, &self.policy, self.node.clone()).await?
+                let try_once = Self::request_group(&mut self.batch_reads, &self.policy, self.node.clone());
+                if let Some(deadline) = deadline {
+                    aerospike_rt::timeout_at(deadline, try_once).await.unwrap_or_else(|_|Err(ErrorKind::Connection("Timeout".to_string()).into()))
+                } else {
+                    try_once.await
+                }?
             } else {
                 // However, for odd iterations try the second choice for each. Instead of re-sharding the batch (as the second choice may not correspond to the first), just try each by itself.
                 let mut all_successful = true;
@@ -66,7 +71,15 @@ impl BatchReadCommand {
                     let partition = Partition::new_by_key(&individual_read[0].0.key);
                     let node = cluster.get_node(&partition, self.policy.replica, Arc::downgrade(&self.node)).await?;
 
-                    if !Self::request_group(individual_read, &self.policy, node).await? {
+                    let try_once = Self::request_group(individual_read, &self.policy, node);
+
+                    let result = if let Some(deadline) = deadline {
+                        aerospike_rt::timeout_at(deadline, try_once).await.unwrap_or_else(|_|Err(ErrorKind::Connection("Timeout".to_string()).into()))
+                    } else {
+                        try_once.await
+                    }?;
+
+                    if !result {
                         all_successful = false;
                         break;
                     }

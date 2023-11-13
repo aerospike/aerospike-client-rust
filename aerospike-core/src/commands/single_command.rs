@@ -82,6 +82,13 @@ impl<'a> SingleCommand<'a> {
         loop {
             iterations += 1;
 
+            // check for command timeout
+            if let Some(deadline) = deadline {
+                if Instant::now().checked_add(policy.sleep_between_retries().unwrap_or_default()).unwrap() > deadline {
+                    break;
+                }
+            }
+
             // Sleep before trying again, after the first iteration
             if iterations > 1 {
                 if let Some(sleep_between_retries) = policy.sleep_between_retries() {
@@ -89,13 +96,6 @@ impl<'a> SingleCommand<'a> {
                 } else {
                     // yield to free space for the runtime to execute other futures between runs because the loop would block the thread
                     aerospike_rt::task::yield_now().await;
-                }
-            }
-
-            // check for command timeout
-            if let Some(deadline) = deadline {
-                if Instant::now() > deadline {
-                    break;
                 }
             }
 
@@ -114,35 +114,47 @@ impl<'a> SingleCommand<'a> {
                 }
             };
 
-            cmd.prepare_buffer(&mut conn)
-                .chain_err(|| "Failed to prepare send buffer")?;
-            cmd.write_timeout(&mut conn, policy.timeout())
-                .await
-                .chain_err(|| "Failed to set timeout for send buffer")?;
-
-            // Send command.
-            if let Err(err) = cmd.write_buffer(&mut conn).await {
-                // IO errors are considered temporary anomalies. Retry.
-                // Close socket to flush out possible garbage. Do not put back in pool.
-                conn.invalidate();
-                warn!("Node {}: {}", node, err);
-                continue;
-            }
-
-            // Parse results.
-            if let Err(err) = cmd.parse_result(&mut conn).await {
-                // close the connection
-                // cancelling/closing the batch/multi commands will return an error, which will
-                // close the connection to throw away its data and signal the server about the
-                // situation. We will not put back the connection in the buffer.
-                if !commands::keep_connection(&err) {
-                    conn.invalidate();
+            let try_once = async {
+                if let Err(e) = cmd.prepare_buffer(&mut conn)
+                    .chain_err(|| "Failed to prepare send buffer") {
+                    Some(Err(e))
                 }
-                return Err(err);
-            }
+                else if let Err(e) = cmd.write_timeout(&mut conn, policy.timeout()).await
+                    .chain_err(|| "Failed to set timeout for send buffer") {
+                    Some(Err(e))
+                }
+                // Send command.
+                else if let Err(err) = cmd.write_buffer(&mut conn).await {
+                    // IO errors are considered temporary anomalies. Retry.
+                    // Close socket to flush out possible garbage. Do not put back in pool.
+                    conn.invalidate();
+                    warn!("Node {}: {}", node, err);
+                    None
+                }
+                // Parse results.
+                else if let Err(err) = cmd.parse_result(&mut conn).await {
+                    // close the connection
+                    // cancelling/closing the batch/multi commands will return an error, which will
+                    // close the connection to throw away its data and signal the server about the
+                    // situation. We will not put back the connection in the buffer.
+                    if !commands::keep_connection(&err) {
+                        conn.invalidate();
+                    }
+                    Some(Err(err))
+                } else {
+                    Some(Ok(()))
+                }
+            };
 
-            // command has completed successfully.  Exit method.
-            return Ok(());
+            let result = if let Some(deadline) = deadline {
+                aerospike_rt::timeout_at(deadline, try_once).await.unwrap_or_else(|_|Some(Err(ErrorKind::Connection("Timeout".to_string()).into())))
+            } else {
+                try_once.await
+            };
+            
+            if let Some(result) = result {
+                return result;
+            }
         }
 
         bail!(ErrorKind::Connection("Timeout".to_string()))

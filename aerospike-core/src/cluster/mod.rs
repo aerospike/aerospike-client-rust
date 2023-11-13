@@ -57,7 +57,7 @@ impl PartitionForNamespace {
         (0..self.replicas).map(move |i|self.nodes.get(i * node::PARTITIONS + index).and_then(|(_, item)|item.clone()))
     }
 
-    async fn get_node(&self, cluster: &Cluster, partition: &Partition<'_>, replica: crate::policy::Replica, last_tried: Weak<Node>) -> Result<Arc<Node>> {
+    fn get_node(&self, cluster: &Cluster, partition: &Partition<'_>, replica: crate::policy::Replica, last_tried: Weak<Node>) -> Result<Arc<Node>> {
         fn get_next_in_sequence<I: Iterator<Item = Arc<Node>>, F: Fn()->I>(get_sequence: F, last_tried: Weak<Node>) -> Option<Arc<Node>> {
             if let Some(last_tried) = last_tried.upgrade() {
                 // If this isn't the first attempt, try the replica immediately after in sequence (that is actually valid)
@@ -560,7 +560,7 @@ impl Cluster {
             .get(partition.namespace)
             .ok_or_else(||format!("Cannot get appropriate node for namespace: {}", partition.namespace))?;
     
-        namespace.get_node(self, partition, replica, last_tried).await
+        namespace.get_node(self, partition, replica, last_tried)
     }
 
     pub async fn get_random_node(&self) -> Result<Arc<Node>> {
