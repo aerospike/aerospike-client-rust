@@ -112,8 +112,8 @@ impl Default for ClientPolicy {
 
 impl ClientPolicy {
     /// Set username and password to use when authenticating to the cluster.
-    pub fn requires_auth(&mut self) -> bool {
-        if self.username == None || self.password == None {
+    pub fn requires_auth(username: Option<String>, password: Option<String>) -> bool {
+        if username == None || password == None {
             return false;
         }
         return true;

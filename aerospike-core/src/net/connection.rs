@@ -42,7 +42,7 @@ pub struct Connection {
 }
 
 impl Connection {
-    pub async fn new(addr: &str, policy: &mut ClientPolicy) -> Result<Self> {
+    pub async fn new(addr: &str, policy: &ClientPolicy) -> Result<Self> {
         let stream = aerospike_rt::timeout(Duration::from_secs(10), TcpStream::connect(addr)).await;
         if stream.is_err() {
             bail!(ErrorKind::Connection(
@@ -56,7 +56,7 @@ impl Connection {
             idle_timeout: policy.idle_timeout,
             idle_deadline: policy.idle_timeout.map(|timeout| Instant::now() + timeout),
         };
-        if policy.requires_auth(){
+        if ClientPolicy::requires_auth(policy.username.clone(), policy.password.clone()){
             if let Some(password) = &policy.password {
                 let hashed_password = AdminCommand::hash_password(password)?;
                 conn.authenticate(policy.username.clone(), Some(hashed_password)).await?;
