@@ -50,7 +50,11 @@ impl Queue {
     }
 
     pub async fn get(&self) -> Result<PooledConnection> {
-        let permit = self.1.clone().acquire_owned().await.unwrap();
+        let Ok(permit) = self.1.clone().try_acquire_owned() else {
+            bail!(ErrorKind::Connection(
+                "Too many connections".to_string()
+            ));
+        };
         let mut connections_to_free = Vec::new();
         let mut conn: Option<Connection> = None;
         {
