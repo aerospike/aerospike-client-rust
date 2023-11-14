@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use std::ops::Add;
 use std::sync::{Arc, Weak};
 
 use crate::cluster::partition::Partition;
@@ -93,18 +94,25 @@ impl<'a> SingleCommand<'a> {
         loop {
             iterations += 1;
 
-            // check for command timeout
-            if let Some(deadline) = deadline {
-                if Instant::now().checked_add(policy.sleep_between_retries().unwrap_or_default()).unwrap() > deadline {
-                    break;
-                }
-            }
-
             // Sleep before trying again, after the first iteration
             if iterations > 1 {
                 if let Some(sleep_between_retries) = policy.sleep_between_retries() {
+                    // check for command timeout
+                    if let Some(deadline) = deadline {
+                        if Instant::now().add(sleep_between_retries) > deadline {
+                            break;
+                        }
+                    }
+        
                     sleep(sleep_between_retries).await;
                 } else {
+                    // check for command timeout
+                    if let Some(deadline) = deadline {
+                        if Instant::now() > deadline {
+                            break;
+                        }
+                    }
+        
                     // yield to free space for the runtime to execute other futures between runs because the loop would block the thread
                     aerospike_rt::task::yield_now().await;
                 }
