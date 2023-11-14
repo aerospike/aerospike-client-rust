@@ -124,7 +124,7 @@ impl<'a> SingleCommand<'a> {
                 Err(_) => continue, // Node is currently inactive. Retry.
             };
 
-            let mut conn = match node.get_connection().await {
+            let mut conn = match try_with_timeout(deadline, node.get_connection()).await {
                 Ok(conn) => conn,
                 Err(err) => {
                     warn!("Node {}: {}", node, err);

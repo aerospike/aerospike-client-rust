@@ -106,7 +106,7 @@ impl BatchReadCommand {
     }
 
     async fn request_group(batch_reads: &mut [(BatchRead, usize)], policy: &BatchPolicy, node: Arc<Node>, deadline: Option<Instant>) -> Result<bool> {
-        let mut conn = match node.get_connection().await {
+        let mut conn = match crate::commands::single_command::try_with_timeout(deadline, node.get_connection()).await {
             Ok(conn) => conn,
             Err(err) => {
                 warn!("Node {}: {}", node, err);
