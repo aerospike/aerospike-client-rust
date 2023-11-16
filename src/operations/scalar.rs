@@ -54,7 +54,7 @@ pub const fn put<'a>(bin: &'a Bin) -> Operation<'a> {
     Operation {
         op: OperationType::Write,
         ctx: DEFAULT_CTX,
-        bin: OperationBin::Name(bin.name),
+        bin: OperationBin::Name(&bin.name),
         data: OperationData::Value(&bin.value),
     }
 }
@@ -64,7 +64,7 @@ pub const fn append<'a>(bin: &'a Bin) -> Operation<'a> {
     Operation {
         op: OperationType::Append,
         ctx: DEFAULT_CTX,
-        bin: OperationBin::Name(bin.name),
+        bin: OperationBin::Name(&bin.name),
         data: OperationData::Value(&bin.value),
     }
 }
@@ -74,7 +74,7 @@ pub const fn prepend<'a>(bin: &'a Bin) -> Operation<'a> {
     Operation {
         op: OperationType::Prepend,
         ctx: DEFAULT_CTX,
-        bin: OperationBin::Name(bin.name),
+        bin: OperationBin::Name(&bin.name),
         data: OperationData::Value(&bin.value),
     }
 }
@@ -84,7 +84,7 @@ pub const fn add<'a>(bin: &'a Bin) -> Operation<'a> {
     Operation {
         op: OperationType::Incr,
         ctx: DEFAULT_CTX,
-        bin: OperationBin::Name(bin.name),
+        bin: OperationBin::Name(&bin.name),
         data: OperationData::Value(&bin.value),
     }
 }
