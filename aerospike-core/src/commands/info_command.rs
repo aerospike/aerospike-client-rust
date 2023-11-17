@@ -18,7 +18,7 @@ use std::collections::HashMap;
 use std::io::{Cursor, Write};
 use std::str;
 
-use crate::errors::Result;
+use crate::errors::{Result, Error};
 use crate::net::Connection;
 
 // MAX_BUFFER_SIZE protects against allocating massive memory blocks
@@ -71,7 +71,7 @@ impl Message {
         // Corrupted data streams can result in a huge length.
         // Do a sanity check here.
         if data_len > MAX_BUFFER_SIZE {
-            bail!("Invalid size for info command buffer: {}", data_len);
+            return Err(Error::InvalidArgument(format!("Invalid size for info command buffer: {data_len}")));
         }
         self.buf.resize(data_len, 0);
 
@@ -96,7 +96,7 @@ impl Message {
             match (key, val) {
                 (Some(key), Some(val)) => result.insert(key.to_string(), val.to_string()),
                 (Some(key), None) => result.insert(key.to_string(), "".to_string()),
-                _ => bail!("Parsing Info command failed"),
+                _ => return Err(Error::InvalidArgument("Parsing Info command failed".into())),
             };
         }
 

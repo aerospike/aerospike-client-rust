@@ -18,7 +18,7 @@ use std::sync::Arc;
 
 use crate::cluster::Node;
 use crate::commands::{self, Command};
-use crate::errors::{ErrorKind, Result, ResultExt};
+use crate::errors::{Error, Result};
 use crate::net::Connection;
 use crate::policy::{BatchPolicy, Policy, PolicyLike};
 use crate::{value, BatchRead, Record, ResultCode, Value};
@@ -59,7 +59,7 @@ impl BatchReadCommand {
             // too many retries
             if let Some(max_retries) = base_policy.max_retries() {
                 if iterations > max_retries + 1 {
-                    bail!(ErrorKind::Connection(format!(
+                    return Err(Error::Connection(format!(
                         "Timeout after {} tries",
                         iterations
                     )));
@@ -125,7 +125,7 @@ impl BatchReadCommand {
             return Ok(());
         }
 
-        bail!(ErrorKind::Connection("Timeout".to_string()))
+        return Err(Error::Connection("Timeout".to_string()))
     }
 
     async fn parse_group(&mut self, conn: &mut Connection, size: usize) -> Result<bool> {
@@ -150,7 +150,7 @@ impl BatchReadCommand {
         let found_key = match ResultCode::from(conn.buffer.read_u8(Some(5))) {
             ResultCode::Ok => true,
             ResultCode::KeyNotFoundError => false,
-            rc => bail!(ErrorKind::ServerError(rc)),
+            rc => return Err(Error::ServerError(rc)),
         };
 
         // if cmd is the end marker of the response, do not proceed further

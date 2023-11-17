@@ -19,7 +19,7 @@ use std::str;
 use pwhash::bcrypt::{self, BcryptSetup, BcryptVariant};
 
 use crate::cluster::Cluster;
-use crate::errors::{ErrorKind, Result};
+use crate::errors::{Error, Result};
 use crate::net::Connection;
 use crate::net::PooledConnection;
 use crate::ResultCode;
@@ -81,7 +81,7 @@ impl AdminCommand {
         let result_code = conn.buffer.read_u8(Some(RESULT_CODE));
         let result_code = ResultCode::from(result_code);
         if result_code != ResultCode::Ok {
-            bail!(ErrorKind::ServerError(result_code));
+            return Err(Error::ServerError(result_code));
         }
 
         Ok(())
@@ -103,7 +103,7 @@ impl AdminCommand {
         let result_code = conn.buffer.read_u8(Some(RESULT_CODE));
         let result_code = ResultCode::from(result_code);
         if ResultCode::SecurityNotEnabled != result_code && ResultCode::Ok != result_code {
-            bail!(ErrorKind::ServerError(result_code));
+            return Err(Error::ServerError(result_code));
         }
 
         // consume the rest of the buffer

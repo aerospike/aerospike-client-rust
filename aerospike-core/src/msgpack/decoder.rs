@@ -18,7 +18,7 @@ use std::vec::Vec;
 
 use crate::commands::buffer::Buffer;
 use crate::commands::ParticleType;
-use crate::errors::{ErrorKind, Result};
+use crate::errors::{Error, Result};
 use crate::value::Value;
 
 pub fn unpack_value_list(buf: &mut Buffer) -> Result<Value> {
@@ -104,10 +104,10 @@ fn unpack_blob(buf: &mut Buffer, count: usize) -> Result<Value> {
             Ok(Value::GeoJSON(val))
         }
 
-        _ => bail!(
+        _ => return Err(Error::BadResponse(format!(
             "Error while unpacking BLOB. Type-header with code `{}` not recognized.",
             vtype
-        ),
+        ))),
     }
 }
 
@@ -213,7 +213,7 @@ fn unpack_value(buf: &mut Buffer) -> Result<Value> {
             Ok(Value::from(value))
         }
         _ => Err(
-            ErrorKind::BadResponse(format!("Error unpacking value of type '{:x}'", obj_type))
+            Error::BadResponse(format!("Error unpacking value of type '{:x}'", obj_type))
                 .into(),
         ),
     }

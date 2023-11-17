@@ -20,7 +20,7 @@ use std::time::Duration;
 use crate::cluster::{Cluster, Node};
 use crate::commands::buffer;
 use crate::commands::{Command, SingleCommand};
-use crate::errors::{ErrorKind, Result};
+use crate::errors::{Error, Result};
 use crate::net::Connection;
 use crate::policy::ReadPolicy;
 use crate::value::bytes_to_particle;
@@ -125,7 +125,7 @@ impl<'a> Command for ReadCommand<'a> {
             .await
         {
             warn!("Parse result error: {}", err);
-            bail!(err);
+            return Err(err);
         }
 
         conn.buffer.reset_offset();
@@ -142,7 +142,7 @@ impl<'a> Command for ReadCommand<'a> {
         if receive_size > 0 {
             if let Err(err) = conn.read_buffer(receive_size).await {
                 warn!("Parse result error: {}", err);
-                bail!(err);
+                return Err(err);
             }
         }
 
@@ -164,9 +164,9 @@ impl<'a> Command for ReadCommand<'a> {
                     .bins
                     .get("FAILURE")
                     .map_or(String::from("UDF Error"), ToString::to_string);
-                Err(ErrorKind::UdfBadResponse(reason).into())
+                Err(Error::UdfBadResponse(reason).into())
             }
-            rc => Err(ErrorKind::ServerError(rc).into()),
+            rc => Err(Error::ServerError(rc).into()),
         }
     }
 }

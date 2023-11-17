@@ -18,7 +18,7 @@ use std::time::Duration;
 use byteorder::{ByteOrder, LittleEndian, NetworkEndian};
 
 use crate::commands::field_type::FieldType;
-use crate::errors::Result;
+use crate::errors::{Result, Error};
 use crate::expressions::FilterExpression;
 use crate::msgpack::encoder;
 use crate::operations::{Operation, OperationBin, OperationData, OperationType};
@@ -125,7 +125,7 @@ impl Buffer {
         // Corrupted data streams can result in a huge length.
         // Do a sanity check here.
         if size > MAX_BUFFER_SIZE {
-            bail!("Invalid size for buffer: {}", size);
+            return Err(Error::InvalidArgument(format!("Invalid size for buffer: {size}")));
         }
 
         let mem_size = self.data_buffer.capacity();

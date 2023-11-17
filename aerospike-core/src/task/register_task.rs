@@ -14,7 +14,7 @@
 // the License.
 
 use crate::cluster::Cluster;
-use crate::errors::{ErrorKind, Result};
+use crate::errors::{Error, Result};
 use crate::task::{Status, Task};
 use std::sync::Arc;
 
@@ -45,7 +45,7 @@ impl Task for RegisterTask {
         let nodes = self.cluster.nodes().await;
 
         if nodes.is_empty() {
-            bail!(ErrorKind::Connection("No connected node".to_string()))
+            return Err(Error::Connection("No connected node".to_string()))
         }
 
         for node in &nodes {

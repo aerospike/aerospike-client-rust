@@ -563,7 +563,7 @@ impl TryFrom<Value> for String {
         match val {
             Value::String(v) => Ok(v),
             Value::GeoJSON(v) => Ok(v),
-            _ => bail!(format!(
+            _ => return Err(format!(
                 "Invalid type conversion from Value::{} to {}",
                 val.particle_type(),
                 std::any::type_name::<Self>()
@@ -578,7 +578,7 @@ impl TryFrom<Value> for Vec<u8> {
         match val {
             Value::Blob(v) => Ok(v),
             Value::HLL(v) => Ok(v),
-            _ => bail!(format!(
+            _ => return Err(format!(
                 "Invalid type conversion from Value::{} to {}",
                 val.particle_type(),
                 std::any::type_name::<Self>()
@@ -592,7 +592,7 @@ impl TryFrom<Value> for Vec<Value> {
     fn try_from(val: Value) -> std::result::Result<Self, Self::Error> {
         match val {
             Value::List(v) => Ok(v),
-            _ => bail!(format!(
+            _ => return Err(format!(
                 "Invalid type conversion from Value::{} to {}",
                 val.particle_type(),
                 std::any::type_name::<Self>()
@@ -606,7 +606,7 @@ impl TryFrom<Value> for HashMap<Value, Value> {
     fn try_from(val: Value) -> std::result::Result<Self, Self::Error> {
         match val {
             Value::HashMap(v) => Ok(v),
-            _ => bail!(format!(
+            _ => return Err(format!(
                 "Invalid type conversion from Value::{} to {}",
                 val.particle_type(),
                 std::any::type_name::<Self>()
@@ -620,7 +620,7 @@ impl TryFrom<Value> for Vec<(Value, Value)> {
     fn try_from(val: Value) -> std::result::Result<Self, Self::Error> {
         match val {
             Value::OrderedMap(v) => Ok(v),
-            _ => bail!(format!(
+            _ => return Err(format!(
                 "Invalid type conversion from Value::{} to {}",
                 val.particle_type(),
                 std::any::type_name::<Self>()
@@ -634,7 +634,7 @@ impl TryFrom<Value> for f64 {
     fn try_from(val: Value) -> std::result::Result<Self, Self::Error> {
         match val {
             Value::Float(v) => Ok(f64::from(v)),
-            _ => bail!(format!(
+            _ => return Err(format!(
                 "Invalid type conversion from Value::{} to {}",
                 val.particle_type(),
                 std::any::type_name::<Self>()
@@ -648,7 +648,7 @@ impl TryFrom<Value> for bool {
     fn try_from(val: Value) -> std::result::Result<Self, Self::Error> {
         match val {
             Value::Bool(v) => Ok(v),
-            _ => bail!("Invalid type bool"),
+            _ => return Err("Invalid type bool".into()),
         }
     }
 }

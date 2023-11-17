@@ -50,7 +50,7 @@ pub use self::touch_command::TouchCommand;
 pub use self::write_command::WriteCommand;
 
 use crate::cluster::Node;
-use crate::errors::{Error, ErrorKind, Result};
+use crate::errors::{Error, Result};
 use crate::net::Connection;
 use crate::ResultCode;
 
@@ -71,6 +71,6 @@ pub trait Command {
 pub const fn keep_connection(err: &Error) -> bool {
     matches!(
         err,
-        Error(ErrorKind::ServerError(ResultCode::KeyNotFoundError), _)
+        Error::ServerError(ResultCode::KeyNotFoundError)
     )
 }

@@ -86,7 +86,7 @@ end
     let res = client
         .execute_udf(&wpolicy, &key, "test_udf1", "no_such_function", None)
         .await;
-    if let Err(Error(ErrorKind::UdfBadResponse(response), _)) = res {
+    if let Err(Error::UdfBadResponse(response)) = res {
         assert_eq!(response, "function not found".to_string());
     } else {
         panic!("UDF function did not return the expected error");

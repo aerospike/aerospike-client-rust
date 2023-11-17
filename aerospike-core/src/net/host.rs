@@ -18,7 +18,7 @@ use std::io;
 use std::net::{SocketAddr, ToSocketAddrs};
 use std::vec::IntoIter;
 
-use crate::errors::{ErrorKind, Result, ResultExt};
+use crate::errors::{Error, Result};
 use crate::net::parser::Parser;
 
 /// Host name/port of database server.
@@ -80,7 +80,7 @@ impl ToHosts for String {
         let mut parser = Parser::new(self, 3000);
         parser
             .read_hosts()
-            .chain_err(|| ErrorKind::InvalidArgument(format!("Invalid hosts list: '{}'", self)))
+            .chain_err(|| Error::InvalidArgument(format!("Invalid hosts list: '{}'", self)))
     }
 }
 

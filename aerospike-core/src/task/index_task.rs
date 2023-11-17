@@ -14,7 +14,7 @@
 // the License.
 
 use crate::cluster::Cluster;
-use crate::errors::{ErrorKind, Result};
+use crate::errors::{Error, Result};
 use crate::task::{Status, Task};
 use std::sync::Arc;
 
@@ -51,7 +51,7 @@ impl IndexTask {
                 if response.contains(FAIL_PATTERN_201) || response.contains(FAIL_PATTERN_203) {
                     Ok(Status::NotFound)
                 } else {
-                    bail!(ErrorKind::BadResponse(format!(
+                    return Err(Error::BadResponse(format!(
                         "Code 201 and 203 missing. Response: {}",
                         response
                     )));
@@ -61,7 +61,7 @@ impl IndexTask {
                 let percent_begin = pattern_index + SUCCESS_PATTERN.len();
 
                 let percent_end = match response[percent_begin..].find(DELMITER) {
-                    None => bail!(ErrorKind::BadResponse(format!(
+                    None => return Err(Error::BadResponse(format!(
                         "delimiter missing in response. Response: {}",
                         response
                     ))),
@@ -71,7 +71,7 @@ impl IndexTask {
                 match percent_str.parse::<isize>() {
                     Ok(100) => Ok(Status::Complete),
                     Ok(_) => Ok(Status::InProgress),
-                    Err(_) => bail!(ErrorKind::BadResponse(
+                    Err(_) => return Err(Error::BadResponse(
                         "Unexpected load_pct value from server".to_string()
                     )),
                 }
@@ -87,7 +87,7 @@ impl Task for IndexTask {
         let nodes = self.cluster.nodes().await;
 
         if nodes.is_empty() {
-            bail!(ErrorKind::Connection("No connected node".to_string()))
+            return Err(Error::Connection("No connected node".to_string()))
         }
 
         for node in &nodes {
