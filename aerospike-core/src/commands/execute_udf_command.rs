@@ -18,20 +18,21 @@ use std::time::Duration;
 
 use crate::cluster::{Cluster, Node};
 use crate::commands::{Command, ReadCommand, SingleCommand};
+use crate::derive::readable::ReadableBins;
 use crate::errors::Result;
 use crate::net::Connection;
 use crate::policy::WritePolicy;
 use crate::{Bins, Key, Value};
 
-pub struct ExecuteUDFCommand<'a> {
-    pub read_command: ReadCommand<'a>,
+pub struct ExecuteUDFCommand<'a, T: ReadableBins> {
+    pub read_command: ReadCommand<'a, T>,
     policy: &'a WritePolicy,
     package_name: &'a str,
     function_name: &'a str,
     args: Option<&'a [Value]>,
 }
 
-impl<'a> ExecuteUDFCommand<'a> {
+impl<'a, T: ReadableBins> ExecuteUDFCommand<'a, T> {
     pub fn new(
         policy: &'a WritePolicy,
         cluster: Arc<Cluster>,
@@ -55,7 +56,7 @@ impl<'a> ExecuteUDFCommand<'a> {
 }
 
 #[async_trait::async_trait]
-impl<'a> Command for ExecuteUDFCommand<'a> {
+impl<'a, T: ReadableBins> Command for ExecuteUDFCommand<'a, T> {
     async fn write_timeout(
         &mut self,
         conn: &mut Connection,
@@ -63,10 +64,6 @@ impl<'a> Command for ExecuteUDFCommand<'a> {
     ) -> Result<()> {
         conn.buffer.write_timeout(timeout);
         Ok(())
-    }
-
-    async fn write_buffer(&mut self, conn: &mut Connection) -> Result<()> {
-        conn.flush().await
     }
 
     fn prepare_buffer(&mut self, conn: &mut Connection) -> Result<()> {
@@ -85,5 +82,9 @@ impl<'a> Command for ExecuteUDFCommand<'a> {
 
     async fn parse_result(&mut self, conn: &mut Connection) -> Result<()> {
         self.read_command.parse_result(conn).await
+    }
+
+    async fn write_buffer(&mut self, conn: &mut Connection) -> Result<()> {
+        conn.flush().await
     }
 }

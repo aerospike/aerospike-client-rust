@@ -13,6 +13,8 @@
 // License for the specific language governing permissions and limitations under
 // the License.
 
+//! General Functions to Decode Aerospike Wire Data
+
 use std::collections::HashMap;
 use std::vec::Vec;
 
@@ -21,7 +23,7 @@ use crate::commands::ParticleType;
 use crate::errors::{ErrorKind, Result};
 use crate::value::Value;
 
-pub fn unpack_value_list(buf: &mut Buffer) -> Result<Value> {
+pub(crate) fn unpack_value_list(buf: &mut Buffer) -> Result<Value> {
     if buf.data_buffer.is_empty() {
         return Ok(Value::List(vec![]));
     }
@@ -32,13 +34,15 @@ pub fn unpack_value_list(buf: &mut Buffer) -> Result<Value> {
         0x90..=0x9f => (ltype & 0x0f) as usize,
         0xdc => buf.read_u16(None) as usize,
         0xdd => buf.read_u32(None) as usize,
-        _ => unreachable!(),
+        _ => {
+            unreachable!()
+        }
     };
 
     unpack_list(buf, count)
 }
 
-pub fn unpack_value_map(buf: &mut Buffer) -> Result<Value> {
+pub(crate) fn unpack_value_map(buf: &mut Buffer) -> Result<Value> {
     if buf.data_buffer.is_empty() {
         return Ok(Value::from(HashMap::with_capacity(0)));
     }
@@ -111,7 +115,7 @@ fn unpack_blob(buf: &mut Buffer, count: usize) -> Result<Value> {
     }
 }
 
-fn unpack_value(buf: &mut Buffer) -> Result<Value> {
+pub(crate) fn unpack_value(buf: &mut Buffer) -> Result<Value> {
     let obj_type = buf.read_u8(None);
 
     match obj_type {
@@ -219,6 +223,6 @@ fn unpack_value(buf: &mut Buffer) -> Result<Value> {
     }
 }
 
-const fn is_ext(byte: u8) -> bool {
+pub(crate) const fn is_ext(byte: u8) -> bool {
     matches!(byte, 0xc7 | 0xc8 | 0xc9 | 0xd4 | 0xd5 | 0xd6 | 0xd7 | 0xd8)
 }

@@ -183,8 +183,11 @@ mod batch;
 mod client;
 mod cluster;
 mod commands;
+
+pub use commands::buffer::Buffer;
+
 pub mod expressions;
-mod msgpack;
+pub mod msgpack;
 mod net;
 pub mod operations;
 pub mod policy;
@@ -196,3 +199,5 @@ mod user;
 
 #[cfg(test)]
 extern crate hex;
+
+pub mod derive;

@@ -18,6 +18,8 @@ use std::time::Duration;
 use byteorder::{ByteOrder, LittleEndian, NetworkEndian};
 
 use crate::commands::field_type::FieldType;
+use crate::derive::readable::ReadableBins;
+use crate::derive::writable::WritableBins;
 use crate::errors::Result;
 use crate::expressions::FilterExpression;
 use crate::msgpack::encoder;
@@ -95,15 +97,16 @@ const AS_MSG_TYPE: u8 = 3;
 // LDT elements in your queries.
 const MAX_BUFFER_SIZE: usize = 1024 * 1024 + 8; // 1 MB + header
 
-// Holds data buffer for the command
-#[derive(Debug, Default)]
+/// Aerospike Wire Buffer. This holds the raw communication Buffer for the commands to read and write.
+#[derive(Debug, Default, Clone)]
 pub struct Buffer {
     pub data_buffer: Vec<u8>,
     pub data_offset: usize,
-    pub reclaim_threshold: usize,
+    pub(crate) reclaim_threshold: usize,
 }
 
 impl Buffer {
+    /// Create new Buffer Instance
     pub fn new(reclaim_threshold: usize) -> Self {
         Buffer {
             data_buffer: Vec::with_capacity(1024),
@@ -116,11 +119,12 @@ impl Buffer {
         self.data_offset = MSG_TOTAL_HEADER_SIZE as usize;
     }
 
-    pub fn size_buffer(&mut self) -> Result<()> {
+    pub(crate) fn size_buffer(&mut self) -> Result<()> {
         let offset = self.data_offset;
         self.resize_buffer(offset)
     }
 
+    /// Size the Buffer Byte Vec to the given length
     pub fn resize_buffer(&mut self, size: usize) -> Result<()> {
         // Corrupted data streams can result in a huge length.
         // Do a sanity check here.
@@ -137,12 +141,13 @@ impl Buffer {
         Ok(())
     }
 
+    /// Reset the Buffer Offset to 0
     pub fn reset_offset(&mut self) {
         // reset data offset
         self.data_offset = 0;
     }
 
-    pub fn end(&mut self) {
+    pub(crate) fn end(&mut self) {
         let size = ((self.data_offset - 8) as i64)
             | ((i64::from(CL_MSG_VERSION) << 56) as i64)
             | (i64::from(AS_MSG_TYPE) << 48);
@@ -153,12 +158,12 @@ impl Buffer {
     }
 
     // Writes the command for write operations
-    pub fn set_write(
+    pub(crate) fn set_write<T: WritableBins>(
         &mut self,
         policy: &WritePolicy,
         op_type: OperationType,
         key: &Key,
-        bins: &[Bin],
+        bins: &T,
     ) -> Result<()> {
         self.begin();
         let mut field_count = self.estimate_key_size(key, policy.send_key);
@@ -167,9 +172,10 @@ impl Buffer {
             field_count += 1;
         }
 
-        for bin in bins {
-            self.estimate_operation_size_for_bin(bin.as_ref());
-        }
+        self.data_offset += bins.writable_bins_size();
+        //for bin in bins {
+        //    self.estimate_operation_size_for_bin(bin.as_ref());
+        //}
 
         self.size_buffer()?;
         self.write_header_with_policy(
@@ -177,23 +183,24 @@ impl Buffer {
             0,
             INFO2_WRITE,
             field_count as u16,
-            bins.len() as u16,
+            bins.writable_bins_count() as u16,
         );
         self.write_key(key, policy.send_key);
 
         if let Some(filter) = policy.filter_expression() {
             self.write_filter_expression(filter, filter_size);
         }
-        for bin in bins {
+        bins.write_as_bins(self, op_type as u8)?;
+        /*for bin in bins {
             self.write_operation_for_bin(bin.as_ref(), op_type);
-        }
+        }*/
 
         self.end();
         Ok(())
     }
 
     // Writes the command for write operations
-    pub fn set_delete(&mut self, policy: &WritePolicy, key: &Key) -> Result<()> {
+    pub(crate) fn set_delete(&mut self, policy: &WritePolicy, key: &Key) -> Result<()> {
         self.begin();
         let mut field_count = self.estimate_key_size(key, false);
         let filter_size = self.estimate_filter_size(policy.filter_expression());
@@ -214,7 +221,7 @@ impl Buffer {
     }
 
     // Writes the command for touch operations
-    pub fn set_touch(&mut self, policy: &WritePolicy, key: &Key) -> Result<()> {
+    pub(crate) fn set_touch(&mut self, policy: &WritePolicy, key: &Key) -> Result<()> {
         self.begin();
         let mut field_count = self.estimate_key_size(key, policy.send_key);
         let filter_size = self.estimate_filter_size(policy.filter_expression());
@@ -236,7 +243,7 @@ impl Buffer {
     }
 
     // Writes the command for exist operations
-    pub fn set_exists(&mut self, policy: &WritePolicy, key: &Key) -> Result<()> {
+    pub(crate) fn set_exists(&mut self, policy: &WritePolicy, key: &Key) -> Result<()> {
         self.begin();
         let mut field_count = self.estimate_key_size(key, false);
         let filter_size = self.estimate_filter_size(policy.filter_expression());
@@ -263,7 +270,7 @@ impl Buffer {
     }
 
     // Writes the command for get operations
-    pub fn set_read(&mut self, policy: &ReadPolicy, key: &Key, bins: &Bins) -> Result<()> {
+    pub(crate) fn set_read(&mut self, policy: &ReadPolicy, key: &Key, bins: &Bins) -> Result<()> {
         match bins {
             Bins::None => self.set_read_header(policy, key),
             Bins::All => self.set_read_for_key_only(policy, key),
@@ -297,7 +304,7 @@ impl Buffer {
     }
 
     // Writes the command for getting metadata operations
-    pub fn set_read_header(&mut self, policy: &ReadPolicy, key: &Key) -> Result<()> {
+    pub(crate) fn set_read_header(&mut self, policy: &ReadPolicy, key: &Key) -> Result<()> {
         self.begin();
         let mut field_count = self.estimate_key_size(key, false);
         let filter_size = self.estimate_filter_size(policy.filter_expression());
@@ -319,7 +326,7 @@ impl Buffer {
         Ok(())
     }
 
-    pub fn set_read_for_key_only(&mut self, policy: &ReadPolicy, key: &Key) -> Result<()> {
+    pub(crate) fn set_read_for_key_only(&mut self, policy: &ReadPolicy, key: &Key) -> Result<()> {
         self.begin();
 
         let mut field_count = self.estimate_key_size(key, false);
@@ -341,10 +348,10 @@ impl Buffer {
     }
 
     // Writes the command for batch read operations
-    pub fn set_batch_read(
+    pub(crate) fn set_batch_read<T: ReadableBins>(
         &mut self,
         policy: &BatchPolicy,
-        batch_reads: Vec<BatchRead>,
+        batch_reads: Vec<BatchRead<T>>,
     ) -> Result<()> {
         let field_count_row = if policy.send_set_name { 2 } else { 1 };
 
@@ -357,7 +364,7 @@ impl Buffer {
             field_count += 1;
         }
 
-        let mut prev: Option<&BatchRead> = None;
+        let mut prev: Option<&BatchRead<T>> = None;
         for batch_read in &batch_reads {
             self.data_offset += batch_read.key.digest.len() + 4;
             match prev {
@@ -462,7 +469,7 @@ impl Buffer {
     }
 
     // Writes the command for getting metadata operations
-    pub fn set_operate<'a>(
+    pub(crate) fn set_operate<'a>(
         &mut self,
         policy: &WritePolicy,
         key: &Key,
@@ -549,7 +556,7 @@ impl Buffer {
         Ok(())
     }
 
-    pub fn set_udf(
+    pub(crate) fn set_udf(
         &mut self,
         policy: &WritePolicy,
         key: &Key,
@@ -581,7 +588,7 @@ impl Buffer {
         Ok(())
     }
 
-    pub fn set_scan(
+    pub(crate) fn set_scan(
         &mut self,
         policy: &ScanPolicy,
         namespace: &str,
@@ -696,7 +703,7 @@ impl Buffer {
     }
 
     #[allow(clippy::cognitive_complexity)]
-    pub fn set_query(
+    pub(crate) fn set_query(
         &mut self,
         policy: &QueryPolicy,
         statement: &Statement,
@@ -1156,22 +1163,26 @@ impl Buffer {
 
     // Data buffer implementations
 
+    /// Get the current Data Offset
     pub const fn data_offset(&self) -> usize {
         self.data_offset
     }
 
-    pub fn skip_bytes(&mut self, count: usize) {
+    pub(crate) fn skip_bytes(&mut self, count: usize) {
         self.data_offset += count;
     }
 
+    /// Skips the amount of next bytes
     pub fn skip(&mut self, count: usize) {
         self.data_offset += count;
     }
 
+    /// Returns the current byte without moving the index
     pub fn peek(&self) -> u8 {
         self.data_buffer[self.data_offset]
     }
 
+    /// Reads a u8 Value from the Buffer
     #[allow(clippy::option_if_let_else)]
     pub fn read_u8(&mut self, pos: Option<usize>) -> u8 {
         if let Some(pos) = pos {
@@ -1183,6 +1194,7 @@ impl Buffer {
         }
     }
 
+    /// Reads a i8 Value from the Buffer
     #[allow(clippy::option_if_let_else)]
     pub fn read_i8(&mut self, pos: Option<usize>) -> i8 {
         if let Some(pos) = pos {
@@ -1194,6 +1206,7 @@ impl Buffer {
         }
     }
 
+    /// Reads a u16 Value from the Buffer
     #[allow(clippy::option_if_let_else)]
     pub fn read_u16(&mut self, pos: Option<usize>) -> u16 {
         let len = 2;
@@ -1208,11 +1221,13 @@ impl Buffer {
         }
     }
 
+    /// Reads a i16 Value from the Buffer
     pub fn read_i16(&mut self, pos: Option<usize>) -> i16 {
         let val = self.read_u16(pos);
         val as i16
     }
 
+    /// Reads a u32 Value from the Buffer
     #[allow(clippy::option_if_let_else)]
     pub fn read_u32(&mut self, pos: Option<usize>) -> u32 {
         let len = 4;
@@ -1227,11 +1242,13 @@ impl Buffer {
         }
     }
 
+    /// Reads a i32 Value from the Buffer
     pub fn read_i32(&mut self, pos: Option<usize>) -> i32 {
         let val = self.read_u32(pos);
         val as i32
     }
 
+    /// Reads a u64 Value from the Buffer
     #[allow(clippy::option_if_let_else)]
     pub fn read_u64(&mut self, pos: Option<usize>) -> u64 {
         let len = 8;
@@ -1246,17 +1263,19 @@ impl Buffer {
         }
     }
 
+    /// Reads a i16 Value from the Buffer
     pub fn read_i64(&mut self, pos: Option<usize>) -> i64 {
         let val = self.read_u64(pos);
         val as i64
     }
 
-    pub fn read_msg_size(&mut self, pos: Option<usize>) -> usize {
+    pub(crate) fn read_msg_size(&mut self, pos: Option<usize>) -> usize {
         let size = self.read_i64(pos);
         let size = size & 0xFFFF_FFFF_FFFF;
         size as usize
     }
 
+    /// Reads a f32 Value from the Buffer
     #[allow(clippy::option_if_let_else)]
     pub fn read_f32(&mut self, pos: Option<usize>) -> f32 {
         let len = 4;
@@ -1271,6 +1290,7 @@ impl Buffer {
         }
     }
 
+    /// Reads a f64 Value from the Buffer
     #[allow(clippy::option_if_let_else)]
     pub fn read_f64(&mut self, pos: Option<usize>) -> f64 {
         let len = 8;
@@ -1285,26 +1305,31 @@ impl Buffer {
         }
     }
 
+    /// Reads a String Value from the Buffer
     pub fn read_str(&mut self, len: usize) -> Result<String> {
         let s = str::from_utf8(&self.data_buffer[self.data_offset..self.data_offset + len])?;
         self.data_offset += len;
         Ok(s.to_owned())
     }
 
+    /// Reads a raw Bytes from the Buffer
     pub fn read_bytes(&mut self, pos: usize, count: usize) -> &[u8] {
         &self.data_buffer[pos..pos + count]
     }
 
+    /// Reads a byte Slice from the Buffer
     pub fn read_slice(&mut self, count: usize) -> &[u8] {
         &self.data_buffer[self.data_offset..self.data_offset + count]
     }
 
+    /// Reads a Blob Value from teh Buffer
     pub fn read_blob(&mut self, len: usize) -> Vec<u8> {
         let val = self.data_buffer[self.data_offset..self.data_offset + len].to_vec();
         self.data_offset += len;
         val
     }
 
+    /// Reads a bool Value from the Buffer
     pub fn read_bool(&mut self, len: usize) -> bool {
         if len <= 0 {
             false
@@ -1315,18 +1340,21 @@ impl Buffer {
         }
     }
 
+    /// Writes a u8 Value to the Buffer
     pub fn write_u8(&mut self, val: u8) -> usize {
         self.data_buffer[self.data_offset] = val;
         self.data_offset += 1;
         1
     }
 
+    /// Writes a i8 Value to the Buffer
     pub fn write_i8(&mut self, val: i8) -> usize {
         self.data_buffer[self.data_offset] = val as u8;
         self.data_offset += 1;
         1
     }
 
+    /// Writes a u16 Value to the Buffer
     pub fn write_u16(&mut self, val: u16) -> usize {
         NetworkEndian::write_u16(
             &mut self.data_buffer[self.data_offset..self.data_offset + 2],
@@ -1336,6 +1364,7 @@ impl Buffer {
         2
     }
 
+    /// Writes a u16 as Little Endian Value to the Buffer
     pub fn write_u16_little_endian(&mut self, val: u16) -> usize {
         LittleEndian::write_u16(
             &mut self.data_buffer[self.data_offset..self.data_offset + 2],
@@ -1345,10 +1374,12 @@ impl Buffer {
         2
     }
 
+    /// Writes a i16 Value to the Buffer
     pub fn write_i16(&mut self, val: i16) -> usize {
         self.write_u16(val as u16)
     }
 
+    /// Writes a u32 Value to the Buffer
     pub fn write_u32(&mut self, val: u32) -> usize {
         NetworkEndian::write_u32(
             &mut self.data_buffer[self.data_offset..self.data_offset + 4],
@@ -1358,10 +1389,12 @@ impl Buffer {
         4
     }
 
+    /// Writes a i32 Value to the Buffer
     pub fn write_i32(&mut self, val: i32) -> usize {
         self.write_u32(val as u32)
     }
 
+    /// Writes a u64 Value to the Buffer
     pub fn write_u64(&mut self, val: u64) -> usize {
         NetworkEndian::write_u64(
             &mut self.data_buffer[self.data_offset..self.data_offset + 8],
@@ -1371,15 +1404,18 @@ impl Buffer {
         8
     }
 
+    /// Writes a i64 Value to the Buffer
     pub fn write_i64(&mut self, val: i64) -> usize {
         self.write_u64(val as u64)
     }
 
+    /// Writes a bool Value to the Buffer
     pub fn write_bool(&mut self, val: bool) -> usize {
         let val = if val { 1 } else { 0 };
         self.write_i8(val)
     }
 
+    /// Writes a f32 Value to the Buffer
     pub fn write_f32(&mut self, val: f32) -> usize {
         NetworkEndian::write_f32(
             &mut self.data_buffer[self.data_offset..self.data_offset + 4],
@@ -1389,6 +1425,7 @@ impl Buffer {
         4
     }
 
+    /// Writes a f64 Value to the Buffer
     pub fn write_f64(&mut self, val: f64) -> usize {
         NetworkEndian::write_f64(
             &mut self.data_buffer[self.data_offset..self.data_offset + 8],
@@ -1398,6 +1435,7 @@ impl Buffer {
         8
     }
 
+    /// Writes raw Bytes to the Buffer
     pub fn write_bytes(&mut self, bytes: &[u8]) -> usize {
         for b in bytes {
             self.write_u8(*b);
@@ -1405,10 +1443,12 @@ impl Buffer {
         bytes.len()
     }
 
+    /// Writes a String Reference to the Buffer
     pub fn write_str(&mut self, val: &str) -> usize {
         self.write_bytes(val.as_bytes())
     }
 
+    /// Writes a GeoJSON Value to the Buffer
     pub fn write_geo(&mut self, value: &str) -> usize {
         self.write_u8(0);
         self.write_u8(0);
@@ -1417,14 +1457,24 @@ impl Buffer {
         3 + value.len()
     }
 
-    pub fn write_timeout(&mut self, val: Option<Duration>) {
+    pub(crate) fn write_timeout(&mut self, val: Option<Duration>) {
         if let Some(val) = val {
             let millis: i32 = (val.as_secs() * 1_000) as i32 + val.subsec_millis() as i32;
             NetworkEndian::write_i32(&mut self.data_buffer[22..22 + 4], millis);
         }
     }
 
-    pub fn dump_buffer(&self) {
+    pub(crate) fn dump_buffer(&self) {
         println!(">>>>>>>>>>>>>>> {:?}", self.data_buffer.clone());
+    }
+
+    pub(crate) fn dump_hex(&self) {
+        self.data_buffer.iter().enumerate().for_each(|f| {
+            if f.0 == self.data_offset {
+                println!("{:#04x} <--- Current Offset", f.1);
+            } else {
+                println!("{:#04x}", f.1);
+            }
+        });
     }
 }

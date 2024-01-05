@@ -12,7 +12,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::collections::HashMap;
 use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
@@ -21,30 +20,34 @@ use crate::cluster::Node;
 use crate::commands::buffer;
 use crate::commands::field_type::FieldType;
 use crate::commands::Command;
+use crate::derive::readable::ReadableBins;
 use crate::errors::{ErrorKind, Result};
 use crate::net::Connection;
 use crate::query::Recordset;
 use crate::value::bytes_to_particle;
 use crate::{Key, Record, ResultCode, Value};
 
-pub struct StreamCommand {
+pub struct StreamCommand<T: ReadableBins> {
     node: Arc<Node>,
-    pub recordset: Arc<Recordset>,
+    pub recordset: Arc<Recordset<T>>,
 }
 
-impl Drop for StreamCommand {
+impl<T: ReadableBins> Drop for StreamCommand<T> {
     fn drop(&mut self) {
         // signal_end
         self.recordset.signal_end();
     }
 }
 
-impl StreamCommand {
-    pub fn new(node: Arc<Node>, recordset: Arc<Recordset>) -> Self {
+impl<T: ReadableBins> StreamCommand<T> {
+    pub fn new(node: Arc<Node>, recordset: Arc<Recordset<T>>) -> Self {
         StreamCommand { node, recordset }
     }
 
-    async fn parse_record(conn: &mut Connection, size: usize) -> Result<(Option<Record>, bool)> {
+    async fn parse_record(conn: &mut Connection, size: usize) -> Result<(Option<Record<T>>, bool)>
+    where
+        T: ReadableBins,
+    {
         let result_code = ResultCode::from(conn.buffer.read_u8(Some(5)));
         if result_code != ResultCode::Ok {
             if conn.bytes_read() < size {
@@ -71,31 +74,15 @@ impl StreamCommand {
         let field_count = conn.buffer.read_u16(None) as usize; // almost certainly 0
         let op_count = conn.buffer.read_u16(None) as usize;
 
-        let key = StreamCommand::parse_key(conn, field_count).await?;
+        let key = StreamCommand::<T>::parse_key(conn, field_count).await?;
 
         // Partition is done, don't go further
         if info3 & buffer::_INFO3_PARTITION_DONE != 0 {
             return Ok((None, true));
         }
 
-        let mut bins: HashMap<String, Value> = HashMap::with_capacity(op_count);
-
-        for _ in 0..op_count {
-            conn.read_buffer(8).await?;
-            let op_size = conn.buffer.read_u32(None) as usize;
-            conn.buffer.skip(1);
-            let particle_type = conn.buffer.read_u8(None);
-            conn.buffer.skip(1);
-            let name_size = conn.buffer.read_u8(None) as usize;
-            conn.read_buffer(name_size).await?;
-            let name: String = conn.buffer.read_str(name_size)?;
-
-            let particle_bytes_size = op_size - (4 + name_size);
-            conn.read_buffer(particle_bytes_size).await?;
-            let value = bytes_to_particle(particle_type, &mut conn.buffer, particle_bytes_size)?;
-
-            bins.insert(name, value);
-        }
+        let mut data_points = conn.pre_parse_stream_bins(op_count).await?;
+        let bins = T::read_bins_from_bytes(&mut data_points)?;
 
         let record = Record::new(Some(key), bins, generation, expiration);
         Ok((Some(record), true))
@@ -181,7 +168,7 @@ impl StreamCommand {
 }
 
 #[async_trait::async_trait]
-impl Command for StreamCommand {
+impl<T: ReadableBins> Command for StreamCommand<T> {
     async fn write_timeout(
         &mut self,
         conn: &mut Connection,
@@ -189,10 +176,6 @@ impl Command for StreamCommand {
     ) -> Result<()> {
         conn.buffer.write_timeout(timeout);
         Ok(())
-    }
-
-    async fn write_buffer(&mut self, conn: &mut Connection) -> Result<()> {
-        conn.flush().await
     }
 
     #[allow(unused_variables)]
@@ -220,5 +203,9 @@ impl Command for StreamCommand {
         }
 
         Ok(())
+    }
+
+    async fn write_buffer(&mut self, conn: &mut Connection) -> Result<()> {
+        conn.flush().await
     }
 }

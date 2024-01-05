@@ -121,10 +121,15 @@ error_chain! {
             display("UDF Bad Response: {}", details)
         }
 
-/// Error returned when a tasked timeed out before it could be completed.
+/// Error returned when a tasked timed out before it could be completed.
         Timeout(details: String) {
             description("Timeout")
             display("Timeout: {}", details)
+        }
+/// Error returned when a derive operation fails to encode/decode data.
+        Derive(details: String)  {
+            description("Derive")
+            display("Derive error: {}", details)
         }
     }
 }

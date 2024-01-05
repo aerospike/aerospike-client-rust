@@ -15,6 +15,7 @@
 
 use crate::common;
 use env_logger;
+use std::collections::HashMap;
 
 use aerospike::operations::bitwise;
 use aerospike::operations::bitwise::{BitPolicy, BitwiseOverflowActions};
@@ -42,12 +43,18 @@ async fn cdt_bitwise() {
         bitwise::insert("bin", 0, &val, &bpolicy),
         bitwise::get("bin", 9, 5),
     ];
-    let rec = client.operate(&wpolicy, &key, ops).await.unwrap();
+    let rec = client
+        .operate::<HashMap<String, Value>>(&wpolicy, &key, ops)
+        .await
+        .unwrap();
     assert_eq!(*rec.bins.get("bin").unwrap(), Value::Blob(vec![0b10000000]));
 
     // Verify the Count command
     let ops = &vec![bitwise::count("bin", 20, 4)];
-    let rec = client.operate(&wpolicy, &key, ops).await.unwrap();
+    let rec = client
+        .operate::<HashMap<String, Value>>(&wpolicy, &key, ops)
+        .await
+        .unwrap();
     assert_eq!(*rec.bins.get("bin").unwrap(), Value::Int(2));
 
     // Verify the set command
@@ -56,7 +63,10 @@ async fn cdt_bitwise() {
         bitwise::set("bin", 13, 3, &val, &bpolicy),
         bitwise::get("bin", 0, 40),
     ];
-    let rec = client.operate(&wpolicy, &key, ops).await.unwrap();
+    let rec = client
+        .operate::<HashMap<String, Value>>(&wpolicy, &key, ops)
+        .await
+        .unwrap();
     assert_eq!(
         *rec.bins.get("bin").unwrap(),
         Value::Blob(vec![
@@ -69,7 +79,10 @@ async fn cdt_bitwise() {
         bitwise::remove("bin", 0, 1, &bpolicy),
         bitwise::get("bin", 0, 8),
     ];
-    let rec = client.operate(&wpolicy, &key, ops).await.unwrap();
+    let rec = client
+        .operate::<HashMap<String, Value>>(&wpolicy, &key, ops)
+        .await
+        .unwrap();
     assert_eq!(*rec.bins.get("bin").unwrap(), Value::Blob(vec![0b01000111]));
 
     // Verify OR command
@@ -78,7 +91,10 @@ async fn cdt_bitwise() {
         bitwise::or("bin", 0, 8, &val, &bpolicy),
         bitwise::get("bin", 0, 8),
     ];
-    let rec = client.operate(&wpolicy, &key, ops).await.unwrap();
+    let rec = client
+        .operate::<HashMap<String, Value>>(&wpolicy, &key, ops)
+        .await
+        .unwrap();
     assert_eq!(*rec.bins.get("bin").unwrap(), Value::Blob(vec![0b11101111]));
 
     // Verify XOR command
@@ -87,7 +103,10 @@ async fn cdt_bitwise() {
         bitwise::xor("bin", 0, 8, &val, &bpolicy),
         bitwise::get("bin", 0, 8),
     ];
-    let rec = client.operate(&wpolicy, &key, ops).await.unwrap();
+    let rec = client
+        .operate::<HashMap<String, Value>>(&wpolicy, &key, ops)
+        .await
+        .unwrap();
     assert_eq!(*rec.bins.get("bin").unwrap(), Value::Blob(vec![0b01000011]));
 
     // Verify AND command
@@ -96,7 +115,10 @@ async fn cdt_bitwise() {
         bitwise::and("bin", 0, 8, &val, &bpolicy),
         bitwise::get("bin", 0, 8),
     ];
-    let rec = client.operate(&wpolicy, &key, ops).await.unwrap();
+    let rec = client
+        .operate::<HashMap<String, Value>>(&wpolicy, &key, ops)
+        .await
+        .unwrap();
     assert_eq!(*rec.bins.get("bin").unwrap(), Value::Blob(vec![0b01000010]));
 
     // Verify NOT command
@@ -104,7 +126,10 @@ async fn cdt_bitwise() {
         bitwise::not("bin", 0, 8, &bpolicy),
         bitwise::get("bin", 0, 8),
     ];
-    let rec = client.operate(&wpolicy, &key, ops).await.unwrap();
+    let rec = client
+        .operate::<HashMap<String, Value>>(&wpolicy, &key, ops)
+        .await
+        .unwrap();
     assert_eq!(*rec.bins.get("bin").unwrap(), Value::Blob(vec![0b10111101]));
 
     // Verify LSHIFT command
@@ -112,7 +137,10 @@ async fn cdt_bitwise() {
         bitwise::lshift("bin", 24, 8, 3, &bpolicy),
         bitwise::get("bin", 24, 8),
     ];
-    let rec = client.operate(&wpolicy, &key, ops).await.unwrap();
+    let rec = client
+        .operate::<HashMap<String, Value>>(&wpolicy, &key, ops)
+        .await
+        .unwrap();
     assert_eq!(*rec.bins.get("bin").unwrap(), Value::Blob(vec![0b00101000]));
 
     // Verify RSHIFT command
@@ -120,7 +148,10 @@ async fn cdt_bitwise() {
         bitwise::rshift("bin", 0, 9, 1, &bpolicy),
         bitwise::get("bin", 0, 16),
     ];
-    let rec = client.operate(&wpolicy, &key, ops).await.unwrap();
+    let rec = client
+        .operate::<HashMap<String, Value>>(&wpolicy, &key, ops)
+        .await
+        .unwrap();
     assert_eq!(
         *rec.bins.get("bin").unwrap(),
         Value::Blob(vec![0b01011110, 0b10000011])
@@ -139,7 +170,10 @@ async fn cdt_bitwise() {
         ),
         bitwise::get("bin", 0, 32),
     ];
-    let rec = client.operate(&wpolicy, &key, ops).await.unwrap();
+    let rec = client
+        .operate::<HashMap<String, Value>>(&wpolicy, &key, ops)
+        .await
+        .unwrap();
     assert_eq!(
         *rec.bins.get("bin").unwrap(),
         Value::Blob(vec![0b11011110, 0b10000011, 0b00000100, 0b00101000])
@@ -158,7 +192,10 @@ async fn cdt_bitwise() {
         ),
         bitwise::get("bin", 0, 32),
     ];
-    let rec = client.operate(&wpolicy, &key, ops).await.unwrap();
+    let rec = client
+        .operate::<HashMap<String, Value>>(&wpolicy, &key, ops)
+        .await
+        .unwrap();
     assert_eq!(
         *rec.bins.get("bin").unwrap(),
         Value::Blob(vec![0b01011110, 0b10000011, 0b00000100, 0b00101000])
@@ -169,7 +206,10 @@ async fn cdt_bitwise() {
         bitwise::set_int("bin", 8, 8, 255, &bpolicy),
         bitwise::get("bin", 0, 32),
     ];
-    let rec = client.operate(&wpolicy, &key, ops).await.unwrap();
+    let rec = client
+        .operate::<HashMap<String, Value>>(&wpolicy, &key, ops)
+        .await
+        .unwrap();
     assert_eq!(
         *rec.bins.get("bin").unwrap(),
         Value::Blob(vec![0b01011110, 0b11111111, 0b00000100, 0b00101000])
@@ -177,17 +217,26 @@ async fn cdt_bitwise() {
 
     // Verify the get int command
     let ops = &vec![bitwise::get_int("bin", 8, 8, false)];
-    let rec = client.operate(&wpolicy, &key, ops).await.unwrap();
+    let rec = client
+        .operate::<HashMap<String, Value>>(&wpolicy, &key, ops)
+        .await
+        .unwrap();
     assert_eq!(*rec.bins.get("bin").unwrap(), Value::Int(255));
 
     // Verify the LSCAN command
     let ops = &vec![bitwise::lscan("bin", 19, 8, true)];
-    let rec = client.operate(&wpolicy, &key, ops).await.unwrap();
+    let rec = client
+        .operate::<HashMap<String, Value>>(&wpolicy, &key, ops)
+        .await
+        .unwrap();
     assert_eq!(*rec.bins.get("bin").unwrap(), Value::Int(2));
 
     // Verify the RSCAN command
     let ops = &vec![bitwise::rscan("bin", 19, 8, true)];
-    let rec = client.operate(&wpolicy, &key, ops).await.unwrap();
+    let rec = client
+        .operate::<HashMap<String, Value>>(&wpolicy, &key, ops)
+        .await
+        .unwrap();
     assert_eq!(*rec.bins.get("bin").unwrap(), Value::Int(7));
     client.close().await.unwrap();
 }

@@ -1,4 +1,4 @@
-// Copyright 2015-2018 Aerospike, Inc.
+// Copyright 2015-2020 Aerospike, Inc.
 //
 // Portions may be licensed to Aerospike, Inc. under one or more contributor
 // license agreements.
@@ -13,7 +13,7 @@
 // License for the specific language governing permissions and limitations under
 // the License.
 
-//! General Functions for Aerospike Wire encoding and decoding
+//! Traits and Implementations for reading and writing data from/into structs and variables
 
-pub mod decoder;
-pub mod encoder;
+pub mod readable;
+pub mod writable;

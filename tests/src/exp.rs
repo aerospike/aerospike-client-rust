@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 // Copyright 2015-2020 Aerospike, Inc.
 //
 // Portions may be licensed to Aerospike, Inc. under one or more contributor
@@ -16,8 +17,9 @@ use crate::common;
 use env_logger;
 
 use aerospike::expressions::*;
-use aerospike::ParticleType;
 use aerospike::*;
+use aerospike::{ParticleType, Record};
+use aerospike_core::Recordset;
 use std::sync::Arc;
 
 const EXPECTED: usize = 100;
@@ -646,11 +648,11 @@ async fn expression_commands() {
     // GET
     let key = as_key!(namespace, &set_name, 35);
     rpolicy.filter_expression = Some(eq(int_bin("bin".to_string()), int_val(15)));
-    let test = client.get(&rpolicy, &key, Bins::All).await;
+    let test: Result<Record<HashMap<String, Value>>> = client.get(&rpolicy, &key, Bins::All).await;
     assert_eq!(test.is_err(), true, "GET Err Test Failed");
 
     rpolicy.filter_expression = Some(eq(int_bin("bin".to_string()), int_val(35)));
-    let test = client.get(&rpolicy, &key, Bins::All).await;
+    let test: Result<Record<HashMap<String, Value>>> = client.get(&rpolicy, &key, Bins::All).await;
     assert_eq!(test.is_ok(), true, "GET Ok Test Failed");
 
     // EXISTS
@@ -703,7 +705,10 @@ async fn expression_commands() {
 
     // SCAN
     spolicy.filter_expression = Some(eq(int_bin("bin".to_string()), int_val(75)));
-    match client.scan(&spolicy, namespace, &set_name, Bins::All).await {
+
+    let res: aerospike::Result<Arc<Recordset<HashMap<String, Value>>>> =
+        client.scan(&spolicy, namespace, &set_name, Bins::All).await;
+    match res {
         Ok(records) => {
             let mut count = 0;
             for record in &*records {
@@ -723,12 +728,16 @@ async fn expression_commands() {
 
     let key = as_key!(namespace, &set_name, 85);
     wpolicy.filter_expression = Some(eq(int_bin("bin".to_string()), int_val(15)));
-    let op = client.operate(&wpolicy, &key, &ops).await;
+    let op = client
+        .operate::<HashMap<String, Value>>(&wpolicy, &key, &ops)
+        .await;
     assert_eq!(op.is_err(), true, "OPERATE Err Test Failed");
 
     let key = as_key!(namespace, &set_name, 85);
     wpolicy.filter_expression = Some(eq(int_bin("bin".to_string()), int_val(85)));
-    let op = client.operate(&wpolicy, &key, &ops).await;
+    let op = client
+        .operate::<HashMap<String, Value>>(&wpolicy, &key, &ops)
+        .await;
     assert_eq!(op.is_ok(), true, "OPERATE Ok Test Failed");
 
     // BATCH GET
@@ -736,7 +745,7 @@ async fn expression_commands() {
     let b = Bins::from(["bin"]);
     for i in 85..90 {
         let key = as_key!(namespace, &set_name, i);
-        batch_reads.push(BatchRead::new(key, b.clone()));
+        batch_reads.push(BatchRead::<HashMap<String, Value>>::new(key, b.clone()));
     }
     bpolicy.filter_expression = Some(gt(int_bin("bin".to_string()), int_val(84)));
     match client.batch_get(&bpolicy, batch_reads).await {
@@ -756,7 +765,11 @@ async fn expression_commands() {
     client.close().await.unwrap();
 }
 
-async fn test_filter(client: &Client, filter: FilterExpression, set_name: &str) -> Arc<Recordset> {
+async fn test_filter(
+    client: &Client,
+    filter: FilterExpression,
+    set_name: &str,
+) -> Arc<Recordset<HashMap<String, Value>>> {
     let namespace = common::namespace();
 
     let mut qpolicy = QueryPolicy::default();
@@ -766,7 +779,7 @@ async fn test_filter(client: &Client, filter: FilterExpression, set_name: &str) 
     client.query(&qpolicy, statement).await.unwrap()
 }
 
-fn count_results(rs: Arc<Recordset>) -> usize {
+fn count_results(rs: Arc<Recordset<HashMap<String, Value>>>) -> usize {
     let mut count = 0;
 
     for res in &*rs {

@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 // Copyright 2015-2018 Aerospike, Inc.
 //
 // Portions may be licensed to Aerospike, Inc. under one or more contributor
@@ -13,7 +14,8 @@
 // License for the specific language governing permissions and limitations under
 // the License.
 use aerospike::{
-    as_bin, as_blob, as_geo, as_key, as_list, as_map, as_val, Bins, ReadPolicy, WritePolicy,
+    as_bin, as_blob, as_geo, as_key, as_list, as_map, as_val, Bins, ReadPolicy, Record, Value,
+    WritePolicy,
 };
 use env_logger;
 
@@ -50,7 +52,8 @@ async fn serialize() {
     ];
     client.put(&wpolicy, &key, &bins).await.unwrap();
 
-    let record = client.get(&policy, &key, Bins::All).await.unwrap();
+    let record: Record<HashMap<String, Value>> =
+        client.get(&policy, &key, Bins::All).await.unwrap();
 
     let json = serde_json::to_string(&record);
     if json.is_err() {

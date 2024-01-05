@@ -17,6 +17,7 @@ mod batch;
 mod cdt_bitwise;
 mod cdt_list;
 mod cdt_map;
+mod derive;
 mod exp;
 mod exp_bitwise;
 mod exp_hll;

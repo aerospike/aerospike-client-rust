@@ -13,31 +13,31 @@
 // limitations under the License.
 
 use aerospike_rt::time::{Duration, Instant};
-use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::cluster::Node;
 use crate::commands::{self, Command};
+use crate::derive::readable::ReadableBins;
 use crate::errors::{ErrorKind, Result, ResultExt};
 use crate::net::Connection;
 use crate::policy::{BatchPolicy, Policy, PolicyLike};
-use crate::{value, BatchRead, Record, ResultCode, Value};
+use crate::{BatchRead, Record, ResultCode};
 use aerospike_rt::sleep;
 
-struct BatchRecord {
+struct BatchRecord<T: ReadableBins> {
     batch_index: usize,
-    record: Option<Record>,
+    record: Option<Record<T>>,
 }
 
 #[derive(Clone, Debug)]
-pub struct BatchReadCommand {
+pub struct BatchReadCommand<T: ReadableBins> {
     policy: BatchPolicy,
     pub node: Arc<Node>,
-    pub batch_reads: Vec<BatchRead>,
+    pub batch_reads: Vec<BatchRead<T>>,
 }
 
-impl BatchReadCommand {
-    pub fn new(policy: &BatchPolicy, node: Arc<Node>, batch_reads: Vec<BatchRead>) -> Self {
+impl<T: ReadableBins> BatchReadCommand<T> {
+    pub fn new(policy: &BatchPolicy, node: Arc<Node>, batch_reads: Vec<BatchRead<T>>) -> Self {
         BatchReadCommand {
             policy: policy.clone(),
             node,
@@ -146,7 +146,7 @@ impl BatchReadCommand {
         Ok(true)
     }
 
-    async fn parse_record(&mut self, conn: &mut Connection) -> Result<Option<BatchRecord>> {
+    async fn parse_record(&mut self, conn: &mut Connection) -> Result<Option<BatchRecord<T>>> {
         let found_key = match ResultCode::from(conn.buffer.read_u8(Some(5))) {
             ResultCode::Ok => true,
             ResultCode::KeyNotFoundError => false,
@@ -166,26 +166,11 @@ impl BatchReadCommand {
         let field_count = conn.buffer.read_u16(None) as usize; // almost certainly 0
         let op_count = conn.buffer.read_u16(None) as usize;
 
-        let key = commands::StreamCommand::parse_key(conn, field_count).await?;
+        let key = commands::StreamCommand::<T>::parse_key(conn, field_count).await?;
 
         let record = if found_key {
-            let mut bins: HashMap<String, Value> = HashMap::with_capacity(op_count);
-
-            for _ in 0..op_count {
-                conn.read_buffer(8).await?;
-                let op_size = conn.buffer.read_u32(None) as usize;
-                conn.buffer.skip(1);
-                let particle_type = conn.buffer.read_u8(None);
-                conn.buffer.skip(1);
-                let name_size = conn.buffer.read_u8(None) as usize;
-                conn.read_buffer(name_size).await?;
-                let name = conn.buffer.read_str(name_size)?;
-                let particle_bytes_size = op_size - (4 + name_size);
-                conn.read_buffer(particle_bytes_size).await?;
-                let value =
-                    value::bytes_to_particle(particle_type, &mut conn.buffer, particle_bytes_size)?;
-                bins.insert(name, value);
-            }
+            let mut data_points = conn.pre_parse_stream_bins(op_count).await?;
+            let bins = T::read_bins_from_bytes(&mut data_points)?;
 
             Some(Record::new(Some(key), bins, generation, expiration))
         } else {
@@ -199,7 +184,7 @@ impl BatchReadCommand {
 }
 
 #[async_trait::async_trait]
-impl commands::Command for BatchReadCommand {
+impl<T: ReadableBins> commands::Command for BatchReadCommand<T> {
     async fn write_timeout(
         &mut self,
         conn: &mut Connection,
@@ -207,10 +192,6 @@ impl commands::Command for BatchReadCommand {
     ) -> Result<()> {
         conn.buffer.write_timeout(timeout);
         Ok(())
-    }
-
-    async fn write_buffer(&mut self, conn: &mut Connection) -> Result<()> {
-        conn.flush().await
     }
 
     fn prepare_buffer(&mut self, conn: &mut Connection) -> Result<()> {
@@ -232,5 +213,9 @@ impl commands::Command for BatchReadCommand {
             }
         }
         Ok(())
+    }
+
+    async fn write_buffer(&mut self, conn: &mut Connection) -> Result<()> {
+        conn.flush().await
     }
 }

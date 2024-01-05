@@ -1,4 +1,5 @@
 #[cfg(not(any(feature = "rt-tokio", feature = "rt-async-std")))]
+
 compile_error!("Please select a runtime from ['rt-tokio', 'rt-async-std']");
 
 #[cfg(any(all(feature = "rt-async-std", feature = "rt-tokio")))]

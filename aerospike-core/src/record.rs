@@ -16,12 +16,10 @@
 #[cfg(feature = "serialization")]
 use serde::Serialize;
 
-use std::collections::HashMap;
-use std::fmt;
+use crate::derive::readable::ReadableBins;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use crate::Key;
-use crate::Value;
 
 lazy_static! {
   // Fri Jan  1 00:00:00 UTC 2010
@@ -31,13 +29,13 @@ lazy_static! {
 /// Container object for a database record.
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "serialization", derive(Serialize))]
-pub struct Record {
+pub struct Record<T: ReadableBins> {
     /// Record key. When reading a record from the database, the key is not set in the returned
     /// Record struct.
     pub key: Option<Key>,
 
     /// Map of named record bins.
-    pub bins: HashMap<String, Value>,
+    pub bins: T,
 
     /// Record modification count.
     pub generation: u32,
@@ -46,15 +44,10 @@ pub struct Record {
     expiration: u32,
 }
 
-impl Record {
+impl<T: ReadableBins> Record<T> {
     /// Construct a new Record. For internal use only.
     #[doc(hidden)]
-    pub const fn new(
-        key: Option<Key>,
-        bins: HashMap<String, Value>,
-        generation: u32,
-        expiration: u32,
-    ) -> Self {
+    pub const fn new(key: Option<Key>, bins: T, generation: u32, expiration: u32) -> Self {
         Record {
             key,
             bins,
@@ -77,25 +70,6 @@ impl Record {
                     Err(_) => Some(Duration::new(1u64, 0)),
                 }
             }
-        }
-    }
-}
-
-impl fmt::Display for Record {
-    fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
-        write!(f, "key: {:?}", self.key)?;
-        write!(f, ", bins: {{")?;
-        for (i, (k, v)) in self.bins.iter().enumerate() {
-            if i > 0 {
-                write!(f, ", ")?;
-            }
-            write!(f, "{}: {}", k, v)?;
-        }
-        write!(f, "}}, generation: {}", self.generation)?;
-        write!(f, ", ttl: ")?;
-        match self.time_to_live() {
-            None => "none".fmt(f),
-            Some(duration) => duration.as_secs().fmt(f),
         }
     }
 }

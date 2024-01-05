@@ -13,6 +13,8 @@
 // License for the specific language governing permissions and limitations under
 // the License.
 
+//! General Functions to Encode Aerospike Wire Data
+
 use std::collections::HashMap;
 use std::num::Wrapping;
 use std::{i16, i32, i64, i8};
@@ -24,7 +26,7 @@ use crate::operations::cdt_context::CdtContext;
 use crate::value::{FloatValue, Value};
 
 #[doc(hidden)]
-pub fn pack_value(buf: &mut Option<&mut Buffer>, val: &Value) -> usize {
+pub(crate) fn pack_value(buf: &mut Option<&mut Buffer>, val: &Value) -> usize {
     match *val {
         Value::Nil => pack_nil(buf),
         Value::Int(ref val) => pack_integer(buf, *val),
@@ -44,7 +46,7 @@ pub fn pack_value(buf: &mut Option<&mut Buffer>, val: &Value) -> usize {
 }
 
 #[doc(hidden)]
-pub fn pack_empty_args_array(buf: &mut Option<&mut Buffer>) -> usize {
+pub(crate) fn pack_empty_args_array(buf: &mut Option<&mut Buffer>) -> usize {
     let mut size = 0;
     size += pack_array_begin(buf, 0);
 
@@ -52,7 +54,7 @@ pub fn pack_empty_args_array(buf: &mut Option<&mut Buffer>) -> usize {
 }
 
 #[doc(hidden)]
-pub fn pack_cdt_op(
+pub(crate) fn pack_cdt_op(
     buf: &mut Option<&mut Buffer>,
     cdt_op: &CdtOperation,
     ctx: &[CdtContext],
@@ -98,7 +100,7 @@ pub fn pack_cdt_op(
 }
 
 #[doc(hidden)]
-pub fn pack_hll_op(
+pub(crate) fn pack_hll_op(
     buf: &mut Option<&mut Buffer>,
     hll_op: &CdtOperation,
     _ctx: &[CdtContext],
@@ -122,7 +124,7 @@ pub fn pack_hll_op(
 }
 
 #[doc(hidden)]
-pub fn pack_cdt_bit_op(
+pub(crate) fn pack_cdt_bit_op(
     buf: &mut Option<&mut Buffer>,
     cdt_op: &CdtOperation,
     ctx: &[CdtContext],
@@ -162,7 +164,7 @@ pub fn pack_cdt_bit_op(
 }
 
 #[doc(hidden)]
-pub fn pack_array(buf: &mut Option<&mut Buffer>, values: &[Value]) -> usize {
+pub(crate) fn pack_array(buf: &mut Option<&mut Buffer>, values: &[Value]) -> usize {
     let mut size = 0;
 
     size += pack_array_begin(buf, values.len());
@@ -174,7 +176,7 @@ pub fn pack_array(buf: &mut Option<&mut Buffer>, values: &[Value]) -> usize {
 }
 
 #[doc(hidden)]
-pub fn pack_map(buf: &mut Option<&mut Buffer>, map: &HashMap<Value, Value>) -> usize {
+pub(crate) fn pack_map(buf: &mut Option<&mut Buffer>, map: &HashMap<Value, Value>) -> usize {
     let mut size = 0;
 
     size += pack_map_begin(buf, map.len());
@@ -205,13 +207,15 @@ const MSGPACK_MARKER_NI64: u8 = 0xd3;
 // This method is not compatible with MsgPack specs and is only used by aerospike client<->server
 // for wire transfer only
 #[doc(hidden)]
-pub fn pack_raw_u16(buf: &mut Option<&mut Buffer>, value: u16) -> usize {
+pub(crate) fn pack_raw_u16(buf: &mut Option<&mut Buffer>, value: u16) -> usize {
     if let Some(ref mut buf) = *buf {
         buf.write_u16(value);
     }
     2
 }
 
+/// Packs a byte without Marker. Writes it to the Buffer if given.
+/// Returns the size of the packaged Data
 #[doc(hidden)]
 pub fn pack_half_byte(buf: &mut Option<&mut Buffer>, value: u8) -> usize {
     if let Some(ref mut buf) = *buf {
@@ -220,6 +224,8 @@ pub fn pack_half_byte(buf: &mut Option<&mut Buffer>, value: u8) -> usize {
     1
 }
 
+/// Packs a byte with Marker. Writes it to the Buffer if given.
+/// Returns the size of the packaged Data
 #[doc(hidden)]
 pub fn pack_byte(buf: &mut Option<&mut Buffer>, marker: u8, value: u8) -> usize {
     if let Some(ref mut buf) = *buf {
@@ -230,13 +236,15 @@ pub fn pack_byte(buf: &mut Option<&mut Buffer>, marker: u8, value: u8) -> usize 
 }
 
 #[doc(hidden)]
-pub fn pack_nil(buf: &mut Option<&mut Buffer>) -> usize {
+pub(crate) fn pack_nil(buf: &mut Option<&mut Buffer>) -> usize {
     if let Some(ref mut buf) = *buf {
         buf.write_u8(MSGPACK_MARKER_NIL);
     }
     1
 }
 
+/// Packs a bool. Writes it to the Buffer if given.
+/// Returns the size of the packaged Data
 #[doc(hidden)]
 pub fn pack_bool(buf: &mut Option<&mut Buffer>, value: bool) -> usize {
     if let Some(ref mut buf) = *buf {
@@ -249,6 +257,8 @@ pub fn pack_bool(buf: &mut Option<&mut Buffer>, value: bool) -> usize {
     1
 }
 
+/// Packs a Map Marker including the length. Writes it to the Buffer if given.
+/// Returns the size of the packaged Data
 #[doc(hidden)]
 pub fn pack_map_begin(buf: &mut Option<&mut Buffer>, length: usize) -> usize {
     match length {
@@ -258,6 +268,8 @@ pub fn pack_map_begin(buf: &mut Option<&mut Buffer>, length: usize) -> usize {
     }
 }
 
+/// Packs a List Marker including the length. Writes it to the Buffer if given.
+/// Returns the size of the packaged Data
 #[doc(hidden)]
 pub fn pack_array_begin(buf: &mut Option<&mut Buffer>, length: usize) -> usize {
     match length {
@@ -267,6 +279,8 @@ pub fn pack_array_begin(buf: &mut Option<&mut Buffer>, length: usize) -> usize {
     }
 }
 
+/// Packs a Byte Array Marker. Writes it to the Buffer if given.
+/// Returns the size of the packaged Data
 #[doc(hidden)]
 pub fn pack_byte_array_begin(buf: &mut Option<&mut Buffer>, length: usize) -> usize {
     match length {
@@ -276,6 +290,8 @@ pub fn pack_byte_array_begin(buf: &mut Option<&mut Buffer>, length: usize) -> us
     }
 }
 
+/// Packs a blob. Writes it to the Buffer if given.
+/// Returns the size of the packaged Data
 #[doc(hidden)]
 pub fn pack_blob(buf: &mut Option<&mut Buffer>, value: &[u8]) -> usize {
     let mut size = value.len() + 1;
@@ -289,6 +305,8 @@ pub fn pack_blob(buf: &mut Option<&mut Buffer>, value: &[u8]) -> usize {
     size
 }
 
+/// Packs a string including Marker. Writes it to the Buffer if given.
+/// Returns the size of the packaged Data
 #[doc(hidden)]
 pub fn pack_string(buf: &mut Option<&mut Buffer>, value: &str) -> usize {
     let mut size = value.len() + 1;
@@ -302,6 +320,8 @@ pub fn pack_string(buf: &mut Option<&mut Buffer>, value: &str) -> usize {
     size
 }
 
+/// Packs a String without Marker. Writes it to the Buffer if given.
+/// Returns the size of the packaged Data
 #[doc(hidden)]
 pub fn pack_raw_string(buf: &mut Option<&mut Buffer>, value: &str) -> usize {
     let mut size = value.len();
@@ -314,6 +334,8 @@ pub fn pack_raw_string(buf: &mut Option<&mut Buffer>, value: &str) -> usize {
     size
 }
 
+/// Packs a GeoJSON Object. Writes it to the Buffer if given.
+/// Returns the size of the packaged Data
 #[doc(hidden)]
 fn pack_geo_json(buf: &mut Option<&mut Buffer>, value: &str) -> usize {
     let mut size = value.len() + 1;
@@ -327,6 +349,9 @@ fn pack_geo_json(buf: &mut Option<&mut Buffer>, value: &str) -> usize {
     size
 }
 
+/// Packs a Integer. Writes it to the Buffer if given.
+/// Returns the size of the packaged Data
+/// The exact Integer size is handled by this function.
 #[doc(hidden)]
 pub fn pack_integer(buf: &mut Option<&mut Buffer>, val: i64) -> usize {
     match val {
@@ -361,7 +386,7 @@ pub fn pack_integer(buf: &mut Option<&mut Buffer>, val: i64) -> usize {
 }
 
 #[doc(hidden)]
-pub fn pack_i16(buf: &mut Option<&mut Buffer>, marker: u8, value: i16) -> usize {
+pub(crate) fn pack_i16(buf: &mut Option<&mut Buffer>, marker: u8, value: i16) -> usize {
     if let Some(ref mut buf) = *buf {
         buf.write_u8(marker);
         buf.write_i16(value);
@@ -370,7 +395,7 @@ pub fn pack_i16(buf: &mut Option<&mut Buffer>, marker: u8, value: i16) -> usize 
 }
 
 #[doc(hidden)]
-pub fn pack_i32(buf: &mut Option<&mut Buffer>, marker: u8, value: i32) -> usize {
+pub(crate) fn pack_i32(buf: &mut Option<&mut Buffer>, marker: u8, value: i32) -> usize {
     if let Some(ref mut buf) = *buf {
         buf.write_u8(marker);
         buf.write_i32(value);
@@ -379,7 +404,7 @@ pub fn pack_i32(buf: &mut Option<&mut Buffer>, marker: u8, value: i32) -> usize 
 }
 
 #[doc(hidden)]
-pub fn pack_i64(buf: &mut Option<&mut Buffer>, marker: u8, value: i64) -> usize {
+pub(crate) fn pack_i64(buf: &mut Option<&mut Buffer>, marker: u8, value: i64) -> usize {
     if let Some(ref mut buf) = *buf {
         buf.write_u8(marker);
         buf.write_i64(value);
@@ -388,7 +413,7 @@ pub fn pack_i64(buf: &mut Option<&mut Buffer>, marker: u8, value: i64) -> usize 
 }
 
 #[doc(hidden)]
-pub fn pack_u64(buf: &mut Option<&mut Buffer>, value: u64) -> usize {
+pub(crate) fn pack_u64(buf: &mut Option<&mut Buffer>, value: u64) -> usize {
     if value <= i64::max_value() as u64 {
         return pack_integer(buf, value as i64);
     }

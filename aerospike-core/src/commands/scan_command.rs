@@ -18,13 +18,14 @@ use std::time::Duration;
 
 use crate::cluster::Node;
 use crate::commands::{Command, SingleCommand, StreamCommand};
+use crate::derive::readable::ReadableBins;
 use crate::errors::Result;
 use crate::net::Connection;
 use crate::policy::ScanPolicy;
 use crate::{Bins, Recordset};
 
-pub struct ScanCommand<'a> {
-    stream_command: StreamCommand,
+pub struct ScanCommand<'a, T: ReadableBins> {
+    stream_command: StreamCommand<T>,
     policy: &'a ScanPolicy,
     namespace: &'a str,
     set_name: &'a str,
@@ -32,14 +33,14 @@ pub struct ScanCommand<'a> {
     partitions: Vec<u16>,
 }
 
-impl<'a> ScanCommand<'a> {
+impl<'a, T: ReadableBins> ScanCommand<'a, T> {
     pub fn new(
         policy: &'a ScanPolicy,
         node: Arc<Node>,
         namespace: &'a str,
         set_name: &'a str,
         bins: Bins,
-        recordset: Arc<Recordset>,
+        recordset: Arc<Recordset<T>>,
         partitions: Vec<u16>,
     ) -> Self {
         ScanCommand {
@@ -58,7 +59,7 @@ impl<'a> ScanCommand<'a> {
 }
 
 #[async_trait::async_trait]
-impl<'a> Command for ScanCommand<'a> {
+impl<'a, T: ReadableBins> Command for ScanCommand<'a, T> {
     async fn write_timeout(
         &mut self,
         conn: &mut Connection,
@@ -66,10 +67,6 @@ impl<'a> Command for ScanCommand<'a> {
     ) -> Result<()> {
         conn.buffer.write_timeout(timeout);
         Ok(())
-    }
-
-    async fn write_buffer(&mut self, conn: &mut Connection) -> Result<()> {
-        conn.flush().await
     }
 
     fn prepare_buffer(&mut self, conn: &mut Connection) -> Result<()> {
@@ -89,5 +86,9 @@ impl<'a> Command for ScanCommand<'a> {
 
     async fn parse_result(&mut self, conn: &mut Connection) -> Result<()> {
         StreamCommand::parse_result(&mut self.stream_command, conn).await
+    }
+
+    async fn write_buffer(&mut self, conn: &mut Connection) -> Result<()> {
+        conn.flush().await
     }
 }

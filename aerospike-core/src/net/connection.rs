@@ -15,6 +15,7 @@
 
 use crate::commands::admin_command::AdminCommand;
 use crate::commands::buffer::Buffer;
+use crate::derive::readable::{PreParsedBin, PreParsedValue};
 use crate::errors::{ErrorKind, Result};
 use crate::policy::ClientPolicy;
 #[cfg(all(any(feature = "rt-async-std"), not(feature = "rt-tokio")))]
@@ -25,6 +26,8 @@ use aerospike_rt::net::TcpStream;
 use aerospike_rt::time::{Duration, Instant};
 #[cfg(all(any(feature = "rt-async-std"), not(feature = "rt-tokio")))]
 use futures::{AsyncReadExt, AsyncWriteExt};
+use std::collections::hash_map::Entry::{Occupied, Vacant};
+use std::collections::HashMap;
 use std::ops::Add;
 
 #[derive(Debug)]
@@ -128,5 +131,55 @@ impl Connection {
 
     pub const fn bytes_read(&self) -> usize {
         self.bytes_read
+    }
+
+    pub(crate) async fn pre_parse_stream_bins(
+        &mut self,
+        op_count: usize,
+    ) -> Result<HashMap<String, PreParsedBin>> {
+        let mut data_points: HashMap<String, PreParsedBin> = HashMap::new();
+
+        for _ in 0..op_count {
+            self.read_buffer(8).await?;
+
+            let op_size = self.buffer.read_u32(None) as usize;
+            self.buffer.skip(1);
+            let particle_type = self.buffer.read_u8(None);
+            self.buffer.skip(1);
+            let name_size = self.buffer.read_u8(None) as usize;
+            self.read_buffer(name_size).await?;
+
+            let name: String = self.buffer.read_str(name_size)?;
+            let particle_bytes_size = op_size - (4 + name_size);
+            self.read_buffer(particle_bytes_size).await?;
+
+            if particle_type != 0 {
+                let pre_parsed = PreParsedValue {
+                    particle_type,
+                    // Needs to be cloned since buffer will be changed in the meantime
+                    buffer: self.buffer.clone(),
+                    byte_length: particle_bytes_size,
+                };
+
+                match data_points.entry(name) {
+                    Vacant(entry) => {
+                        let pre_bin = PreParsedBin {
+                            value: pre_parsed,
+                            sub_values: Vec::new(),
+                        };
+                        entry.insert(pre_bin);
+                    }
+                    Occupied(entry) => {
+                        let ent = entry.into_mut();
+                        ent.sub_values.push(pre_parsed);
+                    }
+                }
+            }
+
+            // Value Data starts at current offset. We dont want to parse that now, so skip to let the loop continue at the next bin.
+            self.buffer.skip(particle_bytes_size);
+        }
+
+        Ok(data_points)
     }
 }
