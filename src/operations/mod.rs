@@ -75,6 +75,7 @@ pub enum OperationBin<'a> {
 }
 
 /// Database operation definition. This data type is used in the client's `operate()` method.
+#[derive(Clone)]
 pub struct Operation<'a> {
     // OpType determines type of operation.
     #[doc(hidden)]
