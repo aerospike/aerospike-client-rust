@@ -22,6 +22,7 @@ use crate::operations::cdt_context::CdtContext;
 use crate::Value;
 
 #[doc(hidden)]
+#[derive(Clone)]
 pub enum CdtArgument<'a> {
     Byte(u8),
     Int(i64),
@@ -34,7 +35,14 @@ pub enum CdtArgument<'a> {
 pub type OperationEncoder =
     Box<dyn Fn(&mut Option<&mut Buffer>, &CdtOperation, &[CdtContext]) -> Result<usize>>;
 
+impl Clone for Box<dyn OperationEncoder> {
+    fn clone(&self) -> Self {
+        self.clone_box()
+    }
+}
+
 #[doc(hidden)]
+#[derive(Clone)]
 pub struct CdtOperation<'a> {
     pub op: u8,
     pub encoder: OperationEncoder,
