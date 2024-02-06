@@ -39,7 +39,7 @@ pub type OperationEncoder =
 #[derive(Clone)]
 pub struct CdtOperation<'a> {
     pub op: u8,
-    pub encoder: OperationEncoder,
+    pub encoder: OperationEncoder<'a>,
     pub args: Vec<CdtArgument<'a>>,
 }
 
