@@ -32,8 +32,8 @@ pub enum CdtArgument<'a> {
     Map(&'a HashMap<Value, Value>),
 }
 
-pub type OperationEncoder<'a> =
-    Box<dyn Fn(&'a mut Option<&'a mut Buffer>, &'a CdtOperation, &'a [CdtContext]) -> Result<usize>>;
+pub type OperationEncoder =
+    Box<dyn Fn(&mut Option<&mut Buffer>, &CdtOperation, &[CdtContext]) -> Result<usize>>;
 
 #[doc(hidden)]
 #[derive(Clone)]
