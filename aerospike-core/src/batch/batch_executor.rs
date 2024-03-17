@@ -28,10 +28,13 @@ pub struct BatchExecutor {
     cluster: Arc<Cluster>,
 }
 
+const MAX_BATCH_REQUEST_SIZE : usize = 5000;
+
 impl BatchExecutor {
     pub fn new(cluster: Arc<Cluster>) -> Self {
         BatchExecutor { cluster }
     }
+
 
     pub async fn execute_batch_read(
         &self,
@@ -39,10 +42,12 @@ impl BatchExecutor {
         batch_reads: Vec<BatchRead>,
     ) -> Result<Vec<BatchRead>> {
         let batch_nodes = self.get_batch_nodes(&batch_reads, policy.replica)?;
-        let jobs = batch_nodes
-            .into_iter()
-            .map(|(node, reads)| BatchReadCommand::new(policy, node, reads))
-            .collect();
+        let mut jobs = Vec::<BatchReadCommand>::new();
+        for (node, node_jobs) in batch_nodes {
+            for node_chunk in node_jobs.chunks(MAX_BATCH_REQUEST_SIZE) {
+                jobs.push( BatchReadCommand::new(policy, node.clone(), node_chunk.to_vec()) );
+            }
+        }
         let reads = self.execute_batch_jobs(jobs, policy.concurrency).await?;
         let mut all_results: Vec<_> = reads.into_iter().flat_map(|cmd|cmd.batch_reads).collect();
         all_results.sort_by_key(|(_, i)|*i);
