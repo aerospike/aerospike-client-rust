@@ -17,7 +17,7 @@ use std::ops::{Deref, DerefMut, Drop};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
-use crate::errors::{Error, ErrorKind, Result};
+use crate::errors::{Error, Result};
 use crate::net::{Connection, Host};
 use crate::policy::ClientPolicy;
 use futures::executor::block_on;
@@ -75,7 +75,7 @@ impl Queue {
             }
 
             if internals.num_conns >= self.0.capacity {
-                bail!(ErrorKind::NoMoreConnections);
+                return Err(Error::NoMoreConnections);
             }
 
             internals.num_conns += 1;
@@ -93,7 +93,7 @@ impl Queue {
                 let mut internals = self.0.internals.lock().await;
                 internals.num_conns -= 1;
                 drop(internals);
-                bail!(ErrorKind::Connection(
+                return Err(Error::Connection(
                     "Could not open network connection".to_string()
                 ));
             }
@@ -190,7 +190,7 @@ impl ConnectionPool {
             loop {
                 let i = self.queue_counter.fetch_add(1, Ordering::Relaxed);
                 let connection = self.queues[i % self.num_queues].get().await;
-                if let Err(Error(ErrorKind::NoMoreConnections, _)) = connection {
+                if let Err(Error::NoMoreConnections) = connection {
                     attempts -= 1;
                     if attempts > 0 {
                         continue;

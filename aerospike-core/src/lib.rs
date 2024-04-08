@@ -140,7 +140,7 @@ extern crate byteorder;
 extern crate crossbeam_queue;
 extern crate ripemd160;
 #[macro_use]
-extern crate error_chain;
+extern crate thiserror;
 #[macro_use]
 extern crate lazy_static;
 #[macro_use]
@@ -153,7 +153,7 @@ pub use bin::{Bin, Bins};
 pub use client::Client;
 pub use cluster::Node;
 pub use commands::particle_type::ParticleType;
-pub use errors::{Error, ErrorKind, Result};
+pub use errors::{Error, Result};
 pub use expressions::regex_flag::RegexFlag;
 pub use key::Key;
 pub use net::Host;

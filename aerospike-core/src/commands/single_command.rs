@@ -17,7 +17,7 @@ use std::sync::Arc;
 use crate::cluster::partition::Partition;
 use crate::cluster::{Cluster, Node};
 use crate::commands::{self};
-use crate::errors::{ErrorKind, Result, ResultExt};
+use crate::errors::{Error, Result};
 use crate::net::Connection;
 use crate::policy::Policy;
 use crate::Key;
@@ -109,10 +109,10 @@ impl<'a> SingleCommand<'a> {
             };
 
             cmd.prepare_buffer(&mut conn)
-                .chain_err(|| "Failed to prepare send buffer")?;
+                .map_err(|e| e.chain_error("Failed to prepare send buffer"))?;
             cmd.write_timeout(&mut conn, policy.timeout())
                 .await
-                .chain_err(|| "Failed to set timeout for send buffer")?;
+                .map_err(|e| e.chain_error("Failed to set timeout for send buffer"))?;
 
             // Send command.
             if let Err(err) = cmd.write_buffer(&mut conn).await {
@@ -139,6 +139,6 @@ impl<'a> SingleCommand<'a> {
             return Ok(());
         }
 
-        bail!(ErrorKind::Connection("Timeout".to_string()))
+        return Err(Error::Connection("Timeout".to_string()));
     }
 }

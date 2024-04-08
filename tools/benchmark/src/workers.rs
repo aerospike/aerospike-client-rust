@@ -23,7 +23,7 @@ use rand::prelude::*;
 
 use aerospike::Error as asError;
 use aerospike::Result as asResult;
-use aerospike::{Client, ErrorKind, Key, ReadPolicy, ResultCode, WritePolicy};
+use aerospike::{Client, Error, Key, ReadPolicy, ResultCode, WritePolicy};
 
 use generator::KeyRange;
 use percent::Percent;
@@ -113,7 +113,7 @@ trait Task: Send {
 
     fn status(&self, result: asResult<()>) -> Status {
         match result {
-            Err(asError(ErrorKind::ServerError(ResultCode::Timeout), _)) => Status::Timeout,
+            Err(Error::ServerError(ResultCode::Timeout)) => Status::Timeout,
             Err(_) => Status::Error,
             _ => Status::Success,
         }
