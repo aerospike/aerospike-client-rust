@@ -95,10 +95,10 @@ impl BatchReadCommand {
             };
 
             self.prepare_buffer(&mut conn)
-                .chain_err(|| "Failed to prepare send buffer")?;
+                .map_err(|e| e.chain_error("Failed to prepare send buffer"))?;
             self.write_timeout(&mut conn, base_policy.timeout())
                 .await
-                .chain_err(|| "Failed to set timeout for send buffer")?;
+                .map_err(|e| e.chain_error("Failed to set timeout for send buffer"))?;
 
             // Send command.
             if let Err(err) = self.write_buffer(&mut conn).await {
@@ -125,7 +125,7 @@ impl BatchReadCommand {
             return Ok(());
         }
 
-        return Err(Error::Connection("Timeout".to_string()))
+        return Err(Error::Connection("Timeout".to_string()));
     }
 
     async fn parse_group(&mut self, conn: &mut Connection, size: usize) -> Result<bool> {

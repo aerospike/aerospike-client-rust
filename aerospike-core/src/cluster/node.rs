@@ -129,15 +129,15 @@ impl Node {
         let info_map = self
             .info(&commands)
             .await
-            .chain_err(|| "Info command failed")?;
+            .map_err(|e| e.chain_error("Info command failed"))?;
         self.validate_node(&info_map)
-            .chain_err(|| "Failed to validate node")?;
+            .map_err(|e| e.chain_error("Failed to validate node"))?;
         self.responded.store(true, Ordering::Relaxed);
         let friends = self
             .add_friends(current_aliases, &info_map)
-            .chain_err(|| "Failed to add friends")?;
+            .map_err(|e| e.chain_error("Failed to add friends"))?;
         self.update_partitions(&info_map)
-            .chain_err(|| "Failed to update partitions")?;
+            .map_err(|e| e.chain_error("Failed to update partitions"))?;
         self.reset_failures();
         Ok(friends)
     }
@@ -237,9 +237,11 @@ impl Node {
 
     fn update_partitions(&self, info_map: &HashMap<String, String>) -> Result<()> {
         match info_map.get("partition-generation") {
-            None => return Err(Error::BadResponse(
-                "Missing partition generation".to_string()
-            )),
+            None => {
+                return Err(Error::BadResponse(
+                    "Missing partition generation".to_string(),
+                ))
+            }
             Some(gen_string) => {
                 let gen = gen_string.parse::<isize>()?;
                 self.partition_generation.store(gen, Ordering::Relaxed);

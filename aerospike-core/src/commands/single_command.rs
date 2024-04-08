@@ -109,10 +109,10 @@ impl<'a> SingleCommand<'a> {
             };
 
             cmd.prepare_buffer(&mut conn)
-                .chain_err(|| "Failed to prepare send buffer")?;
+                .map_err(|e| e.chain_error("Failed to prepare send buffer"))?;
             cmd.write_timeout(&mut conn, policy.timeout())
                 .await
-                .chain_err(|| "Failed to set timeout for send buffer")?;
+                .map_err(|e| e.chain_error("Failed to set timeout for send buffer"))?;
 
             // Send command.
             if let Err(err) = cmd.write_buffer(&mut conn).await {
@@ -139,6 +139,6 @@ impl<'a> SingleCommand<'a> {
             return Ok(());
         }
 
-        return Err(Error::Connection("Timeout".to_string()))
+        return Err(Error::Connection("Timeout".to_string()));
     }
 }

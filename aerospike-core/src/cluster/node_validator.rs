@@ -55,7 +55,7 @@ impl NodeValidator {
 
     pub async fn validate_node(&mut self, cluster: &Cluster, host: &Host) -> Result<()> {
         self.resolve_aliases(host)
-            .chain_err(|| "Failed to resolve host aliases")?;
+            .map_err(|e| e.chain_error("Failed to resolve host aliases"))?;
 
         let mut last_err = None;
         for alias in &self.aliases() {
@@ -103,11 +103,13 @@ impl NodeValidator {
             match info_map.get("cluster-name") {
                 None => return Err(Error::InvalidNode(String::from("Missing cluster name"))),
                 Some(info_name) if info_name == cluster_name => {}
-                Some(info_name) => return Err(Error::InvalidNode(format!(
-                    "Cluster name mismatch: expected={},
+                Some(info_name) => {
+                    return Err(Error::InvalidNode(format!(
+                        "Cluster name mismatch: expected={},
                                                          got={}",
-                    cluster_name, info_name
-                ))),
+                        cluster_name, info_name
+                    )))
+                }
             }
         }
 

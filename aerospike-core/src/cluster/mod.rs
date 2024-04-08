@@ -88,7 +88,7 @@ impl Cluster {
                 "Failed to connect to host(s). The network \
                  connection(s) to cluster nodes may have timed out, or \
                  the cluster may be in a state of flux."
-                    .to_string()
+                    .to_string(),
             ));
         }
 
@@ -201,9 +201,9 @@ impl Cluster {
         });
 
         #[cfg(all(feature = "rt-tokio", not(feature = "rt-async-std")))]
-        return handle
-            .await
-            .map_err(|err| format!("Error during initial cluster tend: {:?}", err).into());
+        return handle.await.map_err(|err| {
+            Error::InvalidArgument(format!("Error during initial cluster tend: {:?}", err).into())
+        });
         #[cfg(all(feature = "rt-async-std", not(feature = "rt-tokio")))]
         return {
             handle.await;
@@ -518,7 +518,7 @@ impl Cluster {
             }
         }
 
-        return Err(Error::Connection("No active node".into()))
+        return Err(Error::Connection("No active node".into()));
     }
 
     pub async fn get_node_by_name(&self, node_name: &str) -> Result<Arc<Node>> {
@@ -530,7 +530,9 @@ impl Cluster {
             }
         }
 
-        return Err(Error::InvalidNode(format!("Requested node `{node_name}` not found.")))
+        return Err(Error::InvalidNode(format!(
+            "Requested node `{node_name}` not found."
+        )));
     }
 
     pub async fn close(&self) -> Result<()> {

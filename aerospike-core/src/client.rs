@@ -539,7 +539,12 @@ impl Client {
 
         match response.get(&cmd).map(String::as_str) {
             Some("ok") => Ok(()),
-            _ => return Err(Error::UdfBadResponse(format!("UDF Remove failed: {:?}", response))),
+            _ => {
+                return Err(Error::UdfBadResponse(format!(
+                    "UDF Remove failed: {:?}",
+                    response
+                )))
+            }
         }
     }
 
@@ -808,7 +813,7 @@ impl Client {
 
         self.send_info_cmd(&cmd)
             .await
-            .chain_err(|| "Error truncating ns/set")
+            .map_err(|e| e.chain_error("Error truncating ns/set"))
     }
 
     /// Create a secondary index on a bin containing scalar values. This asynchronous server call
@@ -879,7 +884,7 @@ impl Client {
         );
         self.send_info_cmd(&cmd)
             .await
-            .chain_err(|| "Error creating index")
+            .map_err(|e| e.chain_error("Error creating index"))
     }
 
     /// Delete secondary index.
@@ -900,7 +905,7 @@ impl Client {
         );
         self.send_info_cmd(&cmd)
             .await
-            .chain_err(|| "Error dropping index")
+            .map_err(|e| e.chain_error("Error dropping index"))
     }
 
     async fn send_info_cmd(&self, cmd: &str) -> Result<()> {
@@ -917,7 +922,7 @@ impl Client {
         }
 
         return Err(Error::BadResponse(
-            "Unexpected sindex info command response".to_string()
-        ))
+            "Unexpected sindex info command response".to_string(),
+        ));
     }
 }
