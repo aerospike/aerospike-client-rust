@@ -94,7 +94,7 @@ impl Queue {
                 internals.num_conns -= 1;
                 drop(internals);
                 return Err(Error::Connection(
-                    "Could not open network connection".to_string()
+                    "Could not open network connection".to_string(),
                 ));
             }
 

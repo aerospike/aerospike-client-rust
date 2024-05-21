@@ -150,7 +150,7 @@ impl BatchReadCommand {
         let found_key = match ResultCode::from(conn.buffer.read_u8(Some(5))) {
             ResultCode::Ok => true,
             ResultCode::KeyNotFoundError => false,
-            rc => return Err(Error::ServerError(rc)),
+            rc => return Err(Error::ServerError(rc, false, self.node.address().into())),
         };
 
         // if cmd is the end marker of the response, do not proceed further

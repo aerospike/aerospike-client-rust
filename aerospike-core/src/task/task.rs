@@ -55,7 +55,7 @@ pub trait Task {
             }
 
             if timeout.map_or(false, timeout_elapsed) {
-                return Err(Error::Timeout("Task timeout reached".to_string()))
+                return Err(Error::Timeout("Task timeout reached".to_string(), true));
             }
         }
     }

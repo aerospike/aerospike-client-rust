@@ -90,14 +90,14 @@ pub enum Error {
     #[error("Too many connections")]
     NoMoreConnections,
     /// Server responded with a response code indicating an error condition.
-    #[error("Server error: {0:?}")]
-    ServerError(ResultCode),
+    #[error("Server error: {0:?}, In Doubt: {1}, Node: {2}")]
+    ServerError(ResultCode, bool, String),
     /// Error returned when executing a User-Defined Function (UDF) resulted in an error.
     #[error("UDF Bad Response: {0}")]
     UdfBadResponse(String),
     /// Error returned when a task times out before it could be completed.
-    #[error("Timeout: {0}")]
-    Timeout(String),
+    #[error("Timeout: {0}, Client-Side: {1}")]
+    Timeout(String, bool),
 
     /// ClientError is an untyped Error happening on client-side
     #[error("{0}")]
@@ -105,16 +105,16 @@ pub enum Error {
 
     /// Error returned when a tasked timeed out before it could be completed.
     #[error("{0}\n\t{1}")]
-    Wrapped(Box<Error>, Box<Error>),
+    Chain(Box<Error>, Box<Error>),
 }
 
 impl Error {
     pub fn chain_error(self, e: &str) -> Error {
-        Error::Wrapped(Box::new(Error::ClientError(e.into())), Box::new(self))
+        Error::Chain(Box::new(Error::ClientError(e.into())), Box::new(self))
     }
 
     pub fn wrap(self, e: Error) -> Error {
-        Error::Wrapped(Box::new(e), Box::new(self))
+        Error::Chain(Box::new(e), Box::new(self))
     }
 }
 

@@ -54,7 +54,7 @@ impl StreamCommand {
 
             match result_code {
                 ResultCode::KeyNotFoundError => return Ok((None, false)),
-                _ => return Err(Error::ServerError(result_code)),
+                _ => return Err(Error::ServerError(result_code, false, conn.addr.clone())),
             }
         }
 

@@ -29,7 +29,7 @@ use std::ops::Add;
 
 #[derive(Debug)]
 pub struct Connection {
-    timeout: Option<Duration>,
+    pub(crate) addr: String,
 
     // duration after which connection is considered idle
     idle_timeout: Option<Duration>,
@@ -48,13 +48,13 @@ impl Connection {
         let stream = aerospike_rt::timeout(Duration::from_secs(10), TcpStream::connect(addr)).await;
         if stream.is_err() {
             return Err(Error::Connection(
-                "Could not open network connection".to_string()
+                "Could not open network connection".to_string(),
             ));
         }
         let mut conn = Connection {
+            addr: addr.into(),
             buffer: Buffer::new(policy.buffer_reclaim_threshold),
             bytes_read: 0,
-            timeout: policy.timeout,
             conn: stream.unwrap()?,
             idle_timeout: policy.idle_timeout,
             idle_deadline: policy.idle_timeout.map(|timeout| Instant::now() + timeout),

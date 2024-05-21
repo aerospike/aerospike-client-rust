@@ -917,7 +917,11 @@ impl Client {
                 return Ok(());
             } else if v.starts_with("FAIL:") {
                 let result = v.split(':').nth(1).unwrap().parse::<u8>()?;
-                return Err(Error::ServerError(ResultCode::from(result)));
+                return Err(Error::ServerError(
+                    ResultCode::from(result),
+                    false,
+                    node.host().address().clone(),
+                ));
             }
         }
 

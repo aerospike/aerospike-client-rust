@@ -41,7 +41,7 @@ impl PartitionTokenizer {
                 buffer: buf.as_bytes().to_owned(),
             });
         }
-        return Err(Error::BadResponse("Missing replicas info".to_string()))
+        return Err(Error::BadResponse("Missing replicas info".to_string()));
     }
 
     pub async fn update_partition(
@@ -72,9 +72,11 @@ impl PartitionTokenizer {
                     }
                 }
                 (None, None) => break,
-                _ => return Err(Error::BadResponse(
-                    "Error parsing partition info".to_string()
-                )),
+                _ => {
+                    return Err(Error::BadResponse(
+                        "Error parsing partition info".to_string(),
+                    ))
+                }
             }
         }
 

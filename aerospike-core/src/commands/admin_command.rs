@@ -81,7 +81,7 @@ impl AdminCommand {
         let result_code = conn.buffer.read_u8(Some(RESULT_CODE));
         let result_code = ResultCode::from(result_code);
         if result_code != ResultCode::Ok {
-            return Err(Error::ServerError(result_code));
+            return Err(Error::ServerError(result_code, false, conn.addr.clone()));
         }
 
         Ok(())
@@ -103,7 +103,7 @@ impl AdminCommand {
         let result_code = conn.buffer.read_u8(Some(RESULT_CODE));
         let result_code = ResultCode::from(result_code);
         if ResultCode::SecurityNotEnabled != result_code && ResultCode::Ok != result_code {
-            return Err(Error::ServerError(result_code));
+            return Err(Error::ServerError(result_code, false, conn.addr.clone()));
         }
 
         // consume the rest of the buffer

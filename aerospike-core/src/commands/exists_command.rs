@@ -82,7 +82,7 @@ impl<'a> Command for ExistsCommand<'a> {
         let result_code = ResultCode::from(conn.buffer.read_u8(Some(13)));
 
         if result_code != ResultCode::Ok && result_code != ResultCode::KeyNotFoundError {
-            return Err(Error::ServerError(result_code));
+            return Err(Error::ServerError(result_code, false, conn.addr.clone()));
         }
 
         self.exists = result_code == ResultCode::Ok;

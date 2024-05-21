@@ -166,7 +166,7 @@ impl<'a> Command for ReadCommand<'a> {
                     .map_or(String::from("UDF Error"), ToString::to_string);
                 Err(Error::UdfBadResponse(reason).into())
             }
-            rc => Err(Error::ServerError(rc).into()),
+            rc => Err(Error::ServerError(rc.into(), false, conn.addr.clone())),
         }
     }
 }
