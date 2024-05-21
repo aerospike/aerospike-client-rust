@@ -30,7 +30,7 @@ use self::node_validator::NodeValidator;
 use self::partition::Partition;
 use self::partition_tokenizer::PartitionTokenizer;
 
-use crate::errors::{ErrorKind, Result};
+use crate::errors::{Error, Result};
 use crate::net::Host;
 use crate::policy::ClientPolicy;
 use aerospike_rt::RwLock;
@@ -84,11 +84,11 @@ impl Cluster {
 
         // apply policy rules
         if cluster.client_policy.fail_if_not_connected && !cluster.is_connected().await {
-            bail!(ErrorKind::Connection(
+            return Err(Error::Connection(
                 "Failed to connect to host(s). The network \
                  connection(s) to cluster nodes may have timed out, or \
                  the cluster may be in a state of flux."
-                    .to_string()
+                    .to_string(),
             ));
         }
 
@@ -201,9 +201,9 @@ impl Cluster {
         });
 
         #[cfg(all(feature = "rt-tokio", not(feature = "rt-async-std")))]
-        return handle
-            .await
-            .map_err(|err| format!("Error during initial cluster tend: {:?}", err).into());
+        return handle.await.map_err(|err| {
+            Error::InvalidArgument(format!("Error during initial cluster tend: {:?}", err).into())
+        });
         #[cfg(all(feature = "rt-async-std", not(feature = "rt-tokio")))]
         return {
             handle.await;
@@ -518,7 +518,7 @@ impl Cluster {
             }
         }
 
-        bail!("No active node")
+        return Err(Error::Connection("No active node".into()));
     }
 
     pub async fn get_node_by_name(&self, node_name: &str) -> Result<Arc<Node>> {
@@ -530,7 +530,9 @@ impl Cluster {
             }
         }
 
-        bail!("Requested node `{}` not found.", node_name)
+        return Err(Error::InvalidNode(format!(
+            "Requested node `{node_name}` not found."
+        )));
     }
 
     pub async fn close(&self) -> Result<()> {

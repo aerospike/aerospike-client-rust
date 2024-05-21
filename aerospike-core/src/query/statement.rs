@@ -13,7 +13,7 @@
 // License for the specific language governing permissions and limitations under
 // the License.
 
-use crate::errors::{ErrorKind, Result};
+use crate::errors::{Error, Result};
 use crate::query::Filter;
 use crate::Bins;
 use crate::Value;
@@ -122,31 +122,31 @@ impl Statement {
     pub fn validate(&self) -> Result<()> {
         if let Some(ref filters) = self.filters {
             if filters.len() > 1 {
-                bail!(ErrorKind::InvalidArgument(
+                return Err(Error::InvalidArgument(
                     "Too many filter expressions".to_string()
                 ));
             }
         }
 
         if self.set_name.is_empty() {
-            bail!(ErrorKind::InvalidArgument("Empty set name".to_string()));
+            return Err(Error::InvalidArgument("Empty set name".to_string()));
         }
 
         if let Some(ref index_name) = self.index_name {
             if index_name.is_empty() {
-                bail!(ErrorKind::InvalidArgument("Empty index name".to_string()));
+                return Err(Error::InvalidArgument("Empty index name".to_string()));
             }
         }
 
         if let Some(ref agg) = self.aggregation {
             if agg.package_name.is_empty() {
-                bail!(ErrorKind::InvalidArgument(
+                return Err(Error::InvalidArgument(
                     "Empty UDF package name".to_string()
                 ));
             }
 
             if agg.function_name.is_empty() {
-                bail!(ErrorKind::InvalidArgument(
+                return Err(Error::InvalidArgument(
                     "Empty UDF function name".to_string()
                 ));
             }

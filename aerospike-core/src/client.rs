@@ -24,7 +24,7 @@ use crate::commands::{
     DeleteCommand, ExecuteUDFCommand, ExistsCommand, OperateCommand, QueryCommand, ReadCommand,
     ScanCommand, TouchCommand, WriteCommand,
 };
-use crate::errors::{ErrorKind, Result, ResultExt};
+use crate::errors::{Error, Result};
 use crate::net::ToHosts;
 use crate::operations::{Operation, OperationType};
 use crate::policy::{BatchPolicy, ClientPolicy, QueryPolicy, ReadPolicy, ScanPolicy, WritePolicy};
@@ -148,7 +148,7 @@ impl Client {
     /// match client.get(&ReadPolicy::default(), &key, ["a", "b"]).await {
     ///     Ok(record)
     ///         => println!("a={:?}", record.bins.get("a")),
-    ///     Err(Error(ErrorKind::ServerError(ResultCode::KeyNotFoundError), _))
+    ///     Err(Error::ServerError(ResultCode::KeyNotFoundError))
     ///         => println!("No such record: {}", key),
     ///     Err(err)
     ///         => println!("Error fetching record: {}", err),
@@ -170,7 +170,7 @@ impl Client {
     ///             Some(duration) => println!("ttl: {} secs", duration.as_secs()),
     ///         }
     ///     },
-    ///     Err(Error(ErrorKind::ServerError(ResultCode::KeyNotFoundError), _))
+    ///     Err(Error::ServerError(ResultCode::KeyNotFoundError))
     ///         => println!("No such record: {}", key),
     ///     Err(err)
     ///         => println!("Error fetching record: {}", err),
@@ -495,13 +495,13 @@ impl Client {
         if let Some(msg) = response.get("error") {
             let msg = base64::decode(msg)?;
             let msg = str::from_utf8(&msg)?;
-            bail!(
+            return Err(Error::UdfBadResponse(format!(
                 "UDF Registration failed: {}, file: {}, line: {}, message: {}",
                 response.get("error").unwrap_or(&"-".to_string()),
                 response.get("file").unwrap_or(&"-".to_string()),
                 response.get("line").unwrap_or(&"-".to_string()),
                 msg
-            );
+            )));
         }
 
         Ok(RegisterTask::new(
@@ -539,7 +539,12 @@ impl Client {
 
         match response.get(&cmd).map(String::as_str) {
             Some("ok") => Ok(()),
-            _ => bail!("UDF Remove failed: {:?}", response),
+            _ => {
+                return Err(Error::UdfBadResponse(format!(
+                    "UDF Remove failed: {:?}",
+                    response
+                )))
+            }
         }
     }
 
@@ -578,11 +583,11 @@ impl Client {
             if key.contains("SUCCESS") {
                 return Ok(Some(value.clone()));
             } else if key.contains("FAILURE") {
-                bail!("{:?}", value);
+                return Err(Error::UdfBadResponse(value.to_string()));
             }
         }
 
-        Err("Invalid UDF return value".into())
+        Err(Error::UdfBadResponse("Invalid UDF return value".into()))
     }
 
     /// Read all records in the specified namespace and set and return a record iterator. The scan
@@ -644,7 +649,7 @@ impl Client {
                 );
                 command.execute().await.unwrap();
             })
-            .await;
+            .await?;
         }
         Ok(recordset)
     }
@@ -688,7 +693,7 @@ impl Client {
             );
             command.execute().await.unwrap();
         })
-        .await;
+        .await?;
 
         Ok(recordset)
     }
@@ -742,7 +747,7 @@ impl Client {
                     QueryCommand::new(&policy, node, statement, t_recordset, partitions);
                 command.execute().await.unwrap();
             })
-            .await;
+            .await?;
         }
         Ok(recordset)
     }
@@ -774,7 +779,7 @@ impl Client {
             let mut command = QueryCommand::new(&policy, node, statement, t_recordset, partitions);
             command.execute().await.unwrap();
         })
-        .await;
+        .await?;
 
         Ok(recordset)
     }
@@ -808,7 +813,7 @@ impl Client {
 
         self.send_info_cmd(&cmd)
             .await
-            .chain_err(|| "Error truncating ns/set")
+            .map_err(|e| e.chain_error("Error truncating ns/set"))
     }
 
     /// Create a secondary index on a bin containing scalar values. This asynchronous server call
@@ -879,7 +884,7 @@ impl Client {
         );
         self.send_info_cmd(&cmd)
             .await
-            .chain_err(|| "Error creating index")
+            .map_err(|e| e.chain_error("Error creating index"))
     }
 
     /// Delete secondary index.
@@ -900,7 +905,7 @@ impl Client {
         );
         self.send_info_cmd(&cmd)
             .await
-            .chain_err(|| "Error dropping index")
+            .map_err(|e| e.chain_error("Error dropping index"))
     }
 
     async fn send_info_cmd(&self, cmd: &str) -> Result<()> {
@@ -912,12 +917,16 @@ impl Client {
                 return Ok(());
             } else if v.starts_with("FAIL:") {
                 let result = v.split(':').nth(1).unwrap().parse::<u8>()?;
-                bail!(ErrorKind::ServerError(ResultCode::from(result)));
+                return Err(Error::ServerError(
+                    ResultCode::from(result),
+                    false,
+                    node.host().address().clone(),
+                ));
             }
         }
 
-        bail!(ErrorKind::BadResponse(
-            "Unexpected sindex info command response".to_string()
-        ))
+        return Err(Error::BadResponse(
+            "Unexpected sindex info command response".to_string(),
+        ));
     }
 }

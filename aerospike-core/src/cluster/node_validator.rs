@@ -18,7 +18,7 @@ use std::vec::Vec;
 
 use crate::cluster::Cluster;
 use crate::commands::Message;
-use crate::errors::{ErrorKind, Result, ResultExt};
+use crate::errors::{Error, Result};
 use crate::net::{Connection, Host};
 use crate::policy::ClientPolicy;
 
@@ -55,7 +55,7 @@ impl NodeValidator {
 
     pub async fn validate_node(&mut self, cluster: &Cluster, host: &Host) -> Result<()> {
         self.resolve_aliases(host)
-            .chain_err(|| "Failed to resolve host aliases")?;
+            .map_err(|e| e.chain_error("Failed to resolve host aliases"))?;
 
         let mut last_err = None;
         for alias in &self.aliases() {
@@ -84,7 +84,7 @@ impl NodeValidator {
             .collect();
         debug!("Resolved aliases for host {}: {:?}", host, self.aliases);
         if self.aliases.is_empty() {
-            Err(ErrorKind::Connection(format!("Failed to find addresses for {}", host)).into())
+            Err(Error::Connection(format!("Failed to find addresses for {}", host)).into())
         } else {
             Ok(())
         }
@@ -95,19 +95,21 @@ impl NodeValidator {
         let info_map = Message::info(&mut conn, &["node", "cluster-name", "features"]).await?;
 
         match info_map.get("node") {
-            None => bail!(ErrorKind::InvalidNode(String::from("Missing node name"))),
+            None => return Err(Error::InvalidNode(String::from("Missing node name"))),
             Some(node_name) => self.name = node_name.clone(),
         }
 
         if let Some(ref cluster_name) = *cluster.cluster_name() {
             match info_map.get("cluster-name") {
-                None => bail!(ErrorKind::InvalidNode(String::from("Missing cluster name"))),
+                None => return Err(Error::InvalidNode(String::from("Missing cluster name"))),
                 Some(info_name) if info_name == cluster_name => {}
-                Some(info_name) => bail!(ErrorKind::InvalidNode(format!(
-                    "Cluster name mismatch: expected={},
+                Some(info_name) => {
+                    return Err(Error::InvalidNode(format!(
+                        "Cluster name mismatch: expected={},
                                                          got={}",
-                    cluster_name, info_name
-                ))),
+                        cluster_name, info_name
+                    )))
+                }
             }
         }
 

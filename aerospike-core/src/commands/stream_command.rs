@@ -21,7 +21,7 @@ use crate::cluster::Node;
 use crate::commands::buffer;
 use crate::commands::field_type::FieldType;
 use crate::commands::Command;
-use crate::errors::{ErrorKind, Result};
+use crate::errors::{Error, Result};
 use crate::net::Connection;
 use crate::query::Recordset;
 use crate::value::bytes_to_particle;
@@ -54,7 +54,7 @@ impl StreamCommand {
 
             match result_code {
                 ResultCode::KeyNotFoundError => return Ok((None, false)),
-                _ => bail!(ErrorKind::ServerError(result_code)),
+                _ => return Err(Error::ServerError(result_code, false, conn.addr.clone())),
             }
         }
 

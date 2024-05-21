@@ -21,7 +21,7 @@ use std::vec::Vec;
 use crate::cluster::node;
 use crate::cluster::Node;
 use crate::commands::Message;
-use crate::errors::{ErrorKind, Result};
+use crate::errors::{Error, Result};
 use crate::net::Connection;
 use aerospike_rt::RwLock;
 
@@ -41,7 +41,7 @@ impl PartitionTokenizer {
                 buffer: buf.as_bytes().to_owned(),
             });
         }
-        bail!(ErrorKind::BadResponse("Missing replicas info".to_string()))
+        return Err(Error::BadResponse("Missing replicas info".to_string()));
     }
 
     pub async fn update_partition(
@@ -72,9 +72,11 @@ impl PartitionTokenizer {
                     }
                 }
                 (None, None) => break,
-                _ => bail!(ErrorKind::BadResponse(
-                    "Error parsing partition info".to_string()
-                )),
+                _ => {
+                    return Err(Error::BadResponse(
+                        "Error parsing partition info".to_string(),
+                    ))
+                }
             }
         }
 

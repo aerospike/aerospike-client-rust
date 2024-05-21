@@ -33,7 +33,7 @@
 //!             Some(duration) => println!("ttl: {} secs", duration.as_secs()),
 //!         }
 //!     },
-//!     Err(Error(ErrorKind::ServerError(ResultCode::KeyNotFoundError), _)) => {
+//!     Err(Error::ServerError(ResultCode::KeyNotFoundError)) => {
 //!         println!("No such record: {}", key);
 //!     },
 //!     Err(err) => {
@@ -53,91 +53,82 @@
 #![allow(missing_docs)]
 
 use crate::ResultCode;
+use aerospike_rt::task;
 
-error_chain! {
+#[derive(Error, Debug)]
+pub enum Error {
+    #[error("Error decoding Base64 encoded value")]
+    Base64(#[from] ::base64::DecodeError),
+    #[error("Error interpreting a sequence of u8 as a UTF-8 encoded string.")]
+    InvalidUtf8(#[from] ::std::str::Utf8Error),
+    #[error("Error during an I/O operation")]
+    Io(#[from] ::std::io::Error),
+    #[error("Error returned from the `recv` function on an MPSC `Receiver`")]
+    MpscRecv(#[from] ::std::sync::mpsc::RecvError),
+    #[error("Error parsing an IP or socket address")]
+    ParseAddr(#[from] ::std::net::AddrParseError),
+    #[error("Error parsing an integer")]
+    ParseInt(#[from] ::std::num::ParseIntError),
+    #[error("Error returned while hashing a password for user authentication")]
+    PwHash(#[from] ::pwhash::error::Error),
+    #[error("Async runtime error {0}")]
+    Async(#[from] task::JoinError),
+    /// The client received a server response that it was not able to process.
+    #[error("Bad Server Response: {0}")]
+    BadResponse(String),
+    /// The client was not able to communicate with the cluster due to some issue with the
+    /// network connection.
+    #[error("Unable to communicate with server cluster: {0}")]
+    Connection(String),
+    /// One or more of the arguments passed to the client are invalid.
+    #[error("Invalid argument: {0}")]
+    InvalidArgument(String),
+    /// Cluster node is invalid.
+    #[error("Invalid cluster node: {0}")]
+    InvalidNode(String),
+    /// Exceeded max. number of connections per node.
+    #[error("Too many connections")]
+    NoMoreConnections,
+    /// Server responded with a response code indicating an error condition.
+    #[error("Server error: {0:?}, In Doubt: {1}, Node: {2}")]
+    ServerError(ResultCode, bool, String),
+    /// Error returned when executing a User-Defined Function (UDF) resulted in an error.
+    #[error("UDF Bad Response: {0}")]
+    UdfBadResponse(String),
+    /// Error returned when a task times out before it could be completed.
+    #[error("Timeout: {0}, Client-Side: {1}")]
+    Timeout(String, bool),
 
-// Automatic conversions between this error chain and other error types not defined by the
-// `error_chain!`.
-    foreign_links {
-        Base64(::base64::DecodeError)
-            #[doc = "Error decoding Base64 encoded value"];
-        InvalidUtf8(::std::str::Utf8Error)
-            #[doc = "Error interpreting a sequence of u8 as a UTF-8 encoded string."];
-        Io(::std::io::Error)
-            #[doc = "Error during an I/O operation"];
-        MpscRecv(::std::sync::mpsc::RecvError)
-            #[doc = "Error returned from the `recv` function on an MPSC `Receiver`"];
-        ParseAddr(::std::net::AddrParseError)
-            #[doc = "Error parsing an IP or socket address"];
-        ParseInt(::std::num::ParseIntError)
-            #[doc = "Error parsing an integer"];
-        PwHash(::pwhash::error::Error)
-            #[doc = "Error returned while hashing a password for user authentication"];
+    /// ClientError is an untyped Error happening on client-side
+    #[error("{0}")]
+    ClientError(String),
+
+    /// Error returned when a tasked timeed out before it could be completed.
+    #[error("{0}\n\t{1}")]
+    Chain(Box<Error>, Box<Error>),
+}
+
+impl Error {
+    pub fn chain_error(self, e: &str) -> Error {
+        Error::Chain(Box::new(Error::ClientError(e.into())), Box::new(self))
     }
 
-// Additional `ErrorKind` variants.
-    errors {
-
-/// The client received a server response that it was not able to process.
-        BadResponse(details: String) {
-            description("Bad Server Response")
-            display("Bad Server Response: {}", details)
-        }
-
-/// The client was not able to communicate with the cluster due to some issue with the
-/// network connection.
-        Connection(details: String) {
-            description("Network Connection Issue")
-            display("Unable to communicate with server cluster: {}", details)
-        }
-
-/// One or more of the arguments passed to the client are invalid.
-        InvalidArgument(details: String) {
-            description("Invalid Argument")
-            display("Invalid argument: {}", details)
-        }
-
-/// Cluster node is invalid.
-        InvalidNode(details: String) {
-            description("Invalid cluster node")
-            display("Invalid cluster node: {}", details)
-        }
-
-/// Exceeded max. number of connections per node.
-        NoMoreConnections {
-            description("Too many connections")
-            display("Too many connections")
-        }
-
-/// Server responded with a response code indicating an error condition.
-        ServerError(rc: ResultCode) {
-            description("Server Error")
-            display("Server error: {}", rc.into_string())
-        }
-
-/// Error returned when executing a User-Defined Function (UDF) resulted in an error.
-        UdfBadResponse(details: String) {
-            description("UDF Bad Response")
-            display("UDF Bad Response: {}", details)
-        }
-
-/// Error returned when a tasked timeed out before it could be completed.
-        Timeout(details: String) {
-            description("Timeout")
-            display("Timeout: {}", details)
-        }
+    pub fn wrap(self, e: Error) -> Error {
+        Error::Chain(Box::new(e), Box::new(self))
     }
 }
+
+pub type Result<T> = ::std::result::Result<T, Error>;
 
 macro_rules! log_error_chain {
     ($err:expr, $($arg:tt)*) => {
         error!($($arg)*);
         error!("Error: {}", $err);
-        for e in $err.iter().skip(1) {
-            error!("caused by: {}", e);
-        }
-        if let Some(backtrace) = $err.backtrace() {
-            error!("backtrace: {:?}", backtrace);
-        }
+        // for e in $err.iter().skip(1) {
+        //     error!("caused by: {}", e);
+        // }
+        // if let Some(backtrace) = $err.provide() {
+        //     error!("backtrace: {:?}", backtrace);
+        // }
     };
 }
