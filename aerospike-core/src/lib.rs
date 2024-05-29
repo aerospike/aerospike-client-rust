@@ -182,7 +182,7 @@ mod key;
 mod batch;
 mod client;
 mod cluster;
-mod commands;
+pub mod commands;
 pub mod expressions;
 mod msgpack;
 mod net;
