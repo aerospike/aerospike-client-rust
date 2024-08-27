@@ -1,5 +1,8 @@
 # Aerospike Rust Client [![crates-io][crates-io-image]][crates-io-url] [![docs][docs-image]][docs-url] [![travis][travis-image]][travis-url] [![appveyor][appveyor-image]][appveyor-url]
 
+> [!NOTE]
+> Developement for the version 2 of the Rust client, which includes async support and modern Aerospike functionality happens in the [v2 branch](https://github.com/aerospike/aerospike-client-rust/tree/v2). Get involved!
+
 [crates-io-image]: https://img.shields.io/crates/v/aerospike.svg
 [crates-io-url]: https://crates.io/crates/aerospike
 [docs-image]: https://docs.rs/aerospike/badge.svg
