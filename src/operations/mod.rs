@@ -57,6 +57,7 @@ pub enum OperationType {
 }
 
 #[doc(hidden)]
+#[derive(Clone)]
 pub enum OperationData<'a> {
     None,
     Value(&'a Value),
@@ -68,6 +69,7 @@ pub enum OperationData<'a> {
 }
 
 #[doc(hidden)]
+#[derive(Clone)]
 pub enum OperationBin<'a> {
     None,
     All,
@@ -75,6 +77,7 @@ pub enum OperationBin<'a> {
 }
 
 /// Database operation definition. This data type is used in the client's `operate()` method.
+#[derive(Clone)]
 pub struct Operation<'a> {
     // OpType determines type of operation.
     #[doc(hidden)]

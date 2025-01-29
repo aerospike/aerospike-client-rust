@@ -48,6 +48,7 @@ pub enum ExpWriteFlags {
 pub type ExpressionEncoder = Box<dyn Fn(&mut Option<&mut Buffer>, &ExpOperation) -> Result<usize>>;
 
 #[doc(hidden)]
+#[derive(Clone)]
 pub struct ExpOperation<'a> {
     pub encoder: ExpressionEncoder,
     pub policy: i64,
