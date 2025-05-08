@@ -41,6 +41,7 @@ use cli::Options;
 use generator::KeyPartitions;
 use stats::Collector;
 use workers::Worker;
+use futures::executor::block_on;
 
 fn main() {
     let _ = env_logger::try_init();
@@ -53,7 +54,7 @@ fn main() {
 fn connect(options: &Options) -> Client {
     let mut policy = ClientPolicy::default();
     policy.conn_pools_per_node = options.conn_pools_per_node;
-    Client::new(&policy, &options.hosts).unwrap()
+    block_on(Client::new(&policy, &options.hosts)).unwrap()
 }
 
 fn run_workload(client: Client, opts: Options) {

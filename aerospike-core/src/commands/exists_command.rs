@@ -31,7 +31,7 @@ pub struct ExistsCommand<'a> {
 impl<'a> ExistsCommand<'a> {
     pub fn new(policy: &'a WritePolicy, cluster: Arc<Cluster>, key: &'a Key) -> Self {
         ExistsCommand {
-            single_command: SingleCommand::new(cluster, key),
+            single_command: SingleCommand::new(cluster, key, crate::policy::Replica::Master),
             policy,
             exists: false,
         }
@@ -61,7 +61,7 @@ impl<'a> Command for ExistsCommand<'a> {
         conn.buffer.set_exists(self.policy, self.single_command.key)
     }
 
-    async fn get_node(&self) -> Result<Arc<Node>> {
+    async fn get_node(&mut self) -> Result<Arc<Node>> {
         self.single_command.get_node().await
     }
 

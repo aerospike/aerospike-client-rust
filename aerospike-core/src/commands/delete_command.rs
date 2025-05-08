@@ -31,7 +31,7 @@ pub struct DeleteCommand<'a> {
 impl<'a> DeleteCommand<'a> {
     pub fn new(policy: &'a WritePolicy, cluster: Arc<Cluster>, key: &'a Key) -> Self {
         DeleteCommand {
-            single_command: SingleCommand::new(cluster, key),
+            single_command: SingleCommand::new(cluster, key, crate::policy::Replica::Master),
             policy,
             existed: false,
         }
@@ -61,7 +61,7 @@ impl<'a> Command for DeleteCommand<'a> {
         conn.buffer.set_delete(self.policy, self.single_command.key)
     }
 
-    async fn get_node(&self) -> Result<Arc<Node>> {
+    async fn get_node(&mut self) -> Result<Arc<Node>> {
         self.single_command.get_node().await
     }
 

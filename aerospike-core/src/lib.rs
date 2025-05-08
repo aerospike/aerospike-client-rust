@@ -138,7 +138,6 @@
 extern crate base64;
 extern crate byteorder;
 extern crate crossbeam_queue;
-extern crate ripemd160;
 #[macro_use]
 extern crate thiserror;
 #[macro_use]

@@ -22,21 +22,21 @@ use crate::commands::buffer;
 use crate::commands::{Command, SingleCommand};
 use crate::errors::{Error, Result};
 use crate::net::Connection;
-use crate::policy::ReadPolicy;
+use crate::policy::{BasePolicy, Replica};
 use crate::value::bytes_to_particle;
 use crate::{Bins, Key, Record, ResultCode, Value};
 
 pub struct ReadCommand<'a> {
     pub single_command: SingleCommand<'a>,
     pub record: Option<Record>,
-    policy: &'a ReadPolicy,
+    policy: &'a BasePolicy,
     bins: Bins,
 }
 
 impl<'a> ReadCommand<'a> {
-    pub fn new(policy: &'a ReadPolicy, cluster: Arc<Cluster>, key: &'a Key, bins: Bins) -> Self {
+    pub fn new(policy: &'a BasePolicy, cluster: Arc<Cluster>, key: &'a Key, bins: Bins, replica: Replica) -> Self {
         ReadCommand {
-            single_command: SingleCommand::new(cluster, key),
+            single_command: SingleCommand::new(cluster, key, replica),
             bins,
             policy,
             record: None,
@@ -115,7 +115,7 @@ impl<'a> Command for ReadCommand<'a> {
             .set_read(self.policy, self.single_command.key, &self.bins)
     }
 
-    async fn get_node(&self) -> Result<Arc<Node>> {
+    async fn get_node(&mut self) -> Result<Arc<Node>> {
         self.single_command.get_node().await
     }
 

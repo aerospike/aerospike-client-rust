@@ -94,7 +94,7 @@ impl<'a> Iterator for &'a Recordset {
     fn next(&mut self) -> Option<Result<Record>> {
         loop {
             if self.is_active() || !self.record_queue.is_empty() {
-                let result = self.record_queue.pop().ok();
+                let result = self.record_queue.pop();
                 if result.is_some() {
                     self.record_queue_count.fetch_sub(1, Ordering::Relaxed);
                     return result;

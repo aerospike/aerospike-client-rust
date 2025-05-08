@@ -184,7 +184,7 @@ impl Client {
         T: Into<Bins> + Send + Sync + 'static,
     {
         let bins = bins.into();
-        let mut command = ReadCommand::new(policy, self.cluster.clone(), key, bins);
+        let mut command = ReadCommand::new(&policy.base_policy, self.cluster.clone(), key, bins, policy.replica);
         command.execute().await?;
         Ok(command.record.unwrap())
     }

@@ -41,17 +41,46 @@ pub enum HLLWriteFlags {
     AllowFold = 8,
 }
 
+/// Something that can be resolved into a set of ExpWriteFlags. Either a single HLLWriteFlags, Option<HLLWriteFlags>, [HLLWriteFlags], etc.
+pub trait ToHLLWriteFlagsBitmask {
+    /// Convert to an i64 bitmask
+    fn to_bitmask(self) -> i64;
+}
+
+impl ToHLLWriteFlagsBitmask for HLLWriteFlags {
+    fn to_bitmask(self) -> i64 {
+        self as i64
+    }
+}
+
+impl<T: IntoIterator<Item=HLLWriteFlags>> ToHLLWriteFlagsBitmask for T {
+    fn to_bitmask(self) -> i64 {
+        let mut out = 0;
+        for val in self {
+            out |= val.to_bitmask();
+        }
+        out
+    }
+}
+
 /// `HLLPolicy` operation policy.
 #[derive(Debug, Clone, Copy)]
 pub struct HLLPolicy {
     /// CdtListWriteFlags
-    pub flags: HLLWriteFlags,
+    pub flags: i64,
 }
 
 impl HLLPolicy {
     /// Use specified `HLLWriteFlags` when performing `HLL` operations
     pub const fn new(write_flags: HLLWriteFlags) -> Self {
-        HLLPolicy { flags: write_flags }
+        HLLPolicy { flags: write_flags as i64 }
+    }
+    
+    /// Use specified `HLLWriteFlags` or combination thereof when performing `HLL` operations
+    pub fn new_with_flags<HWF: ToHLLWriteFlagsBitmask>(write_flags: HWF) -> Self {
+        HLLPolicy {
+            flags: write_flags.to_bitmask(),
+        }
     }
 }
 

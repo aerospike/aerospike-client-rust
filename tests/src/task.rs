@@ -57,7 +57,7 @@ async fn register_task_test() {
     let timeout = Duration::from_millis(100);
     assert!(matches!(
         register_task.wait_till_complete(Some(timeout)).await,
-        Err(Error(Error::Timeout(_), _))
+        Err(Error::Timeout(_, _))
     ));
 
     client.close().await.unwrap();

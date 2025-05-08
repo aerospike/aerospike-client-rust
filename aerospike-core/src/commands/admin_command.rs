@@ -268,6 +268,6 @@ impl AdminCommand {
             },
             &password,
         )
-        .map_err(|e| e.into())
+        .map_err(std::convert::Into::into)
     }
 }
