@@ -89,6 +89,9 @@ pub enum Error {
     /// Exceeded max. number of connections per node.
     #[error("Too many connections")]
     NoMoreConnections,
+    /// Server responded with a response code indicating an error condition for batch.
+    #[error("BatchIndex error: Index: {0:?}, Result Code: {1:?}, In Doubt: {2}, Node: {3}")]
+    BatchError(u32, ResultCode, bool, String),
     /// Server responded with a response code indicating an error condition.
     #[error("Server error: {0:?}, In Doubt: {1}, Node: {2}")]
     ServerError(ResultCode, bool, String),

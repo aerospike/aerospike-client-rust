@@ -23,7 +23,7 @@ use crate::net::Connection;
 use crate::policy::WritePolicy;
 use crate::{Key, ResultCode};
 
-pub struct TouchCommand<'a> {
+pub(crate) struct TouchCommand<'a> {
     single_command: SingleCommand<'a>,
     policy: &'a WritePolicy,
 }

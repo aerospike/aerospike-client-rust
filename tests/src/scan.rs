@@ -123,7 +123,7 @@ async fn scan_node() {
     }
 
     for t in threads {
-        t.await;
+        t.await.unwrap();
     }
 
     assert_eq!(count.load(Ordering::Relaxed), EXPECTED);

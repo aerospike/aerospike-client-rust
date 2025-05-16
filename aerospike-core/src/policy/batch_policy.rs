@@ -42,12 +42,6 @@ pub struct BatchPolicy {
     /// Default: true
     pub allow_inline: bool,
 
-    /// Send set name field to server for every key in the batch. This is only necessary when
-    /// authentication is enabled and security roles are defined on a per-set basis.
-    ///
-    /// Default: false
-    pub send_set_name: bool,
-
     /// Optional Filter Expression
     pub filter_expression: Option<FilterExpression>,
 
@@ -73,7 +67,7 @@ impl Default for BatchPolicy {
             base_policy: BasePolicy::default(),
             concurrency: Concurrency::Sequential,
             allow_inline: true,
-            send_set_name: false,
+            // send_set_name: true,
             filter_expression: None,
             replica: Replica::default(),
         }

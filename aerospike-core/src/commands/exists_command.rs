@@ -22,7 +22,7 @@ use crate::net::Connection;
 use crate::policy::WritePolicy;
 use crate::{Key, ResultCode};
 
-pub struct ExistsCommand<'a> {
+pub(crate) struct ExistsCommand<'a> {
     single_command: SingleCommand<'a>,
     policy: &'a WritePolicy,
     pub exists: bool,

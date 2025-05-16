@@ -16,12 +16,13 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Weak};
 
-use crate::batch::BatchRead;
+use crate::batch::BatchOperation;
 use crate::cluster::partition::Partition;
 use crate::cluster::{Cluster, Node};
-use crate::commands::BatchReadCommand;
+use crate::commands::BatchOperateCommand;
 use crate::errors::Result;
 use crate::policy::{BatchPolicy, Concurrency};
+use crate::BatchRecord;
 use crate::Error;
 use crate::Key;
 
@@ -34,30 +35,50 @@ impl BatchExecutor {
         BatchExecutor { cluster }
     }
 
-    pub async fn execute_batch_read(
-        &self,
-        policy: &BatchPolicy,
-        batch_reads: Vec<BatchRead>,
-    ) -> Result<Vec<BatchRead>> {
-        let batch_nodes = self.get_batch_nodes(&batch_reads, policy.replica).await?;
-        let jobs = batch_nodes
-            .into_iter()
-            .map(|(node, reads)| BatchReadCommand::new(policy, node, reads))
-            .collect();
-        let reads = self.execute_batch_jobs(jobs, policy.concurrency).await?;
-        let mut all_results: Vec<_> = reads.into_iter().flat_map(|cmd| cmd.batch_reads).collect();
-        all_results.sort_by_key(|(_, i)| *i);
-        Ok(all_results.into_iter().map(|(b, _)| b).collect())
+    async fn node_for_key(&self, key: &Key, replica: crate::policy::Replica) -> Result<Arc<Node>> {
+        let partition = Partition::new_by_key(key);
+        let node = self
+            .cluster
+            .get_node(&partition, replica, Weak::new())
+            .await?;
+        Ok(node)
     }
 
-    async fn execute_batch_jobs(
+    pub async fn execute_batch_operate<'a>(
         &self,
-        jobs: Vec<BatchReadCommand>,
-        concurrency: Concurrency,
-    ) -> Result<Vec<BatchReadCommand>> {
-        let handles = jobs
+        policy: &'a BatchPolicy,
+        batch_ops: &[BatchOperation<'a>],
+    ) -> Result<Vec<BatchRecord>> {
+        let batch_nodes = self
+            .get_batch_operate_nodes(batch_ops, policy.replica)
+            .await?;
+        let jobs = batch_nodes
             .into_iter()
-            .map(|job| job.execute(self.cluster.clone()));
+            .map(|(node, ops)| BatchOperateCommand::new(policy, node, ops))
+            .collect();
+        let ops = self
+            .execute_batch_operate_jobs(jobs, policy.concurrency)
+            .await?;
+        let mut all_results: Vec<_> = ops.into_iter().flat_map(|cmd| cmd.batch_ops).collect();
+        all_results.sort_by_key(|(_, i)| *i);
+        Ok(all_results
+            .into_iter()
+            .map(|(b, _)| b.batch_record())
+            .collect())
+    }
+
+    async fn execute_batch_operate_jobs<'a>(
+        &self,
+        jobs: Vec<BatchOperateCommand<'a>>,
+        concurrency: Concurrency,
+    ) -> Result<Vec<BatchOperateCommand<'a>>> {
+        let handles = jobs.into_iter().map(|job| {
+            // SAFETY: this variable needs to be static, because it is passed into a green-thread,
+            // but the green-thread does not live longer than this function, because we wait for
+            // it to finish by calling `join` and `await` on it.
+            let job: BatchOperateCommand<'static> = unsafe { std::mem::transmute(job) };
+            job.execute(self.cluster.clone())
+        });
         match concurrency {
             Concurrency::Sequential => futures::future::join_all(handles)
                 .await
@@ -71,27 +92,18 @@ impl BatchExecutor {
         }
     }
 
-    async fn get_batch_nodes(
+    async fn get_batch_operate_nodes<'a>(
         &self,
-        batch_reads: &[BatchRead],
+        batch_ops: &[BatchOperation<'a>],
         replica: crate::policy::Replica,
-    ) -> Result<HashMap<Arc<Node>, Vec<(BatchRead, usize)>>> {
+    ) -> Result<HashMap<Arc<Node>, Vec<(BatchOperation<'a>, usize)>>> {
         let mut map = HashMap::new();
-        for (index, batch_read) in batch_reads.iter().enumerate() {
-            let node = self.node_for_key(&batch_read.key, replica).await?;
+        for (index, batch_op) in batch_ops.iter().enumerate() {
+            let node = self.node_for_key(&batch_op.key(), replica).await?;
             map.entry(node)
                 .or_insert_with(Vec::new)
-                .push((batch_read.clone(), index));
+                .push((batch_op.clone(), index));
         }
         Ok(map)
-    }
-
-    async fn node_for_key(&self, key: &Key, replica: crate::policy::Replica) -> Result<Arc<Node>> {
-        let partition = Partition::new_by_key(key);
-        let node = self
-            .cluster
-            .get_node(&partition, replica, Weak::new())
-            .await?;
-        Ok(node)
     }
 }

@@ -13,37 +13,40 @@
 // License for the specific language governing permissions and limitations under
 // the License.
 
-use aerospike::BatchRead;
-use aerospike::Bins;
-use aerospike::{as_bin, as_key, BatchPolicy, Concurrency, WritePolicy};
+use aerospike::*;
 
 use env_logger;
 
 use crate::common;
 
 #[aerospike_macro::test]
-async fn batch_get() {
+async fn batch_operate_read() {
     let _ = env_logger::try_init();
 
     let client = common::client().await;
-    let namespace: &str = common::namespace();
-    let set_name = &common::rand_str(10);
+    let namespace: &str = "test"; //common::namespace();
+    let set_name = "test"; //&common::rand_str(10);
     let mut bpolicy = BatchPolicy::default();
     bpolicy.concurrency = Concurrency::Parallel;
-    let wpolicy = WritePolicy::default();
+
+    let udf_body = r#"
+function echo(rec, val)
+  return val
+end
+"#;
+
+    let task = client
+        .register_udf(udf_body.as_bytes(), "test_udf.lua", UDFLang::Lua)
+        .await
+        .unwrap();
+    task.wait_till_complete(None).await.unwrap();
 
     let bin1 = as_bin!("a", "a value");
     let bin2 = as_bin!("b", "another value");
     let bin3 = as_bin!("c", 42);
-    let bins = [bin1, bin2, bin3];
     let key1 = as_key!(namespace, set_name, 1);
-    client.put(&wpolicy, &key1, &bins).await.unwrap();
-
     let key2 = as_key!(namespace, set_name, 2);
-    client.put(&wpolicy, &key2, &bins).await.unwrap();
-
     let key3 = as_key!(namespace, set_name, 3);
-    client.put(&wpolicy, &key3, &bins).await.unwrap();
 
     let key4 = as_key!(namespace, set_name, -1);
     // key does not exist
@@ -52,13 +55,50 @@ async fn batch_get() {
     let all = Bins::All;
     let none = Bins::None;
 
-    let batch = vec![
-        BatchRead::new(key1.clone(), selected),
-        BatchRead::new(key2.clone(), all),
-        BatchRead::new(key3.clone(), none.clone()),
-        BatchRead::new(key4.clone(), none),
+    let wops = vec![
+        operations::put(&bin1),
+        operations::put(&bin2),
+        operations::put(&bin3),
     ];
-    let mut results = client.batch_get(&bpolicy, batch).await.unwrap();
+
+    let rops = vec![
+        operations::get_bin(&bin1.name),
+        operations::get_bin(&bin2.name),
+        operations::get_header(),
+    ];
+
+    let bpr = BatchReadPolicy::default();
+    let bpw = BatchWritePolicy::default();
+    let bpd = BatchDeletePolicy::default();
+    let bpu = BatchUDFPolicy::default();
+
+    let batch = vec![
+        BatchOperation::write(&bpw, key1.clone(), wops.clone()),
+        BatchOperation::write(&bpw, key2.clone(), wops.clone()),
+        BatchOperation::write(&bpw, key3.clone(), wops.clone()),
+    ];
+    let mut results = client.batch(&bpolicy, &batch).await.unwrap();
+
+    // dbg!(&results);
+
+    // WRITE Operations
+    // remove the first three write ops
+    let result = results.remove(0);
+    assert_eq!(result.key, key1);
+    let result = results.remove(0);
+    assert_eq!(result.key, key2);
+    let result = results.remove(0);
+    assert_eq!(result.key, key3);
+
+    // READ Operations
+    let batch = vec![
+        BatchOperation::read(&bpr, key1.clone(), selected),
+        BatchOperation::read(&bpr, key2.clone(), all),
+        BatchOperation::read(&bpr, key3.clone(), none.clone()),
+        BatchOperation::read_ops(&bpr, key3.clone(), rops),
+        BatchOperation::read(&bpr, key4.clone(), none),
+    ];
+    let mut results = client.batch(&bpolicy, &batch).await.unwrap();
 
     let result = results.remove(0);
     assert_eq!(result.key, key1);
@@ -76,8 +116,96 @@ async fn batch_get() {
     assert_eq!(record.bins.keys().count(), 0);
 
     let result = results.remove(0);
+    assert_eq!(result.key, key3);
+
+    let result = results.remove(0);
+    assert_eq!(result.key, key4);
+
+    // DELETE Operations
+    let batch = vec![
+        BatchOperation::delete(&bpd, key1.clone()),
+        BatchOperation::delete(&bpd, key2.clone()),
+        BatchOperation::delete(&bpd, key3.clone()),
+        BatchOperation::delete(&bpd, key4.clone()),
+    ];
+    let mut results = client.batch(&bpolicy, &batch).await.unwrap();
+
+    let result = results.remove(0);
+    assert_eq!(result.key, key1);
+
+    let result = results.remove(0);
+    assert_eq!(result.key, key2);
+
+    let result = results.remove(0);
+    assert_eq!(result.key, key3);
+
+    let result = results.remove(0);
+    assert_eq!(result.key, key4);
+
+    let record = result.record;
+    assert!(record.is_none());
+
+    // Read
+    let batch = vec![
+        BatchOperation::read(&bpr, key1.clone(), Bins::None),
+        BatchOperation::read(&bpr, key2.clone(), Bins::None),
+        BatchOperation::read(&bpr, key3.clone(), Bins::None),
+        BatchOperation::read(&bpr, key4.clone(), Bins::None),
+    ];
+    let mut results = client.batch(&bpolicy, &batch).await.unwrap();
+
+    let result = results.remove(0);
+    assert_eq!(result.key, key1);
+    let record = result.record;
+    assert!(record.is_none());
+
+    let result = results.remove(0);
+    assert_eq!(result.key, key2);
+    let record = result.record;
+    assert!(record.is_none());
+
+    let result = results.remove(0);
+    assert_eq!(result.key, key3);
+    let record = result.record;
+    assert!(record.is_none());
+
+    let result = results.remove(0);
     assert_eq!(result.key, key4);
     let record = result.record;
     assert!(record.is_none());
+
+    // Read
+    let args1 = &[as_val!(1)];
+    let args2 = &[as_val!(2)];
+    let args3 = &[as_val!(3)];
+    let args4 = &[as_val!(4)];
+    let batch = vec![
+        BatchOperation::udf(&bpu, key1.clone(), "test_udf", "echo", Some(args1)),
+        BatchOperation::udf(&bpu, key2.clone(), "test_udf", "echo", Some(args2)),
+        BatchOperation::udf(&bpu, key3.clone(), "test_udf", "echo", Some(args3)),
+        BatchOperation::udf(&bpu, key4.clone(), "test_udf", "echo", Some(args4)),
+    ];
+    let mut results = client.batch(&bpolicy, &batch).await.unwrap();
+
+    let result = results.remove(0);
+    assert_eq!(result.key, key1);
+    let record = result.record;
+    assert_eq!(record.unwrap().bins.get("SUCCESS"), Some(&as_val!(1)));
+
+    let result = results.remove(0);
+    assert_eq!(result.key, key2);
+    let record = result.record;
+    assert_eq!(record.unwrap().bins.get("SUCCESS"), Some(&as_val!(2)));
+
+    let result = results.remove(0);
+    assert_eq!(result.key, key3);
+    let record = result.record;
+    assert_eq!(record.unwrap().bins.get("SUCCESS"), Some(&as_val!(3)));
+
+    let result = results.remove(0);
+    assert_eq!(result.key, key4);
+    let record = result.record;
+    assert_eq!(record.unwrap().bins.get("SUCCESS"), Some(&as_val!(4)));
+
     client.close().await.unwrap();
 }

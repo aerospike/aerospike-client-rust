@@ -31,6 +31,8 @@
 //! If an index is out of bounds, a parameter error will be returned. If a range is partially out of
 //! bounds, the valid part of the range will be returned.
 
+use std::sync::Arc;
+
 use crate::msgpack::encoder::pack_cdt_op;
 use crate::operations::cdt::{CdtArgument, CdtOperation};
 use crate::operations::cdt_context::{CdtContext, DEFAULT_CTX};
@@ -141,7 +143,6 @@ impl ToListReturnTypeBitmask for InvertedListReturn {
     }
 }
 
-
 /// `CdtListSortFlags` determines sort flags for CDT lists
 #[derive(Debug, Clone, Copy)]
 pub enum ListSortFlags {
@@ -179,7 +180,6 @@ pub struct ListPolicy {
     pub flags: u8,
 }
 
-
 /// Something that can be resolved into a set of ExpWriteFlags. Either a single ListWriteFlags, Option<ListWriteFlags>, [ListWriteFlags], etc.
 pub trait ToListWriteFlagsBitmask {
     /// Convert to an u8 bitmask potentially containing multiple flags
@@ -192,7 +192,7 @@ impl ToListWriteFlagsBitmask for ListWriteFlags {
     }
 }
 
-impl<T: IntoIterator<Item=ListWriteFlags>> ToListWriteFlagsBitmask for T {
+impl<T: IntoIterator<Item = ListWriteFlags>> ToListWriteFlagsBitmask for T {
     fn to_bitmask(self) -> u8 {
         let mut out = 0;
         for val in self {
@@ -202,7 +202,6 @@ impl<T: IntoIterator<Item=ListWriteFlags>> ToListWriteFlagsBitmask for T {
     }
 }
 
-
 impl ListPolicy {
     /// Create unique key list with specified order when list does not exist.
     /// Use specified write mode when writing list items.
@@ -210,14 +209,16 @@ impl ListPolicy {
         ListPolicy {
             attributes: order,
             flags: write_flags as u8,
-
         }
     }
 
     /// Create unique key list with specified order when list does not exist.
     /// Use specified write mode when writing list items.
     /// This is non-const, but allows specifying multiple flags.
-    pub fn new_with_flags<LWF: ToListWriteFlagsBitmask>(order: ListOrderType, write_flags: LWF) -> Self {
+    pub fn new_with_flags<LWF: ToListWriteFlagsBitmask>(
+        order: ListOrderType,
+        write_flags: LWF,
+    ) -> Self {
         ListPolicy {
             attributes: order,
             flags: write_flags.to_bitmask(),
@@ -250,7 +251,7 @@ pub const fn list_order_flag(order: ListOrderType, pad: bool) -> u8 {
 pub fn create(bin: &str, list_order: ListOrderType, pad: bool) -> Operation {
     let cdt_op = CdtOperation {
         op: CdtListOpType::SetType as u8,
-        encoder: Box::new(pack_cdt_op),
+        encoder: Arc::new(pack_cdt_op),
         args: vec![
             CdtArgument::Byte(list_order_flag(list_order, pad)),
             CdtArgument::Byte(list_order as u8),
@@ -273,7 +274,7 @@ pub fn set_order<'a>(
 ) -> Operation<'a> {
     let cdt_op = CdtOperation {
         op: CdtListOpType::SetType as u8,
-        encoder: Box::new(pack_cdt_op),
+        encoder: Arc::new(pack_cdt_op),
         args: vec![CdtArgument::Byte(list_order as u8)],
     };
     Operation {
@@ -288,7 +289,7 @@ pub fn set_order<'a>(
 pub fn append<'a>(policy: &ListPolicy, bin: &'a str, value: &'a Value) -> Operation<'a> {
     let cdt_op = CdtOperation {
         op: CdtListOpType::Append as u8,
-        encoder: Box::new(pack_cdt_op),
+        encoder: Arc::new(pack_cdt_op),
         args: vec![
             CdtArgument::Value(value),
             CdtArgument::Byte(policy.attributes as u8),
@@ -313,7 +314,7 @@ pub fn append_items<'a>(policy: &ListPolicy, bin: &'a str, values: &'a [Value]) 
 
     let cdt_op = CdtOperation {
         op: CdtListOpType::AppendItems as u8,
-        encoder: Box::new(pack_cdt_op),
+        encoder: Arc::new(pack_cdt_op),
         args: vec![
             CdtArgument::List(values),
             CdtArgument::Byte(policy.attributes as u8),
@@ -338,7 +339,7 @@ pub fn insert<'a>(
 ) -> Operation<'a> {
     let cdt_op = CdtOperation {
         op: CdtListOpType::Insert as u8,
-        encoder: Box::new(pack_cdt_op),
+        encoder: Arc::new(pack_cdt_op),
         args: vec![
             CdtArgument::Int(index),
             CdtArgument::Value(value),
@@ -368,7 +369,7 @@ pub fn insert_items<'a>(
 
     let cdt_op = CdtOperation {
         op: CdtListOpType::InsertItems as u8,
-        encoder: Box::new(pack_cdt_op),
+        encoder: Arc::new(pack_cdt_op),
         args: vec![
             CdtArgument::Int(index),
             CdtArgument::List(values),
@@ -388,7 +389,7 @@ pub fn insert_items<'a>(
 pub fn pop(bin: &str, index: i64) -> Operation {
     let cdt_op = CdtOperation {
         op: CdtListOpType::Pop as u8,
-        encoder: Box::new(pack_cdt_op),
+        encoder: Arc::new(pack_cdt_op),
         args: vec![CdtArgument::Int(index)],
     };
     Operation {
@@ -404,7 +405,7 @@ pub fn pop(bin: &str, index: i64) -> Operation {
 pub fn pop_range(bin: &str, index: i64, count: i64) -> Operation {
     let cdt_op = CdtOperation {
         op: CdtListOpType::PopRange as u8,
-        encoder: Box::new(pack_cdt_op),
+        encoder: Arc::new(pack_cdt_op),
         args: vec![CdtArgument::Int(index), CdtArgument::Int(count)],
     };
     Operation {
@@ -420,7 +421,7 @@ pub fn pop_range(bin: &str, index: i64, count: i64) -> Operation {
 pub fn pop_range_from(bin: &str, index: i64) -> Operation {
     let cdt_op = CdtOperation {
         op: CdtListOpType::PopRange as u8,
-        encoder: Box::new(pack_cdt_op),
+        encoder: Arc::new(pack_cdt_op),
         args: vec![CdtArgument::Int(index)],
     };
     Operation {
@@ -436,7 +437,7 @@ pub fn pop_range_from(bin: &str, index: i64) -> Operation {
 pub fn remove(bin: &str, index: i64) -> Operation {
     let cdt_op = CdtOperation {
         op: CdtListOpType::Remove as u8,
-        encoder: Box::new(pack_cdt_op),
+        encoder: Arc::new(pack_cdt_op),
         args: vec![CdtArgument::Int(index)],
     };
     Operation {
@@ -452,7 +453,7 @@ pub fn remove(bin: &str, index: i64) -> Operation {
 pub fn remove_range(bin: &str, index: i64, count: i64) -> Operation {
     let cdt_op = CdtOperation {
         op: CdtListOpType::RemoveRange as u8,
-        encoder: Box::new(pack_cdt_op),
+        encoder: Arc::new(pack_cdt_op),
         args: vec![CdtArgument::Int(index), CdtArgument::Int(count)],
     };
     Operation {
@@ -468,7 +469,7 @@ pub fn remove_range(bin: &str, index: i64, count: i64) -> Operation {
 pub fn remove_range_from(bin: &str, index: i64) -> Operation {
     let cdt_op = CdtOperation {
         op: CdtListOpType::RemoveRange as u8,
-        encoder: Box::new(pack_cdt_op),
+        encoder: Arc::new(pack_cdt_op),
         args: vec![CdtArgument::Int(index)],
     };
     Operation {
@@ -488,7 +489,7 @@ pub fn remove_by_value<'a, TLR: ToListReturnTypeBitmask>(
 ) -> Operation<'a> {
     let cdt_op = CdtOperation {
         op: CdtListOpType::RemoveByValue as u8,
-        encoder: Box::new(pack_cdt_op),
+        encoder: Arc::new(pack_cdt_op),
         args: vec![
             CdtArgument::Int(return_type.to_bitmask()),
             CdtArgument::Value(value),
@@ -511,7 +512,7 @@ pub fn remove_by_value_list<'a, TLR: ToListReturnTypeBitmask>(
 ) -> Operation<'a> {
     let cdt_op = CdtOperation {
         op: CdtListOpType::RemoveByValueList as u8,
-        encoder: Box::new(pack_cdt_op),
+        encoder: Arc::new(pack_cdt_op),
         args: vec![
             CdtArgument::Int(return_type.to_bitmask()),
             CdtArgument::List(values),
@@ -538,7 +539,7 @@ pub fn remove_by_value_range<'a, TLR: ToListReturnTypeBitmask>(
 ) -> Operation<'a> {
     let cdt_op = CdtOperation {
         op: CdtListOpType::RemoveByValueInterval as u8,
-        encoder: Box::new(pack_cdt_op),
+        encoder: Arc::new(pack_cdt_op),
         args: vec![
             CdtArgument::Int(return_type.to_bitmask()),
             CdtArgument::Value(begin),
@@ -575,7 +576,7 @@ pub fn remove_by_value_relative_rank_range<'a, TLR: ToListReturnTypeBitmask>(
 ) -> Operation<'a> {
     let cdt_op = CdtOperation {
         op: CdtListOpType::RemoveByValueRelRankRange as u8,
-        encoder: Box::new(pack_cdt_op),
+        encoder: Arc::new(pack_cdt_op),
         args: vec![
             CdtArgument::Int(return_type.to_bitmask()),
             CdtArgument::Value(value),
@@ -613,7 +614,7 @@ pub fn remove_by_value_relative_rank_range_count<'a, TLR: ToListReturnTypeBitmas
 ) -> Operation<'a> {
     let cdt_op = CdtOperation {
         op: CdtListOpType::RemoveByValueRelRankRange as u8,
-        encoder: Box::new(pack_cdt_op),
+        encoder: Arc::new(pack_cdt_op),
         args: vec![
             CdtArgument::Int(return_type.to_bitmask()),
             CdtArgument::Value(value),
@@ -631,10 +632,14 @@ pub fn remove_by_value_relative_rank_range_count<'a, TLR: ToListReturnTypeBitmas
 
 /// Creates a list remove operation.
 /// Server removes list item identified by index and returns removed data specified by returnType.
-pub fn remove_by_index<TLR: ToListReturnTypeBitmask>(bin: &str, index: i64, return_type: TLR) -> Operation {
+pub fn remove_by_index<TLR: ToListReturnTypeBitmask>(
+    bin: &str,
+    index: i64,
+    return_type: TLR,
+) -> Operation {
     let cdt_op = CdtOperation {
         op: CdtListOpType::RemoveByIndex as u8,
-        encoder: Box::new(pack_cdt_op),
+        encoder: Arc::new(pack_cdt_op),
         args: vec![
             CdtArgument::Int(return_type.to_bitmask()),
             CdtArgument::Int(index),
@@ -651,10 +656,14 @@ pub fn remove_by_index<TLR: ToListReturnTypeBitmask>(bin: &str, index: i64, retu
 /// Creates a list remove operation.
 /// Server removes list items starting at specified index to the end of list and returns removed
 /// data specified by returnType.
-pub fn remove_by_index_range<TLR: ToListReturnTypeBitmask>(bin: &str, index: i64, return_type: TLR) -> Operation {
+pub fn remove_by_index_range<TLR: ToListReturnTypeBitmask>(
+    bin: &str,
+    index: i64,
+    return_type: TLR,
+) -> Operation {
     let cdt_op = CdtOperation {
         op: CdtListOpType::RemoveByIndexRange as u8,
-        encoder: Box::new(pack_cdt_op),
+        encoder: Arc::new(pack_cdt_op),
         args: vec![
             CdtArgument::Int(return_type.to_bitmask()),
             CdtArgument::Int(index),
@@ -678,7 +687,7 @@ pub fn remove_by_index_range_count<TLR: ToListReturnTypeBitmask>(
 ) -> Operation {
     let cdt_op = CdtOperation {
         op: CdtListOpType::RemoveByIndexRange as u8,
-        encoder: Box::new(pack_cdt_op),
+        encoder: Arc::new(pack_cdt_op),
         args: vec![
             CdtArgument::Int(return_type.to_bitmask()),
             CdtArgument::Int(index),
@@ -695,11 +704,18 @@ pub fn remove_by_index_range_count<TLR: ToListReturnTypeBitmask>(
 
 /// Creates a list remove operation.
 /// Server removes list item identified by rank and returns removed data specified by returnType.
-pub fn remove_by_rank<TLR: ToListReturnTypeBitmask>(bin: &str, rank: i64, return_type: TLR) -> Operation {
+pub fn remove_by_rank<TLR: ToListReturnTypeBitmask>(
+    bin: &str,
+    rank: i64,
+    return_type: TLR,
+) -> Operation {
     let cdt_op = CdtOperation {
         op: CdtListOpType::RemoveByRank as u8,
-        encoder: Box::new(pack_cdt_op),
-        args: vec![CdtArgument::Int(return_type.to_bitmask()), CdtArgument::Int(rank)],
+        encoder: Arc::new(pack_cdt_op),
+        args: vec![
+            CdtArgument::Int(return_type.to_bitmask()),
+            CdtArgument::Int(rank),
+        ],
     };
     Operation {
         op: OperationType::CdtWrite,
@@ -712,11 +728,18 @@ pub fn remove_by_rank<TLR: ToListReturnTypeBitmask>(bin: &str, rank: i64, return
 /// Creates a list remove operation.
 /// Server removes list items starting at specified rank to the last ranked item and returns removed
 /// data specified by returnType.
-pub fn remove_by_rank_range<TLR: ToListReturnTypeBitmask>(bin: &str, rank: i64, return_type: TLR) -> Operation {
+pub fn remove_by_rank_range<TLR: ToListReturnTypeBitmask>(
+    bin: &str,
+    rank: i64,
+    return_type: TLR,
+) -> Operation {
     let cdt_op = CdtOperation {
         op: CdtListOpType::RemoveByRankRange as u8,
-        encoder: Box::new(pack_cdt_op),
-        args: vec![CdtArgument::Int(return_type.to_bitmask()), CdtArgument::Int(rank)],
+        encoder: Arc::new(pack_cdt_op),
+        args: vec![
+            CdtArgument::Int(return_type.to_bitmask()),
+            CdtArgument::Int(rank),
+        ],
     };
     Operation {
         op: OperationType::CdtWrite,
@@ -736,7 +759,7 @@ pub fn remove_by_rank_range_count<TLR: ToListReturnTypeBitmask>(
 ) -> Operation {
     let cdt_op = CdtOperation {
         op: CdtListOpType::RemoveByRankRange as u8,
-        encoder: Box::new(pack_cdt_op),
+        encoder: Arc::new(pack_cdt_op),
         args: vec![
             CdtArgument::Int(return_type.to_bitmask()),
             CdtArgument::Int(rank),
@@ -761,7 +784,7 @@ pub fn set<'a>(bin: &'a str, index: i64, value: &'a Value) -> Operation<'a> {
 
     let cdt_op = CdtOperation {
         op: CdtListOpType::Set as u8,
-        encoder: Box::new(pack_cdt_op),
+        encoder: Arc::new(pack_cdt_op),
         args: vec![CdtArgument::Int(index), CdtArgument::Value(value)],
     };
     Operation {
@@ -778,7 +801,7 @@ pub fn set<'a>(bin: &'a str, index: i64, value: &'a Value) -> Operation<'a> {
 pub fn trim(bin: &str, index: i64, count: i64) -> Operation {
     let cdt_op = CdtOperation {
         op: CdtListOpType::Trim as u8,
-        encoder: Box::new(pack_cdt_op),
+        encoder: Arc::new(pack_cdt_op),
         args: vec![CdtArgument::Int(index), CdtArgument::Int(count)],
     };
     Operation {
@@ -794,7 +817,7 @@ pub fn trim(bin: &str, index: i64, count: i64) -> Operation {
 pub fn clear(bin: &str) -> Operation {
     let cdt_op = CdtOperation {
         op: CdtListOpType::Clear as u8,
-        encoder: Box::new(pack_cdt_op),
+        encoder: Arc::new(pack_cdt_op),
         args: vec![],
     };
     Operation {
@@ -810,7 +833,7 @@ pub fn clear(bin: &str) -> Operation {
 pub fn increment<'a>(policy: &ListPolicy, bin: &'a str, index: i64, value: i64) -> Operation<'a> {
     let cdt_op = CdtOperation {
         op: CdtListOpType::Increment as u8,
-        encoder: Box::new(pack_cdt_op),
+        encoder: Arc::new(pack_cdt_op),
         args: vec![
             CdtArgument::Int(index),
             CdtArgument::Int(value),
@@ -829,7 +852,7 @@ pub fn increment<'a>(policy: &ListPolicy, bin: &'a str, index: i64, value: i64) 
 pub fn size(bin: &str) -> Operation {
     let cdt_op = CdtOperation {
         op: CdtListOpType::Size as u8,
-        encoder: Box::new(pack_cdt_op),
+        encoder: Arc::new(pack_cdt_op),
         args: vec![],
     };
     Operation {
@@ -844,7 +867,7 @@ pub fn size(bin: &str) -> Operation {
 pub fn get(bin: &str, index: i64) -> Operation {
     let cdt_op = CdtOperation {
         op: CdtListOpType::Get as u8,
-        encoder: Box::new(pack_cdt_op),
+        encoder: Arc::new(pack_cdt_op),
         args: vec![CdtArgument::Int(index)],
     };
     Operation {
@@ -860,7 +883,7 @@ pub fn get(bin: &str, index: i64) -> Operation {
 pub fn get_range(bin: &str, index: i64, count: i64) -> Operation {
     let cdt_op = CdtOperation {
         op: CdtListOpType::GetRange as u8,
-        encoder: Box::new(pack_cdt_op),
+        encoder: Arc::new(pack_cdt_op),
         args: vec![CdtArgument::Int(index), CdtArgument::Int(count)],
     };
     Operation {
@@ -876,7 +899,7 @@ pub fn get_range(bin: &str, index: i64, count: i64) -> Operation {
 pub fn get_range_from(bin: &str, index: i64) -> Operation {
     let cdt_op = CdtOperation {
         op: CdtListOpType::GetRange as u8,
-        encoder: Box::new(pack_cdt_op),
+        encoder: Arc::new(pack_cdt_op),
         args: vec![CdtArgument::Int(index)],
     };
     Operation {
@@ -896,7 +919,7 @@ pub fn get_by_value<'a, TLR: ToListReturnTypeBitmask>(
 ) -> Operation<'a> {
     let cdt_op = CdtOperation {
         op: CdtListOpType::GetByValue as u8,
-        encoder: Box::new(pack_cdt_op),
+        encoder: Arc::new(pack_cdt_op),
         args: vec![
             CdtArgument::Int(return_type.to_bitmask()),
             CdtArgument::Value(value),
@@ -920,7 +943,7 @@ pub fn get_by_value_list<'a, TLR: ToListReturnTypeBitmask>(
 ) -> Operation<'a> {
     let cdt_op = CdtOperation {
         op: CdtListOpType::GetByValueList as u8,
-        encoder: Box::new(pack_cdt_op),
+        encoder: Arc::new(pack_cdt_op),
         args: vec![
             CdtArgument::Int(return_type.to_bitmask()),
             CdtArgument::List(values),
@@ -947,7 +970,7 @@ pub fn get_by_value_range<'a, TLR: ToListReturnTypeBitmask>(
 ) -> Operation<'a> {
     let cdt_op = CdtOperation {
         op: CdtListOpType::GetByValueInterval as u8,
-        encoder: Box::new(pack_cdt_op),
+        encoder: Arc::new(pack_cdt_op),
         args: vec![
             CdtArgument::Int(return_type.to_bitmask()),
             CdtArgument::Value(begin),
@@ -964,10 +987,14 @@ pub fn get_by_value_range<'a, TLR: ToListReturnTypeBitmask>(
 
 /// Creates list get by index operation.
 /// Server selects list item identified by index and returns selected data specified by returnType
-pub fn get_by_index<TLR: ToListReturnTypeBitmask>(bin: &str, index: i64, return_type: TLR) -> Operation {
+pub fn get_by_index<TLR: ToListReturnTypeBitmask>(
+    bin: &str,
+    index: i64,
+    return_type: TLR,
+) -> Operation {
     let cdt_op = CdtOperation {
         op: CdtListOpType::GetByIndex as u8,
-        encoder: Box::new(pack_cdt_op),
+        encoder: Arc::new(pack_cdt_op),
         args: vec![
             CdtArgument::Int(return_type.to_bitmask()),
             CdtArgument::Int(index),
@@ -985,10 +1012,14 @@ pub fn get_by_index<TLR: ToListReturnTypeBitmask>(bin: &str, index: i64, return_
 /// Creates list get by index range operation.
 /// Server selects list items starting at specified index to the end of list and returns selected
 /// data specified by returnType.
-pub fn get_by_index_range<TLR: ToListReturnTypeBitmask>(bin: &str, index: i64, return_type: TLR) -> Operation {
+pub fn get_by_index_range<TLR: ToListReturnTypeBitmask>(
+    bin: &str,
+    index: i64,
+    return_type: TLR,
+) -> Operation {
     let cdt_op = CdtOperation {
         op: CdtListOpType::GetByIndexRange as u8,
-        encoder: Box::new(pack_cdt_op),
+        encoder: Arc::new(pack_cdt_op),
         args: vec![
             CdtArgument::Int(return_type.to_bitmask()),
             CdtArgument::Int(index),
@@ -1014,7 +1045,7 @@ pub fn get_by_index_range_count<TLR: ToListReturnTypeBitmask>(
 ) -> Operation {
     let cdt_op = CdtOperation {
         op: CdtListOpType::GetByIndexRange as u8,
-        encoder: Box::new(pack_cdt_op),
+        encoder: Arc::new(pack_cdt_op),
         args: vec![
             CdtArgument::Int(return_type.to_bitmask()),
             CdtArgument::Int(index),
@@ -1032,11 +1063,18 @@ pub fn get_by_index_range_count<TLR: ToListReturnTypeBitmask>(
 
 /// Creates a list get by rank operation.
 /// Server selects list item identified by rank and returns selected data specified by returnType.
-pub fn get_by_rank<TLR: ToListReturnTypeBitmask>(bin: &str, rank: i64, return_type: TLR) -> Operation {
+pub fn get_by_rank<TLR: ToListReturnTypeBitmask>(
+    bin: &str,
+    rank: i64,
+    return_type: TLR,
+) -> Operation {
     let cdt_op = CdtOperation {
         op: CdtListOpType::GetByRank as u8,
-        encoder: Box::new(pack_cdt_op),
-        args: vec![CdtArgument::Int(return_type.to_bitmask()), CdtArgument::Int(rank)],
+        encoder: Arc::new(pack_cdt_op),
+        args: vec![
+            CdtArgument::Int(return_type.to_bitmask()),
+            CdtArgument::Int(rank),
+        ],
     };
     Operation {
         op: OperationType::CdtRead,
@@ -1049,11 +1087,18 @@ pub fn get_by_rank<TLR: ToListReturnTypeBitmask>(bin: &str, rank: i64, return_ty
 /// Creates a list get by rank range operation.
 /// Server selects list items starting at specified rank to the last ranked item and returns selected
 /// data specified by returnType.
-pub fn get_by_rank_range<TLR: ToListReturnTypeBitmask>(bin: &str, rank: i64, return_type: TLR) -> Operation {
+pub fn get_by_rank_range<TLR: ToListReturnTypeBitmask>(
+    bin: &str,
+    rank: i64,
+    return_type: TLR,
+) -> Operation {
     let cdt_op = CdtOperation {
         op: CdtListOpType::GetByRankRange as u8,
-        encoder: Box::new(pack_cdt_op),
-        args: vec![CdtArgument::Int(return_type.to_bitmask()), CdtArgument::Int(rank)],
+        encoder: Arc::new(pack_cdt_op),
+        args: vec![
+            CdtArgument::Int(return_type.to_bitmask()),
+            CdtArgument::Int(rank),
+        ],
     };
     Operation {
         op: OperationType::CdtRead,
@@ -1073,7 +1118,7 @@ pub fn get_by_rank_range_count<TLR: ToListReturnTypeBitmask>(
 ) -> Operation {
     let cdt_op = CdtOperation {
         op: CdtListOpType::GetByRankRange as u8,
-        encoder: Box::new(pack_cdt_op),
+        encoder: Arc::new(pack_cdt_op),
         args: vec![
             CdtArgument::Int(return_type.to_bitmask()),
             CdtArgument::Int(rank),
@@ -1110,7 +1155,7 @@ pub fn get_by_value_relative_rank_range<'a, TLR: ToListReturnTypeBitmask>(
 ) -> Operation<'a> {
     let cdt_op = CdtOperation {
         op: CdtListOpType::GetByValueRelRankRange as u8,
-        encoder: Box::new(pack_cdt_op),
+        encoder: Arc::new(pack_cdt_op),
         args: vec![
             CdtArgument::Int(return_type.to_bitmask()),
             CdtArgument::Value(value),
@@ -1148,7 +1193,7 @@ pub fn get_by_value_relative_rank_range_count<'a, TLR: ToListReturnTypeBitmask>(
 ) -> Operation<'a> {
     let cdt_op = CdtOperation {
         op: CdtListOpType::GetByValueRelRankRange as u8,
-        encoder: Box::new(pack_cdt_op),
+        encoder: Arc::new(pack_cdt_op),
         args: vec![
             CdtArgument::Int(return_type.to_bitmask()),
             CdtArgument::Value(value),
@@ -1170,7 +1215,7 @@ pub fn get_by_value_relative_rank_range_count<'a, TLR: ToListReturnTypeBitmask>(
 pub fn sort(bin: &str, sort_flags: ListSortFlags) -> Operation {
     let cdt_op = CdtOperation {
         op: CdtListOpType::Sort as u8,
-        encoder: Box::new(pack_cdt_op),
+        encoder: Arc::new(pack_cdt_op),
         args: vec![CdtArgument::Byte(sort_flags as u8)],
     };
     Operation {

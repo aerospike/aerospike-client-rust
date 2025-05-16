@@ -732,14 +732,16 @@ async fn expression_commands() {
     assert_eq!(op.is_ok(), true, "OPERATE Ok Test Failed");
 
     // BATCH GET
-    let mut batch_reads = vec![];
+    let bpr = BatchReadPolicy::default();
+    let mut batch_ops = vec![];
     let b = Bins::from(["bin"]);
     for i in 85..90 {
         let key = as_key!(namespace, &set_name, i);
-        batch_reads.push(BatchRead::new(key, b.clone()));
+        let bo = BatchOperation::read(&bpr, key, Bins::All);
+        batch_ops.push(bo);
     }
     bpolicy.filter_expression = Some(gt(int_bin("bin".to_string()), int_val(84)));
-    match client.batch_get(&bpolicy, batch_reads).await {
+    match client.batch(&bpolicy, &batch_ops).await {
         Ok(results) => {
             for result in results {
                 let mut count = 0;

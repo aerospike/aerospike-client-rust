@@ -20,9 +20,9 @@ use std::vec::Vec;
 use aerospike_core::errors::Result;
 use aerospike_core::operations::Operation;
 use aerospike_core::{
-    BatchPolicy, BatchRead, Bin, Bins, ClientPolicy, CollectionIndexType, IndexTask, IndexType,
-    Key, Node, QueryPolicy, ReadPolicy, Record, Recordset, RegisterTask, ScanPolicy, Statement,
-    ToHosts, UDFLang, Value, WritePolicy,
+    BatchOperation, BatchPolicy, BatchRecord, Bin, Bins, ClientPolicy, CollectionIndexType,
+    IndexTask, IndexType, Key, Node, QueryPolicy, ReadPolicy, Record, Recordset, RegisterTask,
+    ScanPolicy, Statement, ToHosts, UDFLang, Value, WritePolicy,
 };
 use futures::executor::block_on;
 
@@ -182,14 +182,14 @@ impl Client {
     /// # use aerospike::*;
     ///
     /// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap();
-    /// # let client = Client::new(&ClientPolicy::default(), &hosts).unwrap();
+    /// # let client = Client::new(&ClientPolicy::default(), &hosts).await.unwrap();
     /// let bins = Bins::from(["name", "age"]);
     /// let mut batch_reads = vec![];
     /// for i in 0..10 {
     ///   let key = as_key!("test", "test", i);
     ///   batch_reads.push(BatchRead::new(key, bins.clone()));
     /// }
-    /// match client.batch_get(&BatchPolicy::default(), batch_reads) {
+    /// match client.batch(&BatchPolicy::default(), batch_reads).await {
     ///     Ok(results) => {
     ///       for result in results {
     ///         match result.record {
@@ -202,12 +202,12 @@ impl Client {
     ///         => println!("Error executing batch request: {}", err),
     /// }
     /// ```
-    pub fn batch_get(
+    pub fn batch(
         &self,
         policy: &BatchPolicy,
-        batch_reads: Vec<BatchRead>,
-    ) -> Result<Vec<BatchRead>> {
-        block_on(self.async_client.batch_get(policy, batch_reads))
+        batch_records: &[BatchOperation<'_>],
+    ) -> Result<Vec<BatchRecord>> {
+        block_on(self.async_client.batch(policy, batch_records))
     }
 
     /// Write record bin(s). The policy specifies the transaction timeout, record expiration and

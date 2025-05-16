@@ -301,6 +301,10 @@ impl FilterExpression {
         pack_value(buf, &self.val.clone().unwrap())
     }
 
+    pub fn size(&self) -> usize {
+        self.pack(&mut None)
+    }
+
     pub fn pack(&self, buf: &mut Option<&mut Buffer>) -> usize {
         let mut size = 0;
         if let Some(exps) = &self.exps {

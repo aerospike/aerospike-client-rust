@@ -198,7 +198,7 @@ async fn query_node() {
     }
 
     for t in threads {
-        t.await;
+        t.await.unwrap();
     }
 
     assert_eq!(count.load(Ordering::Relaxed), 100);

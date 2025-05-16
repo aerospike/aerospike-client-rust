@@ -13,42 +13,46 @@
 // License for the specific language governing permissions and limitations under
 // the License.
 
-use crate::Bins;
 use crate::Key;
 use crate::Record;
+use crate::ResultCode;
 #[cfg(feature = "serialization")]
 use serde::Serialize;
 
 /// Key and bin names used in batch read commands where variable bins are needed for each key.
 #[cfg_attr(feature = "serialization", derive(Serialize))]
 #[derive(Debug, Clone)]
-pub struct BatchRead {
+
+/// Encapsulates the Batch key and record result.
+pub struct BatchRecord {
     /// Key.
     pub key: Key,
 
-    /// Bins to retrieve for this key.
-    pub bins: Bins,
-
-    /// Will contain the record after the batch read operation.
+    /// Record result after batch command has completed.  Will be nil if record was not found
+    /// or an error occurred. See ResultCode.
     pub record: Option<Record>,
+
+    /// ResultCode for this returned record. See ResultCode.
+    /// If not OK, the record will be nil.
+    pub result_code: Option<ResultCode>,
+
+    /// InDoubt signifies the possibility that the write command may have completed even though an error
+    /// occurred for this record. This may be the case when a client error occurs (like timeout)
+    /// after the command was sent to the server.
+    pub in_doubt: bool,
+
+    /// Does this command contain a write operation. For internal use only.
+    has_write: bool,
 }
 
-impl BatchRead {
-    /// Create a new `BatchRead` instance for the given key and bin selector.
-    pub const fn new(key: Key, bins: Bins) -> Self {
-        BatchRead {
-            key,
-            bins,
+impl BatchRecord {
+    pub(crate) fn new(key: Key, has_write: bool) -> Self {
+        BatchRecord {
+            key: key,
             record: None,
+            result_code: None,
+            in_doubt: false,
+            has_write: has_write,
         }
-    }
-
-    #[doc(hidden)]
-    pub fn match_header(&self, other: &BatchRead, match_set: bool) -> bool {
-        let key = &self.key;
-        let other_key = &other.key;
-        (key.namespace == other_key.namespace)
-            && (match_set && (key.set_name == other_key.set_name))
-            && (self.bins == other.bins)
     }
 }

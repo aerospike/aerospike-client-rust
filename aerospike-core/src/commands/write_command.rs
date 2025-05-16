@@ -24,7 +24,7 @@ use crate::operations::OperationType;
 use crate::policy::WritePolicy;
 use crate::{Bin, Key, ResultCode};
 
-pub struct WriteCommand<'a> {
+pub(crate) struct WriteCommand<'a> {
     single_command: SingleCommand<'a>,
     policy: &'a WritePolicy,
     bins: &'a [Bin],

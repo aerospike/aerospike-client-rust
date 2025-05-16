@@ -22,7 +22,7 @@ use crate::net::Connection;
 use crate::policy::QueryPolicy;
 use crate::{Recordset, Statement};
 
-pub struct QueryCommand<'a> {
+pub(crate) struct QueryCommand<'a> {
     stream_command: StreamCommand,
     policy: &'a QueryPolicy,
     statement: Arc<Statement>,

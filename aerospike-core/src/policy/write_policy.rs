@@ -41,7 +41,7 @@ pub struct WritePolicy {
     /// If a write operation is creating a record, the expected generation would be 0.
     pub generation: u32,
 
-    /// Expiration determimes record expiration in seconds. Also known as TTL (Time-To-Live).
+    /// Expiration determines record expiration in seconds. Also known as TTL (Time-To-Live).
     /// Seconds record will live before being removed by the server.
     pub expiration: Expiration,
 

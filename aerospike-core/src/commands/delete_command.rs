@@ -22,7 +22,7 @@ use crate::net::Connection;
 use crate::policy::WritePolicy;
 use crate::{Key, ResultCode};
 
-pub struct DeleteCommand<'a> {
+pub(crate) struct DeleteCommand<'a> {
     single_command: SingleCommand<'a>,
     policy: &'a WritePolicy,
     pub existed: bool,

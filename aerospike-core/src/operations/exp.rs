@@ -16,6 +16,8 @@
 //! Expression Operations.
 //! This functions allow users to run `FilterExpressions` as Operate commands.
 
+use std::sync::Arc;
+
 use crate::commands::buffer::Buffer;
 use crate::expressions::FilterExpression;
 use crate::msgpack::encoder::{pack_array_begin, pack_integer};
@@ -56,7 +58,7 @@ impl ToExpWriteFlagBitmask for ExpWriteFlags {
     }
 }
 
-impl<T: IntoIterator<Item=ExpWriteFlags>> ToExpWriteFlagBitmask for T {
+impl<T: IntoIterator<Item = ExpWriteFlags>> ToExpWriteFlagBitmask for T {
     fn to_bitmask(self) -> i64 {
         let mut out = 0;
         for val in self {
@@ -68,8 +70,9 @@ impl<T: IntoIterator<Item=ExpWriteFlags>> ToExpWriteFlagBitmask for T {
 
 #[doc(hidden)]
 pub type ExpressionEncoder =
-    Box<dyn Fn(&mut Option<&mut Buffer>, &ExpOperation) -> usize + Send + Sync + 'static>;
+    Arc<dyn Fn(&mut Option<&mut Buffer>, &ExpOperation) -> usize + Send + Sync + 'static>;
 
+#[derive(Clone)]
 #[doc(hidden)]
 pub struct ExpOperation<'a> {
     pub encoder: ExpressionEncoder,
@@ -114,7 +117,7 @@ impl ToExpReadFlagBitmask for ExpReadFlags {
     }
 }
 
-impl<T: IntoIterator<Item=ExpReadFlags>> ToExpReadFlagBitmask for T {
+impl<T: IntoIterator<Item = ExpReadFlags>> ToExpReadFlagBitmask for T {
     fn to_bitmask(self) -> i64 {
         let mut out = 0;
         for val in self {
@@ -124,7 +127,6 @@ impl<T: IntoIterator<Item=ExpReadFlags>> ToExpReadFlagBitmask for T {
     }
 }
 
-
 /// Create operation that performs a expression that writes to record bin.
 pub fn write_exp<'a, E: ToExpWriteFlagBitmask>(
     bin: &'a str,
@@ -132,7 +134,7 @@ pub fn write_exp<'a, E: ToExpWriteFlagBitmask>(
     flags: E,
 ) -> Operation<'a> {
     let op = ExpOperation {
-        encoder: Box::new(pack_write_exp),
+        encoder: Arc::new(pack_write_exp),
         policy: flags.to_bitmask(),
         exp,
     };
@@ -151,7 +153,7 @@ pub fn read_exp<'a, E: ToExpReadFlagBitmask>(
     flags: E,
 ) -> Operation<'a> {
     let op = ExpOperation {
-        encoder: Box::new(pack_read_exp),
+        encoder: Arc::new(pack_read_exp),
         policy: flags.to_bitmask(),
         exp,
     };

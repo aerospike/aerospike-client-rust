@@ -27,9 +27,9 @@ use crate::query::Recordset;
 use crate::value::bytes_to_particle;
 use crate::{Key, Record, ResultCode, Value};
 
-pub struct StreamCommand {
+pub(crate) struct StreamCommand {
     node: Arc<Node>,
-    pub recordset: Arc<Recordset>,
+    pub(crate) recordset: Arc<Recordset>,
 }
 
 impl Drop for StreamCommand {
@@ -74,7 +74,7 @@ impl StreamCommand {
         let key = StreamCommand::parse_key(conn, field_count).await?;
 
         // Partition is done, don't go further
-        if info3 & buffer::_INFO3_PARTITION_DONE != 0 {
+        if info3 & buffer::INFO3_PARTITION_DONE != 0 {
             return Ok((None, true));
         }
 

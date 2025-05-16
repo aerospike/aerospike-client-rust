@@ -16,6 +16,8 @@ use aerospike_rt::time::Instant;
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use crate::batch::BatchOperation;
+use crate::batch::BatchRecordIndex;
 use crate::cluster::partition::Partition;
 use crate::cluster::{Cluster, Node};
 use crate::commands::Duration;
@@ -23,31 +25,26 @@ use crate::commands::{self};
 use crate::errors::{Error, Result};
 use crate::net::Connection;
 use crate::policy::{BatchPolicy, Policy, PolicyLike, Replica};
-use crate::{value, BatchRead, Record, ResultCode, Value};
+use crate::{value, Record, ResultCode, Value};
 use aerospike_rt::sleep;
 
-struct BatchRecord {
-    batch_index: usize,
-    record: Option<Record>,
-}
-
-#[derive(Clone, Debug)]
-pub(crate) struct BatchReadCommand {
+#[derive(Clone)]
+pub(crate) struct BatchOperateCommand<'a> {
     policy: BatchPolicy,
     pub node: Arc<Node>,
-    pub batch_reads: Vec<(BatchRead, usize)>,
+    pub batch_ops: Vec<(BatchOperation<'a>, usize)>,
 }
 
-impl BatchReadCommand {
+impl<'a> BatchOperateCommand<'a> {
     pub fn new(
-        policy: &BatchPolicy,
+        policy: &'a BatchPolicy,
         node: Arc<Node>,
-        batch_reads: Vec<(BatchRead, usize)>,
-    ) -> Self {
-        BatchReadCommand {
+        batch_ops: Vec<(BatchOperation<'a>, usize)>,
+    ) -> BatchOperateCommand<'a> {
+        BatchOperateCommand {
             policy: policy.clone(),
             node,
-            batch_reads,
+            batch_ops,
         }
     }
 
@@ -62,18 +59,19 @@ impl BatchReadCommand {
         loop {
             let success = if iterations & 1 == 0 || matches!(self.policy.replica, Replica::Master) {
                 // For even iterations, we request all keys from the same node for efficiency.
-                Self::request_group(&mut self.batch_reads, &self.policy, self.node.clone()).await?
+                Self::request_group(&mut self.batch_ops, &self.policy, self.node.clone()).await?
             } else {
                 // However, for odd iterations try the second choice for each. Instead of re-sharding the batch (as the second choice may not correspond to the first), just try each by itself.
                 let mut all_successful = true;
-                for individual_read in self.batch_reads.clone().chunks_mut(1) {
+                for individual_op in self.batch_ops.chunks_mut(1) {
+                    let key = individual_op[0].0.key();
                     // Find somewhere else to try.
-                    let partition = Partition::new_by_key(&individual_read[0].0.key);
+                    let partition = Partition::new_by_key(&key);
                     let node = cluster
                         .get_node(&partition, self.policy.replica, Arc::downgrade(&self.node))
                         .await?;
 
-                    if !Self::request_group(individual_read, &self.policy, node).await? {
+                    if !Self::request_group(individual_op, &self.policy, node).await? {
                         all_successful = false;
                         break;
                     }
@@ -135,7 +133,7 @@ impl BatchReadCommand {
             }
 
             // Parse results.
-            if let Err(err) = Self::parse_result(&mut self.batch_reads.clone(), &mut conn).await {
+            if let Err(err) = Self::parse_result(&mut self.batch_ops, &mut conn).await {
                 // close the connection
                 // cancelling/closing the batch/multi commands will return an error, which will
                 // close the connection to throw away its data and signal the server about the
@@ -152,7 +150,7 @@ impl BatchReadCommand {
     }
 
     async fn request_group(
-        batch_reads: &mut [(BatchRead, usize)],
+        batch_ops: &mut [(BatchOperation<'a>, usize)],
         policy: &BatchPolicy,
         node: Arc<Node>,
     ) -> Result<bool> {
@@ -165,7 +163,7 @@ impl BatchReadCommand {
         };
 
         conn.buffer
-            .set_batch_read(policy, batch_reads)
+            .set_batch_operate(policy, batch_ops)
             .map_err(|_| Error::ClientError("Failed to prepare send buffer".into()))?;
 
         conn.buffer.write_timeout(policy.base().timeout());
@@ -180,7 +178,7 @@ impl BatchReadCommand {
         }
 
         // Parse results.
-        if let Err(err) = Self::parse_result(batch_reads, &mut conn).await {
+        if let Err(err) = Self::parse_result(batch_ops, &mut conn).await {
             // close the connection
             // cancelling/closing the batch/multi commands will return an error, which will
             // close the connection to throw away its data and signal the server about the
@@ -195,36 +193,42 @@ impl BatchReadCommand {
     }
 
     async fn parse_group(
-        batch_reads: &mut [(BatchRead, usize)],
+        batch_ops: &mut [(BatchOperation<'a>, usize)],
         conn: &mut Connection,
         size: usize,
     ) -> Result<bool> {
         while conn.bytes_read() < size {
             conn.read_buffer(commands::buffer::MSG_REMAINING_HEADER_SIZE as usize)
                 .await?;
-            match Self::parse_record(conn).await? {
-                None => return Ok(false),
-                Some(batch_record) => {
-                    let batch_read = batch_reads
+            match Self::parse_record(conn).await {
+                Ok(None) => return Ok(false),
+                Ok(Some(batch_record)) => {
+                    let batch_op = batch_ops
                         .get_mut(batch_record.batch_index)
                         .expect("Invalid batch index");
-                    batch_read.0.record = batch_record.record;
+                    batch_op.0.set_record(batch_record.record);
+                    batch_op.0.set_result_code(batch_record.result_code, false);
                 }
+                Err(Error::BatchError(batch_index, rc, in_doubt, ..)) => {
+                    let batch_op = batch_ops
+                        .get_mut(batch_index as usize)
+                        .expect("Invalid batch index");
+                    batch_op.0.set_result_code(rc, in_doubt);
+                }
+                Err(err @ _) => return Err(err),
             }
         }
         Ok(true)
     }
 
-    async fn parse_record(conn: &mut Connection) -> Result<Option<BatchRecord>> {
-        match ResultCode::from(conn.buffer.read_u8(Some(5))) {
-            ResultCode::Ok => true,
-            ResultCode::KeyNotFoundError => false,
+    async fn parse_record(conn: &mut Connection) -> Result<Option<BatchRecordIndex>> {
+        let batch_index = conn.buffer.read_u32(Some(14));
+        let result_code = ResultCode::from(conn.buffer.read_u8(Some(5)));
+        match result_code {
+            ResultCode::Ok => (),
+            ResultCode::KeyNotFoundError => (),
             rc => {
-                return Err(Error::ServerError(
-                    rc,
-                    false,
-                    "".into(), /*self.node.address().into()*/
-                ));
+                return Err(Error::BatchError(batch_index, rc, false, conn.addr.clone()));
             }
         };
 
@@ -234,15 +238,11 @@ impl BatchReadCommand {
             return Ok(None);
         }
 
-        let found_key = match ResultCode::from(conn.buffer.read_u8(Some(5))) {
+        let found_key = match result_code {
             ResultCode::Ok => true,
             ResultCode::KeyNotFoundError => false,
             rc => {
-                return Err(Error::ServerError(
-                    rc,
-                    false,
-                    "".into(), /*self.node.address().into()*/
-                ));
+                return Err(Error::BatchError(batch_index, rc, false, conn.addr.clone()));
             }
         };
 
@@ -278,9 +278,10 @@ impl BatchReadCommand {
         } else {
             None
         };
-        Ok(Some(BatchRecord {
+        Ok(Some(BatchRecordIndex {
             batch_index: batch_index as usize,
             record,
+            result_code: result_code,
         }))
     }
 
@@ -289,22 +290,18 @@ impl BatchReadCommand {
     }
 
     fn prepare_buffer(&mut self, conn: &mut Connection) -> Result<()> {
-        conn.buffer.set_batch_read(&self.policy, &self.batch_reads)
-    }
-
-    async fn get_node(&self) -> Result<Arc<Node>> {
-        Ok(self.node.clone())
+        conn.buffer.set_batch_operate(&self.policy, &self.batch_ops)
     }
 
     async fn parse_result(
-        batch_reads: &mut [(BatchRead, usize)],
+        batch_ops: &mut [(BatchOperation<'a>, usize)],
         conn: &mut Connection,
     ) -> Result<()> {
         loop {
             conn.read_buffer(8).await?;
             let size = conn.buffer.read_msg_size(None);
             conn.bookmark();
-            if size > 0 && !Self::parse_group(batch_reads, conn, size as usize).await? {
+            if size > 0 && !Self::parse_group(batch_ops, conn, size as usize).await? {
                 break;
             }
         }

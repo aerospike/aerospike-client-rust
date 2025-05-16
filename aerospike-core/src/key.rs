@@ -77,6 +77,10 @@ impl Key {
 
         Ok(())
     }
+
+    pub(crate) fn has_value_to_send(&self) -> bool {
+        self.user_key.is_some()
+    }
 }
 
 impl fmt::Display for Key {

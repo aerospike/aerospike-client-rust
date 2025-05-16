@@ -14,12 +14,14 @@
 // the License.
 
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use crate::commands::buffer::Buffer;
 use crate::commands::ParticleType;
 use crate::operations::cdt_context::CdtContext;
 use crate::Value;
 
+#[derive(Debug, Clone)]
 #[doc(hidden)]
 pub enum CdtArgument<'a> {
     Byte(u8),
@@ -30,10 +32,11 @@ pub enum CdtArgument<'a> {
     Map(&'a HashMap<Value, Value>),
 }
 
-pub type OperationEncoder = Box<
+pub type OperationEncoder = Arc<
     dyn Fn(&mut Option<&mut Buffer>, &CdtOperation, &[CdtContext]) -> usize + Send + Sync + 'static,
 >;
 
+#[derive(Clone)]
 #[doc(hidden)]
 pub struct CdtOperation<'a> {
     pub op: u8,

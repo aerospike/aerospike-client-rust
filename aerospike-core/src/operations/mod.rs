@@ -56,6 +56,7 @@ pub enum OperationType {
 }
 
 #[doc(hidden)]
+#[derive(Clone)]
 pub enum OperationData<'a> {
     None,
     Value(&'a Value),
@@ -67,6 +68,7 @@ pub enum OperationData<'a> {
 }
 
 #[doc(hidden)]
+#[derive(Clone, Debug)]
 pub enum OperationBin<'a> {
     None,
     All,
@@ -74,6 +76,7 @@ pub enum OperationBin<'a> {
 }
 
 /// Database operation definition. This data type is used in the client's `operate()` method.
+#[derive(Clone)]
 pub struct Operation<'a> {
     // OpType determines type of operation.
     #[doc(hidden)]
@@ -93,6 +96,23 @@ pub struct Operation<'a> {
 }
 
 impl<'a> Operation<'a> {
+    #[doc(hidden)]
+    pub(crate) fn is_write(&self) -> bool {
+        match self.op {
+            OperationType::Write
+            | OperationType::CdtWrite
+            | OperationType::Incr
+            | OperationType::ExpWrite
+            | OperationType::Append
+            | OperationType::Prepend
+            | OperationType::Touch
+            | OperationType::BitWrite
+            | OperationType::Delete
+            | OperationType::HllWrite => true,
+            _ => false,
+        }
+    }
+
     #[doc(hidden)]
     pub fn estimate_size(&self) -> usize {
         let mut size: usize = 0;

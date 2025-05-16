@@ -139,6 +139,8 @@ extern crate base64;
 extern crate byteorder;
 extern crate crossbeam_queue;
 #[macro_use]
+extern crate rhexdump;
+#[macro_use]
 extern crate thiserror;
 #[macro_use]
 extern crate lazy_static;
@@ -147,7 +149,12 @@ extern crate log;
 extern crate pwhash;
 extern crate rand;
 
-pub use batch::BatchRead;
+pub use batch::BatchDeletePolicy;
+pub use batch::BatchOperation;
+pub use batch::BatchReadPolicy;
+pub use batch::BatchRecord;
+pub use batch::BatchUDFPolicy;
+pub use batch::BatchWritePolicy;
 pub use bin::{Bin, Bins};
 pub use client::Client;
 pub use cluster::Node;
@@ -181,7 +188,7 @@ mod key;
 mod batch;
 mod client;
 mod cluster;
-pub mod commands;
+pub(crate) mod commands;
 pub mod expressions;
 mod msgpack;
 mod net;

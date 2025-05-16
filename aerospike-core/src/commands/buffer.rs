@@ -17,75 +17,84 @@ use std::time::Duration;
 
 use byteorder::{ByteOrder, LittleEndian, NetworkEndian};
 
+use crate::batch::BatchOperation;
 use crate::commands::field_type::FieldType;
-use crate::errors::{Result, Error};
+use crate::commands::BatchAttr;
+use crate::errors::{Error, Result};
 use crate::expressions::FilterExpression;
 use crate::msgpack::encoder;
 use crate::operations::{Operation, OperationBin, OperationData, OperationType};
 use crate::policy::{
-    BatchPolicy, CommitLevel, ConsistencyLevel, GenerationPolicy, QueryPolicy, BasePolicy,
+    BasePolicy, BatchPolicy, CommitLevel, ConsistencyLevel, GenerationPolicy, QueryPolicy,
     RecordExistsAction, ScanPolicy, WritePolicy,
 };
-use crate::{BatchRead, Bin, Bins, CollectionIndexType, Key, Statement, Value};
+use crate::{Bin, Bins, CollectionIndexType, Key, Statement, Value};
 
 // Contains a read operation.
-const INFO1_READ: u8 = 1;
+pub(crate) const INFO1_READ: u8 = 1;
 
 // Get all bins.
-const INFO1_GET_ALL: u8 = 1 << 1;
+pub(crate) const INFO1_GET_ALL: u8 = 1 << 1;
 
 // Batch read or exists.
-const INFO1_BATCH: u8 = 1 << 3;
+pub(crate) const INFO1_BATCH: u8 = 1 << 3;
 
 // Do not read the bins
-const INFO1_NOBINDATA: u8 = 1 << 5;
+pub(crate) const INFO1_NOBINDATA: u8 = 1 << 5;
 
 // Involve all replicas in read operation.
 const INFO1_CONSISTENCY_ALL: u8 = 1 << 6;
 
 // Create or update record
-const INFO2_WRITE: u8 = 1;
+pub(crate) const INFO2_WRITE: u8 = 1;
 
 // Fling a record into the belly of Moloch.
-const INFO2_DELETE: u8 = 1 << 1;
+pub(crate) const INFO2_DELETE: u8 = 1 << 1;
 
 // Update if expected generation == old.
-const INFO2_GENERATION: u8 = 1 << 2;
+pub(crate) const INFO2_GENERATION: u8 = 1 << 2;
 
 // Update if new generation >= old, good for restore.
-const INFO2_GENERATION_GT: u8 = 1 << 3;
+pub(crate) const INFO2_GENERATION_GT: u8 = 1 << 3;
 
 // Transaction resulting in record deletion leaves tombstone (Enterprise only).
-const INFO2_DURABLE_DELETE: u8 = 1 << 4;
+pub(crate) const INFO2_DURABLE_DELETE: u8 = 1 << 4;
 
 // Create only. Fail if record already exists.
-const INFO2_CREATE_ONLY: u8 = 1 << 5;
+pub(crate) const INFO2_CREATE_ONLY: u8 = 1 << 5;
 
 // Return a result for every operation.
-const INFO2_RESPOND_ALL_OPS: u8 = 1 << 7;
+pub(crate) const INFO2_RESPOND_ALL_OPS: u8 = 1 << 7;
 
 // This is the last of a multi-part message.
-pub const INFO3_LAST: u8 = 1;
+pub(crate) const INFO3_LAST: u8 = 1;
 
 // Commit to master only before declaring success.
-const INFO3_COMMIT_MASTER: u8 = 1 << 1;
+pub(crate) const INFO3_COMMIT_MASTER: u8 = 1 << 1;
 
 // Partition is complete response in scan.
-pub const _INFO3_PARTITION_DONE: u8 = 1 << 2;
+pub(crate) const INFO3_PARTITION_DONE: u8 = 1 << 2;
 
 // Update only. Merge bins.
-const INFO3_UPDATE_ONLY: u8 = 1 << 3;
+pub(crate) const INFO3_UPDATE_ONLY: u8 = 1 << 3;
 
 // Create or completely replace record.
-const INFO3_CREATE_OR_REPLACE: u8 = 1 << 4;
+pub(crate) const INFO3_CREATE_OR_REPLACE: u8 = 1 << 4;
 
 // Completely replace existing record only.
-const INFO3_REPLACE_ONLY: u8 = 1 << 5;
+pub(crate) const INFO3_REPLACE_ONLY: u8 = 1 << 5;
 
-pub const MSG_TOTAL_HEADER_SIZE: u8 = 30;
-const FIELD_HEADER_SIZE: u8 = 5;
-const OPERATION_HEADER_SIZE: u8 = 8;
-pub const MSG_REMAINING_HEADER_SIZE: u8 = 22;
+// pub(crate) const BATCH_MSG_READ: u8 = 0x0;
+pub(crate) const BATCH_MSG_REPEAT: u8 = 0x1;
+pub(crate) const BATCH_MSG_INFO: u8 = 0x2;
+pub(crate) const BATCH_MSG_GEN: u8 = 0x4;
+pub(crate) const BATCH_MSG_TTL: u8 = 0x8;
+// pub(crate) const BATCH_MSG_INFO4: u8 = 0x10;
+
+pub(crate) const MSG_TOTAL_HEADER_SIZE: u8 = 30;
+pub(crate) const FIELD_HEADER_SIZE: u8 = 5;
+pub(crate) const OPERATION_HEADER_SIZE: u8 = 8;
+pub(crate) const MSG_REMAINING_HEADER_SIZE: u8 = 22;
 const DIGEST_SIZE: u8 = 20;
 const CL_MSG_VERSION: u8 = 2;
 const AS_MSG_TYPE: u8 = 3;
@@ -104,7 +113,7 @@ pub struct Buffer {
 }
 
 impl Buffer {
-    pub fn new(reclaim_threshold: usize) -> Self {
+    pub(crate) fn new(reclaim_threshold: usize) -> Self {
         Buffer {
             data_buffer: Vec::with_capacity(1024),
             data_offset: 0,
@@ -116,16 +125,18 @@ impl Buffer {
         self.data_offset = MSG_TOTAL_HEADER_SIZE as usize;
     }
 
-    pub fn size_buffer(&mut self) -> Result<()> {
+    pub(crate) fn size_buffer(&mut self) -> Result<()> {
         let offset = self.data_offset;
         self.resize_buffer(offset)
     }
 
-    pub fn resize_buffer(&mut self, size: usize) -> Result<()> {
+    pub(crate) fn resize_buffer(&mut self, size: usize) -> Result<()> {
         // Corrupted data streams can result in a huge length.
         // Do a sanity check here.
         if size > MAX_BUFFER_SIZE {
-            return Err(Error::InvalidArgument(format!("Invalid size for buffer: {size}")));
+            return Err(Error::InvalidArgument(format!(
+                "Invalid size for buffer: {size}"
+            )));
         }
 
         let mem_size = self.data_buffer.capacity();
@@ -137,12 +148,12 @@ impl Buffer {
         Ok(())
     }
 
-    pub fn reset_offset(&mut self) {
+    pub(crate) fn reset_offset(&mut self) {
         // reset data offset
         self.data_offset = 0;
     }
 
-    pub fn end(&mut self) {
+    pub(crate) fn end(&mut self) {
         let size = ((self.data_offset - 8) as i64)
             | ((i64::from(CL_MSG_VERSION) << 56) as i64)
             | (i64::from(AS_MSG_TYPE) << 48);
@@ -153,7 +164,7 @@ impl Buffer {
     }
 
     // Writes the command for write operations
-    pub fn set_write(
+    pub(crate) fn set_write(
         &mut self,
         policy: &WritePolicy,
         op_type: OperationType,
@@ -193,7 +204,7 @@ impl Buffer {
     }
 
     // Writes the command for write operations
-    pub fn set_delete(&mut self, policy: &WritePolicy, key: &Key) -> Result<()> {
+    pub(crate) fn set_delete(&mut self, policy: &WritePolicy, key: &Key) -> Result<()> {
         self.begin();
         let mut field_count = self.estimate_key_size(key, false);
         let filter_size = self.estimate_filter_size(policy.filter_expression());
@@ -214,7 +225,7 @@ impl Buffer {
     }
 
     // Writes the command for touch operations
-    pub fn set_touch(&mut self, policy: &WritePolicy, key: &Key) -> Result<()> {
+    pub(crate) fn set_touch(&mut self, policy: &WritePolicy, key: &Key) -> Result<()> {
         self.begin();
         let mut field_count = self.estimate_key_size(key, policy.send_key);
         let filter_size = self.estimate_filter_size(policy.filter_expression());
@@ -236,7 +247,7 @@ impl Buffer {
     }
 
     // Writes the command for exist operations
-    pub fn set_exists(&mut self, policy: &WritePolicy, key: &Key) -> Result<()> {
+    pub(crate) fn set_exists(&mut self, policy: &WritePolicy, key: &Key) -> Result<()> {
         self.begin();
         let mut field_count = self.estimate_key_size(key, false);
         let filter_size = self.estimate_filter_size(policy.filter_expression());
@@ -263,7 +274,7 @@ impl Buffer {
     }
 
     // Writes the command for get operations
-    pub fn set_read(&mut self, policy: &BasePolicy, key: &Key, bins: &Bins) -> Result<()> {
+    pub(crate) fn set_read(&mut self, policy: &BasePolicy, key: &Key, bins: &Bins) -> Result<()> {
         match bins {
             Bins::None => self.set_read_header(policy, key),
             Bins::All => self.set_read_for_key_only(policy, key),
@@ -297,7 +308,7 @@ impl Buffer {
     }
 
     // Writes the command for getting metadata operations
-    pub fn set_read_header(&mut self, policy: &BasePolicy, key: &Key) -> Result<()> {
+    pub(crate) fn set_read_header(&mut self, policy: &BasePolicy, key: &Key) -> Result<()> {
         self.begin();
         let mut field_count = self.estimate_key_size(key, false);
         let filter_size = self.estimate_filter_size(policy.filter_expression());
@@ -319,7 +330,7 @@ impl Buffer {
         Ok(())
     }
 
-    pub fn set_read_for_key_only(&mut self, policy: &BasePolicy, key: &Key) -> Result<()> {
+    pub(crate) fn set_read_for_key_only(&mut self, policy: &BasePolicy, key: &Key) -> Result<()> {
         self.begin();
 
         let mut field_count = self.estimate_key_size(key, false);
@@ -340,14 +351,135 @@ impl Buffer {
         Ok(())
     }
 
+    fn write_batch_fields_with_filter(
+        &mut self,
+        key: &Key,
+        filter: &Option<FilterExpression>,
+        field_count: usize,
+        op_count: usize,
+    ) -> Result<()> {
+        if let Some(filter) = filter {
+            let field_count = field_count + 1;
+            self.write_batch_fields(key, field_count, op_count)?;
+            let exp_size = filter.size();
+            self.write_filter_expression(&filter, exp_size);
+        } else {
+            self.write_batch_fields(key, field_count, op_count)?;
+        }
+        Ok(())
+    }
+
+    fn write_batch_fields_reg(
+        &mut self,
+        key: &Key,
+        attr: &BatchAttr,
+        filter: &Option<FilterExpression>,
+        mut field_count: usize,
+        op_count: usize,
+    ) -> Result<()> {
+        if filter.is_some() {
+            field_count += 1;
+        }
+
+        if attr.send_key && key.has_value_to_send() {
+            field_count += 1
+        }
+
+        self.write_batch_fields(key, field_count, op_count)?;
+
+        if let Some(filter) = filter {
+            let exp_size = filter.size();
+            self.write_filter_expression(&filter, exp_size);
+        }
+
+        if attr.send_key && key.has_value_to_send() {
+            self.write_field_value(&key.user_key.clone().unwrap(), FieldType::Key)
+        }
+        Ok(())
+    }
+
+    fn write_batch_fields(&mut self, key: &Key, field_count: usize, op_count: usize) -> Result<()> {
+        let field_count = field_count + 2;
+        self.write_u16(field_count as u16);
+        self.write_u16(op_count as u16);
+        self.write_field_string(&key.namespace, FieldType::Namespace);
+        self.write_field_string(&key.set_name, FieldType::Table);
+
+        Ok(())
+    }
+
+    fn write_batch_bin_names(
+        &mut self,
+        key: &Key,
+        bin_names: &Vec<String>,
+        attr: &BatchAttr,
+        filter: &Option<FilterExpression>,
+    ) -> Result<()> {
+        self.write_batch_read(key, attr, filter, bin_names.len())?;
+
+        for bin in bin_names {
+            self.write_operation_for_bin_name(bin, OperationType::Read);
+        }
+        Ok(())
+    }
+
+    fn write_batch_operations(
+        &mut self,
+        key: &Key,
+        ops: &Vec<Operation>,
+        attr: &BatchAttr,
+        filter: &Option<FilterExpression>,
+    ) -> Result<()> {
+        if attr.has_write {
+            self.write_batch_write(key, attr, filter, 0, ops.len())?;
+        } else {
+            self.write_batch_read(key, attr, filter, ops.len())?;
+        }
+
+        for op in ops {
+            self.write_operation_for_operation(op)
+        }
+        Ok(())
+    }
+
+    fn write_batch_read(
+        &mut self,
+        key: &Key,
+        attr: &BatchAttr,
+        filter: &Option<FilterExpression>,
+        op_count: usize,
+    ) -> Result<()> {
+        self.write_u8(BATCH_MSG_INFO | BATCH_MSG_TTL);
+        self.write_u8(attr.read_attr);
+        self.write_u8(attr.write_attr);
+        self.write_u8(attr.info_attr);
+        self.write_u32(attr.expiration);
+        self.write_batch_fields_with_filter(key, filter, 0, op_count)
+    }
+
+    fn write_batch_write(
+        &mut self,
+        key: &Key,
+        attr: &BatchAttr,
+        filter: &Option<FilterExpression>,
+        field_count: usize,
+        op_count: usize,
+    ) -> Result<()> {
+        self.write_u8(BATCH_MSG_INFO | BATCH_MSG_GEN | BATCH_MSG_TTL);
+        self.write_u8(attr.read_attr);
+        self.write_u8(attr.write_attr);
+        self.write_u8(attr.info_attr);
+        self.write_u16(attr.generation as u16);
+        self.write_u32(attr.expiration);
+        self.write_batch_fields_reg(key, attr, filter, field_count, op_count)
+    }
+
     // Writes the command for batch read operations
-    pub fn set_batch_read(
+    pub(crate) fn set_batch_operate(
         &mut self,
         policy: &BatchPolicy,
-        batch_reads: &[(BatchRead, usize)],
+        batch_ops: &[(BatchOperation, usize)],
     ) -> Result<()> {
-        let field_count_row = if policy.send_set_name { 2 } else { 1 };
-
         self.begin();
         let mut field_count = 1;
         self.data_offset += FIELD_HEADER_SIZE as usize + 5;
@@ -357,98 +489,109 @@ impl Buffer {
             field_count += 1;
         }
 
-        let mut prev: Option<&BatchRead> = None;
-        for (batch_read, _) in batch_reads {
-            self.data_offset += batch_read.key.digest.len() + 4;
-            match prev {
-                Some(prev) if batch_read.match_header(prev, policy.send_set_name) => {
-                    self.data_offset += 1;
-                }
-                _ => {
-                    let key = &batch_read.key;
-                    self.data_offset += key.namespace.len() + FIELD_HEADER_SIZE as usize + 6;
-                    if policy.send_set_name {
-                        self.data_offset += key.set_name.len() + FIELD_HEADER_SIZE as usize;
-                    }
-                    if let Bins::Some(ref bin_names) = batch_read.bins {
-                        for name in bin_names {
-                            self.estimate_operation_size_for_bin_name(name);
-                        }
-                    }
-                }
+        let mut prev: Option<&BatchOperation> = None;
+        for (batch_op, _) in batch_ops {
+            self.data_offset += batch_op.key().digest.len() + 4;
+            if batch_op.match_header(prev) {
+                self.data_offset += 1;
+            } else {
+                // Must write full header and namespace/set/bin names.
+                let key = &batch_op.key();
+                self.data_offset += 12; // header(4) + ttl(4) + fiel_count(2) + op_count(2) = 12
+                self.data_offset += key.namespace.len() + FIELD_HEADER_SIZE as usize;
+                self.data_offset += key.set_name.len() + FIELD_HEADER_SIZE as usize;
+                self.data_offset += batch_op.size(&policy.filter_expression)?; // + HEADER
             }
-            prev = Some(batch_read);
+            prev = Some(batch_op);
         }
 
+        // self.data_offset += 24 * batch_ops.len();
         self.size_buffer()?;
-        self.write_header(
-            &policy.base_policy,
-            INFO1_READ | INFO1_BATCH,
-            0,
-            field_count,
-            0,
-        );
+        self.write_header(&policy.base_policy, INFO1_BATCH, 0, field_count, 0);
 
         if let Some(filter) = policy.filter_expression() {
             self.write_filter_expression(filter, filter_size);
         }
 
         let field_size_offset = self.data_offset;
-        let field_type = if policy.send_set_name {
-            FieldType::BatchIndexWithSet
-        } else {
-            FieldType::BatchIndex
-        };
+        let field_type = FieldType::BatchIndexWithSet;
         self.write_field_header(0, field_type);
-        self.write_u32(batch_reads.len() as u32);
+        self.write_u32(batch_ops.len() as u32);
         self.write_u8(if policy.allow_inline { 1 } else { 0 });
 
+        let mut attr = BatchAttr::default();
         prev = None;
-        for (idx, (batch_read, _)) in batch_reads.iter().enumerate() {
-            let key = &batch_read.key;
+        for (idx, (batch_op, _)) in batch_ops.iter().enumerate() {
+            let key = &batch_op.key();
             self.write_u32(idx as u32);
             self.write_bytes(&key.digest);
-            match prev {
-                Some(prev) if batch_read.match_header(prev, policy.send_set_name) => {
-                    self.write_u8(1);
-                }
-                _ => {
-                    self.write_u8(0);
-                    match batch_read.bins {
-                        Bins::None => {
-                            self.write_u8(INFO1_READ | INFO1_NOBINDATA);
-                            self.write_u16(field_count_row);
-                            self.write_u16(0);
-                            self.write_field_string(&key.namespace, FieldType::Namespace);
-                            if policy.send_set_name {
-                                self.write_field_string(&key.set_name, FieldType::Table);
+            if batch_op.match_header(prev) {
+                self.write_u8(BATCH_MSG_REPEAT);
+            } else {
+                match batch_op {
+                    BatchOperation::Read {
+                        br: _,
+                        policy,
+                        bins,
+                        ops,
+                    } => {
+                        attr.set_batch_read(policy);
+                        match (bins, ops) {
+                            (Bins::Some(bin_names), Some(ops))
+                                if bin_names.len() > 0 && ops.len() > 0 =>
+                            {
+                                return Err(Error::ClientError(
+                                    "Can't pass both bin names and operations to BatchReads".into(),
+                                ))
                             }
-                        }
-                        Bins::All => {
-                            self.write_u8(INFO1_READ | INFO1_GET_ALL);
-                            self.write_u16(field_count_row);
-                            self.write_u16(0);
-                            self.write_field_string(&key.namespace, FieldType::Namespace);
-                            if policy.send_set_name {
-                                self.write_field_string(&key.set_name, FieldType::Table);
+                            (Bins::Some(bin_names), _) if bin_names.len() > 0 => {
+                                self.write_batch_bin_names(
+                                    key,
+                                    bin_names,
+                                    &attr,
+                                    &attr.filter_expression,
+                                )?;
                             }
-                        }
-                        Bins::Some(ref bin_names) => {
-                            self.write_u8(INFO1_READ);
-                            self.write_u16(field_count_row);
-                            self.write_u16(bin_names.len() as u16);
-                            self.write_field_string(&key.namespace, FieldType::Namespace);
-                            if policy.send_set_name {
-                                self.write_field_string(&key.set_name, FieldType::Table);
+                            (_, Some(ops)) if ops.len() > 0 => {
+                                attr.adjust_read(ops);
+                                self.write_batch_operations(
+                                    key,
+                                    ops,
+                                    &attr,
+                                    &attr.filter_expression,
+                                )?;
                             }
-                            for bin in bin_names {
-                                self.write_operation_for_bin_name(bin, OperationType::Read);
+                            _ => {
+                                attr.adjust_read_for_all_bins(matches!(bins, Bins::All));
+                                self.write_batch_read(key, &attr, &attr.filter_expression, 0)?;
                             }
                         }
                     }
+                    BatchOperation::Write { br: _, policy, ops } => {
+                        attr.set_batch_write(policy);
+                        attr.adjust_write(ops);
+                        self.write_batch_operations(key, ops, &attr, &attr.filter_expression)?;
+                    }
+                    BatchOperation::Delete { br: _, policy } => {
+                        attr.set_batch_delete(policy);
+                        self.write_batch_write(key, &attr, &attr.filter_expression, 0, 0)?;
+                    }
+                    BatchOperation::UDF {
+                        br: _,
+                        policy,
+                        udf_name,
+                        function_name,
+                        args,
+                    } => {
+                        attr.set_batch_udf(policy);
+                        self.write_batch_write(key, &attr, &attr.filter_expression, 3, 0)?;
+                        self.write_field_string(udf_name, FieldType::UdfPackageName);
+                        self.write_field_string(function_name, FieldType::UdfFunction);
+                        self.write_args(*args, FieldType::UdfArgList);
+                    }
                 }
             }
-            prev = Some(batch_read);
+            prev = Some(batch_op);
         }
 
         let field_size = self.data_offset - MSG_TOTAL_HEADER_SIZE as usize - 4;
@@ -462,7 +605,7 @@ impl Buffer {
     }
 
     // Writes the command for getting metadata operations
-    pub fn set_operate<'a>(
+    pub(crate) fn set_operate<'a>(
         &mut self,
         policy: &WritePolicy,
         key: &Key,
@@ -549,7 +692,7 @@ impl Buffer {
         Ok(())
     }
 
-    pub fn set_udf(
+    pub(crate) fn set_udf(
         &mut self,
         policy: &WritePolicy,
         key: &Key,
@@ -581,7 +724,7 @@ impl Buffer {
         Ok(())
     }
 
-    pub fn set_scan(
+    pub(crate) fn set_scan(
         &mut self,
         policy: &ScanPolicy,
         namespace: &str,
@@ -696,7 +839,7 @@ impl Buffer {
     }
 
     #[allow(clippy::cognitive_complexity)]
-    pub fn set_query(
+    pub(crate) fn set_query(
         &mut self,
         policy: &QueryPolicy,
         statement: &Statement,
@@ -1146,6 +1289,10 @@ impl Buffer {
         self.write_str(name);
     }
 
+    fn write_operation_for_operation(&mut self, op: &Operation) {
+        op.write_to(self);
+    }
+
     fn write_operation_for_operation_type(&mut self, op_type: OperationType) {
         self.write_i32(4);
         self.write_u8(op_type as u8);
@@ -1156,24 +1303,24 @@ impl Buffer {
 
     // Data buffer implementations
 
-    pub const fn data_offset(&self) -> usize {
+    pub(crate) const fn data_offset(&self) -> usize {
         self.data_offset
     }
 
-    pub fn skip_bytes(&mut self, count: usize) {
+    pub(crate) fn skip_bytes(&mut self, count: usize) {
         self.data_offset += count;
     }
 
-    pub fn skip(&mut self, count: usize) {
+    pub(crate) fn skip(&mut self, count: usize) {
         self.data_offset += count;
     }
 
-    pub fn peek(&self) -> u8 {
+    pub(crate) fn peek(&self) -> u8 {
         self.data_buffer[self.data_offset]
     }
 
     #[allow(clippy::option_if_let_else)]
-    pub fn read_u8(&mut self, pos: Option<usize>) -> u8 {
+    pub(crate) fn read_u8(&mut self, pos: Option<usize>) -> u8 {
         if let Some(pos) = pos {
             self.data_buffer[pos]
         } else {
@@ -1184,7 +1331,7 @@ impl Buffer {
     }
 
     #[allow(clippy::option_if_let_else)]
-    pub fn read_i8(&mut self, pos: Option<usize>) -> i8 {
+    pub(crate) fn read_i8(&mut self, pos: Option<usize>) -> i8 {
         if let Some(pos) = pos {
             self.data_buffer[pos] as i8
         } else {
@@ -1195,7 +1342,7 @@ impl Buffer {
     }
 
     #[allow(clippy::option_if_let_else)]
-    pub fn read_u16(&mut self, pos: Option<usize>) -> u16 {
+    pub(crate) fn read_u16(&mut self, pos: Option<usize>) -> u16 {
         let len = 2;
         if let Some(pos) = pos {
             NetworkEndian::read_u16(&self.data_buffer[pos..pos + len])
@@ -1208,13 +1355,13 @@ impl Buffer {
         }
     }
 
-    pub fn read_i16(&mut self, pos: Option<usize>) -> i16 {
+    pub(crate) fn read_i16(&mut self, pos: Option<usize>) -> i16 {
         let val = self.read_u16(pos);
         val as i16
     }
 
     #[allow(clippy::option_if_let_else)]
-    pub fn read_u32(&mut self, pos: Option<usize>) -> u32 {
+    pub(crate) fn read_u32(&mut self, pos: Option<usize>) -> u32 {
         let len = 4;
         if let Some(pos) = pos {
             NetworkEndian::read_u32(&self.data_buffer[pos..pos + len])
@@ -1227,13 +1374,13 @@ impl Buffer {
         }
     }
 
-    pub fn read_i32(&mut self, pos: Option<usize>) -> i32 {
+    pub(crate) fn read_i32(&mut self, pos: Option<usize>) -> i32 {
         let val = self.read_u32(pos);
         val as i32
     }
 
     #[allow(clippy::option_if_let_else)]
-    pub fn read_u64(&mut self, pos: Option<usize>) -> u64 {
+    pub(crate) fn read_u64(&mut self, pos: Option<usize>) -> u64 {
         let len = 8;
         if let Some(pos) = pos {
             NetworkEndian::read_u64(&self.data_buffer[pos..pos + len])
@@ -1246,19 +1393,19 @@ impl Buffer {
         }
     }
 
-    pub fn read_i64(&mut self, pos: Option<usize>) -> i64 {
+    pub(crate) fn read_i64(&mut self, pos: Option<usize>) -> i64 {
         let val = self.read_u64(pos);
         val as i64
     }
 
-    pub fn read_msg_size(&mut self, pos: Option<usize>) -> usize {
+    pub(crate) fn read_msg_size(&mut self, pos: Option<usize>) -> usize {
         let size = self.read_i64(pos);
         let size = size & 0xFFFF_FFFF_FFFF;
         size as usize
     }
 
     #[allow(clippy::option_if_let_else)]
-    pub fn read_f32(&mut self, pos: Option<usize>) -> f32 {
+    pub(crate) fn read_f32(&mut self, pos: Option<usize>) -> f32 {
         let len = 4;
         if let Some(pos) = pos {
             NetworkEndian::read_f32(&self.data_buffer[pos..pos + len])
@@ -1272,7 +1419,7 @@ impl Buffer {
     }
 
     #[allow(clippy::option_if_let_else)]
-    pub fn read_f64(&mut self, pos: Option<usize>) -> f64 {
+    pub(crate) fn read_f64(&mut self, pos: Option<usize>) -> f64 {
         let len = 8;
         if let Some(pos) = pos {
             NetworkEndian::read_f64(&self.data_buffer[pos..pos + len])
@@ -1285,27 +1432,27 @@ impl Buffer {
         }
     }
 
-    pub fn read_str(&mut self, len: usize) -> Result<String> {
+    pub(crate) fn read_str(&mut self, len: usize) -> Result<String> {
         let s = str::from_utf8(&self.data_buffer[self.data_offset..self.data_offset + len])?;
         self.data_offset += len;
         Ok(s.to_owned())
     }
 
-    pub fn read_bytes(&mut self, pos: usize, count: usize) -> &[u8] {
+    pub(crate) fn read_bytes(&mut self, pos: usize, count: usize) -> &[u8] {
         &self.data_buffer[pos..pos + count]
     }
 
-    pub fn read_slice(&mut self, count: usize) -> &[u8] {
+    pub(crate) fn read_slice(&mut self, count: usize) -> &[u8] {
         &self.data_buffer[self.data_offset..self.data_offset + count]
     }
 
-    pub fn read_blob(&mut self, len: usize) -> Vec<u8> {
+    pub(crate) fn read_blob(&mut self, len: usize) -> Vec<u8> {
         let val = self.data_buffer[self.data_offset..self.data_offset + len].to_vec();
         self.data_offset += len;
         val
     }
 
-    pub fn read_bool(&mut self, len: usize) -> bool {
+    pub(crate) fn read_bool(&mut self, len: usize) -> bool {
         if len <= 0 {
             false
         } else {
@@ -1315,19 +1462,19 @@ impl Buffer {
         }
     }
 
-    pub fn write_u8(&mut self, val: u8) -> usize {
+    pub(crate) fn write_u8(&mut self, val: u8) -> usize {
         self.data_buffer[self.data_offset] = val;
         self.data_offset += 1;
         1
     }
 
-    pub fn write_i8(&mut self, val: i8) -> usize {
+    pub(crate) fn write_i8(&mut self, val: i8) -> usize {
         self.data_buffer[self.data_offset] = val as u8;
         self.data_offset += 1;
         1
     }
 
-    pub fn write_u16(&mut self, val: u16) -> usize {
+    pub(crate) fn write_u16(&mut self, val: u16) -> usize {
         NetworkEndian::write_u16(
             &mut self.data_buffer[self.data_offset..self.data_offset + 2],
             val,
@@ -1336,7 +1483,7 @@ impl Buffer {
         2
     }
 
-    pub fn write_u16_little_endian(&mut self, val: u16) -> usize {
+    pub(crate) fn write_u16_little_endian(&mut self, val: u16) -> usize {
         LittleEndian::write_u16(
             &mut self.data_buffer[self.data_offset..self.data_offset + 2],
             val,
@@ -1345,11 +1492,11 @@ impl Buffer {
         2
     }
 
-    pub fn write_i16(&mut self, val: i16) -> usize {
+    pub(crate) fn write_i16(&mut self, val: i16) -> usize {
         self.write_u16(val as u16)
     }
 
-    pub fn write_u32(&mut self, val: u32) -> usize {
+    pub(crate) fn write_u32(&mut self, val: u32) -> usize {
         NetworkEndian::write_u32(
             &mut self.data_buffer[self.data_offset..self.data_offset + 4],
             val,
@@ -1358,11 +1505,11 @@ impl Buffer {
         4
     }
 
-    pub fn write_i32(&mut self, val: i32) -> usize {
+    pub(crate) fn write_i32(&mut self, val: i32) -> usize {
         self.write_u32(val as u32)
     }
 
-    pub fn write_u64(&mut self, val: u64) -> usize {
+    pub(crate) fn write_u64(&mut self, val: u64) -> usize {
         NetworkEndian::write_u64(
             &mut self.data_buffer[self.data_offset..self.data_offset + 8],
             val,
@@ -1371,16 +1518,16 @@ impl Buffer {
         8
     }
 
-    pub fn write_i64(&mut self, val: i64) -> usize {
+    pub(crate) fn write_i64(&mut self, val: i64) -> usize {
         self.write_u64(val as u64)
     }
 
-    pub fn write_bool(&mut self, val: bool) -> usize {
+    pub(crate) fn write_bool(&mut self, val: bool) -> usize {
         let val = if val { 1 } else { 0 };
         self.write_i8(val)
     }
 
-    pub fn write_f32(&mut self, val: f32) -> usize {
+    pub(crate) fn write_f32(&mut self, val: f32) -> usize {
         NetworkEndian::write_f32(
             &mut self.data_buffer[self.data_offset..self.data_offset + 4],
             val,
@@ -1389,7 +1536,7 @@ impl Buffer {
         4
     }
 
-    pub fn write_f64(&mut self, val: f64) -> usize {
+    pub(crate) fn write_f64(&mut self, val: f64) -> usize {
         NetworkEndian::write_f64(
             &mut self.data_buffer[self.data_offset..self.data_offset + 8],
             val,
@@ -1398,18 +1545,18 @@ impl Buffer {
         8
     }
 
-    pub fn write_bytes(&mut self, bytes: &[u8]) -> usize {
+    pub(crate) fn write_bytes(&mut self, bytes: &[u8]) -> usize {
         for b in bytes {
             self.write_u8(*b);
         }
         bytes.len()
     }
 
-    pub fn write_str(&mut self, val: &str) -> usize {
+    pub(crate) fn write_str(&mut self, val: &str) -> usize {
         self.write_bytes(val.as_bytes())
     }
 
-    pub fn write_geo(&mut self, value: &str) -> usize {
+    pub(crate) fn write_geo(&mut self, value: &str) -> usize {
         self.write_u8(0);
         self.write_u8(0);
         self.write_u8(0);
@@ -1417,14 +1564,14 @@ impl Buffer {
         3 + value.len()
     }
 
-    pub fn write_timeout(&mut self, val: Option<Duration>) {
+    pub(crate) fn write_timeout(&mut self, val: Option<Duration>) {
         if let Some(val) = val {
             let millis: i32 = (val.as_secs() * 1_000) as i32 + val.subsec_millis() as i32;
             NetworkEndian::write_i32(&mut self.data_buffer[22..22 + 4], millis);
         }
     }
 
-    pub fn dump_buffer(&self) {
-        println!(">>>>>>>>>>>>>>> {:?}", self.data_buffer.clone());
+    pub(crate) fn dump_buffer(&self) {
+        rhexdump!(&self.data_buffer);
     }
 }

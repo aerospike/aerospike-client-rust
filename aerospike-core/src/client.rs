@@ -18,7 +18,7 @@ use std::str;
 use std::sync::Arc;
 use std::vec::Vec;
 
-use crate::batch::BatchExecutor;
+use crate::batch::{BatchExecutor, BatchOperation};
 use crate::cluster::{Cluster, Node};
 use crate::commands::{
     DeleteCommand, ExecuteUDFCommand, ExistsCommand, OperateCommand, QueryCommand, ReadCommand,
@@ -30,7 +30,7 @@ use crate::operations::{Operation, OperationType};
 use crate::policy::{BatchPolicy, ClientPolicy, QueryPolicy, ReadPolicy, ScanPolicy, WritePolicy};
 use crate::task::{IndexTask, RegisterTask};
 use crate::{
-    BatchRead, Bin, Bins, CollectionIndexType, IndexType, Key, Record, Recordset, ResultCode,
+    BatchRecord, Bin, Bins, CollectionIndexType, IndexType, Key, Record, Recordset, ResultCode,
     Statement, UDFLang, Value,
 };
 use aerospike_rt::fs::File;
@@ -87,7 +87,7 @@ impl Client {
     ///
     /// Using an environment variable to set the list of seed hosts.
     ///
-    /// ```rust,edition2018
+    /// ```rust,edition2021
     /// use aerospike::{Client, ClientPolicy};
     ///
     /// let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap();
@@ -139,7 +139,7 @@ impl Client {
     ///
     /// Fetch specified bins for a record with the given key.
     ///
-    /// ```rust,edition2018
+    /// ```rust,edition2021
     /// # use aerospike::*;
     ///
     /// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap();
@@ -148,16 +148,17 @@ impl Client {
     /// match client.get(&ReadPolicy::default(), &key, ["a", "b"]).await {
     ///     Ok(record)
     ///         => println!("a={:?}", record.bins.get("a")),
-    ///     Err(Error::ServerError(ResultCode::KeyNotFoundError))
+    ///     Err(Error::ServerError(ResultCode::KeyNotFoundError,..))
     ///         => println!("No such record: {}", key),
     ///     Err(err)
     ///         => println!("Error fetching record: {}", err),
     /// }
+
     /// ```
     ///
     /// Determine the remaining time-to-live of a record.
     ///
-    /// ```rust,edition2018
+    /// ```rust,edition2021
     /// # use aerospike::*;
     ///
     /// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap();
@@ -170,11 +171,12 @@ impl Client {
     ///             Some(duration) => println!("ttl: {} secs", duration.as_secs()),
     ///         }
     ///     },
-    ///     Err(Error::ServerError(ResultCode::KeyNotFoundError))
+    ///     Err(Error::ServerError(ResultCode::KeyNotFoundError,..))
     ///         => println!("No such record: {}", key),
     ///     Err(err)
     ///         => println!("Error fetching record: {}", err),
     /// }
+
     /// ```
     ///
     /// # Panics
@@ -184,7 +186,13 @@ impl Client {
         T: Into<Bins> + Send + Sync + 'static,
     {
         let bins = bins.into();
-        let mut command = ReadCommand::new(&policy.base_policy, self.cluster.clone(), key, bins, policy.replica);
+        let mut command = ReadCommand::new(
+            &policy.base_policy,
+            self.cluster.clone(),
+            key,
+            bins,
+            policy.replica,
+        );
         command.execute().await?;
         Ok(command.record.unwrap())
     }
@@ -199,21 +207,59 @@ impl Client {
     ///
     /// Fetch multiple records in a single client request
     ///
-    /// ```rust,edition2018
+    /// ```rust,edition2021
     /// # use aerospike::*;
     ///
     /// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap();
     /// # let client = Client::new(&ClientPolicy::default(), &hosts).await.unwrap();
     /// let bins = Bins::from(["name", "age"]);
-    /// let mut batch_reads = vec![];
-    /// for i in 0..10 {
-    ///   let key = as_key!("test", "test", i);
-    ///   batch_reads.push(BatchRead::new(key, bins.clone()));
-    /// }
-    /// match client.batch_get(&BatchPolicy::default(), batch_reads).await {
+    /// let mut batch_ops = vec![];
+    /// let bin1 = as_bin!("a", "a value");
+    /// let bin2 = as_bin!("b", "another value");
+    /// let bin3 = as_bin!("c", 42);
+    ///
+    /// let key1 = as_key!("test", "test", 1);
+    /// let key2 = as_key!("test", "test", 2);
+    /// let key3 = as_key!("test", "test", 3);
+    ///
+    /// let key4 = as_key!("test", "test", -1);
+    /// key does not exist
+    ///
+    /// let selected = Bins::from(["a"]);
+    /// let all = Bins::All;
+    /// let none = Bins::None;
+    ///
+    /// let wops = vec![
+    ///     operations::put(&bin1),
+    ///     operations::put(&bin2),
+    ///     operations::put(&bin3),
+    /// ];
+    ///
+    /// let rops = vec![
+    ///     operations::get_bin(&bin1.name),
+    ///     operations::get_bin(&bin2.name),
+    ///     operations::get_header(),
+    /// ];
+    ///
+    /// let bpr = BatchReadPolicy::default();
+    /// let bpw = BatchWritePolicy::default();
+    /// let bpd = BatchDeletePolicy::default();
+    /// let bpu = BatchUDFPolicy::default();
+    ///
+    /// let batch = vec![
+    ///     BatchOperation::write(&bpw, key1.clone(), wops.clone()),
+    ///     BatchOperation::read(&bpr, key1.clone(), selected),
+    ///     BatchOperation::read(&bpr, key2.clone(), all),
+    ///     BatchOperation::read(&bpr, key3.clone(), none.clone()),
+    ///     BatchOperation::read_ops(&bpr, key3.clone(), rops),
+    ///     BatchOperation::delete(&bpd, key1.clone()),
+    ///     BatchOperation::udf(&bpu, key1.clone(), "test_udf", "echo", Some(args)),
+    /// ];
+    /// let mut results = client.batch(&bpolicy, &batch).await.unwrap();
+    /// match results {
     ///     Ok(results) => {
     ///       for result in results {
-    ///         match result.record {
+    ///         match result.batch_record().record {
     ///           Some(record) => println!("{:?} => {:?}", result.key, record.bins),
     ///           None => println!("No such record: {:?}", result.key),
     ///         }
@@ -223,13 +269,13 @@ impl Client {
     ///         => println!("Error executing batch request: {}", err),
     /// }
     /// ```
-    pub async fn batch_get(
+    pub async fn batch(
         &self,
         policy: &BatchPolicy,
-        batch_reads: Vec<BatchRead>,
-    ) -> Result<Vec<BatchRead>> {
+        batch_records: &[BatchOperation<'_>],
+    ) -> Result<Vec<BatchRecord>> {
         let executor = BatchExecutor::new(self.cluster.clone());
-        executor.execute_batch_read(policy, batch_reads).await
+        executor.execute_batch_operate(policy, batch_records).await
     }
 
     /// Write record bin(s). The policy specifies the transaction timeout, record expiration and
@@ -239,7 +285,7 @@ impl Client {
     ///
     /// Write a record with a single integer bin.
     ///
-    /// ```rust,edition2018
+    /// ```rust,edition2021
     /// # use aerospike::*;
     ///
     /// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap();
@@ -254,7 +300,7 @@ impl Client {
     ///
     /// Write a record with an expiration of 10 seconds.
     ///
-    /// ```rust,edition2018
+    /// ```rust,edition2021
     /// # use aerospike::*;
     ///
     /// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap();
@@ -287,7 +333,7 @@ impl Client {
     ///
     /// Add two integer values to two existing bin values.
     ///
-    /// ```rust,edition2018
+    /// ```rust,edition2021
     /// # use aerospike::*;
     ///
     /// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap();
@@ -342,7 +388,7 @@ impl Client {
     ///
     /// Delete a record.
     ///
-    /// ```rust,edition2018
+    /// ```rust,edition2021
     /// # use aerospike::*;
     ///
     /// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap();
@@ -367,7 +413,7 @@ impl Client {
     ///
     /// Reset a record's time to expiration to the default ttl for the namespace.
     ///
-    /// ```rust,edition2018
+    /// ```rust,edition2021
     /// # use aerospike::*;
     ///
     /// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap();
@@ -403,7 +449,7 @@ impl Client {
     /// Add an integer value to an existing record and then read the result, all in one database
     /// call.
     ///
-    /// ```rust,edition2018
+    /// ```rust,edition2021
     /// # use aerospike::*;
     ///
     /// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap();
@@ -441,7 +487,7 @@ impl Client {
     ///
     /// # Examples
     ///
-    /// ```rust,edition2018
+    /// ```rust,edition2021
     /// # extern crate aerospike;
     /// # use aerospike::*;
     ///
@@ -598,7 +644,7 @@ impl Client {
     ///
     /// # Examples
     ///
-    /// ```rust,edition2018
+    /// ```rust,edition2021
     /// # extern crate aerospike;
     /// # use aerospike::*;
     ///
@@ -704,7 +750,7 @@ impl Client {
     ///
     /// # Examples
     ///
-    /// ```rust,edition2018
+    /// ```rust,edition2021
     /// # extern crate aerospike;
     /// # use aerospike::*;
     ///
@@ -824,7 +870,7 @@ impl Client {
     /// The following example creates an index `idx_foo_bar_baz`. The index is in namespace `foo`
     /// within set `bar` and bin `baz`:
     ///
-    /// ```rust,edition2018
+    /// ```rust,edition2021
     /// # extern crate aerospike;
     /// # use aerospike::*;
     ///

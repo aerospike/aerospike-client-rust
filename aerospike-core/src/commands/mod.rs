@@ -13,28 +13,30 @@
 // limitations under the License.
 
 pub mod admin_command;
-pub mod batch_read_command;
-pub mod buffer;
-pub mod delete_command;
-pub mod execute_udf_command;
-pub mod exists_command;
-pub mod info_command;
-pub mod operate_command;
-pub mod particle_type;
-pub mod query_command;
-pub mod read_command;
-pub mod scan_command;
-pub mod single_command;
-pub mod stream_command;
-pub mod touch_command;
-pub mod write_command;
+pub(crate) mod batch_attr;
+pub(crate) mod batch_operate_command;
+pub(crate) mod buffer;
+pub(crate) mod delete_command;
+pub(crate) mod execute_udf_command;
+pub(crate) mod exists_command;
+pub(crate) mod info_command;
+pub(crate) mod operate_command;
+pub(crate) mod particle_type;
+pub(crate) mod query_command;
+pub(crate) mod read_command;
+pub(crate) mod scan_command;
+pub(crate) mod single_command;
+pub(crate) mod stream_command;
+pub(crate) mod touch_command;
+pub(crate) mod write_command;
 
 mod field_type;
 
 use std::sync::Arc;
 use std::time::Duration;
 
-pub(crate) use self::batch_read_command::BatchReadCommand;
+pub(crate) use self::batch_attr::BatchAttr;
+pub(crate) use self::batch_operate_command::BatchOperateCommand;
 pub(crate) use self::delete_command::DeleteCommand;
 pub(crate) use self::execute_udf_command::ExecuteUDFCommand;
 pub(crate) use self::exists_command::ExistsCommand;

@@ -24,7 +24,7 @@ use crate::Key;
 use aerospike_rt::sleep;
 use aerospike_rt::time::Instant;
 
-pub struct SingleCommand<'a> {
+pub(crate) struct SingleCommand<'a> {
     cluster: Arc<Cluster>,
     pub key: &'a Key,
     partition: Partition<'a>,
@@ -33,7 +33,7 @@ pub struct SingleCommand<'a> {
 }
 
 impl<'a> SingleCommand<'a> {
-    pub fn new(cluster: Arc<Cluster>, key: &'a Key, replica: crate::policy::Replica,) -> Self {
+    pub fn new(cluster: Arc<Cluster>, key: &'a Key, replica: crate::policy::Replica) -> Self {
         let partition = Partition::new_by_key(key);
         SingleCommand {
             cluster,
@@ -45,7 +45,10 @@ impl<'a> SingleCommand<'a> {
     }
 
     pub async fn get_node(&mut self) -> Result<Arc<Node>> {
-        let this_time = self.cluster.get_node(&self.partition, self.replica, self.last_tried.clone()).await?;
+        let this_time = self
+            .cluster
+            .get_node(&self.partition, self.replica, self.last_tried.clone())
+            .await?;
         self.last_tried = Arc::downgrade(&this_time);
         Ok(this_time)
     }

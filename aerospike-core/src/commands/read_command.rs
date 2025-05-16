@@ -26,7 +26,7 @@ use crate::policy::{BasePolicy, Replica};
 use crate::value::bytes_to_particle;
 use crate::{Bins, Key, Record, ResultCode, Value};
 
-pub struct ReadCommand<'a> {
+pub(crate) struct ReadCommand<'a> {
     pub single_command: SingleCommand<'a>,
     pub record: Option<Record>,
     policy: &'a BasePolicy,
@@ -34,7 +34,13 @@ pub struct ReadCommand<'a> {
 }
 
 impl<'a> ReadCommand<'a> {
-    pub fn new(policy: &'a BasePolicy, cluster: Arc<Cluster>, key: &'a Key, bins: Bins, replica: Replica) -> Self {
+    pub fn new(
+        policy: &'a BasePolicy,
+        cluster: Arc<Cluster>,
+        key: &'a Key,
+        bins: Bins,
+        replica: Replica,
+    ) -> Self {
         ReadCommand {
             single_command: SingleCommand::new(cluster, key, replica),
             bins,

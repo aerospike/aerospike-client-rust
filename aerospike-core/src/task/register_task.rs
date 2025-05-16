@@ -45,7 +45,7 @@ impl Task for RegisterTask {
         let nodes = self.cluster.nodes().await;
 
         if nodes.is_empty() {
-            return Err(Error::Connection("No connected node".to_string()))
+            return Err(Error::Connection("No connected node".to_string()));
         }
 
         for node in &nodes {
