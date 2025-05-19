@@ -2,7 +2,28 @@
 
 All notable changes to this project will be documented in this file.
 
-## [Unreleased]
+## [2.0.0-alpha.1]
+We are pleased to release the first alpha version of the next gen v2 for the Rust client.
+This version of the client comes with a major feature: `async`! This feature was started by [Jonas Breuer](https://github.com/jonas32), in his epic PR and fixed and extended by Aerospike. We would like to thank him for his amazing contribution. Others also opened PRs which we have accepted and merged into this release.
+
+Please keep in mind that the API is still unstable and we *WILL* break it to enhance ergonomics, feature-set and the performance of the library. We invite the community to test drive the library and file tickets for bug reports or enhancement either on `Github` or with Aerospike support.
+
+* **New Features**
+  * Support `async` rust. You can use both `tokio` and `async-std` as features to enable the respective runtimes. `tokio` is the default.
+  * Support `sync` through blocking in the `sync` sub-crate.
+  * [CLIENT-2051] Support new batch protocol, allowing `read`, `write`, `delete` and `udf` operations. Use `BatchOperation` constructors.
+  * [CLIENT-2321] Support queries and scans not sending a fresh message header per partition in server v6+.
+  * [CLIENT-2320] Implement `std::convert::TryFrom<aerospike::Value>` for each variant.
+  * [CLIENT-2099] Support `boolean` particle type.
+  * Support New Scan/Query wire protocol.
+  * Replace `error-chain` with a custom implementation. We still use `thiserror`'s macros internally (To be removed in the future.)
+  * Support for `Replica` policies, including `PreferRack` policy.
+  * Removes lifetimes that were due to `&str`, replacing most of them with `String`.
+
+* **Bug Fixes**
+  * Fixed various bugs in `messagepack` encoding.
+  * Fixed large integers packing when encoding to `messagepack`.
+  * Fixed `Float` serialization.
 
 ## [1.2.0] - 2021-10-22
 
