@@ -15,10 +15,10 @@
 
 use crate::expressions::FilterExpression;
 use crate::policy::BasePolicy;
-use crate::{ConsistencyLevel, Priority};
+use crate::ConsistencyLevel;
 use std::time::Duration;
 
-use super::{Replica, PolicyLike};
+use super::{PolicyLike, Replica};
 
 /// `ReadPolicy` excapsulates parameters for transaction policy attributes
 /// used in all database operation calls.
@@ -34,7 +34,6 @@ pub struct ReadPolicy {
 impl Default for BasePolicy {
     fn default() -> BasePolicy {
         BasePolicy {
-            priority: Priority::Default,
             timeout: Some(Duration::new(30, 0)),
             max_retries: Some(2),
             sleep_between_retries: Some(Duration::new(0, 500_000_000)),

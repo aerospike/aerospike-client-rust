@@ -167,8 +167,7 @@ pub use net::ToHosts;
 pub use operations::{MapPolicy, MapReturnType, MapWriteMode};
 pub use policy::{
     BatchPolicy, ClientPolicy, CommitLevel, Concurrency, ConsistencyLevel, Expiration,
-    GenerationPolicy, Policy, Priority, QueryPolicy, ReadPolicy, RecordExistsAction, ScanPolicy,
-    WritePolicy,
+    GenerationPolicy, Policy, QueryPolicy, ReadPolicy, RecordExistsAction, ScanPolicy, WritePolicy,
 };
 pub use query::{CollectionIndexType, IndexType, Recordset, Statement, UDFLang};
 pub use record::Record;

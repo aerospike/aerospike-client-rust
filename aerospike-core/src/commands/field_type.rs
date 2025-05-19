@@ -28,6 +28,7 @@ pub enum FieldType {
     // ScanOptions = 8,
     ScanTimeout = 9,
     PIDArray = 11,
+    BValArray = 15,
     IndexName = 21,
     IndexRange = 22,
     // IndexFilter = 23,

@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use std::cmp::max;
 use std::str;
 use std::time::Duration;
 
@@ -751,10 +752,6 @@ impl Buffer {
             field_count += 1;
         }
 
-        // // Estimate scan options size.
-        // self.data_offset += 2 + FIELD_HEADER_SIZE as usize;
-        // field_count += 1;
-
         // Estimate pid size
         self.data_offset += partitions.len() * 2 + FIELD_HEADER_SIZE as usize;
         field_count += 1;
@@ -784,10 +781,11 @@ impl Buffer {
             read_attr |= INFO1_NOBINDATA;
         }
 
-        self.write_header(
+        self.write_header_read(
             &policy.base_policy,
             read_attr,
             0,
+            INFO3_PARTITION_DONE,
             field_count,
             bin_count as u16,
         );
@@ -808,18 +806,6 @@ impl Buffer {
         if let Some(filter) = policy.filter_expression() {
             self.write_filter_expression(filter, filter_size);
         }
-
-        // self.write_field_header(2, FieldType::ScanOptions);
-
-        // let mut priority: u8 = policy.base_policy.priority.clone() as u8;
-        // priority <<= 4;
-
-        // if policy.fail_on_cluster_change {
-        //     priority |= 0x08;
-        // }
-
-        // self.write_u8(priority);
-        // self.write_u8(policy.scan_percent);
 
         // Write scan timeout
         self.write_field_header(4, FieldType::ScanTimeout);
@@ -898,15 +884,12 @@ impl Buffer {
                 self.data_offset += bin_name_size;
                 field_count += 1;
             }
-        } else {
-            // Calling query with no filters is more efficiently handled by a primary index scan.
-            // Estimate scan options size.
-            // self.data_offset += 2 + FIELD_HEADER_SIZE as usize;
-            // field_count += 1;
-            // Estimate pid size
-            self.data_offset += partitions.len() * 2 + FIELD_HEADER_SIZE as usize;
-            field_count += 1;
         }
+
+        // Estimate pid size
+        self.data_offset += partitions.len() * 2 + FIELD_HEADER_SIZE as usize;
+        field_count += 1;
+
         let filter_exp_size = self.estimate_filter_size(policy.filter_expression());
         if filter_exp_size > 0 {
             field_count += 1;
@@ -948,10 +931,11 @@ impl Buffer {
         };
         let info2 = if write { INFO2_WRITE } else { 0 };
 
-        self.write_header(
+        self.write_header_read(
             &policy.base_policy,
             info1,
             info2,
+            INFO3_PARTITION_DONE,
             field_count,
             operation_count as u16,
         );
@@ -997,16 +981,11 @@ impl Buffer {
                     }
                 }
             }
-        } else {
-            // // Calling query with no filters is more efficiently handled by a primary index scan.
-            // self.write_field_header(2, FieldType::ScanOptions);
-            // let priority: u8 = (policy.base_policy.priority.clone() as u8) << 4;
-            // self.write_u8(priority);
-            // self.write_u8(100);
-            self.write_field_header(partitions.len() * 2, FieldType::PIDArray);
-            for pid in partitions {
-                self.write_u16_little_endian(*pid);
-            }
+        }
+
+        self.write_field_header(partitions.len() * 2, FieldType::PIDArray);
+        for pid in partitions {
+            self.write_u16_little_endian(*pid);
         }
 
         if let Some(filter_exp) = policy.filter_expression() {
@@ -1142,6 +1121,38 @@ impl Buffer {
         self.data_offset = MSG_TOTAL_HEADER_SIZE as usize;
     }
 
+    fn write_header_read(
+        &mut self,
+        policy: &BasePolicy,
+        read_attr: u8,
+        write_attr: u8,
+        info_attr: u8,
+        field_count: u16,
+        operation_count: u16,
+    ) {
+        let mut read_attr = read_attr;
+
+        if policy.consistency_level == ConsistencyLevel::ConsistencyAll {
+            read_attr |= INFO1_CONSISTENCY_ALL;
+        }
+
+        // Write all header data except total size which must be written last.
+        self.data_buffer[8] = MSG_REMAINING_HEADER_SIZE; // Message header length.
+        self.data_buffer[9] = read_attr;
+        self.data_buffer[10] = write_attr;
+        self.data_buffer[11] = info_attr;
+
+        for i in 12..26 {
+            self.data_buffer[i] = 0;
+        }
+
+        self.data_offset = 26;
+        self.write_u16(field_count as u16);
+        self.write_u16(operation_count as u16);
+
+        self.data_offset = MSG_TOTAL_HEADER_SIZE as usize;
+    }
+
     // Header write for write operations.
     fn write_header_with_policy(
         &mut self,
@@ -1239,6 +1250,16 @@ impl Buffer {
     fn write_field_header(&mut self, size: usize, ftype: FieldType) {
         self.write_i32(size as i32 + 1);
         self.write_u8(ftype as u8);
+    }
+
+    fn write_field_u64(&mut self, field: u64, ftype: FieldType) {
+        self.write_field_header(8, ftype);
+        self.write_u64(field);
+    }
+
+    fn write_field_u32(&mut self, field: u32, ftype: FieldType) {
+        self.write_field_header(4, ftype);
+        self.write_u32(field);
     }
 
     fn write_field_string(&mut self, field: &str, ftype: FieldType) {
@@ -1388,6 +1409,19 @@ impl Buffer {
             let res = NetworkEndian::read_u64(
                 &self.data_buffer[self.data_offset..self.data_offset + len],
             );
+            self.data_offset += len;
+            res
+        }
+    }
+
+    #[allow(clippy::option_if_let_else)]
+    pub(crate) fn read_le_u64(&mut self, pos: Option<usize>) -> u64 {
+        let len = 8;
+        if let Some(pos) = pos {
+            LittleEndian::read_u64(&self.data_buffer[pos..pos + len])
+        } else {
+            let res =
+                LittleEndian::read_u64(&self.data_buffer[self.data_offset..self.data_offset + len]);
             self.data_offset += len;
             res
         }

@@ -24,7 +24,6 @@ mod concurrency;
 mod consistency_level;
 mod expiration;
 mod generation_policy;
-mod priority;
 mod query_policy;
 mod read_policy;
 mod record_exists_action;
@@ -39,7 +38,6 @@ pub use self::concurrency::Concurrency;
 pub use self::consistency_level::ConsistencyLevel;
 pub use self::expiration::Expiration;
 pub use self::generation_policy::GenerationPolicy;
-pub use self::priority::Priority;
 pub use self::query_policy::QueryPolicy;
 pub use self::read_policy::ReadPolicy;
 pub use self::record_exists_action::RecordExistsAction;
@@ -53,9 +51,6 @@ use std::option::Option;
 /// Trait implemented by most policy types; policies that implement this trait typically encompass
 /// an instance of `BasePolicy`.
 pub trait Policy {
-    /// Transaction priority.
-    fn priority(&self) -> &Priority;
-
     #[doc(hidden)]
     /// Deadline for current transaction based on specified timeout. For internal use only.
     fn deadline(&self) -> Option<Instant>;
@@ -92,10 +87,6 @@ impl<T> Policy for T
 where
     T: PolicyLike,
 {
-    fn priority(&self) -> &Priority {
-        self.base().priority()
-    }
-
     fn consistency_level(&self) -> &ConsistencyLevel {
         self.base().consistency_level()
     }
@@ -117,7 +108,6 @@ where
     }
 }
 
-
 /// Defines algorithm used to determine the target node for a command. The replica algorithm only affects single record and batch commands.
 #[derive(Debug, Copy, Clone)]
 pub enum Replica {
@@ -125,7 +115,7 @@ pub enum Replica {
     Master,
     /// Try node containing master partition first. If connection fails, all commands try nodes containing replicated partitions. If socketTimeout is reached, reads also try nodes containing replicated partitions, but writes remain on master node.
     Sequence,
-    /// Try node on the same rack as the client first. If there are no nodes on the same rack, use SEQUENCE instead. 
+    /// Try node on the same rack as the client first. If there are no nodes on the same rack, use SEQUENCE instead.
     PreferRack,
 }
 
@@ -138,11 +128,6 @@ impl Default for Replica {
 /// Common parameters shared by all policy types.
 #[derive(Debug, Clone)]
 pub struct BasePolicy {
-    /// Priority of request relative to other transactions.
-    /// Currently, only used for scans.
-    /// This is deprected for Scan/Query commands and will not be sent to the server.
-    pub priority: Priority,
-
     /// How replicas should be consulted in a read operation to provide the desired
     /// consistency guarantee. Default to allowing one replica to be used in the
     /// read operation.
@@ -169,10 +154,6 @@ pub struct BasePolicy {
 }
 
 impl Policy for BasePolicy {
-    fn priority(&self) -> &Priority {
-        &self.priority
-    }
-
     fn deadline(&self) -> Option<Instant> {
         self.timeout.map(|timeout| Instant::now() + timeout)
     }

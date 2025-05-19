@@ -253,7 +253,7 @@ impl<'a> BatchOperateCommand<'a> {
         let field_count = conn.buffer.read_u16(None) as usize; // almost certainly 0
         let op_count = conn.buffer.read_u16(None) as usize;
 
-        let key = commands::StreamCommand::parse_key(conn, field_count).await?;
+        let (key, _) = commands::StreamCommand::parse_key(conn, field_count).await?;
 
         let record = if found_key {
             let mut bins: HashMap<String, Value> = HashMap::with_capacity(op_count);

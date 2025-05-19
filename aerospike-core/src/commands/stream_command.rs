@@ -71,7 +71,7 @@ impl StreamCommand {
         let field_count = conn.buffer.read_u16(None) as usize; // almost certainly 0
         let op_count = conn.buffer.read_u16(None) as usize;
 
-        let key = StreamCommand::parse_key(conn, field_count).await?;
+        let (key, _) = StreamCommand::parse_key(conn, field_count).await?;
 
         // Partition is done, don't go further
         if info3 & buffer::INFO3_PARTITION_DONE != 0 {
@@ -136,11 +136,15 @@ impl StreamCommand {
         Ok(true)
     }
 
-    pub async fn parse_key(conn: &mut Connection, field_count: usize) -> Result<Key> {
+    pub async fn parse_key(
+        conn: &mut Connection,
+        field_count: usize,
+    ) -> Result<(Key, Option<u64>)> {
         let mut digest: [u8; 20] = [0; 20];
         let mut namespace: String = "".to_string();
         let mut set_name: String = "".to_string();
         let mut orig_key: Option<Value> = None;
+        let mut bval = None;
 
         for _ in 0..field_count {
             conn.read_buffer(4).await?;
@@ -167,16 +171,22 @@ impl StreamCommand {
                         particle_bytes_size,
                     )?);
                 }
+                x if x == FieldType::BValArray as u8 => {
+                    bval = Some(conn.buffer.read_le_u64(None));
+                }
                 _ => unreachable!(),
             }
         }
 
-        Ok(Key {
-            namespace,
-            set_name,
-            user_key: orig_key,
-            digest,
-        })
+        Ok((
+            Key {
+                namespace,
+                set_name,
+                user_key: orig_key,
+                digest,
+            },
+            bval,
+        ))
     }
 }
 
