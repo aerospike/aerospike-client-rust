@@ -21,6 +21,7 @@ use crate::common;
 use env_logger;
 
 use aerospike::*;
+use aerospike_rt::time::Instant;
 
 const EXPECTED: usize = 1000;
 
@@ -56,6 +57,33 @@ async fn scan_single_consumer() {
 
     let count = (&*rs).filter(Result::is_ok).count();
     assert_eq!(count, EXPECTED);
+
+    client.close().await.unwrap();
+}
+
+#[aerospike_macro::test]
+async fn scan_single_consumer_rps() {
+    let _ = env_logger::try_init();
+
+    let client = common::client().await;
+    let namespace = common::namespace();
+    let set_name = create_test_set(&client, EXPECTED).await;
+
+    let mut spolicy = ScanPolicy::default();
+    spolicy.records_per_second = (EXPECTED / 3) as u32;
+
+    let start_time = Instant::now();
+    let rs = client
+        .scan(&spolicy, namespace, &set_name, Bins::All)
+        .await
+        .unwrap();
+
+    let count = (&*rs).filter(Result::is_ok).count();
+    assert_eq!(count, EXPECTED);
+    let duration = Instant::now() - start_time;
+
+    // Should take at least 3 seconds due to rps
+    assert!(duration.as_millis() > 3000);
 
     client.close().await.unwrap();
 }

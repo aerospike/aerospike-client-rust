@@ -752,6 +752,11 @@ impl Buffer {
             field_count += 1;
         }
 
+        if policy.records_per_second > 0 {
+            self.data_offset += 4 + FIELD_HEADER_SIZE as usize;
+            field_count += 1;
+        }
+
         // Estimate pid size
         self.data_offset += partitions.len() * 2 + FIELD_HEADER_SIZE as usize;
         field_count += 1;
@@ -807,6 +812,10 @@ impl Buffer {
             self.write_filter_expression(filter, filter_size);
         }
 
+        if policy.records_per_second > 0 {
+            self.write_field_u32(policy.records_per_second, FieldType::RecordsPerSecond);
+        }
+
         // Write scan timeout
         self.write_field_header(4, FieldType::ScanTimeout);
         self.write_u32(policy.socket_timeout);
@@ -848,6 +857,11 @@ impl Buffer {
 
         if !statement.set_name.is_empty() {
             self.data_offset += statement.set_name.len() + FIELD_HEADER_SIZE as usize;
+            field_count += 1;
+        }
+
+        if policy.records_per_second > 0 {
+            self.data_offset += 4 + FIELD_HEADER_SIZE as usize;
             field_count += 1;
         }
 
@@ -986,6 +1000,10 @@ impl Buffer {
         self.write_field_header(partitions.len() * 2, FieldType::PIDArray);
         for pid in partitions {
             self.write_u16_little_endian(*pid);
+        }
+
+        if policy.records_per_second > 0 {
+            self.write_field_u32(policy.records_per_second, FieldType::RecordsPerSecond);
         }
 
         if let Some(filter_exp) = policy.filter_expression() {

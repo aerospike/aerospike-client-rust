@@ -22,6 +22,7 @@ use env_logger;
 
 use aerospike::Task;
 use aerospike::*;
+use aerospike_rt::time::Instant;
 
 const EXPECTED: usize = 1000;
 
@@ -95,6 +96,42 @@ async fn query_single_consumer() {
         }
     }
     assert_eq!(count, 10);
+
+    client.close().await.unwrap();
+}
+#[aerospike_macro::test]
+async fn query_single_consumer_rps() {
+    let _ = env_logger::try_init();
+
+    let client = common::client().await;
+    let namespace = common::namespace();
+    let set_name = create_test_set(&client, EXPECTED).await;
+    let mut qpolicy = QueryPolicy::default();
+
+    // Range Query
+    let mut statement = Statement::new(namespace, &set_name, Bins::All);
+    statement.add_filter(as_range!("bin", 0, (EXPECTED / 3) as i64));
+
+    qpolicy.records_per_second = 3;
+    let start_time = Instant::now();
+    let rs = client.query(&qpolicy, statement).await.unwrap();
+    let mut count = 0;
+    for res in &*rs {
+        match res {
+            Ok(rec) => {
+                count += 1;
+                let v: i64 = rec.bins["bin"].clone().into();
+                assert!(v >= 0);
+                assert!(v <= (EXPECTED / 3) as i64);
+            }
+            Err(err) => panic!("{:?}", err),
+        }
+    }
+    assert_eq!(count, EXPECTED / 3 + 1);
+
+    // Should take at least 3 seconds due to rps
+    let duration = Instant::now() - start_time;
+    assert!(duration.as_millis() > 3000);
 
     client.close().await.unwrap();
 }

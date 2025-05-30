@@ -23,7 +23,7 @@ pub struct ScanPolicy {
     pub base_policy: BasePolicy,
 
     /// Percent of data to scan. Valid integer range is 1 to 100. Default is 100.
-    /// This is deprected and won't be sent to the server.
+    /// This is deprecated and won't be sent to the server.
     pub scan_percent: u8,
 
     /// Maximum number of concurrent requests to server nodes at any point in time. If there are 16
@@ -32,13 +32,21 @@ pub struct ScanPolicy {
     /// nodes have been scanned. Default (0) is to issue requests to all server nodes in parallel.
     pub max_concurrent_nodes: usize,
 
+    /// Limits returned records per second (rps) rate for each server node.
+    /// It does not apply rps limit if `records_per_second` is zero (default).
+    //
+    /// `records_per_second` is supported in all scans in server versions 6.0+.
+    /// For background queries, `records_per_second` is bounded by the server
+    /// config `background-query-max-rps`.
+    pub records_per_second: u32,
+
     /// Number of records to place in queue before blocking. Records received from multiple server
     /// nodes will be placed in a queue. A separate thread consumes these records in parallel. If
     /// the queue is full, the producer threads will block until records are consumed.
     pub record_queue_size: usize,
 
     /// Terminate scan if cluster is in fluctuating state.
-    /// This is deprected and won't be sent to the server.
+    /// This is deprecated and won't be sent to the server.
     pub fail_on_cluster_change: bool,
 
     /// Maximum time in milliseconds to wait when polling socket for availability prior to
@@ -68,6 +76,7 @@ impl Default for ScanPolicy {
             base_policy: BasePolicy::default(),
             scan_percent: 100,
             max_concurrent_nodes: 0,
+            records_per_second: 0,
             record_queue_size: 1024,
             fail_on_cluster_change: true,
             socket_timeout: 10000,
