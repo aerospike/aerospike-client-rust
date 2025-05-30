@@ -26,8 +26,8 @@ use crate::expressions::FilterExpression;
 use crate::msgpack::encoder;
 use crate::operations::{Operation, OperationBin, OperationData, OperationType};
 use crate::policy::{
-    BasePolicy, BatchPolicy, CommitLevel, ConsistencyLevel, GenerationPolicy, QueryPolicy,
-    RecordExistsAction, ScanPolicy, WritePolicy,
+    BasePolicy, BatchPolicy, CommitLevel, ConsistencyLevel, GenerationPolicy, QueryDuration,
+    QueryPolicy, RecordExistsAction, ScanPolicy, WritePolicy,
 };
 use crate::{Bin, Bins, CollectionIndexType, Key, Statement, Value};
 
@@ -36,6 +36,9 @@ pub(crate) const INFO1_READ: u8 = 1;
 
 // Get all bins.
 pub(crate) const INFO1_GET_ALL: u8 = 1 << 1;
+
+// Short query.
+pub(crate) const INFO1_SHORT_QUERY: u8 = 1 << 2;
 
 // Batch read or exists.
 pub(crate) const INFO1_BATCH: u8 = 1 << 3;
@@ -63,6 +66,9 @@ pub(crate) const INFO2_DURABLE_DELETE: u8 = 1 << 4;
 
 // Create only. Fail if record already exists.
 pub(crate) const INFO2_CREATE_ONLY: u8 = 1 << 5;
+
+// Create only. Fail if record already exists.
+pub(crate) const INFO2_RELAX_AP_LONG_QUERY: u8 = 1 << 6;
 
 // Return a result for every operation.
 pub(crate) const INFO2_RESPOND_ALL_OPS: u8 = 1 << 7;
@@ -938,11 +944,18 @@ impl Buffer {
             }
         }
 
-        let info1 = if statement.bins.is_none() {
+        let mut info1 = if statement.bins.is_none() {
             INFO1_READ | INFO1_NOBINDATA
         } else {
             INFO1_READ
         };
+
+        match policy.expected_duration {
+            QueryDuration::Short => info1 |= INFO1_SHORT_QUERY,
+            QueryDuration::LongRelaxAP => info1 |= INFO2_RELAX_AP_LONG_QUERY,
+            _ => (),
+        }
+
         let info2 = if write { INFO2_WRITE } else { 0 };
 
         self.write_header_read(

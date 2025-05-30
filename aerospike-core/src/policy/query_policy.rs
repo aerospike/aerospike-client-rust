@@ -14,7 +14,7 @@
 // the License.
 
 use crate::expressions::FilterExpression;
-use crate::policy::{BasePolicy, PolicyLike};
+use crate::policy::{BasePolicy, PolicyLike, QueryDuration};
 
 /// `QueryPolicy` encapsulates parameters for query operations.
 #[derive(Debug, Clone)]
@@ -44,6 +44,12 @@ pub struct QueryPolicy {
     /// Terminate query if cluster is in fluctuating state.
     pub fail_on_cluster_change: bool,
 
+    /// Expected query duration. The server treats the query in different ways depending on the expected duration.
+    /// This field is ignored for aggregation queries, background queries and server versions < 6.0.
+    ///
+    /// Default: QueryDuration::Long
+    pub expected_duration: QueryDuration,
+
     /// Optional Filter Expression
     pub filter_expression: Option<FilterExpression>,
 }
@@ -68,6 +74,7 @@ impl Default for QueryPolicy {
             records_per_second: 0,
             record_queue_size: 1024,
             fail_on_cluster_change: true,
+            expected_duration: QueryDuration::Long,
             filter_expression: None,
         }
     }

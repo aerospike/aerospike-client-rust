@@ -61,7 +61,8 @@ async fn query_single_consumer() {
     let client = common::client().await;
     let namespace = common::namespace();
     let set_name = create_test_set(&client, EXPECTED).await;
-    let qpolicy = QueryPolicy::default();
+    let mut qpolicy = QueryPolicy::default();
+    qpolicy.expected_duration = QueryDuration::Short;
 
     // Filter Query
     let mut statement = Statement::new(namespace, &set_name, Bins::All);
