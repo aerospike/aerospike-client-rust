@@ -25,3 +25,6 @@ aerospike-rt = {path = "../aerospike-rt", version = "2.0.0-alpha.1"}
 [features]
 rt-tokio = ["aerospike-rt/rt-tokio"]
 rt-async-std = ["aerospike-rt/rt-async-std"]
+
+[build-dependencies]
+syn = "2.0.98"
