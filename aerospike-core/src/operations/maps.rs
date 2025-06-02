@@ -149,6 +149,15 @@ pub enum MapReturnType {
     /// * `Value::OrderedMap`: Returned for range results where range order needs to be preserved.
     KeyValue = 8,
 
+    /// Returns true if count > 0.
+    Exists = 13,
+
+    /// Returns an unordered map.
+    UnorderedMap = 16,
+
+    /// Returns an ordered map.
+    OrderedMap = 17,
+
     /// Invert meaning of map command and return values.
     /// With the INVERTED flag enabled, the keys outside of the specified key range will be removed and returned.
     Inverted = 0x10000,

@@ -114,6 +114,8 @@ pub enum ListReturnType {
     Count = 5,
     /// Return value for single key read and value list for range read.
     Values = 7,
+    /// Return true if count > 0.
+    Exists = 13,
     /// Invert meaning of list command and return values.
     /// With the INVERTED flag enabled, the items outside of the specified index range will be returned.
     /// The meaning of the list command can also be inverted.
