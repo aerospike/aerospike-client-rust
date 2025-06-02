@@ -42,6 +42,5 @@ pub enum FieldType {
     UdfOp = 33,
     QueryBinList = 40,
     BatchIndex = 41,
-    BatchIndexWithSet = 42,
     FilterExp = 43,
 }

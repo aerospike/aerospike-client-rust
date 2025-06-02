@@ -53,7 +53,7 @@ impl Default for BatchAttr {
 }
 
 impl BatchAttr {
-    pub(crate) fn set_read(&mut self, _rp: &BatchPolicy) {
+    pub(crate) fn set_read(&mut self, rp: &BatchPolicy) {
         self.filter_expression = None;
         self.read_attr = buffer::INFO1_READ;
 
@@ -75,7 +75,7 @@ impl BatchAttr {
         // 	self.info_attr = buffer::INFO3_SC_READ_TYPE | buffer::INFO3_SC_READ_RELAX
         // }
         self.txn_attr = 0;
-        self.expiration = 0; //uint32(rp.ReadTouchTTLPercent);
+        self.expiration = rp.base_policy.read_touch_ttl.into();
         self.generation = 0;
         self.has_write = false;
         self.send_key = false;
@@ -102,8 +102,8 @@ impl BatchAttr {
         // case ReadModeSCAllowUnavailable:
         // 	self.info_attr = buffer::INFO3_SC_READ_TYPE | buffer::INFO3_SC_READ_RELAX
         // }
-        // self.txn_attr = 0
-        self.expiration = 0; //uint32(rp.ReadTouchTTLPercent);
+        self.txn_attr = 0;
+        self.expiration = rp.read_touch_ttl.into();
         self.generation = 0;
         self.has_write = false;
         self.send_key = false;
@@ -225,8 +225,8 @@ impl BatchAttr {
         self.read_attr = 0;
         self.write_attr = buffer::INFO2_WRITE;
         self.info_attr = 0;
-        // self.txn_attr = 0;
-        // self.expiration = up.expiration;
+        self.txn_attr = 0;
+        self.expiration = up.expiration.into();
         self.generation = 0;
         self.has_write = true;
         self.send_key = up.send_key;
@@ -250,7 +250,7 @@ impl BatchAttr {
         self.write_attr =
             buffer::INFO2_WRITE | buffer::INFO2_RESPOND_ALL_OPS | buffer::INFO2_DELETE;
         self.info_attr = 0;
-        // self.txn_attr = 0;
+        self.txn_attr = 0;
         self.expiration = 0;
         self.has_write = true;
         self.send_key = dp.send_key;

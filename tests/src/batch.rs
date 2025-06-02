@@ -18,14 +18,17 @@ use aerospike::*;
 use env_logger;
 
 use crate::common;
+use aerospike::{operations, Expiration, ReadTouchTTL};
+use aerospike_rt::sleep;
+use aerospike_rt::time::Duration;
 
 #[aerospike_macro::test]
 async fn batch_operate_read() {
     let _ = env_logger::try_init();
 
     let client = common::client().await;
-    let namespace: &str = "test"; //common::namespace();
-    let set_name = "test"; //&common::rand_str(10);
+    let namespace: &str = common::namespace();
+    let set_name = &common::rand_str(10);
     let mut bpolicy = BatchPolicy::default();
     bpolicy.concurrency = Concurrency::Parallel;
 
@@ -208,4 +211,66 @@ end
     assert_eq!(record.unwrap().bins.get("SUCCESS"), Some(&as_val!(4)));
 
     client.close().await.unwrap();
+}
+
+#[aerospike_macro::test]
+async fn batch_operate_read_touch_ttl() {
+    let _ = env_logger::try_init();
+
+    let client = common::client().await;
+    let namespace: &str = "test"; //common::namespace();
+    let set_name = "test"; // &common::rand_str(10);
+    let mut bpolicy = BatchPolicy::default();
+    bpolicy.concurrency = Concurrency::Parallel;
+
+    // WARNING: This test takes a long time to run due to sleeps.
+    // Define keys
+    let key1 = as_key!(namespace, set_name, 88888);
+    let key2 = as_key!(namespace, set_name, 88889);
+
+    // Write keys with ttl.
+    let mut bwp = BatchWritePolicy::default();
+    bwp.expiration = Expiration::Seconds(10);
+    let bin1 = as_bin!("a", 1);
+
+    let bw1 = BatchOperation::write(&bwp, key1.clone(), vec![operations::put(&bin1)]);
+    let bw2 = BatchOperation::write(&bwp, key2.clone(), vec![operations::put(&bin1)]);
+    let list = vec![bw1, bw2];
+    client.batch(&bpolicy, &list).await.unwrap();
+
+    // Read records before they expire and reset read ttl on one record.
+    sleep(Duration::from_secs(8)).await;
+    let mut brp1 = BatchReadPolicy::default();
+    brp1.read_touch_ttl = ReadTouchTTL::Percent(80);
+
+    let mut brp2 = BatchReadPolicy::default();
+    brp2.read_touch_ttl = ReadTouchTTL::DontReset;
+
+    let br1 = BatchOperation::read(&brp1, key1.clone(), Bins::Some(vec!["a".into()]));
+    let br2 = BatchOperation::read(&brp2, key2.clone(), Bins::Some(vec!["a".into()]));
+    let list = vec![br1, br2];
+    let recs = client.batch(&bpolicy, &list).await.unwrap();
+
+    assert!(Some(ResultCode::Ok) == recs[0].result_code);
+    assert!(Some(ResultCode::Ok) == recs[1].result_code);
+
+    // Read records again, but don't reset read ttl.
+    sleep(Duration::from_secs(3)).await;
+    brp1.read_touch_ttl = ReadTouchTTL::DontReset;
+    brp2.read_touch_ttl = ReadTouchTTL::DontReset;
+
+    let br1 = BatchOperation::read(&brp1, key1.clone(), Bins::Some(vec!["a".into()]));
+    let br2 = BatchOperation::read(&brp2, key2.clone(), Bins::Some(vec!["a".into()]));
+    let list = vec![br1, br2];
+    let recs = client.batch(&bpolicy, &list).await.unwrap();
+
+    // Key 2 should have expired.
+    assert!(Some(ResultCode::Ok) == recs[0].result_code);
+    assert!(Some(ResultCode::KeyNotFoundError) == recs[1].result_code);
+
+    // Read  record after it expires, showing it's gone.
+    sleep(Duration::from_secs(8)).await;
+    let recs = client.batch(&bpolicy, &list).await.unwrap();
+    assert!(Some(ResultCode::KeyNotFoundError) == recs[0].result_code);
+    assert!(Some(ResultCode::KeyNotFoundError) == recs[1].result_code);
 }

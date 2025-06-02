@@ -27,6 +27,7 @@ mod generation_policy;
 mod query_duration;
 mod query_policy;
 mod read_policy;
+mod read_touch_ttl_percent;
 mod record_exists_action;
 mod scan_policy;
 mod write_policy;
@@ -42,6 +43,7 @@ pub use self::generation_policy::GenerationPolicy;
 pub use self::query_duration::QueryDuration;
 pub use self::query_policy::QueryPolicy;
 pub use self::read_policy::ReadPolicy;
+pub use self::read_touch_ttl_percent::ReadTouchTTL;
 pub use self::record_exists_action::RecordExistsAction;
 pub use self::scan_policy::ScanPolicy;
 pub use self::write_policy::WritePolicy;
@@ -146,6 +148,20 @@ pub struct BasePolicy {
     /// If maxRetries is exceeded, the abort will occur even if the timeout
     /// has not yet been exceeded.
     pub max_retries: Option<usize>,
+
+    /// read_touch_ttl determines how record TTL (time to live) is affected on reads. When enabled, the server can
+    /// efficiently operate as a read-based LRU cache where the least recently used records are expired.
+    /// The value is expressed as a percentage of the TTL sent on the most recent write such that a read
+    /// within this interval of the record’s end of life will generate a touch.
+    ///
+    /// For example, if the most recent write had a TTL of 10 hours and `read_touch_ttl` is set to
+    /// 80, the next read within 8 hours of the record's end of life (equivalent to 2 hours after the most
+    /// recent write) will result in a touch, resetting the TTL to another 10 hours.
+    ///
+    /// Supported in server v8+.
+    ///
+    /// Default: ReadTouchTTL::ServerDefault
+    pub read_touch_ttl: ReadTouchTTL,
 
     /// SleepBetweenReplies determines duration to sleep between retries if a
     /// transaction fails and the timeout was not exceeded.  Enter zero to skip sleep.

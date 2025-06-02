@@ -42,6 +42,36 @@ pub struct BatchPolicy {
     /// Default: true
     pub allow_inline: bool,
 
+    /// Allow batch to be processed immediately in the server's receiving thread for SSD
+    /// namespaces. If false, the batch will always be processed in separate service threads.
+    /// Server versions before 6.0 ignore this field.
+    ///
+    /// Inline processing can introduce the possibility of unfairness because the server
+    /// can process the entire batch before moving onto the next command.
+    ///
+    /// Default: false
+    pub allow_inline_ssd: bool, // = false
+
+    /// Should all batch keys be attempted regardless of errors. This field is used on both
+    /// the client and server. The client handles node specific errors and the server handles
+    /// key specific errors.
+    ///
+    /// If true, every batch key is attempted regardless of previous key specific errors.
+    /// Node specific errors such as timeouts stop keys to that node, but keys directed at
+    /// other nodes will continue to be processed.
+    ///
+    /// If false, the server will stop the batch to its node on most key specific errors.
+    /// The exceptions are types.KEY_NOT_FOUND_ERROR and types.FILTERED_OUT which never stop the batch.
+    /// The client will stop the entire batch on node specific errors for sync commands
+    /// that are run in sequence (MaxConcurrentThreads == 1). The client will not stop
+    /// the entire batch for async commands or sync commands run in parallel.
+    ///
+    /// Server versions &lt; 6.0 do not support this field and treat this value as false
+    /// for key specific errors.
+    ///
+    /// Default: true
+    pub respond_all_keys: bool, //= true;
+
     /// Optional Filter Expression
     pub filter_expression: Option<FilterExpression>,
 
@@ -67,7 +97,8 @@ impl Default for BatchPolicy {
             base_policy: BasePolicy::default(),
             concurrency: Concurrency::Sequential,
             allow_inline: true,
-            // send_set_name: true,
+            allow_inline_ssd: false,
+            respond_all_keys: true,
             filter_expression: None,
             replica: Replica::default(),
         }

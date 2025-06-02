@@ -25,6 +25,7 @@ use crate::CommitLevel;
 use crate::Expiration;
 use crate::GenerationPolicy;
 use crate::Key;
+use crate::ReadTouchTTL;
 use crate::Record;
 use crate::RecordExistsAction;
 use crate::ResultCode;
@@ -44,6 +45,20 @@ pub(crate) struct BatchRecordIndex {
 /// Policy for a single batch read operation.
 #[derive(Debug, Clone)]
 pub struct BatchReadPolicy {
+    /// read_touch_ttl determines how record TTL (time to live) is affected on reads. When enabled, the server can
+    /// efficiently operate as a read-based LRU cache where the least recently used records are expired.
+    /// The value is expressed as a percentage of the TTL sent on the most recent write such that a read
+    /// within this interval of the record’s end of life will generate a touch.
+    ///
+    /// For example, if the most recent write had a TTL of 10 hours and `read_touch_ttl` is set to
+    /// 80, the next read within 8 hours of the record's end of life (equivalent to 2 hours after the most
+    /// recent write) will result in a touch, resetting the TTL to another 10 hours.
+    ///
+    /// Supported in server v8+.
+    ///
+    /// Default: ReadTouchTTL::ServerDefault
+    pub read_touch_ttl: ReadTouchTTL,
+
     /// FilterExpression is the optional expression filter. If FilterExpression exists and evaluates to false, the specific batch key
     /// request is not performed and BatchRecord.ResultCode is set to types.FILTERED_OUT.
     ///
@@ -54,6 +69,7 @@ pub struct BatchReadPolicy {
 impl Default for BatchReadPolicy {
     fn default() -> Self {
         Self {
+            read_touch_ttl: ReadTouchTTL::ServerDefault,
             filter_expression: None,
         }
     }
@@ -197,27 +213,25 @@ impl Default for BatchUDFPolicy {
 /// Do not directly create the batch operations. Use the helper methods instead.
 #[derive(Clone)]
 pub enum BatchOperation<'a> {
-    /// a batch read operation.
+    #[doc(hidden)]
     Read {
-        /// Batch record contains the results of the
         br: BatchRecord,
         policy: &'a BatchReadPolicy,
-        /// Bins to retrieve for this key.
         bins: Bins,
         ops: Option<Vec<Operation<'a>>>,
     },
-    /// a batch write operation.
+    #[doc(hidden)]
     Write {
         br: BatchRecord,
         policy: &'a BatchWritePolicy,
         ops: Vec<Operation<'a>>,
     },
-    /// a batch delete operation.
+    #[doc(hidden)]
     Delete {
         br: BatchRecord,
         policy: &'a BatchDeletePolicy,
     },
-    /// a batch udf operation.
+    #[doc(hidden)]
     UDF {
         br: BatchRecord,
         policy: &'a BatchUDFPolicy,

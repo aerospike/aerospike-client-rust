@@ -53,6 +53,7 @@ use futures::AsyncReadExt;
 /// "single-bin". In "multi-bin" mode, partial records may be written or read by specifying the
 /// relevant subset of bins.
 pub struct Client {
+    /// Cluster management object.
     pub cluster: Arc<Cluster>,
 }
 

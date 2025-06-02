@@ -12,13 +12,53 @@
 // WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
 // License for the specific language governing permissions and limitations under
 // the License.
-use aerospike::operations;
 use aerospike::{
     as_bin, as_blob, as_geo, as_key, as_list, as_map, as_val, Bins, ReadPolicy, Value, WritePolicy,
 };
+use aerospike::{operations, Expiration, ReadTouchTTL};
+use aerospike_rt::sleep;
+use aerospike_rt::time::Duration;
 use env_logger;
 
 use crate::common;
+
+#[aerospike_macro::test]
+async fn read_touch_ttl() {
+    let _ = env_logger::try_init();
+
+    let client = common::client().await;
+    let namespace: &str = common::namespace();
+    let set_name = &common::rand_str(10);
+    let key = as_key!(namespace, set_name, -1);
+    let bin = as_bin!("expireBinName", "expirevalue");
+
+    // Specify that record expires 2 seconds after it's written.
+    let write_policy = WritePolicy::new(0, Expiration::Seconds(2));
+    let bins = [bin.clone()];
+    client.put(&write_policy, &key, &bins).await.unwrap();
+
+    // Read the record before it expires and reset read ttl.
+    sleep(Duration::from_secs(1)).await;
+    let mut read_policy = ReadPolicy::default();
+    read_policy.base_policy.read_touch_ttl = ReadTouchTTL::Percent(80);
+    let record = client.get(&read_policy, &key, Bins::All).await.unwrap();
+    assert!(record.bins.get(&bin.clone().name) == Some(&bin.clone().value.into()));
+
+    // Read the record again, but don't reset read ttl.
+    sleep(Duration::from_secs(1)).await;
+    read_policy.base_policy.read_touch_ttl = ReadTouchTTL::DontReset;
+    let record = client.get(&read_policy, &key, Bins::All).await.unwrap();
+    assert!(record.bins.get(&bin.clone().name) == Some(&bin.clone().value.into()));
+
+    // Read the record after it expires, showing it's gone.
+    sleep(Duration::from_secs(2)).await;
+    let rp = ReadPolicy::default();
+    let record = client.get(&rp, &key, Bins::All).await;
+    match record {
+        Err(_) => (),
+        _ => panic!("expected key not found error"),
+    }
+}
 
 #[aerospike_macro::test]
 async fn connect() {

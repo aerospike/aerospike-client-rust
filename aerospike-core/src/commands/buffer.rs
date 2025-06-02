@@ -12,7 +12,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::cmp::max;
 use std::str;
 use std::time::Duration;
 
@@ -481,6 +480,23 @@ impl Buffer {
         self.write_batch_fields_reg(key, attr, filter, field_count, op_count)
     }
 
+    pub(crate) fn get_batch_flags(policy: &BatchPolicy) -> u8 {
+        let mut flags = 0;
+        if policy.allow_inline {
+            flags = 1
+        }
+
+        if policy.allow_inline_ssd {
+            flags |= 0x2
+        }
+
+        if policy.respond_all_keys {
+            flags |= 0x4
+        }
+
+        flags
+    }
+
     // Writes the command for batch read operations
     pub(crate) fn set_batch_operate(
         &mut self,
@@ -521,10 +537,10 @@ impl Buffer {
         }
 
         let field_size_offset = self.data_offset;
-        let field_type = FieldType::BatchIndexWithSet;
+        let field_type = FieldType::BatchIndex;
         self.write_field_header(0, field_type);
         self.write_u32(batch_ops.len() as u32);
-        self.write_u8(if policy.allow_inline { 1 } else { 0 });
+        self.write_u8(Buffer::get_batch_flags(policy));
 
         let mut attr = BatchAttr::default();
         prev = None;
@@ -1145,6 +1161,9 @@ impl Buffer {
             self.data_buffer[i] = 0;
         }
 
+        self.data_offset = 18;
+        self.write_u32(policy.read_touch_ttl.into());
+
         self.data_offset = 26;
         self.write_u16(field_count as u16);
         self.write_u16(operation_count as u16);
@@ -1176,6 +1195,9 @@ impl Buffer {
         for i in 12..26 {
             self.data_buffer[i] = 0;
         }
+
+        self.data_offset = 18;
+        self.write_u32(policy.read_touch_ttl.into());
 
         self.data_offset = 26;
         self.write_u16(field_count as u16);
@@ -1638,5 +1660,6 @@ impl Buffer {
 
     pub(crate) fn dump_buffer(&self) {
         rhexdump!(&self.data_buffer);
+        println!("");
     }
 }

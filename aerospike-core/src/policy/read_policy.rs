@@ -38,6 +38,7 @@ impl Default for BasePolicy {
             max_retries: Some(2),
             sleep_between_retries: Some(Duration::new(0, 500_000_000)),
             consistency_level: ConsistencyLevel::ConsistencyOne,
+            read_touch_ttl: super::ReadTouchTTL::ServerDefault,
             filter_expression: None,
         }
     }
