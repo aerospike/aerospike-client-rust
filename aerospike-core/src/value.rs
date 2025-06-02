@@ -193,6 +193,12 @@ pub enum Value {
 
     /// HLL value
     HLL(Vec<u8>),
+
+    /// Infinity Value
+    Infinity,
+
+    /// Infinity Value
+    Wildcard,
 }
 
 #[allow(clippy::derive_hash_xor_eq)]
@@ -212,6 +218,8 @@ impl Hash for Value {
             Value::List(ref val) => val.hash(state),
             Value::HashMap(_) => panic!("HashMaps cannot be used as map keys."),
             Value::OrderedMap(_) => panic!("OrderedMaps cannot be used as map keys."),
+            Value::Infinity => panic!("Infinity cannot be used as map keys."),
+            Value::Wildcard => panic!("Wildcard cannot be used as map keys."),
         }
     }
 }
@@ -242,6 +250,8 @@ impl Value {
             Value::OrderedMap(_) => panic!("The library never passes ordered maps to the server."),
             Value::GeoJSON(_) => ParticleType::GEOJSON,
             Value::HLL(_) => ParticleType::HLL,
+            Value::Infinity => unreachable!(),
+            Value::Wildcard => unreachable!(),
         }
     }
 
@@ -258,6 +268,8 @@ impl Value {
             Value::List(ref val) => format!("{:?}", val),
             Value::HashMap(ref val) => format!("{:?}", val),
             Value::OrderedMap(ref val) => format!("{:?}", val),
+            Value::Infinity => "INF".into(),
+            Value::Wildcard => "*".into(),
         }
     }
 
@@ -279,6 +291,8 @@ impl Value {
             Value::OrderedMap(_) => panic!("The library never passes ordered maps to the server."),
             Value::GeoJSON(ref s) => 1 + 2 + s.len(), // flags + ncells + jsonstr
             Value::HLL(ref h) => h.len(),
+            Value::Infinity => 0,
+            Value::Wildcard => 0,
         }
     }
 
@@ -300,6 +314,8 @@ impl Value {
             Value::List(_) | Value::HashMap(_) => encoder::pack_value(&mut Some(buf), self),
             Value::OrderedMap(_) => panic!("The library never passes ordered maps to the server."),
             Value::GeoJSON(ref val) => buf.write_geo(val),
+            Value::Infinity => encoder::pack_infinity(&mut Some(buf)),
+            Value::Wildcard => encoder::pack_wildcard(&mut Some(buf)),
         }
     }
 
@@ -563,11 +579,13 @@ impl TryFrom<Value> for String {
         match val {
             Value::String(v) => Ok(v),
             Value::GeoJSON(v) => Ok(v),
-            _ => return Err(format!(
-                "Invalid type conversion from Value::{} to {}",
-                val.particle_type(),
-                std::any::type_name::<Self>()
-            )),
+            _ => {
+                return Err(format!(
+                    "Invalid type conversion from Value::{} to {}",
+                    val.particle_type(),
+                    std::any::type_name::<Self>()
+                ))
+            }
         }
     }
 }
@@ -578,11 +596,13 @@ impl TryFrom<Value> for Vec<u8> {
         match val {
             Value::Blob(v) => Ok(v),
             Value::HLL(v) => Ok(v),
-            _ => return Err(format!(
-                "Invalid type conversion from Value::{} to {}",
-                val.particle_type(),
-                std::any::type_name::<Self>()
-            )),
+            _ => {
+                return Err(format!(
+                    "Invalid type conversion from Value::{} to {}",
+                    val.particle_type(),
+                    std::any::type_name::<Self>()
+                ))
+            }
         }
     }
 }
@@ -592,11 +612,13 @@ impl TryFrom<Value> for Vec<Value> {
     fn try_from(val: Value) -> std::result::Result<Self, Self::Error> {
         match val {
             Value::List(v) => Ok(v),
-            _ => return Err(format!(
-                "Invalid type conversion from Value::{} to {}",
-                val.particle_type(),
-                std::any::type_name::<Self>()
-            )),
+            _ => {
+                return Err(format!(
+                    "Invalid type conversion from Value::{} to {}",
+                    val.particle_type(),
+                    std::any::type_name::<Self>()
+                ))
+            }
         }
     }
 }
@@ -606,11 +628,13 @@ impl TryFrom<Value> for HashMap<Value, Value> {
     fn try_from(val: Value) -> std::result::Result<Self, Self::Error> {
         match val {
             Value::HashMap(v) => Ok(v),
-            _ => return Err(format!(
-                "Invalid type conversion from Value::{} to {}",
-                val.particle_type(),
-                std::any::type_name::<Self>()
-            )),
+            _ => {
+                return Err(format!(
+                    "Invalid type conversion from Value::{} to {}",
+                    val.particle_type(),
+                    std::any::type_name::<Self>()
+                ))
+            }
         }
     }
 }
@@ -620,11 +644,13 @@ impl TryFrom<Value> for Vec<(Value, Value)> {
     fn try_from(val: Value) -> std::result::Result<Self, Self::Error> {
         match val {
             Value::OrderedMap(v) => Ok(v),
-            _ => return Err(format!(
-                "Invalid type conversion from Value::{} to {}",
-                val.particle_type(),
-                std::any::type_name::<Self>()
-            )),
+            _ => {
+                return Err(format!(
+                    "Invalid type conversion from Value::{} to {}",
+                    val.particle_type(),
+                    std::any::type_name::<Self>()
+                ))
+            }
         }
     }
 }
@@ -634,11 +660,13 @@ impl TryFrom<Value> for f64 {
     fn try_from(val: Value) -> std::result::Result<Self, Self::Error> {
         match val {
             Value::Float(v) => Ok(f64::from(v)),
-            _ => return Err(format!(
-                "Invalid type conversion from Value::{} to {}",
-                val.particle_type(),
-                std::any::type_name::<Self>()
-            )),
+            _ => {
+                return Err(format!(
+                    "Invalid type conversion from Value::{} to {}",
+                    val.particle_type(),
+                    std::any::type_name::<Self>()
+                ))
+            }
         }
     }
 }
@@ -853,6 +881,8 @@ impl Serialize for Value {
                 }
                 map.end()
             }
+            Value::Infinity => panic!("Infinity cannot be serialized"),
+            Value::Wildcard => panic!("Wildcard cannot be serialized"),
         }
     }
 }

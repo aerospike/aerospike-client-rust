@@ -742,6 +742,17 @@ pub fn geo_val(val: String) -> FilterExpression {
 pub fn nil() -> FilterExpression {
     FilterExpression::new(None, Some(Value::Nil), None, None, None, None)
 }
+
+/// Create a Infinity Value
+pub fn infinity() -> FilterExpression {
+    FilterExpression::new(None, Some(Value::Infinity), None, None, None, None)
+}
+
+/// Create a Wildcard Value
+pub fn wildcard() -> FilterExpression {
+    FilterExpression::new(None, Some(Value::Wildcard), None, None, None, None)
+}
+
 /// Create "not" operator expression.
 /// ```
 /// // ! (a == 0 || a == 10)

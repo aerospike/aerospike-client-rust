@@ -21,7 +21,7 @@ use env_logger;
 use aerospike::operations::cdt_context::{ctx_map_key, ctx_map_key_create};
 use aerospike::operations::{maps, MapOrder};
 use aerospike::{
-    as_bin, as_key, as_list, as_map, as_val, Bins, MapPolicy, MapReturnType, ReadPolicy,
+    as_bin, as_key, as_list, as_map, as_val, Bins, MapPolicy, MapReturnType, ReadPolicy, Value,
     WritePolicy,
 };
 
@@ -325,4 +325,36 @@ async fn map_operations() {
     assert_eq!(*rec.bins.get(bin_name).unwrap(), as_val!(9));
 
     client.close().await.unwrap();
+}
+
+#[aerospike_macro::test]
+async fn map_operations_wildcard() {
+    let _ = env_logger::try_init();
+
+    let client = common::client().await;
+    let namespace = common::namespace();
+    let set_name = &common::rand_str(10);
+
+    let wpolicy = WritePolicy::default();
+    let mpolicy = MapPolicy::default();
+
+    let key = common::rand_str(10);
+    let key = as_key!(namespace, set_name, &key);
+
+    client.delete(&wpolicy, &key).await.unwrap();
+
+    let mut items = HashMap::new();
+    items.insert(as_val!(4), as_list!("John", 55));
+    items.insert(as_val!(5), as_list!("Jim", 95));
+    items.insert(as_val!(9), as_list!("Joe", 80));
+
+    let op = maps::put_items(&mpolicy, "bin", &items);
+    let rec = client.operate(&wpolicy, &key, &[op]).await.unwrap();
+    // returns size of map after put
+    assert_eq!(*rec.bins.get("bin").unwrap(), as_val!(3));
+
+    let val = as_list!(Value::from("Joe"), Value::Wildcard);
+    let ops = &vec![maps::get_by_value("bin", &val, MapReturnType::Key)];
+    let rec = client.operate(&wpolicy, &key, ops).await.unwrap();
+    assert_eq!(*rec.bins.get("bin").unwrap(), as_list!(9));
 }

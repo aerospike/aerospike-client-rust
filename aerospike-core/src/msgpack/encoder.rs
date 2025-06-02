@@ -40,6 +40,8 @@ pub fn pack_value(buf: &mut Option<&mut Buffer>, val: &Value) -> usize {
         Value::HashMap(ref val) => pack_map(buf, val),
         Value::OrderedMap(_) => panic!("Ordered maps are not supported in this encoder."),
         Value::GeoJSON(ref val) => pack_geo_json(buf, val),
+        Value::Infinity => pack_infinity(buf),
+        Value::Wildcard => pack_wildcard(buf),
     }
 }
 
@@ -184,6 +186,26 @@ pub fn pack_map(buf: &mut Option<&mut Buffer>, map: &HashMap<Value, Value>) -> u
     }
 
     size
+}
+
+#[doc(hidden)]
+pub fn pack_infinity(buf: &mut Option<&mut Buffer>) -> usize {
+    if let Some(ref mut buf) = *buf {
+        buf.write_u8(0xd4);
+        buf.write_u8(0xff);
+        buf.write_u8(0x01);
+    }
+    3
+}
+
+#[doc(hidden)]
+pub fn pack_wildcard(buf: &mut Option<&mut Buffer>) -> usize {
+    if let Some(ref mut buf) = *buf {
+        buf.write_u8(0xd4);
+        buf.write_u8(0xff);
+        buf.write_u8(0x00);
+    }
+    3
 }
 
 /// ///////////////////////////////////////////////////////////////////

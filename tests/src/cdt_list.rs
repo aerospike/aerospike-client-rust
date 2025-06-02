@@ -450,3 +450,35 @@ fn cdt_list() {
     assert_eq!(*rec.bins.get("bin").unwrap(), as_list!(8, 9));
     client.close().await.unwrap();
 }
+
+#[aerospike_macro::test]
+fn cdt_list_wildcard() {
+    let _ = env_logger::try_init();
+
+    let client = common::client().await;
+    let namespace = common::namespace();
+    let set_name = &common::rand_str(10);
+
+    let wpolicy = WritePolicy::default();
+    let key = as_key!(namespace, set_name, -1);
+    let lpolicy = ListPolicy::default();
+
+    client.delete(&wpolicy, &key).await.unwrap();
+
+    let list = vec![
+        as_list!("John", 55),
+        as_list!("Jim", 95),
+        as_list!("Joe", 80),
+    ];
+
+    let val = as_list!(Value::from("Jim"), Value::Wildcard);
+    let ops = &vec![
+        lists::append_items(&lpolicy, "bin", &list),
+        lists::get_by_value("bin", &val, ListReturnType::Values),
+    ];
+    let rec = client.operate(&wpolicy, &key, ops).await.unwrap();
+    assert_eq!(
+        *rec.bins.get("bin").unwrap(),
+        as_list!(3, as_list!(as_list!("Jim", 95)))
+    );
+}
