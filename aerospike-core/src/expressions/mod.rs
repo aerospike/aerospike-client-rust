@@ -101,6 +101,8 @@ pub(crate) enum ExpOp {
     SetName = 70,
     KeyExists = 71,
     IsTombstone = 72,
+    MemorySize = 73,
+    RecordSize = 74,
     Key = 80,
     Bin = 81,
     BinType = 82,
@@ -537,6 +539,21 @@ pub fn set_name() -> FilterExpression {
     FilterExpression::new(Some(ExpOp::SetName), None, None, None, None, None)
 }
 
+/// Create expression that returns the record size. This expression usually evaluates
+/// quickly because record meta data is cached in memory.
+///
+/// Requires server version 7.0+. This expression replaces [device_size()](device_size) and
+/// [memory_size()](memory_size) since those older expressions are equivalent on server version 7.0+.
+///
+/// ```
+/// use aerospike::expressions::{ge, record_size, int_val};
+/// // Record device size >= 100 KB
+/// ge(record_size(), int_val(100*1024));
+/// ```
+pub fn record_size() -> FilterExpression {
+    FilterExpression::new(Some(ExpOp::RecordSize), None, None, None, None, None)
+}
+
 /// Create function that returns record size on disk.
 /// If server storage-engine is memory, then zero is returned.
 /// ```
@@ -546,6 +563,22 @@ pub fn set_name() -> FilterExpression {
 /// ```
 pub fn device_size() -> FilterExpression {
     FilterExpression::new(Some(ExpOp::DeviceSize), None, None, None, None, None)
+}
+
+/// Create expression that returns record size in memory. If server storage-engine is
+/// not memory nor data-in-memory, then zero is returned. This expression usually evaluates
+/// quickly because record meta data is cached in memory.
+///
+/// Requires server version between 5.3 inclusive and 7.0 exclusive.
+/// Use [record_size()](record_size) for server version 7.0+.
+///
+/// ```
+/// use aerospike::expressions::{ge, memory_size, int_val};
+/// // Record device size >= 100 KB
+/// ge(memory_size(), int_val(100*1024));
+/// ```
+pub fn memory_size() -> FilterExpression {
+    FilterExpression::new(Some(ExpOp::MemorySize), None, None, None, None, None)
 }
 
 /// Create function that returns record last update time expressed as 64 bit integer
