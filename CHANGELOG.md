@@ -2,6 +2,21 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.0.0-alpha.2]
+
+* **New Features**
+  * [CLIENT-2046] Add `Exists`, `OrderedMap` and `UnorderedMap` return types for CDT read operations.
+  * [CLIENT-2385] Add support for `Infinity` and `Wildcard` values.
+  * [CLIENT-2309] Add support for `expressions::infinity()` and `expressions::wildcard()`.
+  * [CLIENT-2576] Support `expressions::record_size()` and `expressions::memory_size()`.
+  * [CLIENT-3491] Add `allow_inline_ssd`, `respond_all_keys` to `BatchPolicy`.
+  * [CLIENT-2832] Add `read_touch_ttl` to policies.
+  * [CLIENT-2825] Support `QueryDuration` enum in `QueryPolicy`.
+  * [CLIENT-3488] Support `records_per_second` for Scan/Query.
+
+* **Bug Fixes**
+  * Fix build issue on crates.io
+
 ## [2.0.0-alpha.1]
 We are pleased to release the first alpha version of the next gen v2 for the Rust client.
 This version of the client comes with a major feature: `async`! This feature was started by [Jonas Breuer](https://github.com/jonas32), in his epic PR and fixed and extended by Aerospike. We would like to thank him for his amazing contribution. Others also opened PRs which we have accepted and merged into this release.
@@ -34,7 +49,7 @@ Please keep in mind that the API is still unstable and we *WILL* break it to enh
   * Fix for buffer size when using CDT contexts. Thanks to [Jonas Breuer](https://github.com/jonas32)
 
 ## [1.1.0] - 2021-10-12
-This version of the client drops support for the older server versions without changing the API. `ScanPolicy.fail_on_cluster_change`, `ScanPolicy.scan_percent` and `BasePolicy.priority` are deprected for the Scan operations and will not be sent to the server. They remain in the API to avoid breaking the API.
+This version of the client drops support for the older server versions without changing the API. `ScanPolicy.fail_on_cluster_change`, `ScanPolicy.scan_percent` and `BasePolicy.priority` are deprecated for the Scan operations and will not be sent to the server. They remain in the API to avoid breaking the API.
 
 * **New Features**
   * Support Aerospike server v5.6+ server authentication.

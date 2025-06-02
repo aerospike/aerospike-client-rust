@@ -1,6 +1,6 @@
 [package]
 name = "aerospike-rt"
-version = "2.0.0-alpha.1"
+version = "2.0.0-alpha.2"
 edition = "2018"
 authors = ["Khosrow Afroozeh <khosrow@aerospike.com>", "Jan Hecking <jhecking@aerospike.com>"]
 description = "Aerospike Client for Rust Runtime Crate. Not meant to be used independently."
