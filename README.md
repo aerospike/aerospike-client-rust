@@ -1,46 +1,113 @@
-# Aerospike Rust Client [![crates-io][crates-io-image]][crates-io-url] [![docs][docs-image]][docs-url] [![travis][travis-image]][travis-url] [![appveyor][appveyor-image]][appveyor-url]
+# Aerospike Rust client v2.0 alpha 
 
-[crates-io-image]: https://img.shields.io/crates/v/aerospike.svg
-[crates-io-url]: https://crates.io/crates/aerospike
-[docs-image]: https://docs.rs/aerospike/badge.svg
-[docs-url]: https://docs.rs/aerospike/
-[travis-image]: https://travis-ci.org/aerospike/aerospike-client-rust.svg?branch=master
-[travis-url]: https://travis-ci.org/aerospike/aerospike-client-rust
-[appveyor-image]: https://ci.appveyor.com/api/projects/status/e9gx1b5d1307hj2t/branch/master?svg=true
-[appveyor-url]: https://ci.appveyor.com/project/aerospike/aerospike-client-rust/branch/master
+Welcome to the preview of Aerospike's official [Rust client](https://aerospike.com/docs/develop/client/rust).
+This is your opportunity to help shape the direction of the Rust
+client's ongoing development.
 
-An [Aerospike](https://www.aerospike.com/) client library for Rust.
+This early-release library brings async-native database operations to Rust 
+developers, with support for batch updates and partition queries. 
+We welcome your feedback as we work toward production readiness.
 
-This library is compatible with Rust 1.46+ and supports the following operating systems: Linux, Mac OS X, and Windows.
-The current release supports Aerospike version v5.6 and later. Take a look at the [changelog](CHANGELOG.md) for more details.
+## Feature highlights
 
-- [Usage](#Usage)
-- [Known Limitations](#Limitations)
-- [Tests](#Tests)
-- [Benchmarks](#Benchmarks)
+**Execution models:**
 
-<a name="Usage"></a>
-## Usage:
+- Async-First: Built for non-blocking IO, powered by 
+  [Tokio](https://tokio.rs/) by default, with optional support for [async-std](https://async.rs/).
+- Sync Support: Blocking APIs are available via a sync sub-crate for 
+  flexibility in legacy or mixed environments.
 
-Add one of the following to your cargo file
-```toml
-# Async API with tokio Runtime
-aerospike = { version = "<version>", features = ["rt-tokio"]}
-# Async API with async-std runtime
-aerospike = { version = "<version>", features = ["rt-async-std"]}
+**Advanced Data Operations:**
 
-# The library still supports the old sync interface, but it will be deprecated in the future.
-# This is only for compatibility reasons and will be removed in a later stage.
+- Batch protocol: full support for read, write, delete, and udf operations through the 
+  new `BatchOperationAPI`.
+- New query/scan wire protocols: implements updated scan and query protocols for 
+  improved consistency and performance.
 
-# Sync API with tokio
-aerospike = { version = "<version>", default-features = false, features = ["rt-tokio", "sync"]}
-# Sync API with async-std
-aerospike = { version = "<version>", default-features = false, features = ["rt-async-std", "sync"]}
-```
+**Policy and Expression Enhancements:**
 
-The following is a very simple example of CRUD operations in an Aerospike database.
+- Replica policies: includes support for Replica, including PreferRack placement.
+- Policy additions: new fields such as `allow_inline_ssd`, `respond_all_keys` 
+  in `BatchPolicy`, `read_touch_ttl`, and `QueryDuration` in `QueryPolicy`.
+- Rate limiting: supports `records_per_second` for scan/query throttling.
 
-```rust,edition2018
+**Data Model Improvements:**
+
+- Type support: adds support for boolean particle type.
+- New data constructs: returns types such as `Exists`, 
+  `OrderedMap`, `UnorderedMap` now supported for 
+  [CDT](https://aerospike.com/docs/develop/data-types/collections/) reads.
+- Value conversions: implements `TryFromaerospike::Value` for seamless type interoperability.
+- Infinity and wildcard: supports `Infinity`, `Wildcard`, and 
+  corresponding expression builders `expressions::infinity()` and 
+  `expressions::wildcard()`.
+- Size expressions: adds `expressions::record_size()` and `expressions::memory_size()` 
+  for granular control.
+
+## What’s coming next?
+We are working toward full functional parity with our 
+other officially supported clients. Features on the roadmap include:
+
+- Partition queries
+- Distributed ACID transactions
+- Strong consistency
+- Full TLS support for secure, production-ready deployments
+
+## Getting started
+
+Prerequisites:
+
+- [Aerospike Database Server](https://aerospike.com/download/server/community/) version 6.4 or later
+- [Rust](https://www.rust-lang.org/) version 1.63 or later 
+- [Tokio runtime](https://tokio.rs/) or [async-std](https://async.rs/)
+
+## Installation
+
+1. Build from source code:
+
+   ```
+   git clone https://github.com/aerospike/aerospike-client-rust/tree/v2
+   cd aerospike-client-rust
+   ```
+
+1. Add the following to your `cargo.toml` file:
+
+   ```
+   [dependencies]  
+   # Async API with tokio Runtime
+   aerospike = { version = "<version>", features = ["rt-tokio"]}
+   
+   # OR
+
+   # Async API with async-std runtime
+   aerospike = { version = "<version>", features = ["rt-async-std"]}
+   
+   # The library still supports the old sync interface, but it will be deprecated in the future.
+   # This is only for compatibility reasons and will be removed in a later stage.
+   
+   # Sync API with tokio
+   aerospike = { version = "<version>", default-features = false, features = ["rt-tokio", "sync"]}
+
+   # OR
+
+   # Sync API with async-std
+   aerospike = { version = "<version>", default-features = false, features = ["rt-async-std", "sync"]}
+   ```
+
+1. Run the following command:
+
+   ```
+   cargo build
+   ```
+
+## Core feature examples
+
+The following code examples demonstrate some of the Rust client's new
+features.
+
+### Batch operations
+
+```rust
 #[macro_use]
 extern crate aerospike;
 extern crate tokio;
@@ -97,54 +164,33 @@ async fn main() {
 }
 ```
 
-<a name="Limitations"></a>
-## Known Limitations
+### Batch updates
 
-The following features are not yet supported in the Aerospike Rust client:
+```rust
+// update 50k user profiles
 
-- Query Aggregation using Lua User-Defined Functions (UDF).
-- Secure connections using TLS.
-- IPv6 support.
-
-<a name="Tests"></a>
-## Tests
-
-This library is packaged with a number of tests. The tests assume that an
-Aerospike cluster is running at `localhost:3000`. To test using a cluster at a
-different address, set the `AEROSPIKE_HOSTS` environment variable to the list
-of cluster hosts.
-
-To run all the test cases:
-
-```shell
-$ export AEROSPIKE_HOSTS=127.0.0.1:3000
-$ cargo test --features <runtime>
+let keys = user_ids.iter().map(|id| as_key!("test", "users", id));  
+let ops = vec![  
+    operations::Write::new("last_login", DateTime::now().into()),  
+    operations::Increment::new("login_count", 1)  
+];  
+client.batch_operate(  
+    &BatchPolicy::default(),  
+    keys,  
+    &ops  
+).await.expect("Batch update failed");
 ```
 
-To enable debug logging for the `aerospike` crate:
+## Feedback wanted
 
-```shell
-$ RUST_LOG=aerospike=debug cargo test --features <runtime>
-```
+We need your help with:
 
-To enable backtraces set the `RUST_BACKTRACE` environment variable:
+- Real-world async patterns in your codebase
+- Ergonomic pain points in API design
 
-```shell
-$ RUST_BACKTRACE=1 cargo test --features <runtime>
-```
+You’re not just testing this new client - you’re shaping the future of Rust in databases!
 
-<a name="Benchmarks"></a>
-## Benchmarks
-
-The micro-benchmarks in the `benches` directory use the
-[`bencher`](https://crates.io/crates/bencher) crate and can be run on Rust
-stable releases:
-
-```shell
-$ export AEROSPIKE_HOSTS=127.0.0.1:3000
-$ cargo bench
-```
-
-There is a separate benchmark tool under the
-[tools/benchmark](tools/benchmark) directory that is designed to
-insert data into an Aerospike server cluster and generate load.
+You can reach us through [Github Issues](https://github.com/aerospike/aerospike-client-rust/issues),
+ping us through the standard Support portal, or schedule a meeting to speak
+directly with our product team using
+[this scheduling link](https://calendar.app.google/sDseJu6vUg8da5Kw5).
