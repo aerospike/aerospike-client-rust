@@ -1,4 +1,13 @@
-# Aerospike Rust client v2.0 alpha 
+# Aerospike Rust Client [![crates-io][crates-io-image]][crates-io-url] [![docs][docs-image]][docs-url] [![travis][travis-image]][travis-url] [![appveyor][appveyor-image]][appveyor-url]
+
+[crates-io-image]: https://img.shields.io/crates/v/aerospike.svg
+[crates-io-url]: https://crates.io/crates/aerospike
+[docs-image]: https://docs.rs/aerospike/badge.svg
+[docs-url]: https://docs.rs/aerospike/
+[travis-image]: https://travis-ci.org/aerospike/aerospike-client-rust.svg?branch=master
+[travis-url]: https://travis-ci.org/aerospike/aerospike-client-rust
+[appveyor-image]: https://ci.appveyor.com/api/projects/status/e9gx1b5d1307hj2t/branch/master?svg=true
+[appveyor-url]: https://ci.appveyor.com/project/aerospike/aerospike-client-rust/branch/master
 
 Welcome to the preview of Aerospike's official [Rust client](https://aerospike.com/docs/develop/client/rust).
 This is your opportunity to help shape the direction of the Rust
@@ -12,37 +21,39 @@ We welcome your feedback as we work toward production readiness.
 
 **Execution models:**
 
-- Async-First: Built for non-blocking IO, powered by 
+- **Async-First:** Built for non-blocking IO, powered by 
   [Tokio](https://tokio.rs/) by default, with optional support for [async-std](https://async.rs/).
-- Sync Support: Blocking APIs are available via a sync sub-crate for 
+- **Sync Support:** Blocking APIs are available via a sync sub-crate for 
   flexibility in legacy or mixed environments.
 
 **Advanced Data Operations:**
 
-- Batch protocol: full support for read, write, delete, and udf operations through the 
+- **Batch protocol:** full support for read, write, delete, and udf operations through the 
   new `BatchOperationAPI`.
-- New query/scan wire protocols: implements updated scan and query protocols for 
+- **New query/scan wire protocols:** implements updated scan and query protocols for 
   improved consistency and performance.
 
 **Policy and Expression Enhancements:**
 
-- Replica policies: includes support for Replica, including PreferRack placement.
-- Policy additions: new fields such as `allow_inline_ssd`, `respond_all_keys` 
+- **Replica policies:** includes support for Replica, including PreferRack placement.
+- **Policy additions:** new fields such as `allow_inline_ssd`, `respond_all_keys` 
   in `BatchPolicy`, `read_touch_ttl`, and `QueryDuration` in `QueryPolicy`.
-- Rate limiting: supports `records_per_second` for scan/query throttling.
+- **Rate limiting:** supports `records_per_second` for scan/query throttling.
 
 **Data Model Improvements:**
 
-- Type support: adds support for boolean particle type.
-- New data constructs: returns types such as `Exists`, 
+- **Type support:** adds support for boolean particle type.
+- **New data constructs:** returns types such as `Exists`, 
   `OrderedMap`, `UnorderedMap` now supported for 
   [CDT](https://aerospike.com/docs/develop/data-types/collections/) reads.
-- Value conversions: implements `TryFromaerospike::Value` for seamless type interoperability.
-- Infinity and wildcard: supports `Infinity`, `Wildcard`, and 
+- **Value conversions:** implements `TryFromaerospike::Value` for seamless type interoperability.
+- **Infinity and wildcard:** supports `Infinity`, `Wildcard`, and 
   corresponding expression builders `expressions::infinity()` and 
   `expressions::wildcard()`.
-- Size expressions: adds `expressions::record_size()` and `expressions::memory_size()` 
+- **Size expressions:** adds `expressions::record_size()` and `expressions::memory_size()` 
   for granular control.
+
+Take a look at the [changelog](https://github.com/aerospike/aerospike-client-rust/blob/v2/CHANGELOG.md) for more details.
 
 ## What’s coming next?
 We are working toward full functional parity with our 
@@ -105,7 +116,7 @@ Prerequisites:
 The following code examples demonstrate some of the Rust client's new
 features.
 
-### Batch operations
+### CRUD operations
 
 ```rust
 #[macro_use]
@@ -190,7 +201,6 @@ We need your help with:
 
 You’re not just testing this new client - you’re shaping the future of Rust in databases!
 
-You can reach us through [Github Issues](https://github.com/aerospike/aerospike-client-rust/issues),
-ping us through the standard Support portal, or schedule a meeting to speak
-directly with our product team using
+You can reach us through [Github Issues](https://github.com/aerospike/aerospike-client-rust/issues)
+or schedule a meeting to speak directly with our product team using
 [this scheduling link](https://calendar.app.google/sDseJu6vUg8da5Kw5).
