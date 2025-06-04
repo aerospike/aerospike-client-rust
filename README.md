@@ -66,7 +66,7 @@ Prerequisites:
 1. Build from source code:
 
    ```
-   git clone https://github.com/aerospike/aerospike-client-rust/tree/v2
+   git clone --single-branch --branch v2 https://github.com/aerospike/aerospike-client-rust.git
    cd aerospike-client-rust
    ```
 
