@@ -1,13 +1,4 @@
-# Aerospike Rust Client [![crates-io][crates-io-image]][crates-io-url] [![docs][docs-image]][docs-url] [![travis][travis-image]][travis-url] [![appveyor][appveyor-image]][appveyor-url]
-
-[crates-io-image]: https://img.shields.io/crates/v/aerospike.svg
-[crates-io-url]: https://crates.io/crates/aerospike
-[docs-image]: https://docs.rs/aerospike/badge.svg
-[docs-url]: https://docs.rs/aerospike/
-[travis-image]: https://travis-ci.org/aerospike/aerospike-client-rust.svg?branch=master
-[travis-url]: https://travis-ci.org/aerospike/aerospike-client-rust
-[appveyor-image]: https://ci.appveyor.com/api/projects/status/e9gx1b5d1307hj2t/branch/master?svg=true
-[appveyor-url]: https://ci.appveyor.com/project/aerospike/aerospike-client-rust/branch/master
+# Aerospike Rust Client 
 
 Welcome to the preview of Aerospike's official [Rust client](https://aerospike.com/docs/develop/client/rust).
 This is your opportunity to help shape the direction of the Rust
@@ -69,7 +60,7 @@ other officially supported clients. Features on the roadmap include:
 Prerequisites:
 
 - [Aerospike Database}(https://aerospike.com/download/server/community/) 6.4 or later.
-- [Rust](https://www.rust-lang.org/) version 1.63 or later 
+- [Rust](https://www.rust-lang.org/) version 1.75 or later 
 - [Tokio runtime](https://tokio.rs/) or [async-std](https://async.rs/)
 
 ## Installation
