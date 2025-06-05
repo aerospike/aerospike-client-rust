@@ -23,24 +23,24 @@ We welcome your feedback as we work toward production readiness.
 
 - **Async-First:** Built for non-blocking IO, powered by 
   [Tokio](https://tokio.rs/) by default, with optional support for [async-std](https://async.rs/).
-- **Sync Support:** Blocking APIs are available via a sync sub-crate for 
+- **Sync Support:** Blocking APIs are available using a sync sub-crate for 
   flexibility in legacy or mixed environments.
 
-**Advanced Data Operations:**
+**Advanced data operations:**
 
 - **Batch protocol:** full support for read, write, delete, and udf operations through the 
   new `BatchOperationAPI`.
-- **New query/scan wire protocols:** implements updated scan and query protocols for 
+- **New query wire protocols:** implements updated query protocols for 
   improved consistency and performance.
 
-**Policy and Expression Enhancements:**
+**Policy and expression enhancements:**
 
 - **Replica policies:** includes support for Replica, including PreferRack placement.
 - **Policy additions:** new fields such as `allow_inline_ssd`, `respond_all_keys` 
   in `BatchPolicy`, `read_touch_ttl`, and `QueryDuration` in `QueryPolicy`.
-- **Rate limiting:** supports `records_per_second` for scan/query throttling.
+- **Rate limiting:** supports `records_per_second` for query throttling.
 
-**Data Model Improvements:**
+**Data model improvements:**
 
 - **Type support:** adds support for boolean particle type.
 - **New data constructs:** returns types such as `Exists`, 
@@ -68,7 +68,7 @@ other officially supported clients. Features on the roadmap include:
 
 Prerequisites:
 
-- [Aerospike Database Server](https://aerospike.com/download/server/community/) version 6.4 or later
+- [Aerospike Database}(https://aerospike.com/download/server/community/) 6.4 or later.
 - [Rust](https://www.rust-lang.org/) version 1.63 or later 
 - [Tokio runtime](https://tokio.rs/) or [async-std](https://async.rs/)
 
