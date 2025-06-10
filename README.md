@@ -59,7 +59,7 @@ other officially supported clients. Features on the roadmap include:
 
 Prerequisites:
 
-- [Aerospike Database}(https://aerospike.com/download/server/community/) 6.4 or later.
+- [Aerospike Database](https://aerospike.com/download/server/community/) 6.4 or later.
 - [Rust](https://www.rust-lang.org/) version 1.75 or later 
 - [Tokio runtime](https://tokio.rs/) or [async-std](https://async.rs/)
 
@@ -172,10 +172,10 @@ async fn main() {
     let mut bpolicy = BatchPolicy::default();
 
     let udf_body = r#"
-		function echo(rec, val)
-  			return val
-		end
-		"#;
+	function echo(rec, val)
+  		return val
+	end
+	"#;
 
     let task = client
         .register_udf(udf_body.as_bytes(), "test_udf.lua", UDFLang::Lua)
