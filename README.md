@@ -172,10 +172,10 @@ async fn main() {
     let mut bpolicy = BatchPolicy::default();
 
     let udf_body = r#"
-function echo(rec, val)
-  	return val
-end
-"#;
+	function echo(rec, val)
+  		return val
+	end
+	"#;
 
     let task = client
         .register_udf(udf_body.as_bytes(), "test_udf.lua", UDFLang::Lua)
