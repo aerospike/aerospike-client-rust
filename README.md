@@ -166,21 +166,101 @@ async fn main() {
 }
 ```
 
-### Batch updates
+### Batch operations
 
 ```rust
-// update 50k user profiles
+    let mut bpolicy = BatchPolicy::default();
 
-let keys = user_ids.iter().map(|id| as_key!("test", "users", id));  
-let ops = vec![  
-    operations::Write::new("last_login", DateTime::now().into()),  
-    operations::Increment::new("login_count", 1)  
-];  
-client.batch_operate(  
-    &BatchPolicy::default(),  
-    keys,  
-    &ops  
-).await.expect("Batch update failed");
+    let udf_body = r#"
+		function echo(rec, val)
+  			return val
+		end
+		"#;
+
+    let task = client
+        .register_udf(udf_body.as_bytes(), "test_udf.lua", UDFLang::Lua)
+        .await
+        .unwrap();
+    task.wait_till_complete(None).await.unwrap();
+
+    let bin1 = as_bin!("a", "a value");
+    let bin2 = as_bin!("b", "another value");
+    let bin3 = as_bin!("c", 42);
+
+    let key1 = as_key!(namespace, set_name, 1);
+    let key2 = as_key!(namespace, set_name, 2);
+    let key3 = as_key!(namespace, set_name, 3);
+
+    let key4 = as_key!(namespace, set_name, -1);
+    // key does not exist
+
+    let selected = Bins::from(["a"]);
+    let all = Bins::All;
+    let none = Bins::None;
+
+    let wops = vec![
+        operations::put(&bin1),
+        operations::put(&bin2),
+        operations::put(&bin3),
+    ];
+
+    let rops = vec![
+        operations::get_bin(&bin1.name),
+        operations::get_bin(&bin2.name),
+        operations::get_header(),
+    ];
+
+    let bpr = BatchReadPolicy::default();
+    let bpw = BatchWritePolicy::default();
+    let bpd = BatchDeletePolicy::default();
+    let bpu = BatchUDFPolicy::default();
+
+    let batch = vec![
+        BatchOperation::write(&bpw, key1.clone(), wops.clone()),
+        BatchOperation::write(&bpw, key2.clone(), wops.clone()),
+        BatchOperation::write(&bpw, key3.clone(), wops.clone()),
+    ];
+    let mut results = client.batch(&bpolicy, &batch).await.unwrap();
+
+    dbg!(&results);
+
+    // READ Operations
+    let batch = vec![
+        BatchOperation::read(&bpr, key1.clone(), selected),
+        BatchOperation::read(&bpr, key2.clone(), all),
+        BatchOperation::read(&bpr, key3.clone(), none.clone()),
+        BatchOperation::read_ops(&bpr, key3.clone(), rops),
+        BatchOperation::read(&bpr, key4.clone(), none),
+    ];
+    let mut results = client.batch(&bpolicy, &batch).await.unwrap();
+
+    dbg!(&results);
+
+    // DELETE Operations
+    let batch = vec![
+        BatchOperation::delete(&bpd, key1.clone()),
+        BatchOperation::delete(&bpd, key2.clone()),
+        BatchOperation::delete(&bpd, key3.clone()),
+        BatchOperation::delete(&bpd, key4.clone()),
+    ];
+    let mut results = client.batch(&bpolicy, &batch).await.unwrap();
+
+    dbg!(&results);
+
+    // Read
+    let args1 = &[as_val!(1)];
+    let args2 = &[as_val!(2)];
+    let args3 = &[as_val!(3)];
+    let args4 = &[as_val!(4)];
+    let batch = vec![
+        BatchOperation::udf(&bpu, key1.clone(), "test_udf", "echo", Some(args1)),
+        BatchOperation::udf(&bpu, key2.clone(), "test_udf", "echo", Some(args2)),
+        BatchOperation::udf(&bpu, key3.clone(), "test_udf", "echo", Some(args3)),
+        BatchOperation::udf(&bpu, key4.clone(), "test_udf", "echo", Some(args4)),
+    ];
+    let mut results = client.batch(&bpolicy, &batch).await.unwrap();
+
+    dbg!(&results);
 ```
 
 ## Feedback wanted
