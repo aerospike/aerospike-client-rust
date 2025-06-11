@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.0.0-alpha.3]
+
+* **New Features**
+  * [CLIENT-3105] Add newer error codes to the client.
+  * [CLIENT-2052] Support new 6.0 `truncate`, `udf-admin`, and `sindex-admin` privileges.
+  * [CLIENT-2100] Support user quotas and statistics and newer API.
+
 ## [2.0.0-alpha.2]
 
 * **New Features**
