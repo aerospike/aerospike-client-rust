@@ -1,6 +1,6 @@
 [package]
 name = "aerospike-sync"
-version = "2.0.0-alpha.2"
+version = "2.0.0-alpha.3"
 edition = "2018"
 authors = ["Khosrow Afroozeh <khosrow@aerospike.com>", "Jan Hecking <jhecking@aerospike.com>"]
 description = "Aerospike Client for Rust Sync Crate."
@@ -15,7 +15,7 @@ readme = "README.md"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-aerospike-core = {path = "../aerospike-core", version = "2.0.0-alpha.2"}
+aerospike-core = {path = "../aerospike-core", version = "2.0.0-alpha.3"}
 futures = {version = "0.3.16" }
 
 [features]
