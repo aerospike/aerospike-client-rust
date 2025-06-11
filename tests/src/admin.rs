@@ -13,17 +13,19 @@
 // License for the specific language governing permissions and limitations under
 // the License.
 
-use aerospike::*;
-
 use env_logger;
 
 use crate::common;
-use aerospike::{Privilege, PrivilegeCode, Role, User};
+use aerospike::{Privilege, PrivilegeCode};
 use aerospike_rt::sleep;
 use aerospike_rt::time::Duration;
 
 #[aerospike_macro::test]
 async fn user_management() {
+    if !common::security_enabled().await {
+        return;
+    }
+
     const USER_NAME: &str = "test_user";
     const ROLE: &str = "user-admin";
 
@@ -80,6 +82,10 @@ async fn user_management() {
 
 #[aerospike_macro::test]
 async fn role_management() {
+    if !common::security_enabled().await {
+        return;
+    }
+
     let namespace: &str = common::namespace();
     let set_name = "test";
 

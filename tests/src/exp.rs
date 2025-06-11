@@ -734,7 +734,7 @@ async fn expression_commands() {
     // BATCH GET
     let bpr = BatchReadPolicy::default();
     let mut batch_ops = vec![];
-    let b = Bins::from(["bin"]);
+    // let b = Bins::from(["bin"]);
     for i in 85..90 {
         let key = as_key!(namespace, &set_name, i);
         let bo = BatchOperation::read(&bpr, key, Bins::All);

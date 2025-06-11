@@ -1305,10 +1305,10 @@ impl Buffer {
         self.write_u8(ftype as u8);
     }
 
-    fn write_field_u64(&mut self, field: u64, ftype: FieldType) {
-        self.write_field_header(8, ftype);
-        self.write_u64(field);
-    }
+    // fn write_field_u64(&mut self, field: u64, ftype: FieldType) {
+    //     self.write_field_header(8, ftype);
+    //     self.write_u64(field);
+    // }
 
     fn write_field_u32(&mut self, field: u32, ftype: FieldType) {
         self.write_field_header(4, ftype);
@@ -1539,9 +1539,9 @@ impl Buffer {
         return Ok(s.to_owned());
     }
 
-    pub(crate) fn read_bytes(&mut self, pos: usize, count: usize) -> &[u8] {
-        &self.data_buffer[pos..pos + count]
-    }
+    // pub(crate) fn read_bytes(&mut self, pos: usize, count: usize) -> &[u8] {
+    //     &self.data_buffer[pos..pos + count]
+    // }
 
     pub(crate) fn read_slice(&mut self, count: usize) -> &[u8] {
         &self.data_buffer[self.data_offset..self.data_offset + count]
@@ -1672,8 +1672,8 @@ impl Buffer {
         }
     }
 
-    pub(crate) fn dump_buffer(&self) {
-        rhexdump!(&self.data_buffer);
-        println!("");
-    }
+    // pub(crate) fn dump_buffer(&self) {
+    //     rhexdump!(&self.data_buffer);
+    //     println!("");
+    // }
 }

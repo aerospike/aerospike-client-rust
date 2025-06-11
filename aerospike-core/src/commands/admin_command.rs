@@ -14,7 +14,7 @@
 
 #![allow(dead_code)]
 
-use std::{default, str};
+use std::str;
 
 use pwhash::bcrypt::{self, BcryptSetup, BcryptVariant};
 
@@ -23,10 +23,10 @@ use crate::errors::{Error, Result};
 use crate::net::Connection;
 use crate::net::PooledConnection;
 use crate::privilege::PrivilegeCode;
+use crate::Privilege;
 use crate::ResultCode;
 use crate::Role;
 use crate::User;
-use crate::{result_code, Privilege};
 
 // Commands
 const AUTHENTICATE: u8 = 0;

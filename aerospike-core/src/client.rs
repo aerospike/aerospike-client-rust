@@ -1009,8 +1009,8 @@ impl Client {
         AdminCommand::revoke_roles(&cluster, user, roles).await
     }
 
-    // Retrieves users and their roles.
-    // If None is passed for the user argument, all users will be returned.
+    /// Retrieves users and their roles.
+    /// If None is passed for the user argument, all users will be returned.
     pub async fn query_users(&self, user: Option<&str>) -> Result<Vec<User>> {
         let cluster = self.cluster.clone();
         AdminCommand::query_users(&cluster, user).await

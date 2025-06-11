@@ -65,3 +65,36 @@ pub fn rand_str(sz: usize) -> String {
     let rng = rand::thread_rng();
     rng.sample_iter(&Alphanumeric).take(sz).collect()
 }
+
+pub async fn enterprise_edition() -> bool {
+    let client = client().await;
+    let node = client.cluster.get_random_node().await;
+    if let Err(_) = node {
+        return false;
+    }
+    let node = node.unwrap();
+    let edition = node.info(&vec!["edition"]).await;
+    if let Err(_) = edition {
+        return false;
+    }
+
+    if let Some(edition) = edition.unwrap().get("edition") {
+        return edition.to_lowercase().contains("enterprise");
+    }
+
+    false
+}
+
+pub async fn security_enabled() -> bool {
+    if !enterprise_edition().await {
+        return false;
+    }
+
+    let client = client().await;
+    let roles = client.query_users(None).await;
+    if let Err(_) = roles {
+        return false;
+    }
+
+    true
+}
