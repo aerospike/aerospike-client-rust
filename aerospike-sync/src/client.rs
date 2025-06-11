@@ -21,8 +21,8 @@ use aerospike_core::errors::Result;
 use aerospike_core::operations::Operation;
 use aerospike_core::{
     BatchOperation, BatchPolicy, BatchRecord, Bin, Bins, ClientPolicy, CollectionIndexType,
-    IndexTask, IndexType, Key, Node, QueryPolicy, ReadPolicy, Record, Recordset, RegisterTask,
-    ScanPolicy, Statement, ToHosts, UDFLang, Value, WritePolicy,
+    IndexTask, IndexType, Key, Node, Privilege, QueryPolicy, ReadPolicy, Record, Recordset,
+    RegisterTask, Role, ScanPolicy, Statement, ToHosts, UDFLang, User, Value, WritePolicy,
 };
 use futures::executor::block_on;
 
@@ -686,6 +686,101 @@ impl Client {
         block_on(
             self.async_client
                 .drop_index(namespace, set_name, index_name),
+        )
+    }
+
+    /// Creates a new user with password and roles. Clear-text password will be hashed using bcrypt
+    /// before sending to server.
+    pub async fn create_user(&self, user: &str, password: &str, roles: &[&str]) -> Result<()> {
+        block_on(self.async_client.create_user(user, password, roles))
+    }
+
+    /// Removes a user from the cluster.
+    pub async fn drop_user(&self, user: &str) -> Result<()> {
+        block_on(self.async_client.drop_user(user))
+    }
+
+    /// Changes a user's password. Clear-text password will be hashed using bcrypt before sending to server.
+    pub async fn change_password(&self, user: &str, password: &str) -> Result<()> {
+        block_on(self.async_client.change_password(user, password))
+    }
+
+    /// Adds roles to user's list of roles.
+    pub async fn grant_roles(&self, user: &str, roles: &[&str]) -> Result<()> {
+        block_on(self.async_client.grant_roles(user, roles))
+    }
+
+    /// Removes roles from user's list of roles.
+    pub async fn revoke_roles(&self, user: &str, roles: &[&str]) -> Result<()> {
+        block_on(self.async_client.revoke_roles(user, roles))
+    }
+
+    // Retrieves users and their roles.
+    // If None is passed for the user argument, all users will be returned.
+    pub async fn query_users(&self, user: Option<&str>) -> Result<Vec<User>> {
+        block_on(self.async_client.query_users(user))
+    }
+
+    /// Creates a user-defined role.
+    /// Quotas require server security configuration "enable-quotas" to be set to true.
+    /// Pass 0 for quota values for no limit.
+    pub async fn create_role(
+        &self,
+        role_name: &str,
+        privileges: &[Privilege],
+        allowlist: &[&str],
+        read_quota: u32,
+        write_quota: u32,
+    ) -> Result<()> {
+        block_on(self.async_client.create_role(
+            role_name,
+            privileges,
+            allowlist,
+            read_quota,
+            write_quota,
+        ))
+    }
+
+    /// Retrieves roles and their privileges.
+    /// If None is passed for the role argument, all roles will be returned.
+    pub async fn query_roles(&self, role: Option<&str>) -> Result<Vec<Role>> {
+        block_on(self.async_client.query_roles(&role))
+    }
+
+    /// Removes a user-defined role.
+    pub async fn drop_role(&self, role_name: &str) -> Result<()> {
+        block_on(self.async_client.drop_role(role_name))
+    }
+
+    /// Grants privileges to a user-defined role.
+    pub async fn grant_privileges(&self, role_name: &str, privileges: &[Privilege]) -> Result<()> {
+        block_on(self.async_client.grant_privileges(role_name, privileges))
+    }
+
+    /// Revokes privileges from a user-defined role.
+    pub async fn revoke_privileges(&self, role_name: &str, privileges: &[Privilege]) -> Result<()> {
+        block_on(self.async_client.revoke_privileges(role_name, privileges))
+    }
+
+    /// Sets IP address allowlist for a role.
+    /// If allowlist is nil or empty, it removes existing allowlist from role.
+    pub async fn set_allowlist(&self, role_name: &str, allowlist: &[&str]) -> Result<()> {
+        block_on(self.async_client.set_allowlist(role_name, allowlist))
+    }
+
+    /// Sets maximum reads/writes per second limits for a role.
+    /// If a quota is zero, the limit is removed.
+    /// Quotas require server security configuration "enable-quotas" to be set to true.
+    /// Pass 0 for quota values for no limit.
+    pub async fn set_quotas(
+        &self,
+        role_name: &str,
+        read_quota: u32,
+        write_quota: u32,
+    ) -> Result<()> {
+        block_on(
+            self.async_client
+                .set_quotas(role_name, read_quota, write_quota),
         )
     }
 }

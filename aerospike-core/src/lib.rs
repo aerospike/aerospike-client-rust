@@ -170,9 +170,11 @@ pub use policy::{
     GenerationPolicy, Policy, QueryDuration, QueryPolicy, ReadPolicy, ReadTouchTTL,
     RecordExistsAction, ScanPolicy, WritePolicy,
 };
+pub use privilege::{Privilege, PrivilegeCode};
 pub use query::{CollectionIndexType, IndexType, Recordset, Statement, UDFLang};
 pub use record::Record;
 pub use result_code::ResultCode;
+pub use role::Role;
 pub use task::{IndexTask, RegisterTask, Task};
 pub use user::User;
 pub use value::{FloatValue, Value};
@@ -194,9 +196,11 @@ mod msgpack;
 mod net;
 pub mod operations;
 pub mod policy;
+mod privilege;
 pub mod query;
 mod record;
 mod result_code;
+mod role;
 pub mod task;
 mod user;
 
