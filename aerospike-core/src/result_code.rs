@@ -100,8 +100,20 @@ pub enum ResultCode {
     /// exists.
     ElementExists,
 
-    /// Enterprise-only feature not supported by the community edition
+    /// Enterprise-only feature not supported by the community edition.
     EnterpriseOnly,
+
+    /// The operation cannot be applied to the current bin value on the server.
+    OpNotApplicable,
+
+    /// The command was not performed because the filter was false.
+    FilteredOut,
+
+    /// Write command loses conflict to XDR.
+    LostConflict,
+
+    /// Write can't complete until XDR finishes shipping.
+    XDRKeyBusy,
 
     /// There are no more records left for query.
     QueryEnd,
@@ -142,6 +154,9 @@ pub enum ResultCode {
     /// Security credential is invalid.
     InvalidCredential,
 
+    /// Login session expired.
+    ExpiredSession,
+
     /// Role name is invalid.
     InvalidRole,
 
@@ -151,11 +166,26 @@ pub enum ResultCode {
     /// Privilege is invalid.
     InvalidPrivilege,
 
+    /// Invalid IP address allowlist.
+    InvalidAllowlist,
+
+    /// Quotas not enabled on server.
+    QuotasNotEnabled,
+
+    /// Invalid quota value.
+    InvalidQuota,
+
     /// User must be authentication before performing database operations.
     NotAuthenticated,
 
     /// User does not posses the required role to perform the database operation.
     RoleViolation,
+
+    /// Command not allowed because sender IP address not allowlisted.
+    NotWhitelisted,
+
+    /// Quota exceeded.
+    QuotaExceeded,
 
     /// A user defined function returned an error code.
     UdfBadResponse,
@@ -171,6 +201,9 @@ pub enum ResultCode {
 
     /// All batch queues are full.
     BatchQueuesFull,
+
+    /// Invalid GeoJSON on insert/update
+    InvalidGeojson,
 
     /// Secondary index already exists.
     IndexFound,
@@ -245,6 +278,10 @@ impl ResultCode {
             22 => ResultCode::FailForbidden,
             23 => ResultCode::ElementNotFound,
             24 => ResultCode::ElementExists,
+            26 => ResultCode::OpNotApplicable,
+            27 => ResultCode::FilteredOut,
+            28 => ResultCode::LostConflict,
+            32 => ResultCode::XDRKeyBusy,
             25 => ResultCode::EnterpriseOnly,
             50 => ResultCode::QueryEnd,
             51 => ResultCode::SecurityNotSupported,
@@ -259,16 +296,23 @@ impl ResultCode {
             63 => ResultCode::ExpiredPassword,
             64 => ResultCode::ForbiddenPassword,
             65 => ResultCode::InvalidCredential,
+            66 => ResultCode::ExpiredSession,
             70 => ResultCode::InvalidRole,
             71 => ResultCode::RoleAlreadyExists,
             72 => ResultCode::InvalidPrivilege,
+            73 => ResultCode::InvalidAllowlist,
+            74 => ResultCode::QuotasNotEnabled,
+            75 => ResultCode::InvalidQuota,
             80 => ResultCode::NotAuthenticated,
             81 => ResultCode::RoleViolation,
+            82 => ResultCode::NotWhitelisted,
+            83 => ResultCode::QuotaExceeded,
             100 => ResultCode::UdfBadResponse,
             125 => ResultCode::LargeItemNotFound,
             150 => ResultCode::BatchDisabled,
             151 => ResultCode::BatchMaxRequestsExceeded,
             152 => ResultCode::BatchQueuesFull,
+            160 => ResultCode::InvalidGeojson,
             200 => ResultCode::IndexFound,
             201 => ResultCode::IndexNotFound,
             202 => ResultCode::IndexOom,
@@ -316,6 +360,12 @@ impl ResultCode {
             ResultCode::FailForbidden => String::from("OperationType not allowed at this time"),
             ResultCode::ElementNotFound => String::from("Element not found"),
             ResultCode::ElementExists => String::from("Element already exists"),
+            ResultCode::OpNotApplicable => String::from("Operation not applicable"),
+            ResultCode::FilteredOut => String::from("Transaction filtered out"),
+            ResultCode::LostConflict => String::from("Write command loses conflict to XDR"),
+            ResultCode::XDRKeyBusy => {
+                String::from("Write can't complete until XDR finishes shipping")
+            }
             ResultCode::EnterpriseOnly => {
                 String::from("Enterprise-only feature not supported by community edition")
             }
@@ -332,11 +382,17 @@ impl ResultCode {
             ResultCode::ExpiredPassword => String::from("Expired password"),
             ResultCode::ForbiddenPassword => String::from("Forbidden password"),
             ResultCode::InvalidCredential => String::from("Invalid credential"),
+            ResultCode::ExpiredSession => String::from("Login session expired"),
             ResultCode::InvalidRole => String::from("Invalid role"),
             ResultCode::RoleAlreadyExists => String::from("Role already exists"),
             ResultCode::InvalidPrivilege => String::from("Invalid privilege"),
+            ResultCode::InvalidAllowlist => String::from("Invalid whitelist"),
+            ResultCode::QuotasNotEnabled => String::from("Quotas not enabled"),
+            ResultCode::InvalidQuota => String::from("Invalid quota"),
             ResultCode::NotAuthenticated => String::from("Not authenticated"),
             ResultCode::RoleViolation => String::from("Role violation"),
+            ResultCode::NotWhitelisted => String::from("Command not whitelisted"),
+            ResultCode::QuotaExceeded => String::from("Quota exceeded"),
             ResultCode::UdfBadResponse => String::from("Udf returned error"),
             ResultCode::LargeItemNotFound => String::from("Large collection item not found"),
             ResultCode::BatchDisabled => String::from("Batch functionality has been disabled"),
@@ -344,6 +400,7 @@ impl ResultCode {
                 String::from("Batch max requests have been exceeded")
             }
             ResultCode::BatchQueuesFull => String::from("All batch queues are full"),
+            ResultCode::InvalidGeojson => String::from("Invalid GeoJSON on insert/update"),
             ResultCode::IndexFound => String::from("Index already exists"),
             ResultCode::IndexNotFound => String::from("Index not found"),
             ResultCode::IndexOom => String::from("Index out of memory"),
