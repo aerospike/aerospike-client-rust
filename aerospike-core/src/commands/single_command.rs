@@ -95,6 +95,16 @@ impl<'a> SingleCommand<'a> {
                 }
             }
 
+            // check for max retries
+            if let Some(max_retries) = policy.max_retries() {
+                if iterations > max_retries + 1 {  // first attempt isn't a retry
+                    return Err(Error::Connection(format!(
+                        "Timeout after {} tries",
+                        iterations
+                    )));
+                }
+            }
+
             // check for command timeout
             if let Some(deadline) = deadline {
                 if Instant::now() > deadline {
