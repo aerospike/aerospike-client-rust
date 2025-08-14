@@ -68,6 +68,26 @@ impl Key {
         Ok(key)
     }
 
+    /// Construct a new key from namespace, optional set name, user key and digest.
+    /// The server handles record identifiers by digest only.
+    /// The digest will be set to the provided value and not validated.
+    pub fn key_with_digest<S>(
+        namespace: String,
+        set_name: Option<String>,
+        key: Option<Value>,
+        digest: [u8; 20],
+    ) -> Result<Self>
+    where
+        S: Into<String>,
+    {
+        Ok(Self {
+            namespace: namespace.into(),
+            set_name: set_name.unwrap_or(String::from("")).into(),
+            user_key: key,
+            digest,
+        })
+    }
+
     fn compute_digest(&mut self) -> Result<()> {
         let mut hash = Ripemd160::new();
         hash.update(self.set_name.as_bytes());
