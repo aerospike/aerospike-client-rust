@@ -209,13 +209,15 @@ impl Hash for Value {
                 let v: Option<u8> = None;
                 v.hash(state);
             }
-            Value::Bool(ref val) => val.hash(state),
+            Value::Bool(_) => panic!("Booleans cannot be used as map keys."),
             Value::Int(ref val) => val.hash(state),
             Value::UInt(ref val) => val.hash(state),
-            Value::Float(ref val) => val.hash(state),
-            Value::String(ref val) | Value::GeoJSON(ref val) => val.hash(state),
-            Value::Blob(ref val) | Value::HLL(ref val) => val.hash(state),
-            Value::List(ref val) => val.hash(state),
+            Value::Float(_) => panic!("Floats cannot be used as map keys."),
+            Value::String(ref val) => val.hash(state),
+            Value::GeoJSON(_) => panic!("GeoJson cannot be used as map keys."),
+            Value::Blob(ref val) => val.hash(state),
+            Value::HLL(_) => panic!("HLL cannot be used as map keys."),
+            Value::List(_) => panic!("Lists cannot be used as map keys."),
             Value::HashMap(_) => panic!("HashMaps cannot be used as map keys."),
             Value::OrderedMap(_) => panic!("OrderedMaps cannot be used as map keys."),
             Value::Infinity => panic!("Infinity cannot be used as map keys."),
