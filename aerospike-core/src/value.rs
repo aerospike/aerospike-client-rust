@@ -181,6 +181,7 @@ pub enum Value {
     /// Map data type is a collection of key-value pairs. Each key can only appear once in a
     /// collection and is associated with a value. Map keys and values can be any supported data
     /// type.
+    /// Map keys can only be of type String, Bytes, Integer, and that this will be enforced by the client and server.
     HashMap(HashMap<Value, Value>),
 
     /// Map data type where the map entries are sorted based key ordering (K-ordered maps) and may
