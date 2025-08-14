@@ -20,7 +20,7 @@ use byteorder::{LittleEndian, ReadBytesExt};
 use crate::cluster::node;
 use crate::Key;
 
-// Validates a Database server node
+/// Validates a Database server node
 #[derive(Debug, Clone)]
 pub struct Partition<'a> {
     pub namespace: &'a str,

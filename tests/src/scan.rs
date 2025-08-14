@@ -13,11 +13,14 @@
 // License for the specific language governing permissions and limitations under
 // the License.
 
-use std::sync::atomic::{AtomicUsize, Ordering};
+use crate::common;
+
+use std::sync::atomic::AtomicUsize;
+use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::thread;
 
-use crate::common;
+use aerospike::query::PartitionFilter;
 use env_logger;
 
 use aerospike::*;
@@ -49,9 +52,11 @@ async fn scan_single_consumer() {
     let namespace = common::namespace();
     let set_name = create_test_set(&client, EXPECTED).await;
 
+    let pf = PartitionFilter::all();
     let spolicy = ScanPolicy::default();
+
     let rs = client
-        .scan(&spolicy, namespace, &set_name, Bins::All)
+        .scan(&spolicy, pf, namespace, &set_name, Bins::All)
         .await
         .unwrap();
 
@@ -62,25 +67,64 @@ async fn scan_single_consumer() {
 }
 
 #[aerospike_macro::test]
-async fn scan_single_consumer_rps() {
+async fn scan_single_consumer_with_cursor() {
     let _ = env_logger::try_init();
 
     let client = common::client().await;
     let namespace = common::namespace();
     let set_name = create_test_set(&client, EXPECTED).await;
 
+    let mut pf = PartitionFilter::all();
     let mut spolicy = ScanPolicy::default();
-    spolicy.records_per_second = (EXPECTED / 3) as u32;
+    spolicy.max_records = (EXPECTED / 3) as u64;
+
+    let mut count = 0;
+    while !pf.done() {
+        let rs = client
+            .scan(&spolicy, pf, namespace, &set_name, Bins::All)
+            .await
+            .unwrap();
+
+        count += (&*rs).filter(Result::is_ok).count();
+        assert!(rs.is_active() == false);
+        pf = rs.partition_filter().await.unwrap();
+        if count == 1000 {
+            assert!(pf.done() == true);
+        }
+    }
+    assert_eq!(count, EXPECTED);
+
+    client.close().await.unwrap();
+}
+
+#[aerospike_macro::test]
+async fn scan_single_consumer_rps() {
+    let _ = env_logger::try_init();
+
+    let client = common::client().await;
+
+    // only run on single node clusters
+    if client.nodes().await.len() != 1 {
+        return;
+    }
+
+    let node_count = client.cluster.nodes().await.len();
+    let namespace = common::namespace();
+    let set_name = create_test_set(&client, EXPECTED).await;
+
+    let mut spolicy = ScanPolicy::default();
+    spolicy.records_per_second = (EXPECTED / 3 / node_count) as u32;
 
     let start_time = Instant::now();
+    let pf = PartitionFilter::all();
     let rs = client
-        .scan(&spolicy, namespace, &set_name, Bins::All)
+        .scan(&spolicy, pf, namespace, &set_name, Bins::All)
         .await
         .unwrap();
 
     let count = (&*rs).filter(Result::is_ok).count();
+    let duration = start_time.elapsed();
     assert_eq!(count, EXPECTED);
-    let duration = Instant::now() - start_time;
 
     // Should take at least 3 seconds due to rps
     assert!(duration.as_millis() > 3000);
@@ -98,8 +142,9 @@ async fn scan_multi_consumer() {
 
     let mut spolicy = ScanPolicy::default();
     spolicy.record_queue_size = 4096;
+    let pf = PartitionFilter::all();
     let rs = client
-        .scan(&spolicy, namespace, &set_name, Bins::All)
+        .scan(&spolicy, pf, namespace, &set_name, Bins::All)
         .await
         .unwrap();
 
@@ -117,41 +162,6 @@ async fn scan_multi_consumer() {
 
     for t in threads {
         t.join().expect("Cannot join thread");
-    }
-
-    assert_eq!(count.load(Ordering::Relaxed), EXPECTED);
-
-    client.close().await.unwrap();
-}
-
-#[aerospike_macro::test]
-async fn scan_node() {
-    let _ = env_logger::try_init();
-
-    let client = Arc::new(common::client().await);
-    let namespace = common::namespace();
-    let set_name = create_test_set(&client, EXPECTED).await;
-
-    let count = Arc::new(AtomicUsize::new(0));
-    let mut threads = vec![];
-
-    for node in client.nodes().await {
-        let client = client.clone();
-        let count = count.clone();
-        let set_name = set_name.clone();
-        threads.push(aerospike_rt::spawn(async move {
-            let spolicy = ScanPolicy::default();
-            let rs = client
-                .scan_node(&spolicy, node, namespace, &set_name, Bins::All)
-                .await
-                .unwrap();
-            let ok = (&*rs).filter(Result::is_ok).count();
-            count.fetch_add(ok, Ordering::Relaxed);
-        }));
-    }
-
-    for t in threads {
-        t.await.unwrap();
     }
 
     assert_eq!(count.load(Ordering::Relaxed), EXPECTED);

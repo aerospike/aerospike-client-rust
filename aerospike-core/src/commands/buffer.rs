@@ -28,6 +28,7 @@ use crate::policy::{
     BasePolicy, BatchPolicy, CommitLevel, ConsistencyLevel, GenerationPolicy, QueryDuration,
     QueryPolicy, RecordExistsAction, ScanPolicy, WritePolicy,
 };
+use crate::query::NodePartitions;
 use crate::{Bin, Bins, CollectionIndexType, Key, Statement, Value};
 
 // Contains a read operation.
@@ -108,7 +109,7 @@ const AS_MSG_TYPE: u8 = 3;
 // MAX_BUFFER_SIZE protects against allocating massive memory blocks
 // for buffers. Tweak this number if you are returning a lot of
 // LDT elements in your queries.
-const MAX_BUFFER_SIZE: usize = 1024 * 1024 + 8; // 1 MB + header
+pub(crate) const MAX_BUFFER_SIZE: usize = 1024 * 1024 + 8; // 1 MB + header
 
 // Holds data buffer for the command
 #[derive(Debug, Default)]
@@ -747,18 +748,23 @@ impl Buffer {
         Ok(())
     }
 
-    pub(crate) fn set_scan(
+    pub(crate) async fn set_scan(
         &mut self,
         policy: &ScanPolicy,
         namespace: &str,
         set_name: &str,
         bins: &Bins,
         task_id: u64,
-        partitions: &[u16],
+        node_partitions: &NodePartitions,
     ) -> Result<()> {
         self.begin();
 
         let mut field_count = 0;
+
+        let parts_full_size = node_partitions.parts_full.len() * 2;
+        let parts_partial_size = node_partitions.parts_partial.len() * 20;
+        let max_records = node_partitions.record_max;
+
         let filter_size = self.estimate_filter_size(policy.filter_expression());
         if filter_size > 0 {
             field_count += 1;
@@ -774,14 +780,25 @@ impl Buffer {
             field_count += 1;
         }
 
+        if parts_full_size > 0 {
+            self.data_offset += parts_full_size + FIELD_HEADER_SIZE as usize;
+            field_count += 1;
+        }
+
+        if parts_partial_size > 0 {
+            self.data_offset += parts_partial_size + FIELD_HEADER_SIZE as usize;
+            field_count += 1;
+        }
+
+        if max_records > 0 {
+            self.data_offset += 8 + FIELD_HEADER_SIZE as usize;
+            field_count += 1;
+        }
+
         if policy.records_per_second > 0 {
             self.data_offset += 4 + FIELD_HEADER_SIZE as usize;
             field_count += 1;
         }
-
-        // Estimate pid size
-        self.data_offset += partitions.len() * 2 + FIELD_HEADER_SIZE as usize;
-        field_count += 1;
 
         // Estimate scan timeout size.
         self.data_offset += 4 + FIELD_HEADER_SIZE as usize;
@@ -825,13 +842,28 @@ impl Buffer {
             self.write_field_string(set_name, FieldType::Table);
         }
 
-        self.write_field_header(partitions.len() * 2, FieldType::PIDArray);
-        for pid in partitions {
-            self.write_u16_little_endian(*pid);
+        if parts_full_size > 0 {
+            self.write_field_header(parts_full_size, FieldType::PIDArray);
+            for part in &node_partitions.parts_full {
+                let part = part.lock().await;
+                self.write_u16_little_endian(part.id);
+            }
+        }
+
+        if parts_partial_size > 0 {
+            self.write_field_header(parts_partial_size, FieldType::DigestArray);
+            for part in &node_partitions.parts_partial {
+                let part = part.lock().await;
+                part.digest.map(|digest| self.write_bytes(&digest));
+            }
         }
 
         if let Some(filter) = policy.filter_expression() {
             self.write_filter_expression(filter, filter_size);
+        }
+
+        if max_records > 0 {
+            self.write_field_u64(max_records, FieldType::MaxRecords);
         }
 
         if policy.records_per_second > 0 {
@@ -839,10 +871,10 @@ impl Buffer {
         }
 
         // Write scan timeout
-        self.write_field_header(4, FieldType::ScanTimeout);
+        self.write_field_header(4, FieldType::SocketTimeout);
         self.write_u32(policy.socket_timeout);
 
-        self.write_field_header(8, FieldType::TranId);
+        self.write_field_header(8, FieldType::QueryId);
         self.write_u64(task_id);
 
         if let Bins::Some(ref bin_names) = *bins {
@@ -852,17 +884,19 @@ impl Buffer {
         }
 
         self.end();
+        // self.dump_buffer();
+
         Ok(())
     }
 
     #[allow(clippy::cognitive_complexity)]
-    pub(crate) fn set_query(
+    pub(crate) async fn set_query(
         &mut self,
         policy: &QueryPolicy,
         statement: &Statement,
         write: bool,
         task_id: u64,
-        partitions: &[u16],
+        node_partitions: &NodePartitions,
     ) -> Result<()> {
         let filter = statement.filters.as_ref().map(|filters| &filters[0]);
 
@@ -870,7 +904,6 @@ impl Buffer {
 
         let mut field_count = 0;
         let mut filter_size = 0;
-        let mut bin_name_size = 0;
 
         if !statement.namespace.is_empty() {
             self.data_offset += statement.namespace.len() + FIELD_HEADER_SIZE as usize;
@@ -909,27 +942,52 @@ impl Buffer {
             self.data_offset += filter_size + FIELD_HEADER_SIZE as usize;
             field_count += 1;
 
-            if let Bins::Some(ref bin_names) = statement.bins {
-                self.data_offset += FIELD_HEADER_SIZE as usize;
-                bin_name_size += 1;
+            // if let Bins::Some(ref bin_names) = statement.bins {
+            //     self.data_offset += FIELD_HEADER_SIZE as usize;
+            //     bin_name_size += 1;
 
-                for bin_name in bin_names {
-                    bin_name_size += bin_name.len() + 1;
-                }
+            //     for bin_name in bin_names {
+            //         bin_name_size += bin_name.len() + 1;
+            //     }
 
-                self.data_offset += bin_name_size;
-                field_count += 1;
-            }
+            //     self.data_offset += bin_name_size;
+            //     field_count += 1;
+            // }
         }
 
-        // Estimate pid size
-        self.data_offset += partitions.len() * 2 + FIELD_HEADER_SIZE as usize;
-        field_count += 1;
+        let parts_full_size = node_partitions.parts_full.len() * 2;
+        let parts_partial_size = node_partitions.parts_partial.len() * 20;
+        let parts_partial_bval_size = match filter {
+            Some(_) => node_partitions.parts_partial.len() * 8,
+            None => 0,
+        };
+        let max_records = node_partitions.record_max;
+
+        if parts_full_size > 0 {
+            self.data_offset += parts_full_size + FIELD_HEADER_SIZE as usize;
+            field_count += 1;
+        }
+
+        if parts_partial_size > 0 {
+            self.data_offset += parts_partial_size + FIELD_HEADER_SIZE as usize;
+            field_count += 1;
+        }
+
+        if parts_partial_bval_size > 0 {
+            self.data_offset += parts_partial_bval_size + FIELD_HEADER_SIZE as usize;
+            field_count += 1;
+        }
+
+        if max_records > 0 {
+            self.data_offset += 8 + FIELD_HEADER_SIZE as usize;
+            field_count += 1;
+        }
 
         let filter_exp_size = self.estimate_filter_size(policy.filter_expression());
         if filter_exp_size > 0 {
             field_count += 1;
         }
+
         if let Some(ref aggregation) = statement.aggregation {
             self.data_offset += 1 + FIELD_HEADER_SIZE as usize; // udf type
             self.data_offset += aggregation.package_name.len() + FIELD_HEADER_SIZE as usize;
@@ -997,7 +1055,7 @@ impl Buffer {
             self.write_field_string(&statement.set_name, FieldType::Table);
         }
 
-        self.write_field_header(8, FieldType::TranId);
+        self.write_field_header(8, FieldType::QueryId);
         self.write_u64(task_id);
 
         if let Some(filter) = filter {
@@ -1013,22 +1071,47 @@ impl Buffer {
 
             filter.write(self);
 
-            if let Bins::Some(ref bin_names) = statement.bins {
-                if !bin_names.is_empty() {
-                    self.write_field_header(bin_name_size, FieldType::QueryBinList);
-                    self.write_u8(bin_names.len() as u8);
+            // if let Bins::Some(ref bin_names) = statement.bins {
+            //     if !bin_names.is_empty() {
+            //         self.write_field_header(bin_name_size, FieldType::QueryBinList);
+            //         self.write_u8(bin_names.len() as u8);
 
-                    for bin_name in bin_names {
-                        self.write_u8(bin_name.len() as u8);
-                        self.write_str(bin_name);
-                    }
+            //         for bin_name in bin_names {
+            //             self.write_u8(bin_name.len() as u8);
+            //             self.write_str(bin_name);
+            //         }
+            //     }
+            // }
+        }
+
+        if parts_full_size > 0 {
+            self.write_field_header(parts_full_size, FieldType::PIDArray);
+            for part in &node_partitions.parts_full {
+                let part = part.lock().await;
+                self.write_u16_little_endian(part.id);
+            }
+        }
+
+        if parts_partial_size > 0 {
+            self.write_field_header(parts_partial_size, FieldType::DigestArray);
+            for part in &node_partitions.parts_partial {
+                let part = part.lock().await;
+                part.digest.map(|digest| self.write_bytes(&digest));
+            }
+        }
+
+        if parts_partial_bval_size > 0 {
+            self.write_field_header(parts_partial_bval_size, FieldType::BValArray);
+            for part in &node_partitions.parts_partial {
+                let part = part.lock().await;
+                if let Some(bval) = part.bval {
+                    self.write_u64_little_endian(bval);
                 }
             }
         }
 
-        self.write_field_header(partitions.len() * 2, FieldType::PIDArray);
-        for pid in partitions {
-            self.write_u16_little_endian(*pid);
+        if max_records > 0 {
+            self.write_field_u64(max_records, FieldType::MaxRecords);
         }
 
         if policy.records_per_second > 0 {
@@ -1305,10 +1388,10 @@ impl Buffer {
         self.write_u8(ftype as u8);
     }
 
-    // fn write_field_u64(&mut self, field: u64, ftype: FieldType) {
-    //     self.write_field_header(8, ftype);
-    //     self.write_u64(field);
-    // }
+    fn write_field_u64(&mut self, field: u64, ftype: FieldType) {
+        self.write_field_header(8, ftype);
+        self.write_u64(field);
+    }
 
     fn write_field_u32(&mut self, field: u32, ftype: FieldType) {
         self.write_field_header(4, ftype);
@@ -1584,6 +1667,15 @@ impl Buffer {
         2
     }
 
+    pub(crate) fn write_u64_little_endian(&mut self, val: u64) -> usize {
+        LittleEndian::write_u64(
+            &mut self.data_buffer[self.data_offset..self.data_offset + 8],
+            val,
+        );
+        self.data_offset += 8;
+        8
+    }
+
     pub(crate) fn write_u16_little_endian(&mut self, val: u16) -> usize {
         LittleEndian::write_u16(
             &mut self.data_buffer[self.data_offset..self.data_offset + 2],
@@ -1672,8 +1764,9 @@ impl Buffer {
         }
     }
 
-    // pub(crate) fn dump_buffer(&self) {
-    //     rhexdump!(&self.data_buffer);
-    //     println!("");
-    // }
+    #[allow(dead_code)]
+    pub(crate) fn dump_buffer(&self) {
+        rhexdump!(&self.data_buffer);
+        println!("");
+    }
 }

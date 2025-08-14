@@ -54,13 +54,13 @@ pub enum ResultCode {
     /// Client or server has timed out.
     Timeout,
 
-    /// Xds product is not available.
-    NoXds,
+    /// Operation not allowed in current configuration.
+    AlwaysForbidden,
 
-    /// Server is not accepting requests.
-    ServerNotAvailable,
+    /// Partition is unavailable.
+    PartitionUnavailable,
 
-    /// OperationType is not supported with configured bin type (single-bin or multi-bin).
+    /// Operation type is not supported with configured bin type (single-bin or multi-bin).
     BinTypeError,
 
     /// Record size exceeds limit.
@@ -182,16 +182,13 @@ pub enum ResultCode {
     RoleViolation,
 
     /// Command not allowed because sender IP address not allowlisted.
-    NotWhitelisted,
+    NotAllowlisted,
 
     /// Quota exceeded.
     QuotaExceeded,
 
     /// A user defined function returned an error code.
     UdfBadResponse,
-
-    /// The requested item in a large collection was not found.
-    LargeItemNotFound,
 
     /// Batch functionality has been disabled.
     BatchDisabled,
@@ -263,8 +260,8 @@ impl ResultCode {
             7 => ResultCode::ClusterKeyMismatch,
             8 => ResultCode::ServerMemError,
             9 => ResultCode::Timeout,
-            10 => ResultCode::NoXds,
-            11 => ResultCode::ServerNotAvailable,
+            10 => ResultCode::AlwaysForbidden,
+            11 => ResultCode::PartitionUnavailable,
             12 => ResultCode::BinTypeError,
             13 => ResultCode::RecordTooBig,
             14 => ResultCode::KeyBusy,
@@ -305,10 +302,9 @@ impl ResultCode {
             75 => ResultCode::InvalidQuota,
             80 => ResultCode::NotAuthenticated,
             81 => ResultCode::RoleViolation,
-            82 => ResultCode::NotWhitelisted,
+            82 => ResultCode::NotAllowlisted,
             83 => ResultCode::QuotaExceeded,
             100 => ResultCode::UdfBadResponse,
-            125 => ResultCode::LargeItemNotFound,
             150 => ResultCode::BatchDisabled,
             151 => ResultCode::BatchMaxRequestsExceeded,
             152 => ResultCode::BatchQueuesFull,
@@ -343,8 +339,8 @@ impl ResultCode {
             ResultCode::ClusterKeyMismatch => String::from("Cluster key mismatch"),
             ResultCode::ServerMemError => String::from("Server memory error"),
             ResultCode::Timeout => String::from("Timeout"),
-            ResultCode::NoXds => String::from("Xds not available"),
-            ResultCode::ServerNotAvailable => String::from("Server not available"),
+            ResultCode::AlwaysForbidden => String::from("Xds not available"),
+            ResultCode::PartitionUnavailable => String::from("Server not available"),
             ResultCode::BinTypeError => String::from("Bin type error"),
             ResultCode::RecordTooBig => String::from("Record too big"),
             ResultCode::KeyBusy => String::from("Hot key"),
@@ -391,10 +387,9 @@ impl ResultCode {
             ResultCode::InvalidQuota => String::from("Invalid quota"),
             ResultCode::NotAuthenticated => String::from("Not authenticated"),
             ResultCode::RoleViolation => String::from("Role violation"),
-            ResultCode::NotWhitelisted => String::from("Command not whitelisted"),
+            ResultCode::NotAllowlisted => String::from("Command not whitelisted"),
             ResultCode::QuotaExceeded => String::from("Quota exceeded"),
             ResultCode::UdfBadResponse => String::from("Udf returned error"),
-            ResultCode::LargeItemNotFound => String::from("Large collection item not found"),
             ResultCode::BatchDisabled => String::from("Batch functionality has been disabled"),
             ResultCode::BatchMaxRequestsExceeded => {
                 String::from("Batch max requests have been exceeded")

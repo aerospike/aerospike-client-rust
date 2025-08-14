@@ -16,18 +16,23 @@
 extern crate rand;
 
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::Arc;
 use std::thread;
+
+use aerospike_rt::Mutex;
 
 use crossbeam_queue::SegQueue;
 use rand::Rng;
 
 use crate::errors::Result;
+use crate::query::{PartitionFilter, PartitionTracker};
 use crate::Record;
 
 /// Virtual collection of records retrieved through queries and scans. During a query/scan,
 /// multiple threads will retrieve records from the server nodes and put these records on an
 /// internal queue managed by the recordset. The single user thread consumes these records from the
 /// queue.
+#[derive(Debug)]
 pub struct Recordset {
     instances: AtomicUsize,
     record_queue_count: AtomicUsize,
@@ -35,11 +40,22 @@ pub struct Recordset {
     record_queue: SegQueue<Result<Record>>,
     active: AtomicBool,
     task_id: AtomicUsize,
+    pub(crate) tracker: Arc<Mutex<PartitionTracker>>,
+}
+
+impl Drop for Recordset {
+    fn drop(&mut self) {
+        // close the recordset to finish all the commands sending data
+        self.close();
+    }
 }
 
 impl Recordset {
-    #[doc(hidden)]
-    pub fn new(rec_queue_size: usize, nodes: usize) -> Self {
+    pub(crate) fn new(
+        rec_queue_size: usize,
+        nodes: usize,
+        tracker: Arc<Mutex<PartitionTracker>>,
+    ) -> Self {
         let mut rng = rand::thread_rng();
         let task_id = rng.gen::<usize>();
 
@@ -50,6 +66,7 @@ impl Recordset {
             record_queue: SegQueue::new(),
             active: AtomicBool::new(true),
             task_id: AtomicUsize::new(task_id),
+            tracker: tracker,
         }
     }
 
@@ -63,8 +80,31 @@ impl Recordset {
         self.active.load(Ordering::Relaxed)
     }
 
-    #[doc(hidden)]
-    pub fn push(&self, record: Result<Record>) -> Option<Result<Record>> {
+    pub(crate) fn reset_task_id(&self) {
+        let mut rng = rand::thread_rng();
+        let task_id = rng.gen::<usize>();
+        self.task_id.store(task_id, Ordering::Relaxed);
+    }
+
+    pub(crate) async fn busy_push(&self, mut record: Result<Record>) {
+        loop {
+            let result = self.push(record);
+            match result {
+                None => break,
+                Some(returned) => {
+                    record = returned;
+                    // thread::yield_now();
+                    aerospike_rt::task::yield_now().await;
+                }
+            }
+        }
+    }
+
+    fn push(&self, record: Result<Record>) -> Option<Result<Record>> {
+        if !self.is_active() {
+            return None; // accepted. That allows commands waiting to continue and exit
+        }
+
         if self.record_queue_count.fetch_add(1, Ordering::Relaxed)
             < self.record_queue_size.load(Ordering::Relaxed)
         {
@@ -76,15 +116,22 @@ impl Recordset {
     }
 
     /// Returns the task ID for the scan/query.
-    pub fn task_id(&self) -> u64 {
+    pub(crate) fn task_id(&self) -> u64 {
         self.task_id.load(Ordering::Relaxed) as u64
     }
 
-    #[doc(hidden)]
-    pub fn signal_end(&self) {
+    pub(crate) fn signal_end(&self) {
         if self.instances.fetch_sub(1, Ordering::Relaxed) == 1 {
             self.close();
         };
+    }
+
+    /// If the recordset is inactive, it will extract the PartitionFilter cursor to use in a future scan/query.
+    pub async fn partition_filter(&self) -> Option<PartitionFilter> {
+        if !self.is_active() {
+            return self.tracker.lock().await.extract_partition_filter();
+        }
+        None
     }
 }
 
@@ -99,6 +146,7 @@ impl<'a> Iterator for &'a Recordset {
                     self.record_queue_count.fetch_sub(1, Ordering::Relaxed);
                     return result;
                 }
+                // aerospike_rt::task::yield_now().await;
                 thread::yield_now();
                 continue;
             }

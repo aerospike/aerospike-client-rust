@@ -14,22 +14,25 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::thread;
 use std::time::Duration;
+
+use aerospike_rt::Mutex;
 
 use crate::cluster::Node;
 use crate::commands::buffer;
 use crate::commands::field_type::FieldType;
 use crate::commands::Command;
 use crate::errors::{Error, Result};
-use crate::net::Connection;
-use crate::query::Recordset;
+use crate::net::{BufferedConn, Connection};
+use crate::query::{NodePartitions, Recordset};
 use crate::value::bytes_to_particle;
 use crate::{Key, Record, ResultCode, Value};
 
 pub(crate) struct StreamCommand {
+    is_scan: bool,
     node: Arc<Node>,
     pub(crate) recordset: Arc<Recordset>,
+    pub(crate) node_partitions: Arc<Mutex<NodePartitions>>,
 }
 
 impl Drop for StreamCommand {
@@ -40,12 +43,26 @@ impl Drop for StreamCommand {
 }
 
 impl StreamCommand {
-    pub fn new(node: Arc<Node>, recordset: Arc<Recordset>) -> Self {
-        StreamCommand { node, recordset }
+    pub fn new(
+        node: Arc<Node>,
+        recordset: Arc<Recordset>,
+        node_partitions: Arc<Mutex<NodePartitions>>,
+        is_scan: bool,
+    ) -> Self {
+        StreamCommand {
+            is_scan,
+            node,
+            recordset,
+            node_partitions,
+        }
     }
 
-    async fn parse_record(conn: &mut Connection, size: usize) -> Result<(Option<Record>, bool)> {
-        let result_code = ResultCode::from(conn.buffer.read_u8(Some(5)));
+    async fn parse_record(
+        &self,
+        conn: &mut BufferedConn<'_>,
+        size: usize,
+    ) -> Result<(Option<Record>, Option<u64>, bool)> {
+        let result_code = ResultCode::from(conn.buffer().read_u8(Some(5)));
         if result_code != ResultCode::Ok {
             if conn.bytes_read() < size {
                 let remaining = size - conn.bytes_read();
@@ -53,56 +70,77 @@ impl StreamCommand {
             }
 
             match result_code {
-                ResultCode::KeyNotFoundError => return Ok((None, false)),
-                _ => return Err(Error::ServerError(result_code, false, conn.addr.clone())),
+                ResultCode::KeyNotFoundError | ResultCode::FilteredOut => {
+                    return Ok((None, None, false))
+                }
+                ResultCode::PartitionUnavailable => (),
+                _ => {
+                    return Err(Error::ServerError(
+                        result_code,
+                        false,
+                        conn.conn.addr.clone(),
+                    ))
+                }
             }
         }
 
         // if cmd is the end marker of the response, do not proceed further
-        let info3 = conn.buffer.read_u8(Some(3));
+        let info3 = conn.buffer().read_u8(Some(3));
         if info3 & buffer::INFO3_LAST == buffer::INFO3_LAST {
-            return Ok((None, false));
+            return Ok((None, None, false));
         }
 
-        conn.buffer.skip(6);
-        let generation = conn.buffer.read_u32(None);
-        let expiration = conn.buffer.read_u32(None);
-        conn.buffer.skip(4);
-        let field_count = conn.buffer.read_u16(None) as usize; // almost certainly 0
-        let op_count = conn.buffer.read_u16(None) as usize;
+        conn.buffer().skip(6);
+        let generation = conn.buffer().read_u32(None);
+        let expiration = conn.buffer().read_u32(None);
+        conn.buffer().skip(4);
+        let field_count = conn.buffer().read_u16(None) as usize; // almost certainly 0
+        let op_count = conn.buffer().read_u16(None) as usize;
 
-        let (key, _) = StreamCommand::parse_key(conn, field_count).await?;
+        let (key, bval) = StreamCommand::parse_key(conn, field_count).await?;
 
         // Partition is done, don't go further
         if info3 & buffer::INFO3_PARTITION_DONE != 0 {
-            return Ok((None, true));
+            // return Ok((None, true));
+            if result_code != ResultCode::Ok {
+                let mut tracker = self.recordset.tracker.lock().await;
+                let mut node_partitions = self.node_partitions.lock().await;
+                tracker
+                    .partition_unavailable(&mut node_partitions, generation as u16)
+                    .await;
+            }
+            return Ok((None, None, true));
         }
 
         let mut bins: HashMap<String, Value> = HashMap::with_capacity(op_count);
 
         for _ in 0..op_count {
             conn.read_buffer(8).await?;
-            let op_size = conn.buffer.read_u32(None) as usize;
-            conn.buffer.skip(1);
-            let particle_type = conn.buffer.read_u8(None);
-            conn.buffer.skip(1);
-            let name_size = conn.buffer.read_u8(None) as usize;
+            let op_size = conn.buffer().read_u32(None) as usize;
+            conn.buffer().skip(1);
+            let particle_type = conn.buffer().read_u8(None);
+            conn.buffer().skip(1);
+            let name_size = conn.buffer().read_u8(None) as usize;
             conn.read_buffer(name_size).await?;
-            let name: String = conn.buffer.read_str(name_size)?;
+            let name: String = conn.buffer().read_str(name_size)?;
 
             let particle_bytes_size = op_size - (4 + name_size);
             conn.read_buffer(particle_bytes_size).await?;
-            let value = bytes_to_particle(particle_type, &mut conn.buffer, particle_bytes_size)?;
+            let value = bytes_to_particle(particle_type, &mut conn.buffer(), particle_bytes_size)?;
 
             bins.insert(name, value);
         }
 
         let record = Record::new(Some(key), bins, generation, expiration);
-        Ok((Some(record), true))
+        Ok((Some(record), bval, true))
     }
 
-    async fn parse_stream(&mut self, conn: &mut Connection, size: usize) -> Result<bool> {
-        while self.recordset.is_active() && conn.bytes_read() < size {
+    async fn parse_stream<'a>(
+        &mut self,
+        conn: &'a mut BufferedConn<'a>,
+        size: usize,
+    ) -> Result<bool> {
+        'outer: while self.recordset.is_active() && !conn.exhausted() {
             // Read header.
             if let Err(err) = conn
                 .read_buffer(buffer::MSG_REMAINING_HEADER_SIZE as usize)
@@ -112,22 +150,27 @@ impl StreamCommand {
                 return Err(err);
             }
 
-            let res = StreamCommand::parse_record(conn, size).await;
+            let res = self.parse_record(conn, size).await;
             match res {
-                Ok((Some(mut rec), _)) => loop {
-                    let result = self.recordset.push(Ok(rec));
-                    match result {
-                        None => break,
-                        Some(returned) => {
-                            rec = returned?;
-                            thread::yield_now();
-                        }
+                Ok((Some(rec), bval, _)) => {
+                    let mut tracker = self.recordset.tracker.lock().await;
+                    let mut node_partitions = self.node_partitions.lock().await;
+                    if !tracker.allow_record(&mut node_partitions) {
+                        continue 'outer;
                     }
-                },
-                Ok((None, false)) => return Ok(false),
-                Ok((None, true)) => continue, // handle partition done
+                    let key = &rec.key.clone().unwrap();
+                    self.recordset.busy_push(Ok(rec)).await;
+
+                    if self.is_scan {
+                        tracker.set_digest(&mut node_partitions, key).await?;
+                    } else {
+                        tracker.set_last(&mut node_partitions, key, bval).await?;
+                    }
+                }
+                Ok((None, _, false)) => return Ok(false),
+                Ok((None, _, true)) => continue, // handle partition done
                 Err(err) => {
-                    self.recordset.push(Err(err));
+                    self.recordset.busy_push(Err(err)).await;
                     return Ok(false);
                 }
             };
@@ -137,7 +180,7 @@ impl StreamCommand {
     }
 
     pub async fn parse_key(
-        conn: &mut Connection,
+        conn: &mut BufferedConn<'_>,
         field_count: usize,
     ) -> Result<(Key, Option<u64>)> {
         let mut digest: [u8; 20] = [0; 20];
@@ -148,31 +191,31 @@ impl StreamCommand {
 
         for _ in 0..field_count {
             conn.read_buffer(4).await?;
-            let field_len = conn.buffer.read_u32(None) as usize;
+            let field_len = conn.buffer().read_u32(None) as usize;
             conn.read_buffer(field_len).await?;
-            let field_type = conn.buffer.read_u8(None);
+            let field_type = conn.buffer().read_u8(None);
 
             match field_type {
                 x if x == FieldType::DigestRipe as u8 => {
-                    digest.copy_from_slice(conn.buffer.read_slice(field_len - 1));
+                    digest.copy_from_slice(conn.buffer().read_slice(field_len - 1));
                 }
                 x if x == FieldType::Namespace as u8 => {
-                    namespace = conn.buffer.read_str(field_len - 1)?;
+                    namespace = conn.buffer().read_str(field_len - 1)?;
                 }
                 x if x == FieldType::Table as u8 => {
-                    set_name = conn.buffer.read_str(field_len - 1)?;
+                    set_name = conn.buffer().read_str(field_len - 1)?;
                 }
                 x if x == FieldType::Key as u8 => {
-                    let particle_type = conn.buffer.read_u8(None);
+                    let particle_type = conn.buffer().read_u8(None);
                     let particle_bytes_size = field_len - 2;
                     orig_key = Some(bytes_to_particle(
                         particle_type,
-                        &mut conn.buffer,
+                        &mut conn.buffer(),
                         particle_bytes_size,
                     )?);
                 }
                 x if x == FieldType::BValArray as u8 => {
-                    bval = Some(conn.buffer.read_le_u64(None));
+                    bval = Some(conn.buffer().read_le_u64(None));
                 }
                 _ => unreachable!(),
             }
@@ -206,7 +249,7 @@ impl Command for StreamCommand {
     }
 
     #[allow(unused_variables)]
-    fn prepare_buffer(&mut self, conn: &mut Connection) -> Result<()> {
+    async fn prepare_buffer(&mut self, conn: &mut Connection) -> Result<()> {
         // should be implemented downstream
         unreachable!()
     }
@@ -219,13 +262,18 @@ impl Command for StreamCommand {
         let mut status = true;
 
         while status {
+            let mut conn = BufferedConn::new(conn);
+
+            conn.set_limit(8);
             conn.read_buffer(8).await?;
-            let size = conn.buffer.read_msg_size(None);
+            let size = conn.buffer().read_msg_size(None);
             conn.bookmark();
 
             status = false;
             if size > 0 {
-                status = self.parse_stream(conn, size as usize).await?;
+                conn.set_limit(size);
+                // status = self.parse_stream(&mut conn, size as usize).await?;
+                status = self.parse_stream(&mut conn, size as usize).await?
             }
         }
 

@@ -14,7 +14,8 @@
 // the License.
 
 use crate::expressions::FilterExpression;
-use crate::policy::{BasePolicy, PolicyLike};
+use crate::policy::{BasePolicy, PolicyLike, Replica, StreamPolicy};
+use aerospike_rt::time::Duration;
 
 /// `ScanPolicy` encapsulates optional parameters used in scan operations.
 #[derive(Debug, Clone)]
@@ -22,22 +23,25 @@ pub struct ScanPolicy {
     /// Base policy instance
     pub base_policy: BasePolicy,
 
-    /// Percent of data to scan. Valid integer range is 1 to 100. Default is 100.
-    /// This is deprecated and won't be sent to the server.
-    pub scan_percent: u8,
-
     /// Maximum number of concurrent requests to server nodes at any point in time. If there are 16
     /// nodes in the cluster and `max_concurrent_nodes` is 8, then scan requests will be made to 8
     /// nodes in parallel. When a scan completes, a new scan request will be issued until all 16
     /// nodes have been scanned. Default (0) is to issue requests to all server nodes in parallel.
     pub max_concurrent_nodes: usize,
 
-    /// Limits returned records per second (rps) rate for each server node.
-    /// It does not apply rps limit if `records_per_second` is zero (default).
-    //
-    /// `records_per_second` is supported in all scans in server versions 6.0+.
-    /// For background queries, `records_per_second` is bounded by the server
-    /// config `background-query-max-rps`.
+    /// Number of records to return to the client. This number is divided by the
+    /// number of nodes involved in the query. The actual number of records returned
+    /// may be less than max_records if node record counts are small and unbalanced across
+    /// nodes.
+    ///
+    /// This field is supported on server versions >= 4.9.
+    ///
+    /// Default: 0 (do not limit record count)
+    pub max_records: u64,
+
+    /// Limits returned records per second (rps) rate for each server.
+    /// Will not apply rps limit if records_per_second is 0 (default).
+    /// Currently only applicable to a scan without a defined filter.
     pub records_per_second: u32,
 
     /// Number of records to place in queue before blocking. Records received from multiple server
@@ -56,6 +60,9 @@ pub struct ScanPolicy {
 
     /// Optional Filter Expression
     pub filter_expression: Option<FilterExpression>,
+
+    /// Defines algorithm used to determine the target node for a command. The replica algorithm only affects single record and batch commands.
+    pub replica: Replica,
 }
 
 impl ScanPolicy {
@@ -74,13 +81,14 @@ impl Default for ScanPolicy {
     fn default() -> Self {
         ScanPolicy {
             base_policy: BasePolicy::default(),
-            scan_percent: 100,
             max_concurrent_nodes: 0,
+            max_records: 0,
             records_per_second: 0,
             record_queue_size: 1024,
             fail_on_cluster_change: true,
             socket_timeout: 10000,
             filter_expression: None,
+            replica: Replica::default(),
         }
     }
 }
@@ -88,5 +96,30 @@ impl Default for ScanPolicy {
 impl PolicyLike for ScanPolicy {
     fn base(&self) -> &BasePolicy {
         &self.base_policy
+    }
+}
+
+impl StreamPolicy for &ScanPolicy {
+    fn max_records(&self) -> Option<u64> {
+        if self.max_records > 0 {
+            Some(self.max_records)
+        } else {
+            None
+        }
+    }
+    fn sleep_between_retries(&self) -> Option<Duration> {
+        self.base_policy.sleep_between_retries
+    }
+    fn socket_timeout(&self) -> Option<Duration> {
+        self.base_policy.total_timeout //self.base_policy.socket_timeout
+    }
+    fn total_timeout(&self) -> Option<Duration> {
+        self.base_policy.total_timeout
+    }
+    fn replica(&self) -> crate::policy::Replica {
+        self.replica
+    }
+    fn max_retries(&self) -> Option<usize> {
+        self.base_policy.max_retries
     }
 }

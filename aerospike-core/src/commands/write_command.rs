@@ -67,7 +67,7 @@ impl<'a> Command for WriteCommand<'a> {
         conn.flush().await
     }
 
-    fn prepare_buffer(&mut self, conn: &mut Connection) -> Result<()> {
+    async fn prepare_buffer(&mut self, conn: &mut Connection) -> Result<()> {
         conn.buffer.set_write(
             self.policy,
             self.operation,

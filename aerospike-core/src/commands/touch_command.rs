@@ -56,7 +56,7 @@ impl<'a> Command for TouchCommand<'a> {
         conn.flush().await
     }
 
-    fn prepare_buffer(&mut self, conn: &mut Connection) -> Result<()> {
+    async fn prepare_buffer(&mut self, conn: &mut Connection) -> Result<()> {
         conn.buffer.set_touch(self.policy, self.single_command.key)
     }
 

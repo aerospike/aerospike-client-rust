@@ -3,7 +3,7 @@
 // Portions may be licensed to Aerospike, Inc. under one or more contributor
 // license agreements.
 //
-// Licensed under the Apache License, Version 2.0 (the "License"); you may not
+// Licensed under the Apache Licenseersion 2.0 (the "License"); you may not
 // use this file except in compliance with the License. You may obtain a copy of
 // the License at http://www.apache.org/licenses/LICENSE-2.0
 //
@@ -13,14 +13,13 @@
 // License for the specific language governing permissions and limitations under
 // the License.
 
-pub(crate) use self::connection::BufferedConn;
-pub use self::connection::Connection;
-pub use self::connection_pool::ConnectionPool;
-pub use self::connection_pool::PooledConnection;
-pub use self::host::Host;
-pub use self::host::ToHosts;
+use aerospike_rt::time::Duration;
 
-mod connection;
-mod connection_pool;
-pub mod host;
-mod parser;
+pub(crate) trait StreamPolicy {
+    fn max_records(&self) -> Option<u64>;
+    fn sleep_between_retries(&self) -> Option<Duration>;
+    fn socket_timeout(&self) -> Option<Duration>;
+    fn total_timeout(&self) -> Option<Duration>;
+    fn replica(&self) -> crate::policy::Replica;
+    fn max_retries(&self) -> Option<usize>;
+}

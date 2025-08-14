@@ -16,13 +16,13 @@
 use crate::expressions::FilterExpression;
 use crate::policy::BasePolicy;
 use crate::ConsistencyLevel;
-use std::time::Duration;
+use aerospike_rt::time::Duration;
 
 use super::{PolicyLike, Replica};
 
 /// `ReadPolicy` excapsulates parameters for transaction policy attributes
 /// used in all database operation calls.
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct ReadPolicy {
     /// Base policy instance
     pub base_policy: BasePolicy,
@@ -34,7 +34,7 @@ pub struct ReadPolicy {
 impl Default for BasePolicy {
     fn default() -> BasePolicy {
         BasePolicy {
-            timeout: Some(Duration::new(30, 0)),
+            total_timeout: Some(Duration::new(30, 0)),
             max_retries: Some(2),
             sleep_between_retries: Some(Duration::new(0, 500_000_000)),
             consistency_level: ConsistencyLevel::ConsistencyOne,

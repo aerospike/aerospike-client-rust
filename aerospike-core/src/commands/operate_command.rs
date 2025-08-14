@@ -69,7 +69,7 @@ impl<'a> Command for OperateCommand<'a> {
         conn.flush().await
     }
 
-    fn prepare_buffer(&mut self, conn: &mut Connection) -> Result<()> {
+    async fn prepare_buffer(&mut self, conn: &mut Connection) -> Result<()> {
         conn.buffer.set_operate(
             self.policy,
             self.read_command.single_command.key,

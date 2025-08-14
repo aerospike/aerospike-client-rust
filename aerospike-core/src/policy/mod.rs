@@ -30,6 +30,7 @@ mod read_policy;
 mod read_touch_ttl_percent;
 mod record_exists_action;
 mod scan_policy;
+mod stream_policy;
 mod write_policy;
 
 pub use self::admin_policy::AdminPolicy;
@@ -46,6 +47,7 @@ pub use self::read_policy::ReadPolicy;
 pub use self::read_touch_ttl_percent::ReadTouchTTL;
 pub use self::record_exists_action::RecordExistsAction;
 pub use self::scan_policy::ScanPolicy;
+pub(crate) use self::stream_policy::StreamPolicy;
 pub use self::write_policy::WritePolicy;
 
 use crate::expressions::FilterExpression;
@@ -65,7 +67,7 @@ pub trait Policy {
     /// transaction as well.
     ///
     /// The timeout is also used as a socket timeout. Default: 0 (no timeout).
-    fn timeout(&self) -> Option<Duration>;
+    fn total_timeout(&self) -> Option<Duration>;
 
     /// Maximum number of retries before aborting the current transaction. A retry may be attempted
     /// when there is a network error. If `max_retries` is exceeded, the abort will occur even if
@@ -99,8 +101,8 @@ where
         self.base().deadline()
     }
 
-    fn timeout(&self) -> Option<Duration> {
-        self.base().timeout()
+    fn total_timeout(&self) -> Option<Duration> {
+        self.base().total_timeout()
     }
 
     fn max_retries(&self) -> Option<usize> {
@@ -117,9 +119,18 @@ where
 pub enum Replica {
     /// Use node containing key's master partition.
     Master,
-    /// Try node containing master partition first. If connection fails, all commands try nodes containing replicated partitions. If socketTimeout is reached, reads also try nodes containing replicated partitions, but writes remain on master node.
+
+    /// Try node containing master partition first.
+    /// If connection fails, all commands try nodes containing replicated partitions.
+    /// If socketTimeout is reached, reads also try nodes containing replicated partitions,
+    /// but writes remain on master node.
     Sequence,
-    /// Try node on the same rack as the client first. If there are no nodes on the same rack, use SEQUENCE instead.
+
+    /// Try node on the same rack as the client first.  If timeout or there are no nodes on the
+    /// same rack, use SEQUENCE instead.
+    ///
+    /// {@link ClientPolicy#rackAware}, {@link ClientPolicy#rackId}, and server rack
+    /// configuration must also be set to enable this functionality.
     PreferRack,
 }
 
@@ -141,7 +152,7 @@ pub struct BasePolicy {
     /// This timeout is used to set the socket timeout and is also sent to the
     /// server along with the transaction in the wire protocol.
     /// Default to no timeout (0).
-    pub timeout: Option<Duration>,
+    pub total_timeout: Option<Duration>,
 
     /// MaxRetries determines maximum number of retries before aborting the current transaction.
     /// A retry is attempted when there is a network error other than timeout.
@@ -173,11 +184,11 @@ pub struct BasePolicy {
 
 impl Policy for BasePolicy {
     fn deadline(&self) -> Option<Instant> {
-        self.timeout.map(|timeout| Instant::now() + timeout)
+        self.total_timeout.map(|timeout| Instant::now() + timeout)
     }
 
-    fn timeout(&self) -> Option<Duration> {
-        self.timeout
+    fn total_timeout(&self) -> Option<Duration> {
+        self.total_timeout
     }
 
     fn max_retries(&self) -> Option<usize> {
