@@ -49,10 +49,6 @@ pub struct ScanPolicy {
     /// the queue is full, the producer threads will block until records are consumed.
     pub record_queue_size: usize,
 
-    /// Terminate scan if cluster is in fluctuating state.
-    /// This is deprecated and won't be sent to the server.
-    pub fail_on_cluster_change: bool,
-
     /// Maximum time in milliseconds to wait when polling socket for availability prior to
     /// performing an operation on the socket on the server side. Zero means there is no socket
     /// timeout. Default: 10,000 ms.
@@ -85,7 +81,6 @@ impl Default for ScanPolicy {
             max_records: 0,
             records_per_second: 0,
             record_queue_size: 1024,
-            fail_on_cluster_change: true,
             socket_timeout: 10000,
             filter_expression: None,
             replica: Replica::default(),
