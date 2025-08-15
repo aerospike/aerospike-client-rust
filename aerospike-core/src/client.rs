@@ -655,18 +655,26 @@ impl Client {
     ///
     /// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap();
     /// # let client = Client::new(&ClientPolicy::default(), &hosts).wait.unwrap();
-    /// match client.scan(&ScanPolicy::default(), "test", "demo", Bins::All).await {
-    ///     Ok(records) => {
-    ///         let mut count = 0;
-    ///         for record in &*records {
-    ///             match record {
-    ///                 Ok(record) => count += 1,
-    ///                 Err(err) => panic!("Error executing scan: {}", err),
+    /// let sp = ScanPolicy::default();
+    /// sp.max_records = 1000;
+    ///
+    /// let pf = PartitionFilter::all();
+    /// while !pf.done() {
+    ///     let rs = client.scan(&sp, pf, "test", "demo", Bins::All).await;
+    ///     match rs {
+    ///         Ok(records) => {
+    ///             let mut count = 0;
+    ///             for record in &*records {
+    ///                 match record {
+    ///                     Ok(record) => count += 1,
+    ///                     Err(err) => panic!("Error executing scan: {}", err),
+    ///                 }
     ///             }
-    ///         }
-    ///         println!("Records: {}", count);
-    ///     },
-    ///     Err(err) => println!("Failed to execute scan: {}", err),
+    ///             println!("Records: {}", count);
+    ///         },
+    ///         Err(err) => println!("Failed to execute scan: {}", err),
+    ///     }
+    ///     pf = recordset.partition_filter();
     /// }
     /// ```
     ///
@@ -836,13 +844,26 @@ impl Client {
     /// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap();
     /// # let client = Client::new(&ClientPolicy::default(), &hosts).await.unwrap();
     /// let stmt = Statement::new("test", "test", Bins::All);
-    /// match client.query(&QueryPolicy::default(), stmt).await {
-    ///     Ok(records) => {
-    ///         for record in &*records {
-    ///             // .. process record
-    ///         }
-    ///     },
-    ///     Err(err) => println!("Error fetching record: {}", err),
+    /// let qp = QueryPolicy::default();
+    /// qp.max_records = 1000;
+    ///
+    /// let pf = PartitionFilter::all();
+    /// while !pf.done() {
+    ///     let rs = client.query(&qp, pf, stmt).await {
+    ///     match rs {
+    ///         Ok(records) => {
+    ///             let mut count = 0;
+    ///             for record in &*records {
+    ///                 match record {
+    ///                     Ok(record) => count += 1,
+    ///                     Err(err) => panic!("Error executing query: {}", err),
+    ///                 }
+    ///             }
+    ///             println!("Records: {}", count);
+    ///         },
+    ///         Err(err) => println!("Failed to execute query: {}", err),
+    ///     }
+    ///     pf = recordset.partition_filter();
     /// }
     /// ```
     ///

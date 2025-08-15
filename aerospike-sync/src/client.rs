@@ -19,6 +19,7 @@ use std::vec::Vec;
 
 use aerospike_core::errors::Result;
 use aerospike_core::operations::Operation;
+use aerospike_core::query::PartitionFilter;
 use aerospike_core::{
     BatchOperation, BatchPolicy, BatchRecord, Bin, Bins, ClientPolicy, CollectionIndexType,
     IndexTask, IndexType, Key, Node, Privilege, QueryPolicy, ReadPolicy, Record, Recordset,
@@ -507,7 +508,8 @@ impl Client {
     ///
     /// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap();
     /// # let client = Client::new(&ClientPolicy::default(), &hosts).wait.unwrap();
-    /// match client.scan(&ScanPolicy::default(), "test", "demo", Bins::All) {
+    /// let pf = PartitionFilter::all();
+    /// match client.scan(&ScanPolicy::default(), pf, "test", "demo", Bins::All) {
     ///     Ok(records) => {
     ///         let mut count = 0;
     ///         for record in &*records {
@@ -527,28 +529,7 @@ impl Client {
     pub fn scan<T>(
         &self,
         policy: &ScanPolicy,
-        namespace: &str,
-        set_name: &str,
-        bins: T,
-    ) -> Result<Arc<Recordset>>
-    where
-        T: Into<Bins> + Send + Sync + 'static,
-    {
-        block_on(self.async_client.scan(policy, namespace, set_name, bins))
-    }
-
-    /// Read all records in the specified namespace and set for one node only and return a record
-    /// iterator. The scan executor puts records on a queue in separate threads. The calling thread
-    /// concurrently pops records off the queue through the record iterator. Up to
-    /// `policy.max_concurrent_nodes` nodes are scanned in parallel. If concurrent nodes is set to
-    /// zero, the server nodes are read in series.
-    ///
-    /// # Panics
-    /// panics if the async block fails
-    pub fn scan_node<T>(
-        &self,
-        policy: &ScanPolicy,
-        node: Arc<Node>,
+        partition_filter: PartitionFilter,
         namespace: &str,
         set_name: &str,
         bins: T,
@@ -558,7 +539,7 @@ impl Client {
     {
         block_on(
             self.async_client
-                .scan_node(policy, node, namespace, set_name, bins),
+                .scan(policy, partition_filter, namespace, set_name, bins),
         )
     }
 
@@ -575,7 +556,8 @@ impl Client {
     /// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap();
     /// # let client = Client::new(&ClientPolicy::default(), &hosts).unwrap();
     /// let stmt = Statement::new("test", "test", Bins::All);
-    /// match client.query(&QueryPolicy::default(), stmt) {
+    /// let pf = PartitionFilter::all();
+    /// match client.query(&QueryPolicy::default(), pf, stmt) {
     ///     Ok(records) => {
     ///         for record in &*records {
     ///             // .. process record
@@ -587,23 +569,13 @@ impl Client {
     ///
     /// # Panics
     /// Panics if the async block fails
-    pub fn query(&self, policy: &QueryPolicy, statement: Statement) -> Result<Arc<Recordset>> {
-        block_on(self.async_client.query(policy, statement))
-    }
-
-    /// Execute a query on a single server node and return a record iterator. The query executor
-    /// puts records on a queue in separate threads. The calling thread concurrently pops records
-    /// off the queue through the record iterator.
-    ///
-    /// # Panics
-    /// Panics when the async block fails
-    pub fn query_node(
+    pub fn query(
         &self,
         policy: &QueryPolicy,
-        node: Arc<Node>,
+        partition_filter: PartitionFilter,
         statement: Statement,
     ) -> Result<Arc<Recordset>> {
-        block_on(self.async_client.query_node(policy, node, statement))
+        block_on(self.async_client.query(policy, partition_filter, statement))
     }
 
     /// Removes all records in the specified namespace/set efficiently.
@@ -744,7 +716,7 @@ impl Client {
     /// Retrieves roles and their privileges.
     /// If None is passed for the role argument, all roles will be returned.
     pub async fn query_roles(&self, role: Option<&str>) -> Result<Vec<Role>> {
-        block_on(self.async_client.query_roles(&role))
+        block_on(self.async_client.query_roles(role))
     }
 
     /// Removes a user-defined role.
