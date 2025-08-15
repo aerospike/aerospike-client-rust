@@ -846,13 +846,26 @@ fn add_write(
 }
 
 #[doc(hidden)]
-const fn get_value_type(return_type: i64) -> ExpType {
+fn get_value_type(return_type: i64) -> ExpType {
     let t = return_type & !(MapReturnType::Inverted as i64);
-    if t == MapReturnType::Key as i64 || t == MapReturnType::Value as i64 {
-        ExpType::LIST
-    } else if t == MapReturnType::KeyValue as i64 {
-        ExpType::MAP
-    } else {
-        ExpType::INT
+    
+    match t {
+        t if t == MapReturnType::Index as i64 
+          || t == MapReturnType::ReverseIndex as i64
+          || t == MapReturnType::Rank as i64
+          || t == MapReturnType::ReverseRank as i64 => ExpType::LIST,
+
+        t if t == MapReturnType::Count as i64 => ExpType::INT,
+
+        t if t == MapReturnType::Key as i64 
+          || t == MapReturnType::Value as i64 => ExpType::LIST,
+
+        t if t == MapReturnType::KeyValue as i64
+          || t == MapReturnType::OrderedMap as i64 
+          || t == MapReturnType::UnorderedMap as i64 => ExpType::MAP,
+
+        t if t == MapReturnType::Exists as i64 => ExpType::BOOL,
+        
+        _ => panic!("Invalid MapReturnType: {}", return_type)
     }
 }

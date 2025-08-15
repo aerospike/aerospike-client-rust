@@ -698,10 +698,21 @@ fn add_write(
 }
 
 #[doc(hidden)]
-const fn get_value_type(return_type: i64) -> ExpType {
-    if (return_type & !(ListReturnType::Inverted as i64)) == ListReturnType::Values as i64 {
-        ExpType::LIST
-    } else {
-        ExpType::INT
+fn get_value_type(return_type: i64) -> ExpType {
+    let t = return_type & !(ListReturnType::Inverted as i64);
+    
+    match t {
+        t if t == ListReturnType::Index as i64 
+          || t == ListReturnType::ReverseIndex as i64
+          || t == ListReturnType::Rank as i64
+          || t == ListReturnType::ReverseRank as i64 => ExpType::LIST,
+
+        t if t == ListReturnType::Count as i64 => ExpType::INT,
+
+        t if t == ListReturnType::Values as i64 => ExpType::LIST,
+
+        t if t == ListReturnType::Exists as i64 => ExpType::BOOL,
+        
+        _ => panic!("Invalid ListReturnType: {}", return_type)
     }
 }
