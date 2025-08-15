@@ -14,13 +14,16 @@
 
 use std::str;
 use std::sync::Arc;
-use std::time::Duration;
+
+use aerospike_rt::time::Duration;
+use aerospike_rt::Mutex;
 
 use crate::cluster::Node;
 use crate::commands::{Command, SingleCommand, StreamCommand};
 use crate::errors::Result;
 use crate::net::Connection;
 use crate::policy::ScanPolicy;
+use crate::query::NodePartitions;
 use crate::{Bins, Recordset};
 
 pub(crate) struct ScanCommand<'a> {
@@ -29,26 +32,28 @@ pub(crate) struct ScanCommand<'a> {
     namespace: &'a str,
     set_name: &'a str,
     bins: Bins,
-    partitions: Vec<u16>,
 }
 
 impl<'a> ScanCommand<'a> {
-    pub fn new(
+    pub async fn new(
         policy: &'a ScanPolicy,
-        node: Arc<Node>,
         namespace: &'a str,
         set_name: &'a str,
         bins: Bins,
         recordset: Arc<Recordset>,
-        partitions: Vec<u16>,
+        node_partitions: Arc<Mutex<NodePartitions>>,
     ) -> Self {
+        let node = {
+            let node_partitions = node_partitions.lock().await;
+            node_partitions.node.clone()
+        };
+
         ScanCommand {
-            stream_command: StreamCommand::new(node, recordset),
+            stream_command: StreamCommand::new(node, recordset, node_partitions, true),
             policy,
             namespace,
             set_name,
             bins,
-            partitions,
         }
     }
 
@@ -72,15 +77,18 @@ impl<'a> Command for ScanCommand<'a> {
         conn.flush().await
     }
 
-    fn prepare_buffer(&mut self, conn: &mut Connection) -> Result<()> {
-        conn.buffer.set_scan(
-            self.policy,
-            self.namespace,
-            self.set_name,
-            &self.bins,
-            self.stream_command.recordset.task_id(),
-            &self.partitions,
-        )
+    async fn prepare_buffer(&mut self, conn: &mut Connection) -> Result<()> {
+        let node_partitions = self.stream_command.node_partitions.lock().await;
+        conn.buffer
+            .set_scan(
+                self.policy,
+                self.namespace,
+                self.set_name,
+                &self.bins,
+                self.stream_command.recordset.task_id(),
+                &node_partitions,
+            )
+            .await
     }
 
     async fn get_node(&mut self) -> Result<Arc<Node>> {

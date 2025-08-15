@@ -53,6 +53,7 @@ impl Default for BatchAttr {
 }
 
 impl BatchAttr {
+    #[allow(dead_code)]
     pub(crate) fn set_read(&mut self, rp: &BatchPolicy) {
         self.filter_expression = None;
         self.read_attr = buffer::INFO1_READ;

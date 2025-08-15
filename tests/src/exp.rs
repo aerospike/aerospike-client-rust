@@ -16,6 +16,7 @@ use crate::common;
 use env_logger;
 
 use aerospike::expressions::*;
+use aerospike::query::PartitionFilter;
 use aerospike::ParticleType;
 use aerospike::*;
 use std::sync::Arc;
@@ -703,7 +704,11 @@ async fn expression_commands() {
 
     // SCAN
     spolicy.filter_expression = Some(eq(int_bin("bin".to_string()), int_val(75)));
-    match client.scan(&spolicy, namespace, &set_name, Bins::All).await {
+    let pf = PartitionFilter::all();
+    match client
+        .scan(&spolicy, pf, namespace, &set_name, Bins::All)
+        .await
+    {
         Ok(records) => {
             let mut count = 0;
             for record in &*records {
@@ -765,7 +770,8 @@ async fn test_filter(client: &Client, filter: FilterExpression, set_name: &str) 
     qpolicy.filter_expression = Some(filter);
 
     let statement = Statement::new(namespace, set_name, Bins::All);
-    client.query(&qpolicy, statement).await.unwrap()
+    let pf = PartitionFilter::all();
+    client.query(&qpolicy, pf, statement).await.unwrap()
 }
 
 fn count_results(rs: Arc<Recordset>) -> usize {

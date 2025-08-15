@@ -14,13 +14,17 @@
 // the License.
 
 use std::fmt;
+use std::io::Cursor;
 use std::result::Result as StdResult;
 
+use crate::cluster::node;
 use crate::errors::Result;
 use crate::Value;
 
+use byteorder::{LittleEndian, ReadBytesExt};
 use ripemd::digest::Digest;
 use ripemd::Ripemd160;
+
 #[cfg(feature = "serialization")]
 use serde::Serialize;
 /// Unique record identifier. Records can be identified using a specified namespace, an optional
@@ -64,6 +68,26 @@ impl Key {
         Ok(key)
     }
 
+    /// Construct a new key from namespace, optional set name, user key and digest.
+    /// The server handles record identifiers by digest only.
+    /// The digest will be set to the provided value and not validated.
+    pub fn key_with_digest<S>(
+        namespace: String,
+        set_name: Option<String>,
+        key: Option<Value>,
+        digest: [u8; 20],
+    ) -> Result<Self>
+    where
+        S: Into<String>,
+    {
+        Ok(Self {
+            namespace: namespace.into(),
+            set_name: set_name.unwrap_or(String::from("")).into(),
+            user_key: key,
+            digest,
+        })
+    }
+
     fn compute_digest(&mut self) -> Result<()> {
         let mut hash = Ripemd160::new();
         hash.update(self.set_name.as_bytes());
@@ -80,6 +104,16 @@ impl Key {
 
     pub(crate) fn has_value_to_send(&self) -> bool {
         self.user_key.is_some()
+    }
+
+    /// Returns the partitionId of the key.
+    pub fn partition_id(&self) -> usize {
+        let mut rdr = Cursor::new(&self.digest[0..4]);
+
+        // CAN'T USE MOD directly - mod will give negative numbers.
+        // First AND makes positive and negative correctly, then mod.
+        // For any x, y : x % 2^y = x & (2^y - 1); the second method is twice as fast
+        rdr.read_u32::<LittleEndian>().unwrap() as usize & (node::PARTITIONS - 1)
     }
 }
 

@@ -20,6 +20,7 @@ use std::thread;
 use crate::common;
 use env_logger;
 
+use aerospike::query::PartitionFilter;
 use aerospike::Task;
 use aerospike::*;
 use aerospike_rt::time::Instant;
@@ -67,7 +68,8 @@ async fn query_single_consumer() {
     // Filter Query
     let mut statement = Statement::new(namespace, &set_name, Bins::All);
     statement.add_filter(as_eq!("bin", 1));
-    let rs = client.query(&qpolicy, statement).await.unwrap();
+    let pf = PartitionFilter::all();
+    let rs = client.query(&qpolicy, pf, statement).await.unwrap();
     let mut count = 0;
     for res in &*rs {
         match res {
@@ -83,7 +85,8 @@ async fn query_single_consumer() {
     // Range Query
     let mut statement = Statement::new(namespace, &set_name, Bins::All);
     statement.add_filter(as_range!("bin", 0, 9));
-    let rs = client.query(&qpolicy, statement).await.unwrap();
+    let pf = PartitionFilter::all();
+    let rs = client.query(&qpolicy, pf, statement).await.unwrap();
     let mut count = 0;
     for res in &*rs {
         match res {
@@ -100,11 +103,100 @@ async fn query_single_consumer() {
 
     client.close().await.unwrap();
 }
+
+#[aerospike_macro::test]
+async fn query_single_consumer_with_cursor() {
+    let _ = env_logger::try_init();
+
+    let client = common::client().await;
+    let namespace = common::namespace();
+    let set_name = create_test_set(&client, EXPECTED).await;
+    let mut qpolicy = QueryPolicy::default();
+    qpolicy.expected_duration = QueryDuration::Short;
+
+    let mut pf = PartitionFilter::all();
+    let mut count = 0;
+    while !pf.done() {
+        // Filter Query
+        let mut statement = Statement::new(namespace, &set_name, Bins::All);
+        statement.add_filter(as_eq!("bin", 1));
+        let rs = client.query(&qpolicy, pf, statement).await.unwrap();
+        for res in &*rs {
+            match res {
+                Ok(rec) => {
+                    assert_eq!(rec.bins["bin"], as_val!(1));
+                    count += 1;
+                }
+                Err(err) => panic!("{:?}", err),
+            }
+        }
+        pf = rs.partition_filter().await.unwrap();
+    }
+    assert_eq!(count, 1);
+
+    let mut pf = PartitionFilter::all();
+    let mut iter = 0;
+    count = 0;
+    qpolicy.max_records = 1;
+    while !pf.done() {
+        iter += 1;
+        // Range Query
+        let mut statement = Statement::new(namespace, &set_name, Bins::Some(vec!["bin".into()]));
+        statement.add_filter(as_range!("bin", 0, 9));
+        let rs = client.query(&qpolicy, pf, statement).await.unwrap();
+        for res in &*rs {
+            match res {
+                Ok(rec) => {
+                    count += 1;
+                    let v: i64 = rec.bins["bin"].clone().into();
+                    assert!(v >= 0);
+                    assert!(v < 10);
+                }
+                Err(err) => panic!("{:?}", err),
+            }
+        }
+        pf = rs.partition_filter().await.unwrap();
+    }
+    assert_eq!(count, 10);
+    assert_eq!(iter, 11);
+
+    let mut pf = PartitionFilter::all();
+    qpolicy.max_records = (EXPECTED / 3) as u64;
+    iter = 0;
+    count = 0;
+    while !pf.done() {
+        iter += 1;
+        // Range Query
+        let statement = Statement::new(namespace, &set_name, Bins::Some(vec!["bin".into()]));
+        let rs = client.query(&qpolicy, pf, statement).await.unwrap();
+        for res in &*rs {
+            match res {
+                Ok(rec) => {
+                    count += 1;
+                    rec.bins.get("bin").unwrap(); // must exists
+                }
+                Err(err) => panic!("{:?}", err),
+            }
+        }
+        pf = rs.partition_filter().await.unwrap();
+    }
+    assert_eq!(count, EXPECTED);
+    assert_eq!(iter, 4);
+
+    client.close().await.unwrap();
+}
+
 #[aerospike_macro::test]
 async fn query_single_consumer_rps() {
     let _ = env_logger::try_init();
 
     let client = common::client().await;
+
+    // only run on single node clusters
+    if client.nodes().await.len() != 1 {
+        return;
+    }
+
     let namespace = common::namespace();
     let set_name = create_test_set(&client, EXPECTED).await;
     let mut qpolicy = QueryPolicy::default();
@@ -115,7 +207,8 @@ async fn query_single_consumer_rps() {
 
     qpolicy.records_per_second = 3;
     let start_time = Instant::now();
-    let rs = client.query(&qpolicy, statement).await.unwrap();
+    let pf = PartitionFilter::all();
+    let rs = client.query(&qpolicy, pf, statement).await.unwrap();
     let mut count = 0;
     for res in &*rs {
         match res {
@@ -148,7 +241,8 @@ async fn query_nobins() {
 
     let mut statement = Statement::new(namespace, &set_name, Bins::None);
     statement.add_filter(as_range!("bin", 0, 9));
-    let rs = client.query(&qpolicy, statement).await.unwrap();
+    let pf = PartitionFilter::all();
+    let rs = client.query(&qpolicy, pf, statement).await.unwrap();
     let mut count = 0;
     for res in &*rs {
         match res {
@@ -178,7 +272,9 @@ async fn query_multi_consumer() {
     let mut statement = Statement::new(namespace, &set_name, Bins::All);
     let f = as_range!("bin", 0, 9);
     statement.add_filter(f);
-    let rs = client.query(&qpolicy, statement).await.unwrap();
+
+    let pf = PartitionFilter::all();
+    let rs = client.query(&qpolicy, pf, statement).await.unwrap();
 
     let count = Arc::new(AtomicUsize::new(0));
     let mut threads = vec![];
@@ -210,40 +306,6 @@ async fn query_multi_consumer() {
     client.close().await.unwrap();
 }
 
-#[aerospike_macro::test]
-async fn query_node() {
-    let _ = env_logger::try_init();
-
-    let client = Arc::new(common::client().await);
-    let namespace = common::namespace();
-    let set_name = create_test_set(&client, EXPECTED).await;
-
-    let count = Arc::new(AtomicUsize::new(0));
-    let mut threads = vec![];
-
-    for node in client.nodes().await {
-        let client = client.clone();
-        let count = count.clone();
-        let set_name = set_name.clone();
-        threads.push(aerospike_rt::spawn(async move {
-            let qpolicy = QueryPolicy::default();
-            let mut statement = Statement::new(namespace, &set_name, Bins::All);
-            statement.add_filter(as_range!("bin", 0, 99));
-            let rs = client.query_node(&qpolicy, node, statement).await.unwrap();
-            let ok = (&*rs).filter(Result::is_ok).count();
-            count.fetch_add(ok, Ordering::Relaxed);
-        }));
-    }
-
-    for t in threads {
-        t.await.unwrap();
-    }
-
-    assert_eq!(count.load(Ordering::Relaxed), 100);
-
-    client.close().await.unwrap();
-}
-
 // https://github.com/aerospike/aerospike-client-rust/issues/115
 #[aerospike_macro::test]
 async fn query_large_i64() {
@@ -268,7 +330,8 @@ async fn query_large_i64() {
         .filter_expression
         .replace(aerospike::expressions::eq(bin_name, bin_val));
     let stmt = aerospike::Statement::new(common::namespace(), SET, aerospike::Bins::All);
-    let recordset = client.query(&qpolicy, stmt).await.unwrap();
+    let pf = PartitionFilter::all();
+    let recordset = client.query(&qpolicy, pf, stmt).await.unwrap();
 
     for r in &*recordset {
         assert!(r.is_ok());

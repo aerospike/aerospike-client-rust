@@ -95,7 +95,7 @@ impl Default for BatchPolicy {
     fn default() -> Self {
         BatchPolicy {
             base_policy: BasePolicy::default(),
-            concurrency: Concurrency::Sequential,
+            concurrency: Concurrency::Parallel,
             allow_inline: true,
             allow_inline_ssd: false,
             respond_all_keys: true,

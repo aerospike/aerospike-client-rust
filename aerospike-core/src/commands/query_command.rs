@@ -20,28 +20,33 @@ use crate::commands::{Command, SingleCommand, StreamCommand};
 use crate::errors::Result;
 use crate::net::Connection;
 use crate::policy::QueryPolicy;
+use crate::query::NodePartitions;
 use crate::{Recordset, Statement};
+
+use aerospike_rt::Mutex;
 
 pub(crate) struct QueryCommand<'a> {
     stream_command: StreamCommand,
     policy: &'a QueryPolicy,
     statement: Arc<Statement>,
-    partitions: Vec<u16>,
 }
 
 impl<'a> QueryCommand<'a> {
-    pub fn new(
+    pub async fn new(
         policy: &'a QueryPolicy,
-        node: Arc<Node>,
         statement: Arc<Statement>,
         recordset: Arc<Recordset>,
-        partitions: Vec<u16>,
+        node_partitions: Arc<Mutex<NodePartitions>>,
     ) -> Self {
+        let node = {
+            let node_partitions = node_partitions.lock().await;
+            node_partitions.node.clone()
+        };
+
         QueryCommand {
-            stream_command: StreamCommand::new(node, recordset),
+            stream_command: StreamCommand::new(node, recordset, node_partitions, false),
             policy,
             statement,
-            partitions,
         }
     }
 
@@ -65,14 +70,17 @@ impl<'a> Command for QueryCommand<'a> {
         conn.flush().await
     }
 
-    fn prepare_buffer(&mut self, conn: &mut Connection) -> Result<()> {
-        conn.buffer.set_query(
-            self.policy,
-            &self.statement,
-            false,
-            self.stream_command.recordset.task_id(),
-            &self.partitions,
-        )
+    async fn prepare_buffer(&mut self, conn: &mut Connection) -> Result<()> {
+        let node_partitions = self.stream_command.node_partitions.lock().await;
+        conn.buffer
+            .set_query(
+                self.policy,
+                &self.statement,
+                false,
+                self.stream_command.recordset.task_id(),
+                &node_partitions,
+            )
+            .await
     }
 
     async fn get_node(&mut self) -> Result<Arc<Node>> {

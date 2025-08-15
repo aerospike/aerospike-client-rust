@@ -17,6 +17,7 @@ pub mod node;
 pub mod node_validator;
 pub mod partition;
 pub mod partition_tokenizer;
+// pub mod partitions;
 
 use aerospike_rt::time::{Duration, Instant};
 use std::collections::HashMap;
@@ -34,6 +35,7 @@ use crate::commands::Message;
 use crate::errors::{Error, Result};
 use crate::net::Host;
 use crate::policy::ClientPolicy;
+use crate::policy::Replica;
 use aerospike_rt::RwLock;
 use futures::channel::mpsc;
 use futures::channel::mpsc::{Receiver, Sender};
@@ -94,14 +96,12 @@ impl PartitionForNamespace {
         }
 
         let node = match replica {
-            crate::policy::Replica::Master => {
-                self.all_replicas(partition.partition_id).next().flatten()
-            }
-            crate::policy::Replica::Sequence => get_next_in_sequence(
+            Replica::Master => self.all_replicas(partition.partition_id).next().flatten(),
+            Replica::Sequence => get_next_in_sequence(
                 || self.all_replicas(partition.partition_id).flatten(),
                 last_tried,
             ),
-            crate::policy::Replica::PreferRack => {
+            Replica::PreferRack => {
                 let rack_ids = cluster.client_policy.rack_ids.as_ref().ok_or_else(|| Error::InvalidArgument("Attempted to use Replica::PreferRack without configuring racks in client policy".to_string()))?;
                 get_next_in_sequence(
                     || {
@@ -613,6 +613,25 @@ impl Cluster {
         namespace
             .get_node(self, partition, replica, last_tried)
             .await
+    }
+
+    pub async fn get_master_node(&self, namespace: &str, partition_id: usize) -> Result<Arc<Node>> {
+        let partitions = self.partition_write_map.read().await;
+
+        let ns_partition = partitions.get(namespace).ok_or_else(|| {
+            Error::InvalidNode(format!(
+                "Cannot get appropriate node for namespace: {}",
+                namespace
+            ))
+        })?;
+
+        let node = ns_partition.all_replicas(partition_id).next().flatten();
+        node.ok_or_else(|| {
+            Error::InvalidNode(format!(
+                "Cannot get appropriate node for namespace: {} partition: {}",
+                namespace, partition_id
+            ))
+        })
     }
 
     pub async fn get_random_node(&self) -> Result<Arc<Node>> {

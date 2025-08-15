@@ -20,11 +20,14 @@ use crate::batch::BatchOperation;
 use crate::batch::BatchRecordIndex;
 use crate::cluster::partition::Partition;
 use crate::cluster::{Cluster, Node};
+use crate::commands::field_type::FieldType;
 use crate::commands::Duration;
 use crate::commands::{self};
 use crate::errors::{Error, Result};
 use crate::net::Connection;
 use crate::policy::{BatchPolicy, Policy, PolicyLike, Replica};
+use crate::value::bytes_to_particle;
+use crate::Key;
 use crate::{value, Record, ResultCode, Value};
 use aerospike_rt::sleep;
 
@@ -118,8 +121,9 @@ impl<'a> BatchOperateCommand<'a> {
             };
 
             self.prepare_buffer(&mut conn)
+                .await
                 .map_err(|e| e.chain_error("Failed to prepare send buffer"))?;
-            self.write_timeout(&mut conn, base_policy.timeout())
+            self.write_timeout(&mut conn, base_policy.total_timeout())
                 .await
                 .map_err(|e| e.chain_error("Failed to set timeout for send buffer"))?;
 
@@ -166,7 +170,7 @@ impl<'a> BatchOperateCommand<'a> {
             .set_batch_operate(policy, batch_ops)
             .map_err(|_| Error::ClientError("Failed to prepare send buffer".into()))?;
 
-        conn.buffer.write_timeout(policy.base().timeout());
+        conn.buffer.write_timeout(policy.base().total_timeout());
 
         // Send command.
         if let Err(err) = conn.flush().await {
@@ -253,7 +257,7 @@ impl<'a> BatchOperateCommand<'a> {
         let field_count = conn.buffer.read_u16(None) as usize; // almost certainly 0
         let op_count = conn.buffer.read_u16(None) as usize;
 
-        let (key, _) = commands::StreamCommand::parse_key(conn, field_count).await?;
+        let (key, _) = Self::parse_key(conn, field_count).await?;
 
         let record = if found_key {
             let mut bins: HashMap<String, Value> = HashMap::with_capacity(op_count);
@@ -289,7 +293,7 @@ impl<'a> BatchOperateCommand<'a> {
         conn.flush().await
     }
 
-    fn prepare_buffer(&mut self, conn: &mut Connection) -> Result<()> {
+    async fn prepare_buffer(&mut self, conn: &mut Connection) -> Result<()> {
         conn.buffer.set_batch_operate(&self.policy, &self.batch_ops)
     }
 
@@ -315,5 +319,55 @@ impl<'a> BatchOperateCommand<'a> {
     ) -> Result<()> {
         conn.buffer.write_timeout(timeout);
         Ok(())
+    }
+
+    async fn parse_key(conn: &mut Connection, field_count: usize) -> Result<(Key, Option<u64>)> {
+        let mut digest: [u8; 20] = [0; 20];
+        let mut namespace: String = "".to_string();
+        let mut set_name: String = "".to_string();
+        let mut orig_key: Option<Value> = None;
+        let mut bval = None;
+
+        for _ in 0..field_count {
+            conn.read_buffer(4).await?;
+            let field_len = conn.buffer.read_u32(None) as usize;
+            conn.read_buffer(field_len).await?;
+            let field_type = conn.buffer.read_u8(None);
+
+            match field_type {
+                x if x == FieldType::DigestRipe as u8 => {
+                    digest.copy_from_slice(conn.buffer.read_slice(field_len - 1));
+                }
+                x if x == FieldType::Namespace as u8 => {
+                    namespace = conn.buffer.read_str(field_len - 1)?;
+                }
+                x if x == FieldType::Table as u8 => {
+                    set_name = conn.buffer.read_str(field_len - 1)?;
+                }
+                x if x == FieldType::Key as u8 => {
+                    let particle_type = conn.buffer.read_u8(None);
+                    let particle_bytes_size = field_len - 2;
+                    orig_key = Some(bytes_to_particle(
+                        particle_type,
+                        &mut conn.buffer,
+                        particle_bytes_size,
+                    )?);
+                }
+                x if x == FieldType::BValArray as u8 => {
+                    bval = Some(conn.buffer.read_le_u64(None));
+                }
+                _ => unreachable!(),
+            }
+        }
+
+        Ok((
+            Key {
+                namespace,
+                set_name,
+                user_key: orig_key,
+                digest,
+            },
+            bval,
+        ))
     }
 }

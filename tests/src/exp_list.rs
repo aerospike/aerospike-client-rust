@@ -4,6 +4,7 @@ use env_logger;
 use aerospike::expressions::lists::*;
 use aerospike::expressions::*;
 use aerospike::operations::lists::{ListPolicy, ListReturnType};
+use aerospike::query::PartitionFilter;
 use aerospike::*;
 use std::sync::Arc;
 
@@ -565,7 +566,8 @@ async fn test_filter(client: &Client, filter: FilterExpression, set_name: &str) 
     qpolicy.filter_expression = Some(filter);
 
     let statement = Statement::new(namespace, set_name, Bins::All);
-    client.query(&qpolicy, statement).await.unwrap()
+    let pf = PartitionFilter::all();
+    client.query(&qpolicy, pf, statement).await.unwrap()
 }
 
 fn count_results(rs: Arc<Recordset>) -> usize {
