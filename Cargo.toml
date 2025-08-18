@@ -1,6 +1,6 @@
 [package]
 name = "aerospike"
-version = "2.0.0-alpha.3"
+version = "2.0.0-alpha.4"
 edition = "2018"
 authors = ["Khosrow Afroozeh <khosrow@aerospike.com>", "Jan Hecking <jhecking@aerospike.com>"]
 description = "Aerospike Client for Rust"
@@ -23,9 +23,9 @@ travis-ci = { repository = "aerospike/aerospike-client-rust" }
 appveyor = { repository = "aerospike/aerospike-client-rust" }
 
 [dependencies]
-aerospike-core = {path = "./aerospike-core", optional = true, version = "2.0.0-alpha.3"}
-aerospike-sync = {path = "./aerospike-sync", optional = true, version = "2.0.0-alpha.3"}
-aerospike-macro = {path = "./aerospike-macro", optional = true, version = "2.0.0-alpha.3"}
+aerospike-core = {path = "./aerospike-core", optional = true, version = "2.0.0-alpha.4"}
+aerospike-sync = {path = "./aerospike-sync", optional = true, version = "2.0.0-alpha.4"}
+aerospike-macro = {path = "./aerospike-macro", optional = true, version = "2.0.0-alpha.4"}
 
 [features]
 default = ["async", "serialization", "rt-tokio"]
