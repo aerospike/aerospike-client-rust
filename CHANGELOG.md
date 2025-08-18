@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.0.0-alpha.4]
+
+* **New Features**
+  * [CLIENT-2446] Only string, integer, bytes map-key types.
+  * [CLIENT-3559] Missing API to initialize Key from namespace, digest, optional set name and optional user key.
+  * [CLIENT-2408] Support partition queries.
+  * [CLIENT-2407] Support `QueryPolicy.max_records` in queries.
+  * [CLIENT-2401] Support partition scans.
+  * [CLIENT-2399] Support `ScanPolicy.max_records` in scans.
+  * [CLIENT-2105] Support scan/query pagination with `PartitionFilter`.
+  * [CLIENT-2396] Remove legacy client code for old servers.
+  * [CLIENT-2101] Remove `Policy.priority`, `ScanPolicy.scan_percent` and `ScanPolicy.fail_on_cluster_change`.
+
 ## [2.0.0-alpha.3]
 
 * **New Features**
