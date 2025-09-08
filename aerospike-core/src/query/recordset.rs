@@ -197,6 +197,12 @@ impl futures::Stream for RecordStream {
     }
 }
 
+impl AsRef<Recordset> for RecordStream {
+    fn as_ref(&self) -> &Recordset {
+        &self.0
+    }
+}
+
 impl Drop for RecordStream {
     fn drop(&mut self) {
         self.0.close_stream();
