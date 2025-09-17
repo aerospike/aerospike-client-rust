@@ -15,6 +15,8 @@
 use std::str;
 use std::time::Duration;
 
+use lazy_static::lazy_static;
+
 use byteorder::{ByteOrder, LittleEndian, NetworkEndian};
 
 use crate::batch::batch_executor::SharedSlice;
@@ -94,7 +96,14 @@ const AS_MSG_TYPE: u8 = 3;
 // MAX_BUFFER_SIZE protects against allocating massive memory blocks
 // for buffers. Tweak this number if you are returning a lot of
 // LDT elements in your queries.
-const MAX_BUFFER_SIZE: usize = 1024 * 1024 + 8; // 1 MB + header
+lazy_static! {
+    static ref MAX_BUFFER_SIZE: usize = {
+        std::env::var("AEROSPIKE_MAX_BUFFER_SIZE")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(1024 * 1024 + 8) // 1 MB + header (default)
+    };
+}
 
 // Holds data buffer for the command
 #[derive(Debug, Default)]
@@ -126,7 +135,7 @@ impl Buffer {
     pub fn resize_buffer(&mut self, size: usize) -> Result<()> {
         // Corrupted data streams can result in a huge length.
         // Do a sanity check here.
-        if size > MAX_BUFFER_SIZE {
+        if size > *MAX_BUFFER_SIZE {
             bail!("Invalid size for buffer: {}", size);
         }
 
