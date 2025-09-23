@@ -19,17 +19,17 @@ use crate::cluster::{Cluster, Node};
 use crate::commands::{buffer, Command, SingleCommand};
 use crate::errors::{Error, Result};
 use crate::net::Connection;
-use crate::policy::WritePolicy;
+use crate::policy::ReadPolicy;
 use crate::{Key, ResultCode};
 
 pub(crate) struct ExistsCommand<'a> {
     single_command: SingleCommand<'a>,
-    policy: &'a WritePolicy,
+    policy: &'a ReadPolicy,
     pub exists: bool,
 }
 
 impl<'a> ExistsCommand<'a> {
-    pub fn new(policy: &'a WritePolicy, cluster: Arc<Cluster>, key: &'a Key) -> Self {
+    pub fn new(policy: &'a ReadPolicy, cluster: Arc<Cluster>, key: &'a Key) -> Self {
         ExistsCommand {
             single_command: SingleCommand::new(cluster, key, crate::policy::Replica::Master),
             policy,

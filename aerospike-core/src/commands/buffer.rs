@@ -26,7 +26,7 @@ use crate::msgpack::encoder;
 use crate::operations::{Operation, OperationBin, OperationData, OperationType};
 use crate::policy::{
     BasePolicy, BatchPolicy, CommitLevel, ConsistencyLevel, GenerationPolicy, QueryDuration,
-    QueryPolicy, RecordExistsAction, ScanPolicy, WritePolicy,
+    QueryPolicy, ReadPolicy, RecordExistsAction, ScanPolicy, WritePolicy,
 };
 use crate::query::NodePartitions;
 use crate::{Bin, Bins, CollectionIndexType, Key, Statement, Value};
@@ -254,10 +254,10 @@ impl Buffer {
     }
 
     // Writes the command for exist operations
-    pub(crate) fn set_exists(&mut self, policy: &WritePolicy, key: &Key) -> Result<()> {
+    pub(crate) fn set_exists(&mut self, policy: &ReadPolicy, key: &Key) -> Result<()> {
         self.begin();
         let mut field_count = self.estimate_key_size(key, false);
-        let filter_size = self.estimate_filter_size(policy.filter_expression());
+        let filter_size = self.estimate_filter_size(policy.base_policy.filter_expression());
         if filter_size > 0 {
             field_count += 1;
         }
@@ -272,7 +272,7 @@ impl Buffer {
         );
         self.write_key(key, false);
 
-        if let Some(filter) = policy.filter_expression() {
+        if let Some(filter) = policy.base_policy.filter_expression() {
             self.write_filter_expression(filter, filter_size);
         }
 

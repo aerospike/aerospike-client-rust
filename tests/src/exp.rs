@@ -657,11 +657,11 @@ async fn expression_commands() {
     // EXISTS
     let key = as_key!(namespace, &set_name, 45);
     wpolicy.filter_expression = Some(eq(int_bin("bin".to_string()), int_val(15)));
-    let test = client.exists(&wpolicy, &key).await;
+    let test = client.exists(&rpolicy, &key).await;
     assert_eq!(test.is_err(), true, "EXISTS Err Test Failed");
 
     wpolicy.filter_expression = Some(eq(int_bin("bin".to_string()), int_val(45)));
-    let test = client.exists(&wpolicy, &key).await;
+    let test = client.exists(&rpolicy, &key).await;
     assert_eq!(test.is_ok(), true, "EXISTS Ok Test Failed");
 
     // APPEND

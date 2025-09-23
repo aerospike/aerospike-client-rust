@@ -437,7 +437,7 @@ impl Client {
     }
 
     /// Determine if a record key exists. The policy can be used to specify timeouts.
-    pub async fn exists(&self, policy: &WritePolicy, key: &Key) -> Result<bool> {
+    pub async fn exists(&self, policy: &ReadPolicy, key: &Key) -> Result<bool> {
         let mut command = ExistsCommand::new(policy, self.cluster.clone(), key);
         command.execute().await?;
         Ok(command.exists)
