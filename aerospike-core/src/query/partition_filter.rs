@@ -3,7 +3,7 @@
 // Portions may be licensed to Aerospike, Inc. under one or more contributor
 // license agreements.
 //
-// Licensed under the Apache Licenseersion 2.0 (the "License"); you may not
+// Licensed under the Apache License version 2.0 (the "License"); you may not
 // use this file except in compliance with the License. You may obtain a copy of
 // the License at http://www.apache.org/licenses/LICENSE-2.0
 //
@@ -115,6 +115,26 @@ impl PartitionFilter {
                 }
             }
             None => (),
+        }
+    }
+}
+
+impl Default for PartitionFilter {
+    fn default() -> Self {
+        Self::all()
+    }
+}
+
+impl Clone for PartitionFilter {
+    fn clone(&self) -> Self {
+        Self {
+            begin: self.begin,
+            count: self.count,
+            digest: self.digest,
+
+            partitions: self.partitions.clone(),
+            done: AtomicBool::new(self.done.load(Ordering::Relaxed)),
+            retry: AtomicBool::new(self.retry.load(Ordering::Relaxed)),
         }
     }
 }

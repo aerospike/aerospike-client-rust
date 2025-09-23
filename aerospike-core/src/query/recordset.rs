@@ -3,7 +3,7 @@
 // Portions may be licensed to Aerospike, Inc. under one or more contributor
 // license agreements.
 //
-// Licensed under the Apache Licenseersion 2.0 (the "License"); you may not
+// Licensed under the Apache License version 2.0 (the "License"); you may not
 // use this file except in compliance with the License. You may obtain a copy of
 // the License at http://www.apache.org/licenses/LICENSE-2.0
 //
@@ -133,23 +133,38 @@ impl Recordset {
         }
         None
     }
+
+    /// Returns a result from the queue if it exists. Otherwise, returns None.
+    pub fn next_record(&self) -> Option<Result<Record>> {
+        if self.is_active() || !self.record_queue.is_empty() {
+            let result = self.record_queue.pop();
+            if result.is_some() {
+                self.record_queue_count.fetch_sub(1, Ordering::Relaxed);
+            }
+            return result;
+        }
+        return None;
+    }
 }
 
 impl<'a> Iterator for &'a Recordset {
     type Item = Result<Record>;
 
+    /// Implements a blocking iterator.
     fn next(&mut self) -> Option<Result<Record>> {
         loop {
+            let result = self.next_record();
+            if result.is_some() {
+                return result;
+            }
+
             if self.is_active() || !self.record_queue.is_empty() {
-                let result = self.record_queue.pop();
-                if result.is_some() {
-                    self.record_queue_count.fetch_sub(1, Ordering::Relaxed);
-                    return result;
-                }
                 // aerospike_rt::task::yield_now().await;
                 thread::yield_now();
                 continue;
             }
+
+            // ends the iterator
             return None;
         }
     }
