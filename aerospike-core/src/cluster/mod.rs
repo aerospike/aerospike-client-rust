@@ -384,16 +384,11 @@ impl Cluster {
                 continue;
             };
 
-            for alias in &*seed_node_validator.aliases() {
-                let nv = if *seed == *alias {
-                    seed_node_validator.clone()
-                } else {
-                    let mut nv2 = NodeValidator::new(self);
-                    if let Err(err) = nv2.validate_node(self, seed).await {
-                        log_error_chain!(err, "Seeding host {} failed with error", alias);
-                        continue;
-                    };
-                    nv2
+            for alias in &*seed_node_validator.peers() {
+                let mut nv = NodeValidator::new(self);
+                if let Err(err) = nv.validate_node(self, alias).await {
+                    log_error_chain!(err, "Seeding host {} failed with error", alias);
+                    continue;
                 };
 
                 if self.find_node_name(&list, &nv.name) {
