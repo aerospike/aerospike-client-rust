@@ -1,6 +1,6 @@
 [package]
 name = "aerospike-core"
-version = "2.0.0-alpha.4"
+version = "2.0.0-alpha.5"
 edition = "2018"
 authors = ["Khosrow Afroozeh <khosrow@aerospike.com>", "Jan Hecking <jhecking@aerospike.com>"]
 description = "Aerospike Client for Rust Core Crate. Not meant to be used independently."
@@ -25,7 +25,7 @@ lazy_static = "1.4"
 thiserror = "1.0.40"
 pwhash = "1.0"
 serde = { version = "1.0", features = ["derive"], optional = true }
-aerospike-rt = {path = "../aerospike-rt", version = "2.0.0-alpha.4"}
+aerospike-rt = {path = "../aerospike-rt", version = "2.0.0-alpha.5"}
 futures = {version = "0.3.16" }
 async-trait = "0.1.51"
 rhexdump = "0.2.0"
