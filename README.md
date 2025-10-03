@@ -12,7 +12,7 @@
 [appveyor-image]: https://ci.appveyor.com/api/projects/status/e9gx1b5d1307hj2t/branch/master?svg=true
 [appveyor-url]: https://ci.appveyor.com/project/aerospike/aerospike-client-rust/branch/master
 
-A community-supported [Aerospike](https://www.aerospike.com/) client library for Rust. Rust will become officially supported with the 2.0.0 release, currently in developer preview.
+A community-supported [Aerospike](https://www.aerospike.com/) client library for Rust. Rust will become officially supported after the Rust client 2 alpha releases, currently in developer preview.
 
 This library is compatible with Rust 1.46+ and supports the following operating systems: Linux, Mac OS X, and Windows.
 The current release supports Aerospike version v5.6 and later. Take a look at the [changelog](CHANGELOG.md) for more details.
