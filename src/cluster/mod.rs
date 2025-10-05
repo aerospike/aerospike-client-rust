@@ -17,6 +17,7 @@ pub mod node;
 pub mod node_validator;
 pub mod partition;
 pub mod partition_tokenizer;
+pub mod peers;
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicIsize, Ordering};
