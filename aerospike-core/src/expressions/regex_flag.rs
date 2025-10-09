@@ -8,7 +8,7 @@ pub enum RegexFlag {
     /// Do not differentiate case.
     ICASE = 2,
     /// Do not report position of matches.
-    NOSUB = 3,
+    NOSUB = 4,
     /// Match-any-character operators don't match a newline.
     NEWLINE = 8,
 }
