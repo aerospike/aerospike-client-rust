@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.0.0-alpha.6]
+
+* **Bug Fixes**
+  * Fixes an issue where the client could not connect to single node clusters.
+
+## [2.0.0-alpha.5]
+
+* **Bug Fixes**
+  * [CLIENT-3776] Fix an issue where load balancers are not supported.
+  * Increase `MAX_BUFFER_SIZE` to 120MiB.
+
 ## [2.0.0-alpha.4]
 
 * **New Features**

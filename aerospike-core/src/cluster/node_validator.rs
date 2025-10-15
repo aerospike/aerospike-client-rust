@@ -21,7 +21,7 @@ use crate::commands::Message;
 use crate::errors::{Error, Result};
 use crate::net::{Connection, Host};
 use crate::policy::ClientPolicy;
-
+use crate::ToHosts;
 
 #[allow(clippy::struct_excessive_bools)]
 #[derive(Copy, Clone, Default, Debug)]
@@ -39,6 +39,7 @@ pub struct NodeFeatures {
 pub struct NodeValidator {
     pub name: String,
     pub aliases: Vec<Host>,
+    pub services: Vec<Host>,
     pub address: String,
     pub client_policy: ClientPolicy,
     pub use_new_info: bool,
@@ -50,6 +51,7 @@ impl NodeValidator {
     pub fn new(cluster: &Cluster) -> Self {
         NodeValidator {
             name: "".to_string(),
+            services: vec![],
             aliases: vec![],
             address: "".to_string(),
             client_policy: cluster.client_policy().clone(),
@@ -82,6 +84,10 @@ impl NodeValidator {
         self.aliases.clone()
     }
 
+    pub fn peers(&self) -> Vec<Host> {
+        self.services.clone()
+    }
+
     fn resolve_aliases(&mut self, host: &Host) -> Result<()> {
         self.aliases = (host.name.as_ref(), host.port)
             .to_socket_addrs()?
@@ -97,7 +103,16 @@ impl NodeValidator {
 
     async fn validate_alias(&mut self, cluster: &Cluster, alias: &Host) -> Result<()> {
         let mut conn = Connection::new(&alias.address(), &self.client_policy).await?;
-        let info_map = Message::info(&mut conn, &["node", "cluster-name", "features"]).await?;
+        let service_name = if cluster.client_policy.use_services_alternate {
+            "services-alternate"
+        } else {
+            "services"
+        };
+        let info_map = Message::info(
+            &mut conn,
+            &["node", "cluster-name", "features", service_name],
+        )
+        .await?;
 
         match info_map.get("node") {
             None => return Err(Error::InvalidNode(String::from("Missing node name"))),
@@ -124,9 +139,22 @@ impl NodeValidator {
             self.features.set_features(features);
         }
 
+        if let Some(peers) = info_map.get(service_name) {
+            self.set_services(peers);
+        }
+
         Ok(())
     }
 
+    fn set_services(&mut self, peers: &str) {
+        let peers = peers.split(';');
+        for peer in peers {
+            match peer.to_hosts() {
+                Err(e) => error!("Invalid host: {}, {}", peer, e),
+                Ok(ref mut host) => self.services.append(host),
+            };
+        }
+    }
 }
 
 impl NodeFeatures {
