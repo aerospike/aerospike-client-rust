@@ -136,11 +136,15 @@ impl NodeValidator {
         self.address = alias.address();
 
         if let Some(features) = info_map.get("features") {
-            self.features.set_features(features);
+            if features.trim().len() > 0 {
+                self.features.set_features(features);
+            }
         }
 
         if let Some(peers) = info_map.get(service_name) {
-            self.set_services(peers);
+            if peers.trim().len() > 0 {
+                self.set_services(peers);
+            }
         }
 
         Ok(())

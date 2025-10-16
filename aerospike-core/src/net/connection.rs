@@ -42,6 +42,7 @@ pub struct Connection {
     bytes_read: usize,
 
     pub buffer: Buffer,
+    pub(crate) exhausted: bool,
 }
 
 impl Connection {
@@ -59,6 +60,7 @@ impl Connection {
             conn: stream.unwrap()?,
             idle_timeout: policy.idle_timeout,
             idle_deadline: policy.idle_timeout.map(|timeout| Instant::now() + timeout),
+            exhausted: true,
         };
         conn.authenticate(&policy.user_password).await?;
         conn.refresh();
@@ -105,8 +107,8 @@ impl Connection {
     }
 
     pub async fn read(&mut self, buf: &mut [u8]) -> Result<()> {
-        self.conn.read_exact(buf).await?;
-        self.bytes_read += buf.len();
+        let size = self.conn.read_exact(buf).await?;
+        self.bytes_read += size;
         self.refresh();
         Ok(())
     }

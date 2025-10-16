@@ -97,7 +97,8 @@ impl<'a> SingleCommand<'a> {
 
             // check for max retries
             if let Some(max_retries) = policy.max_retries() {
-                if iterations > max_retries + 1 {  // first attempt isn't a retry
+                if iterations > max_retries + 1 {
+                    // first attempt isn't a retry
                     return Err(Error::Connection(format!(
                         "Timeout after {} tries",
                         iterations
@@ -134,6 +135,8 @@ impl<'a> SingleCommand<'a> {
                 .await
                 .map_err(|e| e.chain_error("Failed to set timeout for send buffer"))?;
 
+            conn.exhausted = false;
+
             // Send command.
             if let Err(err) = cmd.write_buffer(&mut conn).await {
                 // IO errors are considered temporary anomalies. Retry.
@@ -144,15 +147,21 @@ impl<'a> SingleCommand<'a> {
             }
 
             // Parse results.
-            if let Err(err) = cmd.parse_result(&mut conn).await {
-                // close the connection
-                // cancelling/closing the batch/multi commands will return an error, which will
-                // close the connection to throw away its data and signal the server about the
-                // situation. We will not put back the connection in the buffer.
-                if !commands::keep_connection(&err) {
-                    conn.invalidate();
+            match cmd.parse_result(&mut conn).await {
+                Err(err) => {
+                    // close the connection
+                    // cancelling/closing the batch/multi commands will return an error, which will
+                    // close the connection to throw away its data and signal the server about the
+                    // situation. We will not put back the connection in the buffer.
+                    if !commands::keep_connection(&err) {
+                        conn.invalidate();
+                    }
+                    return Err(err);
                 }
-                return Err(err);
+                _ => {
+                    // this will cause the connection to be put back in the pool.
+                    conn.exhausted = true;
+                }
             }
 
             // command has completed successfully.  Exit method.

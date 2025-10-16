@@ -78,8 +78,6 @@ impl Queue {
                 return Err(Error::NoMoreConnections);
             }
 
-            internals.num_conns += 1;
-
             // Free the lock to prevent deadlocking
             drop(internals);
 
@@ -90,13 +88,14 @@ impl Queue {
             .await;
 
             let Ok(Ok(conn)) = conn else {
-                let mut internals = self.0.internals.lock().await;
-                internals.num_conns -= 1;
-                drop(internals);
                 return Err(Error::Connection(
                     "Could not open network connection".to_string(),
                 ));
             };
+
+            let mut internals = self.0.internals.lock().await;
+            internals.num_conns += 1;
+            drop(internals);
 
             connection = conn;
             break;
@@ -222,7 +221,11 @@ impl PooledConnection {
 impl Drop for PooledConnection {
     fn drop(&mut self) {
         if let Some(conn) = self.conn.take() {
-            block_on(self.queue.put_back(conn));
+            if !conn.exhausted {
+                block_on(self.queue.drop_conn(conn));
+            } else {
+                block_on(self.queue.put_back(conn));
+            }
         }
     }
 }
