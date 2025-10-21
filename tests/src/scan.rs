@@ -20,6 +20,8 @@ use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::thread;
 
+use futures::stream::StreamExt;
+
 use aerospike::query::PartitionFilter;
 use env_logger;
 
@@ -162,6 +164,77 @@ async fn scan_multi_consumer() {
 
     for t in threads {
         t.join().expect("Cannot join thread");
+    }
+
+    assert_eq!(count.load(Ordering::Relaxed), EXPECTED);
+
+    client.close().await.unwrap();
+}
+
+#[aerospike_macro::test]
+async fn scan_single_consumer_stream() {
+    let _ = env_logger::try_init();
+
+    let client = common::client().await;
+    let namespace = common::namespace();
+    let set_name = create_test_set(&client, EXPECTED).await;
+
+    let mut spolicy = ScanPolicy::default();
+    spolicy.record_queue_size = 4096;
+    let pf = PartitionFilter::all();
+    let rs = client
+        .scan(&spolicy, pf, namespace, &set_name, Bins::All)
+        .await
+        .unwrap();
+
+    let count = Arc::new(AtomicUsize::new(0));
+    let rs = rs.into_stream();
+    tokio::pin!(rs);
+    while let Some(res) = rs.next().await {
+        if res.is_ok() {
+            count.fetch_add(1, Ordering::Relaxed);
+        }
+    }
+
+    assert_eq!(count.load(Ordering::Relaxed), EXPECTED);
+
+    client.close().await.unwrap();
+}
+
+#[aerospike_macro::test]
+async fn scan_multi_consumer_stream() {
+    let _ = env_logger::try_init();
+
+    let client = common::client().await;
+    let namespace = common::namespace();
+    let set_name = create_test_set(&client, EXPECTED).await;
+
+    let mut spolicy = ScanPolicy::default();
+    spolicy.record_queue_size = 4096;
+    let pf = PartitionFilter::all();
+    let rs = client
+        .scan(&spolicy, pf, namespace, &set_name, Bins::All)
+        .await
+        .unwrap();
+
+    let count = Arc::new(AtomicUsize::new(0));
+    let mut threads = vec![];
+
+    for _ in 0..8 {
+        let count = count.clone();
+        let rs = rs.clone().into_stream();
+        threads.push(aerospike_rt::spawn(async move {
+            tokio::pin!(rs);
+            while let Some(res) = rs.next().await {
+                if res.is_ok() {
+                    count.fetch_add(1, Ordering::Relaxed);
+                }
+            }
+        }));
+    }
+
+    for t in threads {
+        t.await.expect("Cannot join thread");
     }
 
     assert_eq!(count.load(Ordering::Relaxed), EXPECTED);

@@ -17,9 +17,9 @@ extern crate rand;
 
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
-use std::thread;
 
 use aerospike_rt::Mutex;
+use futures::executor::block_on;
 
 use crossbeam_queue::SegQueue;
 use rand::Rng;
@@ -27,6 +27,9 @@ use rand::Rng;
 use crate::errors::Result;
 use crate::query::{PartitionFilter, PartitionTracker};
 use crate::Record;
+
+/// A stream over incoming records for a [`Recordset`] that can be iterated over either synchronously or asynchronously.
+pub struct RecordStream(Arc<Recordset>);
 
 /// Virtual collection of records retrieved through queries and scans. During a query/scan,
 /// multiple threads will retrieve records from the server nodes and put these records on an
@@ -127,6 +130,7 @@ impl Recordset {
     }
 
     /// If the recordset is inactive, it will extract the PartitionFilter cursor to use in a future scan/query.
+    /// It will still return nil if the PartitionFilter is already extracted.
     pub async fn partition_filter(&self) -> Option<PartitionFilter> {
         if !self.is_active() {
             return self.tracker.lock().await.extract_partition_filter();
@@ -145,6 +149,12 @@ impl Recordset {
         }
         return None;
     }
+
+    /// Converts a reference to a [`Recordset`] into a [`RecordStream`] that can be used
+    /// to iterate over records.
+    pub fn into_stream(self: Arc<Self>) -> RecordStream {
+        RecordStream(self)
+    }
 }
 
 impl<'a> Iterator for &'a Recordset {
@@ -159,13 +169,37 @@ impl<'a> Iterator for &'a Recordset {
             }
 
             if self.is_active() || !self.record_queue.is_empty() {
-                // aerospike_rt::task::yield_now().await;
-                thread::yield_now();
+                block_on(aerospike_rt::task::yield_now());
                 continue;
             }
 
             // ends the iterator
             return None;
         }
+    }
+}
+
+impl futures::Stream for RecordStream {
+    type Item = Result<Record>;
+
+    fn poll_next(
+        self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Option<Self::Item>> {
+        if self.0.is_active() || !self.0.record_queue.is_empty() {
+            if let Some(result) = self.0.next_record() {
+                return std::task::Poll::Ready(Some(result));
+            }
+            cx.waker().wake_by_ref();
+            std::task::Poll::Pending
+        } else {
+            std::task::Poll::Ready(None)
+        }
+    }
+}
+
+impl AsRef<Recordset> for RecordStream {
+    fn as_ref(&self) -> &Recordset {
+        &self.0
     }
 }

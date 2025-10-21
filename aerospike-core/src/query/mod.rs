@@ -22,6 +22,7 @@ pub(crate) use self::node_partitions::NodePartitions;
 pub use self::partition_filter::PartitionFilter;
 pub use self::partition_status::PartitionStatus;
 pub(crate) use self::partition_tracker::PartitionTracker;
+pub use self::recordset::RecordStream;
 pub use self::recordset::Recordset;
 pub use self::statement::Statement;
 pub use self::udf::UDFLang;
