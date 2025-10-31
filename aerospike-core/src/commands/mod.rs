@@ -71,5 +71,5 @@ pub(crate) trait Command {
 }
 
 pub(crate) const fn keep_connection(err: &Error) -> bool {
-    matches!(err, Error::ServerError(ResultCode::KeyNotFoundError, _, _))
+    matches!(err, Error::ServerError(_, _, _))
 }
