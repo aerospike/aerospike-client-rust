@@ -117,6 +117,7 @@ impl<'a> SingleCommand<'a> {
             let node_future = cmd.get_node();
             let node = match node_future.await {
                 Ok(node) => node,
+                e @ Err(Error::InvalidArgument(_)) => e?,
                 Err(_) => continue, // Node is currently inactive. Retry.
             };
 
@@ -155,6 +156,9 @@ impl<'a> SingleCommand<'a> {
                     // situation. We will not put back the connection in the buffer.
                     if !commands::keep_connection(&err) {
                         conn.invalidate();
+                    } else {
+                        // this will cause the connection to be put back in the pool.
+                        conn.exhausted = true;
                     }
                     return Err(err);
                 }
