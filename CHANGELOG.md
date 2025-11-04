@@ -2,7 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
-## [Unreleased]
+## [1.4.0] - 2025-11-04
+
+* **Bug Fixes**
+  * Add support for newer Scan/Query protocol for server v5.0+. Older servers are not supported anymore.
+
+* **Improvements**
+  * Fixes an issue where connection were closed on trivial errors.
+  * Fix some compiler warnings.
 
 ## [1.3.0] - 2023-05-01
 
