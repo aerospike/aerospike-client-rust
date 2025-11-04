@@ -138,7 +138,7 @@ impl<T> SharedSlice<T> {
     }
 
     pub fn get(&self, idx: usize) -> Option<&T> {
-        unsafe { (*self.value.get()).get(idx) }
+        unsafe { (&(*self.value.get())).get(idx) }
     }
 
     // Like slice.get_mut but does not require a mutable reference!
