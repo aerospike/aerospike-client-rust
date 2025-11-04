@@ -98,6 +98,9 @@ pub enum ResultCode {
     /// Enterprise-only feature not supported by the community edition
     EnterpriseOnly,
 
+    /// The command was not performed because the filter was false.
+    FilteredOut,
+
     /// There are no more records left for query.
     QueryEnd,
 
@@ -241,6 +244,7 @@ impl ResultCode {
             23 => ResultCode::ElementNotFound,
             24 => ResultCode::ElementExists,
             25 => ResultCode::EnterpriseOnly,
+            27 => ResultCode::FilteredOut,
             50 => ResultCode::QueryEnd,
             51 => ResultCode::SecurityNotSupported,
             52 => ResultCode::SecurityNotEnabled,
@@ -314,6 +318,7 @@ impl ResultCode {
             ResultCode::EnterpriseOnly => {
                 String::from("Enterprise-only feature not supported by community edition")
             }
+            ResultCode::FilteredOut => String::from("Filtered out"),
             ResultCode::QueryEnd => String::from("Query end"),
             ResultCode::SecurityNotSupported => String::from("Security not supported"),
             ResultCode::SecurityNotEnabled => String::from("Security not enabled"),

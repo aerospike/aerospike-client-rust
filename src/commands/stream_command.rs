@@ -207,7 +207,11 @@ impl Command for StreamCommand {
 
             status = false;
             if size > 0 {
-                status = self.parse_stream(conn, size as usize)?;
+                status = self.parse_stream(conn, size as usize).map_err(|e| {
+                    // stream errors should close the connection to make sure it is invalidated.
+                    conn.close();
+                    e
+                })?;
             }
         }
 

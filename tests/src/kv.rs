@@ -18,7 +18,7 @@ use aerospike::{
 };
 use env_logger;
 
-use crate::common;
+use crate::common::{self, rand_str};
 
 #[test]
 fn connect() {

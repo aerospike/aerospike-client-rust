@@ -29,6 +29,7 @@ pub struct BatchRead<'a> {
     pub bins: &'a Bins,
 
     /// Will contain the record after the batch read operation.
+    /// It will be None if key was not found or filtered out.
     pub record: Option<Record>,
 }
 

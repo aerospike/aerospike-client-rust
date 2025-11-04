@@ -154,7 +154,7 @@ impl<'a, 'b> BatchReadCommand<'a, 'b> {
     fn parse_record(&mut self, conn: &mut Connection) -> Result<Option<BatchRecord>> {
         let found_key = match ResultCode::from(conn.buffer.read_u8(Some(5))?) {
             ResultCode::Ok => true,
-            ResultCode::KeyNotFoundError => false,
+            ResultCode::KeyNotFoundError | ResultCode::FilteredOut => false,
             rc => bail!(ErrorKind::ServerError(rc)),
         };
 
@@ -230,7 +230,12 @@ impl<'a, 'b> commands::Command for BatchReadCommand<'a, 'b> {
             conn.read_buffer(8)?;
             let size = conn.buffer.read_msg_size(None)?;
             conn.bookmark();
-            if size > 0 && !self.parse_group(conn, size as usize)? {
+            if size > 0
+                && !self.parse_group(conn, size as usize).map_err(|e| {
+                    conn.close();
+                    e
+                })?
+            {
                 break;
             }
         }

@@ -63,11 +63,9 @@ pub trait Command {
     fn write_buffer(&mut self, conn: &mut Connection) -> Result<()>;
 }
 
-pub const fn keep_connection(err: &Error) -> bool {
+pub fn keep_connection(err: &Error) -> bool {
     match *err {
-        Error(ErrorKind::ServerError(result_code), _) => {
-            matches!(result_code, ResultCode::KeyNotFoundError)
-        }
+        Error(ErrorKind::ServerError(_), _) => true,
         _ => false,
     }
 }
