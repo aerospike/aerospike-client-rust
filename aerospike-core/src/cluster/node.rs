@@ -119,7 +119,7 @@ impl Node {
             "node",
             "cluster-name",
             PARTITION_GENERATION,
-            self.services_name(),
+            self.client_policy.service_string(),
         ];
 
         if self.client_policy.rack_ids.is_some() {
@@ -142,15 +142,6 @@ impl Node {
             .map_err(|e| e.chain_error("Failed to update rebalance generation"))?;
         self.reset_failures();
         Ok(friends)
-    }
-
-    // Returns the services that the client should use for the cluster tend
-    const fn services_name(&self) -> &'static str {
-        if self.client_policy.use_services_alternate {
-            "services-alternate"
-        } else {
-            "services"
-        }
     }
 
     fn validate_node(&self, info_map: &HashMap<String, String>) -> Result<()> {
@@ -200,7 +191,7 @@ impl Node {
     ) -> Result<Vec<Host>> {
         let mut friends: Vec<Host> = vec![];
 
-        let friend_string = match info_map.get(self.services_name()) {
+        let friend_string = match info_map.get(self.client_policy.service_string()) {
             None => return Err(Error::BadResponse("Missing services list".to_string())),
             Some(friend_string) if friend_string.is_empty() => return Ok(friends),
             Some(friend_string) => friend_string,

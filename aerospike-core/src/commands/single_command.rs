@@ -18,7 +18,7 @@ use crate::cluster::partition::Partition;
 use crate::cluster::{Cluster, Node};
 use crate::commands::{self};
 use crate::errors::{Error, Result};
-use crate::net::Connection;
+use crate::net::{BufferedConn, Connection};
 use crate::policy::Policy;
 use crate::Key;
 use aerospike_rt::sleep;
@@ -167,6 +167,9 @@ impl<'a> SingleCommand<'a> {
                     conn.exhausted = true;
                 }
             }
+
+            // let the signals go through
+            aerospike_rt::task::yield_now().await;
 
             // command has completed successfully.  Exit method.
             return Ok(());

@@ -626,21 +626,21 @@ async fn expression_commands() {
 
     // DELETE
     let key = as_key!(namespace, &set_name, 15);
-    wpolicy.filter_expression = Some(eq(int_bin("bin".to_string()), int_val(16)));
+    wpolicy.base_policy.filter_expression = Some(eq(int_bin("bin".to_string()), int_val(16)));
     let test = client.delete(&wpolicy, &key).await;
     assert_eq!(test.is_err(), true, "DELETE EXP Err Test Failed");
 
-    wpolicy.filter_expression = Some(eq(int_bin("bin".to_string()), int_val(15)));
+    wpolicy.base_policy.filter_expression = Some(eq(int_bin("bin".to_string()), int_val(15)));
     let test = client.delete(&wpolicy, &key).await;
     assert_eq!(test.is_ok(), true, "DELETE EXP Ok Test Failed");
 
     // PUT
     let key = as_key!(namespace, &set_name, 25);
-    wpolicy.filter_expression = Some(eq(int_bin("bin".to_string()), int_val(15)));
+    wpolicy.base_policy.filter_expression = Some(eq(int_bin("bin".to_string()), int_val(15)));
     let test = client.put(&wpolicy, &key, &[as_bin!("bin", 26)]).await;
     assert_eq!(test.is_err(), true, "PUT Err Test Failed");
 
-    wpolicy.filter_expression = Some(eq(int_bin("bin".to_string()), int_val(25)));
+    wpolicy.base_policy.filter_expression = Some(eq(int_bin("bin".to_string()), int_val(25)));
     let test = client.put(&wpolicy, &key, &[as_bin!("bin", 26)]).await;
     assert_eq!(test.is_ok(), true, "PUT Ok Test Failed");
 
@@ -656,23 +656,23 @@ async fn expression_commands() {
 
     // EXISTS
     let key = as_key!(namespace, &set_name, 45);
-    wpolicy.filter_expression = Some(eq(int_bin("bin".to_string()), int_val(15)));
+    wpolicy.base_policy.filter_expression = Some(eq(int_bin("bin".to_string()), int_val(15)));
     let test = client.exists(&rpolicy, &key).await;
     assert_eq!(test.is_err(), true, "EXISTS Err Test Failed");
 
-    wpolicy.filter_expression = Some(eq(int_bin("bin".to_string()), int_val(45)));
+    rpolicy.base_policy.filter_expression = Some(eq(int_bin("bin".to_string()), int_val(45)));
     let test = client.exists(&rpolicy, &key).await;
     assert_eq!(test.is_ok(), true, "EXISTS Ok Test Failed");
 
     // APPEND
     let key = as_key!(namespace, &set_name, 55);
-    wpolicy.filter_expression = Some(eq(int_bin("bin".to_string()), int_val(15)));
+    wpolicy.base_policy.filter_expression = Some(eq(int_bin("bin".to_string()), int_val(15)));
     let test = client
         .add(&wpolicy, &key, &[as_bin!("test55", "test")])
         .await;
     assert_eq!(test.is_err(), true, "APPEND Err Test Failed");
 
-    wpolicy.filter_expression = Some(eq(int_bin("bin".to_string()), int_val(55)));
+    wpolicy.base_policy.filter_expression = Some(eq(int_bin("bin".to_string()), int_val(55)));
     let test = client
         .add(&wpolicy, &key, &[as_bin!("test55", "test")])
         .await;
@@ -680,13 +680,13 @@ async fn expression_commands() {
 
     // PREPEND
     let key = as_key!(namespace, &set_name, 55);
-    wpolicy.filter_expression = Some(eq(int_bin("bin".to_string()), int_val(15)));
+    wpolicy.base_policy.filter_expression = Some(eq(int_bin("bin".to_string()), int_val(15)));
     let test = client
         .prepend(&wpolicy, &key, &[as_bin!("test55", "test")])
         .await;
     assert_eq!(test.is_err(), true, "PREPEND Err Test Failed");
 
-    wpolicy.filter_expression = Some(eq(int_bin("bin".to_string()), int_val(55)));
+    wpolicy.base_policy.filter_expression = Some(eq(int_bin("bin".to_string()), int_val(55)));
     let test = client
         .prepend(&wpolicy, &key, &[as_bin!("test55", "test")])
         .await;
@@ -694,16 +694,16 @@ async fn expression_commands() {
 
     // TOUCH
     let key = as_key!(namespace, &set_name, 65);
-    wpolicy.filter_expression = Some(eq(int_bin("bin".to_string()), int_val(15)));
+    wpolicy.base_policy.filter_expression = Some(eq(int_bin("bin".to_string()), int_val(15)));
     let test = client.touch(&wpolicy, &key).await;
     assert_eq!(test.is_err(), true, "TOUCH Err Test Failed");
 
-    wpolicy.filter_expression = Some(eq(int_bin("bin".to_string()), int_val(65)));
+    wpolicy.base_policy.filter_expression = Some(eq(int_bin("bin".to_string()), int_val(65)));
     let test = client.touch(&wpolicy, &key).await;
     assert_eq!(test.is_ok(), true, "TOUCH Ok Test Failed");
 
     // SCAN
-    spolicy.filter_expression = Some(eq(int_bin("bin".to_string()), int_val(75)));
+    spolicy.base_policy.filter_expression = Some(eq(int_bin("bin".to_string()), int_val(75)));
     let pf = PartitionFilter::all();
     match client
         .scan(&spolicy, pf, namespace, &set_name, Bins::All)
@@ -727,12 +727,12 @@ async fn expression_commands() {
     let ops = vec![operations::add(&bin)];
 
     let key = as_key!(namespace, &set_name, 85);
-    wpolicy.filter_expression = Some(eq(int_bin("bin".to_string()), int_val(15)));
+    wpolicy.base_policy.filter_expression = Some(eq(int_bin("bin".to_string()), int_val(15)));
     let op = client.operate(&wpolicy, &key, &ops).await;
     assert_eq!(op.is_err(), true, "OPERATE Err Test Failed");
 
     let key = as_key!(namespace, &set_name, 85);
-    wpolicy.filter_expression = Some(eq(int_bin("bin".to_string()), int_val(85)));
+    wpolicy.base_policy.filter_expression = Some(eq(int_bin("bin".to_string()), int_val(85)));
     let op = client.operate(&wpolicy, &key, &ops).await;
     assert_eq!(op.is_ok(), true, "OPERATE Ok Test Failed");
 
@@ -745,7 +745,7 @@ async fn expression_commands() {
         let bo = BatchOperation::read(&bpr, key, Bins::All);
         batch_ops.push(bo);
     }
-    bpolicy.filter_expression = Some(gt(int_bin("bin".to_string()), int_val(84)));
+    bpolicy.base_policy.filter_expression = Some(gt(int_bin("bin".to_string()), int_val(84)));
     match client.batch(&bpolicy, &batch_ops).await {
         Ok(results) => {
             for result in results {
@@ -767,7 +767,7 @@ async fn test_filter(client: &Client, filter: FilterExpression, set_name: &str) 
     let namespace = common::namespace();
 
     let mut qpolicy = QueryPolicy::default();
-    qpolicy.filter_expression = Some(filter);
+    qpolicy.base_policy.filter_expression = Some(filter);
 
     let statement = Statement::new(namespace, set_name, Bins::All);
     let pf = PartitionFilter::all();

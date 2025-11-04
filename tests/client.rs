@@ -17,6 +17,8 @@ extern crate env_logger;
 #[macro_use]
 extern crate lazy_static;
 extern crate rand;
+#[cfg(feature = "tls")]
+extern crate webpki_roots;
 
 use aerospike::Client;
 
@@ -76,4 +78,34 @@ async fn close() {
     } else {
         assert!(false, "Failed to close client");
     }
+}
+
+#[cfg(feature = "tls")]
+#[aerospike_macro::test]
+async fn tls_no_auth() {
+    if common::no_tls() {
+        return;
+    }
+
+    let policy = &mut common::client_policy().clone();
+    policy.tls_config = Some(common::tls_config_no_client_auth());
+    let client = Client::new(policy, &common::hosts()).await.unwrap();
+    let names = client.node_names().await;
+    assert!(!names.is_empty());
+    client.close().await.unwrap();
+}
+
+#[cfg(feature = "tls")]
+#[aerospike_macro::test]
+async fn tls_client_auth() {
+    if common::no_tls() {
+        return;
+    }
+
+    let policy = &mut common::client_policy().clone();
+    policy.tls_config = Some(common::tls_config());
+    let client = Client::new(policy, &common::hosts()).await.unwrap();
+    let names = client.node_names().await;
+    assert!(!names.is_empty());
+    client.close().await.unwrap();
 }

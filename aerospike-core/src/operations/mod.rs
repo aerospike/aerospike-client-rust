@@ -35,7 +35,7 @@ use crate::operations::cdt_context::CdtContext;
 use crate::operations::exp::ExpOperation;
 use crate::Value;
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 #[doc(hidden)]
 pub enum OperationType {
     Read = 1,
@@ -56,7 +56,7 @@ pub enum OperationType {
 }
 
 #[doc(hidden)]
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum OperationData<'a> {
     None,
     Value(&'a Value),
@@ -76,7 +76,7 @@ pub enum OperationBin<'a> {
 }
 
 /// Database operation definition. This data type is used in the client's `operate()` method.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Operation<'a> {
     // OpType determines type of operation.
     #[doc(hidden)]

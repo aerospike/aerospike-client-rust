@@ -1,4 +1,4 @@
-// Copyright 2015-2018 Aerospike, Inc.
+// Copyright 2015-2020 Aerospike, Inc.
 //
 // Portions may be licensed to Aerospike, Inc. under one or more contributor
 // license agreements.
@@ -12,18 +12,15 @@
 // WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
 // License for the specific language governing permissions and limitations under
 // the License.
-extern crate env_logger;
-#[cfg(feature = "tls")]
-extern crate tokio_rustls;
-#[macro_use]
-extern crate lazy_static;
-extern crate proptest;
-extern crate rand;
-#[cfg(feature = "tls")]
-extern crate webpki_roots;
 
-mod common;
-mod proptest_async;
-#[macro_use]
-mod src;
-mod proptests;
+mod bins;
+mod filter_expression;
+mod key;
+mod kv;
+mod operation;
+mod operations;
+mod partition_filter;
+mod policy;
+mod queries;
+mod scans;
+mod value;

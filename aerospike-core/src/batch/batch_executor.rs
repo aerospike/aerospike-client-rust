@@ -84,6 +84,13 @@ impl BatchExecutor {
                 .await
                 .into_iter()
                 .collect(),
+            #[cfg(all(any(feature = "rt-async-std"), not(feature = "rt-tokio")))]
+            Concurrency::Parallel => futures::future::join_all(handles)
+                .await
+                .into_iter()
+                .map(|value| value.map_err(|e| Error::ClientError(e.to_string())))
+                .collect(),
+            #[cfg(all(any(feature = "rt-tokio"), not(feature = "rt-async-std")))]
             Concurrency::Parallel => futures::future::join_all(handles.map(aerospike_rt::spawn))
                 .await
                 .into_iter()

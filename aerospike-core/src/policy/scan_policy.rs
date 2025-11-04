@@ -54,9 +54,6 @@ pub struct ScanPolicy {
     /// timeout. Default: 10,000 ms.
     pub socket_timeout: u32,
 
-    /// Optional Filter Expression
-    pub filter_expression: Option<FilterExpression>,
-
     /// Defines algorithm used to determine the target node for a command. The replica algorithm only affects single record and batch commands.
     pub replica: Replica,
 }
@@ -69,7 +66,7 @@ impl ScanPolicy {
 
     /// Get the current Filter Expression
     pub const fn filter_expression(&self) -> &Option<FilterExpression> {
-        &self.filter_expression
+        &self.base_policy.filter_expression
     }
 }
 
@@ -81,8 +78,7 @@ impl Default for ScanPolicy {
             max_records: 0,
             records_per_second: 0,
             record_queue_size: 1024,
-            socket_timeout: 10000,
-            filter_expression: None,
+            socket_timeout: 30000,
             replica: Replica::default(),
         }
     }

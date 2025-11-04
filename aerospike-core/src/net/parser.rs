@@ -15,92 +15,63 @@
 
 use crate::errors::{Error, Result};
 use crate::Host;
-use std::iter::Peekable;
-use std::str::Chars;
+use regex::Regex;
+use std::sync::LazyLock;
 
+#[derive(Debug)]
 pub struct Parser<'a> {
-    s: Peekable<Chars<'a>>,
+    s: &'a str,
     default_port: u16,
 }
 
 impl<'a> Parser<'a> {
     pub fn new(s: &'a str, default_port: u16) -> Self {
-        Parser {
-            s: s.chars().peekable(),
-            default_port,
-        }
+        Parser { s: s, default_port }
     }
 
     pub fn read_hosts(&mut self) -> Result<Vec<Host>> {
+        static RE: LazyLock<Regex> = LazyLock::new(|| {
+            Regex::new(r"^(((\[(?P<ipv6>(\S+))\])|(?P<ipv4>((\d{1,3})(\.\d{1,3}){3}))|(?P<host>([\S--:]+)))(:(?P<tls>[\S--[\d:]][\S--:]*))?(:(?P<port>(\d{1,5})))?)$")
+            .unwrap()
+        });
+
         let mut hosts = Vec::new();
-        loop {
-            let addr = self.read_addr_tuple()?;
-            let (host, _tls_name, port) = match addr.len() {
-                3 => (addr[0].clone(), Some(addr[1].clone()), addr[2].parse()?),
-                2 => {
-                    if let Ok(port) = addr[1].parse() {
-                        (addr[0].clone(), None, port)
-                    } else {
-                        (addr[0].clone(), Some(addr[1].clone()), self.default_port)
-                    }
-                }
-                1 => (addr[0].clone(), None, self.default_port),
-                _ => return Err(Error::InvalidArgument(
-                    "Invalid address string".to_string()
-                )),
-            };
-            // TODO: add TLS name
-            hosts.push(Host::new(&host, port));
 
-            match self.peek() {
-                Some(&c) if c == ',' => self.next_char(),
-                _ => break,
-            };
-        }
+        let sne = self.s.split(",");
+        for (_, s) in sne.enumerate() {
+            if !RE.is_match(s) {
+                return Err(Error::ClientError(format!("Could not parse `{}`", s)));
+            }
 
-        Ok(hosts)
-    }
+            // 'm' is a 'Match', and 'as_str()' returns the matching part of the haystack.
+            let addrs: (String, Option<String>, String) = RE
+                .captures(&s)
+                .map(|caps| {
+                    let host = match (caps.name("ipv6"), caps.name("ipv4"), caps.name("host")) {
+                        (Some(ipv6), None, None) => ipv6,
+                        (None, Some(ipv4), None) => ipv4,
+                        (None, None, Some(host)) => host,
+                        _ => unreachable!(),
+                    };
+                    let host = host.as_str().into();
+                    let tls = caps.name("tls").map(|tls| tls.as_str().into());
+                    let port = caps
+                        .name("port")
+                        .map_or_else(|| format!("{}", self.default_port), |p| p.as_str().into())
+                        .into();
+                    (host, tls, port)
+                })
+                .unwrap();
 
-    fn read_addr_tuple(&mut self) -> Result<Vec<String>> {
-        let mut parts = Vec::new();
-        loop {
-            let part = self.read_addr_part()?;
-            parts.push(part);
-            match self.peek() {
-                Some(&c) if c == ':' => self.next_char(),
-                _ => break,
-            };
-        }
-        Ok(parts)
-    }
+            let (host, tls_name, port) = addrs;
+            let (host, tls_name, port) = (host, tls_name, port.parse::<u16>()?);
 
-    fn read_addr_part(&mut self) -> Result<String> {
-        let mut substr = String::new();
-        loop {
-            match self.peek() {
-                Some(&c) if c != ':' && c != ',' => {
-                    substr.push(c);
-                    self.next_char();
-                }
-                _ => {
-                    return if substr.is_empty() {
-                        return Err(Error::InvalidArgument(
-                            "Invalid address string".to_string()
-                        ))
-                    } else {
-                        Ok(substr)
-                    }
-                }
+            match tls_name {
+                Some(tls_name) => hosts.push(Host::new_tls(&host, &tls_name, port)),
+                _ => hosts.push(Host::new(&host, port)),
             }
         }
-    }
-
-    fn peek(&mut self) -> Option<&char> {
-        self.s.peek()
-    }
-
-    fn next_char(&mut self) -> Option<char> {
-        self.s.next()
+        Ok(hosts)
     }
 }
 
@@ -109,52 +80,13 @@ mod tests {
     use super::{Host, Parser};
 
     #[test]
-    fn read_addr_part() {
-        assert_eq!(
-            "foo".to_string(),
-            Parser::new("foo:bar", 3000).read_addr_part().unwrap()
-        );
-        assert_eq!(
-            "foo".to_string(),
-            Parser::new("foo,bar", 3000).read_addr_part().unwrap()
-        );
-        assert_eq!(
-            "foo".to_string(),
-            Parser::new("foo", 3000).read_addr_part().unwrap()
-        );
-        assert!(Parser::new("", 3000).read_addr_part().is_err());
-        assert!(Parser::new(",", 3000).read_addr_part().is_err());
-        assert!(Parser::new(":", 3000).read_addr_part().is_err());
-    }
-
-    #[test]
-    fn read_addr_tuple() {
-        assert_eq!(
-            vec!["foo".to_string()],
-            Parser::new("foo", 3000).read_addr_tuple().unwrap()
-        );
-        assert_eq!(
-            vec!["foo".to_string(), "bar".to_string()],
-            Parser::new("foo:bar", 3000).read_addr_tuple().unwrap()
-        );
-        assert_eq!(
-            vec!["foo".to_string()],
-            Parser::new("foo,", 3000).read_addr_tuple().unwrap()
-        );
-        assert!(Parser::new("", 3000).read_addr_tuple().is_err());
-        assert!(Parser::new(",", 3000).read_addr_tuple().is_err());
-        assert!(Parser::new(":", 3000).read_addr_tuple().is_err());
-        assert!(Parser::new("foo:", 3000).read_addr_tuple().is_err());
-    }
-
-    #[test]
     fn read_hosts() {
         assert_eq!(
             vec![Host::new("foo", 3000)],
             Parser::new("foo", 3000).read_hosts().unwrap()
         );
         assert_eq!(
-            vec![Host::new("foo", 3000)],
+            vec![Host::new_tls("foo", "bar", 3000)],
             Parser::new("foo:bar", 3000).read_hosts().unwrap()
         );
         assert_eq!(
@@ -162,7 +94,7 @@ mod tests {
             Parser::new("foo:1234", 3000).read_hosts().unwrap()
         );
         assert_eq!(
-            vec![Host::new("foo", 1234)],
+            vec![Host::new_tls("foo", "bar", 1234)],
             Parser::new("foo:bar:1234", 3000).read_hosts().unwrap()
         );
         assert_eq!(

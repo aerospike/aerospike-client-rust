@@ -149,6 +149,9 @@ extern crate log;
 extern crate pwhash;
 extern crate rand;
 
+#[cfg(feature = "tls")]
+extern crate tokio_rustls;
+
 pub use batch::BatchDeletePolicy;
 pub use batch::BatchOperation;
 pub use batch::BatchReadPolicy;

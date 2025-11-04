@@ -20,8 +20,8 @@ use std::sync::Arc;
 use crate::errors::{Error, Result};
 use crate::net::{Connection, Host};
 use crate::policy::ClientPolicy;
+use aerospike_rt::Mutex;
 use futures::executor::block_on;
-use futures::lock::Mutex;
 use std::collections::VecDeque;
 use std::time::Duration;
 
@@ -83,7 +83,7 @@ impl Queue {
 
             let conn = aerospike_rt::timeout(
                 Duration::from_secs(5),
-                Connection::new(&self.0.host.address(), &self.0.policy),
+                Connection::new(&self.0.host, &self.0.policy),
             )
             .await;
 

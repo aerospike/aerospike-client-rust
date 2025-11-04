@@ -64,11 +64,6 @@ impl StreamCommand {
     ) -> Result<(Option<Record>, Option<u64>, bool)> {
         let result_code = ResultCode::from(conn.buffer().read_u8(Some(5)));
         if result_code != ResultCode::Ok {
-            if conn.bytes_read() < size {
-                let remaining = size - conn.bytes_read();
-                conn.read_buffer(remaining).await?;
-            }
-
             match result_code {
                 ResultCode::KeyNotFoundError | ResultCode::FilteredOut => {
                     return Ok((None, None, false))
@@ -79,7 +74,7 @@ impl StreamCommand {
                         result_code,
                         false,
                         conn.conn.addr.clone(),
-                    ))
+                    ));
                 }
             }
         }
@@ -135,12 +130,8 @@ impl StreamCommand {
         Ok((Some(record), bval, true))
     }
 
-    async fn parse_stream<'a>(
-        &mut self,
-        conn: &'a mut BufferedConn<'a>,
-        size: usize,
-    ) -> Result<bool> {
-        'outer: while self.recordset.is_active() && !conn.exhausted() {
+    async fn parse_stream(&mut self, conn: &mut BufferedConn<'_>, size: usize) -> Result<bool> {
+        'outer: while !conn.exhausted() {
             // Read header.
             if let Err(err) = conn
                 .read_buffer(buffer::MSG_REMAINING_HEADER_SIZE as usize)
@@ -159,7 +150,7 @@ impl StreamCommand {
                         continue 'outer;
                     }
                     let key = &rec.key.clone().unwrap();
-                    self.recordset.busy_push(Ok(rec)).await;
+                    self.recordset.push(Ok(rec)).await?;
 
                     if self.is_scan {
                         tracker.set_digest(&mut node_partitions, key).await?;
@@ -170,7 +161,7 @@ impl StreamCommand {
                 Ok((None, _, false)) => return Ok(false),
                 Ok((None, _, true)) => continue, // handle partition done
                 Err(err) => {
-                    self.recordset.busy_push(Err(err)).await;
+                    let _ = self.recordset.push(Err(err)).await;
                     return Ok(false);
                 }
             };
@@ -264,16 +255,15 @@ impl Command for StreamCommand {
         while status {
             let mut conn = BufferedConn::new(conn);
 
-            conn.set_limit(8);
+            conn.set_limit(8)?;
             conn.read_buffer(8).await?;
             let size = conn.buffer().read_msg_size(None);
             conn.bookmark();
 
             status = false;
             if size > 0 {
-                conn.set_limit(size);
-                // status = self.parse_stream(&mut conn, size as usize).await?;
-                status = self.parse_stream(&mut conn, size as usize).await?
+                conn.set_limit(size)?;
+                status = self.parse_stream(&mut conn, size as usize).await?;
             }
         }
 

@@ -663,7 +663,7 @@ async fn test_filter(client: &Client, filter: FilterExpression, set_name: &str) 
     let namespace = common::namespace();
 
     let mut qpolicy = QueryPolicy::default();
-    qpolicy.filter_expression = Some(filter);
+    qpolicy.base_policy.filter_expression = Some(filter);
 
     let statement = Statement::new(namespace, set_name, Bins::All);
     let pf = PartitionFilter::all();

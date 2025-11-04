@@ -16,6 +16,7 @@
 //! Expression Operations.
 //! This functions allow users to run `FilterExpressions` as Operate commands.
 
+use std::fmt;
 use std::sync::Arc;
 
 use crate::commands::buffer::Buffer;
@@ -94,6 +95,24 @@ impl<'a> ExpOperation<'a> {
     pub fn write_to(&self, buffer: &mut Buffer) -> usize {
         let size: usize = (self.encoder)(&mut Some(buffer), self);
         size
+    }
+}
+
+impl<'a> fmt::Debug for ExpOperation<'a> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> Result<(), fmt::Error> {
+        #[derive(Debug)]
+        struct ExpOperation<'a> {
+            policy: &'a i64,
+            exp: &'a FilterExpression,
+        }
+
+        let Self {
+            encoder: _,
+            policy,
+            exp,
+        } = self;
+
+        fmt::Debug::fmt(&ExpOperation { policy, exp }, f)
     }
 }
 

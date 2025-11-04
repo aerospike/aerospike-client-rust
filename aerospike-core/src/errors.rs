@@ -53,7 +53,10 @@
 #![allow(missing_docs)]
 
 use crate::ResultCode;
+#[cfg(all(any(feature = "rt-tokio"), not(feature = "rt-async-std")))]
 use aerospike_rt::task;
+
+use crate::Record;
 
 #[derive(Error, Debug)]
 pub enum Error {
@@ -63,14 +66,13 @@ pub enum Error {
     InvalidUtf8(#[from] ::std::str::Utf8Error),
     #[error("Error during an I/O operation")]
     Io(#[from] ::std::io::Error),
-    #[error("Error returned from the `recv` function on an MPSC `Receiver`")]
-    MpscRecv(#[from] ::std::sync::mpsc::RecvError),
     #[error("Error parsing an IP or socket address")]
     ParseAddr(#[from] ::std::net::AddrParseError),
     #[error("Error parsing an integer")]
     ParseInt(#[from] ::std::num::ParseIntError),
     #[error("Error returned while hashing a password for user authentication")]
     PwHash(#[from] ::pwhash::error::Error),
+    #[cfg(all(any(feature = "rt-tokio"), not(feature = "rt-async-std")))]
     #[error("Async runtime error {0}")]
     Async(#[from] task::JoinError),
     /// The client received a server response that it was not able to process.
@@ -105,6 +107,10 @@ pub enum Error {
     /// ClientError is an untyped Error happening on client-side
     #[error("{0}")]
     ClientError(String),
+
+    /// StreamSendError is a client-side error that signifies the scan/query was terminated.
+    #[error("Record stream was terminated by user")]
+    StreamTerminatedError(),
 
     /// Error returned when a tasked timeed out before it could be completed.
     #[error("{0}\n\t{1}")]

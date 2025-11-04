@@ -29,11 +29,17 @@ aerospike-rt = {path = "../aerospike-rt", version = "2.0.0-alpha.6"}
 futures = {version = "0.3.16" }
 async-trait = "0.1.51"
 rhexdump = "0.2.0"
+regex = "1"
+tokio-rustls = {version = "0.26.0", optional = true}
+rustls = {version = "0.23.31", optional = true}
+async-lock = "3.4.1"
+async-channel = "2.5.0"
 
 [features]
 serialization = ["serde"]
 rt-tokio = ["aerospike-rt/rt-tokio"]
 rt-async-std = ["aerospike-rt/rt-async-std"]
+tls = ["rustls", "tokio-rustls"]
 
 [dev-dependencies]
 env_logger = "0.9"

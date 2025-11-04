@@ -14,6 +14,7 @@
 // the License.
 
 use std::collections::HashMap;
+use std::fmt;
 use std::sync::Arc;
 
 use crate::commands::buffer::Buffer;
@@ -57,5 +58,23 @@ impl<'a> CdtOperation<'a> {
     pub fn write_to(&self, buffer: &mut Buffer, ctx: &[CdtContext]) -> usize {
         let size: usize = (self.encoder)(&mut Some(buffer), self, ctx);
         size
+    }
+}
+
+impl<'a> fmt::Debug for CdtOperation<'a> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> Result<(), fmt::Error> {
+        #[derive(Debug)]
+        struct CdtOperation<'a> {
+            pub op: &'a u8,
+            pub args: &'a Vec<CdtArgument<'a>>,
+        }
+
+        let Self {
+            op,
+            encoder: _,
+            args,
+        } = self;
+
+        fmt::Debug::fmt(&CdtOperation { op, args }, f)
     }
 }

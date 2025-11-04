@@ -19,7 +19,7 @@ use serde::Serialize;
 use std::convert::From;
 
 /// Container object for a record bin, comprising a name and a value.
-#[derive(Clone)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Bin {
     /// Bin name
     pub name: String,

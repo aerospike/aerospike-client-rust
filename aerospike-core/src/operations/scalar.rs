@@ -44,7 +44,7 @@ pub fn get_bin(bin_name: &str) -> Operation {
     Operation {
         op: OperationType::Read,
         ctx: DEFAULT_CTX,
-        bin: OperationBin::Name(bin_name),
+        bin: OperationBin::Name(&bin_name),
         data: OperationData::None,
     }
 }

@@ -28,12 +28,13 @@ aerospike-sync = {path = "./aerospike-sync", optional = true, version = "2.0.0-a
 aerospike-macro = {path = "./aerospike-macro", optional = true, version = "2.0.0-alpha.6"}
 
 [features]
-default = ["async", "serialization", "rt-tokio"]
+default = ["async", "serialization", "rt-tokio", "tls"]
 serialization = ["aerospike-core/serialization"]
 async = ["aerospike-core"]
 sync = ["aerospike-sync"]
 rt-tokio = ["aerospike-core/rt-tokio", "aerospike-macro/rt-tokio"]
 rt-async-std = ["aerospike-core/rt-async-std", "aerospike-macro/rt-async-std"]
+tls = ["aerospike-core/tls", "aerospike-rt/tls"]
 
 [[bench]]
 name = "client_server"
@@ -54,4 +55,9 @@ ripemd = "0.1"
 aerospike-macro = {path = "./aerospike-macro"}
 aerospike-rt = {path = "./aerospike-rt"}
 futures = {version = "0.3.16" }
-tokio = { version = "1.10.0", features = ["full"] }
+tokio = { version = "1.48.0", features = ["full"] }
+proptest = "1.6.0"
+tokio-rustls = {version = "0.26.0"}
+rustls = {version = "0.23.31"}
+webpki-roots = "1"
+#console-subscriber = "0.1.5"

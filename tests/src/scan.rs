@@ -234,7 +234,10 @@ async fn scan_multi_consumer_stream() {
     }
 
     for t in threads {
+        #[cfg(all(any(feature = "rt-tokio"), not(feature = "rt-async-std")))]
         t.await.expect("Cannot join thread");
+        #[cfg(all(any(feature = "rt-async-std"), not(feature = "rt-tokio")))]
+        t.await;
     }
 
     assert_eq!(count.load(Ordering::Relaxed), EXPECTED);

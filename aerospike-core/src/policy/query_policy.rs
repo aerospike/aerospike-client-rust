@@ -52,9 +52,6 @@ pub struct QueryPolicy {
     /// is bounded by the server config `background-query-max-rps`.
     pub records_per_second: u32,
 
-    /// Terminate query if cluster is in fluctuating state.
-    pub fail_on_cluster_change: bool,
-
     /// Maximum time in milliseconds to wait when polling socket for availability prior to
     /// performing an operation on the socket on the server side. Zero means there is no socket
     /// timeout. Default: 10,000 ms.
@@ -65,9 +62,6 @@ pub struct QueryPolicy {
     ///
     /// Default: QueryDuration::Long
     pub expected_duration: QueryDuration,
-
-    /// Optional Filter Expression
-    pub filter_expression: Option<FilterExpression>,
 
     /// Defines algorithm used to determine the target node for a command. The replica algorithm only affects single record and batch commands.
     pub replica: Replica,
@@ -81,7 +75,7 @@ impl QueryPolicy {
 
     /// Get the current Filter Expression
     pub const fn filter_expression(&self) -> &Option<FilterExpression> {
-        &self.filter_expression
+        &self.base_policy.filter_expression
     }
 }
 
@@ -93,10 +87,8 @@ impl Default for QueryPolicy {
             max_records: 0,
             records_per_second: 0,
             record_queue_size: 1024,
-            fail_on_cluster_change: true,
             socket_timeout: 10000,
             expected_duration: QueryDuration::Long,
-            filter_expression: None,
             replica: Replica::default(),
         }
     }

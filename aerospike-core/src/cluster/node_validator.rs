@@ -74,6 +74,7 @@ impl NodeValidator {
                 }
             }
         }
+
         match last_err {
             Some(err) => Err(err),
             None => unreachable!(),
@@ -84,15 +85,22 @@ impl NodeValidator {
         self.aliases.clone()
     }
 
-    pub fn peers(&self) -> Vec<Host> {
+    pub fn services(&self) -> Vec<Host> {
         self.services.clone()
     }
 
     fn resolve_aliases(&mut self, host: &Host) -> Result<()> {
         self.aliases = (host.name.as_ref(), host.port)
             .to_socket_addrs()?
-            .map(|addr| Host::new(&addr.ip().to_string(), addr.port()))
+            .map(|addr| {
+                Host::new_tls(
+                    &addr.ip().to_string(),
+                    &host.tls_name.clone().unwrap_or("".into()),
+                    addr.port(),
+                )
+            })
             .collect();
+
         debug!("Resolved aliases for host {}: {:?}", host, self.aliases);
         if self.aliases.is_empty() {
             Err(Error::Connection(format!("Failed to find addresses for {}", host)).into())
@@ -102,12 +110,8 @@ impl NodeValidator {
     }
 
     async fn validate_alias(&mut self, cluster: &Cluster, alias: &Host) -> Result<()> {
-        let mut conn = Connection::new(&alias.address(), &self.client_policy).await?;
-        let service_name = if cluster.client_policy.use_services_alternate {
-            "services-alternate"
-        } else {
-            "services"
-        };
+        let mut conn = Connection::new(&alias, &self.client_policy).await?;
+        let service_name = cluster.client_policy.service_string();
         let info_map = Message::info(
             &mut conn,
             &["node", "cluster-name", "features", service_name],

@@ -21,7 +21,8 @@ use std::sync::Arc;
 use aerospike_rt::Mutex;
 use futures::executor::block_on;
 
-use crossbeam_queue::SegQueue;
+use async_channel::{Receiver, Sender};
+
 use rand::Rng;
 
 use crate::errors::Result;
@@ -37,10 +38,10 @@ pub struct RecordStream(Arc<Recordset>);
 /// queue.
 #[derive(Debug)]
 pub struct Recordset {
+    count: AtomicUsize,
     instances: AtomicUsize,
-    record_queue_count: AtomicUsize,
-    record_queue_size: AtomicUsize,
-    record_queue: SegQueue<Result<Record>>,
+    rx: Receiver<Result<Record>>,
+    tx: Sender<Result<Record>>,
     active: AtomicBool,
     task_id: AtomicUsize,
     pub(crate) tracker: Arc<Mutex<PartitionTracker>>,
@@ -62,11 +63,12 @@ impl Recordset {
         let mut rng = rand::thread_rng();
         let task_id = rng.gen::<usize>();
 
+        let (tx, rx) = async_channel::bounded(rec_queue_size);
         Recordset {
+            count: AtomicUsize::new(nodes),
             instances: AtomicUsize::new(nodes),
-            record_queue_size: AtomicUsize::new(rec_queue_size),
-            record_queue_count: AtomicUsize::new(0),
-            record_queue: SegQueue::new(),
+            rx,
+            tx,
             active: AtomicBool::new(true),
             task_id: AtomicUsize::new(task_id),
             tracker: tracker,
@@ -76,6 +78,8 @@ impl Recordset {
     /// Close the query.
     pub fn close(&self) {
         self.active.store(false, Ordering::Relaxed);
+        // self.tx.close();
+        // self.rx.close();
     }
 
     /// Check whether the query is still active.
@@ -89,33 +93,19 @@ impl Recordset {
         self.task_id.store(task_id, Ordering::Relaxed);
     }
 
-    pub(crate) async fn busy_push(&self, mut record: Result<Record>) {
-        loop {
-            let result = self.push(record);
-            match result {
-                None => break,
-                Some(returned) => {
-                    record = returned;
-                    // thread::yield_now();
-                    aerospike_rt::task::yield_now().await;
-                }
-            }
-        }
+    pub(crate) async fn err(&self, e: crate::Error) {
+        let _ = self.tx.clone().send(Err(e)).await;
     }
 
-    fn push(&self, record: Result<Record>) -> Option<Result<Record>> {
-        if !self.is_active() {
-            return None; // accepted. That allows commands waiting to continue and exit
+    pub(crate) async fn push(&self, record: Result<Record>) -> Result<()> {
+        match record {
+            // Do not emit stream termination errors; they are used as signals only.
+            Err(crate::Error::StreamTerminatedError()) => Ok(()),
+            _ => match self.tx.send(record).await {
+                Ok(_) => Ok(()),
+                Err(_) => Err(crate::Error::StreamTerminatedError()),
+            },
         }
-
-        if self.record_queue_count.fetch_add(1, Ordering::Relaxed)
-            < self.record_queue_size.load(Ordering::Relaxed)
-        {
-            self.record_queue.push(record);
-            return None;
-        }
-        self.record_queue_count.fetch_sub(1, Ordering::Relaxed);
-        Some(record)
     }
 
     /// Returns the task ID for the scan/query.
@@ -140,14 +130,10 @@ impl Recordset {
 
     /// Returns a result from the queue if it exists. Otherwise, returns None.
     pub fn next_record(&self) -> Option<Result<Record>> {
-        if self.is_active() || !self.record_queue.is_empty() {
-            let result = self.record_queue.pop();
-            if result.is_some() {
-                self.record_queue_count.fetch_sub(1, Ordering::Relaxed);
-            }
-            return result;
+        match self.rx.try_recv() {
+            Ok(r) => Some(r),
+            Err(_) => None,
         }
-        return None;
     }
 
     /// Converts a reference to a [`Recordset`] into a [`RecordStream`] that can be used
@@ -168,7 +154,7 @@ impl<'a> Iterator for &'a Recordset {
                 return result;
             }
 
-            if self.is_active() || !self.record_queue.is_empty() {
+            if self.is_active() {
                 block_on(aerospike_rt::task::yield_now());
                 continue;
             }
@@ -186,14 +172,19 @@ impl futures::Stream for RecordStream {
         self: std::pin::Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
     ) -> std::task::Poll<Option<Self::Item>> {
-        if self.0.is_active() || !self.0.record_queue.is_empty() {
-            if let Some(result) = self.0.next_record() {
-                return std::task::Poll::Ready(Some(result));
+        match self.0.rx.try_recv() {
+            Ok(r) => {
+                self.0.count.fetch_add(1, Ordering::Relaxed);
+                std::task::Poll::Ready(Some(r))
             }
-            cx.waker().wake_by_ref();
-            std::task::Poll::Pending
-        } else {
-            std::task::Poll::Ready(None)
+            Err(e) => {
+                if !self.0.is_active() && e.is_empty() {
+                    std::task::Poll::Ready(None)
+                } else {
+                    cx.waker().wake_by_ref();
+                    std::task::Poll::Pending
+                }
+            }
         }
     }
 }
@@ -201,5 +192,14 @@ impl futures::Stream for RecordStream {
 impl AsRef<Recordset> for RecordStream {
     fn as_ref(&self) -> &Recordset {
         &self.0
+    }
+}
+
+/// If the record stream is inactive, it will extract the PartitionFilter cursor to use in a future scan/query.
+/// It will still return nil if the PartitionFilter is already extracted.
+impl RecordStream {
+    /// Returns the
+    pub async fn partition_filter(&self) -> Option<PartitionFilter> {
+        self.0.partition_filter().await
     }
 }

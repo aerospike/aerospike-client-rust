@@ -54,7 +54,6 @@ pub(crate) use self::write_command::WriteCommand;
 use crate::cluster::Node;
 use crate::errors::{Error, Result};
 use crate::net::Connection;
-use crate::ResultCode;
 
 // Command interface describes all commands available
 #[async_trait::async_trait]

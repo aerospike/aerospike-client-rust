@@ -13,12 +13,18 @@
 // License for the specific language governing permissions and limitations under
 // the License.
 
+#[cfg(feature = "tls")]
+use std::convert::TryFrom;
+#[cfg(feature = "tls")]
+use std::sync::Arc;
+
+use futures::executor::block_on;
+
 use crate::commands::admin_command::AdminCommand;
 use crate::commands::buffer::{Buffer, MAX_BUFFER_SIZE};
 use crate::errors::{Error, Result};
+use crate::net::Host;
 use crate::policy::ClientPolicy;
-use std::cmp::min;
-
 #[cfg(all(any(feature = "rt-async-std"), not(feature = "rt-tokio")))]
 use aerospike_rt::async_std::net::Shutdown;
 #[cfg(all(any(feature = "rt-tokio"), not(feature = "rt-async-std")))]
@@ -27,7 +33,20 @@ use aerospike_rt::net::TcpStream;
 use aerospike_rt::time::{Duration, Instant};
 #[cfg(all(any(feature = "rt-async-std"), not(feature = "rt-tokio")))]
 use futures::{AsyncReadExt, AsyncWriteExt};
+use std::cmp::min;
 use std::ops::Add;
+
+#[cfg(feature = "tls")]
+use rustls::pki_types::ServerName;
+#[cfg(feature = "tls")]
+use tokio_rustls::{client::TlsStream, rustls, TlsConnector};
+
+#[derive(Debug)]
+pub enum Netsocket {
+    Tcp(TcpStream),
+    #[cfg(feature = "tls")]
+    Tls(TlsStream<TcpStream>),
+}
 
 #[derive(Debug)]
 pub struct Connection {
@@ -37,7 +56,7 @@ pub struct Connection {
     idle_deadline: Option<Instant>,
 
     // connection object
-    pub(crate) conn: TcpStream,
+    pub(crate) conn: Netsocket,
 
     bytes_read: usize,
 
@@ -46,18 +65,54 @@ pub struct Connection {
 }
 
 impl Connection {
-    pub async fn new(addr: &str, policy: &ClientPolicy) -> Result<Self> {
-        let stream = aerospike_rt::timeout(Duration::from_secs(10), TcpStream::connect(addr)).await;
+    #[cfg(feature = "tls")]
+    async fn get_netsocket(
+        stream: TcpStream,
+        host: &Host,
+        policy: &ClientPolicy,
+    ) -> Result<Netsocket> {
+        if let Some(tls_config) = policy.tls_config.clone() {
+            let connector = TlsConnector::from(Arc::new(tls_config));
+            let server_name = host
+                .tls_name
+                .clone()
+                .unwrap_or(policy.cluster_name.clone().unwrap_or_default());
+            let domain = ServerName::try_from(server_name.as_str())
+                .map_err(|e| Error::ClientError(e.to_string()))?
+                .to_owned();
+            Ok(Netsocket::Tls(connector.connect(domain, stream).await?))
+        } else {
+            Ok(Netsocket::Tcp(stream))
+        }
+    }
+
+    #[cfg(not(feature = "tls"))]
+    async fn get_netsocket(
+        stream: TcpStream,
+        _host: &Host,
+        _policy: &ClientPolicy,
+    ) -> Result<Netsocket> {
+        Ok(Netsocket::Tcp(stream))
+    }
+
+    pub async fn new(host: &Host, policy: &ClientPolicy) -> Result<Self> {
+        let addr = host.address();
+        let stream =
+            aerospike_rt::timeout(Duration::from_secs(10), TcpStream::connect(addr.clone())).await;
         if stream.is_err() {
             return Err(Error::Connection(
                 "Could not open network connection".to_string(),
             ));
         }
+
+        let stream = stream.unwrap()?;
+        let stream = Self::get_netsocket(stream, host, policy).await?;
+
         let mut conn = Connection {
             addr: addr.into(),
             buffer: Buffer::new(policy.buffer_reclaim_threshold),
             bytes_read: 0,
-            conn: stream.unwrap()?,
+            conn: stream,
             idle_timeout: policy.idle_timeout,
             idle_deadline: policy.idle_timeout.map(|timeout| Instant::now() + timeout),
             exhausted: true,
@@ -68,21 +123,41 @@ impl Connection {
     }
 
     pub async fn close(&mut self) {
-        #[cfg(all(any(feature = "rt-async-std"), not(feature = "rt-tokio")))]
-        let _s = self.conn.shutdown(Shutdown::Both);
-        #[cfg(all(any(feature = "rt-tokio"), not(feature = "rt-async-std")))]
-        let _s = self.conn.shutdown().await;
+        let _ = match self.conn {
+            Netsocket::Tcp(ref mut conn) => {
+                #[cfg(all(any(feature = "rt-tokio"), not(feature = "rt-async-std")))]
+                let _ = conn.shutdown();
+                #[cfg(all(any(feature = "rt-async-std"), not(feature = "rt-tokio")))]
+                let _ = conn.shutdown(Shutdown::Both);
+            }
+            #[cfg(feature = "tls")]
+            Netsocket::Tls(ref mut conn) => {
+                #[cfg(all(any(feature = "rt-tokio"), not(feature = "rt-async-std")))]
+                let _ = conn.shutdown();
+                #[cfg(all(any(feature = "rt-async-std"), not(feature = "rt-tokio")))]
+                let _ = conn.shutdown(Shutdown::Both);
+            }
+        };
     }
 
     pub async fn flush(&mut self) -> Result<()> {
-        self.conn.write_all(&self.buffer.data_buffer).await?;
+        match self.conn {
+            Netsocket::Tcp(ref mut conn) => conn.write_all(&self.buffer.data_buffer).await?,
+            #[cfg(feature = "tls")]
+            Netsocket::Tls(ref mut conn) => conn.write_all(&self.buffer.data_buffer).await?,
+        };
+
         self.refresh();
         Ok(())
     }
 
     pub async fn read_buffer(&mut self, size: usize) -> Result<usize> {
         self.buffer.resize_buffer(size)?;
-        let size = self.conn.read_exact(&mut self.buffer.data_buffer).await?;
+        match self.conn {
+            Netsocket::Tcp(ref mut conn) => conn.read_exact(&mut self.buffer.data_buffer).await?,
+            #[cfg(feature = "tls")]
+            Netsocket::Tls(ref mut conn) => conn.read_exact(&mut self.buffer.data_buffer).await?,
+        };
         self.bytes_read += size;
         self.buffer.reset_offset();
         self.refresh();
@@ -90,10 +165,18 @@ impl Connection {
     }
 
     pub async fn read_buffer_at(&mut self, pos: usize, size: usize) -> Result<usize> {
-        let size = self
-            .conn
-            .read_exact(&mut self.buffer.data_buffer[pos..pos + size])
-            .await?;
+        match self.conn {
+            Netsocket::Tcp(ref mut conn) => {
+                conn.read_exact(&mut self.buffer.data_buffer[pos..pos + size])
+                    .await?
+            }
+            #[cfg(feature = "tls")]
+            Netsocket::Tls(ref mut conn) => {
+                conn.read_exact(&mut self.buffer.data_buffer[pos..pos + size])
+                    .await?
+            }
+        };
+
         self.bytes_read += size;
         self.buffer.reset_offset();
         self.refresh();
@@ -101,14 +184,24 @@ impl Connection {
     }
 
     pub async fn write(&mut self, buf: &[u8]) -> Result<()> {
-        self.conn.write_all(buf).await?;
+        match self.conn {
+            Netsocket::Tcp(ref mut conn) => conn.write_all(buf).await?,
+            #[cfg(feature = "tls")]
+            Netsocket::Tls(ref mut conn) => conn.write_all(buf).await?,
+        };
+
         self.refresh();
         Ok(())
     }
 
     pub async fn read(&mut self, buf: &mut [u8]) -> Result<()> {
-        let size = self.conn.read_exact(buf).await?;
-        self.bytes_read += size;
+        match self.conn {
+            Netsocket::Tcp(ref mut conn) => conn.read_exact(buf).await?,
+            #[cfg(feature = "tls")]
+            Netsocket::Tls(ref mut conn) => conn.read_exact(buf).await?,
+        };
+
+        self.bytes_read += buf.len();
         self.refresh();
         Ok(())
     }
@@ -156,8 +249,15 @@ pub(crate) struct BufferedConn<'a> {
     cache: Vec<u8>,
     pos: usize,
 
-    limit: usize,
+    pub(crate) limit: usize,
     bytes_read: usize,
+}
+
+// buffered connections have a limit and will be drained as soon as they are dropped.
+impl<'a> Drop for BufferedConn<'a> {
+    fn drop(&mut self) {
+        let _ = block_on(self.drain());
+    }
 }
 
 impl<'a> BufferedConn<'a> {
@@ -186,11 +286,11 @@ impl<'a> BufferedConn<'a> {
         self.bytes_read
     }
 
-    pub(crate) fn set_limit(&mut self, size: usize) {
+    pub(crate) fn set_limit(&mut self, size: usize) -> Result<()> {
         self.limit = size;
         self.pos = 0;
         self.bytes_read = 0;
-        self.resize_cache(0).unwrap();
+        self.resize_cache(0)
     }
 
     fn resize_cache(&mut self, size: usize) -> Result<()> {
@@ -217,11 +317,44 @@ impl<'a> BufferedConn<'a> {
         let size = min(self.cache.capacity(), self.limit);
         self.resize_cache(size)?;
 
-        let size = self.conn.conn.read_exact(&mut self.cache).await?;
+        match self.conn.conn {
+            Netsocket::Tcp(ref mut conn) => conn.read_exact(&mut self.cache).await?,
+            #[cfg(feature = "tls")]
+            Netsocket::Tls(ref mut conn) => conn.read_exact(&mut self.cache).await?,
+        };
 
         self.limit -= size;
         self.pos = 0;
         Ok(size)
+    }
+
+    pub(crate) async fn drain(&mut self) -> Result<()> {
+        while self.limit > 0 {
+            let count = match self.conn.conn {
+                Netsocket::Tcp(ref mut conn) => {
+                    aerospike_rt::io::copy(
+                        &mut conn.take(self.limit as u64),
+                        &mut aerospike_rt::io::sink(),
+                    )
+                    .await?
+                }
+                #[cfg(feature = "tls")]
+                Netsocket::Tls(ref mut conn) => {
+                    aerospike_rt::io::copy(
+                        &mut conn.take(self.limit as u64),
+                        &mut aerospike_rt::io::sink(),
+                    )
+                    .await?
+                }
+            };
+
+            self.limit -= count as usize;
+            self.bytes_read += count as usize;
+        }
+        let _ = self.resize_cache(0);
+        self.pos = 0;
+        assert!(self.exhausted());
+        Ok(())
     }
 
     #[inline]
@@ -253,15 +386,6 @@ impl<'a> BufferedConn<'a> {
         self.pos += size;
         Ok(size)
     }
-
-    // pub async fn read_buffer2(&mut self, size: usize) -> Result<usize> {
-    //     let size: usize = self.conn.read_buffer(size).await?;
-    //     // self.conn.buffer.dump_buffer();
-    //     self.bytes_read += size;
-    //     self.limit -= size;
-    //     self.pos = self.cache.len(); // mark as empty
-    //     Ok(size)
-    // }
 
     pub async fn read_buffer(&mut self, size: usize) -> Result<usize> {
         self.conn.buffer.resize_buffer(size)?;

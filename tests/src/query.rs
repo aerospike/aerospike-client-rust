@@ -327,6 +327,7 @@ async fn query_large_i64() {
     let bin_name = aerospike::expressions::int_bin(BIN.into());
     let bin_val = aerospike::expressions::int_val(i64::max_value());
     qpolicy
+        .base_policy
         .filter_expression
         .replace(aerospike::expressions::eq(bin_name, bin_val));
     let stmt = aerospike::Statement::new(common::namespace(), SET, aerospike::Bins::All);

@@ -36,10 +36,10 @@ use crate::errors::{Error, Result};
 use crate::net::Host;
 use crate::policy::ClientPolicy;
 use crate::policy::Replica;
+use aerospike_rt::Mutex;
 use aerospike_rt::RwLock;
 use futures::channel::mpsc;
 use futures::channel::mpsc::{Receiver, Sender};
-use futures::lock::Mutex;
 
 #[derive(Debug)]
 pub struct PartitionForNamespace {
@@ -384,8 +384,8 @@ impl Cluster {
                 continue;
             };
 
-            let peers = if seed_node_validator.peers().len() > 0 {
-                &*seed_node_validator.peers()
+            let peers = if seed_node_validator.services().len() > 0 {
+                &*seed_node_validator.services()
             } else {
                 &*seed_node_validator.aliases()
             };

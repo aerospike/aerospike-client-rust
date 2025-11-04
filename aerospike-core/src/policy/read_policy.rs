@@ -34,9 +34,9 @@ pub struct ReadPolicy {
 impl Default for BasePolicy {
     fn default() -> BasePolicy {
         BasePolicy {
-            total_timeout: Some(Duration::new(30, 0)),
+            total_timeout: Some(Duration::from_secs(30)),
             max_retries: Some(2),
-            sleep_between_retries: Some(Duration::new(0, 500_000_000)),
+            sleep_between_retries: Some(Duration::from_millis(500)),
             consistency_level: ConsistencyLevel::ConsistencyOne,
             read_touch_ttl: super::ReadTouchTTL::ServerDefault,
             filter_expression: None,

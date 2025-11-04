@@ -27,6 +27,9 @@ pub struct Host {
     /// Host name or IP address of database server.
     pub name: String,
 
+    /// TLS certificate name used for secure connections.
+    pub tls_name: Option<String>,
+
     /// Port of database server.
     pub port: u16,
 }
@@ -36,6 +39,21 @@ impl Host {
     pub fn new(name: &str, port: u16) -> Self {
         Host {
             name: name.to_string(),
+            tls_name: None,
+            port,
+        }
+    }
+
+    /// Create a new tls host instance given a hostname/IP and a port number.
+    pub fn new_tls(name: &str, tls_name: &str, port: u16) -> Self {
+        let tls_name = match tls_name.trim().len() {
+            0 => None,
+            _ => Some(tls_name.into()),
+        };
+
+        Host {
+            name: name.to_string(),
+            tls_name: tls_name,
             port,
         }
     }

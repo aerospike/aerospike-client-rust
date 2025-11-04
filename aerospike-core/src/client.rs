@@ -34,14 +34,20 @@ use crate::policy::{BatchPolicy, ClientPolicy, QueryPolicy, ReadPolicy, ScanPoli
 use crate::query::{PartitionFilter, PartitionTracker};
 use crate::task::{IndexTask, RegisterTask};
 use crate::{
-    BatchRecord, Bin, Bins, CollectionIndexType, IndexType, Key, Privilege, Record, Recordset,
-    ResultCode, Role, Statement, UDFLang, User, Value,
+    record, BatchRecord, Bin, Bins, CollectionIndexType, IndexType, Key, Privilege, Record,
+    Recordset, ResultCode, Role, Statement, UDFLang, User, Value,
 };
 use aerospike_rt::fs::File;
 #[cfg(all(any(feature = "rt-tokio"), not(feature = "rt-async-std")))]
-use aerospike_rt::{io::AsyncReadExt, Semaphore};
+use aerospike_rt::io::AsyncReadExt;
+use aerospike_rt::Semaphore;
 #[cfg(all(any(feature = "rt-async-std"), not(feature = "rt-tokio")))]
-use futures::{AsyncReadExt, Semaphore};
+use futures::AsyncReadExt;
+
+use futures::sink::SinkExt;
+use futures::stream::StreamExt;
+
+const MAX_PERMITS: usize = 256;
 
 /// Instantiate a Client instance to access an Aerospike database cluster and perform database
 /// operations.
@@ -277,10 +283,10 @@ impl Client {
     pub async fn batch(
         &self,
         policy: &BatchPolicy,
-        batch_records: &[BatchOperation<'_>],
+        ops: &[BatchOperation<'_>],
     ) -> Result<Vec<BatchRecord>> {
         let executor = BatchExecutor::new(self.cluster.clone());
-        executor.execute_batch_operate(policy, batch_records).await
+        executor.execute_batch_operate(policy, ops).await
     }
 
     /// Write record bin(s). The policy specifies the transaction timeout, record expiration and
@@ -751,7 +757,7 @@ impl Client {
                 {
                     Ok(list) => list,
                     Err(e) => {
-                        recordset.busy_push(Err(e)).await;
+                        recordset.err(e).await;
                         tracker.partition_error().await;
                         return;
                     }
@@ -764,7 +770,7 @@ impl Client {
             if recordset.is_active() {
                 let mut handles = Vec::with_capacity(list.len());
                 let semaphore = Arc::new(Semaphore::new(if policy.max_concurrent_nodes == 0 {
-                    Semaphore::MAX_PERMITS
+                    MAX_PERMITS
                 } else {
                     policy.max_concurrent_nodes
                 }));
@@ -778,9 +784,7 @@ impl Client {
                     let node_partition = node_partition.clone();
 
                     let handle = aerospike_rt::spawn(async move {
-                        let permit = semaphore.acquire().await.map_err(|e| {
-                            Error::ClientError(format!("Failed to acquire semaphore: {}", e))
-                        })?;
+                        let permit = semaphore.acquire().await;
                         let mut command = ScanCommand::new(
                             &policy,
                             &namespace,
@@ -801,9 +805,7 @@ impl Client {
 
                 let res = futures::future::try_join_all(handles).await;
                 if let Err(e) = res {
-                    err_recordset
-                        .busy_push(Err(Error::ClientError(e.to_string())))
-                        .await;
+                    err_recordset.err(Error::ClientError(e.to_string())).await;
                 }
             };
 
@@ -814,7 +816,7 @@ impl Client {
                 (Ok(_), false) => return,
                 (Err(e), _) => {
                     tracker.partition_error().await;
-                    recordset.busy_push(Err(e)).await;
+                    recordset.err(e).await;
                     return;
                 }
                 _ => (),
@@ -928,7 +930,7 @@ impl Client {
                 {
                     Ok(list) => list,
                     Err(e) => {
-                        recordset.busy_push(Err(e)).await;
+                        recordset.err(e).await;
                         tracker.partition_error().await;
                         return;
                     }
@@ -941,7 +943,7 @@ impl Client {
             if recordset.is_active() {
                 let mut handles = Vec::with_capacity(list.len());
                 let semaphore = Arc::new(Semaphore::new(if policy.max_concurrent_nodes == 0 {
-                    Semaphore::MAX_PERMITS
+                    MAX_PERMITS
                 } else {
                     policy.max_concurrent_nodes
                 }));
@@ -953,9 +955,7 @@ impl Client {
                     let node_partition = node_partition.clone();
                     let statement = statement.clone();
                     let handle = aerospike_rt::spawn(async move {
-                        let permit = semaphore.acquire().await.map_err(|e| {
-                            Error::ClientError(format!("Failed to acquire semaphore: {}", e))
-                        })?;
+                        let permit = semaphore.acquire().await;
                         let mut command = QueryCommand::new(
                             &policy,
                             statement,
@@ -974,9 +974,7 @@ impl Client {
 
                 let res = futures::future::try_join_all(handles).await;
                 if let Err(e) = res {
-                    err_recordset
-                        .busy_push(Err(Error::ClientError(e.to_string())))
-                        .await;
+                    err_recordset.err(Error::ClientError(e.to_string())).await;
                 }
             };
 
@@ -987,7 +985,7 @@ impl Client {
                 (Ok(_), false) => return,
                 (Err(e), _) => {
                     tracker.partition_error().await;
-                    recordset.busy_push(Err(e)).await;
+                    recordset.err(e).await;
                     return;
                 }
                 _ => (),

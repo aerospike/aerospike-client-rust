@@ -18,11 +18,18 @@ use std::time::Duration;
 use crate::commands::admin_command::AdminCommand;
 use crate::errors::Result;
 
+#[cfg(feature = "tls")]
+use tokio_rustls::rustls::ClientConfig;
+
 /// `ClientPolicy` encapsulates parameters for client policy command.
 #[derive(Debug, Clone)]
 pub struct ClientPolicy {
     /// User authentication to cluster. Leave empty for clusters running without restricted access.
     pub user_password: Option<(String, String)>,
+
+    /// TLS secure connection policy for TLS enabled servers.
+    #[cfg(feature = "tls")]
+    pub tls_config: Option<ClientConfig>,
 
     /// Initial host connection timeout in milliseconds.  The timeout when opening a connection
     /// to the server host for the first time.
@@ -74,23 +81,18 @@ pub struct ClientPolicy {
     /// "services-alternate" is available with Aerospike Server versions >= 3.7.1.
     pub use_services_alternate: bool,
 
-    /// Size of the thread pool used in scan and query commands. These commands are often sent to
-    /// multiple server nodes in parallel threads. A thread pool improves performance because
-    /// threads do not have to be created/destroyed for each command.
-    pub thread_pool_size: usize,
-
     /// Expected cluster name. It not `None`, server nodes must return this cluster name in order
     /// to join the client's view of the cluster. Should only be set when connecting to servers
     /// that support the "cluster-name" info command.
     pub cluster_name: Option<String>,
 
-    /// Mark this client as belonging to a rack, and track server rack data.  This field is useful when directing read commands to 
-	/// the server node that contains the key and exists on the same rack as the client.
+    /// Mark this client as belonging to a rack, and track server rack data.  This field is useful when directing read commands to
+    /// the server node that contains the key and exists on the same rack as the client.
     /// This serves to lower cloud provider costs when nodes are distributed across different
-	/// racks/data centers.
-	///
-	/// Replica.PreferRack and server rack configuration must
-	/// also be set to enable this functionality.
+    /// racks/data centers.
+    ///
+    /// Replica.PreferRack and server rack configuration must
+    /// also be set to enable this functionality.
     pub rack_ids: Option<HashSet<usize>>,
 }
 
@@ -99,17 +101,19 @@ impl Default for ClientPolicy {
         ClientPolicy {
             user_password: None,
             timeout: Some(Duration::new(30, 0)),
-            idle_timeout: Some(Duration::new(5, 0)),
+            idle_timeout: Some(Duration::new(30, 0)),
             max_conns_per_node: 256,
             conn_pools_per_node: 1,
             fail_if_not_connected: true,
             tend_interval: Duration::new(1, 0),
             ip_map: None,
             use_services_alternate: false,
-            thread_pool_size: 128,
             cluster_name: None,
             buffer_reclaim_threshold: 65536,
             rack_ids: None,
+
+            #[cfg(feature = "tls")]
+            tls_config: None,
         }
     }
 }
@@ -120,5 +124,23 @@ impl ClientPolicy {
         let password = AdminCommand::hash_password(&password)?;
         self.user_password = Some((username, password));
         Ok(())
+    }
+
+    #[cfg(feature = "tls")]
+    pub(crate) const fn service_string(&self) -> &'static str {
+        match (&self.tls_config, self.use_services_alternate) {
+            (None, true) => "service-clear-alt",
+            (None, false) => "service-clear-std",
+            (Some(_), true) => "service-tls-alt",
+            (Some(_), false) => "service-tls-std",
+        }
+    }
+
+    #[cfg(not(feature = "tls"))]
+    pub(crate) const fn service_string(&self) -> &'static str {
+        match self.use_services_alternate {
+            true => "service-clear-alt",
+            false => "service-clear-std",
+        }
     }
 }

@@ -17,7 +17,8 @@ pub fn test(_attr: TokenStream, input: TokenStream) -> TokenStream {
             #[test]
             #(#attrs)*
             fn #name() #ret {
-                ::aerospike_rt::tokio::runtime::Runtime::new().unwrap().block_on( async {#body} )
+                // ::aerospike_rt::tokio::runtime::Runtime::new().unwrap().block_on( async {#body} )
+                crate::common::RUNTIME.block_on( async {#body} )
             }
         }
     } else if cfg!(feature = "rt-async-std") {
