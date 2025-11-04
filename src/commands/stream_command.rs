@@ -53,7 +53,7 @@ impl StreamCommand {
             }
 
             match result_code {
-                ResultCode::KeyNotFoundError => return Ok((None, false)),
+                ResultCode::KeyNotFoundError | ResultCode::FilteredOut => return Ok((None, false)),
                 _ => bail!(ErrorKind::ServerError(result_code)),
             }
         }
@@ -163,6 +163,9 @@ impl StreamCommand {
                         &mut conn.buffer,
                         particle_bytes_size,
                     )?);
+                }
+                x if x == FieldType::BValArray as u8 => {
+                    conn.buffer.read_slice(field_len - 1)?;
                 }
                 _ => unreachable!(),
             }

@@ -13,6 +13,9 @@
 // License for the specific language governing permissions and limitations under
 // the License.
 
+use aerospike::expressions::*;
+use aerospike::ScanPolicy;
+
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::thread;
@@ -121,4 +124,61 @@ fn scan_node() {
     }
 
     assert_eq!(count.load(Ordering::Relaxed), EXPECTED);
+}
+
+#[test]
+fn scan_filtered() {
+    let _ = env_logger::try_init();
+
+    let client = common::client();
+    let namespace: &str = common::namespace();
+    let set_name = &common::rand_str(10);
+    let mut spolicy = ScanPolicy::default();
+    let mut wpolicy = WritePolicy::default();
+    wpolicy.record_exists_action = aerospike::RecordExistsAction::Replace;
+
+    let bin1 = as_bin!("a", "a value");
+    let bin2 = as_bin!("b", "another value");
+    let bin3 = as_bin!("c", 42);
+    let bin4nf = as_bin!("d", 667);
+    let bin4f = as_bin!("d", 666);
+
+    let key1 = as_key!(namespace, set_name, 1);
+    client
+        .put(&wpolicy, &key1, &[&bin1, &bin2, &bin3, &bin4nf])
+        .unwrap();
+
+    let key2 = as_key!(namespace, set_name, 2);
+    client
+        .put(&wpolicy, &key2, &[&bin1, &bin2, &bin3, &bin4nf])
+        .unwrap();
+
+    let key3 = as_key!(namespace, set_name, 3);
+    client
+        .put(&wpolicy, &key3, &[&bin1, &bin2, &bin3, &bin4nf])
+        .unwrap();
+
+    // should filter out
+    let key5 = as_key!(namespace, set_name, 4);
+    client
+        .put(&wpolicy, &key5, &[&bin1, &bin2, &bin3, &bin4f])
+        .unwrap();
+
+    let fe = Some(ne(int_bin("d".to_string()), int_val(666)));
+    spolicy.filter_expression = fe;
+
+    let rs = client
+        .scan(&spolicy, common::namespace(), &set_name, Bins::All)
+        .unwrap();
+
+    for res in &*rs {
+        match res {
+            Err(e) => panic!("err: {}", e),
+            Ok(rec) => {
+                if rec.key.unwrap().digest == key5.digest {
+                    panic!("filter not working")
+                }
+            }
+        }
+    }
 }
