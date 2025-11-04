@@ -26,6 +26,7 @@ use crate::commands::{self};
 use crate::errors::{Error, Result};
 use crate::net::Connection;
 use crate::policy::{BatchPolicy, Policy, PolicyLike, Replica};
+use crate::result_code;
 use crate::value::bytes_to_particle;
 use crate::Key;
 use crate::{value, Record, ResultCode, Value};
@@ -187,7 +188,7 @@ impl<'a> BatchOperateCommand<'a> {
             // cancelling/closing the batch/multi commands will return an error, which will
             // close the connection to throw away its data and signal the server about the
             // situation. We will not put back the connection in the buffer.
-            if !commands::keep_connection(&err) {
+            if !Self::keep_connection(&err) {
                 conn.invalidate();
             }
             Err(err)
@@ -230,7 +231,7 @@ impl<'a> BatchOperateCommand<'a> {
         let result_code = ResultCode::from(conn.buffer.read_u8(Some(5)));
         match result_code {
             ResultCode::Ok => (),
-            ResultCode::KeyNotFoundError => (),
+            ResultCode::KeyNotFoundError | ResultCode::FilteredOut => (),
             rc => {
                 return Err(Error::BatchError(batch_index, rc, false, conn.addr.clone()));
             }
@@ -244,7 +245,7 @@ impl<'a> BatchOperateCommand<'a> {
 
         let found_key = match result_code {
             ResultCode::Ok => true,
-            ResultCode::KeyNotFoundError => false,
+            ResultCode::KeyNotFoundError | ResultCode::FilteredOut => false,
             rc => {
                 return Err(Error::BatchError(batch_index, rc, false, conn.addr.clone()));
             }
@@ -287,6 +288,19 @@ impl<'a> BatchOperateCommand<'a> {
             record,
             result_code: result_code,
         }))
+    }
+
+    const fn keep_connection(err: &Error) -> bool {
+        if let Error::ServerError(result_code, _, _) = err {
+            match result_code {
+                ResultCode::KeyNotFoundError
+                | ResultCode::FilteredOut
+                | ResultCode::InvalidNamespace => true,
+                _ => false,
+            }
+        } else {
+            false
+        }
     }
 
     async fn write_buffer(&mut self, conn: &mut Connection) -> Result<()> {
