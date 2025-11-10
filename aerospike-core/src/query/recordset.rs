@@ -17,6 +17,8 @@ extern crate rand;
 
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::thread;
+use std::time::Duration;
 
 use aerospike_rt::Mutex;
 use futures::executor::block_on;
@@ -129,10 +131,30 @@ impl Recordset {
     }
 
     /// Returns a result from the queue if it exists. Otherwise, returns None.
+    /// Includes retry logic to handle timing issues where records may not be
+    /// immediately available when called right after query/scan.
     pub fn next_record(&self) -> Option<Result<Record>> {
-        match self.rx.try_recv() {
-            Ok(r) => Some(r),
-            Err(_) => None,
+        const MAX_ATTEMPTS: u32 = 1000; // Safety limit to prevent infinite loops
+        let mut attempts = 0;
+
+        loop {
+            match self.rx.try_recv() {
+                Ok(r) => return Some(r),
+                Err(_) => {
+                    if !self.is_active() {
+                        return None;
+                    }
+
+                    if attempts >= MAX_ATTEMPTS {
+                        return None;
+                    }
+                    // Yield to async runtime and sleep briefly to allow background tasks
+                    // to populate the queue
+                    block_on(aerospike_rt::task::yield_now());
+                    thread::sleep(Duration::from_micros(100));
+                    attempts += 1;
+                }
+            }
         }
     }
 
@@ -147,21 +169,9 @@ impl<'a> Iterator for &'a Recordset {
     type Item = Result<Record>;
 
     /// Implements a blocking iterator.
+    /// Uses next_record() which includes retry logic for timing issues.
     fn next(&mut self) -> Option<Result<Record>> {
-        loop {
-            let result = self.next_record();
-            if result.is_some() {
-                return result;
-            }
-
-            if self.is_active() {
-                block_on(aerospike_rt::task::yield_now());
-                continue;
-            }
-
-            // ends the iterator
-            return None;
-        }
+        self.next_record()
     }
 }
 
