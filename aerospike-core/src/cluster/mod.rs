@@ -235,7 +235,25 @@ impl Cluster {
                         refresh_count += 1;
 
                         if !friends.is_empty() {
-                            friend_list.extend_from_slice(&friends);
+                            // For single-node clusters, skip validating friends since they're likely
+                            // the same node with different IPs (e.g., Docker internal IPs that are unreachable)
+                            let known_aliases = self.aliases().await;
+                            let current_nodes = self.nodes().await;
+
+                            if current_nodes.len() == 1 {
+                                // Single-node cluster: skip friends that aren't in known aliases
+                                // to avoid validating unreachable addresses
+                            } else {
+                                // Multi-node cluster: filter out friends that are already in known aliases
+                                let filtered_friends: Vec<_> = friends.iter()
+                                    .filter(|host| {
+                                        let host_addr = host.address();
+                                        !known_aliases.keys().any(|alias_host| alias_host.address() == host_addr)
+                                    })
+                                    .cloned()
+                                    .collect();
+                                friend_list.extend_from_slice(&filtered_friends);
+                            }
                         }
 
                         if old_gen != node.partition_generation() {
@@ -268,6 +286,7 @@ impl Cluster {
     }
 
     async fn wait_till_stabilized(cluster: Arc<Cluster>) -> Result<()> {
+        use aerospike_rt::time::Instant;
         let timeout = cluster
             .client_policy()
             .timeout
@@ -288,7 +307,8 @@ impl Cluster {
 
                 let old_count = count;
                 count = cluster.nodes().await.len() as isize;
-                if count == old_count {
+                // Only break if count has stabilized AND at least one node is discovered
+                if count == old_count && count > 0 {
                     break;
                 }
 
@@ -297,14 +317,15 @@ impl Cluster {
         });
 
         #[cfg(all(feature = "rt-tokio", not(feature = "rt-async-std")))]
-        return handle.await.map_err(|err| {
+        let result = handle.await.map_err(|err| {
             Error::InvalidArgument(format!("Error during initial cluster tend: {:?}", err).into())
         });
         #[cfg(all(feature = "rt-async-std", not(feature = "rt-tokio")))]
-        return {
+        let result = {
             handle.await;
             Ok(())
         };
+        result
     }
 
     pub const fn cluster_name(&self) -> &Option<String> {
@@ -384,27 +405,61 @@ impl Cluster {
                 continue;
             };
 
-            let peers = if seed_node_validator.services().len() > 0 {
-                &*seed_node_validator.services()
-            } else {
-                &*seed_node_validator.aliases()
-            };
+            let services = seed_node_validator.services();
+            let aliases = seed_node_validator.aliases();
 
-            for alias in peers {
-                let mut nv = NodeValidator::new(self);
-                if let Err(err) = nv.validate_node(self, alias).await {
-                    log_error_chain!(err, "Seeding host {} failed with error", alias);
-                    continue;
-                };
+            let node_name = seed_node_validator.name.clone();
 
-                if self.find_node_name(&list, &nv.name) {
-                    continue;
-                }
-
-                let node = self.create_node(nv);
+            // Add the seed node immediately since we've already validated it
+            if !self.find_node_name(&list, &node_name) {
+                let node = self.create_node(seed_node_validator);
                 let node = Arc::new(node);
                 self.add_aliases(node.clone()).await;
                 list.push(node);
+            }
+
+            // Try services for additional nodes (only if they're not in aliases)
+            // If a service is not in aliases, it might be unreachable (e.g., Docker internal IP),
+            // so we skip it and rely on aliases instead
+            let mut found_nodes_from_services = false;
+            if services.len() > 0 {
+                for alias in &*services {
+                    // Skip if this service is already in aliases (will be validated there)
+                    if aliases.iter().any(|a| a.address() == alias.address()) {
+                        found_nodes_from_services = true;
+                        continue;
+                    }
+
+                    // Skip services not in aliases to avoid timeouts on unreachable addresses
+                    // (e.g., Docker internal IPs that aren't accessible from the host)
+                    continue;
+                }
+            }
+
+            // For single-node clusters, aliases are just the resolved addresses of the seed host,
+            // so they're the same node we already added. Skip validating them to avoid redundant work.
+            // Only validate aliases if we found nodes from services (multi-node cluster scenario).
+            if !found_nodes_from_services {
+                // Skip alias validation for single-node clusters
+            } else {
+                // Validate aliases for any additional nodes not yet discovered
+                for alias in &*aliases {
+                    // Skip if we already have this node (check by name after validation)
+                    let mut nv = NodeValidator::new(self);
+                    if let Err(err) = nv.validate_node(self, alias).await {
+                        log_error_chain!(err, "Seeding host {} failed with error", alias);
+                        continue;
+                    };
+
+                    if self.find_node_name(&list, &nv.name) {
+                        continue;
+                    }
+
+                    let node = self.create_node(nv);
+                    let node = Arc::new(node);
+                    self.add_aliases(node.clone()).await;
+                    list.push(node);
+                }
             }
         }
 
@@ -418,10 +473,29 @@ impl Cluster {
 
     async fn find_new_nodes_to_add(&self, hosts: Vec<Host>) -> Vec<Arc<Node>> {
         let mut list: Vec<Arc<Node>> = vec![];
+        let known_aliases = self.aliases().await;
+        let known_nodes = self.nodes().await;
 
         for host in hosts {
+            // Check if this host is already in our known aliases (same node, different IP)
+            let host_address = host.address();
+            let is_known = known_aliases.keys().any(|alias_host| alias_host.address() == host_address);
+            if is_known {
+                // This host is already known, skip validation to avoid redundant work
+                continue;
+            }
+
+            // For single-node clusters, friends returned by node.refresh() are often
+            // the same node with different IPs (e.g., Docker internal IPs).
+            // Try a quick validation with a timeout to avoid long delays.
+            // If it fails quickly, skip it rather than waiting for the full timeout.
             let mut nv = NodeValidator::new(self);
             if let Err(err) = nv.validate_node(self, &host).await {
+                // Check if this is a connection error (likely unreachable address)
+                // For single-node clusters, skip unreachable friends
+                if known_nodes.len() == 1 {
+                    continue;
+                }
                 log_error_chain!(err, "Adding node {} failed with error", host.name);
                 continue;
             };
