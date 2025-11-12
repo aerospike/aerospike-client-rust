@@ -69,9 +69,15 @@ impl Filter {
 
     #[doc(hidden)]
     pub fn estimate_size(&self) -> usize {
-        // bin name size(1) + particle type size(1)
-        //     + begin particle size(4) + end particle size(4) = 10
-        self.bin_name.len() + self.begin.estimate_size() + self.end.estimate_size() + 10
+        let begin_size = match &self.begin {
+            Value::GeoJSON(ref s) => s.len(),
+            _ => self.begin.estimate_size(),
+        };
+        let end_size = match &self.end {
+            Value::GeoJSON(ref s) => s.len(),
+            _ => self.end.estimate_size(),
+        };
+        self.bin_name.len() + begin_size + end_size + 10
     }
 
     #[doc(hidden)]
@@ -80,11 +86,27 @@ impl Filter {
         buffer.write_str(&self.bin_name);
         buffer.write_u8(self.value_particle_type.clone() as u8);
 
-        buffer.write_u32(self.begin.estimate_size() as u32);
-        self.begin.write_to(buffer);
+        let begin_size = match &self.begin {
+            Value::GeoJSON(ref s) => s.len(),
+            _ => self.begin.estimate_size(),
+        };
+        buffer.write_u32(begin_size as u32);
+        if let Value::GeoJSON(ref geo_str) = &self.begin {
+            buffer.write_geo_string(geo_str);
+        } else {
+            self.begin.write_to(buffer);
+        }
 
-        buffer.write_u32(self.end.estimate_size() as u32);
-        self.end.write_to(buffer);
+        let end_size = match &self.end {
+            Value::GeoJSON(ref s) => s.len(),
+            _ => self.end.estimate_size(),
+        };
+        buffer.write_u32(end_size as u32);
+        if let Value::GeoJSON(ref geo_str) = &self.end {
+            buffer.write_geo_string(geo_str);
+        } else {
+            self.end.write_to(buffer);
+        }
     }
 }
 

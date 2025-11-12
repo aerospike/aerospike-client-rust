@@ -292,7 +292,7 @@ impl Value {
             Value::Bool(_) => 1,
             Value::List(_) | Value::HashMap(_) => encoder::pack_value(&mut None, self),
             Value::OrderedMap(_) => panic!("The library never passes ordered maps to the server."),
-            Value::GeoJSON(ref s) => 1 + 2 + s.len(), // flags + ncells + jsonstr
+            Value::GeoJSON(ref s) => 1 + 2 + s.len(), // flags + ncells + string
             Value::HLL(ref h) => h.len(),
             Value::Infinity => 0,
             Value::Wildcard => 0,

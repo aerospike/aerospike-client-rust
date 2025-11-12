@@ -141,12 +141,12 @@ impl Connection {
     }
 
     pub async fn flush(&mut self) -> Result<()> {
+        let send_buf = &self.buffer.data_buffer;
         match self.conn {
-            Netsocket::Tcp(ref mut conn) => conn.write_all(&self.buffer.data_buffer).await?,
+            Netsocket::Tcp(ref mut conn) => conn.write_all(send_buf).await?,
             #[cfg(feature = "tls")]
-            Netsocket::Tls(ref mut conn) => conn.write_all(&self.buffer.data_buffer).await?,
-        };
-
+            Netsocket::Tls(ref mut conn) => conn.write_all(send_buf).await?,
+        }
         self.refresh();
         Ok(())
     }

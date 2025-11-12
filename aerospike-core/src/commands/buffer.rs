@@ -1750,11 +1750,17 @@ impl Buffer {
     }
 
     pub(crate) fn write_geo(&mut self, value: &str) -> usize {
+        // Bin values require flags+ncells prefix
         self.write_u8(0);
-        self.write_u8(0);
-        self.write_u8(0);
+        self.write_i16(0);
         self.write_bytes(value.as_bytes());
         3 + value.len()
+    }
+
+    pub(crate) fn write_geo_string(&mut self, value: &str) -> usize {
+        // Query filters use raw GeoJSON string
+        self.write_bytes(value.as_bytes());
+        value.len()
     }
 
     pub(crate) fn write_timeout(&mut self, val: Option<Duration>) {
@@ -1767,6 +1773,5 @@ impl Buffer {
     #[allow(dead_code)]
     pub(crate) fn dump_buffer(&self) {
         rhexdump!(&self.data_buffer);
-        println!("");
     }
 }
