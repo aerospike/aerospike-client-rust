@@ -17,10 +17,12 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::thread;
 
+use futures::stream::StreamExt;
+
 use crate::common;
 use env_logger;
 
-use aerospike::query::PartitionFilter;
+use aerospike::query::{Filter, PartitionFilter};
 use aerospike::Task;
 use aerospike::*;
 use aerospike_rt::time::Instant;
@@ -341,4 +343,99 @@ async fn query_large_i64() {
     }
 
     let _ = client.truncate(common::namespace(), SET, 0).await;
+}
+
+#[aerospike_macro::test]
+async fn test_query_geo_within_geojson_region() {
+    let namespace: &str = common::namespace();
+    let set_name = &common::rand_str(10);
+    let bin_name = "geo_bin";
+
+    let client = Arc::new(common::client().await);
+
+    let task = client
+        .create_index(
+            namespace,
+            set_name,
+            bin_name,
+            &format!("{}_{}_{}", namespace, set_name, bin_name),
+            IndexType::Geo2DSphere,
+        )
+        .await
+        .expect("Failed to create index");
+    task.wait_till_complete(None).await.unwrap();
+
+    let wp = WritePolicy::default();
+
+    // Records inside the polygon
+    let key1 = as_key!(namespace, set_name, "point1");
+    client
+        .put(
+            &wp,
+            &key1,
+            &vec![as_bin!(
+                bin_name,
+                as_geo!(r#"{"type": "Point", "coordinates": [-122.0, 37.5]}"#)
+            )],
+        )
+        .await
+        .unwrap();
+
+    let key2 = as_key!(namespace, set_name, "point2");
+    client
+        .put(
+            &wp,
+            &key2,
+            &vec![as_bin!(
+                bin_name,
+                as_geo!(r#"{"type": "Point", "coordinates": [-121.5, 37.5]}"#)
+            )],
+        )
+        .await
+        .unwrap();
+
+    // Record outside the polygon
+    let key3 = as_key!(namespace, set_name, "point3");
+    client
+        .put(
+            &wp,
+            &key3,
+            &vec![as_bin!(
+                bin_name,
+                as_geo!(r#"{"type": "Point", "coordinates": [-120.0, 37.5]}"#)
+            )],
+        )
+        .await
+        .unwrap();
+
+    let region_str = r#"{
+            "type": "Polygon",
+            "coordinates": [[[-122.500000, 37.000000],
+                             [-121.000000, 37.000000],
+                             [-121.000000, 38.080000],
+                             [-122.500000, 38.080000],
+                             [-122.500000, 37.000000]]]
+        }"#;
+
+    let predicate = as_within_region!(bin_name, region_str);
+
+    let qpolicy = QueryPolicy::default();
+    let mut stmt = aerospike::Statement::new(namespace, set_name, aerospike::Bins::All);
+    stmt.add_filter(predicate);
+    let pf = PartitionFilter::all();
+    let mut rs = client
+        .query(&qpolicy, pf, stmt)
+        .await
+        .unwrap()
+        .into_stream();
+
+    let mut count = 0;
+    while let Some(r) = rs.next().await {
+        assert!(r.is_ok());
+        count += 1;
+    }
+
+    assert!(count == 2);
+
+    let _ = client.truncate(namespace, set_name, 0).await;
 }
