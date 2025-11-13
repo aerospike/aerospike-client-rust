@@ -40,7 +40,7 @@ pub const fn get_header<'a>() -> Operation<'a> {
 }
 
 /// Create read bin database operation.
-pub const fn get_bin(bin_name: &str) -> Operation {
+pub const fn get_bin(bin_name: &str) -> Operation<'_> {
     Operation {
         op: OperationType::Read,
         ctx: DEFAULT_CTX,

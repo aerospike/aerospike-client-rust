@@ -189,7 +189,7 @@ pub const fn list_order_flag(order: ListOrderType, pad: bool) -> u8 {
 /// Server creates list at given context level. The context is allowed to be beyond list
 /// boundaries only if pad is set to true.  In that case, nil list entries will be inserted to
 /// satisfy the context position.
-pub fn create(bin: &str, list_order: ListOrderType, pad: bool) -> Operation {
+pub fn create(bin: &str, list_order: ListOrderType, pad: bool) -> Operation<'_> {
     let cdt_op = CdtOperation {
         op: CdtListOpType::SetType as u8,
         encoder: Box::new(pack_cdt_op),
@@ -321,7 +321,7 @@ pub fn insert_items<'a>(
 
 /// Create list pop operation. Server returns the item at the specified index and removes the
 /// item from the list bin.
-pub fn pop(bin: &str, index: i64) -> Operation {
+pub fn pop(bin: &str, index: i64) -> Operation<'_> {
     let cdt_op = CdtOperation {
         op: CdtListOpType::Pop as u8,
         encoder: Box::new(pack_cdt_op),
@@ -337,7 +337,7 @@ pub fn pop(bin: &str, index: i64) -> Operation {
 
 /// Create list pop range operation. Server returns `count` items starting at the specified
 /// index and removes the items from the list bin.
-pub fn pop_range(bin: &str, index: i64, count: i64) -> Operation {
+pub fn pop_range(bin: &str, index: i64, count: i64) -> Operation<'_> {
     let cdt_op = CdtOperation {
         op: CdtListOpType::PopRange as u8,
         encoder: Box::new(pack_cdt_op),
@@ -353,7 +353,7 @@ pub fn pop_range(bin: &str, index: i64, count: i64) -> Operation {
 
 /// Create list pop range operation. Server returns the items starting at the specified index
 /// to the end of the list and removes those items from the list bin.
-pub fn pop_range_from(bin: &str, index: i64) -> Operation {
+pub fn pop_range_from(bin: &str, index: i64) -> Operation<'_> {
     let cdt_op = CdtOperation {
         op: CdtListOpType::PopRange as u8,
         encoder: Box::new(pack_cdt_op),
@@ -369,7 +369,7 @@ pub fn pop_range_from(bin: &str, index: i64) -> Operation {
 
 /// Create list remove operation. Server removes the item at the specified index from the list
 /// bin. Server returns the number of items removed.
-pub fn remove(bin: &str, index: i64) -> Operation {
+pub fn remove(bin: &str, index: i64) -> Operation<'_> {
     let cdt_op = CdtOperation {
         op: CdtListOpType::Remove as u8,
         encoder: Box::new(pack_cdt_op),
@@ -385,7 +385,7 @@ pub fn remove(bin: &str, index: i64) -> Operation {
 
 /// Create list remove range operation. Server removes `count` items starting at the specified
 /// index from the list bin. Server returns the number of items removed.
-pub fn remove_range(bin: &str, index: i64, count: i64) -> Operation {
+pub fn remove_range(bin: &str, index: i64, count: i64) -> Operation<'_> {
     let cdt_op = CdtOperation {
         op: CdtListOpType::RemoveRange as u8,
         encoder: Box::new(pack_cdt_op),
@@ -401,7 +401,7 @@ pub fn remove_range(bin: &str, index: i64, count: i64) -> Operation {
 
 /// Create list remove range operation. Server removes the items starting at the specified
 /// index to the end of the list. Server returns the number of items removed.
-pub fn remove_range_from(bin: &str, index: i64) -> Operation {
+pub fn remove_range_from(bin: &str, index: i64) -> Operation<'_> {
     let cdt_op = CdtOperation {
         op: CdtListOpType::RemoveRange as u8,
         encoder: Box::new(pack_cdt_op),
@@ -567,7 +567,7 @@ pub fn remove_by_value_relative_rank_range_count<'a>(
 
 /// Creates a list remove operation.
 /// Server removes list item identified by index and returns removed data specified by returnType.
-pub fn remove_by_index(bin: &str, index: i64, return_type: ListReturnType) -> Operation {
+pub fn remove_by_index(bin: &str, index: i64, return_type: ListReturnType) -> Operation<'_> {
     let cdt_op = CdtOperation {
         op: CdtListOpType::RemoveByIndex as u8,
         encoder: Box::new(pack_cdt_op),
@@ -587,7 +587,7 @@ pub fn remove_by_index(bin: &str, index: i64, return_type: ListReturnType) -> Op
 /// Creates a list remove operation.
 /// Server removes list items starting at specified index to the end of list and returns removed
 /// data specified by returnType.
-pub fn remove_by_index_range(bin: &str, index: i64, return_type: ListReturnType) -> Operation {
+pub fn remove_by_index_range(bin: &str, index: i64, return_type: ListReturnType) -> Operation<'_> {
     let cdt_op = CdtOperation {
         op: CdtListOpType::RemoveByIndexRange as u8,
         encoder: Box::new(pack_cdt_op),
@@ -611,7 +611,7 @@ pub fn remove_by_index_range_count(
     index: i64,
     count: i64,
     return_type: ListReturnType,
-) -> Operation {
+) -> Operation<'_> {
     let cdt_op = CdtOperation {
         op: CdtListOpType::RemoveByIndexRange as u8,
         encoder: Box::new(pack_cdt_op),
@@ -631,7 +631,7 @@ pub fn remove_by_index_range_count(
 
 /// Creates a list remove operation.
 /// Server removes list item identified by rank and returns removed data specified by returnType.
-pub fn remove_by_rank(bin: &str, rank: i64, return_type: ListReturnType) -> Operation {
+pub fn remove_by_rank(bin: &str, rank: i64, return_type: ListReturnType) -> Operation<'_> {
     let cdt_op = CdtOperation {
         op: CdtListOpType::RemoveByRank as u8,
         encoder: Box::new(pack_cdt_op),
@@ -648,7 +648,7 @@ pub fn remove_by_rank(bin: &str, rank: i64, return_type: ListReturnType) -> Oper
 /// Creates a list remove operation.
 /// Server removes list items starting at specified rank to the last ranked item and returns removed
 /// data specified by returnType.
-pub fn remove_by_rank_range(bin: &str, rank: i64, return_type: ListReturnType) -> Operation {
+pub fn remove_by_rank_range(bin: &str, rank: i64, return_type: ListReturnType) -> Operation<'_> {
     let cdt_op = CdtOperation {
         op: CdtListOpType::RemoveByRankRange as u8,
         encoder: Box::new(pack_cdt_op),
@@ -669,7 +669,7 @@ pub fn remove_by_rank_range_count(
     rank: i64,
     count: i64,
     return_type: ListReturnType,
-) -> Operation {
+) -> Operation<'_> {
     let cdt_op = CdtOperation {
         op: CdtListOpType::RemoveByRankRange as u8,
         encoder: Box::new(pack_cdt_op),
@@ -708,7 +708,7 @@ pub fn set<'a>(bin: &'a str, index: i64, value: &'a Value) -> Operation<'a> {
 /// Create list trim operation. Server removes `count` items in the list bin that do not fall
 /// into the range specified by `index` and `count`. If the range is out of bounds, then all
 /// items will be removed. Server returns list size after trim.
-pub fn trim(bin: &str, index: i64, count: i64) -> Operation {
+pub fn trim(bin: &str, index: i64, count: i64) -> Operation<'_> {
     let cdt_op = CdtOperation {
         op: CdtListOpType::Trim as u8,
         encoder: Box::new(pack_cdt_op),
@@ -724,7 +724,7 @@ pub fn trim(bin: &str, index: i64, count: i64) -> Operation {
 
 /// Create list clear operation. Server removes all items in the list bin. Server does not
 /// return a result by default.
-pub fn clear(bin: &str) -> Operation {
+pub fn clear(bin: &str) -> Operation<'_> {
     let cdt_op = CdtOperation {
         op: CdtListOpType::Clear as u8,
         encoder: Box::new(pack_cdt_op),
@@ -759,7 +759,7 @@ pub fn increment<'a>(policy: &ListPolicy, bin: &'a str, index: i64, value: i64) 
 }
 
 /// Create list size operation. Server returns size of the list.
-pub fn size(bin: &str) -> Operation {
+pub fn size(bin: &str) -> Operation<'_> {
     let cdt_op = CdtOperation {
         op: CdtListOpType::Size as u8,
         encoder: Box::new(pack_cdt_op),
@@ -774,7 +774,7 @@ pub fn size(bin: &str) -> Operation {
 }
 
 /// Create list get operation. Server returns the item at the specified index in the list bin.
-pub fn get(bin: &str, index: i64) -> Operation {
+pub fn get(bin: &str, index: i64) -> Operation<'_> {
     let cdt_op = CdtOperation {
         op: CdtListOpType::Get as u8,
         encoder: Box::new(pack_cdt_op),
@@ -790,7 +790,7 @@ pub fn get(bin: &str, index: i64) -> Operation {
 
 /// Create list get range operation. Server returns `count` items starting at the specified
 /// index in the list bin.
-pub fn get_range(bin: &str, index: i64, count: i64) -> Operation {
+pub fn get_range(bin: &str, index: i64, count: i64) -> Operation<'_> {
     let cdt_op = CdtOperation {
         op: CdtListOpType::GetRange as u8,
         encoder: Box::new(pack_cdt_op),
@@ -806,7 +806,7 @@ pub fn get_range(bin: &str, index: i64, count: i64) -> Operation {
 
 /// Create list get range operation. Server returns items starting at the index to the end of
 /// the list.
-pub fn get_range_from(bin: &str, index: i64) -> Operation {
+pub fn get_range_from(bin: &str, index: i64) -> Operation<'_> {
     let cdt_op = CdtOperation {
         op: CdtListOpType::GetRange as u8,
         encoder: Box::new(pack_cdt_op),
@@ -897,7 +897,7 @@ pub fn get_by_value_range<'a>(
 
 /// Creates list get by index operation.
 /// Server selects list item identified by index and returns selected data specified by returnType
-pub fn get_by_index(bin: &str, index: i64, return_type: ListReturnType) -> Operation {
+pub fn get_by_index(bin: &str, index: i64, return_type: ListReturnType) -> Operation<'_> {
     let cdt_op = CdtOperation {
         op: CdtListOpType::GetByIndex as u8,
         encoder: Box::new(pack_cdt_op),
@@ -918,7 +918,7 @@ pub fn get_by_index(bin: &str, index: i64, return_type: ListReturnType) -> Opera
 /// Creates list get by index range operation.
 /// Server selects list items starting at specified index to the end of list and returns selected
 /// data specified by returnType.
-pub fn get_by_index_range(bin: &str, index: i64, return_type: ListReturnType) -> Operation {
+pub fn get_by_index_range(bin: &str, index: i64, return_type: ListReturnType) -> Operation<'_> {
     let cdt_op = CdtOperation {
         op: CdtListOpType::GetByIndexRange as u8,
         encoder: Box::new(pack_cdt_op),
@@ -944,7 +944,7 @@ pub fn get_by_index_range_count(
     index: i64,
     count: i64,
     return_type: ListReturnType,
-) -> Operation {
+) -> Operation<'_> {
     let cdt_op = CdtOperation {
         op: CdtListOpType::GetByIndexRange as u8,
         encoder: Box::new(pack_cdt_op),
@@ -965,7 +965,7 @@ pub fn get_by_index_range_count(
 
 /// Creates a list get by rank operation.
 /// Server selects list item identified by rank and returns selected data specified by returnType.
-pub fn get_by_rank(bin: &str, rank: i64, return_type: ListReturnType) -> Operation {
+pub fn get_by_rank(bin: &str, rank: i64, return_type: ListReturnType) -> Operation<'_> {
     let cdt_op = CdtOperation {
         op: CdtListOpType::GetByRank as u8,
         encoder: Box::new(pack_cdt_op),
@@ -982,7 +982,7 @@ pub fn get_by_rank(bin: &str, rank: i64, return_type: ListReturnType) -> Operati
 /// Creates a list get by rank range operation.
 /// Server selects list items starting at specified rank to the last ranked item and returns selected
 /// data specified by returnType.
-pub fn get_by_rank_range(bin: &str, rank: i64, return_type: ListReturnType) -> Operation {
+pub fn get_by_rank_range(bin: &str, rank: i64, return_type: ListReturnType) -> Operation<'_> {
     let cdt_op = CdtOperation {
         op: CdtListOpType::GetByRankRange as u8,
         encoder: Box::new(pack_cdt_op),
@@ -1003,7 +1003,7 @@ pub fn get_by_rank_range_count(
     rank: i64,
     count: i64,
     return_type: ListReturnType,
-) -> Operation {
+) -> Operation<'_> {
     let cdt_op = CdtOperation {
         op: CdtListOpType::GetByRankRange as u8,
         encoder: Box::new(pack_cdt_op),
@@ -1100,7 +1100,7 @@ pub fn get_by_value_relative_rank_range_count<'a>(
 /// Creates list sort operation.
 /// Server sorts list according to sortFlags.
 /// Server does not return a result by default.
-pub fn sort(bin: &str, sort_flags: ListSortFlags) -> Operation {
+pub fn sort(bin: &str, sort_flags: ListSortFlags) -> Operation<'_> {
     let cdt_op = CdtOperation {
         op: CdtListOpType::Sort as u8,
         encoder: Box::new(pack_cdt_op),
