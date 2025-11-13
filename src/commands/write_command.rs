@@ -31,7 +31,7 @@ pub struct WriteCommand<'a, A: 'a> {
     operation: OperationType,
 }
 
-impl<'a, 'b, A: AsRef<Bin<'b>>> WriteCommand<'a, A> {
+impl<'a, A: AsRef<Bin>> WriteCommand<'a, A> {
     pub fn new(
         policy: &'a WritePolicy,
         cluster: Arc<Cluster>,
@@ -52,7 +52,7 @@ impl<'a, 'b, A: AsRef<Bin<'b>>> WriteCommand<'a, A> {
     }
 }
 
-impl<'a, 'b, A: AsRef<Bin<'b>>> Command for WriteCommand<'a, A> {
+impl<'a, A: AsRef<Bin>> Command for WriteCommand<'a, A> {
     fn write_timeout(&mut self, conn: &mut Connection, timeout: Option<Duration>) -> Result<()> {
         conn.buffer.write_timeout(timeout);
         Ok(())
