@@ -252,7 +252,7 @@ pub(crate) const fn map_write_op(policy: &MapPolicy, multi: bool) -> CdtMapOpTyp
     }
 }
 #[allow(clippy::trivially_copy_pass_by_ref)]
-const fn map_order_arg(policy: &MapPolicy) -> Option<CdtArgument> {
+const fn map_order_arg(policy: &MapPolicy) -> Option<CdtArgument<'_>> {
     match policy.write_mode {
         MapWriteMode::UpdateOnly => None,
         _ => Some(CdtArgument::Byte(policy.order as u8)),
@@ -272,7 +272,7 @@ pub const fn map_order_flag(order: MapOrder) -> u8 {
 /// return a result.
 ///
 /// The required map policy attributes can be changed after the map has been created.
-pub fn set_order(bin: &str, map_order: MapOrder) -> Operation {
+pub fn set_order(bin: &str, map_order: MapOrder) -> Operation<'_> {
     let cdt_op = CdtOperation {
         op: CdtMapOpType::SetType as u8,
         encoder: Arc::new(pack_cdt_op),
@@ -409,7 +409,7 @@ pub fn decrement_value<'a>(
 
 /// Create map clear operation. Server removes all items in the map. Server does not return a
 /// result.
-pub fn clear(bin: &str) -> Operation {
+pub fn clear(bin: &str) -> Operation<'_> {
     let cdt_op = CdtOperation {
         op: CdtMapOpType::Clear as u8,
         encoder: Arc::new(pack_cdt_op),
@@ -581,7 +581,7 @@ pub fn remove_by_index<TMR: ToMapReturnTypeBitmask>(
     bin: &str,
     index: i64,
     return_type: TMR,
-) -> Operation {
+) -> Operation<'_> {
     let cdt_op = CdtOperation {
         op: CdtMapOpType::RemoveByIndex as u8,
         encoder: Arc::new(pack_cdt_op),
@@ -605,7 +605,7 @@ pub fn remove_by_index_range<TMR: ToMapReturnTypeBitmask>(
     index: i64,
     count: i64,
     return_type: TMR,
-) -> Operation {
+) -> Operation<'_> {
     let cdt_op = CdtOperation {
         op: CdtMapOpType::RemoveByIndexRange as u8,
         encoder: Arc::new(pack_cdt_op),
@@ -629,7 +629,7 @@ pub fn remove_by_index_range_from<TMR: ToMapReturnTypeBitmask>(
     bin: &str,
     index: i64,
     return_type: TMR,
-) -> Operation {
+) -> Operation<'_> {
     let cdt_op = CdtOperation {
         op: CdtMapOpType::RemoveByIndexRange as u8,
         encoder: Arc::new(pack_cdt_op),
@@ -652,7 +652,7 @@ pub fn remove_by_rank<TMR: ToMapReturnTypeBitmask>(
     bin: &str,
     rank: i64,
     return_type: TMR,
-) -> Operation {
+) -> Operation<'_> {
     let cdt_op = CdtOperation {
         op: CdtMapOpType::RemoveByRank as u8,
         encoder: Arc::new(pack_cdt_op),
@@ -676,7 +676,7 @@ pub fn remove_by_rank_range<TMR: ToMapReturnTypeBitmask>(
     rank: i64,
     count: i64,
     return_type: TMR,
-) -> Operation {
+) -> Operation<'_> {
     let cdt_op = CdtOperation {
         op: CdtMapOpType::RemoveByRankRange as u8,
         encoder: Arc::new(pack_cdt_op),
@@ -700,7 +700,7 @@ pub fn remove_by_rank_range_from<TMR: ToMapReturnTypeBitmask>(
     bin: &str,
     rank: i64,
     return_type: TMR,
-) -> Operation {
+) -> Operation<'_> {
     let cdt_op = CdtOperation {
         op: CdtMapOpType::RemoveByRankRange as u8,
         encoder: Arc::new(pack_cdt_op),
@@ -718,7 +718,7 @@ pub fn remove_by_rank_range_from<TMR: ToMapReturnTypeBitmask>(
 }
 
 /// Create map size operation. Server returns the size of the map.
-pub fn size(bin: &str) -> Operation {
+pub fn size(bin: &str) -> Operation<'_> {
     let cdt_op = CdtOperation {
         op: CdtMapOpType::Size as u8,
         encoder: Arc::new(pack_cdt_op),
@@ -844,7 +844,7 @@ pub fn get_by_index<TMR: ToMapReturnTypeBitmask>(
     bin: &str,
     index: i64,
     return_type: TMR,
-) -> Operation {
+) -> Operation<'_> {
     let cdt_op = CdtOperation {
         op: CdtMapOpType::GetByIndex as u8,
         encoder: Arc::new(pack_cdt_op),
@@ -868,7 +868,7 @@ pub fn get_by_index_range<TMR: ToMapReturnTypeBitmask>(
     index: i64,
     count: i64,
     return_type: TMR,
-) -> Operation {
+) -> Operation<'_> {
     let cdt_op = CdtOperation {
         op: CdtMapOpType::GetByIndexRange as u8,
         encoder: Arc::new(pack_cdt_op),
@@ -893,7 +893,7 @@ pub fn get_by_index_range_from<TMR: ToMapReturnTypeBitmask>(
     bin: &str,
     index: i64,
     return_type: TMR,
-) -> Operation {
+) -> Operation<'_> {
     let cdt_op = CdtOperation {
         op: CdtMapOpType::GetByIndexRange as u8,
         encoder: Arc::new(pack_cdt_op),
@@ -916,7 +916,7 @@ pub fn get_by_rank<TMR: ToMapReturnTypeBitmask>(
     bin: &str,
     rank: i64,
     return_type: TMR,
-) -> Operation {
+) -> Operation<'_> {
     let cdt_op = CdtOperation {
         op: CdtMapOpType::GetByRank as u8,
         encoder: Arc::new(pack_cdt_op),
@@ -940,7 +940,7 @@ pub fn get_by_rank_range<TMR: ToMapReturnTypeBitmask>(
     rank: i64,
     count: i64,
     return_type: TMR,
-) -> Operation {
+) -> Operation<'_> {
     let cdt_op = CdtOperation {
         op: CdtMapOpType::GetByRankRange as u8,
         encoder: Arc::new(pack_cdt_op),
@@ -965,7 +965,7 @@ pub fn get_by_rank_range_from<TMR: ToMapReturnTypeBitmask>(
     bin: &str,
     rank: i64,
     return_type: TMR,
-) -> Operation {
+) -> Operation<'_> {
     let cdt_op = CdtOperation {
         op: CdtMapOpType::GetByRankRange as u8,
         encoder: Arc::new(pack_cdt_op),
