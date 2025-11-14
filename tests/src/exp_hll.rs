@@ -16,6 +16,8 @@
 use crate::common;
 use env_logger;
 
+use crate::src::count_results;
+
 use aerospike::expressions::hll::*;
 use aerospike::expressions::lists::*;
 use aerospike::expressions::*;
@@ -86,7 +88,7 @@ async fn expression_hll() {
         &set_name,
     )
     .await;
-    let count = count_results(rs);
+    let count = count_results(rs).await;
     assert_eq!(count, 99, "HLL INIT Test Failed");
 
     let rs = test_filter(
@@ -101,7 +103,7 @@ async fn expression_hll() {
         &set_name,
     )
     .await;
-    let count = count_results(rs);
+    let count = count_results(rs).await;
     assert_eq!(count, 1, "HLL MAY CONTAIN Test Failed");
 
     let rs = test_filter(
@@ -119,7 +121,7 @@ async fn expression_hll() {
         &set_name,
     )
     .await;
-    let count = count_results(rs);
+    let count = count_results(rs).await;
     assert_eq!(count, 100, "HLL DESCRIBE Test Failed");
 
     let rs = test_filter(
@@ -134,7 +136,7 @@ async fn expression_hll() {
         &set_name,
     )
     .await;
-    let count = count_results(rs);
+    let count = count_results(rs).await;
     assert_eq!(count, 98, "HLL GET UNION Test Failed");
 
     let rs = test_filter(
@@ -149,7 +151,7 @@ async fn expression_hll() {
         &set_name,
     )
     .await;
-    let count = count_results(rs);
+    let count = count_results(rs).await;
     assert_eq!(count, 98, "HLL GET UNION COUNT Test Failed");
 
     let rs = test_filter(
@@ -164,7 +166,7 @@ async fn expression_hll() {
         &set_name,
     )
     .await;
-    let count = count_results(rs);
+    let count = count_results(rs).await;
     assert_eq!(count, 99, "HLL GET INTERSECT COUNT Test Failed");
 
     let rs = test_filter(
@@ -179,7 +181,7 @@ async fn expression_hll() {
         &set_name,
     )
     .await;
-    let count = count_results(rs);
+    let count = count_results(rs).await;
     assert_eq!(count, 99, "HLL GET INTERSECT COUNT Test Failed");
 
     client.close().await.unwrap();
@@ -194,19 +196,4 @@ async fn test_filter(client: &Client, filter: FilterExpression, set_name: &str) 
     let statement = Statement::new(namespace, set_name, Bins::All);
     let pf = PartitionFilter::all();
     client.query(&qpolicy, pf, statement).await.unwrap()
-}
-
-fn count_results(rs: Arc<Recordset>) -> usize {
-    let mut count = 0;
-
-    for res in &*rs {
-        match res {
-            Ok(_) => {
-                count += 1;
-            }
-            Err(err) => panic!("{:?}", err),
-        }
-    }
-
-    count
 }
