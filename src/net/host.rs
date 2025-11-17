@@ -67,17 +67,24 @@ pub trait ToHosts {
     ///
     /// Any errors encountered during conversion will be returned as an `Err`.
     fn to_hosts(&self) -> Result<Vec<Host>>;
+    fn to_hosts_with_default_port(&self, default_port: u16) -> Result<Vec<Host>>;
 }
 
 impl ToHosts for Vec<Host> {
     fn to_hosts(&self) -> Result<Vec<Host>> {
         Ok(self.clone())
     }
+    fn to_hosts_with_default_port(&self, default_port: u16) -> Result<Vec<Host>> {
+        Ok(self.clone())
+    }
 }
 
 impl ToHosts for String {
     fn to_hosts(&self) -> Result<Vec<Host>> {
-        let mut parser = Parser::new(self, 3000);
+        self.to_hosts_with_default_port(3000)
+    }
+    fn to_hosts_with_default_port(&self, default_port: u16) -> Result<Vec<Host>> {
+        let mut parser = Parser::new(self, default_port);
         parser
             .read_hosts()
             .chain_err(|| ErrorKind::InvalidArgument(format!("Invalid hosts list: '{}'", self)))
@@ -87,6 +94,9 @@ impl ToHosts for String {
 impl<'a> ToHosts for &'a str {
     fn to_hosts(&self) -> Result<Vec<Host>> {
         (*self).to_string().to_hosts()
+    }
+    fn to_hosts_with_default_port(&self, default_port: u16) -> Result<Vec<Host>> {
+        (*self).to_string().to_hosts_with_default_port(default_port)
     }
 }
 
