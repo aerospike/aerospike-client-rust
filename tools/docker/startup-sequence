@@ -1,11 +1,22 @@
 #!/bin/bash
 
+echo "================================================================"
+echo "               RECEIVED ENVIRONMENT CONFIGURATION               "
+echo "----------------------------------------------------------------"
+echo "AEROSPIKE_CLIENT_BRANCH          = ${AEROSPIKE_CLIENT_BRANCH}"
+echo "AEROSPIKE_HOSTS                  = ${AEROSPIKE_HOSTS}"
+echo "AEROSPIKE_USE_SERVICES_ALTERNATE = ${AEROSPIKE_USE_SERVICES_ALTERNATE}"
+echo ""
+echo "CARGO_TEST_OPTS                  = cargo test ${CARGO_TEST_OPTS}"
+echo ""
+echo "PROPTEST_CASES                   = ${PROPTEST_CASES}"
+echo "================================================================"
+
 source $HOME/.cargo/env
 
 git clone https://github.com/aerospike/aerospike-client-rust.git
 cd aerospike-client-rust
-git checkout tls
+git checkout ${AEROSPIKE_CLIENT_BRANCH}
 cargo clean
-cargo fix --lib -p aerospike-core
-cargo test
+cargo test ${CARGO_TEST_OPTS}
 
