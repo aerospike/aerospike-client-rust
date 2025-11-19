@@ -1,13 +1,16 @@
-FROM debian:trixie-slim
+FROM rust:trixie
+
+ENV AEROSPIKE_CLIENT_BRANCH=tls
+ENV AEROSPIKE_HOSTS=build-trixie.:3000
+ENV AEROSPIKE_USE_SERVICES_ALTERNATE=true
+ENV CARGO_TEST_OPTS='--no-default-features --features async,rt-tokio -- --no-capture'
+ENV PROPTEST_CASES=1000
 
 WORKDIR /app
-RUN apt update -y && \
-    apt install -y git curl build-essential
-
-RUN curl https://sh.rustup.rs -sSf | sh -s -- -y
+#RUN apt update -y && \
+#    apt install -y git curl build-essential
 
 COPY startup-sequence /app/startup-sequence
-RUN chmod +x /app/startup-sequence
-RUN echo 'source $HOME/.cargo/env' >> $HOME/.bashrc
+#RUN echo 'source $HOME/.cargo/env' >> $HOME/.bashrc
 CMD "/app/startup-sequence"
 
