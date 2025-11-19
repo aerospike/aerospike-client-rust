@@ -4,7 +4,7 @@ source $HOME/.cargo/env
 
 git clone https://github.com/aerospike/aerospike-client-rust.git
 cd aerospike-client-rust
-git checkout v2
+git checkout tls
 cargo clean
 cargo fix --lib -p aerospike-core
 cargo test
