@@ -5,3 +5,4 @@ aerospike-rust-client.sublime-project
 aerospike-rust-client.sublime-workspace
 aerospike-client-rust.code-workspace
 Makefile
+proptest-regressions/

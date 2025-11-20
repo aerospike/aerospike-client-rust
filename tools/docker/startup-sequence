@@ -1,0 +1,38 @@
+#!/bin/bash
+
+# Come up with a reasonably random namespace for this particular docker
+# image when run.  Through this, we avoid namespace collisions during
+# long-running tests.  NOTE!!  If running the docker image with the
+# --hostname flag, you MUST use a unique name for the hostname.  However,
+# if you avoid using the --hostname flag, Docker automatically randomizes
+# the hostname for us.
+#
+# We rely upon a (suitably unique) hostname and the current PID.
+
+export AEROSPIKE_PROP_SET_NAME="prop-$(hostname | md5sum | cut -c 1-6)-$$"
+
+echo "================================================================"
+echo "               RECEIVED ENVIRONMENT CONFIGURATION               "
+echo "----------------------------------------------------------------"
+echo "AEROSPIKE_CLIENT_BRANCH          = ${AEROSPIKE_CLIENT_BRANCH}"
+echo "AEROSPIKE_HOSTS                  = ${AEROSPIKE_HOSTS}"
+echo "AEROSPIKE_NAMESPACE              = ${AEROSPIKE_NAMESPACE}"
+echo "AEROSPIKE_USE_SERVICES_ALTERNATE = ${AEROSPIKE_USE_SERVICES_ALTERNATE}"
+echo ""
+echo "CARGO_TEST_OPTS                  = ${CARGO_TEST_OPTS}"
+echo ""
+echo "PROPTEST_CASES                   = ${PROPTEST_CASES}"
+echo "----------------------------------------------------------------"
+echo "                DERIVED ENVIRONMENT CONFIGURATION               "
+echo "----------------------------------------------------------------"
+echo "AEROSPIKE_PROP_SET_NAME          = ${AEROSPIKE_PROP_SET_NAME}"
+echo "================================================================"
+
+source $HOME/.cargo/env
+
+git clone https://github.com/aerospike/aerospike-client-rust.git
+cd aerospike-client-rust
+git checkout ${AEROSPIKE_CLIENT_BRANCH}
+cargo clean
+cargo test ${CARGO_TEST_OPTS}
+

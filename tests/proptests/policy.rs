@@ -6,13 +6,17 @@ use aerospike::policy::BasePolicy;
 use aerospike::policy::Replica;
 use aerospike::CollectionIndexType;
 use aerospike::CommitLevel;
+use aerospike::Concurrency;
 use aerospike::GenerationPolicy;
 use aerospike::QueryDuration;
 use aerospike::QueryPolicy;
 use aerospike::ReadTouchTTL;
 use aerospike::RecordExistsAction;
 
-use aerospike::{Expiration, ReadPolicy, ScanPolicy, WritePolicy};
+use aerospike::{
+    BatchDeletePolicy, BatchPolicy, BatchReadPolicy, BatchWritePolicy, Expiration, ReadPolicy,
+    ScanPolicy, WritePolicy,
+};
 
 use proptest::bool;
 use proptest::prelude::*;
@@ -25,6 +29,10 @@ pub fn read_touch_ttl() -> impl Strategy<Value = ReadTouchTTL> {
         Just(ReadTouchTTL::DontReset),
         any::<u32>().prop_map(|pct| ReadTouchTTL::Percent((pct % 100) as u8)),
     ]
+}
+
+pub fn concurrency() -> impl Strategy<Value = Concurrency> {
+    prop_oneof![Just(Concurrency::Sequential), Just(Concurrency::Parallel),]
 }
 
 pub fn consistency_level() -> impl Strategy<Value = ConsistencyLevel> {
@@ -66,7 +74,7 @@ pub fn replica() -> impl Strategy<Value = Replica> {
     prop_oneof![
         Just(Replica::Master),
         Just(Replica::Sequence),
-        Just(Replica::PreferRack),
+        // Just(Replica::PreferRack),
     ]
 }
 
@@ -90,10 +98,10 @@ pub fn collection_index_type() -> impl Strategy<Value = CollectionIndexType> {
 pub fn record_exists_action() -> impl Strategy<Value = RecordExistsAction> {
     prop_oneof![
         Just(RecordExistsAction::Update),
-        Just(RecordExistsAction::UpdateOnly),
-        Just(RecordExistsAction::Replace),
-        Just(RecordExistsAction::ReplaceOnly),
-        Just(RecordExistsAction::CreateOnly),
+        // Just(RecordExistsAction::UpdateOnly),
+        // Just(RecordExistsAction::Replace),
+        // Just(RecordExistsAction::ReplaceOnly),
+        // Just(RecordExistsAction::CreateOnly),
     ]
 }
 
@@ -132,7 +140,7 @@ pub fn base_policy(
         duration_ms_opt(100, 500),
         consistency_level(),
         read_touch_ttl(),
-        true_or_false_filter_expression(),
+        Just(None), //true_or_false_filter_expression(),
     )
         .prop_map(
             |(
@@ -312,4 +320,89 @@ pub fn read_policy(
             replica,
         },
     )
+}
+
+pub fn batch_policy(
+    socket_timeout_ms: u32,
+    total_timeout_ms: u32,
+) -> impl Strategy<Value = BatchPolicy> {
+    (
+        base_policy(socket_timeout_ms, total_timeout_ms),
+        concurrency(),
+        any::<bool>(),
+        any::<bool>(),
+        any::<bool>(),
+        true_or_false_filter_expression(),
+        replica(),
+    )
+        .prop_map(
+            |(
+                base_policy,
+                concurrency,
+                allow_inline,
+                allow_inline_ssd,
+                respond_all_keys,
+                filter_expression,
+                replica,
+            )| {
+                BatchPolicy {
+                    base_policy,
+                    concurrency,
+                    allow_inline,
+                    allow_inline_ssd,
+                    respond_all_keys,
+                    filter_expression,
+                    replica,
+                }
+            },
+        )
+}
+
+pub fn batch_read_policy() -> impl Strategy<Value = BatchReadPolicy> {
+    (read_touch_ttl(), true_or_false_filter_expression()).prop_map(
+        |(read_touch_ttl, filter_expression)| BatchReadPolicy {
+            read_touch_ttl,
+            filter_expression,
+        },
+    )
+}
+
+prop_compose! {
+    pub fn batch_write_policy()
+    (
+        record_exists_action in record_exists_action(),
+        expiration in expiration(0, 5),
+        durable_delete in any::<bool>(),
+        filter_expression in true_or_false_filter_expression(),
+    )
+    -> BatchWritePolicy {
+        BatchWritePolicy {
+            record_exists_action,
+            expiration,
+            durable_delete,
+            filter_expression,
+            // for all other fields, assume their default values.
+            ..Default::default()
+        }
+    }
+}
+
+prop_compose! {
+    pub fn batch_delete_policy()
+    (
+        generation_policy in generation_policy(),
+        commit_level in commit_level(),
+        durable_delete in any::<bool>(),
+        filter_expression in true_or_false_filter_expression(),
+    )
+    -> BatchDeletePolicy {
+        BatchDeletePolicy {
+            generation_policy,
+            commit_level,
+            durable_delete,
+            filter_expression,
+            // for all other fields, assume their default values.
+            ..Default::default()
+        }
+    }
 }

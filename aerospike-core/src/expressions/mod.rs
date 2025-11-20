@@ -28,7 +28,7 @@ use std::collections::HashMap;
 use std::fmt::Debug;
 
 /// Expression Data Types for usage in some `FilterExpressions` on for example Map and List
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum ExpType {
     /// NIL Expression Type
     NIL = 0,
@@ -52,7 +52,7 @@ pub enum ExpType {
     HLL = 9,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) enum ExpOp {
     Unknown = 0,
     EQ = 1,
@@ -114,7 +114,7 @@ pub(crate) enum ExpOp {
 
 pub(crate) const MODIFY: i64 = 0x40;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub(crate) enum ExpressionArgument {
     Value(Value),
     FilterExpression(Expression),
@@ -124,7 +124,7 @@ pub(crate) enum ExpressionArgument {
 /// Filter expression, which can be applied to most commands, to control which records are
 /// affected by the command. Filter expression are created using the functions in the
 /// [expressions](crate::expressions) module and its submodules.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Expression {
     /// The Operation code
     cmd: Option<ExpOp>,

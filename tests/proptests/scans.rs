@@ -7,9 +7,10 @@ use crate::proptests::{bins::*, partition_filter::*, policy::*};
 
 proptest_async::proptest! {
     #[test]
-    async fn scan(scan_policy in scan_policy(1000, 5000), mut pf in partition_filter(common::namespace().into(), "multi".into()), bins in bins(100)) {
+    async fn scan(scan_policy in scan_policy(1000,5000), mut pf in partition_filter(common::namespace().into(), common::prop_setname_multi().into()), bins in bins(100)) {
         let client = common::singleton_client().await;
         let namespace: &str = common::namespace();
+        // let set_name = common::prop_setname();
 
         // let now = aerospike_rt::time::Instant::now();
 

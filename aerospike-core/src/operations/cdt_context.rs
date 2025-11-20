@@ -34,7 +34,7 @@ pub(crate) enum CtxType {
 /// for the current level.
 /// An array of CTX identifies location of the list/map on multiple
 /// levels on nesting.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct CdtContext {
     /// Context Type
     pub id: u8,

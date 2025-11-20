@@ -213,8 +213,8 @@ end
 #[aerospike_macro::test]
 async fn batch_operate_read_touch_ttl() {
     let client = common::client().await;
-    let namespace: &str = "test"; //common::namespace();
-    let set_name = "test"; // &common::rand_str(10);
+    let namespace: &str = common::namespace();
+    let set_name = &common::rand_str(10);
     let mut bpolicy = BatchPolicy::default();
     bpolicy.concurrency = Concurrency::Parallel;
 
