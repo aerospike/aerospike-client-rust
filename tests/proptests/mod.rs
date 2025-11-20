@@ -13,6 +13,8 @@
 // License for the specific language governing permissions and limitations under
 // the License.
 
+mod batch_operation;
+mod batches;
 mod bins;
 mod filter_expression;
 mod key;

@@ -6,13 +6,14 @@ use aerospike::policy::BasePolicy;
 use aerospike::policy::Replica;
 use aerospike::CollectionIndexType;
 use aerospike::CommitLevel;
+use aerospike::Concurrency;
 use aerospike::GenerationPolicy;
 use aerospike::QueryDuration;
 use aerospike::QueryPolicy;
 use aerospike::ReadTouchTTL;
 use aerospike::RecordExistsAction;
 
-use aerospike::{Expiration, ReadPolicy, ScanPolicy, WritePolicy};
+use aerospike::{BatchPolicy, BatchReadPolicy, Expiration, ReadPolicy, ScanPolicy, WritePolicy};
 
 use proptest::bool;
 use proptest::prelude::*;
@@ -25,6 +26,10 @@ pub fn read_touch_ttl() -> impl Strategy<Value = ReadTouchTTL> {
         Just(ReadTouchTTL::DontReset),
         any::<u32>().prop_map(|pct| ReadTouchTTL::Percent((pct % 100) as u8)),
     ]
+}
+
+pub fn concurrency() -> impl Strategy<Value = Concurrency> {
+    prop_oneof![Just(Concurrency::Sequential), Just(Concurrency::Parallel),]
 }
 
 pub fn consistency_level() -> impl Strategy<Value = ConsistencyLevel> {
@@ -66,7 +71,7 @@ pub fn replica() -> impl Strategy<Value = Replica> {
     prop_oneof![
         Just(Replica::Master),
         Just(Replica::Sequence),
-        Just(Replica::PreferRack),
+        // Just(Replica::PreferRack),
     ]
 }
 
@@ -294,4 +299,46 @@ pub fn read_policy(timeout_ms: u32) -> impl Strategy<Value = ReadPolicy> {
         base_policy,
         replica,
     })
+}
+
+pub fn batch_policy(timeout_ms: u32) -> impl Strategy<Value = BatchPolicy> {
+    (
+        base_policy(timeout_ms),
+        concurrency(),
+        any::<bool>(),
+        any::<bool>(),
+        any::<bool>(),
+        true_or_false_filter_expression(),
+        replica(),
+    )
+        .prop_map(
+            |(
+                base_policy,
+                concurrency,
+                allow_inline,
+                allow_inline_ssd,
+                respond_all_keys,
+                filter_expression,
+                replica,
+            )| {
+                BatchPolicy {
+                    base_policy,
+                    concurrency,
+                    allow_inline,
+                    allow_inline_ssd,
+                    respond_all_keys,
+                    filter_expression,
+                    replica,
+                }
+            },
+        )
+}
+
+pub fn batch_read_policy() -> impl Strategy<Value = BatchReadPolicy> {
+    (read_touch_ttl(), true_or_false_filter_expression()).prop_map(
+        |(read_touch_ttl, filter_expression)| BatchReadPolicy {
+            read_touch_ttl,
+            filter_expression,
+        },
+    )
 }

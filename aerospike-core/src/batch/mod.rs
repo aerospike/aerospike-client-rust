@@ -43,7 +43,7 @@ pub(crate) struct BatchRecordIndex {
 }
 
 /// Policy for a single batch read operation.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct BatchReadPolicy {
     /// read_touch_ttl determines how record TTL (time to live) is affected on reads. When enabled, the server can
     /// efficiently operate as a read-based LRU cache where the least recently used records are expired.
@@ -76,7 +76,7 @@ impl Default for BatchReadPolicy {
 }
 
 /// Policy for a single batch write operation.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct BatchWritePolicy {
     /// RecordExistsAction qualifies how to handle writes where the record already exists.
     pub record_exists_action: RecordExistsAction,
@@ -128,7 +128,7 @@ impl Default for BatchWritePolicy {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 /// Policy for a single batch delete operation.
 pub struct BatchDeletePolicy {
     /// GenerationPolicy qualifies how to handle record writes based on record generation.
@@ -173,7 +173,7 @@ impl Default for BatchDeletePolicy {
 }
 
 /// Policy for a single batch udf operation.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct BatchUDFPolicy {
     /// Desired consistency guarantee when committing a transaction on the server. The default
     /// (CommitAll) indicates that the server should wait for master and all replica commits to
