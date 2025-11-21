@@ -126,6 +126,13 @@ impl ClientPolicy {
         Ok(())
     }
 
+    pub(crate) const fn peers_string(&self) -> &'static str {
+        match self.use_services_alternate {
+            true => "services-alternate",
+            false => "services",
+        }
+    }
+
     #[cfg(feature = "tls")]
     pub(crate) const fn service_string(&self) -> &'static str {
         match (&self.tls_config, self.use_services_alternate) {

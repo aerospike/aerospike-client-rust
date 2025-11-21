@@ -119,7 +119,7 @@ impl Node {
             "node",
             "cluster-name",
             PARTITION_GENERATION,
-            self.client_policy.service_string(),
+            self.client_policy.peers_string(),
         ];
 
         if self.client_policy.rack_ids.is_some() {
@@ -191,7 +191,7 @@ impl Node {
     ) -> Result<Vec<Host>> {
         let mut friends: Vec<Host> = vec![];
 
-        let friend_string = match info_map.get(self.client_policy.service_string()) {
+        let friend_string = match info_map.get(self.client_policy.peers_string()) {
             None => return Err(Error::BadResponse("Missing services list".to_string())),
             Some(friend_string) if friend_string.is_empty() => return Ok(friends),
             Some(friend_string) => friend_string,
