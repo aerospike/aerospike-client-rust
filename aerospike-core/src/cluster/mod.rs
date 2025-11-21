@@ -264,6 +264,15 @@ impl Cluster {
         let remove_list = self.find_nodes_to_remove(refresh_count).await;
         self.remove_nodes_and_aliases(remove_list).await;
 
+        let aliases: Vec<String> = self
+            .aliases()
+            .await
+            .iter()
+            .map(|(host, _)| host.to_string())
+            .collect();
+
+        debug!("Nodes {:?}", aliases);
+
         Ok(())
     }
 

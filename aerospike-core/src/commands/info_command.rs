@@ -84,7 +84,7 @@ impl Message {
         let response = str::from_utf8(&self.buf)?;
         let response = response.trim_matches('\n');
 
-        debug!("response from server for info command: {:?}", response);
+        trace!("response from server for info command: {:?}", response);
         let mut result: HashMap<String, String> = HashMap::new();
 
         for tuple in response.split('\n') {
