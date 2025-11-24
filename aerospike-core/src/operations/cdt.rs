@@ -19,7 +19,7 @@ use std::sync::Arc;
 
 use crate::commands::buffer::Buffer;
 use crate::commands::ParticleType;
-use crate::operations::cdt_context::CdtContext;
+pub use crate::operations::cdt_context::CdtContext;
 use crate::Value;
 
 #[derive(Debug, Clone)]

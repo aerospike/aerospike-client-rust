@@ -17,8 +17,9 @@ use std::str;
 use std::sync::Arc;
 use std::vec::Vec;
 
+use crate::expressions::FilterExpression;
 use aerospike_core::errors::Result;
-use aerospike_core::operations::Operation;
+use aerospike_core::operations::{CdtContext, Operation};
 use aerospike_core::query::PartitionFilter;
 use aerospike_core::{
     BatchOperation, BatchPolicy, BatchRecord, Bin, Bins, ClientPolicy, CollectionIndexType,
@@ -612,7 +613,7 @@ impl Client {
     /// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap();
     /// # let client = Client::new(&ClientPolicy::default(), &hosts).unwrap();
     /// match client.create_index("foo", "bar", "baz",
-    ///     "idx_foo_bar_baz", IndexType::Numeric).await {
+    ///     "idx_foo_bar_baz", IndexType::Numeric, CollectionIndexType::Default, None, None).await {
     ///     Err(err) => println!("Failed to create index: {}", err),
     ///     _ => {}
     /// }
@@ -624,11 +625,20 @@ impl Client {
         bin_name: &str,
         index_name: &str,
         index_type: IndexType,
+        collection_index_type: CollectionIndexType,
+        expression: Option<&FilterExpression>,
+        ctx: Option<&[CdtContext]>,
     ) -> Result<IndexTask> {
-        block_on(
-            self.async_client
-                .create_index(namespace, set_name, bin_name, index_name, index_type),
-        )
+        block_on(self.async_client.create_index(
+            namespace,
+            set_name,
+            bin_name,
+            index_name,
+            index_type,
+            collection_index_type,
+            expression,
+            ctx,
+        ))
     }
 
     /// Create a complex secondary index on a bin containing scalar, list or map values. This

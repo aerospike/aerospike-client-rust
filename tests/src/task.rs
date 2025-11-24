@@ -87,6 +87,9 @@ async fn index_task_test() {
             &bin_name,
             &index_name,
             IndexType::Numeric,
+            CollectionIndexType::Default,
+            None,
+            None,
         )
         .await
         .unwrap();

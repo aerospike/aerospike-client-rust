@@ -49,6 +49,9 @@ async fn create_test_set(client: &Client, no_records: usize) -> String {
             "bin",
             &format!("{}_{}_{}", namespace, set_name, "bin"),
             IndexType::Numeric,
+            CollectionIndexType::Default,
+            None,
+            None,
         )
         .await
         .expect("Failed to create index");
@@ -369,6 +372,9 @@ async fn test_query_geo_within_geojson_region() {
             bin_name,
             &format!("{}_{}_{}", namespace, set_name, bin_name),
             IndexType::Geo2DSphere,
+            CollectionIndexType::Default,
+            None,
+            None,
         )
         .await
         .expect("Failed to create index");

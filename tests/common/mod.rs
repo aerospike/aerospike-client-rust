@@ -18,6 +18,7 @@
 use std::env;
 
 use aerospike::expressions::set_name;
+use aerospike::CollectionIndexType;
 use aerospike::Task;
 
 use rand;
@@ -244,6 +245,9 @@ pub async fn insert_bins(ns: &str, set_name: &str) -> aerospike::Result<()> {
             "bin_i",
             &format!("{}_{}_{}", ns, set_name, "bin_i"),
             aerospike::IndexType::Numeric,
+            CollectionIndexType::Default,
+            None,
+            None,
         )
         .await
         .expect("Failed to create index for bin_i");
@@ -256,6 +260,9 @@ pub async fn insert_bins(ns: &str, set_name: &str) -> aerospike::Result<()> {
             "bin_s",
             &format!("{}_{}_{}", ns, set_name, "bin_s"),
             aerospike::IndexType::String,
+            CollectionIndexType::Default,
+            None,
+            None,
         )
         .await
         .expect("Failed to create index for bin_s");

@@ -28,8 +28,10 @@ use crate::commands::{
     ScanCommand, TouchCommand, WriteCommand,
 };
 use crate::errors::{Error, Result};
+use crate::expressions::FilterExpression;
+use crate::msgpack::encoder::pack_ctx_for_index;
 use crate::net::ToHosts;
-use crate::operations::{Operation, OperationType};
+use crate::operations::{CdtContext, Operation, OperationType};
 use crate::policy::{BatchPolicy, ClientPolicy, QueryPolicy, ReadPolicy, ScanPolicy, WritePolicy};
 use crate::query::{PartitionFilter, PartitionTracker};
 use crate::task::{IndexTask, RegisterTask};
@@ -1034,7 +1036,7 @@ impl Client {
             .map_err(|e| e.chain_error("Error truncating ns/set"))
     }
 
-    /// Create a secondary index on a bin containing scalar values. This asynchronous server call
+    /// Create a secondary index on a bin. This asynchronous server call
     /// returns before the command is complete.
     ///
     /// # Examples
@@ -1049,7 +1051,7 @@ impl Client {
     /// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap();
     /// # let client = Client::new(&ClientPolicy::default(), &hosts).await.unwrap();
     /// match client.create_index("foo", "bar", "baz",
-    ///     "idx_foo_bar_baz", IndexType::Numeric).await {
+    ///     "idx_foo_bar_baz", IndexType::Numeric, CollectionIndexType::Default, None, None).await {
     ///     Err(err) => println!("Failed to create index: {}", err),
     ///     _ => {}
     /// }
@@ -1061,48 +1063,70 @@ impl Client {
         bin_name: &str,
         index_name: &str,
         index_type: IndexType,
-    ) -> Result<IndexTask> {
-        self.create_complex_index(
-            namespace,
-            set_name,
-            bin_name,
-            index_name,
-            index_type,
-            CollectionIndexType::Default,
-        )
-        .await?;
-        Ok(IndexTask::new(
-            Arc::clone(&self.cluster),
-            namespace.to_string(),
-            index_name.to_string(),
-        ))
-    }
-
-    /// Create a complex secondary index on a bin containing scalar, list or map values. This
-    /// asynchronous server call returns before the command is complete.
-    #[allow(clippy::too_many_arguments)]
-    pub async fn create_complex_index(
-        &self,
-        namespace: &str,
-        set_name: &str,
-        bin_name: &str,
-        index_name: &str,
-        index_type: IndexType,
         collection_index_type: CollectionIndexType,
-    ) -> Result<()> {
+        expression: Option<&FilterExpression>,
+        ctx: Option<&[CdtContext]>,
+    ) -> Result<IndexTask> {
+        use crate::commands::buffer::Buffer;
+
+        let ctx_str = if let Some(ctx) = ctx {
+            if ctx.is_empty() {
+                "".to_string()
+            } else {
+                let size = pack_ctx_for_index(&mut None, ctx);
+                let mut buf = Buffer::new(0);
+                buf.resize_buffer(size)?;
+                let _ = pack_ctx_for_index(&mut Some(&mut buf), ctx);
+                base64::encode(&buf.data_buffer)
+            }
+        } else {
+            "".to_string()
+        };
+
+        let exp_str: String = if let Some(expression) = expression {
+            let size = expression.size();
+            let mut buf = Buffer::new(0);
+            buf.resize_buffer(size)?;
+            let _ = expression.pack(&mut Some(&mut buf));
+            base64::encode(&buf.data_buffer)
+        } else {
+            "".to_string()
+        };
+
         let cit_str: String = if let CollectionIndexType::Default = collection_index_type {
             "".to_string()
         } else {
             format!("indextype={};", collection_index_type)
         };
-        let cmd = format!(
-            "sindex-create:ns={};set={};indexname={};numbins=1;{}indexdata={},{};\
+
+        let cmd =         match (ctx_str.is_empty(), exp_str.is_empty()) {
+        (false, false) =>format!(
+             "sindex-create:ns={};set={};indexname={};context={};exp={};numbins=1;{}indexdata={},{};\
+             priority=normal",
+            namespace, set_name, index_name, ctx_str, exp_str,cit_str, bin_name, index_type
+        ),
+            (false, true) => format!("sindex-create:ns={};set={};indexname={};context={};numbins=1;{}indexdata={},{};\
+             priority=normal",
+            namespace, set_name, index_name, ctx_str,cit_str, bin_name, index_type
+        ),
+            (true, false) => format!("sindex-create:ns={};set={};indexname={};exp={};numbins=1;{}indexdata={},{};\
+             priority=normal",
+            namespace, set_name, index_name,  exp_str,cit_str, bin_name, index_type
+        ),
+        _ => format!("sindex-create:ns={};set={};indexname={};numbins=1;{}indexdata={},{};\
              priority=normal",
             namespace, set_name, index_name, cit_str, bin_name, index_type
-        );
+        ),
+    };
+
         self.send_info_cmd(&cmd)
             .await
-            .map_err(|e| e.chain_error("Error creating index"))
+            .map_err(|e| e.chain_error("Error creating index"))?;
+        Ok(IndexTask::new(
+            Arc::clone(&self.cluster),
+            namespace.to_string(),
+            index_name.to_string(),
+        ))
     }
 
     /// Delete secondary index.

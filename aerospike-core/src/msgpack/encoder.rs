@@ -54,6 +54,19 @@ pub fn pack_empty_args_array(buf: &mut Option<&mut Buffer>) -> usize {
 }
 
 #[doc(hidden)]
+pub fn pack_ctx_for_index(buf: &mut Option<&mut Buffer>, ctx: &[CdtContext]) -> usize {
+    let mut size: usize = 0;
+    size += pack_array_begin(buf, ctx.len() * 2);
+
+    for c in ctx {
+        size += pack_integer(buf, i64::from(c.id));
+        size += pack_value(buf, &c.value);
+    }
+
+    size
+}
+
+#[doc(hidden)]
 pub fn pack_cdt_op(
     buf: &mut Option<&mut Buffer>,
     cdt_op: &CdtOperation,

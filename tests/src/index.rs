@@ -17,6 +17,8 @@ use std::thread;
 use std::time::Duration;
 
 use crate::common;
+use aerospike::expressions::*;
+use aerospike::operations::cdt_context::*;
 use env_logger;
 
 use aerospike::Task;
@@ -54,7 +56,50 @@ async fn create_index() {
     thread::sleep(Duration::from_millis(1000));
 
     let task = client
-        .create_index(ns, &set, bin, &index, IndexType::Numeric)
+        .create_index(
+            ns,
+            &set,
+            bin,
+            &index,
+            IndexType::Numeric,
+            CollectionIndexType::Default,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+    task.wait_till_complete(None).await.unwrap();
+
+    client.close().await.unwrap();
+}
+
+#[aerospike_macro::test]
+async fn create_complex_index() {
+    let _ = env_logger::try_init();
+
+    let client = common::client().await;
+    let ns = common::namespace();
+    let set = create_test_set(&client, EXPECTED).await;
+    let bin = "bin";
+    let index = format!("{}_{}_{}", ns, set, bin);
+
+    let _ = client.drop_index(ns, &set, &index).await;
+    thread::sleep(Duration::from_millis(1000));
+
+    let ctx = vec![ctx_map_key(as_val!("map_key"))];
+    let fe = eq(int_bin("a".to_string()), int_val(500));
+
+    let task = client
+        .create_index(
+            ns,
+            &set,
+            bin,
+            &index,
+            IndexType::Numeric,
+            CollectionIndexType::Default,
+            Some(&fe),
+            Some(&ctx),
+        )
         .await
         .unwrap();
     task.wait_till_complete(None).await.unwrap();
