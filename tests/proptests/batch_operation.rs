@@ -7,11 +7,13 @@ use crate::proptests::operation::*;
 use crate::proptests::value::*;
 
 use aerospike::policy::*;
+use aerospike::BatchOperation;
 use aerospike::*;
 
 use futures::stream::StreamExt;
 
 use crate::proptests::{bins::*, partition_filter::*, policy::*};
+use crate::proptests::operation::any_operation_readish;
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum PropBatchOperation {
@@ -41,26 +43,16 @@ impl PropBatchOperation {
 pub fn batch_operation(bin: Bin) -> impl Strategy<Value = PropBatchOperation> {
     prop_oneof![
         bop_read_bins(),
-        // bop_read_ops(),
+        bop_read_ops(),
         // bop_write(),
         // bop_delete(),
         // bop_udf(),
     ]
 }
 
-// given a bin, select a batch operation to work with that bin.
-//
-// I don't see the need for this function; it appears to just replicate the
-// fn batch_operation() above.  Or, more precisely, the prior function appears
-// equally superfluous and this can be turned into the prop_oneof![] macro
-// expansions.
-
 pub fn any_batch_operation(bin: Bin) -> impl Strategy<Value = PropBatchOperation> {
     batch_operation(bin)
 }
-
-// This appears to build upon any_batch_operation() to provide a plurality of
-// operations in a vector.
 
 prop_compose! {
     pub fn many_batch_operations(n: usize)(bin in bin())(ops in prop::collection::vec(any_batch_operation(bin), 1..n as usize)) -> Vec<PropBatchOperation> {
@@ -80,15 +72,19 @@ prop_compose! {
         brp in batch_read_policy(),
         bs in bins(10),
     ) -> PropBatchOperation {
+		eprintln!("bop_read_bins() called");
         PropBatchOperation::ReadBins(brp,  bs)
     }
 }
 
-// prop_compose! {
-//     pub fn bop_read_ops()(
-//         brp in batch_read_policy(),
-//         ops in ...,
-//     ) -> PropBatchOperation {
-//         PropBatchOperation::ReadBins(brp, ops)
-//     }
-// }
+prop_compose! {
+    pub fn bop_read_ops()
+	(n in 1usize..20, bin in bin())
+	(
+        brp in batch_read_policy(),
+        ops in prop::collection::vec(any_operation_readish(bin), n)
+    ) -> PropBatchOperation {
+		eprintln!("bop_read_ops() called");
+        PropBatchOperation::ReadOps(brp, ops)
+    }
+}

@@ -27,6 +27,7 @@ proptest_async::proptest! {
         let set_name = "test";
 
         let now = aerospike_rt::time::Instant::now();
+		eprintln!("PRPBAT001 It is now {:?}", now.elapsed());
 
         // let as_ops: Vec<aerospike::operations::Operation> = ops.into_iter().map(|op| op.to_op()).collect();
         let mut as_ops = vec![];
@@ -36,8 +37,9 @@ proptest_async::proptest! {
             as_ops.push(as_op);
         }
 
+		eprintln!("PRPBAT002 Submitting batch operation at {:?}", now.elapsed());
         let res = client.batch(&batch_policy, &as_ops).await;
-        println!("Batch succeeded in {:?}", now.elapsed());
+        eprintln!("PRPBAT003 Batch returned in {:?}", now.elapsed());
 
         match res {
         //     Err(Error::ServerError(ResultCode::ParameterError, _, _)) => {
@@ -65,3 +67,4 @@ proptest_async::proptest! {
         }
     }
 }
+
