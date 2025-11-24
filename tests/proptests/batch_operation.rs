@@ -28,12 +28,39 @@ impl PropBatchOperation {
             PropBatchOperation::ReadBins(brp, bins) => BatchOperation::read(brp, key, bins.clone()),
             PropBatchOperation::ReadOps(brp, ops) => {
                 BatchOperation::read_ops(brp, key, ops.iter().map(|op| op.to_op()).collect())
-            } // PropBatchOperation::Write(bwp, ops) => ,
-              // PropBatchOperation::Delete(bdp) => ,
-              // PropBatchOperation::UDF(bup, package, func, vals) =>,
+            }
+			// PropBatchOperation::Write(bwp, ops) => todo!(),
+            // PropBatchOperation::Delete(bdp) => todo!(),
+            // PropBatchOperation::UDF(bup, package, func, vals) => todo!(),
         }
     }
 }
+
+// select one batch operation and return a strategy for it.
+
+pub fn batch_operation(bin: Bin) -> impl Strategy<Value = PropBatchOperation> {
+    prop_oneof![
+        bop_read_bins(),
+        // bop_read_ops(),
+        // bop_write(),
+        // bop_delete(),
+        // bop_udf(),
+    ]
+}
+
+// given a bin, select a batch operation to work with that bin.
+//
+// I don't see the need for this function; it appears to just replicate the
+// fn batch_operation() above.  Or, more precisely, the prior function appears
+// equally superfluous and this can be turned into the prop_oneof![] macro
+// expansions.
+
+pub fn any_batch_operation(bin: Bin) -> impl Strategy<Value = PropBatchOperation> {
+    batch_operation(bin)
+}
+
+// This appears to build upon any_batch_operation() to provide a plurality of
+// operations in a vector.
 
 prop_compose! {
     pub fn many_batch_operations(n: usize)(bin in bin())(ops in prop::collection::vec(any_batch_operation(bin), 1..n as usize)) -> Vec<PropBatchOperation> {
@@ -41,19 +68,12 @@ prop_compose! {
     }
 }
 
-pub fn any_batch_operation(bin: Bin) -> impl Strategy<Value = PropBatchOperation> {
-    batch_operation(bin)
-}
-
-pub fn batch_operation(bin: Bin) -> impl Strategy<Value = PropBatchOperation> {
-    prop_oneof![
-        bop_read_bins(),
-        bop_read_ops(),
-        // bop_write(),
-        // bop_delete(),
-        // bop_udf(),
-    ]
-}
+// Given a randomly selected BatchReadPolicy, and
+// given a random set of 10 bins, then
+// construct an enumeration variant that implements a strategy.
+//
+// Later on, we'll 'match' on this variant (maybe not us directly, but one
+// of aerospike's APIs) to invoke calls back to the server.
 
 prop_compose! {
     pub fn bop_read_bins()(
@@ -64,11 +84,11 @@ prop_compose! {
     }
 }
 
-prop_compose! {
-    pub fn bop_read_ops()(
-        brp in batch_read_policy(),
-        ops in ...,
-    ) -> PropBatchOperation {
-        PropBatchOperation::ReadBins(brp, ops)
-    }
-}
+// prop_compose! {
+//     pub fn bop_read_ops()(
+//         brp in batch_read_policy(),
+//         ops in ...,
+//     ) -> PropBatchOperation {
+//         PropBatchOperation::ReadBins(brp, ops)
+//     }
+// }
