@@ -1,5 +1,16 @@
 #!/bin/bash
 
+# Come up with a reasonably random namespace for this particular docker
+# image when run.  Through this, we avoid namespace collisions during
+# long-running tests.  NOTE!!  If running the docker image with the
+# --hostname flag, you MUST use a unique name for the hostname.  However,
+# if you avoid using the --hostname flag, Docker automatically randomizes
+# the hostname for us.
+#
+# We rely upon a (suitably unique) hostname and the current PID.
+
+export AEROSPIKE_NAMESPACE="prop-$(hostname | md5sum | cut -c 1-6)-$$"
+
 echo "================================================================"
 echo "               RECEIVED ENVIRONMENT CONFIGURATION               "
 echo "----------------------------------------------------------------"
@@ -10,6 +21,10 @@ echo ""
 echo "CARGO_TEST_OPTS                  = ${CARGO_TEST_OPTS}"
 echo ""
 echo "PROPTEST_CASES                   = ${PROPTEST_CASES}"
+echo "----------------------------------------------------------------"
+echo "                DERIVED ENVIRONMENT CONFIGURATION               "
+echo "----------------------------------------------------------------"
+echo "AEROSPIKE_NAMESPACE              = ${AEROSPIKE_NAMESPACE}"
 echo "================================================================"
 
 source $HOME/.cargo/env
