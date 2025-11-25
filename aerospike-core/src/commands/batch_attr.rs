@@ -82,8 +82,11 @@ impl BatchAttr {
         self.send_key = false;
     }
 
-    pub(crate) fn set_batch_read(&mut self, rp: &BatchReadPolicy) {
-        self.filter_expression = rp.filter_expression.clone();
+    pub(crate) fn set_batch_read(&mut self, rp: &BatchReadPolicy, parent: &BatchPolicy) {
+        self.filter_expression = rp
+            .filter_expression
+            .clone()
+            .or(parent.filter_expression.clone());
         self.read_attr = buffer::INFO1_READ;
 
         // if rp.ReadModeAP == ReadModeAPAll {
@@ -135,8 +138,11 @@ impl BatchAttr {
         }
     }
 
-    pub(crate) fn set_batch_write(&mut self, wp: &BatchWritePolicy) {
-        self.filter_expression = wp.filter_expression.clone();
+    pub(crate) fn set_batch_write(&mut self, wp: &BatchWritePolicy, parent: &BatchPolicy) {
+        self.filter_expression = wp
+            .filter_expression
+            .clone()
+            .or(parent.filter_expression.clone());
         self.read_attr = 0;
         self.write_attr = buffer::INFO2_WRITE | buffer::INFO2_RESPOND_ALL_OPS;
         self.info_attr = 0;
@@ -221,8 +227,11 @@ impl BatchAttr {
         }
     }
 
-    pub(crate) fn set_batch_udf(&mut self, up: &BatchUDFPolicy) {
-        self.filter_expression = up.filter_expression.clone();
+    pub(crate) fn set_batch_udf(&mut self, up: &BatchUDFPolicy, parent: &BatchPolicy) {
+        self.filter_expression = up
+            .filter_expression
+            .clone()
+            .or(parent.filter_expression.clone());
         self.read_attr = 0;
         self.write_attr = buffer::INFO2_WRITE;
         self.info_attr = 0;
@@ -245,8 +254,11 @@ impl BatchAttr {
         }
     }
 
-    pub(crate) fn set_batch_delete(&mut self, dp: &BatchDeletePolicy) {
-        self.filter_expression = dp.filter_expression.clone();
+    pub(crate) fn set_batch_delete(&mut self, dp: &BatchDeletePolicy, parent: &BatchPolicy) {
+        self.filter_expression = dp
+            .filter_expression
+            .clone()
+            .or(parent.filter_expression.clone());
         self.read_attr = 0;
         self.write_attr =
             buffer::INFO2_WRITE | buffer::INFO2_RESPOND_ALL_OPS | buffer::INFO2_DELETE;
