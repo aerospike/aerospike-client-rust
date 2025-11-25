@@ -7,7 +7,6 @@ use crate::proptests::operation::*;
 use crate::proptests::value::*;
 
 use aerospike::policy::*;
-use aerospike::BatchOperation;
 use aerospike::*;
 
 use futures::stream::StreamExt;
@@ -19,7 +18,7 @@ use crate::proptests::operation::any_operation_readish;
 pub enum PropBatchOperation {
     ReadBins(BatchReadPolicy, Bins),
     ReadOps(BatchReadPolicy, Vec<PropOperation>),
-    // Write(BatchWritePolicy, Key, Vec<PropOperation>),
+    Write(BatchWritePolicy, Vec<PropOperation>),
     // Delete(BatchDeletePolicy, Key),
     // UDF(BatchUDFPolicy, Key, String, String, Option<Vec<Value>>),
 }
@@ -31,7 +30,9 @@ impl PropBatchOperation {
             PropBatchOperation::ReadOps(brp, ops) => {
                 BatchOperation::read_ops(brp, key, ops.iter().map(|op| op.to_op()).collect())
             }
-			// PropBatchOperation::Write(bwp, ops) => todo!(),
+			PropBatchOperation::Write(bwp, ops) => {
+				BatchOperation::write(bwp, key, ops.iter().map(|op| op.to_op()).collect())
+			}
             // PropBatchOperation::Delete(bdp) => todo!(),
             // PropBatchOperation::UDF(bup, package, func, vals) => todo!(),
         }
@@ -40,18 +41,14 @@ impl PropBatchOperation {
 
 // select one batch operation and return a strategy for it.
 
-pub fn batch_operation(bin: Bin) -> impl Strategy<Value = PropBatchOperation> {
+pub fn any_batch_operation(bin: Bin) -> impl Strategy<Value = PropBatchOperation> {
     prop_oneof![
         bop_read_bins(),
         bop_read_ops(),
-        // bop_write(),
+        bop_write(),
         // bop_delete(),
         // bop_udf(),
     ]
-}
-
-pub fn any_batch_operation(bin: Bin) -> impl Strategy<Value = PropBatchOperation> {
-    batch_operation(bin)
 }
 
 prop_compose! {
@@ -82,9 +79,22 @@ prop_compose! {
 	(n in 1usize..20, bin in bin())
 	(
         brp in batch_read_policy(),
-        ops in prop::collection::vec(any_operation_readish(bin), n)
+        ops in prop::collection::vec(operation_readish(bin), n)
     ) -> PropBatchOperation {
 		eprintln!("bop_read_ops() called");
         PropBatchOperation::ReadOps(brp, ops)
     }
 }
+
+prop_compose! {
+	pub fn bop_write()
+	(n in 1usize..20, bin in bin())
+	(
+		bwp in batch_write_policy(),
+		ops in prop::collection::vec(operation_writeish(bin), n)
+	) -> PropBatchOperation {
+		eprintln!("bop_write() called");
+		PropBatchOperation::Write(bwp, ops)
+	}
+}
+

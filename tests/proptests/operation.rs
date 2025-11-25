@@ -78,6 +78,17 @@ pub fn operation_readish(bin: Bin) -> impl Strategy<Value = PropOperation> {
 	]
 }
 
+// Selects an operation that is strictly write-ish in nature.
+pub fn operation_writeish(bin: Bin) -> impl Strategy<Value = PropOperation> {
+	prop_oneof![
+        op_touch(),
+        op_put(bin.clone()),
+        op_append(bin.clone()),
+        op_prepend(bin.clone()),
+        op_add(bin.clone()),
+	]
+}
+
 pub fn op_get() -> impl Strategy<Value = PropOperation> {
     Just(PropOperation::Get)
 }

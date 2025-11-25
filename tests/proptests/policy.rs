@@ -13,7 +13,10 @@ use aerospike::QueryPolicy;
 use aerospike::ReadTouchTTL;
 use aerospike::RecordExistsAction;
 
-use aerospike::{BatchPolicy, BatchReadPolicy, Expiration, ReadPolicy, ScanPolicy, WritePolicy};
+use aerospike::{
+	BatchPolicy, BatchReadPolicy, BatchWritePolicy,
+	Expiration, ReadPolicy, ScanPolicy, WritePolicy
+};
 
 use proptest::bool;
 use proptest::prelude::*;
@@ -342,3 +345,24 @@ pub fn batch_read_policy() -> impl Strategy<Value = BatchReadPolicy> {
         },
     )
 }
+
+prop_compose! {
+	pub fn batch_write_policy()
+	(
+		record_exists_action in record_exists_action(),
+		expiration in expiration(0, 5),
+		durable_delete in any::<bool>(),
+	)
+	-> BatchWritePolicy {
+		BatchWritePolicy {
+			record_exists_action,
+			expiration,
+			durable_delete,
+
+			// for all other fields, assume their default values.
+			..Default::default()
+		}
+	}
+}
+
+
