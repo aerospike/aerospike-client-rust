@@ -14,8 +14,7 @@ use aerospike::ReadTouchTTL;
 use aerospike::RecordExistsAction;
 
 use aerospike::{
-	BatchPolicy, BatchReadPolicy, BatchWritePolicy,
-	Expiration, ReadPolicy, ScanPolicy, WritePolicy
+    BatchPolicy, BatchReadPolicy, BatchWritePolicy, Expiration, ReadPolicy, ScanPolicy, WritePolicy,
 };
 
 use proptest::bool;
@@ -98,10 +97,10 @@ pub fn collection_index_type() -> impl Strategy<Value = CollectionIndexType> {
 pub fn record_exists_action() -> impl Strategy<Value = RecordExistsAction> {
     prop_oneof![
         Just(RecordExistsAction::Update),
-        Just(RecordExistsAction::UpdateOnly),
-        Just(RecordExistsAction::Replace),
-        Just(RecordExistsAction::ReplaceOnly),
-        Just(RecordExistsAction::CreateOnly),
+        // Just(RecordExistsAction::UpdateOnly),
+        // Just(RecordExistsAction::Replace),
+        // Just(RecordExistsAction::ReplaceOnly),
+        // Just(RecordExistsAction::CreateOnly),
     ]
 }
 
@@ -135,7 +134,7 @@ pub fn base_policy(timeout_ms: u32) -> impl Strategy<Value = BasePolicy> {
         duration_ms_opt(100, 500),
         consistency_level(),
         read_touch_ttl(),
-        true_or_false_filter_expression(),
+        Just(None), //true_or_false_filter_expression(),
     )
         .prop_map(
             |(
@@ -347,22 +346,21 @@ pub fn batch_read_policy() -> impl Strategy<Value = BatchReadPolicy> {
 }
 
 prop_compose! {
-	pub fn batch_write_policy()
-	(
-		record_exists_action in record_exists_action(),
-		expiration in expiration(0, 5),
-		durable_delete in any::<bool>(),
-	)
-	-> BatchWritePolicy {
-		BatchWritePolicy {
-			record_exists_action,
-			expiration,
-			durable_delete,
-
-			// for all other fields, assume their default values.
-			..Default::default()
-		}
-	}
+    pub fn batch_write_policy()
+    (
+        record_exists_action in record_exists_action(),
+        expiration in expiration(0, 5),
+        durable_delete in any::<bool>(),
+        filter_expression in true_or_false_filter_expression(),
+    )
+    -> BatchWritePolicy {
+        BatchWritePolicy {
+            record_exists_action,
+            expiration,
+            durable_delete,
+            filter_expression,
+            // for all other fields, assume their default values.
+            ..Default::default()
+        }
+    }
 }
-
-

@@ -51,7 +51,7 @@ pub fn any_operation(bin: Bin) -> impl Strategy<Value = PropOperation> {
 }
 
 pub fn any_operation_readish(bin: Bin) -> impl Strategy<Value = PropOperation> {
-	operation_readish(bin)
+    operation_readish(bin)
 }
 
 // Selects an operation that is a readish or write-ish in nature.
@@ -71,22 +71,18 @@ pub fn operation(bin: Bin) -> impl Strategy<Value = PropOperation> {
 
 // Selects an operation that is strictly readish in nature.
 pub fn operation_readish(bin: Bin) -> impl Strategy<Value = PropOperation> {
-	prop_oneof![
-        // op_get(),
-        op_get_header(),
-        op_get_bin(bin.clone().name),
-	]
+    prop_oneof![op_get(), op_get_header(), op_get_bin(bin.clone().name),]
 }
 
 // Selects an operation that is strictly write-ish in nature.
 pub fn operation_writeish(bin: Bin) -> impl Strategy<Value = PropOperation> {
-	prop_oneof![
+    prop_oneof![
         op_touch(),
         op_put(bin.clone()),
         op_append(bin.clone()),
         op_prepend(bin.clone()),
         op_add(bin.clone()),
-	]
+    ]
 }
 
 pub fn op_get() -> impl Strategy<Value = PropOperation> {

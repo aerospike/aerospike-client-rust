@@ -211,7 +211,7 @@ impl Default for BatchUDFPolicy {
 
 /// Represents a batch operation.
 /// Do not directly create the batch operations. Use the helper methods instead.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum BatchOperation<'a> {
     #[doc(hidden)]
     Read {
