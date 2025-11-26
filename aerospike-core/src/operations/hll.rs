@@ -213,7 +213,7 @@ pub fn set_union<'a>(policy: &HLLPolicy, bin: &'a str, list: &'a [Value]) -> Ope
 
 /// Create HLL refresh operation.
 /// Server updates the cached count (if stale) and returns the count.
-pub fn refresh_count(bin: &str) -> Operation {
+pub fn refresh_count(bin: &str) -> Operation<'_> {
     let cdt_op = CdtOperation {
         op: HLLOpType::SetCount as u8,
         encoder: Arc::new(pack_hll_op),
@@ -231,7 +231,7 @@ pub fn refresh_count(bin: &str) -> Operation {
 /// Servers folds `indexBitCount` to the specified value.
 /// This can only be applied when `minHashBitCount` on the HLL bin is 0.
 /// Server does not return a value.
-pub fn fold(bin: &str, index_bit_count: i64) -> Operation {
+pub fn fold(bin: &str, index_bit_count: i64) -> Operation<'_> {
     let cdt_op = CdtOperation {
         op: HLLOpType::Fold as u8,
         encoder: Arc::new(pack_hll_op),
@@ -247,7 +247,7 @@ pub fn fold(bin: &str, index_bit_count: i64) -> Operation {
 
 /// Create HLL getCount operation.
 /// Server returns estimated number of elements in the HLL bin.
-pub fn get_count(bin: &str) -> Operation {
+pub fn get_count(bin: &str) -> Operation<'_> {
     let cdt_op = CdtOperation {
         op: HLLOpType::Count as u8,
         encoder: Arc::new(pack_hll_op),
@@ -331,7 +331,7 @@ pub fn get_similarity<'a>(bin: &'a str, list: &'a [Value]) -> Operation<'a> {
 /// Create HLL describe operation.
 /// Server returns `indexBitCount` and `minHashBitCount` used to create HLL bin in a list of longs.
 /// The list size is 2.
-pub fn describe(bin: &str) -> Operation {
+pub fn describe(bin: &str) -> Operation<'_> {
     let cdt_op = CdtOperation {
         op: HLLOpType::Describe as u8,
         encoder: Arc::new(pack_hll_op),

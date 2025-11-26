@@ -128,6 +128,7 @@ impl Recordset {
         None
     }
 
+    #[cfg(feature = "sync")]
     /// Returns a result from the queue if it exists. Otherwise, returns None.
     pub fn next_record(&self) -> Option<Result<Record>> {
         match self.rx.try_recv() {
@@ -143,6 +144,7 @@ impl Recordset {
     }
 }
 
+#[cfg(feature = "sync")]
 impl<'a> Iterator for &'a Recordset {
     type Item = Result<Record>;
 

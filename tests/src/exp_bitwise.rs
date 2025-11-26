@@ -15,6 +15,8 @@
 use crate::common;
 use env_logger;
 
+use crate::src::count_results;
+
 use aerospike::expressions::bitwise::*;
 use aerospike::expressions::*;
 use aerospike::operations::bitwise::{BitPolicy, BitwiseOverflowActions, BitwiseResizeFlags};
@@ -56,7 +58,7 @@ async fn expression_bitwise() {
         &set_name,
     )
     .await;
-    let item_count = count_results(rs);
+    let item_count = count_results(rs).await;
     assert_eq!(item_count, 100, "COUNT Test Failed");
 
     let rs = test_filter(
@@ -77,7 +79,7 @@ async fn expression_bitwise() {
         &set_name,
     )
     .await;
-    let item_count = count_results(rs);
+    let item_count = count_results(rs).await;
     assert_eq!(item_count, 100, "RESIZE Test Failed");
 
     let rs = test_filter(
@@ -98,7 +100,7 @@ async fn expression_bitwise() {
         &set_name,
     )
     .await;
-    let item_count = count_results(rs);
+    let item_count = count_results(rs).await;
     assert_eq!(item_count, 100, "INSERT Test Failed");
 
     let rs = test_filter(
@@ -119,7 +121,7 @@ async fn expression_bitwise() {
         &set_name,
     )
     .await;
-    let item_count = count_results(rs);
+    let item_count = count_results(rs).await;
     assert_eq!(item_count, 100, "REMOVE Test Failed");
 
     let rs = test_filter(
@@ -141,7 +143,7 @@ async fn expression_bitwise() {
         &set_name,
     )
     .await;
-    let item_count = count_results(rs);
+    let item_count = count_results(rs).await;
     assert_eq!(item_count, 100, "SET Test Failed");
 
     let rs = test_filter(
@@ -163,7 +165,7 @@ async fn expression_bitwise() {
         &set_name,
     )
     .await;
-    let item_count = count_results(rs);
+    let item_count = count_results(rs).await;
     assert_eq!(item_count, 100, "OR Test Failed");
 
     let rs = test_filter(
@@ -185,7 +187,7 @@ async fn expression_bitwise() {
         &set_name,
     )
     .await;
-    let item_count = count_results(rs);
+    let item_count = count_results(rs).await;
     assert_eq!(item_count, 100, "XOR Test Failed");
 
     let rs = test_filter(
@@ -207,7 +209,7 @@ async fn expression_bitwise() {
         &set_name,
     )
     .await;
-    let item_count = count_results(rs);
+    let item_count = count_results(rs).await;
     assert_eq!(item_count, 100, "AND Test Failed");
 
     let rs = test_filter(
@@ -228,7 +230,7 @@ async fn expression_bitwise() {
         &set_name,
     )
     .await;
-    let item_count = count_results(rs);
+    let item_count = count_results(rs).await;
     assert_eq!(item_count, 100, "NOT Test Failed");
 
     let rs = test_filter(
@@ -250,7 +252,7 @@ async fn expression_bitwise() {
         &set_name,
     )
     .await;
-    let item_count = count_results(rs);
+    let item_count = count_results(rs).await;
     assert_eq!(item_count, 100, "LSHIFT Test Failed");
 
     let rs = test_filter(
@@ -272,7 +274,7 @@ async fn expression_bitwise() {
         &set_name,
     )
     .await;
-    let item_count = count_results(rs);
+    let item_count = count_results(rs).await;
     assert_eq!(item_count, 100, "RSHIFT Test Failed");
 
     let rs = test_filter(
@@ -296,7 +298,7 @@ async fn expression_bitwise() {
         &set_name,
     )
     .await;
-    let item_count = count_results(rs);
+    let item_count = count_results(rs).await;
     assert_eq!(item_count, 100, "ADD Test Failed");
 
     let rs = test_filter(
@@ -320,7 +322,7 @@ async fn expression_bitwise() {
         &set_name,
     )
     .await;
-    let item_count = count_results(rs);
+    let item_count = count_results(rs).await;
     assert_eq!(item_count, 100, "SUBTRACT Test Failed");
 
     let rs = test_filter(
@@ -342,7 +344,7 @@ async fn expression_bitwise() {
         &set_name,
     )
     .await;
-    let item_count = count_results(rs);
+    let item_count = count_results(rs).await;
     assert_eq!(item_count, 100, "SET INT Test Failed");
 
     let rs = test_filter(
@@ -354,7 +356,7 @@ async fn expression_bitwise() {
         &set_name,
     )
     .await;
-    let item_count = count_results(rs);
+    let item_count = count_results(rs).await;
     assert_eq!(item_count, 100, "GET Test Failed");
 
     let rs = test_filter(
@@ -371,7 +373,7 @@ async fn expression_bitwise() {
         &set_name,
     )
     .await;
-    let item_count = count_results(rs);
+    let item_count = count_results(rs).await;
     assert_eq!(item_count, 100, "LSCAN Test Failed");
 
     let rs = test_filter(
@@ -388,7 +390,7 @@ async fn expression_bitwise() {
         &set_name,
     )
     .await;
-    let item_count = count_results(rs);
+    let item_count = count_results(rs).await;
     assert_eq!(item_count, 100, "RSCAN Test Failed");
 
     let rs = test_filter(
@@ -400,7 +402,7 @@ async fn expression_bitwise() {
         &set_name,
     )
     .await;
-    let item_count = count_results(rs);
+    let item_count = count_results(rs).await;
     assert_eq!(item_count, 100, "RSCAN Test Failed");
 
     client.close().await.unwrap();
@@ -415,19 +417,4 @@ async fn test_filter(client: &Client, filter: FilterExpression, set_name: &str) 
     let statement = Statement::new(namespace, set_name, Bins::All);
     let pf = PartitionFilter::all();
     client.query(&qpolicy, pf, statement).await.unwrap()
-}
-
-fn count_results(rs: Arc<Recordset>) -> usize {
-    let mut count = 0;
-
-    for res in &*rs {
-        match res {
-            Ok(_) => {
-                count += 1;
-            }
-            Err(err) => panic!("{:?}", err),
-        }
-    }
-
-    count
 }

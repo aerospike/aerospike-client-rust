@@ -15,6 +15,10 @@
 use crate::common;
 use env_logger;
 
+use futures::stream::StreamExt;
+
+use crate::src::count_results;
+
 use aerospike::expressions::*;
 use aerospike::query::PartitionFilter;
 use aerospike::ParticleType;
@@ -58,7 +62,7 @@ async fn expression_compare() {
         &set_name,
     )
     .await;
-    let count = count_results(rs);
+    let count = count_results(rs).await;
     assert_eq!(count, 1, "EQ Test Failed");
 
     // NE
@@ -68,7 +72,7 @@ async fn expression_compare() {
         &set_name,
     )
     .await;
-    let count = count_results(rs);
+    let count = count_results(rs).await;
     assert_eq!(count, 99, "NE Test Failed");
 
     // LT
@@ -78,7 +82,7 @@ async fn expression_compare() {
         &set_name,
     )
     .await;
-    let count = count_results(rs);
+    let count = count_results(rs).await;
     assert_eq!(count, 10, "LT Test Failed");
 
     // LE
@@ -88,7 +92,7 @@ async fn expression_compare() {
         &set_name,
     )
     .await;
-    let count = count_results(rs);
+    let count = count_results(rs).await;
     assert_eq!(count, 11, "LE Test Failed");
 
     // GT
@@ -98,7 +102,7 @@ async fn expression_compare() {
         &set_name,
     )
     .await;
-    let count = count_results(rs);
+    let count = count_results(rs).await;
     assert_eq!(count, 98, "GT Test Failed");
 
     // GE
@@ -108,7 +112,7 @@ async fn expression_compare() {
         &set_name,
     )
     .await;
-    let count = count_results(rs);
+    let count = count_results(rs).await;
     assert_eq!(count, 99, "GT Test Failed");
 
     client.close().await.unwrap();
@@ -131,7 +135,7 @@ async fn expression_condition() {
         &set_name,
     )
     .await;
-    let count = count_results(rs);
+    let count = count_results(rs).await;
     assert_eq!(count, 1, "AND Test Failed");
 
     // OR
@@ -144,7 +148,7 @@ async fn expression_condition() {
         &set_name,
     )
     .await;
-    let count = count_results(rs);
+    let count = count_results(rs).await;
     assert_eq!(count, 2, "OR Test Failed");
 
     // NOT
@@ -154,7 +158,7 @@ async fn expression_condition() {
         &set_name,
     )
     .await;
-    let count = count_results(rs);
+    let count = count_results(rs).await;
     assert_eq!(count, 99, "NOT Test Failed");
 
     client.close().await.unwrap();
@@ -174,7 +178,7 @@ async fn expression_data_types() {
         &set_name,
     )
     .await;
-    let count = count_results(rs);
+    let count = count_results(rs).await;
     assert_eq!(count, 1, "INT Test Failed");
 
     // STRING
@@ -184,7 +188,7 @@ async fn expression_data_types() {
         &set_name,
     )
     .await;
-    let count = count_results(rs);
+    let count = count_results(rs).await;
     assert_eq!(count, 1, "STRING Test Failed");
 
     let rs = test_filter(
@@ -193,7 +197,7 @@ async fn expression_data_types() {
         &set_name,
     )
     .await;
-    let count = count_results(rs);
+    let count = count_results(rs).await;
     assert_eq!(count, 1, "FLOAT Test Failed");
 
     let rs = test_filter(
@@ -205,7 +209,7 @@ async fn expression_data_types() {
         &set_name,
     )
     .await;
-    let count = count_results(rs);
+    let count = count_results(rs).await;
     assert_eq!(count, 1, "BLOB Test Failed");
 
     let rs = test_filter(
@@ -217,7 +221,7 @@ async fn expression_data_types() {
         &set_name,
     )
     .await;
-    let count = count_results(rs);
+    let count = count_results(rs).await;
     assert_eq!(count, 100, "BIN TYPE Test Failed");
     client.close().await.unwrap();
 }
@@ -238,7 +242,7 @@ fn expression_aero_5_6() {
         &set_name,
     )
     .await;
-    let count = count_results(rs);
+    let count = count_results(rs).await;
     assert_eq!(count, 1, "NUM_ADD Test Failed");
 
     let rs = test_filter(
@@ -250,7 +254,7 @@ fn expression_aero_5_6() {
         &set_name,
     )
     .await;
-    let count = count_results(rs);
+    let count = count_results(rs).await;
     assert_eq!(count, 1, "NUM_SUB Test Failed");
 
     let rs = test_filter(
@@ -262,7 +266,7 @@ fn expression_aero_5_6() {
         &set_name,
     )
     .await;
-    let count = count_results(rs);
+    let count = count_results(rs).await;
     assert_eq!(count, 1, "NUM_MUL Test Failed");
 
     let rs = test_filter(
@@ -274,7 +278,7 @@ fn expression_aero_5_6() {
         &set_name,
     )
     .await;
-    let count = count_results(rs);
+    let count = count_results(rs).await;
     assert_eq!(count, 45, "NUM_DIV Test Failed");
 
     let rs = test_filter(
@@ -286,7 +290,7 @@ fn expression_aero_5_6() {
         &set_name,
     )
     .await;
-    let count = count_results(rs);
+    let count = count_results(rs).await;
     assert_eq!(count, 1, "NUM_POW Test Failed");
 
     let rs = test_filter(
@@ -298,7 +302,7 @@ fn expression_aero_5_6() {
         &set_name,
     )
     .await;
-    let count = count_results(rs);
+    let count = count_results(rs).await;
     assert_eq!(count, 1, "NUM_LOG Test Failed");
 
     let rs = test_filter(
@@ -307,7 +311,7 @@ fn expression_aero_5_6() {
         &set_name,
     )
     .await;
-    let count = count_results(rs);
+    let count = count_results(rs).await;
     assert_eq!(count, 10, "NUM_MOD Test Failed");
 
     let rs = test_filter(
@@ -316,7 +320,7 @@ fn expression_aero_5_6() {
         &set_name,
     )
     .await;
-    let count = count_results(rs);
+    let count = count_results(rs).await;
     assert_eq!(count, 1, "NUM_ABS Test Failed");
 
     let rs = test_filter(
@@ -325,7 +329,7 @@ fn expression_aero_5_6() {
         &set_name,
     )
     .await;
-    let count = count_results(rs);
+    let count = count_results(rs).await;
     assert_eq!(count, 3, "NUM_FLOOR Test Failed");
 
     let rs = test_filter(
@@ -334,7 +338,7 @@ fn expression_aero_5_6() {
         &set_name,
     )
     .await;
-    let count = count_results(rs);
+    let count = count_results(rs).await;
     assert_eq!(count, 3, "NUM_CEIL Test Failed");
 
     let rs = test_filter(
@@ -343,7 +347,7 @@ fn expression_aero_5_6() {
         &set_name,
     )
     .await;
-    let count = count_results(rs);
+    let count = count_results(rs).await;
     assert_eq!(count, 3, "TO_INT Test Failed");
 
     let rs = test_filter(
@@ -352,7 +356,7 @@ fn expression_aero_5_6() {
         &set_name,
     )
     .await;
-    let count = count_results(rs);
+    let count = count_results(rs).await;
     assert_eq!(count, 1, "TO_FLOAT Test Failed");
 
     let rs = test_filter(
@@ -364,7 +368,7 @@ fn expression_aero_5_6() {
         &set_name,
     )
     .await;
-    let count = count_results(rs);
+    let count = count_results(rs).await;
     assert_eq!(count, 1, "INT_AND Test Failed");
 
     let rs = test_filter(
@@ -376,7 +380,7 @@ fn expression_aero_5_6() {
         &set_name,
     )
     .await;
-    let count = count_results(rs);
+    let count = count_results(rs).await;
     assert_eq!(count, 1, "INT_XOR Test Failed");
 
     let rs = test_filter(
@@ -385,7 +389,7 @@ fn expression_aero_5_6() {
         &set_name,
     )
     .await;
-    let count = count_results(rs);
+    let count = count_results(rs).await;
     assert_eq!(count, 1, "INT_NOT Test Failed");
 
     let rs = test_filter(
@@ -397,7 +401,7 @@ fn expression_aero_5_6() {
         &set_name,
     )
     .await;
-    let count = count_results(rs);
+    let count = count_results(rs).await;
     assert_eq!(count, 99, "INT_LSHIFT Test Failed");
 
     let rs = test_filter(
@@ -409,7 +413,7 @@ fn expression_aero_5_6() {
         &set_name,
     )
     .await;
-    let count = count_results(rs);
+    let count = count_results(rs).await;
     assert_eq!(count, 14, "INT_RSHIFT Test Failed");
 
     let rs = test_filter(
@@ -421,7 +425,7 @@ fn expression_aero_5_6() {
         &set_name,
     )
     .await;
-    let count = count_results(rs);
+    let count = count_results(rs).await;
     assert_eq!(count, 14, "INT_ARSHIFT Test Failed");
 
     let rs = test_filter(
@@ -430,7 +434,7 @@ fn expression_aero_5_6() {
         &set_name,
     )
     .await;
-    let count = count_results(rs);
+    let count = count_results(rs).await;
     assert_eq!(count, 32, "INT_COUNT Test Failed");
 
     let rs = test_filter(
@@ -442,7 +446,7 @@ fn expression_aero_5_6() {
         &set_name,
     )
     .await;
-    let count = count_results(rs);
+    let count = count_results(rs).await;
     assert_eq!(count, 7, "INT_LSCAN Test Failed");
 
     let rs = test_filter(
@@ -454,7 +458,7 @@ fn expression_aero_5_6() {
         &set_name,
     )
     .await;
-    let count = count_results(rs);
+    let count = count_results(rs).await;
     assert_eq!(count, 87, "INT_RSCAN Test Failed");
 
     let rs = test_filter(
@@ -466,7 +470,7 @@ fn expression_aero_5_6() {
         &set_name,
     )
     .await;
-    let count = count_results(rs);
+    let count = count_results(rs).await;
     assert_eq!(count, 90, "MIN Test Failed");
 
     let rs = test_filter(
@@ -478,7 +482,7 @@ fn expression_aero_5_6() {
         &set_name,
     )
     .await;
-    let count = count_results(rs);
+    let count = count_results(rs).await;
     assert_eq!(count, 11, "MAX Test Failed");
 
     let rs = test_filter(
@@ -496,7 +500,7 @@ fn expression_aero_5_6() {
         &set_name,
     )
     .await;
-    let count = count_results(rs);
+    let count = count_results(rs).await;
     assert_eq!(count, 54, "COND Test Failed");
 
     let rs = test_filter(
@@ -512,7 +516,7 @@ fn expression_aero_5_6() {
     )
     .await;
 
-    let count = count_results(rs);
+    let count = count_results(rs).await;
     assert_eq!(count, 4, "LET/DEF/VAR Test Failed");
 
     client.close().await.unwrap();
@@ -526,33 +530,33 @@ fn expression_rec_ops() {
     let set_name = create_test_set(&client, EXPECTED).await;
 
     let rs = test_filter(&client, le(device_size(), int_val(0)), &set_name).await;
-    let mut count = count_results(rs);
+    let mut count = count_results(rs).await;
     if count == 0 {
         // Not in-memory
         let rs = test_filter(&client, le(device_size(), int_val(2000)), &set_name).await;
-        count = count_results(rs);
+        count = count_results(rs).await;
     }
     assert_eq!(count, 100, "DEVICE SIZE Test Failed");
 
     let rs = test_filter(&client, gt(last_update(), int_val(15000)), &set_name).await;
-    let count = count_results(rs);
+    let count = count_results(rs).await;
     assert_eq!(count, 100, "LAST UPDATE Test Failed");
 
     let rs = test_filter(&client, gt(since_update(), int_val(10)), &set_name).await;
-    let count = count_results(rs);
+    let count = count_results(rs).await;
     assert_eq!(count, 100, "SINCE UPDATE Test Failed");
 
     // Records don't expire
     let rs = test_filter(&client, ge(void_time(), int_val(50)), &set_name).await;
-    let count = count_results(rs);
+    let count = count_results(rs).await;
     assert_eq!(count, 100, "VOID TIME Test Failed");
 
     let rs = test_filter(&client, ge(ttl(), int_val(0)), &set_name).await;
-    let count = count_results(rs);
+    let count = count_results(rs).await;
     assert_eq!(count, 100, "TTL Test Failed");
 
     let rs = test_filter(&client, not(is_tombstone()), &set_name).await;
-    let count = count_results(rs);
+    let count = count_results(rs).await;
     assert_eq!(count, 100, "TOMBSTONE Test Failed");
 
     let rs = test_filter(
@@ -561,29 +565,29 @@ fn expression_rec_ops() {
         &set_name,
     )
     .await;
-    let count = count_results(rs);
+    let count = count_results(rs).await;
     assert_eq!(count, 100, "SET NAME Test Failed");
 
     let rs = test_filter(&client, bin_exists("bin4".to_string()), &set_name).await;
-    let count = count_results(rs);
+    let count = count_results(rs).await;
     assert_eq!(count, 100, "BIN EXISTS Test Failed");
 
     let rs = test_filter(&client, eq(digest_modulo(3), int_val(1)), &set_name).await;
-    let count = count_results(rs);
+    let count = count_results(rs).await;
     assert_eq!(count > 0 && count < 100, true, "DIGEST MODULO Test Failed");
 
     let rs = test_filter(&client, eq(key(ExpType::INT), int_val(50)), &set_name).await;
-    let count = count_results(rs);
+    let count = count_results(rs).await;
     // 0 because key is not saved
     assert_eq!(count, 0, "KEY Test Failed");
 
     let rs = test_filter(&client, key_exists(), &set_name).await;
-    let count = count_results(rs);
+    let count = count_results(rs).await;
     // 0 because key is not saved
     assert_eq!(count, 0, "KEY EXISTS Test Failed");
 
     let rs = test_filter(&client, eq(nil(), nil()), &set_name).await;
-    let count = count_results(rs);
+    let count = count_results(rs).await;
     assert_eq!(count, 100, "NIL Test Failed");
 
     let rs = test_filter(
@@ -596,7 +600,7 @@ fn expression_rec_ops() {
         &set_name,
     )
     .await;
-    let count = count_results(rs);
+    let count = count_results(rs).await;
     assert_eq!(count, 75, "REGEX Test Failed");
 
     client.close().await.unwrap();
@@ -710,8 +714,9 @@ async fn expression_commands() {
         .await
     {
         Ok(records) => {
+            let mut records = records.into_stream();
             let mut count = 0;
-            for record in &*records {
+            while let Some(record) = records.next().await {
                 match record {
                     Ok(_) => count += 1,
                     Err(err) => panic!("Error executing scan: {}", err),
@@ -772,19 +777,4 @@ async fn test_filter(client: &Client, filter: FilterExpression, set_name: &str) 
     let statement = Statement::new(namespace, set_name, Bins::All);
     let pf = PartitionFilter::all();
     client.query(&qpolicy, pf, statement).await.unwrap()
-}
-
-fn count_results(rs: Arc<Recordset>) -> usize {
-    let mut count = 0;
-
-    for res in &*rs {
-        match res {
-            Ok(_) => {
-                count += 1;
-            }
-            Err(err) => panic!("{:?}", err),
-        }
-    }
-
-    count
 }

@@ -116,6 +116,7 @@ pub(crate) const MAX_BUFFER_SIZE: usize = 120 * 1024 * 1024 + 8; // 120 MB + hea
 pub struct Buffer {
     pub data_buffer: Vec<u8>,
     pub data_offset: usize,
+    // pub estimated_data_offset: usize,
     pub reclaim_threshold: usize,
 }
 
@@ -124,6 +125,7 @@ impl Buffer {
         Buffer {
             data_buffer: Vec::with_capacity(1024),
             data_offset: 0,
+            // estimated_data_offset: 0,
             reclaim_threshold,
         }
     }
@@ -134,6 +136,7 @@ impl Buffer {
 
     pub(crate) fn size_buffer(&mut self) -> Result<()> {
         let offset = self.data_offset;
+        // self.estimated_data_offset = offset;
         self.resize_buffer(offset)
     }
 
@@ -164,6 +167,13 @@ impl Buffer {
         let size = ((self.data_offset - 8) as i64)
             | ((i64::from(CL_MSG_VERSION) << 56) as i64)
             | (i64::from(AS_MSG_TYPE) << 48);
+
+        // assert!(
+        // self.data_offset == self.estimated_data_offset,
+        //     "estimated command size was not correct: est {} != {} actual",
+        // self.estimated_data_offset,
+        //     self.data_offset
+        // );
 
         // reset data offset
         self.reset_offset();
@@ -555,11 +565,11 @@ impl Buffer {
                 match batch_op {
                     BatchOperation::Read {
                         br: _,
-                        policy,
+                        policy: brpolicy,
                         bins,
                         ops,
                     } => {
-                        attr.set_batch_read(policy);
+                        attr.set_batch_read(brpolicy, policy);
                         match (bins, ops) {
                             (Bins::Some(bin_names), Some(ops))
                                 if bin_names.len() > 0 && ops.len() > 0 =>
@@ -591,23 +601,30 @@ impl Buffer {
                             }
                         }
                     }
-                    BatchOperation::Write { br: _, policy, ops } => {
-                        attr.set_batch_write(policy);
+                    BatchOperation::Write {
+                        br: _,
+                        policy: bwpolicy,
+                        ops,
+                    } => {
+                        attr.set_batch_write(bwpolicy, policy);
                         attr.adjust_write(ops);
                         self.write_batch_operations(key, ops, &attr, &attr.filter_expression)?;
                     }
-                    BatchOperation::Delete { br: _, policy } => {
-                        attr.set_batch_delete(policy);
+                    BatchOperation::Delete {
+                        br: _,
+                        policy: bdpolicy,
+                    } => {
+                        attr.set_batch_delete(bdpolicy, policy);
                         self.write_batch_write(key, &attr, &attr.filter_expression, 0, 0)?;
                     }
                     BatchOperation::UDF {
                         br: _,
-                        policy,
+                        policy: bupolicy,
                         udf_name,
                         function_name,
                         args,
                     } => {
-                        attr.set_batch_udf(policy);
+                        attr.set_batch_udf(bupolicy, policy);
                         self.write_batch_write(key, &attr, &attr.filter_expression, 3, 0)?;
                         self.write_field_string(udf_name, FieldType::UdfPackageName);
                         self.write_field_string(function_name, FieldType::UdfFunction);
@@ -1156,6 +1173,7 @@ impl Buffer {
         filter.clone().map_or(0, |filter| {
             let filter_size = filter.pack(&mut None);
             self.data_offset += filter_size + FIELD_HEADER_SIZE as usize;
+            // filter_size + FIELD_HEADER_SIZE as usize
             filter_size
         })
     }
@@ -1380,7 +1398,7 @@ impl Buffer {
 
     fn write_filter_expression(&mut self, filter: &FilterExpression, size: usize) {
         self.write_field_header(size, FieldType::FilterExp);
-        filter.pack(&mut Some(self));
+        let _ = filter.pack(&mut Some(self));
     }
 
     fn write_field_header(&mut self, size: usize, ftype: FieldType) {

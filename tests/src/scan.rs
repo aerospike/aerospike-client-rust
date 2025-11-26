@@ -62,7 +62,11 @@ async fn scan_single_consumer() {
         .await
         .unwrap();
 
-    let count = (&*rs).filter(Result::is_ok).count();
+    let count = rs
+        .into_stream()
+        .filter(|res| futures::future::ready(res.is_ok()))
+        .count()
+        .await;
     assert_eq!(count, EXPECTED);
 
     client.close().await.unwrap();
@@ -87,7 +91,12 @@ async fn scan_single_consumer_with_cursor() {
             .await
             .unwrap();
 
-        count += (&*rs).filter(Result::is_ok).count();
+        count += rs
+            .clone()
+            .into_stream()
+            .filter(|res| futures::future::ready(res.is_ok()))
+            .count()
+            .await;
         assert!(rs.is_active() == false);
         pf = rs.partition_filter().await.unwrap();
         if count == 1000 {
@@ -124,7 +133,11 @@ async fn scan_single_consumer_rps() {
         .await
         .unwrap();
 
-    let count = (&*rs).filter(Result::is_ok).count();
+    let count = rs
+        .into_stream()
+        .filter(|res| futures::future::ready(res.is_ok()))
+        .count()
+        .await;
     let duration = start_time.elapsed();
     assert_eq!(count, EXPECTED);
 
@@ -156,15 +169,19 @@ async fn scan_multi_consumer() {
     for _ in 0..8 {
         let count = count.clone();
         let rs = rs.clone();
-        threads.push(thread::spawn(move || {
-            let ok = (&*rs).filter(Result::is_ok).count();
+        threads.push(aerospike_rt::spawn(async move {
+            let ok = rs
+                .into_stream()
+                .filter(|res| futures::future::ready(res.is_ok()))
+                .count()
+                .await;
             count.fetch_add(ok, Ordering::Relaxed);
         }));
     }
 
-    for t in threads {
-        t.join().expect("Cannot join thread");
-    }
+    futures::future::try_join_all(threads)
+        .await
+        .expect("Cannot join threads");
 
     assert_eq!(count.load(Ordering::Relaxed), EXPECTED);
 

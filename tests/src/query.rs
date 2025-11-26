@@ -17,10 +17,12 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::thread;
 
+use futures::stream::StreamExt;
+
 use crate::common;
 use env_logger;
 
-use aerospike::query::PartitionFilter;
+use aerospike::query::{Filter, PartitionFilter};
 use aerospike::Task;
 use aerospike::*;
 use aerospike_rt::time::Instant;
@@ -71,7 +73,8 @@ async fn query_single_consumer() {
     let pf = PartitionFilter::all();
     let rs = client.query(&qpolicy, pf, statement).await.unwrap();
     let mut count = 0;
-    for res in &*rs {
+    let mut rs = rs.into_stream();
+    while let Some(res) = rs.next().await {
         match res {
             Ok(rec) => {
                 assert_eq!(rec.bins["bin"], as_val!(1));
@@ -88,7 +91,8 @@ async fn query_single_consumer() {
     let pf = PartitionFilter::all();
     let rs = client.query(&qpolicy, pf, statement).await.unwrap();
     let mut count = 0;
-    for res in &*rs {
+    let mut rs = rs.into_stream();
+    while let Some(res) = rs.next().await {
         match res {
             Ok(rec) => {
                 count += 1;
@@ -121,7 +125,8 @@ async fn query_single_consumer_with_cursor() {
         let mut statement = Statement::new(namespace, &set_name, Bins::All);
         statement.add_filter(as_eq!("bin", 1));
         let rs = client.query(&qpolicy, pf, statement).await.unwrap();
-        for res in &*rs {
+        let mut rs = rs.into_stream();
+        while let Some(res) = rs.next().await {
             match res {
                 Ok(rec) => {
                     assert_eq!(rec.bins["bin"], as_val!(1));
@@ -144,7 +149,8 @@ async fn query_single_consumer_with_cursor() {
         let mut statement = Statement::new(namespace, &set_name, Bins::Some(vec!["bin".into()]));
         statement.add_filter(as_range!("bin", 0, 9));
         let rs = client.query(&qpolicy, pf, statement).await.unwrap();
-        for res in &*rs {
+        let mut rs = rs.into_stream();
+        while let Some(res) = rs.next().await {
             match res {
                 Ok(rec) => {
                     count += 1;
@@ -169,7 +175,8 @@ async fn query_single_consumer_with_cursor() {
         // Range Query
         let statement = Statement::new(namespace, &set_name, Bins::Some(vec!["bin".into()]));
         let rs = client.query(&qpolicy, pf, statement).await.unwrap();
-        for res in &*rs {
+        let mut rs = rs.into_stream();
+        while let Some(res) = rs.next().await {
             match res {
                 Ok(rec) => {
                     count += 1;
@@ -210,7 +217,8 @@ async fn query_single_consumer_rps() {
     let pf = PartitionFilter::all();
     let rs = client.query(&qpolicy, pf, statement).await.unwrap();
     let mut count = 0;
-    for res in &*rs {
+    let mut rs = rs.into_stream();
+    while let Some(res) = rs.next().await {
         match res {
             Ok(rec) => {
                 count += 1;
@@ -244,7 +252,8 @@ async fn query_nobins() {
     let pf = PartitionFilter::all();
     let rs = client.query(&qpolicy, pf, statement).await.unwrap();
     let mut count = 0;
-    for res in &*rs {
+    let mut rs = rs.into_stream();
+    while let Some(res) = rs.next().await {
         match res {
             Ok(rec) => {
                 count += 1;
@@ -282,8 +291,9 @@ async fn query_multi_consumer() {
     for _ in 0..8 {
         let count = count.clone();
         let rs = rs.clone();
-        threads.push(thread::spawn(move || {
-            for res in &*rs {
+        threads.push(aerospike_rt::spawn(async move {
+            let mut rs = rs.into_stream();
+            while let Some(res) = rs.next().await {
                 match res {
                     Ok(rec) => {
                         count.fetch_add(1, Ordering::Relaxed);
@@ -297,9 +307,9 @@ async fn query_multi_consumer() {
         }));
     }
 
-    for t in threads {
-        t.join().expect("Failed to join threads");
-    }
+    futures::future::try_join_all(threads)
+        .await
+        .expect("Cannot join threads");
 
     assert_eq!(count.load(Ordering::Relaxed), 10);
 
@@ -334,11 +344,107 @@ async fn query_large_i64() {
     let pf = PartitionFilter::all();
     let recordset = client.query(&qpolicy, pf, stmt).await.unwrap();
 
-    for r in &*recordset {
+    let mut recordset = recordset.into_stream();
+    while let Some(r) = recordset.next().await {
         assert!(r.is_ok());
         let int = r.unwrap().bins.remove(BIN).unwrap();
         assert_eq!(int, Value::Int(i64::max_value()));
     }
 
     let _ = client.truncate(common::namespace(), SET, 0).await;
+}
+
+#[aerospike_macro::test]
+async fn test_query_geo_within_geojson_region() {
+    let namespace: &str = common::namespace();
+    let set_name = &common::rand_str(10);
+    let bin_name = "geo_bin";
+
+    let client = Arc::new(common::client().await);
+
+    let task = client
+        .create_index(
+            namespace,
+            set_name,
+            bin_name,
+            &format!("{}_{}_{}", namespace, set_name, bin_name),
+            IndexType::Geo2DSphere,
+        )
+        .await
+        .expect("Failed to create index");
+    task.wait_till_complete(None).await.unwrap();
+
+    let wp = WritePolicy::default();
+
+    // Records inside the polygon
+    let key1 = as_key!(namespace, set_name, "point1");
+    client
+        .put(
+            &wp,
+            &key1,
+            &vec![as_bin!(
+                bin_name,
+                as_geo!(r#"{"type": "Point", "coordinates": [-122.0, 37.5]}"#)
+            )],
+        )
+        .await
+        .unwrap();
+
+    let key2 = as_key!(namespace, set_name, "point2");
+    client
+        .put(
+            &wp,
+            &key2,
+            &vec![as_bin!(
+                bin_name,
+                as_geo!(r#"{"type": "Point", "coordinates": [-121.5, 37.5]}"#)
+            )],
+        )
+        .await
+        .unwrap();
+
+    // Record outside the polygon
+    let key3 = as_key!(namespace, set_name, "point3");
+    client
+        .put(
+            &wp,
+            &key3,
+            &vec![as_bin!(
+                bin_name,
+                as_geo!(r#"{"type": "Point", "coordinates": [-120.0, 37.5]}"#)
+            )],
+        )
+        .await
+        .unwrap();
+
+    let region_str = r#"{
+            "type": "Polygon",
+            "coordinates": [[[-122.500000, 37.000000],
+                             [-121.000000, 37.000000],
+                             [-121.000000, 38.080000],
+                             [-122.500000, 38.080000],
+                             [-122.500000, 37.000000]]]
+        }"#;
+
+    let predicate = as_within_region!(bin_name, region_str);
+
+    let qpolicy = QueryPolicy::default();
+    let mut stmt = aerospike::Statement::new(namespace, set_name, aerospike::Bins::All);
+    stmt.add_filter(predicate);
+    let pf = PartitionFilter::all();
+    let mut rs = client
+        .query(&qpolicy, pf, stmt)
+        .await
+        .unwrap()
+        .into_stream();
+
+    let mut count = 0;
+    while let Some(r) = rs.next().await {
+        assert!(r.is_ok());
+        count += 1;
+    }
+
+    assert!(count == 2);
+
+    let _ = client.truncate(namespace, set_name, 0).await;
 }

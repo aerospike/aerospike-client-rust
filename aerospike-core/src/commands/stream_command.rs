@@ -60,7 +60,7 @@ impl StreamCommand {
     async fn parse_record(
         &self,
         conn: &mut BufferedConn<'_>,
-        size: usize,
+        _size: usize,
     ) -> Result<(Option<Record>, Option<u64>, bool)> {
         let result_code = ResultCode::from(conn.buffer().read_u8(Some(5)));
         if result_code != ResultCode::Ok {

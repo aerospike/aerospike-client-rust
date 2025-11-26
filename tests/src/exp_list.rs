@@ -1,6 +1,8 @@
 use crate::common;
 use env_logger;
 
+use crate::src::count_results;
+
 use aerospike::expressions::lists::*;
 use aerospike::expressions::*;
 use aerospike::operations::lists::{ListPolicy, ListReturnType};
@@ -51,7 +53,7 @@ async fn expression_list() {
         &set_name,
     )
     .await;
-    let count = count_results(rs);
+    let count = count_results(rs).await;
     assert_eq!(count, 100, "SIZE AND APPEND Test Failed");
 
     let rs = test_filter(
@@ -71,7 +73,7 @@ async fn expression_list() {
         &set_name,
     )
     .await;
-    let count = count_results(rs);
+    let count = count_results(rs).await;
     assert_eq!(count, 100, "SIZE AND APPEND ITEMS Test Failed");
 
     let rs = test_filter(
@@ -83,7 +85,7 @@ async fn expression_list() {
         &set_name,
     )
     .await;
-    let count = count_results(rs);
+    let count = count_results(rs).await;
     assert_eq!(count, 100, "CLEAR Test Failed");
 
     let rs = test_filter(
@@ -106,7 +108,7 @@ async fn expression_list() {
         &set_name,
     )
     .await;
-    let count = count_results(rs);
+    let count = count_results(rs).await;
     assert_eq!(count, 100, "GET BY VALUE AND INSERT Test Failed");
 
     let rs = test_filter(
@@ -123,7 +125,7 @@ async fn expression_list() {
         &set_name,
     )
     .await;
-    let count = count_results(rs);
+    let count = count_results(rs).await;
     assert_eq!(count, 2, "GET BY VALUE LIST Test Failed");
 
     let rs = test_filter(
@@ -144,7 +146,7 @@ async fn expression_list() {
         &set_name,
     )
     .await;
-    let count = count_results(rs);
+    let count = count_results(rs).await;
     assert_eq!(count, 100, "INSERT LIST Test Failed");
 
     let rs = test_filter(
@@ -168,7 +170,7 @@ async fn expression_list() {
         &set_name,
     )
     .await;
-    let count = count_results(rs);
+    let count = count_results(rs).await;
     assert_eq!(count, 1, "GET BY INDEX AND INCREMENT Test Failed");
 
     let rs = test_filter(
@@ -192,7 +194,7 @@ async fn expression_list() {
         &set_name,
     )
     .await;
-    let count = count_results(rs);
+    let count = count_results(rs).await;
     assert_eq!(count, 100, "GET BY INDEX AND SET Test Failed");
 
     let rs = test_filter(
@@ -210,7 +212,7 @@ async fn expression_list() {
         &set_name,
     )
     .await;
-    let count = count_results(rs);
+    let count = count_results(rs).await;
     assert_eq!(count, 1, "GET BY INDEX RANGE COUNT Test Failed");
 
     let rs = test_filter(
@@ -227,7 +229,7 @@ async fn expression_list() {
         &set_name,
     )
     .await;
-    let count = count_results(rs);
+    let count = count_results(rs).await;
     assert_eq!(count, 1, "GET BY INDEX RANGE Test Failed");
 
     let rs = test_filter(
@@ -245,7 +247,7 @@ async fn expression_list() {
         &set_name,
     )
     .await;
-    let count = count_results(rs);
+    let count = count_results(rs).await;
     assert_eq!(count, 1, "GET BY RANK Test Failed");
 
     let rs = test_filter(
@@ -262,7 +264,7 @@ async fn expression_list() {
         &set_name,
     )
     .await;
-    let count = count_results(rs);
+    let count = count_results(rs).await;
     assert_eq!(count, 1, "GET BY RANK RANGE Test Failed");
 
     let rs = test_filter(
@@ -280,7 +282,7 @@ async fn expression_list() {
         &set_name,
     )
     .await;
-    let count = count_results(rs);
+    let count = count_results(rs).await;
     assert_eq!(count, 1, "GET BY RANK RANGE COUNT Test Failed");
 
     let rs = test_filter(
@@ -298,7 +300,7 @@ async fn expression_list() {
         &set_name,
     )
     .await;
-    let count = count_results(rs);
+    let count = count_results(rs).await;
     assert_eq!(count, 98, "GET BY VALUE RANGE Test Failed");
 
     let rs = test_filter(
@@ -316,7 +318,7 @@ async fn expression_list() {
         &set_name,
     )
     .await;
-    let count = count_results(rs);
+    let count = count_results(rs).await;
     assert_eq!(count, 98, "GET BY VAL REL RANK RANGE Test Failed");
 
     let rs = test_filter(
@@ -335,7 +337,7 @@ async fn expression_list() {
         &set_name,
     )
     .await;
-    let count = count_results(rs);
+    let count = count_results(rs).await;
     assert_eq!(count, 99, "GET BY VAL REL RANK RANGE COUNT Test Failed");
 
     let rs = test_filter(
@@ -350,7 +352,7 @@ async fn expression_list() {
         &set_name,
     )
     .await;
-    let count = count_results(rs);
+    let count = count_results(rs).await;
     assert_eq!(count, 99, "REMOVE BY VALUE Test Failed");
 
     let rs = test_filter(
@@ -369,7 +371,7 @@ async fn expression_list() {
         &set_name,
     )
     .await;
-    let count = count_results(rs);
+    let count = count_results(rs).await;
     assert_eq!(count, 98, "REMOVE BY VALUE LIST Test Failed");
 
     let rs = test_filter(
@@ -389,7 +391,7 @@ async fn expression_list() {
         &set_name,
     )
     .await;
-    let count = count_results(rs);
+    let count = count_results(rs).await;
     assert_eq!(count, 98, "REMOVE BY VALUE RANGE Test Failed");
 
     let rs = test_filter(
@@ -409,7 +411,7 @@ async fn expression_list() {
         &set_name,
     )
     .await;
-    let count = count_results(rs);
+    let count = count_results(rs).await;
     assert_eq!(count, 97, "REMOVE BY VALUE REL RANK RANGE Test Failed");
 
     let rs = test_filter(
@@ -430,7 +432,7 @@ async fn expression_list() {
         &set_name,
     )
     .await;
-    let count = count_results(rs);
+    let count = count_results(rs).await;
     assert_eq!(
         count, 100,
         "REMOVE BY VALUE REL RANK RANGE LIST Test Failed"
@@ -448,7 +450,7 @@ async fn expression_list() {
         &set_name,
     )
     .await;
-    let count = count_results(rs);
+    let count = count_results(rs).await;
     assert_eq!(count, 100, "REMOVE BY INDEX Test Failed");
 
     let rs = test_filter(
@@ -463,7 +465,7 @@ async fn expression_list() {
         &set_name,
     )
     .await;
-    let count = count_results(rs);
+    let count = count_results(rs).await;
     assert_eq!(count, 100, "REMOVE BY INDEX RANGE Test Failed");
 
     let rs = test_filter(
@@ -483,7 +485,7 @@ async fn expression_list() {
         &set_name,
     )
     .await;
-    let count = count_results(rs);
+    let count = count_results(rs).await;
     assert_eq!(count, 100, "REMOVE BY INDEX RANGE COUNT Test Failed");
 
     let rs = test_filter(
@@ -503,7 +505,7 @@ async fn expression_list() {
         &set_name,
     )
     .await;
-    let count = count_results(rs);
+    let count = count_results(rs).await;
     assert_eq!(count, 100, "REMOVE BY INDEX RANGE COUNT Test Failed");
 
     let rs = test_filter(
@@ -518,7 +520,7 @@ async fn expression_list() {
         &set_name,
     )
     .await;
-    let count = count_results(rs);
+    let count = count_results(rs).await;
     assert_eq!(count, 100, "REMOVE BY RANK Test Failed");
 
     let rs = test_filter(
@@ -533,7 +535,7 @@ async fn expression_list() {
         &set_name,
     )
     .await;
-    let count = count_results(rs);
+    let count = count_results(rs).await;
     assert_eq!(count, 100, "REMOVE BY RANK RANGE Test Failed");
 
     let rs = test_filter(
@@ -553,7 +555,7 @@ async fn expression_list() {
         &set_name,
     )
     .await;
-    let count = count_results(rs);
+    let count = count_results(rs).await;
     assert_eq!(count, 100, "REMOVE BY RANK RANGE COUNT Test Failed");
 
     client.close().await.unwrap();
@@ -568,19 +570,4 @@ async fn test_filter(client: &Client, filter: FilterExpression, set_name: &str) 
     let statement = Statement::new(namespace, set_name, Bins::All);
     let pf = PartitionFilter::all();
     client.query(&qpolicy, pf, statement).await.unwrap()
-}
-
-fn count_results(rs: Arc<Recordset>) -> usize {
-    let mut count = 0;
-
-    for res in &*rs {
-        match res {
-            Ok(_) => {
-                count += 1;
-            }
-            Err(err) => panic!("{:?}", err),
-        }
-    }
-
-    count
 }

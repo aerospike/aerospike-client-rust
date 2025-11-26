@@ -13,6 +13,12 @@
 // License for the specific language governing permissions and limitations under
 // the License.
 
+use std::sync::Arc;
+
+use futures::stream::StreamExt;
+
+use aerospike_core::Recordset;
+
 mod admin;
 mod batch;
 mod cdt_bitwise;
@@ -34,3 +40,19 @@ mod serialization;
 mod task;
 mod truncate;
 mod udf;
+
+pub(crate) async fn count_results(rs: Arc<Recordset>) -> usize {
+    let mut count = 0;
+
+    let mut rs = rs.into_stream();
+    while let Some(res) = rs.next().await {
+        match res {
+            Ok(_) => {
+                count += 1;
+            }
+            Err(err) => panic!("{:?}", err),
+        }
+    }
+
+    count
+}

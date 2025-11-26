@@ -150,21 +150,21 @@ macro_rules! as_contains_range {
 macro_rules! as_within_region {
     ($bin_name:expr, $region:expr) => {{
         let cit = $crate::CollectionIndexType::Default;
-        let region = as_geo!(String::from($region));
+        let region = Value::String(String::from($region));
         $crate::query::Filter::new(
             $bin_name,
             cit,
-            region.particle_type(),
+            ParticleType::GEOJSON,
             region.clone(),
             region.clone(),
         )
     }};
     ($bin_name:expr, $region:expr, $cit:expr) => {{
-        let region = as_geo!(String::from($region));
+        let region = Value::String(String::from($region));
         $crate::query::Filter::new(
             $bin_name,
             $cit,
-            region.particle_type(),
+            ParticleType::GEOJSON,
             region.clone(),
             region.clone(),
         )
@@ -184,11 +184,11 @@ macro_rules! as_within_radius {
             "{{ \"type\": \"Aeroircle\", \"coordinates\": [[{:.8}, {:.8}], {}] }}",
             lng, lat, radius
         );
-        let geo_json = as_geo!(geo_json);
+        let geo_json = Value::String(geo_json);
         $crate::query::Filter::new(
             $bin_name,
             cit,
-            geo_json.particle_type(),
+            ParticleType::GEOJSON,
             geo_json.clone(),
             geo_json.clone(),
         )
@@ -201,11 +201,11 @@ macro_rules! as_within_radius {
             "{{ \"type\": \"Aeroircle\", \"coordinates\": [[{:.8}, {:.8}], {}] }}",
             lng, lat, radius
         );
-        let geo_json = as_geo!(geo_json);
+        let geo_json = Value::String(geo_json);
         $crate::query::Filter::new(
             $bin_name,
             $cit,
-            geo_json.particle_type(),
+            ParticleType::GEOJSON,
             geo_json.clone(),
             geo_json.clone(),
         )
@@ -218,21 +218,21 @@ macro_rules! as_within_radius {
 macro_rules! as_regions_containing_point {
     ($bin_name:expr, $point:expr) => {{
         let cit = $crate::CollectionIndexType::Default;
-        let point = as_geo!(String::from($point));
+        let point = Value::String(String::from($point));
         $crate::query::Filter::new(
             $bin_name,
             cit,
-            point.particle_type(),
+            ParticleType::GEOJSON,
             point.clone(),
             point.clone(),
         )
     }};
     ($bin_name:expr, $point:expr, $cit:expr) => {{
-        let point = as_geo!(String::from($point));
+        let point = Value::String(String::from($point));
         $crate::query::Filter::new(
             $bin_name,
             $cit,
-            point.particle_type(),
+            ParticleType::GEOJSON,
             point.clone(),
             point.clone(),
         )
