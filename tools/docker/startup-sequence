@@ -9,13 +9,14 @@
 #
 # We rely upon a (suitably unique) hostname and the current PID.
 
-export AEROSPIKE_NAMESPACE="prop-$(hostname | md5sum | cut -c 1-6)-$$"
+export AEROSPIKE_PROP_SET_NAME="prop-$(hostname | md5sum | cut -c 1-6)-$$"
 
 echo "================================================================"
 echo "               RECEIVED ENVIRONMENT CONFIGURATION               "
 echo "----------------------------------------------------------------"
 echo "AEROSPIKE_CLIENT_BRANCH          = ${AEROSPIKE_CLIENT_BRANCH}"
 echo "AEROSPIKE_HOSTS                  = ${AEROSPIKE_HOSTS}"
+echo "AEROSPIKE_NAMESPACE              = ${AEROSPIKE_NAMESPACE}"
 echo "AEROSPIKE_USE_SERVICES_ALTERNATE = ${AEROSPIKE_USE_SERVICES_ALTERNATE}"
 echo ""
 echo "CARGO_TEST_OPTS                  = ${CARGO_TEST_OPTS}"
@@ -24,7 +25,7 @@ echo "PROPTEST_CASES                   = ${PROPTEST_CASES}"
 echo "----------------------------------------------------------------"
 echo "                DERIVED ENVIRONMENT CONFIGURATION               "
 echo "----------------------------------------------------------------"
-echo "AEROSPIKE_NAMESPACE              = ${AEROSPIKE_NAMESPACE}"
+echo "AEROSPIKE_PROP_SET_NAME          = ${AEROSPIKE_PROP_SET_NAME}"
 echo "================================================================"
 
 source $HOME/.cargo/env
