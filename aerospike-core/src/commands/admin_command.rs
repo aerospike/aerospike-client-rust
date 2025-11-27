@@ -15,6 +15,7 @@
 #![allow(dead_code)]
 
 use std::str;
+use std::sync::Arc;
 
 use pwhash::bcrypt::{self, BcryptSetup, BcryptVariant};
 
@@ -22,6 +23,7 @@ use crate::cluster::Cluster;
 use crate::errors::{Error, Result};
 use crate::net::Connection;
 use crate::net::PooledConnection;
+use crate::policy::AuthMode;
 use crate::privilege::PrivilegeCode;
 use crate::Privilege;
 use crate::ResultCode;
@@ -377,14 +379,27 @@ impl AdminCommand {
 
     pub(crate) async fn authenticate(
         conn: &mut Connection,
-        user: &str,
-        password: &str,
+        auth_mode: &AuthMode,
+        hashed_pass: Option<&String>,
     ) -> Result<()> {
         conn.buffer.resize_buffer(1024)?;
         conn.buffer.reset_offset();
-        AdminCommand::write_header(conn, LOGIN, 2);
-        AdminCommand::write_field_str(conn, USER, user);
-        AdminCommand::write_field_bytes(conn, CREDENTIAL, password.as_bytes());
+        match auth_mode {
+            AuthMode::Internal(ref user, _) => {
+                AdminCommand::write_header(conn, LOGIN, 2);
+                AdminCommand::write_field_str(conn, USER, user);
+                AdminCommand::write_field_bytes(conn, CREDENTIAL, hashed_pass.unwrap().as_bytes());
+            }
+            AuthMode::External(ref user, ref password) => {
+                AdminCommand::write_header(conn, LOGIN, 3);
+                AdminCommand::write_field_str(conn, USER, user);
+                AdminCommand::write_field_bytes(conn, CREDENTIAL, hashed_pass.unwrap().as_bytes());
+                AdminCommand::write_field_str(conn, CLEAR_PASSWORD, password);
+            }
+            AuthMode::PKI => AdminCommand::write_header(conn, LOGIN, 0),
+            AuthMode::None => return Ok(()),
+        };
+
         conn.buffer.size_buffer()?;
         let size = conn.buffer.data_offset;
         conn.buffer.reset_offset();
@@ -462,8 +477,8 @@ impl AdminCommand {
         conn.buffer.reset_offset();
         AdminCommand::write_header(&mut conn, CHANGE_PASSWORD, 3);
         AdminCommand::write_field_str(&mut conn, USER, user);
-        match cluster.client_policy().user_password {
-            Some((_, ref password)) => {
+        match cluster.client_policy().await.auth_mode {
+            AuthMode::Internal(_, ref password) | AuthMode::External(_, ref password) => {
                 AdminCommand::write_field_str(
                     &mut conn,
                     OLD_PASSWORD,
@@ -471,12 +486,18 @@ impl AdminCommand {
                 );
             }
 
-            None => AdminCommand::write_field_str(&mut conn, OLD_PASSWORD, ""),
+            AuthMode::PKI => {
+                return Err(Error::ClientError(
+                    "Can't change PKI user's password".into(),
+                ))
+            }
+            AuthMode::None => AdminCommand::write_field_str(&mut conn, OLD_PASSWORD, ""),
         };
 
         AdminCommand::write_field_str(&mut conn, PASSWORD, &AdminCommand::hash_password(password)?);
 
-        AdminCommand::execute(conn).await
+        AdminCommand::execute(conn).await?;
+        cluster.update_password(user, password).await
     }
 
     pub(crate) async fn create_role(

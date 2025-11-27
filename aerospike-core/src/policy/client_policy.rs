@@ -21,11 +21,34 @@ use crate::errors::Result;
 #[cfg(feature = "tls")]
 use tokio_rustls::rustls::ClientConfig;
 
+#[derive(Debug, Clone, PartialEq)]
+/// Determines authentication mode.
+pub enum AuthMode {
+    /// No Authentication will be performed
+    None,
+
+    /// Uses internal authentication only when user/password defined. Hashed password is stored
+    /// on the server. Do not send clear password. This is the default.
+    Internal(String, String),
+
+    /// Uses external authentication (like LDAP) when user/password defined. Specific external authentication is
+    /// configured on server.  If TLSConfig is defined, sends clear password on node login via TLS.
+    /// Will return an error if TLSConfig is not defined.
+    External(String, String),
+
+    /// Allows authentication and authorization based on a certificate. No user name or
+    /// password needs to be configured. Requires TLS and a client certificate.
+    /// Requires server version 5.7.0+
+    PKI,
+}
+
 /// `ClientPolicy` encapsulates parameters for client policy command.
 #[derive(Debug, Clone)]
 pub struct ClientPolicy {
-    /// User authentication to cluster. Leave empty for clusters running without restricted access.
-    pub user_password: Option<(String, String)>,
+    /// User authentication to cluster.
+    pub auth_mode: AuthMode,
+
+    pub(crate) hashed_pass: Option<String>,
 
     /// TLS secure connection policy for TLS enabled servers.
     #[cfg(feature = "tls")]
@@ -99,7 +122,8 @@ pub struct ClientPolicy {
 impl Default for ClientPolicy {
     fn default() -> ClientPolicy {
         ClientPolicy {
-            user_password: None,
+            auth_mode: AuthMode::None,
+            hashed_pass: None,
             timeout: Some(Duration::new(30, 0)),
             idle_timeout: Some(Duration::new(30, 0)),
             max_conns_per_node: 256,
@@ -120,9 +144,15 @@ impl Default for ClientPolicy {
 
 impl ClientPolicy {
     /// Set username and password to use when authenticating to the cluster.
-    pub fn set_user_password(&mut self, username: String, password: String) -> Result<()> {
-        let password = AdminCommand::hash_password(&password)?;
-        self.user_password = Some((username, password));
+    pub fn set_auth_mode(&mut self, auth_mode: AuthMode) -> Result<()> {
+        match auth_mode {
+            AuthMode::External(_, ref password) | AuthMode::Internal(_, ref password) => {
+                let password = AdminCommand::hash_password(password)?;
+                self.hashed_pass = Some(password);
+            }
+            _ => (),
+        };
+        self.auth_mode = auth_mode;
         Ok(())
     }
 

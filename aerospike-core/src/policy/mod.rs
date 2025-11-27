@@ -35,6 +35,7 @@ mod write_policy;
 
 pub use self::admin_policy::AdminPolicy;
 pub use self::batch_policy::BatchPolicy;
+pub use self::client_policy::AuthMode;
 pub use self::client_policy::ClientPolicy;
 pub use self::commit_level::CommitLevel;
 pub use self::concurrency::Concurrency;

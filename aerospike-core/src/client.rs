@@ -1179,6 +1179,14 @@ impl Client {
         AdminCommand::create_user(&cluster, user, password, roles).await
     }
 
+    /// Creates a new user PKI user with roles. PKI users are authenticated via TLS and a certificate instead of a password.
+    /// Supported by Aerospike Server v8.1+ Enterprise.
+    pub async fn create_pki_user(&self, user: &str, roles: &[&str]) -> Result<()> {
+        let password = AdminCommand::hash_password("nopassword")?;
+        let cluster = self.cluster.clone();
+        AdminCommand::create_user(&cluster, user, &password, roles).await
+    }
+
     /// Removes a user from the cluster.
     pub async fn drop_user(&self, user: &str) -> Result<()> {
         let cluster = self.cluster.clone();
@@ -1188,7 +1196,18 @@ impl Client {
     /// Changes a user's password. Clear-text password will be hashed using bcrypt before sending to server.
     pub async fn change_password(&self, user: &str, password: &str) -> Result<()> {
         let cluster = self.cluster.clone();
-        AdminCommand::change_password(&cluster, user, password).await
+        let auth_mode = self.cluster.client_policy().await.auth_mode;
+        match auth_mode {
+            crate::AuthMode::Internal(u, _) | crate::AuthMode::External(u, _) if u == user => {
+                AdminCommand::change_password(&cluster, user, password).await
+            }
+            crate::AuthMode::PKI => {
+                return Err(Error::ClientError(
+                    "Can't change PKI user's password".into(),
+                ))
+            }
+            _ => AdminCommand::set_password(&cluster, user, password).await,
+        }
     }
 
     /// Adds roles to user's list of roles.

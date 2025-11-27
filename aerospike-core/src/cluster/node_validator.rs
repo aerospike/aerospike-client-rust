@@ -48,13 +48,13 @@ pub struct NodeValidator {
 
 // Generates a node validator
 impl NodeValidator {
-    pub fn new(cluster: &Cluster) -> Self {
+    pub fn new(client_policy: ClientPolicy) -> Self {
         NodeValidator {
             name: "".to_string(),
             services: vec![],
             aliases: vec![],
             address: "".to_string(),
-            client_policy: cluster.client_policy().clone(),
+            client_policy: client_policy,
             use_new_info: true,
             features: NodeFeatures::default(),
         }
@@ -111,7 +111,7 @@ impl NodeValidator {
 
     async fn validate_alias(&mut self, cluster: &Cluster, alias: &Host) -> Result<()> {
         let mut conn = Connection::new(&alias, &self.client_policy).await?;
-        let service_name = cluster.client_policy.service_string();
+        let service_name = cluster.client_policy().await.service_string();
         let info_map = Message::info(
             &mut conn,
             &["node", "cluster-name", "features", service_name],
@@ -123,7 +123,7 @@ impl NodeValidator {
             Some(node_name) => self.name = node_name.clone(),
         }
 
-        if let Some(ref cluster_name) = *cluster.cluster_name() {
+        if let Some(ref cluster_name) = cluster.cluster_name().await {
             match info_map.get("cluster-name") {
                 None => return Err(Error::InvalidNode(String::from("Missing cluster name"))),
                 Some(info_name) if info_name == cluster_name => {}

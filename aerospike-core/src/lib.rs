@@ -169,7 +169,7 @@ pub use net::Host;
 pub use net::ToHosts;
 pub use operations::{MapPolicy, MapReturnType, MapWriteMode};
 pub use policy::{
-    BatchPolicy, ClientPolicy, CommitLevel, Concurrency, ConsistencyLevel, Expiration,
+    AuthMode, BatchPolicy, ClientPolicy, CommitLevel, Concurrency, ConsistencyLevel, Expiration,
     GenerationPolicy, Policy, QueryDuration, QueryPolicy, ReadPolicy, ReadTouchTTL,
     RecordExistsAction, ScanPolicy, WritePolicy,
 };

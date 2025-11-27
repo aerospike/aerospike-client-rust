@@ -21,6 +21,7 @@ pub mod partition_tokenizer;
 
 use aerospike_rt::time::{Duration, Instant};
 use std::collections::HashMap;
+use std::sync::atomic::AtomicPtr;
 use std::sync::atomic::{AtomicBool, AtomicIsize, Ordering};
 use std::sync::{Arc, Weak};
 use std::vec::Vec;
@@ -102,7 +103,8 @@ impl PartitionForNamespace {
                 last_tried,
             ),
             Replica::PreferRack => {
-                let rack_ids = cluster.client_policy.rack_ids.as_ref().ok_or_else(|| Error::InvalidArgument("Attempted to use Replica::PreferRack without configuring racks in client policy".to_string()))?;
+                let rack_ids = cluster.client_policy().await.rack_ids;
+                let rack_ids = rack_ids.as_ref().ok_or_else(|| Error::InvalidArgument("Attempted to use Replica::PreferRack without configuring racks in client policy".to_string()))?;
                 get_next_in_sequence(
                     || {
                         self.all_replicas(partition.partition_id)
@@ -148,17 +150,20 @@ pub struct Cluster {
     // Random node index.
     node_index: AtomicIsize,
 
-    client_policy: ClientPolicy,
+    client_policy: RwLock<ClientPolicy>,
 
     tend_channel: Mutex<Sender<()>>,
     closed: AtomicBool,
 }
 
 impl Cluster {
-    pub async fn new(policy: ClientPolicy, hosts: &[Host]) -> Result<Arc<Self>> {
+    pub async fn new(mut policy: ClientPolicy, hosts: &[Host]) -> Result<Arc<Self>> {
+        // updated the hashed password
+        let _ = policy.set_auth_mode(policy.auth_mode.clone());
+
         let (tx, rx) = mpsc::channel(100);
         let cluster = Arc::new(Cluster {
-            client_policy: policy,
+            client_policy: RwLock::new(policy),
 
             seeds: Arc::new(RwLock::new(hosts.to_vec())),
             aliases: Arc::new(RwLock::new(HashMap::new())),
@@ -174,7 +179,7 @@ impl Cluster {
         Cluster::wait_till_stabilized(cluster.clone()).await?;
 
         // apply policy rules
-        if cluster.client_policy.fail_if_not_connected && !cluster.is_connected().await {
+        if cluster.client_policy().await.fail_if_not_connected && !cluster.is_connected().await {
             return Err(Error::Connection(
                 "Failed to connect to host(s). The network \
                  connection(s) to cluster nodes may have timed out, or \
@@ -190,7 +195,7 @@ impl Cluster {
     }
 
     async fn tend_thread(cluster: Arc<Cluster>, mut rx: Receiver<()>) {
-        let tend_interval = cluster.client_policy.tend_interval;
+        let tend_interval = cluster.client_policy().await.tend_interval;
 
         loop {
             if rx.try_next().is_ok() {
@@ -279,6 +284,7 @@ impl Cluster {
     async fn wait_till_stabilized(cluster: Arc<Cluster>) -> Result<()> {
         let timeout = cluster
             .client_policy()
+            .await
             .timeout
             .unwrap_or_else(|| Duration::from_secs(3));
         let deadline = Instant::now() + timeout;
@@ -316,12 +322,13 @@ impl Cluster {
         };
     }
 
-    pub const fn cluster_name(&self) -> &Option<String> {
-        &self.client_policy.cluster_name
+    pub async fn cluster_name(&self) -> Option<String> {
+        self.client_policy().await.cluster_name
     }
 
-    pub const fn client_policy(&self) -> &ClientPolicy {
-        &self.client_policy
+    pub async fn client_policy(&self) -> ClientPolicy {
+        let cp = self.client_policy.read().await;
+        cp.clone()
     }
 
     pub async fn add_seeds(&self, new_seeds: &[Host]) -> Result<()> {
@@ -387,7 +394,7 @@ impl Cluster {
 
         let mut list: Vec<Arc<Node>> = vec![];
         for seed in &*seed_array {
-            let mut seed_node_validator = NodeValidator::new(self);
+            let mut seed_node_validator = NodeValidator::new(self.client_policy().await);
             if let Err(err) = seed_node_validator.validate_node(self, seed).await {
                 log_error_chain!(err, "Failed to validate seed host: {}", seed);
                 continue;
@@ -400,7 +407,7 @@ impl Cluster {
             };
 
             for alias in peers {
-                let mut nv = NodeValidator::new(self);
+                let mut nv = NodeValidator::new(self.client_policy().await);
                 if let Err(err) = nv.validate_node(self, alias).await {
                     log_error_chain!(err, "Seeding host {} failed with error", alias);
                     continue;
@@ -410,7 +417,7 @@ impl Cluster {
                     continue;
                 }
 
-                let node = self.create_node(nv);
+                let node = self.create_node(nv).await;
                 let node = Arc::new(node);
                 self.add_aliases(node.clone()).await;
                 list.push(node);
@@ -429,7 +436,7 @@ impl Cluster {
         let mut list: Vec<Arc<Node>> = vec![];
 
         for host in hosts {
-            let mut nv = NodeValidator::new(self);
+            let mut nv = NodeValidator::new(self.client_policy().await);
             if let Err(err) = nv.validate_node(self, &host).await {
                 log_error_chain!(err, "Adding node {} failed with error", host.name);
                 continue;
@@ -454,7 +461,7 @@ impl Cluster {
             };
 
             if !dup {
-                let node = self.create_node(nv);
+                let node = self.create_node(nv).await;
                 list.push(Arc::new(node));
             }
         }
@@ -462,8 +469,8 @@ impl Cluster {
         list
     }
 
-    fn create_node(&self, nv: NodeValidator) -> Node {
-        Node::new(self.client_policy.clone(), Arc::new(nv))
+    async fn create_node(&self, nv: NodeValidator) -> Node {
+        Node::new(self.client_policy().await, Arc::new(nv))
     }
 
     async fn find_nodes_to_remove(&self, refresh_count: usize) -> Vec<Arc<Node>> {
@@ -672,6 +679,17 @@ impl Cluster {
         return Err(Error::InvalidNode(format!(
             "Requested node `{node_name}` not found."
         )));
+    }
+
+    pub(crate) async fn update_password(&self, user: &str, password: &str) -> Result<()> {
+        let mut client_policy = self.client_policy.write().await;
+        match client_policy.auth_mode.clone() {
+            crate::AuthMode::Internal(u, _) if u == user => client_policy
+                .set_auth_mode(crate::AuthMode::Internal(u.clone(), password.to_string())),
+            crate::AuthMode::External(u, _) if u == user => client_policy
+                .set_auth_mode(crate::AuthMode::External(u.clone(), password.to_string())),
+            _ => Ok(()),
+        }
     }
 
     pub async fn close(&self) -> Result<()> {
