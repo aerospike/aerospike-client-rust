@@ -18,7 +18,7 @@ proptest_async::proptest! {
     async fn query(
         query_policy in query_policy(30000)
             .prop_filter("ShortQuery and rps together are invalid",
-                |qp| !(qp.expected_duration != QueryDuration::Long && qp.records_per_second > 0)),
+                |qp| !(qp.expected_duration == QueryDuration::Short && qp.records_per_second > 0)),
             mut pf in partition_filter(common::namespace().into(), "test".into()),
             stmt in statement(common::namespace().into(), "test".into()))
     {

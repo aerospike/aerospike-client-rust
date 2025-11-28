@@ -14,9 +14,9 @@
 // the License.
 
 use std::path::Path;
-use std::str;
 use std::sync::Arc;
 use std::vec::Vec;
+use std::{str, usize};
 
 use aerospike_rt::{sleep, Mutex};
 
@@ -701,7 +701,6 @@ impl Client {
     {
         let bins = bins.into();
         let nodes: Vec<Arc<Node>> = self.cluster.nodes().await;
-        let nodes_len = nodes.len();
 
         let t_policy = policy.clone();
         let namespace = namespace.to_owned();
@@ -713,7 +712,7 @@ impl Client {
 
         let recordset = Arc::new(Recordset::new(
             policy.record_queue_size,
-            nodes_len + 1, // +1 is for the async executor
+            usize::MAX, // will be set again later
             tracker.clone(),
         ));
         let t_recordset = recordset.clone();
@@ -765,6 +764,8 @@ impl Client {
                     }
                 }
             };
+
+            recordset.set_instances(list.len() + 1); // +1 is for the async executor
 
             // used for join errors
             let err_recordset = recordset.clone();
@@ -888,11 +889,9 @@ impl Client {
             PartitionTracker::new(&t_policy, Arc::new(Mutex::new(partition_filter)), nodes).await?,
         ));
 
-        let nodes = self.cluster.nodes().await;
-        let nodes_len = nodes.len();
         let recordset = Arc::new(Recordset::new(
             policy.record_queue_size,
-            nodes_len + 1, // +1 is for the async executor
+            usize::MAX, // will be reset later
             tracker.clone(),
         ));
 
@@ -921,7 +920,6 @@ impl Client {
         statement: Arc<Statement>,
         recordset: Arc<Recordset>,
     ) {
-        // defer recordset.signalEnd()
         let namespace = statement.namespace.clone();
         loop {
             let list = {
@@ -938,6 +936,8 @@ impl Client {
                     }
                 }
             };
+
+            recordset.set_instances(list.len() + 1); // +1 is for the async executor
 
             // used for join errors
             let err_recordset = recordset.clone();

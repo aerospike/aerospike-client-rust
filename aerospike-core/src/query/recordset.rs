@@ -87,6 +87,10 @@ impl Recordset {
         self.active.load(Ordering::Relaxed)
     }
 
+    pub(crate) fn set_instances(&self, count: usize) {
+        self.instances.store(count, Ordering::Relaxed);
+    }
+
     pub(crate) fn reset_task_id(&self) {
         let mut rng = rand::thread_rng();
         let task_id = rng.gen::<usize>();
