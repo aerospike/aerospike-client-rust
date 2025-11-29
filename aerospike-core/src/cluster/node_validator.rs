@@ -147,19 +147,28 @@ impl NodeValidator {
 
         if let Some(peers) = info_map.get(service_name) {
             if peers.trim().len() > 0 {
-                self.set_services(peers);
+                self.set_services(alias, peers);
             }
         }
 
         Ok(())
     }
 
-    fn set_services(&mut self, peers: &str) {
+    fn set_services(&mut self, alias: &Host, peers: &str) {
         let peers = peers.split(';');
         for peer in peers {
             match peer.to_hosts() {
                 Err(e) => error!("Invalid host: {}, {}", peer, e),
-                Ok(ref mut host) => self.services.append(host),
+                Ok(host) => {
+                    let mut host: Vec<Host> = host
+                        .into_iter()
+                        .map(|h| Host {
+                            tls_name: alias.tls_name.clone(),
+                            ..h
+                        })
+                        .collect();
+                    self.services.append(&mut host);
+                }
             };
         }
     }

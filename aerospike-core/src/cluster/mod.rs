@@ -17,6 +17,7 @@ pub mod node;
 pub mod node_validator;
 pub mod partition;
 pub mod partition_tokenizer;
+pub mod peers_parser;
 // pub mod partitions;
 
 use aerospike_rt::time::{Duration, Instant};

@@ -242,7 +242,8 @@ macro_rules! as_regions_containing_point {
 #[cfg(test)]
 mod tests {
     use super::CollectionIndexType;
-
+    use crate::ParticleType;
+    use crate::Value;
     #[test]
     fn geo_filter_macros() {
         let geo_filter = as_within_region!("bin1", "{}");

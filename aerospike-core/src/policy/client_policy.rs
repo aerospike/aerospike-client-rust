@@ -104,7 +104,7 @@ pub struct ClientPolicy {
     /// "services-alternate" is available with Aerospike Server versions >= 3.7.1.
     pub use_services_alternate: bool,
 
-    /// Expected cluster name. It not `None`, server nodes must return this cluster name in order
+    /// Expected cluster name. If not `None`, server nodes must return this cluster name in order
     /// to join the client's view of the cluster. Should only be set when connecting to servers
     /// that support the "cluster-name" info command.
     pub cluster_name: Option<String>,
@@ -157,9 +157,19 @@ impl ClientPolicy {
     }
 
     pub(crate) const fn peers_string(&self) -> &'static str {
+        match (&self.tls_config, self.use_services_alternate) {
+            (None, true) => "peers-clear-alt",
+            (None, false) => "peers-clear-std",
+            (Some(_), true) => "peers-tls-alt",
+            (Some(_), false) => "peers-tls-std",
+        }
+    }
+
+    #[cfg(not(feature = "tls"))]
+    pub(crate) const fn peers_string(&self) -> &'static str {
         match self.use_services_alternate {
-            true => "services-alternate",
-            false => "services",
+            true => "peers-clear-alt",
+            false => "peers-clear-std",
         }
     }
 

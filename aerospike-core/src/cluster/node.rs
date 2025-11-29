@@ -22,6 +22,7 @@ use std::sync::atomic::{AtomicBool, AtomicIsize, AtomicUsize, Ordering};
 use std::sync::Arc;
 
 use crate::cluster::node_validator::{NodeFeatures, NodeValidator};
+use crate::cluster::peers_parser::PeersParser;
 use crate::commands::Message;
 use crate::errors::{Error, Result};
 use crate::net::{ConnectionPool, Host, PooledConnection};
@@ -197,29 +198,8 @@ impl Node {
             Some(friend_string) => friend_string,
         };
 
-        let friend_names = friend_string.split(';');
-        for friend in friend_names {
-            let mut friend_info = friend.split(':');
-            if friend_info.clone().count() != 2 {
-                error!(
-                    "Node info from asinfo:services is malformed. Expected HOST:PORT, but got \
-                     '{}'",
-                    friend
-                );
-                continue;
-            }
-
-            let host = friend_info.next().unwrap();
-            let port = u16::from_str(friend_info.next().unwrap())?;
-            let alias = Host::new(
-                self.client_policy
-                    .ip_map
-                    .as_ref()
-                    .and_then(|ip_map| ip_map.get(host))
-                    .map_or(host, String::as_str),
-                port,
-            );
-
+        let (_, hosts) = PeersParser::new(friend_string).parse()?;
+        for alias in hosts {
             if current_aliases.contains_key(&alias) {
                 self.reference_count.fetch_add(1, Ordering::Relaxed);
             } else if !friends.contains(&alias) {

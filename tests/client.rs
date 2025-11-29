@@ -20,6 +20,8 @@ extern crate rand;
 #[cfg(feature = "tls")]
 extern crate webpki_roots;
 
+use std::time::Duration;
+
 use aerospike::Client;
 
 mod common;
@@ -82,7 +84,7 @@ async fn close() {
 
 #[cfg(feature = "tls")]
 #[aerospike_macro::test]
-async fn tls_no_auth() {
+async fn tls_client_no_auth() {
     if common::no_tls() {
         return;
     }

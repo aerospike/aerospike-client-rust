@@ -110,6 +110,9 @@ pub enum Error {
     /// ClientError is an untyped Error happening on client-side
     #[error("{0}")]
     ClientError(String),
+    /// ParsePeersError occurs when parsing a peer string fails.
+    #[error("{0}")]
+    ParsePeersError(String),
 
     /// StreamSendError is a client-side error that signifies the scan/query was terminated.
     #[error("Record stream was terminated by user")]
