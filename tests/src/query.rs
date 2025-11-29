@@ -15,14 +15,13 @@
 
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
-use std::thread;
 
 use futures::stream::StreamExt;
 
 use crate::common;
 use env_logger;
 
-use aerospike::query::{Filter, PartitionFilter};
+use aerospike::query::PartitionFilter;
 use aerospike::Task;
 use aerospike::*;
 use aerospike_rt::time::Instant;

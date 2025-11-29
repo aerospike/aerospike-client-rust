@@ -1,15 +1,7 @@
-use crate::common;
 use crate::proptest::prelude::*;
-use crate::proptest_async;
-
-use crate::proptests::value::*;
-
-use aerospike::query::*;
 use aerospike::*;
 
-use futures::stream::StreamExt;
-
-use crate::proptests::{bins::*, partition_filter::*, policy::*};
+use crate::proptests::bins::*;
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum PropOperation {

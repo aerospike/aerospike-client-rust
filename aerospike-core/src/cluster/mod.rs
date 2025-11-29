@@ -22,7 +22,6 @@ pub mod peers_parser;
 
 use aerospike_rt::time::{Duration, Instant};
 use std::collections::HashMap;
-use std::sync::atomic::AtomicPtr;
 use std::sync::atomic::{AtomicBool, AtomicIsize, Ordering};
 use std::sync::{Arc, Weak};
 use std::vec::Vec;

@@ -56,8 +56,6 @@ use crate::ResultCode;
 #[cfg(all(any(feature = "rt-tokio"), not(feature = "rt-async-std")))]
 use aerospike_rt::task;
 
-use crate::Record;
-
 #[derive(Error, Debug)]
 pub enum Error {
     #[error("Error decoding Base64 encoded value")]

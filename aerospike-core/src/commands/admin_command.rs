@@ -15,7 +15,6 @@
 #![allow(dead_code)]
 
 use std::str;
-use std::sync::Arc;
 
 use pwhash::bcrypt::{self, BcryptSetup, BcryptVariant};
 

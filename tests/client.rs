@@ -20,8 +20,6 @@ extern crate rand;
 #[cfg(feature = "tls")]
 extern crate webpki_roots;
 
-use std::time::Duration;
-
 use aerospike::Client;
 
 mod common;

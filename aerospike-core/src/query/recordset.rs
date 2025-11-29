@@ -19,6 +19,8 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 
 use aerospike_rt::Mutex;
+
+#[cfg(feature = "sync")]
 use futures::executor::block_on;
 
 use async_channel::{Receiver, Sender};

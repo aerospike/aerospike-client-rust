@@ -1,5 +1,4 @@
 use crate::common;
-use crate::proptest::prelude::*;
 use crate::proptest_async;
 
 use futures::stream::StreamExt;

@@ -17,7 +17,6 @@
 
 use std::env;
 
-use aerospike::expressions::set_name;
 use aerospike::CollectionIndexType;
 use aerospike::Task;
 

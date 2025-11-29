@@ -1,17 +1,8 @@
-use crate::proptest::prelude::*;
+use crate::common;
 use crate::proptest_async;
-use crate::{common, proptests::key};
-use proptest::strategy::{Strategy, ValueTree};
-use proptest::test_runner::TestRunner;
-
-use crate::proptests::value::*;
-
-use aerospike::query::*;
 use aerospike::*;
 
-use futures::stream::StreamExt;
-
-use crate::proptests::{bins::*, key::*, operation::*, partition_filter::*, policy::*};
+use crate::proptests::{key::*, operation::*, policy::*};
 
 proptest_async::proptest! {
     #[test]

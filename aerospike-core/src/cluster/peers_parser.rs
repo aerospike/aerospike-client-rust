@@ -15,10 +15,8 @@
 
 use crate::errors::{Error, Result};
 use crate::Host;
-use std::default;
 use std::iter::Peekable;
 use std::str::Chars;
-use std::sync::Arc;
 
 pub struct PeersParser<'a> {
     s: Peekable<Chars<'a>>,

@@ -360,7 +360,7 @@ impl Client {
     }
 
     /// Determine if a record key exists. The policy can be used to specify timeouts.
-    pub fn exists(&self, policy: &WritePolicy, key: &Key) -> Result<bool> {
+    pub fn exists(&self, policy: &ReadPolicy, key: &Key) -> Result<bool> {
         block_on(self.async_client.exists(policy, key))
     }
 
@@ -652,14 +652,18 @@ impl Client {
         index_name: &str,
         index_type: IndexType,
         collection_index_type: CollectionIndexType,
-    ) -> Result<()> {
-        block_on(self.async_client.create_complex_index(
+        expression: Option<&FilterExpression>,
+        ctx: Option<&[CdtContext]>,
+    ) -> Result<IndexTask> {
+        block_on(self.async_client.create_index(
             namespace,
             set_name,
             bin_name,
             index_name,
             index_type,
             collection_index_type,
+            expression,
+            ctx,
         ))
     }
 

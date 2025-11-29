@@ -36,8 +36,8 @@ use crate::policy::{BatchPolicy, ClientPolicy, QueryPolicy, ReadPolicy, ScanPoli
 use crate::query::{PartitionFilter, PartitionTracker};
 use crate::task::{IndexTask, RegisterTask};
 use crate::{
-    record, BatchRecord, Bin, Bins, CollectionIndexType, IndexType, Key, Privilege, Record,
-    Recordset, ResultCode, Role, Statement, UDFLang, User, Value,
+    BatchRecord, Bin, Bins, CollectionIndexType, IndexType, Key, Privilege, Record, Recordset,
+    ResultCode, Role, Statement, UDFLang, User, Value,
 };
 use aerospike_rt::fs::File;
 #[cfg(all(any(feature = "rt-tokio"), not(feature = "rt-async-std")))]
@@ -45,9 +45,6 @@ use aerospike_rt::io::AsyncReadExt;
 use aerospike_rt::Semaphore;
 #[cfg(all(any(feature = "rt-async-std"), not(feature = "rt-tokio")))]
 use futures::AsyncReadExt;
-
-use futures::sink::SinkExt;
-use futures::stream::StreamExt;
 
 const MAX_PERMITS: usize = 256;
 

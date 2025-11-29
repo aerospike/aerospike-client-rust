@@ -20,7 +20,7 @@ use aerospike_rt::sleep;
 use aerospike_rt::time::Duration;
 use env_logger;
 
-use crate::common::{self, rand_str};
+use crate::common::{self};
 
 #[aerospike_macro::test]
 async fn read_touch_ttl() {
