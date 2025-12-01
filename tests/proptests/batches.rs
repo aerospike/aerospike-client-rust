@@ -26,9 +26,6 @@ proptest_async::proptest! {
         let namespace: &str = common::namespace();
         let set_name: &str = common::prop_setname();
 
-        // let now = aerospike_rt::time::Instant::now();
-        // eprintln!("PRPBAT001 It is now {:?}", now.elapsed());
-
         // let as_ops: Vec<aerospike::operations::Operation> = ops.into_iter().map(|op| op.to_op()).collect();
         let mut as_ops = vec![];
         for op in &ops {
@@ -37,9 +34,7 @@ proptest_async::proptest! {
             as_ops.push(as_op);
         }
 
-        // eprintln!("PRPBAT002 Submitting batch operation at {:?}", now.elapsed());
         let res = client.batch(&batch_policy, &as_ops).await;
-        // eprintln!("PRPBAT003 Batch returned in {:?}", now.elapsed());
 
         match res {
         //     Err(Error::ServerError(ResultCode::ParameterError, _, _)) => {
@@ -47,8 +42,6 @@ proptest_async::proptest! {
         //             return;
         //         }
         //     }, // it's fine
-        //     Err(Error::ServerError(ResultCode::BinTypeError, _, _)) => {
-        //     }
         //     Err(Error::ServerError(ResultCode::KeyNotFoundError, _, _)) => {
         //     },
         //     Err(e @ Error::ServerError(ResultCode::KeyExistsError, _, _)) => {
@@ -62,6 +55,7 @@ proptest_async::proptest! {
         //         }
         //         panic!("{}", e);
         //     },
+            Err(Error::BatchError(_, ResultCode::BinTypeError, _, _)) => {}
             Err(e) => panic!("{}", e),
             Ok(res) => (), //println!("OK"),
         }
@@ -98,8 +92,6 @@ proptest_async::proptest! {
         //             return;
         //         }
         //     }, // it's fine
-        //     Err(Error::ServerError(ResultCode::BinTypeError, _, _)) => {
-        //     }
         //     Err(Error::ServerError(ResultCode::KeyNotFoundError, _, _)) => {
         //     },
         //     Err(e @ Error::ServerError(ResultCode::KeyExistsError, _, _)) => {
@@ -113,8 +105,9 @@ proptest_async::proptest! {
         //         }
         //         panic!("{}", e);
         //     },
-            Err(e) => panic!("{}", e),
-            Ok(res) => (), //println!("OK"),
+            Err(Error::BatchError(_, ResultCode::BinTypeError, _, _)) => {}
+            Err(e) => panic!("ERR: {:?}", e),
+            Ok(res) => println!("OK: {:?}", res),
         }
     }
 }
