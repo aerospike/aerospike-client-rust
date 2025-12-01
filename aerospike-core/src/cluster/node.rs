@@ -26,6 +26,7 @@ use crate::commands::Message;
 use crate::errors::{Error, Result};
 use crate::net::{ConnectionPool, Host, PooledConnection};
 use crate::policy::ClientPolicy;
+use crate::Version;
 use aerospike_rt::RwLock;
 
 pub const PARTITIONS: usize = 4096;
@@ -54,6 +55,7 @@ pub struct Node {
     responded: AtomicBool,
     active: AtomicBool,
     features: NodeFeatures,
+    version: Version,
 }
 
 impl Node {
@@ -79,17 +81,24 @@ impl Node {
             responded: AtomicBool::new(false),
             active: AtomicBool::new(true),
             features: nv.features,
+            version: nv.version.clone(),
             rack_ids: std::sync::Mutex::new(HashMap::new()),
         }
     }
-    // Returns the Node address
+
+    /// Returns the Node address
     pub fn address(&self) -> &str {
         &self.address
     }
 
-    // Returns the Node name
+    /// Returns the Node name
     pub fn name(&self) -> &str {
         &self.name
+    }
+
+    /// Returns the Node name
+    pub fn version(&self) -> &Version {
+        &self.version
     }
 
     // Returns the active client policy

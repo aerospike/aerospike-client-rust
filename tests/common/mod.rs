@@ -200,6 +200,7 @@ pub async fn enterprise_edition() -> bool {
     if let Err(_) = node {
         return false;
     }
+
     let node = node.unwrap();
     let edition = node.info(&vec!["edition"]).await;
     if let Err(_) = edition {
@@ -242,7 +243,7 @@ pub async fn insert_bins(ns: &str, set_name: &str) -> aerospike::Result<()> {
     }
 
     let task = client
-        .create_index(
+        .create_index_on_bin(
             ns,
             set_name,
             "bin_i",
@@ -250,21 +251,19 @@ pub async fn insert_bins(ns: &str, set_name: &str) -> aerospike::Result<()> {
             aerospike::IndexType::Numeric,
             CollectionIndexType::Default,
             None,
-            None,
         )
         .await
         .expect("Failed to create index for bin_i");
     task.wait_till_complete(None).await.unwrap();
 
     let task = client
-        .create_index(
+        .create_index_on_bin(
             ns,
             set_name,
             "bin_s",
             &format!("{}_{}_{}", ns, set_name, "bin_s"),
             aerospike::IndexType::String,
             CollectionIndexType::Default,
-            None,
             None,
         )
         .await

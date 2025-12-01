@@ -18,7 +18,7 @@ pub mod node_validator;
 pub mod partition;
 pub mod partition_tokenizer;
 pub mod peers_parser;
-// pub mod partitions;
+pub mod version_parser;
 
 use aerospike_rt::time::{Duration, Instant};
 use std::collections::HashMap;
@@ -438,7 +438,7 @@ impl Cluster {
         for host in hosts {
             let mut nv = NodeValidator::new(self.client_policy().await);
             if let Err(err) = nv.validate_node(self, &host).await {
-                log_error_chain!(err, "Adding node {} failed with error", host.name);
+                log_error_chain!(err, "Adding node {} failed with error: {}", host.name, err);
                 continue;
             };
 

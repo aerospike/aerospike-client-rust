@@ -81,14 +81,13 @@ async fn index_task_test() {
     }
 
     let index_task = client
-        .create_index(
+        .create_index_on_bin(
             &namespace,
             &set_name,
             &bin_name,
             &index_name,
             IndexType::Numeric,
             CollectionIndexType::Default,
-            None,
             None,
         )
         .await

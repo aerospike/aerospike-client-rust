@@ -16,6 +16,7 @@ use std::net::ToSocketAddrs;
 use std::str;
 use std::vec::Vec;
 
+use crate::cluster::version_parser::{Version, VersionParser};
 use crate::cluster::Cluster;
 use crate::commands::Message;
 use crate::errors::{Error, Result};
@@ -26,11 +27,7 @@ use crate::ToHosts;
 #[allow(clippy::struct_excessive_bools)]
 #[derive(Copy, Clone, Default, Debug)]
 pub struct NodeFeatures {
-    pub supports_float: bool,
-    pub supports_batch_index: bool,
-    pub supports_replicas_all: bool,
-    pub supports_replicas: bool,
-    pub supports_geo: bool,
+    // pub supports_XXX: bool,
 }
 
 // Validates a Database server node
@@ -44,6 +41,7 @@ pub struct NodeValidator {
     pub client_policy: ClientPolicy,
     pub use_new_info: bool,
     pub features: NodeFeatures,
+    pub version: Version,
 }
 
 // Generates a node validator
@@ -57,6 +55,7 @@ impl NodeValidator {
             client_policy: client_policy,
             use_new_info: true,
             features: NodeFeatures::default(),
+            version: Version::default(),
         }
     }
 
@@ -112,11 +111,8 @@ impl NodeValidator {
     async fn validate_alias(&mut self, cluster: &Cluster, alias: &Host) -> Result<()> {
         let mut conn = Connection::new(&alias, &self.client_policy).await?;
         let service_name = cluster.client_policy().await.service_string();
-        let info_map = Message::info(
-            &mut conn,
-            &["node", "cluster-name", "features", service_name],
-        )
-        .await?;
+        let info_map =
+            Message::info(&mut conn, &["node", "cluster-name", "build", service_name]).await?;
 
         match info_map.get("node") {
             None => return Err(Error::InvalidNode(String::from("Missing node name"))),
@@ -139,10 +135,10 @@ impl NodeValidator {
 
         self.address = alias.address();
 
-        if let Some(features) = info_map.get("features") {
-            if features.trim().len() > 0 {
-                self.features.set_features(features);
-            }
+        if let Some(build) = info_map.get("build") {
+            let version = VersionParser::new(build).parse()?;
+            self.features.set_features(&version);
+            self.version = version;
         }
 
         if let Some(peers) = info_map.get(service_name) {
@@ -175,17 +171,7 @@ impl NodeValidator {
 }
 
 impl NodeFeatures {
-    fn set_features(&mut self, features: &str) {
-        let features = features.split(';');
-        for feature in features {
-            match feature {
-                "float" => self.supports_float = true,
-                "batch-index" => self.supports_batch_index = true,
-                "replicas-all" => self.supports_replicas_all = true,
-                "geo" => self.supports_geo = true,
-                "replicas" => self.supports_replicas = true,
-                _ => (),
-            }
-        }
+    fn set_features(&mut self, _version: &Version) {
+        // for later use
     }
 }

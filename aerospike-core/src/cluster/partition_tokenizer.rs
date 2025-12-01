@@ -28,43 +28,15 @@ use super::{PartitionForNamespace, PartitionTable};
 #[derive(Debug, Clone)]
 pub struct PartitionTokenizer {
     buffer: Vec<u8>,
-    request_type: RequestedReplicas,
-}
-
-#[derive(Debug, Clone)]
-enum RequestedReplicas {
-    ReplicasMaster, // Ancient
-    ReplicasAll,    // Old
-    Replicas,       // Modern,
-}
-
-impl RequestedReplicas {
-    const fn command(&self) -> &'static str {
-        match self {
-            RequestedReplicas::ReplicasMaster => "replicas-master",
-            RequestedReplicas::ReplicasAll => "replicas-all",
-            RequestedReplicas::Replicas => "replicas",
-        }
-    }
 }
 
 impl PartitionTokenizer {
     pub async fn new(conn: &mut Connection, node: &Arc<Node>) -> Result<Self> {
-        let request_type = match (
-            node.features().supports_replicas,
-            node.features().supports_replicas_all,
-        ) {
-            (true, _) => RequestedReplicas::Replicas,
-            (false, true) => RequestedReplicas::ReplicasAll,
-            (false, false) => RequestedReplicas::ReplicasMaster,
-        };
-
-        let command = request_type.command();
+        let command = "replicas";
         let info_map = Message::info(conn, &[command, node::PARTITION_GENERATION]).await?;
         if let Some(buf) = info_map.get(command) {
             return Ok(PartitionTokenizer {
                 buffer: buf.as_bytes().to_owned(),
-                request_type,
             });
         }
 
@@ -81,32 +53,19 @@ impl PartitionTokenizer {
             match part.split_once(':') {
                 Some((ns, info)) => {
                     let mut info_section = info.split(',');
-                    let reigime = if matches!(self.request_type, RequestedReplicas::Replicas) {
-                        info_section
-                            .next()
-                            .ok_or_else(|| Error::BadResponse("Missing regime".to_string()))?
-                            .parse()
-                            .map_err(|err| Error::BadResponse(format!("Invalid regime: {err}")))?
-                    } else {
-                        0
-                    };
+                    let reigime = info_section
+                        .next()
+                        .ok_or_else(|| Error::BadResponse("Missing regime".to_string()))?
+                        .parse()
+                        .map_err(|err| Error::BadResponse(format!("Invalid regime: {err}")))?;
 
-                    let n_replicas = if matches!(
-                        self.request_type,
-                        RequestedReplicas::Replicas | RequestedReplicas::ReplicasAll
-                    ) {
-                        info_section
-                            .next()
-                            .ok_or_else(|| {
-                                Error::BadResponse("Missing replicas count".to_string())
-                            })?
-                            .parse()
-                            .map_err(|err| {
-                                Error::BadResponse(format!("Invalid replicas count: {err}"))
-                            })?
-                    } else {
-                        1
-                    };
+                    let n_replicas = info_section
+                        .next()
+                        .ok_or_else(|| Error::BadResponse("Missing replicas count".to_string()))?
+                        .parse()
+                        .map_err(|err| {
+                            Error::BadResponse(format!("Invalid replicas count: {err}"))
+                        })?;
 
                     let entry = nmap
                         .entry(ns.to_string())

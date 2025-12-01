@@ -529,11 +529,11 @@ fn expression_rec_ops() {
 
     let set_name = create_test_set(&client, EXPECTED).await;
 
-    let rs = test_filter(&client, le(device_size(), int_val(0)), &set_name).await;
+    let rs = test_filter(&client, le(record_size(), int_val(0)), &set_name).await;
     let mut count = count_results(rs).await;
     if count == 0 {
         // Not in-memory
-        let rs = test_filter(&client, le(device_size(), int_val(2000)), &set_name).await;
+        let rs = test_filter(&client, le(record_size(), int_val(2000)), &set_name).await;
         count = count_results(rs).await;
     }
     assert_eq!(count, 100, "DEVICE SIZE Test Failed");

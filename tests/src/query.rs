@@ -42,14 +42,13 @@ async fn create_test_set(client: &Client, no_records: usize) -> String {
     }
 
     let task = client
-        .create_index(
+        .create_index_on_bin(
             namespace,
             &set_name,
             "bin",
             &format!("{}_{}_{}", namespace, set_name, "bin"),
             IndexType::Numeric,
             CollectionIndexType::Default,
-            None,
             None,
         )
         .await
@@ -365,14 +364,13 @@ async fn test_query_geo_within_geojson_region() {
     let client = Arc::new(common::client().await);
 
     let task = client
-        .create_index(
+        .create_index_on_bin(
             namespace,
             set_name,
             bin_name,
             &format!("{}_{}_{}", namespace, set_name, bin_name),
             IndexType::Geo2DSphere,
             CollectionIndexType::Default,
-            None,
             None,
         )
         .await

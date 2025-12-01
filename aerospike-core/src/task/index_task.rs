@@ -13,9 +13,10 @@
 // License for the specific language governing permissions and limitations under
 // the License.
 
-use crate::cluster::Cluster;
+use crate::cluster::{Cluster, Node};
 use crate::errors::{Error, Result};
 use crate::task::{Status, Task};
+use crate::Version;
 use std::sync::Arc;
 
 /// Struct for querying index creation status
@@ -41,8 +42,15 @@ impl IndexTask {
         }
     }
 
-    fn build_command(namespace: String, index_name: String) -> String {
-        return format!("sindex/{}/{}", namespace, index_name);
+    fn build_command(node: &Arc<Node>, namespace: String, index_name: String) -> String {
+        if node.version() >= &Version::new(8, 1, 0, 0) {
+            format!(
+                "sindex-stat:namespace={};indexname={}",
+                namespace, index_name
+            )
+        } else {
+            format!("sindex/{}/{}", namespace, index_name)
+        }
     }
 
     fn parse_response(response: &str) -> Result<Status> {
@@ -61,19 +69,23 @@ impl IndexTask {
                 let percent_begin = pattern_index + SUCCESS_PATTERN.len();
 
                 let percent_end = match response[percent_begin..].find(DELMITER) {
-                    None => return Err(Error::BadResponse(format!(
-                        "delimiter missing in response. Response: {}",
-                        response
-                    ))),
+                    None => {
+                        return Err(Error::BadResponse(format!(
+                            "delimiter missing in response. Response: {}",
+                            response
+                        )))
+                    }
                     Some(percent_end) => percent_end,
                 };
                 let percent_str = &response[percent_begin..percent_begin + percent_end];
                 match percent_str.parse::<isize>() {
                     Ok(100) => Ok(Status::Complete),
                     Ok(_) => Ok(Status::InProgress),
-                    Err(_) => return Err(Error::BadResponse(
-                        "Unexpected load_pct value from server".to_string()
-                    )),
+                    Err(_) => {
+                        return Err(Error::BadResponse(
+                            "Unexpected load_pct value from server".to_string(),
+                        ))
+                    }
                 }
             }
         }
@@ -87,12 +99,12 @@ impl Task for IndexTask {
         let nodes = self.cluster.nodes().await;
 
         if nodes.is_empty() {
-            return Err(Error::Connection("No connected node".to_string()))
+            return Err(Error::Connection("No connected node".to_string()));
         }
 
         for node in &nodes {
             let command =
-                &IndexTask::build_command(self.namespace.clone(), self.index_name.clone());
+                &IndexTask::build_command(node, self.namespace.clone(), self.index_name.clone());
             let response = node.info(&[&command[..]]).await?;
 
             if !response.contains_key(command) {

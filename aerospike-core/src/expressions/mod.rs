@@ -556,11 +556,14 @@ pub fn record_size() -> FilterExpression {
 
 /// Create function that returns record size on disk.
 /// If server storage-engine is memory, then zero is returned.
+///
+/// Deprecated: memory_size has been deprecated since server version 8.1. Use [record_size()].
 /// ```
 /// use aerospike::expressions::{ge, device_size, int_val};
 /// // Record device size >= 100 KB
 /// ge(device_size(), int_val(100*1024));
 /// ```
+#[deprecated]
 pub fn device_size() -> FilterExpression {
     FilterExpression::new(Some(ExpOp::DeviceSize), None, None, None, None, None)
 }
@@ -572,11 +575,13 @@ pub fn device_size() -> FilterExpression {
 /// Requires server version between 5.3 inclusive and 7.0 exclusive.
 /// Use [record_size()](record_size) for server version 7.0+.
 ///
+/// Deprecated: memory_size has been deprecated since server version 8.1. Use [record_size()].
 /// ```
 /// use aerospike::expressions::{ge, memory_size, int_val};
 /// // Record device size >= 100 KB
 /// ge(memory_size(), int_val(100*1024));
 /// ```
+#[deprecated]
 pub fn memory_size() -> FilterExpression {
     FilterExpression::new(Some(ExpOp::MemorySize), None, None, None, None, None)
 }

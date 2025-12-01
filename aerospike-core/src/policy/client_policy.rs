@@ -61,6 +61,9 @@ pub struct ClientPolicy {
     /// Connection idle timeout. Every time a connection is used, its idle
     /// deadline will be extended by this duration. When this deadline is reached,
     /// the connection will be closed and discarded from the connection pool.
+    ///
+    /// Servers 8.1+ have deprecated proto-fd-idle-ms. When proto-fd-idle-ms is ultimately removed,
+    /// the server will stop automatically reaping based on socket idle timeouts.
     pub idle_timeout: Option<Duration>,
 
     /// Maximum number of synchronous connections allowed per server node.

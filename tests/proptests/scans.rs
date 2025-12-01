@@ -12,13 +12,14 @@ proptest_async::proptest! {
         let namespace: &str = common::namespace();
         let set_name = "test";
 
+        // let now = aerospike_rt::time::Instant::now();
+
         // let mut recs = vec![];
         let mut count = 0;
         let mut iter = 0;
         while !pf.done() {
             iter+=1;
 
-            // let now = aerospike_rt::time::Instant::now();
             // println!("Scan starting...");
             let rs = client.scan(&scan_policy, pf, namespace, set_name, bins.clone()).await.unwrap();
 
@@ -36,7 +37,7 @@ proptest_async::proptest! {
 
             pf = rs.partition_filter().await.unwrap();
         }
-        // println!("Scan succeeded in {:?}", now.elapsed());
+        // println!("Scan succeeded in {:?} for {} records", now.elapsed(), count);
 
         assert!(scan_policy.max_records == 0 || count <= scan_policy.max_records || iter > 1);
     }

@@ -35,6 +35,7 @@ use crate::operations::{CdtContext, Operation, OperationType};
 use crate::policy::{BatchPolicy, ClientPolicy, QueryPolicy, ReadPolicy, ScanPolicy, WritePolicy};
 use crate::query::{PartitionFilter, PartitionTracker};
 use crate::task::{IndexTask, RegisterTask};
+use crate::Version;
 use crate::{
     BatchRecord, Bin, Bins, CollectionIndexType, IndexType, Key, Privilege, Record, Recordset,
     ResultCode, Role, Statement, UDFLang, User, Value,
@@ -1028,7 +1029,8 @@ impl Client {
             cmd.push_str(&format!("{}", before_nanos));
         }
 
-        self.send_info_cmd(&cmd)
+        let node = self.cluster.get_random_node().await?;
+        self.send_info_cmd(node, &cmd)
             .await
             .map_err(|e| e.chain_error("Error truncating ns/set"))
     }
@@ -1048,12 +1050,100 @@ impl Client {
     /// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap();
     /// # let client = Client::new(&ClientPolicy::default(), &hosts).await.unwrap();
     /// match client.create_index("foo", "bar", "baz",
+    ///     "idx_foo_bar_baz", IndexType::Numeric, CollectionIndexType::Default, None).await {
+    ///     Err(err) => println!("Failed to create index: {}", err),
+    ///     _ => {}
+    /// }
+    /// ```
+    pub async fn create_index_on_bin(
+        &self,
+        namespace: &str,
+        set_name: &str,
+        bin_name: &str,
+        index_name: &str,
+        index_type: IndexType,
+        collection_index_type: CollectionIndexType,
+        ctx: Option<&[CdtContext]>,
+    ) -> Result<IndexTask> {
+        self.create_index(
+            namespace,
+            set_name,
+            bin_name,
+            index_name,
+            index_type,
+            collection_index_type,
+            None,
+            ctx,
+        )
+        .await
+    }
+
+    /// Create a secondary index using an expression. This asynchronous server call
+    /// returns before the command is complete.
+    ///
+    /// # Examples
+    ///
+    /// The following example creates an index `idx_foo_bar_baz`. The index is in namespace `foo`
+    /// within set `bar` with the expression `int_bin("a") == 500`:
+    ///
+    /// ```rust,edition2021
+    /// # extern crate aerospike;
+    /// # use aerospike::*;
+    ///
+    /// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap();
+    /// # let client = Client::new(&ClientPolicy::default(), &hosts).await.unwrap();
+    /// let fe: FilterExpression = eq(int_bin("a".to_string()), int_val(500));
+    /// match client.create_index("foo", "bar", "baz",
+    ///     "idx_foo_bar_baz", IndexType::Numeric, CollectionIndexType::Default, &fe).await {
+    ///     Err(err) => println!("Failed to create index: {}", err),
+    ///     _ => {}
+    /// }
+    /// ```
+    pub async fn create_index_using_expression(
+        &self,
+        namespace: &str,
+        set_name: &str,
+        index_name: &str,
+        index_type: IndexType,
+        collection_index_type: CollectionIndexType,
+        expression: &FilterExpression,
+    ) -> Result<IndexTask> {
+        self.create_index(
+            namespace,
+            set_name,
+            "",
+            index_name,
+            index_type,
+            collection_index_type,
+            Some(expression),
+            None,
+        )
+        .await
+    }
+
+    /// Create a secondary index on a bin or using expression. This asynchronous server call
+    /// returns before the command is complete.
+    ///
+    /// For internal use only. bin_name and expression cannot both be passed.
+    ///
+    /// # Examples
+    ///
+    /// The following example creates an index `idx_foo_bar_baz`. The index is in namespace `foo`
+    /// within set `bar` and bin `baz`:
+    ///
+    /// ```rust,edition2021
+    /// # extern crate aerospike;
+    /// # use aerospike::*;
+    ///
+    /// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap();
+    /// # let client = Client::new(&ClientPolicy::default(), &hosts).await.unwrap();
+    /// match client.create_index("foo", "bar", "baz",
     ///     "idx_foo_bar_baz", IndexType::Numeric, CollectionIndexType::Default, None, None).await {
     ///     Err(err) => println!("Failed to create index: {}", err),
     ///     _ => {}
     /// }
     /// ```
-    pub async fn create_index(
+    async fn create_index(
         &self,
         namespace: &str,
         set_name: &str,
@@ -1066,57 +1156,68 @@ impl Client {
     ) -> Result<IndexTask> {
         use crate::commands::buffer::Buffer;
 
-        let ctx_str = if let Some(ctx) = ctx {
-            if ctx.is_empty() {
-                "".to_string()
-            } else {
+        let mut cmd = String::with_capacity(1024);
+        let node = self.cluster.get_random_node().await?;
+        let node_version = node.version();
+        if node_version >= &Version::new(8, 1, 0, 0) {
+            cmd.push_str("sindex-create:namespace=");
+        } else {
+            cmd.push_str("sindex-create:ns=");
+        };
+        cmd.push_str(namespace);
+
+        if !set_name.is_empty() {
+            cmd.push_str(";set=");
+            cmd.push_str(set_name);
+        }
+
+        cmd.push_str(";indexname=");
+        cmd.push_str(index_name);
+
+        if let Some(ctx) = ctx {
+            if !ctx.is_empty() {
                 let size = pack_ctx_for_index(&mut None, ctx);
                 let mut buf = Buffer::new(0);
                 buf.resize_buffer(size)?;
                 let _ = pack_ctx_for_index(&mut Some(&mut buf), ctx);
-                base64::encode(&buf.data_buffer)
-            }
-        } else {
-            "".to_string()
+                let ctx_str = base64::encode(&buf.data_buffer);
+                cmd.push_str(";context=");
+                cmd.push_str(&ctx_str);
+            };
         };
 
-        let exp_str: String = if let Some(expression) = expression {
+        if let Some(expression) = expression {
             let size = expression.size();
             let mut buf = Buffer::new(0);
             buf.resize_buffer(size)?;
             let _ = expression.pack(&mut Some(&mut buf));
-            base64::encode(&buf.data_buffer)
-        } else {
-            "".to_string()
+            let exp_str = base64::encode(&buf.data_buffer);
+            cmd.push_str(";exp=");
+            cmd.push_str(&exp_str);
         };
 
-        let cit_str: String = if let CollectionIndexType::Default = collection_index_type {
-            "".to_string()
-        } else {
-            format!("indextype={};", collection_index_type)
+        if CollectionIndexType::Default != collection_index_type {
+            cmd.push_str("indextype=");
+            cmd.push_str(&format!("{}", collection_index_type));
         };
 
-        let cmd =         match (ctx_str.is_empty(), exp_str.is_empty()) {
-        (false, false) =>format!(
-             "sindex-create:ns={};set={};indexname={};context={};exp={};numbins=1;{}indexdata={},{};\
-             priority=normal",
-            namespace, set_name, index_name, ctx_str, exp_str,cit_str, bin_name, index_type
-        ),
-            (false, true) => format!("sindex-create:ns={};set={};indexname={};context={};numbins=1;{}indexdata={},{};\
-             priority=normal",
-            namespace, set_name, index_name, ctx_str,cit_str, bin_name, index_type
-        ),
-            (true, false) => format!("sindex-create:ns={};set={};indexname={};exp={};numbins=1;{}indexdata={},{};\
-             priority=normal",
-            namespace, set_name, index_name,  exp_str,cit_str, bin_name, index_type
-        ),
-        _ => format!("sindex-create:ns={};set={};indexname={};numbins=1;{}indexdata={},{};\
-             priority=normal",
-            namespace, set_name, index_name, cit_str, bin_name, index_type
-        ),
-    };
+        if !bin_name.is_empty() {
+            if node_version >= &Version::new(8, 1, 0, 0) {
+                cmd.push_str(";bin=");
+                cmd.push_str(bin_name);
+                cmd.push_str(";type=");
+            } else {
+                cmd.push_str(";indexdata=");
+                cmd.push_str(bin_name);
+                cmd.push_str(",");
+            }
+        } else {
+            cmd.push_str(";type=");
+        }
 
-        self.send_info_cmd(&cmd)
+        cmd.push_str(&format!("{}", index_type));
+
+        self.send_info_cmd(node, &cmd)
             .await
             .map_err(|e| e.chain_error("Error creating index"))?;
         Ok(IndexTask::new(
@@ -1133,24 +1234,33 @@ impl Client {
         set_name: &str,
         index_name: &str,
     ) -> Result<()> {
-        let set_name: String = if let "" = set_name {
-            "".to_string()
+        let node = self.cluster.get_random_node().await?;
+        let node_version = node.version();
+
+        let mut cmd = String::with_capacity(100);
+
+        if node_version >= &Version::new(8, 1, 0, 0) {
+            cmd.push_str("sindex-delete:namespace=");
         } else {
-            format!("set={};", set_name)
+            cmd.push_str("sindex-delete:ns=");
         };
-        let cmd = format!(
-            "sindex-delete:ns={};{}indexname={}",
-            namespace, set_name, index_name
-        );
-        self.send_info_cmd(&cmd)
+        cmd.push_str(namespace);
+
+        if !set_name.is_empty() {
+            cmd.push_str(";set=");
+            cmd.push_str(set_name);
+        };
+
+        cmd.push_str(";indexname=");
+        cmd.push_str(index_name);
+
+        self.send_info_cmd(node, &cmd)
             .await
             .map_err(|e| e.chain_error("Error dropping index"))
     }
 
-    async fn send_info_cmd(&self, cmd: &str) -> Result<()> {
-        let node = self.cluster.get_random_node().await?;
+    async fn send_info_cmd(&self, node: Arc<Node>, cmd: &str) -> Result<()> {
         let response = node.info(&[cmd]).await?;
-
         if let Some(v) = response.values().next() {
             if v.to_uppercase() == "OK" {
                 return Ok(());
@@ -1165,7 +1275,7 @@ impl Client {
         }
 
         return Err(Error::BadResponse(
-            "Unexpected sindex info command response".to_string(),
+            "Unexpected info command response".to_string(),
         ));
     }
 

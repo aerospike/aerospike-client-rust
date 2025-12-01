@@ -184,14 +184,14 @@ impl Client {
     /// # use aerospike::*;
     ///
     /// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap();
-    /// # let client = Client::new(&ClientPolicy::default(), &hosts).await.unwrap();
+    /// # let client = Client::new(&ClientPolicy::default(), &hosts).unwrap();
     /// let bins = Bins::from(["name", "age"]);
     /// let mut batch_reads = vec![];
     /// for i in 0..10 {
     ///   let key = as_key!("test", "test", i);
     ///   batch_reads.push(BatchRead::new(key, bins.clone()));
     /// }
-    /// match client.batch(&BatchPolicy::default(), batch_reads).await {
+    /// match client.batch(&BatchPolicy::default(), batch_reads) {
     ///     Ok(results) => {
     ///       for result in results {
     ///         match result.record {
@@ -598,7 +598,7 @@ impl Client {
         )
     }
 
-    /// Create a secondary index on a bin containing scalar values. This asynchronous server call
+    /// Create a secondary index on a bin. This asynchronous server call
     /// returns before the command is complete.
     ///
     /// # Examples
@@ -606,19 +606,19 @@ impl Client {
     /// The following example creates an index `idx_foo_bar_baz`. The index is in namespace `foo`
     /// within set `bar` and bin `baz`:
     ///
-    /// ```rust,edition2018
+    /// ```rust,edition2021
     /// # extern crate aerospike;
     /// # use aerospike::*;
     ///
     /// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap();
     /// # let client = Client::new(&ClientPolicy::default(), &hosts).unwrap();
     /// match client.create_index("foo", "bar", "baz",
-    ///     "idx_foo_bar_baz", IndexType::Numeric, CollectionIndexType::Default, None, None).await {
+    ///     "idx_foo_bar_baz", IndexType::Numeric, CollectionIndexType::Default, None) {
     ///     Err(err) => println!("Failed to create index: {}", err),
     ///     _ => {}
     /// }
     /// ```
-    pub fn create_index(
+    pub async fn create_index_on_bin(
         &self,
         namespace: &str,
         set_name: &str,
@@ -626,44 +626,56 @@ impl Client {
         index_name: &str,
         index_type: IndexType,
         collection_index_type: CollectionIndexType,
-        expression: Option<&FilterExpression>,
         ctx: Option<&[CdtContext]>,
     ) -> Result<IndexTask> {
-        block_on(self.async_client.create_index(
+        block_on(self.async_client.create_index_on_bin(
             namespace,
             set_name,
             bin_name,
             index_name,
             index_type,
             collection_index_type,
-            expression,
             ctx,
         ))
     }
 
-    /// Create a complex secondary index on a bin containing scalar, list or map values. This
-    /// asynchronous server call returns before the command is complete.
-    #[allow(clippy::too_many_arguments)]
-    pub fn create_complex_index(
+    /// Create a secondary index using an expression. This asynchronous server call
+    /// returns before the command is complete.
+    ///
+    /// # Examples
+    ///
+    /// The following example creates an index `idx_foo_bar_baz`. The index is in namespace `foo`
+    /// within set `bar` with the expression `int_bin("a") == 500`:
+    ///
+    /// ```rust,edition2021
+    /// # extern crate aerospike;
+    /// # use aerospike::*;
+    ///
+    /// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap();
+    /// # let client = Client::new(&ClientPolicy::default(), &hosts).unwrap();
+    /// let fe: FilterExpression = eq(int_bin("a".to_string()), int_val(500));
+    /// match client.create_index("foo", "bar", "baz",
+    ///     "idx_foo_bar_baz", IndexType::Numeric, CollectionIndexType::Default, &fe) {
+    ///     Err(err) => println!("Failed to create index: {}", err),
+    ///     _ => {}
+    /// }
+    /// ```
+    pub async fn create_index_using_expression(
         &self,
         namespace: &str,
         set_name: &str,
-        bin_name: &str,
         index_name: &str,
         index_type: IndexType,
         collection_index_type: CollectionIndexType,
-        expression: Option<&FilterExpression>,
-        ctx: Option<&[CdtContext]>,
+        expression: &FilterExpression,
     ) -> Result<IndexTask> {
-        block_on(self.async_client.create_index(
+        block_on(self.async_client.create_index_using_expression(
             namespace,
             set_name,
-            bin_name,
             index_name,
             index_type,
             collection_index_type,
             expression,
-            ctx,
         ))
     }
 

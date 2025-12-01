@@ -160,6 +160,7 @@ pub use batch::BatchUDFPolicy;
 pub use batch::BatchWritePolicy;
 pub use bin::{Bin, Bins};
 pub use client::Client;
+pub use cluster::version_parser::Version;
 pub use cluster::Node;
 pub use commands::particle_type::ParticleType;
 pub use errors::{Error, Result};

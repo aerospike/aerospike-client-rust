@@ -18,7 +18,6 @@ use std::time::Duration;
 
 use crate::common;
 use aerospike::expressions::*;
-use aerospike::operations::cdt_context::*;
 use env_logger;
 
 use aerospike::Task;
@@ -43,7 +42,7 @@ async fn create_test_set(client: &Client, no_records: usize) -> String {
 }
 
 #[aerospike_macro::test]
-async fn create_index() {
+async fn create_index_on_bin() {
     let _ = env_logger::try_init();
 
     let client = common::client().await;
@@ -56,14 +55,13 @@ async fn create_index() {
     thread::sleep(Duration::from_millis(1000));
 
     let task = client
-        .create_index(
+        .create_index_on_bin(
             ns,
             &set,
             bin,
             &index,
             IndexType::Numeric,
             CollectionIndexType::Default,
-            None,
             None,
         )
         .await
@@ -74,7 +72,7 @@ async fn create_index() {
 }
 
 #[aerospike_macro::test]
-async fn create_complex_index() {
+async fn create_index_using_expression() {
     let _ = env_logger::try_init();
 
     let client = common::client().await;
@@ -86,19 +84,16 @@ async fn create_complex_index() {
     let _ = client.drop_index(ns, &set, &index).await;
     thread::sleep(Duration::from_millis(1000));
 
-    let ctx = vec![ctx_map_key(as_val!("map_key"))];
-    let fe = eq(int_bin("a".to_string()), int_val(500));
+    let fe: FilterExpression = eq(int_bin("a".to_string()), int_val(500));
 
     let task = client
-        .create_index(
+        .create_index_using_expression(
             ns,
             &set,
-            bin,
             &index,
             IndexType::Numeric,
             CollectionIndexType::Default,
-            Some(&fe),
-            Some(&ctx),
+            &fe,
         )
         .await
         .unwrap();
