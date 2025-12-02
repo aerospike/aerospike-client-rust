@@ -159,6 +159,7 @@ impl ClientPolicy {
         Ok(())
     }
 
+    #[cfg(feature = "tls")]
     pub(crate) const fn peers_string(&self) -> &'static str {
         match (&self.tls_config, self.use_services_alternate) {
             (None, true) => "peers-clear-alt",
