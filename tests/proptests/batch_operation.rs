@@ -19,7 +19,7 @@ pub enum PropBatchOperation {
     ReadBins(BatchReadPolicy, Bins),
     ReadOps(BatchReadPolicy, Vec<PropOperation>),
     Write(BatchWritePolicy, Vec<PropOperation>),
-    // Delete(BatchDeletePolicy, Key),
+    Delete(BatchDeletePolicy),
     // UDF(BatchUDFPolicy, Key, String, String, Option<Vec<Value>>),
 }
 
@@ -32,8 +32,8 @@ impl PropBatchOperation {
             }
             PropBatchOperation::Write(bwp, ops) => {
                 BatchOperation::write(bwp, key, ops.iter().map(|op| op.to_op()).collect())
-            } // PropBatchOperation::Delete(bdp) => todo!(),
-              // PropBatchOperation::UDF(bup, package, func, vals) => todo!(),
+            }
+            PropBatchOperation::Delete(bdp) => BatchOperation::delete(bdp, key), // PropBatchOperation::UDF(bup, package, func, vals) => todo!(),
         }
     }
 }
@@ -44,8 +44,8 @@ pub fn any_batch_operation(bin: Bin) -> impl Strategy<Value = PropBatchOperation
     prop_oneof![
         // bop_read_bins(),
         // bop_read_ops(),
-        bop_write(),
-        // bop_delete(),
+        // bop_write(),
+        bop_delete(),
         // bop_udf(),
     ]
 }
@@ -56,6 +56,10 @@ pub fn any_batch_read_operation(bin: Bin) -> impl Strategy<Value = PropBatchOper
 
 pub fn any_batch_write_operation(bin: Bin) -> impl Strategy<Value = PropBatchOperation> {
     prop_oneof![bop_write()]
+}
+
+pub fn any_batch_delete_operation() -> impl Strategy<Value = PropBatchOperation> {
+    prop_oneof![bop_delete()]
 }
 
 prop_compose! {
@@ -72,6 +76,12 @@ prop_compose! {
 
 prop_compose! {
     pub fn many_batch_write_operations(n: usize)(bin in bin())(ops in prop::collection::vec(any_batch_write_operation(bin), 1..n as usize)) -> Vec<PropBatchOperation> {
+        ops
+    }
+}
+
+prop_compose! {
+    pub fn many_batch_delete_operations(n: usize)(ops in prop::collection::vec(any_batch_delete_operation(), 1..n as usize)) -> Vec<PropBatchOperation> {
         ops
     }
 }
@@ -114,5 +124,12 @@ prop_compose! {
     ) -> PropBatchOperation {
         // eprintln!("bop_write() called");
         PropBatchOperation::Write(bwp, ops)
+    }
+}
+
+prop_compose! {
+    pub fn bop_delete()
+    (bdp in batch_delete_policy()) -> PropBatchOperation {
+        PropBatchOperation::Delete(bdp)
     }
 }
