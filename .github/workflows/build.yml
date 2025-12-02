@@ -24,15 +24,20 @@ jobs:
         rust: [stable]
 
     steps:
-    - uses: actions/checkout@v2
+    - name: Harden the runner (Audit all outbound calls)
+      uses: step-security/harden-runner@df199fb7be9f65074067a9eb93f12bb4c5547cf2 # v2.13.3
+      with:
+        egress-policy: audit
+
+    - uses: actions/checkout@ee0669bd1cc54295c223e0bb666b733df41de1c5 # v2.7.0
     - name: Install Rust ${{ matrix.rust }} toolchain
-      uses: actions-rs/toolchain@v1
+      uses: actions-rs/toolchain@16499b5e05bf2e26879000db0c1d13f7e13fa3af # v1.0.7
       with:
         toolchain: ${{ matrix.rust }}
         override: true
     - run: rustc --version
     - name: Set up Aerospike Database
-      uses: reugn/github-action-aerospike@v1
+      uses: reugn/github-action-aerospike@2065a9209cfd5ef88a3e07f3e7929e321d1e0067 # v1.1.0
     - name: Clear cache
       run: rm -rf target/debug/deps/*aerospike*
     - name: Build
