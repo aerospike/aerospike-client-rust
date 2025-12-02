@@ -21,16 +21,12 @@ use crate::batch::BatchOperation;
 use crate::batch::BatchRecordIndex;
 use crate::cluster::partition::Partition;
 use crate::cluster::{Cluster, Node};
-use crate::commands::field_type::FieldType;
 use crate::commands::Duration;
 use crate::commands::StreamCommand;
 use crate::commands::{self};
 use crate::errors::{Error, Result};
 use crate::net::{BufferedConn, Connection};
 use crate::policy::{BatchPolicy, Policy, PolicyLike, Replica};
-use crate::result_code;
-use crate::value::bytes_to_particle;
-use crate::Key;
 use crate::{value, Record, ResultCode, Value};
 use aerospike_rt::sleep;
 

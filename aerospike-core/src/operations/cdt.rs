@@ -19,7 +19,7 @@ use std::sync::Arc;
 
 use crate::commands::buffer::Buffer;
 use crate::commands::ParticleType;
-use crate::operations::cdt_context::CdtContext;
+pub use crate::operations::cdt_context::CdtContext;
 use crate::Value;
 
 #[derive(Debug, Clone)]
@@ -64,6 +64,7 @@ impl<'a> CdtOperation<'a> {
 impl<'a> fmt::Debug for CdtOperation<'a> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> Result<(), fmt::Error> {
         #[derive(Debug)]
+        #[allow(unused)]
         struct CdtOperation<'a> {
             pub op: &'a u8,
             pub args: &'a Vec<CdtArgument<'a>>,

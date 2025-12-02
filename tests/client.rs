@@ -82,7 +82,7 @@ async fn close() {
 
 #[cfg(feature = "tls")]
 #[aerospike_macro::test]
-async fn tls_no_auth() {
+async fn tls_client_no_auth() {
     if common::no_tls() {
         return;
     }

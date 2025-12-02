@@ -24,7 +24,7 @@ use crate::commands::admin_command::AdminCommand;
 use crate::commands::buffer::{Buffer, MAX_BUFFER_SIZE};
 use crate::errors::{Error, Result};
 use crate::net::Host;
-use crate::policy::ClientPolicy;
+use crate::policy::{AuthMode, ClientPolicy};
 #[cfg(all(any(feature = "rt-async-std"), not(feature = "rt-tokio")))]
 use aerospike_rt::async_std::net::Shutdown;
 #[cfg(all(any(feature = "rt-tokio"), not(feature = "rt-async-std")))]
@@ -117,7 +117,8 @@ impl Connection {
             idle_deadline: policy.idle_timeout.map(|timeout| Instant::now() + timeout),
             exhausted: true,
         };
-        conn.authenticate(&policy.user_password).await?;
+        conn.authenticate(&policy.auth_mode, policy.hashed_pass.as_ref())
+            .await?;
         conn.refresh();
         Ok(conn)
     }
@@ -218,18 +219,18 @@ impl Connection {
         };
     }
 
-    async fn authenticate(&mut self, user_password: &Option<(String, String)>) -> Result<()> {
-        if let Some((ref user, ref password)) = *user_password {
-            return match AdminCommand::authenticate(self, user, password).await {
-                Ok(()) => Ok(()),
-                Err(err) => {
-                    self.close().await;
-                    Err(err)
-                }
-            };
-        }
-
-        Ok(())
+    async fn authenticate(
+        &mut self,
+        auth_mode: &AuthMode,
+        hashed_pass: Option<&String>,
+    ) -> Result<()> {
+        return match AdminCommand::authenticate(self, auth_mode, hashed_pass).await {
+            Ok(()) => Ok(()),
+            Err(err) => {
+                self.close().await;
+                Err(err)
+            }
+        };
     }
 
     pub fn bookmark(&mut self) {

@@ -14,9 +14,9 @@
 // the License.
 
 use std::path::Path;
-use std::str;
 use std::sync::Arc;
 use std::vec::Vec;
+use std::{str, usize};
 
 use aerospike_rt::{sleep, Mutex};
 
@@ -28,14 +28,17 @@ use crate::commands::{
     ScanCommand, TouchCommand, WriteCommand,
 };
 use crate::errors::{Error, Result};
+use crate::expressions::FilterExpression;
+use crate::msgpack::encoder::pack_ctx_for_index;
 use crate::net::ToHosts;
-use crate::operations::{Operation, OperationType};
+use crate::operations::{CdtContext, Operation, OperationType};
 use crate::policy::{BatchPolicy, ClientPolicy, QueryPolicy, ReadPolicy, ScanPolicy, WritePolicy};
 use crate::query::{PartitionFilter, PartitionTracker};
 use crate::task::{IndexTask, RegisterTask};
+use crate::Version;
 use crate::{
-    record, BatchRecord, Bin, Bins, CollectionIndexType, IndexType, Key, Privilege, Record,
-    Recordset, ResultCode, Role, Statement, UDFLang, User, Value,
+    BatchRecord, Bin, Bins, CollectionIndexType, IndexType, Key, Privilege, Record, Recordset,
+    ResultCode, Role, Statement, UDFLang, User, Value,
 };
 use aerospike_rt::fs::File;
 #[cfg(all(any(feature = "rt-tokio"), not(feature = "rt-async-std")))]
@@ -43,9 +46,6 @@ use aerospike_rt::io::AsyncReadExt;
 use aerospike_rt::Semaphore;
 #[cfg(all(any(feature = "rt-async-std"), not(feature = "rt-tokio")))]
 use futures::AsyncReadExt;
-
-use futures::sink::SinkExt;
-use futures::stream::StreamExt;
 
 const MAX_PERMITS: usize = 256;
 
@@ -699,7 +699,6 @@ impl Client {
     {
         let bins = bins.into();
         let nodes: Vec<Arc<Node>> = self.cluster.nodes().await;
-        let nodes_len = nodes.len();
 
         let t_policy = policy.clone();
         let namespace = namespace.to_owned();
@@ -711,7 +710,7 @@ impl Client {
 
         let recordset = Arc::new(Recordset::new(
             policy.record_queue_size,
-            nodes_len + 1, // +1 is for the async executor
+            usize::MAX, // will be set again later
             tracker.clone(),
         ));
         let t_recordset = recordset.clone();
@@ -763,6 +762,8 @@ impl Client {
                     }
                 }
             };
+
+            recordset.set_instances(list.len() + 1); // +1 is for the async executor
 
             // used for join errors
             let err_recordset = recordset.clone();
@@ -886,11 +887,9 @@ impl Client {
             PartitionTracker::new(&t_policy, Arc::new(Mutex::new(partition_filter)), nodes).await?,
         ));
 
-        let nodes = self.cluster.nodes().await;
-        let nodes_len = nodes.len();
         let recordset = Arc::new(Recordset::new(
             policy.record_queue_size,
-            nodes_len + 1, // +1 is for the async executor
+            usize::MAX, // will be reset later
             tracker.clone(),
         ));
 
@@ -919,7 +918,6 @@ impl Client {
         statement: Arc<Statement>,
         recordset: Arc<Recordset>,
     ) {
-        // defer recordset.signalEnd()
         let namespace = statement.namespace.clone();
         loop {
             let list = {
@@ -936,6 +934,8 @@ impl Client {
                     }
                 }
             };
+
+            recordset.set_instances(list.len() + 1); // +1 is for the async executor
 
             // used for join errors
             let err_recordset = recordset.clone();
@@ -1029,12 +1029,13 @@ impl Client {
             cmd.push_str(&format!("{}", before_nanos));
         }
 
-        self.send_info_cmd(&cmd)
+        let node = self.cluster.get_random_node().await?;
+        self.send_info_cmd(node, &cmd)
             .await
             .map_err(|e| e.chain_error("Error truncating ns/set"))
     }
 
-    /// Create a secondary index on a bin containing scalar values. This asynchronous server call
+    /// Create a secondary index on a bin. This asynchronous server call
     /// returns before the command is complete.
     ///
     /// # Examples
@@ -1049,39 +1050,12 @@ impl Client {
     /// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap();
     /// # let client = Client::new(&ClientPolicy::default(), &hosts).await.unwrap();
     /// match client.create_index("foo", "bar", "baz",
-    ///     "idx_foo_bar_baz", IndexType::Numeric).await {
+    ///     "idx_foo_bar_baz", IndexType::Numeric, CollectionIndexType::Default, None).await {
     ///     Err(err) => println!("Failed to create index: {}", err),
     ///     _ => {}
     /// }
     /// ```
-    pub async fn create_index(
-        &self,
-        namespace: &str,
-        set_name: &str,
-        bin_name: &str,
-        index_name: &str,
-        index_type: IndexType,
-    ) -> Result<IndexTask> {
-        self.create_complex_index(
-            namespace,
-            set_name,
-            bin_name,
-            index_name,
-            index_type,
-            CollectionIndexType::Default,
-        )
-        .await?;
-        Ok(IndexTask::new(
-            Arc::clone(&self.cluster),
-            namespace.to_string(),
-            index_name.to_string(),
-        ))
-    }
-
-    /// Create a complex secondary index on a bin containing scalar, list or map values. This
-    /// asynchronous server call returns before the command is complete.
-    #[allow(clippy::too_many_arguments)]
-    pub async fn create_complex_index(
+    pub async fn create_index_on_bin(
         &self,
         namespace: &str,
         set_name: &str,
@@ -1089,20 +1063,168 @@ impl Client {
         index_name: &str,
         index_type: IndexType,
         collection_index_type: CollectionIndexType,
-    ) -> Result<()> {
-        let cit_str: String = if let CollectionIndexType::Default = collection_index_type {
-            "".to_string()
+        ctx: Option<&[CdtContext]>,
+    ) -> Result<IndexTask> {
+        self.create_index(
+            namespace,
+            set_name,
+            bin_name,
+            index_name,
+            index_type,
+            collection_index_type,
+            None,
+            ctx,
+        )
+        .await
+    }
+
+    /// Create a secondary index using an expression. This asynchronous server call
+    /// returns before the command is complete.
+    ///
+    /// # Examples
+    ///
+    /// The following example creates an index `idx_foo_bar_baz`. The index is in namespace `foo`
+    /// within set `bar` with the expression `int_bin("a") == 500`:
+    ///
+    /// ```rust,edition2021
+    /// # extern crate aerospike;
+    /// # use aerospike::*;
+    ///
+    /// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap();
+    /// # let client = Client::new(&ClientPolicy::default(), &hosts).await.unwrap();
+    /// let fe: FilterExpression = eq(int_bin("a".to_string()), int_val(500));
+    /// match client.create_index("foo", "bar", "baz",
+    ///     "idx_foo_bar_baz", IndexType::Numeric, CollectionIndexType::Default, &fe).await {
+    ///     Err(err) => println!("Failed to create index: {}", err),
+    ///     _ => {}
+    /// }
+    /// ```
+    pub async fn create_index_using_expression(
+        &self,
+        namespace: &str,
+        set_name: &str,
+        index_name: &str,
+        index_type: IndexType,
+        collection_index_type: CollectionIndexType,
+        expression: &FilterExpression,
+    ) -> Result<IndexTask> {
+        self.create_index(
+            namespace,
+            set_name,
+            "",
+            index_name,
+            index_type,
+            collection_index_type,
+            Some(expression),
+            None,
+        )
+        .await
+    }
+
+    /// Create a secondary index on a bin or using expression. This asynchronous server call
+    /// returns before the command is complete.
+    ///
+    /// For internal use only. bin_name and expression cannot both be passed.
+    ///
+    /// # Examples
+    ///
+    /// The following example creates an index `idx_foo_bar_baz`. The index is in namespace `foo`
+    /// within set `bar` and bin `baz`:
+    ///
+    /// ```rust,edition2021
+    /// # extern crate aerospike;
+    /// # use aerospike::*;
+    ///
+    /// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap();
+    /// # let client = Client::new(&ClientPolicy::default(), &hosts).await.unwrap();
+    /// match client.create_index("foo", "bar", "baz",
+    ///     "idx_foo_bar_baz", IndexType::Numeric, CollectionIndexType::Default, None, None).await {
+    ///     Err(err) => println!("Failed to create index: {}", err),
+    ///     _ => {}
+    /// }
+    /// ```
+    async fn create_index(
+        &self,
+        namespace: &str,
+        set_name: &str,
+        bin_name: &str,
+        index_name: &str,
+        index_type: IndexType,
+        collection_index_type: CollectionIndexType,
+        expression: Option<&FilterExpression>,
+        ctx: Option<&[CdtContext]>,
+    ) -> Result<IndexTask> {
+        use crate::commands::buffer::Buffer;
+
+        let mut cmd = String::with_capacity(1024);
+        let node = self.cluster.get_random_node().await?;
+        let node_version = node.version();
+        if node_version >= &Version::new(8, 1, 0, 0) {
+            cmd.push_str("sindex-create:namespace=");
         } else {
-            format!("indextype={};", collection_index_type)
+            cmd.push_str("sindex-create:ns=");
         };
-        let cmd = format!(
-            "sindex-create:ns={};set={};indexname={};numbins=1;{}indexdata={},{};\
-             priority=normal",
-            namespace, set_name, index_name, cit_str, bin_name, index_type
-        );
-        self.send_info_cmd(&cmd)
+        cmd.push_str(namespace);
+
+        if !set_name.is_empty() {
+            cmd.push_str(";set=");
+            cmd.push_str(set_name);
+        }
+
+        cmd.push_str(";indexname=");
+        cmd.push_str(index_name);
+
+        if let Some(ctx) = ctx {
+            if !ctx.is_empty() {
+                let size = pack_ctx_for_index(&mut None, ctx);
+                let mut buf = Buffer::new(0);
+                buf.resize_buffer(size)?;
+                let _ = pack_ctx_for_index(&mut Some(&mut buf), ctx);
+                let ctx_str = base64::encode(&buf.data_buffer);
+                cmd.push_str(";context=");
+                cmd.push_str(&ctx_str);
+            };
+        };
+
+        if let Some(expression) = expression {
+            let size = expression.size();
+            let mut buf = Buffer::new(0);
+            buf.resize_buffer(size)?;
+            let _ = expression.pack(&mut Some(&mut buf));
+            let exp_str = base64::encode(&buf.data_buffer);
+            cmd.push_str(";exp=");
+            cmd.push_str(&exp_str);
+        };
+
+        if CollectionIndexType::Default != collection_index_type {
+            cmd.push_str("indextype=");
+            cmd.push_str(&format!("{}", collection_index_type));
+        };
+
+        if !bin_name.is_empty() {
+            if node_version >= &Version::new(8, 1, 0, 0) {
+                cmd.push_str(";bin=");
+                cmd.push_str(bin_name);
+                cmd.push_str(";type=");
+            } else {
+                cmd.push_str(";indexdata=");
+                cmd.push_str(bin_name);
+                cmd.push_str(",");
+            }
+        } else {
+            cmd.push_str(";type=");
+        }
+
+        cmd.push_str(&format!("{}", index_type));
+
+        self.send_info_cmd(node, &cmd)
             .await
-            .map_err(|e| e.chain_error("Error creating index"))
+            .map_err(|e| e.chain_error("Error creating index"))?;
+        Ok(IndexTask::new(
+            Arc::clone(&self.cluster),
+            namespace.to_string(),
+            index_name.to_string(),
+        ))
     }
 
     /// Delete secondary index.
@@ -1112,24 +1234,33 @@ impl Client {
         set_name: &str,
         index_name: &str,
     ) -> Result<()> {
-        let set_name: String = if let "" = set_name {
-            "".to_string()
+        let node = self.cluster.get_random_node().await?;
+        let node_version = node.version();
+
+        let mut cmd = String::with_capacity(100);
+
+        if node_version >= &Version::new(8, 1, 0, 0) {
+            cmd.push_str("sindex-delete:namespace=");
         } else {
-            format!("set={};", set_name)
+            cmd.push_str("sindex-delete:ns=");
         };
-        let cmd = format!(
-            "sindex-delete:ns={};{}indexname={}",
-            namespace, set_name, index_name
-        );
-        self.send_info_cmd(&cmd)
+        cmd.push_str(namespace);
+
+        if !set_name.is_empty() {
+            cmd.push_str(";set=");
+            cmd.push_str(set_name);
+        };
+
+        cmd.push_str(";indexname=");
+        cmd.push_str(index_name);
+
+        self.send_info_cmd(node, &cmd)
             .await
             .map_err(|e| e.chain_error("Error dropping index"))
     }
 
-    async fn send_info_cmd(&self, cmd: &str) -> Result<()> {
-        let node = self.cluster.get_random_node().await?;
+    async fn send_info_cmd(&self, node: Arc<Node>, cmd: &str) -> Result<()> {
         let response = node.info(&[cmd]).await?;
-
         if let Some(v) = response.values().next() {
             if v.to_uppercase() == "OK" {
                 return Ok(());
@@ -1144,7 +1275,7 @@ impl Client {
         }
 
         return Err(Error::BadResponse(
-            "Unexpected sindex info command response".to_string(),
+            "Unexpected info command response".to_string(),
         ));
     }
 
@@ -1153,6 +1284,14 @@ impl Client {
     pub async fn create_user(&self, user: &str, password: &str, roles: &[&str]) -> Result<()> {
         let cluster = self.cluster.clone();
         AdminCommand::create_user(&cluster, user, password, roles).await
+    }
+
+    /// Creates a new user PKI user with roles. PKI users are authenticated via TLS and a certificate instead of a password.
+    /// Supported by Aerospike Server v8.1+ Enterprise.
+    pub async fn create_pki_user(&self, user: &str, roles: &[&str]) -> Result<()> {
+        let password = AdminCommand::hash_password("nopassword")?;
+        let cluster = self.cluster.clone();
+        AdminCommand::create_user(&cluster, user, &password, roles).await
     }
 
     /// Removes a user from the cluster.
@@ -1164,7 +1303,18 @@ impl Client {
     /// Changes a user's password. Clear-text password will be hashed using bcrypt before sending to server.
     pub async fn change_password(&self, user: &str, password: &str) -> Result<()> {
         let cluster = self.cluster.clone();
-        AdminCommand::change_password(&cluster, user, password).await
+        let auth_mode = self.cluster.client_policy().await.auth_mode;
+        match auth_mode {
+            crate::AuthMode::Internal(u, _) | crate::AuthMode::External(u, _) if u == user => {
+                AdminCommand::change_password(&cluster, user, password).await
+            }
+            crate::AuthMode::PKI => {
+                return Err(Error::ClientError(
+                    "Can't change PKI user's password".into(),
+                ))
+            }
+            _ => AdminCommand::set_password(&cluster, user, password).await,
+        }
     }
 
     /// Adds roles to user's list of roles.

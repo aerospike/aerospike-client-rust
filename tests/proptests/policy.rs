@@ -238,7 +238,6 @@ pub fn scan_policy(timeout_ms: u32) -> impl Strategy<Value = ScanPolicy> {
         1..u32::MAX,
         1..10_000 as usize,
         5000..10_000 as u32,
-        // true_or_false_filter_expression(),
         replica(),
     )
         .prop_map(
@@ -271,7 +270,6 @@ pub fn query_policy(timeout_ms: u32) -> impl Strategy<Value = QueryPolicy> {
         1..10_000 as usize,
         5000..10_000 as u32,
         query_duration(),
-        // Just(None), //true_or_false_filter_expression(),
         replica(),
     )
         .prop_map(

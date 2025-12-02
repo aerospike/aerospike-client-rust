@@ -9,9 +9,6 @@ pub fn partition_filter(ns: String, set_name: String) -> impl Strategy<Value = P
         (0usize..4095).prop_map(|partition_id| PartitionFilter::by_id(partition_id)),
         (0usize..4096 / 2, 1usize..4096 / 2)
             .prop_map(|(begin, count)| PartitionFilter::by_range(begin, count)),
-        // TODO: Fix this
-        // any_key(ns, set_name).prop_map(|key| {
-        //     PartitionFilter::by_key(&key)
-        // }),
+        any_key(ns, set_name).prop_map(|key| { PartitionFilter::by_key(&key) }),
     ]
 }

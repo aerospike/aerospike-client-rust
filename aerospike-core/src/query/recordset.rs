@@ -19,6 +19,8 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 
 use aerospike_rt::Mutex;
+
+#[cfg(feature = "sync")]
 use futures::executor::block_on;
 
 use async_channel::{Receiver, Sender};
@@ -85,6 +87,10 @@ impl Recordset {
     /// Check whether the query is still active.
     pub fn is_active(&self) -> bool {
         self.active.load(Ordering::Relaxed)
+    }
+
+    pub(crate) fn set_instances(&self, count: usize) {
+        self.instances.store(count, Ordering::Relaxed);
     }
 
     pub(crate) fn reset_task_id(&self) {

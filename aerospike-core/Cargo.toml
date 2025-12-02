@@ -40,6 +40,7 @@ serialization = ["serde"]
 rt-tokio = ["aerospike-rt/rt-tokio"]
 rt-async-std = ["aerospike-rt/rt-async-std"]
 tls = ["rustls", "tokio-rustls"]
+sync = []
 
 [dev-dependencies]
 env_logger = "0.9"

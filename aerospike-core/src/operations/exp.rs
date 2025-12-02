@@ -101,6 +101,7 @@ impl<'a> ExpOperation<'a> {
 impl<'a> fmt::Debug for ExpOperation<'a> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> Result<(), fmt::Error> {
         #[derive(Debug)]
+        #[allow(unused)]
         struct ExpOperation<'a> {
             policy: &'a i64,
             exp: &'a FilterExpression,

@@ -17,7 +17,7 @@
 
 use std::env;
 
-use aerospike::expressions::set_name;
+use aerospike::CollectionIndexType;
 use aerospike::Task;
 
 use rand;
@@ -26,7 +26,7 @@ use rand::Rng;
 
 use tokio::sync::OnceCell;
 
-use aerospike::{Client, ClientPolicy};
+use aerospike::{AuthMode, Client, ClientPolicy};
 
 #[cfg(feature = "tls")]
 use rustls::pki_types::pem::PemObject;
@@ -67,7 +67,9 @@ lazy_static! {
         let mut policy = ClientPolicy::default();
         if let Ok(user) = env::var("AEROSPIKE_USER") {
             let password = env::var("AEROSPIKE_PASSWORD").unwrap_or_default();
-            policy.set_user_password(user, password).unwrap();
+            policy
+                .set_auth_mode(AuthMode::Internal(user, password))
+                .unwrap();
         }
         policy.cluster_name = AEROSPIKE_CLUSTER.clone();
         policy.use_services_alternate = AEROSPIKE_USE_SERVICES_ALTERNATE.clone();
@@ -81,7 +83,9 @@ lazy_static! {
         let mut policy = ClientPolicy::default();
         if let Ok(user) = env::var("AEROSPIKE_USER") {
             let password = env::var("AEROSPIKE_PASSWORD").unwrap_or_default();
-            policy.set_user_password(user, password).unwrap();
+            policy
+                .set_auth_mode(AuthMode::Internal(user, password))
+                .unwrap();
             policy.cluster_name = AEROSPIKE_CLUSTER.clone();
         }
         policy.use_services_alternate = AEROSPIKE_USE_SERVICES_ALTERNATE.clone();
@@ -202,6 +206,7 @@ pub async fn enterprise_edition() -> bool {
     if let Err(_) = node {
         return false;
     }
+
     let node = node.unwrap();
     let edition = node.info(&vec!["edition"]).await;
     if let Err(_) = edition {
@@ -244,24 +249,28 @@ pub async fn insert_bins(ns: &str, set_name: &str) -> aerospike::Result<()> {
     }
 
     let task = client
-        .create_index(
+        .create_index_on_bin(
             ns,
             set_name,
             "bin_i",
             &format!("{}_{}_{}", ns, set_name, "bin_i"),
             aerospike::IndexType::Numeric,
+            CollectionIndexType::Default,
+            None,
         )
         .await
         .expect("Failed to create index for bin_i");
     task.wait_till_complete(None).await.unwrap();
 
     let task = client
-        .create_index(
+        .create_index_on_bin(
             ns,
             set_name,
             "bin_s",
             &format!("{}_{}_{}", ns, set_name, "bin_s"),
             aerospike::IndexType::String,
+            CollectionIndexType::Default,
+            None,
         )
         .await
         .expect("Failed to create index for bin_s");

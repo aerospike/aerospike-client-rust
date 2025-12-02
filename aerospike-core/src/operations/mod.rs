@@ -31,7 +31,7 @@ pub use self::scalar::*;
 
 use crate::commands::buffer::Buffer;
 use crate::commands::ParticleType;
-use crate::operations::cdt_context::CdtContext;
+pub use crate::operations::cdt_context::CdtContext;
 use crate::operations::exp::ExpOperation;
 use crate::Value;
 

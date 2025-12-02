@@ -18,7 +18,7 @@ use crate::cluster::partition::Partition;
 use crate::cluster::{Cluster, Node};
 use crate::commands::{self};
 use crate::errors::{Error, Result};
-use crate::net::{BufferedConn, Connection};
+use crate::net::Connection;
 use crate::policy::Policy;
 use crate::Key;
 use aerospike_rt::sleep;

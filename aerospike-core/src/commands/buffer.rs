@@ -1123,6 +1123,8 @@ impl Buffer {
                 let part = part.lock().await;
                 if let Some(bval) = part.bval {
                     self.write_u64_little_endian(bval);
+                } else {
+                    self.write_u64_little_endian(0);
                 }
             }
         }

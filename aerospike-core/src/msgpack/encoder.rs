@@ -54,18 +54,26 @@ pub fn pack_empty_args_array(buf: &mut Option<&mut Buffer>) -> usize {
 }
 
 #[doc(hidden)]
+pub fn pack_ctx_for_index(buf: &mut Option<&mut Buffer>, ctx: &[CdtContext]) -> usize {
+    let mut size: usize = 0;
+    size += pack_array_begin(buf, ctx.len() * 2);
+
+    for c in ctx {
+        size += pack_integer(buf, i64::from(c.id));
+        size += pack_value(buf, &c.value);
+    }
+
+    size
+}
+
+#[doc(hidden)]
 pub fn pack_cdt_op(
     buf: &mut Option<&mut Buffer>,
     cdt_op: &CdtOperation,
     ctx: &[CdtContext],
 ) -> usize {
     let mut size: usize = 0;
-    if ctx.is_empty() {
-        size += pack_raw_u16(buf, u16::from(cdt_op.op));
-        if !cdt_op.args.is_empty() {
-            size += pack_array_begin(buf, cdt_op.args.len());
-        }
-    } else {
+    if !ctx.is_empty() {
         size += pack_array_begin(buf, 3);
         size += pack_integer(buf, 0xff);
         size += pack_array_begin(buf, ctx.len() * 2);
@@ -78,10 +86,10 @@ pub fn pack_cdt_op(
             }
             size += pack_value(buf, &c.value);
         }
-
-        size += pack_array_begin(buf, cdt_op.args.len() + 1);
-        size += pack_integer(buf, i64::from(cdt_op.op));
     }
+
+    size += pack_array_begin(buf, cdt_op.args.len() + 1);
+    size += pack_integer(buf, i64::from(cdt_op.op));
 
     if !cdt_op.args.is_empty() {
         for arg in &cdt_op.args {
@@ -223,16 +231,6 @@ const MSGPACK_MARKER_I8: u8 = 0xd0;
 const MSGPACK_MARKER_I16: u8 = 0xd1;
 const MSGPACK_MARKER_I32: u8 = 0xd2;
 const MSGPACK_MARKER_I64: u8 = 0xd3;
-
-// This method is not compatible with MsgPack specs and is only used by aerospike client<->server
-// for wire transfer only
-#[doc(hidden)]
-pub fn pack_raw_u16(buf: &mut Option<&mut Buffer>, value: u16) -> usize {
-    if let Some(ref mut buf) = *buf {
-        buf.write_u16(value);
-    }
-    2
-}
 
 #[doc(hidden)]
 pub fn pack_half_byte(buf: &mut Option<&mut Buffer>, value: u8) -> usize {

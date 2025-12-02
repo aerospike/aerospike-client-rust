@@ -16,6 +16,7 @@ use std::net::ToSocketAddrs;
 use std::str;
 use std::vec::Vec;
 
+use crate::cluster::version_parser::{Version, VersionParser};
 use crate::cluster::Cluster;
 use crate::commands::Message;
 use crate::errors::{Error, Result};
@@ -26,11 +27,7 @@ use crate::ToHosts;
 #[allow(clippy::struct_excessive_bools)]
 #[derive(Copy, Clone, Default, Debug)]
 pub struct NodeFeatures {
-    pub supports_float: bool,
-    pub supports_batch_index: bool,
-    pub supports_replicas_all: bool,
-    pub supports_replicas: bool,
-    pub supports_geo: bool,
+    // pub supports_XXX: bool,
 }
 
 // Validates a Database server node
@@ -44,19 +41,21 @@ pub struct NodeValidator {
     pub client_policy: ClientPolicy,
     pub use_new_info: bool,
     pub features: NodeFeatures,
+    pub version: Version,
 }
 
 // Generates a node validator
 impl NodeValidator {
-    pub fn new(cluster: &Cluster) -> Self {
+    pub fn new(client_policy: ClientPolicy) -> Self {
         NodeValidator {
             name: "".to_string(),
             services: vec![],
             aliases: vec![],
             address: "".to_string(),
-            client_policy: cluster.client_policy().clone(),
+            client_policy: client_policy,
             use_new_info: true,
             features: NodeFeatures::default(),
+            version: Version::default(),
         }
     }
 
@@ -111,19 +110,16 @@ impl NodeValidator {
 
     async fn validate_alias(&mut self, cluster: &Cluster, alias: &Host) -> Result<()> {
         let mut conn = Connection::new(&alias, &self.client_policy).await?;
-        let service_name = cluster.client_policy.service_string();
-        let info_map = Message::info(
-            &mut conn,
-            &["node", "cluster-name", "features", service_name],
-        )
-        .await?;
+        let service_name = cluster.client_policy().await.service_string();
+        let info_map =
+            Message::info(&mut conn, &["node", "cluster-name", "build", service_name]).await?;
 
         match info_map.get("node") {
             None => return Err(Error::InvalidNode(String::from("Missing node name"))),
             Some(node_name) => self.name = node_name.clone(),
         }
 
-        if let Some(ref cluster_name) = *cluster.cluster_name() {
+        if let Some(ref cluster_name) = cluster.cluster_name().await {
             match info_map.get("cluster-name") {
                 None => return Err(Error::InvalidNode(String::from("Missing cluster name"))),
                 Some(info_name) if info_name == cluster_name => {}
@@ -139,44 +135,43 @@ impl NodeValidator {
 
         self.address = alias.address();
 
-        if let Some(features) = info_map.get("features") {
-            if features.trim().len() > 0 {
-                self.features.set_features(features);
-            }
+        if let Some(build) = info_map.get("build") {
+            let version = VersionParser::new(build).parse()?;
+            self.features.set_features(&version);
+            self.version = version;
         }
 
         if let Some(peers) = info_map.get(service_name) {
             if peers.trim().len() > 0 {
-                self.set_services(peers);
+                self.set_services(alias, peers);
             }
         }
 
         Ok(())
     }
 
-    fn set_services(&mut self, peers: &str) {
+    fn set_services(&mut self, alias: &Host, peers: &str) {
         let peers = peers.split(';');
         for peer in peers {
             match peer.to_hosts() {
                 Err(e) => error!("Invalid host: {}, {}", peer, e),
-                Ok(ref mut host) => self.services.append(host),
+                Ok(host) => {
+                    let mut host: Vec<Host> = host
+                        .into_iter()
+                        .map(|h| Host {
+                            tls_name: alias.tls_name.clone(),
+                            ..h
+                        })
+                        .collect();
+                    self.services.append(&mut host);
+                }
             };
         }
     }
 }
 
 impl NodeFeatures {
-    fn set_features(&mut self, features: &str) {
-        let features = features.split(';');
-        for feature in features {
-            match feature {
-                "float" => self.supports_float = true,
-                "batch-index" => self.supports_batch_index = true,
-                "replicas-all" => self.supports_replicas_all = true,
-                "geo" => self.supports_geo = true,
-                "replicas" => self.supports_replicas = true,
-                _ => (),
-            }
-        }
+    fn set_features(&mut self, _version: &Version) {
+        // for later use
     }
 }

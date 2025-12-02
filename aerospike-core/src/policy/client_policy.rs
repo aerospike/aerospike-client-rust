@@ -21,11 +21,34 @@ use crate::errors::Result;
 #[cfg(feature = "tls")]
 use tokio_rustls::rustls::ClientConfig;
 
+#[derive(Debug, Clone, PartialEq)]
+/// Determines authentication mode.
+pub enum AuthMode {
+    /// No Authentication will be performed
+    None,
+
+    /// Uses internal authentication only when user/password defined. Hashed password is stored
+    /// on the server. Do not send clear password. This is the default.
+    Internal(String, String),
+
+    /// Uses external authentication (like LDAP) when user/password defined. Specific external authentication is
+    /// configured on server.  If TLSConfig is defined, sends clear password on node login via TLS.
+    /// Will return an error if TLSConfig is not defined.
+    External(String, String),
+
+    /// Allows authentication and authorization based on a certificate. No user name or
+    /// password needs to be configured. Requires TLS and a client certificate.
+    /// Requires server version 5.7.0+
+    PKI,
+}
+
 /// `ClientPolicy` encapsulates parameters for client policy command.
 #[derive(Debug, Clone)]
 pub struct ClientPolicy {
-    /// User authentication to cluster. Leave empty for clusters running without restricted access.
-    pub user_password: Option<(String, String)>,
+    /// User authentication to cluster.
+    pub auth_mode: AuthMode,
+
+    pub(crate) hashed_pass: Option<String>,
 
     /// TLS secure connection policy for TLS enabled servers.
     #[cfg(feature = "tls")]
@@ -38,6 +61,9 @@ pub struct ClientPolicy {
     /// Connection idle timeout. Every time a connection is used, its idle
     /// deadline will be extended by this duration. When this deadline is reached,
     /// the connection will be closed and discarded from the connection pool.
+    ///
+    /// Servers 8.1+ have deprecated proto-fd-idle-ms. When proto-fd-idle-ms is ultimately removed,
+    /// the server will stop automatically reaping based on socket idle timeouts.
     pub idle_timeout: Option<Duration>,
 
     /// Maximum number of synchronous connections allowed per server node.
@@ -81,7 +107,7 @@ pub struct ClientPolicy {
     /// "services-alternate" is available with Aerospike Server versions >= 3.7.1.
     pub use_services_alternate: bool,
 
-    /// Expected cluster name. It not `None`, server nodes must return this cluster name in order
+    /// Expected cluster name. If not `None`, server nodes must return this cluster name in order
     /// to join the client's view of the cluster. Should only be set when connecting to servers
     /// that support the "cluster-name" info command.
     pub cluster_name: Option<String>,
@@ -99,7 +125,8 @@ pub struct ClientPolicy {
 impl Default for ClientPolicy {
     fn default() -> ClientPolicy {
         ClientPolicy {
-            user_password: None,
+            auth_mode: AuthMode::None,
+            hashed_pass: None,
             timeout: Some(Duration::new(30, 0)),
             idle_timeout: Some(Duration::new(30, 0)),
             max_conns_per_node: 256,
@@ -120,10 +147,34 @@ impl Default for ClientPolicy {
 
 impl ClientPolicy {
     /// Set username and password to use when authenticating to the cluster.
-    pub fn set_user_password(&mut self, username: String, password: String) -> Result<()> {
-        let password = AdminCommand::hash_password(&password)?;
-        self.user_password = Some((username, password));
+    pub fn set_auth_mode(&mut self, auth_mode: AuthMode) -> Result<()> {
+        match auth_mode {
+            AuthMode::External(_, ref password) | AuthMode::Internal(_, ref password) => {
+                let password = AdminCommand::hash_password(password)?;
+                self.hashed_pass = Some(password);
+            }
+            _ => (),
+        };
+        self.auth_mode = auth_mode;
         Ok(())
+    }
+
+    #[cfg(feature = "tls")]
+    pub(crate) const fn peers_string(&self) -> &'static str {
+        match (&self.tls_config, self.use_services_alternate) {
+            (None, true) => "peers-clear-alt",
+            (None, false) => "peers-clear-std",
+            (Some(_), true) => "peers-tls-alt",
+            (Some(_), false) => "peers-tls-std",
+        }
+    }
+
+    #[cfg(not(feature = "tls"))]
+    pub(crate) const fn peers_string(&self) -> &'static str {
+        match self.use_services_alternate {
+            true => "peers-clear-alt",
+            false => "peers-clear-std",
+        }
     }
 
     #[cfg(feature = "tls")]

@@ -20,7 +20,7 @@ use aerospike_rt::sleep;
 use aerospike_rt::time::Duration;
 use env_logger;
 
-use crate::common::{self, rand_str};
+use crate::common::{self};
 
 #[aerospike_macro::test]
 async fn read_touch_ttl() {
@@ -65,15 +65,14 @@ async fn invalid_delete() {
     let _ = env_logger::try_init();
 
     let client = common::client().await;
-    let namespace: &str = common::namespace();
-    let set_name = &common::rand_str(10);
-    let policy = ReadPolicy::default();
     let wpolicy = WritePolicy::default();
-    let key = as_key!(namespace, set_name, -1);
 
     // the namespace will be invalid
     let invalid_ns_key = as_key!(common::rand_str(14), common::rand_str(10), -1);
-    client.delete(&wpolicy, &invalid_ns_key).await.unwrap();
+    client
+        .delete(&wpolicy, &invalid_ns_key)
+        .await
+        .expect_err("Should have errored out");
 }
 
 #[aerospike_macro::test]

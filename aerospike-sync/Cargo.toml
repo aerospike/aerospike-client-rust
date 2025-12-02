@@ -15,7 +15,7 @@ readme = "README.md"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-aerospike-core = {path = "../aerospike-core", version = "2.0.0-alpha.6"}
+aerospike-core = {path = "../aerospike-core", version = "2.0.0-alpha.6", features = ["sync"]}
 futures = {version = "0.3.16" }
 
 [features]
