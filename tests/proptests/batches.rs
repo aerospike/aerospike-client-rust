@@ -46,6 +46,9 @@ proptest_async::proptest! {
 				// we set filter expressions to None.  Here, we set it to None for
 				// the Put operation explicitly.  For the reads, we rely on the
 				// "false" parameter of many_batch_read_operations(), elsewhere.
+				// The idea is that if both read and write policies have equal
+				// filter expressions (namely, none at all), there should be no
+				// reason for a filter operation to exclude any records.
 
 				write_policy.base_policy.filter_expression = None;
 
