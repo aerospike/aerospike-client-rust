@@ -32,7 +32,7 @@ pub enum AuthMode {
     Internal(String, String),
 
     /// Uses external authentication (like LDAP) when user/password defined. Specific external authentication is
-    /// configured on server.  If TLSConfig is defined, sends clear password on node login via TLS.
+    /// configured on server. If TLSConfig is defined, sends clear password on node login via TLS.
     /// Will return an error if TLSConfig is not defined.
     External(String, String),
 
@@ -54,9 +54,9 @@ pub struct ClientPolicy {
     #[cfg(feature = "tls")]
     pub tls_config: Option<ClientConfig>,
 
-    /// Initial host connection timeout in milliseconds.  The timeout when opening a connection
+    /// Initial host connection timeout in milliseconds. The timeout when opening a connection
     /// to the server host for the first time.
-    pub timeout: Option<Duration>,
+    pub timeout: u32,
 
     /// Connection idle timeout. Every time a connection is used, its idle
     /// deadline will be extended by this duration. When this deadline is reached,
@@ -64,7 +64,22 @@ pub struct ClientPolicy {
     ///
     /// Servers 8.1+ have deprecated proto-fd-idle-ms. When proto-fd-idle-ms is ultimately removed,
     /// the server will stop automatically reaping based on socket idle timeouts.
-    pub idle_timeout: Option<Duration>,
+    pub idle_timeout: u32,
+
+    /// Minimum number of connections allowed per server node.
+    /// Preallocate min connections on client node creation.
+    /// The client will periodically allocate new connections if count falls below min connections.
+    ///
+    /// Server proto-fd-idle-ms may also need to be increased substantially if min connections are defined.
+    /// The proto-fd-idle-ms default directs the server to close connections that are idle for 60 seconds
+    /// which can defeat the purpose of keeping connections in reserve for a future burst of activity.
+    ///
+    /// If server proto-fd-idle-ms is changed, client ClientPolicy.idle_timeout should also be
+    /// changed to be a few seconds less than proto-fd-idle-ms.
+    ///
+    ///  Servers 8.1+ have deprecated proto-fd-idle-ms. When proto-fd-idle-ms is ultimately removed,
+    ///  the server will stop automatically reaping based on socket idle timeouts.
+    pub min_conns_per_node: usize,
 
     /// Maximum number of synchronous connections allowed per server node.
     pub max_conns_per_node: usize,
@@ -90,7 +105,7 @@ pub struct ClientPolicy {
     pub tend_interval: Duration,
 
     /// A IP translation table is used in cases where different clients
-    /// use different server IP addresses.  This may be necessary when
+    /// use different server IP addresses. This may be necessary when
     /// using clients from both inside and outside a local area
     /// network. Default is no translation.
     /// The key is the IP address returned from friend info requests to other servers.
@@ -100,7 +115,7 @@ pub struct ClientPolicy {
     /// UseServicesAlternate determines if the client should use "services-alternate"
     /// instead of "services" in info request during cluster tending.
     /// "services-alternate" returns server configured external IP addresses that client
-    /// uses to talk to nodes.  "services-alternate" can be used in place of
+    /// uses to talk to nodes. "services-alternate" can be used in place of
     /// providing a client "ipMap".
     /// This feature is recommended instead of using the client-side IpMap above.
     ///
@@ -112,7 +127,7 @@ pub struct ClientPolicy {
     /// that support the "cluster-name" info command.
     pub cluster_name: Option<String>,
 
-    /// Mark this client as belonging to a rack, and track server rack data.  This field is useful when directing read commands to
+    /// Mark this client as belonging to a rack, and track server rack data. This field is useful when directing read commands to
     /// the server node that contains the key and exists on the same rack as the client.
     /// This serves to lower cloud provider costs when nodes are distributed across different
     /// racks/data centers.
@@ -127,8 +142,9 @@ impl Default for ClientPolicy {
         ClientPolicy {
             auth_mode: AuthMode::None,
             hashed_pass: None,
-            timeout: Some(Duration::new(30, 0)),
-            idle_timeout: Some(Duration::new(30, 0)),
+            timeout: 30_000,
+            idle_timeout: 30_000,
+            min_conns_per_node: 0,
             max_conns_per_node: 256,
             conn_pools_per_node: 1,
             fail_if_not_connected: true,
@@ -146,6 +162,14 @@ impl Default for ClientPolicy {
 }
 
 impl ClientPolicy {
+    pub(crate) fn timeout(&self) -> Duration {
+        if self.timeout > 0 {
+            Duration::from_millis(self.timeout as u64)
+        } else {
+            Duration::from_millis(30_000)
+        }
+    }
+
     /// Set username and password to use when authenticating to the cluster.
     pub fn set_auth_mode(&mut self, auth_mode: AuthMode) -> Result<()> {
         match auth_mode {

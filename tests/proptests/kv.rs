@@ -8,7 +8,7 @@ use crate::proptests::{bins::*, policy::*};
 
 proptest_async::proptest! {
     #[test]
-    async fn put(i in 0..10, write_policy in write_policy(5000), ref bins in many_bins(255)) {
+    async fn put(i in 0..10, write_policy in write_policy(1000, 5000), ref bins in many_bins(255)) {
         let client = common::singleton_client().await;
         let namespace: &str = common::namespace();
         let set_name = "test";
@@ -41,7 +41,7 @@ proptest_async::proptest! {
     }
 
     #[test]
-    async fn add(i in 0..1000, write_policy in write_policy_without_replace(3000), val in -1000..1000) {
+    async fn add(i in 0..1000, write_policy in write_policy_without_replace(1000, 5000), val in -1000..1000) {
         let client = common::singleton_client().await;
         let namespace: &str = common::namespace();
         let set_name = "test";
@@ -78,7 +78,7 @@ proptest_async::proptest! {
     }
 
     #[test]
-    async fn append(i in 0..1000, write_policy in write_policy_without_replace(3000), s in "[\\w\\d]{1,1000}") {
+    async fn append(i in 0..1000, write_policy in write_policy_without_replace(1000, 5000), s in "[\\w\\d]{1,1000}") {
         let client = common::singleton_client().await;
         let namespace: &str = common::namespace();
         let set_name = "test";
@@ -115,7 +115,7 @@ proptest_async::proptest! {
     }
 
     #[test]
-    async fn prepend(i in 0..1000, write_policy in write_policy_without_replace(3000), s in "[\\w\\d]{1,1000}") {
+    async fn prepend(i in 0..1000, write_policy in write_policy_without_replace(1000, 5000), s in "[\\w\\d]{1,1000}") {
         let client = common::singleton_client().await;
         let namespace: &str = common::namespace();
         let set_name = "test";
@@ -152,7 +152,7 @@ proptest_async::proptest! {
     }
 
     #[test]
-    async fn touch(i in 0..1000, write_policy in write_policy_without_replace(3000)) {
+    async fn touch(i in 0..1000, write_policy in write_policy_without_replace(1000, 5000)) {
         let client = common::singleton_client().await;
         let namespace: &str = common::namespace();
         let set_name = "test";
@@ -180,7 +180,7 @@ proptest_async::proptest! {
     }
 
     #[test]
-    async fn delete(i in 0..1000, write_policy in write_policy_without_replace(3000)) {
+    async fn delete(i in 0..1000, write_policy in write_policy_without_replace(1000, 5000)) {
         let client = common::singleton_client().await;
         let namespace: &str = common::namespace();
         let set_name = "test";
@@ -208,7 +208,7 @@ proptest_async::proptest! {
     }
 
     #[test]
-    async fn get(i in 0..1000, read_policy in read_policy(3000), bins in bins(100)) {
+    async fn get(i in 0..1000, read_policy in read_policy(1000, 5000), bins in bins(100)) {
         let client = common::singleton_client().await;
 
         let namespace: &str = common::namespace();
@@ -231,7 +231,7 @@ proptest_async::proptest! {
     }
 
     #[test]
-    async fn exists(i in 0..1000, read_policy in read_policy(3000)) {
+    async fn exists(i in 0..1000, read_policy in read_policy(1000, 5000)) {
         let client = common::singleton_client().await;
         let namespace: &str = common::namespace();
         let set_name = "test";

@@ -96,8 +96,8 @@ impl<'a> SingleCommand<'a> {
             }
 
             // check for max retries
-            if let Some(max_retries) = policy.max_retries() {
-                if iterations > max_retries + 1 {
+            if policy.max_retries() > 0 {
+                if iterations > policy.max_retries() + 1 {
                     // first attempt isn't a retry
                     return Err(Error::Connection(format!(
                         "Timeout after {} tries",
@@ -129,10 +129,12 @@ impl<'a> SingleCommand<'a> {
                 }
             };
 
+            conn.set_socket_timeout(policy.socket_timeout());
+
             cmd.prepare_buffer(&mut conn)
                 .await
                 .map_err(|e| e.chain_error("Failed to prepare send buffer"))?;
-            cmd.write_timeout(&mut conn, policy.total_timeout())
+            cmd.write_timeout(&mut conn)
                 .await
                 .map_err(|e| e.chain_error("Failed to set timeout for send buffer"))?;
 
@@ -171,7 +173,7 @@ impl<'a> SingleCommand<'a> {
             // let the signals go through
             aerospike_rt::task::yield_now().await;
 
-            // command has completed successfully.  Exit method.
+            // command has completed successfully. Exit method.
             return Ok(());
         }
 

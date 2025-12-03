@@ -61,7 +61,7 @@ pub struct WritePolicy {
     pub respond_per_each_op: bool,
 
     /// If the transaction results in a record deletion, leave a tombstone for the record. This
-    /// prevents deleted records from reappearing after node failures.  Valid for Aerospike Server
+    /// prevents deleted records from reappearing after node failures. Valid for Aerospike Server
     /// Enterprise Edition 3.10+ only.
     pub durable_delete: bool,
 }

@@ -13,14 +13,13 @@
 // limitations under the License.
 
 use std::sync::Arc;
-use std::time::Duration;
 
 use crate::cluster::{Cluster, Node};
 use crate::commands::{buffer, Command, SingleCommand};
 use crate::errors::{Error, Result};
 use crate::net::Connection;
 use crate::policy::ReadPolicy;
-use crate::{Key, ResultCode};
+use crate::{Key, Policy, ResultCode};
 
 pub(crate) struct ExistsCommand<'a> {
     single_command: SingleCommand<'a>,
@@ -44,12 +43,8 @@ impl<'a> ExistsCommand<'a> {
 
 #[async_trait::async_trait]
 impl<'a> Command for ExistsCommand<'a> {
-    async fn write_timeout(
-        &mut self,
-        conn: &mut Connection,
-        timeout: Option<Duration>,
-    ) -> Result<()> {
-        conn.buffer.write_timeout(timeout);
+    async fn write_timeout(&mut self, conn: &mut Connection) -> Result<()> {
+        conn.buffer.write_timeout(self.policy.server_timeout());
         Ok(())
     }
 

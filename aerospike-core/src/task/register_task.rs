@@ -16,6 +16,7 @@
 use crate::cluster::Cluster;
 use crate::errors::{Error, Result};
 use crate::task::{Status, Task};
+use crate::AdminPolicy;
 use std::sync::Arc;
 
 /// Struct for querying udf register status
@@ -48,8 +49,9 @@ impl Task for RegisterTask {
             return Err(Error::Connection("No connected node".to_string()));
         }
 
+        let admin_policy = AdminPolicy { timeout: 3_000 };
         for node in &nodes {
-            let response = node.info(&[COMMAND]).await?;
+            let response = node.info(&admin_policy, &[COMMAND]).await?;
 
             if !response.contains_key(COMMAND) {
                 return Ok(Status::NotFound);

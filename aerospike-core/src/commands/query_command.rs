@@ -13,7 +13,6 @@
 // limitations under the License.
 
 use std::sync::Arc;
-use std::time::Duration;
 
 use crate::cluster::Node;
 use crate::commands::{Command, SingleCommand, StreamCommand};
@@ -57,12 +56,16 @@ impl<'a> QueryCommand<'a> {
 
 #[async_trait::async_trait]
 impl<'a> Command for QueryCommand<'a> {
-    async fn write_timeout(
-        &mut self,
-        conn: &mut Connection,
-        timeout: Option<Duration>,
-    ) -> Result<()> {
-        conn.buffer.write_timeout(timeout);
+    async fn write_timeout(&mut self, conn: &mut Connection) -> Result<()> {
+        let server_timeout = self
+            .stream_command
+            .recordset
+            .tracker
+            .lock()
+            .await
+            .server_timeout();
+
+        conn.buffer.write_timeout(server_timeout);
         Ok(())
     }
 

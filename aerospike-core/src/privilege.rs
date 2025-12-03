@@ -17,11 +17,11 @@ use std::fmt;
 /// Default privileges defined on the server.
 #[derive(Clone, Debug, PartialEq)]
 pub enum PrivilegeCode {
-    /// User can edit/remove other users.  Global scope only.
+    /// User can edit/remove other users. Global scope only.
     UserAdmin = 0,
 
     /// User can perform systems administration functions on a database that do not involve user
-    /// administration.  Examples include server configuration.
+    /// administration. Examples include server configuration.
     /// Global scope only.
     SysAdmin = 1,
 

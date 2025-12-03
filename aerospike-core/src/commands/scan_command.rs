@@ -15,7 +15,6 @@
 use std::str;
 use std::sync::Arc;
 
-use aerospike_rt::time::Duration;
 use aerospike_rt::Mutex;
 
 use crate::cluster::Node;
@@ -64,12 +63,16 @@ impl<'a> ScanCommand<'a> {
 
 #[async_trait::async_trait]
 impl<'a> Command for ScanCommand<'a> {
-    async fn write_timeout(
-        &mut self,
-        conn: &mut Connection,
-        timeout: Option<Duration>,
-    ) -> Result<()> {
-        conn.buffer.write_timeout(timeout);
+    async fn write_timeout(&mut self, conn: &mut Connection) -> Result<()> {
+        let server_timeout = self
+            .stream_command
+            .recordset
+            .tracker
+            .lock()
+            .await
+            .server_timeout();
+
+        conn.buffer.write_timeout(server_timeout);
         Ok(())
     }
 

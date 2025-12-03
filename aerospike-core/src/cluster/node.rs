@@ -25,7 +25,7 @@ use crate::cluster::peers_parser::PeersParser;
 use crate::commands::Message;
 use crate::errors::{Error, Result};
 use crate::net::{ConnectionPool, Host, PooledConnection};
-use crate::policy::ClientPolicy;
+use crate::policy::{AdminPolicy, ClientPolicy};
 use crate::Version;
 use aerospike_rt::RwLock;
 
@@ -135,8 +135,12 @@ impl Node {
             commands.push(REBALANCE_GENERATION);
         }
 
+        let admin_policy = AdminPolicy {
+            timeout: self.client_policy.timeout,
+        };
+
         let info_map = self
-            .info(&commands)
+            .info(&admin_policy, &commands)
             .await
             .map_err(|e| e.chain_error("Info command failed"))?;
         self.validate_node(&info_map)
@@ -316,12 +320,18 @@ impl Node {
     }
 
     // Send info commands to this node
-    pub async fn info(&self, commands: &[&str]) -> Result<HashMap<String, String>> {
+    pub async fn info(
+        &self,
+        policy: &AdminPolicy,
+        commands: &[&str],
+    ) -> Result<HashMap<String, String>> {
         let mut conn = self.get_connection().await?;
-        Message::info(&mut conn, commands).await.map_err(|e| {
-            conn.invalidate();
-            e
-        })
+        Message::info(policy, &mut conn, commands)
+            .await
+            .map_err(|e| {
+                conn.invalidate();
+                e
+            })
     }
 
     // Get the partition generation

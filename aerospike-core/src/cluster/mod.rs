@@ -37,6 +37,7 @@ use crate::errors::{Error, Result};
 use crate::net::Host;
 use crate::policy::ClientPolicy;
 use crate::policy::Replica;
+use crate::AdminPolicy;
 use aerospike_rt::Mutex;
 use aerospike_rt::RwLock;
 use futures::channel::mpsc;
@@ -282,11 +283,14 @@ impl Cluster {
     }
 
     async fn wait_till_stabilized(cluster: Arc<Cluster>) -> Result<()> {
-        let timeout = cluster
-            .client_policy()
-            .await
-            .timeout
-            .unwrap_or_else(|| Duration::from_secs(3));
+        let timeout = {
+            let timeout = cluster.client_policy().await.timeout;
+            if timeout > 0 {
+                Duration::from_millis(timeout as u64)
+            } else {
+                Duration::from_secs(3)
+            }
+        };
         let deadline = Instant::now() + timeout;
         let sleep_between_tend = Duration::from_millis(1);
 
@@ -360,7 +364,11 @@ impl Cluster {
 
     pub async fn update_partitions(&self, node: &Arc<Node>) -> Result<()> {
         let mut conn = node.get_connection().await?;
-        let tokens = PartitionTokenizer::new(&mut conn, node)
+
+        let admin_policy = AdminPolicy {
+            timeout: self.client_policy().await.timeout,
+        };
+        let tokens = PartitionTokenizer::new(&admin_policy, &mut conn, node)
             .await
             .map_err(|e| {
                 conn.invalidate();
@@ -376,7 +384,15 @@ impl Cluster {
     pub async fn update_rack_ids(&self, node: &Arc<Node>) -> Result<()> {
         const RACK_IDS: &str = "rack-ids";
         let mut conn = node.get_connection().await?;
-        let info_map = Message::info(&mut conn, &[RACK_IDS, node::REBALANCE_GENERATION]).await?;
+        let admin_policy = AdminPolicy {
+            timeout: self.client_policy().await.timeout,
+        };
+        let info_map = Message::info(
+            &admin_policy,
+            &mut conn,
+            &[RACK_IDS, node::REBALANCE_GENERATION],
+        )
+        .await?;
         if let Some(buf) = info_map.get(RACK_IDS) {
             node.parse_rack(buf.as_str())?;
         }
@@ -505,7 +521,7 @@ impl Cluster {
                         // Node is not referenced by other nodes.
                         // Check if node responded to info request.
                         if node.failures() == 0 {
-                            // Node is alive, but not referenced by other nodes.  Check if mapped.
+                            // Node is alive, but not referenced by other nodes. Check if mapped.
                             if !self.find_node_in_partition_map(node).await {
                                 remove_list.push(tnode);
                             }

@@ -17,7 +17,7 @@ use std::f64;
 use std::sync::mpsc::Receiver;
 use std::time::{Duration, Instant};
 
-use workers::Status;
+use crate::workers::Status;
 
 // Number of buckets for latency histogram, e.g.
 // 6 buckets => "<1ms", "<2ms", "<4ms", "<8ms", "<16ms", ">=16ms"

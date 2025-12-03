@@ -28,7 +28,7 @@ pub struct BatchRecord {
     /// Key.
     pub key: Key,
 
-    /// Record result after batch command has completed.  Will be nil if record was not found
+    /// Record result after batch command has completed. Will be nil if record was not found
     /// or an error occurred. See ResultCode.
     pub record: Option<Record>,
 

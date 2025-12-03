@@ -13,7 +13,6 @@
 // limitations under the License.
 
 use std::sync::Arc;
-use std::time::Duration;
 
 use crate::cluster::{Cluster, Node};
 use crate::commands::buffer;
@@ -21,7 +20,7 @@ use crate::commands::{Command, SingleCommand};
 use crate::errors::{Error, Result};
 use crate::net::Connection;
 use crate::operations::OperationType;
-use crate::policy::WritePolicy;
+use crate::policy::{Policy, WritePolicy};
 use crate::{Bin, Key, ResultCode};
 
 pub(crate) struct WriteCommand<'a> {
@@ -54,12 +53,8 @@ impl<'a> WriteCommand<'a> {
 
 #[async_trait::async_trait]
 impl<'a> Command for WriteCommand<'a> {
-    async fn write_timeout(
-        &mut self,
-        conn: &mut Connection,
-        timeout: Option<Duration>,
-    ) -> Result<()> {
-        conn.buffer.write_timeout(timeout);
+    async fn write_timeout(&mut self, conn: &mut Connection) -> Result<()> {
+        conn.buffer.write_timeout(self.policy.server_timeout());
         Ok(())
     }
 

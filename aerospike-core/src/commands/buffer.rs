@@ -13,7 +13,6 @@
 // limitations under the License.
 
 use std::str;
-use std::time::Duration;
 
 use byteorder::{ByteOrder, LittleEndian, NetworkEndian};
 
@@ -25,8 +24,8 @@ use crate::expressions::FilterExpression;
 use crate::msgpack::encoder;
 use crate::operations::{Operation, OperationBin, OperationData, OperationType};
 use crate::policy::{
-    BasePolicy, BatchPolicy, CommitLevel, ConsistencyLevel, GenerationPolicy, QueryDuration,
-    QueryPolicy, ReadPolicy, RecordExistsAction, ScanPolicy, WritePolicy,
+    BasePolicy, BatchPolicy, CommitLevel, ConsistencyLevel, GenerationPolicy, Policy,
+    QueryDuration, QueryPolicy, ReadPolicy, RecordExistsAction, ScanPolicy, WritePolicy,
 };
 use crate::query::NodePartitions;
 use crate::{Bin, Bins, CollectionIndexType, Key, Statement, Value};
@@ -889,7 +888,7 @@ impl Buffer {
 
         // Write scan timeout
         self.write_field_header(4, FieldType::SocketTimeout);
-        self.write_u32(policy.socket_timeout);
+        self.write_u32(policy.socket_timeout());
 
         self.write_field_header(8, FieldType::QueryId);
         self.write_u64(task_id);
@@ -936,6 +935,11 @@ impl Buffer {
             self.data_offset += 4 + FIELD_HEADER_SIZE as usize;
             field_count += 1;
         }
+
+        // Estimate socket timeout field size. This field is used in new servers and not used
+        // (but harmless to add) in old servers.
+        self.data_offset += 4 + FIELD_HEADER_SIZE as usize;
+        field_count += 1;
 
         if let Some(ref index_name) = statement.index_name {
             if !index_name.is_empty() {
@@ -1136,6 +1140,10 @@ impl Buffer {
         if policy.records_per_second > 0 {
             self.write_field_u32(policy.records_per_second, FieldType::RecordsPerSecond);
         }
+
+        // Write scan timeout
+        self.write_field_header(4, FieldType::SocketTimeout);
+        self.write_u32(policy.socket_timeout());
 
         if let Some(filter_exp) = policy.filter_expression() {
             self.write_filter_expression(filter_exp, filter_exp_size);
@@ -1777,11 +1785,8 @@ impl Buffer {
         3 + value.len()
     }
 
-    pub(crate) fn write_timeout(&mut self, val: Option<Duration>) {
-        if let Some(val) = val {
-            let millis: i32 = (val.as_secs() * 1_000) as i32 + val.subsec_millis() as i32;
-            NetworkEndian::write_i32(&mut self.data_buffer[22..22 + 4], millis);
-        }
+    pub(crate) fn write_timeout(&mut self, millis: u32) {
+        NetworkEndian::write_u32(&mut self.data_buffer[22..22 + 4], millis);
     }
 
     #[allow(dead_code)]

@@ -12,11 +12,25 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::time::Duration;
-
 /// Policy attributes used for user administration commands.
 #[derive(Debug, Clone, Copy)]
 pub struct AdminPolicy {
-    /// Total transaction timeout for both client and server.
-    pub timeout: Duration,
+    /// User administration command socket timeout in milliseconds.
+    pub timeout: u32,
+}
+
+impl Default for AdminPolicy {
+    fn default() -> Self {
+        Self { timeout: 3_000 }
+    }
+}
+
+impl AdminPolicy {
+    pub(crate) fn timeout(&self) -> u32 {
+        if self.timeout > 0 {
+            self.timeout
+        } else {
+            3_000
+        }
+    }
 }

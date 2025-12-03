@@ -6,6 +6,7 @@ authors = ["Jan Hecking <jhecking@netgaroo.com>"]
 homepage = "https://www.aerospike.com/"
 repository = "https://github.com/aerospike/aerospike-client-rust/"
 license = "Apache-2.0"
+edition = "2018"
 
 [dependencies]
 clap = "2.33"
@@ -15,7 +16,7 @@ lazy_static = "1.4"
 num_cpus = "1.11"
 rand = "0.8"
 aerospike = { path = "../.." }
-futures = {version = "0.3.16" }
+tokio = { version = "1.0", features = ["full"] }
 
 [[bin]]
 path = "src/main.rs"

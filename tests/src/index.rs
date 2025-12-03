@@ -50,12 +50,14 @@ async fn create_index_on_bin() {
     let set = create_test_set(&client, EXPECTED).await;
     let bin = "bin";
     let index = format!("{}_{}_{}", ns, set, bin);
+    let apolicy = AdminPolicy::default();
 
-    let _ = client.drop_index(ns, &set, &index).await;
+    let _ = client.drop_index(&apolicy, ns, &set, &index).await;
     thread::sleep(Duration::from_millis(1000));
 
     let task = client
         .create_index_on_bin(
+            &apolicy,
             ns,
             &set,
             bin,
@@ -80,14 +82,16 @@ async fn create_index_using_expression() {
     let set = create_test_set(&client, EXPECTED).await;
     let bin = "bin";
     let index = format!("{}_{}_{}", ns, set, bin);
+    let apolicy = AdminPolicy::default();
 
-    let _ = client.drop_index(ns, &set, &index).await;
+    let _ = client.drop_index(&apolicy, ns, &set, &index).await;
     thread::sleep(Duration::from_millis(1000));
 
     let fe: FilterExpression = eq(int_bin("a".to_string()), int_val(500));
 
     let task = client
         .create_index_using_expression(
+            &apolicy,
             ns,
             &set,
             &index,

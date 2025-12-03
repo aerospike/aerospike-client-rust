@@ -13,13 +13,12 @@
 // limitations under the License.
 
 use std::sync::Arc;
-use std::time::Duration;
 
 use crate::cluster::{Cluster, Node};
 use crate::commands::{buffer, Command, SingleCommand};
 use crate::errors::{Error, Result};
 use crate::net::Connection;
-use crate::policy::WritePolicy;
+use crate::policy::{Policy, WritePolicy};
 use crate::{Key, ResultCode};
 
 pub(crate) struct DeleteCommand<'a> {
@@ -44,12 +43,8 @@ impl<'a> DeleteCommand<'a> {
 
 #[async_trait::async_trait]
 impl<'a> Command for DeleteCommand<'a> {
-    async fn write_timeout(
-        &mut self,
-        conn: &mut Connection,
-        timeout: Option<Duration>,
-    ) -> Result<()> {
-        conn.buffer.write_timeout(timeout);
+    async fn write_timeout(&mut self, conn: &mut Connection) -> Result<()> {
+        conn.buffer.write_timeout(self.policy.server_timeout());
         Ok(())
     }
 

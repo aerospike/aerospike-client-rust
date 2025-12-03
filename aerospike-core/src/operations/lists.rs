@@ -163,7 +163,7 @@ pub enum ListWriteFlags {
     Default = 0,
     /// AddUnique means: Only add unique values.
     AddUnique = 1,
-    /// InsertBounded means: Enforce list boundaries when inserting.  Do not allow values to be inserted
+    /// InsertBounded means: Enforce list boundaries when inserting. Do not allow values to be inserted
     /// at index outside current list boundaries.
     InsertBounded = 2,
     /// NoFail means: do not raise error if a list item fails due to write flag constraints.
@@ -248,7 +248,7 @@ pub const fn list_order_flag(order: ListOrderType, pad: bool) -> u8 {
 
 /// Creates list create operation.
 /// Server creates list at given context level. The context is allowed to be beyond list
-/// boundaries only if pad is set to true.  In that case, nil list entries will be inserted to
+/// boundaries only if pad is set to true. In that case, nil list entries will be inserted to
 /// satisfy the context position.
 pub fn create(bin: &str, list_order: ListOrderType, pad: bool) -> Operation<'_> {
     let cdt_op = CdtOperation {
@@ -268,7 +268,7 @@ pub fn create(bin: &str, list_order: ListOrderType, pad: bool) -> Operation<'_> 
 }
 
 /// Creates a set list order operation.
-/// Server sets list order.  Server returns null.
+/// Server sets list order. Server returns null.
 pub fn set_order<'a>(
     bin: &'a str,
     list_order: ListOrderType,

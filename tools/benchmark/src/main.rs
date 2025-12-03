@@ -33,7 +33,6 @@ mod workers;
 
 use std::sync::mpsc;
 use std::sync::Arc;
-use std::thread;
 
 use aerospike::{Client, ClientPolicy};
 
@@ -41,23 +40,23 @@ use cli::Options;
 use generator::KeyPartitions;
 use stats::Collector;
 use workers::Worker;
-use futures::executor::block_on;
 
-fn main() {
+#[tokio::main]
+async fn main() {
     let _ = env_logger::try_init();
     let options = cli::parse_options();
     info!("{:?}", options);
-    let client = connect(&options);
-    run_workload(client, options);
+    let client = connect(&options).await;
+    run_workload(client, options).await;
 }
 
-fn connect(options: &Options) -> Client {
+async fn connect(options: &Options) -> Client {
     let mut policy = ClientPolicy::default();
     policy.conn_pools_per_node = options.conn_pools_per_node;
-    block_on(Client::new(&policy, &options.hosts)).unwrap()
+    Client::new(&policy, &options.hosts).await.unwrap()
 }
 
-fn run_workload(client: Client, opts: Options) {
+async fn run_workload(client: Client, opts: Options) {
     let client = Arc::new(client);
     let (send, recv) = mpsc::channel();
     let collector = Collector::new(recv);
@@ -69,7 +68,9 @@ fn run_workload(client: Client, opts: Options) {
         opts.concurrency,
     ) {
         let mut worker = Worker::for_workload(&opts.workload, client.clone(), send.clone());
-        thread::spawn(move || worker.run(keys));
+        tokio::spawn(async move { worker.run(keys).await })
+            .await
+            .unwrap();
     }
     drop(send);
     collector.collect();

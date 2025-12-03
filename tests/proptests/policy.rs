@@ -34,8 +34,8 @@ pub fn consistency_level() -> impl Strategy<Value = ConsistencyLevel> {
     ]
 }
 
-pub fn duration_ms(d1: u32, d2: u32) -> impl Strategy<Value = Duration> {
-    (d1..d2).prop_map(|n| Duration::new(n as u64 / 1000, (n % 1000) * 1_000_000))
+pub fn duration_ms(d1: u32, d2: u32) -> impl Strategy<Value = u32> {
+    (d1..d2).prop_map(|n| n)
 }
 
 pub fn duration_ms_opt(d1: u32, d2: u32) -> impl Strategy<Value = Option<Duration>> {
@@ -45,8 +45,8 @@ pub fn duration_ms_opt(d1: u32, d2: u32) -> impl Strategy<Value = Option<Duratio
     ]
 }
 
-pub fn max_retries(min: usize, max: usize) -> impl Strategy<Value = Option<usize>> {
-    prop_oneof![(min..max).prop_map(|n| Some(n)), Just(None),]
+pub fn max_retries(min: usize, max: usize) -> impl Strategy<Value = usize> {
+    (min..max).prop_map(|n| n)
 }
 
 pub fn expiration(min: u32, max: u32) -> impl Strategy<Value = Expiration> {
@@ -120,9 +120,13 @@ pub fn commit_level() -> impl Strategy<Value = CommitLevel> {
     ]
 }
 
-pub fn base_policy(timeout_ms: u32) -> impl Strategy<Value = BasePolicy> {
+pub fn base_policy(
+    socket_timeout_ms: u32,
+    total_timeout_ms: u32,
+) -> impl Strategy<Value = BasePolicy> {
     (
-        duration_ms(timeout_ms, timeout_ms + 1000).prop_map(|d| Some(d)),
+        duration_ms(socket_timeout_ms, socket_timeout_ms * 2),
+        duration_ms(total_timeout_ms, total_timeout_ms * 3),
         max_retries(0, 100),
         duration_ms_opt(100, 500),
         consistency_level(),
@@ -131,6 +135,7 @@ pub fn base_policy(timeout_ms: u32) -> impl Strategy<Value = BasePolicy> {
     )
         .prop_map(
             |(
+                socket_timeout,
                 total_timeout,
                 max_retries,
                 sleep_between_retries,
@@ -138,6 +143,7 @@ pub fn base_policy(timeout_ms: u32) -> impl Strategy<Value = BasePolicy> {
                 read_touch_ttl,
                 filter_expression,
             )| BasePolicy {
+                socket_timeout,
                 total_timeout,
                 max_retries,
                 sleep_between_retries,
@@ -148,9 +154,12 @@ pub fn base_policy(timeout_ms: u32) -> impl Strategy<Value = BasePolicy> {
         )
 }
 
-pub fn write_policy(timeout_ms: u32) -> impl Strategy<Value = WritePolicy> {
+pub fn write_policy(
+    socket_timeout_ms: u32,
+    total_timeout_ms: u32,
+) -> impl Strategy<Value = WritePolicy> {
     (
-        base_policy(timeout_ms),
+        base_policy(socket_timeout_ms, total_timeout_ms),
         record_exists_action(),
         generation_policy(),
         commit_level(),
@@ -185,9 +194,12 @@ pub fn write_policy(timeout_ms: u32) -> impl Strategy<Value = WritePolicy> {
         )
 }
 
-pub fn write_policy_without_replace(timeout_ms: u32) -> impl Strategy<Value = WritePolicy> {
+pub fn write_policy_without_replace(
+    socket_timeout_ms: u32,
+    total_timeout_ms: u32,
+) -> impl Strategy<Value = WritePolicy> {
     (
-        base_policy(timeout_ms),
+        base_policy(socket_timeout_ms, total_timeout_ms),
         record_exists_action_no_replace(),
         generation_policy(),
         commit_level(),
@@ -222,14 +234,16 @@ pub fn write_policy_without_replace(timeout_ms: u32) -> impl Strategy<Value = Wr
         )
 }
 
-pub fn scan_policy(timeout_ms: u32) -> impl Strategy<Value = ScanPolicy> {
+pub fn scan_policy(
+    socket_timeout_ms: u32,
+    total_timeout_ms: u32,
+) -> impl Strategy<Value = ScanPolicy> {
     (
-        base_policy(timeout_ms),
+        base_policy(socket_timeout_ms, total_timeout_ms),
         0..256 as usize,
         0..1000 as u64,
         1..u32::MAX,
         1..10_000 as usize,
-        5000..10_000 as u32,
         replica(),
     )
         .prop_map(
@@ -239,7 +253,6 @@ pub fn scan_policy(timeout_ms: u32) -> impl Strategy<Value = ScanPolicy> {
                 max_records,
                 records_per_second,
                 record_queue_size,
-                socket_timeout,
                 replica,
             )| ScanPolicy {
                 base_policy,
@@ -247,20 +260,21 @@ pub fn scan_policy(timeout_ms: u32) -> impl Strategy<Value = ScanPolicy> {
                 max_records,
                 records_per_second,
                 record_queue_size,
-                socket_timeout,
                 replica,
             },
         )
 }
 
-pub fn query_policy(timeout_ms: u32) -> impl Strategy<Value = QueryPolicy> {
+pub fn query_policy(
+    socket_timeout_ms: u32,
+    total_timeout_ms: u32,
+) -> impl Strategy<Value = QueryPolicy> {
     (
-        base_policy(timeout_ms),
+        base_policy(socket_timeout_ms, total_timeout_ms),
         0..256 as usize,
         0..1000 as u64,
         1..u32::MAX,
         1..10_000 as usize,
-        5000..10_000 as u32,
         query_duration(),
         replica(),
     )
@@ -271,7 +285,6 @@ pub fn query_policy(timeout_ms: u32) -> impl Strategy<Value = QueryPolicy> {
                 max_records,
                 records_per_second,
                 record_queue_size,
-                socket_timeout,
                 expected_duration,
                 replica,
             )| QueryPolicy {
@@ -280,16 +293,20 @@ pub fn query_policy(timeout_ms: u32) -> impl Strategy<Value = QueryPolicy> {
                 max_records,
                 records_per_second,
                 record_queue_size,
-                socket_timeout,
                 expected_duration,
                 replica,
             },
         )
 }
 
-pub fn read_policy(timeout_ms: u32) -> impl Strategy<Value = ReadPolicy> {
-    (base_policy(timeout_ms), replica()).prop_map(|(base_policy, replica)| ReadPolicy {
-        base_policy,
-        replica,
-    })
+pub fn read_policy(
+    socket_timeout_ms: u32,
+    total_timeout_ms: u32,
+) -> impl Strategy<Value = ReadPolicy> {
+    (base_policy(socket_timeout_ms, total_timeout_ms), replica()).prop_map(
+        |(base_policy, replica)| ReadPolicy {
+            base_policy,
+            replica,
+        },
+    )
 }

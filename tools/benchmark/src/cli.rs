@@ -20,7 +20,7 @@ use std::str::FromStr;
 use clap::{App, Arg};
 use num_cpus;
 
-use workers::Workload;
+use crate::workers::Workload;
 
 const AFTER_HELP: &str = r###"
 

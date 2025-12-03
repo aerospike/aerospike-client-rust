@@ -21,6 +21,7 @@ use std::str;
 use crate::commands::buffer::MAX_BUFFER_SIZE;
 use crate::errors::{Error, Result};
 use crate::net::Connection;
+use crate::policy::AdminPolicy;
 
 #[derive(Debug, Clone)]
 pub struct Message {
@@ -28,11 +29,15 @@ pub struct Message {
 }
 
 impl Message {
-    pub async fn info(conn: &mut Connection, commands: &[&str]) -> Result<HashMap<String, String>> {
+    pub async fn info(
+        policy: &AdminPolicy,
+        conn: &mut Connection,
+        commands: &[&str],
+    ) -> Result<HashMap<String, String>> {
         let cmd = commands.join("\n") + "\n";
         let mut msg = Message::new(&cmd.into_bytes())?;
 
-        msg.send(conn).await?;
+        msg.send(policy, conn).await?;
         msg.parse_response()
     }
 
@@ -56,11 +61,12 @@ impl Message {
         rdr.read_u64::<NetworkEndian>().unwrap()
     }
 
-    async fn send(&mut self, conn: &mut Connection) -> Result<()> {
-        conn.write(&self.buf).await?;
+    async fn send(&mut self, policy: &AdminPolicy, conn: &mut Connection) -> Result<()> {
+        conn.set_socket_timeout(policy.timeout());
+        conn.write_all(&self.buf).await?;
 
         // read the header
-        conn.read(self.buf[..8].as_mut()).await?;
+        conn.read_all(self.buf[..8].as_mut()).await?;
 
         // figure our message size and grow the buffer if necessary
         let data_len = self.data_len() as usize;
@@ -75,7 +81,7 @@ impl Message {
         self.buf.resize(data_len, 0);
 
         // read the message content
-        conn.read(self.buf.as_mut()).await?;
+        conn.read_all(self.buf.as_mut()).await?;
 
         Ok(())
     }

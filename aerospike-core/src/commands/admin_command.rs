@@ -24,10 +24,10 @@ use crate::net::Connection;
 use crate::net::PooledConnection;
 use crate::policy::AuthMode;
 use crate::privilege::PrivilegeCode;
-use crate::Privilege;
 use crate::ResultCode;
 use crate::Role;
 use crate::User;
+use crate::{AdminPolicy, Privilege};
 
 // Commands
 const AUTHENTICATE: u8 = 0;
@@ -81,12 +81,14 @@ impl AdminCommand {
         AdminCommand {}
     }
 
-    async fn execute(mut conn: PooledConnection) -> Result<()> {
+    async fn execute(policy: &AdminPolicy, mut conn: PooledConnection) -> Result<()> {
         // Write the message header
         conn.buffer.size_buffer()?;
         let size = conn.buffer.data_offset;
         conn.buffer.reset_offset();
         AdminCommand::write_size(&mut conn, size as i64);
+
+        conn.set_socket_timeout(policy.timeout());
 
         // Send command.
         if let Err(err) = conn.flush().await {
@@ -109,9 +111,10 @@ impl AdminCommand {
         Ok(())
     }
 
-    async fn read_users(mut conn: PooledConnection) -> Result<Vec<User>> {
+    async fn read_users(policy: &AdminPolicy, mut conn: PooledConnection) -> Result<Vec<User>> {
         // Write the message header
         conn.buffer.size_buffer()?;
+        conn.set_socket_timeout(policy.timeout());
         let size = conn.buffer.data_offset;
         conn.buffer.reset_offset();
         AdminCommand::write_size(&mut conn, size as i64);
@@ -210,9 +213,10 @@ impl AdminCommand {
         Ok((0, users))
     }
 
-    async fn read_roles(mut conn: PooledConnection) -> Result<Vec<Role>> {
+    async fn read_roles(policy: &AdminPolicy, mut conn: PooledConnection) -> Result<Vec<Role>> {
         // Write the message header
         conn.buffer.size_buffer()?;
+        conn.set_socket_timeout(policy.timeout());
         let size = conn.buffer.data_offset();
         conn.buffer.reset_offset();
         AdminCommand::write_size(&mut conn, size as i64);
@@ -421,6 +425,7 @@ impl AdminCommand {
     }
 
     pub(crate) async fn create_user(
+        policy: &AdminPolicy,
         cluster: &Cluster,
         user: &str,
         password: &str,
@@ -436,10 +441,14 @@ impl AdminCommand {
         AdminCommand::write_field_str(&mut conn, PASSWORD, &AdminCommand::hash_password(password)?);
         AdminCommand::write_roles(&mut conn, roles);
 
-        AdminCommand::execute(conn).await
+        AdminCommand::execute(policy, conn).await
     }
 
-    pub(crate) async fn drop_user(cluster: &Cluster, user: &str) -> Result<()> {
+    pub(crate) async fn drop_user(
+        policy: &AdminPolicy,
+        cluster: &Cluster,
+        user: &str,
+    ) -> Result<()> {
         let node = cluster.get_random_node().await?;
         let mut conn = node.get_connection().await?;
 
@@ -448,10 +457,15 @@ impl AdminCommand {
         AdminCommand::write_header(&mut conn, DROP_USER, 1);
         AdminCommand::write_field_str(&mut conn, USER, user);
 
-        AdminCommand::execute(conn).await
+        AdminCommand::execute(policy, conn).await
     }
 
-    pub(crate) async fn set_password(cluster: &Cluster, user: &str, password: &str) -> Result<()> {
+    pub(crate) async fn set_password(
+        policy: &AdminPolicy,
+        cluster: &Cluster,
+        user: &str,
+        password: &str,
+    ) -> Result<()> {
         let node = cluster.get_random_node().await?;
         let mut conn = node.get_connection().await?;
 
@@ -461,10 +475,11 @@ impl AdminCommand {
         AdminCommand::write_field_str(&mut conn, USER, user);
         AdminCommand::write_field_str(&mut conn, PASSWORD, &AdminCommand::hash_password(password)?);
 
-        AdminCommand::execute(conn).await
+        AdminCommand::execute(policy, conn).await
     }
 
     pub(crate) async fn change_password(
+        policy: &AdminPolicy,
         cluster: &Cluster,
         user: &str,
         password: &str,
@@ -495,11 +510,12 @@ impl AdminCommand {
 
         AdminCommand::write_field_str(&mut conn, PASSWORD, &AdminCommand::hash_password(password)?);
 
-        AdminCommand::execute(conn).await?;
+        AdminCommand::execute(policy, conn).await?;
         cluster.update_password(user, password).await
     }
 
     pub(crate) async fn create_role(
+        policy: &AdminPolicy,
         cluster: &Cluster,
         role_name: &str,
         privileges: &[Privilege],
@@ -548,10 +564,14 @@ impl AdminCommand {
             AdminCommand::write_field_u32(&mut conn, WRITE_QUOTA, write_quota);
         }
 
-        AdminCommand::execute(conn).await
+        AdminCommand::execute(policy, conn).await
     }
 
-    pub(crate) async fn drop_role(cluster: &Cluster, role_name: &str) -> Result<()> {
+    pub(crate) async fn drop_role(
+        policy: &AdminPolicy,
+        cluster: &Cluster,
+        role_name: &str,
+    ) -> Result<()> {
         let node = cluster.get_random_node().await?;
         let mut conn = node.get_connection().await?;
 
@@ -560,10 +580,11 @@ impl AdminCommand {
         AdminCommand::write_header(&mut conn, DROP_ROLE, 1);
         AdminCommand::write_field_str(&mut conn, ROLE, role_name);
 
-        AdminCommand::execute(conn).await
+        AdminCommand::execute(policy, conn).await
     }
 
     pub(crate) async fn grant_privileges(
+        policy: &AdminPolicy,
         cluster: &Cluster,
         role_name: &str,
         privileges: &[Privilege],
@@ -577,10 +598,11 @@ impl AdminCommand {
         AdminCommand::write_field_str(&mut conn, ROLE, role_name);
         AdminCommand::write_privileges(&mut conn, privileges)?;
 
-        AdminCommand::execute(conn).await
+        AdminCommand::execute(policy, conn).await
     }
 
     pub(crate) async fn revoke_privileges(
+        policy: &AdminPolicy,
         cluster: &Cluster,
         role_name: &str,
         privileges: &[Privilege],
@@ -594,10 +616,11 @@ impl AdminCommand {
         AdminCommand::write_field_str(&mut conn, ROLE, role_name);
         AdminCommand::write_privileges(&mut conn, privileges)?;
 
-        AdminCommand::execute(conn).await
+        AdminCommand::execute(policy, conn).await
     }
 
     pub(crate) async fn set_allowlist(
+        policy: &AdminPolicy,
         cluster: &Cluster,
         role_name: &str,
         allowlist: &[&str],
@@ -611,10 +634,11 @@ impl AdminCommand {
         AdminCommand::write_field_str(&mut conn, ROLE, role_name);
         AdminCommand::write_allowlist(&mut conn, allowlist);
 
-        AdminCommand::execute(conn).await
+        AdminCommand::execute(policy, conn).await
     }
 
     pub(crate) async fn set_quotas(
+        policy: &AdminPolicy,
         cluster: &Cluster,
         role_name: &str,
         read_quota: u32,
@@ -630,10 +654,15 @@ impl AdminCommand {
         AdminCommand::write_field_u32(&mut conn, READ_QUOTA, read_quota);
         AdminCommand::write_field_u32(&mut conn, WRITE_QUOTA, write_quota);
 
-        AdminCommand::execute(conn).await
+        AdminCommand::execute(policy, conn).await
     }
 
-    pub(crate) async fn grant_roles(cluster: &Cluster, user: &str, roles: &[&str]) -> Result<()> {
+    pub(crate) async fn grant_roles(
+        policy: &AdminPolicy,
+        cluster: &Cluster,
+        user: &str,
+        roles: &[&str],
+    ) -> Result<()> {
         let node = cluster.get_random_node().await?;
         let mut conn = node.get_connection().await?;
 
@@ -643,10 +672,15 @@ impl AdminCommand {
         AdminCommand::write_field_str(&mut conn, USER, user);
         AdminCommand::write_roles(&mut conn, roles);
 
-        AdminCommand::execute(conn).await
+        AdminCommand::execute(policy, conn).await
     }
 
-    pub(crate) async fn revoke_roles(cluster: &Cluster, user: &str, roles: &[&str]) -> Result<()> {
+    pub(crate) async fn revoke_roles(
+        policy: &AdminPolicy,
+        cluster: &Cluster,
+        user: &str,
+        roles: &[&str],
+    ) -> Result<()> {
         let node = cluster.get_random_node().await?;
         let mut conn = node.get_connection().await?;
 
@@ -656,10 +690,14 @@ impl AdminCommand {
         AdminCommand::write_field_str(&mut conn, USER, user);
         AdminCommand::write_roles(&mut conn, roles);
 
-        AdminCommand::execute(conn).await
+        AdminCommand::execute(policy, conn).await
     }
 
-    pub(crate) async fn query_users(cluster: &Cluster, user: Option<&str>) -> Result<Vec<User>> {
+    pub(crate) async fn query_users(
+        policy: &AdminPolicy,
+        cluster: &Cluster,
+        user: Option<&str>,
+    ) -> Result<Vec<User>> {
         let node = cluster.get_random_node().await?;
         let mut conn = node.get_connection().await?;
 
@@ -673,10 +711,14 @@ impl AdminCommand {
             AdminCommand::write_header(&mut conn, QUERY_USERS, 0);
         }
 
-        AdminCommand::read_users(conn).await
+        AdminCommand::read_users(policy, conn).await
     }
 
-    pub(crate) async fn query_roles(cluster: &Cluster, role: Option<&str>) -> Result<Vec<Role>> {
+    pub(crate) async fn query_roles(
+        policy: &AdminPolicy,
+        cluster: &Cluster,
+        role: Option<&str>,
+    ) -> Result<Vec<Role>> {
         let node = cluster.get_random_node().await?;
         let mut conn = node.get_connection().await?;
 
@@ -690,7 +732,7 @@ impl AdminCommand {
             AdminCommand::write_header(&mut conn, QUERY_ROLES, 0);
         }
 
-        AdminCommand::read_roles(conn).await
+        AdminCommand::read_roles(policy, conn).await
     }
 
     // Utility methods

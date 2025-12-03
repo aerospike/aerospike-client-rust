@@ -22,9 +22,10 @@ use aerospike_core::errors::Result;
 use aerospike_core::operations::{CdtContext, Operation};
 use aerospike_core::query::PartitionFilter;
 use aerospike_core::{
-    BatchOperation, BatchPolicy, BatchRecord, Bin, Bins, ClientPolicy, CollectionIndexType,
-    IndexTask, IndexType, Key, Node, Privilege, QueryPolicy, ReadPolicy, Record, Recordset,
-    RegisterTask, Role, ScanPolicy, Statement, ToHosts, UDFLang, User, Value, WritePolicy,
+    AdminPolicy, BatchOperation, BatchPolicy, BatchRecord, Bin, Bins, ClientPolicy,
+    CollectionIndexType, IndexTask, IndexType, Key, Node, Privilege, QueryPolicy, ReadPolicy,
+    Record, Recordset, RegisterTask, Role, ScanPolicy, Statement, ToHosts, UDFLang, User, Value,
+    WritePolicy,
 };
 use futures::executor::block_on;
 
@@ -446,11 +447,15 @@ impl Client {
     /// ```
     pub fn register_udf(
         &self,
+        policy: &AdminPolicy,
         udf_body: &[u8],
         udf_name: &str,
         language: UDFLang,
     ) -> Result<RegisterTask> {
-        block_on(self.async_client.register_udf(udf_body, udf_name, language))
+        block_on(
+            self.async_client
+                .register_udf(policy, udf_body, udf_name, language),
+        )
     }
 
     /// Register a package containing user-defined functions (UDF) with the cluster. This
@@ -461,19 +466,25 @@ impl Client {
     /// Lua is the only supported scripting laungauge for UDFs at the moment.
     pub fn register_udf_from_file(
         &self,
+        policy: &AdminPolicy,
         client_path: &str,
         udf_name: &str,
         language: UDFLang,
     ) -> Result<RegisterTask> {
         block_on(
             self.async_client
-                .register_udf_from_file(client_path, udf_name, language),
+                .register_udf_from_file(policy, client_path, udf_name, language),
         )
     }
 
     /// Remove a user-defined function (UDF) module from the server.
-    pub fn remove_udf(&self, udf_name: &str, language: UDFLang) -> Result<()> {
-        block_on(self.async_client.remove_udf(udf_name, language))
+    pub fn remove_udf(
+        &self,
+        policy: &AdminPolicy,
+        udf_name: &str,
+        language: UDFLang,
+    ) -> Result<()> {
+        block_on(self.async_client.remove_udf(policy, udf_name, language))
     }
 
     /// Execute a user-defined function on the server and return the results. The function operates
@@ -591,10 +602,16 @@ impl Client {
     /// zero, only records with a lut less than `before_nanos` are deleted. Units are in
     /// nanoseconds since unix epoch (1970-01-01). Pass in zero to delete all records in the
     /// namespace/set recardless of last update time.
-    pub fn truncate(&self, namespace: &str, set_name: &str, before_nanos: i64) -> Result<()> {
+    pub fn truncate(
+        &self,
+        policy: &AdminPolicy,
+        namespace: &str,
+        set_name: &str,
+        before_nanos: i64,
+    ) -> Result<()> {
         block_on(
             self.async_client
-                .truncate(namespace, set_name, before_nanos),
+                .truncate(policy, namespace, set_name, before_nanos),
         )
     }
 
@@ -620,6 +637,7 @@ impl Client {
     /// ```
     pub async fn create_index_on_bin(
         &self,
+        policy: &AdminPolicy,
         namespace: &str,
         set_name: &str,
         bin_name: &str,
@@ -629,6 +647,7 @@ impl Client {
         ctx: Option<&[CdtContext]>,
     ) -> Result<IndexTask> {
         block_on(self.async_client.create_index_on_bin(
+            policy,
             namespace,
             set_name,
             bin_name,
@@ -662,6 +681,7 @@ impl Client {
     /// ```
     pub async fn create_index_using_expression(
         &self,
+        policy: &AdminPolicy,
         namespace: &str,
         set_name: &str,
         index_name: &str,
@@ -670,6 +690,7 @@ impl Client {
         expression: &FilterExpression,
     ) -> Result<IndexTask> {
         block_on(self.async_client.create_index_using_expression(
+            policy,
             namespace,
             set_name,
             index_name,
@@ -680,43 +701,70 @@ impl Client {
     }
 
     /// Delete secondary index.
-    pub fn drop_index(&self, namespace: &str, set_name: &str, index_name: &str) -> Result<()> {
+    pub fn drop_index(
+        &self,
+        policy: &AdminPolicy,
+        namespace: &str,
+        set_name: &str,
+        index_name: &str,
+    ) -> Result<()> {
         block_on(
             self.async_client
-                .drop_index(namespace, set_name, index_name),
+                .drop_index(policy, namespace, set_name, index_name),
         )
     }
 
     /// Creates a new user with password and roles. Clear-text password will be hashed using bcrypt
     /// before sending to server.
-    pub async fn create_user(&self, user: &str, password: &str, roles: &[&str]) -> Result<()> {
-        block_on(self.async_client.create_user(user, password, roles))
+    pub async fn create_user(
+        &self,
+        policy: &AdminPolicy,
+        user: &str,
+        password: &str,
+        roles: &[&str],
+    ) -> Result<()> {
+        block_on(self.async_client.create_user(policy, user, password, roles))
     }
 
     /// Removes a user from the cluster.
-    pub async fn drop_user(&self, user: &str) -> Result<()> {
-        block_on(self.async_client.drop_user(user))
+    pub async fn drop_user(&self, policy: &AdminPolicy, user: &str) -> Result<()> {
+        block_on(self.async_client.drop_user(policy, user))
     }
 
     /// Changes a user's password. Clear-text password will be hashed using bcrypt before sending to server.
-    pub async fn change_password(&self, user: &str, password: &str) -> Result<()> {
-        block_on(self.async_client.change_password(user, password))
+    pub async fn change_password(
+        &self,
+        policy: &AdminPolicy,
+        user: &str,
+        password: &str,
+    ) -> Result<()> {
+        block_on(self.async_client.change_password(policy, user, password))
     }
 
     /// Adds roles to user's list of roles.
-    pub async fn grant_roles(&self, user: &str, roles: &[&str]) -> Result<()> {
-        block_on(self.async_client.grant_roles(user, roles))
+    pub async fn grant_roles(
+        &self,
+        policy: &AdminPolicy,
+        user: &str,
+        roles: &[&str],
+    ) -> Result<()> {
+        block_on(self.async_client.grant_roles(policy, user, roles))
     }
 
     /// Removes roles from user's list of roles.
-    pub async fn revoke_roles(&self, user: &str, roles: &[&str]) -> Result<()> {
-        block_on(self.async_client.revoke_roles(user, roles))
+    pub async fn revoke_roles(
+        &self,
+        policy: &AdminPolicy,
+        user: &str,
+        roles: &[&str],
+    ) -> Result<()> {
+        block_on(self.async_client.revoke_roles(policy, user, roles))
     }
 
     // Retrieves users and their roles.
     // If None is passed for the user argument, all users will be returned.
-    pub async fn query_users(&self, user: Option<&str>) -> Result<Vec<User>> {
-        block_on(self.async_client.query_users(user))
+    pub async fn query_users(&self, policy: &AdminPolicy, user: Option<&str>) -> Result<Vec<User>> {
+        block_on(self.async_client.query_users(policy, user))
     }
 
     /// Creates a user-defined role.
@@ -724,6 +772,7 @@ impl Client {
     /// Pass 0 for quota values for no limit.
     pub async fn create_role(
         &self,
+        policy: &AdminPolicy,
         role_name: &str,
         privileges: &[Privilege],
         allowlist: &[&str],
@@ -731,6 +780,7 @@ impl Client {
         write_quota: u32,
     ) -> Result<()> {
         block_on(self.async_client.create_role(
+            policy,
             role_name,
             privileges,
             allowlist,
@@ -741,29 +791,53 @@ impl Client {
 
     /// Retrieves roles and their privileges.
     /// If None is passed for the role argument, all roles will be returned.
-    pub async fn query_roles(&self, role: Option<&str>) -> Result<Vec<Role>> {
-        block_on(self.async_client.query_roles(role))
+    pub async fn query_roles(&self, policy: &AdminPolicy, role: Option<&str>) -> Result<Vec<Role>> {
+        block_on(self.async_client.query_roles(policy, role))
     }
 
     /// Removes a user-defined role.
-    pub async fn drop_role(&self, role_name: &str) -> Result<()> {
-        block_on(self.async_client.drop_role(role_name))
+    pub async fn drop_role(&self, policy: &AdminPolicy, role_name: &str) -> Result<()> {
+        block_on(self.async_client.drop_role(policy, role_name))
     }
 
     /// Grants privileges to a user-defined role.
-    pub async fn grant_privileges(&self, role_name: &str, privileges: &[Privilege]) -> Result<()> {
-        block_on(self.async_client.grant_privileges(role_name, privileges))
+    pub async fn grant_privileges(
+        &self,
+        policy: &AdminPolicy,
+        role_name: &str,
+        privileges: &[Privilege],
+    ) -> Result<()> {
+        block_on(
+            self.async_client
+                .grant_privileges(policy, role_name, privileges),
+        )
     }
 
     /// Revokes privileges from a user-defined role.
-    pub async fn revoke_privileges(&self, role_name: &str, privileges: &[Privilege]) -> Result<()> {
-        block_on(self.async_client.revoke_privileges(role_name, privileges))
+    pub async fn revoke_privileges(
+        &self,
+        policy: &AdminPolicy,
+        role_name: &str,
+        privileges: &[Privilege],
+    ) -> Result<()> {
+        block_on(
+            self.async_client
+                .revoke_privileges(policy, role_name, privileges),
+        )
     }
 
     /// Sets IP address allowlist for a role.
     /// If allowlist is nil or empty, it removes existing allowlist from role.
-    pub async fn set_allowlist(&self, role_name: &str, allowlist: &[&str]) -> Result<()> {
-        block_on(self.async_client.set_allowlist(role_name, allowlist))
+    pub async fn set_allowlist(
+        &self,
+        policy: &AdminPolicy,
+        role_name: &str,
+        allowlist: &[&str],
+    ) -> Result<()> {
+        block_on(
+            self.async_client
+                .set_allowlist(policy, role_name, allowlist),
+        )
     }
 
     /// Sets maximum reads/writes per second limits for a role.
@@ -772,13 +846,14 @@ impl Client {
     /// Pass 0 for quota values for no limit.
     pub async fn set_quotas(
         &self,
+        policy: &AdminPolicy,
         role_name: &str,
         read_quota: u32,
         write_quota: u32,
     ) -> Result<()> {
         block_on(
             self.async_client
-                .set_quotas(role_name, read_quota, write_quota),
+                .set_quotas(policy, role_name, read_quota, write_quota),
         )
     }
 }

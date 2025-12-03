@@ -37,11 +37,12 @@ async fn register_task_test() {
     end
     "#;
 
+    let apolicy = AdminPolicy::default();
     let udf_name = common::rand_str(10);
     let udf_file_name = udf_name.clone().to_owned() + ".LUA";
 
     let register_task = client
-        .register_udf(code.as_bytes(), &udf_file_name, UDFLang::Lua)
+        .register_udf(&apolicy, code.as_bytes(), &udf_file_name, UDFLang::Lua)
         .await
         .unwrap();
 
@@ -50,14 +51,17 @@ async fn register_task_test() {
         Ok(Status::Complete)
     ));
 
-    client.remove_udf(&udf_name, UDFLang::Lua).await.unwrap();
+    client
+        .remove_udf(&apolicy, &udf_name, UDFLang::Lua)
+        .await
+        .unwrap();
     // Wait for some time to ensure UDF has been unregistered on all nodes.
     thread::sleep(Duration::from_secs(2));
 
     let timeout = Duration::from_millis(100);
     assert!(matches!(
         register_task.wait_till_complete(Some(timeout)).await,
-        Err(Error::Timeout(_, _))
+        Err(Error::Timeout(_))
     ));
 
     client.close().await.unwrap();
@@ -73,6 +77,7 @@ async fn index_task_test() {
     let index_name = common::rand_str(10);
 
     let wpolicy = WritePolicy::default();
+    let apolicy = AdminPolicy::default();
     for i in 0..2 as i64 {
         let key = as_key!(namespace, &set_name, i);
         let wbin = as_bin!(&bin_name, i);
@@ -82,6 +87,7 @@ async fn index_task_test() {
 
     let index_task = client
         .create_index_on_bin(
+            &apolicy,
             &namespace,
             &set_name,
             &bin_name,

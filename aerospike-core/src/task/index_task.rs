@@ -16,7 +16,7 @@
 use crate::cluster::{Cluster, Node};
 use crate::errors::{Error, Result};
 use crate::task::{Status, Task};
-use crate::Version;
+use crate::{AdminPolicy, Version};
 use std::sync::Arc;
 
 /// Struct for querying index creation status
@@ -102,10 +102,11 @@ impl Task for IndexTask {
             return Err(Error::Connection("No connected node".to_string()));
         }
 
+        let admin_policy = AdminPolicy { timeout: 3_000 };
         for node in &nodes {
             let command =
                 &IndexTask::build_command(node, self.namespace.clone(), self.index_name.clone());
-            let response = node.info(&[&command[..]]).await?;
+            let response = node.info(&admin_policy, &[&command[..]]).await?;
 
             if !response.contains_key(command) {
                 return Ok(Status::NotFound);

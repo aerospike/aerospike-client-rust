@@ -27,7 +27,7 @@ use crate::Value;
 /// `HLLWriteFlags` determines write flags for HLL
 #[derive(Debug, Clone, Copy)]
 pub enum HLLWriteFlags {
-    /// Default.  Allow create or update.
+    /// Default. Allow create or update.
     Default = 0,
     /// If the bin already exists, the operation will be denied.
     /// If the bin does not exist, a new bin will be created.

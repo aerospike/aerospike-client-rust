@@ -14,7 +14,6 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::Duration;
 
 use aerospike_rt::Mutex;
 
@@ -226,13 +225,9 @@ impl StreamCommand {
 
 #[async_trait::async_trait]
 impl Command for StreamCommand {
-    async fn write_timeout(
-        &mut self,
-        conn: &mut Connection,
-        timeout: Option<Duration>,
-    ) -> Result<()> {
-        conn.buffer.write_timeout(timeout);
-        Ok(())
+    async fn write_timeout(&mut self, _conn: &mut Connection) -> Result<()> {
+        // should be implemented downstream
+        unreachable!()
     }
 
     async fn write_buffer(&mut self, conn: &mut Connection) -> Result<()> {
@@ -240,7 +235,7 @@ impl Command for StreamCommand {
     }
 
     #[allow(unused_variables)]
-    async fn prepare_buffer(&mut self, conn: &mut Connection) -> Result<()> {
+    async fn prepare_buffer(&mut self, _conn: &mut Connection) -> Result<()> {
         // should be implemented downstream
         unreachable!()
     }
@@ -265,6 +260,7 @@ impl Command for StreamCommand {
                 conn.set_limit(size)?;
                 status = self.parse_stream(&mut conn, size as usize).await?;
             }
+            conn.drain().await?;
         }
 
         Ok(())

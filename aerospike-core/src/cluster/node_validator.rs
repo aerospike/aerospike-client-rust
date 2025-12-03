@@ -21,7 +21,7 @@ use crate::cluster::Cluster;
 use crate::commands::Message;
 use crate::errors::{Error, Result};
 use crate::net::{Connection, Host};
-use crate::policy::ClientPolicy;
+use crate::policy::{AdminPolicy, ClientPolicy};
 use crate::ToHosts;
 
 #[allow(clippy::struct_excessive_bools)]
@@ -111,8 +111,15 @@ impl NodeValidator {
     async fn validate_alias(&mut self, cluster: &Cluster, alias: &Host) -> Result<()> {
         let mut conn = Connection::new(&alias, &self.client_policy).await?;
         let service_name = cluster.client_policy().await.service_string();
-        let info_map =
-            Message::info(&mut conn, &["node", "cluster-name", "build", service_name]).await?;
+        let admin_policy = AdminPolicy {
+            timeout: self.client_policy.timeout,
+        };
+        let info_map = Message::info(
+            &admin_policy,
+            &mut conn,
+            &["node", "cluster-name", "build", service_name],
+        )
+        .await?;
 
         match info_map.get("node") {
             None => return Err(Error::InvalidNode(String::from("Missing node name"))),

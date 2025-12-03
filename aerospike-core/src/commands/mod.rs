@@ -33,7 +33,6 @@ pub(crate) mod write_command;
 mod field_type;
 
 use std::sync::Arc;
-use std::time::Duration;
 
 pub(crate) use self::batch_attr::BatchAttr;
 pub(crate) use self::batch_operate_command::BatchOperateCommand;
@@ -58,11 +57,7 @@ use crate::net::Connection;
 // Command interface describes all commands available
 #[async_trait::async_trait]
 pub(crate) trait Command {
-    async fn write_timeout(
-        &mut self,
-        conn: &mut Connection,
-        timeout: Option<Duration>,
-    ) -> Result<()>;
+    async fn write_timeout(&mut self, conn: &mut Connection) -> Result<()>;
     async fn prepare_buffer(&mut self, conn: &mut Connection) -> Result<()>;
     async fn get_node(&mut self) -> Result<Arc<Node>>;
     async fn parse_result(&mut self, conn: &mut Connection) -> Result<()>;

@@ -82,7 +82,7 @@ impl PartitionFilter {
     //
     /// This method only works for scan or query with nil filter (primary index query).
     /// This method does not work for a secondary index query because the digest alone
-    /// is not sufficient to determine a cursor in a secondary index query.    
+    /// is not sufficient to determine a cursor in a secondary index query.   
     pub fn by_key(key: &Key) -> Self {
         PartitionFilter {
             begin: key.partition_id(),

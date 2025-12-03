@@ -33,6 +33,7 @@ async fn create_test_set(client: &Client, no_records: usize) -> String {
     let set_name = common::rand_str(10);
 
     let wpolicy = WritePolicy::default();
+    let apolicy = AdminPolicy::default();
     for i in 0..no_records as i64 {
         let key = as_key!(namespace, &set_name, i);
         let wbin = as_bin!("bin", i);
@@ -43,6 +44,7 @@ async fn create_test_set(client: &Client, no_records: usize) -> String {
 
     let task = client
         .create_index_on_bin(
+            &apolicy,
             namespace,
             &set_name,
             "bin",
@@ -327,6 +329,7 @@ async fn query_large_i64() {
     let value = Value::from(i64::max_value());
     let key = Key::new(common::namespace(), SET, value.clone()).unwrap();
     let wpolicy = WritePolicy::default();
+    let apolicy = AdminPolicy::default();
 
     let res = client
         .put(&wpolicy, &key, &[aerospike::Bin::new(BIN.into(), value)])
@@ -352,7 +355,7 @@ async fn query_large_i64() {
         assert_eq!(int, Value::Int(i64::max_value()));
     }
 
-    let _ = client.truncate(common::namespace(), SET, 0).await;
+    let _ = client.truncate(&apolicy, common::namespace(), SET, 0).await;
 }
 
 #[aerospike_macro::test]
@@ -362,9 +365,11 @@ async fn test_query_geo_within_geojson_region() {
     let bin_name = "geo_bin";
 
     let client = Arc::new(common::client().await);
+    let apolicy = AdminPolicy::default();
 
     let task = client
         .create_index_on_bin(
+            &apolicy,
             namespace,
             set_name,
             bin_name,
@@ -449,5 +454,5 @@ async fn test_query_geo_within_geojson_region() {
 
     assert!(count == 2);
 
-    let _ = client.truncate(namespace, set_name, 0).await;
+    let _ = client.truncate(&apolicy, namespace, set_name, 0).await;
 }

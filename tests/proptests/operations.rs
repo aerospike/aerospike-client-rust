@@ -7,7 +7,7 @@ use crate::proptests::{key::*, operation::*, policy::*};
 proptest_async::proptest! {
     #[test]
     async fn operate(
-        write_policy in write_policy(30000),
+        write_policy in write_policy(1000, 5000),
         key in any_key(common::namespace().into(), "test".into()),
         ops in many_operations(50),
     ) {

@@ -45,10 +45,10 @@ pub(crate) struct PartitionTracker {
     record_count: AtomicUsize,
     max_records: u64,
     sleep_between_retries: Option<Duration>,
-    socket_timeout: Option<Duration>,
-    total_timeout: Option<Duration>,
+    socket_timeout: u32,
+    total_timeout: u32,
     iteration: AtomicUsize, //= 1
-    deadline: Instant,
+    deadline: Option<Instant>,
 }
 
 impl PartitionTracker {
@@ -62,7 +62,7 @@ impl PartitionTracker {
 
             // Validate here instead of initial PartitionFilter constructor because total number of
             // cluster partitions may change on the server and PartitionFilter will never have access
-            // to Cluster instance.  Use fixed number of partitions for now.
+            // to Cluster instance. Use fixed number of partitions for now.
             if !(usize::from(partition_filter.begin) < node::PARTITIONS) {
                 return Err(Error::InvalidArgument(format!(
                     "Invalid partition begin {} . Valid range: 0-{}",
@@ -100,10 +100,10 @@ impl PartitionTracker {
                 record_count: AtomicUsize::new(0),
                 max_records: policy.max_records().unwrap_or(0),
                 sleep_between_retries: None,
-                socket_timeout: None,
-                total_timeout: None,
+                socket_timeout: 0,
+                total_timeout: 0,
                 iteration: AtomicUsize::new(1),
-                deadline: Instant::now(),
+                deadline: None,
             };
 
             if partition_filter.partitions.is_none() {
@@ -237,17 +237,7 @@ impl PartitionTracker {
         self.sleep_between_retries = policy.sleep_between_retries();
         self.socket_timeout = policy.socket_timeout();
         self.total_timeout = policy.total_timeout();
-
-        if let Some(total_timeout) = self.total_timeout {
-            if !total_timeout.is_zero() {
-                self.deadline = Instant::now() + total_timeout;
-                if let Some(socket_timeout) = self.socket_timeout {
-                    if socket_timeout.is_zero() || socket_timeout > total_timeout {
-                        self.socket_timeout = Some(total_timeout);
-                    }
-                }
-            }
-        }
+        self.deadline = policy.deadline();
 
         // if self.replica == RANDOM {
         //     panic(newError(types.PARAMETER_ERROR, "Invalid replica: RANDOM"))
@@ -426,29 +416,30 @@ impl PartitionTracker {
         }
 
         // Check if limits have been reached.
-        if let Some(max_retries) = policy.max_retries() {
-            if *self.iteration.get_mut() > max_retries {
+        if policy.max_retries() > 0 {
+            if *self.iteration.get_mut() > policy.max_retries() {
                 return Err(Error::ClientError(format!(
                     "Max retries exceeded: {}",
-                    max_retries
+                    policy.max_retries()
                 )));
             }
         }
 
-        if let Some(total_timeout) = policy.total_timeout() {
+        if let Some(deadline) = self.deadline {
             // Check for total timeout.
-            let remaining = self.deadline
+            let remaining = deadline
                 - Instant::now()
                 - self
                     .sleep_between_retries
-                    .unwrap_or(Duration::from_micros(0));
+                    .unwrap_or(Duration::from_millis(0));
 
             if remaining.is_zero() {
-                return Err(Error::Timeout("Scan/Query timed out".into(), true));
+                return Err(Error::Timeout("Scan/Query timed out".into()));
             }
 
+            let total_timeout = Duration::from_millis(policy.total_timeout() as u64);
             if remaining < total_timeout {
-                self.total_timeout = Some(remaining);
+                self.total_timeout = remaining.as_millis() as u32;
 
                 if self.socket_timeout > self.total_timeout {
                     self.socket_timeout = self.total_timeout
@@ -515,6 +506,14 @@ impl PartitionTracker {
                 Err(_) => None,
             },
             None => None,
+        }
+    }
+
+    pub(crate) fn server_timeout(&self) -> u32 {
+        if self.total_timeout > 0 {
+            self.socket_timeout
+        } else {
+            0
         }
     }
 }

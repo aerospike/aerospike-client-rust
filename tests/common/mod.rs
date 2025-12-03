@@ -26,7 +26,7 @@ use rand::Rng;
 
 use tokio::sync::OnceCell;
 
-use aerospike::{AuthMode, Client, ClientPolicy};
+use aerospike::{AdminPolicy, AuthMode, Client, ClientPolicy};
 
 #[cfg(feature = "tls")]
 use rustls::pki_types::pem::PemObject;
@@ -179,7 +179,7 @@ pub async fn singleton_client() -> &'static Client {
             //     std::process::abort();
             // }));
             // console_subscriber::init();
-            // insert_bins(namespace(), "test").await.unwrap();
+            insert_bins(namespace(), "test").await.unwrap();
             let client = Client::new(&GLOBAL_CLIENT_POLICY, &*AEROSPIKE_HOSTS)
                 .await
                 .unwrap();
@@ -202,7 +202,7 @@ pub async fn enterprise_edition() -> bool {
     }
 
     let node = node.unwrap();
-    let edition = node.info(&vec!["edition"]).await;
+    let edition = node.info(&AdminPolicy::default(), &vec!["edition"]).await;
     if let Err(_) = edition {
         return false;
     }
@@ -220,7 +220,7 @@ pub async fn security_enabled() -> bool {
     }
 
     let client = client().await;
-    let roles = client.query_users(None).await;
+    let roles = client.query_users(&AdminPolicy::default(), None).await;
     if let Err(_) = roles {
         return false;
     }
@@ -242,8 +242,10 @@ pub async fn insert_bins(ns: &str, set_name: &str) -> aerospike::Result<()> {
         client.put(&wp, &key, &bins).await?;
     }
 
+    let apolicy = AdminPolicy::default();
     let task = client
         .create_index_on_bin(
+            &apolicy,
             ns,
             set_name,
             "bin_i",
@@ -258,6 +260,7 @@ pub async fn insert_bins(ns: &str, set_name: &str) -> aerospike::Result<()> {
 
     let task = client
         .create_index_on_bin(
+            &apolicy,
             ns,
             set_name,
             "bin_s",
