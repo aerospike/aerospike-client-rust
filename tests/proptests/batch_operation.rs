@@ -50,8 +50,8 @@ pub fn any_batch_operation(bin: Bin) -> impl Strategy<Value = PropBatchOperation
     ]
 }
 
-pub fn any_batch_read_operation(bin: Bin, has_filter_exp: bool) -> impl Strategy<Value = PropBatchOperation> {
-    prop_oneof![bop_read_bins(has_filter_exp), bop_read_ops(has_filter_exp),]
+pub fn any_batch_read_operation(bin: Bin) -> impl Strategy<Value = PropBatchOperation> {
+    prop_oneof![bop_read_bins(), bop_read_ops(),]
 }
 
 pub fn any_batch_write_operation(bin: Bin) -> impl Strategy<Value = PropBatchOperation> {
@@ -69,7 +69,7 @@ prop_compose! {
 }
 
 prop_compose! {
-    pub fn many_batch_read_operations(n: usize, has_filter_exp: bool)(bin in bin())(ops in prop::collection::vec(any_batch_read_operation(bin, has_filter_exp), 1..n as usize)) -> Vec<PropBatchOperation> {
+    pub fn many_batch_read_operations(n: usize)(bin in bin())(ops in prop::collection::vec(any_batch_read_operation(bin), 1..n as usize)) -> Vec<PropBatchOperation> {
         ops
     }
 }
@@ -94,32 +94,22 @@ prop_compose! {
 // of aerospike's APIs) to invoke calls back to the server.
 
 prop_compose! {
-    pub fn bop_read_bins(has_filter_exp: bool)(
+    pub fn bop_read_bins()(
         brp in batch_read_policy(),
         bs in bins(10),
     ) -> PropBatchOperation {
-		let mut my_rp = brp;
-
-		if ! has_filter_exp {
-			my_rp.filter_expression = None;
-		}
-        PropBatchOperation::ReadBins(my_rp,  bs)
+        PropBatchOperation::ReadBins(brp,  bs)
     }
 }
 
 prop_compose! {
-    pub fn bop_read_ops(has_filter_exp: bool)
+    pub fn bop_read_ops()
     (n in 1usize..20, bin in bin())
     (
         brp in batch_read_policy(),
         ops in prop::collection::vec(operation_readish(bin), n)
     ) -> PropBatchOperation {
-		let mut my_rp = brp;
-
-		if ! has_filter_exp {
-			my_rp.filter_expression = None;
-		}
-        PropBatchOperation::ReadOps(my_rp, ops)
+        PropBatchOperation::ReadOps(brp, ops)
     }
 }
 

@@ -27,89 +27,68 @@ proptest_async::proptest! {
     #[test]
     async fn batch_read(
         i in 0..10,
-        _batch_policy in batch_policy(30000),
-        ops in bop_read_bins1(),
+        batch_policy in batch_policy(30000),
+        ops in many_batch_read_operations(8),
+		expected_value in any::<String>(),
     ) {
         let client = common::singleton_client().await;
         let namespace: &str = common::namespace();
         let set_name: &str = common::prop_setname();
 
-        println!("{}",i);
         let key = as_key!(namespace, set_name, i);
 
-        // let as_ops: Vec<aerospike::operations::Operation> = ops.into_iter().map(|op| op.to_op()).collect();
         let mut as_ops = vec![];
-        // for op in &ops {
-            let as_op = ops.to_op(key.clone());
+        for op in &ops {
+            let as_op = op.to_op(key.clone());
 
             // Not all reads will have a valid key that leads to content.
             // Does this read have a corresponding write to initialize a bin?
 
             if i % 2 == 0 {
-                let bin = as_bin!("binName", "binValue");
-                let bins = [bin];
+                let bins = [as_bin!("binName", expected_value.clone()),];
                 let write_policy = WritePolicy::default();
-
-                // TO ensure maximum chance of successfully reading from the record,
-                // we set filter expressions to None.  Here, we set it to None for
-                // the Put operation explicitly.  For the reads, we rely on the
-                // "false" parameter of many_batch_read_operations(), elsewhere.
-                // The idea is that if both read and write policies have equal
-                // filter expressions (namely, none at all), there should be no
-                // reason for a filter operation to exclude any records.
-
-                // write_policy.base_policy.filter_expression = None;
 
                 // SAFETY: This is just a test, not production code.
                 // Use of unwrap() here is OK; if something goes wrong, we
                 // WANT the Rust runtime to panic.
 
-                println!("WRITING: {}", i);
                 client.put(&write_policy, &key, &bins).await.unwrap();
-                let res = client.get(&ReadPolicy::default(), &key, Bins::All).await.unwrap();
-                println!("THE RECORD IS: {:?}", res);
+
+				// Make sure write went through using non-batch means.
+
+                let res = client.get(&ReadPolicy::default(), &key, Bins::All).await;
+				match res {
+					Err(e) => panic!("{:?}", e),
+					Ok(res) => {
+						if let Some(actual_value) = res.bins.get("binName") {
+							if expected_value != actual_value.as_string() {
+								panic!("Manual Get: Value for bin 'binName' doesn't match; expected: {expected_value}, got: {actual_value}");
+							}
+						}
+					}
+				}
             }
 
             as_ops.push(as_op);
-        // }
+        }
 
-        println!("{:?}", ops);
-        let batch_policy = BatchPolicy::default();
         let res = client.batch(&batch_policy, &as_ops).await;
 
-
         match res {
-        //     Err(Error::ServerError(ResultCode::ParameterError, _, _)) => {
-        //         if write_policy.respond_per_each_op && ops.into_iter().find(|op| *op == PropOperation::Get).is_some() {
-        //             return;
-        //         }
-        //     }, // it's fine
-        //     Err(Error::ServerError(ResultCode::KeyNotFoundError, _, _)) => {
-        //     },
-        //     Err(e @ Error::ServerError(ResultCode::KeyExistsError, _, _)) => {
-        //         if write_policy.record_exists_action != RecordExistsAction::CreateOnly {
-        //             panic!("{}",e);
-        //          }
-        //     },
-        //     Err(e @ Error::ServerError(ResultCode::GenerationError, _, _)) => {
-        //         if write_policy.generation_policy != GenerationPolicy::None {
-        //             return; // it's fine
-        //         }
-        //         panic!("{}", e);
-        //     },
-            Err(e @ Error::BatchError(index, ResultCode::BinTypeError, _, _)) => {
-                panic!("Batch result ERROR: index={} {:?}", index, e)
-            }
             Err(e) => panic!("{}", e),
             Ok(res) => {
                 // Data validation
                 for op in res {
-                    eprintln!("OP: {:?}", op.record.map(|r| r.bins.len()));
+					op.record.map(|r| {
+						if let Some(actual_value) = r.bins.get("binName") {
+							if expected_value != actual_value.as_string() {
+								panic!("Batch Read: Value for bin 'binName' doesn't match; expected: {expected_value}, got: {actual_value}");
+							}
+						}
+					});
                 }
-            }, //println!("OK"),
+            }
         }
-
-        eprintln!("--------------------");
     }
 
     #[test]
