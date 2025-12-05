@@ -23,6 +23,7 @@ use aerospike_rt::{sleep, Mutex};
 use crate::batch::{BatchExecutor, BatchOperation};
 use crate::cluster::{Cluster, Node};
 use crate::commands::admin_command::AdminCommand;
+use crate::commands::buffer::Buffer;
 use crate::commands::{
     DeleteCommand, ExecuteUDFCommand, ExistsCommand, OperateCommand, QueryCommand, ReadCommand,
     ScanCommand, TouchCommand, WriteCommand,
@@ -1012,6 +1013,41 @@ impl Client {
         }
     }
 
+    /// Sets XDR filter for given datacenter name and namespace. The expression filter indicates
+    /// which records XDR should ship to the datacenter.
+    /// Pass nil as filter to remove the current filter on the server.
+    pub async fn set_xdr_filter(
+        &self,
+        policy: &AdminPolicy,
+        datacenter: &str,
+        namespace: &str,
+        filter_expression: Option<&FilterExpression>,
+    ) -> Result<()> {
+        let node = self.cluster.get_random_node().await?;
+
+        let cmd = if let Some(expression) = filter_expression {
+            let size = expression.size();
+            let mut buf = Buffer::new(0);
+            buf.resize_buffer(size)?;
+            let _ = expression.pack(&mut Some(&mut buf));
+            let exp_str = base64::encode(&buf.data_buffer);
+
+            format!(
+                "xdr-set-filter:dc={};namespace={};exp={}",
+                datacenter, namespace, exp_str
+            )
+        } else {
+            format!(
+                "xdr-set-filter:dc={};namespace={};exp=null",
+                datacenter, namespace
+            )
+        };
+
+        self.send_info_cmd(policy, node, &cmd)
+            .await
+            .map_err(|e| e.chain_error("Error setting XDR filter"))
+    }
+
     /// Removes all records in the specified namespace/set efficiently.
     ///
     /// This method is many orders of magnitude faster than deleting records one at a time. It
@@ -1175,8 +1211,6 @@ impl Client {
         expression: Option<&FilterExpression>,
         ctx: Option<&[CdtContext]>,
     ) -> Result<IndexTask> {
-        use crate::commands::buffer::Buffer;
-
         let mut cmd = String::with_capacity(1024);
         let node = self.cluster.get_random_node().await?;
         let node_version = node.version();

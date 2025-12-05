@@ -590,6 +590,22 @@ impl Client {
         block_on(self.async_client.query(policy, partition_filter, statement))
     }
 
+    /// Sets XDR filter for given datacenter name and namespace. The expression filter indicates
+    /// which records XDR should ship to the datacenter.
+    /// Pass nil as filter to remove the current filter on the server.
+    pub async fn set_xdr_filter(
+        &self,
+        policy: &AdminPolicy,
+        datacenter: &str,
+        namespace: &str,
+        filter_expression: Option<&FilterExpression>,
+    ) -> Result<()> {
+        block_on(
+            self.async_client
+                .set_xdr_filter(policy, datacenter, namespace, filter_expression),
+        )
+    }
+
     /// Removes all records in the specified namespace/set efficiently.
     ///
     /// This method is many orders of magnitude faster than deleting records one at a time. It
