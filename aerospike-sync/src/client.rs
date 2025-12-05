@@ -21,6 +21,8 @@ use crate::expressions::FilterExpression;
 use aerospike_core::errors::Result;
 use aerospike_core::operations::{CdtContext, Operation};
 use aerospike_core::query::PartitionFilter;
+use aerospike_core::DropIndexTask;
+use aerospike_core::UdfRemoveTask;
 use aerospike_core::{
     AdminPolicy, BatchOperation, BatchPolicy, BatchRecord, Bin, Bins, ClientPolicy,
     CollectionIndexType, IndexTask, IndexType, Key, Node, Privilege, QueryPolicy, ReadPolicy,
@@ -408,7 +410,7 @@ impl Client {
     /// the UDF package with a single, random cluster node; from there a copy will get distributed
     /// to all other cluster nodes automatically.
     ///
-    /// Lua is the only supported scripting laungauge for UDFs at the moment.
+    /// Lua is the only supported scripting language for UDFs at the moment.
     ///
     /// # Examples
     ///
@@ -449,12 +451,12 @@ impl Client {
         &self,
         policy: &AdminPolicy,
         udf_body: &[u8],
-        udf_name: &str,
+        server_path: &str,
         language: UDFLang,
     ) -> Result<RegisterTask> {
         block_on(
             self.async_client
-                .register_udf(policy, udf_body, udf_name, language),
+                .register_udf(policy, udf_body, server_path, language),
         )
     }
 
@@ -463,28 +465,25 @@ impl Client {
     /// the UDF package with a single, random cluster node; from there a copy will get distributed
     /// to all other cluster nodes automatically.
     ///
-    /// Lua is the only supported scripting laungauge for UDFs at the moment.
+    /// Lua is the only supported scripting language for UDFs at the moment.
     pub fn register_udf_from_file(
         &self,
         policy: &AdminPolicy,
         client_path: &str,
-        udf_name: &str,
+        server_path: &str,
         language: UDFLang,
     ) -> Result<RegisterTask> {
-        block_on(
-            self.async_client
-                .register_udf_from_file(policy, client_path, udf_name, language),
-        )
+        block_on(self.async_client.register_udf_from_file(
+            policy,
+            client_path,
+            server_path,
+            language,
+        ))
     }
 
     /// Remove a user-defined function (UDF) module from the server.
-    pub fn remove_udf(
-        &self,
-        policy: &AdminPolicy,
-        udf_name: &str,
-        language: UDFLang,
-    ) -> Result<()> {
-        block_on(self.async_client.remove_udf(policy, udf_name, language))
+    pub fn remove_udf(&self, policy: &AdminPolicy, server_path: &str) -> Result<UdfRemoveTask> {
+        block_on(self.async_client.remove_udf(policy, server_path))
     }
 
     /// Execute a user-defined function on the server and return the results. The function operates
@@ -496,13 +495,13 @@ impl Client {
         &self,
         policy: &WritePolicy,
         key: &Key,
-        udf_name: &str,
+        server_path: &str,
         function_name: &str,
         args: Option<&[Value]>,
     ) -> Result<Option<Value>> {
         block_on(
             self.async_client
-                .execute_udf(policy, key, udf_name, function_name, args),
+                .execute_udf(policy, key, server_path, function_name, args),
         )
     }
 
@@ -723,7 +722,7 @@ impl Client {
         namespace: &str,
         set_name: &str,
         index_name: &str,
-    ) -> Result<()> {
+    ) -> Result<DropIndexTask> {
         block_on(
             self.async_client
                 .drop_index(policy, namespace, set_name, index_name),

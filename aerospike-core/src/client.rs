@@ -18,6 +18,9 @@ use std::sync::Arc;
 use std::vec::Vec;
 use std::{str, usize};
 
+use regex::Regex;
+use std::sync::LazyLock;
+
 use aerospike_rt::{sleep, Mutex};
 
 use crate::batch::{BatchExecutor, BatchOperation};
@@ -37,7 +40,7 @@ use crate::policy::{
     AdminPolicy, BatchPolicy, ClientPolicy, QueryPolicy, ReadPolicy, ScanPolicy, WritePolicy,
 };
 use crate::query::{PartitionFilter, PartitionTracker};
-use crate::task::{IndexTask, RegisterTask};
+use crate::task::{DropIndexTask, IndexTask, RegisterTask, UdfRemoveTask};
 use crate::Version;
 use crate::{
     BatchRecord, Bin, Bins, CollectionIndexType, IndexType, Key, Privilege, Record, Recordset,
@@ -497,7 +500,7 @@ impl Client {
     /// the UDF package with a single, random cluster node; from there a copy will get distributed
     /// to all other cluster nodes automatically.
     ///
-    /// Lua is the only supported scripting laungauge for UDFs at the moment.
+    /// Lua is the only supported scripting language for UDFs at the moment.
     ///
     /// # Examples
     ///
@@ -538,36 +541,26 @@ impl Client {
         &self,
         policy: &AdminPolicy,
         udf_body: &[u8],
-        udf_name: &str,
+        server_path: &str,
         language: UDFLang,
     ) -> Result<RegisterTask> {
         let udf_body = base64::encode(udf_body);
 
         let cmd = format!(
             "udf-put:filename={};content={};content-len={};udf-type={};",
-            udf_name,
+            server_path,
             udf_body,
             udf_body.len(),
             language
         );
         let node = self.cluster.get_random_node().await?;
-        let response = node.info(policy, &[&cmd]).await?;
-
-        if let Some(msg) = response.get("error") {
-            let msg = base64::decode(msg)?;
-            let msg = str::from_utf8(&msg)?;
-            return Err(Error::UdfBadResponse(format!(
-                "UDF Registration failed: {}, file: {}, line: {}, message: {}",
-                response.get("error").unwrap_or(&"-".to_string()),
-                response.get("file").unwrap_or(&"-".to_string()),
-                response.get("line").unwrap_or(&"-".to_string()),
-                msg
-            )));
-        }
+        self.send_info_cmd(policy, node, &cmd)
+            .await
+            .map_err(|e| e.chain_error("Error registering UDF"))?;
 
         Ok(RegisterTask::new(
             Arc::clone(&self.cluster),
-            udf_name.to_string(),
+            server_path.to_string(),
         ))
     }
 
@@ -576,12 +569,12 @@ impl Client {
     /// the UDF package with a single, random cluster node; from there a copy will get distributed
     /// to all other cluster nodes automatically.
     ///
-    /// Lua is the only supported scripting laungauge for UDFs at the moment.
+    /// Lua is the only supported scripting language for UDFs at the moment.
     pub async fn register_udf_from_file(
         &self,
         policy: &AdminPolicy,
         client_path: &str,
-        udf_name: &str,
+        server_path: &str,
         language: UDFLang,
     ) -> Result<RegisterTask> {
         let path = Path::new(client_path);
@@ -589,7 +582,7 @@ impl Client {
         let mut udf_body: Vec<u8> = vec![];
         file.read_to_end(&mut udf_body).await?;
 
-        self.register_udf(policy, &udf_body, udf_name, language)
+        self.register_udf(policy, &udf_body, server_path, language)
             .await
     }
 
@@ -597,23 +590,19 @@ impl Client {
     pub async fn remove_udf(
         &self,
         policy: &AdminPolicy,
-        udf_name: &str,
-        language: UDFLang,
-    ) -> Result<()> {
-        let cmd = format!("udf-remove:filename={}.{};", udf_name, language);
+        server_path: &str,
+    ) -> Result<UdfRemoveTask> {
+        let cmd = format!("udf-remove:filename={};", server_path);
         let node = self.cluster.get_random_node().await?;
-        // Sample response: {"udf-remove:filename=file_name.LUA;": "ok"}
-        let response = node.info(policy, &[&cmd]).await?;
+        // Sample response: {"udf-remove:filename=server_path;": "ok"}
+        self.send_info_cmd(policy, node, &cmd)
+            .await
+            .map_err(|e| e.chain_error("UDF Remove failed"))?;
 
-        match response.get(&cmd).map(String::as_str) {
-            Some("ok") => Ok(()),
-            _ => {
-                return Err(Error::UdfBadResponse(format!(
-                    "UDF Remove failed: {:?}",
-                    response
-                )))
-            }
-        }
+        Ok(UdfRemoveTask::new(
+            Arc::clone(&self.cluster),
+            server_path.to_string(),
+        ))
     }
 
     /// Execute a user-defined function on the server and return the results. The function operates
@@ -625,7 +614,7 @@ impl Client {
         &self,
         policy: &WritePolicy,
         key: &Key,
-        udf_name: &str,
+        server_path: &str,
         function_name: &str,
         args: Option<&[Value]>,
     ) -> Result<Option<Value>> {
@@ -633,7 +622,7 @@ impl Client {
             policy,
             self.cluster.clone(),
             key,
-            udf_name,
+            server_path,
             function_name,
             args,
         );
@@ -1289,7 +1278,7 @@ impl Client {
         namespace: &str,
         set_name: &str,
         index_name: &str,
-    ) -> Result<()> {
+    ) -> Result<DropIndexTask> {
         let node = self.cluster.get_random_node().await?;
         let node_version = node.version();
 
@@ -1312,27 +1301,23 @@ impl Client {
 
         self.send_info_cmd(policy, node, &cmd)
             .await
-            .map_err(|e| e.chain_error("Error dropping index"))
+            .map_err(|e| e.chain_error("Error dropping index"))?;
+        Ok(DropIndexTask::new(
+            Arc::clone(&self.cluster),
+            namespace.to_string(),
+            index_name.to_string(),
+        ))
     }
 
     async fn send_info_cmd(&self, policy: &AdminPolicy, node: Arc<Node>, cmd: &str) -> Result<()> {
         let response = node.info(policy, &[cmd]).await?;
-        if let Some(v) = response.values().next() {
-            if v.to_uppercase() == "OK" {
-                return Ok(());
-            } else if v.starts_with("FAIL:") {
-                let result = v.split(':').nth(1).unwrap().parse::<u8>()?;
-                return Err(Error::ServerError(
-                    ResultCode::from(result),
-                    false,
-                    node.host().address().clone(),
-                ));
+        if let Some(response) = response.get(cmd) {
+            if response != "ok" && response != "" {
+                return Err(Self::parse_info_error(response));
             }
         }
 
-        return Err(Error::BadResponse(
-            "Unexpected info command response".to_string(),
-        ));
+        Ok(())
     }
 
     /// Creates a new user with password and roles. Clear-text password will be hashed using bcrypt
@@ -1503,5 +1488,31 @@ impl Client {
     ) -> Result<()> {
         let cluster = self.cluster.clone();
         AdminCommand::set_quotas(policy, &cluster, role_name, read_quota, write_quota).await
+    }
+
+    fn parse_info_error(response: &str) -> Error {
+        static RE: LazyLock<Regex> = LazyLock::new(|| {
+            Regex::new(r"^(?i)(fail|error)((:|=)(?P<code>[0-9]+))?((:|=)(?P<msg>.+))?$").unwrap()
+        });
+
+        if !RE.is_match(response) {
+            return Error::ServerError(ResultCode::ServerError, false, response.into());
+        }
+
+        // 'm' is a 'Match', and 'as_str()' returns the matching part of the haystack.
+        let parts = RE
+            .captures(response)
+            .map(|caps| {
+                let code = caps.name("code").map_or_else(
+                    || ResultCode::ServerError,
+                    |code| ResultCode::from(code.as_str().parse::<u8>().unwrap()),
+                );
+                let msg = caps.name("msg").map(|msg| msg.as_str()).unwrap_or(response);
+
+                (code, msg)
+            })
+            .unwrap();
+
+        Error::ServerError(parts.0, false, parts.1.into())
     }
 }

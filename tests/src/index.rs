@@ -13,9 +13,6 @@
 // License for the specific language governing permissions and limitations under
 // the License.
 
-use std::thread;
-use std::time::Duration;
-
 use crate::common;
 use aerospike::expressions::*;
 use env_logger;
@@ -52,8 +49,8 @@ async fn create_index_on_bin() {
     let index = format!("{}_{}_{}", ns, set, bin);
     let apolicy = AdminPolicy::default();
 
-    let _ = client.drop_index(&apolicy, ns, &set, &index).await;
-    thread::sleep(Duration::from_millis(1000));
+    let task = client.drop_index(&apolicy, ns, &set, &index).await.unwrap();
+    task.wait_till_complete(None).await.unwrap();
 
     let task = client
         .create_index_on_bin(
@@ -84,8 +81,8 @@ async fn create_index_using_expression() {
     let index = format!("{}_{}_{}", ns, set, bin);
     let apolicy = AdminPolicy::default();
 
-    let _ = client.drop_index(&apolicy, ns, &set, &index).await;
-    thread::sleep(Duration::from_millis(1000));
+    let task = client.drop_index(&apolicy, ns, &set, &index).await.unwrap();
+    task.wait_till_complete(None).await.unwrap();
 
     let fe: FilterExpression = eq(int_bin("a".to_string()), int_val(500));
 

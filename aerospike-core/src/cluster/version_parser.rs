@@ -42,6 +42,28 @@ impl Version {
     }
 }
 
+impl Version {
+    /// Server supports partition scans.
+    pub fn supports_partition_scan(&self) -> bool {
+        self >= &Version::new(4, 9, 0, 3)
+    }
+
+    /// Server supports query-show command.
+    pub fn supports_query_show(&self) -> bool {
+        self >= &Version::new(5, 7, 0, 0)
+    }
+
+    /// Server supports batch-index commands.
+    pub fn supports_batch_any(&self) -> bool {
+        self >= &Version::new(6, 0, 0, 0)
+    }
+
+    /// Server supports partition queries.
+    pub fn supports_partition_query(&self) -> bool {
+        self >= &Version::new(6, 0, 0, 0)
+    }
+}
+
 #[derive(Debug)]
 pub(crate) struct VersionParser<'a> {
     s: &'a str,

@@ -17,7 +17,6 @@ use crate::common;
 use aerospike::errors::Error;
 use aerospike::task::{Status, Task};
 use aerospike::*;
-use std::thread;
 use std::time::Duration;
 
 // If registering udf is successful, querying RegisterTask will return Status::Complete
@@ -38,8 +37,7 @@ async fn register_task_test() {
     "#;
 
     let apolicy = AdminPolicy::default();
-    let udf_name = common::rand_str(10);
-    let udf_file_name = udf_name.clone().to_owned() + ".LUA";
+    let udf_file_name = "my_udf_task.lua";
 
     let register_task = client
         .register_udf(&apolicy, code.as_bytes(), &udf_file_name, UDFLang::Lua)
@@ -51,14 +49,11 @@ async fn register_task_test() {
         Ok(Status::Complete)
     ));
 
-    client
-        .remove_udf(&apolicy, &udf_name, UDFLang::Lua)
-        .await
-        .unwrap();
+    let remove_task = client.remove_udf(&apolicy, &udf_file_name).await.unwrap();
     // Wait for some time to ensure UDF has been unregistered on all nodes.
-    thread::sleep(Duration::from_secs(2));
+    remove_task.wait_till_complete(None).await.unwrap();
 
-    let timeout = Duration::from_millis(100);
+    let timeout = Duration::from_millis(1000);
     assert!(matches!(
         register_task.wait_till_complete(Some(timeout)).await,
         Err(Error::Timeout(_))
@@ -101,6 +96,15 @@ async fn index_task_test() {
 
     assert!(matches!(
         index_task.wait_till_complete(None).await,
+        Ok(Status::Complete)
+    ));
+
+    let task = client
+        .drop_index(&apolicy, namespace, &set_name, &index_name)
+        .await
+        .unwrap();
+    assert!(matches!(
+        task.wait_till_complete(None).await,
         Ok(Status::Complete)
     ));
 

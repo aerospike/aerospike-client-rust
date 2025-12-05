@@ -16,12 +16,16 @@
 //! Types and methods used for long running status queries.
 #![allow(clippy::missing_errors_doc)]
 
+pub use self::drop_index_task::DropIndexTask;
 pub use self::index_task::IndexTask;
 pub use self::register_task::RegisterTask;
 pub use self::task::Status;
 pub use self::task::Task;
+pub use self::udf_remove_task::UdfRemoveTask;
 
+mod drop_index_task;
 mod index_task;
 mod register_task;
 #[allow(clippy::module_inception)]
 mod task;
+mod udf_remove_task;
