@@ -1,4 +1,4 @@
-// Copyright 2015-2018 Aerospike, Inc.
+// Copyright 2015-2025 Aerospike, Inc.
 //
 // Portions may be licensed to Aerospike, Inc. under one or more contributor
 // license agreements.
@@ -231,6 +231,52 @@ impl Value {
     /// Returns true if this value is the empty value (nil).
     pub const fn is_nil(&self) -> bool {
         matches!(*self, Value::Nil)
+    }
+
+    /// Returns a (deep!) clone of the value, but where all UInt values have
+    /// been mapped to Int values.
+    ///
+    /// Applications for this method includes property testing where the
+    /// randomness of a strategy forbids carefully crafting a value to avoid
+    /// UInts.  This is a VERY EXPENSIVE operation.  Do not use this for
+    /// production code unless you know precisely what you are doing and
+    /// understand its performance impacts.
+    #[doc(hidden)]
+    pub fn clone_safely(&self) -> Self {
+        match self {
+            // Servers store integers as signed quantities at all times.
+            // Sending requests with Ints can sometimes yield responses with
+            // UInts, however.  For the sake of testing, this prevents us from
+            // simply comparing Value trees using == or != operators.  This
+            // mapping restores our ability to do this.
+            Value::UInt(val) => Value::Int(*val as i64),
+
+            // We need to recurse into maps and lists.
+            Value::HashMap(m) => {
+                let mut new_map = HashMap::new();
+                for (key, value) in m.iter() {
+                    new_map.insert(key.clone_safely(), value.clone_safely());
+                }
+                Value::HashMap(new_map)
+            }
+            Value::OrderedMap(v) => {
+                let mut new_map = vec![];
+                for (key, value) in v {
+                    new_map.push((key.clone_safely(), value.clone_safely()));
+                }
+                Value::OrderedMap(new_map)
+            }
+            Value::List(l) => {
+                let mut new_list = vec![];
+                for item in l {
+                    new_list.push(item.clone_safely());
+                }
+                Value::List(new_list)
+            }
+
+            // For everything else, just clone it as-is.
+            myself => myself.clone(),
+        }
     }
 
     /// Return the particle type for the value used in the wire protocol.

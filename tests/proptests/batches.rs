@@ -126,11 +126,11 @@ proptest_async::proptest! {
                 PropBatchOperation::Write(_, ref ops) => {
                     for sub_op in ops {
                         match sub_op {
-                            PropOperation::Put(ref bins) => {
-                                puts_to_bins.push((bins.name.clone(), bins.value.clone()))
+                            PropOperation::Put(ref bin) => {
+                                puts_to_bins.push((bin.name.clone(), bin.value.clone()))
                             }
-                            PropOperation::Prepend(ref bins) => {
-                                prepends_to_bins.push((bins.name.clone(), bins.value.clone()))
+                            PropOperation::Prepend(ref bin) => {
+                                prepends_to_bins.push((bin.name.clone(), bin.value.clone()))
                             }
                             _ => (),
                         }
@@ -158,7 +158,10 @@ proptest_async::proptest! {
                         client.put(&write_policy, &key, &bins);
                     }
                     Value::UInt(_) => {
-                        let bins = [as_bin!(put.0.clone(), 12345u64)];
+                        // Server does not support a distinct unsigned integer
+                        // type.  So, we need to convert the value into a
+                        // (signed) integer bit-for-bit.
+                        let bins = [as_bin!(put.0.clone(), 12345i64)];
                         client.put(&write_policy, &key, &bins);
                     }
                     Value::Infinity |
@@ -285,9 +288,11 @@ proptest_async::proptest! {
                     for bin in &rec.bins {
                         // Check the list of puts to make sure they succeeded.
                         for candidate in &puts_to_bins {
-                            if *bin.0 == candidate.0 {
-                                if *bin.1 != candidate.1 {
-                                    panic!("Put failed?  Bin \"{}\" expected {:#?} actual {:#?}", bin.0, candidate.1, bin.1);
+                            let (bin_name, bin_value) = (bin.0.clone(), bin.1.clone_safely());
+                            let (cand_name, cand_value) = (candidate.0.clone(), candidate.1.clone_safely());
+                            if *bin_name == cand_name {
+                                if bin_value != cand_value {
+                                    panic!("Put failed?  Bin \"{}\" expected {:#?} actual {:#?}", bin_name, cand_value, bin_value);
                                 }
                             }
                         }
