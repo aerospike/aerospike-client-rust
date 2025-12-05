@@ -17,6 +17,8 @@ use crate::proptests::{
     batch_operation::*, bins::*, key::*, operation::*, partition_filter::*, policy::*,
 };
 
+const STRING_DEFAULT: &str = "aerospike default value";
+
 prop_compose! {
     pub fn bop_read_bins1()(
         _brp in batch_read_policy(),
@@ -119,8 +121,7 @@ proptest_async::proptest! {
             // bins that have been randomly chosen for the property test.
             //
             // First, we need to discover the names of the bins that proptest-rs
-            // has chosen for this run.  For simplicy, we treat each bin as a
-            // string bin.  Other data types can be considered in the future.
+            // has chosen for this run.
 
             match op {
                 PropBatchOperation::Write(_, ref ops) => {
@@ -150,13 +151,12 @@ proptest_async::proptest! {
                         client.put(&write_policy, &key, &bins);
                     }
                     Value::Bool(b) => {
+                        // We put the opposite of the boolean so that the
+                        // difference shows up in any diagnostic output.
                         let bins = [as_bin!(put.0.clone(), !b)];
                         client.put(&write_policy, &key, &bins);
                     }
-                    Value::Int(_) => {
-                        let bins = [as_bin!(put.0.clone(), 12345i64)];
-                        client.put(&write_policy, &key, &bins);
-                    }
+                    Value::Int(_) |
                     Value::UInt(_) => {
                         // Server does not support a distinct unsigned integer
                         // type.  So, we need to convert the value into a
@@ -174,7 +174,7 @@ proptest_async::proptest! {
                         client.put(&write_policy, &key, &bins);
                     }
                     Value::String(_) => {
-                        let bins = [as_bin!(put.0.clone(), "aerospike default value")];
+                        let bins = [as_bin!(put.0.clone(), STRING_DEFAULT)];
                         client.put(&write_policy, &key, &bins);
                     }
                     Value::GeoJSON(_) => {
@@ -226,7 +226,7 @@ proptest_async::proptest! {
                     Value::HashMap(_) => (), // not sure how to handle prepends for these types.
 
                     Value::String(_) => {
-                        let bins = [as_bin!(prepend.0.clone(), "aerospike default value")];
+                        let bins = [as_bin!(prepend.0.clone(), STRING_DEFAULT)];
                         client.put(&write_policy, &key, &bins);
                     }
                     Value::Blob(_) => {
@@ -285,40 +285,10 @@ proptest_async::proptest! {
             Ok(res) => {
                 let check = client.get(&ReadPolicy::default(), &key, Bins::All).await;
                 if let Ok(rec) = &check {
-                    for bin in &rec.bins {
-                        // Check the list of puts to make sure they succeeded.
-                        for candidate in &puts_to_bins {
-                            let (bin_name, bin_value) = (bin.0.clone(), bin.1.clone_safely());
-                            let (cand_name, cand_value) = (candidate.0.clone(), candidate.1.clone_safely());
-                            if *bin_name == cand_name {
-                                if bin_value != cand_value {
-                                    panic!("Put failed?  Bin \"{}\" expected {:#?} actual {:#?}", bin_name, cand_value, bin_value);
-                                }
-                            }
-                        }
-
-                        // Check prepends - these require checking for specific effects for specific data types.
-                        for candidate in &prepends_to_bins {
-                            if *bin.0 == candidate.0 {
-                                match bin.1 {
-                                    Value::String(s) => {
-                                        if ! s.ends_with("aerospike default value") {
-                                            panic!("Prepend failed?  Bin \"{}\" expected {:#?} actual {:#?}", bin.0, candidate.1, bin.1);
-                                        }
-                                    }
-                                    Value::Blob(b) => {
-                                        if ! b.ends_with(&[1, 2, 3]) {
-                                            panic!("Prepend failed?  Bin \"{}\" expected {:#?} actual {:#?}", bin.0, candidate.1, bin.1);
-                                        }
-                                    }
-                                    Value::List(l) => {
-                                    }
-                                    Value::OrderedMap(om) => {
-                                    }
-                                    _ => (),
-                                }
-                            }
-                        }
+                    for (name, value) in &rec.bins {
+                        let bin = (name.clone(), value.clone());
+                        confirm_puts(&bin, &puts_to_bins);
+                        confirm_prepends(&bin, &prepends_to_bins);
                     }
                 }
             }
@@ -369,6 +339,56 @@ proptest_async::proptest! {
             Err(Error::BatchError(_, ResultCode::BinTypeError, _, _)) => {}
             Err(e) => panic!("ERR: {}", e),
             Ok(res) => {}, // println!("OK: {:?}", res),
+        }
+    }
+}
+
+/// Performs a data validation check, making sure that any Put operations
+/// actually put new data into its corresponding bin.
+fn confirm_puts(bin: &(String, Value), puts_to_bins: &Vec<(String, Value)>) {
+    for candidate in puts_to_bins {
+        let (bin_name, bin_value) = (bin.0.clone(), bin.1.clone_safely());
+        let (cand_name, cand_value) = (candidate.0.clone(), candidate.1.clone_safely());
+        if *bin_name == cand_name {
+            if bin_value != cand_value {
+                panic!(
+                    "Put failed?  Bin \"{}\" expected {:#?} actual {:#?}",
+                    bin_name, cand_value, bin_value
+                );
+            }
+        }
+    }
+}
+
+/// Performs a data validation check, making sure that any Prepend operations
+/// actually places its data in front of the data already present in the bin.
+fn confirm_prepends(bin: &(String, Value), prepends_to_bins: &Vec<(String, Value)>) {
+    let bin_name = bin.0.clone();
+    let bin_value = bin.1.clone();
+
+    for (cand_name, cand_value) in prepends_to_bins {
+        if bin_name == *cand_name {
+            match &bin_value {
+                Value::String(s) => {
+                    if !s.ends_with(STRING_DEFAULT) {
+                        panic!(
+                            "Prepend failed?  Bin \"{}\" expected {:#?} actual {:#?}",
+                            bin_name, cand_value, bin_value
+                        );
+                    }
+                }
+                Value::Blob(b) => {
+                    if !b.ends_with(&[1, 2, 3]) {
+                        panic!(
+                            "Prepend failed?  Bin \"{}\" expected {:#?} actual {:#?}",
+                            bin_name, cand_value, bin_value
+                        );
+                    }
+                }
+                Value::List(l) => {}
+                Value::OrderedMap(om) => {}
+                _ => (),
+            }
         }
     }
 }
