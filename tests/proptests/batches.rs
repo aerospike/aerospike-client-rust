@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use crate::proptest::prelude::*;
 use crate::proptest_async;
 use crate::{common, proptests::key};
@@ -29,13 +31,18 @@ proptest_async::proptest! {
         i in 0..10,
         batch_policy in batch_policy(30000),
         ops in many_batch_read_operations(8),
-		expected_value in any::<String>(),
+        expected_value in any::<String>(),
     ) {
         let client = common::singleton_client().await;
         let namespace: &str = common::namespace();
         let set_name: &str = common::prop_setname();
 
         let key = as_key!(namespace, set_name, i);
+
+        // Randomize the bin value to test for even further per iteration.
+
+        let mut expected_value = expected_value.clone();
+        expected_value.push_str(&format!("{}", i));
 
         let mut as_ops = vec![];
         for op in &ops {
@@ -54,19 +61,19 @@ proptest_async::proptest! {
 
                 client.put(&write_policy, &key, &bins).await.unwrap();
 
-				// Make sure write went through using non-batch means.
+                // Make sure write went through using non-batch means.
 
                 let res = client.get(&ReadPolicy::default(), &key, Bins::All).await;
-				match res {
-					Err(e) => panic!("{:?}", e),
-					Ok(res) => {
-						if let Some(actual_value) = res.bins.get("binName") {
-							if expected_value != actual_value.as_string() {
-								panic!("Manual Get: Value for bin 'binName' doesn't match; expected: {expected_value}, got: {actual_value}");
-							}
-						}
-					}
-				}
+                match res {
+                    Err(e) => panic!("{:?}", e),
+                    Ok(res) => {
+                        if let Some(actual_value) = res.bins.get("binName") {
+                            if expected_value != actual_value.as_string() {
+                                panic!("Manual Get: Value for bin 'binName' doesn't match; expected: {expected_value}, got: {actual_value}");
+                            }
+                        }
+                    }
+                }
             }
 
             as_ops.push(as_op);
@@ -79,13 +86,13 @@ proptest_async::proptest! {
             Ok(res) => {
                 // Data validation
                 for op in res {
-					op.record.map(|r| {
-						if let Some(actual_value) = r.bins.get("binName") {
-							if expected_value != actual_value.as_string() {
-								panic!("Batch Read: Value for bin 'binName' doesn't match; expected: {expected_value}, got: {actual_value}");
-							}
-						}
-					});
+                    op.record.map(|r| {
+                        if let Some(actual_value) = r.bins.get("binName") {
+                            if expected_value != actual_value.as_string() {
+                                panic!("Batch Read: Value for bin 'binName' doesn't match; expected: {expected_value}, got: {actual_value}");
+                            }
+                        }
+                    });
                 }
             }
         }
@@ -101,13 +108,150 @@ proptest_async::proptest! {
         let namespace: &str = common::namespace();
         let set_name: &str = common::prop_setname();
 
-        // let as_ops: Vec<aerospike::operations::Operation> = ops.into_iter().map(|op| op.to_op()).collect();
+        let key = as_key!(namespace, set_name, i);
+
+        let mut puts_to_bins: Vec<(String, Value)> = vec![];
+        let mut prepends_to_bins: Vec<(String, Value)> = vec![];
         let mut as_ops = vec![];
+
         for op in &ops {
-            let key = as_key!(namespace, set_name, i);
-            let as_op = op.to_op(key);
+            // Before validating our write operations, we want to initialize the
+            // bins that have been randomly chosen for the property test.
+            //
+            // First, we need to discover the names of the bins that proptest-rs
+            // has chosen for this run.  For simplicy, we treat each bin as a
+            // string bin.  Other data types can be considered in the future.
+
+            match op {
+                PropBatchOperation::Write(_, ref ops) => {
+                    for sub_op in ops {
+                        match sub_op {
+                            PropOperation::Put(ref bins) => {
+                                puts_to_bins.push((bins.name.clone(), bins.value.clone()))
+                            }
+                            PropOperation::Prepend(ref bins) => {
+                                prepends_to_bins.push((bins.name.clone(), bins.value.clone()))
+                            }
+                            _ => (),
+                        }
+                    }
+                }
+                _ => (),
+            }
+
+            // Now that we have a list of bins to initialize, let's actually
+            // set a default value for each of these bins.
+
+            let write_policy = WritePolicy::default();
+            for put in &puts_to_bins {
+                match &put.1 {
+                    Value::Nil => {
+                        let bins = [as_bin!(put.0.clone(), 42)];
+                        client.put(&write_policy, &key, &bins);
+                    }
+                    Value::Bool(b) => {
+                        let bins = [as_bin!(put.0.clone(), !b)];
+                        client.put(&write_policy, &key, &bins);
+                    }
+                    Value::Int(_) => {
+                        let bins = [as_bin!(put.0.clone(), 12345i64)];
+                        client.put(&write_policy, &key, &bins);
+                    }
+                    Value::UInt(_) => {
+                        let bins = [as_bin!(put.0.clone(), 12345u64)];
+                        client.put(&write_policy, &key, &bins);
+                    }
+                    Value::Infinity |
+                    Value::Float(FloatValue::F32(_)) => {
+                        let bins = [as_bin!(put.0.clone(), 12345.0f32)];
+                        client.put(&write_policy, &key, &bins);
+                    }
+                    Value::Float(FloatValue::F64(_)) => {
+                        let bins = [as_bin!(put.0.clone(), 12345.0f64)];
+                        client.put(&write_policy, &key, &bins);
+                    }
+                    Value::String(_) => {
+                        let bins = [as_bin!(put.0.clone(), "aerospike default value")];
+                        client.put(&write_policy, &key, &bins);
+                    }
+                    Value::GeoJSON(_) => {
+                        let bins = [as_bin!(put.0.clone(), Value::GeoJSON("{ \"type\": \"Point\", \"coordinates\": [ -122.335167, 47.608013 ] }".into()))];
+                        client.put(&write_policy, &key, &bins);
+                    }
+                    Value::Blob(_) => {
+                        let bins = [as_bin!(put.0.clone(), Value::Blob(vec![1, 2, 3]))];
+                        client.put(&write_policy, &key, &bins);
+                    }
+                    Value::List(_) => {
+                        let bins = [as_bin!(put.0.clone(), Value::List(vec!["1".into(), "2".into(), "3".into()]))];
+                        client.put(&write_policy, &key, &bins);
+                    }
+                    Value::HashMap(_) => {
+                        let mut hm: HashMap<Value, Value> = HashMap::new();
+                        hm.insert(1.into(), 2.into());
+                        hm.insert(2.into(), 4.into());
+
+                        let bins = [as_bin!(put.0.clone(), Value::HashMap(hm))];
+                        client.put(&write_policy, &key, &bins);
+                    }
+                    Value::OrderedMap(_) => {
+                        let mut om: Vec<(Value, Value)> = vec![];
+                        om.push((1.into(), 2.into()));
+                        om.push((2.into(), 4.into()));
+
+                        let bins = [as_bin!(put.0.clone(), Value::OrderedMap(om))];
+                        client.put(&write_policy, &key, &bins);
+                    }
+
+                    Value::HLL(_) |
+                    Value::Wildcard => (), // Not sure how to handle these yet
+                }
+            }
+
+            for prepend in &prepends_to_bins {
+                match &prepend.1 {
+                    Value::Nil |
+                    Value::Bool(_) |
+                    Value::Int(_) |
+                    Value::UInt(_) |
+                    Value::Infinity |
+                    Value::Float(FloatValue::F32(_)) |
+                    Value::Float(FloatValue::F64(_)) |
+                    Value::GeoJSON(_) |
+                    Value::HLL(_) |
+                    Value::Wildcard |
+                    Value::HashMap(_) => (), // not sure how to handle prepends for these types.
+
+                    Value::String(_) => {
+                        let bins = [as_bin!(prepend.0.clone(), "aerospike default value")];
+                        client.put(&write_policy, &key, &bins);
+                    }
+                    Value::Blob(_) => {
+                        let bins = [as_bin!(prepend.0.clone(), Value::Blob(vec![1, 2, 3]))];
+                        client.put(&write_policy, &key, &bins);
+                    }
+                    Value::List(_) => {
+                        let bins = [as_bin!(prepend.0.clone(), Value::List(vec!["1".into(), "2".into(), "3".into()]))];
+                        client.put(&write_policy, &key, &bins);
+                    }
+                    Value::OrderedMap(_) => {
+                        let mut om: Vec<(Value, Value)> = vec![];
+                        om.push((1.into(), 2.into()));
+                        om.push((2.into(), 4.into()));
+
+                        let bins = [as_bin!(prepend.0.clone(), Value::OrderedMap(om))];
+                        client.put(&write_policy, &key, &bins);
+                    }
+                }
+            }
+
+            // Finally, build the batch operation list.
+
+            let as_op = op.to_op(key.clone());
             as_ops.push(as_op);
         }
+
+        // Invoke the batch operation.
 
         let res = client.batch(&batch_policy, &as_ops).await;
 
@@ -135,7 +279,44 @@ proptest_async::proptest! {
             },
             Err(Error::BatchError(_, ResultCode::BinTypeError, _, _)) => {}
             Err(e) => panic!("ERR: {}", e),
-            Ok(res) => {}, // println!("OK: {:?}", res),
+            Ok(res) => {
+                let check = client.get(&ReadPolicy::default(), &key, Bins::All).await;
+                if let Ok(rec) = &check {
+                    for bin in &rec.bins {
+                        // Check the list of puts to make sure they succeeded.
+                        for candidate in &puts_to_bins {
+                            if *bin.0 == candidate.0 {
+                                if *bin.1 != candidate.1 {
+                                    panic!("Put failed?  Bin \"{}\" expected {:#?} actual {:#?}", bin.0, candidate.1, bin.1);
+                                }
+                            }
+                        }
+
+                        // Check prepends - these require checking for specific effects for specific data types.
+                        for candidate in &prepends_to_bins {
+                            if *bin.0 == candidate.0 {
+                                match bin.1 {
+                                    Value::String(s) => {
+                                        if ! s.ends_with("aerospike default value") {
+                                            panic!("Prepend failed?  Bin \"{}\" expected {:#?} actual {:#?}", bin.0, candidate.1, bin.1);
+                                        }
+                                    }
+                                    Value::Blob(b) => {
+                                        if ! b.ends_with(&[1, 2, 3]) {
+                                            panic!("Prepend failed?  Bin \"{}\" expected {:#?} actual {:#?}", bin.0, candidate.1, bin.1);
+                                        }
+                                    }
+                                    Value::List(l) => {
+                                    }
+                                    Value::OrderedMap(om) => {
+                                    }
+                                    _ => (),
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 

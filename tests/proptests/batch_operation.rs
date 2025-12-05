@@ -120,7 +120,6 @@ prop_compose! {
         bwp in batch_write_policy(),
         ops in prop::collection::vec(operation_writeish(bin), n)
     ) -> PropBatchOperation {
-        // eprintln!("bop_write() called");
         PropBatchOperation::Write(bwp, ops)
     }
 }
