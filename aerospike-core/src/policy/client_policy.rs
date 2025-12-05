@@ -135,6 +135,10 @@ pub struct ClientPolicy {
     /// Replica.PreferRack and server rack configuration must
     /// also be set to enable this functionality.
     pub rack_ids: Option<HashSet<usize>>,
+
+    /// Application id is used to identify an application so that client operations can be correlated
+    /// with server side metrics.
+    pub application_id: Option<String>,
 }
 
 impl Default for ClientPolicy {
@@ -154,6 +158,7 @@ impl Default for ClientPolicy {
             cluster_name: None,
             buffer_reclaim_threshold: 65536,
             rack_ids: None,
+            application_id: None,
 
             #[cfg(feature = "tls")]
             tls_config: None,
@@ -162,6 +167,22 @@ impl Default for ClientPolicy {
 }
 
 impl ClientPolicy {
+    pub(crate) fn application_id(&self) -> &str {
+        if let Some(ref app_id) = self.application_id {
+            if app_id.len() > 0 {
+                return &app_id;
+            }
+        }
+
+        match self.auth_mode {
+            crate::AuthMode::Internal(ref user, _) => return user,
+            crate::AuthMode::External(ref user, _) => return user,
+            _ => (),
+        }
+
+        "not-set"
+    }
+
     pub(crate) fn timeout(&self) -> Duration {
         if self.timeout > 0 {
             Duration::from_millis(self.timeout as u64)

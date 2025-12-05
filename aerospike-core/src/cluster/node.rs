@@ -22,6 +22,7 @@ use std::sync::Arc;
 
 use crate::cluster::node_validator::{NodeFeatures, NodeValidator};
 use crate::cluster::peers_parser::PeersParser;
+use crate::cluster::CLIENT_VERSION;
 use crate::commands::Message;
 use crate::errors::{Error, Result};
 use crate::net::{ConnectionPool, Host, PooledConnection};
@@ -342,6 +343,25 @@ impl Node {
     // Get the rebalance generation
     pub fn rebalance_generation(&self) -> isize {
         self.rebalance_generation.load(Ordering::Relaxed)
+    }
+
+    pub(crate) async fn send_user_agent_id(&self) {
+        if !self.version().supports_app_id() {
+            return;
+        }
+
+        let app_id = self.client_policy().application_id();
+
+        // Source user-agent payload
+        // Format: "1,go-<version>,<application-id>"
+        let user_agent_id = format!("1,rust-{},{}", CLIENT_VERSION, app_id);
+        let user_agent_id = base64::encode(&user_agent_id);
+        let user_agent_command = format!("user-agent-set:value={}", user_agent_id);
+
+        let policy = AdminPolicy {
+            timeout: self.client_policy().timeout,
+        };
+        let _ = self.info(&policy, &[&user_agent_command]).await;
     }
 }
 

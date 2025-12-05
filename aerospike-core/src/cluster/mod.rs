@@ -43,6 +43,8 @@ use aerospike_rt::RwLock;
 use futures::channel::mpsc;
 use futures::channel::mpsc::{Receiver, Sender};
 
+static CLIENT_VERSION: &str = env!("CARGO_PKG_VERSION");
+
 #[derive(Debug)]
 pub struct PartitionForNamespace {
     nodes: Vec<(u32, Option<Arc<Node>>)>,
@@ -486,7 +488,9 @@ impl Cluster {
     }
 
     async fn create_node(&self, nv: NodeValidator) -> Node {
-        Node::new(self.client_policy().await, Arc::new(nv))
+        let res = Node::new(self.client_policy().await, Arc::new(nv));
+        res.send_user_agent_id().await;
+        res
     }
 
     async fn find_nodes_to_remove(&self, refresh_count: usize) -> Vec<Arc<Node>> {

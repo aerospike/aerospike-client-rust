@@ -56,7 +56,7 @@ fn single_key_read(bench: &mut Bencher) {
     bench.iter(|| {
         common::RUNTIME
             .block_on(client.get(&rpolicy, &key, Bins::All))
-            .map_err(|e| println!("{:?}", e))
+            .unwrap();
     });
 }
 

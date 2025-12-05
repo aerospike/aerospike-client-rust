@@ -62,6 +62,11 @@ impl Version {
     pub fn supports_partition_query(&self) -> bool {
         self >= &Version::new(6, 0, 0, 0)
     }
+
+    /// Server supports app-id.
+    pub fn supports_app_id(&self) -> bool {
+        self >= &Version::new(8, 1, 0, 0)
+    }
 }
 
 #[derive(Debug)]
