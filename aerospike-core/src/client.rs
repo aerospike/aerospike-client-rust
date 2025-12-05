@@ -32,7 +32,7 @@ use crate::commands::{
     ScanCommand, TouchCommand, WriteCommand,
 };
 use crate::errors::{Error, Result};
-use crate::expressions::FilterExpression;
+use crate::expressions::Expression;
 use crate::msgpack::encoder::pack_ctx_for_index;
 use crate::net::ToHosts;
 use crate::operations::{CdtContext, Operation, OperationType};
@@ -1010,7 +1010,7 @@ impl Client {
         policy: &AdminPolicy,
         datacenter: &str,
         namespace: &str,
-        filter_expression: Option<&FilterExpression>,
+        filter_expression: Option<&Expression>,
     ) -> Result<()> {
         let node = self.cluster.get_random_node().await?;
 
@@ -1150,7 +1150,7 @@ impl Client {
         index_name: &str,
         index_type: IndexType,
         collection_index_type: CollectionIndexType,
-        expression: &FilterExpression,
+        expression: &Expression,
     ) -> Result<IndexTask> {
         self.create_index(
             policy,
@@ -1197,7 +1197,7 @@ impl Client {
         index_name: &str,
         index_type: IndexType,
         collection_index_type: CollectionIndexType,
-        expression: Option<&FilterExpression>,
+        expression: Option<&Expression>,
         ctx: Option<&[CdtContext]>,
     ) -> Result<IndexTask> {
         let mut cmd = String::with_capacity(1024);

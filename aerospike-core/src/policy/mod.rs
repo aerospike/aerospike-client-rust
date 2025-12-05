@@ -53,7 +53,7 @@ pub use self::scan_policy::ScanPolicy;
 pub(crate) use self::stream_policy::StreamPolicy;
 pub use self::write_policy::WritePolicy;
 
-use crate::expressions::FilterExpression;
+use crate::expressions::Expression;
 use aerospike_rt::time::{Duration, Instant};
 use std::option::Option;
 
@@ -205,8 +205,8 @@ pub struct BasePolicy {
     /// transaction fails and the timeout was not exceeded. Enter zero to skip sleep.
     pub sleep_between_retries: Option<Duration>,
 
-    /// Optional FilterExpression
-    pub filter_expression: Option<FilterExpression>,
+    /// Optional filter Expression
+    pub filter_expression: Option<Expression>,
 }
 
 impl Policy for BasePolicy {

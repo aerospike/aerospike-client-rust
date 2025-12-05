@@ -661,7 +661,7 @@ fn expression_map() {
     client.close().await.unwrap();
 }
 
-async fn test_filter(client: &Client, filter: FilterExpression, set_name: &str) -> Arc<Recordset> {
+async fn test_filter(client: &Client, filter: Expression, set_name: &str) -> Arc<Recordset> {
     let namespace = common::namespace();
 
     let mut qpolicy = QueryPolicy::default();

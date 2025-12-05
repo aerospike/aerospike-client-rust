@@ -13,7 +13,7 @@
 // License for the specific language governing permissions and limitations under
 // the License.
 
-use crate::expressions::FilterExpression;
+use crate::expressions::Expression;
 use crate::policy::BasePolicy;
 use crate::ConsistencyLevel;
 use aerospike_rt::time::Duration;
@@ -47,7 +47,7 @@ impl Default for BasePolicy {
 
 impl BasePolicy {
     /// Get the Optional Filter Expression
-    pub const fn filter_expression(&self) -> &Option<FilterExpression> {
+    pub const fn filter_expression(&self) -> &Option<Expression> {
         &self.filter_expression
     }
 }

@@ -13,7 +13,7 @@
 // License for the specific language governing permissions and limitations under
 // the License.
 
-use crate::expressions::FilterExpression;
+use crate::expressions::Expression;
 use crate::policy::{BasePolicy, Policy, PolicyLike, QueryDuration, Replica, StreamPolicy};
 use aerospike_rt::time::{Duration, Instant};
 
@@ -69,7 +69,7 @@ impl QueryPolicy {
     }
 
     /// Get the current Filter Expression
-    pub const fn filter_expression(&self) -> &Option<FilterExpression> {
+    pub const fn filter_expression(&self) -> &Option<Expression> {
         &self.base_policy.filter_expression
     }
 }

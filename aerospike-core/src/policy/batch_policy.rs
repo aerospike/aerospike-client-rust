@@ -13,7 +13,7 @@
 // License for the specific language governing permissions and limitations under
 // the License.
 
-use crate::expressions::FilterExpression;
+use crate::expressions::Expression;
 use crate::policy::{BasePolicy, Concurrency, PolicyLike};
 
 use super::Replica;
@@ -61,19 +61,19 @@ pub struct BatchPolicy {
     /// other nodes will continue to be processed.
     ///
     /// If false, the server will stop the batch to its node on most key specific errors.
-    /// The exceptions are types.KEY_NOT_FOUND_ERROR and types.FILTERED_OUT which never stop the batch.
+    /// The exceptions are ResultCode::KeyNotFoundError and ResultCode::FilteredOut which never stop the batch.
     /// The client will stop the entire batch on node specific errors for sync commands
-    /// that are run in sequence (MaxConcurrentThreads == 1). The client will not stop
+    /// that are run in sequence ([Concurrency::Sequential]). The client will not stop
     /// the entire batch for async commands or sync commands run in parallel.
     ///
-    /// Server versions &lt; 6.0 do not support this field and treat this value as false
+    /// Server versions < 6.0 do not support this field and treat this value as false
     /// for key specific errors.
     ///
     /// Default: true
     pub respond_all_keys: bool, //= true;
 
     /// Optional Filter Expression
-    pub filter_expression: Option<FilterExpression>,
+    pub filter_expression: Option<Expression>,
 
     /// Defines algorithm used to determine the target node for a command. The replica algorithm only affects single record and batch commands.
     pub replica: Replica,
@@ -86,7 +86,7 @@ impl BatchPolicy {
     }
 
     /// Get the current Filter Expression
-    pub const fn filter_expression(&self) -> &Option<FilterExpression> {
+    pub const fn filter_expression(&self) -> &Option<Expression> {
         &self.filter_expression
     }
 }

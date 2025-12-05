@@ -84,7 +84,7 @@ async fn create_index_using_expression() {
     let task = client.drop_index(&apolicy, ns, &set, &index).await.unwrap();
     task.wait_till_complete(None).await.unwrap();
 
-    let fe: FilterExpression = eq(int_bin("a".to_string()), int_val(500));
+    let fe: Expression = eq(int_bin("a".to_string()), int_val(500));
 
     let task = client
         .create_index_using_expression(

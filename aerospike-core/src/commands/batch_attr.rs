@@ -17,7 +17,7 @@ use crate::batch::BatchReadPolicy;
 use crate::batch::BatchUDFPolicy;
 use crate::batch::BatchWritePolicy;
 use crate::commands::buffer;
-use crate::expressions::FilterExpression;
+use crate::expressions::Expression;
 use crate::operations::{Operation, OperationBin, OperationType};
 use crate::policy::BatchPolicy;
 use crate::CommitLevel;
@@ -25,7 +25,7 @@ use crate::GenerationPolicy;
 use crate::RecordExistsAction;
 
 pub(crate) struct BatchAttr {
-    pub(crate) filter_expression: Option<FilterExpression>,
+    pub(crate) filter_expression: Option<Expression>,
     pub(crate) read_attr: u8,
     pub(crate) write_attr: u8,
     pub(crate) info_attr: u8,

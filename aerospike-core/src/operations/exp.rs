@@ -20,7 +20,7 @@ use std::fmt;
 use std::sync::Arc;
 
 use crate::commands::buffer::Buffer;
-use crate::expressions::FilterExpression;
+use crate::expressions::Expression;
 use crate::msgpack::encoder::{pack_array_begin, pack_integer};
 use crate::operations::{Operation, OperationBin, OperationData, OperationType};
 use crate::ParticleType;
@@ -78,7 +78,7 @@ pub type ExpressionEncoder =
 pub struct ExpOperation<'a> {
     pub encoder: ExpressionEncoder,
     pub policy: i64,
-    pub exp: &'a FilterExpression,
+    pub exp: &'a Expression,
 }
 
 impl<'a> ExpOperation<'a> {
@@ -104,7 +104,7 @@ impl<'a> fmt::Debug for ExpOperation<'a> {
         #[allow(unused)]
         struct ExpOperation<'a> {
             policy: &'a i64,
-            exp: &'a FilterExpression,
+            exp: &'a Expression,
         }
 
         let Self {
@@ -150,7 +150,7 @@ impl<T: IntoIterator<Item = ExpReadFlags>> ToExpReadFlagBitmask for T {
 /// Create operation that performs a expression that writes to record bin.
 pub fn write_exp<'a, E: ToExpWriteFlagBitmask>(
     bin: &'a str,
-    exp: &'a FilterExpression,
+    exp: &'a Expression,
     flags: E,
 ) -> Operation<'a> {
     let op = ExpOperation {
@@ -169,7 +169,7 @@ pub fn write_exp<'a, E: ToExpWriteFlagBitmask>(
 /// Create operation that performs a read expression.
 pub fn read_exp<'a, E: ToExpReadFlagBitmask>(
     name: &'a str,
-    exp: &'a FilterExpression,
+    exp: &'a Expression,
     flags: E,
 ) -> Operation<'a> {
     let op = ExpOperation {

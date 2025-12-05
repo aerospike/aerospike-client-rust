@@ -13,7 +13,7 @@
 // License for the specific language governing permissions and limitations under
 // the License.
 
-use crate::expressions::FilterExpression;
+use crate::expressions::Expression;
 use crate::policy::{BasePolicy, PolicyLike};
 use crate::{CommitLevel, Expiration, GenerationPolicy, RecordExistsAction};
 
@@ -77,7 +77,7 @@ impl WritePolicy {
     }
 
     /// Get the current Filter expression
-    pub const fn filter_expression(&self) -> &Option<FilterExpression> {
+    pub const fn filter_expression(&self) -> &Option<Expression> {
         &self.base_policy.filter_expression
     }
 }

@@ -17,7 +17,7 @@ pub mod batch_executor;
 pub mod batch_record;
 
 use crate::commands::buffer::{FIELD_HEADER_SIZE, OPERATION_HEADER_SIZE};
-use crate::expressions::FilterExpression;
+use crate::expressions::Expression;
 use crate::msgpack::encoder;
 use crate::operations::Operation;
 use crate::Bins;
@@ -59,11 +59,11 @@ pub struct BatchReadPolicy {
     /// Default: ReadTouchTTL::ServerDefault
     pub read_touch_ttl: ReadTouchTTL,
 
-    /// FilterExpression is the optional expression filter. If FilterExpression exists and evaluates to false, the specific batch key
-    /// request is not performed and BatchRecord.ResultCode is set to types.FILTERED_OUT.
+    /// Filter Expression is the optional expression filter. If filter Expression exists and evaluates to false, the specific batch key
+    /// request is not performed and BatchRecord.ResultCode is set to ResultCode::FILTERED_OUT.
     ///
     /// Default: None
-    pub filter_expression: Option<FilterExpression>,
+    pub filter_expression: Option<Expression>,
 }
 
 impl Default for BatchReadPolicy {
@@ -110,7 +110,7 @@ pub struct BatchWritePolicy {
     pub durable_delete: bool,
 
     /// Optional Filter Expression
-    pub filter_expression: Option<FilterExpression>,
+    pub filter_expression: Option<Expression>,
 }
 
 impl Default for BatchWritePolicy {
@@ -156,7 +156,7 @@ pub struct BatchDeletePolicy {
     pub durable_delete: bool,
 
     /// Optional Filter Expression
-    pub filter_expression: Option<FilterExpression>,
+    pub filter_expression: Option<Expression>,
 }
 
 impl Default for BatchDeletePolicy {
@@ -194,7 +194,7 @@ pub struct BatchUDFPolicy {
     pub durable_delete: bool,
 
     /// Optional Filter Expression
-    pub filter_expression: Option<FilterExpression>,
+    pub filter_expression: Option<Expression>,
 }
 
 impl Default for BatchUDFPolicy {
@@ -296,7 +296,7 @@ impl<'a> BatchOperation<'a> {
         }
     }
 
-    pub(crate) fn size(&self, parent_fe: &Option<FilterExpression>) -> Result<usize> {
+    pub(crate) fn size(&self, parent_fe: &Option<Expression>) -> Result<usize> {
         match self {
             Self::Read {
                 policy, bins, ops, ..

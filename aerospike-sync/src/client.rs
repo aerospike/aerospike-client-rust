@@ -17,7 +17,7 @@ use std::str;
 use std::sync::Arc;
 use std::vec::Vec;
 
-use crate::expressions::FilterExpression;
+use crate::expressions::Expression;
 use aerospike_core::errors::Result;
 use aerospike_core::operations::{CdtContext, Operation};
 use aerospike_core::query::PartitionFilter;
@@ -597,7 +597,7 @@ impl Client {
         policy: &AdminPolicy,
         datacenter: &str,
         namespace: &str,
-        filter_expression: Option<&FilterExpression>,
+        filter_expression: Option<&Expression>,
     ) -> Result<()> {
         block_on(
             self.async_client
@@ -687,7 +687,7 @@ impl Client {
     ///
     /// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap();
     /// # let client = Client::new(&ClientPolicy::default(), &hosts).unwrap();
-    /// let fe: FilterExpression = eq(int_bin("a".to_string()), int_val(500));
+    /// let fe: Expression = eq(int_bin("a".to_string()), int_val(500));
     /// match client.create_index("foo", "bar", "baz",
     ///     "idx_foo_bar_baz", IndexType::Numeric, CollectionIndexType::Default, &fe) {
     ///     Err(err) => println!("Failed to create index: {}", err),
@@ -702,7 +702,7 @@ impl Client {
         index_name: &str,
         index_type: IndexType,
         collection_index_type: CollectionIndexType,
-        expression: &FilterExpression,
+        expression: &Expression,
     ) -> Result<IndexTask> {
         block_on(self.async_client.create_index_using_expression(
             policy,

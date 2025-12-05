@@ -14,7 +14,7 @@
 // the License.
 
 //! Bitwise Aerospike Filter Expressions.
-use crate::expressions::{ExpOp, ExpType, ExpressionArgument, FilterExpression, MODIFY};
+use crate::expressions::{ExpOp, ExpType, ExpressionArgument, Expression, MODIFY};
 use crate::operations::bitwise::{BitPolicy, BitwiseOverflowActions, BitwiseResizeFlags};
 use crate::Value;
 
@@ -63,10 +63,10 @@ pub enum BitExpOp {
 #[allow(clippy::trivially_copy_pass_by_ref)]
 pub fn resize(
     policy: &BitPolicy,
-    byte_size: FilterExpression,
+    byte_size: Expression,
     resize_flags: BitwiseResizeFlags,
-    bin: FilterExpression,
-) -> FilterExpression {
+    bin: Expression,
+) -> Expression {
     let args = vec![
         ExpressionArgument::Value(Value::from(BitExpOp::Resize as i64)),
         ExpressionArgument::FilterExpression(byte_size),
@@ -97,10 +97,10 @@ pub fn resize(
 #[allow(clippy::trivially_copy_pass_by_ref)]
 pub fn insert(
     policy: &BitPolicy,
-    byte_offset: FilterExpression,
-    value: FilterExpression,
-    bin: FilterExpression,
-) -> FilterExpression {
+    byte_offset: Expression,
+    value: Expression,
+    bin: Expression,
+) -> Expression {
     let args = vec![
         ExpressionArgument::Value(Value::from(BitExpOp::Insert as i64)),
         ExpressionArgument::FilterExpression(byte_offset),
@@ -129,10 +129,10 @@ pub fn insert(
 #[allow(clippy::trivially_copy_pass_by_ref)]
 pub fn remove(
     policy: &BitPolicy,
-    byte_offset: FilterExpression,
-    byte_size: FilterExpression,
-    bin: FilterExpression,
-) -> FilterExpression {
+    byte_offset: Expression,
+    byte_size: Expression,
+    bin: Expression,
+) -> Expression {
     let args = vec![
         ExpressionArgument::Value(Value::from(BitExpOp::Remove as i64)),
         ExpressionArgument::FilterExpression(byte_offset),
@@ -163,11 +163,11 @@ pub fn remove(
 #[allow(clippy::trivially_copy_pass_by_ref)]
 pub fn set(
     policy: &BitPolicy,
-    bit_offset: FilterExpression,
-    bit_size: FilterExpression,
-    value: FilterExpression,
-    bin: FilterExpression,
-) -> FilterExpression {
+    bit_offset: Expression,
+    bit_size: Expression,
+    value: Expression,
+    bin: Expression,
+) -> Expression {
     let args = vec![
         ExpressionArgument::Value(Value::from(BitExpOp::Set as i64)),
         ExpressionArgument::FilterExpression(bit_offset),
@@ -191,11 +191,11 @@ pub fn set(
 #[allow(clippy::trivially_copy_pass_by_ref)]
 pub fn or(
     policy: &BitPolicy,
-    bit_offset: FilterExpression,
-    bit_size: FilterExpression,
-    value: FilterExpression,
-    bin: FilterExpression,
-) -> FilterExpression {
+    bit_offset: Expression,
+    bit_size: Expression,
+    value: Expression,
+    bin: Expression,
+) -> Expression {
     let args = vec![
         ExpressionArgument::Value(Value::from(BitExpOp::Or as i64)),
         ExpressionArgument::FilterExpression(bit_offset),
@@ -219,11 +219,11 @@ pub fn or(
 #[allow(clippy::trivially_copy_pass_by_ref)]
 pub fn xor(
     policy: &BitPolicy,
-    bit_offset: FilterExpression,
-    bit_size: FilterExpression,
-    value: FilterExpression,
-    bin: FilterExpression,
-) -> FilterExpression {
+    bit_offset: Expression,
+    bit_size: Expression,
+    value: Expression,
+    bin: Expression,
+) -> Expression {
     let args = vec![
         ExpressionArgument::Value(Value::from(BitExpOp::Xor as i64)),
         ExpressionArgument::FilterExpression(bit_offset),
@@ -247,11 +247,11 @@ pub fn xor(
 #[allow(clippy::trivially_copy_pass_by_ref)]
 pub fn and(
     policy: &BitPolicy,
-    bit_offset: FilterExpression,
-    bit_size: FilterExpression,
-    value: FilterExpression,
-    bin: FilterExpression,
-) -> FilterExpression {
+    bit_offset: Expression,
+    bit_size: Expression,
+    value: Expression,
+    bin: Expression,
+) -> Expression {
     let args = vec![
         ExpressionArgument::Value(Value::from(BitExpOp::And as i64)),
         ExpressionArgument::FilterExpression(bit_offset),
@@ -273,10 +273,10 @@ pub fn and(
 #[allow(clippy::trivially_copy_pass_by_ref)]
 pub fn not(
     policy: &BitPolicy,
-    bit_offset: FilterExpression,
-    bit_size: FilterExpression,
-    bin: FilterExpression,
-) -> FilterExpression {
+    bit_offset: Expression,
+    bit_size: Expression,
+    bin: Expression,
+) -> Expression {
     let args = vec![
         ExpressionArgument::Value(Value::from(BitExpOp::Not as i64)),
         ExpressionArgument::FilterExpression(bit_offset),
@@ -298,11 +298,11 @@ pub fn not(
 #[allow(clippy::trivially_copy_pass_by_ref)]
 pub fn lshift(
     policy: &BitPolicy,
-    bit_offset: FilterExpression,
-    bit_size: FilterExpression,
-    shift: FilterExpression,
-    bin: FilterExpression,
-) -> FilterExpression {
+    bit_offset: Expression,
+    bit_size: Expression,
+    shift: Expression,
+    bin: Expression,
+) -> Expression {
     let args = vec![
         ExpressionArgument::Value(Value::from(BitExpOp::LShift as i64)),
         ExpressionArgument::FilterExpression(bit_offset),
@@ -325,11 +325,11 @@ pub fn lshift(
 #[allow(clippy::trivially_copy_pass_by_ref)]
 pub fn rshift(
     policy: &BitPolicy,
-    bit_offset: FilterExpression,
-    bit_size: FilterExpression,
-    shift: FilterExpression,
-    bin: FilterExpression,
-) -> FilterExpression {
+    bit_offset: Expression,
+    bit_size: Expression,
+    shift: Expression,
+    bin: Expression,
+) -> Expression {
     let args = vec![
         ExpressionArgument::Value(Value::from(BitExpOp::RShift as i64)),
         ExpressionArgument::FilterExpression(bit_offset),
@@ -355,13 +355,13 @@ pub fn rshift(
 #[allow(clippy::trivially_copy_pass_by_ref)]
 pub fn add(
     policy: &BitPolicy,
-    bit_offset: FilterExpression,
-    bit_size: FilterExpression,
-    value: FilterExpression,
+    bit_offset: Expression,
+    bit_size: Expression,
+    value: Expression,
     signed: bool,
     action: BitwiseOverflowActions,
-    bin: FilterExpression,
-) -> FilterExpression {
+    bin: Expression,
+) -> Expression {
     let mut flags = action as u8;
     if signed {
         flags |= INT_FLAGS_SIGNED as u8;
@@ -392,13 +392,13 @@ pub fn add(
 #[allow(clippy::trivially_copy_pass_by_ref)]
 pub fn subtract(
     policy: &BitPolicy,
-    bit_offset: FilterExpression,
-    bit_size: FilterExpression,
-    value: FilterExpression,
+    bit_offset: Expression,
+    bit_size: Expression,
+    value: Expression,
     signed: bool,
     action: BitwiseOverflowActions,
-    bin: FilterExpression,
-) -> FilterExpression {
+    bin: Expression,
+) -> Expression {
     let mut flags = action as u8;
     if signed {
         flags |= INT_FLAGS_SIGNED as u8;
@@ -427,11 +427,11 @@ pub fn subtract(
 #[allow(clippy::trivially_copy_pass_by_ref)]
 pub fn set_int(
     policy: &BitPolicy,
-    bit_offset: FilterExpression,
-    bit_size: FilterExpression,
-    value: FilterExpression,
-    bin: FilterExpression,
-) -> FilterExpression {
+    bit_offset: Expression,
+    bit_size: Expression,
+    value: Expression,
+    bin: Expression,
+) -> Expression {
     let args = vec![
         ExpressionArgument::Value(Value::from(BitExpOp::SetInt as i64)),
         ExpressionArgument::FilterExpression(bit_offset),
@@ -458,10 +458,10 @@ pub fn set_int(
 ///   blob_val(vec![0b10000000]));
 /// ```
 pub fn get(
-    bit_offset: FilterExpression,
-    bit_size: FilterExpression,
-    bin: FilterExpression,
-) -> FilterExpression {
+    bit_offset: Expression,
+    bit_size: Expression,
+    bin: Expression,
+) -> Expression {
     let args = vec![
         ExpressionArgument::Value(Value::from(BitExpOp::Get as i64)),
         ExpressionArgument::FilterExpression(bit_offset),
@@ -485,10 +485,10 @@ pub fn get(
 /// le(count(int_val(0), int_val(5), blob_bin("a".to_string())), int_val(2));
 /// ```
 pub fn count(
-    bit_offset: FilterExpression,
-    bit_size: FilterExpression,
-    bin: FilterExpression,
-) -> FilterExpression {
+    bit_offset: Expression,
+    bit_size: Expression,
+    bin: Expression,
+) -> Expression {
     let args = vec![
         ExpressionArgument::Value(Value::from(BitExpOp::Count as i64)),
         ExpressionArgument::FilterExpression(bit_offset),
@@ -513,11 +513,11 @@ pub fn count(
 /// ```
 ///
 pub fn lscan(
-    bit_offset: FilterExpression,
-    bit_size: FilterExpression,
-    value: FilterExpression,
-    bin: FilterExpression,
-) -> FilterExpression {
+    bit_offset: Expression,
+    bit_size: Expression,
+    value: Expression,
+    bin: Expression,
+) -> Expression {
     let args = vec![
         ExpressionArgument::Value(Value::from(BitExpOp::LScan as i64)),
         ExpressionArgument::FilterExpression(bit_offset),
@@ -545,11 +545,11 @@ pub fn lscan(
 /// ```
 ///
 pub fn rscan(
-    bit_offset: FilterExpression,
-    bit_size: FilterExpression,
-    value: FilterExpression,
-    bin: FilterExpression,
-) -> FilterExpression {
+    bit_offset: Expression,
+    bit_size: Expression,
+    value: Expression,
+    bin: Expression,
+) -> Expression {
     let args = vec![
         ExpressionArgument::Value(Value::from(BitExpOp::RScan as i64)),
         ExpressionArgument::FilterExpression(bit_offset),
@@ -574,11 +574,11 @@ pub fn rscan(
 /// eq(get_int(int_val(8), int_val(16), false, blob_bin("a".to_string())), int_val(16899));
 /// ```
 pub fn get_int(
-    bit_offset: FilterExpression,
-    bit_size: FilterExpression,
+    bit_offset: Expression,
+    bit_size: Expression,
     signed: bool,
-    bin: FilterExpression,
-) -> FilterExpression {
+    bin: Expression,
+) -> Expression {
     let mut args = vec![
         ExpressionArgument::Value(Value::from(BitExpOp::GetInt as i64)),
         ExpressionArgument::FilterExpression(bit_offset),
@@ -591,8 +591,8 @@ pub fn get_int(
 }
 
 #[doc(hidden)]
-fn add_write(bin: FilterExpression, arguments: Vec<ExpressionArgument>) -> FilterExpression {
-    FilterExpression {
+fn add_write(bin: Expression, arguments: Vec<ExpressionArgument>) -> Expression {
+    Expression {
         cmd: Some(ExpOp::Call),
         val: None,
         bin: Some(Box::new(bin)),
@@ -605,11 +605,11 @@ fn add_write(bin: FilterExpression, arguments: Vec<ExpressionArgument>) -> Filte
 
 #[doc(hidden)]
 fn add_read(
-    bin: FilterExpression,
+    bin: Expression,
     return_type: ExpType,
     arguments: Vec<ExpressionArgument>,
-) -> FilterExpression {
-    FilterExpression {
+) -> Expression {
+    Expression {
         cmd: Some(ExpOp::Call),
         val: None,
         bin: Some(Box::new(bin)),

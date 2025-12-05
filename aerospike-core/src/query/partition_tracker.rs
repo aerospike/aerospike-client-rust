@@ -240,7 +240,7 @@ impl PartitionTracker {
         self.deadline = policy.deadline();
 
         // if self.replica == RANDOM {
-        //     panic(newError(types.PARAMETER_ERROR, "Invalid replica: RANDOM"))
+        //     panic(newError(ResultCode::ParameterError, "Invalid replica: RANDOM"))
         // }
     }
 

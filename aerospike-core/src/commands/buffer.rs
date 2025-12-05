@@ -20,7 +20,7 @@ use crate::batch::BatchOperation;
 use crate::commands::field_type::FieldType;
 use crate::commands::BatchAttr;
 use crate::errors::{Error, Result};
-use crate::expressions::FilterExpression;
+use crate::expressions::Expression;
 use crate::msgpack::encoder;
 use crate::operations::{Operation, OperationBin, OperationData, OperationType};
 use crate::policy::{
@@ -370,7 +370,7 @@ impl Buffer {
     fn write_batch_fields_with_filter(
         &mut self,
         key: &Key,
-        filter: &Option<FilterExpression>,
+        filter: &Option<Expression>,
         field_count: usize,
         op_count: usize,
     ) -> Result<()> {
@@ -389,7 +389,7 @@ impl Buffer {
         &mut self,
         key: &Key,
         attr: &BatchAttr,
-        filter: &Option<FilterExpression>,
+        filter: &Option<Expression>,
         mut field_count: usize,
         op_count: usize,
     ) -> Result<()> {
@@ -429,7 +429,7 @@ impl Buffer {
         key: &Key,
         bin_names: &Vec<String>,
         attr: &BatchAttr,
-        filter: &Option<FilterExpression>,
+        filter: &Option<Expression>,
     ) -> Result<()> {
         self.write_batch_read(key, attr, filter, bin_names.len())?;
 
@@ -444,7 +444,7 @@ impl Buffer {
         key: &Key,
         ops: &Vec<Operation>,
         attr: &BatchAttr,
-        filter: &Option<FilterExpression>,
+        filter: &Option<Expression>,
     ) -> Result<()> {
         if attr.has_write {
             self.write_batch_write(key, attr, filter, 0, ops.len())?;
@@ -462,7 +462,7 @@ impl Buffer {
         &mut self,
         key: &Key,
         attr: &BatchAttr,
-        filter: &Option<FilterExpression>,
+        filter: &Option<Expression>,
         op_count: usize,
     ) -> Result<()> {
         self.write_u8(BATCH_MSG_INFO | BATCH_MSG_TTL);
@@ -477,7 +477,7 @@ impl Buffer {
         &mut self,
         key: &Key,
         attr: &BatchAttr,
-        filter: &Option<FilterExpression>,
+        filter: &Option<Expression>,
         field_count: usize,
         op_count: usize,
     ) -> Result<()> {
@@ -1179,7 +1179,7 @@ impl Buffer {
         Ok(())
     }
 
-    fn estimate_filter_size(&mut self, filter: &Option<FilterExpression>) -> usize {
+    fn estimate_filter_size(&mut self, filter: &Option<Expression>) -> usize {
         filter.clone().map_or(0, |filter| {
             let filter_size = filter.pack(&mut None);
             self.data_offset += filter_size + FIELD_HEADER_SIZE as usize;
@@ -1406,7 +1406,7 @@ impl Buffer {
         }
     }
 
-    fn write_filter_expression(&mut self, filter: &FilterExpression, size: usize) {
+    fn write_filter_expression(&mut self, filter: &Expression, size: usize) {
         self.write_field_header(size, FieldType::FilterExp);
         let _ = filter.pack(&mut Some(self));
     }
