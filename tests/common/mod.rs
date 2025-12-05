@@ -41,6 +41,8 @@ lazy_static! {
         env::var("AEROSPIKE_HOSTS").unwrap_or_else(|_| String::from("127.0.0.1:3100"));
     static ref AEROSPIKE_NAMESPACE: String =
         env::var("AEROSPIKE_NAMESPACE").unwrap_or_else(|_| String::from("test"));
+    static ref AEROSPIKE_PROP_SET_NAME: String =
+        env::var("AEROSPIKE_PROP_SET_NAME").unwrap_or_else(|_| String::from("test"));
     static ref AEROSPIKE_CLUSTER: Option<String> = env::var("AEROSPIKE_CLUSTER").ok();
     static ref AEROSPIKE_USE_SERVICES_ALTERNATE: bool =
         env::var("AEROSPIKE_USE_SERVICES_ALTERNATE").is_ok();
@@ -156,6 +158,10 @@ pub fn tls_key_file() -> &'static str {
 
 pub fn namespace() -> &'static str {
     &*AEROSPIKE_NAMESPACE
+}
+
+pub fn prop_setname() -> &'static str {
+    &*AEROSPIKE_PROP_SET_NAME
 }
 
 pub fn client_policy() -> &'static ClientPolicy {

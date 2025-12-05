@@ -16,6 +16,7 @@ use aerospike_rt::time::Instant;
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use crate::batch;
 use crate::batch::BatchOperation;
 use crate::batch::BatchRecordIndex;
 use crate::cluster::partition::Partition;

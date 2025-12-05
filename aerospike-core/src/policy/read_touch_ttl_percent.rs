@@ -27,7 +27,7 @@ const DONT_RESET: u32 = 0xFFFF_FFFF; // -1 as i32
 /// 80, the next read within 8 hours of the record's end of life (equivalent to 2 hours after the most
 /// recent write) will result in a touch, resetting the TTL to another 10 hours.
 /// Supported in server v8+.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum ReadTouchTTL {
     /// 1 - 100 : Reset record TTL on reads when within this percentage of the most recent write TTL
     Percent(u8),
