@@ -111,6 +111,7 @@ impl Client {
     /// let client = Client::new(&ClientPolicy::default(), &hosts).await.unwrap();
     /// ```
     pub async fn new(policy: &ClientPolicy, hosts: &(dyn ToHosts + Send + Sync)) -> Result<Self> {
+        policy.validate()?;
         let hosts = hosts.to_hosts()?;
         let cluster = Cluster::new(policy.clone(), &hosts).await?;
 

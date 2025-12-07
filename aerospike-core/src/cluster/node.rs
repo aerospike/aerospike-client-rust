@@ -19,13 +19,14 @@ use std::hash::{Hash, Hasher};
 use std::result::Result as StdResult;
 use std::sync::atomic::{AtomicBool, AtomicIsize, AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::time::Duration;
 
 use crate::cluster::node_validator::{NodeFeatures, NodeValidator};
 use crate::cluster::peers_parser::PeersParser;
 use crate::cluster::CLIENT_VERSION;
 use crate::commands::Message;
 use crate::errors::{Error, Result};
-use crate::net::{ConnectionPool, Host, PooledConnection};
+use crate::net::{Connection, ConnectionPool, Host, PooledConnection};
 use crate::policy::{AdminPolicy, ClientPolicy};
 use crate::Version;
 use aerospike_rt::RwLock;
@@ -155,6 +156,7 @@ impl Node {
         self.update_rebalance_generation(&info_map)
             .map_err(|e| e.chain_error("Failed to update rebalance generation"))?;
         self.reset_failures();
+        let _ = self.fill_min_conns().await;
         Ok(friends)
     }
 
@@ -276,7 +278,9 @@ impl Node {
 
     // Get a connection to the node from the connection pool
     pub async fn get_connection(&self) -> Result<PooledConnection> {
-        self.connection_pool.get().await
+        self.connection_pool
+            .get(self.connection_pool.num_conns().await)
+            .await
     }
 
     // Amount of failures
@@ -362,6 +366,23 @@ impl Node {
             timeout: self.client_policy().timeout,
         };
         let _ = self.info(&policy, &[&user_agent_command]).await;
+    }
+
+    /// Fills the connection pool to the minimum required
+    /// by the [ClientPolicy.min_conns_per_node]
+    pub(crate) async fn fill_min_conns(&self) -> Result<usize> {
+        let mut count = 0;
+
+        let client_policy = self.client_policy();
+        if client_policy.min_conns_per_node > 0 {
+            let to_fill = client_policy.min_conns_per_node - self.connection_pool.num_conns().await;
+            for _ in 0..to_fill {
+                self.connection_pool.make_conn().await?;
+                count += 1;
+            }
+        }
+
+        return Ok(count);
     }
 }
 

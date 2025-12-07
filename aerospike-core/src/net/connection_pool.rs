@@ -60,38 +60,49 @@ impl Queue {
         Queue(Arc::new(shared))
     }
 
-    pub async fn get(&self) -> Result<PooledConnection> {
+    pub async fn make_conn(&self) -> Result<Connection> {
+        let conn = aerospike_rt::timeout(
+            Duration::from_secs(5),
+            Connection::new(&self.0.host, &self.0.policy),
+        )
+        .await;
+
+        if let Ok(Ok(conn)) = conn {
+            return Ok(conn);
+        } else {
+            return Err(Error::Connection(
+                "Could not open network connection".to_string(),
+            ));
+        };
+    }
+
+    pub async fn get(&self, total_conns: usize) -> Result<PooledConnection> {
         let mut internals = self.0.internals.lock().await;
         let connection;
         loop {
             if let Some(IdleConnection(mut conn)) = internals.connections.pop_front() {
                 if conn.is_idle() {
-                    internals.num_conns -= 1;
-                    conn.close().await;
+                    if total_conns > internals.num_conns {
+                        internals.num_conns -= 1;
+                        conn.close().await;
+                    }
                     continue;
                 }
                 connection = conn;
                 break;
             }
 
-            if internals.num_conns >= self.0.capacity {
+            if internals.num_conns >= self.0.capacity
+                || (self.0.policy.max_conns_per_node > 0
+                    && total_conns >= self.0.policy.max_conns_per_node)
+            {
                 return Err(Error::NoMoreConnections);
             }
 
             // Free the lock to prevent deadlocking
             drop(internals);
 
-            let conn = aerospike_rt::timeout(
-                Duration::from_secs(5),
-                Connection::new(&self.0.host, &self.0.policy),
-            )
-            .await;
-
-            let Ok(Ok(conn)) = conn else {
-                return Err(Error::Connection(
-                    "Could not open network connection".to_string(),
-                ));
-            };
+            let conn = self.make_conn().await?;
 
             let mut internals = self.0.internals.lock().await;
             internals.num_conns += 1;
@@ -131,6 +142,10 @@ impl Queue {
             conn.0.close().await;
         }
         internals.num_conns = 0;
+    }
+
+    pub async fn num_conns(&self) -> usize {
+        self.0.internals.lock().await.num_conns
     }
 }
 
@@ -179,14 +194,14 @@ impl ConnectionPool {
         queues
     }
 
-    pub async fn get(&self) -> Result<PooledConnection> {
+    pub async fn get(&self, total_conns: usize) -> Result<PooledConnection> {
         if self.num_queues == 1 {
-            self.queues[0].get().await
+            self.queues[0].get(total_conns).await
         } else {
             let mut attempts = self.num_queues;
             loop {
-                let i = self.queue_counter.fetch_add(1, Ordering::Relaxed);
-                let connection = self.queues[i % self.num_queues].get().await;
+                let i: usize = self.queue_counter.fetch_add(1, Ordering::Relaxed);
+                let connection = self.queues[i % self.num_queues].get(total_conns).await;
                 if let Err(Error::NoMoreConnections) = connection {
                     attempts -= 1;
                     if attempts > 0 {
@@ -198,10 +213,42 @@ impl ConnectionPool {
         }
     }
 
+    pub async fn make_conn(&self) -> Result<()> {
+        let mut attempts = self.num_queues;
+        loop {
+            let i = self.queue_counter.fetch_add(1, Ordering::Relaxed);
+            let queue = &self.queues[i % self.num_queues];
+            if queue.0.internals.lock().await.num_conns >= queue.0.capacity {
+                attempts -= 1;
+                if attempts <= 0 {
+                    break;
+                }
+                continue;
+            }
+
+            let conn = queue.make_conn().await?;
+            queue.put_back(conn).await;
+            queue.0.internals.lock().await.num_conns += 1;
+            return Ok(());
+        }
+
+        Err(Error::ClientError(
+            "Could not make a connection for the connection pool".into(),
+        ))
+    }
+
     pub async fn close(&mut self) {
         for mut queue in self.queues.drain(..) {
             queue.clear().await;
         }
+    }
+
+    pub async fn num_conns(&self) -> usize {
+        let mut sum = 0;
+        for q in &self.queues {
+            sum += q.num_conns().await;
+        }
+        sum
     }
 }
 

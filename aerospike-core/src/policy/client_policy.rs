@@ -16,7 +16,7 @@ use std::collections::{HashMap, HashSet};
 use std::time::Duration;
 
 use crate::commands::admin_command::AdminCommand;
-use crate::errors::Result;
+use crate::errors::{Error, Result};
 
 #[cfg(feature = "tls")]
 use tokio_rustls::rustls::ClientConfig;
@@ -167,6 +167,14 @@ impl Default for ClientPolicy {
 }
 
 impl ClientPolicy {
+    pub(crate) fn validate(&self) -> Result<()> {
+        if self.max_conns_per_node > 0 && self.min_conns_per_node > self.max_conns_per_node {
+            return Err(Error::ClientError("minimum number of connections specified in the ClientPolicy is bigger than total connection pool size".into()));
+        };
+
+        Ok(())
+    }
+
     pub(crate) fn application_id(&self) -> &str {
         if let Some(ref app_id) = self.application_id {
             if app_id.len() > 0 {
