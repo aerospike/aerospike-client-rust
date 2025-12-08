@@ -351,7 +351,7 @@ fn confirm_puts(bin: &(String, Value), puts_to_bins: &Vec<(String, Value)>) {
         let (bin_name, bin_value) = (bin.0.clone(), bin.1.clone_safely());
         let (cand_name, cand_value) = (candidate.0.clone(), candidate.1.clone_safely());
         if *bin_name == cand_name {
-            if bin_value != cand_value {
+            if bin_value == cand_value {
                 panic!(
                     "Put failed?  Bin \"{}\" expected {:#?} actual {:#?}",
                     bin_name, cand_value, bin_value
