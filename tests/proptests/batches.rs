@@ -31,7 +31,7 @@ proptest_async::proptest! {
     #[test]
     async fn batch_read(
         i in 0..10,
-        batch_policy in batch_policy(30000),
+        batch_policy in batch_policy(1000, 5000),
         ops in many_batch_read_operations(8),
         expected_value in any::<String>(),
     ) {
@@ -103,7 +103,7 @@ proptest_async::proptest! {
     #[test]
     async fn batch_write(
         i in 0..10,
-        batch_policy in batch_policy(30000),
+        batch_policy in batch_policy(1000, 5000),
         ops in many_batch_write_operations(2),
     ) {
         let client = common::singleton_client().await;
@@ -230,7 +230,7 @@ proptest_async::proptest! {
                         client.put(&write_policy, &key, &bins).await;
                     }
                     Value::Blob(_) => {
-						eprintln!("PREPEND_TO_BIN: {:#?}", prepend);
+                        eprintln!("PREPEND_TO_BIN: {:#?}", prepend);
                         let bins = [as_bin!(prepend.0.clone(), as_blob!([1, 2, 3].into()))];
                         client.put(&write_policy, &key, &bins).await;
                     }
@@ -299,7 +299,7 @@ proptest_async::proptest! {
     #[test]
     async fn batch_delete(
         i in 0..10,
-        batch_policy in batch_policy(30000),
+        batch_policy in batch_policy(1000, 5000),
         ops in many_batch_delete_operations(2),
     ) {
         let client = common::singleton_client().await;
