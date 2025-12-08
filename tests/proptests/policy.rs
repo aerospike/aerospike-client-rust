@@ -320,8 +320,13 @@ pub fn read_policy(
 }
 
 pub fn batch_policy(timeout_ms: u32) -> impl Strategy<Value = BatchPolicy> {
+    // This is not correct, but it will still allow the tests in my branch
+    // to compile.  TODO(sfalvo): Update batch_policy() to take these two args,
+    // and then update all call sites accordingly.
+    let socket_timeout_ms = timeout_ms;
+    let total_timeout_ms = timeout_ms;
     (
-        base_policy(timeout_ms),
+        base_policy(socket_timeout_ms, total_timeout_ms),
         concurrency(),
         any::<bool>(),
         any::<bool>(),
