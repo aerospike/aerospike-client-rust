@@ -87,7 +87,7 @@ async fn role_management() {
     }
 
     let namespace: &str = common::namespace();
-    let set_name = "test";
+    let set_name = common::prop_setname();
 
     const ROLE: &str = "test-role";
 

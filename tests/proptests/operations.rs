@@ -8,7 +8,7 @@ proptest_async::proptest! {
     #[test]
     async fn operate(
         write_policy in write_policy(30000),
-        key in any_key(common::namespace().into(), "test".into()),
+        key in any_key(common::namespace().into(), common::prop_setname().into()),
         ops in many_operations(50),
     ) {
         let client = common::singleton_client().await;

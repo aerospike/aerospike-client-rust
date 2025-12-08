@@ -13,7 +13,7 @@ async fn hll() {
     let namespace = common::namespace();
     let set_name = &common::rand_str(10);
 
-    let key = as_key!(namespace, set_name, "test");
+    let key = as_key!(namespace, set_name, common::prop_setname());
 
     let hpolicy = HLLPolicy::default();
     let wpolicy = WritePolicy::default();

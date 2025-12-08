@@ -17,8 +17,8 @@ proptest_async::proptest! {
         query_policy in query_policy(30000)
             .prop_filter("ShortQuery and rps together are invalid",
                 |qp| !(qp.expected_duration == QueryDuration::Short && qp.records_per_second > 0)),
-            mut pf in partition_filter(common::namespace().into(), "test".into()),
-            stmt in statement(common::namespace().into(), "test".into()))
+            mut pf in partition_filter(common::namespace().into(), common::prop_setname().into()),
+            stmt in statement(common::namespace().into(), common::prop_setname().into()))
     {
         let client = common::singleton_client().await;
 
