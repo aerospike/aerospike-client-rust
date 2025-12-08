@@ -13,7 +13,6 @@
 // License for the specific language governing permissions and limitations under
 // the License.
 
-use std::boxed::Box;
 use std::str::FromStr;
 use std::sync::mpsc::Sender;
 use std::sync::Arc;
@@ -21,18 +20,30 @@ use std::time::{Duration, Instant};
 
 use rand::prelude::*;
 
-use aerospike::Error as asError;
 use aerospike::Result as asResult;
 use aerospike::{Client, Error, Key, ReadPolicy, ResultCode, WritePolicy};
 
-use generator::KeyRange;
-use percent::Percent;
-use stats::Histogram;
-use futures::executor::block_on;
+use crate::generator::KeyRange;
+use crate::percent::Percent;
+use crate::stats::Histogram;
 
 lazy_static! {
     // How frequently workers send stats to the collector
     pub static ref COLLECT_MS: Duration = Duration::from_millis(100);
+}
+
+pub enum TaskType {
+    Insert(InsertTask),
+    ReadUpdate(ReadUpdateTask),
+}
+
+impl TaskType {
+    pub async fn execute(&self, key: &Key) -> Status {
+        match self {
+            TaskType::Insert(task) => task.execute(key).await,
+            TaskType::ReadUpdate(task) => task.execute(key).await,
+        }
+    }
 }
 
 #[derive(Debug, PartialEq)]
@@ -63,7 +74,7 @@ impl FromStr for Workload {
 pub struct Worker {
     histogram: Histogram,
     collector: Sender<Histogram>,
-    task: Box<dyn Task>,
+    task: TaskType,
 }
 
 impl Worker {
@@ -72,9 +83,11 @@ impl Worker {
         client: Arc<Client>,
         sender: Sender<Histogram>,
     ) -> Self {
-        let task: Box<dyn Task> = match *workload {
-            Workload::Initialize => Box::new(InsertTask::new(client)),
-            Workload::ReadUpdate { read_pct } => Box::new(ReadUpdateTask::new(client, read_pct)),
+        let task = match *workload {
+            Workload::Initialize => TaskType::Insert(InsertTask::new(client)),
+            Workload::ReadUpdate { read_pct } => {
+                TaskType::ReadUpdate(ReadUpdateTask::new(client, read_pct))
+            }
         };
         Worker {
             histogram: Histogram::new(),
@@ -83,11 +96,11 @@ impl Worker {
         }
     }
 
-    pub fn run(&mut self, key_range: KeyRange) {
+    pub async fn run(&mut self, key_range: KeyRange) {
         let mut last_collection = Instant::now();
         for key in key_range {
             let now = Instant::now();
-            let status = self.task.execute(&key);
+            let status = self.task.execute(&key).await;
             self.histogram.add(now.elapsed(), status);
             if last_collection.elapsed() > *COLLECT_MS {
                 self.collect();
@@ -110,11 +123,13 @@ pub enum Status {
 }
 
 trait Task: Send {
-    fn execute(&self, key: &Key) -> Status;
+    async fn execute(&self, key: &Key) -> Status;
 
     fn status(&self, result: asResult<()>) -> Status {
         match result {
-            Err(Error::ServerError(ResultCode::Timeout)) => Status::Timeout,
+            Err(Error::ServerError(ResultCode::Timeout, _, _) | Error::Timeout(_)) => {
+                Status::Timeout
+            }
             Err(_) => Status::Error,
             _ => Status::Success,
         }
@@ -136,10 +151,10 @@ impl InsertTask {
 }
 
 impl Task for InsertTask {
-    fn execute(&self, key: &Key) -> Status {
+    async fn execute(&self, key: &Key) -> Status {
         let bin = as_bin!("int", random::<i64>());
         trace!("Inserting {}", key);
-        self.status(block_on(self.client.put(&self.policy, key, &[bin])))
+        self.status(self.client.put(&self.policy, key, &[bin]).await)
     }
 }
 
@@ -162,14 +177,19 @@ impl ReadUpdateTask {
 }
 
 impl Task for ReadUpdateTask {
-    fn execute(&self, key: &Key) -> Status {
+    async fn execute(&self, key: &Key) -> Status {
         if self.reads >= random() {
             trace!("Reading {}", key);
-            self.status(block_on(self.client.get(&self.rpolicy, key, ["int"])).map(|_| ()))
+            self.status(
+                self.client
+                    .get(&self.rpolicy, key, ["int"])
+                    .await
+                    .map(|_| ()),
+            )
         } else {
             trace!("Writing {}", key);
             let bin = as_bin!("int", random::<i64>());
-            self.status(block_on(self.client.put(&self.wpolicy, key, &[bin])))
+            self.status(self.client.put(&self.wpolicy, key, &[bin]).await)
         }
     }
 }

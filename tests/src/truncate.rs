@@ -14,6 +14,9 @@
 // the License.
 
 use crate::common;
+
+use aerospike::AdminPolicy;
+
 use env_logger;
 
 #[aerospike_macro::test]
@@ -23,8 +26,9 @@ async fn truncate() {
     let client = common::client().await;
     let namespace: &str = common::namespace();
     let set_name = &common::rand_str(10);
+    let apolicy = AdminPolicy::default();
 
-    let result = client.truncate(namespace, set_name, 0).await;
+    let result = client.truncate(&apolicy, namespace, set_name, 0).await;
     assert!(result.is_ok());
 
     client.close().await.unwrap();

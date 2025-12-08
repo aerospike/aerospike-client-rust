@@ -20,7 +20,7 @@ use aerospike_rt::time::Duration;
 
 use super::{PolicyLike, Replica};
 
-/// `ReadPolicy` excapsulates parameters for transaction policy attributes
+/// `ReadPolicy` encapsulates parameters for transaction policy attributes
 /// used in all database operation calls.
 #[derive(Debug, Default, Clone)]
 pub struct ReadPolicy {
@@ -34,8 +34,9 @@ pub struct ReadPolicy {
 impl Default for BasePolicy {
     fn default() -> BasePolicy {
         BasePolicy {
-            total_timeout: Some(Duration::from_secs(30)),
-            max_retries: Some(2),
+            socket_timeout: 5000,
+            total_timeout: 0,
+            max_retries: 2,
             sleep_between_retries: Some(Duration::from_millis(500)),
             consistency_level: ConsistencyLevel::ConsistencyOne,
             read_touch_ttl: super::ReadTouchTTL::ServerDefault,

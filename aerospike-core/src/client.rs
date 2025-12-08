@@ -18,11 +18,15 @@ use std::sync::Arc;
 use std::vec::Vec;
 use std::{str, usize};
 
+use regex::Regex;
+use std::sync::LazyLock;
+
 use aerospike_rt::{sleep, Mutex};
 
 use crate::batch::{BatchExecutor, BatchOperation};
 use crate::cluster::{Cluster, Node};
 use crate::commands::admin_command::AdminCommand;
+use crate::commands::buffer::Buffer;
 use crate::commands::{
     DeleteCommand, ExecuteUDFCommand, ExistsCommand, OperateCommand, QueryCommand, ReadCommand,
     ScanCommand, TouchCommand, WriteCommand,
@@ -32,9 +36,11 @@ use crate::expressions::FilterExpression;
 use crate::msgpack::encoder::pack_ctx_for_index;
 use crate::net::ToHosts;
 use crate::operations::{CdtContext, Operation, OperationType};
-use crate::policy::{BatchPolicy, ClientPolicy, QueryPolicy, ReadPolicy, ScanPolicy, WritePolicy};
+use crate::policy::{
+    AdminPolicy, BatchPolicy, ClientPolicy, QueryPolicy, ReadPolicy, ScanPolicy, WritePolicy,
+};
 use crate::query::{PartitionFilter, PartitionTracker};
-use crate::task::{IndexTask, RegisterTask};
+use crate::task::{DropIndexTask, IndexTask, RegisterTask, UdfRemoveTask};
 use crate::Version;
 use crate::{
     BatchRecord, Bin, Bins, CollectionIndexType, IndexType, Key, Privilege, Record, Recordset,
@@ -494,7 +500,7 @@ impl Client {
     /// the UDF package with a single, random cluster node; from there a copy will get distributed
     /// to all other cluster nodes automatically.
     ///
-    /// Lua is the only supported scripting laungauge for UDFs at the moment.
+    /// Lua is the only supported scripting language for UDFs at the moment.
     ///
     /// # Examples
     ///
@@ -533,37 +539,28 @@ impl Client {
     /// ```
     pub async fn register_udf(
         &self,
+        policy: &AdminPolicy,
         udf_body: &[u8],
-        udf_name: &str,
+        server_path: &str,
         language: UDFLang,
     ) -> Result<RegisterTask> {
         let udf_body = base64::encode(udf_body);
 
         let cmd = format!(
             "udf-put:filename={};content={};content-len={};udf-type={};",
-            udf_name,
+            server_path,
             udf_body,
             udf_body.len(),
             language
         );
         let node = self.cluster.get_random_node().await?;
-        let response = node.info(&[&cmd]).await?;
-
-        if let Some(msg) = response.get("error") {
-            let msg = base64::decode(msg)?;
-            let msg = str::from_utf8(&msg)?;
-            return Err(Error::UdfBadResponse(format!(
-                "UDF Registration failed: {}, file: {}, line: {}, message: {}",
-                response.get("error").unwrap_or(&"-".to_string()),
-                response.get("file").unwrap_or(&"-".to_string()),
-                response.get("line").unwrap_or(&"-".to_string()),
-                msg
-            )));
-        }
+        self.send_info_cmd(policy, node, &cmd)
+            .await
+            .map_err(|e| e.chain_error("Error registering UDF"))?;
 
         Ok(RegisterTask::new(
             Arc::clone(&self.cluster),
-            udf_name.to_string(),
+            server_path.to_string(),
         ))
     }
 
@@ -572,11 +569,12 @@ impl Client {
     /// the UDF package with a single, random cluster node; from there a copy will get distributed
     /// to all other cluster nodes automatically.
     ///
-    /// Lua is the only supported scripting laungauge for UDFs at the moment.
+    /// Lua is the only supported scripting language for UDFs at the moment.
     pub async fn register_udf_from_file(
         &self,
+        policy: &AdminPolicy,
         client_path: &str,
-        udf_name: &str,
+        server_path: &str,
         language: UDFLang,
     ) -> Result<RegisterTask> {
         let path = Path::new(client_path);
@@ -584,25 +582,27 @@ impl Client {
         let mut udf_body: Vec<u8> = vec![];
         file.read_to_end(&mut udf_body).await?;
 
-        self.register_udf(&udf_body, udf_name, language).await
+        self.register_udf(policy, &udf_body, server_path, language)
+            .await
     }
 
     /// Remove a user-defined function (UDF) module from the server.
-    pub async fn remove_udf(&self, udf_name: &str, language: UDFLang) -> Result<()> {
-        let cmd = format!("udf-remove:filename={}.{};", udf_name, language);
+    pub async fn remove_udf(
+        &self,
+        policy: &AdminPolicy,
+        server_path: &str,
+    ) -> Result<UdfRemoveTask> {
+        let cmd = format!("udf-remove:filename={};", server_path);
         let node = self.cluster.get_random_node().await?;
-        // Sample response: {"udf-remove:filename=file_name.LUA;": "ok"}
-        let response = node.info(&[&cmd]).await?;
+        // Sample response: {"udf-remove:filename=server_path;": "ok"}
+        self.send_info_cmd(policy, node, &cmd)
+            .await
+            .map_err(|e| e.chain_error("UDF Remove failed"))?;
 
-        match response.get(&cmd).map(String::as_str) {
-            Some("ok") => Ok(()),
-            _ => {
-                return Err(Error::UdfBadResponse(format!(
-                    "UDF Remove failed: {:?}",
-                    response
-                )))
-            }
-        }
+        Ok(UdfRemoveTask::new(
+            Arc::clone(&self.cluster),
+            server_path.to_string(),
+        ))
     }
 
     /// Execute a user-defined function on the server and return the results. The function operates
@@ -614,7 +614,7 @@ impl Client {
         &self,
         policy: &WritePolicy,
         key: &Key,
-        udf_name: &str,
+        server_path: &str,
         function_name: &str,
         args: Option<&[Value]>,
     ) -> Result<Option<Value>> {
@@ -622,7 +622,7 @@ impl Client {
             policy,
             self.cluster.clone(),
             key,
-            udf_name,
+            server_path,
             function_name,
             args,
         );
@@ -1002,6 +1002,41 @@ impl Client {
         }
     }
 
+    /// Sets XDR filter for given datacenter name and namespace. The expression filter indicates
+    /// which records XDR should ship to the datacenter.
+    /// Pass nil as filter to remove the current filter on the server.
+    pub async fn set_xdr_filter(
+        &self,
+        policy: &AdminPolicy,
+        datacenter: &str,
+        namespace: &str,
+        filter_expression: Option<&FilterExpression>,
+    ) -> Result<()> {
+        let node = self.cluster.get_random_node().await?;
+
+        let cmd = if let Some(expression) = filter_expression {
+            let size = expression.size();
+            let mut buf = Buffer::new(0);
+            buf.resize_buffer(size)?;
+            let _ = expression.pack(&mut Some(&mut buf));
+            let exp_str = base64::encode(&buf.data_buffer);
+
+            format!(
+                "xdr-set-filter:dc={};namespace={};exp={}",
+                datacenter, namespace, exp_str
+            )
+        } else {
+            format!(
+                "xdr-set-filter:dc={};namespace={};exp=null",
+                datacenter, namespace
+            )
+        };
+
+        self.send_info_cmd(policy, node, &cmd)
+            .await
+            .map_err(|e| e.chain_error("Error setting XDR filter"))
+    }
+
     /// Removes all records in the specified namespace/set efficiently.
     ///
     /// This method is many orders of magnitude faster than deleting records one at a time. It
@@ -1014,7 +1049,13 @@ impl Client {
     /// zero, only records with a lut less than `before_nanos` are deleted. Units are in
     /// nanoseconds since unix epoch (1970-01-01). Pass in zero to delete all records in the
     /// namespace/set recardless of last update time.
-    pub async fn truncate(&self, namespace: &str, set_name: &str, before_nanos: i64) -> Result<()> {
+    pub async fn truncate(
+        &self,
+        policy: &AdminPolicy,
+        namespace: &str,
+        set_name: &str,
+        before_nanos: i64,
+    ) -> Result<()> {
         let mut cmd = String::with_capacity(160);
         cmd.push_str("truncate:namespace=");
         cmd.push_str(namespace);
@@ -1030,7 +1071,7 @@ impl Client {
         }
 
         let node = self.cluster.get_random_node().await?;
-        self.send_info_cmd(node, &cmd)
+        self.send_info_cmd(policy, node, &cmd)
             .await
             .map_err(|e| e.chain_error("Error truncating ns/set"))
     }
@@ -1057,6 +1098,7 @@ impl Client {
     /// ```
     pub async fn create_index_on_bin(
         &self,
+        policy: &AdminPolicy,
         namespace: &str,
         set_name: &str,
         bin_name: &str,
@@ -1066,6 +1108,7 @@ impl Client {
         ctx: Option<&[CdtContext]>,
     ) -> Result<IndexTask> {
         self.create_index(
+            policy,
             namespace,
             set_name,
             bin_name,
@@ -1101,6 +1144,7 @@ impl Client {
     /// ```
     pub async fn create_index_using_expression(
         &self,
+        policy: &AdminPolicy,
         namespace: &str,
         set_name: &str,
         index_name: &str,
@@ -1109,6 +1153,7 @@ impl Client {
         expression: &FilterExpression,
     ) -> Result<IndexTask> {
         self.create_index(
+            policy,
             namespace,
             set_name,
             "",
@@ -1145,6 +1190,7 @@ impl Client {
     /// ```
     async fn create_index(
         &self,
+        policy: &AdminPolicy,
         namespace: &str,
         set_name: &str,
         bin_name: &str,
@@ -1154,8 +1200,6 @@ impl Client {
         expression: Option<&FilterExpression>,
         ctx: Option<&[CdtContext]>,
     ) -> Result<IndexTask> {
-        use crate::commands::buffer::Buffer;
-
         let mut cmd = String::with_capacity(1024);
         let node = self.cluster.get_random_node().await?;
         let node_version = node.version();
@@ -1217,7 +1261,7 @@ impl Client {
 
         cmd.push_str(&format!("{}", index_type));
 
-        self.send_info_cmd(node, &cmd)
+        self.send_info_cmd(policy, node, &cmd)
             .await
             .map_err(|e| e.chain_error("Error creating index"))?;
         Ok(IndexTask::new(
@@ -1230,10 +1274,11 @@ impl Client {
     /// Delete secondary index.
     pub async fn drop_index(
         &self,
+        policy: &AdminPolicy,
         namespace: &str,
         set_name: &str,
         index_name: &str,
-    ) -> Result<()> {
+    ) -> Result<DropIndexTask> {
         let node = self.cluster.get_random_node().await?;
         let node_version = node.version();
 
@@ -1254,93 +1299,115 @@ impl Client {
         cmd.push_str(";indexname=");
         cmd.push_str(index_name);
 
-        self.send_info_cmd(node, &cmd)
+        self.send_info_cmd(policy, node, &cmd)
             .await
-            .map_err(|e| e.chain_error("Error dropping index"))
+            .map_err(|e| e.chain_error("Error dropping index"))?;
+        Ok(DropIndexTask::new(
+            Arc::clone(&self.cluster),
+            namespace.to_string(),
+            index_name.to_string(),
+        ))
     }
 
-    async fn send_info_cmd(&self, node: Arc<Node>, cmd: &str) -> Result<()> {
-        let response = node.info(&[cmd]).await?;
-        if let Some(v) = response.values().next() {
-            if v.to_uppercase() == "OK" {
-                return Ok(());
-            } else if v.starts_with("FAIL:") {
-                let result = v.split(':').nth(1).unwrap().parse::<u8>()?;
-                return Err(Error::ServerError(
-                    ResultCode::from(result),
-                    false,
-                    node.host().address().clone(),
-                ));
+    async fn send_info_cmd(&self, policy: &AdminPolicy, node: Arc<Node>, cmd: &str) -> Result<()> {
+        let response = node.info(policy, &[cmd]).await?;
+        if let Some(response) = response.get(cmd) {
+            if response != "ok" && response != "" {
+                return Err(Self::parse_info_error(response));
             }
         }
 
-        return Err(Error::BadResponse(
-            "Unexpected info command response".to_string(),
-        ));
+        Ok(())
     }
 
     /// Creates a new user with password and roles. Clear-text password will be hashed using bcrypt
     /// before sending to server.
-    pub async fn create_user(&self, user: &str, password: &str, roles: &[&str]) -> Result<()> {
+    pub async fn create_user(
+        &self,
+        policy: &AdminPolicy,
+        user: &str,
+        password: &str,
+        roles: &[&str],
+    ) -> Result<()> {
         let cluster = self.cluster.clone();
-        AdminCommand::create_user(&cluster, user, password, roles).await
+        AdminCommand::create_user(policy, &cluster, user, password, roles).await
     }
 
     /// Creates a new user PKI user with roles. PKI users are authenticated via TLS and a certificate instead of a password.
     /// Supported by Aerospike Server v8.1+ Enterprise.
-    pub async fn create_pki_user(&self, user: &str, roles: &[&str]) -> Result<()> {
+    pub async fn create_pki_user(
+        &self,
+        policy: &AdminPolicy,
+        user: &str,
+        roles: &[&str],
+    ) -> Result<()> {
         let password = AdminCommand::hash_password("nopassword")?;
         let cluster = self.cluster.clone();
-        AdminCommand::create_user(&cluster, user, &password, roles).await
+        AdminCommand::create_user(policy, &cluster, user, &password, roles).await
     }
 
     /// Removes a user from the cluster.
-    pub async fn drop_user(&self, user: &str) -> Result<()> {
+    pub async fn drop_user(&self, policy: &AdminPolicy, user: &str) -> Result<()> {
         let cluster = self.cluster.clone();
-        AdminCommand::drop_user(&cluster, user).await
+        AdminCommand::drop_user(policy, &cluster, user).await
     }
 
     /// Changes a user's password. Clear-text password will be hashed using bcrypt before sending to server.
-    pub async fn change_password(&self, user: &str, password: &str) -> Result<()> {
+    pub async fn change_password(
+        &self,
+        policy: &AdminPolicy,
+        user: &str,
+        password: &str,
+    ) -> Result<()> {
         let cluster = self.cluster.clone();
         let auth_mode = self.cluster.client_policy().await.auth_mode;
         match auth_mode {
             crate::AuthMode::Internal(u, _) | crate::AuthMode::External(u, _) if u == user => {
-                AdminCommand::change_password(&cluster, user, password).await
+                AdminCommand::change_password(policy, &cluster, user, password).await
             }
             crate::AuthMode::PKI => {
                 return Err(Error::ClientError(
                     "Can't change PKI user's password".into(),
                 ))
             }
-            _ => AdminCommand::set_password(&cluster, user, password).await,
+            _ => AdminCommand::set_password(policy, &cluster, user, password).await,
         }
     }
 
     /// Adds roles to user's list of roles.
-    pub async fn grant_roles(&self, user: &str, roles: &[&str]) -> Result<()> {
+    pub async fn grant_roles(
+        &self,
+        policy: &AdminPolicy,
+        user: &str,
+        roles: &[&str],
+    ) -> Result<()> {
         let cluster = self.cluster.clone();
-        AdminCommand::grant_roles(&cluster, user, roles).await
+        AdminCommand::grant_roles(policy, &cluster, user, roles).await
     }
 
     /// Removes roles from user's list of roles.
-    pub async fn revoke_roles(&self, user: &str, roles: &[&str]) -> Result<()> {
+    pub async fn revoke_roles(
+        &self,
+        policy: &AdminPolicy,
+        user: &str,
+        roles: &[&str],
+    ) -> Result<()> {
         let cluster = self.cluster.clone();
-        AdminCommand::revoke_roles(&cluster, user, roles).await
+        AdminCommand::revoke_roles(policy, &cluster, user, roles).await
     }
 
     /// Retrieves users and their roles.
     /// If None is passed for the user argument, all users will be returned.
-    pub async fn query_users(&self, user: Option<&str>) -> Result<Vec<User>> {
+    pub async fn query_users(&self, policy: &AdminPolicy, user: Option<&str>) -> Result<Vec<User>> {
         let cluster = self.cluster.clone();
-        AdminCommand::query_users(&cluster, user).await
+        AdminCommand::query_users(policy, &cluster, user).await
     }
 
     /// Retrieves roles and their privileges.
     /// If None is passed for the role argument, all roles will be returned.
-    pub async fn query_roles(&self, role: Option<&str>) -> Result<Vec<Role>> {
+    pub async fn query_roles(&self, policy: &AdminPolicy, role: Option<&str>) -> Result<Vec<Role>> {
         let cluster = self.cluster.clone();
-        AdminCommand::query_roles(&cluster, role).await
+        AdminCommand::query_roles(policy, &cluster, role).await
     }
 
     /// Creates a user-defined role.
@@ -1348,6 +1415,7 @@ impl Client {
     /// Pass 0 for quota values for no limit.
     pub async fn create_role(
         &self,
+        policy: &AdminPolicy,
         role_name: &str,
         privileges: &[Privilege],
         allowlist: &[&str],
@@ -1356,6 +1424,7 @@ impl Client {
     ) -> Result<()> {
         let cluster = self.cluster.clone();
         AdminCommand::create_role(
+            policy,
             &cluster,
             role_name,
             privileges,
@@ -1367,28 +1436,43 @@ impl Client {
     }
 
     /// Removes a user-defined role.
-    pub async fn drop_role(&self, role_name: &str) -> Result<()> {
+    pub async fn drop_role(&self, policy: &AdminPolicy, role_name: &str) -> Result<()> {
         let cluster = self.cluster.clone();
-        AdminCommand::drop_role(&cluster, role_name).await
+        AdminCommand::drop_role(policy, &cluster, role_name).await
     }
 
     /// Grants privileges to a user-defined role.
-    pub async fn grant_privileges(&self, role_name: &str, privileges: &[Privilege]) -> Result<()> {
+    pub async fn grant_privileges(
+        &self,
+        policy: &AdminPolicy,
+        role_name: &str,
+        privileges: &[Privilege],
+    ) -> Result<()> {
         let cluster = self.cluster.clone();
-        AdminCommand::grant_privileges(&cluster, role_name, privileges).await
+        AdminCommand::grant_privileges(policy, &cluster, role_name, privileges).await
     }
 
     /// Revokes privileges from a user-defined role.
-    pub async fn revoke_privileges(&self, role_name: &str, privileges: &[Privilege]) -> Result<()> {
+    pub async fn revoke_privileges(
+        &self,
+        policy: &AdminPolicy,
+        role_name: &str,
+        privileges: &[Privilege],
+    ) -> Result<()> {
         let cluster = self.cluster.clone();
-        AdminCommand::revoke_privileges(&cluster, role_name, privileges).await
+        AdminCommand::revoke_privileges(policy, &cluster, role_name, privileges).await
     }
 
     /// Sets IP address allowlist for a role.
     /// If allowlist is nil or empty, it removes existing allowlist from role.
-    pub async fn set_allowlist(&self, role_name: &str, allowlist: &[&str]) -> Result<()> {
+    pub async fn set_allowlist(
+        &self,
+        policy: &AdminPolicy,
+        role_name: &str,
+        allowlist: &[&str],
+    ) -> Result<()> {
         let cluster = self.cluster.clone();
-        AdminCommand::set_allowlist(&cluster, role_name, allowlist).await
+        AdminCommand::set_allowlist(policy, &cluster, role_name, allowlist).await
     }
 
     /// Sets maximum reads/writes per second limits for a role.
@@ -1397,11 +1481,38 @@ impl Client {
     /// Pass 0 for quota values for no limit.
     pub async fn set_quotas(
         &self,
+        policy: &AdminPolicy,
         role_name: &str,
         read_quota: u32,
         write_quota: u32,
     ) -> Result<()> {
         let cluster = self.cluster.clone();
-        AdminCommand::set_quotas(&cluster, role_name, read_quota, write_quota).await
+        AdminCommand::set_quotas(policy, &cluster, role_name, read_quota, write_quota).await
+    }
+
+    fn parse_info_error(response: &str) -> Error {
+        static RE: LazyLock<Regex> = LazyLock::new(|| {
+            Regex::new(r"^(?i)(fail|error)((:|=)(?P<code>[0-9]+))?((:|=)(?P<msg>.+))?$").unwrap()
+        });
+
+        if !RE.is_match(response) {
+            return Error::ServerError(ResultCode::ServerError, false, response.into());
+        }
+
+        // 'm' is a 'Match', and 'as_str()' returns the matching part of the haystack.
+        let parts = RE
+            .captures(response)
+            .map(|caps| {
+                let code = caps.name("code").map_or_else(
+                    || ResultCode::ServerError,
+                    |code| ResultCode::from(code.as_str().parse::<u8>().unwrap()),
+                );
+                let msg = caps.name("msg").map(|msg| msg.as_str()).unwrap_or(response);
+
+                (code, msg)
+            })
+            .unwrap();
+
+        Error::ServerError(parts.0, false, parts.1.into())
     }
 }

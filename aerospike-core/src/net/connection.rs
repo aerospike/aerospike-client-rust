@@ -13,12 +13,12 @@
 // License for the specific language governing permissions and limitations under
 // the License.
 
+use std::time::SystemTime;
+
 #[cfg(feature = "tls")]
 use std::convert::TryFrom;
 #[cfg(feature = "tls")]
 use std::sync::Arc;
-
-use futures::executor::block_on;
 
 use crate::commands::admin_command::AdminCommand;
 use crate::commands::buffer::{Buffer, MAX_BUFFER_SIZE};
@@ -51,6 +51,7 @@ pub enum Netsocket {
 #[derive(Debug)]
 pub struct Connection {
     pub(crate) addr: String,
+    socket_timeout: u32,
     // duration after which connection is considered idle
     idle_timeout: Option<Duration>,
     idle_deadline: Option<Instant>,
@@ -98,7 +99,7 @@ impl Connection {
     pub async fn new(host: &Host, policy: &ClientPolicy) -> Result<Self> {
         let addr = host.address();
         let stream =
-            aerospike_rt::timeout(Duration::from_secs(10), TcpStream::connect(addr.clone())).await;
+            aerospike_rt::timeout(policy.timeout(), TcpStream::connect(addr.clone())).await;
         if stream.is_err() {
             return Err(Error::Connection(
                 "Could not open network connection".to_string(),
@@ -108,13 +109,20 @@ impl Connection {
         let stream = stream.unwrap()?;
         let stream = Self::get_netsocket(stream, host, policy).await?;
 
+        let idle_timeout = if policy.idle_timeout > 0 {
+            Some(Duration::from_millis(policy.idle_timeout as u64))
+        } else {
+            None
+        };
+
         let mut conn = Connection {
             addr: addr.into(),
             buffer: Buffer::new(policy.buffer_reclaim_threshold),
             bytes_read: 0,
             conn: stream,
-            idle_timeout: policy.idle_timeout,
-            idle_deadline: policy.idle_timeout.map(|timeout| Instant::now() + timeout),
+            socket_timeout: policy.timeout().as_millis() as u32,
+            idle_timeout: idle_timeout,
+            idle_deadline: idle_timeout.map(|timeout| Instant::now() + timeout),
             exhausted: true,
         };
         conn.authenticate(&policy.auth_mode, policy.hashed_pass.as_ref())
@@ -142,65 +150,143 @@ impl Connection {
     }
 
     pub async fn flush(&mut self) -> Result<()> {
-        match self.conn {
-            Netsocket::Tcp(ref mut conn) => conn.write_all(&self.buffer.data_buffer).await?,
-            #[cfg(feature = "tls")]
-            Netsocket::Tls(ref mut conn) => conn.write_all(&self.buffer.data_buffer).await?,
-        };
-
-        self.refresh();
-        Ok(())
-    }
-
-    pub async fn read_buffer(&mut self, size: usize) -> Result<usize> {
-        self.buffer.resize_buffer(size)?;
-        match self.conn {
-            Netsocket::Tcp(ref mut conn) => conn.read_exact(&mut self.buffer.data_buffer).await?,
-            #[cfg(feature = "tls")]
-            Netsocket::Tls(ref mut conn) => conn.read_exact(&mut self.buffer.data_buffer).await?,
-        };
-        self.bytes_read += size;
-        self.buffer.reset_offset();
-        self.refresh();
-        Ok(size)
-    }
-
-    pub async fn read_buffer_at(&mut self, pos: usize, size: usize) -> Result<usize> {
-        match self.conn {
+        let timeout = self.socket_timeout();
+        let res = match self.conn {
             Netsocket::Tcp(ref mut conn) => {
-                conn.read_exact(&mut self.buffer.data_buffer[pos..pos + size])
-                    .await?
+                aerospike_rt::timeout(timeout, conn.write_all(&self.buffer.data_buffer)).await
             }
             #[cfg(feature = "tls")]
             Netsocket::Tls(ref mut conn) => {
-                conn.read_exact(&mut self.buffer.data_buffer[pos..pos + size])
-                    .await?
+                aerospike_rt::timeout(timeout, conn.write_all(&self.buffer.data_buffer)).await
             }
         };
 
-        self.bytes_read += size;
-        self.buffer.reset_offset();
-        self.refresh();
-        Ok(size)
-    }
-
-    pub async fn write(&mut self, buf: &[u8]) -> Result<()> {
-        match self.conn {
-            Netsocket::Tcp(ref mut conn) => conn.write_all(buf).await?,
-            #[cfg(feature = "tls")]
-            Netsocket::Tls(ref mut conn) => conn.write_all(buf).await?,
-        };
+        match res {
+            Ok(Ok(_)) => (),
+            Ok(Err(e)) => return Err(e.into()),
+            Err(_) => {
+                return Err(Error::Timeout(
+                    "Timeout writing to network connection".to_string(),
+                ))
+            }
+        }
 
         self.refresh();
         Ok(())
     }
 
-    pub async fn read(&mut self, buf: &mut [u8]) -> Result<()> {
-        match self.conn {
-            Netsocket::Tcp(ref mut conn) => conn.read_exact(buf).await?,
+    /// Sets the timeout for the connection.
+    pub fn set_socket_timeout(&mut self, timeout: u32) {
+        if timeout > 0 {
+            self.socket_timeout = timeout;
+        } else {
+            self.socket_timeout = 30_000; // 30 secs
+        }
+    }
+
+    /// Reads the socket timeout for the connection.
+    /// If the timeout is zero, it will return the default (30 000 ms)
+    pub fn socket_timeout(&mut self) -> Duration {
+        if self.socket_timeout > 0 {
+            Duration::from_millis(self.socket_timeout as u64)
+        } else {
+            Duration::from_millis(30_000) // 30 secs
+        }
+    }
+
+    pub(crate) async fn read_buffer(&mut self, size: usize) -> Result<usize> {
+        self.read_buffer_at(0, size).await
+    }
+
+    pub(crate) async fn read_buffer_at(&mut self, pos: usize, size: usize) -> Result<usize> {
+        self.buffer.resize_buffer(size + pos)?;
+
+        let deadline = SystemTime::now() + self.socket_timeout();
+        let mut total_read: usize = 0;
+        while total_read < size && SystemTime::now() < deadline {
+            let read_result = match self.conn {
+                Netsocket::Tcp(ref mut conn) => {
+                    conn.read(&mut self.buffer.data_buffer[pos + total_read..])
+                        .await
+                }
+
+                #[cfg(feature = "tls")]
+                Netsocket::Tls(ref mut conn) => {
+                    conn.read(&mut self.buffer.data_buffer[pos + total_read..])
+                        .await
+                }
+            };
+
+            match read_result {
+                Ok(0) => break,
+                Ok(n) => {
+                    total_read += n;
+                    self.bytes_read += n
+                }
+                Err(e) => Err(e)?,
+            }
+        }
+
+        if total_read != size {
+            return Err(Error::Timeout(
+                "Timeout reading from the network connection".into(),
+            ));
+        }
+
+        self.buffer.reset_offset();
+        self.refresh();
+        Ok(size)
+    }
+
+    /// Writes to the connection until done or timeout has been reached.
+    pub async fn write_all(&mut self, buf: &[u8]) -> Result<()> {
+        let timeout = self.socket_timeout();
+        let res = match self.conn {
+            Netsocket::Tcp(ref mut conn) => {
+                aerospike_rt::timeout(timeout, conn.write_all(buf)).await
+            }
             #[cfg(feature = "tls")]
-            Netsocket::Tls(ref mut conn) => conn.read_exact(buf).await?,
+            Netsocket::Tls(ref mut conn) => {
+                aerospike_rt::timeout(timeout, conn.write_all(buf)).await
+            }
         };
+
+        match res {
+            Ok(Ok(_)) => (),
+            Ok(Err(e)) => return Err(e.into()),
+            Err(_) => {
+                return Err(Error::Timeout(
+                    "Timeout writing to the network connection".to_string(),
+                ))
+            }
+        }
+
+        self.refresh();
+        Ok(())
+    }
+
+    /// Reads from the connection until the buffer is full or timeout has been reached.
+    pub async fn read_all(&mut self, buf: &mut [u8]) -> Result<()> {
+        let timeout = self.socket_timeout();
+        let res = match self.conn {
+            Netsocket::Tcp(ref mut conn) => {
+                aerospike_rt::timeout(timeout, conn.read_exact(buf)).await
+            }
+            #[cfg(feature = "tls")]
+            Netsocket::Tls(ref mut conn) => {
+                aerospike_rt::timeout(timeout, conn.read_exact(buf)).await
+            }
+        };
+
+        match res {
+            Ok(Ok(_)) => (),
+            Ok(Err(e)) => return Err(e.into()),
+            Err(_) => {
+                return Err(Error::Timeout(
+                    "Timeout reading from the network connection".to_string(),
+                ))
+            }
+        }
 
         self.bytes_read += buf.len();
         self.refresh();
@@ -242,6 +328,10 @@ impl Connection {
     }
 }
 
+/***********************************************************************************/
+/*  Buffered Connection                                                            */
+/***********************************************************************************/
+
 // Holds data buffer for the command
 #[derive(Debug)]
 pub(crate) struct BufferedConn<'a> {
@@ -255,11 +345,17 @@ pub(crate) struct BufferedConn<'a> {
 }
 
 // buffered connections have a limit and will be drained as soon as they are dropped.
-impl<'a> Drop for BufferedConn<'a> {
-    fn drop(&mut self) {
-        let _ = block_on(self.drain());
-    }
-}
+// impl<'a> Drop for BufferedConn<'a> {
+//     fn drop(&mut self) {
+//         match block_on(aerospike_rt::timeout(
+//             self.conn.socket_timeout(),
+//             self.drain(),
+//         )) {
+//             Ok(_) => (),
+//             Err(_) => block_on(self.conn.close()),
+//         }
+//     }
+// }
 
 impl<'a> BufferedConn<'a> {
     pub fn new(conn: &'a mut Connection) -> Self {
@@ -318,13 +414,33 @@ impl<'a> BufferedConn<'a> {
         let size = min(self.cache.capacity(), self.limit);
         self.resize_cache(size)?;
 
-        match self.conn.conn {
-            Netsocket::Tcp(ref mut conn) => conn.read_exact(&mut self.cache).await?,
-            #[cfg(feature = "tls")]
-            Netsocket::Tls(ref mut conn) => conn.read_exact(&mut self.cache).await?,
-        };
+        let deadline = SystemTime::now() + self.conn.socket_timeout();
+        let mut total_read: usize = 0;
+        while total_read < size && SystemTime::now() < deadline {
+            let read_result = match self.conn.conn {
+                Netsocket::Tcp(ref mut conn) => conn.read(&mut self.cache[total_read..]).await,
 
-        self.limit -= size;
+                #[cfg(feature = "tls")]
+                Netsocket::Tls(ref mut conn) => conn.read(&mut self.cache[total_read..]).await,
+            };
+
+            match read_result {
+                Ok(0) => break,
+                Ok(n) => {
+                    total_read += n;
+                    self.limit -= n;
+                    self.conn.bytes_read += n
+                }
+                Err(e) => Err(e)?,
+            }
+        }
+
+        if total_read != size {
+            return Err(Error::Timeout(
+                "Timeout reading from the network connection".into(),
+            ));
+        }
+
         self.pos = 0;
         Ok(size)
     }

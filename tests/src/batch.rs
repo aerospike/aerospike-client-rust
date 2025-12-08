@@ -31,6 +31,7 @@ async fn batch_operate_read() {
     let set_name = &common::rand_str(10);
     let mut bpolicy = BatchPolicy::default();
     bpolicy.concurrency = Concurrency::Parallel;
+    let apolicy = AdminPolicy::default();
 
     let udf_body = r#"
 function echo(rec, val)
@@ -39,7 +40,7 @@ end
 "#;
 
     let task = client
-        .register_udf(udf_body.as_bytes(), "test_udf.lua", UDFLang::Lua)
+        .register_udf(&apolicy, udf_body.as_bytes(), "test_udf.lua", UDFLang::Lua)
         .await
         .unwrap();
     task.wait_till_complete(None).await.unwrap();

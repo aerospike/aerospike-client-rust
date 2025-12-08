@@ -13,13 +13,14 @@
 // License for the specific language governing permissions and limitations under
 // the License.
 
-use aerospike_rt::time::Duration;
+use aerospike_rt::time::{Duration, Instant};
 
 pub(crate) trait StreamPolicy {
     fn max_records(&self) -> Option<u64>;
     fn sleep_between_retries(&self) -> Option<Duration>;
-    fn socket_timeout(&self) -> Option<Duration>;
-    fn total_timeout(&self) -> Option<Duration>;
+    fn deadline(&self) -> Option<Instant>;
+    fn socket_timeout(&self) -> u32;
+    fn total_timeout(&self) -> u32;
     fn replica(&self) -> crate::policy::Replica;
-    fn max_retries(&self) -> Option<usize>;
+    fn max_retries(&self) -> usize;
 }

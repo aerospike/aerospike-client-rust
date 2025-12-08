@@ -14,14 +14,13 @@
 
 use std::str;
 use std::sync::Arc;
-use std::time::Duration;
 
 use crate::cluster::{Cluster, Node};
 use crate::commands::{Command, ReadCommand, SingleCommand};
 use crate::errors::Result;
 use crate::net::Connection;
 use crate::policy::WritePolicy;
-use crate::{Bins, Key, Value};
+use crate::{Bins, Key, Policy, Value};
 
 pub(crate) struct ExecuteUDFCommand<'a> {
     pub read_command: ReadCommand<'a>,
@@ -62,12 +61,8 @@ impl<'a> ExecuteUDFCommand<'a> {
 
 #[async_trait::async_trait]
 impl<'a> Command for ExecuteUDFCommand<'a> {
-    async fn write_timeout(
-        &mut self,
-        conn: &mut Connection,
-        timeout: Option<Duration>,
-    ) -> Result<()> {
-        conn.buffer.write_timeout(timeout);
+    async fn write_timeout(&mut self, conn: &mut Connection) -> Result<()> {
+        conn.buffer.write_timeout(self.policy.server_timeout());
         Ok(())
     }
 

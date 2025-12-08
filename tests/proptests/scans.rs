@@ -7,7 +7,7 @@ use crate::proptests::{bins::*, partition_filter::*, policy::*};
 
 proptest_async::proptest! {
     #[test]
-    async fn scan(scan_policy in scan_policy(30000), mut pf in partition_filter(common::namespace().into(), common::prop_setname().into()), bins in bins(100)) {
+    async fn scan(scan_policy in scan_policy(1000, 5000), mut pf in partition_filter(common::namespace().into(), common::prop_setname().into()), bins in bins(100)) {
         let client = common::singleton_client().await;
         let namespace: &str = common::namespace();
         let set_name = common::prop_setname();
@@ -27,7 +27,6 @@ proptest_async::proptest! {
             tokio::pin!(rs);
 
             while let Some(res) = rs.next().await {
-                // println!("RECORD RECEIVED!");
                 if res.is_ok() {
                     count+=1;
                 } else {

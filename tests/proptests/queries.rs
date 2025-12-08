@@ -14,7 +14,7 @@ use crate::proptests::{bins::*, partition_filter::*, policy::*};
 proptest_async::proptest! {
     #[test]
     async fn query(
-        query_policy in query_policy(30000)
+        query_policy in query_policy(1000, 5000)
             .prop_filter("ShortQuery and rps together are invalid",
                 |qp| !(qp.expected_duration == QueryDuration::Short && qp.records_per_second > 0)),
             mut pf in partition_filter(common::namespace().into(), common::prop_setname().into()),

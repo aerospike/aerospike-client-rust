@@ -13,6 +13,7 @@
 // License for the specific language governing permissions and limitations under
 // the License.
 
+use aerospike::policy::AdminPolicy;
 use env_logger;
 
 use crate::common;
@@ -32,50 +33,66 @@ async fn user_management() {
     let _ = env_logger::try_init();
 
     let client = common::client().await;
+    let admin_policy = AdminPolicy::default();
 
     // drop the user if it potentially exists
-    let _ = client.drop_user(USER_NAME).await;
+    let _ = client.drop_user(&admin_policy, USER_NAME).await;
 
     /* CREATE USER */
     client
-        .create_user(USER_NAME, "something", &vec![ROLE])
+        .create_user(&admin_policy, USER_NAME, "something", &vec![ROLE])
         .await
         .unwrap();
 
     sleep(Duration::from_secs(1)).await;
 
-    let users = client.query_users(None).await.unwrap();
+    let users = client.query_users(&admin_policy, None).await.unwrap();
     let user = users.iter().find(|u| u.user == USER_NAME).unwrap();
     assert_eq!(user.roles, vec![ROLE]);
 
-    let users = client.query_users(Some(USER_NAME)).await.unwrap();
+    let users = client
+        .query_users(&admin_policy, Some(USER_NAME))
+        .await
+        .unwrap();
     let user = users.iter().find(|u| u.user == USER_NAME).unwrap();
     assert_eq!(user.roles, vec![ROLE]);
 
     /* GRANT ROLES */
-    client.grant_roles(USER_NAME, &vec![ROLE]).await.unwrap();
+    client
+        .grant_roles(&admin_policy, USER_NAME, &vec![ROLE])
+        .await
+        .unwrap();
 
     sleep(Duration::from_secs(1)).await;
 
-    let users = client.query_users(Some(USER_NAME)).await.unwrap();
+    let users = client
+        .query_users(&admin_policy, Some(USER_NAME))
+        .await
+        .unwrap();
     let user = users.iter().find(|u| u.user == USER_NAME).unwrap();
     assert_eq!(user.roles, vec![ROLE]);
 
     /* REVOKE ROLES */
-    client.revoke_roles(USER_NAME, &vec![ROLE]).await.unwrap();
+    client
+        .revoke_roles(&admin_policy, USER_NAME, &vec![ROLE])
+        .await
+        .unwrap();
 
     sleep(Duration::from_secs(1)).await;
 
-    let users = client.query_users(Some(USER_NAME)).await.unwrap();
+    let users = client
+        .query_users(&admin_policy, Some(USER_NAME))
+        .await
+        .unwrap();
     let user = users.iter().find(|u| u.user == USER_NAME).unwrap();
     assert_eq!(user.roles.len(), 0);
 
     /* DROP USER */
-    client.drop_user(USER_NAME).await.unwrap();
+    client.drop_user(&admin_policy, USER_NAME).await.unwrap();
 
     sleep(Duration::from_secs(1)).await;
 
-    let users = client.query_users(None).await.unwrap();
+    let users = client.query_users(&admin_policy, None).await.unwrap();
     let user = users.iter().find(|u| u.user == USER_NAME);
     assert_eq!(user.is_none(), true);
 }
@@ -91,6 +108,8 @@ async fn role_management() {
 
     const ROLE: &str = "test-role";
 
+    let admin_policy = AdminPolicy::default();
+
     let privileges = vec![Privilege::new(
         PrivilegeCode::Read,
         Some(namespace.into()),
@@ -101,18 +120,18 @@ async fn role_management() {
 
     let client = common::client().await;
 
-    let _ = client.drop_role(ROLE).await;
+    let _ = client.drop_role(&admin_policy, ROLE).await;
     sleep(Duration::from_secs(1)).await;
 
     /* CREATE ROLE */
     client
-        .create_role(ROLE, &privileges, &vec![], 1000, 5000)
+        .create_role(&admin_policy, ROLE, &privileges, &vec![], 1000, 5000)
         .await
         .unwrap();
 
     sleep(Duration::from_secs(1)).await;
 
-    let roles = client.query_roles(None).await.unwrap();
+    let roles = client.query_roles(&admin_policy, None).await.unwrap();
     let role = roles.iter().find(|r| r.name == ROLE).unwrap();
     assert_eq!(role.privileges, privileges);
     assert_eq!(role.allowlist.len(), 0);
@@ -127,13 +146,13 @@ async fn role_management() {
 
     /* GRANT PRIVILEGES */
     client
-        .grant_privileges(ROLE, &vec![wpriv.clone()])
+        .grant_privileges(&admin_policy, ROLE, &vec![wpriv.clone()])
         .await
         .unwrap();
 
     sleep(Duration::from_secs(1)).await;
 
-    let roles = client.query_roles(None).await.unwrap();
+    let roles = client.query_roles(&admin_policy, None).await.unwrap();
     let role = roles.iter().find(|r| r.name == ROLE).unwrap();
     assert_eq!(role.privileges, vec![privileges[0].clone(), wpriv.clone()]);
     assert_eq!(role.allowlist.len(), 0);
@@ -142,13 +161,13 @@ async fn role_management() {
 
     /* REVOKE PRIVILEGES */
     client
-        .revoke_privileges(ROLE, &vec![wpriv.clone()])
+        .revoke_privileges(&admin_policy, ROLE, &vec![wpriv.clone()])
         .await
         .unwrap();
 
     sleep(Duration::from_secs(1)).await;
 
-    let roles = client.query_roles(None).await.unwrap();
+    let roles = client.query_roles(&admin_policy, None).await.unwrap();
     let role = roles.iter().find(|r| r.name == ROLE).unwrap();
     assert_eq!(role.privileges, privileges);
     assert_eq!(role.allowlist.len(), 0);
@@ -156,10 +175,10 @@ async fn role_management() {
     assert_eq!(role.write_quota, 5000);
 
     /* REVOKE PRIVILEGES */
-    client.drop_role(ROLE).await.unwrap();
+    client.drop_role(&admin_policy, ROLE).await.unwrap();
     sleep(Duration::from_secs(1)).await;
 
-    let roles = client.query_roles(None).await.unwrap();
+    let roles = client.query_roles(&admin_policy, None).await.unwrap();
     let role = roles.iter().find(|r| r.name == ROLE);
     assert_eq!(role.is_none(), true)
 }

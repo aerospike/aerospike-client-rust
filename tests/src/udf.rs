@@ -26,6 +26,7 @@ async fn execute_udf() {
     let namespace = common::namespace();
     let set_name = &common::rand_str(10);
 
+    let apolicy = AdminPolicy::default();
     let wpolicy = WritePolicy::default();
     let key = as_key!(namespace, set_name, 1);
     let wbin = as_bin!("bin", 10);
@@ -51,13 +52,23 @@ end
 "#;
 
     let task = client
-        .register_udf(udf_body1.as_bytes(), "test_udf1.lua", UDFLang::Lua)
+        .register_udf(
+            &apolicy,
+            udf_body1.as_bytes(),
+            "test_udf1.lua",
+            UDFLang::Lua,
+        )
         .await
         .unwrap();
     task.wait_till_complete(None).await.unwrap();
 
     let task = client
-        .register_udf(udf_body2.as_bytes(), "test_udf2.lua", UDFLang::Lua)
+        .register_udf(
+            &apolicy,
+            udf_body2.as_bytes(),
+            "test_udf2.lua",
+            UDFLang::Lua,
+        )
         .await
         .unwrap();
     task.wait_till_complete(None).await.unwrap();

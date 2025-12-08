@@ -26,4 +26,5 @@ mod common;
 mod proptest_async;
 #[macro_use]
 mod src;
+#[allow(dead_code)]
 mod proptests;

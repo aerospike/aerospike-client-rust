@@ -22,10 +22,11 @@ use std::sync::Arc;
 
 use crate::cluster::node_validator::{NodeFeatures, NodeValidator};
 use crate::cluster::peers_parser::PeersParser;
+use crate::cluster::CLIENT_VERSION;
 use crate::commands::Message;
 use crate::errors::{Error, Result};
 use crate::net::{ConnectionPool, Host, PooledConnection};
-use crate::policy::ClientPolicy;
+use crate::policy::{AdminPolicy, ClientPolicy};
 use crate::Version;
 use aerospike_rt::RwLock;
 
@@ -135,8 +136,12 @@ impl Node {
             commands.push(REBALANCE_GENERATION);
         }
 
+        let admin_policy = AdminPolicy {
+            timeout: self.client_policy.timeout,
+        };
+
         let info_map = self
-            .info(&commands)
+            .info(&admin_policy, &commands)
             .await
             .map_err(|e| e.chain_error("Info command failed"))?;
         self.validate_node(&info_map)
@@ -316,12 +321,18 @@ impl Node {
     }
 
     // Send info commands to this node
-    pub async fn info(&self, commands: &[&str]) -> Result<HashMap<String, String>> {
+    pub async fn info(
+        &self,
+        policy: &AdminPolicy,
+        commands: &[&str],
+    ) -> Result<HashMap<String, String>> {
         let mut conn = self.get_connection().await?;
-        Message::info(&mut conn, commands).await.map_err(|e| {
-            conn.invalidate();
-            e
-        })
+        Message::info(policy, &mut conn, commands)
+            .await
+            .map_err(|e| {
+                conn.invalidate();
+                e
+            })
     }
 
     // Get the partition generation
@@ -332,6 +343,25 @@ impl Node {
     // Get the rebalance generation
     pub fn rebalance_generation(&self) -> isize {
         self.rebalance_generation.load(Ordering::Relaxed)
+    }
+
+    pub(crate) async fn send_user_agent_id(&self) {
+        if !self.version().supports_app_id() {
+            return;
+        }
+
+        let app_id = self.client_policy().application_id();
+
+        // Source user-agent payload
+        // Format: "1,go-<version>,<application-id>"
+        let user_agent_id = format!("1,rust-{},{}", CLIENT_VERSION, app_id);
+        let user_agent_id = base64::encode(&user_agent_id);
+        let user_agent_command = format!("user-agent-set:value={}", user_agent_id);
+
+        let policy = AdminPolicy {
+            timeout: self.client_policy().timeout,
+        };
+        let _ = self.info(&policy, &[&user_agent_command]).await;
     }
 }
 

@@ -21,7 +21,6 @@ use crate::batch::BatchOperation;
 use crate::batch::BatchRecordIndex;
 use crate::cluster::partition::Partition;
 use crate::cluster::{Cluster, Node};
-use crate::commands::Duration;
 use crate::commands::StreamCommand;
 use crate::commands::{self};
 use crate::errors::{Error, Result};
@@ -52,10 +51,9 @@ impl<'a> BatchOperateCommand<'a> {
 
     pub async fn execute(mut self, cluster: Arc<Cluster>) -> Result<Self> {
         let mut iterations = 0;
-        let base_policy = self.policy.base().clone();
 
         // set timeout outside the loop
-        let deadline = base_policy.deadline();
+        let deadline = self.policy.deadline();
 
         // Execute command until successful, timed out or maximum iterations have been reached.
         loop {
@@ -82,15 +80,15 @@ impl<'a> BatchOperateCommand<'a> {
             };
 
             if success {
-                // command has completed successfully.  Exit method.
+                // command has completed successfully. Exit method.
                 return Ok(self);
             }
 
             iterations += 1;
 
             // too many retries
-            if let Some(max_retries) = base_policy.max_retries() {
-                if iterations > max_retries + 1 {
+            if self.policy.max_retries() > 0 {
+                if iterations > self.policy.max_retries() + 1 {
                     return Err(Error::Connection(format!(
                         "Timeout after {} tries",
                         iterations
@@ -99,7 +97,7 @@ impl<'a> BatchOperateCommand<'a> {
             }
 
             // Sleep before trying again, after the first iteration
-            if let Some(sleep_between_retries) = base_policy.sleep_between_retries() {
+            if let Some(sleep_between_retries) = self.policy.sleep_between_retries() {
                 sleep(sleep_between_retries).await;
             }
 
@@ -122,7 +120,7 @@ impl<'a> BatchOperateCommand<'a> {
             self.prepare_buffer(&mut conn)
                 .await
                 .map_err(|e| e.chain_error("Failed to prepare send buffer"))?;
-            self.write_timeout(&mut conn, base_policy.total_timeout())
+            self.write_timeout(&mut conn)
                 .await
                 .map_err(|e| e.chain_error("Failed to set timeout for send buffer"))?;
 
@@ -151,7 +149,7 @@ impl<'a> BatchOperateCommand<'a> {
 
             conn.exhausted = true;
 
-            // command has completed successfully.  Exit method.
+            // command has completed successfully. Exit method.
             return Ok(self);
         }
     }
@@ -173,7 +171,7 @@ impl<'a> BatchOperateCommand<'a> {
             .set_batch_operate(policy, batch_ops)
             .map_err(|_| Error::ClientError("Failed to prepare send buffer".into()))?;
 
-        conn.buffer.write_timeout(policy.base().total_timeout());
+        conn.buffer.write_timeout(policy.base().server_timeout());
 
         // Send command.
         if let Err(err) = conn.flush().await {
@@ -343,28 +341,28 @@ impl<'a> BatchOperateCommand<'a> {
         batch_ops: &mut [(BatchOperation<'a>, usize)],
         conn: &mut Connection,
     ) -> Result<()> {
-        loop {
+        let mut status = true;
+
+        while status {
             let mut conn = BufferedConn::new(conn);
+
             conn.set_limit(8)?;
             conn.read_buffer(8).await?;
             let size = conn.buffer().read_msg_size(None);
             conn.bookmark();
 
-            conn.set_limit(size)?;
-            if size > 0 && !Self::parse_group(batch_ops, &mut conn, size as usize).await? {
-                break;
+            status = false;
+            if size > 0 {
+                conn.set_limit(size)?;
+                status = !Self::parse_group(batch_ops, &mut conn, size as usize).await?;
             }
+            conn.drain().await?;
         }
-        conn.close().await;
         Ok(())
     }
 
-    async fn write_timeout(
-        &mut self,
-        conn: &mut Connection,
-        timeout: Option<Duration>,
-    ) -> Result<()> {
-        conn.buffer.write_timeout(timeout);
+    async fn write_timeout(&mut self, conn: &mut Connection) -> Result<()> {
+        conn.buffer.write_timeout(self.policy.server_timeout());
         Ok(())
     }
 }

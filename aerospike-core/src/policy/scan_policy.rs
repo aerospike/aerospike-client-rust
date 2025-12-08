@@ -14,8 +14,8 @@
 // the License.
 
 use crate::expressions::FilterExpression;
-use crate::policy::{BasePolicy, PolicyLike, Replica, StreamPolicy};
-use aerospike_rt::time::Duration;
+use crate::policy::{BasePolicy, Policy, PolicyLike, Replica, StreamPolicy};
+use aerospike_rt::time::{Duration, Instant};
 
 /// `ScanPolicy` encapsulates optional parameters used in scan operations.
 #[derive(Debug, Clone)]
@@ -49,11 +49,6 @@ pub struct ScanPolicy {
     /// the queue is full, the producer threads will block until records are consumed.
     pub record_queue_size: usize,
 
-    /// Maximum time in milliseconds to wait when polling socket for availability prior to
-    /// performing an operation on the socket on the server side. Zero means there is no socket
-    /// timeout. Default: 10,000 ms.
-    pub socket_timeout: u32,
-
     /// Defines algorithm used to determine the target node for a command. The replica algorithm only affects single record and batch commands.
     pub replica: Replica,
 }
@@ -72,15 +67,18 @@ impl ScanPolicy {
 
 impl Default for ScanPolicy {
     fn default() -> Self {
-        ScanPolicy {
+        let mut res = ScanPolicy {
             base_policy: BasePolicy::default(),
             max_concurrent_nodes: 0,
             max_records: 0,
             records_per_second: 0,
             record_queue_size: 1024,
-            socket_timeout: 30000,
             replica: Replica::default(),
-        }
+        };
+
+        res.base_policy.total_timeout = 0;
+        res.base_policy.max_retries = 5;
+        res
     }
 }
 
@@ -101,16 +99,19 @@ impl StreamPolicy for &ScanPolicy {
     fn sleep_between_retries(&self) -> Option<Duration> {
         self.base_policy.sleep_between_retries
     }
-    fn socket_timeout(&self) -> Option<Duration> {
-        self.base_policy.total_timeout //self.base_policy.socket_timeout
+    fn deadline(&self) -> Option<Instant> {
+        self.base_policy.deadline()
     }
-    fn total_timeout(&self) -> Option<Duration> {
+    fn socket_timeout(&self) -> u32 {
+        self.base_policy.socket_timeout()
+    }
+    fn total_timeout(&self) -> u32 {
         self.base_policy.total_timeout
     }
     fn replica(&self) -> crate::policy::Replica {
         self.replica
     }
-    fn max_retries(&self) -> Option<usize> {
+    fn max_retries(&self) -> usize {
         self.base_policy.max_retries
     }
 }

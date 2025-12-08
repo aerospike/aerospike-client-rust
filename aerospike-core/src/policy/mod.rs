@@ -16,6 +16,8 @@
 //! Policy types encapsulate optional parameters for various client operations.
 #![allow(clippy::missing_errors_doc)]
 
+use std::cmp::min;
+
 mod admin_policy;
 mod batch_policy;
 mod client_policy;
@@ -62,18 +64,22 @@ pub trait Policy {
     /// Deadline for current transaction based on specified timeout. For internal use only.
     fn deadline(&self) -> Option<Instant>;
 
+    /// Server timeout.
+    fn server_timeout(&self) -> u32;
+
+    /// Socket timeout for client.
+    fn socket_timeout(&self) -> u32;
+
     /// Total transaction timeout for both client and server. The timeout is tracked on the client
     /// and also sent to the server along with the transaction in the wire protocol. The client
     /// will most likely timeout first, but the server has the capability to timeout the
     /// transaction as well.
-    ///
-    /// The timeout is also used as a socket timeout. Default: 0 (no timeout).
-    fn total_timeout(&self) -> Option<Duration>;
+    fn total_timeout(&self) -> u32;
 
     /// Maximum number of retries before aborting the current transaction. A retry may be attempted
     /// when there is a network error. If `max_retries` is exceeded, the abort will occur even if
     /// the timeout has not yet been exceeded.
-    fn max_retries(&self) -> Option<usize>;
+    fn max_retries(&self) -> usize;
 
     /// Time to sleep between retries. Set to zero to skip sleep. Default: 500ms.
     fn sleep_between_retries(&self) -> Option<Duration>;
@@ -102,11 +108,19 @@ where
         self.base().deadline()
     }
 
-    fn total_timeout(&self) -> Option<Duration> {
+    fn server_timeout(&self) -> u32 {
+        self.base().server_timeout()
+    }
+
+    fn socket_timeout(&self) -> u32 {
+        self.base().socket_timeout()
+    }
+
+    fn total_timeout(&self) -> u32 {
         self.base().total_timeout()
     }
 
-    fn max_retries(&self) -> Option<usize> {
+    fn max_retries(&self) -> usize {
         self.base().max_retries()
     }
 
@@ -127,7 +141,7 @@ pub enum Replica {
     /// but writes remain on master node.
     Sequence,
 
-    /// Try node on the same rack as the client first.  If timeout or there are no nodes on the
+    /// Try node on the same rack as the client first. If timeout or there are no nodes on the
     /// same rack, use SEQUENCE instead.
     ///
     /// {@link ClientPolicy#rackAware}, {@link ClientPolicy#rackId}, and server rack
@@ -149,17 +163,29 @@ pub struct BasePolicy {
     /// read operation.
     pub consistency_level: ConsistencyLevel,
 
-    /// Timeout specifies transaction timeout.
+    /// Socket idle timeout when processing a database command.
+    ///
+    /// If [socket_timeout] is zero and [total_timeout] is non-zero, then [socket_timeout] will be set
+    /// to [total_timeout]. If both [socket_timeout] and [total_timeout] are non-zero and
+    /// [socket_timeout] > [total_timeout], then [socket_timeout] will be set to [total_timeout]. If both
+    /// [socket_timeout] and [total_timeout] are zero, then there will be no socket idle limit.
+    ///
+    /// If [socket_timeout] is non-zero and the socket has been idle for at least socket_timeout,
+    /// both max_retries and [total_timeout] are checked. If max_retries and [total_timeout] are not
+    /// exceeded, the command is retried.
+    pub socket_timeout: u32,
+
+    /// Total command timeout.
     /// This timeout is used to set the socket timeout and is also sent to the
-    /// server along with the transaction in the wire protocol.
+    /// server along with the command in the wire protocol.
     /// Default to no timeout (0).
-    pub total_timeout: Option<Duration>,
+    pub total_timeout: u32,
 
     /// MaxRetries determines maximum number of retries before aborting the current transaction.
     /// A retry is attempted when there is a network error other than timeout.
     /// If maxRetries is exceeded, the abort will occur even if the timeout
     /// has not yet been exceeded.
-    pub max_retries: Option<usize>,
+    pub max_retries: usize,
 
     /// read_touch_ttl determines how record TTL (time to live) is affected on reads. When enabled, the server can
     /// efficiently operate as a read-based LRU cache where the least recently used records are expired.
@@ -176,7 +202,7 @@ pub struct BasePolicy {
     pub read_touch_ttl: ReadTouchTTL,
 
     /// SleepBetweenReplies determines duration to sleep between retries if a
-    /// transaction fails and the timeout was not exceeded.  Enter zero to skip sleep.
+    /// transaction fails and the timeout was not exceeded. Enter zero to skip sleep.
     pub sleep_between_retries: Option<Duration>,
 
     /// Optional FilterExpression
@@ -185,14 +211,35 @@ pub struct BasePolicy {
 
 impl Policy for BasePolicy {
     fn deadline(&self) -> Option<Instant> {
-        self.total_timeout.map(|timeout| Instant::now() + timeout)
+        if self.total_timeout > 0 {
+            Some(Instant::now() + Duration::from_millis(self.total_timeout as u64))
+        } else {
+            None
+        }
     }
 
-    fn total_timeout(&self) -> Option<Duration> {
+    fn server_timeout(&self) -> u32 {
+        if self.total_timeout > 0 {
+            self.socket_timeout()
+        } else {
+            0
+        }
+    }
+
+    fn socket_timeout(&self) -> u32 {
+        match (self.socket_timeout, self.total_timeout) {
+            (0, 0) => 0,
+            (d, 0) => d,
+            (0, d) => d,
+            (d1, d2) => min(d1, d2),
+        }
+    }
+
+    fn total_timeout(&self) -> u32 {
         self.total_timeout
     }
 
-    fn max_retries(&self) -> Option<usize> {
+    fn max_retries(&self) -> usize {
         self.max_retries
     }
 

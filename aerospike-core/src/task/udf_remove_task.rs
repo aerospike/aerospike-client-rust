@@ -19,29 +19,39 @@ use crate::task::{Status, Task};
 use crate::AdminPolicy;
 use std::sync::Arc;
 
-/// Struct for querying udf register status
+/// Struct for querying index creation status
 #[derive(Debug, Clone)]
-pub struct RegisterTask {
+pub struct UdfRemoveTask {
     cluster: Arc<Cluster>,
     package_name: String,
 }
 
-static COMMAND: &str = "udf-list";
-static RESPONSE_PATTERN: &str = "filename=";
-
-impl RegisterTask {
-    /// Initializes `RegisterTask` from client, creation should only be expose to Client
+impl UdfRemoveTask {
+    /// Initializes `UdfRemoveTask` from client, creation should only be expose to Client
     pub fn new(cluster: Arc<Cluster>, package_name: String) -> Self {
-        RegisterTask {
+        UdfRemoveTask {
             cluster,
             package_name,
+        }
+    }
+
+    fn build_command() -> String {
+        String::from("udf-list")
+    }
+
+    fn parse_response(response: &str, package_name: &str) -> Result<Status> {
+        let find = format!("filename={}", package_name);
+        if !response.contains(&find) {
+            Ok(Status::Complete)
+        } else {
+            Ok(Status::InProgress)
         }
     }
 }
 
 #[async_trait::async_trait]
-impl Task for RegisterTask {
-    /// Query the status of index creation across all nodes
+impl Task for UdfRemoveTask {
+    /// Query the status of execution across all nodes
     async fn query_status(&self) -> Result<Status> {
         let nodes = self.cluster.nodes().await;
 
@@ -51,15 +61,16 @@ impl Task for RegisterTask {
 
         let admin_policy = AdminPolicy { timeout: 3_000 };
         for node in &nodes {
-            let response = node.info(&admin_policy, &[COMMAND]).await?;
+            let command = &UdfRemoveTask::build_command();
+            let response = node.info(&admin_policy, &[&command[..]]).await?;
 
-            if !response.contains_key(COMMAND) {
+            if !response.contains_key(command) {
                 return Ok(Status::NotFound);
             }
 
-            let response_find = format!("{}{}", RESPONSE_PATTERN, self.package_name);
-            if !response[COMMAND].contains(&response_find) {
-                return Ok(Status::InProgress);
+            match UdfRemoveTask::parse_response(&response[command], &self.package_name) {
+                Ok(Status::Complete) => {}
+                in_progress_or_error => return in_progress_or_error,
             }
         }
         Ok(Status::Complete)

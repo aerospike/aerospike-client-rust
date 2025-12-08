@@ -14,8 +14,8 @@
 // the License.
 
 use crate::expressions::FilterExpression;
-use crate::policy::{BasePolicy, PolicyLike, QueryDuration, Replica, StreamPolicy};
-use aerospike_rt::time::Duration;
+use crate::policy::{BasePolicy, Policy, PolicyLike, QueryDuration, Replica, StreamPolicy};
+use aerospike_rt::time::{Duration, Instant};
 
 /// `QueryPolicy` encapsulates parameters for query operations.
 #[derive(Debug, Clone)]
@@ -52,11 +52,6 @@ pub struct QueryPolicy {
     /// is bounded by the server config `background-query-max-rps`.
     pub records_per_second: u32,
 
-    /// Maximum time in milliseconds to wait when polling socket for availability prior to
-    /// performing an operation on the socket on the server side. Zero means there is no socket
-    /// timeout. Default: 10,000 ms.
-    pub socket_timeout: u32,
-
     /// Expected query duration. The server treats the query in different ways depending on the expected duration.
     /// This field is ignored for aggregation queries, background queries and server versions < 6.0.
     ///
@@ -81,16 +76,19 @@ impl QueryPolicy {
 
 impl Default for QueryPolicy {
     fn default() -> Self {
-        QueryPolicy {
+        let mut res = QueryPolicy {
             base_policy: BasePolicy::default(),
             max_concurrent_nodes: 0,
             max_records: 0,
             records_per_second: 0,
             record_queue_size: 1024,
-            socket_timeout: 10000,
             expected_duration: QueryDuration::Long,
             replica: Replica::default(),
-        }
+        };
+
+        res.base_policy.total_timeout = 0;
+        res.base_policy.max_retries = 5;
+        res
     }
 }
 
@@ -111,16 +109,19 @@ impl StreamPolicy for &QueryPolicy {
     fn sleep_between_retries(&self) -> Option<Duration> {
         self.base_policy.sleep_between_retries
     }
-    fn socket_timeout(&self) -> Option<Duration> {
-        self.base_policy.total_timeout //self.base_policy.socket_timeout
+    fn deadline(&self) -> Option<Instant> {
+        self.base_policy.deadline()
     }
-    fn total_timeout(&self) -> Option<Duration> {
+    fn socket_timeout(&self) -> u32 {
+        self.base_policy.socket_timeout()
+    }
+    fn total_timeout(&self) -> u32 {
         self.base_policy.total_timeout
     }
     fn replica(&self) -> crate::policy::Replica {
         self.replica
     }
-    fn max_retries(&self) -> Option<usize> {
+    fn max_retries(&self) -> usize {
         self.base_policy.max_retries
     }
 }

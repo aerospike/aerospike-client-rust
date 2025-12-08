@@ -105,7 +105,7 @@ pub struct BatchWritePolicy {
     pub send_key: bool,
 
     /// If the transaction results in a record deletion, leave a tombstone for the record. This
-    /// prevents deleted records from reappearing after node failures.  Valid for Aerospike Server
+    /// prevents deleted records from reappearing after node failures. Valid for Aerospike Server
     /// Enterprise Edition 3.10+ only.
     pub durable_delete: bool,
 
@@ -151,7 +151,7 @@ pub struct BatchDeletePolicy {
     pub send_key: bool,
 
     /// If the transaction results in a record deletion, leave a tombstone for the record. This
-    /// prevents deleted records from reappearing after node failures.  Valid for Aerospike Server
+    /// prevents deleted records from reappearing after node failures. Valid for Aerospike Server
     /// Enterprise Edition 3.10+ only.
     pub durable_delete: bool,
 
@@ -189,7 +189,7 @@ pub struct BatchUDFPolicy {
     pub send_key: bool,
 
     /// If the transaction results in a record deletion, leave a tombstone for the record. This
-    /// prevents deleted records from reappearing after node failures.  Valid for Aerospike Server
+    /// prevents deleted records from reappearing after node failures. Valid for Aerospike Server
     /// Enterprise Edition 3.10+ only.
     pub durable_delete: bool,
 

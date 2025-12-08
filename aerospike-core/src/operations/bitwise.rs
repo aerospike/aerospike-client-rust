@@ -13,7 +13,7 @@
 // limitations under the License.
 
 //! Bit operations. Create bit operations used by client operate command.
-//! Offset orientation is left-to-right.  Negative offsets are supported.
+//! Offset orientation is left-to-right. Negative offsets are supported.
 //! If the offset is negative, the offset starts backwards from end of the bitmap.
 //! If an offset is out of bounds, a parameter error will be returned.
 //!

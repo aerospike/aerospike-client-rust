@@ -102,8 +102,8 @@ pub enum Error {
     #[error("UDF Bad Response: {0}")]
     UdfBadResponse(String),
     /// Error returned when a task times out before it could be completed.
-    #[error("Timeout: {0}, Client-Side: {1}")]
-    Timeout(String, bool),
+    #[error("Client Timeout: {0}")]
+    Timeout(String),
 
     /// ClientError is an untyped Error happening on client-side
     #[error("{0}")]

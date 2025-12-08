@@ -15,14 +15,13 @@
 use std::collections::hash_map::Entry::{Occupied, Vacant};
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::Duration;
 
 use crate::cluster::{Cluster, Node};
 use crate::commands::buffer;
 use crate::commands::{Command, SingleCommand};
 use crate::errors::{Error, Result};
 use crate::net::Connection;
-use crate::policy::{BasePolicy, Replica};
+use crate::policy::{BasePolicy, Policy, Replica};
 use crate::value::bytes_to_particle;
 use crate::{Bins, Key, Record, ResultCode, Value};
 
@@ -103,12 +102,8 @@ impl<'a> ReadCommand<'a> {
 
 #[async_trait::async_trait]
 impl<'a> Command for ReadCommand<'a> {
-    async fn write_timeout(
-        &mut self,
-        conn: &mut Connection,
-        timeout: Option<Duration>,
-    ) -> Result<()> {
-        conn.buffer.write_timeout(timeout);
+    async fn write_timeout(&mut self, conn: &mut Connection) -> Result<()> {
+        conn.buffer.write_timeout(self.policy.server_timeout());
         Ok(())
     }
 
