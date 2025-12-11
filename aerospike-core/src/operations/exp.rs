@@ -69,30 +69,25 @@ impl<T: IntoIterator<Item = ExpWriteFlags>> ToExpWriteFlagBitmask for T {
     }
 }
 
-#[doc(hidden)]
-pub type ExpressionEncoder =
+pub(crate) type ExpressionEncoder =
     Arc<dyn Fn(&mut Option<&mut Buffer>, &ExpOperation) -> usize + Send + Sync + 'static>;
 
 #[derive(Clone)]
-#[doc(hidden)]
-pub struct ExpOperation<'a> {
+pub(crate) struct ExpOperation<'a> {
     pub encoder: ExpressionEncoder,
     pub policy: i64,
     pub exp: &'a Expression,
 }
 
 impl<'a> ExpOperation<'a> {
-    #[doc(hidden)]
-    pub const fn particle_type(&self) -> ParticleType {
+    pub(crate) const fn particle_type(&self) -> ParticleType {
         ParticleType::BLOB
     }
-    #[doc(hidden)]
-    pub fn estimate_size(&self) -> usize {
+    pub(crate) fn estimate_size(&self) -> usize {
         let size: usize = (self.encoder)(&mut None, self);
         size
     }
-    #[doc(hidden)]
-    pub fn write_to(&self, buffer: &mut Buffer) -> usize {
+    pub(crate) fn write_to(&self, buffer: &mut Buffer) -> usize {
         let size: usize = (self.encoder)(&mut Some(buffer), self);
         size
     }

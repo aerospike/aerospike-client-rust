@@ -14,15 +14,14 @@
 // the License.
 
 //! Bitwise Aerospike Filter Expressions.
-use crate::expressions::{ExpOp, ExpType, ExpressionArgument, Expression, MODIFY};
+use crate::expressions::{ExpOp, ExpType, Expression, ExpressionArgument, MODIFY};
 use crate::operations::bitwise::{BitPolicy, BitwiseOverflowActions, BitwiseResizeFlags};
 use crate::Value;
 
 const MODULE: i64 = 1;
 const INT_FLAGS_SIGNED: i64 = 1;
 
-#[doc(hidden)]
-pub enum BitExpOp {
+pub(crate) enum BitExpOp {
     Resize = 0,
     Insert = 1,
     Remove = 2,
@@ -457,11 +456,7 @@ pub fn set_int(
 ///   get(int_val(9), int_val(5), blob_bin("a".to_string())),
 ///   blob_val(vec![0b10000000]));
 /// ```
-pub fn get(
-    bit_offset: Expression,
-    bit_size: Expression,
-    bin: Expression,
-) -> Expression {
+pub fn get(bit_offset: Expression, bit_size: Expression, bin: Expression) -> Expression {
     let args = vec![
         ExpressionArgument::Value(Value::from(BitExpOp::Get as i64)),
         ExpressionArgument::FilterExpression(bit_offset),
@@ -484,11 +479,7 @@ pub fn get(
 /// use aerospike::expressions::bitwise::count;
 /// le(count(int_val(0), int_val(5), blob_bin("a".to_string())), int_val(2));
 /// ```
-pub fn count(
-    bit_offset: Expression,
-    bit_size: Expression,
-    bin: Expression,
-) -> Expression {
+pub fn count(bit_offset: Expression, bit_size: Expression, bin: Expression) -> Expression {
     let args = vec![
         ExpressionArgument::Value(Value::from(BitExpOp::Count as i64)),
         ExpressionArgument::FilterExpression(bit_offset),
@@ -590,8 +581,7 @@ pub fn get_int(
     add_read(bin, ExpType::INT, args)
 }
 
-#[doc(hidden)]
-fn add_write(bin: Expression, arguments: Vec<ExpressionArgument>) -> Expression {
+pub(crate) fn add_write(bin: Expression, arguments: Vec<ExpressionArgument>) -> Expression {
     Expression {
         cmd: Some(ExpOp::Call),
         val: None,
@@ -603,8 +593,7 @@ fn add_write(bin: Expression, arguments: Vec<ExpressionArgument>) -> Expression 
     }
 }
 
-#[doc(hidden)]
-fn add_read(
+pub(crate) fn add_read(
     bin: Expression,
     return_type: ExpType,
     arguments: Vec<ExpressionArgument>,

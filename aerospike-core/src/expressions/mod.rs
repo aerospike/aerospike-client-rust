@@ -53,7 +53,6 @@ pub enum ExpType {
 }
 
 #[derive(Debug, Clone, Copy)]
-#[doc(hidden)]
 pub(crate) enum ExpOp {
     Unknown = 0,
     EQ = 1,
@@ -113,12 +112,10 @@ pub(crate) enum ExpOp {
     Call = 127,
 }
 
-#[doc(hidden)]
-pub const MODIFY: i64 = 0x40;
+pub(crate) const MODIFY: i64 = 0x40;
 
 #[derive(Debug, Clone)]
-#[doc(hidden)]
-pub enum ExpressionArgument {
+pub(crate) enum ExpressionArgument {
     Value(Value),
     FilterExpression(Expression),
     Context(Vec<CdtContext>),
@@ -145,9 +142,8 @@ pub struct Expression {
     arguments: Option<Vec<ExpressionArgument>>,
 }
 
-#[doc(hidden)]
 impl Expression {
-    fn new(
+    pub(crate) fn new(
         cmd: Option<ExpOp>,
         val: Option<Value>,
         bin: Option<Expression>,

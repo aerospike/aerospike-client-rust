@@ -23,8 +23,7 @@ pub use crate::operations::cdt_context::CdtContext;
 use crate::Value;
 
 #[derive(Debug, Clone)]
-#[doc(hidden)]
-pub enum CdtArgument<'a> {
+pub(crate) enum CdtArgument<'a> {
     Byte(u8),
     Int(i64),
     Bool(bool),
@@ -38,8 +37,7 @@ pub type OperationEncoder = Arc<
 >;
 
 #[derive(Clone)]
-#[doc(hidden)]
-pub struct CdtOperation<'a> {
+pub(crate) struct CdtOperation<'a> {
     pub op: u8,
     pub encoder: OperationEncoder,
     pub args: Vec<CdtArgument<'a>>,

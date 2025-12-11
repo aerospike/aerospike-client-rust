@@ -96,8 +96,7 @@ impl Default for HLLPolicy {
 }
 
 #[derive(Debug, Clone, Copy)]
-#[doc(hidden)]
-pub enum HLLOpType {
+pub(crate) enum HLLOpType {
     Init = 0,
     Add = 1,
     SetUnion = 2,

@@ -30,16 +30,13 @@ use crate::{CollectionIndexType, Value};
 /// - `as_regions_containing_point`
 #[derive(Debug, Clone)]
 pub struct Filter {
-    #[doc(hidden)]
-    pub bin_name: String,
+    pub(crate) bin_name: String,
     collection_index_type: CollectionIndexType,
     value_particle_type: ParticleType,
 
-    #[doc(hidden)]
-    pub begin: Value,
+    pub(crate) begin: Value,
 
-    #[doc(hidden)]
-    pub end: Value,
+    pub(crate) end: Value,
 }
 
 impl Filter {
@@ -62,20 +59,17 @@ impl Filter {
         }
     }
 
-    #[doc(hidden)]
-    pub fn collection_index_type(&self) -> CollectionIndexType {
+    pub(crate) fn collection_index_type(&self) -> CollectionIndexType {
         self.collection_index_type.clone()
     }
 
-    #[doc(hidden)]
-    pub fn estimate_size(&self) -> usize {
+    pub(crate) fn estimate_size(&self) -> usize {
         // bin name size(1) + particle type size(1)
         //     + begin particle size(4) + end particle size(4) = 10
         self.bin_name.len() + self.begin.estimate_size() + self.end.estimate_size() + 10
     }
 
-    #[doc(hidden)]
-    pub fn write(&self, buffer: &mut Buffer) {
+    pub(crate) fn write(&self, buffer: &mut Buffer) {
         buffer.write_u8(self.bin_name.len() as u8);
         buffer.write_str(&self.bin_name);
         buffer.write_u8(self.value_particle_type.clone() as u8);

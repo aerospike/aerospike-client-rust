@@ -50,8 +50,7 @@ use crate::Value;
 use std::collections::HashMap;
 
 #[derive(Debug, Clone, Copy)]
-#[doc(hidden)]
-pub enum CdtMapOpType {
+pub(crate) enum CdtMapOpType {
     SetType = 64,
     Add = 65,
     AddItems = 66,
@@ -259,8 +258,7 @@ const fn map_order_arg(policy: &MapPolicy) -> Option<CdtArgument<'_>> {
     }
 }
 
-#[doc(hidden)]
-pub const fn map_order_flag(order: MapOrder) -> u8 {
+pub(crate) const fn map_order_flag(order: MapOrder) -> u8 {
     match order {
         MapOrder::KeyOrdered => 0x80,
         MapOrder::Unordered => 0x40,

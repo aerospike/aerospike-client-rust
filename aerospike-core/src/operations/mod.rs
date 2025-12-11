@@ -16,8 +16,7 @@
 //! Functions used to create database operations used in the client's `operate()` method.
 
 pub mod bitwise;
-#[doc(hidden)]
-pub mod cdt;
+pub(crate) mod cdt;
 pub mod cdt_context;
 pub mod exp;
 pub mod hll;
@@ -36,8 +35,7 @@ use crate::operations::exp::ExpOperation;
 use crate::Value;
 
 #[derive(Clone, Copy, Debug)]
-#[doc(hidden)]
-pub enum OperationType {
+pub(crate) enum OperationType {
     Read = 1,
     Write = 2,
     CdtRead = 3,
@@ -55,9 +53,8 @@ pub enum OperationType {
     HllWrite = 16,
 }
 
-#[doc(hidden)]
 #[derive(Clone, Debug)]
-pub enum OperationData<'a> {
+pub(crate) enum OperationData<'a> {
     None,
     Value(&'a Value),
     CdtListOp(CdtOperation<'a>),
@@ -67,9 +64,8 @@ pub enum OperationData<'a> {
     EXPOp(ExpOperation<'a>),
 }
 
-#[doc(hidden)]
 #[derive(Clone, Debug)]
-pub enum OperationBin<'a> {
+pub(crate) enum OperationBin<'a> {
     None,
     All,
     Name(&'a str),
@@ -79,24 +75,19 @@ pub enum OperationBin<'a> {
 #[derive(Clone, Debug)]
 pub struct Operation<'a> {
     // OpType determines type of operation.
-    #[doc(hidden)]
-    pub op: OperationType,
+    pub(crate) op: OperationType,
 
     // CDT context for nested types
-    #[doc(hidden)]
-    pub ctx: &'a [CdtContext],
+    pub(crate) ctx: &'a [CdtContext],
 
     // BinName (Optional) determines the name of bin used in operation.
-    #[doc(hidden)]
-    pub bin: OperationBin<'a>,
+    pub(crate) bin: OperationBin<'a>,
 
     // BinData determines bin value used in operation.
-    #[doc(hidden)]
-    pub data: OperationData<'a>,
+    pub(crate) data: OperationData<'a>,
 }
 
 impl<'a> Operation<'a> {
-    #[doc(hidden)]
     pub(crate) fn is_write(&self) -> bool {
         match self.op {
             OperationType::Write
@@ -113,8 +104,7 @@ impl<'a> Operation<'a> {
         }
     }
 
-    #[doc(hidden)]
-    pub fn estimate_size(&self) -> usize {
+    pub(crate) fn estimate_size(&self) -> usize {
         let mut size: usize = 0;
         size += match self.bin {
             OperationBin::Name(bin) => bin.len(),
@@ -133,8 +123,7 @@ impl<'a> Operation<'a> {
         size
     }
 
-    #[doc(hidden)]
-    pub fn write_to(&self, buffer: &mut Buffer) -> usize {
+    pub(crate) fn write_to(&self, buffer: &mut Buffer) -> usize {
         let mut size: usize = 0;
 
         // remove the header size from the estimate
@@ -167,8 +156,7 @@ impl<'a> Operation<'a> {
         size
     }
 
-    #[doc(hidden)]
-    fn write_op_header_to(&self, buffer: &mut Buffer, particle_type: u8) -> usize {
+    pub(crate) fn write_op_header_to(&self, buffer: &mut Buffer, particle_type: u8) -> usize {
         let mut size = buffer.write_u8(particle_type as u8);
         size += buffer.write_u8(0);
         match self.bin {

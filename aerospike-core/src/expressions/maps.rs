@@ -19,8 +19,7 @@ use crate::operations::cdt_context::{CdtContext, CtxType};
 use crate::operations::maps::{map_write_op, CdtMapOpType, ToMapReturnTypeBitmask};
 use crate::{MapPolicy, MapReturnType, Value};
 
-#[doc(hidden)]
-const MODULE: i64 = 0;
+pub(crate) const MODULE: i64 = 0;
 
 /// Create expression that writes key/value item to map bin.
 #[allow(clippy::trivially_copy_pass_by_ref)]
@@ -773,8 +772,7 @@ pub fn get_by_rank_range_count<TMR: ToMapReturnTypeBitmask>(
     add_read(bin, get_value_type(return_type), args)
 }
 
-#[doc(hidden)]
-fn add_read(
+pub(crate) fn add_read(
     bin: Expression,
     return_type: ExpType,
     arguments: Vec<ExpressionArgument>,
@@ -790,8 +788,7 @@ fn add_read(
     }
 }
 
-#[doc(hidden)]
-fn add_write(
+pub(crate) fn add_write(
     bin: Expression,
     ctx: &[CdtContext],
     arguments: Vec<ExpressionArgument>,
@@ -813,8 +810,7 @@ fn add_write(
     }
 }
 
-#[doc(hidden)]
-fn get_value_type(return_type: i64) -> ExpType {
+pub(crate) fn get_value_type(return_type: i64) -> ExpType {
     let t = return_type & !(MapReturnType::Inverted as i64);
 
     match t {

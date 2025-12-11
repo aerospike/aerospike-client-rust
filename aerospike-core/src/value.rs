@@ -235,7 +235,6 @@ impl Value {
 
     /// Return the particle type for the value used in the wire protocol.
     /// For internal use only.
-    #[doc(hidden)]
     pub fn particle_type(&self) -> ParticleType {
         match *self {
             Value::Nil => ParticleType::NULL,
@@ -278,8 +277,7 @@ impl Value {
 
     /// Calculate the size in bytes that the representation on wire for this value will require.
     /// For internal use only.
-    #[doc(hidden)]
-    pub fn estimate_size(&self) -> usize {
+    pub(crate) fn estimate_size(&self) -> usize {
         match *self {
             Value::Nil => 0,
             Value::Int(_) | Value::Float(_) => 8,
@@ -301,8 +299,7 @@ impl Value {
 
     /// Serialize the value into the given buffer.
     /// For internal use only.
-    #[doc(hidden)]
-    pub fn write_to(&self, buf: &mut Buffer) -> usize {
+    pub(crate) fn write_to(&self, buf: &mut Buffer) -> usize {
         match *self {
             Value::Nil => 0,
             Value::Int(ref val) => buf.write_i64(*val),
@@ -324,8 +321,7 @@ impl Value {
 
     /// Serialize the value as a record key.
     /// For internal use only.
-    #[doc(hidden)]
-    pub fn write_key_bytes(&self, h: &mut Ripemd160) -> Result<()> {
+    pub(crate) fn write_key_bytes(&self, h: &mut Ripemd160) -> Result<()> {
         match *self {
             Value::Int(ref val) => {
                 let mut buf = [0; 8];
@@ -684,8 +680,7 @@ impl TryFrom<Value> for bool {
     }
 }
 
-#[doc(hidden)]
-pub fn bytes_to_particle(ptype: u8, buf: &mut Buffer, len: usize) -> Result<Value> {
+pub(crate) fn bytes_to_particle(ptype: u8, buf: &mut Buffer, len: usize) -> Result<Value> {
     match ParticleType::from(ptype) {
         ParticleType::NULL => Ok(Value::Nil),
         ParticleType::INTEGER => {

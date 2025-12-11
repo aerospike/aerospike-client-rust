@@ -17,6 +17,7 @@ use std::fmt;
 use std::result::Result as StdResult;
 
 #[derive(Debug, Clone)]
+/// Type of values in Aerospike wire-protocol.
 #[doc(hidden)]
 pub enum ParticleType {
     // Server particle types. Unsupported types are commented out.

@@ -40,8 +40,7 @@ use crate::operations::{Operation, OperationBin, OperationData, OperationType};
 use crate::Value;
 
 #[derive(Debug, Clone, Copy)]
-#[doc(hidden)]
-pub enum CdtListOpType {
+pub(crate) enum CdtListOpType {
     SetType = 0,
     Append = 1,
     AppendItems = 2,
@@ -235,8 +234,7 @@ impl Default for ListPolicy {
     }
 }
 
-#[doc(hidden)]
-pub const fn list_order_flag(order: ListOrderType, pad: bool) -> u8 {
+pub(crate) const fn list_order_flag(order: ListOrderType, pad: bool) -> u8 {
     if let ListOrderType::Ordered = order {
         return 0xc0;
     }

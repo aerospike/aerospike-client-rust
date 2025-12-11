@@ -89,9 +89,8 @@ pub trait Policy {
     fn consistency_level(&self) -> &ConsistencyLevel;
 }
 
-#[doc(hidden)]
 /// Policy-like object that encapsulates a base policy instance.
-pub trait PolicyLike {
+pub(crate) trait PolicyLike {
     /// Retrieve a reference to the base policy.
     fn base(&self) -> &BasePolicy;
 }

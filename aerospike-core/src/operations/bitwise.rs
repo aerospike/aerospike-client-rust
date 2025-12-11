@@ -36,8 +36,7 @@ use crate::operations::{Operation, OperationBin, OperationData, OperationType};
 use crate::Value;
 
 #[derive(Debug, Clone, Copy)]
-#[doc(hidden)]
-pub enum CdtBitwiseOpType {
+pub(crate) enum CdtBitwiseOpType {
     Resize = 0,
     Insert = 1,
     Remove = 2,

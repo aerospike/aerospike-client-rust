@@ -15,9 +15,11 @@
 
 //! List Cdt Aerospike Filter Expressions.
 
-use crate::expressions::{nil, ExpOp, ExpType, ExpressionArgument, Expression, MODIFY};
+use crate::expressions::{nil, ExpOp, ExpType, Expression, ExpressionArgument, MODIFY};
 use crate::operations::cdt_context::{CdtContext, CtxType};
-use crate::operations::lists::{CdtListOpType, ListPolicy, ListReturnType, ListSortFlags, ToListReturnTypeBitmask};
+use crate::operations::lists::{
+    CdtListOpType, ListPolicy, ListReturnType, ListSortFlags, ToListReturnTypeBitmask,
+};
 use crate::Value;
 
 const MODULE: i64 = 0;
@@ -139,11 +141,7 @@ pub fn clear(bin: Expression, ctx: &[CdtContext]) -> Expression {
 }
 
 /// Create expression that sorts list according to sortFlags.
-pub fn sort(
-    sort_flags: ListSortFlags,
-    bin: Expression,
-    ctx: &[CdtContext],
-) -> Expression {
+pub fn sort(sort_flags: ListSortFlags, bin: Expression, ctx: &[CdtContext]) -> Expression {
     let args = vec![
         ExpressionArgument::Value(Value::from(CdtListOpType::Sort as i64)),
         ExpressionArgument::Value(Value::from(sort_flags as u8)),
@@ -153,11 +151,7 @@ pub fn sort(
 }
 
 /// Create expression that removes list items identified by value.
-pub fn remove_by_value(
-    value: Expression,
-    bin: Expression,
-    ctx: &[CdtContext],
-) -> Expression {
+pub fn remove_by_value(value: Expression, bin: Expression, ctx: &[CdtContext]) -> Expression {
     let args = vec![
         ExpressionArgument::Value(Value::from(CdtListOpType::RemoveByValue as i64)),
         ExpressionArgument::Value(Value::from(ListReturnType::None as u8)),
@@ -168,11 +162,7 @@ pub fn remove_by_value(
 }
 
 /// Create expression that removes list items identified by values.
-pub fn remove_by_value_list(
-    values: Expression,
-    bin: Expression,
-    ctx: &[CdtContext],
-) -> Expression {
+pub fn remove_by_value_list(values: Expression, bin: Expression, ctx: &[CdtContext]) -> Expression {
     let args = vec![
         ExpressionArgument::Value(Value::from(CdtListOpType::RemoveByValueList as i64)),
         ExpressionArgument::Value(Value::from(ListReturnType::None as u8)),
@@ -266,11 +256,7 @@ pub fn remove_by_value_relative_rank_range_count(
 }
 
 /// Create expression that removes list item identified by index.
-pub fn remove_by_index(
-    index: Expression,
-    bin: Expression,
-    ctx: &[CdtContext],
-) -> Expression {
+pub fn remove_by_index(index: Expression, bin: Expression, ctx: &[CdtContext]) -> Expression {
     let args = vec![
         ExpressionArgument::Value(Value::from(CdtListOpType::RemoveByIndex as i64)),
         ExpressionArgument::Value(Value::from(ListReturnType::None as u8)),
@@ -281,11 +267,7 @@ pub fn remove_by_index(
 }
 
 /// Create expression that removes list items starting at specified index to the end of list.
-pub fn remove_by_index_range(
-    index: Expression,
-    bin: Expression,
-    ctx: &[CdtContext],
-) -> Expression {
+pub fn remove_by_index_range(index: Expression, bin: Expression, ctx: &[CdtContext]) -> Expression {
     let args = vec![
         ExpressionArgument::Value(Value::from(CdtListOpType::RemoveByIndexRange as i64)),
         ExpressionArgument::Value(Value::from(ListReturnType::None as u8)),
@@ -313,11 +295,7 @@ pub fn remove_by_index_range_count(
 }
 
 /// Create expression that removes list item identified by rank.
-pub fn remove_by_rank(
-    rank: Expression,
-    bin: Expression,
-    ctx: &[CdtContext],
-) -> Expression {
+pub fn remove_by_rank(rank: Expression, bin: Expression, ctx: &[CdtContext]) -> Expression {
     let args = vec![
         ExpressionArgument::Value(Value::from(CdtListOpType::RemoveByRank as i64)),
         ExpressionArgument::Value(Value::from(ListReturnType::None as u8)),
@@ -328,11 +306,7 @@ pub fn remove_by_rank(
 }
 
 /// Create expression that removes list items starting at specified rank to the last ranked item.
-pub fn remove_by_rank_range(
-    rank: Expression,
-    bin: Expression,
-    ctx: &[CdtContext],
-) -> Expression {
+pub fn remove_by_rank_range(rank: Expression, bin: Expression, ctx: &[CdtContext]) -> Expression {
     let args = vec![
         ExpressionArgument::Value(Value::from(CdtListOpType::RemoveByRankRange as i64)),
         ExpressionArgument::Value(Value::from(ListReturnType::None as u8)),
@@ -654,8 +628,7 @@ pub fn get_by_rank_range_count<TLR: ToListReturnTypeBitmask>(
     add_read(bin, get_value_type(return_type), args)
 }
 
-#[doc(hidden)]
-fn add_read(
+pub(crate) fn add_read(
     bin: Expression,
     return_type: ExpType,
     arguments: Vec<ExpressionArgument>,
@@ -671,8 +644,7 @@ fn add_read(
     }
 }
 
-#[doc(hidden)]
-fn add_write(
+pub(crate) fn add_write(
     bin: Expression,
     ctx: &[CdtContext],
     arguments: Vec<ExpressionArgument>,
@@ -697,22 +669,24 @@ fn add_write(
     }
 }
 
-#[doc(hidden)]
-fn get_value_type(return_type: i64) -> ExpType {
+pub(crate) fn get_value_type(return_type: i64) -> ExpType {
     let t = return_type & !(ListReturnType::Inverted as i64);
-    
+
     match t {
-        t if t == ListReturnType::Index as i64 
-          || t == ListReturnType::ReverseIndex as i64
-          || t == ListReturnType::Rank as i64
-          || t == ListReturnType::ReverseRank as i64 => ExpType::LIST,
+        t if t == ListReturnType::Index as i64
+            || t == ListReturnType::ReverseIndex as i64
+            || t == ListReturnType::Rank as i64
+            || t == ListReturnType::ReverseRank as i64 =>
+        {
+            ExpType::LIST
+        }
 
         t if t == ListReturnType::Count as i64 => ExpType::INT,
 
         t if t == ListReturnType::Values as i64 => ExpType::LIST,
 
         t if t == ListReturnType::Exists as i64 => ExpType::BOOL,
-        
-        _ => panic!("Invalid ListReturnType: {}", return_type)
+
+        _ => panic!("Invalid ListReturnType: {}", return_type),
     }
 }

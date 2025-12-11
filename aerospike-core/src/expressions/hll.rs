@@ -15,14 +15,13 @@
 
 //! HLL Aerospike Filter Expressions.
 
-use crate::expressions::{int_val, ExpOp, ExpType, ExpressionArgument, Expression, MODIFY};
+use crate::expressions::{int_val, ExpOp, ExpType, Expression, ExpressionArgument, MODIFY};
 use crate::operations::hll::HLLPolicy;
 use crate::Value;
 
 const MODULE: i64 = 2;
 
-#[doc(hidden)]
-pub enum HllExpOp {
+pub(crate) enum HllExpOp {
     Init = 0,
     Add = 1,
     Count = 50,
@@ -35,11 +34,7 @@ pub enum HllExpOp {
 }
 
 /// Create expression that creates a new HLL or resets an existing HLL.
-pub fn init(
-    policy: HLLPolicy,
-    index_bit_count: Expression,
-    bin: Expression,
-) -> Expression {
+pub fn init(policy: HLLPolicy, index_bit_count: Expression, bin: Expression) -> Expression {
     init_with_min_hash(policy, index_bit_count, int_val(-1), bin)
 }
 
@@ -286,8 +281,7 @@ pub fn may_contain(list: Expression, bin: Expression) -> Expression {
     )
 }
 
-#[doc(hidden)]
-fn add_read(
+pub(crate) fn add_read(
     bin: Expression,
     return_type: ExpType,
     arguments: Vec<ExpressionArgument>,
@@ -303,8 +297,7 @@ fn add_read(
     }
 }
 
-#[doc(hidden)]
-fn add_write(bin: Expression, arguments: Vec<ExpressionArgument>) -> Expression {
+pub(crate) fn add_write(bin: Expression, arguments: Vec<ExpressionArgument>) -> Expression {
     Expression {
         cmd: Some(ExpOp::Call),
         val: None,

@@ -111,16 +111,14 @@ impl Statement {
         self.aggregation = Some(agg);
     }
 
-    #[doc(hidden)]
-    pub fn is_scan(&self) -> bool {
+    pub(crate) fn is_scan(&self) -> bool {
         match self.filters {
             Some(ref filters) => filters.is_empty(),
             None => true,
         }
     }
 
-    #[doc(hidden)]
-    pub fn validate(&self) -> Result<()> {
+    pub(crate) fn validate(&self) -> Result<()> {
         if let Some(ref filters) = self.filters {
             if filters.len() > 1 {
                 return Err(Error::InvalidArgument(

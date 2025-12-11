@@ -247,8 +247,7 @@ pub enum ResultCode {
 
 impl ResultCode {
     /// Convert the result code from the server response.
-    #[doc(hidden)]
-    pub const fn from_u8(n: u8) -> ResultCode {
+    pub(crate) const fn from_u8(n: u8) -> ResultCode {
         match n {
             0 => ResultCode::Ok,
             1 => ResultCode::ServerError,
