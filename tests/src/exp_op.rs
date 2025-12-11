@@ -5,8 +5,6 @@ use aerospike::{as_bin, as_key, as_val, Bins, ReadPolicy, WritePolicy};
 
 #[aerospike_macro::test]
 async fn exp_ops() {
-    let _ = env_logger::try_init();
-
     let client = common::client().await;
     let namespace = common::namespace();
     let set_name = &common::rand_str(10);

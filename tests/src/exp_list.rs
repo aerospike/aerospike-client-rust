@@ -1,5 +1,4 @@
 use crate::common;
-use env_logger;
 
 use crate::src::count_results;
 
@@ -30,7 +29,6 @@ async fn create_test_set(client: &Client, no_records: usize) -> String {
 
 #[aerospike_macro::test]
 async fn expression_list() {
-    let _ = env_logger::try_init();
     let client = common::client().await;
 
     let set_name = create_test_set(&client, EXPECTED).await;

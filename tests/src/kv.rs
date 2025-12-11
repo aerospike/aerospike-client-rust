@@ -18,14 +18,11 @@ use aerospike::{
 use aerospike::{operations, Expiration, ReadTouchTTL};
 use aerospike_rt::sleep;
 use aerospike_rt::time::Duration;
-use env_logger;
 
 use crate::common::{self};
 
 #[aerospike_macro::test]
 async fn read_touch_ttl() {
-    let _ = env_logger::try_init();
-
     let client = common::client().await;
     let namespace: &str = common::namespace();
     let set_name = &common::rand_str(10);
@@ -62,8 +59,6 @@ async fn read_touch_ttl() {
 
 #[aerospike_macro::test]
 async fn invalid_delete() {
-    let _ = env_logger::try_init();
-
     let client = common::client().await;
     let wpolicy = WritePolicy::default();
 
@@ -77,8 +72,6 @@ async fn invalid_delete() {
 
 #[aerospike_macro::test]
 async fn connect() {
-    let _ = env_logger::try_init();
-
     let client = common::client().await;
     let namespace: &str = common::namespace();
     let set_name = &common::rand_str(10);

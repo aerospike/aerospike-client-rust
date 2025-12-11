@@ -17,12 +17,8 @@ use crate::common;
 
 use aerospike::AdminPolicy;
 
-use env_logger;
-
 #[aerospike_macro::test]
 async fn truncate() {
-    let _ = env_logger::try_init();
-
     let client = common::client().await;
     let namespace: &str = common::namespace();
     let set_name = &common::rand_str(10);

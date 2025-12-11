@@ -14,7 +14,6 @@
 // the License.
 
 use crate::common;
-use env_logger;
 
 use aerospike::operations::bitwise;
 use aerospike::operations::bitwise::{BitPolicy, BitwiseOverflowActions};
@@ -22,8 +21,6 @@ use aerospike::{as_key, Value, WritePolicy};
 
 #[aerospike_macro::test]
 async fn cdt_bitwise() {
-    let _ = env_logger::try_init();
-
     let client = common::client().await;
     let namespace = common::namespace();
     let set_name = &common::rand_str(10);

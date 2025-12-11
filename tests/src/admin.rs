@@ -14,7 +14,6 @@
 // the License.
 
 use aerospike::policy::AdminPolicy;
-use env_logger;
 
 use crate::common;
 use aerospike::{Privilege, PrivilegeCode};
@@ -29,8 +28,6 @@ async fn user_management() {
 
     const USER_NAME: &str = "test_user";
     const ROLE: &str = "user-admin";
-
-    let _ = env_logger::try_init();
 
     let client = common::client().await;
     let admin_policy = AdminPolicy::default();
@@ -115,8 +112,6 @@ async fn role_management() {
         Some(namespace.into()),
         Some(set_name.into()),
     )];
-
-    let _ = env_logger::try_init();
 
     let client = common::client().await;
 

@@ -1,5 +1,4 @@
 use crate::common;
-use env_logger;
 
 use aerospike::operations::hll;
 use aerospike::operations::hll::HLLPolicy;
@@ -7,8 +6,6 @@ use aerospike::{as_key, as_list, as_val, Bins, FloatValue, ReadPolicy, Value, Wr
 
 #[aerospike_macro::test]
 async fn hll() {
-    let _ = env_logger::try_init();
-
     let client = common::client().await;
     let namespace = common::namespace();
     let set_name = &common::rand_str(10);

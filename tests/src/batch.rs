@@ -15,8 +15,6 @@
 
 use aerospike::*;
 
-use env_logger;
-
 use crate::common;
 use aerospike::{operations, Expiration, ReadTouchTTL};
 use aerospike_rt::sleep;
@@ -24,8 +22,6 @@ use aerospike_rt::time::Duration;
 
 #[aerospike_macro::test]
 async fn batch_operate_read() {
-    let _ = env_logger::try_init();
-
     let client = common::client().await;
     let namespace: &str = common::namespace();
     let set_name = &common::rand_str(10);
@@ -216,8 +212,6 @@ end
 
 #[aerospike_macro::test]
 async fn batch_operate_read_touch_ttl() {
-    let _ = env_logger::try_init();
-
     let client = common::client().await;
     let namespace: &str = "test"; //common::namespace();
     let set_name = "test"; // &common::rand_str(10);

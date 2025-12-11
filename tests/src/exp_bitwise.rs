@@ -13,7 +13,6 @@
 // License for the specific language governing permissions and limitations under
 // the License.
 use crate::common;
-use env_logger;
 
 use crate::src::count_results;
 
@@ -44,7 +43,6 @@ async fn create_test_set(client: &Client, no_records: usize) -> String {
 #[aerospike_macro::test]
 async fn expression_bitwise() {
     let client = common::client().await;
-    let _ = env_logger::try_init();
 
     let set_name = create_test_set(&client, EXPECTED).await;
 

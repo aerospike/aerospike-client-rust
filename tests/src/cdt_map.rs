@@ -16,7 +16,6 @@
 use std::collections::HashMap;
 
 use crate::common;
-use env_logger;
 
 use aerospike::operations::cdt_context::{ctx_map_key, ctx_map_key_create};
 use aerospike::operations::{maps, MapOrder};
@@ -27,8 +26,6 @@ use aerospike::{
 
 #[aerospike_macro::test]
 async fn map_operations() {
-    let _ = env_logger::try_init();
-
     let client = common::client().await;
     let namespace = common::namespace();
     let set_name = &common::rand_str(10);
@@ -329,8 +326,6 @@ async fn map_operations() {
 
 #[aerospike_macro::test]
 async fn map_operations_wildcard() {
-    let _ = env_logger::try_init();
-
     let client = common::client().await;
     let namespace = common::namespace();
     let set_name = &common::rand_str(10);

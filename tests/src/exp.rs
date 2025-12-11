@@ -13,7 +13,6 @@
 // License for the specific language governing permissions and limitations under
 // the License.
 use crate::common;
-use env_logger;
 
 use futures::stream::StreamExt;
 
@@ -51,7 +50,6 @@ async fn create_test_set(client: &Client, no_records: usize) -> String {
 #[aerospike_macro::test]
 async fn expression_compare() {
     let client = common::client().await;
-    let _ = env_logger::try_init();
 
     let set_name = create_test_set(&client, EXPECTED).await;
 
@@ -120,7 +118,6 @@ async fn expression_compare() {
 
 #[aerospike_macro::test]
 async fn expression_condition() {
-    let _ = env_logger::try_init();
     let client = common::client().await;
 
     let set_name = create_test_set(&client, EXPECTED).await;
@@ -167,7 +164,6 @@ async fn expression_condition() {
 #[aerospike_macro::test]
 async fn expression_data_types() {
     let client = common::client().await;
-    let _ = env_logger::try_init();
 
     let set_name = create_test_set(&client, EXPECTED).await;
 
@@ -229,7 +225,6 @@ async fn expression_data_types() {
 #[aerospike_macro::test]
 fn expression_aero_5_6() {
     let client = common::client().await;
-    let _ = env_logger::try_init();
 
     let set_name = create_test_set(&client, EXPECTED).await;
 
@@ -525,7 +520,6 @@ fn expression_aero_5_6() {
 #[aerospike_macro::test]
 fn expression_rec_ops() {
     let client = common::client().await;
-    let _ = env_logger::try_init();
 
     let set_name = create_test_set(&client, EXPECTED).await;
 
@@ -608,8 +602,6 @@ fn expression_rec_ops() {
 
 #[aerospike_macro::test]
 async fn expression_commands() {
-    let _ = env_logger::try_init();
-
     let client = common::client().await;
     let namespace = common::namespace();
     let set_name = common::rand_str(10);

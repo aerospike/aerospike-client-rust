@@ -15,14 +15,11 @@
 use aerospike::{
     as_bin, as_blob, as_geo, as_key, as_list, as_map, as_val, Bins, ReadPolicy, WritePolicy,
 };
-use env_logger;
 
 use crate::common;
 
 #[aerospike_macro::test]
 async fn serialize() {
-    let _ = env_logger::try_init();
-
     let client = common::client().await;
     let namespace: &str = common::namespace();
     let set_name = &common::rand_str(10);

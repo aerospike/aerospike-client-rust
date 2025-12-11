@@ -22,7 +22,6 @@ use std::sync::Arc;
 use futures::stream::StreamExt;
 
 use aerospike::query::PartitionFilter;
-use env_logger;
 
 use aerospike::*;
 use aerospike_rt::time::Instant;
@@ -47,8 +46,6 @@ async fn create_test_set(client: &Client, no_records: usize) -> String {
 
 #[aerospike_macro::test]
 async fn scan_single_consumer() {
-    let _ = env_logger::try_init();
-
     let client = common::client().await;
     let namespace = common::namespace();
     let set_name = create_test_set(&client, EXPECTED).await;
@@ -73,8 +70,6 @@ async fn scan_single_consumer() {
 
 #[aerospike_macro::test]
 async fn scan_single_consumer_with_cursor() {
-    let _ = env_logger::try_init();
-
     let client = common::client().await;
     let namespace = common::namespace();
     let set_name = create_test_set(&client, EXPECTED).await;
@@ -109,8 +104,6 @@ async fn scan_single_consumer_with_cursor() {
 
 #[aerospike_macro::test]
 async fn scan_single_consumer_rps() {
-    let _ = env_logger::try_init();
-
     let client = common::client().await;
 
     // only run on single node clusters
@@ -148,8 +141,6 @@ async fn scan_single_consumer_rps() {
 
 #[aerospike_macro::test]
 async fn scan_multi_consumer() {
-    let _ = env_logger::try_init();
-
     let client = common::client().await;
     let namespace = common::namespace();
     let set_name = create_test_set(&client, EXPECTED).await;
@@ -189,8 +180,6 @@ async fn scan_multi_consumer() {
 
 #[aerospike_macro::test]
 async fn scan_single_consumer_stream() {
-    let _ = env_logger::try_init();
-
     let client = common::client().await;
     let namespace = common::namespace();
     let set_name = create_test_set(&client, EXPECTED).await;
@@ -219,8 +208,6 @@ async fn scan_single_consumer_stream() {
 
 #[aerospike_macro::test]
 async fn scan_multi_consumer_stream() {
-    let _ = env_logger::try_init();
-
     let client = common::client().await;
     let namespace = common::namespace();
     let set_name = create_test_set(&client, EXPECTED).await;

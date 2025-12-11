@@ -14,14 +14,11 @@
 // the License.
 
 use crate::common;
-use env_logger;
 
 use aerospike::*;
 
 #[aerospike_macro::test]
 async fn execute_udf() {
-    let _ = env_logger::try_init();
-
     let client = common::client().await;
     let namespace = common::namespace();
     let set_name = &common::rand_str(10);

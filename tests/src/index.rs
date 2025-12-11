@@ -15,7 +15,6 @@
 
 use crate::common;
 use aerospike::expressions::*;
-use env_logger;
 
 use aerospike::Task;
 use aerospike::*;
@@ -40,8 +39,6 @@ async fn create_test_set(client: &Client, no_records: usize) -> String {
 
 #[aerospike_macro::test]
 async fn create_index_on_bin() {
-    let _ = env_logger::try_init();
-
     let client = common::client().await;
     let ns = common::namespace();
     let set = create_test_set(&client, EXPECTED).await;
@@ -72,8 +69,6 @@ async fn create_index_on_bin() {
 
 #[aerospike_macro::test]
 async fn create_index_using_expression() {
-    let _ = env_logger::try_init();
-
     let client = common::client().await;
     let ns = common::namespace();
     let set = create_test_set(&client, EXPECTED).await;
