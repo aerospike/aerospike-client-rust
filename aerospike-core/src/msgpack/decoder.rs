@@ -77,14 +77,18 @@ fn unpack_map(buf: &mut Buffer, mut count: usize) -> Result<Value> {
         count -= 1;
     }
 
-    let mut map: HashMap<Value, Value> = HashMap::with_capacity(count);
+    // Unpack into Vec first to preserve the order from the server
+    // This is important for filter expressions that need to match the exact byte-level order
+    let mut entries: Vec<(Value, Value)> = Vec::with_capacity(count);
     for _ in 0..count {
         let key = unpack_value(buf)?;
         let val = unpack_value(buf)?;
-        map.insert(key, val);
+        entries.push((key, val));
     }
 
-    Ok(Value::from(map))
+    // Convert to HashMap for regular use, but preserve order in OrderedMap for filter expressions
+    // For now, we'll use OrderedMap to preserve order, which can be converted to HashMap when needed
+    Ok(Value::OrderedMap(entries))
 }
 
 fn unpack_blob(buf: &mut Buffer, count: usize) -> Result<Value> {

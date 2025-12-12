@@ -141,6 +141,27 @@ impl Connection {
     }
 
     pub async fn flush(&mut self) -> Result<()> {
+        // Capture bytes to file if AEROSPIKE_DUMP_BYTES env var is set
+        if let Ok(dump_dir) = std::env::var("AEROSPIKE_DUMP_BYTES") {
+            use std::fs::OpenOptions;
+            use std::io::Write;
+            use std::sync::atomic::{AtomicU64, Ordering};
+            
+            static COUNTER: AtomicU64 = AtomicU64::new(0);
+            let count = COUNTER.fetch_add(1, Ordering::SeqCst);
+            let filename = format!("{}/python_client_bytes_{:04}.bin", dump_dir, count);
+            
+            if let Ok(mut file) = OpenOptions::new()
+                .create(true)
+                .write(true)
+                .truncate(true)
+                .open(&filename)
+            {
+                let _ = file.write_all(&self.buffer.data_buffer);
+                let _ = file.write_all(b"\n---\n"); // Separator
+            }
+        }
+        
         match self.conn {
             Netsocket::Tcp(ref mut conn) => conn.write_all(&self.buffer.data_buffer).await?,
             #[cfg(feature = "tls")]

@@ -300,7 +300,54 @@ impl FilterExpression {
 
     fn pack_value(&self, buf: &mut Option<&mut Buffer>) -> usize {
         // Packing logic for Value based Ops
-        pack_value(buf, &self.val.clone().unwrap())
+        // Handle OrderedMap specially for filter expressions (preserve order instead of panicking)
+        let val = self.val.clone().unwrap();
+        match &val {
+            crate::Value::OrderedMap(entries) => {
+                // Pack OrderedMap with KEY_ORDERED extension bytes
+                // This matches the server's stored format for KEY_ORDERED maps
+                // IMPORTANT: Preserve the exact order from retrieval - don't sort!
+                // The server has already sorted the map using its key comparison function.
+                // If we sort again using our comparison function, we might get a different order.
+                let mut size = 0;
+                let map_len = entries.len();
+                
+                // Pack map with +1 for extension entry (like Java client)
+                if map_len + 1 < 16 {
+                    size += crate::msgpack::encoder::pack_half_byte(buf, 0x80 | ((map_len + 1) as u8));
+                } else if map_len + 1 < 1 << 16 {
+                    if let Some(ref mut buf) = *buf {
+                        buf.write_u8(0xde);
+                        buf.write_u16((map_len + 1) as u16);
+                    }
+                    size += 3;
+                } else {
+                    if let Some(ref mut buf) = *buf {
+                        buf.write_u8(0xdf);
+                        buf.write_u32((map_len + 1) as u32);
+                    }
+                    size += 5;
+                }
+                
+                // Add KEY_ORDERED extension bytes (0xc7, 0, 0x01, 0xc0)
+                if let Some(ref mut buf) = *buf {
+                    buf.write_u8(0xc7);  // Extension type
+                    buf.write_u8(0);     // Extension type byte
+                    buf.write_u8(0x01);  // KEY_ORDERED attributes
+                    buf.write_u8(0xc0);  // nil
+                }
+                size += 4;
+                
+                // Serialize in the preserved order from retrieval (server's sorted order)
+                // Don't sort - the server has already sorted it, and we need to match that exact order
+                for (key, val) in entries {
+                    size += crate::msgpack::encoder::pack_value(buf, key);
+                    size += crate::msgpack::encoder::pack_value(buf, val);
+                }
+                size
+            }
+            _ => pack_value(buf, &val),
+        }
     }
 
     pub fn size(&self) -> usize {
@@ -728,9 +775,82 @@ pub fn list_val(val: Vec<Value>) -> FilterExpression {
 }
 
 /// Create Map bin Value
+/// 
+/// For filter expressions, we need to preserve the insertion order from Python dicts.
+/// Accept Vec directly to preserve order from IndexMap, then serialize in that order.
+/// Note: OrderedMap panics in regular pack_value, but filter expressions use a different
+/// code path (pack_value in expressions) which we'll handle specially.
+pub fn map_val(val: Vec<(Value, Value)>) -> FilterExpression {
+    // Use OrderedMap to preserve order - we'll handle serialization specially for filter expressions
+    FilterExpression::new(None, Some(Value::OrderedMap(val)), None, None, None, None)
+}
+
+/// Create Map bin Value (legacy HashMap version for backward compatibility)
+/// 
+/// This version accepts HashMap but converts to Vec, losing order.
+/// Prefer using map_val with Vec to preserve order from IndexMap.
 #[allow(clippy::implicit_hasher)]
-pub fn map_val(val: HashMap<Value, Value>) -> FilterExpression {
-    FilterExpression::new(None, Some(Value::from(val)), None, None, None, None)
+pub fn map_val_from_hashmap(val: HashMap<Value, Value>) -> FilterExpression {
+    // Convert HashMap to Vec - order is lost from HashMap iteration
+    let entries: Vec<(Value, Value)> = val.into_iter().collect();
+    map_val(entries)
+}
+
+/// Compare two Values for deterministic sorting.
+/// This ensures map entries are always serialized in the same order.
+fn compare_values_for_sort(a: &Value, b: &Value) -> std::cmp::Ordering {
+    use std::cmp::Ordering;
+    
+    // First compare by type (deterministic ordering)
+    let type_order_a = value_type_order(a);
+    let type_order_b = value_type_order(b);
+    match type_order_a.cmp(&type_order_b) {
+        Ordering::Equal => {
+            // Same type, compare by value
+            match (a, b) {
+                (Value::Int(a_val), Value::Int(b_val)) => a_val.cmp(b_val),
+                (Value::UInt(a_val), Value::UInt(b_val)) => a_val.cmp(b_val),
+                (Value::String(a_val), Value::String(b_val)) => a_val.cmp(b_val),
+                (Value::Blob(a_val), Value::Blob(b_val)) => a_val.cmp(b_val),
+                (Value::Bool(a_val), Value::Bool(b_val)) => a_val.cmp(b_val),
+                (Value::Float(a_val), Value::Float(b_val)) => {
+                    // Compare float bits for deterministic ordering
+                    let a_bits = match a_val {
+                        crate::FloatValue::F32(bits) => u64::from(*bits),
+                        crate::FloatValue::F64(bits) => *bits,
+                    };
+                    let b_bits = match b_val {
+                        crate::FloatValue::F32(bits) => u64::from(*bits),
+                        crate::FloatValue::F64(bits) => *bits,
+                    };
+                    a_bits.cmp(&b_bits)
+                }
+                // For other types, use Debug representation as fallback
+                _ => format!("{:?}", a).cmp(&format!("{:?}", b)),
+            }
+        }
+        other => other,
+    }
+}
+
+/// Get a numeric order for Value types to ensure deterministic sorting.
+fn value_type_order(v: &Value) -> u8 {
+    match v {
+        Value::Nil => 0,
+        Value::Bool(_) => 1,
+        Value::Int(_) => 2,
+        Value::UInt(_) => 3,
+        Value::Float(_) => 4,
+        Value::String(_) => 5,
+        Value::Blob(_) => 6,
+        Value::List(_) => 7,
+        Value::HashMap(_) => 8,
+        Value::OrderedMap(_) => 9,
+        Value::GeoJSON(_) => 10,
+        Value::HLL(_) => 11,
+        Value::Infinity => 12,
+        Value::Wildcard => 13,
+    }
 }
 
 /// Create geospatial json string value.

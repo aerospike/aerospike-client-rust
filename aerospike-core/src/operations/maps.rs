@@ -268,6 +268,24 @@ pub const fn map_order_flag(order: MapOrder) -> u8 {
     }
 }
 
+/// Create map at given context level. Server creates map at the context level.
+/// The context is allowed to be beyond map boundaries only if the map doesn't exist.
+///
+/// This is similar to Java client's MapOperation.create() which uses SET_TYPE (64) with context.
+pub fn create<'a>(bin: &'a str, map_order: MapOrder, ctx: &'a [crate::operations::cdt_context::CdtContext]) -> Operation<'a> {
+    let cdt_op = CdtOperation {
+        op: CdtMapOpType::SetType as u8,
+        encoder: Arc::new(pack_cdt_op),
+        args: vec![CdtArgument::Byte(map_order as u8)],
+    };
+    Operation {
+        op: OperationType::CdtWrite,
+        ctx,
+        bin: OperationBin::Name(bin),
+        data: OperationData::CdtMapOp(cdt_op),
+    }
+}
+
 /// Create set map policy operation. Server set the map policy attributes. Server does not
 /// return a result.
 ///
@@ -326,9 +344,11 @@ pub fn put<'a>(
 pub fn put_items<'a>(
     policy: &'a MapPolicy,
     bin: &'a str,
-    items: &'a HashMap<Value, Value>,
+    ordered_map: &'a Value,
 ) -> Operation<'a> {
-    let mut args = vec![CdtArgument::Map(items)];
+    // ordered_map is already an OrderedMap stored in map_storage (Python client)
+    // For KEY_ORDERED maps, we need to preserve the order through serialization
+    let mut args = vec![CdtArgument::OrderedMap(ordered_map, policy.order)];
     if let Some(arg) = map_order_arg(policy) {
         args.push(arg);
     }

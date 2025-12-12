@@ -31,6 +31,7 @@ pub enum CdtArgument<'a> {
     Value(&'a Value),
     List(&'a [Value]),
     Map(&'a HashMap<Value, Value>),
+    OrderedMap(&'a Value, crate::operations::maps::MapOrder), // For preserving order from IndexMap/Python dict, with MapOrder
 }
 
 pub type OperationEncoder = Arc<

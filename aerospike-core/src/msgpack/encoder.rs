@@ -38,7 +38,19 @@ pub fn pack_value(buf: &mut Option<&mut Buffer>, val: &Value) -> usize {
         Value::Blob(ref val) | Value::HLL(ref val) => pack_blob(buf, val),
         Value::List(ref val) => pack_array(buf, val),
         Value::HashMap(ref val) => pack_map(buf, val),
-        Value::OrderedMap(_) => panic!("Ordered maps are not supported in this encoder."),
+        Value::OrderedMap(ref entries) => {
+            // Pack OrderedMap preserving the exact order from IndexMap/Python dict
+            // This is used for both regular PUTs and filter expressions to ensure
+            // byte-level order matches between stored maps and filter expressions
+            let mut size = 0;
+            size += pack_map_begin(buf, entries.len());
+            // Serialize in the preserved order (don't sort)
+            for (key, val) in entries {
+                size += pack_value(buf, key);
+                size += pack_value(buf, val);
+            }
+            size
+        },
         Value::GeoJSON(ref val) => pack_geo_json(buf, val),
         Value::Infinity => pack_infinity(buf),
         Value::Wildcard => pack_wildcard(buf),
@@ -91,6 +103,44 @@ pub fn pack_cdt_op(
                 CdtArgument::Value(value) => pack_value(buf, value),
                 CdtArgument::List(list) => pack_array(buf, list),
                 CdtArgument::Map(map) => pack_map(buf, map),
+                CdtArgument::OrderedMap(ordered_map, order) => {
+                    match order {
+                        crate::operations::maps::MapOrder::KeyOrdered => {
+                            let mut size = 0;
+                            if let Value::OrderedMap(entries) = ordered_map {
+                                let map_len = entries.len();
+                                if map_len + 1 < 16 {
+                                    size += pack_half_byte(buf, 0x80 | ((map_len + 1) as u8));
+                                } else if map_len + 1 < 1 << 16 {
+                                    if let Some(ref mut buf) = *buf {
+                                        buf.write_u8(0xde);
+                                        buf.write_u16((map_len + 1) as u16);
+                                    }
+                                    size += 3;
+                                } else {
+                                    if let Some(ref mut buf) = *buf {
+                                        buf.write_u8(0xdf);
+                                        buf.write_u32((map_len + 1) as u32);
+                                    }
+                                    size += 5;
+                                }
+                                if let Some(ref mut buf) = *buf {
+                                    buf.write_u8(0xc7);
+                                    buf.write_u8(0);
+                                    buf.write_u8(0x01);
+                                    buf.write_u8(0xc0);
+                                }
+                                size += 4;
+                                for (key, val) in entries {
+                                    size += pack_value(buf, key);
+                                    size += pack_value(buf, val);
+                                }
+                            }
+                            size
+                        }
+                        _ => pack_value(buf, ordered_map),
+                    }
+                }
                 CdtArgument::Bool(bool_val) => pack_value(buf, &Value::from(bool_val)),
             }
         }
@@ -116,6 +166,44 @@ pub fn pack_hll_op(
                 CdtArgument::Value(value) => pack_value(buf, value),
                 CdtArgument::List(list) => pack_array(buf, list),
                 CdtArgument::Map(map) => pack_map(buf, map),
+                CdtArgument::OrderedMap(ordered_map, order) => {
+                    match order {
+                        crate::operations::maps::MapOrder::KeyOrdered => {
+                            let mut size = 0;
+                            if let Value::OrderedMap(entries) = ordered_map {
+                                let map_len = entries.len();
+                                if map_len + 1 < 16 {
+                                    size += pack_half_byte(buf, 0x80 | ((map_len + 1) as u8));
+                                } else if map_len + 1 < 1 << 16 {
+                                    if let Some(ref mut buf) = *buf {
+                                        buf.write_u8(0xde);
+                                        buf.write_u16((map_len + 1) as u16);
+                                    }
+                                    size += 3;
+                                } else {
+                                    if let Some(ref mut buf) = *buf {
+                                        buf.write_u8(0xdf);
+                                        buf.write_u32((map_len + 1) as u32);
+                                    }
+                                    size += 5;
+                                }
+                                if let Some(ref mut buf) = *buf {
+                                    buf.write_u8(0xc7);
+                                    buf.write_u8(0);
+                                    buf.write_u8(0x01);
+                                    buf.write_u8(0xc0);
+                                }
+                                size += 4;
+                                for (key, val) in entries {
+                                    size += pack_value(buf, key);
+                                    size += pack_value(buf, val);
+                                }
+                            }
+                            size
+                        }
+                        _ => pack_value(buf, ordered_map),
+                    }
+                }
                 CdtArgument::Bool(bool_val) => pack_value(buf, &Value::from(bool_val)),
             }
         }
@@ -156,6 +244,44 @@ pub fn pack_cdt_bit_op(
                 CdtArgument::Value(value) => pack_value(buf, value),
                 CdtArgument::List(list) => pack_array(buf, list),
                 CdtArgument::Map(map) => pack_map(buf, map),
+                CdtArgument::OrderedMap(ordered_map, order) => {
+                    match order {
+                        crate::operations::maps::MapOrder::KeyOrdered => {
+                            let mut size = 0;
+                            if let Value::OrderedMap(entries) = ordered_map {
+                                let map_len = entries.len();
+                                if map_len + 1 < 16 {
+                                    size += pack_half_byte(buf, 0x80 | ((map_len + 1) as u8));
+                                } else if map_len + 1 < 1 << 16 {
+                                    if let Some(ref mut buf) = *buf {
+                                        buf.write_u8(0xde);
+                                        buf.write_u16((map_len + 1) as u16);
+                                    }
+                                    size += 3;
+                                } else {
+                                    if let Some(ref mut buf) = *buf {
+                                        buf.write_u8(0xdf);
+                                        buf.write_u32((map_len + 1) as u32);
+                                    }
+                                    size += 5;
+                                }
+                                if let Some(ref mut buf) = *buf {
+                                    buf.write_u8(0xc7);
+                                    buf.write_u8(0);
+                                    buf.write_u8(0x01);
+                                    buf.write_u8(0xc0);
+                                }
+                                size += 4;
+                                for (key, val) in entries {
+                                    size += pack_value(buf, key);
+                                    size += pack_value(buf, val);
+                                }
+                            }
+                            size
+                        }
+                        _ => pack_value(buf, ordered_map),
+                    }
+                }
                 CdtArgument::Bool(bool_val) => pack_value(buf, &Value::from(bool_val)),
             }
         }
@@ -179,13 +305,78 @@ pub fn pack_array(buf: &mut Option<&mut Buffer>, values: &[Value]) -> usize {
 pub fn pack_map(buf: &mut Option<&mut Buffer>, map: &HashMap<Value, Value>) -> usize {
     let mut size = 0;
 
+    // Pack as UNORDERED (no extension bytes) to match how maps are stored
     size += pack_map_begin(buf, map.len());
-    for (key, val) in map.iter() {
+    
+    // Sort entries by key for deterministic serialization order
+    // This ensures filter expression comparisons work correctly
+    // Even though the format is UNORDERED, sorting ensures consistent byte-level serialization
+    let mut entries: Vec<(&Value, &Value)> = map.iter().collect();
+    entries.sort_by(|a, b| compare_values_for_sort(a.0, b.0));
+    
+    for (key, val) in entries {
         size += pack_value(buf, key);
         size += pack_value(buf, val);
     }
 
     size
+}
+
+/// Compare two Values for deterministic sorting.
+/// This ensures map entries are always serialized in the same order.
+fn compare_values_for_sort(a: &Value, b: &Value) -> std::cmp::Ordering {
+    use std::cmp::Ordering;
+    
+    // First compare by type (deterministic ordering)
+    let type_order_a = value_type_order(a);
+    let type_order_b = value_type_order(b);
+    match type_order_a.cmp(&type_order_b) {
+        Ordering::Equal => {
+            // Same type, compare by value
+            match (a, b) {
+                (Value::Int(a_val), Value::Int(b_val)) => a_val.cmp(b_val),
+                (Value::UInt(a_val), Value::UInt(b_val)) => a_val.cmp(b_val),
+                (Value::String(a_val), Value::String(b_val)) => a_val.cmp(b_val),
+                (Value::Blob(a_val), Value::Blob(b_val)) => a_val.cmp(b_val),
+                (Value::Bool(a_val), Value::Bool(b_val)) => a_val.cmp(b_val),
+                (Value::Float(a_val), Value::Float(b_val)) => {
+                    // Compare float bits for deterministic ordering
+                    let a_bits = match a_val {
+                        FloatValue::F32(bits) => u64::from(*bits),
+                        FloatValue::F64(bits) => *bits,
+                    };
+                    let b_bits = match b_val {
+                        FloatValue::F32(bits) => u64::from(*bits),
+                        FloatValue::F64(bits) => *bits,
+                    };
+                    a_bits.cmp(&b_bits)
+                }
+                // For other types, use Debug representation as fallback
+                _ => format!("{:?}", a).cmp(&format!("{:?}", b)),
+            }
+        }
+        other => other,
+    }
+}
+
+/// Get a numeric order for Value types to ensure deterministic sorting.
+fn value_type_order(v: &Value) -> u8 {
+    match v {
+        Value::Nil => 0,
+        Value::Bool(_) => 1,
+        Value::Int(_) => 2,
+        Value::UInt(_) => 3,
+        Value::Float(_) => 4,
+        Value::String(_) => 5,
+        Value::Blob(_) => 6,
+        Value::List(_) => 7,
+        Value::HashMap(_) => 8,
+        Value::OrderedMap(_) => 9,
+        Value::GeoJSON(_) => 10,
+        Value::HLL(_) => 11,
+        Value::Infinity => 12,
+        Value::Wildcard => 13,
+    }
 }
 
 #[doc(hidden)]
@@ -271,6 +462,29 @@ fn pack_map_begin(buf: &mut Option<&mut Buffer>, length: usize) -> usize {
     } else {
         pack_type_u32(buf, 0xdf, length as u32)
     }
+}
+
+/// Pack map begin with KEY_ORDERED extension bytes (for filter expressions)
+/// This matches the Java client's format for sorted maps
+fn pack_map_begin_key_ordered(buf: &mut Option<&mut Buffer>, length: usize) -> usize {
+    let mut size = 0;
+    // Pack map with +1 for extension entry
+    if length + 1 < 16 {
+        size += pack_half_byte(buf, 0x80 | ((length + 1) as u8))
+    } else if length + 1 < 1 << 16 {
+        size += pack_type_u16(buf, 0xde, (length + 1) as u16)
+    } else {
+        size += pack_type_u32(buf, 0xdf, (length + 1) as u32)
+    }
+    
+    // Add extension bytes for KEY_ORDERED map (0xc7, 0, 0x01, 0xc0)
+    if let Some(ref mut buf) = *buf {
+        buf.write_u8(0xc7);  // Extension type
+        buf.write_u8(0);     // Extension type byte
+        buf.write_u8(0x01);  // KEY_ORDERED attributes (MapOrder.KEY_ORDERED.attributes = 1)
+        buf.write_u8(0xc0);  // Nil terminator
+    }
+    size + 4
 }
 
 #[doc(hidden)]
