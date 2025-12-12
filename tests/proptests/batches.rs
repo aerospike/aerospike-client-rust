@@ -71,7 +71,7 @@ proptest_async::proptest! {
                     Ok(res) => {
                         if let Some(actual_value) = res.bins.get("binName") {
                             if expected_value != actual_value.as_string() {
-                                panic!("Manual Get: Value for bin 'binName' doesn't match; expected: {expected_value}, got: {actual_value}");
+                                panic!("Manual Get: Value for bin 'binName' doesn't match; expected: {}, got: {}", expected_value, actual_value);
                             }
                         }
                     }
@@ -91,7 +91,7 @@ proptest_async::proptest! {
                     op.record.map(|r| {
                         if let Some(actual_value) = r.bins.get("binName") {
                             if expected_value != actual_value.as_string() {
-                                panic!("Batch Read: Value for bin 'binName' doesn't match; expected: {expected_value}, got: {actual_value}");
+                                panic!("Batch Read: Value for bin 'binName' doesn't match; expected: {}, got: {}", expected_value, actual_value);
                             }
                         }
                     });
@@ -148,13 +148,13 @@ proptest_async::proptest! {
                 match &put.1 {
                     Value::Nil => {
                         let bins = [as_bin!(put.0.clone(), 42)];
-                        client.put(&write_policy, &key, &bins).await;
+                        client.put(&write_policy, &key, &bins).await.unwrap();
                     }
                     Value::Bool(b) => {
                         // We put the opposite of the boolean so that the
                         // difference shows up in any diagnostic output.
                         let bins = [as_bin!(put.0.clone(), !b)];
-                        client.put(&write_policy, &key, &bins).await;
+                        client.put(&write_policy, &key, &bins).await.unwrap();
                     }
                     Value::Int(_) |
                     Value::UInt(_) => {
@@ -162,32 +162,32 @@ proptest_async::proptest! {
                         // type.  So, we need to convert the value into a
                         // (signed) integer bit-for-bit.
                         let bins = [as_bin!(put.0.clone(), 12345i64)];
-                        client.put(&write_policy, &key, &bins).await;
+                        client.put(&write_policy, &key, &bins).await.unwrap();
                     }
                     Value::Infinity |
                     Value::Float(FloatValue::F32(_)) => {
                         let bins = [as_bin!(put.0.clone(), 12345.0f32)];
-                        client.put(&write_policy, &key, &bins).await;
+                        client.put(&write_policy, &key, &bins).await.unwrap();
                     }
                     Value::Float(FloatValue::F64(_)) => {
                         let bins = [as_bin!(put.0.clone(), 12345.0f64)];
-                        client.put(&write_policy, &key, &bins).await;
+                        client.put(&write_policy, &key, &bins).await.unwrap();
                     }
                     Value::String(_) => {
                         let bins = [as_bin!(put.0.clone(), STRING_DEFAULT)];
-                        client.put(&write_policy, &key, &bins).await;
+                        client.put(&write_policy, &key, &bins).await.unwrap();
                     }
                     Value::GeoJSON(_) => {
                         let bins = [as_bin!(put.0.clone(), Value::GeoJSON("{ \"type\": \"Point\", \"coordinates\": [ -122.335167, 47.608013 ] }".into()))];
-                        client.put(&write_policy, &key, &bins).await;
+                        client.put(&write_policy, &key, &bins).await.unwrap();
                     }
                     Value::Blob(_) => {
                         let bins = [as_bin!(put.0.clone(), Value::Blob(vec![1, 2, 3]))];
-                        client.put(&write_policy, &key, &bins).await;
+                        client.put(&write_policy, &key, &bins).await.unwrap();
                     }
                     Value::List(_) => {
                         let bins = [as_bin!(put.0.clone(), Value::List(vec!["1".into(), "2".into(), "3".into()]))];
-                        client.put(&write_policy, &key, &bins).await;
+                        client.put(&write_policy, &key, &bins).await.unwrap();
                     }
                     Value::HashMap(_) => {
                         let mut hm: HashMap<Value, Value> = HashMap::new();
@@ -195,7 +195,7 @@ proptest_async::proptest! {
                         hm.insert(2.into(), 4.into());
 
                         let bins = [as_bin!(put.0.clone(), Value::HashMap(hm))];
-                        client.put(&write_policy, &key, &bins).await;
+                        client.put(&write_policy, &key, &bins).await.unwrap();
                     }
                     Value::OrderedMap(_) => {
                         let mut om: Vec<(Value, Value)> = vec![];
@@ -203,7 +203,7 @@ proptest_async::proptest! {
                         om.push((2.into(), 4.into()));
 
                         let bins = [as_bin!(put.0.clone(), Value::OrderedMap(om))];
-                        client.put(&write_policy, &key, &bins).await;
+                        client.put(&write_policy, &key, &bins).await.unwrap();
                     }
 
                     Value::HLL(_) |
@@ -227,16 +227,16 @@ proptest_async::proptest! {
 
                     Value::String(_) => {
                         let bins = [as_bin!(prepend.0.clone(), STRING_DEFAULT)];
-                        client.put(&write_policy, &key, &bins).await;
+                        client.put(&write_policy, &key, &bins).await.unwrap();
                     }
                     Value::Blob(_) => {
                         eprintln!("PREPEND_TO_BIN: {:#?}", prepend);
                         let bins = [as_bin!(prepend.0.clone(), as_blob!([1, 2, 3].into()))];
-                        client.put(&write_policy, &key, &bins).await;
+                        client.put(&write_policy, &key, &bins).await.unwrap();
                     }
                     Value::List(_) => {
                         let bins = [as_bin!(prepend.0.clone(), Value::List(vec!["1".into(), "2".into(), "3".into()]))];
-                        client.put(&write_policy, &key, &bins).await;
+                        client.put(&write_policy, &key, &bins).await.unwrap();
                     }
                     Value::OrderedMap(_) => {
                         let mut om: Vec<(Value, Value)> = vec![];
@@ -244,7 +244,7 @@ proptest_async::proptest! {
                         om.push((2.into(), 4.into()));
 
                         let bins = [as_bin!(prepend.0.clone(), Value::OrderedMap(om))];
-                        client.put(&write_policy, &key, &bins).await;
+                        client.put(&write_policy, &key, &bins).await.unwrap();
                     }
                 }
             }

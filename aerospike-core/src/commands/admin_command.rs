@@ -740,7 +740,7 @@ impl AdminCommand {
     fn write_size(conn: &mut Connection, size: i64) {
         // Write total size of message which is the current offset.
         let size = (size - 8) | (MSG_VERSION << 56) | (MSG_TYPE << 48);
-        conn.buffer.write_i64(size);
+        conn.buffer.write_u64(size as u64);
     }
 
     fn write_header(conn: &mut Connection, command: u8, field_count: u8) {

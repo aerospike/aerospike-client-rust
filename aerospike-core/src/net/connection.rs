@@ -20,8 +20,6 @@ use std::convert::TryFrom;
 #[cfg(feature = "tls")]
 use std::sync::Arc;
 
-use crate::rand::Rng;
-
 use crate::commands::admin_command::AdminCommand;
 use crate::commands::buffer::{self, Buffer, MAX_BUFFER_SIZE};
 use crate::errors::{Error, Result};

@@ -1,8 +1,10 @@
 use crate::common;
 use crate::proptest_async;
 
+use aerospike::Bins;
 use aerospike::{as_bin, as_key};
 use aerospike::{policy::Replica, Error, GenerationPolicy, RecordExistsAction, ResultCode};
+use aerospike::{ReadPolicy, WritePolicy};
 
 use crate::proptests::{bins::*, policy::*};
 
@@ -37,6 +39,25 @@ proptest_async::proptest! {
             },
             Err(e) => panic!("{}", e),
             _ => (),
+        }
+    }
+
+    #[test]
+    async fn put_read(ref bins in many_unique_bins(255)) {
+        let client = common::singleton_client().await;
+        let namespace: &str = common::namespace();
+        let set_name: &str = common::prop_setname();
+        let key = as_key!(namespace, set_name, common::rand_str(10));
+
+        let wp = WritePolicy{record_exists_action: RecordExistsAction::Replace, ..WritePolicy::default()};
+
+        client.delete(&wp, &key).await.unwrap();
+        client.put(&wp, &key, bins).await.unwrap();
+        let rec = client.get(&ReadPolicy::default(), &key, Bins::All).await.unwrap();
+
+        for bin in bins {
+            let ov = rec.bins.get(&bin.name).unwrap();
+            assert_eq!(bin.value, *ov);
         }
     }
 

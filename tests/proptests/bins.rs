@@ -16,6 +16,12 @@ pub fn latin_bin_name() -> impl Strategy<Value = String> {
         .prop_filter("max 14 bytes", |s| s.bytes().len() <= 14)
 }
 
+pub fn long_latin_bin_name() -> impl Strategy<Value = String> {
+    prop::string::string_regex("[A-Za-z0-9]{8,10}")
+        .unwrap()
+        .prop_filter("max 14 bytes", |s| s.bytes().len() <= 14)
+}
+
 prop_compose! {
     pub fn bin_names(n: u8)(vec in prop::collection::vec(valid_bin_name(), 1..n as usize)) -> Vec<String> {
        vec
@@ -51,6 +57,12 @@ prop_compose! {
 }
 
 prop_compose! {
+    pub fn unique_bin()(name in long_latin_bin_name(), val in value_any()) -> Bin {
+        Bin::new(name, val)
+    }
+}
+
+prop_compose! {
     pub fn boxed_bin()(name in valid_bin_name(), val in value_any()) -> Box<Bin> {
         Box::new(Bin::new(name, val))
     }
@@ -64,6 +76,12 @@ prop_compose! {
 
 prop_compose! {
     pub fn many_bins(n: u8)(vec in prop::collection::vec(bin(), 1..n as usize)) -> Vec<Bin> {
+       vec
+   }
+}
+
+prop_compose! {
+    pub fn many_unique_bins(n: u8)(vec in prop::collection::vec(unique_bin(), 1..n as usize)) -> Vec<Bin> {
        vec
    }
 }
