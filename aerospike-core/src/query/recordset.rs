@@ -20,9 +20,6 @@ use std::sync::Arc;
 
 use aerospike_rt::Mutex;
 
-#[cfg(feature = "sync")]
-use futures::executor::block_on;
-
 use async_channel::{Receiver, Sender};
 
 use rand::Rng;
@@ -80,6 +77,7 @@ impl Recordset {
     /// Close the query.
     pub fn close(&self) {
         self.active.store(false, Ordering::Relaxed);
+        // TODO: Close the tx
         // self.tx.close();
         // self.rx.close();
     }
@@ -156,6 +154,8 @@ impl<'a> Iterator for &'a Recordset {
 
     /// Implements a blocking iterator.
     fn next(&mut self) -> Option<Result<Record>> {
+        use futures::executor::block_on;
+
         loop {
             let result = self.next_record();
             if result.is_some() {
@@ -206,7 +206,7 @@ impl AsRef<Recordset> for RecordStream {
 /// If the record stream is inactive, it will extract the PartitionFilter cursor to use in a future scan/query.
 /// It will still return nil if the PartitionFilter is already extracted.
 impl RecordStream {
-    /// Returns the
+    /// Returns the partition filter from the recordset.
     pub async fn partition_filter(&self) -> Option<PartitionFilter> {
         self.0.partition_filter().await
     }

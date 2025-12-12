@@ -15,7 +15,7 @@
 use std::sync::Arc;
 
 use crate::cluster::{Cluster, Node};
-use crate::commands::{buffer, Command, SingleCommand};
+use crate::commands::{Command, SingleCommand};
 use crate::errors::{Error, Result};
 use crate::net::Connection;
 use crate::policy::{Policy, WritePolicy};
@@ -60,20 +60,23 @@ impl<'a> Command for DeleteCommand<'a> {
         self.single_command.get_node().await
     }
 
+    fn can_recover_connection(&mut self) -> bool {
+        true
+    }
+
+    fn can_retry(&mut self) -> bool {
+        true
+    }
+
     async fn parse_result(&mut self, conn: &mut Connection) -> Result<()> {
         // Read header.
-        if let Err(err) = conn
-            .read_buffer(buffer::MSG_TOTAL_HEADER_SIZE as usize)
-            .await
-        {
+        if let Err(err) = conn.read_header().await {
             warn!("Parse result error: {}", err);
             return Err(err);
         }
 
         conn.buffer.reset_offset();
 
-        // A number of these are commented out because we just don't care enough to read
-        // that section of the header. If we do care, uncomment and check!
         let result_code = ResultCode::from(conn.buffer.read_u8(Some(13)));
 
         if result_code != ResultCode::Ok && result_code != ResultCode::KeyNotFoundError {

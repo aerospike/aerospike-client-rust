@@ -69,6 +69,47 @@ async fn scan_single_consumer() {
 }
 
 #[aerospike_macro::test]
+async fn scan_single_consumer_with_cancel() {
+    let client = common::client().await;
+    let namespace = common::namespace();
+    let set_name = create_test_set(&client, EXPECTED).await;
+
+    let mut pf = PartitionFilter::all();
+    let mut spolicy = ScanPolicy::default();
+    spolicy.max_records = (EXPECTED / 3) as u64;
+    // spolicy.records_per_second = (EXPECTED / 4) as u32;
+    // spolicy.record_queue_size = 1;
+
+    let mut count = 0;
+    while !pf.done() {
+        let rs = client
+            .scan(&spolicy, pf, namespace, &set_name, Bins::All)
+            .await
+            .unwrap();
+
+        count += rs
+            .clone()
+            .into_stream()
+            .take(EXPECTED / 3)
+            .filter(|res| futures::future::ready(res.is_ok()))
+            .count()
+            .await;
+
+        // close the stream
+        rs.close();
+
+        assert!(rs.is_active() == false);
+        pf = rs.partition_filter().await.unwrap();
+        if count == 1000 {
+            assert!(pf.done() == true);
+        }
+    }
+    assert_eq!(count, EXPECTED);
+
+    client.close().await.unwrap();
+}
+
+#[aerospike_macro::test]
 async fn scan_single_consumer_with_cursor() {
     let client = common::client().await;
     let namespace = common::namespace();

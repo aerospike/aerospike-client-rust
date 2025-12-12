@@ -56,7 +56,7 @@ use crate::ResultCode;
 #[cfg(all(any(feature = "rt-tokio"), not(feature = "rt-async-std")))]
 use aerospike_rt::task;
 
-#[derive(Error, Debug)]
+#[derive(Error, Debug   )]
 pub enum Error {
     #[error("Error decoding Base64 encoded value")]
     Base64(#[from] ::base64::DecodeError),
@@ -103,7 +103,7 @@ pub enum Error {
     UdfBadResponse(String),
     /// Error returned when a task times out before it could be completed.
     #[error("Client Timeout: {0}")]
-    Timeout(String),
+    Timeout(String), // TODO: Should have Node
 
     /// ClientError is an untyped Error happening on client-side
     #[error("{0}")]

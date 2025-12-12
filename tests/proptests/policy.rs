@@ -127,6 +127,7 @@ pub fn base_policy(
     (
         duration_ms(socket_timeout_ms, socket_timeout_ms * 2),
         duration_ms(total_timeout_ms, total_timeout_ms * 3),
+        duration_ms(0, 10000),
         max_retries(0, 100),
         duration_ms_opt(100, 500),
         consistency_level(),
@@ -137,6 +138,7 @@ pub fn base_policy(
             |(
                 socket_timeout,
                 total_timeout,
+                timeout_delay,
                 max_retries,
                 sleep_between_retries,
                 consistency_level,
@@ -145,6 +147,7 @@ pub fn base_policy(
             )| BasePolicy {
                 socket_timeout,
                 total_timeout,
+                timeout_delay,
                 max_retries,
                 sleep_between_retries,
                 consistency_level,

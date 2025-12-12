@@ -48,7 +48,8 @@ pub struct ClientPolicy {
     /// User authentication to cluster.
     pub auth_mode: AuthMode,
 
-    pub(crate) hashed_pass: Option<String>,
+    #[doc(hidden)]
+    pub hashed_pass: Option<String>,
 
     /// TLS secure connection policy for TLS enabled servers.
     #[cfg(feature = "tls")]

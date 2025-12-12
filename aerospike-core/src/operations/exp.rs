@@ -23,7 +23,6 @@ use crate::commands::buffer::Buffer;
 use crate::expressions::Expression;
 use crate::msgpack::encoder::{pack_array_begin, pack_integer};
 use crate::operations::{Operation, OperationBin, OperationData, OperationType};
-use crate::ParticleType;
 
 /// Expression write Flags
 #[derive(Clone, Copy)]
@@ -80,9 +79,9 @@ pub(crate) struct ExpOperation<'a> {
 }
 
 impl<'a> ExpOperation<'a> {
-    pub(crate) const fn particle_type(&self) -> ParticleType {
-        ParticleType::BLOB
-    }
+    // pub(crate) const fn particle_type(&self) -> ParticleType {
+    //     ParticleType::BLOB
+    // }
     pub(crate) fn estimate_size(&self) -> usize {
         let size: usize = (self.encoder)(&mut None, self);
         size

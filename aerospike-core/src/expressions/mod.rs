@@ -299,11 +299,13 @@ impl Expression {
         pack_value(buf, &self.val.clone().unwrap())
     }
 
-    pub fn size(&self) -> usize {
+    /// Returns the packed size of the expression.
+    pub(crate) fn size(&self) -> usize {
         self.pack(&mut None)
     }
 
-    pub fn pack(&self, buf: &mut Option<&mut Buffer>) -> usize {
+    /// Packs the expression.
+    pub(crate) fn pack(&self, buf: &mut Option<&mut Buffer>) -> usize {
         let mut size = 0;
         if let Some(exps) = &self.exps {
             size += self.pack_expression(exps, buf);

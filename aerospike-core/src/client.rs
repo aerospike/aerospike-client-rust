@@ -749,89 +749,105 @@ impl Client {
 
         let bins = bins.into();
         loop {
-            let list = {
-                let mut tracker = tracker.lock().await;
-                match tracker
+            let mut timed_out = false;
+            {
+                let mut tracker_locked = tracker.lock().await;
+                match tracker_locked
                     .assign_partitions_to_nodes(cluster.clone(), &namespace)
                     .await
                 {
-                    Ok(list) => list,
+                    Ok(()) => (),
                     Err(e) => {
                         recordset.err(e).await;
-                        tracker.partition_error().await;
+                        tracker_locked.partition_error().await;
                         return;
                     }
                 }
-            };
 
-            recordset.set_instances(list.len() + 1); // +1 is for the async executor
-
-            // used for join errors
-            let err_recordset = recordset.clone();
-
-            if recordset.is_active() {
+                let list = tracker_locked.node_partitions_list();
                 let mut handles = Vec::with_capacity(list.len());
-                let semaphore = Arc::new(Semaphore::new(if policy.max_concurrent_nodes == 0 {
-                    MAX_PERMITS
-                } else {
-                    policy.max_concurrent_nodes
-                }));
-                for node_partition in list.iter() {
-                    let semaphore = semaphore.clone();
-                    let recordset = recordset.clone();
-                    let policy = policy.clone();
-                    let namespace = namespace.to_owned();
-                    let set_name = set_name.to_owned();
-                    let bins = bins.clone();
-                    let node_partition = node_partition.clone();
+                recordset.set_instances(list.len() + 1); // +1 is for the async executor
 
-                    let handle = aerospike_rt::spawn(async move {
-                        let permit = semaphore.acquire().await;
-                        let mut command = ScanCommand::new(
-                            &policy,
-                            &namespace,
-                            &set_name,
-                            bins,
-                            recordset.clone(),
-                            node_partition,
-                        )
-                        .await;
+                // used for join errors
+                let err_recordset = recordset.clone();
 
-                        let result = command.execute().await;
-                        drop(permit);
-                        result
-                    });
+                if recordset.is_active() {
+                    let semaphore = Arc::new(Semaphore::new(if policy.max_concurrent_nodes == 0 {
+                        MAX_PERMITS
+                    } else {
+                        policy.max_concurrent_nodes
+                    }));
+                    for node_partition in list.iter() {
+                        let semaphore = semaphore.clone();
+                        let recordset = recordset.clone();
+                        let policy = policy.clone();
+                        let namespace = namespace.to_owned();
+                        let set_name = set_name.to_owned();
+                        let bins = bins.clone();
+                        let node_partition = node_partition.clone();
 
-                    handles.push(handle);
+                        let handle = aerospike_rt::spawn(async move {
+                            let permit = semaphore.acquire().await;
+                            let mut command = ScanCommand::new(
+                                &policy,
+                                &namespace,
+                                &set_name,
+                                bins,
+                                recordset.clone(),
+                                node_partition,
+                            )
+                            .await;
+
+                            let result = command.execute().await;
+                            drop(permit);
+                            result
+                        });
+
+                        handles.push(handle);
+                    }
+
+                    drop(tracker_locked);
+
+                    match futures::future::try_join_all(handles).await {
+                        Err(e) => err_recordset.err(Error::ClientError(e.to_string())).await,
+                        Ok(errs) => {
+                            for err in errs {
+                                match err {
+                                    Err(Error::Timeout(_)) => timed_out = true,
+                                    Err(e) => {
+                                        tracker.lock().await.partition_error().await;
+                                        err_recordset.err(e).await;
+                                    }
+                                    Ok(_) => (),
+                                }
+                            }
+                        }
+                    }
+                };
+            }
+
+            // this retry is due to errors occurring in the command execution
+            // if !retry {
+            {
+                let mut tracker = tracker.lock().await;
+                let done = tracker.is_complete(policy, timed_out).await;
+                match (done, recordset.is_active()) {
+                    (Ok(true), _) => return,
+                    (Ok(_), false) => return,
+                    (Err(e), _) => {
+                        tracker.partition_error().await;
+                        recordset.err(e).await;
+                        return;
+                    }
+                    _ => (),
                 }
-
-                let res = futures::future::try_join_all(handles).await;
-                if let Err(e) = res {
-                    err_recordset.err(Error::ClientError(e.to_string())).await;
-                }
-            };
-
-            let mut tracker = tracker.lock().await;
-            let done = tracker.is_cluster_complete(policy).await;
-            match (done, recordset.is_active()) {
-                (Ok(true), _) => return,
-                (Ok(_), false) => return,
-                (Err(e), _) => {
-                    tracker.partition_error().await;
-                    recordset.err(e).await;
-                    return;
-                }
-                _ => (),
             }
 
             if let Some(sleep_between_retries) = policy.base_policy.sleep_between_retries {
                 sleep(sleep_between_retries).await;
-            } else {
-                // yield to free space for the runtime to execute other futures between runs because the loop would block the thread
-                aerospike_rt::task::yield_now().await;
             }
 
-            recordset.reset_task_id()
+            recordset.reset_task_id();
         }
     }
 
@@ -921,66 +937,81 @@ impl Client {
     ) {
         let namespace = statement.namespace.clone();
         loop {
-            let list = {
-                let mut tracker = tracker.lock().await;
-                match tracker
+            let mut timed_out = false;
+            {
+                let mut tracker_locked = tracker.lock().await;
+                match tracker_locked
                     .assign_partitions_to_nodes(cluster.clone(), &namespace)
                     .await
                 {
-                    Ok(list) => list,
+                    Ok(_) => (),
                     Err(e) => {
                         recordset.err(e).await;
-                        tracker.partition_error().await;
+                        tracker_locked.partition_error().await;
                         return;
+                    }
+                };
+
+                let list = tracker_locked.node_partitions_list();
+                let mut handles = Vec::with_capacity(list.len());
+                recordset.set_instances(list.len() + 1); // +1 is for the async executor
+
+                // used for join errors
+                let err_recordset = recordset.clone();
+
+                if recordset.is_active() {
+                    let semaphore = Arc::new(Semaphore::new(if policy.max_concurrent_nodes == 0 {
+                        MAX_PERMITS
+                    } else {
+                        policy.max_concurrent_nodes
+                    }));
+
+                    for node_partition in list.iter() {
+                        let semaphore = semaphore.clone();
+                        let recordset = recordset.clone();
+                        let policy = policy.clone();
+                        let node_partition = node_partition.clone();
+                        let statement = statement.clone();
+                        let handle = aerospike_rt::spawn(async move {
+                            let permit = semaphore.acquire().await;
+                            let mut command = QueryCommand::new(
+                                &policy,
+                                statement,
+                                recordset.clone(),
+                                node_partition,
+                            )
+                            .await;
+
+                            let result = command.execute().await;
+                            drop(permit);
+                            result
+                        });
+
+                        handles.push(handle);
+                    }
+
+                    drop(tracker_locked);
+
+                    match futures::future::try_join_all(handles).await {
+                        Err(e) => err_recordset.err(Error::ClientError(e.to_string())).await,
+                        Ok(errs) => {
+                            for err in errs {
+                                match err {
+                                    Err(Error::Timeout(_)) => timed_out = true,
+                                    Err(e) => {
+                                        tracker.lock().await.partition_error().await;
+                                        err_recordset.err(e).await;
+                                    }
+                                    Ok(_) => (),
+                                }
+                            }
+                        }
                     }
                 }
             };
 
-            recordset.set_instances(list.len() + 1); // +1 is for the async executor
-
-            // used for join errors
-            let err_recordset = recordset.clone();
-
-            if recordset.is_active() {
-                let mut handles = Vec::with_capacity(list.len());
-                let semaphore = Arc::new(Semaphore::new(if policy.max_concurrent_nodes == 0 {
-                    MAX_PERMITS
-                } else {
-                    policy.max_concurrent_nodes
-                }));
-
-                for node_partition in list.iter() {
-                    let semaphore = semaphore.clone();
-                    let recordset = recordset.clone();
-                    let policy = policy.clone();
-                    let node_partition = node_partition.clone();
-                    let statement = statement.clone();
-                    let handle = aerospike_rt::spawn(async move {
-                        let permit = semaphore.acquire().await;
-                        let mut command = QueryCommand::new(
-                            &policy,
-                            statement,
-                            recordset.clone(),
-                            node_partition,
-                        )
-                        .await;
-
-                        let result = command.execute().await;
-                        drop(permit);
-                        result
-                    });
-
-                    handles.push(handle);
-                }
-
-                let res = futures::future::try_join_all(handles).await;
-                if let Err(e) = res {
-                    err_recordset.err(Error::ClientError(e.to_string())).await;
-                }
-            };
-
             let mut tracker = tracker.lock().await;
-            let done = tracker.is_cluster_complete(policy).await;
+            let done = tracker.is_complete(policy, timed_out).await;
             match (done, recordset.is_active()) {
                 (Ok(true), _) => return,
                 (Ok(_), false) => return,
@@ -994,9 +1025,6 @@ impl Client {
 
             if let Some(sleep_between_retries) = policy.base_policy.sleep_between_retries {
                 sleep(sleep_between_retries).await;
-            } else {
-                // yield to free space for the runtime to execute other futures between runs because the loop would block the thread
-                aerospike_rt::task::yield_now().await;
             }
 
             recordset.reset_task_id()

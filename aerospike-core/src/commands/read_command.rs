@@ -17,7 +17,6 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::cluster::{Cluster, Node};
-use crate::commands::buffer;
 use crate::commands::{Command, SingleCommand};
 use crate::errors::{Error, Result};
 use crate::net::Connection;
@@ -120,11 +119,16 @@ impl<'a> Command for ReadCommand<'a> {
         self.single_command.get_node().await
     }
 
+    fn can_retry(&mut self) -> bool {
+        true
+    }
+
+    fn can_recover_connection(&mut self) -> bool {
+        true
+    }
+
     async fn parse_result(&mut self, conn: &mut Connection) -> Result<()> {
-        if let Err(err) = conn
-            .read_buffer(buffer::MSG_TOTAL_HEADER_SIZE as usize)
-            .await
-        {
+        if let Err(err) = conn.read_header().await {
             warn!("Parse result error: {}", err);
             return Err(err);
         }
@@ -141,7 +145,7 @@ impl<'a> Command for ReadCommand<'a> {
 
         // Read remaining message bytes
         if receive_size > 0 {
-            if let Err(err) = conn.read_buffer(receive_size).await {
+            if let Err(err) = conn.read_body(receive_size).await {
                 warn!("Parse result error: {}", err);
                 return Err(err);
             }

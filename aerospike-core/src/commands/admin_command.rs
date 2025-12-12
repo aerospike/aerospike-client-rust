@@ -92,13 +92,13 @@ impl AdminCommand {
 
         // Send command.
         if let Err(err) = conn.flush().await {
-            conn.invalidate();
+            conn.invalidate().await;
             return Err(err);
         }
 
         // read header
         if let Err(err) = conn.read_buffer(HEADER_SIZE).await {
-            conn.invalidate();
+            conn.invalidate().await;
             return Err(err);
         }
 
@@ -121,13 +121,13 @@ impl AdminCommand {
 
         // Send command.
         if let Err(err) = conn.flush().await {
-            conn.invalidate();
+            conn.invalidate().await;
             return Err(err);
         }
 
         let res = AdminCommand::read_user_blocks(&mut conn).await;
         if let Err(err) = res {
-            conn.invalidate();
+            conn.invalidate().await;
             return Err(err);
         };
         res
@@ -223,13 +223,13 @@ impl AdminCommand {
 
         // Send command.
         if let Err(err) = conn.flush().await {
-            conn.invalidate();
+            conn.invalidate().await;
             return Err(err);
         }
 
         let res = AdminCommand::read_role_blocks(&mut conn).await;
         if let Err(err) = res {
-            conn.invalidate();
+            conn.invalidate().await;
             return Err(err);
         };
         res

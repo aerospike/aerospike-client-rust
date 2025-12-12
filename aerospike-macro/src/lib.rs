@@ -18,6 +18,7 @@ pub fn test(_attr: TokenStream, input: TokenStream) -> TokenStream {
             #(#attrs)*
             fn #name() #ret {
                 // ::aerospike_rt::tokio::runtime::Runtime::new().unwrap().block_on( async {#body} )
+                // Use a shared runtime for the tests and the client:
                 crate::common::RUNTIME.block_on( async {#body} )
             }
         }

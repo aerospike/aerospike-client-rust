@@ -97,7 +97,7 @@ impl StreamCommand {
         if info3 & buffer::INFO3_PARTITION_DONE != 0 {
             // return Ok((None, true));
             if result_code != ResultCode::Ok {
-                let mut tracker = self.recordset.tracker.lock().await;
+                let tracker = self.recordset.tracker.lock().await;
                 let mut node_partitions = self.node_partitions.lock().await;
                 tracker
                     .partition_unavailable(&mut node_partitions, generation as u16)
@@ -143,7 +143,7 @@ impl StreamCommand {
             let res = self.parse_record(conn, size).await;
             match res {
                 Ok((Some(rec), bval, _)) => {
-                    let mut tracker = self.recordset.tracker.lock().await;
+                    let tracker = self.recordset.tracker.lock().await;
                     let mut node_partitions = self.node_partitions.lock().await;
                     if !tracker.allow_record(&mut node_partitions) {
                         continue 'outer;
@@ -160,8 +160,8 @@ impl StreamCommand {
                 Ok((None, _, false)) => return Ok(false),
                 Ok((None, _, true)) => continue, // handle partition done
                 Err(err) => {
-                    let _ = self.recordset.push(Err(err)).await;
-                    return Ok(false);
+                    // let _ = self.recordset.push(Err(err)).await;
+                    return Err(err);
                 }
             };
         }
@@ -244,23 +244,40 @@ impl Command for StreamCommand {
         Ok(self.node.clone())
     }
 
+    fn can_retry(&mut self) -> bool {
+        unreachable!()
+    }
+
+    fn can_recover_connection(&mut self) -> bool {
+        unreachable!()
+    }
+
     async fn parse_result(&mut self, conn: &mut Connection) -> Result<()> {
         let mut status = true;
 
         while status {
             let mut conn = BufferedConn::new(conn);
 
-            conn.set_limit(8)?;
+            conn.set_limit_header(8)?;
             conn.read_buffer(8).await?;
             let size = conn.buffer().read_msg_size(None);
             conn.bookmark();
 
             status = false;
             if size > 0 {
-                conn.set_limit(size)?;
-                status = self.parse_stream(&mut conn, size as usize).await?;
+                conn.set_limit_body(size)?;
+                match self.parse_stream(&mut conn, size as usize).await {
+                    Ok(stat) => status = stat,
+                    Err(e @ Error::ServerError(_, _, _)) => {
+                        conn.drain(conn.conn.socket_timeout()).await?;
+                        return Err(e);
+                    }
+                    Err(e) => {
+                        return Err(e);
+                    }
+                }
             }
-            conn.drain().await?;
+            conn.drain(conn.conn.socket_timeout()).await?;
         }
 
         Ok(())

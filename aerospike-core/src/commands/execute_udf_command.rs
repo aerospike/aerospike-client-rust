@@ -80,6 +80,14 @@ impl<'a> Command for ExecuteUDFCommand<'a> {
         )
     }
 
+    fn can_retry(&mut self) -> bool {
+        true
+    }
+
+    fn can_recover_connection(&mut self) -> bool {
+        true
+    }
+
     async fn get_node(&mut self) -> Result<Arc<Node>> {
         self.read_command.get_node().await
     }

@@ -16,6 +16,7 @@
 #![allow(dead_code)]
 
 use std::env;
+use std::time::Instant;
 
 use aerospike::CollectionIndexType;
 use aerospike::Task;
@@ -181,7 +182,7 @@ pub async fn singleton_client() -> &'static Client {
             //     std::process::abort();
             // }));
             // console_subscriber::init();
-            insert_bins(namespace(), "test").await.unwrap();
+            insert_bins(namespace(), "multi", 1000).await.unwrap();
             let client = Client::new(&GLOBAL_CLIENT_POLICY, &*AEROSPIKE_HOSTS)
                 .await
                 .unwrap();
@@ -230,18 +231,28 @@ pub async fn security_enabled() -> bool {
     true
 }
 
-pub async fn insert_bins(ns: &str, set_name: &str) -> aerospike::Result<()> {
+pub async fn insert_bins(ns: &str, set_name: &str, num_recs: u32) -> aerospike::Result<()> {
     let client = crate::common::client().await;
     let wp = aerospike::WritePolicy::default();
 
-    for i in 0u32..3000 {
+    client
+        .truncate(&AdminPolicy::default(), ns, set_name, 0)
+        .await
+        .expect("should truncate the set");
+
+    let mut count = 0;
+    for i in 0..num_recs {
         let key = aerospike::as_key!(ns, set_name, i);
         let bins = vec![
             aerospike::as_bin!("bin_i", i),
             aerospike::as_bin!("bin_s", rand_str(3)),
         ];
 
-        client.put(&wp, &key, &bins).await?;
+        client
+            .put(&wp, &key, &bins)
+            .await
+            .expect("Initial put failed");
+        count += 1;
     }
 
     let apolicy = AdminPolicy::default();

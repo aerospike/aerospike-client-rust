@@ -8,7 +8,7 @@ use crate::proptests::{bins::*, policy::*};
 
 proptest_async::proptest! {
     #[test]
-    async fn put(i in 0..10, write_policy in write_policy(1000, 5000), ref bins in many_bins(255)) {
+    async fn put(i in 0..1000, write_policy in write_policy(1000, 5000), ref bins in many_bins(255)) {
         let client = common::singleton_client().await;
         let namespace: &str = common::namespace();
         let set_name = "test";

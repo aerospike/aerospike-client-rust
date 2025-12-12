@@ -62,8 +62,14 @@ pub(crate) trait Command {
     async fn get_node(&mut self) -> Result<Arc<Node>>;
     async fn parse_result(&mut self, conn: &mut Connection) -> Result<()>;
     async fn write_buffer(&mut self, conn: &mut Connection) -> Result<()>;
+    fn can_retry(&mut self) -> bool;
+    fn can_recover_connection(&mut self) -> bool;
 }
 
 pub(crate) const fn keep_connection(err: &Error) -> bool {
-    matches!(err, Error::ServerError(_, _, _))
+    matches!(err, Error::ServerError(_, _, _) | Error::Timeout(_))
+}
+
+pub(crate) const fn is_network_error(err: &Error) -> bool {
+    matches!(err, Error::Connection(_) | Error::Timeout(_))
 }

@@ -13,6 +13,8 @@
 // License for the specific language governing permissions and limitations under
 // the License.
 
+use log::*;
+
 use crate::common;
 use aerospike::expressions::*;
 
@@ -70,6 +72,17 @@ async fn create_index_on_bin() {
 #[aerospike_macro::test]
 async fn create_index_using_expression() {
     let client = common::client().await;
+
+    if client
+        .cluster
+        .get_random_node()
+        .await
+        .is_ok_and(|node| node.version() < &Version::new(8, 1, 0, 0))
+    {
+        info!("create_index_using_expression test is only supported in server versions 8.1.0.0+. Skipping.");
+        return;
+    }
+
     let ns = common::namespace();
     let set = create_test_set(&client, EXPECTED).await;
     let bin = "bin";

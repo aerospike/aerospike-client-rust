@@ -18,12 +18,10 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
 use crate::errors::{Error, Result};
-use crate::net::{Connection, Host};
+use crate::net::{Connection, ConnectionState, Host};
 use crate::policy::ClientPolicy;
 use aerospike_rt::Mutex;
-use futures::executor::block_on;
 use std::collections::VecDeque;
-use std::time::Duration;
 
 #[derive(Debug)]
 struct IdleConnection(Connection);
@@ -62,7 +60,7 @@ impl Queue {
 
     pub async fn make_conn(&self) -> Result<Connection> {
         let conn = aerospike_rt::timeout(
-            Duration::from_secs(5),
+            self.0.policy.timeout(),
             Connection::new(&self.0.host, &self.0.policy),
         )
         .await;
@@ -120,7 +118,7 @@ impl Queue {
 
     pub async fn put_back(&self, mut conn: Connection) {
         let mut internals = self.0.internals.lock().await;
-        if internals.num_conns < self.0.capacity {
+        if conn.state == ConnectionState::Ready && internals.num_conns < self.0.capacity {
             internals.connections.push_back(IdleConnection(conn));
         } else {
             conn.close().await;
@@ -250,6 +248,15 @@ impl ConnectionPool {
         }
         sum
     }
+
+    async fn recover_connection(queue: Queue, mut conn: Connection) {
+        conn.recover_connection().await;
+        if conn.state == ConnectionState::Ready {
+            queue.put_back(conn).await;
+        } else {
+            queue.drop_conn(conn).await;
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -259,20 +266,20 @@ pub struct PooledConnection {
 }
 
 impl PooledConnection {
-    pub fn invalidate(mut self) {
+    pub async fn invalidate(mut self) {
         let conn = self.conn.take().unwrap();
-        block_on(self.queue.drop_conn(conn));
+        self.queue.drop_conn(conn).await;
     }
 }
 
 impl Drop for PooledConnection {
     fn drop(&mut self) {
+        // need to spawn a new green thread to avoid blocking the current one
         if let Some(conn) = self.conn.take() {
-            if !conn.exhausted {
-                block_on(self.queue.drop_conn(conn));
-            } else {
-                block_on(self.queue.put_back(conn));
-            }
+            aerospike_rt::spawn(ConnectionPool::recover_connection(
+                Queue(self.queue.0.clone()),
+                conn,
+            ));
         }
     }
 }

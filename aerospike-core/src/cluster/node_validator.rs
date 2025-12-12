@@ -24,12 +24,6 @@ use crate::net::{Connection, Host};
 use crate::policy::{AdminPolicy, ClientPolicy};
 use crate::ToHosts;
 
-#[allow(clippy::struct_excessive_bools)]
-#[derive(Copy, Clone, Default, Debug)]
-pub struct NodeFeatures {
-    // pub supports_XXX: bool,
-}
-
 // Validates a Database server node
 #[allow(clippy::struct_excessive_bools)]
 #[derive(Clone)]
@@ -40,7 +34,6 @@ pub struct NodeValidator {
     pub address: String,
     pub client_policy: ClientPolicy,
     pub use_new_info: bool,
-    pub features: NodeFeatures,
     pub version: Version,
 }
 
@@ -54,7 +47,6 @@ impl NodeValidator {
             address: "".to_string(),
             client_policy: client_policy,
             use_new_info: true,
-            features: NodeFeatures::default(),
             version: Version::default(),
         }
     }
@@ -144,7 +136,6 @@ impl NodeValidator {
 
         if let Some(build) = info_map.get("build") {
             let version = VersionParser::new(build).parse()?;
-            self.features.set_features(&version);
             self.version = version;
         }
 
@@ -174,11 +165,5 @@ impl NodeValidator {
                 }
             };
         }
-    }
-}
-
-impl NodeFeatures {
-    fn set_features(&mut self, _version: &Version) {
-        // for later use
     }
 }

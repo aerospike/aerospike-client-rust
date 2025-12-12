@@ -19,14 +19,13 @@ use std::hash::{Hash, Hasher};
 use std::result::Result as StdResult;
 use std::sync::atomic::{AtomicBool, AtomicIsize, AtomicUsize, Ordering};
 use std::sync::Arc;
-use std::time::Duration;
 
-use crate::cluster::node_validator::{NodeFeatures, NodeValidator};
+use crate::cluster::node_validator::NodeValidator;
 use crate::cluster::peers_parser::PeersParser;
 use crate::cluster::CLIENT_VERSION;
 use crate::commands::Message;
 use crate::errors::{Error, Result};
-use crate::net::{Connection, ConnectionPool, Host, PooledConnection};
+use crate::net::{ConnectionPool, Host, PooledConnection};
 use crate::policy::{AdminPolicy, ClientPolicy};
 use crate::Version;
 use aerospike_rt::RwLock;
@@ -56,7 +55,6 @@ pub struct Node {
     reference_count: AtomicUsize,
     responded: AtomicBool,
     active: AtomicBool,
-    features: NodeFeatures,
     version: Version,
 }
 
@@ -82,7 +80,6 @@ impl Node {
             reference_count: AtomicUsize::new(0),
             responded: AtomicBool::new(false),
             active: AtomicBool::new(true),
-            features: nv.features,
             version: nv.version.clone(),
             rack_ids: std::sync::Mutex::new(HashMap::new()),
         }
@@ -110,10 +107,6 @@ impl Node {
 
     pub fn host(&self) -> Host {
         self.host.clone()
-    }
-    // Returns what the node can do
-    pub const fn features(&self) -> &NodeFeatures {
-        &self.features
     }
 
     // Returns the reference count
@@ -331,12 +324,13 @@ impl Node {
         commands: &[&str],
     ) -> Result<HashMap<String, String>> {
         let mut conn = self.get_connection().await?;
-        Message::info(policy, &mut conn, commands)
-            .await
-            .map_err(|e| {
-                conn.invalidate();
-                e
-            })
+        let res = Message::info(policy, &mut conn, commands).await;
+
+        if let Err(e) = res {
+            conn.invalidate().await;
+            return Err(e);
+        }
+        res
     }
 
     // Get the partition generation

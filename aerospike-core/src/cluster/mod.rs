@@ -370,13 +370,13 @@ impl Cluster {
         let admin_policy = AdminPolicy {
             timeout: self.client_policy().await.timeout,
         };
-        let tokens = PartitionTokenizer::new(&admin_policy, &mut conn, node)
-            .await
-            .map_err(|e| {
-                conn.invalidate();
-                e
-            })?;
+        let tokens = PartitionTokenizer::new(&admin_policy, &mut conn, node).await;
+        if let Err(e) = tokens {
+            conn.invalidate().await;
+            return Err(e);
+        }
 
+        let tokens = tokens.unwrap();
         let mut partitions = self.partition_write_map.write().await;
         tokens.update_partition(&mut partitions, node)?;
 

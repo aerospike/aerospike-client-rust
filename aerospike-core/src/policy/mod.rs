@@ -76,6 +76,9 @@ pub trait Policy {
     /// transaction as well.
     fn total_timeout(&self) -> u32;
 
+    /// Returns the value of [timeout_delay].
+    fn timeout_delay(&self) -> u32;
+
     /// Maximum number of retries before aborting the current transaction. A retry may be attempted
     /// when there is a network error. If `max_retries` is exceeded, the abort will occur even if
     /// the timeout has not yet been exceeded.
@@ -117,6 +120,10 @@ where
 
     fn total_timeout(&self) -> u32 {
         self.base().total_timeout()
+    }
+
+    fn timeout_delay(&self) -> u32 {
+        self.base().timeout_delay()
     }
 
     fn max_retries(&self) -> usize {
@@ -180,6 +187,32 @@ pub struct BasePolicy {
     /// Default to no timeout (0).
     pub total_timeout: u32,
 
+    /// Delay milliseconds after socket read timeout in an attempt to recover the socket
+    /// in the background. Processing continues on the original command and the user
+    /// is still notified at the original command timeout.
+    ///
+    /// When a command is stopped prematurely, the socket must be drained of all incoming
+    /// data or closed to prevent unread socket data from corrupting the next command
+    /// that would use that socket.
+    ///
+    /// If a socket read timeout occurs and [timeout_delay] is greater than zero, the socket
+    /// will be drained until all data has been read or [timeout_delay] is reached. If all
+    /// data has been read, the socket will be placed back into the connection pool. If
+    /// [timeout_delay] is reached before the draining is complete, the socket will be closed.
+    ///
+    /// Many cloud providers encounter performance problems when sockets are closed by the
+    /// client when the server still has data left to write (results in socket RST packet).
+    /// If the socket is fully drained before closing, the socket RST performance penalty
+    /// can be avoided on these cloud providers.
+    ///
+    /// The disadvantage of enabling [timeout_delay] is that extra processing is required
+    /// to drain sockets and additional connections may still be needed for command retries.
+    ///
+    /// If [timeout_delay] were to be enabled, 3000ms would be a reasonable value.
+    ///
+    /// Default: 0 (no delay, connection closed on timeout)
+    pub timeout_delay: u32,
+
     /// MaxRetries determines maximum number of retries before aborting the current transaction.
     /// A retry is attempted when there is a network error other than timeout.
     /// If maxRetries is exceeded, the abort will occur even if the timeout
@@ -236,6 +269,10 @@ impl Policy for BasePolicy {
 
     fn total_timeout(&self) -> u32 {
         self.total_timeout
+    }
+
+    fn timeout_delay(&self) -> u32 {
+        self.timeout_delay
     }
 
     fn max_retries(&self) -> usize {

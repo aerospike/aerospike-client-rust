@@ -133,11 +133,15 @@ impl PartitionTracker {
     //     self.sleep_between_retries = duration;
     // }
 
+    pub(crate) fn node_partitions_list(&self) -> &[Arc<Mutex<NodePartitions>>] {
+        &self.node_partitions_list
+    }
+
     pub(crate) async fn assign_partitions_to_nodes(
         &mut self,
         cluster: Arc<Cluster>,
         namespace: &str,
-    ) -> Result<Vec<Arc<Mutex<NodePartitions>>>> {
+    ) -> Result<()> {
         let mut list = Vec::<Arc<Mutex<NodePartitions>>>::with_capacity(self.node_capacity);
 
         let retry = self.partition_filter.is_none()
@@ -149,7 +153,7 @@ impl PartitionTracker {
                 .await
                 .retry
                 .load(Ordering::Relaxed)
-                && (*self.iteration.get_mut() == 1);
+                && (self.iteration() == 1);
 
         let partition_filter = self.partition_filter.as_mut().unwrap().lock().await;
         let partitions = partition_filter.partitions.as_ref().unwrap();
@@ -229,8 +233,8 @@ impl PartitionTracker {
         }
 
         // let list = Arc::new(Mutex::new(list));
-        self.node_partitions_list = list.clone();
-        return Ok(list);
+        self.node_partitions_list = list;
+        return Ok(());
     }
 
     fn init(&mut self, policy: impl StreamPolicy) {
@@ -258,15 +262,15 @@ impl PartitionTracker {
     }
 
     pub(crate) async fn partition_unavailable(
-        &mut self,
+        &self,
         node_partitions: &mut NodePartitions,
         partition_id: u16,
     ) {
-        let mut pf = self.partition_filter.as_mut().unwrap().lock().await;
-        let partitions = pf.partitions.as_mut().unwrap();
+        let pf = self.partition_filter.as_ref().unwrap().lock().await;
+        let partitions = pf.partitions.as_ref().unwrap();
 
         // let mut partitions = partitions.write();
-        if let Some(ps) = partitions.get_mut(partition_id as usize - self.partition_begin) {
+        if let Some(ps) = partitions.get(partition_id as usize - self.partition_begin) {
             let mut ps = ps.lock().await;
             ps.retry = true;
             if let Some(ref mut seq) = ps.sequence {
@@ -277,17 +281,17 @@ impl PartitionTracker {
     }
 
     pub(crate) async fn set_digest(
-        &mut self,
+        &self,
         node_partitions: &mut NodePartitions,
         key: &Key,
     ) -> Result<()> {
-        let mut pf = self.partition_filter.as_mut().unwrap().lock().await;
-        let partitions = pf.partitions.as_mut();
+        let pf = self.partition_filter.as_ref().unwrap().lock().await;
+        let partitions = pf.partitions.as_ref();
 
         let partition_id = key.partition_id();
         if let Some(partitions) = partitions {
             // let mut partitions = partitions.write();
-            if let Some(ps) = partitions.get_mut(partition_id as usize - self.partition_begin) {
+            if let Some(ps) = partitions.get(partition_id as usize - self.partition_begin) {
                 let mut ps = ps.lock().await;
                 ps.digest = Some(key.digest);
             } else {
@@ -303,7 +307,7 @@ impl PartitionTracker {
     }
 
     pub(crate) async fn set_last(
-        &mut self,
+        &self,
         node_partitions: &mut NodePartitions,
         key: &Key,
         bval: Option<u64>,
@@ -316,11 +320,11 @@ impl PartitionTracker {
             )));
         }
 
-        let mut pf = self.partition_filter.as_mut().unwrap().lock().await;
-        let partitions = pf.partitions.as_mut();
+        let pf = self.partition_filter.as_ref().unwrap().lock().await;
+        let partitions = pf.partitions.as_ref();
 
         if let Some(partitions) = partitions {
-            if let Some(ps) = partitions.get_mut(partition_id as usize - self.partition_begin) {
+            if let Some(ps) = partitions.get(partition_id as usize - self.partition_begin) {
                 let mut ps = ps.lock().await;
                 ps.digest = Some(key.digest);
                 if bval.is_some() {
@@ -351,34 +355,28 @@ impl PartitionTracker {
         return false;
     }
 
-    pub(crate) async fn is_cluster_complete(&mut self, policy: impl StreamPolicy) -> Result<bool> {
-        return self
-            .is_complete(policy, self.node_partitions_list.clone())
-            .await;
-    }
-
     pub(crate) async fn is_complete(
         &mut self,
         policy: impl StreamPolicy,
-        mut node_partitions_list: Vec<Arc<Mutex<NodePartitions>>>,
+        timed_out: bool,
     ) -> Result<bool> {
         let mut record_count: u64 = 0;
         let mut parts_unavailable = 0;
 
-        for np in node_partitions_list.iter() {
+        for np in self.node_partitions_list.iter() {
             let np = np.lock().await;
             record_count += np.record_count;
             parts_unavailable += np.parts_unavailable;
         }
 
-        if parts_unavailable == 0 {
+        if !timed_out && parts_unavailable == 0 {
             if self.max_records <= 0 {
                 if let Some(pf) = &self.partition_filter {
                     let pf = pf.lock().await;
                     pf.retry.store(false, Ordering::Relaxed);
                     pf.done.store(true, Ordering::Relaxed);
                 }
-            } else if self.iteration.load(Ordering::Relaxed) > 1 {
+            } else if self.iteration() > 1 {
                 if let Some(pf) = &self.partition_filter {
                     // If errors occurred on a node, only that node's partitions are retried in the
                     // next iteration. If that node finally succeeds, the other original nodes still
@@ -394,7 +392,7 @@ impl PartitionTracker {
                 // may be records available for that node.
                 let mut done = true;
 
-                for np in node_partitions_list.iter_mut() {
+                for np in self.node_partitions_list.iter() {
                     let mut np = np.lock().await;
                     if np.record_count + np.disallowed_count >= np.record_max {
                         self.mark_retry(&mut np).await;
@@ -417,7 +415,7 @@ impl PartitionTracker {
 
         // Check if limits have been reached.
         if policy.max_retries() > 0 {
-            if *self.iteration.get_mut() > policy.max_retries() {
+            if self.iteration() > policy.max_retries() {
                 return Err(Error::ClientError(format!(
                     "Max retries exceeded: {}",
                     policy.max_retries()
@@ -427,19 +425,18 @@ impl PartitionTracker {
 
         if let Some(deadline) = self.deadline {
             // Check for total timeout.
-            let remaining = deadline
-                - Instant::now()
-                - self
+            if Instant::now()
+                + self
                     .sleep_between_retries
-                    .unwrap_or(Duration::from_millis(0));
-
-            if remaining.is_zero() {
+                    .unwrap_or(Duration::from_millis(0))
+                > deadline
+            {
                 return Err(Error::Timeout("Scan/Query timed out".into()));
             }
 
-            let total_timeout = Duration::from_millis(policy.total_timeout() as u64);
-            if remaining < total_timeout {
-                self.total_timeout = remaining.as_millis() as u32;
+            let total_timeout = policy.total_timeout() as u64;
+            if deadline < Instant::now() + Duration::from_millis(total_timeout) {
+                self.total_timeout = (deadline - Instant::now()).as_millis() as u32;
 
                 if self.socket_timeout > self.total_timeout {
                     self.socket_timeout = self.total_timeout
@@ -456,7 +453,7 @@ impl PartitionTracker {
         return Ok(false);
     }
 
-    pub(crate) async fn mark_retry(&mut self, node_partitions: &mut NodePartitions) {
+    pub(crate) async fn mark_retry(&self, node_partitions: &NodePartitions) {
         // Mark retry for same replica.
         for ps in &node_partitions.parts_full {
             let mut ps = ps.lock().await;
@@ -469,10 +466,10 @@ impl PartitionTracker {
         }
     }
 
-    pub(crate) async fn partition_error(&mut self) {
+    pub(crate) async fn partition_error(&self) {
         // Mark all partitions for retry on fatal errors.
         match self.partition_filter {
-            Some(ref mut pf) => {
+            Some(ref pf) => {
                 let pf = pf.lock().await;
                 pf.retry.store(true, Ordering::Relaxed);
             }
@@ -515,5 +512,9 @@ impl PartitionTracker {
         } else {
             0
         }
+    }
+
+    pub(crate) fn iteration(&self) -> usize {
+        self.iteration.load(std::sync::atomic::Ordering::Relaxed)
     }
 }

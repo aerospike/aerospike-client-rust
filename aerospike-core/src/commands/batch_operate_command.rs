@@ -24,7 +24,7 @@ use crate::commands::StreamCommand;
 use crate::commands::{self};
 use crate::errors::{Error, Result};
 use crate::net::{BufferedConn, Connection};
-use crate::policy::{BatchPolicy, Policy, PolicyLike, Replica};
+use crate::policy::{BatchPolicy, Policy, Replica};
 use crate::{value, Record, ResultCode, Value};
 use aerospike_rt::sleep;
 
@@ -88,7 +88,7 @@ impl<'a> BatchOperateCommand<'a> {
             // too many retries
             if self.policy.max_retries() > 0 {
                 if iterations > self.policy.max_retries() + 1 {
-                    return Err(Error::Connection(format!(
+                    return Err(Error::Timeout(format!(
                         "Timeout after {} tries",
                         iterations
                     )));
@@ -106,47 +106,6 @@ impl<'a> BatchOperateCommand<'a> {
                     return Err(Error::Connection("Timeout".to_string()));
                 }
             }
-
-            // set command node, so when you return a record it has the node
-            let mut conn = match self.node.get_connection().await {
-                Ok(conn) => conn,
-                Err(err) => {
-                    warn!("Node {}: {}", self.node, err);
-                    continue;
-                }
-            };
-
-            self.prepare_buffer(&mut conn)
-                .await
-                .map_err(|e| e.chain_error("Failed to prepare send buffer"))?;
-            self.write_timeout(&mut conn)
-                .await
-                .map_err(|e| e.chain_error("Failed to set timeout for send buffer"))?;
-
-            conn.exhausted = false;
-
-            // Send command.
-            if let Err(err) = self.write_buffer(&mut conn).await {
-                // IO errors are considered temporary anomalies. Retry.
-                // Close socket to flush out possible garbage. Do not put back in pool.
-                conn.invalidate();
-                warn!("Node {}: {}", self.node, err);
-                continue;
-            }
-
-            // Parse results.
-            if let Err(err) = Self::parse_result(&mut self.batch_ops, &mut conn).await {
-                // close the connection
-                // cancelling/closing the batch/multi commands will return an error, which will
-                // close the connection to throw away its data and signal the server about the
-                // situation. We will not put back the connection in the buffer.
-                if !commands::keep_connection(&err) {
-                    conn.invalidate();
-                }
-                return Err(err);
-            }
-
-            conn.exhausted = true;
 
             // command has completed successfully. Exit method.
             return Ok(self);
@@ -170,13 +129,17 @@ impl<'a> BatchOperateCommand<'a> {
             .set_batch_operate(policy, batch_ops)
             .map_err(|_| Error::ClientError("Failed to prepare send buffer".into()))?;
 
-        conn.buffer.write_timeout(policy.base().server_timeout());
+        conn.buffer.write_timeout(policy.server_timeout());
+
+        conn.set_socket_timeout(policy.socket_timeout());
+        // TODO: Support recovering_connection
+        conn.set_timeout_delay(false, policy.timeout_delay());
 
         // Send command.
         if let Err(err) = conn.flush().await {
             // IO errors are considered temporary anomalies. Retry.
             // Close socket to flush out possible garbage. Do not put back in pool.
-            conn.invalidate();
+            conn.invalidate().await;
             warn!("Node {}: {}", node, err);
             return Ok(false);
         }
@@ -188,7 +151,7 @@ impl<'a> BatchOperateCommand<'a> {
             // close the connection to throw away its data and signal the server about the
             // situation. We will not put back the connection in the buffer.
             if !Self::keep_connection(&err) {
-                conn.invalidate();
+                conn.invalidate().await;
             }
             Err(err)
         } else {
@@ -328,14 +291,6 @@ impl<'a> BatchOperateCommand<'a> {
         }
     }
 
-    async fn write_buffer(&mut self, conn: &mut Connection) -> Result<()> {
-        conn.flush().await
-    }
-
-    async fn prepare_buffer(&mut self, conn: &mut Connection) -> Result<()> {
-        conn.buffer.set_batch_operate(&self.policy, &self.batch_ops)
-    }
-
     async fn parse_result(
         batch_ops: &mut [(BatchOperation<'a>, usize)],
         conn: &mut Connection,
@@ -345,23 +300,27 @@ impl<'a> BatchOperateCommand<'a> {
         while status {
             let mut conn = BufferedConn::new(conn);
 
-            conn.set_limit(8)?;
+            conn.set_limit_header(8)?;
             conn.read_buffer(8).await?;
             let size = conn.buffer().read_msg_size(None);
             conn.bookmark();
 
             status = false;
             if size > 0 {
-                conn.set_limit(size)?;
-                status = !Self::parse_group(batch_ops, &mut conn, size as usize).await?;
+                conn.set_limit_body(size)?;
+                match Self::parse_group(batch_ops, &mut conn, size as usize).await {
+                    Ok(stat) => status = stat,
+                    Err(e @ Error::ServerError(_, _, _)) => {
+                        conn.drain(conn.conn.socket_timeout()).await?;
+                        return Err(e);
+                    }
+                    Err(e) => {
+                        return Err(e);
+                    }
+                }
             }
-            conn.drain().await?;
+            conn.drain(conn.conn.socket_timeout()).await?;
         }
-        Ok(())
-    }
-
-    async fn write_timeout(&mut self, conn: &mut Connection) -> Result<()> {
-        conn.buffer.write_timeout(self.policy.server_timeout());
         Ok(())
     }
 }

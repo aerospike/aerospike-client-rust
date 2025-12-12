@@ -98,6 +98,14 @@ impl<'a> Command for ScanCommand<'a> {
         self.stream_command.get_node().await
     }
 
+    fn can_retry(&mut self) -> bool {
+        false
+    }
+
+    fn can_recover_connection(&mut self) -> bool {
+        false
+    }
+
     async fn parse_result(&mut self, conn: &mut Connection) -> Result<()> {
         StreamCommand::parse_result(&mut self.stream_command, conn).await
     }

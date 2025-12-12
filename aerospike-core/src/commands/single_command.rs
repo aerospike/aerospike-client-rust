@@ -63,7 +63,7 @@ impl<'a> SingleCommand<'a> {
         // Read remaining message bytes.
         if receive_size > 0 {
             conn.buffer.resize_buffer(receive_size)?;
-            conn.read_buffer(receive_size).await?;
+            conn.read_body(receive_size).await?;
         }
 
         Ok(())
@@ -89,9 +89,6 @@ impl<'a> SingleCommand<'a> {
             if iterations > 1 {
                 if let Some(sleep_between_retries) = policy.sleep_between_retries() {
                     sleep(sleep_between_retries).await;
-                } else {
-                    // yield to free space for the runtime to execute other futures between runs because the loop would block the thread
-                    aerospike_rt::task::yield_now().await;
                 }
             }
 
@@ -99,7 +96,7 @@ impl<'a> SingleCommand<'a> {
             if policy.max_retries() > 0 {
                 if iterations > policy.max_retries() + 1 {
                     // first attempt isn't a retry
-                    return Err(Error::Connection(format!(
+                    return Err(Error::Timeout(format!(
                         "Timeout after {} tries",
                         iterations
                     )));
@@ -118,7 +115,10 @@ impl<'a> SingleCommand<'a> {
             let node = match node_future.await {
                 Ok(node) => node,
                 e @ Err(Error::InvalidArgument(_)) => e?,
-                Err(_) => continue, // Node is currently inactive. Retry.
+                Err(e) => {
+                    warn!("Error selecting node from the partition table: {}", e);
+                    continue;
+                } // Node is currently inactive. Retry.
             };
 
             let mut conn = match node.get_connection().await {
@@ -130,6 +130,7 @@ impl<'a> SingleCommand<'a> {
             };
 
             conn.set_socket_timeout(policy.socket_timeout());
+            conn.set_timeout_delay(cmd.can_recover_connection(), policy.timeout_delay());
 
             cmd.prepare_buffer(&mut conn)
                 .await
@@ -138,13 +139,11 @@ impl<'a> SingleCommand<'a> {
                 .await
                 .map_err(|e| e.chain_error("Failed to set timeout for send buffer"))?;
 
-            conn.exhausted = false;
-
             // Send command.
             if let Err(err) = cmd.write_buffer(&mut conn).await {
                 // IO errors are considered temporary anomalies. Retry.
                 // Close socket to flush out possible garbage. Do not put back in pool.
-                conn.invalidate();
+                conn.invalidate().await;
                 warn!("Node {}: {}", node, err);
                 continue;
             }
@@ -157,26 +156,29 @@ impl<'a> SingleCommand<'a> {
                     // close the connection to throw away its data and signal the server about the
                     // situation. We will not put back the connection in the buffer.
                     if !commands::keep_connection(&err) {
-                        conn.invalidate();
-                    } else {
-                        // this will cause the connection to be put back in the pool.
-                        conn.exhausted = true;
+                        conn.invalidate().await;
                     }
+
+                    // DO NOT retry for streaming commands here. They retry in their own execution logic.
+                    // DO NOT retry for any error other than network errors.
+                    if cmd.can_retry() {
+                        if commands::is_network_error(&err) {
+                            continue;
+                        }
+                    }
+
                     return Err(err);
                 }
-                _ => {
-                    // this will cause the connection to be put back in the pool.
-                    conn.exhausted = true;
-                }
+                Ok(_) => (),
             }
-
-            // let the signals go through
-            aerospike_rt::task::yield_now().await;
 
             // command has completed successfully. Exit method.
             return Ok(());
         }
 
-        return Err(Error::Connection("Timeout".to_string()));
+        return Err(Error::Timeout(format!(
+            "Command timed out after {} tries",
+            iterations
+        )));
     }
 }
