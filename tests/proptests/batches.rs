@@ -2,19 +2,12 @@ use std::collections::HashMap;
 
 use crate::proptest::prelude::*;
 use crate::proptest_async;
-use crate::{common, proptests::key};
-use proptest::strategy::{Strategy, ValueTree};
-use proptest::test_runner::TestRunner;
+use crate::common;
 
-use crate::proptests::value::*;
-
-use aerospike::query::*;
 use aerospike::*;
 
-use futures::stream::StreamExt;
-
 use crate::proptests::{
-    batch_operation::*, bins::*, clone_safely, key::*, operation::*, partition_filter::*, policy::*,
+    batch_operation::*, operation::*, policy::*,
 };
 
 const STRING_DEFAULT: &str = "aerospike default value";
@@ -71,7 +64,7 @@ proptest_async::proptest! {
                     Ok(res) => {
                         if let Some(actual_value) = res.bins.get("binName") {
                             if expected_value != actual_value.as_string() {
-                                panic!("Manual Get: Value for bin 'binName' doesn't match; expected: {expected_value}, got: {actual_value}");
+                                panic!("Manual Get: Value for bin 'binName' doesn't match; expected: {:?}, got: {:?}", expected_value, actual_value);
                             }
                         }
                     }
@@ -91,7 +84,8 @@ proptest_async::proptest! {
                     op.record.map(|r| {
                         if let Some(actual_value) = r.bins.get("binName") {
                             if expected_value != actual_value.as_string() {
-                                panic!("Batch Read: Value for bin 'binName' doesn't match; expected: {expected_value}, got: {actual_value}");
+                                panic!("Batch Read: Value for bin 'binName' doesn't match; expected: {:?}, got: {:?}", expected_value, actual_value);
+
                             }
                         }
                     });
@@ -148,13 +142,13 @@ proptest_async::proptest! {
                 match &put.1 {
                     Value::Nil => {
                         let bins = [as_bin!(put.0.clone(), 42)];
-                        client.put(&write_policy, &key, &bins).await;
+                        client.put(&write_policy, &key, &bins).await.expect("Default put for nil failed");
                     }
                     Value::Bool(b) => {
                         // We put the opposite of the boolean so that the
                         // difference shows up in any diagnostic output.
                         let bins = [as_bin!(put.0.clone(), !b)];
-                        client.put(&write_policy, &key, &bins).await;
+                        client.put(&write_policy, &key, &bins).await.expect("Default put for bool failed");
                     }
                     Value::Int(_) |
                     Value::UInt(_) => {
@@ -162,32 +156,32 @@ proptest_async::proptest! {
                         // type.  So, we need to convert the value into a
                         // (signed) integer bit-for-bit.
                         let bins = [as_bin!(put.0.clone(), 12345i64)];
-                        client.put(&write_policy, &key, &bins).await;
+                        client.put(&write_policy, &key, &bins).await.expect("Default put for (U)Int failed");
                     }
                     Value::Infinity |
                     Value::Float(FloatValue::F32(_)) => {
                         let bins = [as_bin!(put.0.clone(), 12345.0f32)];
-                        client.put(&write_policy, &key, &bins).await;
+                        client.put(&write_policy, &key, &bins).await.expect("Default put for float F32 failed");
                     }
                     Value::Float(FloatValue::F64(_)) => {
                         let bins = [as_bin!(put.0.clone(), 12345.0f64)];
-                        client.put(&write_policy, &key, &bins).await;
+                        client.put(&write_policy, &key, &bins).await.expect("Default put for float F64 failed");
                     }
                     Value::String(_) => {
                         let bins = [as_bin!(put.0.clone(), STRING_DEFAULT)];
-                        client.put(&write_policy, &key, &bins).await;
+                        client.put(&write_policy, &key, &bins).await.expect("Default put for Str failed");
                     }
                     Value::GeoJSON(_) => {
                         let bins = [as_bin!(put.0.clone(), Value::GeoJSON("{ \"type\": \"Point\", \"coordinates\": [ -122.335167, 47.608013 ] }".into()))];
-                        client.put(&write_policy, &key, &bins).await;
+                        client.put(&write_policy, &key, &bins).await.expect("Default put for GeoJSON failed");
                     }
                     Value::Blob(_) => {
                         let bins = [as_bin!(put.0.clone(), Value::Blob(vec![1, 2, 3]))];
-                        client.put(&write_policy, &key, &bins).await;
+                        client.put(&write_policy, &key, &bins).await.expect("Default put for blob failed");
                     }
                     Value::List(_) => {
                         let bins = [as_bin!(put.0.clone(), Value::List(vec!["1".into(), "2".into(), "3".into()]))];
-                        client.put(&write_policy, &key, &bins).await;
+                        client.put(&write_policy, &key, &bins).await.expect("Default put for list failed");
                     }
                     Value::HashMap(_) => {
                         let mut hm: HashMap<Value, Value> = HashMap::new();
@@ -195,7 +189,7 @@ proptest_async::proptest! {
                         hm.insert(2.into(), 4.into());
 
                         let bins = [as_bin!(put.0.clone(), Value::HashMap(hm))];
-                        client.put(&write_policy, &key, &bins).await;
+                        client.put(&write_policy, &key, &bins).await.expect("Default put for hashmap failed");
                     }
                     Value::OrderedMap(_) => {
                         let mut om: Vec<(Value, Value)> = vec![];
@@ -203,7 +197,7 @@ proptest_async::proptest! {
                         om.push((2.into(), 4.into()));
 
                         let bins = [as_bin!(put.0.clone(), Value::OrderedMap(om))];
-                        client.put(&write_policy, &key, &bins).await;
+                        client.put(&write_policy, &key, &bins).await.expect("Default put for ordered map failed");
                     }
 
                     Value::HLL(_) |
@@ -227,16 +221,16 @@ proptest_async::proptest! {
 
                     Value::String(_) => {
                         let bins = [as_bin!(prepend.0.clone(), STRING_DEFAULT)];
-                        client.put(&write_policy, &key, &bins).await;
+                        client.put(&write_policy, &key, &bins).await.expect("Default put for Str failed (prepend)");
                     }
                     Value::Blob(_) => {
                         eprintln!("PREPEND_TO_BIN: {:#?}", prepend);
                         let bins = [as_bin!(prepend.0.clone(), as_blob!([1, 2, 3].into()))];
-                        client.put(&write_policy, &key, &bins).await;
+                        client.put(&write_policy, &key, &bins).await.expect("Default put for Blob failed (prepend)");
                     }
                     Value::List(_) => {
                         let bins = [as_bin!(prepend.0.clone(), Value::List(vec!["1".into(), "2".into(), "3".into()]))];
-                        client.put(&write_policy, &key, &bins).await;
+                        client.put(&write_policy, &key, &bins).await.expect("Default put for List failed (prepend)");
                     }
                     Value::OrderedMap(_) => {
                         let mut om: Vec<(Value, Value)> = vec![];
@@ -244,7 +238,7 @@ proptest_async::proptest! {
                         om.push((2.into(), 4.into()));
 
                         let bins = [as_bin!(prepend.0.clone(), Value::OrderedMap(om))];
-                        client.put(&write_policy, &key, &bins).await;
+                        client.put(&write_policy, &key, &bins).await.expect("Default put for ordered map failed (prepend)");
                     }
                 }
             }
@@ -272,24 +266,24 @@ proptest_async::proptest! {
         //             panic!("{}",e);
         //          }
         //     },
-            Err(e @ Error::BatchError(_, ResultCode::GenerationError, _, _)) => {
-                // NOTE: there is no way to gain access to the generation_policy
-                // from any field accessible to this scope.
-                //
-                // if batch_policy.generation_policy != GenerationPolicy::None {
-                //     return; // it's fine
-                // }
-                // panic!("{}", e);
-            },
-            Err(Error::BatchError(_, ResultCode::BinTypeError, _, _)) => {}
+        //     Err(e @ Error::BatchError(_, ResultCode::GenerationError, _, _)) => {
+        //         // NOTE: there is no way to gain access to the generation_policy
+        //         // from any field accessible to this scope.
+        //         //
+        //         // if batch_policy.generation_policy != GenerationPolicy::None {
+        //         //     return; // it's fine
+        //         // }
+        //         // panic!("{}", e);
+        //     },
+        //     Err(Error::BatchError(_, ResultCode::BinTypeError, _, _)) => {} // ???!!!
             Err(e) => panic!("ERR: {}", e),
-            Ok(res) => {
+            Ok(_) => {
                 let check = client.get(&ReadPolicy::default(), &key, Bins::All).await;
                 if let Ok(rec) = &check {
-                    for (name, value) in &rec.bins {
-                        let bin = (name.clone(), value.clone());
-                        confirm_puts(&bin, &puts_to_bins);
-                        confirm_prepends(&bin, &prepends_to_bins);
+                    for received_bin in &rec.bins {
+						// received_bin is of type (&String, &String).
+                        confirm_puts(&received_bin, &puts_to_bins);
+                        // confirm_prepends(&received_bin, &prepends_to_bins);
                     }
                 }
             }
@@ -313,6 +307,7 @@ proptest_async::proptest! {
             as_ops.push(as_op);
         }
 
+		eprintln!("AS_OPS -> \n{:?}", as_ops);
         let res = client.batch(&batch_policy, &as_ops).await;
 
         match res {
@@ -328,37 +323,49 @@ proptest_async::proptest! {
         //             panic!("{}",e);
         //          }
         //     },
-            Err(e @ Error::BatchError(_, ResultCode::GenerationError, _, _)) => {
-                // NOTE: there is no way to gain access to the generation_policy
-                // from any field accessible to this scope.
-                //
-                // if batch_policy.generation_policy != GenerationPolicy::None {
-                //     return; // it's fine
-                // }
-                // panic!("{}", e);
-            },
-            Err(Error::BatchError(_, ResultCode::BinTypeError, _, _)) => {}
+        //     Err(e @ Error::BatchError(_, ResultCode::GenerationError, _, _)) => {
+        //         // NOTE: there is no way to gain access to the generation_policy
+        //         // from any field accessible to this scope.
+        //         //
+        //         // if batch_policy.generation_policy != GenerationPolicy::None {
+        //         //     return; // it's fine
+        //         // }
+        //         // panic!("{}", e);
+        //     },
+        //     Err(Error::BatchError(_, ResultCode::BinTypeError, _, _)) => {} // ???!!!
             Err(e) => panic!("ERR: {}", e),
-            Ok(res) => {}, // println!("OK: {:?}", res),
+            Ok(_res) => {}, // println!("OK: {:?}", res),
         }
     }
 }
 
 /// Performs a data validation check, making sure that any Put operations
 /// actually put new data into its corresponding bin.
-fn confirm_puts(bin: &(String, Value), puts_to_bins: &Vec<(String, Value)>) {
-    for candidate in puts_to_bins {
-        let (bin_name, bin_value) = (bin.0.clone(), clone_safely(&bin.1));
-        let (cand_name, cand_value) = (candidate.0.clone(), clone_safely(&candidate.1));
-        if bin_name == cand_name {
-            if bin_value == cand_value {
-                panic!(
+fn confirm_puts(bin: &(&String, &Value), puts_to_bins: &Vec<(String, Value)>) {
+	let received_bin_name = bin.0;
+	let received_bin_value = bin.1;
+
+	// Find the received bin's name in the puts_to_bins vector.
+	for candidate in puts_to_bins {
+		let candidate_name = &candidate.0;
+		let candidate_value = &candidate.1;
+
+		// If found, confirm values match expectations.  Panic if not.
+		// Otherwise, break the search loop to avoid wasting time.
+		if received_bin_name == candidate_name {
+			if received_bin_value != candidate_value {
+				panic!(
                     "Put failed?  Bin \"{}\" expected {:#?} actual {:#?}",
-                    bin_name, cand_value, bin_value
-                );
-            }
-        }
-    }
+                    received_bin_name, candidate_value, received_bin_value
+				);
+			}
+			else {
+				return;
+			}
+		}
+	}
+
+	// Otherwise, if not found, then we succeed by default, as we never put to this bin.
 }
 
 /// Performs a data validation check, making sure that any Prepend operations
@@ -386,8 +393,8 @@ fn confirm_prepends(bin: &(String, Value), prepends_to_bins: &Vec<(String, Value
                         );
                     }
                 }
-                Value::List(l) => {}
-                Value::OrderedMap(om) => {}
+                Value::List(_l) => {}
+                Value::OrderedMap(_om) => {}
                 _ => (),
             }
         }

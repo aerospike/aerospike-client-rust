@@ -16,7 +16,6 @@
 #![allow(dead_code)]
 
 use std::env;
-use std::time::Instant;
 
 use aerospike::CollectionIndexType;
 use aerospike::Task;
@@ -250,7 +249,6 @@ pub async fn insert_bins(ns: &str, set_name: &str, num_recs: u32) -> aerospike::
         .await
         .expect("should truncate the set");
 
-    let mut count = 0;
     for i in 0..num_recs {
         let key = aerospike::as_key!(ns, set_name, i);
         let bins = vec![
@@ -262,7 +260,6 @@ pub async fn insert_bins(ns: &str, set_name: &str, num_recs: u32) -> aerospike::
             .put(&wp, &key, &bins)
             .await
             .expect("Initial put failed");
-        count += 1;
     }
 
     let apolicy = AdminPolicy::default();
