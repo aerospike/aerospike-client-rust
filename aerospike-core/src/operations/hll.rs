@@ -43,7 +43,7 @@ pub enum HLLWriteFlags {
     AllowFold = 8,
 }
 
-/// Something that can be resolved into a set of ExpWriteFlags. Either a single HLLWriteFlags, Option<HLLWriteFlags>, [HLLWriteFlags], etc.
+/// Something that can be resolved into a set of ExpWriteFlags. Either a single [HLLWriteFlags], `Option<HLLWriteFlags>`, [HLLWriteFlags], etc.
 pub trait ToHLLWriteFlagsBitmask {
     /// Convert to an i64 bitmask
     fn to_bitmask(self) -> i64;

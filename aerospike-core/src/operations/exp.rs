@@ -46,7 +46,7 @@ pub enum ExpWriteFlags {
     EvalNoFail = 1 << 4,
 }
 
-/// Something that can be resolved into a set of ExpWriteFlags. Either a single ExpWriteFlag, Option<ExpWriteFlag>, [ExpWriteFlag], etc.
+/// Something that can be resolved into a set of ExpWriteFlags. Either a single `ExpWriteFlag`, `Option<ExpWriteFlag>`, `ExpWriteFlag`, etc.
 pub trait ToExpWriteFlagBitmask {
     /// Convert to an i64 bitmask
     fn to_bitmask(self) -> i64;
@@ -119,7 +119,7 @@ pub enum ExpReadFlags {
     EvalNoFail = 1 << 4,
 }
 
-/// Something that can be resolved into a set of ExpWriteFlags. Either a single ExpWriteFlag, Option<ExpWriteFlag>, [ExpWriteFlag], etc.
+/// Something that can be resolved into a set of ExpWriteFlags. Either a single `ExpWriteFlag`, `Option<ExpWriteFlag>`, `ExpWriteFlag`, etc.
 pub trait ToExpReadFlagBitmask {
     /// Convert to an i64 bitmask
     fn to_bitmask(self) -> i64;

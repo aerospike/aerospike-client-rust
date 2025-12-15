@@ -104,10 +104,12 @@ fn unpack_blob(buf: &mut Buffer, count: usize) -> Result<Value> {
             Ok(Value::GeoJSON(val))
         }
 
-        _ => return Err(Error::BadResponse(format!(
-            "Error while unpacking BLOB. Type-header with code `{}` not recognized.",
-            vtype
-        ))),
+        _ => {
+            return Err(Error::BadResponse(format!(
+                "Error while unpacking BLOB. Type-header with code `{}` not recognized.",
+                vtype
+            )))
+        }
     }
 }
 
@@ -157,7 +159,7 @@ fn unpack_value(buf: &mut Buffer) -> Result<Value> {
         0xcc => Ok(Value::from(buf.read_u8(None))),
         0xcd => Ok(Value::from(buf.read_u16(None))),
         0xce => Ok(Value::from(buf.read_u32(None))),
-        0xcf => Ok(Value::from(buf.read_u64(None))),
+        0xcf => Ok(Value::from(buf.read_u64_value(None))),
         0xd0 => Ok(Value::from(buf.read_i8(None))),
         0xd1 => Ok(Value::from(buf.read_i16(None))),
         0xd2 => Ok(Value::from(buf.read_i32(None))),
@@ -213,8 +215,7 @@ fn unpack_value(buf: &mut Buffer) -> Result<Value> {
             Ok(Value::from(value))
         }
         _ => Err(
-            Error::BadResponse(format!("Error unpacking value of type '{:x}'", obj_type))
-                .into(),
+            Error::BadResponse(format!("Error unpacking value of type '{:x}'", obj_type)).into(),
         ),
     }
 }

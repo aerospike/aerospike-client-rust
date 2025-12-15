@@ -210,9 +210,7 @@ async fn scan_multi_consumer() {
         }));
     }
 
-    futures::future::try_join_all(threads)
-        .await
-        .expect("Cannot join threads");
+    futures::future::join_all(threads).await;
 
     assert_eq!(count.load(Ordering::Relaxed), EXPECTED);
 

@@ -157,6 +157,8 @@ pub enum Value {
     /// Unsigned integer value. The largest integer value that can be stored in a record bin is
     /// `i64::max_value()`; however the list and map data types can store integer values (and keys)
     /// up to `u64::max_value()`.
+    /// This client will only return values > i64::MAX as `UInt`. If you put a smaller value as Uint,
+    /// it will return as `Int`.
     ///
     /// # Panics
     ///
@@ -189,7 +191,7 @@ pub enum Value {
     /// maps).
     OrderedMap(Vec<(Value, Value)>),
 
-    /// GeoJSON data type are JSON formatted strings to encode geospatial information.
+    /// GeoJSON data type are JSON formatted strings to encode geo-spatial information.
     GeoJSON(String),
 
     /// HLL value

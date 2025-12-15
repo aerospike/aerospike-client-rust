@@ -52,6 +52,47 @@ pub struct ClientPolicy {
     pub hashed_pass: Option<String>,
 
     /// TLS secure connection policy for TLS enabled servers.
+    /// # Examples
+    ///
+    /// Using cert files to allow for client authentication.
+    ///
+    /// ```rust,edition2021
+    /// let mut root_store = RootCertStore {
+    ///     roots: webpki_roots::TLS_SERVER_ROOTS.into(),
+    /// };
+    ///
+    /// root_store.add_parsable_certificates(
+    ///     CertificateDer::pem_file_iter("tls_cacert_file")
+    ///         .expect("Cannot open CA file")
+    ///         .map(|result| result.unwrap()),
+    /// );
+    ///
+    /// let client_ca = CertificateDer::from_pem_file("tls_cacert_file").expect("Cannot open CA file");
+    /// let client_key = PrivateKeyDer::from_pem_file("tls_key_file").expect("Cannot open Key file");
+    ///
+    /// let tls_config = rustls::ClientConfig::builder()
+    ///     .with_root_certificates(root_store)
+    ///     .with_client_auth_cert(vec![client_ca], client_key)
+    ///     .unwrap()
+    /// ```
+    ///
+    /// Using cert files without enforcing client authentication.
+    ///
+    /// ```rust,edition2021
+    /// let mut root_store = RootCertStore {
+    ///     roots: webpki_roots::TLS_SERVER_ROOTS.into(),
+    /// };
+    ///
+    /// root_store.add_parsable_certificates(
+    ///     CertificateDer::pem_file_iter("tls_cacert_file")
+    ///         .expect("Cannot open CA file")
+    ///         .map(|result| result.unwrap()),
+    /// );
+    ///
+    /// let tls_config = rustls::ClientConfig::builder()
+    ///     .with_root_certificates(root_store)
+    ///     .with_no_client_auth()
+    /// ```
     #[cfg(feature = "tls")]
     pub tls_config: Option<ClientConfig>,
 

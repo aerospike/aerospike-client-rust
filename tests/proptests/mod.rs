@@ -15,6 +15,7 @@
 
 mod batch_operation;
 mod batches;
+mod batches_spam;
 mod bins;
 mod filter_expression;
 mod key;

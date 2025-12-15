@@ -810,6 +810,9 @@ impl Client {
 
                     match futures::future::try_join_all(handles).await {
                         Err(e) => err_recordset.err(Error::ClientError(e.to_string())).await,
+                        #[cfg(feature = "rt-async-std")]
+                        Ok(_) => (),
+                        #[cfg(feature = "rt-tokio")]
                         Ok(errs) => {
                             for err in errs {
                                 match err {
@@ -869,7 +872,7 @@ impl Client {
     ///
     /// let pf = PartitionFilter::all();
     /// while !pf.done() {
-    ///     let rs = client.query(&qp, pf, stmt).await {
+    ///     let rs = client.query(&qp, pf, stmt).await;
     ///     match rs {
     ///         Ok(records) => {
     ///             let mut count = 0;
@@ -994,6 +997,9 @@ impl Client {
 
                     match futures::future::try_join_all(handles).await {
                         Err(e) => err_recordset.err(Error::ClientError(e.to_string())).await,
+                        #[cfg(feature = "rt-async-std")]
+                        Ok(_) => (),
+                        #[cfg(feature = "rt-tokio")]
                         Ok(errs) => {
                             for err in errs {
                                 match err {

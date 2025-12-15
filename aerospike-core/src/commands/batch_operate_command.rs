@@ -150,9 +150,9 @@ impl<'a> BatchOperateCommand<'a> {
             // cancelling/closing the batch/multi commands will return an error, which will
             // close the connection to throw away its data and signal the server about the
             // situation. We will not put back the connection in the buffer.
-            if !Self::keep_connection(&err) {
-                conn.invalidate().await;
-            }
+            // if !Self::keep_connection(&err) {
+            conn.invalidate().await;
+            // }
             Err(err)
         } else {
             Ok(true)
@@ -278,18 +278,9 @@ impl<'a> BatchOperateCommand<'a> {
         }))
     }
 
-    const fn keep_connection(err: &Error) -> bool {
-        if let Error::ServerError(result_code, _, _) = err {
-            match result_code {
-                ResultCode::KeyNotFoundError
-                | ResultCode::FilteredOut
-                | ResultCode::InvalidNamespace => true,
-                _ => false,
-            }
-        } else {
-            false
-        }
-    }
+    // const fn keep_connection(err: &Error) -> bool {
+    //     matches!(err, Error::ServerError(_, _, _) | Error::Timeout(_))
+    // }
 
     async fn parse_result(
         batch_ops: &mut [(BatchOperation<'a>, usize)],

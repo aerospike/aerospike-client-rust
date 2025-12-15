@@ -176,7 +176,7 @@ impl Buffer {
 
         // reset data offset
         self.reset_offset();
-        self.write_i64(size);
+        self.write_u64(size as u64);
     }
 
     // Writes the command for write operations
@@ -1579,6 +1579,26 @@ impl Buffer {
     }
 
     #[allow(clippy::option_if_let_else)]
+    pub(crate) fn read_u64_value(&mut self, pos: Option<usize>) -> Value {
+        let len = 8;
+        let val = if let Some(pos) = pos {
+            NetworkEndian::read_u64(&self.data_buffer[pos..pos + len])
+        } else {
+            let res = NetworkEndian::read_u64(
+                &self.data_buffer[self.data_offset..self.data_offset + len],
+            );
+            self.data_offset += len;
+            res
+        };
+
+        if val > i64::MAX as u64 {
+            Value::UInt(val)
+        } else {
+            Value::Int(val as i64)
+        }
+    }
+
+    #[allow(clippy::option_if_let_else)]
     pub(crate) fn read_le_u64(&mut self, pos: Option<usize>) -> u64 {
         let len = 8;
         if let Some(pos) = pos {
@@ -1740,7 +1760,12 @@ impl Buffer {
     }
 
     pub(crate) fn write_i64(&mut self, val: i64) -> usize {
-        self.write_u64(val as u64)
+        NetworkEndian::write_i64(
+            &mut self.data_buffer[self.data_offset..self.data_offset + 8],
+            val,
+        );
+        self.data_offset += 8;
+        8
     }
 
     pub(crate) fn write_bool(&mut self, val: bool) -> usize {

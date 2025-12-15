@@ -181,7 +181,7 @@ pub struct ListPolicy {
     pub flags: u8,
 }
 
-/// Something that can be resolved into a set of ExpWriteFlags. Either a single ListWriteFlags, Option<ListWriteFlags>, [ListWriteFlags], etc.
+/// Something that can be resolved into a set of ExpWriteFlags. Either a single [ListWriteFlags], `Option<ListWriteFlags>`, [ListWriteFlags], etc.
 pub trait ToListWriteFlagsBitmask {
     /// Convert to an u8 bitmask potentially containing multiple flags
     fn to_bitmask(self) -> u8;

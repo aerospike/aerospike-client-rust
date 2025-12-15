@@ -12,7 +12,7 @@ pub enum PropBatchOperation {
     ReadOps(BatchReadPolicy, Vec<PropOperation>),
     Write(BatchWritePolicy, Vec<PropOperation>),
     Delete(BatchDeletePolicy),
-    // UDF(BatchUDFPolicy, Key, String, String, Option<Vec<Value>>),
+    UDF(BatchUDFPolicy, String, String, Option<Vec<Value>>),
 }
 
 impl PropBatchOperation {
@@ -25,7 +25,14 @@ impl PropBatchOperation {
             PropBatchOperation::Write(bwp, ops) => {
                 BatchOperation::write(bwp, key, ops.iter().map(|op| op.to_op()).collect())
             }
-            PropBatchOperation::Delete(bdp) => BatchOperation::delete(bdp, key), // PropBatchOperation::UDF(bup, package, func, vals) => todo!(),
+            PropBatchOperation::Delete(bdp) => BatchOperation::delete(bdp, key),
+            PropBatchOperation::UDF(bup, server_path, function_name, args) => BatchOperation::udf(
+                bup,
+                key,
+                server_path,
+                function_name,
+                args.as_ref().map(|v| &**v),
+            ),
         }
     }
 }
@@ -54,6 +61,10 @@ pub fn any_batch_delete_operation() -> impl Strategy<Value = PropBatchOperation>
     prop_oneof![bop_delete()]
 }
 
+pub fn any_batch_udf_operation() -> impl Strategy<Value = PropBatchOperation> {
+    prop_oneof![bop_udf()]
+}
+
 prop_compose! {
     pub fn many_batch_operations(n: usize)(ops in prop::collection::vec(any_batch_operation(), 1..n as usize)) -> Vec<PropBatchOperation> {
         ops
@@ -74,6 +85,12 @@ prop_compose! {
 
 prop_compose! {
     pub fn many_batch_delete_operations(n: usize)(ops in prop::collection::vec(any_batch_delete_operation(), 1..n as usize)) -> Vec<PropBatchOperation> {
+        ops
+    }
+}
+
+prop_compose! {
+    pub fn many_batch_udf_operations(n: usize)(ops in prop::collection::vec(any_batch_udf_operation(), 1..n as usize)) -> Vec<PropBatchOperation> {
         ops
     }
 }
@@ -120,5 +137,12 @@ prop_compose! {
     pub fn bop_delete()
     (bdp in batch_delete_policy()) -> PropBatchOperation {
         PropBatchOperation::Delete(bdp)
+    }
+}
+
+prop_compose! {
+    pub fn bop_udf()
+    (bup in batch_udf_policy(), v in value_any()) -> PropBatchOperation {
+        PropBatchOperation::UDF(bup, "test_udf_proptests1".into(), "echo".into(), Some(vec![v]))
     }
 }

@@ -20,8 +20,6 @@ use std::convert::TryFrom;
 #[cfg(feature = "tls")]
 use std::sync::Arc;
 
-use crate::rand::Rng;
-
 use crate::commands::admin_command::AdminCommand;
 use crate::commands::buffer::{self, Buffer, MAX_BUFFER_SIZE};
 use crate::errors::{Error, Result};
@@ -277,6 +275,7 @@ impl Connection {
         while total_read < size && SystemTime::now() < deadline {
             let read_result = match self.conn {
                 Netsocket::Tcp(ref mut conn) => {
+                    #[cfg(feature = "rt-tokio")]
                     conn.readable().await?;
                     conn.read(&mut self.buffer.data_buffer[pos + total_read..])
                         .await

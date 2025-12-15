@@ -85,7 +85,6 @@ proptest_async::proptest! {
                         if let Some(actual_value) = r.bins.get("binName") {
                             if expected_value != actual_value.as_string() {
                                 panic!("Batch Read: Value for bin 'binName' doesn't match; expected: {:?}, got: {:?}", expected_value, actual_value);
-
                             }
                         }
                     });
