@@ -191,9 +191,9 @@ pub async fn singleton_client() -> &'static Client {
             //     std::process::abort();
             // }));
             // console_subscriber::init();
-            // insert_bins(namespace(), &prop_setname_multi(), 1000)
-            //     .await
-            //     .unwrap();
+            insert_bins(namespace(), &prop_setname_multi(), 1000)
+                .await
+                .unwrap();
             let client = Client::new(&GLOBAL_CLIENT_POLICY, &*AEROSPIKE_HOSTS)
                 .await
                 .unwrap();
@@ -245,11 +245,29 @@ pub async fn security_enabled() -> bool {
 pub async fn insert_bins(ns: &str, set_name: &str, num_recs: u32) -> aerospike::Result<()> {
     let client = crate::common::client().await;
     let wp = aerospike::WritePolicy::default();
+    let ap = aerospike::AdminPolicy::default();
 
     client
         .truncate(&AdminPolicy::default(), ns, set_name, 0)
         .await
         .expect("should truncate the set");
+
+    let udf_body = r#"
+function echo(rec, val)
+  return val
+end
+"#;
+
+    let task = client
+        .register_udf(
+            &ap,
+            udf_body.as_bytes(),
+            "test_udf_proptests1.lua",
+            aerospike::UDFLang::Lua,
+        )
+        .await
+        .unwrap();
+    task.wait_till_complete(None).await.unwrap();
 
     for i in 0..num_recs {
         let key = aerospike::as_key!(ns, set_name, i);

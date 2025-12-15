@@ -14,8 +14,8 @@ use aerospike::ReadTouchTTL;
 use aerospike::RecordExistsAction;
 
 use aerospike::{
-    BatchDeletePolicy, BatchPolicy, BatchReadPolicy, BatchWritePolicy, Expiration, ReadPolicy,
-    ScanPolicy, WritePolicy,
+    BatchDeletePolicy, BatchPolicy, BatchReadPolicy, BatchUDFPolicy, BatchWritePolicy, Expiration,
+    ReadPolicy, ScanPolicy, WritePolicy,
 };
 
 use proptest::bool;
@@ -400,6 +400,28 @@ prop_compose! {
             generation_policy,
             commit_level,
             durable_delete,
+            filter_expression,
+            // for all other fields, assume their default values.
+            ..Default::default()
+        }
+    }
+}
+
+prop_compose! {
+    pub fn batch_udf_policy()
+    (
+        commit_level in commit_level(),
+        expiration in expiration(0, 5),
+        durable_delete in any::<bool>(),
+        send_key in any::<bool>(),
+        filter_expression in true_or_false_filter_expression(),
+    )
+    -> BatchUDFPolicy {
+        BatchUDFPolicy {
+            commit_level,
+            expiration,
+            durable_delete,
+            send_key,
             filter_expression,
             // for all other fields, assume their default values.
             ..Default::default()
