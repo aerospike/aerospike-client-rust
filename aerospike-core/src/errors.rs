@@ -70,7 +70,7 @@ pub enum Error {
     ParseInt(#[from] ::std::num::ParseIntError),
     #[error("Error returned while hashing a password for user authentication")]
     PwHash(#[from] ::pwhash::error::Error),
-    #[cfg(all(any(feature = "rt-tokio"), not(feature = "rt-async-std")))]
+    #[cfg(feature = "rt-tokio")]
     #[error("Async runtime error {0}")]
     Async(#[from] task::JoinError),
     /// The client received a server response that it was not able to process.

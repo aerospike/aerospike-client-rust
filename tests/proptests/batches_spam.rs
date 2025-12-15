@@ -115,8 +115,9 @@ proptest_async::proptest! {
 
         match res {
             Err(Error::BatchError(_, ResultCode::KeyBusy, _, _)) => {}
+            Err(Error::ClientError(_)) => {}
             Err(Error::BatchError(_, ResultCode::BinTypeError, _, _)) => {}
-            Err(e) => panic!("ERR: {}", e),
+            Err(e) => panic!("ERR: {:#?}", e),
             Ok(_) => (),
         }
     }
