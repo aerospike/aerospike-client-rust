@@ -4,7 +4,7 @@ use crate::proptests::operation::*;
 
 use aerospike::*;
 
-use crate::proptests::{bins::*, policy::*};
+use crate::proptests::{bins::*, policy::*, value::*};
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum PropBatchOperation {

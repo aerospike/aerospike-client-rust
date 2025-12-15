@@ -4,9 +4,7 @@ use crate::proptest_async;
 
 use aerospike::*;
 
-use crate::proptests::{
-    batch_operation::*, bins::*, clone_safely, key::*, operation::*, partition_filter::*, policy::*,
-};
+use crate::proptests::{ batch_operation::*, policy::*, };
 
 const STRING_DEFAULT: &str = "aerospike default value";
 
