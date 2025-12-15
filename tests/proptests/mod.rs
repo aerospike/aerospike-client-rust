@@ -26,6 +26,3 @@ mod policy;
 mod queries;
 mod scans;
 mod value;
-
-use aerospike::Value;
-use std::collections::HashMap;
