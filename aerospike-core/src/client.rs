@@ -869,7 +869,7 @@ impl Client {
     ///
     /// let pf = PartitionFilter::all();
     /// while !pf.done() {
-    ///     let rs = client.query(&qp, pf, stmt).await {
+    ///     let rs = client.query(&qp, pf, stmt).await;
     ///     match rs {
     ///         Ok(records) => {
     ///             let mut count = 0;

@@ -76,7 +76,7 @@ pub trait Policy {
     /// transaction as well.
     fn total_timeout(&self) -> u32;
 
-    /// Returns the value of [timeout_delay].
+    /// Returns the value of `timeout_delay`.
     fn timeout_delay(&self) -> u32;
 
     /// Maximum number of retries before aborting the current transaction. A retry may be attempted
@@ -171,13 +171,13 @@ pub struct BasePolicy {
 
     /// Socket idle timeout when processing a database command.
     ///
-    /// If [socket_timeout] is zero and [total_timeout] is non-zero, then [socket_timeout] will be set
-    /// to [total_timeout]. If both [socket_timeout] and [total_timeout] are non-zero and
-    /// [socket_timeout] > [total_timeout], then [socket_timeout] will be set to [total_timeout]. If both
-    /// [socket_timeout] and [total_timeout] are zero, then there will be no socket idle limit.
+    /// If `socket_timeout` is zero and `total_timeout` is non-zero, then `socket_timeout` will be set
+    /// to `total_timeout`. If both `socket_timeout` and `total_timeout` are non-zero and
+    /// `socket_timeout` > `total_timeout`, then `socket_timeout` will be set to `total_timeout`. If both
+    /// `socket_timeout` and `total_timeout` are zero, then there will be no socket idle limit.
     ///
-    /// If [socket_timeout] is non-zero and the socket has been idle for at least socket_timeout,
-    /// both max_retries and [total_timeout] are checked. If max_retries and [total_timeout] are not
+    /// If `socket_timeout` is non-zero and the socket has been idle for at least socket_timeout,
+    /// both max_retries and `total_timeout` are checked. If max_retries and `total_timeout` are not
     /// exceeded, the command is retried.
     pub socket_timeout: u32,
 
@@ -195,20 +195,20 @@ pub struct BasePolicy {
     /// data or closed to prevent unread socket data from corrupting the next command
     /// that would use that socket.
     ///
-    /// If a socket read timeout occurs and [timeout_delay] is greater than zero, the socket
-    /// will be drained until all data has been read or [timeout_delay] is reached. If all
+    /// If a socket read timeout occurs and `timeout_delay` is greater than zero, the socket
+    /// will be drained until all data has been read or `timeout_delay` is reached. If all
     /// data has been read, the socket will be placed back into the connection pool. If
-    /// [timeout_delay] is reached before the draining is complete, the socket will be closed.
+    /// `timeout_delay` is reached before the draining is complete, the socket will be closed.
     ///
     /// Many cloud providers encounter performance problems when sockets are closed by the
     /// client when the server still has data left to write (results in socket RST packet).
     /// If the socket is fully drained before closing, the socket RST performance penalty
     /// can be avoided on these cloud providers.
     ///
-    /// The disadvantage of enabling [timeout_delay] is that extra processing is required
+    /// The disadvantage of enabling `timeout_delay` is that extra processing is required
     /// to drain sockets and additional connections may still be needed for command retries.
     ///
-    /// If [timeout_delay] were to be enabled, 3000ms would be a reasonable value.
+    /// If `timeout_delay` were to be enabled, 3000ms would be a reasonable value.
     ///
     /// Default: 0 (no delay, connection closed on timeout)
     pub timeout_delay: u32,
