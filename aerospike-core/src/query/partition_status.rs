@@ -29,8 +29,11 @@ pub struct PartitionStatus {
     /// Digest of the key to retry from.
     pub digest: Option<[u8; 20]>,
 
-    pub(crate) node: Option<Arc<Node>>,
-    pub(crate) sequence: Option<u64>,
+    /// Partition's corresponding node.
+    pub node: Option<Arc<Node>>,
+
+    /// Partition map's corresponding sequence.
+    pub sequence: Option<u64>,
 }
 
 impl PartitionStatus {

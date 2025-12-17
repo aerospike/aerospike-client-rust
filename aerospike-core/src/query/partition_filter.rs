@@ -40,8 +40,11 @@ pub struct PartitionFilter {
     /// status of the partitions
     pub partitions: Option<Vec<Arc<Mutex<PartitionStatus>>>>,
 
-    pub(crate) done: AtomicBool,
-    pub(crate) retry: AtomicBool,
+    /// Is partition completely scanned/queried.
+    pub done: AtomicBool,
+
+    /// Should the partition be retried.
+    pub retry: AtomicBool,
 }
 
 impl PartitionFilter {
