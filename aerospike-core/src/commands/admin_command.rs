@@ -527,11 +527,11 @@ impl AdminCommand {
         let mut conn = node.get_connection().await?;
 
         let mut field_count = 1;
-        if privileges.len() > 1 {
+        if privileges.len() > 0 {
             field_count += 1;
         }
 
-        if allowlist.len() > 1 {
+        if allowlist.len() > 0 {
             field_count += 1;
         }
 
@@ -805,11 +805,15 @@ impl AdminCommand {
                     )));
                 }
 
-                if let Some(ref set_name) = prev.set_name {
-                    size += set_name.len() + 1;
-                }
+                // Calculate size: namespace first, then set_name (matching Java client order)
+                // Always include both fields (even if empty) - server expects them
+                size += 1; // namespace length byte (always present)
                 if let Some(ref namespace) = prev.namespace {
-                    size += namespace.len() + 1;
+                    size += namespace.len();
+                }
+                size += 1; // set_name length byte (always present)
+                if let Some(ref set_name) = prev.set_name {
+                    size += set_name.len();
                 }
             } else if prev.namespace.as_ref().map(|s| s.len()).unwrap_or(0)
                 + prev.set_name.as_ref().map(|s| s.len()).unwrap_or(0)
@@ -829,13 +833,19 @@ impl AdminCommand {
             let code = &prev.code;
             conn.buffer.write_u8(u8::from(code));
             if code.can_scope() {
-                if let Some(ref set_name) = prev.set_name {
-                    conn.buffer.write_u8(set_name.len() as u8);
-                    conn.buffer.write_str(&set_name);
-                }
+                // Write namespace first, then set_name (matching Java client order)
+                // Always write both fields (even if empty) - server expects them
                 if let Some(ref namespace) = prev.namespace {
                     conn.buffer.write_u8(namespace.len() as u8);
                     conn.buffer.write_str(&namespace);
+                } else {
+                    conn.buffer.write_u8(0); // Empty namespace
+                }
+                if let Some(ref set_name) = prev.set_name {
+                    conn.buffer.write_u8(set_name.len() as u8);
+                    conn.buffer.write_str(&set_name);
+                } else {
+                    conn.buffer.write_u8(0); // Empty set_name
                 }
             }
         }
