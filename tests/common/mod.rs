@@ -80,8 +80,6 @@ lazy_static! {
 #[cfg(feature = "tls")]
 lazy_static! {
     static ref GLOBAL_CLIENT_POLICY: ClientPolicy = {
-        let _ = env_logger::try_init();
-
         let mut policy = ClientPolicy::default();
         if let Ok(user) = env::var("AEROSPIKE_USER") {
             let password = env::var("AEROSPIKE_PASSWORD").unwrap_or_default();

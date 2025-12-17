@@ -17,6 +17,8 @@ pub fn test(_attr: TokenStream, input: TokenStream) -> TokenStream {
             #[test]
             #(#attrs)*
             fn #name() #ret {
+                let _ = env_logger::try_init();
+
                 // ::aerospike_rt::tokio::runtime::Runtime::new().unwrap().block_on( async {#body} )
                 // Use a shared runtime for the tests and the client:
                 crate::common::RUNTIME.block_on( async {#body} )
@@ -27,6 +29,8 @@ pub fn test(_attr: TokenStream, input: TokenStream) -> TokenStream {
             #[test]
             #(#attrs)*
             fn #name() #ret {
+                let _ = env_logger::try_init();
+
                 ::aerospike_rt::async_std::task::block_on( async {#body} )
             }
         }

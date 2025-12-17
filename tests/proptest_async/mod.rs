@@ -8,6 +8,7 @@ pub fn block_on<F>(f: F) -> F::Output
 where
     F: core::future::Future,
 {
+    let _ = env_logger::try_init();
     let rt = &crate::common::RUNTIME;
     // let rt = tokio::runtime::Builder::new_current_thread()
     //     .enable_time()
@@ -24,6 +25,7 @@ pub fn block_on<F>(f: F) -> F::Output
 where
     F: core::future::Future,
 {
+    let _ = env_logger::try_init();
     aerospike_rt::task::block_on(f)
 }
 
