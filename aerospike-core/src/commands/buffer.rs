@@ -926,9 +926,11 @@ impl Buffer {
             field_count += 1;
         }
 
-        if !statement.set_name.is_empty() {
-            self.data_offset += statement.set_name.len() + FIELD_HEADER_SIZE as usize;
-            field_count += 1;
+        if let Some(ref set_name) = statement.set_name {
+            if !set_name.is_empty() {
+                self.data_offset += set_name.len() + FIELD_HEADER_SIZE as usize;
+                field_count += 1;
+            }
         }
 
         if policy.records_per_second > 0 {
@@ -1072,8 +1074,10 @@ impl Buffer {
             }
         }
 
-        if !statement.set_name.is_empty() {
-            self.write_field_string(&statement.set_name, FieldType::Table);
+        if let Some(ref set_name) = statement.set_name {
+            if !set_name.is_empty() {
+                self.write_field_string(set_name, FieldType::Table);
+            }
         }
 
         self.write_field_header(8, FieldType::QueryId);

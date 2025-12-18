@@ -31,8 +31,8 @@ pub struct Statement {
     /// Namespace
     pub namespace: String,
 
-    /// Set name
-    pub set_name: String,
+    /// Set name (optional - None or empty means query all sets in namespace)
+    pub set_name: Option<String>,
 
     /// Optional index name
     pub index_name: Option<String>,
@@ -65,7 +65,11 @@ impl Statement {
     pub fn new(namespace: &str, set_name: &str, bins: Bins) -> Self {
         Statement {
             namespace: namespace.to_owned(),
-            set_name: set_name.to_owned(),
+            set_name: if set_name.is_empty() {
+                None
+            } else {
+                Some(set_name.to_owned())
+            },
             bins,
             index_name: None,
             aggregation: None,
@@ -125,10 +129,6 @@ impl Statement {
                     "Too many filter expressions".to_string(),
                 ));
             }
-        }
-
-        if self.set_name.is_empty() {
-            return Err(Error::InvalidArgument("Empty set name".to_string()));
         }
 
         if let Some(ref index_name) = self.index_name {
