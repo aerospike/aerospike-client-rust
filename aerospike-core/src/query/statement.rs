@@ -31,7 +31,7 @@ pub struct Statement {
     /// Namespace
     pub namespace: String,
 
-    /// Set name
+    /// Set name. If left empty, all the sets within the namespace will be scanned.
     pub set_name: String,
 
     /// Optional index name
@@ -125,10 +125,6 @@ impl Statement {
                     "Too many filter expressions".to_string(),
                 ));
             }
-        }
-
-        if self.set_name.is_empty() {
-            return Err(Error::InvalidArgument("Empty set name".to_string()));
         }
 
         if let Some(ref index_name) = self.index_name {

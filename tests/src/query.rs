@@ -60,6 +60,33 @@ async fn create_test_set(client: &Client, no_records: usize) -> String {
 }
 
 #[aerospike_macro::test]
+async fn query_single_consumer_no_setname() {
+    let client = common::client().await;
+    let namespace = common::namespace();
+    let set_name = "";
+    let mut qpolicy = QueryPolicy::default();
+    qpolicy.expected_duration = QueryDuration::Short;
+
+    // Filter Query
+    let statement = Statement::new(namespace, &set_name, Bins::All);
+    let pf = PartitionFilter::all();
+    let rs = client.query(&qpolicy, pf, statement).await.unwrap();
+    let mut count = 0;
+    let mut rs = rs.into_stream();
+    while let Some(res) = rs.next().await {
+        match res {
+            Ok(_) => {
+                count += 1;
+            }
+            Err(err) => panic!("{:?}", err),
+        }
+    }
+    assert!(count > 0);
+
+    client.close().await.unwrap();
+}
+
+#[aerospike_macro::test]
 async fn query_single_consumer() {
     let client = common::client().await;
     let namespace = common::namespace();
