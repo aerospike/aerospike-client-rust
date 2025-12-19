@@ -260,21 +260,52 @@ proptest_async::proptest! {
         match res {
             Err(e) => panic!("ERR: {}", e),
             Ok(results) => {
-                for record in results {
+                if results.len() != ops.len() {
+                    panic!("Batch results length differ: expected {} got {}", ops.len(), results.len());
+                }
+
+                for rec_index in 0..results.len() {
+                    let record = results[rec_index].clone();
+                    let ops_record = ops[rec_index].clone();
+                    let bdp = match ops_record {
+                        PropBatchOperation::Delete(ref bdp) => bdp.clone(),
+                        _ => panic!("Unexpected batch operation"),
+                    };
+
                     match record.result_code {
+                        Some(ResultCode::Ok) => (),
+                        Some(ResultCode::FilteredOut) => (),
+
                         Some(ResultCode::KeyNotFoundError) => {
                             // Key should not be found for i % 2 != 0, since we
                             // did not create one.  Otherwise, the key should
                             // have existed and should have been deleted.
                             if i % 2 == 0 {
-                                panic!("Target record written but not deleted");
+                                panic!("Target record deleted was never written first, but should have been.");
                             }
                         }
 
-                        Some(ResultCode::Ok) => (), // success
+                        Some(ResultCode::GenerationError) => {
+                            let db_record = client.get(&ReadPolicy::default(), &key, Bins::All).await.expect("diagnostic read should work");
+                            match bdp.generation_policy {
+                                GenerationPolicy::None => { }
+
+                                GenerationPolicy::ExpectGenGreater => {
+                                    if db_record.generation > bdp.generation {
+                                        panic!("ERROR: record generation is {}, policy is looking for >={}, but still got GenerationError.",
+                                                db_record.generation, bdp.generation);
+                                    }
+                                }
+
+                                GenerationPolicy::ExpectGenEqual => {
+                                    if db_record.generation == bdp.generation {
+                                        panic!("ERROR: record generations match, policy looking for equality, but still got GenerationError.");
+                                    }
+                                }
+                            }
+                        }
 
                         _ => {
-                            eprintln!(" RECORD: {:?}", record);
                             panic!("Unexpected result code: {:?}", record.result_code);
                         }
                     }
