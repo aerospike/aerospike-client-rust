@@ -1,14 +1,12 @@
 use std::collections::HashMap;
 
+use crate::common;
 use crate::proptest::prelude::*;
 use crate::proptest_async;
-use crate::common;
 
 use aerospike::*;
 
-use crate::proptests::{
-    batch_operation::*, operation::*, policy::*,
-};
+use crate::proptests::{batch_operation::*, operation::*, policy::*};
 
 const STRING_DEFAULT: &str = "aerospike default value";
 
@@ -32,7 +30,9 @@ proptest_async::proptest! {
         let namespace: &str = common::namespace();
         let set_name: &str = common::prop_setname();
 
+        let write_policy = WritePolicy::default();
         let key = as_key!(namespace, set_name, i);
+        client.delete(&write_policy, &key).await.expect("initial deletion of key should succeed");
 
         // Randomize the bin value to test for even further per iteration.
 
@@ -48,13 +48,12 @@ proptest_async::proptest! {
 
             if i % 2 == 0 {
                 let bins = [as_bin!("binName", expected_value.clone()),];
-                let write_policy = WritePolicy::default();
 
                 // SAFETY: This is just a test, not production code.
                 // Use of unwrap() here is OK; if something goes wrong, we
                 // WANT the Rust runtime to panic.
 
-                client.put(&write_policy, &key, &bins).await.unwrap();
+                client.put(&write_policy, &key, &bins).await.expect("initial put should have succeeded");
 
                 // Make sure write went through using non-batch means.
 
@@ -103,13 +102,16 @@ proptest_async::proptest! {
         let namespace: &str = common::namespace();
         let set_name: &str = common::prop_setname();
 
+        // Delete any previously existing record(s) associated with the key assigned to this test run.
+        let write_policy = WritePolicy::default();
         let key = as_key!(namespace, set_name, i);
+        eprintln!(" DELETE: key {:?}", key.clone());
+        client.delete(&write_policy, &key).await.expect("initial deletion of key should succeed");
 
-        let mut puts_to_bins: Vec<(String, Value)> = vec![];
-        let mut prepends_to_bins: Vec<(String, Value)> = vec![];
+        let mut puts_to_bins: HashMap<String, Value> = HashMap::new();
         let mut as_ops = vec![];
-
         for op in &ops {
+            eprintln!("  AS_OP: {:?}\n.", op.clone());
             // Before validating our write operations, we want to initialize the
             // bins that have been randomly chosen for the property test.
             //
@@ -119,14 +121,13 @@ proptest_async::proptest! {
             match op {
                 PropBatchOperation::Write(_, ref ops) => {
                     for sub_op in ops {
+                        eprintln!(" SUB_OP: ..{:?}", sub_op.clone());
                         match sub_op {
                             PropOperation::Put(ref bin) => {
-                                puts_to_bins.push((bin.name.clone(), bin.value.clone()))
+                                eprintln!(" INSERT: into puts_to_bins: bin \"{:?}\"", bin.name.clone());
+                                puts_to_bins.insert(bin.name.clone(), bin.value.clone());
                             }
-                            PropOperation::Prepend(ref bin) => {
-                                prepends_to_bins.push((bin.name.clone(), bin.value.clone()))
-                            }
-                            _ => (),
+                           _ => (),
                         }
                     }
                 }
@@ -134,112 +135,14 @@ proptest_async::proptest! {
             }
 
             // Now that we have a list of bins to initialize, let's actually
-            // set a default value for each of these bins.
+            // set a default value for each of these bins.	If a batch write
+            // succeeds, the bin value (and type) will be changed according to
+            // the write in the operation list.
 
-            let write_policy = WritePolicy::default();
-            for put in &puts_to_bins {
-                match &put.1 {
-                    Value::Nil => {
-                        let bins = [as_bin!(put.0.clone(), 42)];
-                        client.put(&write_policy, &key, &bins).await.expect("Default put for nil failed");
-                    }
-                    Value::Bool(b) => {
-                        // We put the opposite of the boolean so that the
-                        // difference shows up in any diagnostic output.
-                        let bins = [as_bin!(put.0.clone(), !b)];
-                        client.put(&write_policy, &key, &bins).await.expect("Default put for bool failed");
-                    }
-                    Value::Int(_) |
-                    Value::UInt(_) => {
-                        // Server does not support a distinct unsigned integer
-                        // type.  So, we need to convert the value into a
-                        // (signed) integer bit-for-bit.
-                        let bins = [as_bin!(put.0.clone(), 12345i64)];
-                        client.put(&write_policy, &key, &bins).await.expect("Default put for (U)Int failed");
-                    }
-                    Value::Infinity |
-                    Value::Float(FloatValue::F32(_)) => {
-                        let bins = [as_bin!(put.0.clone(), 12345.0f32)];
-                        client.put(&write_policy, &key, &bins).await.expect("Default put for float F32 failed");
-                    }
-                    Value::Float(FloatValue::F64(_)) => {
-                        let bins = [as_bin!(put.0.clone(), 12345.0f64)];
-                        client.put(&write_policy, &key, &bins).await.expect("Default put for float F64 failed");
-                    }
-                    Value::String(_) => {
-                        let bins = [as_bin!(put.0.clone(), STRING_DEFAULT)];
-                        client.put(&write_policy, &key, &bins).await.expect("Default put for Str failed");
-                    }
-                    Value::GeoJSON(_) => {
-                        let bins = [as_bin!(put.0.clone(), Value::GeoJSON("{ \"type\": \"Point\", \"coordinates\": [ -122.335167, 47.608013 ] }".into()))];
-                        client.put(&write_policy, &key, &bins).await.expect("Default put for GeoJSON failed");
-                    }
-                    Value::Blob(_) => {
-                        let bins = [as_bin!(put.0.clone(), Value::Blob(vec![1, 2, 3]))];
-                        client.put(&write_policy, &key, &bins).await.expect("Default put for blob failed");
-                    }
-                    Value::List(_) => {
-                        let bins = [as_bin!(put.0.clone(), Value::List(vec!["1".into(), "2".into(), "3".into()]))];
-                        client.put(&write_policy, &key, &bins).await.expect("Default put for list failed");
-                    }
-                    Value::HashMap(_) => {
-                        let mut hm: HashMap<Value, Value> = HashMap::new();
-                        hm.insert(1.into(), 2.into());
-                        hm.insert(2.into(), 4.into());
-
-                        let bins = [as_bin!(put.0.clone(), Value::HashMap(hm))];
-                        client.put(&write_policy, &key, &bins).await.expect("Default put for hashmap failed");
-                    }
-                    Value::OrderedMap(_) => {
-                        let mut om: Vec<(Value, Value)> = vec![];
-                        om.push((1.into(), 2.into()));
-                        om.push((2.into(), 4.into()));
-
-                        let bins = [as_bin!(put.0.clone(), Value::OrderedMap(om))];
-                        client.put(&write_policy, &key, &bins).await.expect("Default put for ordered map failed");
-                    }
-
-                    Value::HLL(_) |
-                    Value::Wildcard => (), // Not sure how to handle these yet
-                }
-            }
-
-            for prepend in &prepends_to_bins {
-                match &prepend.1 {
-                    Value::Nil |
-                    Value::Bool(_) |
-                    Value::Int(_) |
-                    Value::UInt(_) |
-                    Value::Infinity |
-                    Value::Float(FloatValue::F32(_)) |
-                    Value::Float(FloatValue::F64(_)) |
-                    Value::GeoJSON(_) |
-                    Value::HLL(_) |
-                    Value::Wildcard |
-                    Value::HashMap(_) => (), // not sure how to handle prepends for these types.
-
-                    Value::String(_) => {
-                        let bins = [as_bin!(prepend.0.clone(), STRING_DEFAULT)];
-                        client.put(&write_policy, &key, &bins).await.expect("Default put for Str failed (prepend)");
-                    }
-                    Value::Blob(_) => {
-                        eprintln!("PREPEND_TO_BIN: {:#?}", prepend);
-                        let bins = [as_bin!(prepend.0.clone(), as_blob!([1, 2, 3].into()))];
-                        client.put(&write_policy, &key, &bins).await.expect("Default put for Blob failed (prepend)");
-                    }
-                    Value::List(_) => {
-                        let bins = [as_bin!(prepend.0.clone(), Value::List(vec!["1".into(), "2".into(), "3".into()]))];
-                        client.put(&write_policy, &key, &bins).await.expect("Default put for List failed (prepend)");
-                    }
-                    Value::OrderedMap(_) => {
-                        let mut om: Vec<(Value, Value)> = vec![];
-                        om.push((1.into(), 2.into()));
-                        om.push((2.into(), 4.into()));
-
-                        let bins = [as_bin!(prepend.0.clone(), Value::OrderedMap(om))];
-                        client.put(&write_policy, &key, &bins).await.expect("Default put for ordered map failed (prepend)");
-                    }
-                }
+            for (bin_name, _) in &puts_to_bins {
+                let bins = [as_bin!(bin_name.clone(), 1)];
+                eprintln!("    PUT: bin \"{:?}\"", bin_name.clone());
+                client.put(&write_policy, &key, &bins).await.expect("initializing put should work");
             }
 
             // Finally, build the batch operation list.
@@ -248,41 +151,92 @@ proptest_async::proptest! {
             as_ops.push(as_op);
         }
 
+        eprintln!("   NOTE: puts_to_bins initialized.  Key initialized.");
+
         // Invoke the batch operation.
 
         let res = client.batch(&batch_policy, &as_ops).await;
 
+        eprintln!("   NOTE: Batch operation completed.");
+
         match res {
-        //     Err(Error::ServerError(ResultCode::ParameterError, _, _)) => {
-        //         if write_policy.respond_per_each_op && ops.into_iter().find(|op| *op == PropOperation::Get).is_some() {
-        //             return;
-        //         }
-        //     }, // it's fine
-        //     Err(Error::ServerError(ResultCode::KeyNotFoundError, _, _)) => {
-        //     },
-        //     Err(e @ Error::ServerError(ResultCode::KeyExistsError, _, _)) => {
-        //         if write_policy.record_exists_action != RecordExistsAction::CreateOnly {
-        //             panic!("{}",e);
-        //          }
-        //     },
-        //     Err(e @ Error::BatchError(_, ResultCode::GenerationError, _, _)) => {
-        //         // NOTE: there is no way to gain access to the generation_policy
-        //         // from any field accessible to this scope.
-        //         //
-        //         // if batch_policy.generation_policy != GenerationPolicy::None {
-        //         //     return; // it's fine
-        //         // }
-        //         // panic!("{}", e);
-        //     },
-        //     Err(Error::BatchError(_, ResultCode::BinTypeError, _, _)) => {} // ???!!!
             Err(e) => panic!("ERR: {}", e),
-            Ok(_) => {
-                let check = client.get(&ReadPolicy::default(), &key, Bins::All).await;
-                if let Ok(rec) = &check {
-                    for received_bin in &rec.bins {
-						// received_bin is of type (&String, &String).
-                        confirm_puts(&received_bin, &puts_to_bins);
-                        // confirm_prepends(&received_bin, &prepends_to_bins);
+            Ok(results) => {
+                // `res` is a list of BatchRecord structures.
+                // For each result,
+                for result in results {
+                    // Check the result code to filter out "errors" that aren't
+                    // really errors.
+                    match result.result_code {
+                        // If a result has been filtered out,
+                        Some(ResultCode::FilteredOut) => {
+                            // skip the check; it's been filtered out.
+                        }
+
+                        // If a key has not been found,
+                        Some(ResultCode::KeyNotFoundError) => {
+                            // then skip this record too.
+                        }
+
+                        // Otherwise
+                        Some(ResultCode::Ok) => {
+                            // The results of the corresponding batch operation
+                            // must have succeeded, somehow.
+                            match result.record {
+                                Some(record) => {
+                                    // This record will have one or more bins associated with it.
+                                    // For each bin in the hashmap of bins,
+                                    // grab the bin name; ignore the value though,
+                                    // as it will always be nil/empty.
+                                    eprintln!("   INFO: client.batch(_, _) -> {} bins returned", record.bins.len());
+                                    for (updated_name, _) in record.bins {
+                                        // Get current contents of the bin from the database.
+                                        // This cannot fail, since we just confirmed at least one bin.
+                                        eprintln!("   INFO: client.get(_, _, [\"{:?}\"])", updated_name);
+                                        let read_result = client
+                                                .get(
+                                                    &ReadPolicy::default(),
+                                                    &key,
+                                                    Bins::Some(vec![updated_name.clone()])
+                                                )
+                                                .await
+                                                .expect("validation get should work");
+                                        eprintln!("   INFO: get() results length = {}", read_result.bins.len());
+                                        // If the contents of the bin does not match the expected value, panic.
+                                        for (candidate_name, candidate_value) in &read_result.bins {
+                                            eprintln!("  FOUND: {:?}", candidate_name);
+                                            let maybe_expected_value = puts_to_bins.get(&String::from(candidate_name));
+                                            match maybe_expected_value {
+                                                // If the bin name was stored in puts_to_bins, then it must have been
+                                                // provided by proptests-rs.  That means we must have previously
+                                                // client.put() to establish a default record.  Check to make sure the
+                                                // bin's current contents matches proptest-rs's expected value.
+                                                Some(expected_value) => {
+                                                    if *candidate_name == updated_name {
+                                                        if *candidate_value != *expected_value {
+                                                            panic!("For bin \"{:?}\"\n  Expected: {:?}\n  Actual: {:?}\n", updated_name, expected_value, candidate_value);
+                                                        }
+                                                    }
+                                                }
+
+                                                // If we found a bin in the reply that does not exist in the puts_to_bins map,
+                                                // it is because it was created by the server in response to an alternative operation
+                                                // that we're not checking for here (e.g., APPEND, ADD, etc.).  Although it looks like
+                                                // it, these are _not_ errors.  But we will skip validation here, because properly validating
+                                                // depends on the precise context and data type involved.
+                                                _ => { }
+                                            }
+                                        }
+                                    }
+                                }
+
+                                _ => panic!("I'd expect at least one bin to verify against")
+                            }
+                        }
+
+                        _ => {
+                            eprintln!("WARNING: Unknown result code {:?}", result.result_code);
+                        }
                     }
                 }
             }
@@ -306,96 +260,34 @@ proptest_async::proptest! {
             as_ops.push(as_op);
         }
 
-		eprintln!("AS_OPS -> \n{:?}", as_ops);
+        eprintln!("AS_OPS -> \n{:?}", as_ops);
         let res = client.batch(&batch_policy, &as_ops).await;
 
         match res {
-        //     Err(Error::ServerError(ResultCode::ParameterError, _, _)) => {
-        //         if write_policy.respond_per_each_op && ops.into_iter().find(|op| *op == PropOperation::Get).is_some() {
-        //             return;
-        //         }
-        //     }, // it's fine
-        //     Err(Error::ServerError(ResultCode::KeyNotFoundError, _, _)) => {
-        //     },
-        //     Err(e @ Error::ServerError(ResultCode::KeyExistsError, _, _)) => {
-        //         if write_policy.record_exists_action != RecordExistsAction::CreateOnly {
-        //             panic!("{}",e);
-        //          }
-        //     },
-        //     Err(e @ Error::BatchError(_, ResultCode::GenerationError, _, _)) => {
-        //         // NOTE: there is no way to gain access to the generation_policy
-        //         // from any field accessible to this scope.
-        //         //
-        //         // if batch_policy.generation_policy != GenerationPolicy::None {
-        //         //     return; // it's fine
-        //         // }
-        //         // panic!("{}", e);
-        //     },
-        //     Err(Error::BatchError(_, ResultCode::BinTypeError, _, _)) => {} // ???!!!
+        //	   Err(Error::ServerError(ResultCode::ParameterError, _, _)) => {
+        //		   if write_policy.respond_per_each_op && ops.into_iter().find(|op| *op == PropOperation::Get).is_some() {
+        //			   return;
+        //		   }
+        //	   }, // it's fine
+        //	   Err(Error::ServerError(ResultCode::KeyNotFoundError, _, _)) => {
+        //	   },
+        //	   Err(e @ Error::ServerError(ResultCode::KeyExistsError, _, _)) => {
+        //		   if write_policy.record_exists_action != RecordExistsAction::CreateOnly {
+        //			   panic!("{}",e);
+        //			}
+        //	   },
+        //	   Err(e @ Error::BatchError(_, ResultCode::GenerationError, _, _)) => {
+        //		   // NOTE: there is no way to gain access to the generation_policy
+        //		   // from any field accessible to this scope.
+        //		   //
+        //		   // if batch_policy.generation_policy != GenerationPolicy::None {
+        //		   //	  return; // it's fine
+        //		   // }
+        //		   // panic!("{}", e);
+        //	   },
+        //	   Err(Error::BatchError(_, ResultCode::BinTypeError, _, _)) => {} // ???!!!
             Err(e) => panic!("ERR: {}", e),
             Ok(_res) => {}, // println!("OK: {:?}", res),
-        }
-    }
-}
-
-/// Performs a data validation check, making sure that any Put operations
-/// actually put new data into its corresponding bin.
-fn confirm_puts(bin: &(&String, &Value), puts_to_bins: &Vec<(String, Value)>) {
-	let received_bin_name = bin.0;
-	let received_bin_value = bin.1;
-
-	// Find the received bin's name in the puts_to_bins vector.
-	for candidate in puts_to_bins {
-		let candidate_name = &candidate.0;
-		let candidate_value = &candidate.1;
-
-		// If found, confirm values match expectations.  Panic if not.
-		// Otherwise, break the search loop to avoid wasting time.
-		if received_bin_name == candidate_name {
-			if received_bin_value != candidate_value {
-				panic!(
-                    "Put failed?  Bin \"{}\" expected {:#?} actual {:#?}",
-                    received_bin_name, candidate_value, received_bin_value
-				);
-			}
-			else {
-				return;
-			}
-		}
-	}
-
-	// Otherwise, if not found, then we succeed by default, as we never put to this bin.
-}
-
-/// Performs a data validation check, making sure that any Prepend operations
-/// actually places its data in front of the data already present in the bin.
-fn confirm_prepends(bin: &(String, Value), prepends_to_bins: &Vec<(String, Value)>) {
-    let bin_name = bin.0.clone();
-    let bin_value = bin.1.clone();
-
-    for (cand_name, cand_value) in prepends_to_bins {
-        if bin_name == *cand_name {
-            match &bin_value {
-                Value::String(s) => {
-                    if !s.ends_with(STRING_DEFAULT) {
-                        panic!(
-                            "Prepend failed?  Bin \"{}\" expected {:#?} actual {:#?}",
-                            bin_name, cand_value, bin_value
-                        );
-                    }
-                }
-                Value::Blob(b) => {
-                    if !b.ends_with(&[1, 2, 3]) {
-                        panic!(
-                            "Prepend failed?  Bin \"{}\" expected {:#?} actual {:#?}",
-                            bin_name, cand_value, bin_value
-                        );
-                    }
-                }
-                Value::List(_l) => {}
-                Value::OrderedMap(_om) => {}
-                _ => (),
-            }
         }
     }
 }
