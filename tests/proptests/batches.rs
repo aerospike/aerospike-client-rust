@@ -105,13 +105,11 @@ proptest_async::proptest! {
         // Delete any previously existing record(s) associated with the key assigned to this test run.
         let write_policy = WritePolicy::default();
         let key = as_key!(namespace, set_name, i);
-        eprintln!(" DELETE: key {:?}", key.clone());
         client.delete(&write_policy, &key).await.expect("initial deletion of key should succeed");
 
         let mut puts_to_bins: HashMap<String, Value> = HashMap::new();
         let mut as_ops = vec![];
         for op in &ops {
-            eprintln!("  AS_OP: {:?}\n.", op.clone());
             // Before validating our write operations, we want to initialize the
             // bins that have been randomly chosen for the property test.
             //
@@ -121,10 +119,8 @@ proptest_async::proptest! {
             match op {
                 PropBatchOperation::Write(_, ref ops) => {
                     for sub_op in ops {
-                        eprintln!(" SUB_OP: ..{:?}", sub_op.clone());
                         match sub_op {
                             PropOperation::Put(ref bin) => {
-                                eprintln!(" INSERT: into puts_to_bins: bin \"{:?}\"", bin.name.clone());
                                 puts_to_bins.insert(bin.name.clone(), bin.value.clone());
                             }
                            _ => (),
@@ -141,7 +137,6 @@ proptest_async::proptest! {
 
             for (bin_name, _) in &puts_to_bins {
                 let bins = [as_bin!(bin_name.clone(), 1)];
-                eprintln!("    PUT: bin \"{:?}\"", bin_name.clone());
                 client.put(&write_policy, &key, &bins).await.expect("initializing put should work");
             }
 
@@ -151,13 +146,9 @@ proptest_async::proptest! {
             as_ops.push(as_op);
         }
 
-        eprintln!("   NOTE: puts_to_bins initialized.  Key initialized.");
-
         // Invoke the batch operation.
 
         let res = client.batch(&batch_policy, &as_ops).await;
-
-        eprintln!("   NOTE: Batch operation completed.");
 
         match res {
             Err(e) => panic!("ERR: {}", e),
@@ -188,11 +179,9 @@ proptest_async::proptest! {
                                     // For each bin in the hashmap of bins,
                                     // grab the bin name; ignore the value though,
                                     // as it will always be nil/empty.
-                                    eprintln!("   INFO: client.batch(_, _) -> {} bins returned", record.bins.len());
                                     for (updated_name, _) in record.bins {
                                         // Get current contents of the bin from the database.
                                         // This cannot fail, since we just confirmed at least one bin.
-                                        eprintln!("   INFO: client.get(_, _, [\"{:?}\"])", updated_name);
                                         let read_result = client
                                                 .get(
                                                     &ReadPolicy::default(),
@@ -201,10 +190,8 @@ proptest_async::proptest! {
                                                 )
                                                 .await
                                                 .expect("validation get should work");
-                                        eprintln!("   INFO: get() results length = {}", read_result.bins.len());
                                         // If the contents of the bin does not match the expected value, panic.
                                         for (candidate_name, candidate_value) in &read_result.bins {
-                                            eprintln!("  FOUND: {:?}", candidate_name);
                                             let maybe_expected_value = puts_to_bins.get(&String::from(candidate_name));
                                             match maybe_expected_value {
                                                 // If the bin name was stored in puts_to_bins, then it must have been
@@ -253,41 +240,46 @@ proptest_async::proptest! {
         let namespace: &str = common::namespace();
         let set_name: &str = common::prop_setname();
 
+        let write_policy = WritePolicy::default();
+        let key = as_key!(namespace, set_name, i);
+
+        client.delete(&write_policy, &key).await.expect("initial records deletion should work");
+        if i % 2 == 0 {
+            let bins = [as_bin!("bin2delete", 100)];
+            client.put(&write_policy, &key, &bins).await.expect("planting a record to delete expected to work");
+        }
+
         let mut as_ops = vec![];
         for op in &ops {
-            let key = as_key!(namespace, set_name, i);
-            let as_op = op.to_op(key);
+            let as_op = op.to_op(key.clone());
             as_ops.push(as_op);
         }
 
-        eprintln!("AS_OPS -> \n{:?}", as_ops);
-        let res = client.batch(&batch_policy, &as_ops).await;
+        let res = client.batch(&BatchPolicy::default(), &as_ops).await;
 
         match res {
-        //	   Err(Error::ServerError(ResultCode::ParameterError, _, _)) => {
-        //		   if write_policy.respond_per_each_op && ops.into_iter().find(|op| *op == PropOperation::Get).is_some() {
-        //			   return;
-        //		   }
-        //	   }, // it's fine
-        //	   Err(Error::ServerError(ResultCode::KeyNotFoundError, _, _)) => {
-        //	   },
-        //	   Err(e @ Error::ServerError(ResultCode::KeyExistsError, _, _)) => {
-        //		   if write_policy.record_exists_action != RecordExistsAction::CreateOnly {
-        //			   panic!("{}",e);
-        //			}
-        //	   },
-        //	   Err(e @ Error::BatchError(_, ResultCode::GenerationError, _, _)) => {
-        //		   // NOTE: there is no way to gain access to the generation_policy
-        //		   // from any field accessible to this scope.
-        //		   //
-        //		   // if batch_policy.generation_policy != GenerationPolicy::None {
-        //		   //	  return; // it's fine
-        //		   // }
-        //		   // panic!("{}", e);
-        //	   },
-        //	   Err(Error::BatchError(_, ResultCode::BinTypeError, _, _)) => {} // ???!!!
             Err(e) => panic!("ERR: {}", e),
-            Ok(_res) => {}, // println!("OK: {:?}", res),
+            Ok(results) => {
+                for record in results {
+                    match record.result_code {
+                        Some(ResultCode::KeyNotFoundError) => {
+                            // Key should not be found for i % 2 != 0, since we
+                            // did not create one.  Otherwise, the key should
+                            // have existed and should have been deleted.
+                            if i % 2 == 0 {
+                                panic!("Target record written but not deleted");
+                            }
+                        }
+
+                        Some(ResultCode::Ok) => (), // success
+
+                        _ => {
+                            eprintln!(" RECORD: {:?}", record);
+                            panic!("Unexpected result code: {:?}", record.result_code);
+                        }
+                    }
+                }
+            }
         }
     }
 }
