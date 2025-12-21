@@ -48,9 +48,6 @@ pub struct ClientPolicy {
     /// User authentication to cluster.
     pub auth_mode: AuthMode,
 
-    #[doc(hidden)]
-    pub hashed_pass: Option<String>,
-
     /// TLS secure connection policy for TLS enabled servers.
     /// # Examples
     ///
@@ -187,7 +184,6 @@ impl Default for ClientPolicy {
     fn default() -> ClientPolicy {
         ClientPolicy {
             auth_mode: AuthMode::None,
-            hashed_pass: None,
             timeout: 30_000,
             idle_timeout: 30_000,
             min_conns_per_node: 0,
@@ -243,15 +239,20 @@ impl ClientPolicy {
 
     /// Set username and password to use when authenticating to the cluster.
     pub fn set_auth_mode(&mut self, auth_mode: AuthMode) -> Result<()> {
-        match auth_mode {
-            AuthMode::External(_, ref password) | AuthMode::Internal(_, ref password) => {
-                let password = AdminCommand::hash_password(password)?;
-                self.hashed_pass = Some(password);
-            }
-            _ => (),
-        };
         self.auth_mode = auth_mode;
         Ok(())
+    }
+
+    /// Return the hashed password for the auth mode.
+    pub(crate) fn hashed_pass(&self) -> Option<String> {
+        match self.auth_mode {
+            AuthMode::External(_, ref password) | AuthMode::Internal(_, ref password) => {
+                let password = AdminCommand::hash_password(password)
+                    .expect("Unexpected error hashing the password");
+                Some(password)
+            }
+            _ => None,
+        }
     }
 
     #[cfg(feature = "tls")]

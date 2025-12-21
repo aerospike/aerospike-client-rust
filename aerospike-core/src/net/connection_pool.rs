@@ -38,6 +38,7 @@ struct SharedQueue {
     capacity: usize,
     host: Host,
     policy: ClientPolicy,
+    hashed_pass: Option<String>,
 }
 
 #[derive(Debug)]
@@ -49,11 +50,15 @@ impl Queue {
             connections: VecDeque::with_capacity(capacity),
             num_conns: 0,
         };
+
+        let hashed_pass = policy.hashed_pass();
+
         let shared = SharedQueue {
             internals: Mutex::new(internals),
             capacity,
             host,
             policy,
+            hashed_pass,
         };
         Queue(Arc::new(shared))
     }
@@ -61,7 +66,7 @@ impl Queue {
     pub async fn make_conn(&self) -> Result<Connection> {
         let conn = aerospike_rt::timeout(
             self.0.policy.timeout(),
-            Connection::new(&self.0.host, &self.0.policy),
+            Connection::new(&self.0.host, &self.0.policy, self.0.hashed_pass.as_ref()),
         )
         .await;
 

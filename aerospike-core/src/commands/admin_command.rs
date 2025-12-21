@@ -876,6 +876,7 @@ impl AdminCommand {
         }
     }
 
+    /// Hash and return the password.
     pub fn hash_password(password: &str) -> Result<String> {
         bcrypt::hash_with(
             BcryptSetup {

@@ -101,7 +101,12 @@ impl NodeValidator {
     }
 
     async fn validate_alias(&mut self, cluster: &Cluster, alias: &Host) -> Result<()> {
-        let mut conn = Connection::new(&alias, &self.client_policy).await?;
+        let mut conn = Connection::new(
+            &alias,
+            &self.client_policy,
+            cluster.hashed_pass().await.as_ref(),
+        )
+        .await?;
         let service_name = cluster.client_policy().await.service_string();
         let admin_policy = AdminPolicy {
             timeout: self.client_policy.timeout,
