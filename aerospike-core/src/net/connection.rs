@@ -108,7 +108,11 @@ impl Connection {
         Ok(Netsocket::Tcp(stream))
     }
 
-    pub async fn new(host: &Host, policy: &ClientPolicy) -> Result<Self> {
+    pub async fn new(
+        host: &Host,
+        policy: &ClientPolicy,
+        hashed_pass: Option<&String>,
+    ) -> Result<Self> {
         let addr = host.address();
         let stream =
             aerospike_rt::timeout(policy.timeout(), TcpStream::connect(addr.clone())).await;
@@ -139,8 +143,7 @@ impl Connection {
             state: ConnectionState::Ready,
             can_recover_connection: false,
         };
-        conn.authenticate(&policy.auth_mode, policy.hashed_pass.as_ref())
-            .await?;
+        conn.authenticate(&policy.auth_mode, hashed_pass).await?;
         conn.refresh();
         Ok(conn)
     }

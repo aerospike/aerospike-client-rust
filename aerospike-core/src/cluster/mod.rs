@@ -32,6 +32,7 @@ use self::node_validator::NodeValidator;
 use self::partition::Partition;
 use self::partition_tokenizer::PartitionTokenizer;
 
+use crate::commands::admin_command::AdminCommand;
 use crate::commands::Message;
 use crate::errors::{Error, Result};
 use crate::net::Host;
@@ -154,6 +155,7 @@ pub struct Cluster {
     node_index: AtomicIsize,
 
     client_policy: RwLock<ClientPolicy>,
+    hashed_pass: RwLock<Option<String>>,
 
     tend_channel: Mutex<Sender<()>>,
     closed: AtomicBool,
@@ -166,6 +168,7 @@ impl Cluster {
 
         let (tx, rx) = mpsc::channel(100);
         let cluster = Arc::new(Cluster {
+            hashed_pass: RwLock::new(policy.hashed_pass()),
             client_policy: RwLock::new(policy),
 
             seeds: Arc::new(RwLock::new(hosts.to_vec())),
@@ -701,15 +704,25 @@ impl Cluster {
         )));
     }
 
+    // Returns the hashed password for the cluster.
+    // Hashing passwords is an expensive operation, se we ony do it once
+    // and then cache it.
+    pub(crate) async fn hashed_pass(&self) -> Option<String> {
+        let res = self.hashed_pass.read().await;
+        res.clone()
+    }
+
+    // Will update the cluster password if the password change was for the current user.
     pub(crate) async fn update_password(&self, user: &str, password: &str) -> Result<()> {
-        let mut client_policy = self.client_policy.write().await;
-        match client_policy.auth_mode.clone() {
-            crate::AuthMode::Internal(u, _) if u == user => client_policy
-                .set_auth_mode(crate::AuthMode::Internal(u.clone(), password.to_string())),
-            crate::AuthMode::External(u, _) if u == user => client_policy
-                .set_auth_mode(crate::AuthMode::External(u.clone(), password.to_string())),
-            _ => Ok(()),
+        let auth_mode = { &self.client_policy.read().await.auth_mode };
+        match auth_mode {
+            crate::AuthMode::Internal(u, _) | crate::AuthMode::External(u, _) if u == user => {
+                let mut hashed_pass = self.hashed_pass.write().await;
+                *hashed_pass = Some(AdminCommand::hash_password(password)?);
+            }
+            _ => (),
         }
+        Ok(())
     }
 
     pub async fn close(&self) -> Result<()> {

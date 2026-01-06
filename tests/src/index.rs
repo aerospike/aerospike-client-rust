@@ -92,7 +92,7 @@ async fn create_index_using_expression() {
     let task = client.drop_index(&apolicy, ns, &set, &index).await.unwrap();
     task.wait_till_complete(None).await.unwrap();
 
-    let fe: Expression = eq(int_bin("a".to_string()), int_val(500));
+    let fe: Expression = num_add(vec![int_bin(common::rand_str(10)), int_val(0)]);
 
     let task = client
         .create_index_using_expression(
