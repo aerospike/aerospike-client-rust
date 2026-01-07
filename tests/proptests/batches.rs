@@ -291,8 +291,14 @@ proptest_async::proptest! {
                                 GenerationPolicy::None => { }
 
                                 GenerationPolicy::ExpectGenGreater => {
-                                    if db_record.generation > bdp.generation {
-                                        panic!("ERROR: record generation is {}, policy is looking for >={}, but still got GenerationError.",
+									// The logic on this seems backwards, but it makes sense when you consider things from a database
+									// restore operation's point of view.  The idea is that if a backup restore's record has a _greater_
+									// generation than what already sits on the server, then it must be _newer_ data, and thus, eligible
+									// for restoration.  This means that the write/delete will succeed if the current record's generation
+									// is *less than or equal* to the provided generation, since the *provided* generation is the backup's
+									// generation.
+                                    if db_record.generation <= bdp.generation {
+                                        panic!("ERROR: server record generation is {}, policy is looking for <= {}, but still got GenerationError.",
                                                 db_record.generation, bdp.generation);
                                     }
                                 }
