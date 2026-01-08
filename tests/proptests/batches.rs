@@ -207,7 +207,7 @@ proptest_async::proptest! {
                     }
 
                     Value::HLL(_) |
-                    Value::Wildcard | Value::MultiValue(_) => (), // Not sure how to handle these yet
+                    Value::Wildcard | Value::MultiResult(_) => (), // Not sure how to handle these yet
                 }
             }
 
@@ -223,7 +223,7 @@ proptest_async::proptest! {
                     Value::GeoJSON(_) |
                     Value::HLL(_) |
                     Value::Wildcard |
-                    Value::MultiValue(_) |
+                    Value::MultiResult(_) |
                     Value::HashMap(_) => (), // not sure how to handle prepends for these types.
 
                     Value::String(_) => {

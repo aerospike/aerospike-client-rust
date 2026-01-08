@@ -245,7 +245,7 @@ async fn batch_operate_read_multi_op_single_bin() {
     let result = results.remove(0);
     assert!(Some(ResultCode::Ok) == result.result_code);
     assert!(
-        Some(&Value::MultiValue(as_values!(3, 333))) == result.record.unwrap().bins.get("lbin")
+        Some(&Value::MultiResult(as_values!(3, 333))) == result.record.unwrap().bins.get("lbin")
     );
 }
 

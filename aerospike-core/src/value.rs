@@ -183,7 +183,7 @@ pub enum Value {
     /// Returned in cases where the server executes multiple operations for the same bin.
     /// This value is only sent from the server to the client, and can't be sent from the
     /// client to the server.
-    MultiValue(Vec<Value>),
+    MultiResult(Vec<Value>),
 
     /// Map data type is a collection of key-value pairs. Each key can only appear once in a
     /// collection and is associated with a value. Map keys and values can be any supported data
@@ -225,7 +225,7 @@ impl Hash for Value {
             Value::GeoJSON(_) => panic!("GeoJson cannot be used as map keys."),
             Value::Blob(ref val) => val.hash(state),
             Value::HLL(_) => panic!("HLL cannot be used as map keys."),
-            Value::MultiValue(_) => panic!("MultiValues cannot be used as map keys."),
+            Value::MultiResult(_) => panic!("MultiValues cannot be used as map keys."),
             Value::List(_) => panic!("Lists cannot be used as map keys."),
             Value::HashMap(_) => panic!("HashMaps cannot be used as map keys."),
             Value::OrderedMap(_) => panic!("OrderedMaps cannot be used as map keys."),
@@ -255,7 +255,7 @@ impl Value {
             Value::String(_) => ParticleType::STRING,
             Value::Blob(_) => ParticleType::BLOB,
             Value::Bool(_) => ParticleType::BOOL,
-            Value::MultiValue(_) => ParticleType::LIST,
+            Value::MultiResult(_) => ParticleType::LIST,
             Value::List(_) => ParticleType::LIST,
             Value::HashMap(_) => ParticleType::MAP,
             Value::OrderedMap(_) => ParticleType::MAP,
@@ -276,7 +276,7 @@ impl Value {
             Value::Float(ref val) => val.to_string(),
             Value::String(ref val) | Value::GeoJSON(ref val) => val.to_string(),
             Value::Blob(ref val) | Value::HLL(ref val) => format!("{:?}", val),
-            Value::MultiValue(ref val) => format!("{:?}", val),
+            Value::MultiResult(ref val) => format!("{:?}", val),
             Value::List(ref val) => format!("{:?}", val),
             Value::HashMap(ref val) => format!("{:?}", val),
             Value::OrderedMap(ref val) => format!("{:?}", val),
@@ -298,7 +298,7 @@ impl Value {
             Value::String(ref s) => s.len(),
             Value::Blob(ref b) => b.len(),
             Value::Bool(_) => 1,
-            Value::MultiValue(_) => {
+            Value::MultiResult(_) => {
                 panic!("MultiValues are only returned as results from the server and never from the client.")
             }
             Value::List(_) | Value::HashMap(_) => encoder::pack_value(&mut None, self),
@@ -324,7 +324,7 @@ impl Value {
             Value::Float(ref val) => buf.write_f64(f64::from(val)),
             Value::String(ref val) => buf.write_str(val),
             Value::Blob(ref val) | Value::HLL(ref val) => buf.write_bytes(val),
-            Value::MultiValue(_) => {
+            Value::MultiResult(_) => {
                 panic!("MultiValues are only returned as results from the server and never from the client.")
             }
             Value::List(_) | Value::HashMap(_) => encoder::pack_value(&mut Some(buf), self),
@@ -627,7 +627,7 @@ impl TryFrom<Value> for Vec<Value> {
     fn try_from(val: Value) -> std::result::Result<Self, Self::Error> {
         match val {
             Value::List(v) => Ok(v),
-            Value::MultiValue(v) => Ok(v),
+            Value::MultiResult(v) => Ok(v),
             _ => {
                 return Err(format!(
                     "Invalid type conversion from Value::{} to {}",
@@ -898,7 +898,7 @@ impl Serialize for Value {
             }
             Value::Infinity => panic!("Infinity cannot be serialized"),
             Value::Wildcard => panic!("Wildcard cannot be serialized"),
-            Value::MultiValue(_) => panic!("MultiValue cannot be serialized"),
+            Value::MultiResult(_) => panic!("MultiValue cannot be serialized"),
         }
     }
 }

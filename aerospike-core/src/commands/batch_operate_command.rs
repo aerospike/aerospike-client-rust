@@ -272,9 +272,9 @@ impl<'a> BatchOperateCommand<'a> {
                         entry.insert(value);
                     }
                     Occupied(entry) => match *entry.into_mut() {
-                        Value::MultiValue(ref mut list) => list.push(value),
+                        Value::MultiResult(ref mut list) => list.push(value),
                         ref mut prev => {
-                            *prev = Value::MultiValue(vec![prev.clone(), value]);
+                            *prev = Value::MultiResult(vec![prev.clone(), value]);
                         }
                     },
                 }

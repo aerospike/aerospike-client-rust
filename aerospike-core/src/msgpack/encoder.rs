@@ -37,7 +37,7 @@ pub(crate) fn pack_value(buf: &mut Option<&mut Buffer>, val: &Value) -> usize {
         Value::Blob(ref val) | Value::HLL(ref val) => pack_blob(buf, val),
         Value::List(ref val) => pack_array(buf, val),
         Value::HashMap(ref val) => pack_map(buf, val),
-        Value::MultiValue(_) => panic!("MultiValues are not supported in this encoder."),
+        Value::MultiResult(_) => panic!("MultiValues are not supported in this encoder."),
         Value::OrderedMap(_) => panic!("Ordered maps are not supported in this encoder."),
         Value::GeoJSON(ref val) => pack_geo_json(buf, val),
         Value::Infinity => pack_infinity(buf),
