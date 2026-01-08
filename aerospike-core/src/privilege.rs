@@ -53,6 +53,16 @@ pub enum PrivilegeCode {
     /// User can truncate data only.
     /// Requires server version 6+
     Truncate = 14,
+
+    /// User can perform data masking administration actions.
+    /// Global scope only.
+    MaskingAdmin = 15,
+
+    /// User can read masked data only.
+    ReadMasked = 16,
+
+    /// User can write masked data only.
+    WriteMasked = 17,
 }
 
 impl PrivilegeCode {
@@ -62,7 +72,9 @@ impl PrivilegeCode {
             | PrivilegeCode::ReadWrite
             | PrivilegeCode::ReadWriteUDF
             | PrivilegeCode::Write
-            | PrivilegeCode::Truncate => true,
+            | PrivilegeCode::Truncate
+            | PrivilegeCode::ReadMasked
+            | PrivilegeCode::WriteMasked => true,
             _ => false,
         }
     }
@@ -113,6 +125,9 @@ impl From<u8> for PrivilegeCode {
             12 => PrivilegeCode::ReadWriteUDF,
             13 => PrivilegeCode::Write,
             14 => PrivilegeCode::Truncate,
+            15 => PrivilegeCode::MaskingAdmin,
+            16 => PrivilegeCode::ReadMasked,
+            17 => PrivilegeCode::WriteMasked,
             _ => panic!("invalid privilege code {}", pc),
         }
     }
@@ -131,6 +146,9 @@ impl From<&PrivilegeCode> for u8 {
             PrivilegeCode::ReadWriteUDF => 12,
             PrivilegeCode::Write => 13,
             PrivilegeCode::Truncate => 14,
+            PrivilegeCode::MaskingAdmin => 15,
+            PrivilegeCode::ReadMasked => 16,
+            PrivilegeCode::WriteMasked => 17,
         }
     }
 }
@@ -148,6 +166,9 @@ impl From<&PrivilegeCode> for String {
             &PrivilegeCode::ReadWriteUDF => "read-write-udf".into(),
             &PrivilegeCode::Write => "write".into(),
             &PrivilegeCode::Truncate => "truncate".into(),
+            &PrivilegeCode::MaskingAdmin => "masking-admin".into(),
+            &PrivilegeCode::ReadMasked => "read-masked".into(),
+            &PrivilegeCode::WriteMasked => "write-masked".into(),
         }
     }
 }
@@ -165,6 +186,9 @@ impl From<&str> for PrivilegeCode {
             "read-write-udf" => PrivilegeCode::ReadWriteUDF,
             "write" => PrivilegeCode::Write,
             "truncate" => PrivilegeCode::Truncate,
+            "masking-admin" => PrivilegeCode::MaskingAdmin,
+            "read-masked" => PrivilegeCode::ReadMasked,
+            "write-masked" => PrivilegeCode::WriteMasked,
             _ => panic!("invalid privilege code {}", pc),
         }
     }
