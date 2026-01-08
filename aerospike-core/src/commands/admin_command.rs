@@ -289,7 +289,15 @@ impl AdminCommand {
                 let id = conn.buffer.read_u8(None);
                 match id {
                     ROLE => name = conn.buffer.read_str(len)?,
-                    PRIVILEGES => privileges = AdminCommand::parse_privileges(conn).await?,
+                    PRIVILEGES => {
+                        let start_offset = conn.buffer.data_offset();
+                        privileges = AdminCommand::parse_privileges(conn).await?;
+                        // Ensure we've read exactly len bytes
+                        let bytes_read = conn.buffer.data_offset() - start_offset;
+                        if bytes_read < len {
+                            conn.buffer.data_offset += len - bytes_read;
+                        }
+                    }
                     WHITELIST => allowlist = AdminCommand::parse_allowlist(conn, len).await?,
                     READ_QUOTA => read_quota = conn.buffer.read_u32(None),
                     WRITE_QUOTA => write_quota = conn.buffer.read_u32(None),
