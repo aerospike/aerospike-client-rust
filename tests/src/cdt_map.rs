@@ -20,8 +20,8 @@ use crate::common;
 use aerospike::operations::cdt_context::{ctx_map_key, ctx_map_key_create};
 use aerospike::operations::{maps, MapOrder};
 use aerospike::{
-    as_bin, as_key, as_list, as_map, as_val, Bins, MapPolicy, MapReturnType, ReadPolicy, Value,
-    WritePolicy,
+    as_bin, as_key, as_list, as_map, as_val, as_values, Bins, MapPolicy, MapReturnType, ReadPolicy,
+    Value, WritePolicy,
 };
 
 #[aerospike_macro::test]
@@ -94,7 +94,10 @@ async fn map_operations() {
     let inc = maps::increment_value(&mpolicy, bin_name, &k, &i);
     let rec = client.operate(&wpolicy, &key, &[dec, inc]).await.unwrap();
     // returns values from multiple ops returned as list
-    assert_eq!(*rec.bins.get(bin_name).unwrap(), as_list!(5, 12));
+    assert_eq!(
+        *rec.bins.get(bin_name).unwrap(),
+        Value::MultiResult(as_values!(5, 12))
+    );
 
     let op = maps::clear(bin_name);
     let rec = client.operate(&wpolicy, &key, &[op]).await.unwrap();
