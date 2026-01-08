@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use std::collections::hash_map::Entry::{Occupied, Vacant};
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -122,7 +123,20 @@ impl StreamCommand {
             conn.read_buffer(particle_bytes_size).await?;
             let value = bytes_to_particle(particle_type, &mut conn.buffer(), particle_bytes_size)?;
 
-            bins.insert(name, value);
+            if !value.is_nil() {
+                // list/map operations may return multiple values for the same bin.
+                match bins.entry(name) {
+                    Vacant(entry) => {
+                        entry.insert(value);
+                    }
+                    Occupied(entry) => match *entry.into_mut() {
+                        Value::MultiValue(ref mut list) => list.push(value),
+                        ref mut prev => {
+                            *prev = Value::MultiValue(vec![prev.clone(), value]);
+                        }
+                    },
+                }
+            }
         }
 
         let record = Record::new(Some(key), bins, generation, expiration);

@@ -13,6 +13,7 @@
 // limitations under the License.
 
 use aerospike_rt::time::Instant;
+use std::collections::hash_map::Entry::{Occupied, Vacant};
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -264,7 +265,19 @@ impl<'a> BatchOperateCommand<'a> {
                     &mut conn.buffer(),
                     particle_bytes_size,
                 )?;
-                bins.insert(name, value);
+
+                // list/map operations may return multiple values for the same bin.
+                match bins.entry(name) {
+                    Vacant(entry) => {
+                        entry.insert(value);
+                    }
+                    Occupied(entry) => match *entry.into_mut() {
+                        Value::MultiValue(ref mut list) => list.push(value),
+                        ref mut prev => {
+                            *prev = Value::MultiValue(vec![prev.clone(), value]);
+                        }
+                    },
+                }
             }
 
             Some(Record::new(Some(key), bins, generation, expiration))

@@ -54,7 +54,7 @@ pub struct WritePolicy {
     /// example). This can sometimes make it difficult to determine the desired result offset in
     /// the returned bin's result list.
     ///
-    /// Setting RespondPerEachOp to true makes it easier to identify the desired result offset
+    /// Setting `respond_per_each_op` to true makes it easier to identify the desired result offset
     /// (result offset equals bin's operate sequence). This only makes sense when multiple list
     /// operations are used in one operate call and some of those operations do not return results
     /// by default.
