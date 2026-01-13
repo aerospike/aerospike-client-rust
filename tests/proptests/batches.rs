@@ -49,21 +49,17 @@ proptest_async::proptest! {
             if i % 2 == 0 {
                 let bins = [as_bin!("binName", expected_value.clone()),];
 
-                // SAFETY: This is just a test, not production code.
-                // Use of unwrap() here is OK; if something goes wrong, we
-                // WANT the Rust runtime to panic.
-
                 client.put(&write_policy, &key, &bins).await.expect("initial put should have succeeded");
 
                 // Make sure write went through using non-batch means.
 
                 let res = client.get(&ReadPolicy::default(), &key, Bins::All).await;
                 match res {
-                    Err(e) => panic!("{:?}", e),
+                    Err(e) => panic!("Unexpected Err after get-after-put: {:?}", e),
                     Ok(res) => {
                         if let Some(actual_value) = res.bins.get("binName") {
                             if expected_value != actual_value.as_string() {
-                                panic!("Manual Get: Value for bin 'binName' doesn't match; expected: {:?}, got: {:?}", expected_value, actual_value);
+                                panic!("get-after-put: Value for bin 'binName' doesn't match; expected: {:?}, got: {:?}", expected_value, actual_value);
                             }
                         }
                     }
