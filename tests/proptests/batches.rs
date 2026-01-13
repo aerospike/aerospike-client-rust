@@ -51,6 +51,8 @@ proptest_async::proptest! {
 
                 client.put(&write_policy, &key, &bins).await.expect("initial put should have succeeded");
 
+				std::thread::sleep(std::time::Duration::from_millis(500));
+
                 // Make sure write went through using non-batch means.
 
                 let res = client.get(&ReadPolicy::default(), &key, Bins::All).await;
