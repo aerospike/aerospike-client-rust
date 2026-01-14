@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 use crate::proptest::prelude::*;
 use crate::proptest_async;
@@ -198,11 +198,19 @@ proptest_async::proptest! {
                         client.put(&write_policy, &key, &bins).await.unwrap();
                     }
                     Value::OrderedMap(_) => {
+                        let mut hm: BTreeMap<Value, Value> = BTreeMap::new();
+                        hm.insert(1.into(), 2.into());
+                        hm.insert(2.into(), 4.into());
+
+                        let bins = [as_bin!(put.0.clone(), Value::OrderedMap(hm))];
+                        client.put(&write_policy, &key, &bins).await.unwrap();
+                    }
+                    Value::KeyValueList(_) => {
                         let mut om: Vec<(Value, Value)> = vec![];
                         om.push((1.into(), 2.into()));
                         om.push((2.into(), 4.into()));
 
-                        let bins = [as_bin!(put.0.clone(), Value::OrderedMap(om))];
+                        let bins = [as_bin!(put.0.clone(), Value::KeyValueList(om))];
                         client.put(&write_policy, &key, &bins).await.unwrap();
                     }
 
@@ -225,6 +233,7 @@ proptest_async::proptest! {
                     Value::Wildcard |
                     Value::MultiResult(_) |
                     Value::HashMap(_) => (), // not sure how to handle prepends for these types.
+                    Value::OrderedMap(_) => (), // not sure how to handle prepends for these types.
 
                     Value::String(_) => {
                         let bins = [as_bin!(prepend.0.clone(), STRING_DEFAULT)];
@@ -239,12 +248,12 @@ proptest_async::proptest! {
                         let bins = [as_bin!(prepend.0.clone(), Value::List(vec!["1".into(), "2".into(), "3".into()]))];
                         client.put(&write_policy, &key, &bins).await.unwrap();
                     }
-                    Value::OrderedMap(_) => {
+                    Value::KeyValueList(_) => {
                         let mut om: Vec<(Value, Value)> = vec![];
                         om.push((1.into(), 2.into()));
                         om.push((2.into(), 4.into()));
 
-                        let bins = [as_bin!(prepend.0.clone(), Value::OrderedMap(om))];
+                        let bins = [as_bin!(prepend.0.clone(), Value::KeyValueList(om))];
                         client.put(&write_policy, &key, &bins).await.unwrap();
                     }
                 }
@@ -388,7 +397,7 @@ fn confirm_prepends(bin: &(String, Value), prepends_to_bins: &Vec<(String, Value
                     }
                 }
                 Value::List(l) => {}
-                Value::OrderedMap(om) => {}
+                Value::KeyValueList(om) => {}
                 _ => (),
             }
         }

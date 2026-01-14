@@ -168,6 +168,7 @@ pub use expressions::regex_flag::RegexFlag;
 pub use key::Key;
 pub use net::Host;
 pub use net::ToHosts;
+pub use operations::{ListOrderType, ListPolicy, ListReturnType, ListSortFlags, ListWriteFlags};
 pub use operations::{MapPolicy, MapReturnType, MapWriteMode};
 pub use policy::{
     AdminPolicy, AuthMode, BatchPolicy, ClientPolicy, CommitLevel, Concurrency, ConsistencyLevel,

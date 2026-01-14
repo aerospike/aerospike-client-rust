@@ -56,12 +56,12 @@ pub fn clone_safely(v: &Value) -> Value {
             }
             Value::HashMap(new_map)
         }
-        Value::OrderedMap(v) => {
+        Value::KeyValueList(v) => {
             let mut new_map = vec![];
             for (key, value) in v {
                 new_map.push((clone_safely(key), clone_safely(value)));
             }
-            Value::OrderedMap(new_map)
+            Value::KeyValueList(new_map)
         }
         Value::List(l) => {
             let mut new_list = vec![];

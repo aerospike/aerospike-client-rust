@@ -13,7 +13,7 @@
 // License for the specific language governing permissions and limitations under
 // the License.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::num::Wrapping;
 use std::{i16, i32, i64, i8};
 
@@ -21,6 +21,7 @@ use crate::commands::buffer::Buffer;
 use crate::commands::ParticleType;
 use crate::operations::cdt::{CdtArgument, CdtOperation};
 use crate::operations::cdt_context::CdtContext;
+use crate::operations::maps::MapOrder;
 use crate::value::{FloatValue, Value};
 
 pub(crate) fn pack_value(buf: &mut Option<&mut Buffer>, val: &Value) -> usize {
@@ -37,8 +38,9 @@ pub(crate) fn pack_value(buf: &mut Option<&mut Buffer>, val: &Value) -> usize {
         Value::Blob(ref val) | Value::HLL(ref val) => pack_blob(buf, val),
         Value::List(ref val) => pack_array(buf, val),
         Value::HashMap(ref val) => pack_map(buf, val),
-        Value::MultiResult(_) => panic!("MultiValues are not supported in this encoder."),
-        Value::OrderedMap(_) => panic!("Ordered maps are not supported in this encoder."),
+        Value::OrderedMap(ref val) => pack_ordered_map(buf, val),
+        Value::MultiResult(_) => panic!("Multi results are not supported in this encoder."),
+        Value::KeyValueList(_) => panic!("KeyValue lists are not supported in this encoder."),
         Value::GeoJSON(ref val) => pack_geo_json(buf, val),
         Value::Infinity => pack_infinity(buf),
         Value::Wildcard => pack_wildcard(buf),
@@ -180,7 +182,22 @@ pub(crate) fn pack_array(buf: &mut Option<&mut Buffer>, values: &[Value]) -> usi
 pub(crate) fn pack_map(buf: &mut Option<&mut Buffer>, map: &HashMap<Value, Value>) -> usize {
     let mut size = 0;
 
-    size += pack_map_begin(buf, map.len());
+    size += pack_map_begin(buf, map.len(), MapOrder::Unordered);
+    for (key, val) in map.iter() {
+        size += pack_value(buf, key);
+        size += pack_value(buf, val);
+    }
+
+    size
+}
+
+pub(crate) fn pack_ordered_map(
+    buf: &mut Option<&mut Buffer>,
+    map: &BTreeMap<Value, Value>,
+) -> usize {
+    let mut size = 0;
+
+    size += pack_map_begin(buf, map.len(), MapOrder::KeyOrdered);
     for (key, val) in map.iter() {
         size += pack_value(buf, key);
         size += pack_value(buf, val);
@@ -230,6 +247,13 @@ pub(crate) fn pack_half_byte(buf: &mut Option<&mut Buffer>, value: u8) -> usize 
     1
 }
 
+pub(crate) fn pack_byte(buf: &mut Option<&mut Buffer>, value: u8) -> usize {
+    if let Some(ref mut buf) = *buf {
+        buf.write_u8(value);
+    }
+    1
+}
+
 pub(crate) fn pack_nil(buf: &mut Option<&mut Buffer>) -> usize {
     if let Some(ref mut buf) = *buf {
         buf.write_u8(MSGPACK_MARKER_NIL);
@@ -248,7 +272,26 @@ pub(crate) fn pack_bool(buf: &mut Option<&mut Buffer>, value: bool) -> usize {
     1
 }
 
-pub(crate) fn pack_map_begin(buf: &mut Option<&mut Buffer>, length: usize) -> usize {
+pub(crate) fn pack_map_begin(
+    buf: &mut Option<&mut Buffer>,
+    length: usize,
+    order: MapOrder,
+) -> usize {
+    match order {
+        MapOrder::Unordered => pack_map_header(buf, length),
+        MapOrder::KeyOrdered => {
+            let mut size = pack_map_header(buf, length + 1);
+            size += pack_byte(buf, 0xc7);
+            size += pack_byte(buf, 0);
+            size += pack_byte(buf, order as u8);
+            size += pack_byte(buf, 0xc0);
+            size
+        }
+        _ => unreachable!(),
+    }
+}
+
+pub(crate) fn pack_map_header(buf: &mut Option<&mut Buffer>, length: usize) -> usize {
     if length < 16 {
         pack_half_byte(buf, 0x80 | (length as u8))
     } else if length < 1 << 16 {

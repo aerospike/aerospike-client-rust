@@ -100,6 +100,16 @@ pub enum MapOrder {
     KeyValueOrdered = 3,
 }
 
+impl MapOrder {
+    pub(crate) const fn flag(&self) -> u8 {
+        match self {
+            MapOrder::Unordered => 0x40,
+            MapOrder::KeyOrdered => 0x80,
+            MapOrder::KeyValueOrdered => 0xc0,
+        }
+    }
+}
+
 /// Map return type. Type of data to return when selecting or removing items from the map.
 #[derive(Debug, Clone, Copy)]
 pub enum MapReturnType {
@@ -145,7 +155,7 @@ pub enum MapReturnType {
     /// Return key/value items. The possible return types are:
     ///
     /// * `Value::HashMap`: Returned for unordered maps
-    /// * `Value::OrderedMap`: Returned for range results where range order needs to be preserved.
+    /// * `Value::KeyValueList`: Returned for range results where range order needs to be preserved.
     KeyValue = 8,
 
     /// Returns true if count > 0.
@@ -250,19 +260,12 @@ pub(crate) const fn map_write_op(policy: &MapPolicy, multi: bool) -> CdtMapOpTyp
         }
     }
 }
+
 #[allow(clippy::trivially_copy_pass_by_ref)]
 const fn map_order_arg(policy: &MapPolicy) -> Option<CdtArgument<'_>> {
     match policy.write_mode {
         MapWriteMode::UpdateOnly => None,
         _ => Some(CdtArgument::Byte(policy.order as u8)),
-    }
-}
-
-pub(crate) const fn map_order_flag(order: MapOrder) -> u8 {
-    match order {
-        MapOrder::KeyOrdered => 0x80,
-        MapOrder::Unordered => 0x40,
-        MapOrder::KeyValueOrdered => 0xc0,
     }
 }
 

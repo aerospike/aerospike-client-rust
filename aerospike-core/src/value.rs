@@ -13,7 +13,8 @@
 // License for the specific language governing permissions and limitations under
 // the License.
 
-use std::collections::HashMap;
+use std::cmp::{Ordering, PartialOrd};
+use std::collections::{BTreeMap, HashMap};
 use std::convert::TryFrom;
 use std::fmt;
 use std::hash::{Hash, Hasher};
@@ -186,15 +187,20 @@ pub enum Value {
     MultiResult(Vec<Value>),
 
     /// Map data type is a collection of key-value pairs. Each key can only appear once in a
-    /// collection and is associated with a value. Map keys and values can be any supported data
+    /// collection and is associated with a value. Map values can be any supported data
     /// type.
     /// Map keys can only be of type String, Bytes, Integer, and that this will be enforced by the client and server.
     HashMap(HashMap<Value, Value>),
 
-    /// Map data type where the map entries are sorted based key ordering (K-ordered maps) and may
-    /// have an additional value-order index depending the namespace configuration (KV-ordered
-    /// maps).
-    OrderedMap(Vec<(Value, Value)>),
+    /// OrderedMap data type where the map entries are sorted based key ordering (K-ordered maps).
+    /// Each key can only appear once in a collection and is associated with a value.
+    /// Map values can be any supported data type.
+    /// Map keys can only be of type String, Bytes, Integer, and that this will be enforced by the client and server.
+    OrderedMap(BTreeMap<Value, Value>),
+
+    /// Result of any map operation in which the server returns a
+    /// map requested with [MapReturnType::KeyValue].
+    KeyValueList(Vec<(Value, Value)>),
 
     /// GeoJSON data type are JSON formatted strings to encode geo-spatial information.
     GeoJSON(String),
@@ -229,6 +235,7 @@ impl Hash for Value {
             Value::List(_) => panic!("Lists cannot be used as map keys."),
             Value::HashMap(_) => panic!("HashMaps cannot be used as map keys."),
             Value::OrderedMap(_) => panic!("OrderedMaps cannot be used as map keys."),
+            Value::KeyValueList(_) => panic!("OrderedMaps cannot be used as map keys."),
             Value::Infinity => panic!("Infinity cannot be used as map keys."),
             Value::Wildcard => panic!("Wildcard cannot be used as map keys."),
         }
@@ -259,6 +266,7 @@ impl Value {
             Value::List(_) => ParticleType::LIST,
             Value::HashMap(_) => ParticleType::MAP,
             Value::OrderedMap(_) => ParticleType::MAP,
+            Value::KeyValueList(_) => ParticleType::MAP,
             Value::GeoJSON(_) => ParticleType::GEOJSON,
             Value::HLL(_) => ParticleType::HLL,
             Value::Infinity => unreachable!(),
@@ -280,6 +288,7 @@ impl Value {
             Value::List(ref val) => format!("{:?}", val),
             Value::HashMap(ref val) => format!("{:?}", val),
             Value::OrderedMap(ref val) => format!("{:?}", val),
+            Value::KeyValueList(ref val) => format!("{:?}", val),
             Value::Infinity => "INF".into(),
             Value::Wildcard => "*".into(),
         }
@@ -301,8 +310,12 @@ impl Value {
             Value::MultiResult(_) => {
                 panic!("MultiValues are only returned as results from the server and never from the client.")
             }
-            Value::List(_) | Value::HashMap(_) => encoder::pack_value(&mut None, self),
-            Value::OrderedMap(_) => panic!("The library never passes ordered maps to the server."),
+            Value::List(_) | Value::HashMap(_) | Value::OrderedMap(_) => {
+                encoder::pack_value(&mut None, self)
+            }
+            Value::KeyValueList(_) => {
+                panic!("The library never passes ordered maps to the server.")
+            }
             Value::GeoJSON(ref s) => 1 + 2 + s.len(), // flags + ncells + jsonstr
             Value::HLL(ref h) => h.len(),
             Value::Infinity => 0,
@@ -327,8 +340,12 @@ impl Value {
             Value::MultiResult(_) => {
                 panic!("MultiValues are only returned as results from the server and never from the client.")
             }
-            Value::List(_) | Value::HashMap(_) => encoder::pack_value(&mut Some(buf), self),
-            Value::OrderedMap(_) => panic!("The library never passes ordered maps to the server."),
+            Value::List(_) | Value::HashMap(_) | Value::OrderedMap(_) => {
+                encoder::pack_value(&mut Some(buf), self)
+            }
+            Value::KeyValueList(_) => {
+                panic!("The library never passes ordered maps to the server.")
+            }
             Value::GeoJSON(ref val) => buf.write_geo(val),
             Value::Infinity => encoder::pack_infinity(&mut Some(buf)),
             Value::Wildcard => encoder::pack_wildcard(&mut Some(buf)),
@@ -354,6 +371,110 @@ impl Value {
                 Ok(())
             }
             _ => panic!("Data type is not supported as Key value."),
+        }
+    }
+
+    /// Order for Value types.
+    pub(crate) fn value_type_order(&self) -> u8 {
+        match self {
+            Value::Nil => 0,
+            Value::Bool(_) => 1,
+            Value::Int(_) => 2,
+            Value::UInt(_) => 3,
+            Value::String(_) => 4,
+            Value::List(_) => 5,
+            Value::HashMap(_) => 6,
+            Value::OrderedMap(_) => 7,
+            Value::Blob(_) => 8,
+            Value::HLL(_) => 9,
+            Value::Float(_) => 10,
+            Value::GeoJSON(_) => 11,
+            // Just here for completion's sake
+            Value::Infinity => 12,
+            Value::Wildcard => 13,
+            Value::MultiResult(_) => 14,
+            Value::KeyValueList(_) => 15,
+        }
+    }
+}
+
+impl Ord for Value {
+    fn cmp(&self, other: &Self) -> Ordering {
+        match self.value_type_order().cmp(&other.value_type_order()) {
+            Ordering::Equal => {
+                // Same type, compare by value
+                match (self, other) {
+                    (Value::Int(a_val), Value::Int(b_val)) => a_val.cmp(b_val),
+                    (Value::UInt(a_val), Value::UInt(b_val)) => a_val.cmp(b_val),
+                    (Value::String(a_val), Value::String(b_val)) => a_val.cmp(b_val),
+                    (Value::GeoJSON(a_val), Value::GeoJSON(b_val)) => a_val.cmp(b_val),
+                    (Value::HLL(a_val), Value::HLL(b_val)) => a_val.cmp(b_val),
+                    (Value::Blob(a_val), Value::Blob(b_val)) => a_val.cmp(b_val),
+                    (Value::Bool(a_val), Value::Bool(b_val)) => a_val.cmp(b_val),
+                    (Value::HashMap(ref a_val), Value::HashMap(ref b_val)) => {
+                        a_val.len().cmp(&b_val.len())
+                    }
+                    (Value::OrderedMap(ref a_val), Value::OrderedMap(ref b_val)) => {
+                        a_val.len().cmp(&b_val.len())
+                    }
+                    (Value::KeyValueList(ref a_val), Value::KeyValueList(ref b_val)) => {
+                        a_val.len().cmp(&b_val.len())
+                    }
+                    (Value::Float(a_val), Value::Float(b_val)) => {
+                        // Compare float bits for deterministic ordering
+                        let a_bits = match a_val {
+                            FloatValue::F32(bits) => u64::from(*bits),
+                            FloatValue::F64(bits) => *bits,
+                        };
+
+                        let b_bits = match b_val {
+                            FloatValue::F32(bits) => u64::from(*bits),
+                            FloatValue::F64(bits) => *bits,
+                        };
+
+                        a_bits.cmp(&b_bits)
+                    }
+                    _ => Ordering::Greater,
+                }
+            }
+
+            ord => ord,
+        }
+    }
+}
+
+impl PartialOrd for Value {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        match self.value_type_order().cmp(&other.value_type_order()) {
+            Ordering::Equal => {
+                // Same type, compare by value
+                match (self, other) {
+                    (Value::Int(a_val), Value::Int(b_val)) => Some(a_val.cmp(b_val)),
+                    (Value::UInt(a_val), Value::UInt(b_val)) => Some(a_val.cmp(b_val)),
+                    (Value::String(a_val), Value::String(b_val)) => Some(a_val.cmp(b_val)),
+                    (Value::GeoJSON(a_val), Value::GeoJSON(b_val)) => Some(a_val.cmp(b_val)),
+                    (Value::HLL(a_val), Value::HLL(b_val)) => Some(a_val.cmp(b_val)),
+                    (Value::Blob(a_val), Value::Blob(b_val)) => Some(a_val.cmp(b_val)),
+                    (Value::Bool(a_val), Value::Bool(b_val)) => Some(a_val.cmp(b_val)),
+                    (Value::Float(a_val), Value::Float(b_val)) => {
+                        // Compare float bits for deterministic ordering
+                        let a_bits = match a_val {
+                            FloatValue::F32(bits) => u64::from(*bits),
+                            FloatValue::F64(bits) => *bits,
+                        };
+
+                        let b_bits = match b_val {
+                            FloatValue::F32(bits) => u64::from(*bits),
+                            FloatValue::F64(bits) => *bits,
+                        };
+
+                        Some(a_bits.cmp(&b_bits))
+                    }
+                    _ => None,
+                }
+            }
+
+            ord => Some(ord),
         }
     }
 }
@@ -659,7 +780,7 @@ impl TryFrom<Value> for Vec<(Value, Value)> {
     type Error = String;
     fn try_from(val: Value) -> std::result::Result<Self, Self::Error> {
         match val {
-            Value::OrderedMap(v) => Ok(v),
+            Value::KeyValueList(v) => Ok(v),
             _ => {
                 return Err(format!(
                     "Invalid type conversion from Value::{} to {}",
@@ -855,6 +976,36 @@ macro_rules! as_map {
     };
 }
 
+/// Constructs an Ordered Map Value from a list of key/value pairs.
+///
+/// # Examples
+///
+/// Write a map value to a record bin.
+///
+/// ```rust,edition2018
+/// # use aerospike::*;
+/// # async fn main() {
+/// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap();
+/// # let client = Client::new(&ClientPolicy::default(), &hosts).await.unwrap();
+/// # let key = as_key!("test", "test", "mykey");
+/// let map = as_ord_map!("a" => 1, "b" => 2);
+/// let bin = as_bin!("map", map);
+/// client.put(&WritePolicy::default(), &key, &vec![bin]).await.unwrap();
+/// # }
+/// ```
+#[macro_export]
+macro_rules! as_ord_map {
+    ( $( $k:expr => $v:expr),* ) => {
+        {
+            let mut temp_map = std::collections::BTreeMap::new();
+            $(
+                temp_map.insert(as_val!($k), as_val!($v));
+            )*
+            $crate::Value::OrderedMap(temp_map)
+        }
+    };
+}
+
 #[cfg(feature = "serialization")]
 impl Serialize for Value {
     fn serialize<S>(
@@ -896,6 +1047,13 @@ impl Serialize for Value {
                 }
                 map.end()
             }
+            Value::KeyValueList(m) => {
+                let mut map = serializer.serialize_map(Some(m.len()))?;
+                for (key, value) in m {
+                    map.serialize_entry(&key, &value)?;
+                }
+                map.end()
+            }
             Value::Infinity => panic!("Infinity cannot be serialized"),
             Value::Wildcard => panic!("Wildcard cannot be serialized"),
             Value::MultiResult(_) => panic!("MultiValue cannot be serialized"),
@@ -921,7 +1079,7 @@ mod tests {
         let _: Vec<u8> = Value::HLL("hello!".into()).try_into().unwrap();
         let _: bool = Value::Bool(false).try_into().unwrap();
         let _: HashMap<Value, Value> = Value::HashMap(HashMap::new()).try_into().unwrap();
-        let _: Vec<(Value, Value)> = Value::OrderedMap(Vec::new()).try_into().unwrap();
+        let _: Vec<(Value, Value)> = Value::KeyValueList(Vec::new()).try_into().unwrap();
     }
 
     #[test]

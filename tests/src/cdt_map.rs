@@ -20,8 +20,8 @@ use crate::common;
 use aerospike::operations::cdt_context::{ctx_map_key, ctx_map_key_create};
 use aerospike::operations::{maps, MapOrder};
 use aerospike::{
-    as_bin, as_key, as_list, as_map, as_val, as_values, Bins, MapPolicy, MapReturnType, ReadPolicy,
-    Value, WritePolicy,
+    as_bin, as_key, as_list, as_map, as_ord_map, as_val, as_values, Bins, MapPolicy, MapReturnType,
+    ReadPolicy, Value, WritePolicy,
 };
 
 #[aerospike_macro::test]
@@ -104,6 +104,19 @@ async fn map_operations() {
     // map_clear returns no result
     assert!(rec.bins.get(bin_name).is_none());
 
+    // ---------------------------------------------------------------------------------
+
+    client.delete(&wpolicy, &key).await.unwrap();
+
+    let val = as_ord_map!("a" => 1, "b" => 2, "c" => 3, "d" => 4, "e" => 5);
+    let bin_name = "bin";
+    let bin = as_bin!(bin_name, val);
+    let bins = vec![bin];
+
+    client.put(&wpolicy, &key, &bins.as_slice()).await.unwrap();
+
+    // ---------------------------------------------------------------------------------
+
     client.delete(&wpolicy, &key).await.unwrap();
 
     let val = as_map!("a" => 1, "b" => 2, "c" => 3, "d" => 4, "e" => 5);
@@ -112,6 +125,21 @@ async fn map_operations() {
     let bins = vec![bin];
 
     client.put(&wpolicy, &key, &bins.as_slice()).await.unwrap();
+
+    let op = maps::get_by_index(bin_name, 0, MapReturnType::UnorderedMap);
+    let rec = client.operate(&wpolicy, &key, &[op]).await.unwrap();
+    assert_eq!(*rec.bins.get(bin_name).unwrap(), as_map!("a" => 1));
+
+    let op = maps::get_by_index(bin_name, 0, MapReturnType::OrderedMap);
+    let rec = client.operate(&wpolicy, &key, &[op]).await.unwrap();
+    assert_eq!(*rec.bins.get(bin_name).unwrap(), as_ord_map!("a" => 1));
+
+    let op = maps::get_by_index(bin_name, 0, MapReturnType::KeyValue);
+    let rec = client.operate(&wpolicy, &key, &[op]).await.unwrap();
+    assert_eq!(
+        *rec.bins.get(bin_name).unwrap(),
+        Value::KeyValueList(vec![(as_val!("a"), as_val!(1))])
+    );
 
     let op = maps::get_by_index(bin_name, 0, MapReturnType::Value);
     let rec = client.operate(&wpolicy, &key, &[op]).await.unwrap();

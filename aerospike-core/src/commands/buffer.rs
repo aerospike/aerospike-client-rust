@@ -1504,6 +1504,10 @@ impl Buffer {
         self.data_buffer[self.data_offset]
     }
 
+    pub(crate) fn peek_n(&self, n: usize) -> u8 {
+        self.data_buffer[self.data_offset + n]
+    }
+
     #[allow(clippy::option_if_let_else)]
     pub(crate) fn read_u8(&mut self, pos: Option<usize>) -> u8 {
         if let Some(pos) = pos {
