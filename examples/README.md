@@ -9,6 +9,22 @@ This directory includes several Rust examples that demonstrate how to use the Ae
 * `query`
 * `timeout_configuration`
 
+## Configuration
+
+The examples connect to Aerospike using the `AEROSPIKE_HOSTS` environment variable.
+
+If the variable is not set, the examples default to:
+
+```
+127.0.0.1:3100
+```
+
+You can override this by setting the environment variable before running an example:
+
+```bash
+export AEROSPIKE_HOSTS="127.0.0.1:3100"
+```
+
 ## How to Run
 
 From the root of the project, use Cargo to run an example by name:
