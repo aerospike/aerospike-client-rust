@@ -157,13 +157,6 @@ proptest_async::proptest! {
                         client.put(&write_policy, &key, &bins).await.unwrap();
                     }
                     Value::Int(_) |
-                    Value::UInt(_) => {
-                        // Server does not support a distinct unsigned integer
-                        // type.  So, we need to convert the value into a
-                        // (signed) integer bit-for-bit.
-                        let bins = [as_bin!(put.0.clone(), 12345i64)];
-                        client.put(&write_policy, &key, &bins).await.unwrap();
-                    }
                     Value::Infinity |
                     Value::Float(FloatValue::F32(_)) => {
                         let bins = [as_bin!(put.0.clone(), 12345.0f32)];
@@ -224,7 +217,6 @@ proptest_async::proptest! {
                     Value::Nil |
                     Value::Bool(_) |
                     Value::Int(_) |
-                    Value::UInt(_) |
                     Value::Infinity |
                     Value::Float(FloatValue::F32(_)) |
                     Value::Float(FloatValue::F64(_)) |

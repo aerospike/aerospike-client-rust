@@ -28,7 +28,6 @@ pub(crate) fn pack_value(buf: &mut Option<&mut Buffer>, val: &Value) -> usize {
     match *val {
         Value::Nil => pack_nil(buf),
         Value::Int(ref val) => pack_integer(buf, *val),
-        Value::UInt(ref val) => pack_u64(buf, *val),
         Value::Bool(ref val) => pack_bool(buf, *val),
         Value::String(ref val) => pack_string(buf, val),
         Value::Float(ref val) => match *val {

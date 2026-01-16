@@ -41,13 +41,6 @@ use std::collections::HashMap;
 /// understand its performance impacts.
 pub fn clone_safely(v: &Value) -> Value {
     match v {
-        // Servers store integers as signed quantities at all times.
-        // Sending requests with Ints can sometimes yield responses with
-        // UInts, however.  For the sake of testing, this prevents us from
-        // simply comparing Value trees using == or != operators.  This
-        // mapping restores our ability to do this.
-        Value::UInt(val) => Value::Int(*val as i64),
-
         // We need to recurse into maps and lists.
         Value::HashMap(m) => {
             let mut new_map = HashMap::new();

@@ -155,18 +155,6 @@ pub enum Value {
     /// Integer value. All integers are represented as 64-bit numerics in Aerospike.
     Int(i64),
 
-    /// Unsigned integer value. The largest integer value that can be stored in a record bin is
-    /// `i64::max_value()`; however the list and map data types can store integer values (and keys)
-    /// up to `u64::max_value()`.
-    /// This client will only return values > i64::MAX as `UInt`. If you put a smaller value as Uint,
-    /// it will return as `Int`.
-    ///
-    /// # Panics
-    ///
-    /// Attempting to store an `u64` value as a record bin value will cause a panic. Use casting to
-    /// store and retrieve `u64` values.
-    UInt(u64),
-
     /// Floating point value. All floating point values are stored in 64-bit IEEE-754 format in
     /// Aerospike. Aerospike server v3.6.0 and later support double data type.
     Float(FloatValue),
@@ -225,7 +213,6 @@ impl Hash for Value {
             }
             Value::Bool(_) => panic!("Booleans cannot be used as map keys."),
             Value::Int(ref val) => val.hash(state),
-            Value::UInt(ref val) => val.hash(state),
             Value::Float(_) => panic!("Floats cannot be used as map keys."),
             Value::String(ref val) => val.hash(state),
             Value::GeoJSON(_) => panic!("GeoJson cannot be used as map keys."),
@@ -254,10 +241,6 @@ impl Value {
         match *self {
             Value::Nil => ParticleType::NULL,
             Value::Int(_) => ParticleType::INTEGER,
-            Value::UInt(_) => panic!(
-                "Aerospike does not support u64 natively on server-side. Use casting to \
-                 store and retrieve u64 values."
-            ),
             Value::Float(_) => ParticleType::FLOAT,
             Value::String(_) => ParticleType::STRING,
             Value::Blob(_) => ParticleType::BLOB,
@@ -279,7 +262,6 @@ impl Value {
         match *self {
             Value::Nil => "<null>".to_string(),
             Value::Int(ref val) => val.to_string(),
-            Value::UInt(ref val) => val.to_string(),
             Value::Bool(ref val) => val.to_string(),
             Value::Float(ref val) => val.to_string(),
             Value::String(ref val) | Value::GeoJSON(ref val) => val.to_string(),
@@ -300,10 +282,6 @@ impl Value {
         match *self {
             Value::Nil => 0,
             Value::Int(_) | Value::Float(_) => 8,
-            Value::UInt(_) => panic!(
-                "Aerospike does not support u64 natively on server-side. Use casting to \
-                 store and retrieve u64 values."
-            ),
             Value::String(ref s) => s.len(),
             Value::Blob(ref b) => b.len(),
             Value::Bool(_) => 1,
@@ -329,10 +307,6 @@ impl Value {
         match *self {
             Value::Nil => 0,
             Value::Int(ref val) => buf.write_i64(*val),
-            Value::UInt(_) => panic!(
-                "Aerospike does not support u64 natively on server-side. Use casting to \
-                 store and retrieve u64 values."
-            ),
             Value::Bool(ref val) => buf.write_bool(*val),
             Value::Float(ref val) => buf.write_f64(f64::from(val)),
             Value::String(ref val) => buf.write_str(val),
@@ -380,20 +354,19 @@ impl Value {
             Value::Nil => 0,
             Value::Bool(_) => 1,
             Value::Int(_) => 2,
-            Value::UInt(_) => 3,
-            Value::String(_) => 4,
-            Value::List(_) => 5,
-            Value::HashMap(_) => 6,
-            Value::OrderedMap(_) => 7,
-            Value::Blob(_) => 8,
-            Value::HLL(_) => 9,
-            Value::Float(_) => 10,
-            Value::GeoJSON(_) => 11,
+            Value::String(_) => 3,
+            Value::List(_) => 4,
+            Value::HashMap(_) => 5,
+            Value::OrderedMap(_) => 6,
+            Value::Blob(_) => 7,
+            Value::HLL(_) => 8,
+            Value::Float(_) => 9,
+            Value::GeoJSON(_) => 10,
             // Just here for completion's sake
-            Value::Infinity => 12,
-            Value::Wildcard => 13,
-            Value::MultiResult(_) => 14,
-            Value::KeyValueList(_) => 15,
+            Value::Infinity => 11,
+            Value::Wildcard => 12,
+            Value::MultiResult(_) => 13,
+            Value::KeyValueList(_) => 14,
         }
     }
 }
@@ -405,7 +378,6 @@ impl Ord for Value {
                 // Same type, compare by value
                 match (self, other) {
                     (Value::Int(a_val), Value::Int(b_val)) => a_val.cmp(b_val),
-                    (Value::UInt(a_val), Value::UInt(b_val)) => a_val.cmp(b_val),
                     (Value::String(a_val), Value::String(b_val)) => a_val.cmp(b_val),
                     (Value::GeoJSON(a_val), Value::GeoJSON(b_val)) => a_val.cmp(b_val),
                     (Value::HLL(a_val), Value::HLL(b_val)) => a_val.cmp(b_val),
@@ -450,7 +422,6 @@ impl PartialOrd for Value {
                 // Same type, compare by value
                 match (self, other) {
                     (Value::Int(a_val), Value::Int(b_val)) => Some(a_val.cmp(b_val)),
-                    (Value::UInt(a_val), Value::UInt(b_val)) => Some(a_val.cmp(b_val)),
                     (Value::String(a_val), Value::String(b_val)) => Some(a_val.cmp(b_val)),
                     (Value::GeoJSON(a_val), Value::GeoJSON(b_val)) => Some(a_val.cmp(b_val)),
                     (Value::HLL(a_val), Value::HLL(b_val)) => Some(a_val.cmp(b_val)),
@@ -613,7 +584,7 @@ impl From<i64> for Value {
 
 impl From<u64> for Value {
     fn from(val: u64) -> Value {
-        Value::UInt(val)
+        Value::Int(val as i64)
     }
 }
 
@@ -625,7 +596,7 @@ impl From<isize> for Value {
 
 impl From<usize> for Value {
     fn from(val: usize) -> Value {
-        Value::UInt(val as u64)
+        Value::Int(val as i64)
     }
 }
 
@@ -673,7 +644,7 @@ impl<'a> From<&'a i64> for Value {
 
 impl<'a> From<&'a u64> for Value {
     fn from(val: &'a u64) -> Value {
-        Value::UInt(*val)
+        Value::Int(*val as i64)
     }
 }
 
@@ -685,7 +656,7 @@ impl<'a> From<&'a isize> for Value {
 
 impl<'a> From<&'a usize> for Value {
     fn from(val: &'a usize) -> Value {
-        Value::UInt(*val as u64)
+        Value::Int(*val as i64)
     }
 }
 
@@ -699,7 +670,6 @@ impl From<Value> for i64 {
     fn from(val: Value) -> i64 {
         match val {
             Value::Int(val) => val,
-            Value::UInt(val) => val as i64,
             _ => panic!("Value is not an integer to convert."),
         }
     }
@@ -709,7 +679,6 @@ impl<'a> From<&'a Value> for i64 {
     fn from(val: &'a Value) -> i64 {
         match *val {
             Value::Int(val) => val,
-            Value::UInt(val) => val as i64,
             _ => panic!("Value is not an integer to convert."),
         }
     }
@@ -1041,7 +1010,6 @@ impl Serialize for Value {
             Value::Nil => serializer.serialize_none(),
             Value::Bool(b) => serializer.serialize_bool(*b),
             Value::Int(i) => serializer.serialize_i64(*i),
-            Value::UInt(u) => serializer.serialize_u64(*u),
             Value::Float(f) => match f {
                 FloatValue::F32(u) => serializer.serialize_f32(f32::from_bits(*u)),
                 FloatValue::F64(u) => serializer.serialize_f64(f64::from_bits(*u)),

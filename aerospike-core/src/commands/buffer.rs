@@ -1595,11 +1595,7 @@ impl Buffer {
             res
         };
 
-        if val > i64::MAX as u64 {
-            Value::UInt(val)
-        } else {
-            Value::Int(val as i64)
-        }
+        Value::Int(val as i64)
     }
 
     #[allow(clippy::option_if_let_else)]
