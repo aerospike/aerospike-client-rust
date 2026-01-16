@@ -98,6 +98,7 @@ pub(crate) fn pack_cdt_op(
                 CdtArgument::Value(value) => pack_value(buf, value),
                 CdtArgument::List(list) => pack_array(buf, list),
                 CdtArgument::Map(map) => pack_map(buf, map),
+                CdtArgument::OrderedMap(map) => pack_ordered_map(buf, map),
                 CdtArgument::Bool(bool_val) => pack_value(buf, &Value::from(bool_val)),
             }
         }
@@ -122,6 +123,7 @@ pub(crate) fn pack_hll_op(
                 CdtArgument::Value(value) => pack_value(buf, value),
                 CdtArgument::List(list) => pack_array(buf, list),
                 CdtArgument::Map(map) => pack_map(buf, map),
+                CdtArgument::OrderedMap(map) => pack_ordered_map(buf, map),
                 CdtArgument::Bool(bool_val) => pack_value(buf, &Value::from(bool_val)),
             }
         }
@@ -161,6 +163,7 @@ pub(crate) fn pack_cdt_bit_op(
                 CdtArgument::Value(value) => pack_value(buf, value),
                 CdtArgument::List(list) => pack_array(buf, list),
                 CdtArgument::Map(map) => pack_map(buf, map),
+                CdtArgument::OrderedMap(map) => pack_ordered_map(buf, map),
                 CdtArgument::Bool(bool_val) => pack_value(buf, &Value::from(bool_val)),
             }
         }

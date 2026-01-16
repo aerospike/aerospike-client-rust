@@ -29,6 +29,7 @@ pub(crate) enum CtxType {
     MapKey = 0x22,
     MapValue = 0x23,
 }
+
 /// `CdtContext` defines Nested CDT context. Identifies the location of nested list/map to apply the operation.
 /// for the current level.
 /// An array of CTX identifies location of the list/map on multiple

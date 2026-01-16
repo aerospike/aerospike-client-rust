@@ -46,8 +46,8 @@ use crate::msgpack::encoder::pack_cdt_op;
 use crate::operations::cdt::{CdtArgument, CdtOperation};
 use crate::operations::cdt_context::DEFAULT_CTX;
 use crate::operations::{Operation, OperationBin, OperationData, OperationType};
+use crate::value::MapLike;
 use crate::Value;
-use std::collections::HashMap;
 
 #[derive(Debug, Clone, Copy)]
 pub(crate) enum CdtMapOpType {
@@ -324,12 +324,17 @@ pub fn put<'a>(
 /// The required map policy dictates the type of map to create when it does not exist. The map
 /// policy also specifies the mode used when writing items to the map.
 #[allow(clippy::implicit_hasher)]
-pub fn put_items<'a>(
+pub fn put_items<'a, M: MapLike<Value, Value>>(
     policy: &'a MapPolicy,
     bin: &'a str,
-    items: &'a HashMap<Value, Value>,
+    items: &'a M,
 ) -> Operation<'a> {
-    let mut args = vec![CdtArgument::Map(items)];
+    let items = match items.value_as_ref() {
+        (Some(hm), None) => CdtArgument::Map(hm),
+        (None, Some(btm)) => CdtArgument::OrderedMap(btm),
+        _ => unreachable!(),
+    };
+    let mut args = vec![items];
     if let Some(arg) = map_order_arg(policy) {
         args.push(arg);
     }

@@ -13,7 +13,7 @@
 // License for the specific language governing permissions and limitations under
 // the License.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::fmt;
 use std::sync::Arc;
 
@@ -30,6 +30,7 @@ pub(crate) enum CdtArgument<'a> {
     Value(&'a Value),
     List(&'a [Value]),
     Map(&'a HashMap<Value, Value>),
+    OrderedMap(&'a BTreeMap<Value, Value>),
 }
 
 pub type OperationEncoder = Arc<

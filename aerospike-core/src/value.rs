@@ -509,6 +509,12 @@ impl From<HashMap<Value, Value>> for Value {
     }
 }
 
+impl From<BTreeMap<Value, Value>> for Value {
+    fn from(val: BTreeMap<Value, Value>) -> Value {
+        Value::OrderedMap(val)
+    }
+}
+
 impl From<f32> for Value {
     fn from(val: f32) -> Value {
         Value::Float(FloatValue::from(val))
@@ -765,6 +771,22 @@ impl TryFrom<Value> for HashMap<Value, Value> {
     fn try_from(val: Value) -> std::result::Result<Self, Self::Error> {
         match val {
             Value::HashMap(v) => Ok(v),
+            _ => {
+                return Err(format!(
+                    "Invalid type conversion from Value::{} to {}",
+                    val.particle_type(),
+                    std::any::type_name::<Self>()
+                ))
+            }
+        }
+    }
+}
+
+impl TryFrom<Value> for BTreeMap<Value, Value> {
+    type Error = String;
+    fn try_from(val: Value) -> std::result::Result<Self, Self::Error> {
+        match val {
+            Value::OrderedMap(v) => Ok(v),
             _ => {
                 return Err(format!(
                     "Invalid type conversion from Value::{} to {}",
@@ -1061,10 +1083,36 @@ impl Serialize for Value {
     }
 }
 
+/// Allows either a HashMap or BTreeMap to be passed as arguments to certain methods.
+pub trait MapLike<K: Eq, V> {
+    fn value(self) -> (Option<HashMap<K, V>>, Option<BTreeMap<K, V>>);
+    fn value_as_ref(&self) -> (Option<&HashMap<K, V>>, Option<&BTreeMap<K, V>>);
+}
+
+impl<K: Eq + Ord, V> MapLike<K, V> for BTreeMap<K, V> {
+    fn value(self) -> (Option<HashMap<K, V>>, Option<BTreeMap<K, V>>) {
+        (None, Some(self))
+    }
+
+    fn value_as_ref(&self) -> (Option<&HashMap<K, V>>, Option<&BTreeMap<K, V>>) {
+        (None, Some(self))
+    }
+}
+
+impl<K: Eq + Hash, V> MapLike<K, V> for HashMap<K, V> {
+    fn value(self) -> (Option<HashMap<K, V>>, Option<BTreeMap<K, V>>) {
+        (Some(self), None)
+    }
+
+    fn value_as_ref(&self) -> (Option<&HashMap<K, V>>, Option<&BTreeMap<K, V>>) {
+        (Some(self), None)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::Value;
-    use std::collections::HashMap;
+    use std::collections::{BTreeMap, HashMap};
     use std::convert::TryInto;
 
     #[test]
@@ -1079,6 +1127,7 @@ mod tests {
         let _: Vec<u8> = Value::HLL("hello!".into()).try_into().unwrap();
         let _: bool = Value::Bool(false).try_into().unwrap();
         let _: HashMap<Value, Value> = Value::HashMap(HashMap::new()).try_into().unwrap();
+        let _: BTreeMap<Value, Value> = Value::OrderedMap(BTreeMap::new()).try_into().unwrap();
         let _: Vec<(Value, Value)> = Value::KeyValueList(Vec::new()).try_into().unwrap();
     }
 

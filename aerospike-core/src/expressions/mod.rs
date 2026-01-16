@@ -23,8 +23,8 @@ pub mod regex_flag;
 use crate::commands::buffer::Buffer;
 use crate::msgpack::encoder::{pack_array_begin, pack_integer, pack_raw_string, pack_value};
 use crate::operations::cdt_context::CdtContext;
+use crate::value::MapLike;
 use crate::{ParticleType, Value};
-use std::collections::HashMap;
 use std::fmt::Debug;
 
 /// Expression Data Types for usage in some `FilterExpressions` on for example Map and List
@@ -732,8 +732,13 @@ pub fn list_val(val: Vec<Value>) -> Expression {
 
 /// Create Map bin Value
 #[allow(clippy::implicit_hasher)]
-pub fn map_val(val: HashMap<Value, Value>) -> Expression {
-    Expression::new(None, Some(Value::from(val)), None, None, None, None)
+pub fn map_val<M: MapLike<Value, Value>>(val: M) -> Expression {
+    let val = match val.value() {
+        (Some(m), None) => Value::HashMap(m),
+        (None, Some(m)) => Value::OrderedMap(m),
+        _ => unreachable!(),
+    };
+    Expression::new(None, Some(val), None, None, None, None)
 }
 
 /// Create geospatial json string value.
