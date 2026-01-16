@@ -36,9 +36,7 @@ use crate::expressions::Expression;
 use crate::msgpack::encoder::pack_ctx_for_index;
 use crate::net::ToHosts;
 use crate::operations::{CdtContext, Operation, OperationType};
-use crate::policy::{
-    AdminPolicy, BatchPolicy, ClientPolicy, QueryPolicy, ReadPolicy, ScanPolicy, WritePolicy,
-};
+use crate::policy::{AdminPolicy, BatchPolicy, ClientPolicy, QueryPolicy, ReadPolicy, WritePolicy};
 use crate::query::{PartitionFilter, PartitionTracker};
 use crate::task::{DropIndexTask, IndexTask, RegisterTask, UdfRemoveTask};
 use crate::Version;
@@ -648,212 +646,6 @@ impl Client {
         Err(Error::UdfBadResponse("Invalid UDF return value".into()))
     }
 
-    /// Read all records in the specified namespace and set and return a record iterator. The scan
-    /// executor puts records on a queue in separate threads. The calling thread concurrently pops
-    /// records off the queue through the record iterator. Up to `policy.max_concurrent_nodes`
-    /// nodes are scanned in parallel. If concurrent nodes is set to zero, the server nodes are
-    /// read in series.
-    ///
-    /// # Examples
-    ///
-    /// ```rust,edition2018
-    /// # extern crate aerospike;
-    /// # use aerospike::*;
-    ///
-    /// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap();
-    /// # let client = Client::new(&ClientPolicy::default(), &hosts).wait.unwrap();
-    /// let sp = ScanPolicy::default();
-    /// sp.max_records = 1000;
-    ///
-    /// let pf = PartitionFilter::all();
-    /// while !pf.done() {
-    ///     let rs = client.scan(&sp, pf, "test", "demo", Bins::All).await;
-    ///     match rs {
-    ///         Ok(records) => {
-    ///             let mut count = 0;
-    ///             for record in &*records {
-    ///                 match record {
-    ///                     Ok(record) => count += 1,
-    ///                     Err(err) => panic!("Error executing scan: {}", err),
-    ///                 }
-    ///             }
-    ///             println!("Records: {}", count);
-    ///         },
-    ///         Err(err) => println!("Failed to execute scan: {}", err),
-    ///     }
-    ///     pf = recordset.partition_filter();
-    /// }
-    /// ```
-    ///
-    /// # Panics
-    /// Panics if the async block fails
-    pub async fn scan<T>(
-        &self,
-        policy: &ScanPolicy,
-        partition_filter: PartitionFilter,
-        namespace: &str,
-        set_name: &str,
-        bins: T,
-    ) -> Result<Arc<Recordset>>
-    where
-        T: Into<Bins> + Send + Sync + 'static,
-    {
-        let bins = bins.into();
-        let nodes: Vec<Arc<Node>> = self.cluster.nodes().await;
-
-        let t_policy = policy.clone();
-        let namespace = namespace.to_owned();
-        let set_name = set_name.to_owned();
-
-        let tracker = Arc::new(Mutex::new(
-            PartitionTracker::new(&t_policy, Arc::new(Mutex::new(partition_filter)), nodes).await?,
-        ));
-
-        let recordset = Arc::new(Recordset::new(
-            policy.record_queue_size,
-            usize::MAX, // will be set again later
-            tracker.clone(),
-        ));
-        let t_recordset = recordset.clone();
-        let defer_recordset = recordset.clone();
-        let cluster = self.cluster.clone();
-        aerospike_rt::spawn(async move {
-            Self::execute_scan(
-                cluster,
-                &t_policy,
-                tracker.clone(),
-                namespace,
-                set_name,
-                t_recordset,
-                bins,
-            )
-            .await;
-            defer_recordset.signal_end();
-        });
-
-        Ok(recordset)
-    }
-
-    async fn execute_scan<T>(
-        cluster: Arc<Cluster>,
-        policy: &ScanPolicy,
-        tracker: Arc<Mutex<PartitionTracker>>,
-        namespace: String,
-        set_name: String,
-        recordset: Arc<Recordset>,
-        bins: T,
-    ) where
-        T: Into<Bins> + Send + Sync + 'static,
-    {
-        // defer recordset.signalEnd()
-
-        let bins = bins.into();
-        loop {
-            let mut timed_out = false;
-            {
-                let mut tracker_locked = tracker.lock().await;
-                match tracker_locked
-                    .assign_partitions_to_nodes(cluster.clone(), &namespace)
-                    .await
-                {
-                    Ok(()) => (),
-                    Err(e) => {
-                        recordset.err(e).await;
-                        tracker_locked.partition_error().await;
-                        return;
-                    }
-                }
-
-                let list = tracker_locked.node_partitions_list();
-                let mut handles = Vec::with_capacity(list.len());
-                recordset.set_instances(list.len() + 1); // +1 is for the async executor
-
-                // used for join errors
-                let err_recordset = recordset.clone();
-
-                if recordset.is_active() {
-                    let semaphore = Arc::new(Semaphore::new(if policy.max_concurrent_nodes == 0 {
-                        MAX_PERMITS
-                    } else {
-                        policy.max_concurrent_nodes
-                    }));
-                    for node_partition in list.iter() {
-                        let semaphore = semaphore.clone();
-                        let recordset = recordset.clone();
-                        let policy = policy.clone();
-                        let namespace = namespace.to_owned();
-                        let set_name = set_name.to_owned();
-                        let bins = bins.clone();
-                        let node_partition = node_partition.clone();
-
-                        let handle = aerospike_rt::spawn(async move {
-                            let permit = semaphore.acquire().await;
-                            let mut command = ScanCommand::new(
-                                &policy,
-                                &namespace,
-                                &set_name,
-                                bins,
-                                recordset.clone(),
-                                node_partition,
-                            )
-                            .await;
-
-                            let result = command.execute().await;
-                            drop(permit);
-                            result
-                        });
-
-                        handles.push(handle);
-                    }
-
-                    drop(tracker_locked);
-
-                    match futures::future::try_join_all(handles).await {
-                        Err(e) => err_recordset.err(Error::ClientError(e.to_string())).await,
-                        #[cfg(feature = "rt-async-std")]
-                        Ok(_) => (),
-                        #[cfg(feature = "rt-tokio")]
-                        Ok(errs) => {
-                            for err in errs {
-                                match err {
-                                    Err(Error::Timeout(_)) => timed_out = true,
-                                    Err(e) => {
-                                        tracker.lock().await.partition_error().await;
-                                        err_recordset.err(e).await;
-                                    }
-                                    Ok(_) => (),
-                                }
-                            }
-                        }
-                    }
-                };
-            }
-
-            // this retry is due to errors occurring in the command execution
-            // if !retry {
-            {
-                let mut tracker = tracker.lock().await;
-                let done = tracker.is_complete(policy, timed_out).await;
-                match (done, recordset.is_active()) {
-                    (Ok(true), _) => return,
-                    (Ok(_), false) => return,
-                    (Err(e), _) => {
-                        tracker.partition_error().await;
-                        recordset.err(e).await;
-                        return;
-                    }
-                    _ => (),
-                }
-            }
-
-            if let Some(sleep_between_retries) = policy.base_policy.sleep_between_retries {
-                sleep(sleep_between_retries).await;
-            }
-
-            recordset.reset_task_id();
-        }
-    }
-
     /// Execute a query on all server nodes and return a record iterator. The query executor puts
     /// records on a queue in separate threads. The calling thread concurrently pops records off
     /// the queue through the record iterator.
@@ -977,15 +769,31 @@ impl Client {
                         let statement = statement.clone();
                         let handle = aerospike_rt::spawn(async move {
                             let permit = semaphore.acquire().await;
-                            let mut command = QueryCommand::new(
-                                &policy,
-                                statement,
-                                recordset.clone(),
-                                node_partition,
-                            )
-                            .await;
+                            let result =
+                                if statement.index_name.is_none() && statement.filters.is_none() {
+                                    ScanCommand::new(
+                                        &policy,
+                                        &statement.namespace,
+                                        &statement.set_name,
+                                        statement.bins.clone(),
+                                        recordset.clone(),
+                                        node_partition,
+                                    )
+                                    .await
+                                    .execute()
+                                    .await
+                                } else {
+                                    QueryCommand::new(
+                                        &policy,
+                                        statement,
+                                        recordset.clone(),
+                                        node_partition,
+                                    )
+                                    .await
+                                    .execute()
+                                    .await
+                                };
 
-                            let result = command.execute().await;
                             drop(permit);
                             result
                         });

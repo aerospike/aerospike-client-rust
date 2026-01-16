@@ -31,7 +31,6 @@ mod query_policy;
 mod read_policy;
 mod read_touch_ttl_percent;
 mod record_exists_action;
-mod scan_policy;
 mod stream_policy;
 mod write_policy;
 
@@ -49,7 +48,6 @@ pub use self::query_policy::QueryPolicy;
 pub use self::read_policy::ReadPolicy;
 pub use self::read_touch_ttl_percent::ReadTouchTTL;
 pub use self::record_exists_action::RecordExistsAction;
-pub use self::scan_policy::ScanPolicy;
 pub(crate) use self::stream_policy::StreamPolicy;
 pub use self::write_policy::WritePolicy;
 

@@ -93,3 +93,9 @@ prop_compose! {
        stmt
    }
 }
+
+prop_compose! {
+    pub fn statement_scan(ns: String, set_name: String)(bins in latin_bins(50)) -> Statement {
+       Statement::new(&ns, &set_name, bins)
+   }
+}

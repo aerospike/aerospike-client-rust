@@ -25,7 +25,7 @@ use crate::msgpack::encoder;
 use crate::operations::{Operation, OperationBin, OperationData, OperationType};
 use crate::policy::{
     BasePolicy, BatchPolicy, CommitLevel, ConsistencyLevel, GenerationPolicy, Policy,
-    QueryDuration, QueryPolicy, ReadPolicy, RecordExistsAction, ScanPolicy, WritePolicy,
+    QueryDuration, QueryPolicy, ReadPolicy, RecordExistsAction, WritePolicy,
 };
 use crate::query::NodePartitions;
 use crate::{Bin, Bins, CollectionIndexType, Key, Statement, Value};
@@ -766,7 +766,7 @@ impl Buffer {
 
     pub(crate) async fn set_scan(
         &mut self,
-        policy: &ScanPolicy,
+        policy: &QueryPolicy,
         namespace: &str,
         set_name: &str,
         bins: &Bins,

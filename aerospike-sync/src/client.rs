@@ -26,8 +26,7 @@ use aerospike_core::UdfRemoveTask;
 use aerospike_core::{
     AdminPolicy, BatchOperation, BatchPolicy, BatchRecord, Bin, Bins, ClientPolicy,
     CollectionIndexType, IndexTask, IndexType, Key, Node, Privilege, QueryPolicy, ReadPolicy,
-    Record, Recordset, RegisterTask, Role, ScanPolicy, Statement, ToHosts, UDFLang, User, Value,
-    WritePolicy,
+    Record, Recordset, RegisterTask, Role, Statement, ToHosts, UDFLang, User, Value, WritePolicy,
 };
 use futures::executor::block_on;
 
@@ -502,55 +501,6 @@ impl Client {
         block_on(
             self.async_client
                 .execute_udf(policy, key, server_path, function_name, args),
-        )
-    }
-
-    /// Read all records in the specified namespace and set and return a record iterator. The scan
-    /// executor puts records on a queue in separate threads. The calling thread concurrently pops
-    /// records off the queue through the record iterator. Up to `policy.max_concurrent_nodes`
-    /// nodes are scanned in parallel. If concurrent nodes is set to zero, the server nodes are
-    /// read in series.
-    ///
-    /// # Examples
-    ///
-    /// ```rust,edition2018
-    /// # extern crate aerospike;
-    /// # use aerospike::*;
-    ///
-    /// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap();
-    /// # let client = Client::new(&ClientPolicy::default(), &hosts).wait.unwrap();
-    /// let pf = PartitionFilter::all();
-    /// match client.scan(&ScanPolicy::default(), pf, "test", "demo", Bins::All) {
-    ///     Ok(records) => {
-    ///         let mut count = 0;
-    ///         for record in &*records {
-    ///             match record {
-    ///                 Ok(record) => count += 1,
-    ///                 Err(err) => panic!("Error executing scan: {}", err),
-    ///             }
-    ///         }
-    ///         println!("Records: {}", count);
-    ///     },
-    ///     Err(err) => println!("Failed to execute scan: {}", err),
-    /// }
-    /// ```
-    ///
-    /// # Panics
-    /// Panics if the async block fails
-    pub fn scan<T>(
-        &self,
-        policy: &ScanPolicy,
-        partition_filter: PartitionFilter,
-        namespace: &str,
-        set_name: &str,
-        bins: T,
-    ) -> Result<Arc<Recordset>>
-    where
-        T: Into<Bins> + Send + Sync + 'static,
-    {
-        block_on(
-            self.async_client
-                .scan(policy, partition_filter, namespace, set_name, bins),
         )
     }
 

@@ -617,7 +617,7 @@ async fn expression_commands() {
     }
     let mut wpolicy = WritePolicy::default();
     let mut rpolicy = ReadPolicy::default();
-    let mut spolicy = ScanPolicy::default();
+    let mut spolicy = QueryPolicy::default();
     let mut bpolicy = BatchPolicy::default();
 
     // DELETE
@@ -701,10 +701,8 @@ async fn expression_commands() {
     // SCAN
     spolicy.base_policy.filter_expression = Some(eq(int_bin("bin".to_string()), int_val(75)));
     let pf = PartitionFilter::all();
-    match client
-        .scan(&spolicy, pf, namespace, &set_name, Bins::All)
-        .await
-    {
+    let stmt = Statement::new(namespace, &set_name, Bins::All);
+    match client.query(&spolicy, pf, stmt).await {
         Ok(records) => {
             let mut records = records.into_stream();
             let mut count = 0;

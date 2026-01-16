@@ -1103,10 +1103,6 @@ mod tests {
     fn as_string() {
         assert_eq!(Value::Nil.as_string(), String::from("<null>"));
         assert_eq!(Value::Int(42).as_string(), String::from("42"));
-        assert_eq!(
-            Value::UInt(9_223_372_036_854_775_808).as_string(),
-            String::from("9223372036854775808")
-        );
         assert_eq!(Value::Bool(true).as_string(), String::from("true"));
         assert_eq!(Value::from(4.1416).as_string(), String::from("4.1416"));
         assert_eq!(

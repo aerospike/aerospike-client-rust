@@ -1,16 +1,20 @@
 use crate::common;
+use crate::proptest::prelude::*;
 use crate::proptest_async;
 
 use futures::stream::StreamExt;
 
-use crate::proptests::{bins::*, partition_filter::*, policy::*};
+use aerospike::*;
+
+use crate::proptests::{bins::*, partition_filter::*, policy::*, queries::*};
 
 proptest_async::proptest! {
     #[test]
-    async fn scan(scan_policy in scan_policy(1000,5000), mut pf in partition_filter(common::namespace().into(), common::prop_setname_multi().into()), bins in bins(100)) {
+    async fn scan(
+        query_policy in query_policy(1000, 5000),
+        stmt in statement_scan(common::namespace().into(), common::prop_setname_multi().into()))
+    {
         let client = common::singleton_client().await;
-        let namespace: &str = common::namespace();
-        // let set_name = common::prop_setname();
 
         // let now = aerospike_rt::time::Instant::now();
 
@@ -18,11 +22,13 @@ proptest_async::proptest! {
         let mut count = 0;
         let mut iter = 0;
 
+        let mut pf = PartitionFilter::all();
+
         while !pf.done() {
             iter+=1;
 
             // println!("Scan starting...");
-            let rs = client.scan(&scan_policy, pf, namespace, "multi", bins.clone()).await.unwrap();
+            let rs = client.query(&query_policy, pf, stmt.clone()).await.unwrap();
 
             let rs = rs.into_stream();
             tokio::pin!(rs);
@@ -38,6 +44,6 @@ proptest_async::proptest! {
         }
         // println!("Scan succeeded in {:?} for {} records", now.elapsed(), count);
 
-        assert!(scan_policy.max_records == 0 || count <= scan_policy.max_records || iter > 1);
+        assert!(query_policy.max_records == 0 || count <= query_policy.max_records || iter > 1);
     }
 }

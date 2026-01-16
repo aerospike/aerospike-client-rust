@@ -173,10 +173,10 @@ pub use operations::{MapPolicy, MapReturnType, MapWriteMode};
 pub use policy::{
     AdminPolicy, AuthMode, BatchPolicy, ClientPolicy, CommitLevel, Concurrency, ConsistencyLevel,
     Expiration, GenerationPolicy, Policy, QueryDuration, QueryPolicy, ReadPolicy, ReadTouchTTL,
-    RecordExistsAction, ScanPolicy, WritePolicy,
+    RecordExistsAction, WritePolicy,
 };
 pub use privilege::{Privilege, PrivilegeCode};
-pub use query::{CollectionIndexType, IndexType, Recordset, Statement, UDFLang};
+pub use query::{CollectionIndexType, IndexType, PartitionFilter, Recordset, Statement, UDFLang};
 pub use record::Record;
 pub use result_code::ResultCode;
 pub use role::Role;
