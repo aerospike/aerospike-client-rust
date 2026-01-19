@@ -1,12 +1,10 @@
 use crate::common;
-use crate::proptest::prelude::*;
 use crate::proptest_async;
+use crate::proptests::{policy::*, queries::*};
 
 use futures::stream::StreamExt;
 
 use aerospike::*;
-
-use crate::proptests::{bins::*, partition_filter::*, policy::*, queries::*};
 
 proptest_async::proptest! {
     #[test]

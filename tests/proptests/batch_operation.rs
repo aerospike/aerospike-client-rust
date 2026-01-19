@@ -1,18 +1,9 @@
-use crate::common;
 use crate::proptest::prelude::*;
-use crate::proptest_async;
-
-use crate::proptests::key::*;
 use crate::proptests::operation::*;
 use crate::proptests::value::*;
+use crate::proptests::{bins::*, policy::*};
 
-use aerospike::policy::*;
 use aerospike::*;
-
-use futures::stream::StreamExt;
-
-use crate::proptests::operation::any_operation_readish;
-use crate::proptests::{bins::*, partition_filter::*, policy::*, value::*};
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum PropBatchOperation {
@@ -47,7 +38,7 @@ impl PropBatchOperation {
 
 // select one batch operation and return a strategy for it.
 
-pub fn any_batch_operation(bin: Bin) -> impl Strategy<Value = PropBatchOperation> {
+pub fn any_batch_operation(_bin: Bin) -> impl Strategy<Value = PropBatchOperation> {
     prop_oneof![
         // bop_read_bins(),
         // bop_read_ops(),
@@ -57,11 +48,11 @@ pub fn any_batch_operation(bin: Bin) -> impl Strategy<Value = PropBatchOperation
     ]
 }
 
-pub fn any_batch_read_operation(bin: Bin) -> impl Strategy<Value = PropBatchOperation> {
+pub fn any_batch_read_operation(_bin: Bin) -> impl Strategy<Value = PropBatchOperation> {
     prop_oneof![bop_read_bins(), bop_read_ops(),]
 }
 
-pub fn any_batch_write_operation(bin: Bin) -> impl Strategy<Value = PropBatchOperation> {
+pub fn any_batch_write_operation(_bin: Bin) -> impl Strategy<Value = PropBatchOperation> {
     prop_oneof![bop_write()]
 }
 

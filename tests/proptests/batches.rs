@@ -1,21 +1,12 @@
 use std::collections::{BTreeMap, HashMap};
 
+use crate::common;
 use crate::proptest::prelude::*;
 use crate::proptest_async;
-use crate::{common, proptests::key};
-use proptest::strategy::{Strategy, ValueTree};
-use proptest::test_runner::TestRunner;
 
-use crate::proptests::value::*;
-
-use aerospike::query::*;
 use aerospike::*;
 
-use futures::stream::StreamExt;
-
-use crate::proptests::{
-    batch_operation::*, bins::*, clone_safely, key::*, operation::*, partition_filter::*, policy::*,
-};
+use crate::proptests::{batch_operation::*, clone_safely, operation::*, policy::*};
 
 const STRING_DEFAULT: &str = "aerospike default value";
 
@@ -274,7 +265,7 @@ proptest_async::proptest! {
         //             panic!("{}",e);
         //          }
         //     },
-            Err(e @ Error::BatchError(_, ResultCode::GenerationError, _, _)) => {
+            Err(_e @ Error::BatchError(_, ResultCode::GenerationError, _, _)) => {
                 // NOTE: there is no way to gain access to the generation_policy
                 // from any field accessible to this scope.
                 //
@@ -285,7 +276,7 @@ proptest_async::proptest! {
             },
             Err(Error::BatchError(_, ResultCode::BinTypeError, _, _)) => {}
             Err(e) => panic!("ERR: {}", e),
-            Ok(res) => {
+            Ok(_res) => {
                 let check = client.get(&ReadPolicy::default(), &key, Bins::All).await;
                 if let Ok(rec) = &check {
                     for (name, value) in &rec.bins {
@@ -330,7 +321,7 @@ proptest_async::proptest! {
         //             panic!("{}",e);
         //          }
         //     },
-            Err(e @ Error::BatchError(_, ResultCode::GenerationError, _, _)) => {
+            Err(_e @ Error::BatchError(_, ResultCode::GenerationError, _, _)) => {
                 // NOTE: there is no way to gain access to the generation_policy
                 // from any field accessible to this scope.
                 //
@@ -341,7 +332,7 @@ proptest_async::proptest! {
             },
             Err(Error::BatchError(_, ResultCode::BinTypeError, _, _)) => {}
             Err(e) => panic!("ERR: {}", e),
-            Ok(res) => {}, // println!("OK: {:?}", res),
+            Ok(_res) => {}, // println!("OK: {:?}", res),
         }
     }
 }
@@ -388,8 +379,8 @@ fn confirm_prepends(bin: &(String, Value), prepends_to_bins: &Vec<(String, Value
                         );
                     }
                 }
-                Value::List(l) => {}
-                Value::KeyValueList(om) => {}
+                Value::List(_l) => {}
+                Value::KeyValueList(_om) => {}
                 _ => (),
             }
         }
