@@ -2,6 +2,57 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.0.0-alpha.7]
+
+* **New Features**
+  * [CLIENT-2088][CLIENT-2089][CLIENT-2175][CLIENT-2390] Support Ordered maps.
+  * [CLIENT-3963] Support `ClientPolicy.timeout_delay` to allow recovering timed out connections.
+  * [CLIENT-3948] Support `ClientPolicy.min_conns_per_node`.
+  * [CLIENT-3946] Add support for user agent-id. Supported by server `v8.1+`.
+  * [CLIENT-3945] Add `UdfRemove` and `DropIndex` tasks to the relevant API.
+  * [CLIENT-3130] Support new server 7.1 info command error response strings. Server 7.1 now returns error strings with "ERROR" instead of "FAIL".
+  * [CLIENT-2151] Support `set_xdr_filter`.
+  * [CLIENT-3597] Support `socket_timeout` on all policies.
+  * [CLIENT-3580] Support creating a PKI user without a password.
+  * [CLIENT-3593] Support secondary index on an expression.
+  * [CLIENT-3781][CLIENT-3851] Add full TLS support + property testing.
+  * [CLIENT-3832] Add support for Async Streams.
+  * Add `MapLike` trait to support passing both `HashMap` and `BTreeMap` to some functions.
+  * Adds new privileges from server `v8.1.1`.
+
+* **Improvements**
+  * [CLIENT-3627] Deprecation warning changes.
+  * [CLIENT-3849] Improve connection churn issue.
+  * Make all `PartitionStatus` and `PartitionFilter` fields public.
+  * Fix logging in tests.
+  * Fixed and updated documentation.
+  * Support peers protocol and fix minor bug in TLS.
+  * Remove `Iterator` and `next_record` for Recordset in the async build.
+  * Brings v2 branch up to rustc v1.90.x language expectations.
+  * Close the connection in Multi-part commands (batch, scan, query) on error.
+
+* **Bug Fixes**
+  * [CLIENT-4015] Allow empty set names in Scan/Queries.
+  * [CLIENT-4007] Fix create_role field calc & correct privilege serializations.
+  * [CLIENT-3892] Geo queries w/ filters are broken.
+  * [CLIENT-3795] Dropping tokio tasks returns stale data from other commands.
+  * Fix map operations due to MultiResult changes.
+  * Fix an issue where only the last operation results were returned in multi operation commands.
+  * Fix reading the AEROSPIKE_USE_SERVICES_ALTERNATE in tests.
+  * Fix feature selection issue.
+  * Fix an issue with Query encoding.
+  * Fix Batch encoding issue.
+  * Log nodes after tend, change info command results at trace level to prevent noise in debug level.
+  * Fixes an issue with clustering and a faulty test case.
+  * Fix `NOSUB` `RegexFlag` enum value.
+
+* **Breaking Change**
+  * [CLIENT-4068] Remove the Scan API due to deprecation.
+  * Remove `Value::Uint` due to lack of native support on the server.
+  * Move hashed password out of the client policy.
+  * Fix an issue where signed integers were unpacked as unsigned.
+  * Rename `FilterExpression` to `Expression`.
+
 ## [2.0.0-alpha.6]
 
 * **Bug Fixes**
