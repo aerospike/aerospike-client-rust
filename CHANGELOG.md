@@ -30,6 +30,7 @@ All notable changes to this project will be documented in this file.
   * Remove `Iterator` and `next_record` for Recordset in the async build.
   * Brings v2 branch up to rustc v1.90.x language expectations.
   * Close the connection in Multi-part commands (batch, scan, query) on error.
+  * Added "examples".
 
 * **Bug Fixes**
   * [CLIENT-4015] Allow empty set names in Scan/Queries.
