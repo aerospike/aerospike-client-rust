@@ -57,8 +57,8 @@ harness = false
 members = ["tools/benchmark", "aerospike-core", "aerospike-rt", "aerospike-sync", "aerospike-macro"]
 
 [dev-dependencies]
-log = "*"
-env_logger = "*"
+log = "0.4.29"
+env_logger = "0.11.8"
 hex = "0.4"
 bencher = "0.1"
 serde_json = "1.0"
