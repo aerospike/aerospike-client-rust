@@ -2,16 +2,16 @@
 extern crate aerospike;
 extern crate tokio;
 
-use std::env;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicUsize, Ordering};
-use aerospike::{Client, ClientPolicy, Bins, QueryPolicy, Statement};
 use aerospike::query::PartitionFilter;
-use aerospike_core::{AdminPolicy, CollectionIndexType, Host, IndexType, Task, WritePolicy};
+use aerospike::{Bins, Client, ClientPolicy, QueryPolicy, Statement};
+use aerospike_core::expressions::{eq, int_bin, int_val};
+use aerospike_core::{AdminPolicy, CollectionIndexType, IndexType, Task, WritePolicy};
 use futures::stream::StreamExt;
 use rand::distributions::Alphanumeric;
 use rand::Rng;
-use aerospike_core::expressions::{eq, int_bin, int_val};
+use std::env;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
 
 const DEFAULT_NAMESPACE: &str = "test";
 const DEFAULT_NUM_RECORDS: usize = 100;
@@ -36,8 +36,7 @@ async fn main() {
 }
 
 async fn connect_to_aerospike() -> Client {
-    let hosts = env::var("AEROSPIKE_HOSTS")
-        .unwrap_or_else(|_| String::from("127.0.0.1:3100"));
+    let hosts = env::var("AEROSPIKE_HOSTS").unwrap_or_else(|_| String::from("127.0.0.1:3100"));
 
     let policy = ClientPolicy::default();
 
@@ -53,7 +52,8 @@ async fn simple_equality_query(client: &Client, namespace: &str, set_name: &str)
     let mut stmt = Statement::new(namespace, set_name, Bins::All);
     stmt.add_filter(as_eq!(BIN_NAME, 5));
 
-    let rs = client.query(&policy, PartitionFilter::all(), stmt)
+    let rs = client
+        .query(&policy, PartitionFilter::all(), stmt)
         .await
         .expect("Query failed");
 
@@ -70,7 +70,8 @@ async fn range_query(client: &Client, namespace: &str, set_name: &str) {
     let mut stmt = Statement::new(namespace, set_name, Bins::All);
     stmt.add_filter(as_range!(BIN_NAME, 0, 9));
 
-    let rs = client.query(&policy, PartitionFilter::all(), stmt)
+    let rs = client
+        .query(&policy, PartitionFilter::all(), stmt)
         .await
         .expect("Query failed");
 
@@ -87,14 +88,19 @@ async fn metadata_only_query(client: &Client, namespace: &str, set_name: &str) {
     let mut stmt = Statement::new(namespace, set_name, Bins::None);
     stmt.add_filter(as_range!(BIN_NAME, 0, 4));
 
-    let rs = client.query(&policy, PartitionFilter::all(), stmt)
+    let rs = client
+        .query(&policy, PartitionFilter::all(), stmt)
         .await
         .expect("Query failed");
 
     let mut rs = rs.into_stream();
     while let Some(r) = rs.next().await {
         let rec = r.unwrap();
-        println!("Record header: gen={}, bins={}", rec.generation, rec.bins.len());
+        println!(
+            "Record header: gen={}, bins={}",
+            rec.generation,
+            rec.bins.len()
+        );
     }
 }
 
@@ -106,9 +112,7 @@ async fn cursor_pagination(client: &Client, namespace: &str, set_name: &str) {
 
     while !pf.done() {
         let stmt = Statement::new(namespace, set_name, Bins::All);
-        let rs = client.query(&policy, pf, stmt)
-            .await
-            .expect("Query failed");
+        let rs = client.query(&policy, pf, stmt).await.expect("Query failed");
 
         let mut rs = rs.into_stream();
         while let Some(r) = rs.next().await {
@@ -126,7 +130,8 @@ async fn parallel_query(client: &Client, namespace: &str, set_name: &str) {
     let mut stmt = Statement::new(namespace, set_name, Bins::All);
     stmt.add_filter(as_range!(BIN_NAME, 0, 9));
 
-    let rs = client.query(&policy, PartitionFilter::all(), stmt)
+    let rs = client
+        .query(&policy, PartitionFilter::all(), stmt)
         .await
         .expect("Query failed");
 
@@ -147,19 +152,24 @@ async fn parallel_query(client: &Client, namespace: &str, set_name: &str) {
     }
 
     futures::future::join_all(handles).await;
-    println!("Total records processed in parallel: {}", count.load(Ordering::Relaxed));
+    println!(
+        "Total records processed in parallel: {}",
+        count.load(Ordering::Relaxed)
+    );
 }
 
 async fn expression_filter(client: &Client, namespace: &str, set_name: &str) {
     println!("\n--- 6. Query with expression filter ---");
 
     let mut policy = QueryPolicy::default();
-    policy.base_policy.filter_expression.replace(
-        eq(int_bin(BIN_NAME.to_string()), int_val(10))
-    );
+    policy
+        .base_policy
+        .filter_expression
+        .replace(eq(int_bin(BIN_NAME.to_string()), int_val(10)));
 
     let stmt = Statement::new(namespace, set_name, Bins::All);
-    let rs = client.query(&policy, PartitionFilter::all(), stmt)
+    let rs = client
+        .query(&policy, PartitionFilter::all(), stmt)
         .await
         .expect("Query failed");
 
@@ -169,7 +179,7 @@ async fn expression_filter(client: &Client, namespace: &str, set_name: &str) {
     }
 }
 
-async fn rate_limited_query(client: &Client, namespace: &str, set_name: &str) {
+async fn rate_limited_query(client: &Client, namespace: &str, _set_name: &str) {
     println!("\n--- 7. Rate-limited query ---");
 
     // Use 1000 records for more observable rate limiting effect
@@ -188,11 +198,14 @@ async fn rate_limited_query(client: &Client, namespace: &str, set_name: &str) {
 
     let expected_count = range_end + 1;
     println!("Rate limit set to {} records/second", RATE_LIMIT);
-    println!("Querying records with bin value 0-{} (expected: ~{} records)",
-             range_end, expected_count);
+    println!(
+        "Querying records with bin value 0-{} (expected: ~{} records)",
+        range_end, expected_count
+    );
 
     let start_time = tokio::time::Instant::now();
-    let rs = client.query(&policy, PartitionFilter::all(), stmt)
+    let rs = client
+        .query(&policy, PartitionFilter::all(), stmt)
         .await
         .expect("Query failed");
 
@@ -211,7 +224,12 @@ async fn rate_limited_query(client: &Client, namespace: &str, set_name: &str) {
                 // Log progress more frequently to see the throttling
                 if last_log.elapsed().as_millis() >= 500 {
                     batch_count += 1;
-                    println!("Batch {}: {} records in {:?}", batch_count, count, start_time.elapsed());
+                    println!(
+                        "Batch {}: {} records in {:?}",
+                        batch_count,
+                        count,
+                        start_time.elapsed()
+                    );
                     last_log = tokio::time::Instant::now();
                 }
             }
@@ -227,7 +245,10 @@ async fn rate_limited_query(client: &Client, namespace: &str, set_name: &str) {
 
 async fn create_test_set(client: &Client, namespace: &str, num_records: usize) -> String {
     let set_name = generate_random_set_name();
-    println!("Creating test set '{}' with {} records...", set_name, num_records);
+    println!(
+        "Creating test set '{}' with {} records...",
+        set_name, num_records
+    );
 
     populate_test_data(client, namespace, &set_name, num_records).await;
     create_secondary_index(client, namespace, &set_name).await;
@@ -253,7 +274,8 @@ async fn populate_test_data(client: &Client, namespace: &str, set_name: &str, nu
         let bins = vec![wbin];
 
         client.delete(&wpolicy, &key).await.ok(); // Ignore if doesn't exist
-        client.put(&wpolicy, &key, &bins)
+        client
+            .put(&wpolicy, &key, &bins)
             .await
             .expect("Failed to write record");
     }
