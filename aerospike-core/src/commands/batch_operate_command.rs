@@ -171,24 +171,40 @@ impl<'a> BatchOperateCommand<'a> {
             match Self::parse_record(conn).await {
                 Ok(None) => return Ok(false),
                 Ok(Some(batch_record)) => {
-                    let batch_op = batch_ops
-                        .get_mut(batch_record.batch_index)
-                        .expect("Invalid batch index");
-                    batch_op.0.set_record(batch_record.record);
-                    batch_op.0.set_result_code(batch_record.result_code, false);
+                    if let Some(batch_op) = batch_ops.get_mut(batch_record.batch_index) {
+                        batch_op.0.set_record(batch_record.record);
+                        batch_op.0.set_result_code(batch_record.result_code, false);
+                    } else {
+                        return Err(Error::ClientError(format!(
+                            "Invalid batch index {} (batch_ops len: {}) for result_code {:?}",
+                            batch_record.batch_index,
+                            batch_ops.len(),
+                            batch_record.result_code
+                        )));
+                    }
                 }
                 Err(Error::BatchLastError(batch_index, rc, in_doubt, ref msg)) => {
-                    let batch_op = batch_ops
-                        .get_mut(batch_index as usize)
-                        .expect("Invalid batch index");
-                    batch_op.0.set_result_code(rc, in_doubt);
-                    return Err(Error::BatchError(batch_index, rc, in_doubt, msg.clone()));
+                    if let Some(batch_op) = batch_ops.get_mut(batch_index as usize) {
+                        batch_op.0.set_result_code(rc, in_doubt);
+                        return Err(Error::BatchError(batch_index, rc, in_doubt, msg.clone()));
+                    } else {
+                        return Err(Error::ClientError(format!(
+                            "Invalid batch index {} (batch_ops len: {})",
+                            batch_index,
+                            batch_ops.len()
+                        )));
+                    }
                 }
                 Err(Error::BatchError(batch_index, rc, in_doubt, ..)) => {
-                    let batch_op = batch_ops
-                        .get_mut(batch_index as usize)
-                        .expect("Invalid batch index");
-                    batch_op.0.set_result_code(rc, in_doubt);
+                    if let Some(batch_op) = batch_ops.get_mut(batch_index as usize) {
+                        batch_op.0.set_result_code(rc, in_doubt);
+                    } else {
+                        return Err(Error::ClientError(format!(
+                            "Invalid batch index {} (batch_ops len: {})",
+                            batch_index,
+                            batch_ops.len()
+                        )));
+                    }
                 }
                 Err(err) => return Err(err),
             }
@@ -201,16 +217,22 @@ impl<'a> BatchOperateCommand<'a> {
         let info3 = conn.buffer().read_u8(Some(3));
         let last_record = info3 & commands::buffer::INFO3_LAST == commands::buffer::INFO3_LAST;
 
-        let batch_index = conn.buffer().read_u32(Some(14));
+        let batch_index_header = conn.buffer().read_u32(Some(14));
         let result_code = ResultCode::from(conn.buffer().read_u8(Some(5)));
 
+        // For UDF_BAD_RESPONSE, we need to parse the record body to get the correct batch_index
+        // and error information. The server returns a record with error details, so we continue
+        // parsing instead of returning early, even if it's the last record.
         match result_code {
             ResultCode::Ok => (),
             ResultCode::KeyNotFoundError | ResultCode::FilteredOut => (),
+            ResultCode::UdfBadResponse => {
+                // Continue parsing to get the correct batch_index from the record body
+            }
             rc => {
                 if last_record {
                     return Err(Error::BatchLastError(
-                        batch_index,
+                        batch_index_header,
                         rc,
                         false,
                         conn.conn.addr.clone(),
@@ -218,7 +240,7 @@ impl<'a> BatchOperateCommand<'a> {
                 }
 
                 return Err(Error::BatchError(
-                    batch_index,
+                    batch_index_header,
                     rc,
                     false,
                     conn.conn.addr.clone(),
@@ -227,13 +249,15 @@ impl<'a> BatchOperateCommand<'a> {
         };
 
         // if cmd is the end marker of the response, do not proceed further
-        if last_record {
+        // Exception: UDF errors need to parse the record body to get the correct batch_index
+        if last_record && result_code != ResultCode::UdfBadResponse {
             return Ok(None);
         }
 
         let found_key = match result_code {
             ResultCode::Ok => true,
             ResultCode::KeyNotFoundError | ResultCode::FilteredOut => false,
+            ResultCode::UdfBadResponse => true, // UDF errors return a record with error info
             _ => unreachable!(),
         };
 
@@ -284,8 +308,16 @@ impl<'a> BatchOperateCommand<'a> {
         } else {
             None
         };
+        // For UDF errors, use header batch_index (matches Java client behavior).
+        // For other cases, use record body batch_index as the authoritative source.
+        let final_batch_index = if result_code == ResultCode::UdfBadResponse {
+            batch_index_header as usize
+        } else {
+            batch_index as usize
+        };
+
         Ok(Some(BatchRecordIndex {
-            batch_index: batch_index as usize,
+            batch_index: final_batch_index,
             record,
             result_code: result_code,
         }))
