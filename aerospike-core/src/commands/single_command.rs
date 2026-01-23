@@ -22,7 +22,7 @@ use crate::net::Connection;
 use crate::policy::Policy;
 use crate::Key;
 use aerospike_rt::sleep;
-use aerospike_rt::time::Instant;
+use aerospike_rt::time::{Duration, Instant};
 
 pub(crate) struct SingleCommand<'a> {
     cluster: Arc<Cluster>,
@@ -73,6 +73,25 @@ impl<'a> SingleCommand<'a> {
     //
 
     pub async fn execute(
+        policy: &(dyn Policy + Send + Sync),
+        cmd: &'a mut (dyn commands::Command + Send),
+    ) -> Result<()> {
+        if policy.total_timeout() > 0 {
+            match aerospike_rt::timeout(
+                Duration::from_millis(policy.total_timeout() as u64),
+                Self::execute_command(policy, cmd),
+            )
+            .await
+            {
+                Ok(res) => res,
+                Err(_) => Err(Error::Timeout(format!("Timeout"))),
+            }
+        } else {
+            Self::execute_command(policy, cmd).await
+        }
+    }
+
+    pub async fn execute_command(
         policy: &(dyn Policy + Send + Sync),
         cmd: &'a mut (dyn commands::Command + Send),
     ) -> Result<()> {
@@ -129,7 +148,7 @@ impl<'a> SingleCommand<'a> {
                 }
             };
 
-            conn.set_socket_timeout(policy.socket_timeout());
+            conn.set_socket_timeout(deadline, policy.socket_timeout());
             conn.set_timeout_delay(cmd.can_recover_connection(), policy.timeout_delay());
 
             cmd.prepare_buffer(&mut conn)

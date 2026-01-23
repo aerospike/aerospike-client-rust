@@ -2,18 +2,20 @@
 extern crate aerospike;
 extern crate tokio;
 
-use std::env;
-use aerospike::{Bins, Client, ClientPolicy, BatchPolicy, UDFLang};
 use aerospike::operations;
+use aerospike::{BatchPolicy, Bins, Client, ClientPolicy, UDFLang};
+use aerospike_core::{
+    AdminPolicy, BatchDeletePolicy, BatchOperation, BatchReadPolicy, BatchUDFPolicy,
+    BatchWritePolicy, Task,
+};
 use rand::distributions::Alphanumeric;
 use rand::Rng;
-use aerospike_core::{AdminPolicy, BatchDeletePolicy, BatchOperation, BatchReadPolicy, BatchUDFPolicy, BatchWritePolicy, Task};
+use std::env;
 
 #[tokio::main]
 async fn main() {
     let cpolicy = ClientPolicy::default();
-    let hosts = env::var("AEROSPIKE_HOSTS")
-        .unwrap_or(String::from("127.0.0.1:3100"));
+    let hosts = env::var("AEROSPIKE_HOSTS").unwrap_or(String::from("127.0.0.1:3100"));
     let client = Client::new(&cpolicy, &hosts)
         .await
         .expect("Failed to connect to cluster");

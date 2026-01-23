@@ -283,7 +283,7 @@ impl Command for StreamCommand {
                 match self.parse_stream(&mut conn, size as usize).await {
                     Ok(stat) => status = stat,
                     Err(e @ Error::ServerError(_, _, _)) => {
-                        conn.drain(conn.conn.socket_timeout()).await?;
+                        conn.drain(conn.conn.deadline()).await?;
                         return Err(e);
                     }
                     Err(e) => {
@@ -291,7 +291,7 @@ impl Command for StreamCommand {
                     }
                 }
             }
-            conn.drain(conn.conn.socket_timeout()).await?;
+            conn.drain(conn.conn.deadline()).await?;
         }
 
         Ok(())

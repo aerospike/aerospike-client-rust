@@ -62,7 +62,7 @@ impl Message {
     }
 
     async fn send(&mut self, policy: &AdminPolicy, conn: &mut Connection) -> Result<()> {
-        conn.set_socket_timeout(policy.timeout());
+        conn.set_socket_timeout(None, policy.timeout());
         conn.write_all(&self.buf).await?;
 
         // read the header

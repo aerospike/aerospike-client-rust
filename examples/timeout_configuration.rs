@@ -2,15 +2,14 @@
 extern crate aerospike;
 extern crate tokio;
 
+use aerospike::{Bins, Client, ClientPolicy, ReadPolicy, WritePolicy};
 use std::env;
 use std::time::Instant;
-use aerospike::{Bins, Client, ClientPolicy, ReadPolicy, WritePolicy};
 
 #[tokio::main]
 async fn main() {
     let cpolicy = ClientPolicy::default();
-    let hosts = env::var("AEROSPIKE_HOSTS")
-        .unwrap_or(String::from("127.0.0.1:3100"));
+    let hosts = env::var("AEROSPIKE_HOSTS").unwrap_or(String::from("127.0.0.1:3100"));
     let client = Client::new(&cpolicy, &hosts)
         .await
         .expect("Failed to connect to cluster");
@@ -57,7 +56,7 @@ async fn socket_and_total_timeouts(client: &Client, key: &aerospike::Key) {
 
     let mut policy = ReadPolicy::default();
     policy.base_policy.socket_timeout = 2000; // 2 seconds
-    policy.base_policy.total_timeout = 5000;  // 5 seconds
+    policy.base_policy.total_timeout = 5000; // 5 seconds
 
     let start = Instant::now();
     match client.get(&policy, key, Bins::All).await {

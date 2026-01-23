@@ -28,6 +28,7 @@ use crate::net::{BufferedConn, Connection};
 use crate::policy::{BatchPolicy, Policy, Replica};
 use crate::{value, Record, ResultCode, Value};
 use aerospike_rt::sleep;
+use aerospike_rt::time::Duration;
 
 #[derive(Clone)]
 pub(crate) struct BatchOperateCommand<'a> {
@@ -49,7 +50,23 @@ impl<'a> BatchOperateCommand<'a> {
         }
     }
 
-    pub async fn execute(mut self, cluster: Arc<Cluster>) -> Result<Self> {
+    pub async fn execute(self, cluster: Arc<Cluster>) -> Result<Self> {
+        if self.policy.total_timeout() > 0 {
+            let res = aerospike_rt::timeout(
+                Duration::from_millis(self.policy.total_timeout() as u64),
+                self.execute_command(cluster),
+            )
+            .await;
+            match res {
+                Ok(res) => res,
+                Err(_) => Err(Error::Timeout(format!("Timeout"))),
+            }
+        } else {
+            self.execute_command(cluster).await
+        }
+    }
+
+    pub async fn execute_command(mut self, cluster: Arc<Cluster>) -> Result<Self> {
         let mut iterations = 0;
 
         // set timeout outside the loop
@@ -59,7 +76,13 @@ impl<'a> BatchOperateCommand<'a> {
         loop {
             let success = if iterations & 1 == 0 || matches!(self.policy.replica, Replica::Master) {
                 // For even iterations, we request all keys from the same node for efficiency.
-                Self::request_group(&mut self.batch_ops, &self.policy, self.node.clone()).await?
+                Self::request_group(
+                    &mut self.batch_ops,
+                    &self.policy,
+                    deadline,
+                    self.node.clone(),
+                )
+                .await?
             } else {
                 // However, for odd iterations try the second choice for each. Instead of re-sharding the batch (as the second choice may not correspond to the first), just try each by itself.
                 let mut all_successful = true;
@@ -71,7 +94,7 @@ impl<'a> BatchOperateCommand<'a> {
                         .get_node(&partition, self.policy.replica, Arc::downgrade(&self.node))
                         .await?;
 
-                    if !Self::request_group(individual_op, &self.policy, node).await? {
+                    if !Self::request_group(individual_op, &self.policy, deadline, node).await? {
                         all_successful = false;
                         break;
                     }
@@ -104,7 +127,10 @@ impl<'a> BatchOperateCommand<'a> {
             // check for command timeout
             if let Some(deadline) = deadline {
                 if Instant::now() > deadline {
-                    return Err(Error::Connection("Timeout".to_string()));
+                    return Err(Error::Timeout(format!(
+                        "Command timed out after {} tries",
+                        iterations
+                    )));
                 }
             }
 
@@ -116,6 +142,7 @@ impl<'a> BatchOperateCommand<'a> {
     async fn request_group(
         batch_ops: &mut [(BatchOperation<'a>, usize)],
         policy: &BatchPolicy,
+        deadline: Option<Instant>,
         node: Arc<Node>,
     ) -> Result<bool> {
         let mut conn = match node.get_connection().await {
@@ -132,7 +159,7 @@ impl<'a> BatchOperateCommand<'a> {
 
         conn.buffer.write_timeout(policy.server_timeout());
 
-        conn.set_socket_timeout(policy.socket_timeout());
+        conn.set_socket_timeout(deadline, policy.socket_timeout());
         // TODO: Support recovering_connection
         conn.set_timeout_delay(false, policy.timeout_delay());
 
@@ -317,7 +344,7 @@ impl<'a> BatchOperateCommand<'a> {
                 match Self::parse_group(batch_ops, &mut conn, size as usize).await {
                     Ok(stat) => status = stat,
                     Err(e @ Error::ServerError(_, _, _)) => {
-                        conn.drain(conn.conn.socket_timeout()).await?;
+                        conn.drain(conn.conn.deadline()).await?;
                         return Err(e);
                     }
                     Err(e) => {
@@ -325,7 +352,7 @@ impl<'a> BatchOperateCommand<'a> {
                     }
                 }
             }
-            conn.drain(conn.conn.socket_timeout()).await?;
+            conn.drain(conn.conn.deadline()).await?;
         }
         Ok(())
     }

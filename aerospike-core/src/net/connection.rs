@@ -13,8 +13,6 @@
 // License for the specific language governing permissions and limitations under
 // the License.
 
-use std::time::SystemTime;
-
 #[cfg(feature = "tls")]
 use std::convert::TryFrom;
 #[cfg(feature = "tls")]
@@ -61,6 +59,7 @@ pub enum Netsocket {
 pub struct Connection {
     pub(crate) addr: String,
     socket_timeout: u32,
+    deadline: Option<Instant>,
     timeout_delay: u32,
     // duration after which connection is considered idle
     idle_timeout: Option<Duration>,
@@ -138,6 +137,7 @@ impl Connection {
             conn: stream,
             socket_timeout: policy.timeout().as_millis() as u32,
             timeout_delay: 0,
+            deadline: None,
             idle_timeout: idle_timeout,
             idle_deadline: idle_timeout.map(|timeout| Instant::now() + timeout),
             state: ConnectionState::Ready,
@@ -169,7 +169,7 @@ impl Connection {
 
     pub async fn flush(&mut self) -> Result<()> {
         self.state = ConnectionState::Writing;
-        let timeout = self.socket_timeout();
+        let timeout = self.deadline();
         let res = match self.conn {
             Netsocket::Tcp(ref mut conn) => {
                 aerospike_rt::timeout(timeout, conn.write_all(&self.buffer.data_buffer)).await
@@ -206,12 +206,27 @@ impl Connection {
     }
 
     /// Sets the timeout for the connection.
-    pub fn set_socket_timeout(&mut self, timeout: u32) {
-        if timeout > 0 {
-            self.socket_timeout = timeout;
+    pub fn set_socket_timeout(&mut self, deadline: Option<Instant>, socket_timeout: u32) {
+        self.deadline = deadline;
+        if socket_timeout > 0 {
+            self.socket_timeout = socket_timeout;
         } else {
             self.socket_timeout = 30_000; // 30 secs
         }
+    }
+
+    /// Reads the socket deadline for the connection.
+    pub fn deadline(&self) -> Duration {
+        let now = Instant::now();
+        let socket_deadline = now + self.socket_timeout();
+
+        let deadline = if let Some(deadline) = self.deadline {
+            min(deadline, socket_deadline)
+        } else {
+            socket_deadline
+        };
+
+        deadline - now
     }
 
     /// Reads the socket timeout for the connection.
@@ -273,9 +288,13 @@ impl Connection {
     pub(crate) async fn read_buffer_at(&mut self, pos: usize, size: usize) -> Result<usize> {
         self.buffer.resize_buffer(size + pos)?;
 
-        let deadline = SystemTime::now() + self.socket_timeout();
+        let deadline = self
+            .deadline
+            .or(Some(Instant::now() + self.deadline()))
+            .unwrap();
+
         let mut total_read: usize = 0;
-        while total_read < size && SystemTime::now() < deadline {
+        while total_read < size && Instant::now() < deadline {
             let read_result = match self.conn {
                 Netsocket::Tcp(ref mut conn) => {
                     #[cfg(feature = "rt-tokio")]
@@ -317,7 +336,7 @@ impl Connection {
     pub async fn write_all(&mut self, buf: &[u8]) -> Result<()> {
         self.state = ConnectionState::Writing;
 
-        let timeout = self.socket_timeout();
+        let timeout = self.deadline();
         let res = match self.conn {
             Netsocket::Tcp(ref mut conn) => {
                 aerospike_rt::timeout(timeout, conn.write_all(buf)).await
@@ -349,7 +368,7 @@ impl Connection {
     pub async fn read_all(&mut self, buf: &mut [u8]) -> Result<()> {
         self.state = ConnectionState::ReadingBody(buf.len());
 
-        let timeout = self.socket_timeout();
+        let timeout = self.deadline();
         let res = match self.conn {
             Netsocket::Tcp(ref mut conn) => {
                 aerospike_rt::timeout(timeout, conn.read_exact(buf)).await
@@ -383,6 +402,7 @@ impl Connection {
 
     fn refresh(&mut self) {
         self.idle_deadline = None;
+        self.deadline = None;
         if let Some(idle_to) = self.idle_timeout {
             self.idle_deadline = Some(Instant::now().add(idle_to));
         };
@@ -420,7 +440,7 @@ impl Connection {
         match self.state {
             ConnectionState::Ready | ConnectionState::Closed | ConnectionState::Writing => (),
             ConnectionState::ReadingHeader(total_size) => {
-                self.set_socket_timeout(self.timeout_delay);
+                self.set_socket_timeout(None, self.timeout_delay);
 
                 if total_size > self.bytes_read {
                     // read the rest of the header
@@ -595,9 +615,9 @@ impl<'a> BufferedConn<'a> {
         let size = min(self.cache.capacity(), self.limit);
         self.resize_cache(size)?;
 
-        let deadline = SystemTime::now() + self.conn.socket_timeout();
+        let deadline = Instant::now() + self.conn.deadline();
         let mut total_read: usize = 0;
-        while total_read < size && SystemTime::now() < deadline {
+        while total_read < size && Instant::now() < deadline {
             let read_result = match self.conn.conn {
                 Netsocket::Tcp(ref mut conn) => conn.read(&mut self.cache[total_read..]).await,
 

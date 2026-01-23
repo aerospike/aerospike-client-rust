@@ -22,9 +22,10 @@ use crate::cluster::{Cluster, Node};
 use crate::commands::BatchOperateCommand;
 use crate::errors::Result;
 use crate::policy::{BatchPolicy, Concurrency};
-use crate::BatchRecord;
 use crate::Error;
 use crate::Key;
+use crate::{BatchRecord, Policy};
+use aerospike_rt::time::Duration;
 
 pub struct BatchExecutor {
     cluster: Arc<Cluster>,
@@ -42,6 +43,26 @@ impl BatchExecutor {
             .get_node(&partition, replica, Weak::new())
             .await?;
         Ok(node)
+    }
+
+    pub async fn execute<'a>(
+        &self,
+        policy: &'a BatchPolicy,
+        batch_ops: &[BatchOperation<'a>],
+    ) -> Result<Vec<BatchRecord>> {
+        if policy.total_timeout() > 0 {
+            match aerospike_rt::timeout(
+                Duration::from_millis(policy.total_timeout() as u64),
+                self.execute_batch_operate(policy, batch_ops),
+            )
+            .await
+            {
+                Ok(res) => res,
+                Err(_) => Err(Error::Timeout(format!("Timeout"))),
+            }
+        } else {
+            self.execute_batch_operate(policy, batch_ops).await
+        }
     }
 
     pub async fn execute_batch_operate<'a>(

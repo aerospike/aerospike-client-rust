@@ -32,7 +32,11 @@ pub struct PartitionTokenizer {
 }
 
 impl PartitionTokenizer {
-    pub async fn new(policy: &AdminPolicy, conn: &mut Connection, node: &Arc<Node>) -> Result<Self> {
+    pub async fn new(
+        policy: &AdminPolicy,
+        conn: &mut Connection,
+        node: &Arc<Node>,
+    ) -> Result<Self> {
         let command = "replicas";
         let info_map = Message::info(policy, conn, &[command, node::PARTITION_GENERATION]).await?;
         if let Some(buf) = info_map.get(command) {

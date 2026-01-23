@@ -20,7 +20,45 @@ use aerospike::*;
 use crate::common;
 use aerospike::{Expiration, ReadTouchTTL};
 use aerospike_rt::sleep;
-use aerospike_rt::time::Duration;
+use aerospike_rt::time::{Duration, Instant};
+
+#[aerospike_macro::test]
+async fn batch_operate_timeout() {
+    let client = common::client().await;
+    let namespace: &str = common::namespace();
+    let set_name = &common::rand_str(10);
+    let mut bpolicy = BatchPolicy::default();
+    bpolicy.concurrency = Concurrency::Parallel;
+    bpolicy.base_policy.total_timeout = 10;
+    bpolicy.base_policy.socket_timeout = 10;
+    bpolicy.base_policy.max_retries = 0;
+    bpolicy.base_policy.sleep_between_retries = Some(Duration::from_millis(0));
+
+    let key1 = as_key!(namespace, set_name, 1);
+    let bin1 = as_bin!("a", "a value");
+    let bin2 = as_bin!("b", "another value");
+    let bin3 = as_bin!("c", 42);
+
+    let wops = vec![
+        operations::put(&bin1),
+        operations::put(&bin2),
+        operations::put(&bin3),
+    ];
+
+    let bpw = BatchWritePolicy::default();
+
+    let mut bops = vec![];
+    for _ in 0..10000 {
+        bops.push(BatchOperation::write(&bpw, key1.clone(), wops.clone()));
+    }
+
+    let start = Instant::now();
+    let _res = client.batch(&bpolicy, &bops).await;
+    let duration = start.elapsed();
+
+    let expected_duration = Duration::from_millis((bpolicy.total_timeout() * 2) as u64);
+    assert!(duration < expected_duration);
+}
 
 #[aerospike_macro::test]
 async fn batch_operate_read() {

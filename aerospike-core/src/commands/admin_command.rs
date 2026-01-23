@@ -88,7 +88,7 @@ impl AdminCommand {
         conn.buffer.reset_offset();
         AdminCommand::write_size(&mut conn, size as i64);
 
-        conn.set_socket_timeout(policy.timeout());
+        conn.set_socket_timeout(None, policy.timeout());
 
         // Send command.
         if let Err(err) = conn.flush().await {
@@ -114,7 +114,7 @@ impl AdminCommand {
     async fn read_users(policy: &AdminPolicy, mut conn: PooledConnection) -> Result<Vec<User>> {
         // Write the message header
         conn.buffer.size_buffer()?;
-        conn.set_socket_timeout(policy.timeout());
+        conn.set_socket_timeout(None, policy.timeout());
         let size = conn.buffer.data_offset;
         conn.buffer.reset_offset();
         AdminCommand::write_size(&mut conn, size as i64);
@@ -216,7 +216,7 @@ impl AdminCommand {
     async fn read_roles(policy: &AdminPolicy, mut conn: PooledConnection) -> Result<Vec<Role>> {
         // Write the message header
         conn.buffer.size_buffer()?;
-        conn.set_socket_timeout(policy.timeout());
+        conn.set_socket_timeout(None, policy.timeout());
         let size = conn.buffer.data_offset();
         conn.buffer.reset_offset();
         AdminCommand::write_size(&mut conn, size as i64);

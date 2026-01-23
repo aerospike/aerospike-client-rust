@@ -39,14 +39,15 @@ use crate::operations::{CdtContext, Operation, OperationType};
 use crate::policy::{AdminPolicy, BatchPolicy, ClientPolicy, QueryPolicy, ReadPolicy, WritePolicy};
 use crate::query::{PartitionFilter, PartitionTracker};
 use crate::task::{DropIndexTask, IndexTask, RegisterTask, UdfRemoveTask};
-use crate::Version;
 use crate::{
     BatchRecord, Bin, Bins, CollectionIndexType, IndexType, Key, Privilege, Record, Recordset,
     ResultCode, Role, Statement, UDFLang, User, Value,
 };
+use crate::{Policy, Version};
 use aerospike_rt::fs::File;
 #[cfg(all(any(feature = "rt-tokio"), not(feature = "rt-async-std")))]
 use aerospike_rt::io::AsyncReadExt;
+use aerospike_rt::time::Duration;
 use aerospike_rt::Semaphore;
 #[cfg(all(any(feature = "rt-async-std"), not(feature = "rt-tokio")))]
 use futures::AsyncReadExt;
@@ -291,7 +292,7 @@ impl Client {
         ops: &[BatchOperation<'_>],
     ) -> Result<Vec<BatchRecord>> {
         let executor = BatchExecutor::new(self.cluster.clone());
-        executor.execute_batch_operate(policy, ops).await
+        executor.execute(policy, ops).await
     }
 
     /// Write record bin(s). The policy specifies the transaction timeout, record expiration and
@@ -709,7 +710,7 @@ impl Client {
         let defer_recordset = recordset.clone();
         let cluster = self.cluster.clone();
         aerospike_rt::spawn(async move {
-            Self::execute_query(
+            Self::execute_query_timeout(
                 cluster,
                 &t_policy,
                 tracker.clone(),
@@ -717,10 +718,37 @@ impl Client {
                 t_recordset,
             )
             .await;
-            defer_recordset.signal_end();
+            defer_recordset.close();
         });
 
         Ok(recordset)
+    }
+
+    async fn execute_query_timeout(
+        cluster: Arc<Cluster>,
+        policy: &QueryPolicy,
+        tracker: Arc<Mutex<PartitionTracker>>,
+        statement: Arc<Statement>,
+        recordset: Arc<Recordset>,
+    ) {
+        if policy.total_timeout() > 0 {
+            let rs_closer = recordset.clone();
+            match aerospike_rt::timeout(
+                Duration::from_millis(policy.total_timeout() as u64),
+                Self::execute_query(cluster, policy, tracker, statement, recordset),
+            )
+            .await
+            {
+                Err(_) => {
+                    let _ = rs_closer
+                        .push(Err(Error::Timeout(format!("Timeout"))))
+                        .await;
+                }
+                _ => (),
+            }
+        } else {
+            Self::execute_query(cluster, policy, tracker, statement, recordset).await;
+        }
     }
 
     async fn execute_query(
