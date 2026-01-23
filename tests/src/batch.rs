@@ -185,7 +185,13 @@ end
         BatchOperation::udf(&bpu, key1.clone(), "test_udf", "echo", Some(args1)),
         BatchOperation::udf(&bpu, key2.clone(), "test_udf", "echo", Some(args2)),
         BatchOperation::udf(&bpu, key3.clone(), "test_udf", "echo", Some(args3)),
-        BatchOperation::udf(&bpu, key4.clone(), "test_udf", "echo", Some(args4)),
+        BatchOperation::udf(
+            &bpu,
+            key4.clone(),
+            "test_udf",
+            "echo_not_exists",
+            Some(args4),
+        ),
     ];
     let mut results = client.batch(&bpolicy, &batch).await.unwrap();
 
@@ -206,8 +212,12 @@ end
 
     let result = results.remove(0);
     assert_eq!(result.key, key4);
+    assert_eq!(result.result_code, Some(ResultCode::UdfBadResponse));
     let record = result.record;
-    assert_eq!(record.unwrap().bins.get("SUCCESS"), Some(&as_val!(4)));
+    assert_eq!(
+        record.unwrap().bins.get("FAILURE"),
+        Some(&as_val!("function not found"))
+    );
 
     client.close().await.unwrap();
 }

@@ -206,6 +206,7 @@ impl<'a> BatchOperateCommand<'a> {
 
         match result_code {
             ResultCode::Ok => (),
+            ResultCode::UdfBadResponse => (), // UDF errors will have a body that needs to be parsed
             ResultCode::KeyNotFoundError | ResultCode::FilteredOut => (),
             rc => {
                 if last_record {
@@ -233,6 +234,7 @@ impl<'a> BatchOperateCommand<'a> {
 
         let found_key = match result_code {
             ResultCode::Ok => true,
+            ResultCode::UdfBadResponse => true,
             ResultCode::KeyNotFoundError | ResultCode::FilteredOut => false,
             _ => unreachable!(),
         };
