@@ -15,7 +15,7 @@
 use std::fmt;
 
 /// Default privileges defined on the server.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, PartialOrd)]
 pub enum PrivilegeCode {
     /// User can edit/remove other users. Global scope only.
     UserAdmin = 0,
@@ -67,16 +67,7 @@ pub enum PrivilegeCode {
 
 impl PrivilegeCode {
     pub(crate) fn can_scope(&self) -> bool {
-        match self {
-            PrivilegeCode::Read
-            | PrivilegeCode::ReadWrite
-            | PrivilegeCode::ReadWriteUDF
-            | PrivilegeCode::Write
-            | PrivilegeCode::Truncate
-            | PrivilegeCode::ReadMasked
-            | PrivilegeCode::WriteMasked => true,
-            _ => false,
-        }
+        *self >= Self::Read
     }
 }
 
