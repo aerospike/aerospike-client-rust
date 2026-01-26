@@ -133,9 +133,6 @@ impl<'a> BatchOperateCommand<'a> {
                     )));
                 }
             }
-
-            // command has completed successfully. Exit method.
-            return Ok(self);
         }
     }
 
