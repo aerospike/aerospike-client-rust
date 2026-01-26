@@ -14,6 +14,7 @@
 
 #![allow(dead_code)]
 
+use std::convert::TryInto;
 use std::str;
 
 use pwhash::bcrypt::{self, BcryptSetup, BcryptVariant};
@@ -23,7 +24,6 @@ use crate::errors::{Error, Result};
 use crate::net::Connection;
 use crate::net::PooledConnection;
 use crate::policy::AuthMode;
-use crate::privilege::PrivilegeCode;
 use crate::ResultCode;
 use crate::Role;
 use crate::User;
@@ -333,7 +333,7 @@ impl AdminCommand {
 
         let size = conn.buffer.read_u8(None);
         for _ in 0..size {
-            let code = PrivilegeCode::from(conn.buffer.read_u8(None));
+            let code = conn.buffer.read_u8(None).try_into()?;
             let mut privilege = Privilege {
                 code: code,
                 namespace: None,
