@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.0.0-alpha.8]
+
+* **New Features**
+  * [CLIENT-4050] Support Privilege / Permission Code Expansion Due to DataMasking Feature.
+
+* **Bug Fixes**
+  * [CLIENT-4099] Enforce `policy.total_timeout` on all commands.
+  * Remove `PrivilegeCode` related panics from the codebase.
+  * Fix an issue where batch commands were not retried.
+  * Handle the UDF error cases in batch commands.
+
 ## [2.0.0-alpha.7]
 
 * **New Features**
