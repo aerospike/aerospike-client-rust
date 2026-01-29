@@ -762,13 +762,6 @@ impl AdminCommand {
         conn.buffer.write_u64(size as u64);
     }
 
-    fn hex_str(b: &[u8]) -> String {
-        b.iter()
-            .map(|x| format!("{:02x}", x))
-            .collect::<Vec<_>>()
-            .join(" ")
-    }
-
     fn write_header(conn: &mut Connection, command: u8, field_count: u8) {
         conn.buffer.data_offset = 8;
         conn.buffer.write_u8(0);
