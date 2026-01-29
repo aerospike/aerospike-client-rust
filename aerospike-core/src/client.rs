@@ -1212,9 +1212,15 @@ impl Client {
         user: &str,
         roles: &[&str],
     ) -> Result<()> {
-        let password = AdminCommand::hash_password("nopassword")?;
         let cluster = self.cluster.clone();
-        AdminCommand::create_user(policy, &cluster, user, &password, roles).await
+        AdminCommand::create_user_with_password_value(
+            policy,
+            &cluster,
+            user,
+            crate::commands::admin_command::NOPASSWORD_BCRYPT_HASH,
+            roles,
+        )
+        .await
     }
 
     /// Removes a user from the cluster.

@@ -14,7 +14,7 @@
 
 #![allow(dead_code)]
 
-use std::convert::TryInto;
+use std::convert::TryFrom;
 use std::str;
 
 use pwhash::bcrypt::{self, BcryptSetup, BcryptVariant};
@@ -24,6 +24,7 @@ use crate::errors::{Error, Result};
 use crate::net::Connection;
 use crate::net::PooledConnection;
 use crate::policy::AuthMode;
+use crate::privilege::PrivilegeCode;
 use crate::ResultCode;
 use crate::Role;
 use crate::User;
@@ -46,6 +47,11 @@ const SET_ALLOWLIST: u8 = 14;
 const SET_QUOTAS: u8 = 15;
 const QUERY_ROLES: u8 = 16;
 const LOGIN: u8 = 20;
+
+// Bcrypt hash of "nopassword" with salt 7EqJtq98hPqEX7fNZaFWoO (cost 10, 2a).
+// Server treats this exact value as PKI-only user; must match other clients.
+pub(crate) const NOPASSWORD_BCRYPT_HASH: &str =
+    "$2a$10$7EqJtq98hPqEX7fNZaFWoOePA2sZy..tlOF99W2N0g5KZ3dLaw8WO";
 
 // Field IDs
 const USER: u8 = 0;
@@ -333,7 +339,7 @@ impl AdminCommand {
 
         let size = conn.buffer.read_u8(None);
         for _ in 0..size {
-            let code = conn.buffer.read_u8(None).try_into()?;
+            let code = PrivilegeCode::try_from(conn.buffer.read_u8(None))?;
             let mut privilege = Privilege {
                 code: code,
                 namespace: None,
@@ -431,6 +437,19 @@ impl AdminCommand {
         password: &str,
         roles: &[&str],
     ) -> Result<()> {
+        let password_value = AdminCommand::hash_password(password)?;
+        AdminCommand::create_user_with_password_value(policy, cluster, user, &password_value, roles).await
+    }
+
+    /// CREATE_USER with PASSWORD field set to the given value (already hashed).
+    /// Used by create_user (after hashing) and create_pki_user (with NOPASSWORD_BCRYPT_HASH).
+    pub(crate) async fn create_user_with_password_value(
+        policy: &AdminPolicy,
+        cluster: &Cluster,
+        user: &str,
+        password_value: &str,
+        roles: &[&str],
+    ) -> Result<()> {
         let node = cluster.get_random_node().await?;
         let mut conn = node.get_connection().await?;
 
@@ -438,7 +457,7 @@ impl AdminCommand {
         conn.buffer.reset_offset();
         AdminCommand::write_header(&mut conn, CREATE_USER, 3);
         AdminCommand::write_field_str(&mut conn, USER, user);
-        AdminCommand::write_field_str(&mut conn, PASSWORD, &AdminCommand::hash_password(password)?);
+        AdminCommand::write_field_str(&mut conn, PASSWORD, password_value);
         AdminCommand::write_roles(&mut conn, roles);
 
         AdminCommand::execute(policy, conn).await
@@ -741,6 +760,13 @@ impl AdminCommand {
         // Write total size of message which is the current offset.
         let size = (size - 8) | (MSG_VERSION << 56) | (MSG_TYPE << 48);
         conn.buffer.write_u64(size as u64);
+    }
+
+    fn hex_str(b: &[u8]) -> String {
+        b.iter()
+            .map(|x| format!("{:02x}", x))
+            .collect::<Vec<_>>()
+            .join(" ")
     }
 
     fn write_header(conn: &mut Connection, command: u8, field_count: u8) {
