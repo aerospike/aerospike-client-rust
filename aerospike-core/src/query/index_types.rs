@@ -57,7 +57,7 @@ impl fmt::Display for IndexType {
 impl fmt::Display for CollectionIndexType {
     fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
         match *self {
-            CollectionIndexType::Default => panic!("Unknown IndexCollectionType value `Default`"),
+            CollectionIndexType::Default => "DEFAULT".fmt(f),
             CollectionIndexType::List => "LIST".fmt(f),
             CollectionIndexType::MapKeys => "MAPKEYS".fmt(f),
             CollectionIndexType::MapValues => "MAPVALUES".fmt(f),

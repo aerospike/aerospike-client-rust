@@ -29,7 +29,7 @@ use std::vec::Vec;
 
 use crate::commands::buffer::Buffer;
 use crate::commands::ParticleType;
-use crate::errors::Result;
+use crate::errors::{Error, Result};
 use crate::msgpack::{decoder, encoder};
 
 #[cfg(feature = "serialization")]
@@ -278,33 +278,39 @@ impl Value {
 
     /// Calculate the size in bytes that the representation on wire for this value will require.
     /// For internal use only.
-    pub(crate) fn estimate_size(&self) -> usize {
-        match *self {
+    #[must_use]
+    pub(crate) fn estimate_size(&self) -> Result<usize> {
+        let res = match *self {
             Value::Nil => 0,
             Value::Int(_) | Value::Float(_) => 8,
             Value::String(ref s) => s.len(),
             Value::Blob(ref b) => b.len(),
             Value::Bool(_) => 1,
             Value::MultiResult(_) => {
-                panic!("MultiValues are only returned as results from the server and never from the client.")
+                return Err(Error::InvalidArgument("MultiValues are only returned as results from the server and never from the client.".into()));
             }
             Value::List(_) | Value::HashMap(_) | Value::OrderedMap(_) => {
-                encoder::pack_value(&mut None, self)
+                encoder::pack_value(&mut None, self)?
             }
             Value::KeyValueList(_) => {
-                panic!("The library never passes ordered maps to the server.")
+                return Err(Error::InvalidArgument(
+                    "The library never passes ordered maps to the server.".into(),
+                ));
             }
             Value::GeoJSON(ref s) => 1 + 2 + s.len(), // flags + ncells + jsonstr
             Value::HLL(ref h) => h.len(),
             Value::Infinity => 0,
             Value::Wildcard => 0,
-        }
+        };
+
+        Ok(res)
     }
 
     /// Serialize the value into the given buffer.
     /// For internal use only.
-    pub(crate) fn write_to(&self, buf: &mut Buffer) -> usize {
-        match *self {
+    #[must_use]
+    pub(crate) fn write_to(&self, buf: &mut Buffer) -> Result<usize> {
+        let res = match *self {
             Value::Nil => 0,
             Value::Int(ref val) => buf.write_i64(*val),
             Value::Bool(ref val) => buf.write_bool(*val),
@@ -312,18 +318,22 @@ impl Value {
             Value::String(ref val) => buf.write_str(val),
             Value::Blob(ref val) | Value::HLL(ref val) => buf.write_bytes(val),
             Value::MultiResult(_) => {
-                panic!("MultiValues are only returned as results from the server and never from the client.")
+                return Err(Error::InvalidArgument("MultiValues are only returned as results from the server and never from the client.".into()));
             }
             Value::List(_) | Value::HashMap(_) | Value::OrderedMap(_) => {
-                encoder::pack_value(&mut Some(buf), self)
+                encoder::pack_value(&mut Some(buf), self)?
             }
             Value::KeyValueList(_) => {
-                panic!("The library never passes ordered maps to the server.")
+                return Err(Error::InvalidArgument(
+                    "The library never passes ordered maps to the server.".into(),
+                ));
             }
             Value::GeoJSON(ref val) => buf.write_geo(val),
             Value::Infinity => encoder::pack_infinity(&mut Some(buf)),
             Value::Wildcard => encoder::pack_wildcard(&mut Some(buf)),
-        }
+        };
+
+        Ok(res)
     }
 
     /// Serialize the value as a record key.
@@ -344,7 +354,9 @@ impl Value {
                 h.update(val);
                 Ok(())
             }
-            _ => panic!("Data type is not supported as Key value."),
+            _ => Err(Error::InvalidArgument(
+                "Data type is not supported as Key value.".into(),
+            )),
         }
     }
 

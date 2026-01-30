@@ -20,6 +20,7 @@ use std::sync::Arc;
 use crate::commands::buffer::Buffer;
 use crate::commands::ParticleType;
 pub use crate::operations::cdt_context::CdtContext;
+use crate::Result;
 use crate::Value;
 
 #[derive(Debug, Clone)]
@@ -34,7 +35,10 @@ pub(crate) enum CdtArgument<'a> {
 }
 
 pub type OperationEncoder = Arc<
-    dyn Fn(&mut Option<&mut Buffer>, &CdtOperation, &[CdtContext]) -> usize + Send + Sync + 'static,
+    dyn Fn(&mut Option<&mut Buffer>, &CdtOperation, &[CdtContext]) -> Result<usize>
+        + Send
+        + Sync
+        + 'static,
 >;
 
 #[derive(Clone)]
@@ -49,19 +53,21 @@ impl<'a> CdtOperation<'a> {
         ParticleType::BLOB
     }
 
-    pub fn estimate_size(&self, ctx: &[CdtContext]) -> usize {
-        let size: usize = (self.encoder)(&mut None, self, ctx);
-        size
+    #[must_use]
+    pub fn estimate_size(&self, ctx: &[CdtContext]) -> Result<usize> {
+        let size: usize = (self.encoder)(&mut None, self, ctx)?;
+        Ok(size)
     }
 
-    pub fn write_to(&self, buffer: &mut Buffer, ctx: &[CdtContext]) -> usize {
-        let size: usize = (self.encoder)(&mut Some(buffer), self, ctx);
-        size
+    #[must_use]
+    pub fn write_to(&self, buffer: &mut Buffer, ctx: &[CdtContext]) -> Result<usize> {
+        let size: usize = (self.encoder)(&mut Some(buffer), self, ctx)?;
+        Ok(size)
     }
 }
 
 impl<'a> fmt::Debug for CdtOperation<'a> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> Result<(), fmt::Error> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> std::result::Result<(), fmt::Error> {
         #[derive(Debug)]
         #[allow(unused)]
         struct CdtOperation<'a> {

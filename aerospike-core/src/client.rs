@@ -886,7 +886,7 @@ impl Client {
         let node = self.cluster.get_random_node().await?;
 
         let cmd = if let Some(expression) = filter_expression {
-            let size = expression.size();
+            let size = expression.size()?;
             let mut buf = Buffer::new(0);
             buf.resize_buffer(size)?;
             let _ = expression.pack(&mut Some(&mut buf));
@@ -1091,7 +1091,7 @@ impl Client {
 
         if let Some(ctx) = ctx {
             if !ctx.is_empty() {
-                let size = pack_ctx_for_index(&mut None, ctx);
+                let size = pack_ctx_for_index(&mut None, ctx)?;
                 let mut buf = Buffer::new(0);
                 buf.resize_buffer(size)?;
                 let _ = pack_ctx_for_index(&mut Some(&mut buf), ctx);
@@ -1102,7 +1102,7 @@ impl Client {
         };
 
         if let Some(expression) = expression {
-            let size = expression.size();
+            let size = expression.size()?;
             let mut buf = Buffer::new(0);
             buf.resize_buffer(size)?;
             let _ = expression.pack(&mut Some(&mut buf));

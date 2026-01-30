@@ -23,9 +23,11 @@ use crate::operations::cdt::{CdtArgument, CdtOperation};
 use crate::operations::cdt_context::CdtContext;
 use crate::operations::maps::MapOrder;
 use crate::value::{FloatValue, Value};
+use crate::{Error, Result};
 
-pub(crate) fn pack_value(buf: &mut Option<&mut Buffer>, val: &Value) -> usize {
-    match *val {
+#[must_use]
+pub(crate) fn pack_value(buf: &mut Option<&mut Buffer>, val: &Value) -> Result<usize> {
+    let res = match *val {
         Value::Nil => pack_nil(buf),
         Value::Int(ref val) => pack_integer(buf, *val),
         Value::Bool(ref val) => pack_bool(buf, *val),
@@ -35,15 +37,25 @@ pub(crate) fn pack_value(buf: &mut Option<&mut Buffer>, val: &Value) -> usize {
             FloatValue::F32(_) => pack_f32(buf, f32::from(val)),
         },
         Value::Blob(ref val) | Value::HLL(ref val) => pack_blob(buf, val),
-        Value::List(ref val) => pack_array(buf, val),
-        Value::HashMap(ref val) => pack_map(buf, val),
-        Value::OrderedMap(ref val) => pack_ordered_map(buf, val),
-        Value::MultiResult(_) => panic!("Multi results are not supported in this encoder."),
-        Value::KeyValueList(_) => panic!("KeyValue lists are not supported in this encoder."),
+        Value::List(ref val) => pack_array(buf, val)?,
+        Value::HashMap(ref val) => pack_map(buf, val)?,
+        Value::OrderedMap(ref val) => pack_ordered_map(buf, val)?,
+        Value::MultiResult(_) => {
+            return Err(Error::InvalidArgument(
+                "Multi results are not supported in this encoder.".into(),
+            ))
+        }
+        Value::KeyValueList(_) => {
+            return Err(Error::InvalidArgument(
+                "KeyValue lists are not supported in this encoder.".into(),
+            ))
+        }
         Value::GeoJSON(ref val) => pack_geo_json(buf, val),
         Value::Infinity => pack_infinity(buf),
         Value::Wildcard => pack_wildcard(buf),
-    }
+    };
+
+    Ok(res)
 }
 
 pub(crate) fn pack_empty_args_array(buf: &mut Option<&mut Buffer>) -> usize {
@@ -53,23 +65,28 @@ pub(crate) fn pack_empty_args_array(buf: &mut Option<&mut Buffer>) -> usize {
     size
 }
 
-pub(crate) fn pack_ctx_for_index(buf: &mut Option<&mut Buffer>, ctx: &[CdtContext]) -> usize {
+#[must_use]
+pub(crate) fn pack_ctx_for_index(
+    buf: &mut Option<&mut Buffer>,
+    ctx: &[CdtContext],
+) -> Result<usize> {
     let mut size: usize = 0;
     size += pack_array_begin(buf, ctx.len() * 2);
 
     for c in ctx {
         size += pack_integer(buf, i64::from(c.id));
-        size += pack_value(buf, &c.value);
+        size += pack_value(buf, &c.value)?;
     }
 
-    size
+    Ok(size)
 }
 
+#[must_use]
 pub(crate) fn pack_cdt_op(
     buf: &mut Option<&mut Buffer>,
     cdt_op: &CdtOperation,
     ctx: &[CdtContext],
-) -> usize {
+) -> Result<usize> {
     let mut size: usize = 0;
     if !ctx.is_empty() {
         size += pack_array_begin(buf, 3);
@@ -82,7 +99,7 @@ pub(crate) fn pack_cdt_op(
             } else {
                 size += pack_integer(buf, i64::from(c.id | c.flags));
             }
-            size += pack_value(buf, &c.value);
+            size += pack_value(buf, &c.value)?;
         }
     }
 
@@ -99,18 +116,19 @@ pub(crate) fn pack_cdt_op(
                 CdtArgument::Map(map) => pack_map(buf, map),
                 CdtArgument::OrderedMap(map) => pack_ordered_map(buf, map),
                 CdtArgument::Bool(bool_val) => pack_value(buf, &Value::from(bool_val)),
-            }
+            }?;
         }
     }
 
-    size
+    Ok(size)
 }
 
+#[must_use]
 pub(crate) fn pack_hll_op(
     buf: &mut Option<&mut Buffer>,
     hll_op: &CdtOperation,
     _ctx: &[CdtContext],
-) -> usize {
+) -> Result<usize> {
     let mut size: usize = 0;
     size += pack_array_begin(buf, hll_op.args.len() + 1);
     size += pack_integer(buf, i64::from(hll_op.op));
@@ -124,17 +142,18 @@ pub(crate) fn pack_hll_op(
                 CdtArgument::Map(map) => pack_map(buf, map),
                 CdtArgument::OrderedMap(map) => pack_ordered_map(buf, map),
                 CdtArgument::Bool(bool_val) => pack_value(buf, &Value::from(bool_val)),
-            }
+            }?;
         }
     }
-    size
+    Ok(size)
 }
 
+#[must_use]
 pub(crate) fn pack_cdt_bit_op(
     buf: &mut Option<&mut Buffer>,
     cdt_op: &CdtOperation,
     ctx: &[CdtContext],
-) -> usize {
+) -> Result<usize> {
     let mut size: usize = 0;
     if !ctx.is_empty() {
         size += pack_array_begin(buf, 3);
@@ -147,7 +166,7 @@ pub(crate) fn pack_cdt_bit_op(
             } else {
                 size += pack_integer(buf, i64::from(c.id | c.flags));
             }
-            size += pack_value(buf, &c.value);
+            size += pack_value(buf, &c.value)?;
         }
     }
 
@@ -164,48 +183,54 @@ pub(crate) fn pack_cdt_bit_op(
                 CdtArgument::Map(map) => pack_map(buf, map),
                 CdtArgument::OrderedMap(map) => pack_ordered_map(buf, map),
                 CdtArgument::Bool(bool_val) => pack_value(buf, &Value::from(bool_val)),
-            }
+            }?;
         }
     }
-    size
+    Ok(size)
 }
 
-pub(crate) fn pack_array(buf: &mut Option<&mut Buffer>, values: &[Value]) -> usize {
+#[must_use]
+pub(crate) fn pack_array(buf: &mut Option<&mut Buffer>, values: &[Value]) -> Result<usize> {
     let mut size = 0;
 
     size += pack_array_begin(buf, values.len());
     for val in values {
-        size += pack_value(buf, val);
+        size += pack_value(buf, val)?;
     }
 
-    size
+    Ok(size)
 }
 
-pub(crate) fn pack_map(buf: &mut Option<&mut Buffer>, map: &HashMap<Value, Value>) -> usize {
+#[must_use]
+pub(crate) fn pack_map(
+    buf: &mut Option<&mut Buffer>,
+    map: &HashMap<Value, Value>,
+) -> Result<usize> {
     let mut size = 0;
 
     size += pack_map_begin(buf, map.len(), MapOrder::Unordered);
     for (key, val) in map.iter() {
-        size += pack_value(buf, key);
-        size += pack_value(buf, val);
+        size += pack_value(buf, key)?;
+        size += pack_value(buf, val)?;
     }
 
-    size
+    Ok(size)
 }
 
+#[must_use]
 pub(crate) fn pack_ordered_map(
     buf: &mut Option<&mut Buffer>,
     map: &BTreeMap<Value, Value>,
-) -> usize {
+) -> Result<usize> {
     let mut size = 0;
 
     size += pack_map_begin(buf, map.len(), MapOrder::KeyOrdered);
     for (key, val) in map.iter() {
-        size += pack_value(buf, key);
-        size += pack_value(buf, val);
+        size += pack_value(buf, key)?;
+        size += pack_value(buf, val)?;
     }
 
-    size
+    Ok(size)
 }
 
 pub(crate) fn pack_infinity(buf: &mut Option<&mut Buffer>) -> usize {

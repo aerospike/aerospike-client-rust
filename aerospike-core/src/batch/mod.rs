@@ -305,10 +305,10 @@ impl<'a> BatchOperation<'a> {
 
                 match (&policy.filter_expression, &parent_fe) {
                     (Some(fe), _) => {
-                        size += fe.size() + FIELD_HEADER_SIZE as usize;
+                        size += fe.size()? + FIELD_HEADER_SIZE as usize;
                     }
                     (_, Some(pfe)) => {
-                        size += pfe.size() + FIELD_HEADER_SIZE as usize;
+                        size += pfe.size()? + FIELD_HEADER_SIZE as usize;
                     }
                     _ => (),
                 }
@@ -329,7 +329,7 @@ impl<'a> BatchOperation<'a> {
                                 "Write operations not allowed in batch read".into(),
                             ));
                         }
-                        size += op.estimate_size() + 8;
+                        size += op.estimate_size()? + 8;
                     }
                 }
 
@@ -342,10 +342,10 @@ impl<'a> BatchOperation<'a> {
 
                 match (&policy.filter_expression, &parent_fe) {
                     (Some(fe), _) => {
-                        size += fe.size() + FIELD_HEADER_SIZE as usize;
+                        size += fe.size()? + FIELD_HEADER_SIZE as usize;
                     }
                     (_, Some(pfe)) => {
-                        size += pfe.size() + FIELD_HEADER_SIZE as usize;
+                        size += pfe.size()? + FIELD_HEADER_SIZE as usize;
                     }
                     _ => (),
                 }
@@ -353,7 +353,7 @@ impl<'a> BatchOperation<'a> {
                 if policy.send_key && br.key.has_value_to_send() {
                     if let Some(ref user_key) = br.key.user_key {
                         // field header size + key size
-                        size += user_key.estimate_size() + FIELD_HEADER_SIZE as usize + 1;
+                        size += user_key.estimate_size()? + FIELD_HEADER_SIZE as usize + 1;
                     }
                 }
 
@@ -363,7 +363,7 @@ impl<'a> BatchOperation<'a> {
                     if op.is_write() {
                         has_write = true
                     }
-                    size += op.estimate_size() + 8;
+                    size += op.estimate_size()? + 8;
                 }
 
                 if !has_write {
@@ -378,10 +378,10 @@ impl<'a> BatchOperation<'a> {
 
                 match (&policy.filter_expression, &parent_fe) {
                     (Some(fe), _) => {
-                        size += fe.size() + FIELD_HEADER_SIZE as usize;
+                        size += fe.size()? + FIELD_HEADER_SIZE as usize;
                     }
                     (_, Some(pfe)) => {
-                        size += pfe.size() + FIELD_HEADER_SIZE as usize;
+                        size += pfe.size()? + FIELD_HEADER_SIZE as usize;
                     }
                     _ => (),
                 }
@@ -389,7 +389,7 @@ impl<'a> BatchOperation<'a> {
                 if policy.send_key && br.key.has_value_to_send() {
                     if let Some(ref user_key) = br.key.user_key {
                         // field header size + key size
-                        size += user_key.estimate_size() + FIELD_HEADER_SIZE as usize + 1;
+                        size += user_key.estimate_size()? + FIELD_HEADER_SIZE as usize + 1;
                     }
                 }
 
@@ -406,10 +406,10 @@ impl<'a> BatchOperation<'a> {
 
                 match (&policy.filter_expression, &parent_fe) {
                     (Some(fe), _) => {
-                        size += fe.size() + FIELD_HEADER_SIZE as usize;
+                        size += fe.size()? + FIELD_HEADER_SIZE as usize;
                     }
                     (_, Some(pfe)) => {
-                        size += pfe.size() + FIELD_HEADER_SIZE as usize;
+                        size += pfe.size()? + FIELD_HEADER_SIZE as usize;
                     }
                     _ => (),
                 }
@@ -417,14 +417,14 @@ impl<'a> BatchOperation<'a> {
                 if policy.send_key && br.key.has_value_to_send() {
                     if let Some(ref user_key) = br.key.user_key {
                         // field header size + key size
-                        size += user_key.estimate_size() + FIELD_HEADER_SIZE as usize + 1;
+                        size += user_key.estimate_size()? + FIELD_HEADER_SIZE as usize + 1;
                     }
                 }
 
                 size += udf_name.len() + FIELD_HEADER_SIZE as usize;
                 size += function_name.len() + FIELD_HEADER_SIZE as usize;
                 if let Some(args) = args {
-                    size += encoder::pack_array(&mut None, args) + FIELD_HEADER_SIZE as usize;
+                    size += encoder::pack_array(&mut None, args)? + FIELD_HEADER_SIZE as usize;
                 } else {
                     size += encoder::pack_empty_args_array(&mut None) + FIELD_HEADER_SIZE as usize;
                 }

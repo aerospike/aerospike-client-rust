@@ -24,6 +24,7 @@ use crate::commands::buffer::Buffer;
 use crate::msgpack::encoder::{pack_array_begin, pack_integer, pack_raw_string, pack_value};
 use crate::operations::cdt_context::CdtContext;
 use crate::value::MapLike;
+use crate::Result;
 use crate::{ParticleType, Value};
 use std::fmt::Debug;
 
@@ -163,12 +164,13 @@ impl Expression {
         }
     }
 
-    fn pack_expression(&self, exps: &[Expression], buf: &mut Option<&mut Buffer>) -> usize {
+    #[must_use]
+    fn pack_expression(&self, exps: &[Expression], buf: &mut Option<&mut Buffer>) -> Result<usize> {
         let mut size = 0;
         if let Some(val) = &self.val {
             // DEF expression
             size += pack_raw_string(buf, &val.to_string());
-            size += exps[0].pack(buf);
+            size += exps[0].pack(buf)?;
         } else {
             // Normal Expressions
             match self.cmd.unwrap() {
@@ -183,13 +185,14 @@ impl Expression {
             }
             size += pack_integer(buf, self.cmd.unwrap() as i64);
             for exp in exps {
-                size += exp.pack(buf);
+                size += exp.pack(buf)?;
             }
         }
-        size
+        Ok(size)
     }
 
-    fn pack_command(&self, cmd: ExpOp, buf: &mut Option<&mut Buffer>) -> usize {
+    #[must_use]
+    fn pack_command(&self, cmd: ExpOp, buf: &mut Option<&mut Buffer>) -> Result<usize> {
         let mut size = 0;
 
         match cmd {
@@ -202,7 +205,7 @@ impl Expression {
                 // Raw String is needed instead of the msgpack String that the pack_value method would use.
                 size += pack_raw_string(buf, &self.val.clone().unwrap().to_string());
                 // The Bin
-                size += self.bin.clone().unwrap().pack(buf);
+                size += self.bin.clone().unwrap().pack(buf)?;
             }
             ExpOp::Call => {
                 // Packing logic for Module
@@ -229,7 +232,7 @@ impl Expression {
 
                                     for c in ctx {
                                         size += pack_integer(buf, i64::from(c.id));
-                                        size += pack_value(buf, &c.value);
+                                        size += pack_value(buf, &c.value)?;
                                     }
                                 }
                             }
@@ -240,20 +243,20 @@ impl Expression {
                     for arg in args {
                         match arg {
                             ExpressionArgument::Value(val) => {
-                                size += pack_value(buf, val);
+                                size += pack_value(buf, val)?;
                             }
                             ExpressionArgument::FilterExpression(cmd) => {
-                                size += cmd.pack(buf);
+                                size += cmd.pack(buf)?;
                             }
                             ExpressionArgument::Context(_) => {}
                         }
                     }
                 } else {
                     // No Arguments
-                    size += pack_value(buf, &self.val.clone().unwrap());
+                    size += pack_value(buf, &self.val.clone().unwrap())?;
                 }
                 // Write the Bin
-                size += self.bin.clone().unwrap().pack(buf);
+                size += self.bin.clone().unwrap().pack(buf)?;
             }
             ExpOp::Bin => {
                 // Bin Encoder
@@ -281,7 +284,7 @@ impl Expression {
                     // Write the Operation
                     size += pack_integer(buf, cmd as i64);
                     // Write the Value
-                    size += pack_value(buf, value);
+                    size += pack_value(buf, value)?;
                 } else {
                     // Operation has no Value
                     size += pack_array_begin(buf, 1);
@@ -291,31 +294,34 @@ impl Expression {
             }
         }
 
-        size
+        Ok(size)
     }
 
-    fn pack_value(&self, buf: &mut Option<&mut Buffer>) -> usize {
+    #[must_use]
+    fn pack_value(&self, buf: &mut Option<&mut Buffer>) -> Result<usize> {
         // Packing logic for Value based Ops
         pack_value(buf, &self.val.clone().unwrap())
     }
 
     /// Returns the packed size of the expression.
-    pub(crate) fn size(&self) -> usize {
+    #[must_use]
+    pub(crate) fn size(&self) -> Result<usize> {
         self.pack(&mut None)
     }
 
     /// Packs the expression.
-    pub(crate) fn pack(&self, buf: &mut Option<&mut Buffer>) -> usize {
+    #[must_use]
+    pub(crate) fn pack(&self, buf: &mut Option<&mut Buffer>) -> Result<usize> {
         let mut size = 0;
         if let Some(exps) = &self.exps {
-            size += self.pack_expression(exps, buf);
+            size += self.pack_expression(exps, buf)?;
         } else if let Some(cmd) = self.cmd {
-            size += self.pack_command(cmd, buf);
+            size += self.pack_command(cmd, buf)?;
         } else {
-            size += self.pack_value(buf);
+            size += self.pack_value(buf)?;
         }
 
-        size
+        Ok(size)
     }
 }
 
