@@ -141,7 +141,7 @@ pub struct ClientPolicy {
 
     /// TendInterval determines interval for checking for cluster state changes.
     /// Minimum possible interval is 10 Milliseconds.
-    pub tend_interval: Duration,
+    pub tend_interval: u32,
 
     /// A IP translation table is used in cases where different clients
     /// use different server IP addresses. This may be necessary when
@@ -190,7 +190,7 @@ impl Default for ClientPolicy {
             max_conns_per_node: 256,
             conn_pools_per_node: 1,
             fail_if_not_connected: true,
-            tend_interval: Duration::new(1, 0),
+            tend_interval: 1000,
             ip_map: None,
             use_services_alternate: false,
             cluster_name: None,

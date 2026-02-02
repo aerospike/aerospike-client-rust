@@ -865,7 +865,7 @@ impl Client {
                 _ => (),
             }
 
-            if let Some(sleep_between_retries) = policy.base_policy.sleep_between_retries {
+            if let Some(sleep_between_retries) = policy.base_policy.sleep_between_retries() {
                 sleep(sleep_between_retries).await;
             }
 

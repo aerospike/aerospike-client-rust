@@ -209,7 +209,7 @@ impl Cluster {
             } else if let Err(err) = cluster.tend().await {
                 log_error_chain!(err, "Error tending cluster");
             }
-            aerospike_rt::sleep(tend_interval).await;
+            aerospike_rt::sleep(Duration::from_millis(tend_interval as u64)).await;
         }
 
         // close all nodes

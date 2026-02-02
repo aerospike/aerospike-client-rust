@@ -107,7 +107,7 @@ impl StreamPolicy for &QueryPolicy {
         }
     }
     fn sleep_between_retries(&self) -> Option<Duration> {
-        self.base_policy.sleep_between_retries
+        self.base_policy.sleep_between_retries()
     }
     fn deadline(&self) -> Option<Instant> {
         self.base_policy.deadline()

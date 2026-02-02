@@ -211,13 +211,13 @@ pub struct BasePolicy {
     /// Default: 0 (no delay, connection closed on timeout)
     pub timeout_delay: u32,
 
-    /// MaxRetries determines maximum number of retries before aborting the current transaction.
+    /// max_retries determines maximum number of retries before aborting the current transaction.
     /// A retry is attempted when there is a network error other than timeout.
     /// If maxRetries is exceeded, the abort will occur even if the timeout
     /// has not yet been exceeded.
     pub max_retries: usize,
 
-    /// read_touch_ttl determines how record TTL (time to live) is affected on reads. When enabled, the server can
+    /// Determines how record TTL (time to live) is affected on reads. When enabled, the server can
     /// efficiently operate as a read-based LRU cache where the least recently used records are expired.
     /// The value is expressed as a percentage of the TTL sent on the most recent write such that a read
     /// within this interval of the record’s end of life will generate a touch.
@@ -231,9 +231,11 @@ pub struct BasePolicy {
     /// Default: ReadTouchTTL::ServerDefault
     pub read_touch_ttl: ReadTouchTTL,
 
-    /// SleepBetweenReplies determines duration to sleep between retries if a
-    /// transaction fails and the timeout was not exceeded. Enter zero to skip sleep.
-    pub sleep_between_retries: Option<Duration>,
+    /// Duration to sleep between retries if a command fails and
+    /// the timeout was not exceeded. Enter zero to skip sleep.
+    ///
+    /// Default: 500
+    pub sleep_between_retries: u32,
 
     /// Optional filter Expression
     pub filter_expression: Option<Expression>,
@@ -278,7 +280,11 @@ impl Policy for BasePolicy {
     }
 
     fn sleep_between_retries(&self) -> Option<Duration> {
-        self.sleep_between_retries
+        if self.sleep_between_retries > 0 {
+            Some(Duration::from_millis(self.sleep_between_retries as u64))
+        } else {
+            None
+        }
     }
 
     fn consistency_level(&self) -> &ConsistencyLevel {

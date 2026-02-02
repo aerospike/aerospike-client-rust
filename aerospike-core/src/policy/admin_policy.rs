@@ -21,7 +21,7 @@ pub struct AdminPolicy {
 
 impl Default for AdminPolicy {
     fn default() -> Self {
-        Self { timeout: 3_000 }
+        Self { timeout: 0 }
     }
 }
 

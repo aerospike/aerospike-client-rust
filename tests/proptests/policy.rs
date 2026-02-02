@@ -137,7 +137,7 @@ pub fn base_policy(
         duration_ms(total_timeout_ms, total_timeout_ms * 3),
         duration_ms(0, 10000),
         max_retries(0, 100),
-        duration_ms_opt(100, 500),
+        100..500 as u32,
         consistency_level(),
         read_touch_ttl(),
         Just(None), //true_or_false_filter_expression(),

@@ -32,7 +32,7 @@ async fn batch_operate_timeout() {
     bpolicy.base_policy.total_timeout = 10;
     bpolicy.base_policy.socket_timeout = 10;
     bpolicy.base_policy.max_retries = 0;
-    bpolicy.base_policy.sleep_between_retries = Some(Duration::from_millis(0));
+    bpolicy.base_policy.sleep_between_retries = 0;
 
     let key1 = as_key!(namespace, set_name, 1);
     let bin1 = as_bin!("a", "a value");
