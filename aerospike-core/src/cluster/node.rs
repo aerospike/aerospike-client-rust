@@ -207,7 +207,13 @@ impl Node {
         };
 
         let (_, hosts) = PeersParser::new(friend_string).parse()?;
-        for alias in hosts {
+        for mut alias in hosts {
+            if let Some(ref ip_map) = self.client_policy.ip_map {
+                if let Some(mapped) = ip_map.get(&alias.name) {
+                    alias.name = mapped.clone();
+                }
+            }
+
             if current_aliases.contains_key(&alias) {
                 self.reference_count.fetch_add(1, Ordering::Relaxed);
             } else if !friends.contains(&alias) {

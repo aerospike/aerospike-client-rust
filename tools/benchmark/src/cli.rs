@@ -14,6 +14,7 @@
 // the License.
 
 use std::convert::AsRef;
+use std::collections::HashMap;
 use std::env;
 use std::str::FromStr;
 
@@ -58,11 +59,18 @@ pub struct Options {
     pub concurrency: i64,
     pub workload: Workload,
     pub conn_pools_per_node: usize,
+    pub use_services_alternate: bool,
+    pub ip_map: Option<HashMap<String, String>>,
 }
 
-pub fn parse_options() -> Options {
+pub fn parse_options() -> Result<Options, String> {
     let matches = build_cli().get_matches();
-    Options {
+    let ip_map_str = matches
+        .value_of("ip_map")
+        .map(|s| s.to_owned())
+        .or_else(|| env::var("AEROSPIKE_IP_MAP").ok());
+
+    Ok(Options {
         hosts: matches
             .value_of("hosts")
             .map(|s| s.to_owned())
@@ -76,7 +84,9 @@ pub fn parse_options() -> Options {
         workload: Workload::from_str(matches.value_of("workload").unwrap()).unwrap(),
         conn_pools_per_node: usize::from_str(matches.value_of("connPoolsPerNode").unwrap())
             .unwrap(),
-    }
+        use_services_alternate: matches.is_present("use_services_alternate"),
+        ip_map: ip_map_str.as_deref().map(parse_ip_map).transpose()?,
+    })
 }
 
 fn build_cli() -> App<'static, 'static> {
@@ -128,6 +138,18 @@ fn build_cli() -> App<'static, 'static> {
                 .validator(|val| validate::<usize>(val, "Must be number".into()))
                 .default_value("1"),
         )
+        .arg(
+            Arg::with_name("use_services_alternate")
+                .long("use-services-alternate")
+                .help("Use server \"services-alternate\" / \"service-alternate\" addresses")
+        )
+        .arg(
+            Arg::with_name("ip_map")
+                .long("ip_map")
+                .takes_value(true)
+                .help("Map advertised IPs to reachable IPs (format: from=to[,from=to...])")
+                .validator(|val| parse_ip_map(&val).map(|_| ()).map_err(|e| e)),
+        )    
         .after_help(AFTER_HELP.trim())
 }
 
@@ -136,4 +158,29 @@ fn validate<T: FromStr>(value: String, err: String) -> Result<(), String> {
         Ok(_) => Ok(()),
         Err(_) => Err(err.into()),
     }
+}
+
+fn parse_ip_map(spec: &str) -> Result<HashMap<String, String>, String> {
+    let mut map = HashMap::new();
+    let spec = spec.trim();
+    if spec.is_empty() {
+        return Ok(map);
+    }
+
+    for entry in spec.split(',') {
+        let entry = entry.trim();
+        if entry.is_empty() {
+            continue;
+        }
+        let (from, to) = entry
+            .split_once('=')
+            .ok_or_else(|| format!("Invalid ip-map entry `{}` (expected from=to)", entry))?;
+        let from = from.trim();
+        let to = to.trim();
+        if from.is_empty() || to.is_empty() {
+            return Err(format!("Invalid ip-map entry `{}` (expected from=to)", entry));
+        }
+        map.insert(from.to_string(), to.to_string());
+    }
+    Ok(map)
 }

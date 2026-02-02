@@ -47,6 +47,7 @@ impl Collector {
         for hist in self.receiver.iter() {
             self.histogram.merge(hist);
             if last_report.elapsed() > *REPORT_MS {
+                println!("--collecting after 100 ms--");
                 self.report();
                 last_report = Instant::now();
                 self.histogram.reset();
