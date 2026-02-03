@@ -130,6 +130,9 @@ trait Task: Send {
             Err(Error::ServerError(ResultCode::Timeout, _, _) | Error::Timeout(_)) => {
                 Status::Timeout
             }
+            Err(Error::ServerError(ResultCode::KeyNotFoundError, _, _ )) => {
+                Status::Success
+            },
             Err(_) => Status::Error,
             _ => Status::Success,
         }

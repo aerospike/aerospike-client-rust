@@ -47,7 +47,6 @@ impl Collector {
         for hist in self.receiver.iter() {
             self.histogram.merge(hist);
             if last_report.elapsed() > *REPORT_MS {
-                println!("--collecting after 100 ms--");
                 self.report();
                 last_report = Instant::now();
                 self.histogram.reset();
@@ -62,7 +61,7 @@ impl Collector {
         let hist = self.histogram;
         let bkt = hist.latencies();
         println!(
-            "TPS: {:>8.0},   Success: {:>8},   Timeouts: {:>8},   Errors: {:>8}",
+            "TPS: {:>8.0},   TOTAL_OPS: {:>8},   Timeouts: {:>8},   Errors: {:>8}",
             hist.tps(),
             hist.count(),
             hist.timeouts(),
