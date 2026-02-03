@@ -370,6 +370,23 @@ pub fn int_bin(name: String) -> Expression {
     )
 }
 
+/// Create boolean bin expression.
+/// ```
+/// // Boolean bin "a" == true
+/// use aerospike::expressions::{bool_bin, bool_val, eq};
+/// eq(bool_bin("a".to_string()), bool_val(true));
+/// ```
+pub fn bool_bin(name: String) -> Expression {
+    Expression::new(
+        Some(ExpOp::Bin),
+        Some(Value::from(name)),
+        None,
+        None,
+        Some(ExpType::BOOL),
+        None,
+    )
+}
+
 /// Create string bin expression.
 /// ```
 /// // String bin "a" == "views"
