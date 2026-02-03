@@ -41,6 +41,9 @@ use generator::KeyPartitions;
 use stats::Collector;
 use workers::Worker;
 
+use crate::generator::KeyRange;
+use crate::workers::Workload;
+
 #[tokio::main]
 async fn main() {
     let _ = env_logger::try_init();
@@ -76,7 +79,6 @@ async fn connect(options: &Options) -> AerospikeResult<Client> {
     Client::new(&policy, &options.hosts).await
 }
 
-
 async fn run_workload(client: Client, opts: Options) {
     let client = Arc::new(client);
     let (send, recv) =  mpsc::channel();
@@ -87,20 +89,33 @@ async fn run_workload(client: Client, opts: Options) {
     });
     let mut worker_handles = Vec::new();
 
-    for keys in KeyPartitions::new(
-        opts.namespace,
-        opts.set,
-        opts.start_key,
-        opts.keys,
-        opts.concurrency,
-    ) {
-        let mut worker = Worker::for_workload(&opts.workload, client.clone(), send.clone());
-        
-        let handle = tokio::spawn(async move { 
-            worker.run(keys).await 
-        });
-        worker_handles.push(handle);
+    if opts.workload == Workload::Initialize {
+        for keys in KeyPartitions::new(
+            opts.namespace,
+            opts.set,
+            opts.start_key,
+            opts.keys,
+            opts.concurrency,
+        ) {
+            let mut worker = Worker::for_workload(&opts.workload, client.clone(), send.clone());
+            
+            let handle = tokio::spawn(async move { 
+                worker.run(keys).await 
+            });
+            worker_handles.push(handle);
+        }
+    } else {
+        for _ in 0..opts.concurrency {
+            let mut worker = Worker::for_workload(&opts.workload, client.clone(), send.clone());
+            let key_range = KeyRange::new(opts.namespace.clone(), opts.set.clone(), opts.start_key, opts.keys);
+            let handle = tokio::spawn(async move {
+                worker.run(key_range).await
+            });
+            worker_handles.push(handle);
+        }
     }
+
+   
     drop(send); 
     for handle in worker_handles {
         let _ = handle.await;
