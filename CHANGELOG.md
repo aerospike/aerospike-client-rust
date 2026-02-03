@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.0.0-alpha.9]
+
+* **Bug Fixes**
+  * [CLIENT-4140] SIGSEGV/Panic with parallel batch operations and short timeouts
+  * [CLIENT-4131] Dix an issue where `Client.create_pki_user` hashes the predefined password twice.
+
+* **Breaking Change**
+  * [CLIENT-4148] Convert `BasePolicy.sleep_between_retries` and `ClientPolicy.tend_interval` to u32. Also sync default policy values with other clients.
+
+* **Improvements**
+  * Turn some panics into errors.
+
 ## [2.0.0-alpha.8]
 
 * **New Features**
