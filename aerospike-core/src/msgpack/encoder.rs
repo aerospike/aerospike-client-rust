@@ -108,13 +108,13 @@ pub(crate) fn pack_cdt_op(
 
     if !cdt_op.args.is_empty() {
         for arg in &cdt_op.args {
-            size += match *arg {
+            size += match arg {
                 CdtArgument::Byte(byte) => pack_value(buf, &Value::from(byte)),
                 CdtArgument::Int(int) => pack_value(buf, &Value::from(int)),
-                CdtArgument::Value(value) => pack_value(buf, value),
-                CdtArgument::List(list) => pack_array(buf, list),
-                CdtArgument::Map(map) => pack_map(buf, map),
-                CdtArgument::OrderedMap(map) => pack_ordered_map(buf, map),
+                CdtArgument::Value(value) => pack_value(buf, &value),
+                CdtArgument::List(list) => pack_array(buf, &list),
+                CdtArgument::Map(map) => pack_map(buf, &map),
+                CdtArgument::OrderedMap(map) => pack_ordered_map(buf, &map),
                 CdtArgument::Bool(bool_val) => pack_value(buf, &Value::from(bool_val)),
             }?;
         }
@@ -134,13 +134,13 @@ pub(crate) fn pack_hll_op(
     size += pack_integer(buf, i64::from(hll_op.op));
     if !hll_op.args.is_empty() {
         for arg in &hll_op.args {
-            size += match *arg {
+            size += match arg {
                 CdtArgument::Byte(byte) => pack_value(buf, &Value::from(byte)),
                 CdtArgument::Int(int) => pack_value(buf, &Value::from(int)),
-                CdtArgument::Value(value) => pack_value(buf, value),
-                CdtArgument::List(list) => pack_array(buf, list),
-                CdtArgument::Map(map) => pack_map(buf, map),
-                CdtArgument::OrderedMap(map) => pack_ordered_map(buf, map),
+                CdtArgument::Value(value) => pack_value(buf, &value),
+                CdtArgument::List(list) => pack_array(buf, &list),
+                CdtArgument::Map(map) => pack_map(buf, &map),
+                CdtArgument::OrderedMap(map) => pack_ordered_map(buf, &map),
                 CdtArgument::Bool(bool_val) => pack_value(buf, &Value::from(bool_val)),
             }?;
         }
@@ -175,13 +175,13 @@ pub(crate) fn pack_cdt_bit_op(
 
     if !cdt_op.args.is_empty() {
         for arg in &cdt_op.args {
-            size += match *arg {
+            size += match arg {
                 CdtArgument::Byte(byte) => pack_value(buf, &Value::from(byte)),
                 CdtArgument::Int(int) => pack_value(buf, &Value::from(int)),
-                CdtArgument::Value(value) => pack_value(buf, value),
-                CdtArgument::List(list) => pack_array(buf, list),
-                CdtArgument::Map(map) => pack_map(buf, map),
-                CdtArgument::OrderedMap(map) => pack_ordered_map(buf, map),
+                CdtArgument::Value(value) => pack_value(buf, &value),
+                CdtArgument::List(list) => pack_array(buf, &list),
+                CdtArgument::Map(map) => pack_map(buf, &map),
+                CdtArgument::OrderedMap(map) => pack_ordered_map(buf, &map),
                 CdtArgument::Bool(bool_val) => pack_value(buf, &Value::from(bool_val)),
             }?;
         }

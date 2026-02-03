@@ -73,13 +73,13 @@ pub(crate) type ExpressionEncoder =
     Arc<dyn Fn(&mut Option<&mut Buffer>, &ExpOperation) -> Result<usize> + Send + Sync + 'static>;
 
 #[derive(Clone)]
-pub(crate) struct ExpOperation<'a> {
+pub(crate) struct ExpOperation {
     pub encoder: ExpressionEncoder,
     pub policy: i64,
-    pub exp: &'a Expression,
+    pub exp: Expression,
 }
 
-impl<'a> ExpOperation<'a> {
+impl ExpOperation {
     // pub(crate) const fn particle_type(&self) -> ParticleType {
     //     ParticleType::BLOB
     // }
@@ -93,7 +93,7 @@ impl<'a> ExpOperation<'a> {
     }
 }
 
-impl<'a> fmt::Debug for ExpOperation<'a> {
+impl fmt::Debug for ExpOperation {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> std::result::Result<(), fmt::Error> {
         #[derive(Debug)]
         #[allow(unused)]
@@ -143,11 +143,7 @@ impl<T: IntoIterator<Item = ExpReadFlags>> ToExpReadFlagBitmask for T {
 }
 
 /// Create operation that performs a expression that writes to record bin.
-pub fn write_exp<'a, E: ToExpWriteFlagBitmask>(
-    bin: &'a str,
-    exp: &'a Expression,
-    flags: E,
-) -> Operation<'a> {
+pub fn write_exp<E: ToExpWriteFlagBitmask>(bin: &str, exp: Expression, flags: E) -> Operation {
     let op = ExpOperation {
         encoder: Arc::new(pack_write_exp),
         policy: flags.to_bitmask(),
@@ -155,18 +151,14 @@ pub fn write_exp<'a, E: ToExpWriteFlagBitmask>(
     };
     Operation {
         op: OperationType::ExpWrite,
-        ctx: &[],
-        bin: OperationBin::Name(bin),
+        ctx: vec![],
+        bin: OperationBin::Name(bin.into()),
         data: OperationData::EXPOp(op),
     }
 }
 
 /// Create operation that performs a read expression.
-pub fn read_exp<'a, E: ToExpReadFlagBitmask>(
-    name: &'a str,
-    exp: &'a Expression,
-    flags: E,
-) -> Operation<'a> {
+pub fn read_exp<E: ToExpReadFlagBitmask>(name: &str, exp: Expression, flags: E) -> Operation {
     let op = ExpOperation {
         encoder: Arc::new(pack_read_exp),
         policy: flags.to_bitmask(),
@@ -174,8 +166,8 @@ pub fn read_exp<'a, E: ToExpReadFlagBitmask>(
     };
     Operation {
         op: OperationType::ExpRead,
-        ctx: &[],
-        bin: OperationBin::Name(name),
+        ctx: vec![],
+        bin: OperationBin::Name(name.into()),
         data: OperationData::EXPOp(op),
     }
 }

@@ -212,86 +212,86 @@ impl Default for BatchUDFPolicy {
 /// Represents a batch operation.
 /// Do not directly create the batch operations. Use the helper methods instead.
 #[derive(Clone, Debug)]
-pub enum BatchOperation<'a> {
+pub enum BatchOperation {
     #[doc(hidden)]
     Read {
         br: BatchRecord,
-        policy: &'a BatchReadPolicy,
+        policy: BatchReadPolicy,
         bins: Bins,
-        ops: Option<Vec<Operation<'a>>>,
+        ops: Option<Vec<Operation>>,
     },
     #[doc(hidden)]
     Write {
         br: BatchRecord,
-        policy: &'a BatchWritePolicy,
-        ops: Vec<Operation<'a>>,
+        policy: BatchWritePolicy,
+        ops: Vec<Operation>,
     },
     #[doc(hidden)]
     Delete {
         br: BatchRecord,
-        policy: &'a BatchDeletePolicy,
+        policy: BatchDeletePolicy,
     },
     #[doc(hidden)]
     UDF {
         br: BatchRecord,
-        policy: &'a BatchUDFPolicy,
-        udf_name: &'a str,
-        function_name: &'a str,
-        args: Option<&'a [Value]>,
+        policy: BatchUDFPolicy,
+        udf_name: String,
+        function_name: String,
+        args: Option<Vec<Value>>,
     },
 }
 
-impl<'a> BatchOperation<'a> {
+impl BatchOperation {
     /// Create a batch read operation.
-    pub fn read(policy: &'a BatchReadPolicy, key: Key, bins: Bins) -> Self {
+    pub fn read(policy: &BatchReadPolicy, key: Key, bins: Bins) -> Self {
         BatchOperation::Read {
             br: BatchRecord::new(key, false),
-            policy: policy,
+            policy: policy.clone(),
             bins: bins,
             ops: None,
         }
     }
 
     /// Create a batch read with multiple operations.
-    pub fn read_ops(policy: &'a BatchReadPolicy, key: Key, ops: Vec<Operation<'a>>) -> Self {
+    pub fn read_ops(policy: &BatchReadPolicy, key: Key, ops: Vec<Operation>) -> Self {
         BatchOperation::Read {
             br: BatchRecord::new(key, false),
-            policy: policy,
+            policy: policy.clone(),
             bins: Bins::None,
             ops: Some(ops),
         }
     }
 
     /// Create a batch write with multiple operations.
-    pub fn write(policy: &'a BatchWritePolicy, key: Key, ops: Vec<Operation<'a>>) -> Self {
+    pub fn write(policy: &BatchWritePolicy, key: Key, ops: Vec<Operation>) -> Self {
         BatchOperation::Write {
             br: BatchRecord::new(key, true),
-            policy: policy,
+            policy: policy.clone(),
             ops: ops,
         }
     }
 
     /// Create a batch delete operation.
-    pub fn delete(policy: &'a BatchDeletePolicy, key: Key) -> Self {
+    pub fn delete(policy: &BatchDeletePolicy, key: Key) -> Self {
         BatchOperation::Delete {
             br: BatchRecord::new(key, true),
-            policy: policy,
+            policy: policy.clone(),
         }
     }
 
     /// Create a batch UDF operation.
     pub fn udf(
-        policy: &'a BatchUDFPolicy,
+        policy: &BatchUDFPolicy,
         key: Key,
-        udf_name: &'a str,
-        function_name: &'a str,
-        args: Option<&'a [Value]>,
+        udf_name: &str,
+        function_name: &str,
+        args: Option<Vec<Value>>,
     ) -> Self {
         BatchOperation::UDF {
             br: BatchRecord::new(key, true),
-            policy: policy,
-            udf_name: udf_name,
-            function_name: function_name,
+            policy: policy.clone(),
+            udf_name: udf_name.into(),
+            function_name: function_name.into(),
             args: args,
         }
     }
@@ -434,7 +434,7 @@ impl<'a> BatchOperation<'a> {
         }
     }
 
-    pub(crate) fn match_header(&self, _prev: Option<&BatchOperation<'a>>) -> bool {
+    pub(crate) fn match_header(&self, _prev: Option<&BatchOperation>) -> bool {
         false
     }
 

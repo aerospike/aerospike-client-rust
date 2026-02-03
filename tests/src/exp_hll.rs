@@ -46,14 +46,14 @@ async fn create_test_set(client: &Client, no_records: usize) -> String {
             operations::hll::add_with_index_and_min_hash(
                 &HLLPolicy::default(),
                 "hllbin",
-                &data,
+                data,
                 8,
                 0,
             ),
             operations::hll::add_with_index_and_min_hash(
                 &HLLPolicy::default(),
                 "hllbin2",
-                &data2,
+                data2,
                 8,
                 0,
             ),

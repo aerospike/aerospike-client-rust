@@ -24,14 +24,14 @@ use crate::Result;
 use crate::Value;
 
 #[derive(Debug, Clone)]
-pub(crate) enum CdtArgument<'a> {
+pub(crate) enum CdtArgument {
     Byte(u8),
     Int(i64),
     Bool(bool),
-    Value(&'a Value),
-    List(&'a [Value]),
-    Map(&'a HashMap<Value, Value>),
-    OrderedMap(&'a BTreeMap<Value, Value>),
+    Value(Value),
+    List(Vec<Value>),
+    Map(HashMap<Value, Value>),
+    OrderedMap(BTreeMap<Value, Value>),
 }
 
 pub type OperationEncoder = Arc<
@@ -42,13 +42,13 @@ pub type OperationEncoder = Arc<
 >;
 
 #[derive(Clone)]
-pub(crate) struct CdtOperation<'a> {
+pub(crate) struct CdtOperation {
     pub op: u8,
     pub encoder: OperationEncoder,
-    pub args: Vec<CdtArgument<'a>>,
+    pub args: Vec<CdtArgument>,
 }
 
-impl<'a> CdtOperation<'a> {
+impl CdtOperation {
     pub const fn particle_type(&self) -> ParticleType {
         ParticleType::BLOB
     }
@@ -66,13 +66,13 @@ impl<'a> CdtOperation<'a> {
     }
 }
 
-impl<'a> fmt::Debug for CdtOperation<'a> {
+impl<'a> fmt::Debug for CdtOperation {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> std::result::Result<(), fmt::Error> {
         #[derive(Debug)]
         #[allow(unused)]
         struct CdtOperation<'a> {
             pub op: &'a u8,
-            pub args: &'a Vec<CdtArgument<'a>>,
+            pub args: &'a Vec<CdtArgument>,
         }
 
         let Self {

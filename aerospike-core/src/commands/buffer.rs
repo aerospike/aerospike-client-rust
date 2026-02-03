@@ -627,7 +627,7 @@ impl Buffer {
                         self.write_batch_write(key, &attr, &attr.filter_expression, 3, 0)?;
                         self.write_field_string(udf_name, FieldType::UdfPackageName);
                         self.write_field_string(function_name, FieldType::UdfFunction);
-                        self.write_args(*args, FieldType::UdfArgList)?;
+                        self.write_args(args.as_deref(), FieldType::UdfArgList)?;
                     }
                 }
             }
@@ -645,11 +645,11 @@ impl Buffer {
     }
 
     // Writes the command for getting metadata operations
-    pub(crate) fn set_operate<'a>(
+    pub(crate) fn set_operate(
         &mut self,
         policy: &WritePolicy,
         key: &Key,
-        operations: &'a [Operation<'a>],
+        operations: &[Operation],
     ) -> Result<()> {
         self.begin();
 

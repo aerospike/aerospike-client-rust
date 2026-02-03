@@ -17,7 +17,7 @@ pub enum PropOperation {
 }
 
 impl PropOperation {
-    pub fn to_op(&self) -> aerospike::operations::Operation<'_> {
+    pub fn to_op(&self) -> aerospike::operations::Operation {
         match self {
             Self::Get => aerospike::operations::get(),
             Self::GetHeader => aerospike::operations::get_header(),

@@ -186,7 +186,7 @@ end
         operations::get_header(),
     ];
 
-    let args1 = &[as_val!(1)];
+    let args1 = vec![as_val!(1)];
     let batch = vec![
         BatchOperation::write(&bpw, key1.clone(), wops.clone()),
         BatchOperation::write(&bpw, key2.clone(), wops.clone()),

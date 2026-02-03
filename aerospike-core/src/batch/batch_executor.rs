@@ -48,7 +48,7 @@ impl BatchExecutor {
     pub async fn execute<'a>(
         &self,
         policy: &'a BatchPolicy,
-        batch_ops: &[BatchOperation<'a>],
+        batch_ops: &[BatchOperation],
     ) -> Result<Vec<BatchRecord>> {
         if policy.total_timeout() > 0 {
             match aerospike_rt::timeout(
@@ -65,17 +65,17 @@ impl BatchExecutor {
         }
     }
 
-    pub async fn execute_batch_operate<'a>(
+    pub async fn execute_batch_operate(
         &self,
-        policy: &'a BatchPolicy,
-        batch_ops: &[BatchOperation<'a>],
+        policy: &BatchPolicy,
+        batch_ops: &[BatchOperation],
     ) -> Result<Vec<BatchRecord>> {
         let batch_nodes = self
             .get_batch_operate_nodes(batch_ops, policy.replica)
             .await?;
         let jobs = batch_nodes
             .into_iter()
-            .map(|(node, ops)| BatchOperateCommand::new(policy, node, ops))
+            .map(|(node, ops)| BatchOperateCommand::new(policy.clone(), node, ops))
             .collect();
         let ops = self
             .execute_batch_operate_jobs(jobs, policy.concurrency)
@@ -88,18 +88,14 @@ impl BatchExecutor {
             .collect())
     }
 
-    async fn execute_batch_operate_jobs<'a>(
+    async fn execute_batch_operate_jobs(
         &self,
-        jobs: Vec<BatchOperateCommand<'a>>,
+        jobs: Vec<BatchOperateCommand>,
         concurrency: Concurrency,
-    ) -> Result<Vec<BatchOperateCommand<'a>>> {
-        let handles = jobs.into_iter().map(|job| {
-            // SAFETY: this variable needs to be static, because it is passed into a green-thread,
-            // but the green-thread does not live longer than this function, because we wait for
-            // it to finish by calling `join` and `await` on it.
-            let job: BatchOperateCommand<'static> = unsafe { std::mem::transmute(job) };
-            job.execute(self.cluster.clone())
-        });
+    ) -> Result<Vec<BatchOperateCommand>> {
+        let handles = jobs
+            .into_iter()
+            .map(|job| job.execute(self.cluster.clone()));
         match concurrency {
             Concurrency::Sequential => futures::future::join_all(handles)
                 .await
@@ -120,11 +116,11 @@ impl BatchExecutor {
         }
     }
 
-    async fn get_batch_operate_nodes<'a>(
+    async fn get_batch_operate_nodes(
         &self,
-        batch_ops: &[BatchOperation<'a>],
+        batch_ops: &[BatchOperation],
         replica: crate::policy::Replica,
-    ) -> Result<HashMap<Arc<Node>, Vec<(BatchOperation<'a>, usize)>>> {
+    ) -> Result<HashMap<Arc<Node>, Vec<(BatchOperation, usize)>>> {
         let mut map = HashMap::new();
         for (index, batch_op) in batch_ops.iter().enumerate() {
             let node = self.node_for_key(&batch_op.key(), replica).await?;

@@ -31,18 +31,18 @@ use aerospike_rt::sleep;
 use aerospike_rt::time::Duration;
 
 #[derive(Clone)]
-pub(crate) struct BatchOperateCommand<'a> {
+pub(crate) struct BatchOperateCommand {
     policy: BatchPolicy,
     pub node: Arc<Node>,
-    pub batch_ops: Vec<(BatchOperation<'a>, usize)>,
+    pub batch_ops: Vec<(BatchOperation, usize)>,
 }
 
-impl<'a> BatchOperateCommand<'a> {
+impl BatchOperateCommand {
     pub fn new(
-        policy: &'a BatchPolicy,
+        policy: BatchPolicy,
         node: Arc<Node>,
-        batch_ops: Vec<(BatchOperation<'a>, usize)>,
-    ) -> BatchOperateCommand<'a> {
+        batch_ops: Vec<(BatchOperation, usize)>,
+    ) -> BatchOperateCommand {
         BatchOperateCommand {
             policy: policy.clone(),
             node,
@@ -137,7 +137,7 @@ impl<'a> BatchOperateCommand<'a> {
     }
 
     async fn request_group(
-        batch_ops: &mut [(BatchOperation<'a>, usize)],
+        batch_ops: &mut [(BatchOperation, usize)],
         policy: &BatchPolicy,
         deadline: Option<Instant>,
         node: Arc<Node>,
@@ -185,7 +185,7 @@ impl<'a> BatchOperateCommand<'a> {
     }
 
     async fn parse_group(
-        batch_ops: &mut [(BatchOperation<'a>, usize)],
+        batch_ops: &mut [(BatchOperation, usize)],
         conn: &mut BufferedConn<'_>,
         size: usize,
     ) -> Result<bool> {
@@ -322,7 +322,7 @@ impl<'a> BatchOperateCommand<'a> {
     // }
 
     async fn parse_result(
-        batch_ops: &mut [(BatchOperation<'a>, usize)],
+        batch_ops: &mut [(BatchOperation, usize)],
         conn: &mut Connection,
     ) -> Result<()> {
         let mut status = true;

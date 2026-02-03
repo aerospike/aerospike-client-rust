@@ -36,7 +36,7 @@ async fn cdt_bitwise() {
 
     // Verify the insert and Get Command
     let ops = &vec![
-        bitwise::insert("bin", 0, &val, &bpolicy),
+        bitwise::insert("bin", 0, val, &bpolicy),
         bitwise::get("bin", 9, 5),
     ];
     let rec = client.operate(&wpolicy, &key, ops).await.unwrap();
@@ -50,7 +50,7 @@ async fn cdt_bitwise() {
     // Verify the set command
     let val = Value::Blob(vec![0b11100000]);
     let ops = &vec![
-        bitwise::set("bin", 13, 3, &val, &bpolicy),
+        bitwise::set("bin", 13, 3, val, &bpolicy),
         bitwise::get("bin", 0, 40),
     ];
     let rec = client.operate(&wpolicy, &key, ops).await.unwrap();
@@ -72,7 +72,7 @@ async fn cdt_bitwise() {
     // Verify OR command
     let val = Value::Blob(vec![0b10101010]);
     let ops = &vec![
-        bitwise::or("bin", 0, 8, &val, &bpolicy),
+        bitwise::or("bin", 0, 8, val, &bpolicy),
         bitwise::get("bin", 0, 8),
     ];
     let rec = client.operate(&wpolicy, &key, ops).await.unwrap();
@@ -81,7 +81,7 @@ async fn cdt_bitwise() {
     // Verify XOR command
     let val = Value::Blob(vec![0b10101100]);
     let ops = &vec![
-        bitwise::xor("bin", 0, 8, &val, &bpolicy),
+        bitwise::xor("bin", 0, 8, val, &bpolicy),
         bitwise::get("bin", 0, 8),
     ];
     let rec = client.operate(&wpolicy, &key, ops).await.unwrap();
@@ -90,7 +90,7 @@ async fn cdt_bitwise() {
     // Verify AND command
     let val = Value::Blob(vec![0b01011010]);
     let ops = &vec![
-        bitwise::and("bin", 0, 8, &val, &bpolicy),
+        bitwise::and("bin", 0, 8, val, &bpolicy),
         bitwise::get("bin", 0, 8),
     ];
     let rec = client.operate(&wpolicy, &key, ops).await.unwrap();

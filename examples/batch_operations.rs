@@ -101,10 +101,10 @@ end
 
     // UDF Operations
     println!("\n--- Batch UDF operations ---");
-    let args1 = &[as_val!(1)];
-    let args2 = &[as_val!(2)];
-    let args3 = &[as_val!(3)];
-    let args4 = &[as_val!(4)];
+    let args1 = vec![as_val!(1)];
+    let args2 = vec![as_val!(2)];
+    let args3 = vec![as_val!(3)];
+    let args4 = vec![as_val!(4)];
     let batch = vec![
         BatchOperation::udf(&bpu, key1.clone(), "test_udf", "echo", Some(args1)),
         BatchOperation::udf(&bpu, key2.clone(), "test_udf", "echo", Some(args2)),

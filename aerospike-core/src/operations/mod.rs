@@ -56,40 +56,40 @@ pub(crate) enum OperationType {
 }
 
 #[derive(Clone, Debug)]
-pub(crate) enum OperationData<'a> {
+pub(crate) enum OperationData {
     None,
-    Value(&'a Value),
-    CdtListOp(CdtOperation<'a>),
-    CdtMapOp(CdtOperation<'a>),
-    CdtBitOp(CdtOperation<'a>),
-    HLLOp(CdtOperation<'a>),
-    EXPOp(ExpOperation<'a>),
+    Value(Value),
+    CdtListOp(CdtOperation),
+    CdtMapOp(CdtOperation),
+    CdtBitOp(CdtOperation),
+    HLLOp(CdtOperation),
+    EXPOp(ExpOperation),
 }
 
 #[derive(Clone, Debug)]
-pub(crate) enum OperationBin<'a> {
+pub(crate) enum OperationBin {
     None,
     All,
-    Name(&'a str),
+    Name(String),
 }
 
 /// Database operation definition. This data type is used in the client's `operate()` method.
 #[derive(Clone, Debug)]
-pub struct Operation<'a> {
+pub struct Operation {
     // OpType determines type of operation.
     pub(crate) op: OperationType,
 
     // CDT context for nested types
-    pub(crate) ctx: &'a [CdtContext],
+    pub(crate) ctx: Vec<CdtContext>,
 
     // BinName (Optional) determines the name of bin used in operation.
-    pub(crate) bin: OperationBin<'a>,
+    pub(crate) bin: OperationBin,
 
     // BinData determines bin value used in operation.
-    pub(crate) data: OperationData<'a>,
+    pub(crate) data: OperationData,
 }
 
-impl<'a> Operation<'a> {
+impl Operation {
     pub(crate) fn is_write(&self) -> bool {
         match self.op {
             OperationType::Write
@@ -109,18 +109,18 @@ impl<'a> Operation<'a> {
     #[must_use]
     pub(crate) fn estimate_size(&self) -> Result<usize> {
         let mut size: usize = 0;
-        size += match self.bin {
+        size += match &self.bin {
             OperationBin::Name(bin) => bin.len(),
             OperationBin::None | OperationBin::All => 0,
         };
-        size += match self.data {
+        size += match &self.data {
             OperationData::None => 0,
             OperationData::Value(value) => value.estimate_size()?,
             OperationData::EXPOp(ref exp_op) => exp_op.estimate_size()?,
             OperationData::CdtListOp(ref cdt_op)
             | OperationData::CdtMapOp(ref cdt_op)
             | OperationData::CdtBitOp(ref cdt_op)
-            | OperationData::HLLOp(ref cdt_op) => cdt_op.estimate_size(self.ctx)?,
+            | OperationData::HLLOp(ref cdt_op) => cdt_op.estimate_size(&self.ctx)?,
         };
 
         Ok(size)
@@ -136,7 +136,7 @@ impl<'a> Operation<'a> {
         size += buffer.write_u32(op_size as u32 + 4);
         size += buffer.write_u8(self.op as u8);
 
-        match self.data {
+        match &self.data {
             OperationData::None => {
                 size += self.write_op_header_to(buffer, ParticleType::NULL as u8);
             }
@@ -149,7 +149,7 @@ impl<'a> Operation<'a> {
             | OperationData::CdtBitOp(ref cdt_op)
             | OperationData::HLLOp(ref cdt_op) => {
                 size += self.write_op_header_to(buffer, cdt_op.particle_type() as u8);
-                size += cdt_op.write_to(buffer, self.ctx)?;
+                size += cdt_op.write_to(buffer, &self.ctx)?;
             }
             OperationData::EXPOp(ref exp) => {
                 size += self.write_op_header_to(buffer, ParticleType::BLOB as u8);
@@ -163,10 +163,10 @@ impl<'a> Operation<'a> {
     pub(crate) fn write_op_header_to(&self, buffer: &mut Buffer, particle_type: u8) -> usize {
         let mut size = buffer.write_u8(particle_type as u8);
         size += buffer.write_u8(0);
-        match self.bin {
+        match &self.bin {
             OperationBin::Name(bin) => {
                 size += buffer.write_u8(bin.len() as u8);
-                size += buffer.write_str(bin);
+                size += buffer.write_str(&bin);
             }
             OperationBin::None | OperationBin::All => {
                 size += buffer.write_u8(0);
@@ -176,7 +176,7 @@ impl<'a> Operation<'a> {
     }
 
     /// Set the context of the operation. Required for nested structures
-    pub const fn set_context(mut self, ctx: &'a [CdtContext]) -> Operation<'a> {
+    pub fn set_context(mut self, ctx: Vec<CdtContext>) -> Operation {
         self.ctx = ctx;
         self
     }

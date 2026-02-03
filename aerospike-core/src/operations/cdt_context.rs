@@ -18,7 +18,7 @@ use crate::operations::MapOrder;
 use crate::Value;
 
 // Empty Context for scalar operations
-pub(crate) const DEFAULT_CTX: &[CdtContext] = &[];
+pub(crate) const DEFAULT_CTX: Vec<CdtContext> = vec![];
 
 pub(crate) enum CtxType {
     ListIndex = 0x10,

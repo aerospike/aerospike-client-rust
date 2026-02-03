@@ -25,7 +25,7 @@ use crate::{Bins, Key};
 pub(crate) struct OperateCommand<'a> {
     pub read_command: ReadCommand<'a>,
     policy: &'a WritePolicy,
-    operations: &'a [Operation<'a>],
+    operations: &'a [Operation],
 }
 
 impl<'a> OperateCommand<'a> {
@@ -33,7 +33,7 @@ impl<'a> OperateCommand<'a> {
         policy: &'a WritePolicy,
         cluster: Arc<Cluster>,
         key: &'a Key,
-        operations: &'a [Operation<'a>],
+        operations: &'a [Operation],
     ) -> Self {
         OperateCommand {
             read_command: ReadCommand::new(

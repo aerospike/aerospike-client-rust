@@ -289,7 +289,7 @@ impl Client {
     pub async fn batch(
         &self,
         policy: &BatchPolicy,
-        ops: &[BatchOperation<'_>],
+        ops: &[BatchOperation],
     ) -> Result<Vec<BatchRecord>> {
         let executor = BatchExecutor::new(self.cluster.clone());
         executor.execute(policy, ops).await
@@ -488,7 +488,7 @@ impl Client {
         &self,
         policy: &WritePolicy,
         key: &Key,
-        ops: &[Operation<'_>],
+        ops: &[Operation],
     ) -> Result<Record> {
         let mut command = OperateCommand::new(policy, self.cluster.clone(), key, ops);
         command.execute().await?;

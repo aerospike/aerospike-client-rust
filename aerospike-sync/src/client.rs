@@ -209,7 +209,7 @@ impl Client {
     pub fn batch(
         &self,
         policy: &BatchPolicy,
-        batch_records: &[BatchOperation<'_>],
+        batch_records: &[BatchOperation],
     ) -> Result<Vec<BatchRecord>> {
         block_on(self.async_client.batch(policy, batch_records))
     }
@@ -395,12 +395,7 @@ impl Client {
     /// ```
     /// # Panics
     ///  Panics if the return is invalid
-    pub fn operate(
-        &self,
-        policy: &WritePolicy,
-        key: &Key,
-        ops: &[Operation<'_>],
-    ) -> Result<Record> {
+    pub fn operate(&self, policy: &WritePolicy, key: &Key, ops: &[Operation]) -> Result<Record> {
         block_on(self.async_client.operate(policy, key, ops))
     }
 
