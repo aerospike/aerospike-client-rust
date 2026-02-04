@@ -26,6 +26,10 @@ impl Percent {
     pub fn new(value: u8) -> Percent {
         Percent(value)
     }
+
+    pub fn as_u8(self) -> u8 {
+        self.0
+    }
 }
 
 impl FromStr for Percent {

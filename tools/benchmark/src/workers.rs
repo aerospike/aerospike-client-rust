@@ -14,11 +14,13 @@
 // the License.
 
 use std::str::FromStr;
-use std::sync::mpsc::Sender;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use rand::prelude::*;
+use tokio::sync::mpsc::UnboundedSender;
+
+use rand::rngs::StdRng;
+use rand::{Rng, SeedableRng};
 
 use aerospike::Result as asResult;
 use aerospike::{Client, Error, Key, ReadPolicy, ResultCode, WritePolicy};
@@ -38,10 +40,10 @@ pub enum TaskType {
 }
 
 impl TaskType {
-    pub async fn execute(&self, key: &Key) -> Status {
+    pub async fn execute(&self, key: &Key, rng: &mut StdRng) -> Status {
         match self {
-            TaskType::Insert(task) => task.execute(key).await,
-            TaskType::ReadUpdate(task) => task.execute(key).await,
+            TaskType::Insert(task) => task.execute(key, rng).await,
+            TaskType::ReadUpdate(task) => task.execute(key, rng).await,
         }
     }
 }
@@ -73,15 +75,16 @@ impl FromStr for Workload {
 
 pub struct Worker {
     histogram: Histogram,
-    collector: Sender<Histogram>,
+    collector: UnboundedSender<Histogram>,
     task: TaskType,
+    rng: StdRng,
 }
 
 impl Worker {
     pub fn for_workload(
         workload: &Workload,
         client: Arc<Client>,
-        sender: Sender<Histogram>,
+        sender: UnboundedSender<Histogram>,
     ) -> Self {
         let task = match *workload {
             Workload::Initialize => TaskType::Insert(InsertTask::new(client)),
@@ -93,6 +96,7 @@ impl Worker {
             histogram: Histogram::new(),
             collector: sender,
             task,
+            rng: StdRng::from_entropy()
         }
     }
 
@@ -100,7 +104,7 @@ impl Worker {
         let mut last_collection = Instant::now();
         for key in key_range {
             let now = Instant::now();
-            let status = self.task.execute(&key).await;
+            let status = self.task.execute(&key, &mut self.rng).await;
             self.histogram.add(now.elapsed(), status);
             if last_collection.elapsed() > *COLLECT_MS {
                 self.collect();
@@ -111,7 +115,7 @@ impl Worker {
     }
 
     fn collect(&mut self) {
-        self.collector.send(self.histogram).unwrap();
+        let _ = self.collector.send(self.histogram);
         self.histogram.reset();
     }
 }
@@ -123,7 +127,7 @@ pub enum Status {
 }
 
 trait Task: Send {
-    async fn execute(&self, key: &Key) -> Status;
+    async fn execute(&self, key: &Key, rng: &mut StdRng) -> Status;
 
     fn status(&self, result: asResult<()>) -> Status {
         match result {
@@ -154,8 +158,8 @@ impl InsertTask {
 }
 
 impl Task for InsertTask {
-    async fn execute(&self, key: &Key) -> Status {
-        let bin = as_bin!("int", random::<i64>());
+    async fn execute(&self, key: &Key, rng: &mut StdRng) -> Status {
+        let bin = as_bin!("int", rng.gen::<i64>());
         trace!("Inserting {}", key);
         self.status(self.client.put(&self.policy, key, &[bin]).await)
     }
@@ -180,8 +184,9 @@ impl ReadUpdateTask {
 }
 
 impl Task for ReadUpdateTask {
-    async fn execute(&self, key: &Key) -> Status {
-        if self.reads >= random() {
+    async fn execute(&self, key: &Key, rng: &mut StdRng) -> Status {
+        let do_read = rng.gen_range(0..=99u8) < self.reads.as_u8();
+        if do_read {
             trace!("Reading {}", key);
             self.status(
                 self.client
@@ -191,7 +196,7 @@ impl Task for ReadUpdateTask {
             )
         } else {
             trace!("Writing {}", key);
-            let bin = as_bin!("int", random::<i64>());
+            let bin = as_bin!("int", rng.gen::<i64>());
             self.status(self.client.put(&self.wpolicy, key, &[bin]).await)
         }
     }
