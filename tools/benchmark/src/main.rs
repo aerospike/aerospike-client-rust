@@ -31,8 +31,9 @@ mod percent;
 mod stats;
 mod workers;
 
-use std::sync::mpsc;
 use std::sync::Arc;
+
+use tokio::sync::mpsc;
 
 use aerospike::{Client, ClientPolicy, Result as AerospikeResult};
 
@@ -81,18 +82,21 @@ async fn connect(options: &Options) -> AerospikeResult<Client> {
 
 async fn run_workload(client: Client, opts: Options) {
     let client = Arc::new(client);
-    let (send, recv) =  mpsc::channel();
+    let (send, recv) = mpsc::unbounded_channel();
     let collector = Collector::new(recv);
 
-    let collector_handle = tokio::task::spawn_blocking(move || {
-        collector.collect(); 
+    let collector_handle = tokio::spawn(async move {
+        collector.collect().await;
     });
     let mut worker_handles = Vec::new();
 
+    let namespace = Arc::from(opts.namespace);
+    let set = Arc::from(opts.set);
+
     if opts.workload == Workload::Initialize {
         for keys in KeyPartitions::new(
-            opts.namespace,
-            opts.set,
+            namespace,
+            set,
             opts.start_key,
             opts.keys,
             opts.concurrency,
@@ -107,14 +111,18 @@ async fn run_workload(client: Client, opts: Options) {
     } else {
         for _ in 0..opts.concurrency {
             let mut worker = Worker::for_workload(&opts.workload, client.clone(), send.clone());
-            let key_range = KeyRange::new(opts.namespace.clone(), opts.set.clone(), opts.start_key, opts.keys);
+            let key_range = KeyRange::new(
+                Arc::clone(&namespace),
+                Arc::clone(&set),
+                opts.start_key,
+                opts.keys,
+            );
             let handle = tokio::spawn(async move {
                 worker.run(key_range).await
             });
             worker_handles.push(handle);
         }
     }
-
    
     drop(send); 
     for handle in worker_handles {

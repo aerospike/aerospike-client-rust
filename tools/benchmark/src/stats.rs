@@ -14,8 +14,9 @@
 // the License.
 
 use std::f64;
-use std::sync::mpsc::Receiver;
 use std::time::{Duration, Instant};
+
+use tokio::sync::mpsc::UnboundedReceiver;
 
 use crate::workers::Status;
 
@@ -30,26 +31,35 @@ lazy_static! {
 
 #[derive(Debug)]
 pub struct Collector {
-    receiver: Receiver<Histogram>,
+    receiver: UnboundedReceiver<Histogram>,
     histogram: Histogram,
 }
 
 impl Collector {
-    pub fn new(recv: Receiver<Histogram>) -> Self {
+    pub fn new(recv: UnboundedReceiver<Histogram>) -> Self {
         Collector {
             receiver: recv,
             histogram: Histogram::new(),
         }
     }
 
-    pub fn collect(mut self) {
-        let mut last_report = Instant::now();
-        for hist in self.receiver.iter() {
-            self.histogram.merge(hist);
-            if last_report.elapsed() > *REPORT_MS {
-                self.report();
-                last_report = Instant::now();
-                self.histogram.reset();
+    pub async fn collect(mut self) {
+        let mut interval = tokio::time::interval(*REPORT_MS);
+        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        interval.tick().await;
+        
+        loop {
+            tokio::select! {
+                msg = self.receiver.recv() => {
+                    match msg {
+                        Some(hist) => self.histogram.merge(hist),
+                        None => break,
+                    }
+                }
+                _= interval.tick() => {
+                    self.report();
+                    self.histogram.reset();
+                }
             }
         }
         self.report();
