@@ -21,6 +21,7 @@ use std::str::FromStr;
 use clap::{App, Arg};
 use num_cpus;
 
+use crate::db_object_spec::{parse_object_spec_list, DBObjectSpec};
 use crate::workers::Workload;
 
 const AFTER_HELP: &str = r###"
@@ -61,6 +62,9 @@ pub struct Options {
     pub conn_pools_per_node: usize,
     pub use_services_alternate: bool,
     pub ip_map: Option<HashMap<String, String>>,
+    pub bins: usize,
+    pub bin_name_base: String,
+    pub object_specs: Vec<DBObjectSpec>,
 }
 
 pub fn parse_options() -> Result<Options, String> {
@@ -86,7 +90,14 @@ pub fn parse_options() -> Result<Options, String> {
             .unwrap(),
         use_services_alternate: matches.is_present("use_services_alternate"),
         ip_map: ip_map_str.as_deref().map(parse_ip_map).transpose()?,
+        bins: usize::from_str(matches.value_of("bins").unwrap()).unwrap(),
+        bin_name_base: matches.value_of("binNameBase").unwrap().to_owned(),
+        object_specs: matches
+            .value_of("objectSpec")
+            .map(|s| parse_object_spec_list(s).unwrap())
+            .unwrap_or_else(|| vec![DBObjectSpec::default()])
     })
+    
 }
 
 fn build_cli() -> App<'static, 'static> {
@@ -141,7 +152,7 @@ fn build_cli() -> App<'static, 'static> {
         .arg(
             Arg::with_name("use_services_alternate")
                 .long("use-services-alternate")
-                .help("Use server \"services-alternate\" / \"service-alternate\" addresses")
+                .help("Use server \"services-alternate\" / \"service-alternate\" addresses"),
         )
         .arg(
             Arg::with_name("ip_map")
@@ -149,7 +160,21 @@ fn build_cli() -> App<'static, 'static> {
                 .takes_value(true)
                 .help("Map advertised IPs to reachable IPs (format: from=to[,from=to...])")
                 .validator(|val| parse_ip_map(&val).map(|_| ()).map_err(|e| e)),
-        )    
+        )
+         .arg(
+            Arg::from_usage("-b, --bins 'Number of bins per record'")
+                .validator(|val| validate::<usize>(val, "Must be number".into()))
+                .default_value("1"),
+         )
+        .arg(
+            Arg::from_usage("--binNameBase 'Specify Prefix for bins name'")
+                .default_value("testBin"),
+        )
+        .arg(
+            Arg::from_usage("-o, --objectSpec [objectSpec] 'Comma-separated object specs: I | D | B:<size> | S:<size> | R:<bytes>:<randPct>'")
+                .default_value("I")
+                .validator(|val| validate_object_spec_list(val)),
+        )
         .after_help(AFTER_HELP.trim())
 }
 
@@ -183,4 +208,8 @@ fn parse_ip_map(spec: &str) -> Result<HashMap<String, String>, String> {
         map.insert(from.to_string(), to.to_string());
     }
     Ok(map)
+}
+
+fn validate_object_spec_list(value: String) -> Result<(), String> {
+    parse_object_spec_list(value.as_ref()).map(|_| ())
 }

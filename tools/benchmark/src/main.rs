@@ -26,10 +26,12 @@ extern crate num_cpus;
 extern crate rand;
 
 mod cli;
+mod db_object_spec;
 mod generator;
 mod percent;
 mod stats;
 mod workers;
+mod args;
 
 use std::sync::Arc;
 
@@ -42,6 +44,7 @@ use generator::KeyPartitions;
 use stats::Collector;
 use workers::Worker;
 
+use crate::args::Args;
 use crate::generator::KeyRange;
 use crate::workers::Workload;
 
@@ -90,30 +93,50 @@ async fn run_workload(client: Client, opts: Options) {
     });
     let mut worker_handles = Vec::new();
 
-    let namespace = Arc::from(opts.namespace);
-    let set = Arc::from(opts.set);
+    let Options {
+        bins,
+        bin_name_base,
+        object_specs,
+        workload,
+        namespace,
+        set,
+        start_key,
+        keys,
+        concurrency,
+        ..
+    } = opts;
 
-    if opts.workload == Workload::Initialize {
+    let args = Arc::new (Args::builder()
+        .n_bins(bins)
+        .bin_name_base(bin_name_base)
+        .object_specs(object_specs)
+        .build()
+        .unwrap()
+    );
+
+    let namespace_ref: Arc<str> = Arc::from(namespace);
+    let set_ref: Arc<str> = Arc::from(set);
+
+    if workload == Workload::Initialize {
         for keys in KeyPartitions::new(
-            namespace,
-            set,
-            opts.start_key,
-            opts.keys,
-            opts.concurrency,
+            namespace_ref,
+            set_ref,
+            start_key,
+            keys,
+            concurrency,
         ) {
-            let mut worker = Worker::for_workload(&opts.workload, client.clone(), send.clone());
-            
-            let handle = tokio::spawn(async move { 
-                worker.run(keys).await 
+            let mut worker = Worker::for_workload(workload, client.clone(), send.clone(), args.clone());
+            let handle = tokio::spawn(async move {
+                worker.run(keys).await
             });
             worker_handles.push(handle);
         }
     } else {
         for _ in 0..opts.concurrency {
-            let mut worker = Worker::for_workload(&opts.workload, client.clone(), send.clone());
+            let mut worker = Worker::for_workload(workload, client.clone(), send.clone(), args.clone());
             let key_range = KeyRange::new(
-                Arc::clone(&namespace),
-                Arc::clone(&set),
+                Arc::clone(&namespace_ref),
+                Arc::clone(&set_ref),
                 opts.start_key,
                 opts.keys,
             );
@@ -130,4 +153,37 @@ async fn run_workload(client: Client, opts: Options) {
     }
     let _ = collector_handle.await;
     
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::db_object_spec::{DBObjectSpec, parse_object_spec_list};
+
+    use super::*;
+
+    #[test]
+    fn parse_object_spec_list_single() {
+        let specs = parse_object_spec_list("I").unwrap();
+        assert_eq!(specs.len(), 1);
+        assert_eq!(specs[0], DBObjectSpec::default());
+    }
+
+    #[test]
+    fn parse_object_spec_list_multiple() {
+        let specs = parse_object_spec_list("I,S:20,B:30").unwrap();
+        assert_eq!(specs.len(), 3);
+    }
+
+    #[test]
+    fn parse_object_spec_list_empty_err() {
+        let result = parse_object_spec_list("");
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), "Object spec is empty");
+    }
+
+    #[test]
+    fn parse_object_spec_list_invalid_err() {
+        let result = parse_object_spec_list("I:10");
+        assert!(result.is_err());
+    }
 }
