@@ -23,8 +23,9 @@ use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 
 use aerospike::Result as asResult;
-use aerospike::{Client, Error, Key, ReadPolicy, ResultCode, WritePolicy};
+use aerospike::{Bins, Client, Error, Key, ReadPolicy, ResultCode, WritePolicy};
 
+use crate::args::Args;
 use crate::generator::KeyRange;
 use crate::percent::Percent;
 use crate::stats::Histogram;
@@ -48,7 +49,7 @@ impl TaskType {
     }
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone, Copy)]
 pub enum Workload {
     // Initialize data with sequential key writes.
     Initialize,
@@ -82,14 +83,15 @@ pub struct Worker {
 
 impl Worker {
     pub fn for_workload(
-        workload: &Workload,
+        workload: Workload,
         client: Arc<Client>,
         sender: UnboundedSender<Histogram>,
+        args: Arc<Args>
     ) -> Self {
-        let task = match *workload {
-            Workload::Initialize => TaskType::Insert(InsertTask::new(client)),
+        let task = match workload {
+            Workload::Initialize => TaskType::Insert(InsertTask::new(client, args)),
             Workload::ReadUpdate { read_pct } => {
-                TaskType::ReadUpdate(ReadUpdateTask::new(client, read_pct))
+                TaskType::ReadUpdate(ReadUpdateTask::new(client, read_pct, args))
             }
         };
         Worker {
@@ -146,22 +148,24 @@ trait Task: Send {
 pub struct InsertTask {
     client: Arc<Client>,
     policy: WritePolicy,
+    args: Arc<Args>,
 }
 
 impl InsertTask {
-    pub fn new(client: Arc<Client>) -> Self {
+    pub fn new(client: Arc<Client>, args: Arc<Args>) -> Self {
         InsertTask {
             client,
             policy: WritePolicy::default(),
+            args,
         }
     }
 }
 
 impl Task for InsertTask {
     async fn execute(&self, key: &Key, rng: &mut StdRng) -> Status {
-        let bin = as_bin!("int", rng.gen::<i64>());
+        let bins = self.args.build_bins(key, rng);
         trace!("Inserting {}", key);
-        self.status(self.client.put(&self.policy, key, &[bin]).await)
+        self.status(self.client.put(&self.policy, key, &bins).await)
     }
 }
 
@@ -170,37 +174,43 @@ pub struct ReadUpdateTask {
     rpolicy: ReadPolicy,
     wpolicy: WritePolicy,
     reads: Percent,
+    args: Arc<Args>,
 }
 
 impl ReadUpdateTask {
-    pub fn new(client: Arc<Client>, reads: Percent) -> Self {
+    pub fn new(client: Arc<Client>, reads: Percent, args: Arc<Args>) -> Self {
         ReadUpdateTask {
             client,
             rpolicy: ReadPolicy::default(),
             wpolicy: WritePolicy::default(),
             reads,
+            args,
         }
     }
 }
 
 impl Task for ReadUpdateTask {
     async fn execute(&self, key: &Key, rng: &mut StdRng) -> Status {
-        let do_read = rng.gen_range(0..=99u8) < self.reads.as_u8();
+        let do_read = rng.gen_range(0..100u8) < self.reads.as_u8();
         if do_read {
-            trace!("Reading {}", key);
+            trace!("Reading all bin {}", key);
+            //let bin_name = format!("{}_1", self.args.bin_name_base);
             self.status(
-                self.client
-                    .get(&self.rpolicy, key, ["int"])
+            self.client
+                    .get(&self.rpolicy, key, Bins::All)
                     .await
                     .map(|_| ()),
             )
         } else {
-            trace!("Writing {}", key);
-            let bin = as_bin!("int", rng.gen::<i64>());
-            self.status(self.client.put(&self.wpolicy, key, &[bin]).await)
+            trace!("Writing all bin{}", key);
+            let bins = self.args.build_bins(key, rng);
+            // let bin = as_bin!("int", rng.gen::<i64>());
+            // self.status(self.client.put(&self.wpolicy, key, &[bin]).await)
+            self.status(self.client.put(&self.wpolicy, key, &bins).await)
         }
     }
 }
+
 
 #[cfg(test)]
 mod test {
@@ -223,3 +233,7 @@ mod test {
         );
     }
 }
+
+
+
+ 
