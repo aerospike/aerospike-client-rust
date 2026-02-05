@@ -45,7 +45,7 @@ use stats::Collector;
 use workers::Worker;
 
 use crate::args::Args;
-use crate::generator::KeyRange;
+use crate::generator::{KeyRangeGen, RandomKeyRange};
 use crate::workers::Workload;
 
 #[tokio::main]
@@ -134,14 +134,14 @@ async fn run_workload(client: Client, opts: Options) {
     } else {
         for _ in 0..opts.concurrency {
             let mut worker = Worker::for_workload(workload, client.clone(), send.clone(), args.clone());
-            let key_range = KeyRange::new(
+            let key_range = RandomKeyRange::new(
                 Arc::clone(&namespace_ref),
                 Arc::clone(&set_ref),
                 opts.start_key,
-                opts.keys,
+                opts.keys
             );
             let handle = tokio::spawn(async move {
-                worker.run(key_range).await
+                worker.run(KeyRangeGen::Random(key_range)).await
             });
             worker_handles.push(handle);
         }

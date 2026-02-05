@@ -26,7 +26,7 @@ use aerospike::Result as asResult;
 use aerospike::{Bins, Client, Error, Key, ReadPolicy, ResultCode, WritePolicy};
 
 use crate::args::Args;
-use crate::generator::KeyRange;
+use crate::generator::KeyRangeGen;
 use crate::percent::Percent;
 use crate::stats::Histogram;
 
@@ -102,7 +102,7 @@ impl Worker {
         }
     }
 
-    pub async fn run(&mut self, key_range: KeyRange) {
+    pub async fn run(&mut self, key_range: KeyRangeGen) {
         let mut last_collection = Instant::now();
         for key in key_range {
             let now = Instant::now();
