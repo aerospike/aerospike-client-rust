@@ -129,7 +129,7 @@ impl AdminCommand {
         if let Err(err) = res {
             conn.invalidate().await;
             return Err(err);
-        };
+        }
         res
     }
 
@@ -171,9 +171,9 @@ impl AdminCommand {
                     false,
                     conn.addr.clone(),
                 ));
-            };
+            }
 
-            let mut user_name = "".into();
+            let mut user_name = String::new();
             let mut roles = vec![];
             let mut read_info = vec![];
             let mut write_info = vec![];
@@ -187,24 +187,24 @@ impl AdminCommand {
                 let id = conn.buffer.read_u8(None);
                 match id {
                     USER => user_name = conn.buffer.read_str(len)?,
-                    ROLES => roles = AdminCommand::parse_roles(conn).await?,
-                    READ_INFO => read_info = AdminCommand::parse_info(conn).await?,
-                    WRITE_INFO => write_info = AdminCommand::parse_info(conn).await?,
+                    ROLES => roles = AdminCommand::parse_roles(conn)?,
+                    READ_INFO => read_info = AdminCommand::parse_info(conn)?,
+                    WRITE_INFO => write_info = AdminCommand::parse_info(conn)?,
                     CONNECTIONS => conns_in_use = conn.buffer.read_u32(None),
                     _ => conn.buffer.data_offset += len,
                 }
             }
 
-            if user_name == "" && roles.len() == 0 {
+            if user_name.is_empty() && roles.is_empty() {
                 continue;
             }
 
             let user = User {
                 user: user_name,
-                roles: roles,
-                read_info: read_info,
-                write_info: write_info,
-                conns_in_use: conns_in_use,
+                roles,
+                read_info,
+                write_info,
+                conns_in_use,
             };
 
             users.push(user);
@@ -231,7 +231,7 @@ impl AdminCommand {
         if let Err(err) = res {
             conn.invalidate().await;
             return Err(err);
-        };
+        }
         res
     }
 
@@ -273,9 +273,9 @@ impl AdminCommand {
                     false,
                     conn.addr.clone(),
                 ));
-            };
+            }
 
-            let mut name = "".into();
+            let mut name = String::new();
             let mut privileges = vec![];
             let mut allowlist = vec![];
             let mut read_quota = 0;
@@ -289,24 +289,24 @@ impl AdminCommand {
                 let id = conn.buffer.read_u8(None);
                 match id {
                     ROLE => name = conn.buffer.read_str(len)?,
-                    PRIVILEGES => privileges = AdminCommand::parse_privileges(conn).await?,
-                    WHITELIST => allowlist = AdminCommand::parse_allowlist(conn, len).await?,
+                    PRIVILEGES => privileges = AdminCommand::parse_privileges(conn)?,
+                    WHITELIST => allowlist = AdminCommand::parse_allowlist(conn, len)?,
                     READ_QUOTA => read_quota = conn.buffer.read_u32(None),
                     WRITE_QUOTA => write_quota = conn.buffer.read_u32(None),
                     _ => conn.buffer.data_offset += len,
                 }
             }
 
-            if name == "" && privileges.len() == 0 {
+            if name.is_empty() && privileges.is_empty() {
                 continue;
             }
 
             let role = Role {
-                name: name,
-                privileges: privileges,
-                allowlist: allowlist,
-                read_quota: read_quota,
-                write_quota: write_quota,
+                name,
+                privileges,
+                allowlist,
+                read_quota,
+                write_quota,
             };
 
             roles.push(role);
@@ -315,7 +315,7 @@ impl AdminCommand {
         Ok((0, roles))
     }
 
-    pub(crate) async fn parse_roles(conn: &mut Connection) -> Result<Vec<String>> {
+    pub(crate) fn parse_roles(conn: &mut Connection) -> Result<Vec<String>> {
         let mut roles = vec![];
 
         let size = conn.buffer.read_u8(None);
@@ -328,14 +328,14 @@ impl AdminCommand {
         Ok(roles)
     }
 
-    pub(crate) async fn parse_privileges(conn: &mut Connection) -> Result<Vec<Privilege>> {
+    pub(crate) fn parse_privileges(conn: &mut Connection) -> Result<Vec<Privilege>> {
         let mut privileges = vec![];
 
         let size = conn.buffer.read_u8(None);
         for _ in 0..size {
             let code = conn.buffer.read_u8(None).try_into()?;
             let mut privilege = Privilege {
-                code: code,
+                code,
                 namespace: None,
                 set_name: None,
             };
@@ -353,10 +353,7 @@ impl AdminCommand {
         Ok(privileges)
     }
 
-    pub(crate) async fn parse_allowlist(
-        conn: &mut Connection,
-        length: usize,
-    ) -> Result<Vec<String>> {
+    pub(crate) fn parse_allowlist(conn: &mut Connection, length: usize) -> Result<Vec<String>> {
         let mut list = vec![];
         let max = conn.buffer.data_offset() + length;
 
@@ -368,7 +365,7 @@ impl AdminCommand {
         Ok(list)
     }
 
-    pub(crate) async fn parse_info(conn: &mut Connection) -> Result<Vec<u32>> {
+    pub(crate) fn parse_info(conn: &mut Connection) -> Result<Vec<u32>> {
         let size = conn.buffer.read_u8(None) as usize;
         let mut list = Vec::with_capacity(size);
 
@@ -401,7 +398,7 @@ impl AdminCommand {
             }
             AuthMode::PKI => AdminCommand::write_header(conn, LOGIN, 0),
             AuthMode::None => return Ok(()),
-        };
+        }
 
         conn.buffer.size_buffer()?;
         let size = conn.buffer.data_offset;
@@ -506,7 +503,7 @@ impl AdminCommand {
                 ))
             }
             AuthMode::None => AdminCommand::write_field_str(&mut conn, OLD_PASSWORD, ""),
-        };
+        }
 
         AdminCommand::write_field_str(&mut conn, PASSWORD, &AdminCommand::hash_password(password)?);
 
@@ -527,11 +524,11 @@ impl AdminCommand {
         let mut conn = node.get_connection().await?;
 
         let mut field_count = 1;
-        if privileges.len() > 0 {
+        if !privileges.is_empty() {
             field_count += 1;
         }
 
-        if allowlist.len() > 0 {
+        if !allowlist.is_empty() {
             field_count += 1;
         }
 
@@ -548,11 +545,11 @@ impl AdminCommand {
         AdminCommand::write_header(&mut conn, CREATE_ROLE, field_count);
         AdminCommand::write_field_str(&mut conn, ROLE, role_name);
 
-        if privileges.len() > 0 {
+        if !privileges.is_empty() {
             AdminCommand::write_privileges(&mut conn, privileges)?;
         }
 
-        if allowlist.len() > 0 {
+        if !allowlist.is_empty() {
             AdminCommand::write_allowlist(&mut conn, allowlist);
         }
 
@@ -796,12 +793,11 @@ impl AdminCommand {
             let code = &prev.code;
             size += 1; // code
             if code.can_scope() {
-                if prev.set_name.as_ref().map(|s| s.trim().len()).unwrap_or(0) > 0
-                    && prev.namespace.as_ref().map(|s| s.trim().len()).unwrap_or(0) == 0
+                if prev.set_name.as_ref().map_or(0, |s| s.trim().len()) > 0
+                    && prev.namespace.as_ref().map_or(0, |s| s.trim().len()) == 0
                 {
                     return Err(Error::ClientError(format!(
-                        "admin privilege '{}' has a set scope with an empty namespace.",
-                        code
+                        "admin privilege '{code}' has a set scope with an empty namespace."
                     )));
                 }
 
@@ -815,13 +811,12 @@ impl AdminCommand {
                 if let Some(ref set_name) = prev.set_name {
                     size += set_name.len();
                 }
-            } else if prev.namespace.as_ref().map(|s| s.len()).unwrap_or(0)
-                + prev.set_name.as_ref().map(|s| s.len()).unwrap_or(0)
+            } else if prev.namespace.as_ref().map_or(0, std::string::String::len)
+                + prev.set_name.as_ref().map_or(0, std::string::String::len)
                 > 0
             {
                 return Err(Error::ClientError(format!(
-                    "admin global privilege '{}' can't have a namespace or set",
-                    code
+                    "admin global privilege '{code}' can't have a namespace or set"
                 )));
             }
         }
@@ -837,13 +832,13 @@ impl AdminCommand {
                 // Always write both fields (even if empty) - server expects them
                 if let Some(ref namespace) = prev.namespace {
                     conn.buffer.write_u8(namespace.len() as u8);
-                    conn.buffer.write_str(&namespace);
+                    conn.buffer.write_str(namespace);
                 } else {
                     conn.buffer.write_u8(0); // Empty namespace
                 }
                 if let Some(ref set_name) = prev.set_name {
                     conn.buffer.write_u8(set_name.len() as u8);
-                    conn.buffer.write_str(&set_name);
+                    conn.buffer.write_str(set_name);
                 } else {
                     conn.buffer.write_u8(0); // Empty set_name
                 }
@@ -872,7 +867,7 @@ impl AdminCommand {
             } else {
                 comma = true;
             }
-            conn.buffer.write_str(&address);
+            conn.buffer.write_str(address);
         }
     }
 
@@ -884,7 +879,7 @@ impl AdminCommand {
                 cost: Some(10),
                 variant: Some(BcryptVariant::V2a),
             },
-            &password,
+            password,
         )
         .map_err(std::convert::Into::into)
     }

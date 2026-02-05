@@ -32,7 +32,7 @@ pub struct BatchExecutor {
 }
 
 impl BatchExecutor {
-    pub fn new(cluster: Arc<Cluster>) -> Self {
+    pub const fn new(cluster: Arc<Cluster>) -> Self {
         BatchExecutor { cluster }
     }
 
@@ -52,13 +52,13 @@ impl BatchExecutor {
     ) -> Result<Vec<BatchRecord>> {
         if policy.total_timeout() > 0 {
             match aerospike_rt::timeout(
-                Duration::from_millis(policy.total_timeout() as u64),
+                Duration::from_millis(u64::from(policy.total_timeout())),
                 self.execute_batch_operate(policy, batch_ops),
             )
             .await
             {
                 Ok(res) => res,
-                Err(_) => Err(Error::Timeout(format!("Timeout"))),
+                Err(_) => Err(Error::Timeout("Timeout".to_string())),
             }
         } else {
             self.execute_batch_operate(policy, batch_ops).await
@@ -101,13 +101,13 @@ impl BatchExecutor {
                 .await
                 .into_iter()
                 .collect(),
-            #[cfg(all(any(feature = "rt-async-std"), not(feature = "rt-tokio")))]
+            #[cfg(feature = "rt-async-std")]
             Concurrency::Parallel => futures::future::join_all(handles)
                 .await
                 .into_iter()
                 .map(|value| value.map_err(|e| Error::ClientError(e.to_string())))
                 .collect(),
-            #[cfg(all(any(feature = "rt-tokio"), not(feature = "rt-async-std")))]
+            #[cfg(feature = "rt-tokio")]
             Concurrency::Parallel => futures::future::join_all(handles.map(aerospike_rt::spawn))
                 .await
                 .into_iter()

@@ -15,7 +15,7 @@
 use crate::Privilege;
 
 /// Role allows granular access to database entities for users.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Role {
     /// Role name.
     pub name: String,

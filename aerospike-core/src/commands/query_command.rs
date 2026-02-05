@@ -24,7 +24,7 @@ use crate::{Recordset, Statement};
 
 use aerospike_rt::Mutex;
 
-pub(crate) struct QueryCommand<'a> {
+pub struct QueryCommand<'a> {
     stream_command: StreamCommand,
     policy: &'a QueryPolicy,
     statement: Arc<Statement>,
@@ -55,7 +55,7 @@ impl<'a> QueryCommand<'a> {
 }
 
 #[async_trait::async_trait]
-impl<'a> Command for QueryCommand<'a> {
+impl Command for QueryCommand<'_> {
     async fn write_timeout(&mut self, conn: &mut Connection) -> Result<()> {
         let server_timeout = self
             .stream_command

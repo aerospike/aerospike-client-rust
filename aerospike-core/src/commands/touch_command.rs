@@ -21,7 +21,7 @@ use crate::net::Connection;
 use crate::policy::{Policy, WritePolicy};
 use crate::{Key, ResultCode};
 
-pub(crate) struct TouchCommand<'a> {
+pub struct TouchCommand<'a> {
     single_command: SingleCommand<'a>,
     policy: &'a WritePolicy,
 }
@@ -40,7 +40,7 @@ impl<'a> TouchCommand<'a> {
 }
 
 #[async_trait::async_trait]
-impl<'a> Command for TouchCommand<'a> {
+impl Command for TouchCommand<'_> {
     async fn write_timeout(&mut self, conn: &mut Connection) -> Result<()> {
         conn.buffer.write_timeout(self.policy.server_timeout());
         Ok(())
@@ -69,7 +69,7 @@ impl<'a> Command for TouchCommand<'a> {
     async fn parse_result(&mut self, conn: &mut Connection) -> Result<()> {
         // Read header.
         if let Err(err) = conn.read_header().await {
-            warn!("Parse result error: {}", err);
+            warn!("Parse result error: {err}");
             return Err(err);
         }
 

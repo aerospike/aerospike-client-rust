@@ -23,13 +23,13 @@ use crate::commands::buffer::{self, Buffer, MAX_BUFFER_SIZE};
 use crate::errors::{Error, Result};
 use crate::net::Host;
 use crate::policy::{AuthMode, ClientPolicy};
-#[cfg(all(any(feature = "rt-async-std"), not(feature = "rt-tokio")))]
+#[cfg(feature = "rt-async-std")]
 use aerospike_rt::async_std::net::Shutdown;
-#[cfg(all(any(feature = "rt-tokio"), not(feature = "rt-async-std")))]
+#[cfg(feature = "rt-tokio")]
 use aerospike_rt::io::{AsyncReadExt, AsyncWriteExt};
 use aerospike_rt::net::TcpStream;
 use aerospike_rt::time::{Duration, Instant};
-#[cfg(all(any(feature = "rt-async-std"), not(feature = "rt-tokio")))]
+#[cfg(feature = "rt-async-std")]
 use futures::{AsyncReadExt, AsyncWriteExt};
 use std::cmp::min;
 use std::ops::Add;
@@ -39,8 +39,8 @@ use rustls::pki_types::ServerName;
 #[cfg(feature = "tls")]
 use tokio_rustls::{client::TlsStream, rustls, TlsConnector};
 
-#[derive(Debug, Clone, PartialEq)]
-pub(crate) enum ConnectionState {
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ConnectionState {
     Ready,
     Closed,
     Writing,
@@ -125,20 +125,20 @@ impl Connection {
         let stream = Self::get_netsocket(stream, host, policy).await?;
 
         let idle_timeout = if policy.idle_timeout > 0 {
-            Some(Duration::from_millis(policy.idle_timeout as u64))
+            Some(Duration::from_millis(u64::from(policy.idle_timeout)))
         } else {
             None
         };
 
         let mut conn = Connection {
-            addr: addr.into(),
+            addr,
             buffer: Buffer::new(policy.buffer_reclaim_threshold),
             bytes_read: 0,
             conn: stream,
             socket_timeout: policy.timeout().as_millis() as u32,
             timeout_delay: 0,
             deadline: None,
-            idle_timeout: idle_timeout,
+            idle_timeout,
             idle_deadline: idle_timeout.map(|timeout| Instant::now() + timeout),
             state: ConnectionState::Ready,
             can_recover_connection: false,
@@ -148,20 +148,20 @@ impl Connection {
         Ok(conn)
     }
 
-    pub async fn close(&mut self) {
+    pub fn close(&mut self) {
         self.state = ConnectionState::Closed;
-        let _ = match self.conn {
+        let () = match self.conn {
             Netsocket::Tcp(ref mut conn) => {
-                #[cfg(all(any(feature = "rt-tokio"), not(feature = "rt-async-std")))]
+                #[cfg(feature = "rt-tokio")]
                 let _ = conn.shutdown();
-                #[cfg(all(any(feature = "rt-async-std"), not(feature = "rt-tokio")))]
+                #[cfg(feature = "rt-async-std")]
                 let _ = conn.shutdown(Shutdown::Both);
             }
             #[cfg(feature = "tls")]
             Netsocket::Tls(ref mut conn) => {
-                #[cfg(all(any(feature = "rt-tokio"), not(feature = "rt-async-std")))]
+                #[cfg(feature = "rt-tokio")]
                 let _ = conn.shutdown();
-                #[cfg(all(any(feature = "rt-async-std"), not(feature = "rt-tokio")))]
+                #[cfg(feature = "rt-async-std")]
                 let _ = conn.shutdown(Shutdown::Both);
             }
         };
@@ -181,7 +181,7 @@ impl Connection {
         };
 
         match res {
-            Ok(Ok(_)) => (),
+            Ok(Ok(())) => (),
             Ok(Err(e)) => return Err(e.into()),
             Err(_) => {
                 return Err(Error::Timeout(
@@ -194,19 +194,23 @@ impl Connection {
         Ok(())
     }
 
-    pub(crate) fn set_state(&mut self, state: ConnectionState) {
+    pub(crate) const fn set_state(&mut self, state: ConnectionState) {
         self.state = state;
         self.bytes_read = 0;
     }
 
     /// Sets the timeout delay for the connection.
-    pub(crate) fn set_timeout_delay(&mut self, can_recover_connection: bool, timeout_delay: u32) {
+    pub(crate) const fn set_timeout_delay(
+        &mut self,
+        can_recover_connection: bool,
+        timeout_delay: u32,
+    ) {
         self.can_recover_connection = can_recover_connection;
         self.timeout_delay = timeout_delay;
     }
 
     /// Sets the timeout for the connection.
-    pub fn set_socket_timeout(&mut self, deadline: Option<Instant>, socket_timeout: u32) {
+    pub const fn set_socket_timeout(&mut self, deadline: Option<Instant>, socket_timeout: u32) {
         self.deadline = deadline;
         if socket_timeout > 0 {
             self.socket_timeout = socket_timeout;
@@ -233,27 +237,25 @@ impl Connection {
     /// If the timeout is zero, it will return the default (30 000 ms)
     pub fn socket_timeout(&self) -> Duration {
         if self.socket_timeout > 0 {
-            Duration::from_millis(self.socket_timeout as u64)
+            Duration::from_millis(u64::from(self.socket_timeout))
         } else {
             Duration::from_millis(30_000) // 30 secs
         }
     }
 
     // This function validates the message header.
-    pub(crate) fn validate_header(&mut self, header: u64) -> Result<()> {
+    pub(crate) fn validate_header(&self, header: u64) -> Result<()> {
         let msg_version = (header & 0xFF00000000000000) >> 56;
         if msg_version != 2 {
             return Err(Error::ClientError(format!(
-                "Invalid Message Header: Expected version to be 2, but got {}",
-                msg_version
+                "Invalid Message Header: Expected version to be 2, but got {msg_version}"
             )));
         }
 
         let msg_type = (header & 0x00FF000000000000) >> 49;
         if !(msg_type == 1 || msg_type == 3 || msg_type == 4) {
             return Err(Error::ClientError(format!(
-                "Invalid Message Header: Expected type to be 1, 3 or 4, but got {}",
-                msg_type
+                "Invalid Message Header: Expected type to be 1, 3 or 4, but got {msg_type}"
             )));
         }
 
@@ -288,10 +290,7 @@ impl Connection {
     pub(crate) async fn read_buffer_at(&mut self, pos: usize, size: usize) -> Result<usize> {
         self.buffer.resize_buffer(size + pos)?;
 
-        let deadline = self
-            .deadline
-            .or(Some(Instant::now() + self.deadline()))
-            .unwrap();
+        let deadline = self.deadline.unwrap_or(Instant::now() + self.deadline());
 
         let mut total_read: usize = 0;
         while total_read < size && Instant::now() < deadline {
@@ -314,7 +313,7 @@ impl Connection {
                 Ok(0) => break,
                 Ok(n) => {
                     total_read += n;
-                    self.bytes_read += n
+                    self.bytes_read += n;
                 }
                 Err(ref e) if e.kind() == aerospike_rt::io::ErrorKind::WouldBlock => {}
                 Err(e) => Err(e)?,
@@ -348,7 +347,7 @@ impl Connection {
         };
 
         match res {
-            Ok(Ok(_)) => (),
+            Ok(Ok(())) => (),
             Ok(Err(e)) => {
                 return Err(e.into());
             }
@@ -397,7 +396,7 @@ impl Connection {
 
     pub fn is_idle(&self) -> bool {
         self.idle_deadline
-            .map_or(false, |idle_dl| Instant::now() >= idle_dl)
+            .is_some_and(|idle_dl| Instant::now() >= idle_dl)
     }
 
     fn refresh(&mut self) {
@@ -405,7 +404,7 @@ impl Connection {
         self.deadline = None;
         if let Some(idle_to) = self.idle_timeout {
             self.idle_deadline = Some(Instant::now().add(idle_to));
-        };
+        }
     }
 
     async fn authenticate(
@@ -417,13 +416,13 @@ impl Connection {
         return match AdminCommand::authenticate(self, auth_mode, hashed_pass).await {
             Ok(()) => Ok(()),
             Err(err) => {
-                self.close().await;
+                self.close();
                 Err(err)
             }
         };
     }
 
-    pub fn bookmark(&mut self) {
+    pub const fn bookmark(&mut self) {
         self.bytes_read = 0;
     }
 
@@ -431,7 +430,7 @@ impl Connection {
         self.bytes_read
     }
 
-    /// recover_connection will try to recover a connection in cases of timeout
+    /// `recover_connection` will try to recover a connection in cases of timeout
     pub(crate) async fn recover_connection(&mut self) {
         if !self.can_recover_connection || self.timeout_delay <= 0 {
             return;
@@ -461,7 +460,7 @@ impl Connection {
                 if let Err(_) = self
                     .drain(
                         receive_size,
-                        Duration::from_millis(self.timeout_delay as u64),
+                        Duration::from_millis(u64::from(self.timeout_delay)),
                     )
                     .await
                 {
@@ -471,14 +470,13 @@ impl Connection {
 
                 assert!(self.bytes_read == receive_size);
                 self.state = ConnectionState::Ready;
-                return;
             }
             ConnectionState::ReadingBody(total_size) => {
                 // read the rest of the body
                 if let Err(_) = self
                     .drain(
                         total_size - self.bytes_read,
-                        Duration::from_millis(self.timeout_delay as u64),
+                        Duration::from_millis(u64::from(self.timeout_delay)),
                     )
                     .await
                 {
@@ -488,7 +486,6 @@ impl Connection {
 
                 assert!(self.bytes_read == total_size);
                 self.state = ConnectionState::Ready;
-                return;
             }
         }
     }
@@ -506,9 +503,7 @@ impl Connection {
                     ),
                 )
                 .await
-                .map_err(|e| {
-                    Error::Timeout(format!("Timeout draining the connection {e}").into())
-                })?,
+                .map_err(|e| Error::Timeout(format!("Timeout draining the connection {e}")))?,
 
                 #[cfg(feature = "tls")]
                 Netsocket::Tls(ref mut conn) => aerospike_rt::timeout(
@@ -519,9 +514,7 @@ impl Connection {
                     ),
                 )
                 .await
-                .map_err(|e| {
-                    Error::Timeout(format!("Timeout draining the connection {e}").into())
-                })?,
+                .map_err(|e| Error::Timeout(format!("Timeout draining the connection {e}")))?,
             }?;
 
             limit -= count as usize;
@@ -538,7 +531,7 @@ impl Connection {
 
 // Holds data buffer for the command
 #[derive(Debug)]
-pub(crate) struct BufferedConn<'a> {
+pub struct BufferedConn<'a> {
     pub(crate) conn: &'a mut Connection,
 
     cache: Vec<u8>,
@@ -551,7 +544,7 @@ pub(crate) struct BufferedConn<'a> {
 impl<'a> BufferedConn<'a> {
     pub fn new(conn: &'a mut Connection) -> Self {
         BufferedConn {
-            conn: conn,
+            conn,
             cache: Vec::with_capacity(4 * 1024),
             limit: 0,
             pos: 0,
@@ -559,18 +552,18 @@ impl<'a> BufferedConn<'a> {
         }
     }
 
-    pub(crate) fn bookmark(&mut self) {
+    pub(crate) const fn bookmark(&mut self) {
         self.bytes_read = 0;
         self.conn.bookmark();
     }
 
     #[inline]
-    pub(crate) fn buffer(&mut self) -> &mut Buffer {
+    pub(crate) const fn buffer(&mut self) -> &mut Buffer {
         &mut self.conn.buffer
     }
 
     #[inline]
-    pub(crate) fn bytes_read(&mut self) -> usize {
+    pub(crate) const fn bytes_read(&self) -> usize {
         self.bytes_read
     }
 
@@ -610,7 +603,7 @@ impl<'a> BufferedConn<'a> {
         // The buffer should have been completely consumed before calling this function
         if self.pos != self.cache.len() || self.limit <= 0 {
             return Ok(0);
-        };
+        }
 
         let size = min(self.cache.capacity(), self.limit);
         self.resize_cache(size)?;
@@ -630,7 +623,7 @@ impl<'a> BufferedConn<'a> {
                 Ok(n) => {
                     total_read += n;
                     self.limit -= n;
-                    self.conn.bytes_read += n
+                    self.conn.bytes_read += n;
                 }
                 Err(e) => Err(e)?,
             }
@@ -657,9 +650,7 @@ impl<'a> BufferedConn<'a> {
                     ),
                 )
                 .await
-                .map_err(|e| {
-                    Error::Timeout(format!("Timeout draining the connection {e}").into())
-                })?,
+                .map_err(|e| Error::Timeout(format!("Timeout draining the connection {e}")))?,
                 #[cfg(feature = "tls")]
                 Netsocket::Tls(ref mut conn) => aerospike_rt::timeout(
                     timeout,
@@ -669,9 +660,7 @@ impl<'a> BufferedConn<'a> {
                     ),
                 )
                 .await
-                .map_err(|e| {
-                    Error::Timeout(format!("Timeout draining the connection {e}").into())
-                })?,
+                .map_err(|e| Error::Timeout(format!("Timeout draining the connection {e}")))?,
             }?;
 
             self.limit -= count as usize;
@@ -689,28 +678,28 @@ impl<'a> BufferedConn<'a> {
     }
 
     #[inline]
-    pub(crate) fn exhausted(&self) -> bool {
+    pub(crate) const fn exhausted(&self) -> bool {
         self.limit <= 0 && self.empty()
     }
 
     #[inline]
-    fn len(&self) -> usize {
+    const fn len(&self) -> usize {
         self.cache.len() - self.pos
     }
 
     #[inline]
-    fn empty(&self) -> bool {
+    const fn empty(&self) -> bool {
         self.len() == 0
     }
 
     async fn cached_read_rest(&mut self) -> Result<usize> {
         if !self.empty() {
-            return self.cached_read(0, self.len()).await;
+            return self.cached_read(0, self.len());
         }
         Ok(0)
     }
 
-    async fn cached_read(&mut self, pos: usize, size: usize) -> Result<usize> {
+    fn cached_read(&mut self, pos: usize, size: usize) -> Result<usize> {
         self.conn.buffer.data_buffer[pos..pos + size]
             .copy_from_slice(&self.cache[self.pos..self.pos + size]);
 
@@ -726,7 +715,7 @@ impl<'a> BufferedConn<'a> {
         }
 
         if size <= self.len() {
-            self.cached_read(0, size).await?;
+            self.cached_read(0, size)?;
         } else if size > self.len() {
             // we have data left in the buffer, but we need more
             let cached = self.cached_read_rest().await?;
@@ -738,7 +727,7 @@ impl<'a> BufferedConn<'a> {
             } else {
                 // fill the buffer and read the rest of requested bytes
                 self.fill_buffer().await?;
-                self.cached_read(cached, remaining).await?;
+                self.cached_read(cached, remaining)?;
             }
         }
 

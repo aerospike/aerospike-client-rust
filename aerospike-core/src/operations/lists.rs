@@ -126,7 +126,7 @@ pub enum ListReturnType {
 /// Inverts the returned values in CDT List operations.
 pub struct InvertedListReturn(ListReturnType);
 
-/// Something that can be resolved into a set of ListReturnType. Either a single ListReturnType, or InvertedListReturn(ListReturnType).
+/// Something that can be resolved into a set of `ListReturnType`. Either a single `ListReturnType`, or InvertedListReturn(ListReturnType).
 pub trait ToListReturnTypeBitmask {
     /// Convert to an u64 bitmask
     fn to_bitmask(self) -> i64;
@@ -151,7 +151,7 @@ pub enum ListSortFlags {
     Default = 0,
     /// Descending will sort the contents of the list in descending order.
     Descending = 1,
-    /// DropDuplicates will drop duplicate values in the results of the CDT list operation.
+    /// `DropDuplicates` will drop duplicate values in the results of the CDT list operation.
     DropDuplicates = 2,
 }
 
@@ -160,12 +160,12 @@ pub enum ListSortFlags {
 pub enum ListWriteFlags {
     /// Default is the default behavior. It means:  Allow duplicate values and insertions at any index.
     Default = 0,
-    /// AddUnique means: Only add unique values.
+    /// `AddUnique` means: Only add unique values.
     AddUnique = 1,
-    /// InsertBounded means: Enforce list boundaries when inserting. Do not allow values to be inserted
+    /// `InsertBounded` means: Enforce list boundaries when inserting. Do not allow values to be inserted
     /// at index outside current list boundaries.
     InsertBounded = 2,
-    /// NoFail means: do not raise error if a list item fails due to write flag constraints.
+    /// `NoFail` means: do not raise error if a list item fails due to write flag constraints.
     NoFail = 4,
     /// Partial means: allow other valid list items to be committed if a list item fails due to
     /// write flag constraints.
@@ -175,13 +175,13 @@ pub enum ListWriteFlags {
 /// `ListPolicy` directives when creating a list and writing list items.
 #[derive(Debug, Clone, Copy)]
 pub struct ListPolicy {
-    /// CdtListOrderType
+    /// `CdtListOrderType`
     pub attributes: ListOrderType,
-    /// CdtListWriteFlags
+    /// `CdtListWriteFlags`
     pub flags: u8,
 }
 
-/// Something that can be resolved into a set of ExpWriteFlags. Either a single [ListWriteFlags], `Option<ListWriteFlags>`, [ListWriteFlags], etc.
+/// Something that can be resolved into a set of `ExpWriteFlags`. Either a single [`ListWriteFlags`], `Option<ListWriteFlags>`, [`ListWriteFlags`], etc.
 pub trait ToListWriteFlagsBitmask {
     /// Convert to an u8 bitmask potentially containing multiple flags
     fn to_bitmask(self) -> u8;
@@ -235,7 +235,7 @@ impl Default for ListPolicy {
 }
 
 pub(crate) const fn list_order_flag(order: ListOrderType, pad: bool) -> u8 {
-    if let ListOrderType::Ordered = order {
+    if matches!(order, ListOrderType::Ordered) {
         return 0xc0;
     }
     if pad {
@@ -245,6 +245,7 @@ pub(crate) const fn list_order_flag(order: ListOrderType, pad: bool) -> u8 {
 }
 
 /// Creates list create operation.
+///
 /// Server creates list at given context level. The context is allowed to be beyond list
 /// boundaries only if pad is set to true. In that case, nil list entries will be inserted to
 /// satisfy the context position.
@@ -289,7 +290,7 @@ pub fn append(policy: &ListPolicy, bin: &str, value: Value) -> Operation {
         args: vec![
             CdtArgument::Value(value),
             CdtArgument::Byte(policy.attributes as u8),
-            CdtArgument::Byte(policy.flags as u8),
+            CdtArgument::Byte(policy.flags),
         ],
     };
     Operation {
@@ -314,7 +315,7 @@ pub fn append_items(policy: &ListPolicy, bin: &str, values: Vec<Value>) -> Opera
         args: vec![
             CdtArgument::List(values),
             CdtArgument::Byte(policy.attributes as u8),
-            CdtArgument::Byte(policy.flags as u8),
+            CdtArgument::Byte(policy.flags),
         ],
     };
     Operation {
@@ -334,7 +335,7 @@ pub fn insert(policy: &ListPolicy, bin: &str, index: i64, value: Value) -> Opera
         args: vec![
             CdtArgument::Int(index),
             CdtArgument::Value(value),
-            CdtArgument::Byte(policy.flags as u8),
+            CdtArgument::Byte(policy.flags),
         ],
     };
     Operation {
@@ -359,7 +360,7 @@ pub fn insert_items(policy: &ListPolicy, bin: &str, index: i64, values: Vec<Valu
         args: vec![
             CdtArgument::Int(index),
             CdtArgument::List(values),
-            CdtArgument::Byte(policy.flags as u8),
+            CdtArgument::Byte(policy.flags),
         ],
     };
     Operation {
@@ -513,6 +514,7 @@ pub fn remove_by_value_list<'a, TLR: ToListReturnTypeBitmask>(
 }
 
 /// Creates a list remove operation.
+///
 /// Server removes list items identified by value range (valueBegin inclusive, valueEnd exclusive).
 /// If valueBegin is nil, the range is less than valueEnd.
 /// If valueEnd is nil, the range is greater than equal to valueBegin.
@@ -578,6 +580,7 @@ pub fn remove_by_value_relative_rank_range<'a, TLR: ToListReturnTypeBitmask>(
 }
 
 /// Creates a list remove by value relative to rank range operation.
+///
 /// Server removes list items nearest to value and greater by relative rank with a count limit.
 /// Server returns removed data specified by returnType.
 ///
@@ -823,7 +826,7 @@ pub fn increment(policy: &ListPolicy, bin: &str, index: i64, value: i64) -> Oper
         args: vec![
             CdtArgument::Int(index),
             CdtArgument::Int(value),
-            CdtArgument::Byte(policy.flags as u8),
+            CdtArgument::Byte(policy.flags),
         ],
     };
     Operation {
@@ -944,6 +947,7 @@ pub fn get_by_value_list<'a, TLR: ToListReturnTypeBitmask>(
 }
 
 /// Creates a list get by value range operation.
+///
 /// Server selects list items identified by value range (valueBegin inclusive, valueEnd exclusive)
 /// If valueBegin is null, the range is less than valueEnd.
 /// If valueEnd is null, the range is greater than equal to valueBegin.
@@ -1157,6 +1161,7 @@ pub fn get_by_value_relative_rank_range<'a, TLR: ToListReturnTypeBitmask>(
 }
 
 /// Creates a list get by value relative to rank range operation.
+///
 /// Server selects list items nearest to value and greater by relative rank with a count limit.
 /// Server returns selected data specified by returnType.
 ///

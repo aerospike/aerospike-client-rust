@@ -43,7 +43,7 @@ pub enum HLLWriteFlags {
     AllowFold = 8,
 }
 
-/// Something that can be resolved into a set of ExpWriteFlags. Either a single [HLLWriteFlags], `Option<HLLWriteFlags>`, [HLLWriteFlags], etc.
+/// Something that can be resolved into a set of `ExpWriteFlags`. Either a single [`HLLWriteFlags`], `Option<HLLWriteFlags>`, [`HLLWriteFlags`], etc.
 pub trait ToHLLWriteFlagsBitmask {
     /// Convert to an i64 bitmask
     fn to_bitmask(self) -> i64;
@@ -68,7 +68,7 @@ impl<T: IntoIterator<Item = HLLWriteFlags>> ToHLLWriteFlagsBitmask for T {
 /// `HLLPolicy` operation policy.
 #[derive(Debug, Clone, Copy)]
 pub struct HLLPolicy {
-    /// CdtListWriteFlags
+    /// `CdtListWriteFlags`
     pub flags: i64,
 }
 
@@ -163,6 +163,7 @@ pub fn add_with_index(
 }
 
 /// Create HLL add operation with minhash bits.
+///
 /// Server adds values to HLL set. If HLL bin does not exist, use `indexBitCount` and `minHashBitCount`
 /// to create HLL bin. Server returns number of entries that caused HLL to update a register.
 pub fn add_with_index_and_min_hash(

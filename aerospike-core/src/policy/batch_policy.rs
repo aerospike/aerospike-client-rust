@@ -61,9 +61,9 @@ pub struct BatchPolicy {
     /// other nodes will continue to be processed.
     ///
     /// If false, the server will stop the batch to its node on most key specific errors.
-    /// The exceptions are ResultCode::KeyNotFoundError and ResultCode::FilteredOut which never stop the batch.
+    /// The exceptions are `ResultCode::KeyNotFoundError` and `ResultCode::FilteredOut` which never stop the batch.
     /// The client will stop the entire batch on node specific errors for sync commands
-    /// that are run in sequence ([Concurrency::Sequential]). The client will not stop
+    /// that are run in sequence ([`Concurrency::Sequential`]). The client will not stop
     /// the entire batch for async commands or sync commands run in parallel.
     ///
     /// Server versions < 6.0 do not support this field and treat this value as false

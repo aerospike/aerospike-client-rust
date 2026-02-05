@@ -130,6 +130,7 @@ pub fn remove_by_key_list(keys: Expression, bin: Expression, ctx: &[CdtContext])
 }
 
 /// Create expression that removes map items identified by key range (keyBegin inclusive, keyEnd exclusive).
+///
 /// If keyBegin is null, the range is less than keyEnd.
 /// If keyEnd is null, the range is greater than equal to keyBegin.
 pub fn remove_by_key_range(
@@ -231,6 +232,7 @@ pub fn remove_by_value_list(values: Expression, bin: Expression, ctx: &[CdtConte
 }
 
 /// Create expression that removes map items identified by value range (valueBegin inclusive, valueEnd exclusive).
+///
 /// If valueBegin is null, the range is less than valueEnd.
 /// If valueEnd is null, the range is greater than equal to valueBegin.
 pub fn remove_by_value_range(
@@ -429,6 +431,7 @@ pub fn get_by_key<TMR: ToMapReturnTypeBitmask>(
 }
 
 /// Create expression that selects map items identified by key range (keyBegin inclusive, keyEnd exclusive).
+///
 /// If keyBegin is null, the range is less than keyEnd.
 /// If keyEnd is null, the range is greater than equal to keyBegin.
 /// Expression returns selected data specified by returnType.

@@ -340,6 +340,7 @@ pub fn rshift(
 }
 
 /// Create expression that adds value to byte[] bin starting at bitOffset for bitSize and returns byte[].
+///
 /// `BitSize` must be <= 64. Signed indicates if bits should be treated as a signed number.
 /// If add overflows/underflows, `BitwiseOverflowActions` is used.
 ///
@@ -377,6 +378,7 @@ pub fn add(
 }
 
 /// Create expression that subtracts value from byte[] bin starting at bitOffset for bitSize and returns byte[].
+///
 /// `BitSize` must be <= 64. Signed indicates if bits should be treated as a signed number.
 /// If add overflows/underflows, `BitwiseOverflowActions` is used.
 ///

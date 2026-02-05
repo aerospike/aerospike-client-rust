@@ -22,7 +22,7 @@ use crate::net::Connection;
 use crate::policy::WritePolicy;
 use crate::{Bins, Key, Policy, Value};
 
-pub(crate) struct ExecuteUDFCommand<'a> {
+pub struct ExecuteUDFCommand<'a> {
     pub read_command: ReadCommand<'a>,
     policy: &'a WritePolicy,
     package_name: &'a str,
@@ -60,7 +60,7 @@ impl<'a> ExecuteUDFCommand<'a> {
 }
 
 #[async_trait::async_trait]
-impl<'a> Command for ExecuteUDFCommand<'a> {
+impl Command for ExecuteUDFCommand<'_> {
     async fn write_timeout(&mut self, conn: &mut Connection) -> Result<()> {
         conn.buffer.write_timeout(self.policy.server_timeout());
         Ok(())

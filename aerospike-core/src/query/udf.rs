@@ -28,7 +28,7 @@ impl fmt::Display for UDFLang {
             UDFLang::Lua => "LUA",
         };
 
-        write!(f, "{}", s)
+        write!(f, "{s}")
     }
 }
 

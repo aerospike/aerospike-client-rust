@@ -21,7 +21,7 @@ use crate::errors::{Error, Result};
 #[cfg(feature = "tls")]
 use tokio_rustls::rustls::ClientConfig;
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 /// Determines authentication mode.
 pub enum AuthMode {
     /// No Authentication will be performed
@@ -32,8 +32,8 @@ pub enum AuthMode {
     Internal(String, String),
 
     /// Uses external authentication (like LDAP) when user/password defined. Specific external authentication is
-    /// configured on server. If TLSConfig is defined, sends clear password on node login via TLS.
-    /// Will return an error if TLSConfig is not defined.
+    /// configured on server. If `TLSConfig` is defined, sends clear password on node login via TLS.
+    /// Will return an error if `TLSConfig` is not defined.
     External(String, String),
 
     /// Allows authentication and authorization based on a certificate. No user name or
@@ -113,7 +113,7 @@ pub struct ClientPolicy {
     /// The proto-fd-idle-ms default directs the server to close connections that are idle for 60 seconds
     /// which can defeat the purpose of keeping connections in reserve for a future burst of activity.
     ///
-    /// If server proto-fd-idle-ms is changed, client ClientPolicy.idle_timeout should also be
+    /// If server proto-fd-idle-ms is changed, client `ClientPolicy.idle_timeout` should also be
     /// changed to be a few seconds less than proto-fd-idle-ms.
     ///
     ///  Servers 8.1+ have deprecated proto-fd-idle-ms. When proto-fd-idle-ms is ultimately removed,
@@ -129,7 +129,7 @@ pub struct ClientPolicy {
     /// connections can be reduced by creating multiple mini connection pools per node.
     pub conn_pools_per_node: usize,
 
-    /// Throw exception if host connection fails during addHost().
+    /// Throw exception if host connection fails during `addHost()`.
     pub fail_if_not_connected: bool,
 
     /// Threshold at which the buffer attached to the connection will be shrunk by deallocating
@@ -139,7 +139,7 @@ pub struct ClientPolicy {
     /// of the connection pool.
     pub buffer_reclaim_threshold: usize,
 
-    /// TendInterval determines interval for checking for cluster state changes.
+    /// `TendInterval` determines interval for checking for cluster state changes.
     /// Minimum possible interval is 10 Milliseconds.
     pub tend_interval: u32,
 
@@ -151,12 +151,12 @@ pub struct ClientPolicy {
     /// The value is the real IP address used to connect to the server.
     pub ip_map: Option<HashMap<String, String>>,
 
-    /// UseServicesAlternate determines if the client should use "services-alternate"
+    /// `UseServicesAlternate` determines if the client should use "services-alternate"
     /// instead of "services" in info request during cluster tending.
     /// "services-alternate" returns server configured external IP addresses that client
     /// uses to talk to nodes. "services-alternate" can be used in place of
     /// providing a client "ipMap".
-    /// This feature is recommended instead of using the client-side IpMap above.
+    /// This feature is recommended instead of using the client-side `IpMap` above.
     ///
     /// "services-alternate" is available with Aerospike Server versions >= 3.7.1.
     pub use_services_alternate: bool,
@@ -208,15 +208,15 @@ impl ClientPolicy {
     pub(crate) fn validate(&self) -> Result<()> {
         if self.max_conns_per_node > 0 && self.min_conns_per_node > self.max_conns_per_node {
             return Err(Error::ClientError("minimum number of connections specified in the ClientPolicy is bigger than total connection pool size".into()));
-        };
+        }
 
         Ok(())
     }
 
     pub(crate) fn application_id(&self) -> &str {
         if let Some(ref app_id) = self.application_id {
-            if app_id.len() > 0 {
-                return &app_id;
+            if !app_id.is_empty() {
+                return app_id;
             }
         }
 
@@ -231,7 +231,7 @@ impl ClientPolicy {
 
     pub(crate) fn timeout(&self) -> Duration {
         if self.timeout > 0 {
-            Duration::from_millis(self.timeout as u64)
+            Duration::from_millis(u64::from(self.timeout))
         } else {
             Duration::from_millis(30_000)
         }

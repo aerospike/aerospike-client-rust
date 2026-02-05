@@ -39,7 +39,7 @@ pub enum ExpWriteFlags {
     /// If bin does not exist, fail with Bin Not Found
     UpdateOnly = 1 << 1,
     /// If expression results in nil value, then delete the bin.
-    /// Otherwise, return OP Not Applicable when NoFail is not set
+    /// Otherwise, return OP Not Applicable when `NoFail` is not set
     AllowDelete = 1 << 2,
     /// Do not raise error if operation is denied.
     PolicyNoFail = 1 << 3,
@@ -47,7 +47,7 @@ pub enum ExpWriteFlags {
     EvalNoFail = 1 << 4,
 }
 
-/// Something that can be resolved into a set of ExpWriteFlags. Either a single `ExpWriteFlag`, `Option<ExpWriteFlag>`, `ExpWriteFlag`, etc.
+/// Something that can be resolved into a set of `ExpWriteFlags`. Either a single `ExpWriteFlag`, `Option<ExpWriteFlag>`, `ExpWriteFlag`, etc.
 pub trait ToExpWriteFlagBitmask {
     /// Convert to an i64 bitmask
     fn to_bitmask(self) -> i64;
@@ -120,7 +120,7 @@ pub enum ExpReadFlags {
     EvalNoFail = 1 << 4,
 }
 
-/// Something that can be resolved into a set of ExpWriteFlags. Either a single `ExpWriteFlag`, `Option<ExpWriteFlag>`, `ExpWriteFlag`, etc.
+/// Something that can be resolved into a set of `ExpWriteFlags`. Either a single `ExpWriteFlag`, `Option<ExpWriteFlag>`, `ExpWriteFlag`, etc.
 pub trait ToExpReadFlagBitmask {
     /// Convert to an i64 bitmask
     fn to_bitmask(self) -> i64;

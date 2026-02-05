@@ -49,13 +49,13 @@ impl<'a> Partition<'a> {
     }
 }
 
-impl<'a> PartialEq for Partition<'a> {
+impl PartialEq for Partition<'_> {
     fn eq(&self, other: &Partition) -> bool {
         self.namespace == other.namespace && self.partition_id == other.partition_id
     }
 }
 
-impl<'a> fmt::Display for Partition<'a> {
+impl fmt::Display for Partition<'_> {
     fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
         format!("Partition ({}: {})", self.namespace, self.partition_id).fmt(f)
     }

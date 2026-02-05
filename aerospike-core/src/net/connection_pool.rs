@@ -72,11 +72,10 @@ impl Queue {
 
         if let Ok(Ok(conn)) = conn {
             return Ok(conn);
-        } else {
-            return Err(Error::Connection(
-                "Could not open network connection".to_string(),
-            ));
-        };
+        }
+        Err(Error::Connection(
+            "Could not open network connection".to_string(),
+        ))
     }
 
     pub async fn get(&self, total_conns: usize) -> Result<PooledConnection> {
@@ -87,7 +86,7 @@ impl Queue {
                 if conn.is_idle() {
                     if total_conns > internals.num_conns {
                         internals.num_conns -= 1;
-                        conn.close().await;
+                        conn.close();
                     }
                     continue;
                 }
@@ -126,7 +125,7 @@ impl Queue {
         if conn.state == ConnectionState::Ready && internals.num_conns < self.0.capacity {
             internals.connections.push_back(IdleConnection(conn));
         } else {
-            conn.close().await;
+            conn.close();
             internals.num_conns -= 1;
         }
     }
@@ -136,13 +135,13 @@ impl Queue {
             let mut internals = self.0.internals.lock().await;
             internals.num_conns -= 1;
         }
-        conn.close().await;
+        conn.close();
     }
 
-    pub async fn clear(&mut self) {
+    pub async fn clear(&self) {
         let mut internals = self.0.internals.lock().await;
         for mut conn in internals.connections.drain(..) {
-            conn.0.close().await;
+            conn.0.close();
         }
         internals.num_conns = 0;
     }
@@ -205,7 +204,7 @@ impl ConnectionPool {
             loop {
                 let i: usize = self.queue_counter.fetch_add(1, Ordering::Relaxed);
                 let connection = self.queues[i % self.num_queues].get(total_conns).await;
-                if let Err(Error::NoMoreConnections) = connection {
+                if matches!(connection, Err(Error::NoMoreConnections)) {
                     attempts -= 1;
                     if attempts > 0 {
                         continue;
@@ -241,7 +240,7 @@ impl ConnectionPool {
     }
 
     pub async fn close(&mut self) {
-        for mut queue in self.queues.drain(..) {
+        for queue in self.queues.drain(..) {
             queue.clear().await;
         }
     }

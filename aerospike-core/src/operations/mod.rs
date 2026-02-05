@@ -90,7 +90,7 @@ pub struct Operation {
 }
 
 impl Operation {
-    pub(crate) fn is_write(&self) -> bool {
+    pub(crate) const fn is_write(&self) -> bool {
         match self.op {
             OperationType::Write
             | OperationType::CdtWrite
@@ -155,18 +155,18 @@ impl Operation {
                 size += self.write_op_header_to(buffer, ParticleType::BLOB as u8);
                 size += exp.write_to(buffer)?;
             }
-        };
+        }
 
         Ok(size)
     }
 
     pub(crate) fn write_op_header_to(&self, buffer: &mut Buffer, particle_type: u8) -> usize {
-        let mut size = buffer.write_u8(particle_type as u8);
+        let mut size = buffer.write_u8(particle_type);
         size += buffer.write_u8(0);
         match &self.bin {
             OperationBin::Name(bin) => {
                 size += buffer.write_u8(bin.len() as u8);
-                size += buffer.write_str(&bin);
+                size += buffer.write_str(bin);
             }
             OperationBin::None | OperationBin::All => {
                 size += buffer.write_u8(0);
