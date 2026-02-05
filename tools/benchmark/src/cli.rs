@@ -21,8 +21,7 @@ use std::str::FromStr;
 use clap::{App, Arg};
 use num_cpus;
 
-use crate::db_object_spec::{parse_object_spec_list, DBObjectSpec};
-use crate::workers::Workload;
+use crate::{db_object_spec::{DBObjectSpec, parse_object_spec_list}, workers::Workload};
 
 const AFTER_HELP: &str = r###"
 
@@ -91,11 +90,11 @@ pub fn parse_options() -> Result<Options, String> {
         use_services_alternate: matches.is_present("use_services_alternate"),
         ip_map: ip_map_str.as_deref().map(parse_ip_map).transpose()?,
         bins: usize::from_str(matches.value_of("bins").unwrap()).unwrap(),
-        bin_name_base: matches.value_of("binNameBase").unwrap().to_owned(),
+        bin_name_base: matches.value_of("bin_name_base").unwrap().to_owned(),
         object_specs: matches
-            .value_of("objectSpec")
+            .value_of("object_spec")
             .map(|s| parse_object_spec_list(s).unwrap())
-            .unwrap_or_else(|| vec![DBObjectSpec::default()])
+            .unwrap_or_else(|| vec![DBObjectSpec::default()]),
     })
     
 }
@@ -167,11 +166,11 @@ fn build_cli() -> App<'static, 'static> {
                 .default_value("1"),
          )
         .arg(
-            Arg::from_usage("--binNameBase 'Specify Prefix for bins name'")
+            Arg::from_usage("--bin_name_base 'Specify Prefix for bins name'")
                 .default_value("testBin"),
         )
         .arg(
-            Arg::from_usage("-o, --objectSpec [objectSpec] 'Comma-separated object specs: I | D | B:<size> | S:<size> | R:<bytes>:<randPct>'")
+            Arg::from_usage("-o, --object_spec [objec_spec] 'Comma-separated object specs: I | D | B:<size> | S:<size> | R:<bytes>:<randPct>'")
                 .default_value("I")
                 .validator(|val| validate_object_spec_list(val)),
         )
