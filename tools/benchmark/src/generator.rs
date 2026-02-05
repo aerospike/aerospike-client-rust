@@ -16,6 +16,25 @@
 use std::sync::Arc;
 
 use aerospike::Key;
+use rand::{Rng, SeedableRng, rngs::StdRng};
+
+
+#[derive(Debug)]
+pub enum KeyRangeGen {
+    Sequential(KeyRange),
+    Random(RandomKeyRange),
+}
+
+impl Iterator for KeyRangeGen {
+    type Item = Key;
+
+    fn next(&mut self) -> Option<Key> {
+        match self {
+            KeyRangeGen::Sequential(it) => it.next(),
+            KeyRangeGen::Random(it) => it.next(),
+        }
+    }
+}
 
 #[derive(Debug)]
 pub struct KeyPartitions {
@@ -47,9 +66,9 @@ impl KeyPartitions {
 }
 
 impl Iterator for KeyPartitions {
-    type Item = KeyRange;
+    type Item = KeyRangeGen;
 
-    fn next(&mut self) -> Option<KeyRange> {
+    fn next(&mut self) -> Option<KeyRangeGen> {
         if self.index < self.end {
             let mut count = self.keys_per_partition;
             if self.remainder > 0 {
@@ -63,7 +82,7 @@ impl Iterator for KeyPartitions {
                 count,
             );
             self.index += count;
-            Some(range)
+            Some(KeyRangeGen::Sequential(range))
         } else {
             None
         }
@@ -100,6 +119,47 @@ impl Iterator for KeyRange {
         } else {
             None
         }
+    }
+}
+
+#[derive(Debug)]
+pub struct RandomKeyRange {
+    namespace: Arc<str>,
+    set: Arc<str>,
+    remaining: i64,
+    start: i64,
+    end: i64,
+    rng: StdRng,
+}
+
+impl RandomKeyRange {
+    pub fn new(
+        namespace: Arc<str>,
+        set: Arc<str>,
+        start: i64,
+        count: i64,
+    ) -> Self {
+        Self {
+            namespace,
+            set,
+            start,
+            end: start + count,
+            remaining: start + count,
+            rng: StdRng::from_entropy()
+        }
+    }
+}
+
+impl Iterator for RandomKeyRange {
+    type Item = Key;
+
+    fn next(&mut self) -> Option<Key> {
+        if self.remaining == 0 {
+            return None;
+        }
+        self.remaining -= 1;
+        let k = self.rng.gen_range(self.start..self.end);
+        Some(as_key!(self.namespace.as_ref(), self.set.as_ref(), k))
     }
 }
 
