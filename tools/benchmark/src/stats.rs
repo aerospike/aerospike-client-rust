@@ -47,7 +47,7 @@ impl Collector {
         let mut interval = tokio::time::interval(*REPORT_MS);
         interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         interval.tick().await;
-        
+
         loop {
             tokio::select! {
                 msg = self.receiver.recv() => {
@@ -321,7 +321,7 @@ mod test {
         hist1.merge(hist2);
         assert_eq!(hist1.buckets, [1, 1, 4, 8, 2, 0]);
         assert_eq!(hist1.min, 0);
-        assert_eq!(hist1.max, 9_000); 
+        assert_eq!(hist1.max, 9_000);
         assert_eq!(hist1.timeouts, 3);
         assert_eq!(hist1.errors, 2);
     }

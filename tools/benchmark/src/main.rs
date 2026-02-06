@@ -50,8 +50,21 @@ use crate::args::Args;
 use crate::generator::{KeyRangeGen, RandomKeyRange};
 use crate::workers::Workload;
 
-#[tokio::main]
-async fn main() {
+fn main() {
+    let num_cores: usize = std::thread::available_parallelism()
+        .expect("error retrieving number of CPU cores.")
+        .into();
+    tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(num_cores)
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(async {
+            benchmark().await;
+        })
+}
+
+async fn benchmark() {
     let _ = env_logger::try_init();
     let options = match cli::parse_options() {
         Ok(options) => options,
@@ -64,7 +77,10 @@ async fn main() {
     match connect(&options).await {
         Ok(client) => run_workload(client, options).await,
         Err(err) => {
-            eprintln!("Failed to connect to Aerospike cluster (hosts: {}).", options.hosts);
+            eprintln!(
+                "Failed to connect to Aerospike cluster (hosts: {}).",
+                options.hosts
+            );
             eprintln!("Error: {err}");
             eprintln!();
             eprintln!(
@@ -124,46 +140,38 @@ async fn run_workload(client: Client, opts: Options) {
     let set_ref: Arc<str> = Arc::from(set);
 
     if workload == Workload::Initialize {
-        for keys in KeyPartitions::new(
-            namespace_ref,
-            set_ref,
-            start_key,
-            keys,
-            concurrency,
-        ) {
-            let mut worker = Worker::for_workload(workload, client.clone(), send.clone(), args.clone());
-            let handle = tokio::spawn(async move {
-                worker.run(keys).await
-            });
+        for keys in KeyPartitions::new(namespace_ref, set_ref, start_key, keys, concurrency) {
+            let mut worker =
+                Worker::for_workload(workload, client.clone(), send.clone(), args.clone());
+            let handle = tokio::spawn(async move { worker.run(keys).await });
             worker_handles.push(handle);
         }
     } else {
         for _ in 0..opts.concurrency {
-            let mut worker = Worker::for_workload(workload, client.clone(), send.clone(), args.clone());
+            let mut worker =
+                Worker::for_workload(workload, client.clone(), send.clone(), args.clone());
             let key_range = RandomKeyRange::new(
                 Arc::clone(&namespace_ref),
                 Arc::clone(&set_ref),
                 opts.start_key,
-                opts.keys
+                opts.keys,
             );
-            let handle = tokio::spawn(async move {
-                worker.run(KeyRangeGen::Random(key_range)).await
-            });
+            let handle =
+                tokio::spawn(async move { worker.run(KeyRangeGen::Random(key_range)).await });
             worker_handles.push(handle);
         }
     }
-   
-    drop(send); 
+
+    drop(send);
     for handle in worker_handles {
         let _ = handle.await;
     }
     let _ = collector_handle.await;
-    
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::db_object_spec::{DBObjectSpec, parse_object_spec_list};
+    use crate::db_object_spec::{parse_object_spec_list, DBObjectSpec};
 
     use super::*;
 

@@ -18,7 +18,7 @@ use std::sync::Arc;
 use rand::rngs::StdRng;
 use rand::Rng;
 
-use aerospike::{Result as asResult};
+use aerospike::Result as asResult;
 use aerospike::{Bins, Client, Error, Key, ReadPolicy, ResultCode, WritePolicy};
 
 use crate::args::Args;

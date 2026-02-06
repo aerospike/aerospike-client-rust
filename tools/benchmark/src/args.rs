@@ -13,8 +13,10 @@
 // License for the specific language governing permissions and limitations under
 // the License.
 
-use aerospike::{BatchPolicy, BatchReadPolicy, BatchWritePolicy, Bin, Key, RecordExistsAction, Value};
-use rand::{rngs::StdRng};
+use aerospike::{
+    BatchPolicy, BatchReadPolicy, BatchWritePolicy, Bin, Key, RecordExistsAction, Value,
+};
+use rand::rngs::StdRng;
 
 use crate::{db_object_spec::DBObjectSpec, workers::Workload};
 
@@ -26,7 +28,7 @@ pub struct Args {
     pub batch_size: usize,
     pub batch_read_policy: BatchReadPolicy,
     pub batch_write_policy: BatchWritePolicy,
-    pub batch_policy: BatchPolicy
+    pub batch_policy: BatchPolicy,
 }
 
 #[derive(Debug, Default)]
@@ -35,11 +37,10 @@ pub struct ArgBuilder {
     bin_name_base: Option<String>,
     object_specs: Option<Vec<DBObjectSpec>>,
     batch_size: Option<usize>,
-    workload: Option<Workload>
+    workload: Option<Workload>,
 }
 
 impl ArgBuilder {
-
     pub fn bin_name_base(mut self, bin_name_base: String) -> Self {
         self.bin_name_base = Some(bin_name_base);
         self
@@ -67,7 +68,9 @@ impl ArgBuilder {
     pub fn build(self) -> Result<Args, String> {
         let n_bins = self.n_bins.unwrap_or(1);
         let bin_name_base = self.bin_name_base.unwrap_or_else(|| "testBin".to_string());
-        let object_specs = self.object_specs.unwrap_or_else(|| vec![DBObjectSpec::default()]);
+        let object_specs = self
+            .object_specs
+            .unwrap_or_else(|| vec![DBObjectSpec::default()]);
         // Batch size applies only to RU; Initialize uses 1.
         let batch_size = match self.workload {
             Some(Workload::Initialize) => 1,
@@ -88,13 +91,10 @@ impl ArgBuilder {
             batch_size,
             batch_policy,
             batch_read_policy,
-            batch_write_policy
+            batch_write_policy,
         })
-        
     }
-
 }
-
 
 impl Args {
     pub fn builder() -> ArgBuilder {
@@ -106,8 +106,8 @@ impl Args {
         let mut bins = Vec::with_capacity(num_bins);
         let n_specs = self.object_specs.len();
         let seed = match key.user_key.as_ref() {
-                Some(Value::Int(k)) => Some(*k),
-                _ => None,
+            Some(Value::Int(k)) => Some(*k),
+            _ => None,
         };
         for i in 0..num_bins {
             let spec = &self.object_specs[i % n_specs];

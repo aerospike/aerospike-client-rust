@@ -13,12 +13,11 @@
 // License for the specific language governing permissions and limitations under
 // the License.
 
+use aerospike::Value;
+use rand::distributions::Alphanumeric;
+use rand::Rng;
 use std::str::FromStr;
 use std::time::{SystemTime, UNIX_EPOCH};
-use aerospike::Value;
-use rand::Rng;
-use rand::distributions::Alphanumeric;
-
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum DBObjectType {
@@ -26,11 +25,10 @@ pub enum DBObjectType {
     Bytes,
     String,
     Timestamp,
-    Random
+    Random,
 }
 
 impl DBObjectType {
-
     fn parse_type(t: char) -> Result<Self, String> {
         match t {
             'I' => Ok(DBObjectType::Integer),
@@ -38,7 +36,7 @@ impl DBObjectType {
             'B' => Ok(DBObjectType::Bytes),
             'D' => Ok(DBObjectType::Timestamp),
             'R' => Ok(DBObjectType::Random),
-            _other => Err(format!("Invalid types: {_other}"))
+            _other => Err(format!("Invalid types: {_other}")),
         }
     }
 }
@@ -47,15 +45,15 @@ impl DBObjectType {
 pub struct DBObjectSpec {
     bin_type: DBObjectType,
     size: usize,
-    pub rand_pct: u32
+    pub rand_pct: u32,
 }
 
 impl Default for DBObjectSpec {
     fn default() -> Self {
-        DBObjectSpec { 
+        DBObjectSpec {
             bin_type: DBObjectType::Integer,
-            size: 8, 
-            rand_pct: 0 
+            size: 8,
+            rand_pct: 0,
         }
     }
 }
@@ -70,14 +68,15 @@ impl FromStr for DBObjectSpec {
         }
 
         let args: Vec<&str> = bin_spec_trimmed.split(':').collect();
-        let type_str = args.get(0)
-         .ok_or_else( ||"Empty object spec".to_string())?
-        .trim();
+        let type_str = args
+            .get(0)
+            .ok_or_else(|| "Empty object spec".to_string())?
+            .trim();
 
         let t = type_str
-        .chars()
-        .next()
-        .ok_or_else(|| "Empty object spec type".to_string())?;
+            .chars()
+            .next()
+            .ok_or_else(|| "Empty object spec type".to_string())?;
 
         let bin_type = DBObjectType::parse_type(t)?;
         match bin_type {
@@ -87,11 +86,11 @@ impl FromStr for DBObjectSpec {
                 rand_pct: 0,
             }),
             DBObjectType::Bytes | DBObjectType::String => {
-
-                let size = args.get(1)
+                let size = args
+                    .get(1)
                     .ok_or_else(|| "Missing size for object spec".to_string())
                     .and_then(|s| parse_size(s))?;
-                    
+
                 Ok(DBObjectSpec {
                     bin_type,
                     size,
@@ -99,11 +98,13 @@ impl FromStr for DBObjectSpec {
                 })
             }
             DBObjectType::Random => {
-                let total_bytes = args.get(1)
+                let total_bytes = args
+                    .get(1)
                     .ok_or_else(|| "Missing size for object spec".to_string())
                     .and_then(|s| parse_size(s))?;
-                
-                let rand_pct: usize = args.get(2)
+
+                let rand_pct: usize = args
+                    .get(2)
                     .ok_or_else(|| "Missing randPct for random object spec".to_string())
                     .and_then(|s| parse_size(s))?;
 
@@ -119,14 +120,12 @@ impl FromStr for DBObjectSpec {
 }
 
 impl DBObjectSpec {
-    
     pub fn gen_value<R: Rng + ?Sized>(&self, rng: &mut R, key_seed: Option<i64>) -> Value {
-
         match self.bin_type {
             DBObjectType::Integer => match key_seed {
                 Some(seed) => Value::from(seed),
-                None => Value::Int(rng.gen_range(0..i64::MAX))
-            }
+                None => Value::Int(rng.gen_range(0..i64::MAX)),
+            },
             DBObjectType::Bytes => {
                 let mut buf = vec![0u8; self.size];
                 rng.fill_bytes(&mut buf);
@@ -138,11 +137,12 @@ impl DBObjectSpec {
                     .collect();
                 Value::String(str_value)
             }
-            DBObjectType::Timestamp => {
-                Value::from(
-                    SystemTime::now() .duration_since(UNIX_EPOCH).unwrap().as_millis() as u64
-                )
-            }
+            DBObjectType::Timestamp => Value::from(
+                SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap()
+                    .as_millis() as u64,
+            ),
             DBObjectType::Random => {
                 let mut bytes = vec![0u8; self.size.saturating_mul(8)];
 
@@ -172,11 +172,9 @@ impl DBObjectSpec {
                 }
                 Value::Blob(bytes)
             }
-
         }
     }
-} 
-
+}
 
 fn write_bytes(mut l: u64, bytes: &mut [u8], offset: usize) -> usize {
     let end = offset + 8;
@@ -191,10 +189,11 @@ fn write_bytes(mut l: u64, bytes: &mut [u8], offset: usize) -> usize {
 }
 
 fn parse_size(s: &str) -> Result<usize, String> {
-   let value: u64 = s.trim()
+    let value: u64 = s
+        .trim()
         .parse()
         .map_err(|e| format!("Invalid number '{}': {}", s, e))?;
-    
+
     if value == 0 {
         Err(format!("Invalid number '{}': must be > 0", s))
     } else {
@@ -279,7 +278,11 @@ mod tests {
             assert_eq!(s.len(), 10);
             for c in s.chars() {
                 let code = c as u32;
-                assert!(code >= 33 && code <= 126, "char {:?} not in printable ASCII", c);
+                assert!(
+                    code >= 33 && code <= 126,
+                    "char {:?} not in printable ASCII",
+                    c
+                );
             }
         } else {
             panic!("expected Value::String, got {:?}", v);
