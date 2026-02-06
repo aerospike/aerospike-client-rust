@@ -25,13 +25,15 @@ extern crate log;
 extern crate num_cpus;
 extern crate rand;
 
+mod args;
+mod batch_ops;
 mod cli;
 mod db_object_spec;
 mod generator;
 mod percent;
 mod stats;
+mod tasks;
 mod workers;
-mod args;
 
 use std::sync::Arc;
 
@@ -106,12 +108,19 @@ async fn run_workload(client: Client, opts: Options) {
         ..
     } = opts;
 
-    let args = Arc::new (Args::builder()
-        .n_bins(bins)
-        .bin_name_base(bin_name_base)
-        .object_specs(object_specs)
-        .build()
-        .unwrap()
+    // Batch size applies only to RU workload; Initialize uses 1.
+    let effective_batch_size = match workload {
+        Workload::Initialize => 1,
+        Workload::ReadUpdate { .. } => opts.batch_size,
+    };
+    let args = Arc::new(
+        Args::builder()
+            .n_bins(bins)
+            .bin_name_base(bin_name_base)
+            .object_specs(object_specs)
+            .batch_size(effective_batch_size)
+            .build()
+            .unwrap(),
     );
 
     let namespace_ref: Arc<str> = Arc::from(namespace);

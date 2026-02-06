@@ -64,6 +64,7 @@ pub struct Options {
     pub bins: usize,
     pub bin_name_base: String,
     pub object_specs: Vec<DBObjectSpec>,
+    pub batch_size: usize,
 }
 
 pub fn parse_options() -> Result<Options, String> {
@@ -90,13 +91,25 @@ pub fn parse_options() -> Result<Options, String> {
         use_services_alternate: matches.is_present("use_services_alternate"),
         ip_map: ip_map_str.as_deref().map(parse_ip_map).transpose()?,
         bins: usize::from_str(matches.value_of("bins").unwrap()).unwrap(),
-        bin_name_base: matches.value_of("bin_name_base").unwrap().to_owned(),
+        bin_name_base: matches.value_of("bin_prefix").unwrap().to_owned(),
         object_specs: matches
             .value_of("object_spec")
             .map(|s| parse_object_spec_list(s).unwrap())
             .unwrap_or_else(|| vec![DBObjectSpec::default()]),
+        batch_size: usize::from_str(matches.value_of("batch_size").unwrap()).unwrap(),
     })
-    
+    .and_then(|opts| custom_validations(&opts).map(|()| opts))
+}
+
+// put all custom validation here 
+fn custom_validations(opts: &Options) -> Result<(), String> {
+    if matches!(opts.workload, Workload::Initialize) && opts.batch_size != 1 {
+        return Err(
+            "batch size (-b/--batch-size) is only applicable for RU workload; use -w RU or omit -b"
+                .to_string(),
+        );
+    }
+    Ok(())
 }
 
 fn build_cli() -> App<'static, 'static> {
@@ -155,7 +168,7 @@ fn build_cli() -> App<'static, 'static> {
         )
         .arg(
             Arg::with_name("ip_map")
-                .long("ip_map")
+                .long("ip-map")
                 .takes_value(true)
                 .help("Map advertised IPs to reachable IPs (format: from=to[,from=to...])")
                 .validator(|val| parse_ip_map(&val).map(|_| ()).map_err(|e| e)),
@@ -165,14 +178,25 @@ fn build_cli() -> App<'static, 'static> {
                 .validator(|val| validate::<usize>(val, "Must be number".into()))
                 .default_value("1"),
          )
+         .arg(
+            Arg::with_name("bin_prefix")
+                .short("p")
+                .long("bin-prefix")
+                .help("Specify prefix for bin names")
+                .default_value("testBin")
+         )
         .arg(
-            Arg::from_usage("--bin_name_base 'Specify Prefix for bins name'")
-                .default_value("testBin"),
+            Arg::from_usage("-o, --object-spec [object_spec] 'Comma-separated object specs: I | D | B:<size> | S:<size> | R:<bytes>:<randPct>'")
+                .default_value("I")
+                .validator(|val| parse_object_spec_list(val.as_ref()).map(|_| ())
+),
         )
         .arg(
-            Arg::from_usage("-o, --object_spec [objec_spec] 'Comma-separated object specs: I | D | B:<size> | S:<size> | R:<bytes>:<randPct>'")
-                .default_value("I")
-                .validator(|val| validate_object_spec_list(val)),
+            Arg::with_name("batch_size")
+                .short("B")
+                .long("batch-size")
+                .help("Applicable only for RU workload. Disabled by default")
+                .default_value("1")
         )
         .after_help(AFTER_HELP.trim())
 }
@@ -207,8 +231,4 @@ fn parse_ip_map(spec: &str) -> Result<HashMap<String, String>, String> {
         map.insert(from.to_string(), to.to_string());
     }
     Ok(map)
-}
-
-fn validate_object_spec_list(value: String) -> Result<(), String> {
-    parse_object_spec_list(value.as_ref()).map(|_| ())
 }
