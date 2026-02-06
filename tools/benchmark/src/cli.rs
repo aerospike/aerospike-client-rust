@@ -41,7 +41,8 @@ The -w/--workload parameter is used to select the desired workload for the
 benchmark:
 
 * Insert workload (-w I)
-* Read workload (-w RU)
+* Read/Update workload (-w RU)
+* Read/Replace workload (-w RR), same as RU but writes use Replace
 
 "###;
 

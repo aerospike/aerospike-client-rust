@@ -39,11 +39,21 @@ lazy_static! {
 
 #[derive(Debug, PartialEq, Clone, Copy)]
 pub enum Workload {
-    // Initialize data with sequential key writes.
     Initialize,
-
-    // Read/Update. Perform random key, random read all bins or write all bins workload.
     ReadUpdate { read_pct: Percent, r_all_bin_pct: Percent, w_all_bin_pct: Percent },
+    ReadReplace { read_pct: Percent, r_all_bin_pct: Percent, w_all_bin_pct: Percent },
+}
+
+impl Workload {
+    pub fn extract_read_workload_param(self) -> Option<(Percent, Percent, Percent)> {
+        match self {
+            Workload::ReadUpdate { read_pct, r_all_bin_pct, w_all_bin_pct }
+            | Workload::ReadReplace { read_pct, r_all_bin_pct, w_all_bin_pct } => {
+                Some((read_pct, r_all_bin_pct, w_all_bin_pct))
+            }
+            Workload::Initialize => None,
+        }
+    }
 }
 
 impl FromStr for Workload {
@@ -53,11 +63,20 @@ impl FromStr for Workload {
         let mut parts = s.split(',');
         match parts.next() {
             Some("RU") => {
-                let read_pct   = Percent::from_str(parts.next().unwrap_or("100"))?;
-                let r_all_bin_pct = Percent::from_str(parts.next().unwrap_or("0"))?; // default to single bin read
-                let w_all_bin_pct  = Percent::from_str(parts.next().unwrap_or("0"))?; // default to single bin write
-
+                let read_pct = Percent::from_str(parts.next().unwrap_or("100"))?;
+                let r_all_bin_pct = Percent::from_str(parts.next().unwrap_or("0"))?;
+                let w_all_bin_pct = Percent::from_str(parts.next().unwrap_or("0"))?;
                 Ok(Workload::ReadUpdate {
+                    read_pct,
+                    r_all_bin_pct,
+                    w_all_bin_pct,
+                })
+            }
+            Some("RR") => {
+                let read_pct = Percent::from_str(parts.next().unwrap_or("100"))?;
+                let r_all_bin_pct = Percent::from_str(parts.next().unwrap_or("0"))?;
+                let w_all_bin_pct = Percent::from_str(parts.next().unwrap_or("0"))?;
+                Ok(Workload::ReadReplace {
                     read_pct,
                     r_all_bin_pct,
                     w_all_bin_pct,
@@ -66,7 +85,6 @@ impl FromStr for Workload {
             Some("I") => Ok(Workload::Initialize),
             _ => Err(String::from("Invalid workload definition")),
         }
-        
     }
 }
 
@@ -88,7 +106,9 @@ impl Worker {
         let batch_size = args.batch_size;
         let task = match workload {
             Workload::Initialize => TaskType::Insert(InsertTask::new(client, args)),
-            Workload::ReadUpdate { read_pct, r_all_bin_pct, w_all_bin_pct } => {
+            _ => {
+                let (read_pct, r_all_bin_pct, w_all_bin_pct) =
+                    workload.extract_read_workload_param().expect("RU or RR workload params");
                 TaskType::ReadUpdate(ReadUpdateTask::new(client, read_pct, r_all_bin_pct, w_all_bin_pct, args))
             }
         };
@@ -145,8 +165,16 @@ mod test {
             Workload::from_str("RU,50"),
             Ok(Workload::ReadUpdate {
                 read_pct: Percent::new(50),
-                r_all_bin_pct: Percent:: new(0),
-                w_all_bin_pct: Percent:: new(0)
+                r_all_bin_pct: Percent::new(0),
+                w_all_bin_pct: Percent::new(0)
+            })
+        );
+        assert_eq!(
+            Workload::from_str("RR"),
+            Ok(Workload::ReadReplace {
+                read_pct: Percent::new(100),
+                r_all_bin_pct: Percent::new(0),
+                w_all_bin_pct: Percent::new(0)
             })
         );
     }

@@ -13,10 +13,10 @@
 // License for the specific language governing permissions and limitations under
 // the License.
 
-use aerospike::{BatchPolicy, BatchReadPolicy, BatchWritePolicy, Bin, Key, Value};
+use aerospike::{BatchPolicy, BatchReadPolicy, BatchWritePolicy, Bin, Key, RecordExistsAction, Value};
 use rand::{rngs::StdRng};
 
-use crate::db_object_spec::DBObjectSpec;
+use crate::{db_object_spec::DBObjectSpec, workers::Workload};
 
 #[derive(Debug, Clone)]
 pub struct Args {
@@ -34,7 +34,8 @@ pub struct ArgBuilder {
     n_bins: Option<usize>,
     bin_name_base: Option<String>,
     object_specs: Option<Vec<DBObjectSpec>>,
-    batch_size: Option<usize>
+    batch_size: Option<usize>,
+    workload: Option<Workload>
 }
 
 impl ArgBuilder {
@@ -58,19 +59,36 @@ impl ArgBuilder {
         self
     }
 
+    pub fn workload(mut self, workload: Workload) -> Self {
+        self.workload = Some(workload);
+        self
+    }
+
     pub fn build(self) -> Result<Args, String> {
         let n_bins = self.n_bins.unwrap_or(1);
         let bin_name_base = self.bin_name_base.unwrap_or_else(|| "testBin".to_string());
         let object_specs = self.object_specs.unwrap_or_else(|| vec![DBObjectSpec::default()]);
-        let batch_size = self.batch_size.unwrap_or(1);
+        // Batch size applies only to RU; Initialize uses 1.
+        let batch_size = match self.workload {
+            Some(Workload::Initialize) => 1,
+            _ => self.batch_size.unwrap_or(1),
+        };
+        let batch_policy = BatchPolicy::default();
+        let batch_read_policy = BatchReadPolicy::default();
+        let mut batch_write_policy = BatchWritePolicy::default();
+
+        if let Some(Workload::ReadReplace { .. }) = self.workload {
+            batch_write_policy.record_exists_action = RecordExistsAction::Replace;
+        }
+
         Ok(Args {
             n_bins,
             bin_name_base,
             object_specs,
             batch_size,
-            batch_policy: BatchPolicy::default(),
-            batch_read_policy: BatchReadPolicy::default(),
-            batch_write_policy: BatchWritePolicy::default(),
+            batch_policy,
+            batch_read_policy,
+            batch_write_policy
         })
         
     }
