@@ -20,33 +20,21 @@ use std::time::{Duration, Instant};
 use tokio::sync::mpsc::UnboundedSender;
 
 use rand::rngs::StdRng;
-use rand::{Rng, SeedableRng};
+use rand::SeedableRng;
 
-use aerospike::Result as asResult;
-use aerospike::{Bins, Client, Error, Key, ReadPolicy, ResultCode, WritePolicy};
+use aerospike::{Client, Key};
 
 use crate::args::Args;
 use crate::generator::KeyRangeGen;
 use crate::percent::Percent;
 use crate::stats::Histogram;
+use crate::tasks::{InsertTask, ReadUpdateTask, TaskType};
+
+pub use crate::tasks::Status;
 
 lazy_static! {
     // How frequently workers send stats to the collector
     pub static ref COLLECT_MS: Duration = Duration::from_millis(100);
-}
-
-pub enum TaskType {
-    Insert(InsertTask),
-    ReadUpdate(ReadUpdateTask),
-}
-
-impl TaskType {
-    pub async fn execute(&self, key: &Key, rng: &mut StdRng) -> Status {
-        match self {
-            TaskType::Insert(task) => task.execute(key, rng).await,
-            TaskType::ReadUpdate(task) => task.execute(key, rng).await,
-        }
-    }
 }
 
 #[derive(Debug, PartialEq, Clone, Copy)]
@@ -54,23 +42,31 @@ pub enum Workload {
     // Initialize data with sequential key writes.
     Initialize,
 
-    // Read/Update. Perform random key, random read all bins wor write all bins workload.
-    ReadUpdate { read_pct: Percent },
+    // Read/Update. Perform random key, random read all bins or write all bins workload.
+    ReadUpdate { read_pct: Percent, r_all_bin_pct: Percent, w_all_bin_pct: Percent },
 }
 
 impl FromStr for Workload {
     type Err = String;
 
     fn from_str(s: &str) -> Result<Workload, String> {
-        let mut parts = s.splitn(2, ',');
+        let mut parts = s.split(',');
         match parts.next() {
             Some("RU") => {
-                let read_pct = Percent::from_str(parts.next().unwrap_or("100"))?;
-                Ok(Workload::ReadUpdate { read_pct })
+                let read_pct   = Percent::from_str(parts.next().unwrap_or("100"))?;
+                let r_all_bin_pct = Percent::from_str(parts.next().unwrap_or("0"))?; // default to single bin read
+                let w_all_bin_pct  = Percent::from_str(parts.next().unwrap_or("0"))?; // default to single bin write
+
+                Ok(Workload::ReadUpdate {
+                    read_pct,
+                    r_all_bin_pct,
+                    w_all_bin_pct,
+                })
             }
             Some("I") => Ok(Workload::Initialize),
             _ => Err(String::from("Invalid workload definition")),
         }
+        
     }
 }
 
@@ -79,6 +75,7 @@ pub struct Worker {
     collector: UnboundedSender<Histogram>,
     task: TaskType,
     rng: StdRng,
+    batch_size: usize
 }
 
 impl Worker {
@@ -88,32 +85,39 @@ impl Worker {
         sender: UnboundedSender<Histogram>,
         args: Arc<Args>
     ) -> Self {
+        let batch_size = args.batch_size;
         let task = match workload {
             Workload::Initialize => TaskType::Insert(InsertTask::new(client, args)),
-            Workload::ReadUpdate { read_pct } => {
-                TaskType::ReadUpdate(ReadUpdateTask::new(client, read_pct, args))
+            Workload::ReadUpdate { read_pct, r_all_bin_pct, w_all_bin_pct } => {
+                TaskType::ReadUpdate(ReadUpdateTask::new(client, read_pct, r_all_bin_pct, w_all_bin_pct, args))
             }
         };
         Worker {
             histogram: Histogram::new(),
             collector: sender,
             task,
-            rng: StdRng::from_entropy()
+            rng: StdRng::from_entropy(),
+            batch_size,
         }
     }
 
     pub async fn run(&mut self, key_range: KeyRangeGen) {
         let mut last_collection = Instant::now();
-        for key in key_range {
+        let mut key_range = key_range;
+        loop {
+            let batch: Vec<Key> = key_range.by_ref().take(self.batch_size).collect();
+            if batch.is_empty() {
+                break;
+            }
             let now = Instant::now();
-            let status = self.task.execute(&key, &mut self.rng).await;
+            let status = self.task.execute(&batch, &mut self.rng).await;
             self.histogram.add(now.elapsed(), status);
             if last_collection.elapsed() > *COLLECT_MS {
                 self.collect();
                 last_collection = Instant::now();
             }
+            self.collect();
         }
-        self.collect();
     }
 
     fn collect(&mut self) {
@@ -121,96 +125,6 @@ impl Worker {
         self.histogram.reset();
     }
 }
-
-pub enum Status {
-    Success,
-    Error,
-    Timeout,
-}
-
-trait Task: Send {
-    async fn execute(&self, key: &Key, rng: &mut StdRng) -> Status;
-
-    fn status(&self, result: asResult<()>) -> Status {
-        match result {
-            Err(Error::ServerError(ResultCode::Timeout, _, _) | Error::Timeout(_)) => {
-                Status::Timeout
-            }
-            Err(Error::ServerError(ResultCode::KeyNotFoundError, _, _ )) => {
-                Status::Success
-            },
-            Err(_) => Status::Error,
-            _ => Status::Success,
-        }
-    }
-}
-
-pub struct InsertTask {
-    client: Arc<Client>,
-    policy: WritePolicy,
-    args: Arc<Args>,
-}
-
-impl InsertTask {
-    pub fn new(client: Arc<Client>, args: Arc<Args>) -> Self {
-        InsertTask {
-            client,
-            policy: WritePolicy::default(),
-            args,
-        }
-    }
-}
-
-impl Task for InsertTask {
-    async fn execute(&self, key: &Key, rng: &mut StdRng) -> Status {
-        let bins = self.args.build_bins(key, rng);
-        trace!("Inserting {}", key);
-        self.status(self.client.put(&self.policy, key, &bins).await)
-    }
-}
-
-pub struct ReadUpdateTask {
-    client: Arc<Client>,
-    rpolicy: ReadPolicy,
-    wpolicy: WritePolicy,
-    reads: Percent,
-    args: Arc<Args>,
-}
-
-impl ReadUpdateTask {
-    pub fn new(client: Arc<Client>, reads: Percent, args: Arc<Args>) -> Self {
-        ReadUpdateTask {
-            client,
-            rpolicy: ReadPolicy::default(),
-            wpolicy: WritePolicy::default(),
-            reads,
-            args,
-        }
-    }
-}
-
-impl Task for ReadUpdateTask {
-    async fn execute(&self, key: &Key, rng: &mut StdRng) -> Status {
-        let do_read = rng.gen_range(0..100u8) < self.reads.as_u8();
-        if do_read {
-            trace!("Reading all bin {}", key);
-            //let bin_name = format!("{}_1", self.args.bin_name_base);
-            self.status(
-            self.client
-                    .get(&self.rpolicy, key, Bins::All)
-                    .await
-                    .map(|_| ()),
-            )
-        } else {
-            trace!("Writing all bin{}", key);
-            let bins = self.args.build_bins(key, rng);
-            // let bin = as_bin!("int", rng.gen::<i64>());
-            // self.status(self.client.put(&self.wpolicy, key, &[bin]).await)
-            self.status(self.client.put(&self.wpolicy, key, &bins).await)
-        }
-    }
-}
-
 
 #[cfg(test)]
 mod test {
@@ -223,12 +137,16 @@ mod test {
             Workload::from_str("RU"),
             Ok(Workload::ReadUpdate {
                 read_pct: Percent::new(100),
+                r_all_bin_pct: Percent:: new(0),
+                w_all_bin_pct: Percent:: new(0)
             })
         );
         assert_eq!(
             Workload::from_str("RU,50"),
             Ok(Workload::ReadUpdate {
                 read_pct: Percent::new(50),
+                r_all_bin_pct: Percent:: new(0),
+                w_all_bin_pct: Percent:: new(0)
             })
         );
     }
