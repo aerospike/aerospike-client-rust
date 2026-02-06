@@ -105,20 +105,17 @@ async fn run_workload(client: Client, opts: Options) {
         start_key,
         keys,
         concurrency,
+        batch_size,
         ..
     } = opts;
 
-    // Batch size applies only to RU workload; Initialize uses 1.
-    let effective_batch_size = match workload {
-        Workload::Initialize => 1,
-        Workload::ReadUpdate { .. } => opts.batch_size,
-    };
     let args = Arc::new(
         Args::builder()
             .n_bins(bins)
+            .workload(workload)
             .bin_name_base(bin_name_base)
             .object_specs(object_specs)
-            .batch_size(effective_batch_size)
+            .batch_size(batch_size)
             .build()
             .unwrap(),
     );
