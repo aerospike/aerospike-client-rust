@@ -13,15 +13,18 @@
 // License for the specific language governing permissions and limitations under
 // the License.
 
-use std::convert::AsRef;
 use std::collections::HashMap;
+use std::convert::AsRef;
 use std::env;
 use std::str::FromStr;
 
 use clap::{App, Arg};
 use num_cpus;
 
-use crate::{db_object_spec::{DBObjectSpec, parse_object_spec_list}, workers::Workload};
+use crate::{
+    db_object_spec::{parse_object_spec_list, DBObjectSpec},
+    workers::Workload,
+};
 
 const AFTER_HELP: &str = r###"
 
@@ -80,7 +83,7 @@ pub fn parse_options() -> Result<Options, String> {
             .value_of("hosts")
             .map(|s| s.to_owned())
             .or_else(|| env::var("AEROSPIKE_HOSTS").ok())
-            .unwrap_or_else(|| String::from("127.0.0.1:3000")),
+            .unwrap_or_else(|| String::from("127.0.0.1:3100")),
         namespace: matches.value_of("namespace").unwrap().to_owned(),
         set: matches.value_of("set").unwrap().to_owned(),
         keys: i64::from_str(matches.value_of("keys").unwrap()).unwrap(),
@@ -102,7 +105,7 @@ pub fn parse_options() -> Result<Options, String> {
     .and_then(|opts| custom_validations(&opts).map(|()| opts))
 }
 
-// put all custom validation here 
+// put all custom validation here
 fn custom_validations(opts: &Options) -> Result<(), String> {
     if matches!(opts.workload, Workload::Initialize) && opts.batch_size != 1 {
         return Err(
@@ -227,7 +230,10 @@ fn parse_ip_map(spec: &str) -> Result<HashMap<String, String>, String> {
         let from = from.trim();
         let to = to.trim();
         if from.is_empty() || to.is_empty() {
-            return Err(format!("Invalid ip-map entry `{}` (expected from=to)", entry));
+            return Err(format!(
+                "Invalid ip-map entry `{}` (expected from=to)",
+                entry
+            ));
         }
         map.insert(from.to_string(), to.to_string());
     }

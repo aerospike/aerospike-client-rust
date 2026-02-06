@@ -16,8 +16,7 @@
 use std::sync::Arc;
 
 use aerospike::Key;
-use rand::{Rng, SeedableRng, rngs::StdRng};
-
+use rand::{rngs::StdRng, Rng, SeedableRng};
 
 #[derive(Debug)]
 pub enum KeyRangeGen {
@@ -133,19 +132,14 @@ pub struct RandomKeyRange {
 }
 
 impl RandomKeyRange {
-    pub fn new(
-        namespace: Arc<str>,
-        set: Arc<str>,
-        start: i64,
-        count: i64,
-    ) -> Self {
+    pub fn new(namespace: Arc<str>, set: Arc<str>, start: i64, count: i64) -> Self {
         Self {
             namespace,
             set,
             start,
             end: start + count,
             remaining: start + count,
-            rng: StdRng::from_entropy()
+            rng: StdRng::from_entropy(),
         }
     }
 }

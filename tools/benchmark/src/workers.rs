@@ -40,17 +40,31 @@ lazy_static! {
 #[derive(Debug, PartialEq, Clone, Copy)]
 pub enum Workload {
     Initialize,
-    ReadUpdate { read_pct: Percent, r_all_bin_pct: Percent, w_all_bin_pct: Percent },
-    ReadReplace { read_pct: Percent, r_all_bin_pct: Percent, w_all_bin_pct: Percent },
+    ReadUpdate {
+        read_pct: Percent,
+        r_all_bin_pct: Percent,
+        w_all_bin_pct: Percent,
+    },
+    ReadReplace {
+        read_pct: Percent,
+        r_all_bin_pct: Percent,
+        w_all_bin_pct: Percent,
+    },
 }
 
 impl Workload {
     pub fn extract_read_workload_param(self) -> Option<(Percent, Percent, Percent)> {
         match self {
-            Workload::ReadUpdate { read_pct, r_all_bin_pct, w_all_bin_pct }
-            | Workload::ReadReplace { read_pct, r_all_bin_pct, w_all_bin_pct } => {
-                Some((read_pct, r_all_bin_pct, w_all_bin_pct))
+            Workload::ReadUpdate {
+                read_pct,
+                r_all_bin_pct,
+                w_all_bin_pct,
             }
+            | Workload::ReadReplace {
+                read_pct,
+                r_all_bin_pct,
+                w_all_bin_pct,
+            } => Some((read_pct, r_all_bin_pct, w_all_bin_pct)),
             Workload::Initialize => None,
         }
     }
@@ -93,7 +107,7 @@ pub struct Worker {
     collector: UnboundedSender<Histogram>,
     task: TaskType,
     rng: StdRng,
-    batch_size: usize
+    batch_size: usize,
 }
 
 impl Worker {
@@ -101,15 +115,22 @@ impl Worker {
         workload: Workload,
         client: Arc<Client>,
         sender: UnboundedSender<Histogram>,
-        args: Arc<Args>
+        args: Arc<Args>,
     ) -> Self {
         let batch_size = args.batch_size;
         let task = match workload {
             Workload::Initialize => TaskType::Insert(InsertTask::new(client, args)),
             _ => {
-                let (read_pct, r_all_bin_pct, w_all_bin_pct) =
-                    workload.extract_read_workload_param().expect("RU or RR workload params");
-                TaskType::ReadUpdate(ReadUpdateTask::new(client, read_pct, r_all_bin_pct, w_all_bin_pct, args))
+                let (read_pct, r_all_bin_pct, w_all_bin_pct) = workload
+                    .extract_read_workload_param()
+                    .expect("RU or RR workload params");
+                TaskType::ReadUpdate(ReadUpdateTask::new(
+                    client,
+                    read_pct,
+                    r_all_bin_pct,
+                    w_all_bin_pct,
+                    args,
+                ))
             }
         };
         Worker {
@@ -157,8 +178,8 @@ mod test {
             Workload::from_str("RU"),
             Ok(Workload::ReadUpdate {
                 read_pct: Percent::new(100),
-                r_all_bin_pct: Percent:: new(0),
-                w_all_bin_pct: Percent:: new(0)
+                r_all_bin_pct: Percent::new(0),
+                w_all_bin_pct: Percent::new(0)
             })
         );
         assert_eq!(
@@ -179,7 +200,3 @@ mod test {
         );
     }
 }
-
-
-
- 
