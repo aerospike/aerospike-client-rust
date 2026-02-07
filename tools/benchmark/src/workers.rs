@@ -28,7 +28,7 @@ use crate::args::Args;
 use crate::generator::KeyRangeGen;
 use crate::percent::Percent;
 use crate::stats::Histogram;
-use crate::tasks::{InsertTask, ReadUpdateTask, TaskType};
+use crate::tasks::{InsertTask, ReadIncrementTask, ReadModUpdateTask, ReadUpdateTask, TaskType};
 
 pub use crate::tasks::Status;
 
@@ -50,6 +50,9 @@ pub enum Workload {
         r_all_bin_pct: Percent,
         w_all_bin_pct: Percent,
     },
+    ReadModUpdate,
+    ReadAndIncrement,
+    ReadAndDecrement,
 }
 
 impl Workload {
@@ -65,7 +68,7 @@ impl Workload {
                 r_all_bin_pct,
                 w_all_bin_pct,
             } => Some((read_pct, r_all_bin_pct, w_all_bin_pct)),
-            Workload::Initialize => None,
+            _ => None,
         }
     }
 }
@@ -80,6 +83,9 @@ impl FromStr for Workload {
                 let read_pct = Percent::from_str(parts.next().unwrap_or("100"))?;
                 let r_all_bin_pct = Percent::from_str(parts.next().unwrap_or("0"))?;
                 let w_all_bin_pct = Percent::from_str(parts.next().unwrap_or("0"))?;
+                if parts.next().is_some() {
+                    return Err(String::from("Extra parameter(s) not allowed for RU"));
+                }
                 Ok(Workload::ReadUpdate {
                     read_pct,
                     r_all_bin_pct,
@@ -90,13 +96,39 @@ impl FromStr for Workload {
                 let read_pct = Percent::from_str(parts.next().unwrap_or("100"))?;
                 let r_all_bin_pct = Percent::from_str(parts.next().unwrap_or("0"))?;
                 let w_all_bin_pct = Percent::from_str(parts.next().unwrap_or("0"))?;
+                if parts.next().is_some() {
+                    return Err(String::from("Extra parameter(s) not allowed for RR"));
+                }
                 Ok(Workload::ReadReplace {
                     read_pct,
                     r_all_bin_pct,
                     w_all_bin_pct,
                 })
             }
-            Some("I") => Ok(Workload::Initialize),
+            Some("I") => {
+                if parts.next().is_some() {
+                    return Err(String::from("Extra parameter(s) not allowed for I"));
+                }
+                Ok(Workload::Initialize)
+            }
+            Some("RMU") => {
+                if parts.next().is_some() {
+                    return Err(String::from("Extra parameter(s) not allowed for RMU"));
+                }
+                Ok(Workload::ReadModUpdate)
+            }
+            Some("RMI") => {
+                if parts.next().is_some() {
+                    return Err(String::from("Extra parameter(s) not allowed for RMI"));
+                }
+                Ok(Workload::ReadAndIncrement)
+            }
+            Some("RMD") => {
+                if parts.next().is_some() {
+                    return Err(String::from("Extra parameter(s) not allowed for RMD"));
+                }
+                Ok(Workload::ReadAndDecrement)
+            }
             _ => Err(String::from("Invalid workload definition")),
         }
     }
@@ -120,6 +152,15 @@ impl Worker {
         let batch_size = args.batch_size;
         let task = match workload {
             Workload::Initialize => TaskType::Insert(InsertTask::new(client, args)),
+            Workload::ReadModUpdate => {
+                TaskType::ReadModifyUpdate(ReadModUpdateTask::new(client, args))
+            }
+            Workload::ReadAndIncrement => {
+                TaskType::ReadIncrement(ReadIncrementTask::new(client, args, 1))
+            }
+            Workload::ReadAndDecrement => {
+                TaskType::ReadIncrement(ReadIncrementTask::new(client, args, -1))
+            }
             _ => {
                 let (read_pct, r_all_bin_pct, w_all_bin_pct) = workload
                     .extract_read_workload_param()
