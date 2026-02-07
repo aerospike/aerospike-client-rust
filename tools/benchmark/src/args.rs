@@ -14,7 +14,8 @@
 // the License.
 
 use aerospike::{
-    BatchPolicy, BatchReadPolicy, BatchWritePolicy, Bin, Key, RecordExistsAction, Value,
+    BatchPolicy, BatchReadPolicy, BatchWritePolicy, Bin, Key, ReadPolicy, RecordExistsAction,
+    Value, WritePolicy,
 };
 use rand::rngs::StdRng;
 
@@ -29,6 +30,8 @@ pub struct Args {
     pub batch_read_policy: BatchReadPolicy,
     pub batch_write_policy: BatchWritePolicy,
     pub batch_policy: BatchPolicy,
+    pub write_policy: WritePolicy,
+    pub read_policy: ReadPolicy,
 }
 
 #[derive(Debug, Default)]
@@ -71,11 +74,13 @@ impl ArgBuilder {
         let object_specs = self
             .object_specs
             .unwrap_or_else(|| vec![DBObjectSpec::default()]);
-        // Batch size applies only to RU; Initialize uses 1.
+        // Batch size must be 1 for I and RMU; RU/RR may use batch.
         let batch_size = match self.workload {
-            Some(Workload::Initialize) => 1,
+            Some(Workload::Initialize) | Some(Workload::ReadModUpdate) => 1,
             _ => self.batch_size.unwrap_or(1),
         };
+        let write_policy = WritePolicy::default();
+        let read_policy = ReadPolicy::default();
         let batch_policy = BatchPolicy::default();
         let batch_read_policy = BatchReadPolicy::default();
         let mut batch_write_policy = BatchWritePolicy::default();
@@ -92,6 +97,8 @@ impl ArgBuilder {
             batch_policy,
             batch_read_policy,
             batch_write_policy,
+            write_policy,
+            read_policy,
         })
     }
 }

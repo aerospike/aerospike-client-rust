@@ -107,10 +107,13 @@ pub fn parse_options() -> Result<Options, String> {
 
 // put all custom validation here
 fn custom_validations(opts: &Options) -> Result<(), String> {
-    if matches!(opts.workload, Workload::Initialize) && opts.batch_size != 1 {
+    let batches_allowed = matches!(
+        opts.workload,
+        Workload::ReadUpdate { .. } | Workload::ReadReplace { .. }
+    );
+    if !batches_allowed && opts.batch_size > 1 {
         return Err(
-            "batch size (-b/--batch-size) is only applicable for RU workload; use -w RU or omit -b"
-                .to_string(),
+            "batch size (-b/--batch-size) is only applicable for RU/RR workload".to_string(),
         );
     }
     Ok(())
@@ -190,10 +193,9 @@ fn build_cli() -> App<'static, 'static> {
                 .default_value("testBin")
          )
         .arg(
-            Arg::from_usage("-o, --object-spec [object_spec] 'Comma-separated object specs: I | D | B:<size> | S:<size> | R:<bytes>:<randPct>'")
+            Arg::from_usage("-o, --object-spec 'Comma-separated object specs: I | D | B:<size> | S:<size> | R:<bytes>:<randPct>'")
                 .default_value("I")
-                .validator(|val| parse_object_spec_list(val.as_ref()).map(|_| ())
-),
+                .validator(|val| parse_object_spec_list(val.as_ref()).map(|_| ()).map_err(|e| e)),
         )
         .arg(
             Arg::with_name("batch_size")

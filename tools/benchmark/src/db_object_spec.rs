@@ -80,11 +80,19 @@ impl FromStr for DBObjectSpec {
 
         let bin_type = DBObjectType::parse_type(t)?;
         match bin_type {
-            DBObjectType::Timestamp | DBObjectType::Integer => Ok(DBObjectSpec {
-                bin_type,
-                size: 8,
-                rand_pct: 0,
-            }),
+            DBObjectType::Timestamp | DBObjectType::Integer => {
+                if args.len() > 1 {
+                    return Err(format!(
+                        "Object spec '{}' does not take arguments (use 'I' or 'D' only)",
+                        t
+                    ));
+                }
+                Ok(DBObjectSpec {
+                    bin_type,
+                    size: 8,
+                    rand_pct: 0,
+                })
+            }
             DBObjectType::Bytes | DBObjectType::String => {
                 let size = args
                     .get(1)
@@ -339,5 +347,13 @@ mod tests {
         } else {
             panic!("expected Value::Blob, got {:?}", v);
         }
+    }
+
+    #[test]
+    fn integer_timestamp_reject_extra_args() {
+        assert!("I".parse::<DBObjectSpec>().is_ok());
+        assert!("D".parse::<DBObjectSpec>().is_ok());
+        assert!("I:10".parse::<DBObjectSpec>().is_err());
+        assert!("D:2".parse::<DBObjectSpec>().is_err());
     }
 }
