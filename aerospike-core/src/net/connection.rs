@@ -46,6 +46,8 @@ pub enum ConnectionState {
     Writing,
     ReadingHeader(usize),
     ReadingBody(usize),
+    ReadingStreamHeader(usize),
+    ReadingStreamBody(usize),
 }
 
 #[derive(Debug)]
@@ -245,14 +247,14 @@ impl Connection {
 
     // This function validates the message header.
     pub(crate) fn validate_header(&self, header: u64) -> Result<()> {
-        let msg_version = (header & 0xFF00000000000000) >> 56;
+        let msg_version = (header & 0xFF00_0000_0000_0000) >> 56;
         if msg_version != 2 {
             return Err(Error::ClientError(format!(
                 "Invalid Message Header: Expected version to be 2, but got {msg_version}"
             )));
         }
 
-        let msg_type = (header & 0x00FF000000000000) >> 49;
+        let msg_type = (header & 0x00FF_0000_0000_0000) >> 49;
         if !(msg_type == 1 || msg_type == 3 || msg_type == 4) {
             return Err(Error::ClientError(format!(
                 "Invalid Message Header: Expected type to be 1, 3 or 4, but got {msg_type}"
@@ -430,66 +432,6 @@ impl Connection {
         self.bytes_read
     }
 
-    /// `recover_connection` will try to recover a connection in cases of timeout
-    pub(crate) async fn recover_connection(&mut self) {
-        if !self.can_recover_connection || self.timeout_delay <= 0 {
-            return;
-        }
-
-        match self.state {
-            ConnectionState::Ready | ConnectionState::Closed | ConnectionState::Writing => (),
-            ConnectionState::ReadingHeader(total_size) => {
-                self.set_socket_timeout(None, self.timeout_delay);
-
-                if total_size > self.bytes_read {
-                    // read the rest of the header
-                    if let Err(_) = self
-                        .read_buffer_at(self.bytes_read, total_size - self.bytes_read)
-                        .await
-                    {
-                        // return early and don't update the connection state
-                        return;
-                    };
-                }
-
-                self.buffer.reset_offset();
-                let sz = self.buffer.read_u64(Some(0));
-                let header_length = self.buffer.read_u8(Some(8));
-                let receive_size = ((sz & 0xFFFF_FFFF_FFFF) - u64::from(header_length)) as usize;
-                self.set_state(ConnectionState::ReadingBody(receive_size));
-                if let Err(_) = self
-                    .drain(
-                        receive_size,
-                        Duration::from_millis(u64::from(self.timeout_delay)),
-                    )
-                    .await
-                {
-                    // return early and don't update the connection state
-                    return;
-                }
-
-                assert!(self.bytes_read == receive_size);
-                self.state = ConnectionState::Ready;
-            }
-            ConnectionState::ReadingBody(total_size) => {
-                // read the rest of the body
-                if let Err(_) = self
-                    .drain(
-                        total_size - self.bytes_read,
-                        Duration::from_millis(u64::from(self.timeout_delay)),
-                    )
-                    .await
-                {
-                    // return early and don't update the connection state
-                    return;
-                }
-
-                assert!(self.bytes_read == total_size);
-                self.state = ConnectionState::Ready;
-            }
-        }
-    }
-
     // reads the rest of the message to empty the connection buffer
     // before returning the connection back to the pool.
     async fn drain(&mut self, mut limit: usize, timeout: Duration) -> Result<()> {
@@ -568,12 +510,14 @@ impl<'a> BufferedConn<'a> {
     }
 
     pub(crate) fn set_limit_header(&mut self, size: usize) -> Result<()> {
-        self.conn.set_state(ConnectionState::ReadingHeader(size));
+        self.conn
+            .set_state(ConnectionState::ReadingStreamHeader(size));
         self.set_limit(size)
     }
 
     pub(crate) fn set_limit_body(&mut self, size: usize) -> Result<()> {
-        self.conn.set_state(ConnectionState::ReadingBody(size));
+        self.conn
+            .set_state(ConnectionState::ReadingStreamBody(size));
         self.set_limit(size)
     }
 
@@ -737,5 +681,217 @@ impl<'a> BufferedConn<'a> {
         self.conn.refresh();
 
         Ok(size)
+    }
+}
+
+pub(crate) struct ConnectionRecovery<'a> {
+    conn: &'a mut Connection,
+}
+
+impl<'a> ConnectionRecovery<'a> {
+    pub const fn new(conn: &'a mut Connection) -> Self {
+        Self { conn }
+    }
+
+    pub async fn recover(&mut self) {
+        if !self.conn.can_recover_connection || self.conn.timeout_delay <= 0 {
+            return;
+        }
+
+        self.conn.set_socket_timeout(None, self.conn.timeout_delay);
+        match self.conn.state {
+            ConnectionState::Ready | ConnectionState::Closed | ConnectionState::Writing => (),
+            ConnectionState::ReadingHeader(total_size) => {
+                let receive_size = match self.read_header(total_size).await {
+                    Ok(v) => v,
+                    Err(_) => return,
+                };
+
+                self.conn
+                    .set_state(ConnectionState::ReadingBody(receive_size));
+
+                if self.read_body(receive_size).await.is_ok() {
+                    self.conn.state = ConnectionState::Ready;
+                }
+            }
+
+            ConnectionState::ReadingBody(total_size) => {
+                if self.read_body(total_size).await.is_ok() {
+                    self.conn.state = ConnectionState::Ready;
+                }
+            }
+
+            ConnectionState::ReadingStreamHeader(total_size) => {
+                let mut receive_size = match self.read_stream_header(total_size).await {
+                    Ok(v) => v,
+                    Err(_) => return,
+                };
+
+                while receive_size > 0 {
+                    self.conn
+                        .set_state(ConnectionState::ReadingStreamBody(receive_size));
+                    match self.read_stream_body(receive_size).await {
+                        Ok(true) => {
+                            self.conn.state = ConnectionState::Ready;
+                            return;
+                        }
+                        Err(_) => return,
+                        _ => (),
+                    }
+
+                    self.conn
+                        .set_state(ConnectionState::ReadingStreamHeader(receive_size));
+                    receive_size = match self.read_stream_header(total_size).await {
+                        Ok(v) => v,
+                        Err(_) => return,
+                    };
+                }
+            }
+
+            ConnectionState::ReadingStreamBody(mut receive_size) => {
+                while receive_size > 0 {
+                    match self.read_stream_body(receive_size).await {
+                        Ok(true) => {
+                            self.conn.state = ConnectionState::Ready;
+                            return;
+                        }
+                        Err(_) => return,
+                        _ => (),
+                    }
+
+                    self.conn.set_state(ConnectionState::ReadingStreamHeader(8));
+                    receive_size = match self.read_stream_header(8).await {
+                        Ok(v) => v,
+                        Err(_) => return,
+                    };
+
+                    self.conn
+                        .set_state(ConnectionState::ReadingStreamBody(receive_size));
+                }
+            }
+        }
+    }
+
+    async fn read_header(&mut self, total_size: usize) -> Result<usize> {
+        assert_eq!(total_size, 8);
+        if total_size > self.conn.bytes_read {
+            // read the rest of the header
+            if let Err(_) = self
+                .conn
+                .read_buffer_at(self.conn.bytes_read, total_size - self.conn.bytes_read)
+                .await
+            {
+                // return early and don't update the connection state
+                return Err(Error::StreamTerminatedError());
+            };
+        }
+
+        self.conn.buffer.reset_offset();
+        let sz = self.conn.buffer.read_u64(Some(0));
+        let header_length = self.conn.buffer.read_u8(Some(8));
+
+        let receive_size = ((sz & 0xFFFF_FFFF_FFFF) - u64::from(header_length)) as usize;
+        Ok(receive_size)
+    }
+
+    async fn read_body(&mut self, total_size: usize) -> Result<()> {
+        if total_size > self.conn.bytes_read {
+            // read the rest of the body
+            if let Err(_) = self
+                .conn
+                .drain(
+                    total_size - self.conn.bytes_read,
+                    Duration::from_millis(u64::from(self.conn.timeout_delay)),
+                )
+                .await
+            {
+                // return early and don't update the connection state
+                return Err(Error::StreamTerminatedError());
+            }
+        }
+
+        assert!(self.conn.bytes_read == total_size);
+        Ok(())
+    }
+
+    async fn read_stream_header(&mut self, total_size: usize) -> Result<usize> {
+        assert_eq!(total_size, 8);
+        if total_size > self.conn.bytes_read {
+            // read the rest of the header
+            if let Err(_) = self
+                .conn
+                .read_buffer_at(self.conn.bytes_read, total_size - self.conn.bytes_read)
+                .await
+            {
+                // return early and don't update the connection state
+                return Err(Error::StreamTerminatedError());
+            };
+        }
+
+        let receive_size = self.conn.buffer.read_msg_size(Some(0));
+        Ok(receive_size)
+    }
+
+    async fn read_stream_body(&mut self, total_size: usize) -> Result<bool> {
+        // The message has been bigger than a header only last part. Drain it straight away.
+        if self.conn.bytes_read > usize::from(crate::commands::buffer::MSG_TOTAL_HEADER_SIZE) {
+            // we are past the header portion, clearly not the last message.
+            // We can safely drain the connection
+            if total_size > self.conn.bytes_read {
+                if let Err(_) = self
+                    .conn
+                    .drain(
+                        total_size - self.conn.bytes_read,
+                        Duration::from_millis(u64::from(self.conn.timeout_delay)),
+                    )
+                    .await
+                {
+                    // return early and don't update the connection state
+                    return Err(Error::StreamTerminatedError());
+                }
+            }
+
+            assert!(self.conn.bytes_read == total_size);
+            return Ok(false);
+        }
+
+        // Still the header portion, so we need to read the rest of it and
+        // figure out if this is the last message in the stream.
+        if usize::from(crate::commands::buffer::MSG_TOTAL_HEADER_SIZE) > self.conn.bytes_read {
+            let remaining = min(
+                total_size,
+                usize::from(crate::commands::buffer::MSG_TOTAL_HEADER_SIZE) - self.conn.bytes_read,
+            );
+            if let Err(_) = self
+                .conn
+                .read_buffer_at(self.conn.bytes_read, remaining)
+                .await
+            {
+                // return early and don't update the connection state
+                return Err(Error::StreamTerminatedError());
+            }
+        }
+
+        let info3 = self.conn.buffer.read_u8(Some(3));
+        let last_record =
+            info3 & crate::commands::buffer::INFO3_LAST == crate::commands::buffer::INFO3_LAST;
+
+        // read the rest of the body
+        if total_size > self.conn.bytes_read {
+            if let Err(_) = self
+                .conn
+                .drain(
+                    total_size - self.conn.bytes_read,
+                    Duration::from_millis(u64::from(self.conn.timeout_delay)),
+                )
+                .await
+            {
+                // return early and don't update the connection state
+                return Err(Error::StreamTerminatedError());
+            }
+        }
+
+        assert!(self.conn.bytes_read == total_size);
+        Ok(last_record)
     }
 }

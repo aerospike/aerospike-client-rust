@@ -151,8 +151,7 @@ impl BatchOperateCommand {
         conn.buffer.write_timeout(policy.server_timeout());
 
         conn.set_socket_timeout(deadline, policy.socket_timeout());
-        // TODO: Support recovering_connection
-        conn.set_timeout_delay(false, policy.timeout_delay());
+        conn.set_timeout_delay(true, policy.timeout_delay());
 
         // Send command.
         if let Err(err) = conn.flush().await {
@@ -169,9 +168,9 @@ impl BatchOperateCommand {
             // cancelling/closing the batch/multi commands will return an error, which will
             // close the connection to throw away its data and signal the server about the
             // situation. We will not put back the connection in the buffer.
-            // if !Self::keep_connection(&err) {
-            conn.invalidate().await;
-            // }
+            if !Self::keep_connection(&err) {
+                conn.invalidate().await;
+            }
             Err(err)
         } else {
             Ok(true)
@@ -308,9 +307,9 @@ impl BatchOperateCommand {
         }))
     }
 
-    // const fn keep_connection(err: &Error) -> bool {
-    //     matches!(err, Error::ServerError(_, _, _) | Error::Timeout(_))
-    // }
+    const fn keep_connection(err: &Error) -> bool {
+        matches!(err, Error::ServerError(_, _, _) | Error::Timeout(_))
+    }
 
     async fn parse_result(
         batch_ops: &mut [(BatchOperation, usize)],

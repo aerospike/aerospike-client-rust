@@ -254,10 +254,16 @@ impl ConnectionPool {
     }
 
     async fn recover_connection(queue: Queue, mut conn: Connection) {
-        conn.recover_connection().await;
         if conn.state == ConnectionState::Ready {
             queue.put_back(conn).await;
         } else {
+            let mut r = crate::net::connection::ConnectionRecovery::new(&mut conn);
+            r.recover().await;
+            if conn.state == ConnectionState::Ready {
+                queue.put_back(conn).await;
+                return;
+            }
+
             queue.drop_conn(conn).await;
         }
     }
