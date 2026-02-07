@@ -19,7 +19,7 @@ use rand::rngs::StdRng;
 use rand::Rng;
 
 use aerospike::Result as asResult;
-use aerospike::{Bins, Client, Error, Key, ReadPolicy, ResultCode, WritePolicy};
+use aerospike::{Bins, Client, Error, Key, ResultCode, WritePolicy};
 
 use crate::args::Args;
 use crate::batch_ops::{build_batch_read_ops, build_batch_write_ops};
@@ -34,6 +34,8 @@ pub enum Status {
 pub enum TaskType {
     Insert(InsertTask),
     ReadUpdate(ReadUpdateTask),
+    ReadModifyUpdate(ReadModUpdateTask),
+    ReadIncrement(ReadIncrementTask),
 }
 
 impl TaskType {
@@ -41,6 +43,8 @@ impl TaskType {
         match self {
             TaskType::Insert(task) => task.execute(keys, rng).await,
             TaskType::ReadUpdate(task) => task.execute(keys, rng).await,
+            TaskType::ReadModifyUpdate(task) => task.execute(keys, rng).await,
+            TaskType::ReadIncrement(task) => task.execute(keys, rng).await,
         }
     }
 }
@@ -85,10 +89,19 @@ impl Task for InsertTask {
     }
 }
 
+pub struct ReadModUpdateTask {
+    client: Arc<Client>,
+    args: Arc<Args>,
+}
+
+impl ReadModUpdateTask {
+    pub fn new(client: Arc<Client>, args: Arc<Args>) -> Self {
+        ReadModUpdateTask { client, args }
+    }
+}
+
 pub struct ReadUpdateTask {
     client: Arc<Client>,
-    rpolicy: ReadPolicy,
-    wpolicy: WritePolicy,
     reads: Percent,
     read_bins_pct: Percent,
     write_bins_pct: Percent,
@@ -105,8 +118,6 @@ impl ReadUpdateTask {
     ) -> Self {
         ReadUpdateTask {
             client,
-            rpolicy: ReadPolicy::default(),
-            wpolicy: WritePolicy::default(),
             reads,
             read_bins_pct,
             write_bins_pct,
@@ -125,6 +136,45 @@ impl Task for ReadUpdateTask {
     }
 }
 
+impl Task for ReadModUpdateTask {
+    async fn execute(&self, keys: &[Key], rng: &mut StdRng) -> Status {
+        let key = &keys[0];
+        // Read all bins
+        self.status(
+            self.client
+                .get(&self.args.read_policy, key, Bins::All)
+                .await
+                .map(|_| ()),
+        );
+        // write single bins
+        let first_bin = self.args.build_bins(key, rng, Some(1));
+        trace!("Writing first bin {}", key);
+        self.status(
+            self.client
+                .put(&self.args.write_policy, key, &first_bin[..1])
+                .await,
+        )
+    }
+}
+
+impl Task for ReadIncrementTask {
+    async fn execute(&self, keys: &[Key], _rng: &mut StdRng) -> Status {
+        let key = &keys[0];
+        // Read all bins
+        self.status(
+            self.client
+                .get(&self.args.read_policy, key, Bins::All)
+                .await
+                .map(|_| ()),
+        );
+        let bins = [as_bin!(
+            format!("{}_counter", self.args.bin_name_base).as_str(),
+            self.delta
+        )];
+        self.status(self.client.add(&self.write_policy, key, &bins).await)
+    }
+}
+
 impl ReadUpdateTask {
     async fn execute_read(&self, keys: &[Key], rng: &mut StdRng) -> Status {
         let multi_bins_read = rng.gen_range(0..100u8) < self.read_bins_pct.as_u8();
@@ -139,7 +189,7 @@ impl ReadUpdateTask {
                     trace!("Reading all bins {}", key);
                     self.status(
                         self.client
-                            .get(&self.rpolicy, key, Bins::All)
+                            .get(&self.args.read_policy, key, Bins::All)
                             .await
                             .map(|_| ()),
                     )
@@ -148,7 +198,11 @@ impl ReadUpdateTask {
                     trace!("Reading single bin {} {}", single_bin, key);
                     self.status(
                         self.client
-                            .get(&self.rpolicy, &keys[0], Bins::from([single_bin.as_str()]))
+                            .get(
+                                &self.args.read_policy,
+                                &keys[0],
+                                Bins::from([single_bin.as_str()]),
+                            )
                             .await
                             .map(|_| ()),
                     )
@@ -181,11 +235,19 @@ impl ReadUpdateTask {
                 if multi_bins_write {
                     let multi_bins = self.args.build_bins(key, rng, None);
                     trace!("Writing all bins {}", key);
-                    self.status(self.client.put(&self.wpolicy, key, &multi_bins).await)
+                    self.status(
+                        self.client
+                            .put(&self.args.write_policy, key, &multi_bins)
+                            .await,
+                    )
                 } else {
                     let first_bin = self.args.build_bins(key, rng, Some(1));
                     trace!("Writing first bin {}", key);
-                    self.status(self.client.put(&self.wpolicy, key, &first_bin[..1]).await)
+                    self.status(
+                        self.client
+                            .put(&self.args.write_policy, key, &first_bin[..1])
+                            .await,
+                    )
                 }
             }
             _ => {
@@ -198,6 +260,27 @@ impl ReadUpdateTask {
                         .map(|_| ()),
                 )
             }
+        }
+    }
+}
+
+pub struct ReadIncrementTask {
+    client: Arc<Client>,
+    args: Arc<Args>,
+    write_policy: WritePolicy,
+    delta: i64,
+}
+
+impl ReadIncrementTask {
+    pub fn new(client: Arc<Client>, args: Arc<Args>, delta: i64) -> Self {
+        let mut write_policy = args.write_policy.clone();
+        write_policy.generation_policy = aerospike::GenerationPolicy::ExpectGenEqual;
+        write_policy.generation = 0;
+        Self {
+            client,
+            args,
+            write_policy,
+            delta,
         }
     }
 }
