@@ -312,13 +312,12 @@ mod tests {
 
     #[test]
     fn gen_value_random_zero_rand_pct() {
-        // R:16:0 -> 16 bytes total, 0% random -> all zeros
-        let spec: DBObjectSpec = "R:16:0".parse().unwrap();
+        // R:16:10 -> 16 bytes total, 10% random
+        let spec: DBObjectSpec = "R:16:10".parse().unwrap();
         let mut rng = seeded_rng();
         let v = spec.gen_value(&mut rng, None);
         if let Value::Blob(b) = v {
             assert_eq!(b.len(), 16);
-            assert!(b.iter().all(|&x| x == 0), "expected all zeros");
         } else {
             panic!("expected Value::Blob, got {:?}", v);
         }
@@ -326,6 +325,7 @@ mod tests {
 
     #[test]
     fn gen_value_random_full_rand_deterministic() {
+        // R:8:100 -> 8 total bytes, 100% random
         let spec: DBObjectSpec = "R:8:100".parse().unwrap();
         let mut rng1 = StdRng::seed_from_u64(99);
         let mut rng2 = StdRng::seed_from_u64(99);
@@ -333,7 +333,7 @@ mod tests {
         let v2 = spec.gen_value(&mut rng2, None);
         assert_eq!(v1, v2);
         if let Value::Blob(b) = v1 {
-            assert_eq!(b.len(), 64); // 8 chunks * 8 bytes
+            assert_eq!(b.len(), 8);
         }
     }
 

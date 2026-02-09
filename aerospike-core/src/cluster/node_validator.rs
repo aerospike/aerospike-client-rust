@@ -151,7 +151,6 @@ impl NodeValidator {
     }
 
     fn set_services(&mut self, alias: &Host, peers: &str) {
-        let ip_map = self.client_policy.ip_map.clone();
         let peers = peers.split(';');
         for peer in peers {
             match peer.to_hosts() {
@@ -160,13 +159,13 @@ impl NodeValidator {
                     let mut host: Vec<Host> = host
                         .into_iter()
                         .map(|mut h| {
-                           h.tls_name = alias.tls_name.clone();
-                           if let Some(ref ip_map) = ip_map {
-                              if let Some(mapped) = ip_map.get(&h.name) {
-                                 h.name = mapped.clone();
-                              }
-                           }
-                           h
+                            h.tls_name = alias.tls_name.clone();
+                            if let Some(ref ip_map) = self.client_policy.ip_map {
+                                if let Some(mapped) = ip_map.get(&h.name) {
+                                    h.name = mapped.clone();
+                                }
+                            }
+                            h
                         })
                         .collect();
                     self.services.append(&mut host);
