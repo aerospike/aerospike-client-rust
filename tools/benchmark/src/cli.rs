@@ -83,7 +83,7 @@ pub fn parse_options() -> Result<Options, String> {
             .value_of("hosts")
             .map(|s| s.to_owned())
             .or_else(|| env::var("AEROSPIKE_HOSTS").ok())
-            .unwrap_or_else(|| String::from("127.0.0.1:3100")),
+            .unwrap_or_else(|| String::from("127.0.0.1:3000")),
         namespace: matches.value_of("namespace").unwrap().to_owned(),
         set: matches.value_of("set").unwrap().to_owned(),
         keys: i64::from_str(matches.value_of("keys").unwrap()).unwrap(),

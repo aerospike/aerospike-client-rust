@@ -64,6 +64,8 @@ trait Task: Send {
     }
 }
 
+// ------ Insert Task ---------
+
 pub struct InsertTask {
     client: Arc<Client>,
     policy: WritePolicy,
@@ -89,6 +91,8 @@ impl Task for InsertTask {
     }
 }
 
+// ------ ReadModUpdateTask ---------
+
 pub struct ReadModUpdateTask {
     client: Arc<Client>,
     args: Arc<Args>,
@@ -99,6 +103,29 @@ impl ReadModUpdateTask {
         ReadModUpdateTask { client, args }
     }
 }
+
+impl Task for ReadModUpdateTask {
+    async fn execute(&self, keys: &[Key], rng: &mut StdRng) -> Status {
+        let key = &keys[0];
+        // Read all bins
+        self.status(
+            self.client
+                .get(&self.args.read_policy, key, Bins::All)
+                .await
+                .map(|_| ()),
+        );
+        // write single bins
+        let first_bin = self.args.build_bins(key, rng, Some(1));
+        trace!("Writing first bin {}", key);
+        self.status(
+            self.client
+                .put(&self.args.write_policy, key, &first_bin[..1])
+                .await,
+        )
+    }
+}
+
+// ------ ReadUpdateTask ---------
 
 pub struct ReadUpdateTask {
     client: Arc<Client>,
@@ -133,45 +160,6 @@ impl Task for ReadUpdateTask {
         } else {
             self.execute_write(keys, rng).await
         }
-    }
-}
-
-impl Task for ReadModUpdateTask {
-    async fn execute(&self, keys: &[Key], rng: &mut StdRng) -> Status {
-        let key = &keys[0];
-        // Read all bins
-        self.status(
-            self.client
-                .get(&self.args.read_policy, key, Bins::All)
-                .await
-                .map(|_| ()),
-        );
-        // write single bins
-        let first_bin = self.args.build_bins(key, rng, Some(1));
-        trace!("Writing first bin {}", key);
-        self.status(
-            self.client
-                .put(&self.args.write_policy, key, &first_bin[..1])
-                .await,
-        )
-    }
-}
-
-impl Task for ReadIncrementTask {
-    async fn execute(&self, keys: &[Key], _rng: &mut StdRng) -> Status {
-        let key = &keys[0];
-        // Read all bins
-        self.status(
-            self.client
-                .get(&self.args.read_policy, key, Bins::All)
-                .await
-                .map(|_| ()),
-        );
-        let bins = [as_bin!(
-            format!("{}_counter", self.args.bin_name_base).as_str(),
-            self.delta
-        )];
-        self.status(self.client.add(&self.write_policy, key, &bins).await)
     }
 }
 
@@ -264,6 +252,8 @@ impl ReadUpdateTask {
     }
 }
 
+// ------ ReadIncrementTask ---------
+
 pub struct ReadIncrementTask {
     client: Arc<Client>,
     args: Arc<Args>,
@@ -282,5 +272,23 @@ impl ReadIncrementTask {
             write_policy,
             delta,
         }
+    }
+}
+
+impl Task for ReadIncrementTask {
+    async fn execute(&self, keys: &[Key], _rng: &mut StdRng) -> Status {
+        let key = &keys[0];
+        // Read all bins
+        self.status(
+            self.client
+                .get(&self.args.read_policy, key, Bins::All)
+                .await
+                .map(|_| ()),
+        );
+        let bins = [as_bin!(
+            format!("{}_counter", self.args.bin_name_base).as_str(),
+            self.delta
+        )];
+        self.status(self.client.add(&self.write_policy, key, &bins).await)
     }
 }

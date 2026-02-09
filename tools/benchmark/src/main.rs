@@ -173,8 +173,6 @@ async fn run_workload(client: Client, opts: Options) {
 mod tests {
     use crate::db_object_spec::{parse_object_spec_list, DBObjectSpec};
 
-    use super::*;
-
     #[test]
     fn parse_object_spec_list_single() {
         let specs = parse_object_spec_list("I").unwrap();
