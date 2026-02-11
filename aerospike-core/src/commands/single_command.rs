@@ -44,6 +44,10 @@ impl<'a> SingleCommand<'a> {
         }
     }
 
+    pub fn hint(&self) -> u8 {
+        self.key.digest[0]
+    }
+
     pub async fn get_node(&mut self) -> Result<Arc<Node>> {
         let this_time = self
             .cluster
@@ -140,7 +144,7 @@ impl<'a> SingleCommand<'a> {
                 } // Node is currently inactive. Retry.
             };
 
-            let mut conn = match node.get_connection().await {
+            let mut conn = match node.get_connection(cmd.hint()).await {
                 Ok(conn) => conn,
                 Err(err) => {
                     warn!("Node {}: {}", node, err);
@@ -162,7 +166,7 @@ impl<'a> SingleCommand<'a> {
             if let Err(err) = cmd.write_buffer(&mut conn).await {
                 // IO errors are considered temporary anomalies. Retry.
                 // Close socket to flush out possible garbage. Do not put back in pool.
-                conn.invalidate().await;
+                conn.invalidate();
                 warn!("Node {}: {}", node, err);
                 continue;
             }
@@ -175,7 +179,7 @@ impl<'a> SingleCommand<'a> {
                     // close the connection to throw away its data and signal the server about the
                     // situation. We will not put back the connection in the buffer.
                     if !commands::keep_connection(&err) {
-                        conn.invalidate().await;
+                        conn.invalidate();
                     }
 
                     // DO NOT retry for streaming commands here. They retry in their own execution logic.
@@ -190,6 +194,9 @@ impl<'a> SingleCommand<'a> {
                 }
                 Ok(_) => (),
             }
+
+            // allow the connection to be put back in the connection pool
+            conn.reset_state();
 
             // command has completed successfully. Exit method.
             return Ok(());

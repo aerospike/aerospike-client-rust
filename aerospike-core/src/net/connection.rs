@@ -23,13 +23,13 @@ use crate::commands::buffer::{self, Buffer, MAX_BUFFER_SIZE};
 use crate::errors::{Error, Result};
 use crate::net::Host;
 use crate::policy::{AuthMode, ClientPolicy};
-#[cfg(all(any(feature = "rt-async-std"), not(feature = "rt-tokio")))]
+#[cfg(feature = "rt-async-std")]
 use aerospike_rt::async_std::net::Shutdown;
-#[cfg(all(any(feature = "rt-tokio"), not(feature = "rt-async-std")))]
+#[cfg(feature = "rt-tokio")]
 use aerospike_rt::io::{AsyncReadExt, AsyncWriteExt};
 use aerospike_rt::net::TcpStream;
 use aerospike_rt::time::{Duration, Instant};
-#[cfg(all(any(feature = "rt-async-std"), not(feature = "rt-tokio")))]
+#[cfg(feature = "rt-async-std")]
 use futures::{AsyncReadExt, AsyncWriteExt};
 use std::cmp::min;
 use std::ops::Add;
@@ -148,20 +148,20 @@ impl Connection {
         Ok(conn)
     }
 
-    pub async fn close(&mut self) {
+    pub fn close(&mut self) {
         self.state = ConnectionState::Closed;
         let _ = match self.conn {
             Netsocket::Tcp(ref mut conn) => {
-                #[cfg(all(any(feature = "rt-tokio"), not(feature = "rt-async-std")))]
+                #[cfg(feature = "rt-tokio")]
                 let _ = conn.shutdown();
-                #[cfg(all(any(feature = "rt-async-std"), not(feature = "rt-tokio")))]
+                #[cfg(feature = "rt-async-std")]
                 let _ = conn.shutdown(Shutdown::Both);
             }
             #[cfg(feature = "tls")]
             Netsocket::Tls(ref mut conn) => {
-                #[cfg(all(any(feature = "rt-tokio"), not(feature = "rt-async-std")))]
+                #[cfg(feature = "rt-tokio")]
                 let _ = conn.shutdown();
-                #[cfg(all(any(feature = "rt-async-std"), not(feature = "rt-tokio")))]
+                #[cfg(feature = "rt-async-std")]
                 let _ = conn.shutdown(Shutdown::Both);
             }
         };
@@ -196,6 +196,11 @@ impl Connection {
 
     pub(crate) fn set_state(&mut self, state: ConnectionState) {
         self.state = state;
+        self.bytes_read = 0;
+    }
+
+    pub(crate) fn reset_state(&mut self) {
+        self.state = ConnectionState::Ready;
         self.bytes_read = 0;
     }
 
@@ -288,43 +293,36 @@ impl Connection {
     pub(crate) async fn read_buffer_at(&mut self, pos: usize, size: usize) -> Result<usize> {
         self.buffer.resize_buffer(size + pos)?;
 
-        let deadline = self
-            .deadline
-            .or(Some(Instant::now() + self.deadline()))
-            .unwrap();
-
-        let mut total_read: usize = 0;
-        while total_read < size && Instant::now() < deadline {
-            let read_result = match self.conn {
-                Netsocket::Tcp(ref mut conn) => {
-                    #[cfg(feature = "rt-tokio")]
-                    conn.readable().await?;
-                    conn.read(&mut self.buffer.data_buffer[pos + total_read..])
-                        .await
-                }
-
-                #[cfg(feature = "tls")]
-                Netsocket::Tls(ref mut conn) => {
-                    conn.read(&mut self.buffer.data_buffer[pos + total_read..])
-                        .await
-                }
-            };
-
-            match read_result {
-                Ok(0) => break,
-                Ok(n) => {
-                    total_read += n;
-                    self.bytes_read += n
-                }
-                Err(ref e) if e.kind() == aerospike_rt::io::ErrorKind::WouldBlock => {}
-                Err(e) => Err(e)?,
+        let timeout = self.deadline();
+        let read_result = match self.conn {
+            Netsocket::Tcp(ref mut conn) =>
+            {
+                #[cfg(feature = "rt-tokio")]
+                aerospike_rt::timeout(
+                    timeout,
+                    conn.read_exact(&mut self.buffer.data_buffer[pos..]),
+                )
+                .await
             }
-        }
 
-        if total_read != size {
-            return Err(Error::Timeout(
-                "Timeout reading from the network connection".into(),
-            ));
+            #[cfg(feature = "tls")]
+            Netsocket::Tls(ref mut conn) => {
+                aerospike_rt::timeout(
+                    timeout,
+                    conn.read_exact(&mut self.buffer.data_buffer[pos..]),
+                )
+                .await
+            }
+        };
+
+        match read_result {
+            Ok(Ok(n)) => self.bytes_read += n,
+            Err(_) => {
+                return Err(Error::Timeout(
+                    "Timeout reading from the network connection".into(),
+                ))
+            }
+            Ok(Err(e)) => return Err(e.into()),
         }
 
         self.buffer.reset_offset();
@@ -359,7 +357,6 @@ impl Connection {
             }
         }
 
-        self.state = ConnectionState::Ready;
         self.refresh();
         Ok(())
     }
@@ -389,7 +386,6 @@ impl Connection {
             }
         }
 
-        self.state = ConnectionState::Ready;
         self.bytes_read += buf.len();
         self.refresh();
         Ok(())
@@ -417,7 +413,7 @@ impl Connection {
         return match AdminCommand::authenticate(self, auth_mode, hashed_pass).await {
             Ok(()) => Ok(()),
             Err(err) => {
-                self.close().await;
+                self.close();
                 Err(err)
             }
         };
@@ -431,9 +427,12 @@ impl Connection {
         self.bytes_read
     }
 
-    /// recover_connection will try to recover a connection in cases of timeout
-    pub(crate) async fn recover_connection(&mut self) {
-        if !self.can_recover_connection || self.timeout_delay <= 0 {
+    pub(crate) fn should_attempt_recovery(&self) -> bool {
+        self.can_recover_connection && self.timeout_delay > 0
+    }
+
+    pub(crate) async fn recover(&mut self) {
+        if !self.should_attempt_recovery() {
             return;
         }
 
@@ -748,5 +747,11 @@ impl<'a> BufferedConn<'a> {
         self.conn.refresh();
 
         Ok(size)
+    }
+}
+
+impl Drop for Connection {
+    fn drop(&mut self) {
+        self.close();
     }
 }

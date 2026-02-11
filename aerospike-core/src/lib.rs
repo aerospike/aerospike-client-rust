@@ -171,9 +171,9 @@ pub use net::ToHosts;
 pub use operations::{ListOrderType, ListPolicy, ListReturnType, ListSortFlags, ListWriteFlags};
 pub use operations::{MapPolicy, MapReturnType, MapWriteMode};
 pub use policy::{
-    AdminPolicy, AuthMode, BatchPolicy, ClientPolicy, CommitLevel, Concurrency, ConsistencyLevel,
-    Expiration, GenerationPolicy, Policy, QueryDuration, QueryPolicy, ReadPolicy, ReadTouchTTL,
-    RecordExistsAction, WritePolicy,
+    AdminPolicy, AuthMode, BasePolicy, BatchPolicy, ClientPolicy, CommitLevel, Concurrency,
+    ConsistencyLevel, Expiration, GenerationPolicy, Policy, QueryDuration, QueryPolicy, ReadPolicy,
+    ReadTouchTTL, RecordExistsAction, WritePolicy,
 };
 pub use privilege::{Privilege, PrivilegeCode};
 pub use query::{CollectionIndexType, IndexType, PartitionFilter, Recordset, Statement, UDFLang};

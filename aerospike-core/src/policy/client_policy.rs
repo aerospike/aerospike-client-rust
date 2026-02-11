@@ -127,7 +127,7 @@ pub struct ClientPolicy {
     /// need only one connection pool per node. Machines with larger number of CPU cores may have
     /// their performance limited by contention for pooled connections. Contention for pooled
     /// connections can be reduced by creating multiple mini connection pools per node.
-    pub conn_pools_per_node: usize,
+    pub conn_pools_per_node: u8,
 
     /// Throw exception if host connection fails during addHost().
     pub fail_if_not_connected: bool,
