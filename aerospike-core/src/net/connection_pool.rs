@@ -339,7 +339,7 @@ impl DerefMut for PooledConnection {
 mod tests {
     use crate::net::Connection;
 
-    use super::{ClientPolicy, ConnectionPool, Error, Host, Queue};
+    use super::{ClientPolicy, ConnectionPool, Host, Queue};
 
     macro_rules! put_back_with_reserve {
         ($queue:ident, $conn:ident) => {{

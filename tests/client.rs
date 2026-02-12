@@ -35,7 +35,7 @@ async fn cluster_name() {
 #[aerospike_macro::test]
 async fn node_names() {
     let client = common::client().await;
-    let names = client.node_names().await;
+    let names = client.node_names();
     assert!(!names.is_empty());
     client.close().await.unwrap();
 }
@@ -43,7 +43,7 @@ async fn node_names() {
 #[aerospike_macro::test]
 async fn nodes() {
     let client = common::client().await;
-    let nodes = client.nodes().await;
+    let nodes = client.nodes();
     assert!(!nodes.is_empty());
     client.close().await.unwrap();
 }
@@ -51,8 +51,8 @@ async fn nodes() {
 #[aerospike_macro::test]
 async fn get_node() {
     let client = common::client().await;
-    for name in client.node_names().await {
-        let node = client.get_node(&name).await;
+    for name in client.node_names() {
+        let node = client.get_node(&name);
         assert!(node.is_ok());
     }
     client.close().await.unwrap();
@@ -63,15 +63,11 @@ async fn close() {
     let client = Client::new(common::client_policy(), &common::hosts())
         .await
         .unwrap();
-    assert_eq!(
-        client.is_connected().await,
-        true,
-        "The client is not connected"
-    );
+    assert_eq!(client.is_connected(), true, "The client is not connected");
 
     if let Ok(()) = client.close().await {
         assert_eq!(
-            client.is_connected().await,
+            client.is_connected(),
             false,
             "The client did not disconnect"
         );
@@ -90,7 +86,7 @@ async fn tls_client_no_auth() {
     let policy = &mut common::client_policy().clone();
     policy.tls_config = Some(common::tls_config_no_client_auth());
     let client = Client::new(policy, &common::hosts()).await.unwrap();
-    let names = client.node_names().await;
+    let names = client.node_names();
     assert!(!names.is_empty());
     client.close().await.unwrap();
 }
@@ -105,7 +101,7 @@ async fn tls_client_auth() {
     let policy = &mut common::client_policy().clone();
     policy.tls_config = Some(common::tls_config());
     let client = Client::new(policy, &common::hosts()).await.unwrap();
-    let names = client.node_names().await;
+    let names = client.node_names();
     assert!(!names.is_empty());
     client.close().await.unwrap();
 }

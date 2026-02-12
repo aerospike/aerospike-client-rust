@@ -256,7 +256,7 @@ impl Connection {
     }
 
     /// Sets the timeout for the connection.
-    pub const fn set_socket_timeout(&mut self, deadline: Option<Instant>, socket_timeout: u32) {
+    pub fn set_socket_timeout(&mut self, deadline: Option<Instant>, socket_timeout: u32) {
         self.deadline = deadline;
         if socket_timeout > 0 {
             self.socket_timeout = socket_timeout;
@@ -351,8 +351,7 @@ impl Connection {
                 {
                     aerospike_rt::timeout(
                         timeout,
-                        conn.read_exact(&mut self.buffer.data_buffer[pos..])
-                            .map_ok(|_| size),
+                        conn.read_exact(&mut self.buffer.data_buffer[pos..]),
                     )
                     .await
                 }
@@ -371,7 +370,7 @@ impl Connection {
         };
 
         match read_result {
-            Ok(Ok(n)) => self.bytes_read += n,
+            Ok(Ok(_)) => self.bytes_read += size,
             Err(_) => {
                 return Err(Error::Timeout(
                     "Timeout reading from the network connection".into(),
@@ -614,33 +613,31 @@ impl<'a> BufferedConn<'a> {
         let size = min(self.cache.capacity(), self.limit);
         self.resize_cache(size)?;
 
-        let deadline = Instant::now() + self.conn.deadline();
-        let mut total_read: usize = 0;
-        while total_read < size && Instant::now() < deadline {
-            let read_result = match self.conn.conn {
-                Netsocket::Tcp(ref mut conn) => conn.read(&mut self.cache[total_read..]).await,
-
-                #[cfg(feature = "tls")]
-                Netsocket::Tls(ref mut conn) => conn.read(&mut self.cache[total_read..]).await,
-                #[cfg(test)]
-                _ => unreachable!(),
-            };
-
-            match read_result {
-                Ok(0) => break,
-                Ok(n) => {
-                    total_read += n;
-                    self.limit -= n;
-                    self.conn.bytes_read += n;
-                }
-                Err(e) => Err(e)?,
+        let deadline = self.conn.deadline();
+        let read_result = match self.conn.conn {
+            Netsocket::Tcp(ref mut conn) => {
+                aerospike_rt::timeout(deadline, conn.read_exact(&mut self.cache)).await
             }
-        }
 
-        if total_read != size {
-            return Err(Error::Timeout(
-                "Timeout reading from the network connection".into(),
-            ));
+            #[cfg(feature = "tls")]
+            Netsocket::Tls(ref mut conn) => {
+                aerospike_rt::timeout(deadline, conn.read_exact(&mut self.cache)).await
+            }
+            #[cfg(test)]
+            _ => unreachable!(),
+        };
+
+        match read_result {
+            Ok(Ok(_)) => {
+                self.limit -= self.cache.len();
+                self.conn.bytes_read += self.cache.len();
+            }
+            Err(_) => {
+                return Err(Error::Timeout(
+                    "Timeout reading from the network connection".into(),
+                ))
+            }
+            Ok(Err(e)) => return Err(e.into()),
         }
 
         self.pos = 0;

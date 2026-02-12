@@ -92,7 +92,6 @@ async fn create_index_using_expression() {
     if client
         .cluster
         .get_random_node()
-        .await
         .is_ok_and(|node| node.version() < &Version::new(8, 1, 0, 0))
     {
         info!("create_index_using_expression test is only supported in server versions 8.1.0.0+. Skipping.");

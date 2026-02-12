@@ -435,7 +435,7 @@ impl AdminCommand {
         password: &str,
         roles: &[&str],
     ) -> Result<()> {
-        let node = cluster.get_random_node().await?;
+        let node = cluster.get_random_node()?;
         let mut conn = node.get_connection(0).await?;
 
         conn.buffer.resize_buffer(1024)?;
@@ -453,7 +453,7 @@ impl AdminCommand {
         cluster: &Cluster,
         user: &str,
     ) -> Result<()> {
-        let node = cluster.get_random_node().await?;
+        let node = cluster.get_random_node()?;
         let mut conn = node.get_connection(0).await?;
 
         conn.buffer.resize_buffer(1024)?;
@@ -470,7 +470,7 @@ impl AdminCommand {
         user: &str,
         password: &str,
     ) -> Result<()> {
-        let node = cluster.get_random_node().await?;
+        let node = cluster.get_random_node()?;
         let mut conn = node.get_connection(0).await?;
 
         conn.buffer.resize_buffer(1024)?;
@@ -488,14 +488,14 @@ impl AdminCommand {
         user: &str,
         password: &str,
     ) -> Result<()> {
-        let node = cluster.get_random_node().await?;
+        let node = cluster.get_random_node()?;
         let mut conn = node.get_connection(0).await?;
 
         conn.buffer.resize_buffer(1024)?;
         conn.buffer.reset_offset();
         AdminCommand::write_header(&mut conn, CHANGE_PASSWORD, 3);
         AdminCommand::write_field_str(&mut conn, USER, user);
-        match cluster.client_policy().await.auth_mode {
+        match cluster.client_policy().auth_mode {
             AuthMode::Internal(_, ref password) | AuthMode::External(_, ref password) => {
                 AdminCommand::write_field_str(
                     &mut conn,
@@ -515,7 +515,7 @@ impl AdminCommand {
         AdminCommand::write_field_str(&mut conn, PASSWORD, &AdminCommand::hash_password(password)?);
 
         AdminCommand::execute(policy, conn).await?;
-        cluster.update_password(user, password).await
+        cluster.update_password(user, password)
     }
 
     pub(crate) async fn create_role(
@@ -527,7 +527,7 @@ impl AdminCommand {
         read_quota: u32,
         write_quota: u32,
     ) -> Result<()> {
-        let node = cluster.get_random_node().await?;
+        let node = cluster.get_random_node()?;
         let mut conn = node.get_connection(0).await?;
 
         let mut field_count = 1;
@@ -576,7 +576,7 @@ impl AdminCommand {
         cluster: &Cluster,
         role_name: &str,
     ) -> Result<()> {
-        let node = cluster.get_random_node().await?;
+        let node = cluster.get_random_node()?;
         let mut conn = node.get_connection(0).await?;
 
         conn.buffer.resize_buffer(1024)?;
@@ -593,7 +593,7 @@ impl AdminCommand {
         role_name: &str,
         privileges: &[Privilege],
     ) -> Result<()> {
-        let node = cluster.get_random_node().await?;
+        let node = cluster.get_random_node()?;
         let mut conn = node.get_connection(0).await?;
 
         conn.buffer.resize_buffer(1024)?;
@@ -611,7 +611,7 @@ impl AdminCommand {
         role_name: &str,
         privileges: &[Privilege],
     ) -> Result<()> {
-        let node = cluster.get_random_node().await?;
+        let node = cluster.get_random_node()?;
         let mut conn = node.get_connection(0).await?;
 
         conn.buffer.resize_buffer(1024)?;
@@ -629,7 +629,7 @@ impl AdminCommand {
         role_name: &str,
         allowlist: &[&str],
     ) -> Result<()> {
-        let node = cluster.get_random_node().await?;
+        let node = cluster.get_random_node()?;
         let mut conn = node.get_connection(0).await?;
 
         conn.buffer.resize_buffer(1024)?;
@@ -648,7 +648,7 @@ impl AdminCommand {
         read_quota: u32,
         write_quota: u32,
     ) -> Result<()> {
-        let node = cluster.get_random_node().await?;
+        let node = cluster.get_random_node()?;
         let mut conn = node.get_connection(0).await?;
 
         conn.buffer.resize_buffer(1024)?;
@@ -667,7 +667,7 @@ impl AdminCommand {
         user: &str,
         roles: &[&str],
     ) -> Result<()> {
-        let node = cluster.get_random_node().await?;
+        let node = cluster.get_random_node()?;
         let mut conn = node.get_connection(0).await?;
 
         conn.buffer.resize_buffer(1024)?;
@@ -685,7 +685,7 @@ impl AdminCommand {
         user: &str,
         roles: &[&str],
     ) -> Result<()> {
-        let node = cluster.get_random_node().await?;
+        let node = cluster.get_random_node()?;
         let mut conn = node.get_connection(0).await?;
 
         conn.buffer.resize_buffer(1024)?;
@@ -702,7 +702,7 @@ impl AdminCommand {
         cluster: &Cluster,
         user: Option<&str>,
     ) -> Result<Vec<User>> {
-        let node = cluster.get_random_node().await?;
+        let node = cluster.get_random_node()?;
         let mut conn = node.get_connection(0).await?;
 
         conn.buffer.resize_buffer(1024)?;
@@ -723,7 +723,7 @@ impl AdminCommand {
         cluster: &Cluster,
         role: Option<&str>,
     ) -> Result<Vec<Role>> {
-        let node = cluster.get_random_node().await?;
+        let node = cluster.get_random_node()?;
         let mut conn = node.get_connection(0).await?;
 
         conn.buffer.resize_buffer(1024)?;

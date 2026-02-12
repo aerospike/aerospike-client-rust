@@ -38,10 +38,7 @@ impl BatchExecutor {
 
     async fn node_for_key(&self, key: &Key, replica: crate::policy::Replica) -> Result<Arc<Node>> {
         let partition = Partition::new_by_key(key);
-        let node = self
-            .cluster
-            .get_node(&partition, replica, Weak::new())
-            .await?;
+        let node = self.cluster.get_node(&partition, replica, Weak::new())?;
         Ok(node)
     }
 

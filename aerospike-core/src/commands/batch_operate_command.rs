@@ -90,9 +90,11 @@ impl BatchOperateCommand {
                     let key = individual_op[0].0.key();
                     // Find somewhere else to try.
                     let partition = Partition::new_by_key(&key);
-                    let node = cluster
-                        .get_node(&partition, self.policy.replica, Arc::downgrade(&self.node))
-                        .await?;
+                    let node = cluster.get_node(
+                        &partition,
+                        self.policy.replica,
+                        Arc::downgrade(&self.node),
+                    )?;
 
                     if !Self::request_group(individual_op, &self.policy, deadline, node).await? {
                         all_successful = false;

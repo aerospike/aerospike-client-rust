@@ -137,7 +137,6 @@
 
 extern crate base64;
 extern crate byteorder;
-extern crate crossbeam_queue;
 #[macro_use]
 extern crate rhexdump;
 #[macro_use]

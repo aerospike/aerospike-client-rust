@@ -103,13 +103,9 @@ impl NodeValidator {
     }
 
     async fn validate_alias(&mut self, cluster: &Cluster, alias: &Host) -> Result<()> {
-        let mut conn = Connection::new(
-            alias,
-            &self.client_policy,
-            cluster.hashed_pass().await.as_ref(),
-        )
-        .await?;
-        let service_name = cluster.client_policy().await.service_string();
+        let mut conn =
+            Connection::new(alias, &self.client_policy, cluster.hashed_pass().as_ref()).await?;
+        let service_name = cluster.client_policy.load().service_string();
         let admin_policy = AdminPolicy {
             timeout: self.client_policy.timeout,
         };
@@ -125,7 +121,7 @@ impl NodeValidator {
             Some(node_name) => self.name = node_name.clone(),
         }
 
-        if let Some(ref cluster_name) = cluster.cluster_name().await {
+        if let Some(ref cluster_name) = cluster.cluster_name() {
             match info_map.get("cluster-name") {
                 None => return Err(Error::InvalidNode(String::from("Missing cluster name"))),
                 Some(info_name) if info_name == cluster_name => {}

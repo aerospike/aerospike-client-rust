@@ -49,10 +49,9 @@ impl<'a> SingleCommand<'a> {
     }
 
     pub async fn get_node(&mut self) -> Result<Arc<Node>> {
-        let this_time = self
-            .cluster
-            .get_node(&self.partition, self.replica, self.last_tried.clone())
-            .await?;
+        let this_time =
+            self.cluster
+                .get_node(&self.partition, self.replica, self.last_tried.clone())?;
         self.last_tried = Arc::downgrade(&this_time);
         Ok(this_time)
     }

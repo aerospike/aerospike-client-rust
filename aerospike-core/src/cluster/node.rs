@@ -18,7 +18,9 @@ use std::fmt;
 use std::hash::{Hash, Hasher};
 use std::result::Result as StdResult;
 use std::sync::atomic::{AtomicBool, AtomicIsize, AtomicUsize, Ordering};
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
+
+use hazarc::AtomicArc;
 
 use crate::cluster::node_validator::NodeValidator;
 use crate::cluster::peers_parser::PeersParser;
@@ -40,7 +42,7 @@ pub struct Node {
     client_policy: ClientPolicy,
     name: String,
     host: Host,
-    aliases: RwLock<Vec<Host>>,
+    aliases: AtomicArc<Vec<Host>>,
     address: String,
 
     connection_pool: ConnectionPool,
@@ -49,7 +51,7 @@ pub struct Node {
     partition_generation: AtomicIsize,
     rebalance_generation: AtomicIsize,
     // Which racks are these things part of
-    rack_ids: std::sync::Mutex<HashMap<String, usize>>,
+    rack_ids: AtomicArc<HashMap<String, usize>>,
     refresh_count: AtomicUsize,
     reference_count: AtomicUsize,
     responded: AtomicBool,
@@ -63,7 +65,7 @@ impl Node {
         Node {
             client_policy: client_policy.clone(),
             name: nv.name.clone(),
-            aliases: RwLock::new(nv.aliases.clone()),
+            aliases: AtomicArc::from(nv.aliases.clone()),
             address: nv.address.clone(),
 
             host: nv.aliases[0].clone(),
@@ -80,7 +82,7 @@ impl Node {
             responded: AtomicBool::new(false),
             active: AtomicBool::new(true),
             version: nv.version.clone(),
-            rack_ids: std::sync::Mutex::new(HashMap::new()),
+            rack_ids: AtomicArc::from(HashMap::new()),
         }
     }
 
@@ -241,8 +243,9 @@ impl Node {
 
     pub fn is_in_rack(&self, namespace: &str, rack_ids: &HashSet<usize>) -> bool {
         self.rack_ids
-            .lock()
-            .is_ok_and(|locked| locked.get(namespace).is_some_and(|r| rack_ids.contains(r)))
+            .load()
+            .get(namespace)
+            .is_some_and(|r| rack_ids.contains(r))
     }
 
     pub fn parse_rack(&self, buf: &str) -> Result<()> {
@@ -256,10 +259,7 @@ impl Node {
             })
             .collect::<Result<HashMap<_, _>>>()?;
 
-        *self
-            .rack_ids
-            .lock()
-            .map_err(|err| Error::ClientError(err.to_string()))? = new_table;
+        self.rack_ids.store(Arc::new(new_table));
         Ok(())
     }
 
@@ -304,16 +304,14 @@ impl Node {
 
     // Get a list of aliases to the node
     pub fn aliases(&self) -> Vec<Host> {
-        self.aliases
-            .read()
-            .unwrap_or_else(|e| e.into_inner())
-            .to_vec()
+        self.aliases.load().to_vec()
     }
 
     // Add an alias to the node
     pub fn add_alias(&self, alias: Host) {
-        let mut aliases = self.aliases.write().unwrap_or_else(|e| e.into_inner());
+        let mut aliases = self.aliases();
         aliases.push(alias);
+        self.aliases.store(Arc::new(aliases));
         self.reference_count.fetch_add(1, Ordering::Relaxed);
     }
 

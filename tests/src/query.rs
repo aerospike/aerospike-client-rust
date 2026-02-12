@@ -256,7 +256,7 @@ async fn query_single_consumer_rps() {
     let client = common::client().await;
 
     // only run on single node clusters
-    if client.nodes().await.len() != 1 {
+    if client.nodes().len() != 1 {
         return;
     }
 
