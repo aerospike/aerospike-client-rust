@@ -16,7 +16,7 @@
 #[cfg(feature = "serialization")]
 use serde::Serialize;
 
-use std::collections::HashMap;
+use indexmap::IndexMap;
 use std::fmt;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -37,7 +37,7 @@ pub struct Record {
     pub key: Option<Key>,
 
     /// Map of named record bins.
-    pub bins: HashMap<String, Value>,
+    pub bins: IndexMap<String, Value>,
 
     /// Record modification count.
     pub generation: u32,
@@ -48,9 +48,9 @@ pub struct Record {
 
 impl Record {
     /// Construct a new Record. For internal use only.
-    pub(crate) const fn new(
+    pub(crate) fn new(
         key: Option<Key>,
-        bins: HashMap<String, Value>,
+        bins: IndexMap<String, Value>,
         generation: u32,
         expiration: u32,
     ) -> Self {
@@ -102,7 +102,7 @@ impl fmt::Display for Record {
 #[cfg(test)]
 mod tests {
     use super::{Record, CITRUSLEAF_EPOCH};
-    use std::collections::HashMap;
+    use indexmap::IndexMap;
     use std::time::{Duration, SystemTime};
 
     #[test]
@@ -112,7 +112,7 @@ mod tests {
             .duration_since(*CITRUSLEAF_EPOCH)
             .unwrap()
             .as_secs();
-        let record = Record::new(None, HashMap::new(), 0, secs_since_epoch as u32);
+        let record = Record::new(None, IndexMap::new(), 0, secs_since_epoch as u32);
         let ttl = record.time_to_live();
         assert!(ttl.is_some());
         assert!(1000 - ttl.unwrap().as_secs() <= 1);
@@ -120,13 +120,13 @@ mod tests {
 
     #[test]
     fn ttl_expiration_past() {
-        let record = Record::new(None, HashMap::new(), 0, 0x0d00_d21c);
+        let record = Record::new(None, IndexMap::new(), 0, 0x0d00_d21c);
         assert_eq!(record.time_to_live(), Some(Duration::new(1u64, 0)));
     }
 
     #[test]
     fn ttl_never_expires() {
-        let record = Record::new(None, HashMap::new(), 0, 0);
+        let record = Record::new(None, IndexMap::new(), 0, 0);
         assert_eq!(record.time_to_live(), None);
     }
 }

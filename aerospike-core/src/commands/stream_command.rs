@@ -12,8 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::collections::hash_map::Entry::{Occupied, Vacant};
-use std::collections::HashMap;
+use indexmap::map::Entry::{Occupied, Vacant};
+use indexmap::IndexMap;
 use std::sync::Arc;
 
 use aerospike_rt::Mutex;
@@ -107,7 +107,7 @@ impl StreamCommand {
             return Ok((None, None, true));
         }
 
-        let mut bins: HashMap<String, Value> = HashMap::with_capacity(op_count);
+        let mut bins: IndexMap<String, Value> = IndexMap::with_capacity(op_count);
 
         for _ in 0..op_count {
             conn.read_buffer(8).await?;

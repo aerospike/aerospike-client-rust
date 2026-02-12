@@ -12,8 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::collections::hash_map::Entry::{Occupied, Vacant};
-use std::collections::HashMap;
+use indexmap::map::Entry::{Occupied, Vacant};
+use indexmap::IndexMap;
 use std::sync::Arc;
 
 use crate::cluster::{Cluster, Node};
@@ -59,7 +59,7 @@ impl<'a> ReadCommand<'a> {
         generation: u32,
         expiration: u32,
     ) -> Result<Record> {
-        let mut bins: HashMap<String, Value> = HashMap::with_capacity(op_count);
+        let mut bins: IndexMap<String, Value> = IndexMap::with_capacity(op_count);
 
         // There can be fields in the response (setname etc). For now, ignore them. Expose them to
         // the API if needed in the future.
@@ -154,7 +154,7 @@ impl<'a> Command for ReadCommand<'a> {
         match ResultCode::from(result_code) {
             ResultCode::Ok => {
                 let record = if self.bins.is_none() {
-                    Record::new(None, HashMap::new(), generation, expiration)
+                    Record::new(None, IndexMap::new(), generation, expiration)
                 } else {
                     self.parse_record(conn, op_count, field_count, generation, expiration)?
                 };
