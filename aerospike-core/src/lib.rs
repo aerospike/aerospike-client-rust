@@ -196,6 +196,7 @@ mod batch;
 mod client;
 mod cluster;
 pub(crate) mod commands;
+mod common;
 pub mod expressions;
 mod msgpack;
 mod net;

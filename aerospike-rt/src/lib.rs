@@ -15,8 +15,8 @@ pub use async_std::{
 };
 #[cfg(all(any(feature = "rt-tokio"), not(feature = "rt-async-std")))]
 pub use tokio::{
-    self, fs, io, net, spawn, sync::Mutex, sync::RwLock, sync::Semaphore, task, time, time::sleep,
-    time::timeout,
+    self, fs, io, net, runtime, spawn, sync::Mutex, sync::RwLock, sync::Semaphore, task, time,
+    time::sleep, time::timeout,
 };
 
 #[cfg(all(any(feature = "rt-async-std"), not(feature = "rt-tokio")))]

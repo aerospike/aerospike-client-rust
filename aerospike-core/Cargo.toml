@@ -48,3 +48,5 @@ hex = "0.4"
 bencher = "0.1"
 serde_json = "1.0"
 aerospike = { path = "../" }
+aerospike-macro = {path = "../aerospike-macro"}
+lazy_static = "1.4"

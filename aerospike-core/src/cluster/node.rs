@@ -270,7 +270,7 @@ impl Node {
 
     // Get a connection to the node from the connection pool
     pub async fn get_connection(&self, hint: u8) -> Result<PooledConnection> {
-        if let Ok(conn) = self.connection_pool.get(hint).await {
+        if let Ok(conn) = self.connection_pool.get(hint) {
             return Ok(conn);
         }
 
@@ -278,7 +278,7 @@ impl Node {
     }
 
     // Put a connection to the node back in the connection pool
-    pub async fn put_connection(&self, mut pconn: PooledConnection) {
+    pub fn put_connection(&self, mut pconn: PooledConnection) {
         if let Some(conn) = pconn.conn.take() {
             pconn.queue.put_back(conn);
         }
@@ -341,7 +341,7 @@ impl Node {
             conn.invalidate();
             return Err(e);
         }
-        self.put_connection(conn).await;
+        self.put_connection(conn);
         res
     }
 
@@ -381,7 +381,7 @@ impl Node {
 
         let client_policy = self.client_policy();
         if client_policy.min_conns_per_node > 0 {
-            let to_fill = client_policy.min_conns_per_node - self.connection_pool.num_conns().await;
+            let to_fill = client_policy.min_conns_per_node - self.connection_pool.num_conns();
             for _ in 0..to_fill {
                 self.connection_pool.make_conn(count).await?;
                 count += 1;

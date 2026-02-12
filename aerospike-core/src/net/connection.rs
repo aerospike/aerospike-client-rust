@@ -30,7 +30,7 @@ use aerospike_rt::io::{AsyncReadExt, AsyncWriteExt};
 use aerospike_rt::net::TcpStream;
 use aerospike_rt::time::{Duration, Instant};
 #[cfg(feature = "rt-async-std")]
-use futures::{AsyncReadExt, AsyncWriteExt};
+use futures::{AsyncReadExt, AsyncWriteExt, TryFutureExt};
 use std::cmp::min;
 use std::ops::Add;
 
@@ -53,6 +53,8 @@ pub enum Netsocket {
     Tcp(TcpStream),
     #[cfg(feature = "tls")]
     Tls(TlsStream<TcpStream>),
+    #[cfg(test)]
+    TestDummy,
 }
 
 #[derive(Debug)]
@@ -107,6 +109,7 @@ impl Connection {
         Ok(Netsocket::Tcp(stream))
     }
 
+    #[cfg(not(test))]
     pub async fn new(
         host: &Host,
         policy: &ClientPolicy,
@@ -148,6 +151,38 @@ impl Connection {
         Ok(conn)
     }
 
+    #[cfg(test)]
+    pub async fn new(
+        host: &Host,
+        policy: &ClientPolicy,
+        _hashed_pass: Option<&String>,
+    ) -> Result<Self> {
+        let addr = host.address();
+        let stream = Netsocket::TestDummy;
+
+        let idle_timeout = if policy.idle_timeout > 0 {
+            Some(Duration::from_millis(policy.idle_timeout as u64))
+        } else {
+            None
+        };
+
+        let mut conn = Connection {
+            addr: addr.into(),
+            buffer: Buffer::new(policy.buffer_reclaim_threshold),
+            bytes_read: 0,
+            conn: stream,
+            socket_timeout: policy.timeout().as_millis() as u32,
+            timeout_delay: 0,
+            deadline: None,
+            idle_timeout: idle_timeout,
+            idle_deadline: idle_timeout.map(|timeout| Instant::now() + timeout),
+            state: ConnectionState::Ready,
+            can_recover_connection: false,
+        };
+        conn.refresh();
+        Ok(conn)
+    }
+
     pub fn close(&mut self) {
         self.state = ConnectionState::Closed;
         let _ = match self.conn {
@@ -164,6 +199,8 @@ impl Connection {
                 #[cfg(feature = "rt-async-std")]
                 let _ = conn.shutdown(Shutdown::Both);
             }
+            #[cfg(test)]
+            _ => (),
         };
     }
 
@@ -178,6 +215,8 @@ impl Connection {
             Netsocket::Tls(ref mut conn) => {
                 aerospike_rt::timeout(timeout, conn.write_all(&self.buffer.data_buffer)).await
             }
+            #[cfg(test)]
+            _ => unreachable!(),
         };
 
         match res {
@@ -295,14 +334,24 @@ impl Connection {
 
         let timeout = self.deadline();
         let read_result = match self.conn {
-            Netsocket::Tcp(ref mut conn) =>
-            {
+            Netsocket::Tcp(ref mut conn) => {
                 #[cfg(feature = "rt-tokio")]
-                aerospike_rt::timeout(
-                    timeout,
-                    conn.read_exact(&mut self.buffer.data_buffer[pos..]),
-                )
-                .await
+                {
+                    aerospike_rt::timeout(
+                        timeout,
+                        conn.read_exact(&mut self.buffer.data_buffer[pos..]),
+                    )
+                    .await
+                }
+                #[cfg(feature = "rt-async-std")]
+                {
+                    aerospike_rt::timeout(
+                        timeout,
+                        conn.read_exact(&mut self.buffer.data_buffer[pos..])
+                            .map_ok(|_| size),
+                    )
+                    .await
+                }
             }
 
             #[cfg(feature = "tls")]
@@ -313,6 +362,8 @@ impl Connection {
                 )
                 .await
             }
+            #[cfg(test)]
+            _ => unreachable!(),
         };
 
         match read_result {
@@ -343,6 +394,8 @@ impl Connection {
             Netsocket::Tls(ref mut conn) => {
                 aerospike_rt::timeout(timeout, conn.write_all(buf)).await
             }
+            #[cfg(test)]
+            _ => unreachable!(),
         };
 
         match res {
@@ -374,6 +427,8 @@ impl Connection {
             Netsocket::Tls(ref mut conn) => {
                 aerospike_rt::timeout(timeout, conn.read_exact(buf)).await
             }
+            #[cfg(test)]
+            _ => unreachable!(),
         };
 
         match res {
@@ -521,6 +576,8 @@ impl Connection {
                 .map_err(|e| {
                     Error::Timeout(format!("Timeout draining the connection {e}").into())
                 })?,
+                #[cfg(test)]
+                _ => unreachable!(),
             }?;
 
             limit -= count as usize;
@@ -622,6 +679,8 @@ impl<'a> BufferedConn<'a> {
 
                 #[cfg(feature = "tls")]
                 Netsocket::Tls(ref mut conn) => conn.read(&mut self.cache[total_read..]).await,
+                #[cfg(test)]
+                _ => unreachable!(),
             };
 
             match read_result {
@@ -671,6 +730,8 @@ impl<'a> BufferedConn<'a> {
                 .map_err(|e| {
                     Error::Timeout(format!("Timeout draining the connection {e}").into())
                 })?,
+                #[cfg(test)]
+                _ => unreachable!(),
             }?;
 
             self.limit -= count as usize;
