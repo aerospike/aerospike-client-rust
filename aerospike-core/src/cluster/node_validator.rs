@@ -41,11 +41,11 @@ pub struct NodeValidator {
 impl NodeValidator {
     pub fn new(client_policy: ClientPolicy) -> Self {
         NodeValidator {
-            name: "".to_string(),
+            name: String::new(),
             services: vec![],
             aliases: vec![],
-            address: "".to_string(),
-            client_policy: client_policy,
+            address: String::new(),
+            client_policy,
             use_new_info: true,
             version: Version::default(),
         }
@@ -58,9 +58,9 @@ impl NodeValidator {
         let mut last_err = None;
         for alias in &self.aliases() {
             match self.validate_alias(cluster, alias).await {
-                Ok(_) => return Ok(()),
+                Ok(()) => return Ok(()),
                 Err(err) => {
-                    debug!("Alias {} failed: {:?}", alias, err);
+                    debug!("Alias {alias} failed: {err:?}");
                     last_err = Some(err);
                 }
             }
@@ -86,7 +86,7 @@ impl NodeValidator {
             .map(|addr| {
                 Host::new_tls(
                     &addr.ip().to_string(),
-                    &host.tls_name.clone().unwrap_or("".into()),
+                    &host.tls_name.clone().unwrap_or_default(),
                     addr.port(),
                 )
             })
@@ -94,7 +94,9 @@ impl NodeValidator {
 
         debug!("Resolved aliases for host {}: {:?}", host, self.aliases);
         if self.aliases.is_empty() {
-            Err(Error::Connection(format!("Failed to find addresses for {}", host)).into())
+            Err(Error::Connection(format!(
+                "Failed to find addresses for {host}"
+            )))
         } else {
             Ok(())
         }
@@ -102,7 +104,7 @@ impl NodeValidator {
 
     async fn validate_alias(&mut self, cluster: &Cluster, alias: &Host) -> Result<()> {
         let mut conn = Connection::new(
-            &alias,
+            alias,
             &self.client_policy,
             cluster.hashed_pass().await.as_ref(),
         )
@@ -129,9 +131,8 @@ impl NodeValidator {
                 Some(info_name) if info_name == cluster_name => {}
                 Some(info_name) => {
                     return Err(Error::InvalidNode(format!(
-                        "Cluster name mismatch: expected={},
-                                                         got={}",
-                        cluster_name, info_name
+                        "Cluster name mismatch: expected={cluster_name},
+                                                         got={info_name}"
                     )))
                 }
             }
@@ -145,7 +146,7 @@ impl NodeValidator {
         }
 
         if let Some(peers) = info_map.get(service_name) {
-            if peers.trim().len() > 0 {
+            if !peers.trim().is_empty() {
                 self.set_services(alias, peers);
             }
         }
@@ -157,7 +158,7 @@ impl NodeValidator {
         let peers = peers.split(';');
         for peer in peers {
             match peer.to_hosts() {
-                Err(e) => error!("Invalid host: {}, {}", peer, e),
+                Err(e) => error!("Invalid host: {peer}, {e}"),
                 Ok(host) => {
                     let mut host: Vec<Host> = host
                         .into_iter()
@@ -168,7 +169,7 @@ impl NodeValidator {
                         .collect();
                     self.services.append(&mut host);
                 }
-            };
+            }
         }
     }
 }

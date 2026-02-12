@@ -31,7 +31,7 @@ static RESPONSE_PATTERN: &str = "filename=";
 
 impl RegisterTask {
     /// Initializes `RegisterTask` from client, creation should only be expose to Client
-    pub fn new(cluster: Arc<Cluster>, package_name: String) -> Self {
+    pub const fn new(cluster: Arc<Cluster>, package_name: String) -> Self {
         RegisterTask {
             cluster,
             package_name,

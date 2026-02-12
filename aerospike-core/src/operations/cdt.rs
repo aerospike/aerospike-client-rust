@@ -24,7 +24,7 @@ use crate::Result;
 use crate::Value;
 
 #[derive(Debug, Clone)]
-pub(crate) enum CdtArgument {
+pub enum CdtArgument {
     Byte(u8),
     Int(i64),
     Bool(bool),
@@ -42,7 +42,7 @@ pub type OperationEncoder = Arc<
 >;
 
 #[derive(Clone)]
-pub(crate) struct CdtOperation {
+pub struct CdtOperation {
     pub op: u8,
     pub encoder: OperationEncoder,
     pub args: Vec<CdtArgument>,

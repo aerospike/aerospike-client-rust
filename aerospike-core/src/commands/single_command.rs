@@ -24,7 +24,7 @@ use crate::Key;
 use aerospike_rt::sleep;
 use aerospike_rt::time::{Duration, Instant};
 
-pub(crate) struct SingleCommand<'a> {
+pub struct SingleCommand<'a> {
     cluster: Arc<Cluster>,
     pub key: &'a Key,
     partition: Partition<'a>,
@@ -82,13 +82,13 @@ impl<'a> SingleCommand<'a> {
     ) -> Result<()> {
         if policy.total_timeout() > 0 {
             match aerospike_rt::timeout(
-                Duration::from_millis(policy.total_timeout() as u64),
+                Duration::from_millis(u64::from(policy.total_timeout())),
                 Self::execute_command(policy, cmd),
             )
             .await
             {
                 Ok(res) => res,
-                Err(_) => Err(Error::Timeout(format!("Timeout"))),
+                Err(_) => Err(Error::Timeout("Timeout".to_string())),
             }
         } else {
             Self::execute_command(policy, cmd).await
@@ -116,14 +116,9 @@ impl<'a> SingleCommand<'a> {
             }
 
             // check for max retries
-            if policy.max_retries() > 0 {
-                if iterations > policy.max_retries() + 1 {
-                    // first attempt isn't a retry
-                    return Err(Error::Timeout(format!(
-                        "Timeout after {} tries",
-                        iterations
-                    )));
-                }
+            if policy.max_retries() > 0 && iterations > policy.max_retries() + 1 {
+                // first attempt isn't a retry
+                return Err(Error::Timeout(format!("Timeout after {iterations} tries")));
             }
 
             // check for command timeout
@@ -139,7 +134,7 @@ impl<'a> SingleCommand<'a> {
                 Ok(node) => node,
                 e @ Err(Error::InvalidArgument(_)) => e?,
                 Err(e) => {
-                    warn!("Error selecting node from the partition table: {}", e);
+                    warn!("Error selecting node from the partition table: {e}");
                     continue;
                 } // Node is currently inactive. Retry.
             };
@@ -147,7 +142,7 @@ impl<'a> SingleCommand<'a> {
             let mut conn = match node.get_connection(cmd.hint()).await {
                 Ok(conn) => conn,
                 Err(err) => {
-                    warn!("Node {}: {}", node, err);
+                    warn!("Node {node}: {err}");
                     continue;
                 }
             };
@@ -167,32 +162,27 @@ impl<'a> SingleCommand<'a> {
                 // IO errors are considered temporary anomalies. Retry.
                 // Close socket to flush out possible garbage. Do not put back in pool.
                 conn.invalidate();
-                warn!("Node {}: {}", node, err);
+                warn!("Node {node}: {err}");
                 continue;
             }
 
             // Parse results.
-            match cmd.parse_result(&mut conn).await {
-                Err(err) => {
-                    // close the connection
-                    // cancelling/closing the batch/multi commands will return an error, which will
-                    // close the connection to throw away its data and signal the server about the
-                    // situation. We will not put back the connection in the buffer.
-                    if !commands::keep_connection(&err) {
-                        conn.invalidate();
-                    }
-
-                    // DO NOT retry for streaming commands here. They retry in their own execution logic.
-                    // DO NOT retry for any error other than network errors.
-                    if cmd.can_retry() {
-                        if commands::is_network_error(&err) {
-                            continue;
-                        }
-                    }
-
-                    return Err(err);
+            if let Err(err) = cmd.parse_result(&mut conn).await {
+                // close the connection
+                // cancelling/closing the batch/multi commands will return an error, which will
+                // close the connection to throw away its data and signal the server about the
+                // situation. We will not put back the connection in the buffer.
+                if !commands::keep_connection(&err) {
+                    conn.invalidate();
                 }
-                Ok(_) => (),
+
+                // DO NOT retry for streaming commands here. They retry in their own execution logic.
+                // DO NOT retry for any error other than network errors.
+                if cmd.can_retry() && commands::is_network_error(&err) {
+                    continue;
+                }
+
+                return Err(err);
             }
 
             // allow the connection to be put back in the connection pool
@@ -202,9 +192,8 @@ impl<'a> SingleCommand<'a> {
             return Ok(());
         }
 
-        return Err(Error::Timeout(format!(
-            "Command timed out after {} tries",
-            iterations
-        )));
+        Err(Error::Timeout(format!(
+            "Command timed out after {iterations} tries"
+        )))
     }
 }

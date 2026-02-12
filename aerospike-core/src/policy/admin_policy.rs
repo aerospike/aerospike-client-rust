@@ -13,20 +13,14 @@
 // limitations under the License.
 
 /// Policy attributes used for user administration commands.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Default)]
 pub struct AdminPolicy {
     /// User administration command socket timeout in milliseconds.
     pub timeout: u32,
 }
 
-impl Default for AdminPolicy {
-    fn default() -> Self {
-        Self { timeout: 0 }
-    }
-}
-
 impl AdminPolicy {
-    pub(crate) fn timeout(&self) -> u32 {
+    pub(crate) const fn timeout(&self) -> u32 {
         if self.timeout > 0 {
             self.timeout
         } else {

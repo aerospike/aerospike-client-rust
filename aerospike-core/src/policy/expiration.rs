@@ -20,7 +20,7 @@ const NEVER_EXPIRE: u32 = 0xFFFF_FFFF; // -1 as i32
 const DONT_UPDATE: u32 = 0xFFFF_FFFE; // -2 as i32
 
 /// Record expiration, also known as time-to-live (TTL).
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Expiration {
     /// Set the record to expire X seconds from now
     Seconds(u32),

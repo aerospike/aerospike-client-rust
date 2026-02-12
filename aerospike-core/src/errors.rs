@@ -53,7 +53,7 @@
 #![allow(missing_docs)]
 
 use crate::ResultCode;
-#[cfg(all(any(feature = "rt-tokio"), not(feature = "rt-async-std")))]
+#[cfg(feature = "rt-tokio")]
 use aerospike_rt::task;
 
 #[derive(Error, Debug)]
@@ -105,14 +105,14 @@ pub enum Error {
     #[error("Client Timeout: {0}")]
     Timeout(String), // TODO: Should have Node
 
-    /// ClientError is an untyped Error happening on client-side
+    /// `ClientError` is an untyped Error happening on client-side
     #[error("{0}")]
     ClientError(String),
-    /// ParsePeersError occurs when parsing a peer string fails.
+    /// `ParsePeersError` occurs when parsing a peer string fails.
     #[error("{0}")]
     ParsePeersError(String),
 
-    /// StreamSendError is a client-side error that signifies the scan/query was terminated.
+    /// `StreamSendError` is a client-side error that signifies the scan/query was terminated.
     #[error("Record stream was terminated by user")]
     StreamTerminatedError(),
 

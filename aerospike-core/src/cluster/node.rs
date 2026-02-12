@@ -95,7 +95,7 @@ impl Node {
     }
 
     /// Returns the Node name
-    pub fn version(&self) -> &Version {
+    pub const fn version(&self) -> &Version {
         &self.version
     }
 
@@ -160,15 +160,14 @@ impl Node {
 
     fn verify_node_name(&self, info_map: &HashMap<String, String>) -> Result<()> {
         match info_map.get("node") {
-            None => Err(Error::InvalidNode("Missing node name".to_string()).into()),
+            None => Err(Error::InvalidNode("Missing node name".to_string())),
             Some(info_name) if info_name == &self.name => Ok(()),
             Some(info_name) => {
                 self.inactivate();
                 Err(Error::InvalidNode(format!(
                     "Node name has changed: '{}' => '{}'",
                     self.name, info_name
-                ))
-                .into())
+                )))
             }
         }
     }
@@ -177,16 +176,14 @@ impl Node {
         match self.client_policy.cluster_name {
             None => Ok(()),
             Some(ref expected) => match info_map.get("cluster-name") {
-                None => Err(Error::InvalidNode("Missing cluster name".to_string()).into()),
+                None => Err(Error::InvalidNode("Missing cluster name".to_string())),
                 Some(info_name) if info_name == expected => Ok(()),
                 Some(info_name) => {
                     self.inactivate();
                     Err(Error::InvalidNode(format!(
-                        "Cluster name mismatch: expected={},
-                                                           got={}",
-                        expected, info_name
-                    ))
-                    .into())
+                        "Cluster name mismatch: expected={expected},
+                                                           got={info_name}"
+                    )))
                 }
             },
         }
@@ -243,11 +240,9 @@ impl Node {
     }
 
     pub fn is_in_rack(&self, namespace: &str, rack_ids: &HashSet<usize>) -> bool {
-        self.rack_ids.lock().map_or(false, |locked| {
-            locked
-                .get(namespace)
-                .map_or(false, |r| rack_ids.contains(r))
-        })
+        self.rack_ids
+            .lock()
+            .is_ok_and(|locked| locked.get(namespace).is_some_and(|r| rack_ids.contains(r)))
     }
 
     pub fn parse_rack(&self, buf: &str) -> Result<()> {
@@ -363,10 +358,10 @@ impl Node {
         let app_id = self.client_policy().application_id();
 
         // Source user-agent payload
-        // Format: "1,go-<version>,<application-id>"
-        let user_agent_id = format!("1,rust-{},{}", CLIENT_VERSION, app_id);
+        // Format: "1,rust-<version>,<application-id>"
+        let user_agent_id = format!("1,rust-{CLIENT_VERSION},{app_id}");
         let user_agent_id = base64::encode(&user_agent_id);
-        let user_agent_command = format!("user-agent-set:value={}", user_agent_id);
+        let user_agent_command = format!("user-agent-set:value={user_agent_id}");
 
         let policy = AdminPolicy {
             timeout: self.client_policy().timeout,
@@ -375,7 +370,7 @@ impl Node {
     }
 
     /// Fills the connection pool to the minimum required
-    /// by the [ClientPolicy.min_conns_per_node]
+    /// by the [`ClientPolicy.min_conns_per_node`]
     pub(crate) async fn fill_min_conns(&self) -> Result<usize> {
         let mut count = 0;
 
@@ -388,7 +383,7 @@ impl Node {
             }
         }
 
-        return Ok(count);
+        Ok(count)
     }
 }
 

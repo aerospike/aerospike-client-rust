@@ -15,7 +15,7 @@
 
 use aerospike_rt::time::{Duration, Instant};
 
-pub(crate) trait StreamPolicy {
+pub trait StreamPolicy {
     fn max_records(&self) -> Option<u64>;
     fn sleep_between_retries(&self) -> Option<Duration>;
     fn deadline(&self) -> Option<Instant>;

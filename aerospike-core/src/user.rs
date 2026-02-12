@@ -13,7 +13,7 @@
 // limitations under the License.
 
 /// User and assigned roles.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct User {
     /// User name.
     pub user: String,

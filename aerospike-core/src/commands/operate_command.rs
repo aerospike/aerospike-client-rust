@@ -22,7 +22,7 @@ use crate::operations::Operation;
 use crate::policy::{Policy, WritePolicy};
 use crate::{Bins, Key};
 
-pub(crate) struct OperateCommand<'a> {
+pub struct OperateCommand<'a> {
     pub read_command: ReadCommand<'a>,
     policy: &'a WritePolicy,
     operations: &'a [Operation],
@@ -54,7 +54,7 @@ impl<'a> OperateCommand<'a> {
 }
 
 #[async_trait::async_trait]
-impl<'a> Command for OperateCommand<'a> {
+impl Command for OperateCommand<'_> {
     async fn write_timeout(&mut self, conn: &mut Connection) -> Result<()> {
         conn.buffer.write_timeout(self.policy.server_timeout());
         Ok(())

@@ -15,22 +15,17 @@
 //
 
 /// `GenerationPolicy` determines how to handle record writes based on record generation.
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, PartialEq, Eq, Clone, Default)]
 pub enum GenerationPolicy {
     /// None means: Do not use record generation to restrict writes.
+    #[default]
     None = 0,
 
-    /// ExpectGenEqual means: Update/delete record if expected generation is equal to server
+    /// `ExpectGenEqual` means: Update/delete record if expected generation is equal to server
     /// generation. Otherwise, fail.
     ExpectGenEqual = 1,
 
-    /// ExpectGenGreater means: Update/delete record if expected generation greater than the server
+    /// `ExpectGenGreater` means: Update/delete record if expected generation greater than the server
     /// generation. Otherwise, fail. This is useful for restore after backup.
     ExpectGenGreater = 2,
-}
-
-impl Default for GenerationPolicy {
-    fn default() -> GenerationPolicy {
-        GenerationPolicy::None
-    }
 }

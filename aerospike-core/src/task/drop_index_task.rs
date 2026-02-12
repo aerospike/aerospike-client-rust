@@ -31,7 +31,7 @@ static SUCCESS_PATTERN: &str = "false";
 
 impl DropIndexTask {
     /// Initializes `DropIndexTask` from client, creation should only be expose to Client
-    pub fn new(cluster: Arc<Cluster>, namespace: String, index_name: String) -> Self {
+    pub const fn new(cluster: Arc<Cluster>, namespace: String, index_name: String) -> Self {
         DropIndexTask {
             cluster,
             namespace,
@@ -43,12 +43,9 @@ impl DropIndexTask {
         let node_version = node.version();
 
         if node_version >= &Version::new(8, 1, 0, 0) {
-            format!(
-                "sindex-exists:namespace={};indexname={}",
-                namespace, index_name,
-            )
+            format!("sindex-exists:namespace={namespace};indexname={index_name}",)
         } else {
-            format!("sindex-exists:ns={};indexname={}", namespace, index_name)
+            format!("sindex-exists:ns={namespace};indexname={index_name}")
         }
     }
 

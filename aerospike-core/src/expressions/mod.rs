@@ -29,7 +29,7 @@ use crate::{ParticleType, Value};
 use std::fmt::Debug;
 
 /// Expression Data Types for usage in some `FilterExpressions` on for example Map and List
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ExpType {
     /// NIL Expression Type
     NIL = 0,
@@ -133,11 +133,11 @@ pub struct Expression {
     val: Option<Value>,
     /// The Bin to use it on (REGEX for example)
     bin: Option<Box<Expression>>,
-    /// The additional flags for the Operation (REGEX or return_type of Module for example)
+    /// The additional flags for the Operation (REGEX or `return_type` of Module for example)
     flags: Option<i64>,
     /// The optional Module flag for Module operations or Bin Types
     module: Option<ExpType>,
-    /// Sub commands for the CmdExp operation
+    /// Sub commands for the `CmdExp` operation
     exps: Option<Vec<Expression>>,
     /// Optional Arguments (CDT)
     arguments: Option<Vec<ExpressionArgument>>,
@@ -563,8 +563,8 @@ pub fn set_name() -> Expression {
 /// Create expression that returns the record size. This expression usually evaluates
 /// quickly because record meta data is cached in memory.
 ///
-/// Requires server version 7.0+. This expression replaces [device_size()](device_size) and
-/// [memory_size()](memory_size) since those older expressions are equivalent on server version 7.0+.
+/// Requires server version 7.0+. This expression replaces [`device_size()`](device_size) and
+/// [`memory_size()`](memory_size) since those older expressions are equivalent on server version 7.0+.
 ///
 /// ```
 /// use aerospike::expressions::{ge, record_size, int_val};
@@ -578,7 +578,7 @@ pub fn record_size() -> Expression {
 /// Create function that returns record size on disk.
 /// If server storage-engine is memory, then zero is returned.
 ///
-/// Deprecated: memory_size has been deprecated since server version 8.1. Use [record_size()].
+/// Deprecated: `memory_size` has been deprecated since server version 8.1. Use [`record_size()`].
 /// ```
 /// use aerospike::expressions::{ge, device_size, int_val};
 /// // Record device size >= 100 KB
@@ -594,9 +594,9 @@ pub fn device_size() -> Expression {
 /// quickly because record meta data is cached in memory.
 ///
 /// Requires server version between 5.3 inclusive and 7.0 exclusive.
-/// Use [record_size()](record_size) for server version 7.0+.
+/// Use [`record_size()`](record_size) for server version 7.0+.
 ///
-/// Deprecated: memory_size has been deprecated since server version 8.1. Use [record_size()].
+/// Deprecated: `memory_size` has been deprecated since server version 8.1. Use [`record_size()`].
 /// ```
 /// use aerospike::expressions::{ge, memory_size, int_val};
 /// // Record device size >= 100 KB
@@ -965,6 +965,7 @@ pub fn le(left: Expression, right: Expression) -> Expression {
 }
 
 /// Create "add" (+) operator that applies to a variable number of expressions.
+///
 /// Return sum of all `FilterExpressions` given. All arguments must resolve to the same type (integer or float).
 /// Requires server version 5.6.0+.
 /// ```
@@ -985,6 +986,7 @@ pub const fn num_add(exps: Vec<Expression>) -> Expression {
 }
 
 /// Create "subtract" (-) operator that applies to a variable number of expressions.
+///
 /// If only one `FilterExpressions` is provided, return the negation of that argument.
 /// Otherwise, return the sum of the 2nd to Nth `FilterExpressions` subtracted from the 1st
 /// `FilterExpressions`. All `FilterExpressions` must resolve to the same type (integer or float).
@@ -1007,6 +1009,7 @@ pub const fn num_sub(exps: Vec<Expression>) -> Expression {
 }
 
 /// Create "multiply" (*) operator that applies to a variable number of expressions.
+///
 /// Return the product of all `FilterExpressions`. If only one `FilterExpressions` is supplied, return
 /// that `FilterExpressions`. All `FilterExpressions` must resolve to the same type (integer or float).
 /// Requires server version 5.6.0+.
@@ -1028,6 +1031,7 @@ pub const fn num_mul(exps: Vec<Expression>) -> Expression {
 }
 
 /// Create "divide" (/) operator that applies to a variable number of expressions.
+///
 /// If there is only one `FilterExpressions`, returns the reciprocal for that `FilterExpressions`.
 /// Otherwise, return the first `FilterExpressions` divided by the product of the rest.
 /// All `FilterExpressions` must resolve to the same type (integer or float).

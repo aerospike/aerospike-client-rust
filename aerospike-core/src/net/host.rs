@@ -53,7 +53,7 @@ impl Host {
 
         Host {
             name: name.to_string(),
-            tls_name: tls_name,
+            tls_name,
             port,
         }
     }
@@ -95,17 +95,16 @@ impl ToHosts for Vec<Host> {
 
 impl ToHosts for String {
     fn to_hosts(&self) -> Result<Vec<Host>> {
-        let mut parser = Parser::new(self, 3000);
+        let parser = Parser::new(self, 3000);
         parser.read_hosts().map_err(|e| {
             e.wrap(Error::InvalidArgument(format!(
-                "Invalid hosts list: '{}'",
-                self
+                "Invalid hosts list: '{self}'"
             )))
         })
     }
 }
 
-impl<'a> ToHosts for &'a str {
+impl ToHosts for &str {
     fn to_hosts(&self) -> Result<Vec<Host>> {
         (*self).to_string().to_hosts()
     }

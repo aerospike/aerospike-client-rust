@@ -46,21 +46,12 @@ use futures::channel::mpsc::{Receiver, Sender};
 
 static CLIENT_VERSION: &str = env!("CARGO_PKG_VERSION");
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct PartitionForNamespace {
     nodes: Vec<(u32, Option<Arc<Node>>)>,
     replicas: usize,
 }
 type PartitionTable = HashMap<String, PartitionForNamespace>;
-
-impl Default for PartitionForNamespace {
-    fn default() -> Self {
-        Self {
-            nodes: Vec::default(),
-            replicas: 0,
-        }
-    }
-}
 
 impl PartitionForNamespace {
     fn all_replicas(&self, index: usize) -> impl Iterator<Item = Option<Arc<Node>>> + '_ {
@@ -209,7 +200,7 @@ impl Cluster {
             } else if let Err(err) = cluster.tend().await {
                 log_error_chain!(err, "Error tending cluster");
             }
-            aerospike_rt::sleep(Duration::from_millis(tend_interval as u64)).await;
+            aerospike_rt::sleep(Duration::from_millis(u64::from(tend_interval))).await;
         }
 
         // close all nodes
@@ -259,7 +250,7 @@ impl Cluster {
                     }
                     Err(err) => {
                         node.increase_failures();
-                        warn!("Node `{}` refresh failed: {}", node, err);
+                        warn!("Node `{node}` refresh failed: {err}");
                     }
                 }
             }
@@ -278,11 +269,11 @@ impl Cluster {
         let aliases: Vec<String> = self
             .aliases()
             .await
-            .iter()
-            .map(|(host, _)| host.to_string())
+            .keys()
+            .map(std::string::ToString::to_string)
             .collect();
 
-        debug!("Nodes {:?}", aliases);
+        debug!("Nodes {aliases:?}");
 
         Ok(())
     }
@@ -291,7 +282,7 @@ impl Cluster {
         let timeout = {
             let timeout = cluster.client_policy().await.timeout;
             if timeout > 0 {
-                Duration::from_millis(timeout as u64)
+                Duration::from_millis(u64::from(timeout))
             } else {
                 Duration::from_secs(3)
             }
@@ -322,7 +313,7 @@ impl Cluster {
 
         #[cfg(all(feature = "rt-tokio", not(feature = "rt-async-std")))]
         return handle.await.map_err(|err| {
-            Error::InvalidArgument(format!("Error during initial cluster tend: {:?}", err).into())
+            Error::InvalidArgument(format!("Error during initial cluster tend: {err:?}"))
         });
         #[cfg(all(feature = "rt-async-std", not(feature = "rt-tokio")))]
         return {
@@ -358,7 +349,7 @@ impl Cluster {
 
         if let Some(node_array) = partitions.get(namespace) {
             for (i, (_, tnode)) in node_array.nodes.iter().enumerate().take(node::PARTITIONS) {
-                if tnode.as_ref().map_or(false, |tnode| tnode.as_ref() == node) {
+                if tnode.as_ref().is_some_and(|tnode| tnode.as_ref() == node) {
                     res.push(i as u16);
                 }
             }
@@ -419,12 +410,12 @@ impl Cluster {
             if let Err(err) = seed_node_validator.validate_node(self, seed).await {
                 log_error_chain!(err, "Failed to validate seed host: {}", seed);
                 continue;
-            };
+            }
 
-            let peers = if seed_node_validator.services().len() > 0 {
-                &*seed_node_validator.services()
-            } else {
+            let peers = if seed_node_validator.services().is_empty() {
                 &*seed_node_validator.aliases()
+            } else {
+                &*seed_node_validator.services()
             };
 
             for alias in peers {
@@ -432,7 +423,7 @@ impl Cluster {
                 if let Err(err) = nv.validate_node(self, alias).await {
                     log_error_chain!(err, "Seeding host {} failed with error", alias);
                     continue;
-                };
+                }
 
                 if self.find_node_name(&list, &nv.name) {
                     continue;
@@ -461,7 +452,7 @@ impl Cluster {
             if let Err(err) = nv.validate_node(self, &host).await {
                 log_error_chain!(err, "Adding node {} failed with error: {}", host.name, err);
                 continue;
-            };
+            }
 
             // Duplicate node name found. This usually occurs when the server
             // services list contains both internal and external IP addresses
@@ -479,7 +470,7 @@ impl Cluster {
                         dup = true;
                     }
                 }
-            };
+            }
 
             if !dup {
                 let node = self.create_node(nv).await;
@@ -660,16 +651,14 @@ impl Cluster {
 
         let ns_partition = partitions.get(namespace).ok_or_else(|| {
             Error::InvalidNode(format!(
-                "Cannot get appropriate node for namespace: {}",
-                namespace
+                "Cannot get appropriate node for namespace: {namespace}"
             ))
         })?;
 
         let node = ns_partition.all_replicas(partition_id).next().flatten();
         node.ok_or_else(|| {
             Error::InvalidNode(format!(
-                "Cannot get appropriate node for namespace: {} partition: {}",
-                namespace, partition_id
+                "Cannot get appropriate node for namespace: {namespace} partition: {partition_id}"
             ))
         })
     }
@@ -687,7 +676,7 @@ impl Cluster {
             }
         }
 
-        return Err(Error::Connection("No active node".into()));
+        Err(Error::Connection("No active node".into()))
     }
 
     pub async fn get_node_by_name(&self, node_name: &str) -> Result<Arc<Node>> {
@@ -699,9 +688,9 @@ impl Cluster {
             }
         }
 
-        return Err(Error::InvalidNode(format!(
+        Err(Error::InvalidNode(format!(
             "Requested node `{node_name}` not found."
-        )));
+        )))
     }
 
     // Returns the hashed password for the cluster.

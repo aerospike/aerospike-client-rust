@@ -30,7 +30,7 @@ use serde::Serialize;
 /// Unique record identifier. Records can be identified using a specified namespace, an optional
 /// set name and a user defined key which must be uique within a set. Records can also be
 /// identified by namespace/digest, which is the combination used on the server.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serialization", derive(Serialize))]
 pub struct Key {
     /// Namespace.
@@ -81,8 +81,8 @@ impl Key {
         S: Into<String>,
     {
         Ok(Self {
-            namespace: namespace.into(),
-            set_name: set_name.unwrap_or(String::from("")).into(),
+            namespace,
+            set_name: set_name.unwrap_or_default(),
             user_key: key,
             digest,
         })
@@ -92,7 +92,7 @@ impl Key {
         let mut hash = Ripemd160::new();
         hash.update(self.set_name.as_bytes());
         if let Some(ref user_key) = self.user_key {
-            hash.update(&[user_key.particle_type() as u8]);
+            hash.update([user_key.particle_type() as u8]);
             user_key.write_key_bytes(&mut hash)?;
         } else {
             unreachable!();
@@ -102,7 +102,7 @@ impl Key {
         Ok(())
     }
 
-    pub(crate) fn has_value_to_send(&self) -> bool {
+    pub(crate) const fn has_value_to_send(&self) -> bool {
         self.user_key.is_some()
     }
 
