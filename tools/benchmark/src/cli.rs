@@ -61,6 +61,7 @@ pub struct Options {
     pub keys: i64,
     pub start_key: i64,
     pub concurrency: i64,
+    pub threads: usize,
     pub workload: Workload,
     pub conn_pools_per_node: usize,
     pub use_services_alternate: bool,
@@ -89,6 +90,7 @@ pub fn parse_options() -> Result<Options, String> {
         keys: i64::from_str(matches.value_of("keys").unwrap()).unwrap(),
         start_key: i64::from_str(matches.value_of("startkey").unwrap()).unwrap(),
         concurrency: i64::from_str(matches.value_of("concurrency").unwrap()).unwrap(),
+        threads: usize::from_str(matches.value_of("threads").unwrap()).unwrap(),
         workload: Workload::from_str(matches.value_of("workload").unwrap()).unwrap(),
         conn_pools_per_node: usize::from_str(matches.value_of("connPoolsPerNode").unwrap())
             .unwrap(),
@@ -154,6 +156,11 @@ fn build_cli() -> App<'static, 'static> {
         .arg(
             Arg::from_usage("-c, --concurrency 'No. threads used to generate load'")
                 .validator(|val| validate::<i64>(val, "Must be number".into()))
+                .default_value(&*NUM_CPUS),
+        )
+        .arg(
+            Arg::from_usage("-t, --threads 'No. of Tokio runtime worker threads'")
+                .validator(|val| validate::<usize>(val, "Must be number".into()))
                 .default_value(&*NUM_CPUS),
         )
         .arg(

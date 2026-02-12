@@ -37,7 +37,6 @@ pub struct RecordStream(Arc<Recordset>);
 /// queue.
 #[derive(Debug)]
 pub struct Recordset {
-    count: AtomicUsize,
     instances: AtomicUsize,
     rx: Receiver<Result<Record>>,
     tx: Sender<Result<Record>>,
@@ -64,7 +63,6 @@ impl Recordset {
 
         let (tx, rx) = async_channel::bounded(rec_queue_size);
         Recordset {
-            count: AtomicUsize::new(nodes),
             instances: AtomicUsize::new(nodes),
             rx,
             tx,
@@ -181,10 +179,7 @@ impl futures::Stream for RecordStream {
         cx: &mut std::task::Context<'_>,
     ) -> std::task::Poll<Option<Self::Item>> {
         match self.0.rx.try_recv() {
-            Ok(r) => {
-                self.0.count.fetch_add(1, Ordering::Relaxed);
-                std::task::Poll::Ready(Some(r))
-            }
+            Ok(r) => std::task::Poll::Ready(Some(r)),
             Err(e) => {
                 if !self.0.is_active() && e.is_empty() {
                     std::task::Poll::Ready(None)

@@ -82,6 +82,7 @@ impl Message {
 
         // read the message content
         conn.read_all(self.buf.as_mut()).await?;
+        conn.reset_state();
 
         Ok(())
     }

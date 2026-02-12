@@ -14,27 +14,20 @@
 // the License.
 
 use std::ops::{Deref, DerefMut, Drop};
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
 use crate::errors::{Error, Result};
 use crate::net::{Connection, ConnectionState, Host};
 use crate::policy::ClientPolicy;
-use aerospike_rt::Mutex;
 use std::collections::VecDeque;
-
-#[derive(Debug)]
-struct IdleConnection(Connection);
-
-#[derive(Debug)]
-struct QueueInternals {
-    connections: VecDeque<IdleConnection>,
-    num_conns: usize,
-}
+use std::sync::Mutex;
 
 #[derive(Debug)]
 struct SharedQueue {
-    internals: Mutex<QueueInternals>,
+    connections: Mutex<VecDeque<Connection>>,
+    // Total number of connections associated with the queue.
+    // These connections may be in flight and not in the queue.
+    reserved: Mutex<usize>,
     capacity: usize,
     host: Host,
     policy: ClientPolicy,
@@ -42,19 +35,15 @@ struct SharedQueue {
 }
 
 #[derive(Debug)]
-struct Queue(Arc<SharedQueue>);
+pub struct Queue(Arc<SharedQueue>);
 
 impl Queue {
+    /// Creates a connection pool with a fixed capacity.
     pub fn with_capacity(capacity: usize, host: Host, policy: ClientPolicy) -> Self {
-        let internals = QueueInternals {
-            connections: VecDeque::with_capacity(capacity),
-            num_conns: 0,
-        };
-
         let hashed_pass = policy.hashed_pass();
-
         let shared = SharedQueue {
-            internals: Mutex::new(internals),
+            connections: Mutex::new(VecDeque::with_capacity(capacity)),
+            reserved: Mutex::new(0),
             capacity,
             host,
             policy,
@@ -63,6 +52,35 @@ impl Queue {
         Queue(Arc::new(shared))
     }
 
+    /// Checks if the queue has capacity for another connection.
+    /// If so, it will increase the reserved value by one and return true.
+    /// Otherwise, return false.
+    pub fn reserve_capacity(&self) -> bool {
+        let mut reserved = self.0.reserved.lock().unwrap_or_else(|e| e.into_inner());
+        if *reserved < self.0.capacity {
+            *reserved += 1;
+            return true;
+        }
+        false
+    }
+
+    /// Decreases the reserved value by one, opening up capacity for more connections.
+    #[cfg(test)]
+    fn reserved(&self) -> usize {
+        let reserved = self.0.reserved.lock().unwrap_or_else(|e| e.into_inner());
+        *reserved
+    }
+
+    /// Decreases the reserved value by one, opening up capacity for more connections.
+    pub fn reduce_capacity(&self) {
+        let mut reserved = self.0.reserved.lock().unwrap_or_else(|e| e.into_inner());
+        if *reserved > 0 {
+            *reserved -= 1;
+        }
+    }
+
+    /// Creates a new connection based on the queue's ClientPolicy.
+    /// It does not check for the capacity of the queue.
     pub async fn make_conn(&self) -> Result<Connection> {
         let conn = aerospike_rt::timeout(
             self.0.policy.timeout(),
@@ -72,83 +90,66 @@ impl Queue {
 
         if let Ok(Ok(conn)) = conn {
             return Ok(conn);
-        } else {
-            return Err(Error::Connection(
-                "Could not open network connection".to_string(),
-            ));
-        };
+        }
+
+        return Err(Error::Connection(
+            "Could not open network connection".to_string(),
+        ));
     }
 
-    pub async fn get(&self, total_conns: usize) -> Result<PooledConnection> {
-        let mut internals = self.0.internals.lock().await;
+    /// Takes a connection out of the queue.
+    pub fn get(&self) -> Result<PooledConnection> {
         let connection;
         loop {
-            if let Some(IdleConnection(mut conn)) = internals.connections.pop_front() {
+            if let Some(conn) = self
+                .0
+                .connections
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .pop_front()
+            {
                 if conn.is_idle() {
-                    if total_conns > internals.num_conns {
-                        internals.num_conns -= 1;
-                        conn.close().await;
-                    }
+                    // let the connection drop and close
                     continue;
                 }
                 connection = conn;
                 break;
-            }
-
-            if internals.num_conns >= self.0.capacity
-                || (self.0.policy.max_conns_per_node > 0
-                    && total_conns >= self.0.policy.max_conns_per_node)
-            {
+            } else {
                 return Err(Error::NoMoreConnections);
             }
-
-            // Free the lock to prevent deadlocking
-            drop(internals);
-
-            let conn = self.make_conn().await?;
-
-            let mut internals = self.0.internals.lock().await;
-            internals.num_conns += 1;
-            drop(internals);
-
-            connection = conn;
-            break;
         }
-
         Ok(PooledConnection {
             queue: self.clone(),
             conn: Some(connection),
         })
     }
 
-    pub async fn put_back(&self, mut conn: Connection) {
-        let mut internals = self.0.internals.lock().await;
-        if conn.state == ConnectionState::Ready && internals.num_conns < self.0.capacity {
-            internals.connections.push_back(IdleConnection(conn));
-        } else {
-            conn.close().await;
-            internals.num_conns -= 1;
+    /// Puts the connection back into the queue.
+    /// Putting back a connection in the queue does not reserve capacity.
+    /// You should reserve capacity before putting back the connection in the queue.
+    pub fn put_back(&self, conn: Connection) {
+        let mut connections = self.0.connections.lock().unwrap_or_else(|e| e.into_inner());
+        if conn.state == ConnectionState::Ready && connections.len() < self.0.capacity {
+            connections.push_back(conn);
+        }
+        // otherwise let it drop
+    }
+
+    /// Removes all the connections from the queue.
+    pub fn clear(&mut self) {
+        let mut connections = self.0.connections.lock().unwrap_or_else(|e| e.into_inner());
+        for mut conn in connections.drain(..) {
+            conn.close();
         }
     }
 
-    pub async fn drop_conn(&self, mut conn: Connection) {
-        {
-            let mut internals = self.0.internals.lock().await;
-            internals.num_conns -= 1;
-        }
-        conn.close().await;
-    }
-
-    pub async fn clear(&mut self) {
-        let mut internals = self.0.internals.lock().await;
-        for mut conn in internals.connections.drain(..) {
-            conn.0.close().await;
-        }
-        internals.num_conns = 0;
-    }
-
-    pub async fn num_conns(&self) -> usize {
-        self.0.internals.lock().await.num_conns
+    /// Returns the current number of connection in the queue.
+    pub fn num_conns(&self) -> usize {
+        self.0
+            .connections
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .len()
     }
 }
 
@@ -160,9 +161,8 @@ impl Clone for Queue {
 
 #[derive(Debug)]
 pub struct ConnectionPool {
-    num_queues: usize,
+    num_queues: u8,
     queues: Vec<Queue>,
-    queue_counter: AtomicUsize,
 }
 
 impl ConnectionPool {
@@ -170,19 +170,16 @@ impl ConnectionPool {
         let num_conns = policy.max_conns_per_node;
         let num_queues = policy.conn_pools_per_node;
         let queues = ConnectionPool::initialize_queues(num_conns, num_queues, host, policy);
-        ConnectionPool {
-            num_queues,
-            queues,
-            queue_counter: AtomicUsize::default(),
-        }
+        ConnectionPool { num_queues, queues }
     }
 
     fn initialize_queues(
         num_conns: usize,
-        num_queues: usize,
+        num_queues: u8,
         host: Host,
         policy: ClientPolicy,
     ) -> Vec<Queue> {
+        let num_queues = usize::from(num_queues);
         let max = num_conns / num_queues;
         let mut rem = num_conns % num_queues;
         let mut queues = Vec::with_capacity(num_queues);
@@ -197,14 +194,19 @@ impl ConnectionPool {
         queues
     }
 
-    pub async fn get(&self, total_conns: usize) -> Result<PooledConnection> {
+    /// Get a connection from one of the internal pools.
+    pub fn get(&self, hint: u8) -> Result<PooledConnection> {
         if self.num_queues == 1 {
-            self.queues[0].get(total_conns).await
+            self.queues[0].get()
         } else {
             let mut attempts = self.num_queues;
+            let mut i = usize::from(hint % self.num_queues);
             loop {
-                let i: usize = self.queue_counter.fetch_add(1, Ordering::Relaxed);
-                let connection = self.queues[i % self.num_queues].get(total_conns).await;
+                let connection = self.queues[i].get();
+                i += 1;
+                if i >= self.queues.len() {
+                    i = 0;
+                }
                 if let Err(Error::NoMoreConnections) = connection {
                     attempts -= 1;
                     if attempts > 0 {
@@ -216,23 +218,37 @@ impl ConnectionPool {
         }
     }
 
-    pub async fn make_conn(&self) -> Result<()> {
+    /// If there is a pool with capacity to hold more connections, create a connection
+    /// for that queue and return it to the user.
+    pub async fn make_conn(&self, hint: usize) -> Result<PooledConnection> {
+        let num_queues = usize::from(self.num_queues);
         let mut attempts = self.num_queues;
+        let mut i = hint % num_queues;
         loop {
-            let i = self.queue_counter.fetch_add(1, Ordering::Relaxed);
-            let queue = &self.queues[i % self.num_queues];
-            if queue.0.internals.lock().await.num_conns >= queue.0.capacity {
+            let queue = &self.queues[i % num_queues];
+            i += 1;
+            if i >= self.queues.len() {
+                i = 0;
+            }
+            if queue.reserve_capacity() {
+                match queue.make_conn().await {
+                    Ok(conn) => {
+                        return Ok(PooledConnection {
+                            queue: queue.clone(),
+                            conn: Some(conn),
+                        });
+                    }
+                    Err(e) => {
+                        return Err(e);
+                    }
+                }
+            } else {
                 attempts -= 1;
                 if attempts <= 0 {
                     break;
                 }
                 continue;
             }
-
-            let conn = queue.make_conn().await?;
-            queue.put_back(conn).await;
-            queue.0.internals.lock().await.num_conns += 1;
-            return Ok(());
         }
 
         Err(Error::ClientError(
@@ -240,51 +256,65 @@ impl ConnectionPool {
         ))
     }
 
-    pub async fn close(&mut self) {
+    /// Closes the connection pool and clears all the internal queues from connection,
+    /// closing then in the process.
+    pub fn close(&mut self) {
         for mut queue in self.queues.drain(..) {
-            queue.clear().await;
+            queue.clear();
         }
     }
 
-    pub async fn num_conns(&self) -> usize {
+    /// Returns sum total of connections inside all the internal queues.
+    pub fn num_conns(&self) -> usize {
         let mut sum = 0;
         for q in &self.queues {
-            sum += q.num_conns().await;
+            sum += q.num_conns();
         }
         sum
     }
 
-    async fn recover_connection(queue: Queue, mut conn: Connection) {
-        conn.recover_connection().await;
+    /// If a connection was dropped in a state that was not [ConnectionState::Ready],
+    /// this method will try to recover the connection by parsing the rest of the data
+    /// and returning the connection to a valid state.
+    pub async fn recover_connection(queue: Queue, mut conn: Connection) {
+        conn.recover().await;
         if conn.state == ConnectionState::Ready {
-            queue.put_back(conn).await;
-        } else {
-            queue.drop_conn(conn).await;
+            queue.put_back(conn);
+            return;
         }
+        queue.reduce_capacity();
     }
 }
 
 #[derive(Debug)]
 pub struct PooledConnection {
-    queue: Queue,
+    pub queue: Queue,
     pub conn: Option<Connection>,
 }
 
 impl PooledConnection {
-    pub async fn invalidate(mut self) {
-        let conn = self.conn.take().unwrap();
-        self.queue.drop_conn(conn).await;
+    pub fn invalidate(&mut self) {
+        if let Some(conn) = self.conn.as_mut() {
+            conn.close();
+        }
     }
 }
 
 impl Drop for PooledConnection {
     fn drop(&mut self) {
-        // need to spawn a new green thread to avoid blocking the current one
         if let Some(conn) = self.conn.take() {
-            aerospike_rt::spawn(ConnectionPool::recover_connection(
-                Queue(self.queue.0.clone()),
-                conn,
-            ));
+            match conn.state {
+                ConnectionState::Closed => self.queue.reduce_capacity(),
+                ConnectionState::Ready => self.queue.put_back(conn),
+                _ if conn.should_attempt_recovery() => {
+                    // need to spawn a new green thread to avoid blocking the current one
+                    aerospike_rt::spawn(ConnectionPool::recover_connection(
+                        Queue(self.queue.0.clone()),
+                        conn,
+                    ));
+                }
+                _ => self.queue.reduce_capacity(),
+            }
         }
     }
 }
@@ -300,5 +330,284 @@ impl Deref for PooledConnection {
 impl DerefMut for PooledConnection {
     fn deref_mut(&mut self) -> &mut Connection {
         self.conn.as_mut().unwrap()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::net::Connection;
+
+    use super::{ClientPolicy, ConnectionPool, Error, Host, Queue};
+
+    macro_rules! put_back_with_reserve {
+        ($queue:ident, $conn:ident) => {{
+            if $queue.reserve_capacity() {
+                $queue.put_back($conn);
+            }
+        }};
+    }
+
+    macro_rules! get_and_invalidate {
+        ($queue:ident) => {{
+            match $queue.get() {
+                Ok(mut c) => {
+                    c.invalidate();
+                    Ok(c)
+                }
+                Err(e) => Err(e),
+            }
+        }};
+    }
+
+    macro_rules! pool_get_and_invalidate {
+        ($pool:ident, $hint:tt) => {{
+            match $pool.get($hint) {
+                Ok(mut c) => {
+                    c.invalidate();
+                    Ok(c)
+                }
+                Err(e) => Err(e),
+            }
+        }};
+    }
+
+    macro_rules! get_or_make {
+        ($pool:ident, $hint:tt) => {{
+            match $pool.get($hint) {
+                Ok(c) => Ok(c),
+                Err(_) => $pool.make_conn($hint).await,
+            }
+        }};
+    }
+
+    #[aerospike_macro::test]
+    async fn queue() {
+        let host = Host::new("some-url", 30000);
+        let policy = ClientPolicy::default();
+
+        let q = Queue::with_capacity(3, host.clone(), policy.clone());
+        assert_eq!(q.num_conns(), 0);
+        assert_eq!(q.reserved(), 0);
+        assert_eq!(q.get().is_err(), true);
+
+        let c = Connection::new(&host, &policy, None)
+            .await
+            .expect("creating dummy connection failed");
+        put_back_with_reserve!(q, c);
+        assert_eq!(q.reserved(), 1);
+        assert_eq!(q.num_conns(), 1);
+
+        let c = Connection::new(&host, &policy, None)
+            .await
+            .expect("creating dummy connection failed");
+        put_back_with_reserve!(q, c);
+        assert_eq!(q.reserved(), 2);
+        assert_eq!(q.num_conns(), 2);
+
+        let c = Connection::new(&host, &policy, None)
+            .await
+            .expect("creating dummy connection failed");
+        put_back_with_reserve!(q, c);
+        assert_eq!(q.reserved(), 3);
+        assert_eq!(q.num_conns(), 3);
+
+        let c = Connection::new(&host, &policy, None)
+            .await
+            .expect("creating dummy connection failed");
+        put_back_with_reserve!(q, c);
+        assert_eq!(q.num_conns(), 3);
+        assert_eq!(q.reserved(), 3);
+        assert_eq!(q.reserve_capacity(), false);
+
+        // drain the queue =====================================
+
+        // remove and drop; the connection goes back into
+        // the queue automatically, because it is in ready state.
+        assert_eq!(q.get().is_err(), false);
+        assert_eq!(q.reserved(), 3);
+        assert_eq!(q.num_conns(), 3);
+
+        assert_eq!(get_and_invalidate!(q).is_err(), false);
+        assert_eq!(q.reserved(), 2);
+        assert_eq!(q.num_conns(), 2);
+
+        assert_eq!(get_and_invalidate!(q).is_err(), false);
+        assert_eq!(q.num_conns(), 1);
+        assert_eq!(q.reserved(), 1);
+
+        assert_eq!(get_and_invalidate!(q).is_err(), false);
+        assert_eq!(q.num_conns(), 0);
+        assert_eq!(q.reserved(), 0);
+
+        assert_eq!(get_and_invalidate!(q).is_err(), true);
+        assert_eq!(q.num_conns(), 0);
+        assert_eq!(q.reserved(), 0);
+    }
+
+    #[aerospike_macro::test]
+    async fn single_queue_connection_pool() {
+        let host = Host::new("some-url", 30000);
+        let policy = ClientPolicy::default();
+
+        let p = ConnectionPool::new(host.clone(), policy.clone());
+        assert_eq!(p.num_conns(), 0);
+        assert_eq!(p.get(0).is_err(), true);
+
+        assert_eq!(get_or_make!(p, 0).is_err(), false);
+        assert_eq!(p.num_conns(), 1);
+
+        // connection was returned to the pool after the above.
+        // so the number of connections in the pool is still 1.
+        assert_eq!(get_or_make!(p, 0).is_err(), false);
+        assert_eq!(p.num_conns(), 1);
+
+        assert_eq!(p.make_conn(0).await.is_err(), false);
+        assert_eq!(p.num_conns(), 2);
+
+        assert_eq!(p.get(0).is_err(), false);
+        assert_eq!(p.num_conns(), 2);
+
+        assert_eq!(pool_get_and_invalidate!(p, 0).is_err(), false);
+        assert_eq!(p.num_conns(), 1);
+        assert_eq!(p.queues[0].reserved(), 1);
+
+        assert_eq!(pool_get_and_invalidate!(p, 0).is_err(), false);
+        assert_eq!(p.num_conns(), 0);
+        assert_eq!(p.queues[0].reserved(), 0);
+    }
+
+    #[aerospike_macro::test]
+    async fn multi_queue_connection_pool() {
+        let host = Host::new("some-url", 30000);
+        let policy = ClientPolicy {
+            conn_pools_per_node: 2,
+            max_conns_per_node: 3,
+            ..ClientPolicy::default()
+        };
+
+        let p = ConnectionPool::new(host.clone(), policy.clone());
+        assert_eq!(p.num_conns(), 0);
+        assert_eq!(p.get(0).is_err(), true);
+
+        assert_eq!(get_or_make!(p, 0).is_err(), false);
+        assert_eq!(p.num_conns(), 1);
+        assert_eq!(p.queues[0].reserved(), 1);
+        assert_eq!(p.queues[0].num_conns(), 1);
+        assert_eq!(p.queues[1].reserved(), 0);
+        assert_eq!(p.queues[1].num_conns(), 0);
+
+        // connection was returned to the pool after the above.
+        // so the number of connections in the pool is still 1.
+        assert_eq!(get_or_make!(p, 1).is_err(), false);
+        assert_eq!(p.num_conns(), 1);
+        assert_eq!(p.queues[0].reserved(), 1);
+        assert_eq!(p.queues[0].num_conns(), 1);
+        assert_eq!(p.queues[1].reserved(), 0);
+        assert_eq!(p.queues[1].num_conns(), 0);
+
+        assert_eq!(p.make_conn(1).await.is_err(), false);
+        assert_eq!(p.num_conns(), 2);
+        assert_eq!(p.queues[0].reserved(), 1);
+        assert_eq!(p.queues[0].num_conns(), 1);
+        assert_eq!(p.queues[1].reserved(), 1);
+        assert_eq!(p.queues[1].num_conns(), 1);
+
+        assert_eq!(p.get(0).is_err(), false);
+        assert_eq!(p.num_conns(), 2);
+        assert_eq!(p.queues[0].reserved(), 1);
+        assert_eq!(p.queues[0].num_conns(), 1);
+        assert_eq!(p.queues[1].reserved(), 1);
+        assert_eq!(p.queues[1].num_conns(), 1);
+
+        assert_eq!(pool_get_and_invalidate!(p, 0).is_err(), false);
+        assert_eq!(p.num_conns(), 1);
+        assert_eq!(p.queues[0].reserved(), 0);
+        assert_eq!(p.queues[0].num_conns(), 0);
+        assert_eq!(p.queues[1].reserved(), 1);
+        assert_eq!(p.queues[1].num_conns(), 1);
+
+        assert_eq!(pool_get_and_invalidate!(p, 0).is_err(), false);
+        assert_eq!(p.num_conns(), 0);
+        assert_eq!(p.queues[0].reserved(), 0);
+        assert_eq!(p.queues[0].num_conns(), 0);
+        assert_eq!(p.queues[1].reserved(), 0);
+        assert_eq!(p.queues[1].num_conns(), 0);
+
+        assert_eq!(pool_get_and_invalidate!(p, 0).is_err(), true);
+        assert_eq!(p.num_conns(), 0);
+        assert_eq!(p.queues[0].reserved(), 0);
+        assert_eq!(p.queues[0].num_conns(), 0);
+        assert_eq!(p.queues[1].reserved(), 0);
+        assert_eq!(p.queues[1].num_conns(), 0);
+
+        // test for capacity planning
+
+        assert_eq!(p.make_conn(1).await.is_err(), false);
+        assert_eq!(p.num_conns(), 1);
+        assert_eq!(p.queues[0].reserved(), 0);
+        assert_eq!(p.queues[0].num_conns(), 0);
+        assert_eq!(p.queues[1].reserved(), 1);
+        assert_eq!(p.queues[1].num_conns(), 1);
+
+        assert_eq!(p.make_conn(1).await.is_err(), false);
+        assert_eq!(p.num_conns(), 2);
+        assert_eq!(p.queues[0].reserved(), 1);
+        assert_eq!(p.queues[0].num_conns(), 1);
+        assert_eq!(p.queues[1].reserved(), 1);
+        assert_eq!(p.queues[1].num_conns(), 1);
+
+        assert_eq!(p.make_conn(1).await.is_err(), false);
+        assert_eq!(p.num_conns(), 3);
+        assert_eq!(p.queues[0].reserved(), 2);
+        assert_eq!(p.queues[0].num_conns(), 2);
+        assert_eq!(p.queues[1].reserved(), 1);
+        assert_eq!(p.queues[1].num_conns(), 1);
+
+        // can't make more, all queues are full
+        assert_eq!(p.make_conn(1).await.is_err(), true);
+        assert_eq!(p.num_conns(), 3);
+        assert_eq!(p.queues[0].reserved(), 2);
+        assert_eq!(p.queues[0].num_conns(), 2);
+        assert_eq!(p.queues[1].reserved(), 1);
+        assert_eq!(p.queues[1].num_conns(), 1);
+
+        // can't make more, all queues are full
+        let mut c = p.get(0).unwrap();
+        // we are at capacity, no more connections can be created
+        assert_eq!(p.make_conn(1).await.is_err(), true);
+        // but there is one connection in flight
+        assert_eq!(p.num_conns(), 2);
+        assert_eq!(p.queues[0].reserved(), 2);
+        assert_eq!(p.queues[0].num_conns(), 1);
+        assert_eq!(p.queues[1].reserved(), 1);
+        assert_eq!(p.queues[1].num_conns(), 1);
+        c.reset_state();
+        // c should go back to the pool
+        drop(c);
+        assert_eq!(p.num_conns(), 3);
+        assert_eq!(p.queues[0].reserved(), 2);
+        assert_eq!(p.queues[0].num_conns(), 2);
+        assert_eq!(p.queues[1].reserved(), 1);
+        assert_eq!(p.queues[1].num_conns(), 1);
+
+        // SAME as above, but with a different hint
+        // can't make more, all queues are full
+        let mut c = p.get(1).unwrap();
+        // we are at capacity, no more connections can be created
+        assert_eq!(p.make_conn(1).await.is_err(), true);
+        // but there is one connection in flight
+        assert_eq!(p.num_conns(), 2);
+        assert_eq!(p.queues[0].reserved(), 2);
+        assert_eq!(p.queues[0].num_conns(), 2);
+        assert_eq!(p.queues[1].reserved(), 1);
+        assert_eq!(p.queues[1].num_conns(), 0);
+        c.reset_state();
+        // c should go back to the pool
+        drop(c);
+        assert_eq!(p.num_conns(), 3);
+        assert_eq!(p.queues[0].reserved(), 2);
+        assert_eq!(p.queues[0].num_conns(), 2);
+        assert_eq!(p.queues[1].reserved(), 1);
+        assert_eq!(p.queues[1].num_conns(), 1);
     }
 }

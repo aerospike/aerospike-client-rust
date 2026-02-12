@@ -60,6 +60,10 @@ impl<'a> Command for ExistsCommand<'a> {
         self.single_command.get_node().await
     }
 
+    fn hint(&self) -> u8 {
+        self.single_command.hint()
+    }
+
     fn can_retry(&mut self) -> bool {
         true
     }

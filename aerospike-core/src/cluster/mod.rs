@@ -368,14 +368,14 @@ impl Cluster {
     }
 
     pub async fn update_partitions(&self, node: &Arc<Node>) -> Result<()> {
-        let mut conn = node.get_connection().await?;
+        let mut conn = node.get_connection(0).await?;
 
         let admin_policy = AdminPolicy {
             timeout: self.client_policy().await.timeout,
         };
         let tokens = PartitionTokenizer::new(&admin_policy, &mut conn, node).await;
         if let Err(e) = tokens {
-            conn.invalidate().await;
+            conn.invalidate();
             return Err(e);
         }
 
@@ -388,7 +388,7 @@ impl Cluster {
 
     pub async fn update_rack_ids(&self, node: &Arc<Node>) -> Result<()> {
         const RACK_IDS: &str = "rack-ids";
-        let mut conn = node.get_connection().await?;
+        let mut conn = node.get_connection(0).await?;
         let admin_policy = AdminPolicy {
             timeout: self.client_policy().await.timeout,
         };
@@ -553,11 +553,11 @@ impl Cluster {
 
     async fn remove_nodes_and_aliases(&self, mut nodes_to_remove: Vec<Arc<Node>>) {
         for node in &mut nodes_to_remove {
-            for alias in node.aliases().await {
+            for alias in node.aliases() {
                 self.remove_alias(&alias).await;
             }
             if let Some(node) = Arc::get_mut(node) {
-                node.close().await;
+                node.close();
             }
         }
         self.remove_nodes(&nodes_to_remove).await;
@@ -565,7 +565,7 @@ impl Cluster {
 
     async fn add_alias(&self, host: Host, node: Arc<Node>) {
         let mut aliases = self.aliases.write().await;
-        node.add_alias(host.clone()).await;
+        node.add_alias(host.clone());
         aliases.insert(host, node);
     }
 
@@ -576,7 +576,7 @@ impl Cluster {
 
     async fn add_aliases(&self, node: Arc<Node>) {
         let mut aliases = self.aliases.write().await;
-        for alias in node.aliases().await {
+        for alias in node.aliases() {
             aliases.insert(alias, node.clone());
         }
     }

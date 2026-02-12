@@ -18,7 +18,7 @@ use std::fmt;
 use std::hash::{Hash, Hasher};
 use std::result::Result as StdResult;
 use std::sync::atomic::{AtomicBool, AtomicIsize, AtomicUsize, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 
 use crate::cluster::node_validator::NodeValidator;
 use crate::cluster::peers_parser::PeersParser;
@@ -28,7 +28,6 @@ use crate::errors::{Error, Result};
 use crate::net::{ConnectionPool, Host, PooledConnection};
 use crate::policy::{AdminPolicy, ClientPolicy};
 use crate::Version;
-use aerospike_rt::RwLock;
 
 pub const PARTITIONS: usize = 4096;
 pub const PARTITION_GENERATION: &str = "partition-generation";
@@ -276,10 +275,19 @@ impl Node {
     }
 
     // Get a connection to the node from the connection pool
-    pub async fn get_connection(&self) -> Result<PooledConnection> {
-        self.connection_pool
-            .get(self.connection_pool.num_conns().await)
-            .await
+    pub async fn get_connection(&self, hint: u8) -> Result<PooledConnection> {
+        if let Ok(conn) = self.connection_pool.get(hint) {
+            return Ok(conn);
+        }
+
+        self.connection_pool.make_conn(0).await
+    }
+
+    // Put a connection to the node back in the connection pool
+    pub fn put_connection(&self, mut pconn: PooledConnection) {
+        if let Some(conn) = pconn.conn.take() {
+            pconn.queue.put_back(conn);
+        }
     }
 
     // Amount of failures
@@ -306,21 +314,24 @@ impl Node {
     }
 
     // Get a list of aliases to the node
-    pub async fn aliases(&self) -> Vec<Host> {
-        self.aliases.read().await.to_vec()
+    pub fn aliases(&self) -> Vec<Host> {
+        self.aliases
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .to_vec()
     }
 
     // Add an alias to the node
-    pub async fn add_alias(&self, alias: Host) {
-        let mut aliases = self.aliases.write().await;
+    pub fn add_alias(&self, alias: Host) {
+        let mut aliases = self.aliases.write().unwrap_or_else(|e| e.into_inner());
         aliases.push(alias);
         self.reference_count.fetch_add(1, Ordering::Relaxed);
     }
 
     // Set the node inactive and close all connections in the pool
-    pub async fn close(&mut self) {
+    pub fn close(&mut self) {
         self.inactivate();
-        self.connection_pool.close().await;
+        self.connection_pool.close();
     }
 
     // Send info commands to this node
@@ -329,13 +340,14 @@ impl Node {
         policy: &AdminPolicy,
         commands: &[&str],
     ) -> Result<HashMap<String, String>> {
-        let mut conn = self.get_connection().await?;
+        let mut conn = self.get_connection(0).await?;
         let res = Message::info(policy, &mut conn, commands).await;
 
         if let Err(e) = res {
-            conn.invalidate().await;
+            conn.invalidate();
             return Err(e);
         }
+        self.put_connection(conn);
         res
     }
 
@@ -375,9 +387,9 @@ impl Node {
 
         let client_policy = self.client_policy();
         if client_policy.min_conns_per_node > 0 {
-            let to_fill = client_policy.min_conns_per_node - self.connection_pool.num_conns().await;
+            let to_fill = client_policy.min_conns_per_node - self.connection_pool.num_conns();
             for _ in 0..to_fill {
-                self.connection_pool.make_conn().await?;
+                self.connection_pool.make_conn(count).await?;
                 count += 1;
             }
         }

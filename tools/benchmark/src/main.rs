@@ -51,21 +51,6 @@ use crate::generator::{KeyRangeGen, RandomKeyRange};
 use crate::workers::Workload;
 
 fn main() {
-    let num_cores: usize = std::thread::available_parallelism()
-        .expect("error retrieving number of CPU cores.")
-        .into();
-    tokio::runtime::Builder::new_multi_thread()
-        .worker_threads(num_cores)
-        .enable_all()
-        .build()
-        .unwrap()
-        .block_on(async {
-            benchmark().await;
-        })
-}
-
-async fn benchmark() {
-    let _ = env_logger::try_init();
     let options = match cli::parse_options() {
         Ok(options) => options,
         Err(err) => {
@@ -73,6 +58,19 @@ async fn benchmark() {
             std::process::exit(2);
         }
     };
+    let num_threads = options.threads;
+    tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(num_threads)
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(async {
+            benchmark(options).await;
+        })
+}
+
+async fn benchmark(options: Options) {
+    let _ = env_logger::try_init();
 
     match connect(&options).await {
         Ok(client) => run_workload(client, options).await,
@@ -95,7 +93,7 @@ async fn benchmark() {
 
 async fn connect(options: &Options) -> AerospikeResult<Client> {
     let mut policy = ClientPolicy::default();
-    policy.conn_pools_per_node = options.conn_pools_per_node;
+    policy.conn_pools_per_node = options.conn_pools_per_node as u8;
     policy.use_services_alternate = options.use_services_alternate;
     policy.ip_map = options.ip_map.clone();
     Client::new(&policy, &options.hosts).await
@@ -147,7 +145,7 @@ async fn run_workload(client: Client, opts: Options) {
             worker_handles.push(handle);
         }
     } else {
-        for _ in 0..opts.concurrency {
+        for _ in 0..opts.threads {
             let mut worker =
                 Worker::for_workload(workload, client.clone(), send.clone(), args.clone());
             let key_range = RandomKeyRange::new(

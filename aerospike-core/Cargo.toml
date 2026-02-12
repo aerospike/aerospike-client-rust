@@ -25,13 +25,13 @@ lazy_static = "1.4"
 thiserror = "1.0.40"
 pwhash = "1.0"
 serde = { version = "1.0", features = ["derive"], optional = true }
-aerospike-rt = {path = "../aerospike-rt", version = "2.0.0-alpha.9"}
-futures = {version = "0.3.16" }
+aerospike-rt = { path = "../aerospike-rt", version = "2.0.0-alpha.9" }
+futures = { version = "0.3.16" }
 async-trait = "0.1.51"
 rhexdump = "0.2.0"
 regex = "1"
-tokio-rustls = {version = "0.26.0", optional = true}
-rustls = {version = "0.23.31", optional = true}
+tokio-rustls = { version = "0.26.0", optional = true }
+rustls = { version = "0.23.31", optional = true }
 async-lock = "3.4.1"
 async-channel = "2.5.0"
 
@@ -47,4 +47,6 @@ env_logger = "0.9"
 hex = "0.4"
 bencher = "0.1"
 serde_json = "1.0"
-aerospike = {path = "../"}
+aerospike = { path = "../" }
+aerospike-macro = {path = "../aerospike-macro"}
+lazy_static = "1.4"
