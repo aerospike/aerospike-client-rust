@@ -281,8 +281,9 @@ impl Cluster {
         self.remove_nodes_and_aliases(remove_list);
 
         let aliases: Vec<String> = self
-            .aliases()
-            .keys()
+            .aliases
+            .load()
+            .values()
             .map(std::string::ToString::to_string)
             .collect();
 
@@ -466,7 +467,7 @@ impl Cluster {
         for host in hosts {
             let mut nv = NodeValidator::new(self.client_policy());
             if let Err(err) = nv.validate_node(self, &host).await {
-                log_error_chain!(err, "Adding node {} failed with error: {}", host.name, err);
+                log_error_chain!(err, "Adding node {} failed with error: {}", host, err);
                 continue;
             }
 
