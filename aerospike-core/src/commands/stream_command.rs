@@ -258,6 +258,10 @@ impl Command for StreamCommand {
         Ok(self.node.clone())
     }
 
+    fn hint(&self) -> u8 {
+        unreachable!()
+    }
+
     fn can_retry(&mut self) -> bool {
         unreachable!()
     }

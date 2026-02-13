@@ -60,6 +60,10 @@ impl Command for DeleteCommand<'_> {
         self.single_command.get_node().await
     }
 
+    fn hint(&self) -> u8 {
+        self.single_command.hint()
+    }
+
     fn can_recover_connection(&mut self) -> bool {
         true
     }

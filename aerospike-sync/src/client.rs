@@ -99,22 +99,22 @@ impl Client {
 
     /// Returns `true` if the client is connected to any cluster nodes.
     pub fn is_connected(&self) -> bool {
-        block_on(self.async_client.is_connected())
+        self.async_client.is_connected()
     }
 
     /// Returns a list of the names of the active server nodes in the cluster.
     pub fn node_names(&self) -> Vec<String> {
-        block_on(self.async_client.node_names())
+        self.async_client.node_names()
     }
 
     /// Return node given its name.
     pub fn get_node(&self, name: &str) -> Result<Arc<Node>> {
-        block_on(self.async_client.get_node(name))
+        self.async_client.get_node(name)
     }
 
     /// Returns a list of active server nodes in the cluster.
     pub fn nodes(&self) -> Vec<Arc<Node>> {
-        block_on(self.async_client.nodes())
+        self.async_client.nodes()
     }
 
     /// Read record for the specified key. Depending on the bins value provided, all record bins,

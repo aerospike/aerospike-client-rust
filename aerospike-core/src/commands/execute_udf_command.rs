@@ -92,6 +92,10 @@ impl Command for ExecuteUDFCommand<'_> {
         self.read_command.get_node().await
     }
 
+    fn hint(&self) -> u8 {
+        self.read_command.single_command.hint()
+    }
+
     async fn parse_result(&mut self, conn: &mut Connection) -> Result<()> {
         self.read_command.parse_result(conn).await
     }

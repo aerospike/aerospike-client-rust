@@ -52,7 +52,7 @@ async fn main() {
 
 async fn connect(options: &Options) -> Client {
     let mut policy = ClientPolicy::default();
-    policy.conn_pools_per_node = options.conn_pools_per_node;
+    policy.conn_pools_per_node = options.conn_pools_per_node as u8;
     Client::new(&policy, &options.hosts).await.unwrap()
 }
 

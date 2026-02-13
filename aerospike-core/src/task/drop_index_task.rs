@@ -62,7 +62,7 @@ impl DropIndexTask {
 impl Task for DropIndexTask {
     /// Query the status of execution across all nodes
     async fn query_status(&self) -> Result<Status> {
-        let nodes = self.cluster.nodes().await;
+        let nodes = self.cluster.nodes();
 
         if nodes.is_empty() {
             return Err(Error::Connection("No connected node".to_string()));

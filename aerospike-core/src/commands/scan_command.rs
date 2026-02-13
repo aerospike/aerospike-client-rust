@@ -98,6 +98,10 @@ impl Command for ScanCommand<'_> {
         self.stream_command.get_node().await
     }
 
+    fn hint(&self) -> u8 {
+        0
+    }
+
     fn can_retry(&mut self) -> bool {
         false
     }

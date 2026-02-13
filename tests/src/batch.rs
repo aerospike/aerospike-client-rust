@@ -34,6 +34,8 @@ async fn batch_operate_timeout() {
     bpolicy.base_policy.max_retries = 0;
     bpolicy.base_policy.sleep_between_retries = 0;
 
+    // aerospike_rt::sleep(Duration::from_secs(10)).await;
+
     let key1 = as_key!(namespace, set_name, 1);
     let bin1 = as_bin!("a", "a value");
     let bin2 = as_bin!("b", "another value");

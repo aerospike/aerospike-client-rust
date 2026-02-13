@@ -90,9 +90,11 @@ impl BatchOperateCommand {
                     let key = individual_op[0].0.key();
                     // Find somewhere else to try.
                     let partition = Partition::new_by_key(&key);
-                    let node = cluster
-                        .get_node(&partition, self.policy.replica, Arc::downgrade(&self.node))
-                        .await?;
+                    let node = cluster.get_node(
+                        &partition,
+                        self.policy.replica,
+                        Arc::downgrade(&self.node),
+                    )?;
 
                     if !Self::request_group(individual_op, &self.policy, deadline, node).await? {
                         all_successful = false;
@@ -136,7 +138,7 @@ impl BatchOperateCommand {
         deadline: Option<Instant>,
         node: Arc<Node>,
     ) -> Result<bool> {
-        let mut conn = match node.get_connection().await {
+        let mut conn = match node.get_connection(0).await {
             Ok(conn) => conn,
             Err(err) => {
                 warn!("Node {node}: {err}");
@@ -157,7 +159,7 @@ impl BatchOperateCommand {
         if let Err(err) = conn.flush().await {
             // IO errors are considered temporary anomalies. Retry.
             // Close socket to flush out possible garbage. Do not put back in pool.
-            conn.invalidate().await;
+            conn.invalidate();
             warn!("Node {node}: {err}");
             return Ok(false);
         }
@@ -169,7 +171,7 @@ impl BatchOperateCommand {
             // close the connection to throw away its data and signal the server about the
             // situation. We will not put back the connection in the buffer.
             if !Self::keep_connection(&err) {
-                conn.invalidate().await;
+                conn.invalidate();
             }
             Err(err)
         } else {
@@ -341,6 +343,8 @@ impl BatchOperateCommand {
             }
             conn.drain(conn.conn.deadline()).await?;
         }
+
+        conn.reset_state();
         Ok(())
     }
 }

@@ -124,28 +124,27 @@ impl Client {
     }
 
     /// Returns `true` if the client is connected to any cluster nodes.
-    pub async fn is_connected(&self) -> bool {
-        self.cluster.is_connected().await
+    pub fn is_connected(&self) -> bool {
+        self.cluster.is_connected()
     }
 
     /// Returns a list of the names of the active server nodes in the cluster.
-    pub async fn node_names(&self) -> Vec<String> {
+    pub fn node_names(&self) -> Vec<String> {
         self.cluster
             .nodes()
-            .await
             .iter()
             .map(|node| node.name().to_owned())
             .collect()
     }
 
     /// Return node given its name.
-    pub async fn get_node(&self, name: &str) -> Result<Arc<Node>> {
-        self.cluster.get_node_by_name(name).await
+    pub fn get_node(&self, name: &str) -> Result<Arc<Node>> {
+        self.cluster.get_node_by_name(name)
     }
 
     /// Returns a list of active server nodes in the cluster.
-    pub async fn nodes(&self) -> Vec<Arc<Node>> {
-        self.cluster.nodes().await
+    pub fn nodes(&self) -> Vec<Arc<Node>> {
+        self.cluster.nodes()
     }
 
     /// Read record for the specified key. Depending on the bins value provided, all record bins,
@@ -553,7 +552,7 @@ impl Client {
             udf_body.len(),
             language
         );
-        let node = self.cluster.get_random_node().await?;
+        let node = self.cluster.get_random_node()?;
         self.send_info_cmd(policy, node, &cmd)
             .await
             .map_err(|e| e.chain_error("Error registering UDF"))?;
@@ -593,7 +592,7 @@ impl Client {
         server_path: &str,
     ) -> Result<UdfRemoveTask> {
         let cmd = format!("udf-remove:filename={server_path};");
-        let node = self.cluster.get_random_node().await?;
+        let node = self.cluster.get_random_node()?;
         // Sample response: {"udf-remove:filename=server_path;": "ok"}
         self.send_info_cmd(policy, node, &cmd)
             .await
@@ -694,7 +693,7 @@ impl Client {
         statement.validate()?;
         let statement = Arc::new(statement);
 
-        let nodes: Vec<Arc<Node>> = self.cluster.nodes().await;
+        let nodes: Vec<Arc<Node>> = self.cluster.nodes();
         let t_policy = policy.clone();
         let tracker = Arc::new(Mutex::new(
             PartitionTracker::new(&t_policy, Arc::new(Mutex::new(partition_filter)), nodes).await?,
@@ -880,7 +879,7 @@ impl Client {
         namespace: &str,
         filter_expression: Option<&Expression>,
     ) -> Result<()> {
-        let node = self.cluster.get_random_node().await?;
+        let node = self.cluster.get_random_node()?;
 
         let cmd = if let Some(expression) = filter_expression {
             let size = expression.size()?;
@@ -910,7 +909,7 @@ impl Client {
     /// `before_nanos` optionally specifies a last update timestamp (lut); if it is greater than
     /// zero, only records with a lut less than `before_nanos` are deleted. Units are in
     /// nanoseconds since unix epoch (1970-01-01). Pass in zero to delete all records in the
-    /// namespace/set recardless of last update time.
+    /// namespace/set regardless of last update time.
     pub async fn truncate(
         &self,
         policy: &AdminPolicy,
@@ -932,7 +931,7 @@ impl Client {
             cmd.push_str(&format!("{before_nanos}"));
         }
 
-        let node = self.cluster.get_random_node().await?;
+        let node = self.cluster.get_random_node()?;
         self.send_info_cmd(policy, node, &cmd)
             .await
             .map_err(|e| e.chain_error("Error truncating ns/set"))
@@ -1063,7 +1062,7 @@ impl Client {
         ctx: Option<&[CdtContext]>,
     ) -> Result<IndexTask> {
         let mut cmd = String::with_capacity(1024);
-        let node = self.cluster.get_random_node().await?;
+        let node = self.cluster.get_random_node()?;
         let node_version = node.version();
         if node_version >= &Version::new(8, 1, 0, 0) {
             cmd.push_str("sindex-create:namespace=");
@@ -1139,7 +1138,7 @@ impl Client {
         set_name: &str,
         index_name: &str,
     ) -> Result<DropIndexTask> {
-        let node = self.cluster.get_random_node().await?;
+        let node = self.cluster.get_random_node()?;
         let node_version = node.version();
 
         let mut cmd = String::with_capacity(100);
@@ -1219,7 +1218,7 @@ impl Client {
         password: &str,
     ) -> Result<()> {
         let cluster = self.cluster.clone();
-        let auth_mode = self.cluster.client_policy().await.auth_mode;
+        let auth_mode = self.cluster.client_policy().auth_mode;
         match auth_mode {
             crate::AuthMode::Internal(u, _) | crate::AuthMode::External(u, _) if u == user => {
                 AdminCommand::change_password(policy, &cluster, user, password).await
