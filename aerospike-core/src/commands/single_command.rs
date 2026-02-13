@@ -107,17 +107,23 @@ impl<'a> SingleCommand<'a> {
         loop {
             iterations += 1;
 
+            // check for max retries
+            if policy.max_retries() > 0 && iterations > policy.max_retries() {
+                // first attempt isn't a retry
+                return Err(Error::Timeout(format!("Timeout after {iterations} tries")));
+            }
+
             // Sleep before trying again, after the first iteration
             if iterations > 1 {
+                // DO NOT retry for streaming commands here. They retry in their own execution logic.
+                // DO NOT retry for any error other than network errors.
+                if !cmd.can_retry() {
+                    return Err(Error::Timeout(format!("Timeout")));
+                }
+
                 if let Some(sleep_between_retries) = policy.sleep_between_retries() {
                     sleep(sleep_between_retries).await;
                 }
-            }
-
-            // check for max retries
-            if policy.max_retries() > 0 && iterations > policy.max_retries() + 1 {
-                // first attempt isn't a retry
-                return Err(Error::Timeout(format!("Timeout after {iterations} tries")));
             }
 
             // check for command timeout
@@ -175,9 +181,7 @@ impl<'a> SingleCommand<'a> {
                     conn.invalidate();
                 }
 
-                // DO NOT retry for streaming commands here. They retry in their own execution logic.
-                // DO NOT retry for any error other than network errors.
-                if cmd.can_retry() && commands::is_network_error(&err) {
+                if commands::is_network_error(&err) {
                     continue;
                 }
 
