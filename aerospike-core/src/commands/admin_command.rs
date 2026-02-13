@@ -235,7 +235,7 @@ impl AdminCommand {
         if let Err(err) = res {
             conn.invalidate();
             return Err(err);
-        };
+        }
 
         conn.reset_state();
 

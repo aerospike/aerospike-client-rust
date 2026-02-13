@@ -56,7 +56,7 @@ use crate::net::Connection;
 
 // Command interface describes all commands available
 #[async_trait::async_trait]
-pub(crate) trait Command {
+pub trait Command {
     fn hint(&self) -> u8;
     async fn write_timeout(&mut self, conn: &mut Connection) -> Result<()>;
     async fn prepare_buffer(&mut self, conn: &mut Connection) -> Result<()>;

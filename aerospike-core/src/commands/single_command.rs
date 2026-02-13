@@ -44,7 +44,7 @@ impl<'a> SingleCommand<'a> {
         }
     }
 
-    pub fn hint(&self) -> u8 {
+    pub const fn hint(&self) -> u8 {
         self.key.digest[0]
     }
 
@@ -118,7 +118,7 @@ impl<'a> SingleCommand<'a> {
                 // DO NOT retry for streaming commands here. They retry in their own execution logic.
                 // DO NOT retry for any error other than network errors.
                 if !cmd.can_retry() {
-                    return Err(Error::Timeout(format!("Timeout")));
+                    return Err(Error::Timeout("Timeout".to_string()));
                 }
 
                 if let Some(sleep_between_retries) = policy.sleep_between_retries() {

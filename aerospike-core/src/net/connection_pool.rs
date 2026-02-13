@@ -56,7 +56,7 @@ impl Queue {
     /// If so, it will increase the reserved value by one and return true.
     /// Otherwise, return false.
     pub fn reserve_capacity(&self) -> bool {
-        let mut reserved = self.0.reserved.lock().unwrap_or_else(|e| e.into_inner());
+        let mut reserved = self.0.reserved.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         if *reserved < self.0.capacity {
             *reserved += 1;
             return true;
@@ -73,13 +73,13 @@ impl Queue {
 
     /// Decreases the reserved value by one, opening up capacity for more connections.
     pub fn reduce_capacity(&self) {
-        let mut reserved = self.0.reserved.lock().unwrap_or_else(|e| e.into_inner());
+        let mut reserved = self.0.reserved.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         if *reserved > 0 {
             *reserved -= 1;
         }
     }
 
-    /// Creates a new connection based on the queue's ClientPolicy.
+    /// Creates a new connection based on the queue's `ClientPolicy`.
     /// It does not check for the capacity of the queue.
     pub async fn make_conn(&self) -> Result<Connection> {
         let conn = aerospike_rt::timeout(
@@ -105,7 +105,7 @@ impl Queue {
                 .0
                 .connections
                 .lock()
-                .unwrap_or_else(|e| e.into_inner())
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
                 .pop_front()
             {
                 if conn.is_idle() {
@@ -114,9 +114,8 @@ impl Queue {
                 }
                 connection = conn;
                 break;
-            } else {
-                return Err(Error::NoMoreConnections);
             }
+            return Err(Error::NoMoreConnections);
         }
         Ok(PooledConnection {
             queue: self.clone(),
@@ -128,7 +127,7 @@ impl Queue {
     /// Putting back a connection in the queue does not reserve capacity.
     /// You should reserve capacity before putting back the connection in the queue.
     pub fn put_back(&self, conn: Connection) {
-        let mut connections = self.0.connections.lock().unwrap_or_else(|e| e.into_inner());
+        let mut connections = self.0.connections.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         if conn.state == ConnectionState::Ready && connections.len() < self.0.capacity {
             connections.push_back(conn);
         }
@@ -137,7 +136,7 @@ impl Queue {
 
     /// Removes all the connections from the queue.
     pub fn clear(&mut self) {
-        let mut connections = self.0.connections.lock().unwrap_or_else(|e| e.into_inner());
+        let mut connections = self.0.connections.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         for mut conn in connections.drain(..) {
             conn.close();
         }
@@ -148,7 +147,7 @@ impl Queue {
         self.0
             .connections
             .lock()
-            .unwrap_or_else(|e| e.into_inner())
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .len()
     }
 }
@@ -207,7 +206,7 @@ impl ConnectionPool {
                 if i >= self.queues.len() {
                     i = 0;
                 }
-                if let Err(Error::NoMoreConnections) = connection {
+                if matches!(connection, Err(Error::NoMoreConnections)) {
                     attempts -= 1;
                     if attempts > 0 {
                         continue;
@@ -242,13 +241,12 @@ impl ConnectionPool {
                         return Err(e);
                     }
                 }
-            } else {
-                attempts -= 1;
-                if attempts <= 0 {
-                    break;
-                }
-                continue;
             }
+            attempts -= 1;
+            if attempts <= 0 {
+                break;
+            }
+            continue;
         }
 
         Err(Error::ClientError(
@@ -273,7 +271,7 @@ impl ConnectionPool {
         sum
     }
 
-    /// If a connection was dropped in a state that was not [ConnectionState::Ready],
+    /// If a connection was dropped in a state that was not [`ConnectionState::Ready`],
     /// this method will try to recover the connection by parsing the rest of the data
     /// and returning the connection to a valid state.
     async fn recover_connection(queue: Queue, mut conn: Connection) {

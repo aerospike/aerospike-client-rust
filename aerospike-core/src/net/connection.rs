@@ -240,7 +240,7 @@ impl Connection {
         self.bytes_read = 0;
     }
 
-    pub(crate) fn reset_state(&mut self) {
+    pub(crate) const fn reset_state(&mut self) {
         self.state = ConnectionState::Ready;
         self.bytes_read = 0;
     }
@@ -256,7 +256,7 @@ impl Connection {
     }
 
     /// Sets the timeout for the connection.
-    pub fn set_socket_timeout(&mut self, deadline: Option<Instant>, socket_timeout: u32) {
+    pub const fn set_socket_timeout(&mut self, deadline: Option<Instant>, socket_timeout: u32) {
         self.deadline = deadline;
         if socket_timeout > 0 {
             self.socket_timeout = socket_timeout;
@@ -485,7 +485,7 @@ impl Connection {
         self.bytes_read
     }
 
-    pub(crate) fn should_attempt_recovery(&self) -> bool {
+    pub(crate) const fn should_attempt_recovery(&self) -> bool {
         self.can_recover_connection && self.timeout_delay > 0
     }
 
@@ -514,7 +514,7 @@ impl Connection {
                 )
                 .await
                 .map_err(|e| {
-                    Error::Timeout(format!("Timeout draining the connection {e}").into())
+                    Error::Timeout(format!("Timeout draining the connection {e}"))
                 })?,
                 #[cfg(test)]
                 _ => unreachable!(),
@@ -666,7 +666,7 @@ impl<'a> BufferedConn<'a> {
                 )
                 .await
                 .map_err(|e| {
-                    Error::Timeout(format!("Timeout draining the connection {e}").into())
+                    Error::Timeout(format!("Timeout draining the connection {e}"))
                 })?,
                 #[cfg(test)]
                 _ => unreachable!(),
@@ -755,7 +755,7 @@ impl Drop for Connection {
     }
 }
 
-pub(crate) struct ConnectionRecovery<'a> {
+pub struct ConnectionRecovery<'a> {
     conn: &'a mut Connection,
 }
 
