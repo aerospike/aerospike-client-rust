@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.0.0-alpha.10]
+
+* **New Features**
+  * Support recovering connections in batch command errors.
+  * Added `bool_bin()` function returning `ExpType::BOOL` expression. (#179).
+
+* **Improvements**
+  * [CLIENT-4200] Performance fix (#185). Replaces `RwLock` with `ArcLock`.
+
+* **Bug Fixes**
+    [CLIENT-4177] Query during migration hangs for full socket_timeout after scale-down cluster
+
 ## [2.0.0-alpha.9]
 
 * **Bug Fixes**
