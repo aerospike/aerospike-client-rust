@@ -71,7 +71,7 @@ fn unpack_list(buf: &mut Buffer, mut count: usize) -> Result<Value> {
     Ok(Value::from(list))
 }
 
-fn map_order(buf: &mut Buffer) -> MapOrder {
+fn map_order(buf: &Buffer) -> MapOrder {
     let map_type = buf.peek();
 
     // Check for extension that the server uses.
@@ -90,7 +90,7 @@ fn map_order(buf: &mut Buffer) -> MapOrder {
             }
         }
     }
-    return MapOrder::Unordered;
+    MapOrder::Unordered
 }
 
 fn unpack_map(buf: &mut Buffer, mut count: usize) -> Result<Value> {
@@ -112,7 +112,7 @@ fn unpack_map(buf: &mut Buffer, mut count: usize) -> Result<Value> {
                 map.insert(key, val);
             }
 
-            return Ok(Value::from(map));
+            Ok(Value::from(map))
         }
         MapOrder::KeyOrdered => {
             let mut map: BTreeMap<Value, Value> = BTreeMap::new();
@@ -122,7 +122,7 @@ fn unpack_map(buf: &mut Buffer, mut count: usize) -> Result<Value> {
                 map.insert(key, val);
             }
 
-            return Ok(Value::OrderedMap(map));
+            Ok(Value::OrderedMap(map))
         }
         MapOrder::KeyValueOrdered => {
             let mut list: Vec<(Value, Value)> = Vec::with_capacity(count);
@@ -132,7 +132,7 @@ fn unpack_map(buf: &mut Buffer, mut count: usize) -> Result<Value> {
                 list.push((key, val));
             }
 
-            return Ok(Value::KeyValueList(list));
+            Ok(Value::KeyValueList(list))
         }
     }
 }
@@ -154,12 +154,9 @@ fn unpack_blob(buf: &mut Buffer, count: usize) -> Result<Value> {
             Ok(Value::GeoJSON(val))
         }
 
-        _ => {
-            return Err(Error::BadResponse(format!(
-                "Error while unpacking BLOB. Type-header with code `{}` not recognized.",
-                vtype
-            )))
-        }
+        _ => Err(Error::BadResponse(format!(
+            "Error while unpacking BLOB. Type-header with code `{vtype}` not recognized."
+        ))),
     }
 }
 
@@ -209,7 +206,7 @@ fn unpack_value(buf: &mut Buffer) -> Result<Value> {
         0xcc => Ok(Value::from(buf.read_u8(None))),
         0xcd => Ok(Value::from(buf.read_u16(None))),
         0xce => Ok(Value::from(buf.read_u32(None))),
-        0xcf => Ok(Value::from(buf.read_u64_value(None))),
+        0xcf => Ok(buf.read_u64_value(None)),
         0xd0 => Ok(Value::from(buf.read_i8(None))),
         0xd1 => Ok(Value::from(buf.read_i16(None))),
         0xd2 => Ok(Value::from(buf.read_i32(None))),
@@ -264,9 +261,9 @@ fn unpack_value(buf: &mut Buffer) -> Result<Value> {
             let value = i16::from(obj_type) - 0xe0 - 32;
             Ok(Value::from(value))
         }
-        _ => Err(
-            Error::BadResponse(format!("Error unpacking value of type '{:x}'", obj_type)).into(),
-        ),
+        _ => Err(Error::BadResponse(format!(
+            "Error unpacking value of type '{obj_type:x}'"
+        ))),
     }
 }
 

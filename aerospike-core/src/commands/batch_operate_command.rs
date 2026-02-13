@@ -31,20 +31,20 @@ use aerospike_rt::sleep;
 use aerospike_rt::time::Duration;
 
 #[derive(Clone)]
-pub(crate) struct BatchOperateCommand {
+pub struct BatchOperateCommand {
     policy: BatchPolicy,
     pub node: Arc<Node>,
     pub batch_ops: Vec<(BatchOperation, usize)>,
 }
 
 impl BatchOperateCommand {
-    pub fn new(
+    pub const fn new(
         policy: BatchPolicy,
         node: Arc<Node>,
         batch_ops: Vec<(BatchOperation, usize)>,
     ) -> BatchOperateCommand {
         BatchOperateCommand {
-            policy: policy.clone(),
+            policy,
             node,
             batch_ops,
         }
@@ -53,13 +53,13 @@ impl BatchOperateCommand {
     pub async fn execute(self, cluster: Arc<Cluster>) -> Result<Self> {
         if self.policy.total_timeout() > 0 {
             let res = aerospike_rt::timeout(
-                Duration::from_millis(self.policy.total_timeout() as u64),
+                Duration::from_millis(u64::from(self.policy.total_timeout())),
                 self.execute_command(cluster),
             )
             .await;
             match res {
                 Ok(res) => res,
-                Err(_) => Err(Error::Timeout(format!("Timeout"))),
+                Err(_) => Err(Error::Timeout("Timeout".to_string())),
             }
         } else {
             self.execute_command(cluster).await
@@ -90,9 +90,11 @@ impl BatchOperateCommand {
                     let key = individual_op[0].0.key();
                     // Find somewhere else to try.
                     let partition = Partition::new_by_key(&key);
-                    let node = cluster
-                        .get_node(&partition, self.policy.replica, Arc::downgrade(&self.node))
-                        .await?;
+                    let node = cluster.get_node(
+                        &partition,
+                        self.policy.replica,
+                        Arc::downgrade(&self.node),
+                    )?;
 
                     if !Self::request_group(individual_op, &self.policy, deadline, node).await? {
                         all_successful = false;
@@ -110,13 +112,8 @@ impl BatchOperateCommand {
             iterations += 1;
 
             // too many retries
-            if self.policy.max_retries() > 0 {
-                if iterations > self.policy.max_retries() + 1 {
-                    return Err(Error::Timeout(format!(
-                        "Timeout after {} tries",
-                        iterations
-                    )));
-                }
+            if self.policy.max_retries() > 0 && iterations > self.policy.max_retries() + 1 {
+                return Err(Error::Timeout(format!("Timeout after {iterations} tries")));
             }
 
             // Sleep before trying again, after the first iteration
@@ -128,8 +125,7 @@ impl BatchOperateCommand {
             if let Some(deadline) = deadline {
                 if Instant::now() > deadline {
                     return Err(Error::Timeout(format!(
-                        "Command timed out after {} tries",
-                        iterations
+                        "Command timed out after {iterations} tries"
                     )));
                 }
             }
@@ -145,7 +141,7 @@ impl BatchOperateCommand {
         let mut conn = match node.get_connection(0).await {
             Ok(conn) => conn,
             Err(err) => {
-                warn!("Node {}: {}", node, err);
+                warn!("Node {node}: {err}");
                 return Ok(false);
             }
         };
@@ -157,15 +153,14 @@ impl BatchOperateCommand {
         conn.buffer.write_timeout(policy.server_timeout());
 
         conn.set_socket_timeout(deadline, policy.socket_timeout());
-        // TODO: Support recovering_connection
-        conn.set_timeout_delay(false, policy.timeout_delay());
+        conn.set_timeout_delay(true, policy.timeout_delay());
 
         // Send command.
         if let Err(err) = conn.flush().await {
             // IO errors are considered temporary anomalies. Retry.
             // Close socket to flush out possible garbage. Do not put back in pool.
             conn.invalidate();
-            warn!("Node {}: {}", node, err);
+            warn!("Node {node}: {err}");
             return Ok(false);
         }
 
@@ -175,9 +170,9 @@ impl BatchOperateCommand {
             // cancelling/closing the batch/multi commands will return an error, which will
             // close the connection to throw away its data and signal the server about the
             // situation. We will not put back the connection in the buffer.
-            // if !Self::keep_connection(&err) {
-            conn.invalidate();
-            // }
+            if !Self::keep_connection(&err) {
+                conn.invalidate();
+            }
             Err(err)
         } else {
             Ok(true)
@@ -249,7 +244,7 @@ impl BatchOperateCommand {
                     conn.conn.addr.clone(),
                 ));
             }
-        };
+        }
 
         // if cmd is the end marker of the response, do not proceed further
         if last_record {
@@ -286,11 +281,8 @@ impl BatchOperateCommand {
                 let name = conn.buffer().read_str(name_size)?;
                 let particle_bytes_size = op_size - (4 + name_size);
                 conn.read_buffer(particle_bytes_size).await?;
-                let value = value::bytes_to_particle(
-                    particle_type,
-                    &mut conn.buffer(),
-                    particle_bytes_size,
-                )?;
+                let value =
+                    value::bytes_to_particle(particle_type, conn.buffer(), particle_bytes_size)?;
 
                 // list/map operations may return multiple values for the same bin.
                 match bins.entry(name) {
@@ -313,13 +305,13 @@ impl BatchOperateCommand {
         Ok(Some(BatchRecordIndex {
             batch_index: batch_index as usize,
             record,
-            result_code: result_code,
+            result_code,
         }))
     }
 
-    // const fn keep_connection(err: &Error) -> bool {
-    //     matches!(err, Error::ServerError(_, _, _) | Error::Timeout(_))
-    // }
+    const fn keep_connection(err: &Error) -> bool {
+        matches!(err, Error::ServerError(_, _, _) | Error::Timeout(_))
+    }
 
     async fn parse_result(
         batch_ops: &mut [(BatchOperation, usize)],
@@ -338,7 +330,7 @@ impl BatchOperateCommand {
             status = false;
             if size > 0 {
                 conn.set_limit_body(size)?;
-                match Self::parse_group(batch_ops, &mut conn, size as usize).await {
+                match Self::parse_group(batch_ops, &mut conn, size).await {
                     Ok(stat) => status = stat,
                     Err(e @ Error::ServerError(_, _, _)) => {
                         conn.drain(conn.conn.deadline()).await?;

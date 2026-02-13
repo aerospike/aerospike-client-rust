@@ -176,7 +176,7 @@ pub enum MapReturnType {
 /// Inverts the returned values in CDT List operations.
 pub struct InvertedMapReturn(MapReturnType);
 
-/// Something that can be resolved into a set of MapReturnType. Either a single MapReturnType, or InvertedMapReturn(MapReturnType).
+/// Something that can be resolved into a set of `MapReturnType`. Either a single `MapReturnType`, or InvertedMapReturn(MapReturnType).
 pub trait ToMapReturnTypeBitmask {
     /// Convert to an u64 bitmask
     fn to_bitmask(self) -> i64;
@@ -1074,6 +1074,7 @@ pub fn remove_by_value_relative_rank_range<'a, TMR: ToMapReturnTypeBitmask>(
 }
 
 /// Creates a map remove by value relative to rank range operation.
+///
 /// Server removes map items nearest to value and greater by relative rank with a count limit.
 /// Server returns removed data specified by returnType.
 ///
@@ -1258,6 +1259,7 @@ pub fn get_by_value_relative_rank_range<'a, TMR: ToMapReturnTypeBitmask>(
 }
 
 /// Creates a map get by value relative to rank range operation.
+///
 /// Server selects map items nearest to value and greater by relative rank with a count limit.
 /// Server returns selected data specified by returnType.
 ///

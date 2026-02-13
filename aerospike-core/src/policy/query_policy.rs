@@ -31,7 +31,7 @@ pub struct QueryPolicy {
 
     /// Number of records to return to the client. This number is divided by the
     /// number of nodes involved in the query. The actual number of records returned
-    /// may be less than max_records if node record counts are small and unbalanced across
+    /// may be less than `max_records` if node record counts are small and unbalanced across
     /// nodes.
     ///
     /// This field is supported on server versions >= 4.9.
@@ -55,7 +55,7 @@ pub struct QueryPolicy {
     /// Expected query duration. The server treats the query in different ways depending on the expected duration.
     /// This field is ignored for aggregation queries, background queries and server versions < 6.0.
     ///
-    /// Default: QueryDuration::Long
+    /// Default: `QueryDuration::Long`
     pub expected_duration: QueryDuration,
 
     /// Defines algorithm used to determine the target node for a command. The replica algorithm only affects single record and batch commands.

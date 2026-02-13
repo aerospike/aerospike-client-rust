@@ -54,7 +54,7 @@ pub trait Task {
                 error_or_complete => return error_or_complete,
             }
 
-            if timeout.map_or(false, timeout_elapsed) {
+            if timeout.is_some_and(timeout_elapsed) {
                 return Err(Error::Timeout("Task timeout reached".to_string()));
             }
         }

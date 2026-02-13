@@ -37,7 +37,7 @@ pub struct PartitionStatus {
 }
 
 impl PartitionStatus {
-    pub(crate) fn new(partition_id: usize) -> Self {
+    pub(crate) const fn new(partition_id: usize) -> Self {
         PartitionStatus {
             bval: None,
             id: partition_id as u16,
@@ -49,11 +49,11 @@ impl PartitionStatus {
         }
     }
 
-    pub(crate) fn set_digest(&mut self, digest: Option<[u8; 20]>) {
+    pub(crate) const fn set_digest(&mut self, digest: Option<[u8; 20]>) {
         self.digest = digest;
     }
 
-    pub(crate) fn reset_sequence(&mut self) {
+    pub(crate) const fn reset_sequence(&mut self) {
         self.sequence = None;
     }
 

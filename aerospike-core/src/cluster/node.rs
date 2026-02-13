@@ -18,7 +18,9 @@ use std::fmt;
 use std::hash::{Hash, Hasher};
 use std::result::Result as StdResult;
 use std::sync::atomic::{AtomicBool, AtomicIsize, AtomicUsize, Ordering};
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
+
+use hazarc::AtomicArc;
 
 use crate::cluster::node_validator::NodeValidator;
 use crate::cluster::peers_parser::PeersParser;
@@ -40,7 +42,7 @@ pub struct Node {
     client_policy: ClientPolicy,
     name: String,
     host: Host,
-    aliases: RwLock<Vec<Host>>,
+    aliases: AtomicArc<Vec<Host>>,
     address: String,
 
     connection_pool: ConnectionPool,
@@ -49,7 +51,7 @@ pub struct Node {
     partition_generation: AtomicIsize,
     rebalance_generation: AtomicIsize,
     // Which racks are these things part of
-    rack_ids: std::sync::Mutex<HashMap<String, usize>>,
+    rack_ids: AtomicArc<HashMap<String, usize>>,
     refresh_count: AtomicUsize,
     reference_count: AtomicUsize,
     responded: AtomicBool,
@@ -63,7 +65,7 @@ impl Node {
         Node {
             client_policy: client_policy.clone(),
             name: nv.name.clone(),
-            aliases: RwLock::new(nv.aliases.clone()),
+            aliases: AtomicArc::from(nv.aliases.clone()),
             address: nv.address.clone(),
 
             host: nv.aliases[0].clone(),
@@ -80,7 +82,7 @@ impl Node {
             responded: AtomicBool::new(false),
             active: AtomicBool::new(true),
             version: nv.version.clone(),
-            rack_ids: std::sync::Mutex::new(HashMap::new()),
+            rack_ids: AtomicArc::from(HashMap::new()),
         }
     }
 
@@ -95,7 +97,7 @@ impl Node {
     }
 
     /// Returns the Node name
-    pub fn version(&self) -> &Version {
+    pub const fn version(&self) -> &Version {
         &self.version
     }
 
@@ -160,15 +162,14 @@ impl Node {
 
     fn verify_node_name(&self, info_map: &HashMap<String, String>) -> Result<()> {
         match info_map.get("node") {
-            None => Err(Error::InvalidNode("Missing node name".to_string()).into()),
+            None => Err(Error::InvalidNode("Missing node name".to_string())),
             Some(info_name) if info_name == &self.name => Ok(()),
             Some(info_name) => {
                 self.inactivate();
                 Err(Error::InvalidNode(format!(
                     "Node name has changed: '{}' => '{}'",
                     self.name, info_name
-                ))
-                .into())
+                )))
             }
         }
     }
@@ -177,16 +178,14 @@ impl Node {
         match self.client_policy.cluster_name {
             None => Ok(()),
             Some(ref expected) => match info_map.get("cluster-name") {
-                None => Err(Error::InvalidNode("Missing cluster name".to_string()).into()),
+                None => Err(Error::InvalidNode("Missing cluster name".to_string())),
                 Some(info_name) if info_name == expected => Ok(()),
                 Some(info_name) => {
                     self.inactivate();
                     Err(Error::InvalidNode(format!(
-                        "Cluster name mismatch: expected={},
-                                                           got={}",
-                        expected, info_name
-                    ))
-                    .into())
+                        "Cluster name mismatch: expected={expected},
+                                                           got={info_name}"
+                    )))
                 }
             },
         }
@@ -249,11 +248,10 @@ impl Node {
     }
 
     pub fn is_in_rack(&self, namespace: &str, rack_ids: &HashSet<usize>) -> bool {
-        self.rack_ids.lock().map_or(false, |locked| {
-            locked
-                .get(namespace)
-                .map_or(false, |r| rack_ids.contains(r))
-        })
+        self.rack_ids
+            .load()
+            .get(namespace)
+            .is_some_and(|r| rack_ids.contains(r))
     }
 
     pub fn parse_rack(&self, buf: &str) -> Result<()> {
@@ -267,10 +265,7 @@ impl Node {
             })
             .collect::<Result<HashMap<_, _>>>()?;
 
-        *self
-            .rack_ids
-            .lock()
-            .map_err(|err| Error::ClientError(err.to_string()))? = new_table;
+        self.rack_ids.store(Arc::new(new_table));
         Ok(())
     }
 
@@ -315,16 +310,14 @@ impl Node {
 
     // Get a list of aliases to the node
     pub fn aliases(&self) -> Vec<Host> {
-        self.aliases
-            .read()
-            .unwrap_or_else(|e| e.into_inner())
-            .to_vec()
+        self.aliases.load().to_vec()
     }
 
     // Add an alias to the node
     pub fn add_alias(&self, alias: Host) {
-        let mut aliases = self.aliases.write().unwrap_or_else(|e| e.into_inner());
+        let mut aliases = self.aliases();
         aliases.push(alias);
+        self.aliases.store(Arc::new(aliases));
         self.reference_count.fetch_add(1, Ordering::Relaxed);
     }
 
@@ -369,10 +362,10 @@ impl Node {
         let app_id = self.client_policy().application_id();
 
         // Source user-agent payload
-        // Format: "1,go-<version>,<application-id>"
-        let user_agent_id = format!("1,rust-{},{}", CLIENT_VERSION, app_id);
+        // Format: "1,rust-<version>,<application-id>"
+        let user_agent_id = format!("1,rust-{CLIENT_VERSION},{app_id}");
         let user_agent_id = base64::encode(&user_agent_id);
-        let user_agent_command = format!("user-agent-set:value={}", user_agent_id);
+        let user_agent_command = format!("user-agent-set:value={user_agent_id}");
 
         let policy = AdminPolicy {
             timeout: self.client_policy().timeout,
@@ -381,7 +374,7 @@ impl Node {
     }
 
     /// Fills the connection pool to the minimum required
-    /// by the [ClientPolicy.min_conns_per_node]
+    /// by the [`ClientPolicy.min_conns_per_node`]
     pub(crate) async fn fill_min_conns(&self) -> Result<usize> {
         let mut count = 0;
 
@@ -394,7 +387,7 @@ impl Node {
             }
         }
 
-        return Ok(count);
+        Ok(count)
     }
 }
 

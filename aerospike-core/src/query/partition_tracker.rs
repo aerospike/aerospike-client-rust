@@ -33,7 +33,7 @@ use std::cmp::max;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 #[derive(Debug)]
-pub(crate) struct PartitionTracker {
+pub struct PartitionTracker {
     partitions_capacity: usize,
     partition_begin: usize,
     node_capacity: usize,
@@ -63,7 +63,7 @@ impl PartitionTracker {
             // Validate here instead of initial PartitionFilter constructor because total number of
             // cluster partitions may change on the server and PartitionFilter will never have access
             // to Cluster instance. Use fixed number of partitions for now.
-            if !(usize::from(partition_filter.begin) < node::PARTITIONS) {
+            if partition_filter.begin >= node::PARTITIONS {
                 return Err(Error::InvalidArgument(format!(
                     "Invalid partition begin {} . Valid range: 0-{}",
                     partition_filter.begin,
@@ -78,7 +78,7 @@ impl PartitionTracker {
                 )));
             }
 
-            if usize::from(partition_filter.begin + partition_filter.count) > node::PARTITIONS {
+            if (partition_filter.begin + partition_filter.count) > node::PARTITIONS {
                 return Err(Error::InvalidArgument(format!(
                     "Invalid partition range ({},{})",
                     partition_filter.begin,
@@ -92,7 +92,7 @@ impl PartitionTracker {
                 // partitions: None,
                 partitions_capacity: partition_filter.count,
                 partition_begin: partition_filter.begin,
-                node_capacity: node_capacity,
+                node_capacity,
                 node_filter: None,
                 partition_filter: None,
                 replica: policy.replica(),
@@ -157,7 +157,7 @@ impl PartitionTracker {
 
         let partition_filter = self.partition_filter.as_mut().unwrap().lock().await;
         let partitions = partition_filter.partitions.as_ref().unwrap();
-        for part in partitions.iter() {
+        for part in partitions {
             let (part_retry, part_id) = {
                 let part = part.lock().await;
                 (part.retry, part.id)
@@ -175,19 +175,16 @@ impl PartitionTracker {
                 }
 
                 let np = Self::find_node(&list, node.clone()).await;
-                match np {
-                    Some(np) => {
-                        let mut np = np.lock().await;
-                        np.add_partition(part.clone()).await;
-                    }
-                    None => {
-                        // If the partition map is in a transitional state, multiple
-                        // nodePartitions instances (each with different partitions)
-                        // may be created for a single node.
-                        let mut np = NodePartitions::new(node.clone(), self.partitions_capacity);
-                        np.add_partition(part.clone()).await;
-                        list.push(Arc::new(Mutex::new(np)));
-                    }
+                if let Some(np) = np {
+                    let mut np = np.lock().await;
+                    np.add_partition(part.clone()).await;
+                } else {
+                    // If the partition map is in a transitional state, multiple
+                    // nodePartitions instances (each with different partitions)
+                    // may be created for a single node.
+                    let mut np = NodePartitions::new(node.clone(), self.partitions_capacity);
+                    np.add_partition(part.clone()).await;
+                    list.push(Arc::new(Mutex::new(np)));
                 }
             }
         }
@@ -234,7 +231,7 @@ impl PartitionTracker {
 
         // let list = Arc::new(Mutex::new(list));
         self.node_partitions_list = list;
-        return Ok(());
+        Ok(())
     }
 
     fn init(&mut self, policy: impl StreamPolicy) {
@@ -258,7 +255,7 @@ impl PartitionTracker {
                 return Some(node_partition.clone());
             }
         }
-        return None;
+        None
     }
 
     pub(crate) async fn partition_unavailable(
@@ -275,7 +272,7 @@ impl PartitionTracker {
             ps.retry = true;
             if let Some(ref mut seq) = ps.sequence {
                 *seq += 1;
-            };
+            }
         }
         node_partitions.parts_unavailable += 1;
     }
@@ -291,7 +288,7 @@ impl PartitionTracker {
         let partition_id = key.partition_id();
         if let Some(partitions) = partitions {
             // let mut partitions = partitions.write();
-            if let Some(ps) = partitions.get(partition_id as usize - self.partition_begin) {
+            if let Some(ps) = partitions.get(partition_id - self.partition_begin) {
                 let mut ps = ps.lock().await;
                 ps.digest = Some(key.digest);
             } else {
@@ -324,7 +321,7 @@ impl PartitionTracker {
         let partitions = pf.partitions.as_ref();
 
         if let Some(partitions) = partitions {
-            if let Some(ps) = partitions.get(partition_id as usize - self.partition_begin) {
+            if let Some(ps) = partitions.get(partition_id - self.partition_begin) {
                 let mut ps = ps.lock().await;
                 ps.digest = Some(key.digest);
                 if bval.is_some() {
@@ -340,19 +337,17 @@ impl PartitionTracker {
     pub(crate) fn allow_record(&self, np: &mut NodePartitions) -> bool {
         if self.max_records == 0 {
             return true;
-        };
+        }
 
         let record_count = self.record_count.fetch_add(1, Ordering::SeqCst) + 1;
-        if self.max_records > 0 {
-            if record_count as u64 <= self.max_records {
-                return true;
-            }
+        if self.max_records > 0 && record_count as u64 <= self.max_records {
+            return true;
         }
 
         // Record was returned, but would exceed max_records.
         // Discard record and increment disallowed_count.
         np.disallowed_count += 1;
-        return false;
+        false
     }
 
     pub(crate) async fn is_complete(
@@ -363,7 +358,7 @@ impl PartitionTracker {
         let mut record_count: u64 = 0;
         let mut parts_unavailable = 0;
 
-        for np in self.node_partitions_list.iter() {
+        for np in &self.node_partitions_list {
             let np = np.lock().await;
             record_count += np.record_count;
             parts_unavailable += np.parts_unavailable;
@@ -392,10 +387,10 @@ impl PartitionTracker {
                 // may be records available for that node.
                 let mut done = true;
 
-                for np in self.node_partitions_list.iter() {
-                    let mut np = np.lock().await;
+                for np in &self.node_partitions_list {
+                    let np = np.lock().await;
                     if np.record_count + np.disallowed_count >= np.record_max {
-                        self.mark_retry(&mut np).await;
+                        self.mark_retry(&np).await;
                         done = false;
                     }
                 }
@@ -414,13 +409,11 @@ impl PartitionTracker {
         }
 
         // Check if limits have been reached.
-        if policy.max_retries() > 0 {
-            if self.iteration() > policy.max_retries() {
-                return Err(Error::ClientError(format!(
-                    "Max retries exceeded: {}",
-                    policy.max_retries()
-                )));
-            }
+        if policy.max_retries() > 0 && self.iteration() > policy.max_retries() {
+            return Err(Error::ClientError(format!(
+                "Max retries exceeded: {}",
+                policy.max_retries()
+            )));
         }
 
         if let Some(deadline) = self.deadline {
@@ -434,23 +427,23 @@ impl PartitionTracker {
                 return Err(Error::Timeout("Scan/Query timed out".into()));
             }
 
-            let total_timeout = policy.total_timeout() as u64;
+            let total_timeout = u64::from(policy.total_timeout());
             if deadline < Instant::now() + Duration::from_millis(total_timeout) {
                 self.total_timeout = (deadline - Instant::now()).as_millis() as u32;
 
                 if self.socket_timeout > self.total_timeout {
-                    self.socket_timeout = self.total_timeout
+                    self.socket_timeout = self.total_timeout;
                 }
             }
         }
 
         // Prepare for next iteration.
         if self.max_records > 0 {
-            self.max_records -= record_count
+            self.max_records -= record_count;
         }
 
         self.iteration.fetch_add(1, Ordering::Relaxed);
-        return Ok(false);
+        Ok(false)
     }
 
     pub(crate) async fn mark_retry(&self, node_partitions: &NodePartitions) {
@@ -468,13 +461,10 @@ impl PartitionTracker {
 
     pub(crate) async fn partition_error(&self) {
         // Mark all partitions for retry on fatal errors.
-        match self.partition_filter {
-            Some(ref pf) => {
-                let pf = pf.lock().await;
-                pf.retry.store(true, Ordering::Relaxed);
-            }
-            None => (),
-        };
+        if let Some(ref pf) = self.partition_filter {
+            let pf = pf.lock().await;
+            pf.retry.store(true, Ordering::Relaxed);
+        }
     }
 
     pub(crate) fn init_partitions(
@@ -506,7 +496,7 @@ impl PartitionTracker {
         }
     }
 
-    pub(crate) fn server_timeout(&self) -> u32 {
+    pub(crate) const fn server_timeout(&self) -> u32 {
         if self.total_timeout > 0 {
             self.socket_timeout
         } else {

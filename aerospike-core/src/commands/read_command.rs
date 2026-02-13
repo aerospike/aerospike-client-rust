@@ -24,7 +24,7 @@ use crate::policy::{BasePolicy, Policy, Replica};
 use crate::value::bytes_to_particle;
 use crate::{Bins, Key, Record, ResultCode, Value};
 
-pub(crate) struct ReadCommand<'a> {
+pub struct ReadCommand<'a> {
     pub single_command: SingleCommand<'a>,
     pub record: Option<Record>,
     policy: &'a BasePolicy,
@@ -52,7 +52,7 @@ impl<'a> ReadCommand<'a> {
     }
 
     fn parse_record(
-        &mut self,
+        &self,
         conn: &mut Connection,
         op_count: usize,
         field_count: usize,
@@ -100,7 +100,7 @@ impl<'a> ReadCommand<'a> {
 }
 
 #[async_trait::async_trait]
-impl<'a> Command for ReadCommand<'a> {
+impl Command for ReadCommand<'_> {
     async fn write_timeout(&mut self, conn: &mut Connection) -> Result<()> {
         conn.buffer.write_timeout(self.policy.server_timeout());
         Ok(())
@@ -133,7 +133,7 @@ impl<'a> Command for ReadCommand<'a> {
 
     async fn parse_result(&mut self, conn: &mut Connection) -> Result<()> {
         if let Err(err) = conn.read_header().await {
-            warn!("Parse result error: {}", err);
+            warn!("Parse result error: {err}");
             return Err(err);
         }
 
@@ -150,7 +150,7 @@ impl<'a> Command for ReadCommand<'a> {
         // Read remaining message bytes
         if receive_size > 0 {
             if let Err(err) = conn.read_body(receive_size).await {
-                warn!("Parse result error: {}", err);
+                warn!("Parse result error: {err}");
                 return Err(err);
             }
         }
@@ -173,9 +173,9 @@ impl<'a> Command for ReadCommand<'a> {
                     .bins
                     .get("FAILURE")
                     .map_or(String::from("UDF Error"), ToString::to_string);
-                Err(Error::UdfBadResponse(reason).into())
+                Err(Error::UdfBadResponse(reason))
             }
-            rc => Err(Error::ServerError(rc.into(), false, conn.addr.clone())),
+            rc => Err(Error::ServerError(rc, false, conn.addr.clone())),
         }
     }
 }

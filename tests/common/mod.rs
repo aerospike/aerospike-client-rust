@@ -208,7 +208,7 @@ pub fn rand_str(sz: usize) -> String {
 
 pub async fn enterprise_edition() -> bool {
     let client = client().await;
-    let node = client.cluster.get_random_node().await;
+    let node = client.cluster.get_random_node();
     if let Err(_) = node {
         return false;
     }

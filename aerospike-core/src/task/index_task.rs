@@ -34,7 +34,7 @@ static DELMITER: &str = ";";
 
 impl IndexTask {
     /// Initializes `IndexTask` from client, creation should only be expose to Client
-    pub fn new(cluster: Arc<Cluster>, namespace: String, index_name: String) -> Self {
+    pub const fn new(cluster: Arc<Cluster>, namespace: String, index_name: String) -> Self {
         IndexTask {
             cluster,
             namespace,
@@ -44,12 +44,9 @@ impl IndexTask {
 
     fn build_command(node: &Arc<Node>, namespace: String, index_name: String) -> String {
         if node.version() >= &Version::new(8, 1, 0, 0) {
-            format!(
-                "sindex-stat:namespace={};indexname={}",
-                namespace, index_name
-            )
+            format!("sindex-stat:namespace={namespace};indexname={index_name}")
         } else {
-            format!("sindex/{}/{}", namespace, index_name)
+            format!("sindex/{namespace}/{index_name}")
         }
     }
 
@@ -59,10 +56,9 @@ impl IndexTask {
                 if response.contains(FAIL_PATTERN_201) || response.contains(FAIL_PATTERN_203) {
                     Ok(Status::NotFound)
                 } else {
-                    return Err(Error::BadResponse(format!(
-                        "Code 201 and 203 missing. Response: {}",
-                        response
-                    )));
+                    Err(Error::BadResponse(format!(
+                        "Code 201 and 203 missing. Response: {response}"
+                    )))
                 }
             }
             Some(pattern_index) => {
@@ -71,8 +67,7 @@ impl IndexTask {
                 let percent_end = match response[percent_begin..].find(DELMITER) {
                     None => {
                         return Err(Error::BadResponse(format!(
-                            "delimiter missing in response. Response: {}",
-                            response
+                            "delimiter missing in response. Response: {response}"
                         )))
                     }
                     Some(percent_end) => percent_end,
@@ -81,11 +76,9 @@ impl IndexTask {
                 match percent_str.parse::<isize>() {
                     Ok(100) => Ok(Status::Complete),
                     Ok(_) => Ok(Status::InProgress),
-                    Err(_) => {
-                        return Err(Error::BadResponse(
-                            "Unexpected load_pct value from server".to_string(),
-                        ))
-                    }
+                    Err(_) => Err(Error::BadResponse(
+                        "Unexpected load_pct value from server".to_string(),
+                    )),
                 }
             }
         }
@@ -96,7 +89,7 @@ impl IndexTask {
 impl Task for IndexTask {
     /// Query the status of index creation across all nodes
     async fn query_status(&self) -> Result<Status> {
-        let nodes = self.cluster.nodes().await;
+        let nodes = self.cluster.nodes();
 
         if nodes.is_empty() {
             return Err(Error::Connection("No connected node".to_string()));

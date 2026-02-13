@@ -166,11 +166,11 @@ async fn scan_single_consumer_rps() {
     let client = common::client().await;
 
     // only run on single node clusters
-    if client.nodes().await.len() != 1 {
+    if client.nodes().len() != 1 {
         return;
     }
 
-    let node_count = client.cluster.nodes().await.len();
+    let node_count = client.cluster.nodes().len();
     let namespace = common::namespace();
     let set_name = create_test_set(&client, EXPECTED).await;
 

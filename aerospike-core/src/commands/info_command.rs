@@ -91,7 +91,7 @@ impl Message {
         let response = str::from_utf8(&self.buf)?;
         let response = response.trim_matches('\n');
 
-        trace!("response from server for info command: {:?}", response);
+        trace!("response from server for info command: {response:?}");
         let mut result: HashMap<String, String> = HashMap::new();
 
         for tuple in response.split('\n') {
@@ -101,7 +101,7 @@ impl Message {
 
             match (key, val) {
                 (Some(key), Some(val)) => result.insert(key.to_string(), val.to_string()),
-                (Some(key), None) => result.insert(key.to_string(), "".to_string()),
+                (Some(key), None) => result.insert(key.to_string(), String::new()),
                 _ => return Err(Error::InvalidArgument("Parsing Info command failed".into())),
             };
         }

@@ -13,6 +13,7 @@
 // limitations under the License.
 
 //! Bit operations. Create bit operations used by client operate command.
+//!
 //! Offset orientation is left-to-right. Negative offsets are supported.
 //! If the offset is negative, the offset starts backwards from end of the bitmap.
 //! If an offset is out of bounds, a parameter error will be returned.
@@ -62,11 +63,11 @@ pub(crate) enum CdtBitwiseOpType {
 pub enum BitwiseResizeFlags {
     /// Default specifies the defalt flag.
     Default = 0,
-    /// FromFront Adds/removes bytes from the beginning instead of the end.
+    /// `FromFront` Adds/removes bytes from the beginning instead of the end.
     FromFront = 1,
-    /// GrowOnly will only allow the byte[] size to increase.
+    /// `GrowOnly` will only allow the byte[] size to increase.
     GrowOnly = 2,
-    /// ShrinkOnly will only allow the byte[] size to decrease.
+    /// `ShrinkOnly` will only allow the byte[] size to decrease.
     ShrinkOnly = 4,
 }
 
@@ -75,15 +76,15 @@ pub enum BitwiseResizeFlags {
 pub enum BitwiseWriteFlags {
     /// Default allows create or update.
     Default = 0,
-    /// CreateOnly specifies that:
+    /// `CreateOnly` specifies that:
     /// If the bin already exists, the operation will be denied.
     /// If the bin does not exist, a new bin will be created.
     CreateOnly = 1,
-    /// UpdateOnly specifies that:
+    /// `UpdateOnly` specifies that:
     /// If the bin already exists, the bin will be overwritten.
     /// If the bin does not exist, the operation will be denied.
     UpdateOnly = 2,
-    /// NoFail specifies not to raise error if operation is denied.
+    /// `NoFail` specifies not to raise error if operation is denied.
     NoFail = 4,
     /// Partial allows other valid operations to be committed if this operations is
     /// denied due to flag constraints.
@@ -105,7 +106,7 @@ pub enum BitwiseOverflowActions {
 /// `BitPolicy` determines the Bit operation policy.
 #[derive(Debug, Clone, Copy)]
 pub struct BitPolicy {
-    /// The flags determined by CdtBitwiseWriteFlags
+    /// The flags determined by `CdtBitwiseWriteFlags`
     pub flags: u8,
 }
 
@@ -140,10 +141,7 @@ pub fn resize(
     resize_flags: Option<BitwiseResizeFlags>,
     policy: &BitPolicy,
 ) -> Operation {
-    let mut args = vec![
-        CdtArgument::Int(byte_size),
-        CdtArgument::Byte(policy.flags as u8),
-    ];
+    let mut args = vec![CdtArgument::Int(byte_size), CdtArgument::Byte(policy.flags)];
     if let Some(resize_flags) = resize_flags {
         args.push(CdtArgument::Byte(resize_flags as u8));
     }
@@ -178,7 +176,7 @@ pub fn insert(bin: &str, byte_offset: i64, value: Value, policy: &BitPolicy) -> 
         args: vec![
             CdtArgument::Int(byte_offset),
             CdtArgument::Value(value),
-            CdtArgument::Byte(policy.flags as u8),
+            CdtArgument::Byte(policy.flags),
         ],
     };
 
@@ -208,7 +206,7 @@ pub fn remove(bin: &str, byte_offset: i64, byte_size: i64, policy: &BitPolicy) -
         args: vec![
             CdtArgument::Int(byte_offset),
             CdtArgument::Int(byte_size),
-            CdtArgument::Byte(policy.flags as u8),
+            CdtArgument::Byte(policy.flags),
         ],
     };
 
@@ -246,7 +244,7 @@ pub fn set(
             CdtArgument::Int(bit_offset),
             CdtArgument::Int(bit_size),
             CdtArgument::Value(value),
-            CdtArgument::Byte(policy.flags as u8),
+            CdtArgument::Byte(policy.flags),
         ],
     };
 
@@ -284,7 +282,7 @@ pub fn or(
             CdtArgument::Int(bit_offset),
             CdtArgument::Int(bit_size),
             CdtArgument::Value(value),
-            CdtArgument::Byte(policy.flags as u8),
+            CdtArgument::Byte(policy.flags),
         ],
     };
 
@@ -322,7 +320,7 @@ pub fn xor(
             CdtArgument::Int(bit_offset),
             CdtArgument::Int(bit_size),
             CdtArgument::Value(value),
-            CdtArgument::Byte(policy.flags as u8),
+            CdtArgument::Byte(policy.flags),
         ],
     };
 
@@ -360,7 +358,7 @@ pub fn and(
             CdtArgument::Int(bit_offset),
             CdtArgument::Int(bit_size),
             CdtArgument::Value(value),
-            CdtArgument::Byte(policy.flags as u8),
+            CdtArgument::Byte(policy.flags),
         ],
     };
 
@@ -390,7 +388,7 @@ pub fn not(bin: &str, bit_offset: i64, bit_size: i64, policy: &BitPolicy) -> Ope
         args: vec![
             CdtArgument::Int(bit_offset),
             CdtArgument::Int(bit_size),
-            CdtArgument::Byte(policy.flags as u8),
+            CdtArgument::Byte(policy.flags),
         ],
     };
 
@@ -428,7 +426,7 @@ pub fn lshift(
             CdtArgument::Int(bit_offset),
             CdtArgument::Int(bit_size),
             CdtArgument::Int(shift),
-            CdtArgument::Byte(policy.flags as u8),
+            CdtArgument::Byte(policy.flags),
         ],
     };
 
@@ -466,7 +464,7 @@ pub fn rshift(
             CdtArgument::Int(bit_offset),
             CdtArgument::Int(bit_size),
             CdtArgument::Int(shift),
-            CdtArgument::Byte(policy.flags as u8),
+            CdtArgument::Byte(policy.flags),
         ],
     };
 
@@ -479,6 +477,7 @@ pub fn rshift(
 }
 
 /// Creates bit "add" operation.
+///
 /// Server adds value to byte[] bin starting at bitOffset for bitSize. `BitSize` must be <= 64.
 /// Signed indicates if bits should be treated as a signed number.
 /// If add overflows/underflows, `CdtBitwiseOverflowAction` is used.
@@ -514,7 +513,7 @@ pub fn add(
             CdtArgument::Int(bit_offset),
             CdtArgument::Int(bit_size),
             CdtArgument::Int(value),
-            CdtArgument::Byte(policy.flags as u8),
+            CdtArgument::Byte(policy.flags),
             CdtArgument::Byte(action_flags),
         ],
     };
@@ -528,6 +527,7 @@ pub fn add(
 }
 
 /// Creates bit "subtract" operation.
+///
 /// Server subtracts value from byte[] bin starting at bitOffset for bitSize. `bit_size` must be <= 64.
 /// Signed indicates if bits should be treated as a signed number.
 /// If add overflows/underflows, `CdtBitwiseOverflowAction` is used.
@@ -563,7 +563,7 @@ pub fn subtract(
             CdtArgument::Int(bit_offset),
             CdtArgument::Int(bit_size),
             CdtArgument::Int(value),
-            CdtArgument::Byte(policy.flags as u8),
+            CdtArgument::Byte(policy.flags),
             CdtArgument::Byte(action_flags),
         ],
     };
@@ -602,7 +602,7 @@ pub fn set_int(
             CdtArgument::Int(bit_offset),
             CdtArgument::Int(bit_size),
             CdtArgument::Int(value),
-            CdtArgument::Byte(policy.flags as u8),
+            CdtArgument::Byte(policy.flags),
         ],
     };
 

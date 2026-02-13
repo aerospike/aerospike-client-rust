@@ -45,11 +45,11 @@ use crate::{
 };
 use crate::{Policy, Version};
 use aerospike_rt::fs::File;
-#[cfg(all(any(feature = "rt-tokio"), not(feature = "rt-async-std")))]
+#[cfg(feature = "rt-tokio")]
 use aerospike_rt::io::AsyncReadExt;
 use aerospike_rt::time::Duration;
 use aerospike_rt::Semaphore;
-#[cfg(all(any(feature = "rt-async-std"), not(feature = "rt-tokio")))]
+#[cfg(feature = "rt-async-std")]
 use futures::AsyncReadExt;
 
 const MAX_PERMITS: usize = 256;
@@ -124,28 +124,27 @@ impl Client {
     }
 
     /// Returns `true` if the client is connected to any cluster nodes.
-    pub async fn is_connected(&self) -> bool {
-        self.cluster.is_connected().await
+    pub fn is_connected(&self) -> bool {
+        self.cluster.is_connected()
     }
 
     /// Returns a list of the names of the active server nodes in the cluster.
-    pub async fn node_names(&self) -> Vec<String> {
+    pub fn node_names(&self) -> Vec<String> {
         self.cluster
             .nodes()
-            .await
             .iter()
             .map(|node| node.name().to_owned())
             .collect()
     }
 
     /// Return node given its name.
-    pub async fn get_node(&self, name: &str) -> Result<Arc<Node>> {
-        self.cluster.get_node_by_name(name).await
+    pub fn get_node(&self, name: &str) -> Result<Arc<Node>> {
+        self.cluster.get_node_by_name(name)
     }
 
     /// Returns a list of active server nodes in the cluster.
-    pub async fn nodes(&self) -> Vec<Arc<Node>> {
-        self.cluster.nodes().await
+    pub fn nodes(&self) -> Vec<Arc<Node>> {
+        self.cluster.nodes()
     }
 
     /// Read record for the specified key. Depending on the bins value provided, all record bins,
@@ -553,7 +552,7 @@ impl Client {
             udf_body.len(),
             language
         );
-        let node = self.cluster.get_random_node().await?;
+        let node = self.cluster.get_random_node()?;
         self.send_info_cmd(policy, node, &cmd)
             .await
             .map_err(|e| e.chain_error("Error registering UDF"))?;
@@ -592,8 +591,8 @@ impl Client {
         policy: &AdminPolicy,
         server_path: &str,
     ) -> Result<UdfRemoveTask> {
-        let cmd = format!("udf-remove:filename={};", server_path);
-        let node = self.cluster.get_random_node().await?;
+        let cmd = format!("udf-remove:filename={server_path};");
+        let node = self.cluster.get_random_node()?;
         // Sample response: {"udf-remove:filename=server_path;": "ok"}
         self.send_info_cmd(policy, node, &cmd)
             .await
@@ -694,7 +693,7 @@ impl Client {
         statement.validate()?;
         let statement = Arc::new(statement);
 
-        let nodes: Vec<Arc<Node>> = self.cluster.nodes().await;
+        let nodes: Vec<Arc<Node>> = self.cluster.nodes();
         let t_policy = policy.clone();
         let tracker = Arc::new(Mutex::new(
             PartitionTracker::new(&t_policy, Arc::new(Mutex::new(partition_filter)), nodes).await?,
@@ -733,18 +732,15 @@ impl Client {
     ) {
         if policy.total_timeout() > 0 {
             let rs_closer = recordset.clone();
-            match aerospike_rt::timeout(
-                Duration::from_millis(policy.total_timeout() as u64),
+            if let Err(_) = aerospike_rt::timeout(
+                Duration::from_millis(u64::from(policy.total_timeout())),
                 Self::execute_query(cluster, policy, tracker, statement, recordset),
             )
             .await
             {
-                Err(_) => {
-                    let _ = rs_closer
-                        .push(Err(Error::Timeout(format!("Timeout"))))
-                        .await;
-                }
-                _ => (),
+                let _ = rs_closer
+                    .push(Err(Error::Timeout("Timeout".to_string())))
+                    .await;
             }
         } else {
             Self::execute_query(cluster, policy, tracker, statement, recordset).await;
@@ -767,13 +763,13 @@ impl Client {
                     .assign_partitions_to_nodes(cluster.clone(), &namespace)
                     .await
                 {
-                    Ok(_) => (),
+                    Ok(()) => (),
                     Err(e) => {
                         recordset.err(e).await;
                         tracker_locked.partition_error().await;
                         return;
                     }
-                };
+                }
 
                 let list = tracker_locked.node_partitions_list();
                 let mut handles = Vec::with_capacity(list.len());
@@ -789,7 +785,7 @@ impl Client {
                         policy.max_concurrent_nodes
                     }));
 
-                    for node_partition in list.iter() {
+                    for node_partition in list {
                         let semaphore = semaphore.clone();
                         let recordset = recordset.clone();
                         let policy = policy.clone();
@@ -844,7 +840,7 @@ impl Client {
                                         tracker.lock().await.partition_error().await;
                                         err_recordset.err(e).await;
                                     }
-                                    Ok(_) => (),
+                                    Ok(()) => (),
                                 }
                             }
                         }
@@ -869,7 +865,7 @@ impl Client {
                 sleep(sleep_between_retries).await;
             }
 
-            recordset.reset_task_id()
+            recordset.reset_task_id();
         }
     }
 
@@ -883,7 +879,7 @@ impl Client {
         namespace: &str,
         filter_expression: Option<&Expression>,
     ) -> Result<()> {
-        let node = self.cluster.get_random_node().await?;
+        let node = self.cluster.get_random_node()?;
 
         let cmd = if let Some(expression) = filter_expression {
             let size = expression.size()?;
@@ -892,15 +888,9 @@ impl Client {
             let _ = expression.pack(&mut Some(&mut buf));
             let exp_str = base64::encode(&buf.data_buffer);
 
-            format!(
-                "xdr-set-filter:dc={};namespace={};exp={}",
-                datacenter, namespace, exp_str
-            )
+            format!("xdr-set-filter:dc={datacenter};namespace={namespace};exp={exp_str}")
         } else {
-            format!(
-                "xdr-set-filter:dc={};namespace={};exp=null",
-                datacenter, namespace
-            )
+            format!("xdr-set-filter:dc={datacenter};namespace={namespace};exp=null")
         };
 
         self.send_info_cmd(policy, node, &cmd)
@@ -919,7 +909,7 @@ impl Client {
     /// `before_nanos` optionally specifies a last update timestamp (lut); if it is greater than
     /// zero, only records with a lut less than `before_nanos` are deleted. Units are in
     /// nanoseconds since unix epoch (1970-01-01). Pass in zero to delete all records in the
-    /// namespace/set recardless of last update time.
+    /// namespace/set regardless of last update time.
     pub async fn truncate(
         &self,
         policy: &AdminPolicy,
@@ -938,10 +928,10 @@ impl Client {
 
         if before_nanos > 0 {
             cmd.push_str(";lut=");
-            cmd.push_str(&format!("{}", before_nanos));
+            cmd.push_str(&format!("{before_nanos}"));
         }
 
-        let node = self.cluster.get_random_node().await?;
+        let node = self.cluster.get_random_node()?;
         self.send_info_cmd(policy, node, &cmd)
             .await
             .map_err(|e| e.chain_error("Error truncating ns/set"))
@@ -1040,7 +1030,7 @@ impl Client {
     /// Create a secondary index on a bin or using expression. This asynchronous server call
     /// returns before the command is complete.
     ///
-    /// For internal use only. bin_name and expression cannot both be passed.
+    /// For internal use only. `bin_name` and expression cannot both be passed.
     ///
     /// # Examples
     ///
@@ -1072,13 +1062,13 @@ impl Client {
         ctx: Option<&[CdtContext]>,
     ) -> Result<IndexTask> {
         let mut cmd = String::with_capacity(1024);
-        let node = self.cluster.get_random_node().await?;
+        let node = self.cluster.get_random_node()?;
         let node_version = node.version();
         if node_version >= &Version::new(8, 1, 0, 0) {
             cmd.push_str("sindex-create:namespace=");
         } else {
             cmd.push_str("sindex-create:ns=");
-        };
+        }
         cmd.push_str(namespace);
 
         if !set_name.is_empty() {
@@ -1098,8 +1088,8 @@ impl Client {
                 let ctx_str = base64::encode(&buf.data_buffer);
                 cmd.push_str(";context=");
                 cmd.push_str(&ctx_str);
-            };
-        };
+            }
+        }
 
         if let Some(expression) = expression {
             let size = expression.size()?;
@@ -1109,28 +1099,26 @@ impl Client {
             let exp_str = base64::encode(&buf.data_buffer);
             cmd.push_str(";exp=");
             cmd.push_str(&exp_str);
-        };
+        }
 
         if CollectionIndexType::Default != collection_index_type {
             cmd.push_str("indextype=");
-            cmd.push_str(&format!("{}", collection_index_type));
-        };
-
-        if !bin_name.is_empty() {
-            if node_version >= &Version::new(8, 1, 0, 0) {
-                cmd.push_str(";bin=");
-                cmd.push_str(bin_name);
-                cmd.push_str(";type=");
-            } else {
-                cmd.push_str(";indexdata=");
-                cmd.push_str(bin_name);
-                cmd.push_str(",");
-            }
-        } else {
-            cmd.push_str(";type=");
+            cmd.push_str(&format!("{collection_index_type}"));
         }
 
-        cmd.push_str(&format!("{}", index_type));
+        if bin_name.is_empty() {
+            cmd.push_str(";type=");
+        } else if node_version >= &Version::new(8, 1, 0, 0) {
+            cmd.push_str(";bin=");
+            cmd.push_str(bin_name);
+            cmd.push_str(";type=");
+        } else {
+            cmd.push_str(";indexdata=");
+            cmd.push_str(bin_name);
+            cmd.push(',');
+        }
+
+        cmd.push_str(&format!("{index_type}"));
 
         self.send_info_cmd(policy, node, &cmd)
             .await
@@ -1150,7 +1138,7 @@ impl Client {
         set_name: &str,
         index_name: &str,
     ) -> Result<DropIndexTask> {
-        let node = self.cluster.get_random_node().await?;
+        let node = self.cluster.get_random_node()?;
         let node_version = node.version();
 
         let mut cmd = String::with_capacity(100);
@@ -1159,13 +1147,13 @@ impl Client {
             cmd.push_str("sindex-delete:namespace=");
         } else {
             cmd.push_str("sindex-delete:ns=");
-        };
+        }
         cmd.push_str(namespace);
 
         if !set_name.is_empty() {
             cmd.push_str(";set=");
             cmd.push_str(set_name);
-        };
+        }
 
         cmd.push_str(";indexname=");
         cmd.push_str(index_name);
@@ -1183,7 +1171,7 @@ impl Client {
     async fn send_info_cmd(&self, policy: &AdminPolicy, node: Arc<Node>, cmd: &str) -> Result<()> {
         let response = node.info(policy, &[cmd]).await?;
         if let Some(response) = response.get(cmd) {
-            if response != "ok" && response != "" {
+            if response != "ok" && !response.is_empty() {
                 return Err(Self::parse_info_error(response));
             }
         }
@@ -1230,16 +1218,14 @@ impl Client {
         password: &str,
     ) -> Result<()> {
         let cluster = self.cluster.clone();
-        let auth_mode = self.cluster.client_policy().await.auth_mode;
+        let auth_mode = self.cluster.client_policy().auth_mode;
         match auth_mode {
             crate::AuthMode::Internal(u, _) | crate::AuthMode::External(u, _) if u == user => {
                 AdminCommand::change_password(policy, &cluster, user, password).await
             }
-            crate::AuthMode::PKI => {
-                return Err(Error::ClientError(
-                    "Can't change PKI user's password".into(),
-                ))
-            }
+            crate::AuthMode::PKI => Err(Error::ClientError(
+                "Can't change PKI user's password".into(),
+            )),
             _ => AdminCommand::set_password(policy, &cluster, user, password).await,
         }
     }
@@ -1377,7 +1363,7 @@ impl Client {
                     || ResultCode::ServerError,
                     |code| ResultCode::from(code.as_str().parse::<u8>().unwrap()),
                 );
-                let msg = caps.name("msg").map(|msg| msg.as_str()).unwrap_or(response);
+                let msg = caps.name("msg").map_or(response, |msg| msg.as_str());
 
                 (code, msg)
             })

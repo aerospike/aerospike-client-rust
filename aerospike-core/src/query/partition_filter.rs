@@ -23,10 +23,10 @@ use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
-/// PartitionFilter is used in scan/queries. This filter is also used as a cursor.
+/// `PartitionFilter` is used in scan/queries. This filter is also used as a cursor.
 ///
-/// If a previous scan/query returned all records specified by a PartitionFilter instance, a
-/// future scan/query using the same PartitionFilter instance will only return new records added
+/// If a previous scan/query returned all records specified by a `PartitionFilter` instance, a
+/// future scan/query using the same `PartitionFilter` instance will only return new records added
 /// after the last record read (in digest order) in each partition in the previous scan/query.
 #[derive(Debug)]
 pub struct PartitionFilter {
@@ -48,10 +48,10 @@ pub struct PartitionFilter {
 }
 
 impl PartitionFilter {
-    pub(crate) fn new(begin: usize, count: usize) -> Self {
+    pub(crate) const fn new(begin: usize, count: usize) -> Self {
         PartitionFilter {
-            begin: begin,
-            count: count,
+            begin,
+            count,
             digest: None,
 
             partitions: None,
@@ -62,20 +62,20 @@ impl PartitionFilter {
 
     /// Creates a partition filter that
     /// reads all the partitions.
-    pub fn all() -> Self {
+    pub const fn all() -> Self {
         Self::new(0, node::PARTITIONS)
     }
 
-    /// NewPartitionFilterById creates a partition filter by partition id.
+    /// `NewPartitionFilterById` creates a partition filter by partition id.
     /// Partition id is between 0 - 4095
-    pub fn by_id(partition_id: usize) -> Self {
+    pub const fn by_id(partition_id: usize) -> Self {
         Self::new(partition_id, 1)
     }
 
-    /// NewPartitionFilterByRange creates a partition filter by partition range.
+    /// `NewPartitionFilterByRange` creates a partition filter by partition range.
     /// begin partition id is between 0 - 4095
     /// count is the number of partitions, in the range of 1 - 4096 inclusive.
-    pub fn by_range(begin: usize, count: usize) -> Self {
+    pub const fn by_range(begin: usize, count: usize) -> Self {
         Self::new(begin, count)
     }
 
@@ -108,16 +108,13 @@ impl PartitionFilter {
     }
 
     pub(crate) async fn reset_partition_status(&mut self) {
-        match self.partitions {
-            Some(ref mut partitions) => {
-                // Reset replica sequence and last node used.
-                for part in partitions.iter_mut() {
-                    let mut part = part.lock().await;
-                    part.reset_sequence();
-                    part.reset_node();
-                }
+        if let Some(ref mut partitions) = self.partitions {
+            // Reset replica sequence and last node used.
+            for part in partitions.iter_mut() {
+                let mut part = part.lock().await;
+                part.reset_sequence();
+                part.reset_node();
             }
-            None => (),
         }
     }
 }

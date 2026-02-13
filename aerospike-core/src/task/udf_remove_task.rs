@@ -28,7 +28,7 @@ pub struct UdfRemoveTask {
 
 impl UdfRemoveTask {
     /// Initializes `UdfRemoveTask` from client, creation should only be expose to Client
-    pub fn new(cluster: Arc<Cluster>, package_name: String) -> Self {
+    pub const fn new(cluster: Arc<Cluster>, package_name: String) -> Self {
         UdfRemoveTask {
             cluster,
             package_name,
@@ -40,11 +40,11 @@ impl UdfRemoveTask {
     }
 
     fn parse_response(response: &str, package_name: &str) -> Result<Status> {
-        let find = format!("filename={}", package_name);
-        if !response.contains(&find) {
-            Ok(Status::Complete)
-        } else {
+        let find = format!("filename={package_name}");
+        if response.contains(&find) {
             Ok(Status::InProgress)
+        } else {
+            Ok(Status::Complete)
         }
     }
 }
@@ -53,7 +53,7 @@ impl UdfRemoveTask {
 impl Task for UdfRemoveTask {
     /// Query the status of execution across all nodes
     async fn query_status(&self) -> Result<Status> {
-        let nodes = self.cluster.nodes().await;
+        let nodes = self.cluster.nodes();
 
         if nodes.is_empty() {
             return Err(Error::Connection("No connected node".to_string()));

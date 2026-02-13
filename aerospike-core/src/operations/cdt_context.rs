@@ -31,10 +31,11 @@ pub(crate) enum CtxType {
 }
 
 /// `CdtContext` defines Nested CDT context. Identifies the location of nested list/map to apply the operation.
+///
 /// for the current level.
 /// An array of CTX identifies location of the list/map on multiple
 /// levels on nesting.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CdtContext {
     /// Context Type
     pub id: u8,
@@ -47,6 +48,7 @@ pub struct CdtContext {
 }
 
 /// Defines Lookup list by index offset.
+///
 /// If the index is negative, the resolved index starts backwards from end of list.
 /// If an index is out of bounds, a parameter error will be returned.
 /// Examples:
@@ -92,6 +94,7 @@ pub const fn ctx_list_value(key: Value) -> CdtContext {
     }
 }
 /// Defines Lookup map by index offset.
+///
 /// If the index is negative, the resolved index starts backwards from end of list.
 /// If an index is out of bounds, a parameter error will be returned.
 /// Examples:

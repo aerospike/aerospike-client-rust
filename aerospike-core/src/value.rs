@@ -58,7 +58,7 @@ impl From<FloatValue> for f64 {
     }
 }
 
-impl<'a> From<&'a FloatValue> for f64 {
+impl From<&FloatValue> for f64 {
     fn from(val: &FloatValue) -> f64 {
         match *val {
             FloatValue::F32(_) => panic!(
@@ -80,7 +80,7 @@ impl From<f64> for FloatValue {
     }
 }
 
-impl<'a> From<&'a f64> for FloatValue {
+impl From<&f64> for FloatValue {
     fn from(val: &f64) -> FloatValue {
         let mut val = *val;
         if val.is_nan() {
@@ -99,7 +99,7 @@ impl From<FloatValue> for f32 {
     }
 }
 
-impl<'a> From<&'a FloatValue> for f32 {
+impl From<&FloatValue> for f32 {
     fn from(val: &FloatValue) -> f32 {
         match *val {
             FloatValue::F32(val) => f32::from_bits(val),
@@ -118,7 +118,7 @@ impl From<f32> for FloatValue {
     }
 }
 
-impl<'a> From<&'a f32> for FloatValue {
+impl From<&f32> for FloatValue {
     fn from(val: &f32) -> FloatValue {
         let mut val = *val;
         if val.is_nan() {
@@ -133,11 +133,11 @@ impl fmt::Display for FloatValue {
         match *self {
             FloatValue::F32(val) => {
                 let val: f32 = f32::from_bits(val);
-                write!(f, "{}", val)
+                write!(f, "{val}")
             }
             FloatValue::F64(val) => {
                 let val: f64 = f64::from_bits(val);
-                write!(f, "{}", val)
+                write!(f, "{val}")
             }
         }
     }
@@ -180,17 +180,17 @@ pub enum Value {
     /// Map keys can only be of type String, Bytes, Integer, and that this will be enforced by the client and server.
     HashMap(HashMap<Value, Value>),
 
-    /// OrderedMap data type where the map entries are sorted based key ordering (K-ordered maps).
+    /// `OrderedMap` data type where the map entries are sorted based key ordering (K-ordered maps).
     /// Each key can only appear once in a collection and is associated with a value.
     /// Map values can be any supported data type.
     /// Map keys can only be of type String, Bytes, Integer, and that this will be enforced by the client and server.
     OrderedMap(BTreeMap<Value, Value>),
 
     /// Result of any map operation in which the server returns a
-    /// map requested with [MapReturnType::KeyValue].
+    /// map requested with [`MapReturnType::KeyValue`].
     KeyValueList(Vec<(Value, Value)>),
 
-    /// GeoJSON data type are JSON formatted strings to encode geo-spatial information.
+    /// `GeoJSON` data type are JSON formatted strings to encode geo-spatial information.
     GeoJSON(String),
 
     /// HLL value
@@ -203,7 +203,7 @@ pub enum Value {
     Wildcard,
 }
 
-#[allow(clippy::derive_hash_xor_eq)]
+#[allow(clippy::derived_hash_with_manual_eq)]
 impl Hash for Value {
     fn hash<H: Hasher>(&self, state: &mut H) {
         match *self {
@@ -264,13 +264,13 @@ impl Value {
             Value::Int(ref val) => val.to_string(),
             Value::Bool(ref val) => val.to_string(),
             Value::Float(ref val) => val.to_string(),
-            Value::String(ref val) | Value::GeoJSON(ref val) => val.to_string(),
-            Value::Blob(ref val) | Value::HLL(ref val) => format!("{:?}", val),
-            Value::MultiResult(ref val) => format!("{:?}", val),
-            Value::List(ref val) => format!("{:?}", val),
-            Value::HashMap(ref val) => format!("{:?}", val),
-            Value::OrderedMap(ref val) => format!("{:?}", val),
-            Value::KeyValueList(ref val) => format!("{:?}", val),
+            Value::String(ref val) | Value::GeoJSON(ref val) => val.clone(),
+            Value::Blob(ref val) | Value::HLL(ref val) => format!("{val:?}"),
+            Value::MultiResult(ref val) => format!("{val:?}"),
+            Value::List(ref val) => format!("{val:?}"),
+            Value::HashMap(ref val) => format!("{val:?}"),
+            Value::OrderedMap(ref val) => format!("{val:?}"),
+            Value::KeyValueList(ref val) => format!("{val:?}"),
             Value::Infinity => "INF".into(),
             Value::Wildcard => "*".into(),
         }
@@ -343,7 +343,7 @@ impl Value {
             Value::Int(ref val) => {
                 let mut buf = [0; 8];
                 NetworkEndian::write_i64(&mut buf, *val);
-                h.update(&buf);
+                h.update(buf);
                 Ok(())
             }
             Value::String(ref val) => {
@@ -361,7 +361,7 @@ impl Value {
     }
 
     /// Order for Value types.
-    pub(crate) fn value_type_order(&self) -> u8 {
+    pub(crate) const fn value_type_order(&self) -> u8 {
         match self {
             Value::Nil => 0,
             Value::Bool(_) => 1,
@@ -702,13 +702,11 @@ impl TryFrom<Value> for String {
         match val {
             Value::String(v) => Ok(v),
             Value::GeoJSON(v) => Ok(v),
-            _ => {
-                return Err(format!(
-                    "Invalid type conversion from Value::{} to {}",
-                    val.particle_type(),
-                    std::any::type_name::<Self>()
-                ))
-            }
+            _ => Err(format!(
+                "Invalid type conversion from Value::{} to {}",
+                val.particle_type(),
+                std::any::type_name::<Self>()
+            )),
         }
     }
 }
@@ -719,13 +717,11 @@ impl TryFrom<Value> for Vec<u8> {
         match val {
             Value::Blob(v) => Ok(v),
             Value::HLL(v) => Ok(v),
-            _ => {
-                return Err(format!(
-                    "Invalid type conversion from Value::{} to {}",
-                    val.particle_type(),
-                    std::any::type_name::<Self>()
-                ))
-            }
+            _ => Err(format!(
+                "Invalid type conversion from Value::{} to {}",
+                val.particle_type(),
+                std::any::type_name::<Self>()
+            )),
         }
     }
 }
@@ -736,13 +732,11 @@ impl TryFrom<Value> for Vec<Value> {
         match val {
             Value::List(v) => Ok(v),
             Value::MultiResult(v) => Ok(v),
-            _ => {
-                return Err(format!(
-                    "Invalid type conversion from Value::{} to {}",
-                    val.particle_type(),
-                    std::any::type_name::<Self>()
-                ))
-            }
+            _ => Err(format!(
+                "Invalid type conversion from Value::{} to {}",
+                val.particle_type(),
+                std::any::type_name::<Self>()
+            )),
         }
     }
 }
@@ -752,13 +746,11 @@ impl TryFrom<Value> for HashMap<Value, Value> {
     fn try_from(val: Value) -> std::result::Result<Self, Self::Error> {
         match val {
             Value::HashMap(v) => Ok(v),
-            _ => {
-                return Err(format!(
-                    "Invalid type conversion from Value::{} to {}",
-                    val.particle_type(),
-                    std::any::type_name::<Self>()
-                ))
-            }
+            _ => Err(format!(
+                "Invalid type conversion from Value::{} to {}",
+                val.particle_type(),
+                std::any::type_name::<Self>()
+            )),
         }
     }
 }
@@ -768,13 +760,11 @@ impl TryFrom<Value> for BTreeMap<Value, Value> {
     fn try_from(val: Value) -> std::result::Result<Self, Self::Error> {
         match val {
             Value::OrderedMap(v) => Ok(v),
-            _ => {
-                return Err(format!(
-                    "Invalid type conversion from Value::{} to {}",
-                    val.particle_type(),
-                    std::any::type_name::<Self>()
-                ))
-            }
+            _ => Err(format!(
+                "Invalid type conversion from Value::{} to {}",
+                val.particle_type(),
+                std::any::type_name::<Self>()
+            )),
         }
     }
 }
@@ -784,13 +774,11 @@ impl TryFrom<Value> for Vec<(Value, Value)> {
     fn try_from(val: Value) -> std::result::Result<Self, Self::Error> {
         match val {
             Value::KeyValueList(v) => Ok(v),
-            _ => {
-                return Err(format!(
-                    "Invalid type conversion from Value::{} to {}",
-                    val.particle_type(),
-                    std::any::type_name::<Self>()
-                ))
-            }
+            _ => Err(format!(
+                "Invalid type conversion from Value::{} to {}",
+                val.particle_type(),
+                std::any::type_name::<Self>()
+            )),
         }
     }
 }
@@ -800,13 +788,11 @@ impl TryFrom<Value> for f64 {
     fn try_from(val: Value) -> std::result::Result<Self, Self::Error> {
         match val {
             Value::Float(v) => Ok(f64::from(v)),
-            _ => {
-                return Err(format!(
-                    "Invalid type conversion from Value::{} to {}",
-                    val.particle_type(),
-                    std::any::type_name::<Self>()
-                ))
-            }
+            _ => Err(format!(
+                "Invalid type conversion from Value::{} to {}",
+                val.particle_type(),
+                std::any::type_name::<Self>()
+            )),
         }
     }
 }
@@ -816,12 +802,12 @@ impl TryFrom<Value> for bool {
     fn try_from(val: Value) -> std::result::Result<Self, Self::Error> {
         match val {
             Value::Bool(v) => Ok(v),
-            _ => return Err("Invalid type bool".into()),
+            _ => Err("Invalid type bool".into()),
         }
     }
 }
 
-pub(crate) fn bytes_to_particle(ptype: u8, buf: &mut Buffer, len: usize) -> Result<Value> {
+pub fn bytes_to_particle(ptype: u8, buf: &mut Buffer, len: usize) -> Result<Value> {
     match ParticleType::from(ptype) {
         ParticleType::NULL => Ok(Value::Nil),
         ParticleType::INTEGER => {
@@ -1063,7 +1049,7 @@ impl Serialize for Value {
     }
 }
 
-/// Allows either a HashMap or BTreeMap to be passed as arguments to certain methods.
+/// Allows either a `HashMap` or `BTreeMap` to be passed as arguments to certain methods.
 pub trait MapLike<K: Eq, V> {
     fn value(self) -> (Option<HashMap<K, V>>, Option<BTreeMap<K, V>>);
     fn value_as_ref(&self) -> (Option<&HashMap<K, V>>, Option<&BTreeMap<K, V>>);

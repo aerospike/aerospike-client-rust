@@ -34,7 +34,7 @@ pub fn append(
         ExpressionArgument::Value(Value::from(CdtListOpType::Append as i64)),
         ExpressionArgument::FilterExpression(value),
         ExpressionArgument::Value(Value::from(policy.attributes as u8)),
-        ExpressionArgument::Value(Value::from(policy.flags as u8)),
+        ExpressionArgument::Value(Value::from(policy.flags)),
         ExpressionArgument::Context(ctx.to_vec()),
     ];
     add_write(bin, ctx, args)
@@ -51,7 +51,7 @@ pub fn append_items(
         ExpressionArgument::Value(Value::from(CdtListOpType::AppendItems as i64)),
         ExpressionArgument::FilterExpression(list),
         ExpressionArgument::Value(Value::from(policy.attributes as u8)),
-        ExpressionArgument::Value(Value::from(policy.flags as u8)),
+        ExpressionArgument::Value(Value::from(policy.flags)),
         ExpressionArgument::Context(ctx.to_vec()),
     ];
     add_write(bin, ctx, args)
@@ -69,7 +69,7 @@ pub fn insert(
         ExpressionArgument::Value(Value::from(CdtListOpType::Insert as i64)),
         ExpressionArgument::FilterExpression(index),
         ExpressionArgument::FilterExpression(value),
-        ExpressionArgument::Value(Value::from(policy.flags as u8)),
+        ExpressionArgument::Value(Value::from(policy.flags)),
         ExpressionArgument::Context(ctx.to_vec()),
     ];
     add_write(bin, ctx, args)
@@ -87,7 +87,7 @@ pub fn insert_items(
         ExpressionArgument::Value(Value::from(CdtListOpType::InsertItems as i64)),
         ExpressionArgument::FilterExpression(index),
         ExpressionArgument::FilterExpression(list),
-        ExpressionArgument::Value(Value::from(policy.flags as u8)),
+        ExpressionArgument::Value(Value::from(policy.flags)),
         ExpressionArgument::Context(ctx.to_vec()),
     ];
     add_write(bin, ctx, args)
@@ -107,7 +107,7 @@ pub fn increment(
         ExpressionArgument::FilterExpression(index),
         ExpressionArgument::FilterExpression(value),
         ExpressionArgument::Value(Value::from(policy.attributes as u8)),
-        ExpressionArgument::Value(Value::from(policy.flags as u8)),
+        ExpressionArgument::Value(Value::from(policy.flags)),
         ExpressionArgument::Context(ctx.to_vec()),
     ];
     add_write(bin, ctx, args)
@@ -125,7 +125,7 @@ pub fn set(
         ExpressionArgument::Value(Value::from(CdtListOpType::Set as i64)),
         ExpressionArgument::FilterExpression(index),
         ExpressionArgument::FilterExpression(value),
-        ExpressionArgument::Value(Value::from(policy.flags as u8)),
+        ExpressionArgument::Value(Value::from(policy.flags)),
         ExpressionArgument::Context(ctx.to_vec()),
     ];
     add_write(bin, ctx, args)
@@ -173,6 +173,7 @@ pub fn remove_by_value_list(values: Expression, bin: Expression, ctx: &[CdtConte
 }
 
 /// Create expression that removes list items identified by value range (valueBegin inclusive, valueEnd exclusive).
+///
 /// If valueBegin is null, the range is less than valueEnd. If valueEnd is null, the range is
 /// greater than equal to valueBegin.
 pub fn remove_by_value_range(

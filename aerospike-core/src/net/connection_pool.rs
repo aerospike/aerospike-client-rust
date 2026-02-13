@@ -92,9 +92,9 @@ impl Queue {
             return Ok(conn);
         }
 
-        return Err(Error::Connection(
+        Err(Error::Connection(
             "Could not open network connection".to_string(),
-        ));
+        ))
     }
 
     /// Takes a connection out of the queue.
@@ -276,12 +276,14 @@ impl ConnectionPool {
     /// If a connection was dropped in a state that was not [ConnectionState::Ready],
     /// this method will try to recover the connection by parsing the rest of the data
     /// and returning the connection to a valid state.
-    pub async fn recover_connection(queue: Queue, mut conn: Connection) {
-        conn.recover().await;
+    async fn recover_connection(queue: Queue, mut conn: Connection) {
+        let mut r = crate::net::connection::ConnectionRecovery::new(&mut conn);
+        r.recover().await;
         if conn.state == ConnectionState::Ready {
             queue.put_back(conn);
             return;
         }
+
         queue.reduce_capacity();
     }
 }
@@ -337,7 +339,7 @@ impl DerefMut for PooledConnection {
 mod tests {
     use crate::net::Connection;
 
-    use super::{ClientPolicy, ConnectionPool, Error, Host, Queue};
+    use super::{ClientPolicy, ConnectionPool, Host, Queue};
 
     macro_rules! put_back_with_reserve {
         ($queue:ident, $conn:ident) => {{

@@ -23,15 +23,15 @@ pub struct WritePolicy {
     /// Base policy instance
     pub base_policy: BasePolicy,
 
-    /// RecordExistsAction qualifies how to handle writes where the record already exists.
+    /// `RecordExistsAction` qualifies how to handle writes where the record already exists.
     pub record_exists_action: RecordExistsAction,
 
-    /// GenerationPolicy qualifies how to handle record writes based on record generation.
+    /// `GenerationPolicy` qualifies how to handle record writes based on record generation.
     /// The default (NONE) indicates that the generation is not used to restrict writes.
     pub generation_policy: GenerationPolicy,
 
     /// Desired consistency guarantee when committing a transaction on the server. The default
-    /// (COMMIT_ALL) indicates that the server should wait for master and all replica commits to
+    /// (`COMMIT_ALL`) indicates that the server should wait for master and all replica commits to
     /// be successful before returning success to the client.
     pub commit_level: CommitLevel,
 
@@ -49,7 +49,7 @@ pub struct WritePolicy {
     /// The default is to not send the user defined key.
     pub send_key: bool,
 
-    /// For Client::operate() method, return a result for every operation.
+    /// For `Client::operate()` method, return a result for every operation.
     /// Some list operations do not return results by default (`operations::list::clear()` for
     /// example). This can sometimes make it difficult to determine the desired result offset in
     /// the returned bin's result list.

@@ -22,7 +22,7 @@ use crate::operations::OperationType;
 use crate::policy::{Policy, WritePolicy};
 use crate::{Bin, Key, ResultCode};
 
-pub(crate) struct WriteCommand<'a> {
+pub struct WriteCommand<'a> {
     single_command: SingleCommand<'a>,
     policy: &'a WritePolicy,
     bins: &'a [Bin],
@@ -51,7 +51,7 @@ impl<'a> WriteCommand<'a> {
 }
 
 #[async_trait::async_trait]
-impl<'a> Command for WriteCommand<'a> {
+impl Command for WriteCommand<'_> {
     async fn write_timeout(&mut self, conn: &mut Connection) -> Result<()> {
         conn.buffer.write_timeout(self.policy.server_timeout());
         Ok(())
@@ -89,7 +89,7 @@ impl<'a> Command for WriteCommand<'a> {
     async fn parse_result(&mut self, conn: &mut Connection) -> Result<()> {
         // Read header.
         if let Err(err) = conn.read_header().await {
-            warn!("Parse result error: {}", err);
+            warn!("Parse result error: {err}");
             return Err(err);
         }
 

@@ -25,7 +25,7 @@ use crate::policy::QueryPolicy;
 use crate::query::NodePartitions;
 use crate::{Bins, Recordset};
 
-pub(crate) struct ScanCommand<'a> {
+pub struct ScanCommand<'a> {
     stream_command: StreamCommand,
     policy: &'a QueryPolicy,
     namespace: &'a str,
@@ -62,7 +62,7 @@ impl<'a> ScanCommand<'a> {
 }
 
 #[async_trait::async_trait]
-impl<'a> Command for ScanCommand<'a> {
+impl Command for ScanCommand<'_> {
     async fn write_timeout(&mut self, conn: &mut Connection) -> Result<()> {
         let server_timeout = self
             .stream_command

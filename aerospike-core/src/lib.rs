@@ -42,11 +42,11 @@
     clippy::missing_errors_doc
 )]
 
-//! A pure-rust client for the Aerospike NoSQL database.
+//! A pure-rust client for the Aerospike `NoSQL` database.
 //!
-//! Aerospike is an enterprise-class, NoSQL database solution for real-time operational
+//! Aerospike is an enterprise-class, `NoSQL` database solution for real-time operational
 //! applications, delivering predictable performance at scale, superior uptime, and high
-//! availability at the lowest TCO compared to first-generation NoSQL and relational databases. For
+//! availability at the lowest TCO compared to first-generation `NoSQL` and relational databases. For
 //! more information please refer to <https://www.aerospike.com/>.
 //!
 //! # Installation
@@ -137,7 +137,6 @@
 
 extern crate base64;
 extern crate byteorder;
-extern crate crossbeam_queue;
 #[macro_use]
 extern crate rhexdump;
 #[macro_use]

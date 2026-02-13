@@ -51,7 +51,7 @@ pub fn init_with_min_hash(
             ExpressionArgument::Value(Value::from(HllExpOp::Init as i64)),
             ExpressionArgument::FilterExpression(index_bit_count),
             ExpressionArgument::FilterExpression(min_hash_count),
-            ExpressionArgument::Value(Value::from(policy.flags as i64)),
+            ExpressionArgument::Value(Value::from(policy.flags)),
         ],
     )
 }
@@ -119,7 +119,7 @@ pub fn add_with_index_and_min_hash(
             ExpressionArgument::FilterExpression(list),
             ExpressionArgument::FilterExpression(index_bit_count),
             ExpressionArgument::FilterExpression(min_hash_count),
-            ExpressionArgument::Value(Value::from(policy.flags as i64)),
+            ExpressionArgument::Value(Value::from(policy.flags)),
         ],
     )
 }
