@@ -513,9 +513,7 @@ impl Connection {
                     ),
                 )
                 .await
-                .map_err(|e| {
-                    Error::Timeout(format!("Timeout draining the connection {e}"))
-                })?,
+                .map_err(|e| Error::Timeout(format!("Timeout draining the connection {e}")))?,
                 #[cfg(test)]
                 _ => unreachable!(),
             }?;
@@ -665,9 +663,7 @@ impl<'a> BufferedConn<'a> {
                     ),
                 )
                 .await
-                .map_err(|e| {
-                    Error::Timeout(format!("Timeout draining the connection {e}"))
-                })?,
+                .map_err(|e| Error::Timeout(format!("Timeout draining the connection {e}")))?,
                 #[cfg(test)]
                 _ => unreachable!(),
             }?;
@@ -782,13 +778,13 @@ impl<'a> ConnectionRecovery<'a> {
                     .set_state(ConnectionState::ReadingBody(receive_size));
 
                 if self.read_body(receive_size).await.is_ok() {
-                    self.conn.state = ConnectionState::Ready;
+                    self.conn.reset_state();
                 }
             }
 
             ConnectionState::ReadingBody(total_size) => {
                 if self.read_body(total_size).await.is_ok() {
-                    self.conn.state = ConnectionState::Ready;
+                    self.conn.reset_state();
                 }
             }
 
@@ -803,7 +799,7 @@ impl<'a> ConnectionRecovery<'a> {
                         .set_state(ConnectionState::ReadingStreamBody(receive_size));
                     match self.read_stream_body(receive_size).await {
                         Ok(true) => {
-                            self.conn.state = ConnectionState::Ready;
+                            self.conn.reset_state();
                             return;
                         }
                         Err(_) => return,
@@ -823,7 +819,7 @@ impl<'a> ConnectionRecovery<'a> {
                 while receive_size > 0 {
                     match self.read_stream_body(receive_size).await {
                         Ok(true) => {
-                            self.conn.state = ConnectionState::Ready;
+                            self.conn.reset_state();
                             return;
                         }
                         Err(_) => return,
@@ -844,7 +840,6 @@ impl<'a> ConnectionRecovery<'a> {
     }
 
     async fn read_header(&mut self, total_size: usize) -> Result<usize> {
-        assert_eq!(total_size, 8);
         if total_size > self.conn.bytes_read {
             // read the rest of the header
             if let Err(_) = self

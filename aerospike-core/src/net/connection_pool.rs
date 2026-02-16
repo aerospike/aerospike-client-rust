@@ -56,7 +56,11 @@ impl Queue {
     /// If so, it will increase the reserved value by one and return true.
     /// Otherwise, return false.
     pub fn reserve_capacity(&self) -> bool {
-        let mut reserved = self.0.reserved.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut reserved = self
+            .0
+            .reserved
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         if *reserved < self.0.capacity {
             *reserved += 1;
             return true;
@@ -73,7 +77,11 @@ impl Queue {
 
     /// Decreases the reserved value by one, opening up capacity for more connections.
     pub fn reduce_capacity(&self) {
-        let mut reserved = self.0.reserved.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut reserved = self
+            .0
+            .reserved
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         if *reserved > 0 {
             *reserved -= 1;
         }
@@ -127,7 +135,11 @@ impl Queue {
     /// Putting back a connection in the queue does not reserve capacity.
     /// You should reserve capacity before putting back the connection in the queue.
     pub fn put_back(&self, conn: Connection) {
-        let mut connections = self.0.connections.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut connections = self
+            .0
+            .connections
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         if conn.state == ConnectionState::Ready && connections.len() < self.0.capacity {
             connections.push_back(conn);
         }
@@ -136,7 +148,11 @@ impl Queue {
 
     /// Removes all the connections from the queue.
     pub fn clear(&mut self) {
-        let mut connections = self.0.connections.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut connections = self
+            .0
+            .connections
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         for mut conn in connections.drain(..) {
             conn.close();
         }
