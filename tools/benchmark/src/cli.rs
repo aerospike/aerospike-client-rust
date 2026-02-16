@@ -19,7 +19,6 @@ use std::env;
 use std::str::FromStr;
 
 use clap::{App, Arg};
-use num_cpus;
 
 use crate::{
     db_object_spec::{parse_object_spec_list, DBObjectSpec},
@@ -50,7 +49,9 @@ benchmark:
 "###;
 
 lazy_static! {
-    pub static ref NUM_CPUS: String = format!("{}", num_cpus::get());
+    static ref DEFAULT_CORES: String = std::thread::available_parallelism()
+        .map(|n| n.get().to_string())
+        .unwrap_or_else(|_| "1".to_string());
 }
 
 #[derive(Debug)]
@@ -60,7 +61,7 @@ pub struct Options {
     pub set: String,
     pub keys: i64,
     pub start_key: i64,
-    pub concurrency: i64,
+    pub cores: i64,
     pub workload: Workload,
     pub conn_pools_per_node: usize,
     pub use_services_alternate: bool,
@@ -88,7 +89,7 @@ pub fn parse_options() -> Result<Options, String> {
         set: matches.value_of("set").unwrap().to_owned(),
         keys: i64::from_str(matches.value_of("keys").unwrap()).unwrap(),
         start_key: i64::from_str(matches.value_of("startkey").unwrap()).unwrap(),
-        concurrency: i64::from_str(matches.value_of("concurrency").unwrap()).unwrap(),
+        cores: i64::from_str(matches.value_of("cores").unwrap()).unwrap(),
         workload: Workload::from_str(matches.value_of("workload").unwrap()).unwrap(),
         conn_pools_per_node: usize::from_str(matches.value_of("connPoolsPerNode").unwrap())
             .unwrap(),
@@ -152,9 +153,9 @@ fn build_cli() -> App<'static, 'static> {
                 .default_value("0"),
         )
         .arg(
-            Arg::from_usage("-c, --concurrency 'No. threads used to generate load'")
+            Arg::from_usage("-c, --cores 'No. of CPU Cores to be used'")
                 .validator(|val| validate::<i64>(val, "Must be number".into()))
-                .default_value(&*NUM_CPUS),
+                .default_value(&*DEFAULT_CORES),
         )
         .arg(
             Arg::from_usage(
