@@ -22,7 +22,7 @@ extern crate env_logger;
 extern crate lazy_static;
 #[macro_use]
 extern crate log;
-extern crate num_cpus;
+// extern crate num_cpus;
 extern crate rand;
 
 mod args;
@@ -51,21 +51,6 @@ use crate::generator::{KeyRangeGen, RandomKeyRange};
 use crate::workers::Workload;
 
 fn main() {
-    let num_cores: usize = std::thread::available_parallelism()
-        .expect("error retrieving number of CPU cores.")
-        .into();
-    tokio::runtime::Builder::new_multi_thread()
-        .worker_threads(num_cores)
-        .enable_all()
-        .build()
-        .unwrap()
-        .block_on(async {
-            benchmark().await;
-        })
-}
-
-async fn benchmark() {
-    let _ = env_logger::try_init();
     let options = match cli::parse_options() {
         Ok(options) => options,
         Err(err) => {
@@ -73,7 +58,20 @@ async fn benchmark() {
             std::process::exit(2);
         }
     };
+    let cores = options.cores as usize;
 
+    tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(cores.max(1))
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(async move {
+            benchmark(options).await;
+        })
+}
+
+async fn benchmark(options: Options) {
+    let _ = env_logger::try_init();
     match connect(&options).await {
         Ok(client) => run_workload(client, options).await,
         Err(err) => {
@@ -120,7 +118,7 @@ async fn run_workload(client: Client, opts: Options) {
         set,
         start_key,
         keys,
-        concurrency,
+        cores,
         batch_size,
         ..
     } = opts;
@@ -140,14 +138,14 @@ async fn run_workload(client: Client, opts: Options) {
     let set_ref: Arc<str> = Arc::from(set);
 
     if workload == Workload::Initialize {
-        for keys in KeyPartitions::new(namespace_ref, set_ref, start_key, keys, concurrency) {
+        for keys in KeyPartitions::new(namespace_ref, set_ref, start_key, keys, cores) {
             let mut worker =
                 Worker::for_workload(workload, client.clone(), send.clone(), args.clone());
             let handle = tokio::spawn(async move { worker.run(keys).await });
             worker_handles.push(handle);
         }
     } else {
-        for _ in 0..opts.concurrency {
+        for _ in 0..opts.cores {
             let mut worker =
                 Worker::for_workload(workload, client.clone(), send.clone(), args.clone());
             let key_range = RandomKeyRange::new(
