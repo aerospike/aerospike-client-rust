@@ -918,7 +918,11 @@ impl Client {
         before_nanos: i64,
     ) -> Result<()> {
         let mut cmd = String::with_capacity(160);
-        cmd.push_str("truncate:namespace=");
+        if !set_name.is_empty() {
+            cmd.push_str("truncate:namespace=");
+        } else {
+            cmd.push_str("truncate-namespace:namespace=");
+        }
         cmd.push_str(namespace);
 
         if !set_name.is_empty() {
