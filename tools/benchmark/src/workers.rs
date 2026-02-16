@@ -28,7 +28,9 @@ use crate::args::Args;
 use crate::generator::KeyRangeGen;
 use crate::percent::Percent;
 use crate::stats::Histogram;
-use crate::tasks::{InsertTask, ReadIncrementTask, ReadModUpdateTask, ReadUpdateTask, TaskType};
+use crate::tasks::{
+    InsertTask, OpType, ReadIncrementTask, ReadModUpdateTask, ReadUpdateTask, TaskType,
+};
 
 pub use crate::tasks::Status;
 
@@ -135,8 +137,9 @@ impl FromStr for Workload {
 }
 
 pub struct Worker {
-    histogram: Histogram,
-    collector: UnboundedSender<Histogram>,
+    read_histogram: Histogram,
+    write_histogram: Histogram,
+    collector: UnboundedSender<(Histogram, Histogram)>,
     task: TaskType,
     rng: StdRng,
     batch_size: usize,
@@ -146,7 +149,7 @@ impl Worker {
     pub fn for_workload(
         workload: Workload,
         client: Arc<Client>,
-        sender: UnboundedSender<Histogram>,
+        sender: UnboundedSender<(Histogram, Histogram)>,
         args: Arc<Args>,
     ) -> Self {
         let batch_size = args.batch_size;
@@ -175,7 +178,8 @@ impl Worker {
             }
         };
         Worker {
-            histogram: Histogram::new(),
+            read_histogram: Histogram::new(),
+            write_histogram: Histogram::new(),
             collector: sender,
             task,
             rng: StdRng::from_entropy(),
@@ -191,20 +195,26 @@ impl Worker {
             if batch.is_empty() {
                 break;
             }
-            let now = Instant::now();
-            let status = self.task.execute(&batch, &mut self.rng).await;
-            self.histogram.add(now.elapsed(), status);
+            let op_statuses = self.task.execute(&batch, &mut self.rng).await;
+            for (status, duration, op_type) in &op_statuses {
+                match op_type {
+                    OpType::Read => self.read_histogram.add(*duration, *status),
+                    OpType::Write => self.write_histogram.add(*duration, *status),
+                }
+            }
             if last_collection.elapsed() > *COLLECT_MS {
                 self.collect();
                 last_collection = Instant::now();
             }
-            self.collect();
         }
+        self.collect();
+
     }
 
     fn collect(&mut self) {
-        let _ = self.collector.send(self.histogram);
-        self.histogram.reset();
+        let _ = self.collector.send((self.read_histogram, self.write_histogram));
+        self.read_histogram.reset();
+        self.write_histogram.reset();
     }
 }
 
