@@ -12,7 +12,9 @@ All notable changes to this project will be documented in this file.
   * [CLIENT-4200] Performance fix (#185). Replaces `RwLock` with `ArcLock`.
 
 * **Bug Fixes**
-    [CLIENT-4177] Query during migration hangs for full socket_timeout after scale-down cluster
+  * [CLIENT-4177] Query during migration hangs for full `socket_timeout` after scale-down cluster.
+  * Allow truncating the whole namespace.
+  * Fix an issue where `max_retries` were not respected in Scan/Queries.
 
 ## [2.0.0-alpha.9]
 
