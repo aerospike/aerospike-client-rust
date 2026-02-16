@@ -18,6 +18,9 @@ use std::time::{Duration, Instant};
 
 use tokio::sync::mpsc::UnboundedReceiver;
 
+/// Read and write histograms sent by workers each collection interval.
+pub type StatsPacket = (Histogram, Histogram);
+
 use crate::workers::Status;
 
 // Number of buckets for latency histogram, e.g.
@@ -31,15 +34,17 @@ lazy_static! {
 
 #[derive(Debug)]
 pub struct Collector {
-    receiver: UnboundedReceiver<Histogram>,
-    histogram: Histogram,
+    receiver: UnboundedReceiver<StatsPacket>,
+    read_histogram: Histogram,
+    write_histogram: Histogram,
 }
 
 impl Collector {
-    pub fn new(recv: UnboundedReceiver<Histogram>) -> Self {
+    pub fn new(recv: UnboundedReceiver<StatsPacket>) -> Self {
         Collector {
             receiver: recv,
-            histogram: Histogram::new(),
+            read_histogram: Histogram::new(),
+            write_histogram: Histogram::new(),
         }
     }
 
@@ -52,64 +57,93 @@ impl Collector {
             tokio::select! {
                 msg = self.receiver.recv() => {
                     match msg {
-                        Some(hist) => self.histogram.merge(hist),
+                        Some((read_hist, write_hist)) => {
+                            self.read_histogram.merge(read_hist);
+                            self.write_histogram.merge(write_hist);
+                        }
                         None => break,
                     }
                 }
                 _= interval.tick() => {
                     self.report();
-                    self.histogram.reset();
+                    self.read_histogram.reset();
+                    self.write_histogram.reset();
                 }
             }
         }
         self.report();
-        self.histogram.reset();
+        self.read_histogram.reset();
+        self.write_histogram.reset();
         self.summary();
     }
 
     fn report(&self) {
-        let hist = self.histogram;
-        let bkt = hist.latencies();
+        Self::report_section("READ", &self.read_histogram);
+        Self::report_section("WRITE", &self.write_histogram);
+    }
+
+    fn report_section(label: &str, hist: &Histogram) {
         println!(
-            "TPS: {:>8.0},   TOTAL_OPS: {:>8},   Timeouts: {:>8},   Errors: {:>8}",
+            "--- {} ---\n  TPS: {:>8.0},   TOTAL_OPS: {:>8},   Timeouts: {:>8},   Errors: {:>8}",
+            label,
             hist.tps(),
             hist.count(),
             hist.timeouts(),
             hist.errors()
         );
-        println!(
-            "Latency:    min      avg      max    |        < 1 ms        < 2 ms        < 4 \
-             ms        < 8 ms       < 16 ms      >= 16 ms"
-        );
-        println!(
-            "       {:>8.0} {:>8.0} {:>8.0} μs | {:>7}/{:>4.1}% {:>7}/{:>4.1}% \
-             {:>7}/{:>4.1}% {:>7}/{:>4.1}% {:>7}/{:>4.1}% {:>7}/{:>4.1}%",
-            hist.min(),
-            hist.avg(),
-            hist.max(),
-            bkt[0].0,
-            bkt[0].1,
-            bkt[1].0,
-            bkt[1].1,
-            bkt[2].0,
-            bkt[2].1,
-            bkt[3].0,
-            bkt[3].1,
-            bkt[4].0,
-            bkt[4].1,
-            bkt[5].0,
-            bkt[5].1
-        );
+        if hist.count() > 0 {
+            let bkt = hist.latencies();
+            println!(
+                "  Latency:    min      avg      max    |        < 1 ms        < 2 ms        < 4 \
+                 ms        < 8 ms       < 16 ms      >= 16 ms"
+            );
+            println!(
+                "         {:>8.0} {:>8.0} {:>8.0} μs | {:>7}/{:>4.1}% {:>7}/{:>4.1}% \
+                 {:>7}/{:>4.1}% {:>7}/{:>4.1}% {:>7}/{:>4.1}% {:>7}/{:>4.1}%",
+                hist.min(),
+                hist.avg(),
+                hist.max(),
+                bkt[0].0,
+                bkt[0].1,
+                bkt[1].0,
+                bkt[1].1,
+                bkt[2].0,
+                bkt[2].1,
+                bkt[3].0,
+                bkt[3].1,
+                bkt[4].0,
+                bkt[4].1,
+                bkt[5].0,
+                bkt[5].1
+            );
+        } else {
+            println!("  Latency: (no ops)");
+        }
+        println!();
     }
 
     fn summary(&self) {
-        let hist = self.histogram;
+        let read = self.read_histogram;
+        let write = self.write_histogram;
         println!(
-            "Total requests: {},   Elapsed time: {:.1}s,    TPS: {:.0}",
-            hist.total(),
-            hist.total_elapsed_as_secs(),
-            hist.total_tps()
-        )
+            "Total read requests: {},   Total write requests: {}",
+            read.total(),
+            write.total()
+        );
+        // Both histograms share the same start time (Collector creation), so elapsed is identical
+        println!(
+            "Elapsed time: {:.1}s",
+            write.total_elapsed_as_secs()
+        );
+        println!(
+            "Total TPS: {:.0}",
+            read.total_tps() + write.total_tps()
+        );
+        println!(
+            "Total timeouts: {},   Total errors: {}",
+            read.total_timeouts() + write.total_timeouts(),
+            read.total_errors() + write.total_errors()
+        );
     }
 }
 
@@ -125,6 +159,8 @@ pub struct Histogram {
     interval: Instant,
     start: Instant,
     total: u128,
+    total_timeouts: u128,
+    total_errors: u128,
 }
 
 impl Histogram {
@@ -141,6 +177,8 @@ impl Histogram {
             interval: now,
             start: now,
             total: 0,
+            total_timeouts: 0,
+            total_errors: 0,
         }
     }
 
@@ -157,7 +195,7 @@ impl Histogram {
     }
 
     pub fn tps(&self) -> f64 {
-        self.count as f64 / self.interval_as_secs()
+       self.count as f64 / self.interval_as_secs()
     }
 
     pub fn count(&self) -> u128 {
@@ -184,6 +222,14 @@ impl Histogram {
 
     pub fn total(&self) -> u128 {
         self.total
+    }
+
+    pub fn total_timeouts(&self) -> u128 {
+        self.total_timeouts
+    }
+
+    pub fn total_errors(&self) -> u128 {
+        self.total_errors
     }
 
     pub fn total_elapsed_as_secs(&self) -> f64 {
@@ -253,6 +299,8 @@ impl Histogram {
             *bucket = 0;
         }
         self.total += self.count;
+        self.total_timeouts += self.timeouts;
+        self.total_errors += self.errors;
         self.min = u128::max_value();
         self.max = u128::min_value();
         self.sum = 0;

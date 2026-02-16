@@ -13,7 +13,9 @@
 // License for the specific language governing permissions and limitations under
 // the License.
 
+use std::future::Future;
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use rand::rngs::StdRng;
 use rand::Rng;
@@ -25,10 +27,17 @@ use crate::args::Args;
 use crate::batch_ops::{build_batch_read_ops, build_batch_write_ops};
 use crate::percent::Percent;
 
+#[derive(Clone, Copy)]
 pub enum Status {
     Success,
     Error,
     Timeout,
+}
+
+#[derive(Clone, Copy)]
+pub enum OpType {
+    Read,
+    Write,
 }
 
 pub enum TaskType {
@@ -39,7 +48,7 @@ pub enum TaskType {
 }
 
 impl TaskType {
-    pub async fn execute(&self, keys: &[Key], rng: &mut StdRng) -> Status {
+    pub async fn execute(&self, keys: &[Key], rng: &mut StdRng) -> Vec<(Status, Duration, OpType)> {
         match self {
             TaskType::Insert(task) => task.execute(keys, rng).await,
             TaskType::ReadUpdate(task) => task.execute(keys, rng).await,
@@ -50,7 +59,7 @@ impl TaskType {
 }
 
 trait Task: Send {
-    async fn execute(&self, keys: &[Key], rng: &mut StdRng) -> Status;
+    async fn execute(&self, keys: &[Key], rng: &mut StdRng) -> Vec<(Status, Duration, OpType)>;
 
     fn status(&self, result: asResult<()>) -> Status {
         match result {
@@ -61,6 +70,15 @@ trait Task: Send {
             Err(_) => Status::Error,
             _ => Status::Success,
         }
+    }
+
+    async fn timed_execution<F>(&self, fut: F) -> (Status, Duration)
+    where
+        F: Future<Output = asResult<()>> + Send,
+    {
+        let start = Instant::now();
+        let status = self.status(fut.await);
+        (status, start.elapsed())
     }
 }
 
@@ -83,11 +101,15 @@ impl InsertTask {
 }
 
 impl Task for InsertTask {
-    async fn execute(&self, keys: &[Key], rng: &mut StdRng) -> Status {
+    async fn execute(&self, keys: &[Key], rng: &mut StdRng) -> Vec<(Status, Duration, OpType)> {
+        let mut results = Vec::with_capacity(1);
         let key = &keys[0];
         let bins = self.args.build_bins(key, rng, None);
         trace!("Inserting {}", key);
-        self.status(self.client.put(&self.policy, key, &bins).await)
+        let (status, duration) =
+            self.timed_execution(self.client.put(&self.policy, key, &bins)).await;
+        results.push((status, duration, OpType::Write));
+        results
     }
 }
 
@@ -105,23 +127,31 @@ impl ReadModUpdateTask {
 }
 
 impl Task for ReadModUpdateTask {
-    async fn execute(&self, keys: &[Key], rng: &mut StdRng) -> Status {
+    async fn execute(&self, keys: &[Key], rng: &mut StdRng) -> Vec<(Status, Duration, OpType)> {
+        let mut results = Vec::with_capacity(2);
         let key = &keys[0];
         // Read all bins
-        self.status(
-            self.client
-                .get(&self.args.read_policy, key, Bins::All)
-                .await
-                .map(|_| ()),
-        );
+        let client = self.client.clone();
+        let policy = self.args.read_policy.clone();
+        let key_clone = key.clone();
+        let (status, duration) = self
+            .timed_execution(async move {
+                client.get(&policy, &key_clone, Bins::All).await.map(|_| ())
+            })
+            .await;
+        results.push((status, duration, OpType::Read));
+
         // write single bins
         let first_bin = self.args.build_bins(key, rng, Some(1));
         trace!("Writing first bin {}", key);
-        self.status(
-            self.client
-                .put(&self.args.write_policy, key, &first_bin[..1])
-                .await,
-        )
+        let (status, duration) = self
+            .timed_execution(
+                self.client
+                    .put(&self.args.write_policy, key, &first_bin[..1]),
+            )
+            .await;
+        results.push((status, duration, OpType::Write));
+        results
     }
 }
 
@@ -133,6 +163,7 @@ pub struct ReadUpdateTask {
     read_bins_pct: Percent,
     write_bins_pct: Percent,
     args: Arc<Args>,
+    first_bin_name: String,
 }
 
 impl ReadUpdateTask {
@@ -143,18 +174,20 @@ impl ReadUpdateTask {
         write_bins_pct: Percent,
         args: Arc<Args>,
     ) -> Self {
+        let first_bin_name = format!("{}_{}", args.bin_name_base, 1);
         ReadUpdateTask {
             client,
             reads,
             read_bins_pct,
             write_bins_pct,
             args,
+            first_bin_name,
         }
     }
 }
 
 impl Task for ReadUpdateTask {
-    async fn execute(&self, keys: &[Key], rng: &mut StdRng) -> Status {
+    async fn execute(&self, keys: &[Key], rng: &mut StdRng) -> Vec<(Status, Duration, OpType)> {
         if rng.gen_range(0..100u8) < self.reads.as_u8() {
             self.execute_read(keys, rng).await
         } else {
@@ -164,57 +197,67 @@ impl Task for ReadUpdateTask {
 }
 
 impl ReadUpdateTask {
-    async fn execute_read(&self, keys: &[Key], rng: &mut StdRng) -> Status {
+    async fn execute_read(&self, keys: &[Key], rng: &mut StdRng) -> Vec<(Status, Duration, OpType)> {
         let multi_bins_read = rng.gen_range(0..100u8) < self.read_bins_pct.as_u8();
+        let mut results = Vec::with_capacity(1);
 
         if keys.is_empty() {
-            return Status::Success;
+            return results;
         }
         match keys.len() {
             1 => {
                 let key = &keys[0];
                 if multi_bins_read {
                     trace!("Reading all bins {}", key);
-                    self.status(
-                        self.client
-                            .get(&self.args.read_policy, key, Bins::All)
-                            .await
-                            .map(|_| ()),
-                    )
+                    let client = self.client.clone();
+                    let policy = self.args.read_policy.clone();
+                    let key_clone = key.clone();
+                    let (status, duration) = self
+                        .timed_execution(async move {
+                            client.get(&policy, &key_clone, Bins::All).await.map(|_| ())
+                        })
+                        .await;
+                    results.push((status, duration, OpType::Read));
                 } else {
-                    let single_bin = format!("{}_{}", self.args.bin_name_base, 1);
-                    trace!("Reading single bin {} {}", single_bin, key);
-                    self.status(
-                        self.client
-                            .get(
-                                &self.args.read_policy,
-                                &keys[0],
-                                Bins::from([single_bin.as_str()]),
-                            )
-                            .await
-                            .map(|_| ()),
-                    )
+                    trace!("Reading single bin {} {}", self.first_bin_name, key);
+                    let client = self.client.clone();
+                    let policy = self.args.read_policy.clone();
+                    let key_clone = keys[0].clone();
+                    let bin_name = self.first_bin_name.clone();
+                    let (status, duration) = self
+                        .timed_execution(async move {
+                            client
+                                .get(&policy, &key_clone, Bins::from([bin_name.as_str()]))
+                                .await
+                                .map(|_| ())
+                        })
+                        .await;
+                    results.push((status, duration, OpType::Read));
                 }
             }
             _ => {
                 // batch read
                 trace!("Batch Reads ");
                 let ops = build_batch_read_ops(keys, &self.args.batch_read_policy, Bins::All);
-                self.status(
-                    self.client
-                        .batch(&self.args.batch_policy, &ops)
-                        .await
-                        .map(|_| ()),
-                )
+                let client = self.client.clone();
+                let policy = self.args.batch_policy.clone();
+                let (status, duration) = self
+                    .timed_execution(async move {
+                        client.batch(&policy, &ops).await.map(|_| ())
+                    })
+                    .await;
+                results.push((status, duration, OpType::Read));
             }
         }
+        results
     }
 
-    async fn execute_write(&self, keys: &[Key], rng: &mut StdRng) -> Status {
+    async fn execute_write(&self, keys: &[Key], rng: &mut StdRng) -> Vec<(Status, Duration, OpType)> {
         let multi_bins_write = rng.gen_range(0..100u8) < self.write_bins_pct.as_u8();
+        let mut results = Vec::with_capacity(1);
 
         if keys.is_empty() {
-            return Status::Success;
+            return results;
         }
 
         match keys.len() {
@@ -223,32 +266,38 @@ impl ReadUpdateTask {
                 if multi_bins_write {
                     let multi_bins = self.args.build_bins(key, rng, None);
                     trace!("Writing all bins {}", key);
-                    self.status(
-                        self.client
-                            .put(&self.args.write_policy, key, &multi_bins)
-                            .await,
-                    )
+                    let (status, duration) = self
+                        .timed_execution(
+                            self.client.put(&self.args.write_policy, key, &multi_bins),
+                        )
+                        .await;
+                    results.push((status, duration, OpType::Write));
                 } else {
                     let first_bin = self.args.build_bins(key, rng, Some(1));
                     trace!("Writing first bin {}", key);
-                    self.status(
-                        self.client
-                            .put(&self.args.write_policy, key, &first_bin[..1])
-                            .await,
-                    )
+                    let (status, duration) = self
+                        .timed_execution(
+                            self.client
+                                .put(&self.args.write_policy, key, &first_bin[..1]),
+                        )
+                        .await;
+                    results.push((status, duration, OpType::Write));
                 }
             }
             _ => {
                 // batch write
                 let ops = build_batch_write_ops(keys, &self.args, rng, multi_bins_write);
-                self.status(
-                    self.client
-                        .batch(&self.args.batch_policy, &ops)
-                        .await
-                        .map(|_| ()),
-                )
+                let client = self.client.clone();
+                let policy = self.args.batch_policy.clone();
+                let (status, duration) = self
+                    .timed_execution(async move {
+                        client.batch(&policy, &ops).await.map(|_| ())
+                    })
+                    .await;
+                results.push((status, duration, OpType::Write));
             }
         }
+        results
     }
 }
 
@@ -276,19 +325,27 @@ impl ReadIncrementTask {
 }
 
 impl Task for ReadIncrementTask {
-    async fn execute(&self, keys: &[Key], _rng: &mut StdRng) -> Status {
+    async fn execute(&self, keys: &[Key], _rng: &mut StdRng) -> Vec<(Status, Duration, OpType)> {
+        let mut results = Vec::with_capacity(2);
         let key = &keys[0];
         // Read all bins
-        self.status(
-            self.client
-                .get(&self.args.read_policy, key, Bins::All)
-                .await
-                .map(|_| ()),
-        );
+        let client = self.client.clone();
+        let policy = self.args.read_policy.clone();
+        let key_clone = key.clone();
+        let (status, duration) = self
+            .timed_execution(async move {
+                client.get(&policy, &key_clone, Bins::All).await.map(|_| ())
+            })
+            .await;
+        results.push((status, duration, OpType::Read));
         let bins = [as_bin!(
             format!("{}_counter", self.args.bin_name_base).as_str(),
             self.delta
         )];
-        self.status(self.client.add(&self.write_policy, key, &bins).await)
+        let (status, duration) = self
+            .timed_execution(self.client.add(&self.write_policy, key, &bins))
+            .await;
+        results.push((status, duration, OpType::Write));
+        results
     }
 }
