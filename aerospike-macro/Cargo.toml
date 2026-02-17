@@ -11,6 +11,7 @@ categories.workspace = true
 homepage.workspace = true
 repository.workspace = true
 documentation.workspace = true
+rust-version.workspace = true
 
 [lib]
 proc-macro = true

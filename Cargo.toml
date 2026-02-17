@@ -11,6 +11,7 @@ homepage.workspace = true
 repository.workspace = true
 documentation.workspace = true
 readme.workspace = true
+rust-version.workspace = true
 
 exclude = [
     ".travis.yml",
@@ -21,6 +22,7 @@ exclude = [
 [workspace.package]
 version = "2.0.0-alpha.10"
 edition = "2018"
+rust-version = "1.87"
 authors = ["Khosrow Afroozeh <khosrow@aerospike.com>", "Jan Hecking <jhecking@aerospike.com>"]
 license = "Apache-2.0"
 description = "Aerospike Client for Rust"
