@@ -93,7 +93,7 @@ async fn benchmark(options: Options) {
 
 async fn connect(options: &Options) -> AerospikeResult<Client> {
     let mut policy = ClientPolicy::default();
-    policy.conn_pools_per_node = options.conn_pools_per_node;
+    policy.conn_pools_per_node = options.conn_pools_per_node as u8;
     policy.use_services_alternate = options.use_services_alternate;
     policy.ip_map = options.ip_map.clone();
     Client::new(&policy, &options.hosts).await
@@ -141,7 +141,8 @@ async fn run_workload(client: Client, opts: Options) {
         for keys in KeyPartitions::new(namespace_ref, set_ref, start_key, keys, cores) {
             let mut worker =
                 Worker::for_workload(workload, client.clone(), send.clone(), args.clone());
-            let handle = tokio::spawn(async move { worker.run(keys).await });
+            let handle =
+                tokio::spawn(Box::pin(async move { worker.run(keys).await }));
             worker_handles.push(handle);
         }
     } else {
@@ -154,8 +155,9 @@ async fn run_workload(client: Client, opts: Options) {
                 opts.start_key,
                 opts.keys,
             );
-            let handle =
-                tokio::spawn(async move { worker.run(KeyRangeGen::Random(key_range)).await });
+            let handle = tokio::spawn(Box::pin(async move {
+                worker.run(KeyRangeGen::Random(key_range)).await
+            }));
             worker_handles.push(handle);
         }
     }
