@@ -25,6 +25,8 @@ use crate::{db_object_spec::DBObjectSpec, workers::Workload};
 pub struct Args {
     pub n_bins: usize,
     pub bin_name_base: String,
+    /// Precomputed bin names ("base_1", "base_2", ...) to avoid format! in build_bins hot path.
+    pub bin_names: Vec<String>,
     pub object_specs: Vec<DBObjectSpec>,
     pub batch_size: usize,
     pub batch_read_policy: BatchReadPolicy,
@@ -89,9 +91,13 @@ impl ArgBuilder {
             batch_write_policy.record_exists_action = RecordExistsAction::Replace;
         }
 
+        let bin_names = (0..n_bins)
+            .map(|i| format!("{}_{}", bin_name_base, i + 1))
+            .collect();
         Ok(Args {
             n_bins,
             bin_name_base,
+            bin_names,
             object_specs,
             batch_size,
             batch_policy,
@@ -108,9 +114,16 @@ impl Args {
         ArgBuilder::default()
     }
 
-    pub fn build_bins(&self, key: &Key, rng: &mut StdRng, bin_opted: Option<usize>) -> Vec<Bin> {
+    pub fn build_bins(
+        &self,
+        key: &Key,
+        rng: &mut StdRng,
+        bin_opted: Option<usize>,
+        out: &mut Vec<Bin>,
+    ) {
+        out.clear();
         let num_bins = bin_opted.unwrap_or(self.n_bins);
-        let mut bins = Vec::with_capacity(num_bins);
+        out.reserve(num_bins);
         let n_specs = self.object_specs.len();
         let seed = match key.user_key.as_ref() {
             Some(Value::Int(k)) => Some(*k),
@@ -123,9 +136,8 @@ impl Args {
             } else {
                 spec.gen_value(rng, None)
             };
-            let name = format!("{}_{}", self.bin_name_base, i + 1);
-            bins.push(Bin::new(name, value));
+            let name = self.bin_names[i].clone();
+            out.push(Bin::new(name, value));
         }
-        bins
     }
 }

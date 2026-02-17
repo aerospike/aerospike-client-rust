@@ -16,7 +16,7 @@
 use rand::rngs::StdRng;
 
 use aerospike::operations;
-use aerospike::{BatchOperation, BatchReadPolicy, Bins, Key};
+use aerospike::{BatchOperation, BatchReadPolicy, Bin, Bins, Key};
 
 use crate::args::Args;
 
@@ -24,10 +24,13 @@ pub(crate) fn build_batch_read_ops(
     keys: &[Key],
     brpolicy: &BatchReadPolicy,
     bins: Bins,
-) -> Vec<BatchOperation> {
-    keys.iter()
-        .map(|k| BatchOperation::read(brpolicy, k.clone(), bins.clone()))
-        .collect()
+    out: &mut Vec<BatchOperation>,
+) {
+    out.clear();
+    out.reserve(keys.len());
+    for k in keys {
+        out.push(BatchOperation::read(brpolicy, k.clone(), bins.clone()));
+    }
 }
 
 pub(crate) fn build_batch_write_ops(
@@ -35,17 +38,22 @@ pub(crate) fn build_batch_write_ops(
     args: &Args,
     rng: &mut StdRng,
     multi_bins_write: bool,
-) -> Vec<BatchOperation> {
-    keys.iter()
-        .map(|k| {
-            let wops: Vec<_> = if multi_bins_write {
-                let bins = args.build_bins(k, rng, None);
-                bins.iter().map(operations::put).collect()
-            } else {
-                let bins = args.build_bins(k, rng, Some(1));
-                bins.iter().take(1).map(operations::put).collect()
-            };
-            BatchOperation::write(&args.batch_write_policy, k.clone(), wops)
-        })
-        .collect()
+    out: &mut Vec<BatchOperation>,
+    bins_buffer: &mut Vec<Bin>,
+) {
+    out.clear();
+    out.reserve(keys.len());
+    for k in keys {
+        if multi_bins_write {
+            args.build_bins(k, rng, None, bins_buffer);
+        } else {
+            args.build_bins(k, rng, Some(1), bins_buffer);
+        }
+        let wops: Vec<_> = if multi_bins_write {
+            bins_buffer.iter().map(operations::put).collect()
+        } else {
+            bins_buffer.iter().take(1).map(operations::put).collect()
+        };
+        out.push(BatchOperation::write(&args.batch_write_policy, k.clone(), wops));
+    }
 }

@@ -22,7 +22,7 @@ use tokio::sync::mpsc::UnboundedSender;
 use rand::rngs::StdRng;
 use rand::SeedableRng;
 
-use aerospike::{Client, Key};
+use aerospike::{BatchOperation, Bin, Client, Key};
 
 use crate::args::Args;
 use crate::generator::KeyRangeGen;
@@ -142,7 +142,11 @@ pub struct Worker {
     collector: UnboundedSender<(Histogram, Histogram)>,
     task: TaskType,
     rng: StdRng,
-    batch_size: usize,
+    batch_size: usize, 
+    batch: Vec<Key>,                          // Reused each loop to avoid allocating a new Vec<Key> per batch.
+    results: Vec<(Status, Duration, OpType)>, // Reused each batch so task execute() fills this instead of allocating a new Vec.
+    batch_ops: Vec<BatchOperation>, // Reused for batch read/write ops to avoid allocating Vec<BatchOperation> per batch.
+    bins_buffer: Vec<Bin>,          // Reused for build_bins to avoid allocating Vec<Bin> per call.
 }
 
 impl Worker {
@@ -184,6 +188,10 @@ impl Worker {
             task,
             rng: StdRng::from_entropy(),
             batch_size,
+            batch: Vec::with_capacity(batch_size),
+            results: Vec::with_capacity(2), // max 2 per batch (e.g. RMU, RMI)
+            batch_ops: Vec::new(),
+            bins_buffer: Vec::new(),
         }
     }
 
@@ -191,12 +199,26 @@ impl Worker {
         let mut last_collection = Instant::now();
         let mut key_range = key_range;
         loop {
-            let batch: Vec<Key> = key_range.by_ref().take(self.batch_size).collect();
-            if batch.is_empty() {
+            self.batch.clear();
+            for _ in 0..self.batch_size {
+                match key_range.next() {
+                    Some(k) => self.batch.push(k),
+                    None => break,
+                }
+            }
+            if self.batch.is_empty() {
                 break;
             }
-            let op_statuses = self.task.execute(&batch, &mut self.rng).await;
-            for (status, duration, op_type) in &op_statuses {
+            self.task
+                .execute(
+                    &self.batch,
+                    &mut self.rng,
+                    &mut self.results,
+                    &mut self.batch_ops,
+                    &mut self.bins_buffer,
+                )
+                .await;
+            for (status, duration, op_type) in &self.results {
                 match op_type {
                     OpType::Read => self.read_histogram.add(*duration, *status),
                     OpType::Write => self.write_histogram.add(*duration, *status),
