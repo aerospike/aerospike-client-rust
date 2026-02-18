@@ -15,7 +15,7 @@
 
 use std::future::Future;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use tokio::time::{Duration, Instant};
 
 use rand::rngs::StdRng;
 use rand::Rng;
