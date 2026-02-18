@@ -58,16 +58,20 @@ impl TaskType {
     ) {
         match self {
             TaskType::Insert(task) => {
-                task.execute(keys, rng, results, batch_ops, bins_buffer).await
+                task.execute(keys, rng, results, batch_ops, bins_buffer)
+                    .await
             }
             TaskType::ReadUpdate(task) => {
-                task.execute(keys, rng, results, batch_ops, bins_buffer).await
+                task.execute(keys, rng, results, batch_ops, bins_buffer)
+                    .await
             }
             TaskType::ReadModifyUpdate(task) => {
-                task.execute(keys, rng, results, batch_ops, bins_buffer).await
+                task.execute(keys, rng, results, batch_ops, bins_buffer)
+                    .await
             }
             TaskType::ReadIncrement(task) => {
-                task.execute(keys, rng, results, batch_ops, bins_buffer).await
+                task.execute(keys, rng, results, batch_ops, bins_buffer)
+                    .await
             }
         }
     }
@@ -135,8 +139,9 @@ impl Task for InsertTask {
         let key = &keys[0];
         self.args.build_bins(key, rng, None, bins_buffer);
         trace!("Inserting {}", key);
-        let (status, duration) =
-            self.timed_execution(self.client.put(&self.policy, key, bins_buffer)).await;
+        let (status, duration) = self
+            .timed_execution(self.client.put(&self.policy, key, bins_buffer))
+            .await;
         results.push((status, duration, OpType::Write));
     }
 }
@@ -170,9 +175,9 @@ impl Task for ReadModUpdateTask {
         let policy = self.args.read_policy.clone();
         let key_clone = key.clone();
         let (status, duration) = self
-            .timed_execution(async move {
-                client.get(&policy, &key_clone, Bins::All).await.map(|_| ())
-            })
+            .timed_execution(
+                async move { client.get(&policy, &key_clone, Bins::All).await.map(|_| ()) },
+            )
             .await;
         results.push((status, duration, OpType::Read));
 
@@ -231,9 +236,11 @@ impl Task for ReadUpdateTask {
     ) {
         results.clear();
         if rng.gen_range(0..100u8) < self.reads.as_u8() {
-            self.execute_read(keys, rng, results, batch_ops, bins_buffer).await
+            self.execute_read(keys, rng, results, batch_ops, bins_buffer)
+                .await
         } else {
-            self.execute_write(keys, rng, results, batch_ops, bins_buffer).await
+            self.execute_write(keys, rng, results, batch_ops, bins_buffer)
+                .await
         }
     }
 }
@@ -285,19 +292,12 @@ impl ReadUpdateTask {
             _ => {
                 // batch read
                 trace!("Batch Reads ");
-                build_batch_read_ops(
-                    keys,
-                    &self.args.batch_read_policy,
-                    Bins::All,
-                    batch_ops,
-                );
+                build_batch_read_ops(keys, &self.args.batch_read_policy, Bins::All, batch_ops);
                 let ops = batch_ops.as_slice();
                 let client = self.client.clone();
                 let policy = self.args.batch_policy.clone();
                 let (status, duration) = self
-                    .timed_execution(async move {
-                        client.batch(&policy, ops).await.map(|_| ())
-                    })
+                    .timed_execution(async move { client.batch(&policy, ops).await.map(|_| ()) })
                     .await;
                 results.push((status, duration, OpType::Read));
             }
@@ -323,19 +323,18 @@ impl ReadUpdateTask {
                     self.args.build_bins(key, rng, None, bins_buffer);
                     trace!("Writing all bins {}", key);
                     let (status, duration) = self
-                        .timed_execution(
-                            self.client.put(&self.args.write_policy, key, bins_buffer),
-                        )
+                        .timed_execution(self.client.put(&self.args.write_policy, key, bins_buffer))
                         .await;
                     results.push((status, duration, OpType::Write));
                 } else {
                     self.args.build_bins(key, rng, Some(1), bins_buffer);
                     trace!("Writing first bin {}", key);
                     let (status, duration) = self
-                        .timed_execution(
-                            self.client
-                                .put(&self.args.write_policy, key, &bins_buffer[..1]),
-                        )
+                        .timed_execution(self.client.put(
+                            &self.args.write_policy,
+                            key,
+                            &bins_buffer[..1],
+                        ))
                         .await;
                     results.push((status, duration, OpType::Write));
                 }
@@ -354,9 +353,7 @@ impl ReadUpdateTask {
                 let client = self.client.clone();
                 let policy = self.args.batch_policy.clone();
                 let (status, duration) = self
-                    .timed_execution(async move {
-                        client.batch(&policy, ops).await.map(|_| ())
-                    })
+                    .timed_execution(async move { client.batch(&policy, ops).await.map(|_| ()) })
                     .await;
                 results.push((status, duration, OpType::Write));
             }
@@ -407,9 +404,9 @@ impl Task for ReadIncrementTask {
         let policy = self.args.read_policy.clone();
         let key_clone = key.clone();
         let (status, duration) = self
-            .timed_execution(async move {
-                client.get(&policy, &key_clone, Bins::All).await.map(|_| ())
-            })
+            .timed_execution(
+                async move { client.get(&policy, &key_clone, Bins::All).await.map(|_| ()) },
+            )
             .await;
         results.push((status, duration, OpType::Read));
         let bins = [as_bin!(self.counter_bin_name.as_str(), self.delta)];

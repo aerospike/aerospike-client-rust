@@ -141,8 +141,7 @@ async fn run_workload(client: Client, opts: Options) {
         for keys in KeyPartitions::new(namespace_ref, set_ref, start_key, keys, cores) {
             let mut worker =
                 Worker::for_workload(workload, client.clone(), send.clone(), args.clone());
-            let handle =
-                tokio::spawn(Box::pin(async move { worker.run(keys).await }));
+            let handle = tokio::spawn(async move { worker.run(keys).await });
             worker_handles.push(handle);
         }
     } else {

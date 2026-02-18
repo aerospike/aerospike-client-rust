@@ -98,11 +98,11 @@ impl Collector {
                  ms        < 8 ms       < 16 ms      >= 16 ms"
             );
             println!(
-                "         {:>8.0} {:>8.0} {:>8.0} μs | {:>7}/{:>4.1}% {:>7}/{:>4.1}% \
+                "         {:>8.3} {:>8.3} {:>8.3} ms | {:>7}/{:>4.1}% {:>7}/{:>4.1}% \
                  {:>7}/{:>4.1}% {:>7}/{:>4.1}% {:>7}/{:>4.1}% {:>7}/{:>4.1}%",
-                hist.percentile(50.0),
-                hist.percentile(95.0),
-                hist.percentile(99.0),
+                hist.min() as f64 / 1000.0,
+                hist.avg() as f64 / 1000.0,
+                hist.max() as f64 / 1000.0,
                 bkt[0].0,
                 bkt[0].1,
                 bkt[1].0,
@@ -131,14 +131,8 @@ impl Collector {
             write.total()
         );
         // Both histograms share the same start time (Collector creation), so elapsed is identical
-        println!(
-            "Elapsed time: {:.1}s",
-            write.total_elapsed_as_secs()
-        );
-        println!(
-            "Total TPS: {:.0}",
-            read.total_tps() + write.total_tps()
-        );
+        println!("Elapsed time: {:.1}s", write.total_elapsed_as_secs());
+        println!("Total TPS: {:.0}", read.total_tps() + write.total_tps());
         println!(
             "Total timeouts: {},   Total errors: {}",
             read.total_timeouts() + write.total_timeouts(),
@@ -195,7 +189,7 @@ impl Histogram {
     }
 
     pub fn tps(&self) -> f64 {
-       self.count as f64 / self.interval_as_secs()
+        self.count as f64 / self.interval_as_secs()
     }
 
     pub fn count(&self) -> u128 {
@@ -226,8 +220,7 @@ impl Histogram {
         }
         let target = p / 100.0 * self.count as f64;
         // Upper bound (μs) of each bucket: <1ms, <2ms, <4ms, <8ms, <16ms, >=16ms
-        let bucket_upper_us: [u128; HIST_BUCKETS] =
-            [1_000, 2_000, 4_000, 8_000, 16_000, 32_000];
+        let bucket_upper_us: [u128; HIST_BUCKETS] = [1_000, 2_000, 4_000, 8_000, 16_000, 32_000];
         let mut cum = 0u128;
         for (i, &c) in self.buckets.iter().enumerate() {
             cum += c;
