@@ -71,15 +71,12 @@ impl Key {
     /// Construct a new key from namespace, optional set name, user key and digest.
     /// The server handles record identifiers by digest only.
     /// The digest will be set to the provided value and not validated.
-    pub fn key_with_digest<S>(
+    pub fn key_with_digest(
         namespace: String,
         set_name: Option<String>,
         key: Option<Value>,
         digest: [u8; 20],
-    ) -> Result<Self>
-    where
-        S: Into<String>,
-    {
+    ) -> Result<Self> {
         Ok(Self {
             namespace,
             set_name: set_name.unwrap_or_default(),

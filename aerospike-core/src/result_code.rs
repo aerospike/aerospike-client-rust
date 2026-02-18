@@ -19,9 +19,8 @@ use std::result::Result as StdResult;
 #[cfg(feature = "serialization")]
 use serde::Serialize;
 
-/// Key and bin names used in batch read commands where variable bins are needed for each key.
-#[cfg_attr(feature = "serialization", derive(Serialize))]
 /// Database operation error codes. The error codes are defined in the server-side file proto.h.
+#[cfg_attr(feature = "serialization", derive(Serialize))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ResultCode {
     /// `OperationType` was successful.

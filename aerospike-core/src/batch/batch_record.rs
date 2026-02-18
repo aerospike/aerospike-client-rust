@@ -19,11 +19,9 @@ use crate::ResultCode;
 #[cfg(feature = "serialization")]
 use serde::Serialize;
 
-/// Key and bin names used in batch read commands where variable bins are needed for each key.
+/// Encapsulates the Batch key and record result.
 #[cfg_attr(feature = "serialization", derive(Serialize))]
 #[derive(Debug, Clone)]
-
-/// Encapsulates the Batch key and record result.
 pub struct BatchRecord {
     /// Key.
     pub key: Key,
