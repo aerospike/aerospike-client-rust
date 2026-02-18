@@ -142,8 +142,8 @@ pub struct Worker {
     collector: UnboundedSender<(Histogram, Histogram)>,
     task: TaskType,
     rng: StdRng,
-    batch_size: usize, 
-    batch: Vec<Key>,                          // Reused each loop to avoid allocating a new Vec<Key> per batch.
+    batch_size: usize,
+    batch: Vec<Key>, // Reused each loop to avoid allocating a new Vec<Key> per batch.
     results: Vec<(Status, Duration, OpType)>, // Reused each batch so task execute() fills this instead of allocating a new Vec.
     batch_ops: Vec<BatchOperation>, // Reused for batch read/write ops to avoid allocating Vec<BatchOperation> per batch.
     bins_buffer: Vec<Bin>,          // Reused for build_bins to avoid allocating Vec<Bin> per call.
@@ -195,9 +195,8 @@ impl Worker {
         }
     }
 
-    pub async fn run(&mut self, key_range: KeyRangeGen) {
+    pub async fn run(&mut self, mut key_range: KeyRangeGen) {
         let mut last_collection = Instant::now();
-        let mut key_range = key_range;
         loop {
             self.batch.clear();
             for _ in 0..self.batch_size {
@@ -230,11 +229,12 @@ impl Worker {
             }
         }
         self.collect();
-
     }
 
     fn collect(&mut self) {
-        let _ = self.collector.send((self.read_histogram, self.write_histogram));
+        let _ = self
+            .collector
+            .send((self.read_histogram, self.write_histogram));
         self.read_histogram.reset();
         self.write_histogram.reset();
     }

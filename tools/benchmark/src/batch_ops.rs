@@ -54,6 +54,10 @@ pub(crate) fn build_batch_write_ops(
         } else {
             bins_buffer.iter().take(1).map(operations::put).collect()
         };
-        out.push(BatchOperation::write(&args.batch_write_policy, k.clone(), wops));
+        out.push(BatchOperation::write(
+            &args.batch_write_policy,
+            k.clone(),
+            wops,
+        ));
     }
 }
