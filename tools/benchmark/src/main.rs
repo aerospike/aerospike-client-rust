@@ -145,7 +145,7 @@ async fn run_workload(client: Client, opts: Options) {
             worker_handles.push(handle);
         }
     } else {
-        for _ in 0..opts.cores {
+        for _ in 0..opts.tasks {
             let mut worker =
                 Worker::for_workload(workload, client.clone(), send.clone(), args.clone());
             let key_range = RandomKeyRange::new(
