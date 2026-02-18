@@ -94,15 +94,15 @@ impl Collector {
         if hist.count() > 0 {
             let bkt = hist.latencies();
             println!(
-                "  Latency:    min      avg      max    |        < 1 ms        < 2 ms        < 4 \
+                "  Latency:     p50      p95      p99    |        < 1 ms        < 2 ms        < 4 \
                  ms        < 8 ms       < 16 ms      >= 16 ms"
             );
             println!(
                 "         {:>8.0} {:>8.0} {:>8.0} μs | {:>7}/{:>4.1}% {:>7}/{:>4.1}% \
                  {:>7}/{:>4.1}% {:>7}/{:>4.1}% {:>7}/{:>4.1}% {:>7}/{:>4.1}%",
-                hist.min(),
-                hist.avg(),
-                hist.max(),
+                hist.percentile(50.0),
+                hist.percentile(95.0),
+                hist.percentile(99.0),
                 bkt[0].0,
                 bkt[0].1,
                 bkt[1].0,
@@ -220,6 +220,24 @@ impl Histogram {
             .collect()
     }
 
+    fn percentile(&self, p: f64) -> u128 {
+        if self.count == 0 {
+            return 0;
+        }
+        let target = p / 100.0 * self.count as f64;
+        // Upper bound (μs) of each bucket: <1ms, <2ms, <4ms, <8ms, <16ms, >=16ms
+        let bucket_upper_us: [u128; HIST_BUCKETS] =
+            [1_000, 2_000, 4_000, 8_000, 16_000, 32_000];
+        let mut cum = 0u128;
+        for (i, &c) in self.buckets.iter().enumerate() {
+            cum += c;
+            if cum as f64 >= target {
+                return bucket_upper_us[i];
+            }
+        }
+        bucket_upper_us[HIST_BUCKETS - 1]
+    }
+
     pub fn total(&self) -> u128 {
         self.total
     }
@@ -271,11 +289,7 @@ impl Histogram {
     }
 
     pub fn merge(&mut self, other: Histogram) {
-        self.min = if self.min < other.min {
-            self.min
-        } else {
-            other.min
-        };
+        self.min = self.min.min(other.min);
 
         self.max = if self.max > other.max {
             self.max
