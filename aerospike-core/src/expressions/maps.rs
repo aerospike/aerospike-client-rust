@@ -108,10 +108,15 @@ pub fn clear(bin: Expression, ctx: &[CdtContext]) -> Expression {
 }
 
 /// Create expression that removes map item identified by key.
-pub fn remove_by_key(key: Expression, bin: Expression, ctx: &[CdtContext]) -> Expression {
+pub fn remove_by_key<TMR: ToMapReturnTypeBitmask>(
+    return_type: TMR,
+    key: Expression,
+    bin: Expression,
+    ctx: &[CdtContext],
+) -> Expression {
     let args = vec![
         ExpressionArgument::Value(Value::from(CdtMapOpType::RemoveByKey as u8)),
-        ExpressionArgument::Value(Value::from(MapReturnType::None as u8)),
+        ExpressionArgument::Value(Value::from(return_type.to_bitmask())),
         ExpressionArgument::FilterExpression(key),
         ExpressionArgument::Context(ctx.to_vec()),
     ];
@@ -119,10 +124,15 @@ pub fn remove_by_key(key: Expression, bin: Expression, ctx: &[CdtContext]) -> Ex
 }
 
 /// Create expression that removes map items identified by keys.
-pub fn remove_by_key_list(keys: Expression, bin: Expression, ctx: &[CdtContext]) -> Expression {
+pub fn remove_by_key_list<TMR: ToMapReturnTypeBitmask>(
+    return_type: TMR,
+    keys: Expression,
+    bin: Expression,
+    ctx: &[CdtContext],
+) -> Expression {
     let args = vec![
         ExpressionArgument::Value(Value::from(CdtMapOpType::RemoveKeyList as u8)),
-        ExpressionArgument::Value(Value::from(MapReturnType::None as u8)),
+        ExpressionArgument::Value(Value::from(return_type.to_bitmask())),
         ExpressionArgument::FilterExpression(keys),
         ExpressionArgument::Context(ctx.to_vec()),
     ];
@@ -133,7 +143,8 @@ pub fn remove_by_key_list(keys: Expression, bin: Expression, ctx: &[CdtContext])
 ///
 /// If keyBegin is null, the range is less than keyEnd.
 /// If keyEnd is null, the range is greater than equal to keyBegin.
-pub fn remove_by_key_range(
+pub fn remove_by_key_range<TMR: ToMapReturnTypeBitmask>(
+    return_type: TMR,
     key_begin: Option<Expression>,
     key_end: Option<Expression>,
     bin: Expression,
@@ -142,7 +153,7 @@ pub fn remove_by_key_range(
     let mut args = vec![
         ExpressionArgument::Context(ctx.to_vec()),
         ExpressionArgument::Value(Value::from(CdtMapOpType::RemoveByKeyInterval as u8)),
-        ExpressionArgument::Value(Value::from(MapReturnType::None as u8)),
+        ExpressionArgument::Value(Value::from(return_type.to_bitmask())),
     ];
     if let Some(val_beg) = key_begin {
         args.push(ExpressionArgument::FilterExpression(val_beg));
@@ -165,7 +176,8 @@ pub fn remove_by_key_range(
 /// * (5,-1) = [{4=2},{5=15},{9=10}]
 /// * (3,2) = [{9=10}]
 /// * (3,-2) = [{0=17},{4=2},{5=15},{9=10}]
-pub fn remove_by_key_relative_index_range(
+pub fn remove_by_key_relative_index_range<TMR: ToMapReturnTypeBitmask>(
+    return_type: TMR,
     key: Expression,
     index: Expression,
     bin: Expression,
@@ -173,7 +185,7 @@ pub fn remove_by_key_relative_index_range(
 ) -> Expression {
     let args = vec![
         ExpressionArgument::Value(Value::from(CdtMapOpType::RemoveByKeyRelIndexRange as u8)),
-        ExpressionArgument::Value(Value::from(MapReturnType::None as u8)),
+        ExpressionArgument::Value(Value::from(return_type.to_bitmask())),
         ExpressionArgument::FilterExpression(key),
         ExpressionArgument::FilterExpression(index),
         ExpressionArgument::Context(ctx.to_vec()),
@@ -191,7 +203,8 @@ pub fn remove_by_key_relative_index_range(
 /// * (5,-1,1) = [{4=2}]
 /// * (3,2,1) = [{9=10}]
 /// * (3,-2,2) = [{0=17}]
-pub fn remove_by_key_relative_index_range_count(
+pub fn remove_by_key_relative_index_range_count<TMR: ToMapReturnTypeBitmask>(
+    return_type: TMR,
     key: Expression,
     index: Expression,
     count: Expression,
@@ -200,7 +213,7 @@ pub fn remove_by_key_relative_index_range_count(
 ) -> Expression {
     let args = vec![
         ExpressionArgument::Value(Value::from(CdtMapOpType::RemoveByKeyRelIndexRange as u8)),
-        ExpressionArgument::Value(Value::from(MapReturnType::None as u8)),
+        ExpressionArgument::Value(Value::from(return_type.to_bitmask())),
         ExpressionArgument::FilterExpression(key),
         ExpressionArgument::FilterExpression(index),
         ExpressionArgument::FilterExpression(count),
@@ -210,10 +223,15 @@ pub fn remove_by_key_relative_index_range_count(
 }
 
 /// Create expression that removes map items identified by value.
-pub fn remove_by_value(value: Expression, bin: Expression, ctx: &[CdtContext]) -> Expression {
+pub fn remove_by_value<TMR: ToMapReturnTypeBitmask>(
+    return_type: TMR,
+    value: Expression,
+    bin: Expression,
+    ctx: &[CdtContext],
+) -> Expression {
     let args = vec![
         ExpressionArgument::Value(Value::from(CdtMapOpType::RemoveByValue as u8)),
-        ExpressionArgument::Value(Value::from(MapReturnType::None as u8)),
+        ExpressionArgument::Value(Value::from(return_type.to_bitmask())),
         ExpressionArgument::FilterExpression(value),
         ExpressionArgument::Context(ctx.to_vec()),
     ];
@@ -221,10 +239,15 @@ pub fn remove_by_value(value: Expression, bin: Expression, ctx: &[CdtContext]) -
 }
 
 /// Create expression that removes map items identified by values.
-pub fn remove_by_value_list(values: Expression, bin: Expression, ctx: &[CdtContext]) -> Expression {
+pub fn remove_by_value_list<TMR: ToMapReturnTypeBitmask>(
+    return_type: TMR,
+    values: Expression,
+    bin: Expression,
+    ctx: &[CdtContext],
+) -> Expression {
     let args = vec![
         ExpressionArgument::Value(Value::from(CdtMapOpType::RemoveValueList as u8)),
-        ExpressionArgument::Value(Value::from(MapReturnType::None as u8)),
+        ExpressionArgument::Value(Value::from(return_type.to_bitmask())),
         ExpressionArgument::FilterExpression(values),
         ExpressionArgument::Context(ctx.to_vec()),
     ];
@@ -235,7 +258,8 @@ pub fn remove_by_value_list(values: Expression, bin: Expression, ctx: &[CdtConte
 ///
 /// If valueBegin is null, the range is less than valueEnd.
 /// If valueEnd is null, the range is greater than equal to valueBegin.
-pub fn remove_by_value_range(
+pub fn remove_by_value_range<TMR: ToMapReturnTypeBitmask>(
+    return_type: TMR,
     value_begin: Option<Expression>,
     value_end: Option<Expression>,
     bin: Expression,
@@ -244,7 +268,7 @@ pub fn remove_by_value_range(
     let mut args = vec![
         ExpressionArgument::Context(ctx.to_vec()),
         ExpressionArgument::Value(Value::from(CdtMapOpType::RemoveByValueInterval as u8)),
-        ExpressionArgument::Value(Value::from(MapReturnType::None as u8)),
+        ExpressionArgument::Value(Value::from(return_type.to_bitmask())),
     ];
     if let Some(val_beg) = value_begin {
         args.push(ExpressionArgument::FilterExpression(val_beg));
@@ -264,7 +288,8 @@ pub fn remove_by_value_range(
 /// * (value,rank) = [removed items]
 /// * (11,1) = [{0=17}]
 /// * (11,-1) = [{9=10},{5=15},{0=17}]
-pub fn remove_by_value_relative_rank_range(
+pub fn remove_by_value_relative_rank_range<TMR: ToMapReturnTypeBitmask>(
+    return_type: TMR,
     value: Expression,
     rank: Expression,
     bin: Expression,
@@ -272,7 +297,7 @@ pub fn remove_by_value_relative_rank_range(
 ) -> Expression {
     let args = vec![
         ExpressionArgument::Value(Value::from(CdtMapOpType::RemoveByValueRelRankRange as u8)),
-        ExpressionArgument::Value(Value::from(MapReturnType::None as u8)),
+        ExpressionArgument::Value(Value::from(return_type.to_bitmask())),
         ExpressionArgument::FilterExpression(value),
         ExpressionArgument::FilterExpression(rank),
         ExpressionArgument::Context(ctx.to_vec()),
@@ -287,7 +312,8 @@ pub fn remove_by_value_relative_rank_range(
 /// * (value,rank,count) = [removed items]
 /// * (11,1,1) = [{0=17}]
 /// * (11,-1,1) = [{9=10}]
-pub fn remove_by_value_relative_rank_range_count(
+pub fn remove_by_value_relative_rank_range_count<TMR: ToMapReturnTypeBitmask>(
+    return_type: TMR,
     value: Expression,
     rank: Expression,
     count: Expression,
@@ -296,7 +322,7 @@ pub fn remove_by_value_relative_rank_range_count(
 ) -> Expression {
     let args = vec![
         ExpressionArgument::Value(Value::from(CdtMapOpType::RemoveByValueRelRankRange as u8)),
-        ExpressionArgument::Value(Value::from(MapReturnType::None as u8)),
+        ExpressionArgument::Value(Value::from(return_type.to_bitmask())),
         ExpressionArgument::FilterExpression(value),
         ExpressionArgument::FilterExpression(rank),
         ExpressionArgument::FilterExpression(count),
@@ -306,10 +332,15 @@ pub fn remove_by_value_relative_rank_range_count(
 }
 
 /// Create expression that removes map item identified by index.
-pub fn remove_by_index(index: Expression, bin: Expression, ctx: &[CdtContext]) -> Expression {
+pub fn remove_by_index<TMR: ToMapReturnTypeBitmask>(
+    return_type: TMR,
+    index: Expression,
+    bin: Expression,
+    ctx: &[CdtContext],
+) -> Expression {
     let args = vec![
         ExpressionArgument::Value(Value::from(CdtMapOpType::RemoveByIndex as u8)),
-        ExpressionArgument::Value(Value::from(MapReturnType::None as u8)),
+        ExpressionArgument::Value(Value::from(return_type.to_bitmask())),
         ExpressionArgument::FilterExpression(index),
         ExpressionArgument::Context(ctx.to_vec()),
     ];
@@ -317,10 +348,15 @@ pub fn remove_by_index(index: Expression, bin: Expression, ctx: &[CdtContext]) -
 }
 
 /// Create expression that removes map items starting at specified index to the end of map.
-pub fn remove_by_index_range(index: Expression, bin: Expression, ctx: &[CdtContext]) -> Expression {
+pub fn remove_by_index_range<TMR: ToMapReturnTypeBitmask>(
+    return_type: TMR,
+    index: Expression,
+    bin: Expression,
+    ctx: &[CdtContext],
+) -> Expression {
     let args = vec![
         ExpressionArgument::Value(Value::from(CdtMapOpType::RemoveByIndexRange as u8)),
-        ExpressionArgument::Value(Value::from(MapReturnType::None as u8)),
+        ExpressionArgument::Value(Value::from(return_type.to_bitmask())),
         ExpressionArgument::FilterExpression(index),
         ExpressionArgument::Context(ctx.to_vec()),
     ];
@@ -328,7 +364,8 @@ pub fn remove_by_index_range(index: Expression, bin: Expression, ctx: &[CdtConte
 }
 
 /// Create expression that removes "count" map items starting at specified index.
-pub fn remove_by_index_range_count(
+pub fn remove_by_index_range_count<TMR: ToMapReturnTypeBitmask>(
+    return_type: TMR,
     index: Expression,
     count: Expression,
     bin: Expression,
@@ -336,7 +373,7 @@ pub fn remove_by_index_range_count(
 ) -> Expression {
     let args = vec![
         ExpressionArgument::Value(Value::from(CdtMapOpType::RemoveByIndexRange as u8)),
-        ExpressionArgument::Value(Value::from(MapReturnType::None as u8)),
+        ExpressionArgument::Value(Value::from(return_type.to_bitmask())),
         ExpressionArgument::FilterExpression(index),
         ExpressionArgument::FilterExpression(count),
         ExpressionArgument::Context(ctx.to_vec()),
@@ -345,10 +382,15 @@ pub fn remove_by_index_range_count(
 }
 
 /// Create expression that removes map item identified by rank.
-pub fn remove_by_rank(rank: Expression, bin: Expression, ctx: &[CdtContext]) -> Expression {
+pub fn remove_by_rank<TMR: ToMapReturnTypeBitmask>(
+    return_type: TMR,
+    rank: Expression,
+    bin: Expression,
+    ctx: &[CdtContext],
+) -> Expression {
     let args = vec![
         ExpressionArgument::Value(Value::from(CdtMapOpType::RemoveByRank as u8)),
-        ExpressionArgument::Value(Value::from(MapReturnType::None as u8)),
+        ExpressionArgument::Value(Value::from(return_type.to_bitmask())),
         ExpressionArgument::FilterExpression(rank),
         ExpressionArgument::Context(ctx.to_vec()),
     ];
@@ -356,10 +398,15 @@ pub fn remove_by_rank(rank: Expression, bin: Expression, ctx: &[CdtContext]) -> 
 }
 
 /// Create expression that removes map items starting at specified rank to the last ranked item.
-pub fn remove_by_rank_range(rank: Expression, bin: Expression, ctx: &[CdtContext]) -> Expression {
+pub fn remove_by_rank_range<TMR: ToMapReturnTypeBitmask>(
+    return_type: TMR,
+    rank: Expression,
+    bin: Expression,
+    ctx: &[CdtContext],
+) -> Expression {
     let args = vec![
         ExpressionArgument::Value(Value::from(CdtMapOpType::RemoveByRankRange as u8)),
-        ExpressionArgument::Value(Value::from(MapReturnType::None as u8)),
+        ExpressionArgument::Value(Value::from(return_type.to_bitmask())),
         ExpressionArgument::FilterExpression(rank),
         ExpressionArgument::Context(ctx.to_vec()),
     ];
@@ -367,7 +414,8 @@ pub fn remove_by_rank_range(rank: Expression, bin: Expression, ctx: &[CdtContext
 }
 
 /// Create expression that removes "count" map items starting at specified rank.
-pub fn remove_by_rank_range_count(
+pub fn remove_by_rank_range_count<TMR: ToMapReturnTypeBitmask>(
+    return_type: TMR,
     rank: Expression,
     count: Expression,
     bin: Expression,
@@ -375,7 +423,7 @@ pub fn remove_by_rank_range_count(
 ) -> Expression {
     let args = vec![
         ExpressionArgument::Value(Value::from(CdtMapOpType::RemoveByRankRange as u8)),
-        ExpressionArgument::Value(Value::from(MapReturnType::None as u8)),
+        ExpressionArgument::Value(Value::from(return_type.to_bitmask())),
         ExpressionArgument::FilterExpression(rank),
         ExpressionArgument::FilterExpression(count),
         ExpressionArgument::Context(ctx.to_vec()),
