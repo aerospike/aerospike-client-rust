@@ -19,11 +19,9 @@ use std::time::Instant;
 use aerospike::operations;
 use aerospike::{Bins, Client, ClientPolicy, ReadPolicy, WritePolicy};
 
-fn main() {
-    let rt = tokio::runtime::Runtime::new().expect("Failed to create Tokio runtime");
-    rt.block_on(async {
-        run();
-    });
+#[tokio::main]
+async fn main() {
+    run();
 }
 
 fn run() {

@@ -135,43 +135,52 @@ let client = Client::new(&policy, &hosts)
 
 #### Sync client
 
-With the `sync` feature, the client exposes blocking APIs (no `async`/`.await`). Use the same types and methods; calls block until the operation completes.
+The `sync` feature exposes blocking APIs — no `async`/`.await` at call sites. However, the client still uses Tokio 
+internally for cluster management, so **a Tokio runtime must be running** for the duration of your program.
 
-**Cargo.toml** (sync with tokio; or use `rt-async-std` instead of `rt-tokio`):
-
+**Cargo.toml**
 ```toml
 [dependencies]
-aerospike = { version = "<version>", default-features = false, features = ["rt-tokio", "sync"]}
+aerospike = { version = "<version>", default-features = false, features = ["rt-tokio", "sync"] }
+tokio = { version = "1", features = ["full"] }  # required even for sync usage
 ```
 
-**Example:**
+> Swap `rt-tokio` for `rt-async-std` if your project uses async-std instead.
 
+**Example:**
 ```rust
 #[macro_use]
 extern crate aerospike;
 
 use std::env;
-use aerospike::{as_key, as_bin, Bins, Client, ClientPolicy, ReadPolicy, WritePolicy};
+use aerospike::{Bins, Client, ClientPolicy, ReadPolicy, WritePolicy};
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+// #[tokio::main] is required — the sync client uses Tokio internally
+// for cluster tending, even though your code has no .await calls.
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let policy = ClientPolicy::default();
-    let hosts = env::var("AEROSPIKE_HOSTS").unwrap_or_else(|_| "127.0.0.1:3000".to_string());
+    let hosts = env::var("AEROSPIKE_HOSTS")
+        .unwrap_or_else(|_| "127.0.0.1:3000".to_string());
 
     let client = Client::new(&policy, &hosts)?;
 
     let key = as_key!("test", "myset", "sync-key");
-    let wpolicy = WritePolicy::default();
-    let bins = vec![as_bin!("name", "Alice"), as_bin!("count", 42)];
-    client.put(&wpolicy, &key, &bins)?;
+    let bins = [as_bin!("name", "Alice"), as_bin!("count", 42)];
+    client.put(&WritePolicy::default(), &key, &bins)?;
 
-    let rpolicy = ReadPolicy::default();
-    let record = client.get(&rpolicy, &key, Bins::All)?;
+    let record = client.get(&ReadPolicy::default(), &key, Bins::All)?;
     println!("Record: {:?}", record.bins);
 
     client.close()?;
     Ok(())
 }
 ```
+
+> **Why does sync need a Tokio runtime?** The `sync` feature wraps the async client and provides blocking call 
+> sites — it does not replace the underlying async runtime. Cluster tending (node discovery, connection pooling) runs 
+> as a background Tokio task regardless of which API surface you use. Calling `Client::new` outside of a runtime context
+> will panic with `there is no reactor running`.
 
 #### TLS connection without client authentication
 
