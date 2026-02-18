@@ -217,7 +217,7 @@ impl Worker {
                     &mut self.bins_buffer,
                 )
                 .await;
-            for (status, duration, op_type) in &self.results {
+            for (status, duration, op_type) in self.results.iter() {
                 match op_type {
                     OpType::Read => self.read_histogram.add(*duration, *status),
                     OpType::Write => self.write_histogram.add(*duration, *status),

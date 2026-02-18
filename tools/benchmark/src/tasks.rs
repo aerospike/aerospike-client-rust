@@ -87,7 +87,7 @@ trait Task: Send {
         bins_buffer: &mut Vec<Bin>,
     );
 
-    fn status(&self, result: asResult<()>) -> Status {
+    fn status<T>(&self, result: asResult<T>) -> Status {
         match result {
             Err(Error::ServerError(ResultCode::Timeout, _, _) | Error::Timeout(_)) => {
                 Status::Timeout
@@ -98,9 +98,9 @@ trait Task: Send {
         }
     }
 
-    async fn timed_execution<F>(&self, fut: F) -> (Status, Duration)
+    async fn timed_execution<F, T>(&self, fut: F) -> (Status, Duration)
     where
-        F: Future<Output = asResult<()>> + Send,
+        F: Future<Output = asResult<T>> + Send,
     {
         let start = Instant::now();
         let status = self.status(fut.await);
@@ -175,9 +175,7 @@ impl Task for ReadModUpdateTask {
         let policy = self.args.read_policy.clone();
         let key_clone = key.clone();
         let (status, duration) = self
-            .timed_execution(
-                async move { client.get(&policy, &key_clone, Bins::All).await.map(|_| ()) },
-            )
+            .timed_execution(client.get(&policy, &key_clone, Bins::All))
             .await;
         results.push((status, duration, OpType::Read));
 
@@ -264,27 +262,19 @@ impl ReadUpdateTask {
                 if multi_bins_read {
                     trace!("Reading all bins {}", key);
                     let client = self.client.clone();
-                    let policy = self.args.read_policy.clone();
-                    let key_clone = key.clone();
                     let (status, duration) = self
-                        .timed_execution(async move {
-                            client.get(&policy, &key_clone, Bins::All).await.map(|_| ())
-                        })
+                        .timed_execution(client.get(&self.args.read_policy, &key, Bins::All))
                         .await;
                     results.push((status, duration, OpType::Read));
                 } else {
                     trace!("Reading single bin {} {}", self.first_bin_name, key);
                     let client = self.client.clone();
-                    let policy = self.args.read_policy.clone();
-                    let key_clone = keys[0].clone();
-                    let bin_name = self.first_bin_name.clone();
                     let (status, duration) = self
-                        .timed_execution(async move {
-                            client
-                                .get(&policy, &key_clone, Bins::from([bin_name.as_str()]))
-                                .await
-                                .map(|_| ())
-                        })
+                        .timed_execution(client.get(
+                            &self.args.read_policy,
+                            &key,
+                            Bins::from([self.first_bin_name.as_str()]),
+                        ))
                         .await;
                     results.push((status, duration, OpType::Read));
                 }
@@ -295,9 +285,8 @@ impl ReadUpdateTask {
                 build_batch_read_ops(keys, &self.args.batch_read_policy, Bins::All, batch_ops);
                 let ops = batch_ops.as_slice();
                 let client = self.client.clone();
-                let policy = self.args.batch_policy.clone();
                 let (status, duration) = self
-                    .timed_execution(async move { client.batch(&policy, ops).await.map(|_| ()) })
+                    .timed_execution(client.batch(&self.args.batch_policy, ops))
                     .await;
                 results.push((status, duration, OpType::Read));
             }
@@ -352,9 +341,7 @@ impl ReadUpdateTask {
                 let ops = batch_ops.as_slice();
                 let client = self.client.clone();
                 let policy = self.args.batch_policy.clone();
-                let (status, duration) = self
-                    .timed_execution(async move { client.batch(&policy, ops).await.map(|_| ()) })
-                    .await;
+                let (status, duration) = self.timed_execution(client.batch(&policy, ops)).await;
                 results.push((status, duration, OpType::Write));
             }
         }
@@ -404,9 +391,7 @@ impl Task for ReadIncrementTask {
         let policy = self.args.read_policy.clone();
         let key_clone = key.clone();
         let (status, duration) = self
-            .timed_execution(
-                async move { client.get(&policy, &key_clone, Bins::All).await.map(|_| ()) },
-            )
+            .timed_execution(client.get(&policy, &key_clone, Bins::All))
             .await;
         results.push((status, duration, OpType::Read));
         let bins = [as_bin!(self.counter_bin_name.as_str(), self.delta)];

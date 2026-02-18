@@ -52,6 +52,9 @@ lazy_static! {
     static ref DEFAULT_CORES: String = std::thread::available_parallelism()
         .map(|n| n.get().to_string())
         .unwrap_or_else(|_| "1".to_string());
+    static ref DEFAULT_TASKS: String = std::thread::available_parallelism()
+        .map(|n| (n.get() * 2).to_string())
+        .unwrap_or_else(|_| "1".to_string());
 }
 
 #[derive(Debug)]
@@ -61,6 +64,7 @@ pub struct Options {
     pub set: String,
     pub keys: i64,
     pub start_key: i64,
+    pub tasks: i64,
     pub cores: i64,
     pub workload: Workload,
     pub conn_pools_per_node: usize,
@@ -89,6 +93,7 @@ pub fn parse_options() -> Result<Options, String> {
         set: matches.value_of("set").unwrap().to_owned(),
         keys: i64::from_str(matches.value_of("keys").unwrap()).unwrap(),
         start_key: i64::from_str(matches.value_of("startkey").unwrap()).unwrap(),
+        tasks: i64::from_str(matches.value_of("tasks").unwrap()).unwrap(),
         cores: i64::from_str(matches.value_of("cores").unwrap()).unwrap(),
         workload: Workload::from_str(matches.value_of("workload").unwrap()).unwrap(),
         conn_pools_per_node: usize::from_str(matches.value_of("connPoolsPerNode").unwrap())
@@ -151,6 +156,11 @@ fn build_cli() -> App<'static, 'static> {
                 )
                 .validator(|val| validate::<i64>(val, "Must be number".into()))
                 .default_value("0"),
+        )
+        .arg(
+            Arg::from_usage("-t, --tasks 'No. of async tasks to be used'")
+                .validator(|val| validate::<i64>(val, "Must be number".into()))
+                .default_value(&*DEFAULT_TASKS),
         )
         .arg(
             Arg::from_usage("-c, --cores 'No. of CPU Cores to be used'")
