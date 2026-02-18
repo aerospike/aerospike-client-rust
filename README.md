@@ -115,18 +115,62 @@ features.
 
 ### Client connection
 
+The examples below use the **async** client (default). For a blocking API with no `.await`, see [Sync client](#sync-client) below.
+
 #### Standard connection
 
 Connect to an Aerospike cluster without TLS:
 
 ```rust
+use std::env;
 use aerospike::{Client, ClientPolicy};
 
 let policy = ClientPolicy::default();
 let hosts = env::var("AEROSPIKE_HOSTS")
-    .unwrap_or(String::from("127.0.0.1:3000"));
-let client = Client::new(&policy, &hosts).await
+    .unwrap_or_else(|_| "127.0.0.1:3000".to_string());
+let client = Client::new(&policy, &hosts)
+    .await
     .expect("Failed to connect to cluster");
+```
+
+#### Sync client
+
+With the `sync` feature, the client exposes blocking APIs (no `async`/`.await`). Use the same types and methods; calls block until the operation completes.
+
+**Cargo.toml** (sync with tokio; or use `rt-async-std` instead of `rt-tokio`):
+
+```toml
+[dependencies]
+aerospike = { version = "<version>", default-features = false, features = ["rt-tokio", "sync"]}
+```
+
+**Example:**
+
+```rust
+#[macro_use]
+extern crate aerospike;
+
+use std::env;
+use aerospike::{as_key, as_bin, Bins, Client, ClientPolicy, ReadPolicy, WritePolicy};
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let policy = ClientPolicy::default();
+    let hosts = env::var("AEROSPIKE_HOSTS").unwrap_or_else(|_| "127.0.0.1:3000".to_string());
+
+    let client = Client::new(&policy, &hosts)?;
+
+    let key = as_key!("test", "myset", "sync-key");
+    let wpolicy = WritePolicy::default();
+    let bins = vec![as_bin!("name", "Alice"), as_bin!("count", 42)];
+    client.put(&wpolicy, &key, &bins)?;
+
+    let rpolicy = ReadPolicy::default();
+    let record = client.get(&rpolicy, &key, Bins::All)?;
+    println!("Record: {:?}", record.bins);
+
+    client.close()?;
+    Ok(())
+}
 ```
 
 #### TLS connection without client authentication
