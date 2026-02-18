@@ -94,7 +94,7 @@ impl Collector {
         if hist.count() > 0 {
             let bkt = hist.latencies();
             println!(
-                "  Latency:     p50      p95      p99    |        < 1 ms        < 2 ms        < 4 \
+                "  Latency:     min      avg      max    |        < 1 ms        < 2 ms        < 4 \
                  ms        < 8 ms       < 16 ms      >= 16 ms"
             );
             println!(
