@@ -14,7 +14,7 @@
 // the License.
 //
 
-/// `QueryDuration`` defines the expected query duration. The server treats the query in different ways depending on the expected duration.
+/// `QueryDuration` defines the expected query duration. The server treats the query in different ways depending on the expected duration.
 ///
 /// This enum is ignored for aggregation queries, background queries and server versions < 6.0.
 #[derive(Debug, PartialEq, Eq, Clone, Default)]

@@ -58,7 +58,7 @@ pub(crate) enum CdtBitwiseOpType {
     GetInt = 54,
 }
 
-/// `CdtBitwiseResizeFlags` specifies the bitwise operation flags for resize.
+/// [`BitwiseResizeFlags`] specifies the bitwise operation flags for resize.
 #[derive(Debug, Clone)]
 pub enum BitwiseResizeFlags {
     /// Default specifies the defalt flag.
@@ -71,7 +71,7 @@ pub enum BitwiseResizeFlags {
     ShrinkOnly = 4,
 }
 
-/// `CdtBitwiseWriteFlags` specify bitwise operation policy write flags.
+/// [`BitwiseWriteFlags`] specify bitwise operation policy write flags.
 #[derive(Debug, Clone)]
 pub enum BitwiseWriteFlags {
     /// Default allows create or update.
@@ -91,7 +91,7 @@ pub enum BitwiseWriteFlags {
     Partial = 8,
 }
 
-/// `CdtBitwiseOverflowActions` specifies the action to take when bitwise add/subtract results in overflow/underflow.
+/// [`BitwiseOverflowActions`] specifies the action to take when bitwise add/subtract results in overflow/underflow.
 #[derive(Debug, Clone)]
 pub enum BitwiseOverflowActions {
     /// Fail specifies to fail operation with error.

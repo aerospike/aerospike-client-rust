@@ -23,14 +23,22 @@ pub use crate::operations::cdt_context::CdtContext;
 use crate::Result;
 use crate::Value;
 
+/// Argument value for CDT (list/map) operations in the wire protocol.
 #[derive(Debug, Clone)]
 pub enum CdtArgument {
+    /// Single byte.
     Byte(u8),
+    /// 64-bit integer.
     Int(i64),
+    /// Boolean.
     Bool(bool),
+    /// Arbitrary Aerospike value.
     Value(Value),
+    /// List of values.
     List(Vec<Value>),
+    /// Unordered map (key-value pairs).
     Map(HashMap<Value, Value>),
+    /// Ordered map (key-value pairs with key ordering).
     OrderedMap(BTreeMap<Value, Value>),
 }
 
