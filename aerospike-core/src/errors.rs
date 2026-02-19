@@ -59,21 +59,29 @@ use crate::ResultCode;
 #[cfg(feature = "rt-tokio")]
 use aerospike_rt::task;
 
+/// Aerospike client and protocol errors.
 #[derive(Error, Debug)]
 pub enum Error {
+    /// Error decoding a Base64-encoded value.
     #[error("Error decoding Base64 encoded value")]
     Base64(#[from] ::base64::DecodeError),
+    /// Error interpreting a byte sequence as UTF-8.
     #[error("Error interpreting a sequence of u8 as a UTF-8 encoded string.")]
     InvalidUtf8(#[from] ::std::str::Utf8Error),
+    /// Error during an I/O operation.
     #[error("Error during an I/O operation")]
     Io(#[from] ::std::io::Error),
+    /// Error parsing an IP or socket address.
     #[error("Error parsing an IP or socket address")]
     ParseAddr(#[from] ::std::net::AddrParseError),
+    /// Error parsing a string as an integer.
     #[error("Error parsing an integer")]
     ParseInt(#[from] ::std::num::ParseIntError),
+    /// Error while hashing a password for user authentication.
     #[error("Error returned while hashing a password for user authentication")]
     PwHash(#[from] ::pwhash::error::Error),
     #[cfg(feature = "rt-tokio")]
+    /// Async runtime error (e.g. task join failure).
     #[error("Async runtime error {0}")]
     Async(#[from] task::JoinError),
     /// The client received a server response that it was not able to process.
@@ -119,7 +127,7 @@ pub enum Error {
     #[error("Record stream was terminated by user")]
     StreamTerminatedError(),
 
-    /// Error returned when a tasked timeed out before it could be completed.
+    /// Error returned when a task timed out before it could be completed.
     #[error("{0}\n\t{1}")]
     Chain(Box<Error>, Box<Error>),
 }
