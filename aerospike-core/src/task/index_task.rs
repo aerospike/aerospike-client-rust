@@ -33,7 +33,7 @@ static FAIL_PATTERN_203: &str = "FAIL:203";
 static DELMITER: &str = ";";
 
 impl IndexTask {
-    /// Initializes `IndexTask` from client, creation should only be expose to Client
+    /// Initializes `IndexTask` from a client, creation should only be exposed to Client
     pub const fn new(cluster: Arc<Cluster>, namespace: String, index_name: String) -> Self {
         IndexTask {
             cluster,

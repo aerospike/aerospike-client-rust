@@ -17,7 +17,7 @@
 //!
 //! All maps maintain an index and a rank. The index is the item offset from the start of the map,
 //! for both unordered and ordered maps. The rank is the sorted index of the value component.
-//! Map supports negative indexing for indexjkj and rank.
+//! Map supports negative indexing for index and rank.
 //!
 //! The default unique key map is unordered.
 //!
@@ -167,8 +167,8 @@ pub enum MapReturnType {
     /// Returns an ordered map.
     OrderedMap = 17,
 
-    /// Invert meaning of map command and return values.
-    /// With the INVERTED flag enabled, the keys outside of the specified key range will be removed and returned.
+    /// Invert the meaning of the map command and return values.
+    /// With the INVERTED flag enabled, the keys outside the specified key range will be removed and returned.
     Inverted = 0x10000,
 }
 

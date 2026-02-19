@@ -19,12 +19,13 @@
 //!
 //! Handling an error returned by the client.
 //!
-//! ```rust,edition2018
+//! ```rust,edition2021
 //! use aerospike::*;
 //!
+//! # async fn example() -> Result<(), Box<dyn std::error::Error>> {
 //! let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap();
 //! let policy = ClientPolicy::default();
-//! let client = Client::new(&policy, &hosts).expect("Failed to connect to cluster").await;
+//! let client = Client::new(&policy, &hosts).await?;
 //! let key = as_key!("test", "test", "someKey");
 //! match client.get(&ReadPolicy::default(), &key, Bins::None).await {
 //!     Ok(record) => {
@@ -33,7 +34,7 @@
 //!             Some(duration) => println!("ttl: {} secs", duration.as_secs()),
 //!         }
 //!     },
-//!     Err(Error::ServerError(ResultCode::KeyNotFoundError)) => {
+//!     Err(Error::ServerError(ResultCode::KeyNotFoundError, _, _)) => {
 //!         println!("No such record: {}", key);
 //!     },
 //!     Err(err) => {
@@ -48,6 +49,8 @@
 //!         }
 //!     }
 //! }
+//! # Ok(())
+//! # }
 //! ```
 
 #![allow(missing_docs)]
