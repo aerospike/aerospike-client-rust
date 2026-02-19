@@ -342,7 +342,7 @@ async fn expression_list() {
         &client,
         eq(
             size(
-                remove_by_value(int_val(3), list_bin("bin".to_string()), &[]),
+                remove_by_value(ListReturnType::None, int_val(3), list_bin("bin".to_string()), &[]),
                 &[],
             ),
             int_val(3),
@@ -358,6 +358,7 @@ async fn expression_list() {
         eq(
             size(
                 remove_by_value_list(
+                    ListReturnType::None,
                     list_val(vec![Value::from(1), Value::from(2)]),
                     list_bin("bin".to_string()),
                     &[],
@@ -377,6 +378,7 @@ async fn expression_list() {
         eq(
             size(
                 remove_by_value_range(
+                    ListReturnType::None,
                     Some(int_val(1)),
                     Some(int_val(3)),
                     list_bin("bin".to_string()),
@@ -397,6 +399,7 @@ async fn expression_list() {
         eq(
             size(
                 remove_by_value_relative_rank_range(
+                    ListReturnType::None,
                     int_val(3),
                     int_val(1),
                     list_bin("bin".to_string()),
@@ -417,6 +420,7 @@ async fn expression_list() {
         eq(
             size(
                 remove_by_value_relative_rank_range_count(
+                    ListReturnType::None,
                     int_val(2),
                     int_val(1),
                     int_val(1),
@@ -440,7 +444,7 @@ async fn expression_list() {
         &client,
         eq(
             size(
-                remove_by_index(int_val(0), list_bin("bin".to_string()), &[]),
+                remove_by_index(ListReturnType::None, int_val(0), list_bin("bin".to_string()), &[]),
                 &[],
             ),
             int_val(3),
@@ -455,7 +459,7 @@ async fn expression_list() {
         &client,
         eq(
             size(
-                remove_by_index_range(int_val(2), list_bin("bin".to_string()), &[]),
+                remove_by_index_range(ListReturnType::None, int_val(2), list_bin("bin".to_string()), &[]),
                 &[],
             ),
             int_val(2),
@@ -471,6 +475,7 @@ async fn expression_list() {
         eq(
             size(
                 remove_by_index_range_count(
+                    ListReturnType::None,
                     int_val(2),
                     int_val(1),
                     list_bin("bin".to_string()),
@@ -491,6 +496,7 @@ async fn expression_list() {
         eq(
             size(
                 remove_by_index_range_count(
+                    ListReturnType::None,
                     int_val(2),
                     int_val(1),
                     list_bin("bin".to_string()),
@@ -510,7 +516,7 @@ async fn expression_list() {
         &client,
         eq(
             size(
-                remove_by_rank(int_val(2), list_bin("bin".to_string()), &[]),
+                remove_by_rank(ListReturnType::None, int_val(2), list_bin("bin".to_string()), &[]),
                 &[],
             ),
             int_val(3),
@@ -525,7 +531,7 @@ async fn expression_list() {
         &client,
         eq(
             size(
-                remove_by_rank_range(int_val(2), list_bin("bin".to_string()), &[]),
+                remove_by_rank_range(ListReturnType::None, int_val(2), list_bin("bin".to_string()), &[]),
                 &[],
             ),
             int_val(2),
@@ -541,6 +547,7 @@ async fn expression_list() {
         eq(
             size(
                 remove_by_rank_range_count(
+                    ListReturnType::None,
                     int_val(2),
                     int_val(1),
                     list_bin("bin".to_string()),
