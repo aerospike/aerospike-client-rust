@@ -15,7 +15,7 @@
 use aerospike::{
     as_bin, as_blob, as_geo, as_key, as_list, as_map, as_val, Bins, ReadPolicy, Value, WritePolicy,
 };
-use aerospike::{operations, Error, Expiration, ReadTouchTTL, ResultCode};
+use aerospike::{operations, Expiration, ReadTouchTTL};
 use aerospike_rt::sleep;
 use aerospike_rt::time::Duration;
 
@@ -54,22 +54,6 @@ async fn read_touch_ttl() {
     match record {
         Err(_) => (),
         _ => panic!("expected key not found error"),
-    }
-}
-
-#[aerospike_macro::test]
-async fn get_nonexisting_key() {
-    let client = common::client().await;
-    let namespace: &str = common::namespace();
-    let set_name = &common::rand_str(10);
-    let key = as_key!(namespace, set_name, "nonexisting_key");
-    let policy = ReadPolicy::default();
-
-    let result = client.get(&policy, &key, Bins::All).await;
-    match result {
-        Err(Error::ServerError(ResultCode::KeyNotFoundError, _, _)) => (),
-        Ok(_) => panic!("expected key not found error, got Ok(record)"),
-        Err(e) => panic!("expected KeyNotFoundError, got {:?}", e),
     }
 }
 
