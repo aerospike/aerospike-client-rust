@@ -580,6 +580,8 @@ pub fn record_size() -> Expression {
 ///
 /// Deprecated: `memory_size` has been deprecated since server version 8.1. Use [`record_size()`].
 /// ```
+/// #  #![deny(warnings)]
+/// # #![allow(deprecated)]
 /// use aerospike::expressions::{ge, device_size, int_val};
 /// // Record device size >= 100 KB
 /// ge(device_size(), int_val(100*1024));
@@ -598,6 +600,8 @@ pub fn device_size() -> Expression {
 ///
 /// Deprecated: `memory_size` has been deprecated since server version 8.1. Use [`record_size()`].
 /// ```
+/// # #![deny(warnings)]
+/// # #![allow(deprecated)]
 /// use aerospike::expressions::{ge, memory_size, int_val};
 /// // Record device size >= 100 KB
 /// ge(memory_size(), int_val(100*1024));

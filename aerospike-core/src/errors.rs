@@ -22,8 +22,8 @@
 //! ```rust,edition2021
 //! use aerospike::*;
 //!
-//! # async fn example() -> Result<(), Box<dyn std::error::Error>> {
-//! let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap();
+//! # async fn example() -> Result<()> {
+//! let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap_or_else(|_| "127.0.0.1:3000".to_string());
 //! let policy = ClientPolicy::default();
 //! let client = Client::new(&policy, &hosts).await?;
 //! let key = as_key!("test", "test", "someKey");
@@ -39,13 +39,10 @@
 //!     },
 //!     Err(err) => {
 //!         println!("Error fetching record: {}", err);
-//!         for err in err.iter().skip(1) {
-//!             println!("Caused by: {}", err);
-//!         }
-//!         // The backtrace is not always generated. Try to run this example
-//!         // with `RUST_BACKTRACE=1`.
-//!         if let Some(backtrace) = err.backtrace() {
-//!             println!("Backtrace: {:?}", backtrace);
+//!         let mut source = std::error::Error::source(&err);
+//!         while let Some(e) = source {
+//!             println!("Caused by: {}", e);
+//!             source = e.source();
 //!         }
 //!     }
 //! }
