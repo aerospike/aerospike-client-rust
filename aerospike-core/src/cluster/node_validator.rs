@@ -103,8 +103,24 @@ impl NodeValidator {
     }
 
     async fn validate_alias(&mut self, cluster: &Cluster, alias: &Host) -> Result<()> {
+        *cluster.metrics.load().connections_attempts.lock().unwrap_or_else(|poisoned| poisoned.into_inner()) += 1;
         let mut conn =
-            Connection::new(alias, &self.client_policy, cluster.hashed_pass().as_ref()).await?;
+            match Connection::new(alias, &self.client_policy, cluster.hashed_pass().as_ref()).await
+            {
+                Ok(conn) => {
+                    *cluster
+                        .metrics
+                        .load()
+                        .connections_successful
+                        .lock()
+                        .unwrap() += 1;
+                    Ok(conn)
+                }
+                Err(e) => {
+                    *cluster.metrics.load().connections_failed.lock().unwrap_or_else(|poisoned| poisoned.into_inner()) += 1;
+                    Err(e)
+                }
+            }?;
         let service_name = cluster.client_policy.load().service_string();
         let admin_policy = AdminPolicy {
             timeout: self.client_policy.timeout,

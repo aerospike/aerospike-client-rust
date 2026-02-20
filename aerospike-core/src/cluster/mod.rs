@@ -13,6 +13,8 @@
 // License for the specific language governing permissions and limitations under
 // the License.
 
+pub mod histogram;
+pub mod metrics;
 pub mod node;
 pub mod node_validator;
 pub mod partition;
@@ -33,12 +35,13 @@ use self::node_validator::NodeValidator;
 use self::partition::Partition;
 use self::partition_tokenizer::PartitionTokenizer;
 
+use crate::cluster::metrics::Metrics;
 use crate::commands::admin_command::AdminCommand;
 use crate::commands::Message;
 use crate::errors::{Error, Result};
 use crate::net::Host;
-use crate::policy::ClientPolicy;
 use crate::policy::Replica;
+use crate::policy::{ClientPolicy, MetricsPolicy};
 use crate::AdminPolicy;
 use aerospike_rt::Mutex;
 use futures::channel::mpsc;
@@ -152,6 +155,8 @@ pub struct Cluster {
 
     tend_channel: Mutex<Sender<()>>,
     closed: AtomicBool,
+
+    pub(crate) metrics: Arc<AtomicArc<Metrics>>,
 }
 
 impl Cluster {
@@ -159,6 +164,7 @@ impl Cluster {
         // updated the hashed password
         let _ = policy.set_auth_mode(policy.auth_mode.clone());
 
+        let metrics = Arc::new(AtomicArc::from(Metrics::new(MetricsPolicy::default())));
         let (tx, rx) = mpsc::channel(100);
         let cluster = Arc::new(Cluster {
             hashed_pass: AtomicArc::from(policy.hashed_pass()),
@@ -173,6 +179,8 @@ impl Cluster {
 
             tend_channel: Mutex::new(tx),
             closed: AtomicBool::new(false),
+
+            metrics: metrics,
         });
         // try to seed connections for first use
         Cluster::wait_till_stabilized(cluster.clone()).await?;
@@ -236,6 +244,12 @@ impl Cluster {
             let old_gen = node.partition_generation();
             let old_rebalance_gen = node.rebalance_generation();
             if node.is_active() {
+                *node
+                    .metrics
+                    .load()
+                    .tends_total
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner()) += 1;
                 match node.refresh(self.aliases()).await {
                     Ok(friends) => {
                         refresh_count += 1;
@@ -256,8 +270,21 @@ impl Cluster {
                         if old_rebalance_gen != node.rebalance_generation() {
                             self.update_rack_ids(&node).await?;
                         }
+
+                        *node
+                            .metrics
+                            .load()
+                            .tends_successful
+                            .lock()
+                            .unwrap_or_else(|poisoned| poisoned.into_inner()) += 1;
                     }
                     Err(err) => {
+                        *node
+                            .metrics
+                            .load()
+                            .tends_failed
+                            .lock()
+                            .unwrap_or_else(|poisoned| poisoned.into_inner()) += 1;
                         node.increase_failures();
                         warn!("Node `{node}` refresh failed: {err}");
                     }
@@ -391,6 +418,13 @@ impl Cluster {
         let tokens = tokens.unwrap();
         tokens.update_partition(partition_map, node)?;
 
+        *node
+            .metrics
+            .load()
+            .partition_map_updates
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) += 1;
+
         Ok(())
     }
 
@@ -499,7 +533,7 @@ impl Cluster {
     }
 
     async fn create_node(&self, nv: NodeValidator) -> Node {
-        let res = Node::new(self.client_policy(), Arc::new(nv));
+        let res = Node::new(self.client_policy(), Arc::new(nv), self.metrics.clone());
         res.send_user_agent_id().await;
         res
     }
@@ -663,7 +697,7 @@ impl Cluster {
         namespace.get_node(self, partition, replica, last_tried)
     }
 
-    pub async fn get_master_node(&self, namespace: &str, partition_id: usize) -> Result<Arc<Node>> {
+    pub fn get_master_node(&self, namespace: &str, partition_id: usize) -> Result<Arc<Node>> {
         let partitions = self.partition_map.load();
 
         let ns_partition = partitions.get(namespace).ok_or_else(|| {
@@ -730,12 +764,39 @@ impl Cluster {
         Ok(())
     }
 
+    /// Enable gathering the metrics from the client.
+    pub fn set_metrics_policy(&self, policy: MetricsPolicy) -> Arc<Metrics> {
+        // make new metrics
+        let metrics = Arc::new(Metrics::new(policy));
+        self.metrics.swap(metrics)
+    }
+
+    /// Retrieves the metrics from the client.
+    pub fn get_metrics(&self) -> Arc<Metrics> {
+        let policy = self.metrics.load().metric_policy.clone();
+        let metrics = Arc::new(Metrics::new(policy));
+        *metrics
+            .connections_open
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = self
+            .nodes()
+            .iter()
+            .map(|n| n.total_open_connections() as u64)
+            .sum::<u64>();
+        self.metrics.swap(metrics)
+    }
+
     pub async fn close(&self) -> Result<()> {
-        if !self.closed.load(Ordering::Relaxed) {
+        if !self.closed.swap(true, Ordering::Relaxed) {
             // close tend by closing the channel
             let tx = self.tend_channel.lock().await;
             drop(tx);
-            self.closed.store(true, Ordering::Relaxed);
+            self.seeds.load_owned();
+            self.aliases.load_owned();
+            self.nodes.load_owned();
+            self.partition_map.load_owned();
+            self.client_policy.load_owned();
+            self.hashed_pass.load_owned();
         }
 
         Ok(())

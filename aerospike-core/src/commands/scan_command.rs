@@ -18,7 +18,7 @@ use std::sync::Arc;
 use aerospike_rt::Mutex;
 
 use crate::cluster::Node;
-use crate::commands::{Command, SingleCommand, StreamCommand};
+use crate::commands::{Command, CommandType, NamespaceProvider, SingleCommand, StreamCommand};
 use crate::errors::Result;
 use crate::net::Connection;
 use crate::policy::QueryPolicy;
@@ -57,7 +57,7 @@ impl<'a> ScanCommand<'a> {
     }
 
     pub async fn execute(&mut self) -> Result<()> {
-        SingleCommand::execute(self.policy, self).await
+        crate::report_latency!(self, Arc::downgrade(&self.stream_command.node))
     }
 }
 
@@ -98,6 +98,10 @@ impl Command for ScanCommand<'_> {
         self.stream_command.get_node().await
     }
 
+    fn command_type(&self) -> CommandType {
+        CommandType::Scan
+    }
+
     fn hint(&self) -> u8 {
         0
     }
@@ -112,5 +116,11 @@ impl Command for ScanCommand<'_> {
 
     async fn parse_result(&mut self, conn: &mut Connection) -> Result<()> {
         StreamCommand::parse_result(&mut self.stream_command, conn).await
+    }
+}
+
+impl NamespaceProvider for ScanCommand<'_> {
+    fn get_namespaces(&self) -> impl Iterator<Item = (&str, CommandType)> {
+        std::iter::once((self.namespace.as_ref(), self.command_type()))
     }
 }

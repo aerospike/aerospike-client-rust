@@ -72,7 +72,9 @@ pub struct Connection {
     // connection object
     pub(crate) conn: Netsocket,
 
-    bytes_read: usize,
+    pub(crate) bytes_received: usize,
+    pub(crate) total_bytes_received: usize,
+    pub(crate) bytes_sent: usize,
 
     pub buffer: Buffer,
 
@@ -138,7 +140,9 @@ impl Connection {
         let mut conn = Connection {
             addr,
             buffer: Buffer::new(policy.buffer_reclaim_threshold),
-            bytes_read: 0,
+            bytes_received: 0,
+            total_bytes_received: 0,
+            bytes_sent: 0,
             conn: stream,
             socket_timeout: policy.timeout().as_millis() as u32,
             timeout_delay: 0,
@@ -171,7 +175,9 @@ impl Connection {
         let mut conn = Connection {
             addr: addr.into(),
             buffer: Buffer::new(policy.buffer_reclaim_threshold),
-            bytes_read: 0,
+            bytes_received: 0,
+            total_bytes_received: 0,
+            bytes_sent: 0,
             conn: stream,
             socket_timeout: policy.timeout().as_millis() as u32,
             timeout_delay: 0,
@@ -222,7 +228,7 @@ impl Connection {
         };
 
         match res {
-            Ok(Ok(())) => (),
+            Ok(Ok(())) => self.bytes_sent += self.buffer.data_buffer.len(),
             Ok(Err(e)) => return Err(e.into()),
             Err(_) => {
                 return Err(Error::Timeout(
@@ -237,12 +243,14 @@ impl Connection {
 
     pub(crate) const fn set_state(&mut self, state: ConnectionState) {
         self.state = state;
-        self.bytes_read = 0;
+        self.bytes_received = 0;
     }
 
     pub(crate) const fn reset_state(&mut self) {
         self.state = ConnectionState::Ready;
-        self.bytes_read = 0;
+        self.bytes_received = 0;
+        self.total_bytes_received = 0;
+        self.bytes_sent = 0;
     }
 
     /// Sets the timeout delay for the connection.
@@ -370,7 +378,10 @@ impl Connection {
         };
 
         match read_result {
-            Ok(Ok(_)) => self.bytes_read += size,
+            Ok(Ok(_)) => {
+                self.bytes_received += size;
+                self.total_bytes_received += size
+            }
             Err(_) => {
                 return Err(Error::Timeout(
                     "Timeout reading from the network connection".into(),
@@ -402,7 +413,7 @@ impl Connection {
         };
 
         match res {
-            Ok(Ok(())) => (),
+            Ok(Ok(())) => self.bytes_sent += buf.len(),
             Ok(Err(e)) => {
                 return Err(e.into());
             }
@@ -435,7 +446,10 @@ impl Connection {
         };
 
         match res {
-            Ok(Ok(_)) => (),
+            Ok(Ok(_)) => {
+                self.bytes_received += buf.len();
+                self.total_bytes_received += buf.len()
+            }
             Ok(Err(e)) => return Err(e.into()),
             Err(_) => {
                 return Err(Error::Timeout(
@@ -444,7 +458,7 @@ impl Connection {
             }
         }
 
-        self.bytes_read += buf.len();
+        self.bytes_received += buf.len();
         self.refresh();
         Ok(())
     }
@@ -478,11 +492,11 @@ impl Connection {
     }
 
     pub const fn bookmark(&mut self) {
-        self.bytes_read = 0;
+        self.bytes_received = 0;
     }
 
-    pub const fn bytes_read(&self) -> usize {
-        self.bytes_read
+    pub const fn bytes_received(&self) -> usize {
+        self.bytes_received
     }
 
     pub(crate) const fn should_attempt_recovery(&self) -> bool {
@@ -519,7 +533,7 @@ impl Connection {
             }?;
 
             limit -= count as usize;
-            self.bytes_read += count as usize;
+            self.bytes_received += count as usize;
         }
 
         Ok(())
@@ -539,7 +553,7 @@ pub struct BufferedConn<'a> {
     pos: usize,
 
     pub(crate) limit: usize,
-    bytes_read: usize,
+    bytes_received: usize,
 }
 
 impl<'a> BufferedConn<'a> {
@@ -549,12 +563,12 @@ impl<'a> BufferedConn<'a> {
             cache: Vec::with_capacity(4 * 1024),
             limit: 0,
             pos: 0,
-            bytes_read: 0,
+            bytes_received: 0,
         }
     }
 
     pub(crate) const fn bookmark(&mut self) {
-        self.bytes_read = 0;
+        self.bytes_received = 0;
         self.conn.bookmark();
     }
 
@@ -564,8 +578,8 @@ impl<'a> BufferedConn<'a> {
     }
 
     #[inline]
-    pub(crate) const fn bytes_read(&self) -> usize {
-        self.bytes_read
+    pub(crate) const fn bytes_received(&self) -> usize {
+        self.bytes_received
     }
 
     pub(crate) fn set_limit_header(&mut self, size: usize) -> Result<()> {
@@ -583,7 +597,7 @@ impl<'a> BufferedConn<'a> {
     fn set_limit(&mut self, size: usize) -> Result<()> {
         self.limit = size;
         self.pos = 0;
-        self.bytes_read = 0;
+        self.bytes_received = 0;
         self.resize_cache(0)
     }
 
@@ -628,7 +642,8 @@ impl<'a> BufferedConn<'a> {
         match read_result {
             Ok(Ok(_)) => {
                 self.limit -= self.cache.len();
-                self.conn.bytes_read += self.cache.len();
+                self.conn.bytes_received += self.cache.len();
+                self.conn.total_bytes_received += self.cache.len();
             }
             Err(_) => {
                 return Err(Error::Timeout(
@@ -669,8 +684,8 @@ impl<'a> BufferedConn<'a> {
             }?;
 
             self.limit -= count as usize;
-            self.bytes_read += count as usize;
-            self.conn.bytes_read += count as usize;
+            self.bytes_received += count as usize;
+            self.conn.bytes_received += count as usize;
         }
 
         let _ = self.resize_cache(0);
@@ -736,7 +751,7 @@ impl<'a> BufferedConn<'a> {
             }
         }
 
-        self.bytes_read += size;
+        self.bytes_received += size;
 
         self.conn.buffer.reset_offset();
         self.conn.refresh();
@@ -840,11 +855,14 @@ impl<'a> ConnectionRecovery<'a> {
     }
 
     async fn read_header(&mut self, total_size: usize) -> Result<usize> {
-        if total_size > self.conn.bytes_read {
+        if total_size > self.conn.bytes_received {
             // read the rest of the header
             if let Err(_) = self
                 .conn
-                .read_buffer_at(self.conn.bytes_read, total_size - self.conn.bytes_read)
+                .read_buffer_at(
+                    self.conn.bytes_received,
+                    total_size - self.conn.bytes_received,
+                )
                 .await
             {
                 // return early and don't update the connection state
@@ -861,12 +879,12 @@ impl<'a> ConnectionRecovery<'a> {
     }
 
     async fn read_body(&mut self, total_size: usize) -> Result<()> {
-        if total_size > self.conn.bytes_read {
+        if total_size > self.conn.bytes_received {
             // read the rest of the body
             if let Err(_) = self
                 .conn
                 .drain(
-                    total_size - self.conn.bytes_read,
+                    total_size - self.conn.bytes_received,
                     Duration::from_millis(u64::from(self.conn.timeout_delay)),
                 )
                 .await
@@ -876,17 +894,20 @@ impl<'a> ConnectionRecovery<'a> {
             }
         }
 
-        assert!(self.conn.bytes_read == total_size);
+        assert!(self.conn.bytes_received == total_size);
         Ok(())
     }
 
     async fn read_stream_header(&mut self, total_size: usize) -> Result<usize> {
         assert_eq!(total_size, 8);
-        if total_size > self.conn.bytes_read {
+        if total_size > self.conn.bytes_received {
             // read the rest of the header
             if let Err(_) = self
                 .conn
-                .read_buffer_at(self.conn.bytes_read, total_size - self.conn.bytes_read)
+                .read_buffer_at(
+                    self.conn.bytes_received,
+                    total_size - self.conn.bytes_received,
+                )
                 .await
             {
                 // return early and don't update the connection state
@@ -900,14 +921,14 @@ impl<'a> ConnectionRecovery<'a> {
 
     async fn read_stream_body(&mut self, total_size: usize) -> Result<bool> {
         // The message has been bigger than a header only last part. Drain it straight away.
-        if self.conn.bytes_read > usize::from(crate::commands::buffer::MSG_TOTAL_HEADER_SIZE) {
+        if self.conn.bytes_received > usize::from(crate::commands::buffer::MSG_TOTAL_HEADER_SIZE) {
             // we are past the header portion, clearly not the last message.
             // We can safely drain the connection
-            if total_size > self.conn.bytes_read {
+            if total_size > self.conn.bytes_received {
                 if let Err(_) = self
                     .conn
                     .drain(
-                        total_size - self.conn.bytes_read,
+                        total_size - self.conn.bytes_received,
                         Duration::from_millis(u64::from(self.conn.timeout_delay)),
                     )
                     .await
@@ -917,20 +938,21 @@ impl<'a> ConnectionRecovery<'a> {
                 }
             }
 
-            assert!(self.conn.bytes_read == total_size);
+            assert!(self.conn.bytes_received == total_size);
             return Ok(false);
         }
 
         // Still the header portion, so we need to read the rest of it and
         // figure out if this is the last message in the stream.
-        if usize::from(crate::commands::buffer::MSG_TOTAL_HEADER_SIZE) > self.conn.bytes_read {
+        if usize::from(crate::commands::buffer::MSG_TOTAL_HEADER_SIZE) > self.conn.bytes_received {
             let remaining = min(
                 total_size,
-                usize::from(crate::commands::buffer::MSG_TOTAL_HEADER_SIZE) - self.conn.bytes_read,
+                usize::from(crate::commands::buffer::MSG_TOTAL_HEADER_SIZE)
+                    - self.conn.bytes_received,
             );
             if let Err(_) = self
                 .conn
-                .read_buffer_at(self.conn.bytes_read, remaining)
+                .read_buffer_at(self.conn.bytes_received, remaining)
                 .await
             {
                 // return early and don't update the connection state
@@ -943,11 +965,11 @@ impl<'a> ConnectionRecovery<'a> {
             info3 & crate::commands::buffer::INFO3_LAST == crate::commands::buffer::INFO3_LAST;
 
         // read the rest of the body
-        if total_size > self.conn.bytes_read {
+        if total_size > self.conn.bytes_received {
             if let Err(_) = self
                 .conn
                 .drain(
-                    total_size - self.conn.bytes_read,
+                    total_size - self.conn.bytes_received,
                     Duration::from_millis(u64::from(self.conn.timeout_delay)),
                 )
                 .await
@@ -957,7 +979,7 @@ impl<'a> ConnectionRecovery<'a> {
             }
         }
 
-        assert!(self.conn.bytes_read == total_size);
+        assert!(self.conn.bytes_received == total_size);
         Ok(last_record)
     }
 }

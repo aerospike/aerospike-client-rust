@@ -15,7 +15,7 @@
 use std::sync::Arc;
 
 use crate::cluster::Node;
-use crate::commands::{Command, SingleCommand, StreamCommand};
+use crate::commands::{Command, CommandType, NamespaceProvider, SingleCommand, StreamCommand};
 use crate::errors::Result;
 use crate::net::Connection;
 use crate::policy::QueryPolicy;
@@ -50,7 +50,7 @@ impl<'a> QueryCommand<'a> {
     }
 
     pub async fn execute(&mut self) -> Result<()> {
-        SingleCommand::execute(self.policy, self).await
+        crate::report_latency!(self, Arc::downgrade(&self.stream_command.node))
     }
 }
 
@@ -90,6 +90,10 @@ impl Command for QueryCommand<'_> {
         self.stream_command.get_node().await
     }
 
+    fn command_type(&self) -> CommandType {
+        CommandType::Query
+    }
+
     fn hint(&self) -> u8 {
         0
     }
@@ -104,5 +108,11 @@ impl Command for QueryCommand<'_> {
 
     async fn parse_result(&mut self, conn: &mut Connection) -> Result<()> {
         StreamCommand::parse_result(&mut self.stream_command, conn).await
+    }
+}
+
+impl NamespaceProvider for QueryCommand<'_> {
+    fn get_namespaces(&self) -> impl Iterator<Item = (&str, CommandType)> {
+        std::iter::once((self.statement.namespace.as_ref(), self.command_type()))
     }
 }

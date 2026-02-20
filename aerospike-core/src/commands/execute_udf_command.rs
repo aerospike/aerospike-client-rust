@@ -16,7 +16,7 @@ use std::str;
 use std::sync::Arc;
 
 use crate::cluster::{Cluster, Node};
-use crate::commands::{Command, ReadCommand, SingleCommand};
+use crate::commands::{Command, CommandType, NamespaceProvider, ReadCommand, SingleCommand};
 use crate::errors::Result;
 use crate::net::Connection;
 use crate::policy::WritePolicy;
@@ -55,7 +55,7 @@ impl<'a> ExecuteUDFCommand<'a> {
     }
 
     pub async fn execute(&mut self) -> Result<()> {
-        SingleCommand::execute(self.policy, self).await
+        crate::report_latency!(self, self.read_command.single_command.last_tried)
     }
 }
 
@@ -92,11 +92,24 @@ impl Command for ExecuteUDFCommand<'_> {
         self.read_command.get_node().await
     }
 
+    fn command_type(&self) -> CommandType {
+        CommandType::Udf
+    }
+
     fn hint(&self) -> u8 {
         self.read_command.single_command.hint()
     }
 
     async fn parse_result(&mut self, conn: &mut Connection) -> Result<()> {
         self.read_command.parse_result(conn).await
+    }
+}
+
+impl NamespaceProvider for ExecuteUDFCommand<'_> {
+    fn get_namespaces(&self) -> impl Iterator<Item = (&str, CommandType)> {
+        std::iter::once((
+            self.read_command.single_command.key.namespace.as_ref(),
+            self.command_type(),
+        ))
     }
 }

@@ -15,7 +15,7 @@
 use std::sync::Arc;
 
 use crate::cluster::{Cluster, Node};
-use crate::commands::{Command, SingleCommand};
+use crate::commands::{Command, CommandType, NamespaceProvider, SingleCommand};
 use crate::errors::{Error, Result};
 use crate::net::Connection;
 use crate::operations::OperationType;
@@ -46,7 +46,7 @@ impl<'a> WriteCommand<'a> {
     }
 
     pub async fn execute(&mut self) -> Result<()> {
-        SingleCommand::execute(self.policy, self).await
+        crate::report_latency!(self, self.single_command.last_tried)
     }
 }
 
@@ -72,6 +72,10 @@ impl Command for WriteCommand<'_> {
 
     async fn get_node(&mut self) -> Result<Arc<Node>> {
         self.single_command.get_node().await
+    }
+
+    fn command_type(&self) -> CommandType {
+        CommandType::Put
     }
 
     fn hint(&self) -> u8 {
@@ -100,5 +104,14 @@ impl Command for WriteCommand<'_> {
         }
 
         SingleCommand::empty_socket(conn).await
+    }
+}
+
+impl NamespaceProvider for WriteCommand<'_> {
+    fn get_namespaces(&self) -> impl Iterator<Item = (&str, CommandType)> {
+        std::iter::once((
+            self.single_command.key.namespace.as_ref(),
+            self.command_type(),
+        ))
     }
 }

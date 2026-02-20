@@ -16,8 +16,10 @@ use std::collections::hash_map::Entry::{Occupied, Vacant};
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use futures::io::Read;
+
 use crate::cluster::{Cluster, Node};
-use crate::commands::{Command, SingleCommand};
+use crate::commands::{Command, CommandType, NamespaceProvider, SingleCommand};
 use crate::errors::{Error, Result};
 use crate::net::Connection;
 use crate::policy::{BasePolicy, Policy, Replica};
@@ -48,7 +50,7 @@ impl<'a> ReadCommand<'a> {
     }
 
     pub async fn execute(&mut self) -> Result<()> {
-        SingleCommand::execute(self.policy, self).await
+        crate::report_latency!(self, self.single_command.last_tried)
     }
 
     fn parse_record(
@@ -119,6 +121,13 @@ impl Command for ReadCommand<'_> {
         self.single_command.get_node().await
     }
 
+    fn command_type(&self) -> CommandType {
+        if self.bins.is_none() {
+            return CommandType::GetHeader;
+        }
+        CommandType::Get
+    }
+
     fn hint(&self) -> u8 {
         self.single_command.hint()
     }
@@ -177,5 +186,14 @@ impl Command for ReadCommand<'_> {
             }
             rc => Err(Error::ServerError(rc, false, conn.addr.clone())),
         }
+    }
+}
+
+impl NamespaceProvider for ReadCommand<'_> {
+    fn get_namespaces(&self) -> impl Iterator<Item = (&str, CommandType)> {
+        std::iter::once((
+            self.single_command.key.namespace.as_ref(),
+            self.command_type(),
+        ))
     }
 }

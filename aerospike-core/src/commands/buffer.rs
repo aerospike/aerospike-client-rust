@@ -506,7 +506,7 @@ impl Buffer {
         &mut self,
         policy: &BatchPolicy,
         batch_ops: &[(BatchOperation, usize)],
-    ) -> Result<()> {
+    ) -> Result<BatchAttr> {
         self.begin();
         let mut field_count = 1;
         self.data_offset += FIELD_HEADER_SIZE as usize + 5;
@@ -635,7 +635,7 @@ impl Buffer {
         );
 
         self.end();
-        Ok(())
+        Ok(attr)
     }
 
     // Writes the command for getting metadata operations

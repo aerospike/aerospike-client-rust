@@ -24,6 +24,7 @@ use std::sync::LazyLock;
 use aerospike_rt::{sleep, Mutex};
 
 use crate::batch::{BatchExecutor, BatchOperation};
+use crate::cluster::metrics::Metrics;
 use crate::cluster::{Cluster, Node};
 use crate::commands::admin_command::AdminCommand;
 use crate::commands::buffer::Buffer;
@@ -36,7 +37,9 @@ use crate::expressions::Expression;
 use crate::msgpack::encoder::pack_ctx_for_index;
 use crate::net::ToHosts;
 use crate::operations::{CdtContext, Operation, OperationType};
-use crate::policy::{AdminPolicy, BatchPolicy, ClientPolicy, QueryPolicy, ReadPolicy, WritePolicy};
+use crate::policy::{
+    AdminPolicy, BatchPolicy, ClientPolicy, MetricsPolicy, QueryPolicy, ReadPolicy, WritePolicy,
+};
 use crate::query::{PartitionFilter, PartitionTracker};
 use crate::task::{DropIndexTask, IndexTask, RegisterTask, UdfRemoveTask};
 use crate::{
@@ -115,6 +118,16 @@ impl Client {
         let cluster = Cluster::new(policy.clone(), &hosts).await?;
 
         Ok(Client { cluster })
+    }
+
+    /// Set metrics gathering policy. The old existing delta will be returned.
+    pub fn set_metrics_policy(&self, policy: MetricsPolicy) -> Arc<Metrics> {
+        self.cluster.set_metrics_policy(policy)
+    }
+
+    /// Retrieves the metrics from the client.
+    pub fn get_metrics(&self) -> Arc<Metrics> {
+        self.cluster.get_metrics()
     }
 
     /// Closes the connection to the Aerospike cluster.

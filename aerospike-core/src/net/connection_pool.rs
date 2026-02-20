@@ -16,6 +16,10 @@
 use std::ops::{Deref, DerefMut, Drop};
 use std::sync::Arc;
 
+use hazarc::AtomicArc;
+
+use crate::cluster::metrics::Metrics;
+use crate::cluster::Node;
 use crate::errors::{Error, Result};
 use crate::net::{Connection, ConnectionState, Host};
 use crate::policy::ClientPolicy;
@@ -68,9 +72,8 @@ impl Queue {
         false
     }
 
-    /// Decreases the reserved value by one, opening up capacity for more connections.
-    #[cfg(test)]
-    fn reserved(&self) -> usize {
+    /// Returns the total number of connections opened for this queue. They may be in flight.
+    pub fn reserved(&self) -> usize {
         let reserved = self.0.reserved.lock().unwrap_or_else(|e| e.into_inner());
         *reserved
     }
@@ -106,7 +109,7 @@ impl Queue {
     }
 
     /// Takes a connection out of the queue.
-    pub fn get(&self) -> Result<PooledConnection> {
+    pub fn get(&self, metrics: Arc<AtomicArc<Metrics>>) -> Result<PooledConnection> {
         let connection;
         loop {
             if let Some(conn) = self
@@ -117,6 +120,7 @@ impl Queue {
                 .pop_front()
             {
                 if conn.is_idle() {
+                    *metrics.load().connections_idle_dropped.lock().unwrap_or_else(|poisoned| poisoned.into_inner()) += 1;
                     // let the connection drop and close
                     continue;
                 }
@@ -126,6 +130,7 @@ impl Queue {
             return Err(Error::NoMoreConnections);
         }
         Ok(PooledConnection {
+            metrics: metrics.clone(),
             queue: self.clone(),
             conn: Some(connection),
         })
@@ -134,7 +139,7 @@ impl Queue {
     /// Puts the connection back into the queue.
     /// Putting back a connection in the queue does not reserve capacity.
     /// You should reserve capacity before putting back the connection in the queue.
-    pub fn put_back(&self, conn: Connection) {
+    pub fn put_back(&self, conn: Connection, metrics: Arc<AtomicArc<Metrics>>) {
         let mut connections = self
             .0
             .connections
@@ -142,6 +147,8 @@ impl Queue {
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         if conn.state == ConnectionState::Ready && connections.len() < self.0.capacity {
             connections.push_back(conn);
+        } else {
+            *metrics.load().connections_pool_overflow.lock().unwrap_or_else(|poisoned| poisoned.into_inner()) += 1;
         }
         // otherwise let it drop
     }
@@ -176,16 +183,21 @@ impl Clone for Queue {
 
 #[derive(Debug)]
 pub struct ConnectionPool {
+    metrics: Arc<AtomicArc<Metrics>>,
     num_queues: u8,
     queues: Vec<Queue>,
 }
 
 impl ConnectionPool {
-    pub fn new(host: Host, policy: ClientPolicy) -> Self {
+    pub fn new(metrics: Arc<AtomicArc<Metrics>>, host: Host, policy: ClientPolicy) -> Self {
         let num_conns = policy.max_conns_per_node;
         let num_queues = policy.conn_pools_per_node;
         let queues = ConnectionPool::initialize_queues(num_conns, num_queues, host, policy);
-        ConnectionPool { num_queues, queues }
+        ConnectionPool {
+            metrics: metrics.clone(),
+            num_queues,
+            queues,
+        }
     }
 
     fn initialize_queues(
@@ -212,12 +224,18 @@ impl ConnectionPool {
     /// Get a connection from one of the internal pools.
     pub fn get(&self, hint: u8) -> Result<PooledConnection> {
         if self.num_queues == 1 {
-            self.queues[0].get()
+            match self.queues[0].get(self.metrics.clone()) {
+                Err(e) => {
+                    *self.metrics.load().connections_pool_empty.lock().unwrap_or_else(|poisoned| poisoned.into_inner()) += 1;
+                    return Err(e);
+                }
+                Ok(conn) => Ok(conn),
+            }
         } else {
             let mut attempts = self.num_queues;
             let mut i = usize::from(hint % self.num_queues);
             loop {
-                let connection = self.queues[i].get();
+                let connection = self.queues[i].get(self.metrics.clone());
                 i += 1;
                 if i >= self.queues.len() {
                     i = 0;
@@ -228,7 +246,14 @@ impl ConnectionPool {
                         continue;
                     }
                 }
-                return connection;
+
+                return match connection {
+                    Err(e) => {
+                        *self.metrics.load().connections_pool_empty.lock().unwrap_or_else(|poisoned| poisoned.into_inner()) += 1;
+                        return Err(e);
+                    }
+                    Ok(conn) => Ok(conn),
+                };
             }
         }
     }
@@ -246,14 +271,18 @@ impl ConnectionPool {
                 i = 0;
             }
             if queue.reserve_capacity() {
+                *self.metrics.load().connections_attempts.lock().unwrap_or_else(|poisoned| poisoned.into_inner()) += 1;
                 match queue.make_conn().await {
                     Ok(conn) => {
+                        *self.metrics.load().connections_successful.lock().unwrap_or_else(|poisoned| poisoned.into_inner()) += 1;
                         return Ok(PooledConnection {
+                            metrics: self.metrics.clone(),
                             queue: queue.clone(),
                             conn: Some(conn),
                         });
                     }
                     Err(e) => {
+                        *self.metrics.load().connections_failed.lock().unwrap_or_else(|poisoned| poisoned.into_inner()) += 1;
                         return Err(e);
                     }
                 }
@@ -287,23 +316,40 @@ impl ConnectionPool {
         sum
     }
 
+    /// Returns sum total of open connections per internal queues. They may be in flight.
+    pub fn num_conns_open(&self) -> usize {
+        let mut sum = 0;
+        for q in &self.queues {
+            sum += q.reserved();
+        }
+        sum
+    }
+
     /// If a connection was dropped in a state that was not [`ConnectionState::Ready`],
     /// this method will try to recover the connection by parsing the rest of the data
     /// and returning the connection to a valid state.
-    async fn recover_connection(queue: Queue, mut conn: Connection) {
+    async fn recover_connection(
+        queue: Queue,
+        mut conn: Connection,
+        metrics: Arc<AtomicArc<Metrics>>,
+    ) {
         let mut r = crate::net::connection::ConnectionRecovery::new(&mut conn);
         r.recover().await;
         if conn.state == ConnectionState::Ready {
-            queue.put_back(conn);
+            *metrics.load().connections_recovered.lock().unwrap_or_else(|poisoned| poisoned.into_inner()) += 1;
+            queue.put_back(conn, metrics.clone());
             return;
         }
 
+        conn.close();
+        *metrics.load().connections_closed.lock().unwrap_or_else(|poisoned| poisoned.into_inner()) += 1;
         queue.reduce_capacity();
     }
 }
 
 #[derive(Debug)]
 pub struct PooledConnection {
+    pub metrics: Arc<AtomicArc<Metrics>>,
     pub queue: Queue,
     pub conn: Option<Connection>,
 }
@@ -320,16 +366,23 @@ impl Drop for PooledConnection {
     fn drop(&mut self) {
         if let Some(conn) = self.conn.take() {
             match conn.state {
-                ConnectionState::Closed => self.queue.reduce_capacity(),
-                ConnectionState::Ready => self.queue.put_back(conn),
+                ConnectionState::Closed => {
+                    self.queue.reduce_capacity();
+                    *self.metrics.load().connections_closed.lock().unwrap_or_else(|poisoned| poisoned.into_inner()) += 1;
+                }
+                ConnectionState::Ready => self.queue.put_back(conn, self.metrics.clone()),
                 _ if conn.should_attempt_recovery() => {
                     // need to spawn a new green thread to avoid blocking the current one
                     aerospike_rt::spawn(ConnectionPool::recover_connection(
                         Queue(self.queue.0.clone()),
                         conn,
+                        self.metrics.clone(),
                     ));
                 }
-                _ => self.queue.reduce_capacity(),
+                _ => {
+                    self.queue.reduce_capacity();
+                    *self.metrics.load().connections_closed.lock().unwrap_or_else(|poisoned| poisoned.into_inner()) += 1;
+                }
             }
         }
     }
@@ -351,21 +404,23 @@ impl DerefMut for PooledConnection {
 
 #[cfg(test)]
 mod tests {
-    use crate::net::Connection;
+    use crate::{cluster::metrics::Metrics, net::Connection, policy::MetricsPolicy};
 
     use super::{ClientPolicy, ConnectionPool, Host, Queue};
+    use hazarc::AtomicArc;
+    use std::sync::Arc;
 
     macro_rules! put_back_with_reserve {
-        ($queue:ident, $conn:ident) => {{
+        ($queue:ident, $conn:ident, $metrics:ident) => {{
             if $queue.reserve_capacity() {
-                $queue.put_back($conn);
+                $queue.put_back($conn, $metrics.clone());
             }
         }};
     }
 
     macro_rules! get_and_invalidate {
-        ($queue:ident) => {{
-            match $queue.get() {
+        ($queue:ident, $metrics:ident) => {{
+            match $queue.get($metrics.clone()) {
                 Ok(mut c) => {
                     c.invalidate();
                     Ok(c)
@@ -400,37 +455,38 @@ mod tests {
     async fn queue() {
         let host = Host::new("some-url", 30000);
         let policy = ClientPolicy::default();
+        let metrics = Arc::new(AtomicArc::from(Metrics::new(MetricsPolicy::default())));
 
         let q = Queue::with_capacity(3, host.clone(), policy.clone());
         assert_eq!(q.num_conns(), 0);
         assert_eq!(q.reserved(), 0);
-        assert_eq!(q.get().is_err(), true);
+        assert_eq!(q.get(metrics.clone()).is_err(), true);
 
         let c = Connection::new(&host, &policy, None)
             .await
             .expect("creating dummy connection failed");
-        put_back_with_reserve!(q, c);
+        put_back_with_reserve!(q, c, metrics);
         assert_eq!(q.reserved(), 1);
         assert_eq!(q.num_conns(), 1);
 
         let c = Connection::new(&host, &policy, None)
             .await
             .expect("creating dummy connection failed");
-        put_back_with_reserve!(q, c);
+        put_back_with_reserve!(q, c, metrics);
         assert_eq!(q.reserved(), 2);
         assert_eq!(q.num_conns(), 2);
 
         let c = Connection::new(&host, &policy, None)
             .await
             .expect("creating dummy connection failed");
-        put_back_with_reserve!(q, c);
+        put_back_with_reserve!(q, c, metrics);
         assert_eq!(q.reserved(), 3);
         assert_eq!(q.num_conns(), 3);
 
         let c = Connection::new(&host, &policy, None)
             .await
             .expect("creating dummy connection failed");
-        put_back_with_reserve!(q, c);
+        put_back_with_reserve!(q, c, metrics);
         assert_eq!(q.num_conns(), 3);
         assert_eq!(q.reserved(), 3);
         assert_eq!(q.reserve_capacity(), false);
@@ -439,23 +495,23 @@ mod tests {
 
         // remove and drop; the connection goes back into
         // the queue automatically, because it is in ready state.
-        assert_eq!(q.get().is_err(), false);
+        assert_eq!(q.get(metrics.clone()).is_err(), false);
         assert_eq!(q.reserved(), 3);
         assert_eq!(q.num_conns(), 3);
 
-        assert_eq!(get_and_invalidate!(q).is_err(), false);
+        assert_eq!(get_and_invalidate!(q, metrics).is_err(), false);
         assert_eq!(q.reserved(), 2);
         assert_eq!(q.num_conns(), 2);
 
-        assert_eq!(get_and_invalidate!(q).is_err(), false);
+        assert_eq!(get_and_invalidate!(q, metrics).is_err(), false);
         assert_eq!(q.num_conns(), 1);
         assert_eq!(q.reserved(), 1);
 
-        assert_eq!(get_and_invalidate!(q).is_err(), false);
+        assert_eq!(get_and_invalidate!(q, metrics).is_err(), false);
         assert_eq!(q.num_conns(), 0);
         assert_eq!(q.reserved(), 0);
 
-        assert_eq!(get_and_invalidate!(q).is_err(), true);
+        assert_eq!(get_and_invalidate!(q, metrics).is_err(), true);
         assert_eq!(q.num_conns(), 0);
         assert_eq!(q.reserved(), 0);
     }
@@ -464,8 +520,9 @@ mod tests {
     async fn single_queue_connection_pool() {
         let host = Host::new("some-url", 30000);
         let policy = ClientPolicy::default();
+        let metrics = Arc::new(AtomicArc::from(Metrics::new(MetricsPolicy::default())));
 
-        let p = ConnectionPool::new(host.clone(), policy.clone());
+        let p = ConnectionPool::new(metrics, host.clone(), policy.clone());
         assert_eq!(p.num_conns(), 0);
         assert_eq!(p.get(0).is_err(), true);
 
@@ -500,8 +557,9 @@ mod tests {
             max_conns_per_node: 3,
             ..ClientPolicy::default()
         };
+        let metrics = Arc::new(AtomicArc::from(Metrics::new(MetricsPolicy::default())));
 
-        let p = ConnectionPool::new(host.clone(), policy.clone());
+        let p = ConnectionPool::new(metrics, host.clone(), policy.clone());
         assert_eq!(p.num_conns(), 0);
         assert_eq!(p.get(0).is_err(), true);
 

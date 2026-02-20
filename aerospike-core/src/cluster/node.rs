@@ -22,13 +22,14 @@ use std::sync::Arc;
 
 use hazarc::AtomicArc;
 
+use crate::cluster::metrics::Metrics;
 use crate::cluster::node_validator::NodeValidator;
 use crate::cluster::peers_parser::PeersParser;
 use crate::cluster::CLIENT_VERSION;
 use crate::commands::Message;
 use crate::errors::{Error, Result};
 use crate::net::{ConnectionPool, Host, PooledConnection};
-use crate::policy::{AdminPolicy, ClientPolicy};
+use crate::policy::{AdminPolicy, ClientPolicy, MetricsPolicy};
 use crate::Version;
 
 pub const PARTITIONS: usize = 4096;
@@ -57,11 +58,17 @@ pub struct Node {
     responded: AtomicBool,
     active: AtomicBool,
     version: Version,
+
+    pub(crate) metrics: Arc<AtomicArc<Metrics>>,
 }
 
 impl Node {
     #![allow(missing_docs)]
-    pub fn new(client_policy: ClientPolicy, nv: Arc<NodeValidator>) -> Self {
+    pub fn new(
+        client_policy: ClientPolicy,
+        nv: Arc<NodeValidator>,
+        metrics: Arc<AtomicArc<Metrics>>,
+    ) -> Self {
         Node {
             client_policy: client_policy.clone(),
             name: nv.name.clone(),
@@ -74,7 +81,11 @@ impl Node {
             } else {
                 0
             }),
-            connection_pool: ConnectionPool::new(nv.aliases[0].clone(), client_policy),
+            connection_pool: ConnectionPool::new(
+                metrics.clone(),
+                nv.aliases[0].clone(),
+                client_policy,
+            ),
             failures: AtomicUsize::new(0),
             partition_generation: AtomicIsize::new(-1),
             refresh_count: AtomicUsize::new(0),
@@ -83,6 +94,8 @@ impl Node {
             active: AtomicBool::new(true),
             version: nv.version.clone(),
             rack_ids: AtomicArc::from(HashMap::new()),
+
+            metrics: metrics,
         }
     }
 
@@ -108,6 +121,10 @@ impl Node {
 
     pub fn host(&self) -> Host {
         self.host.clone()
+    }
+
+    pub fn total_open_connections(&self) -> usize {
+        self.connection_pool.num_conns_open()
     }
 
     // Returns the reference count
@@ -150,7 +167,10 @@ impl Node {
         self.update_rebalance_generation(&info_map)
             .map_err(|e| e.chain_error("Failed to update rebalance generation"))?;
         self.reset_failures();
+
+        // TODO: spawn async?
         let _ = self.fill_min_conns().await;
+
         Ok(friends)
     }
 
@@ -278,13 +298,6 @@ impl Node {
         self.connection_pool.make_conn(0).await
     }
 
-    // Put a connection to the node back in the connection pool
-    pub fn put_connection(&self, mut pconn: PooledConnection) {
-        if let Some(conn) = pconn.conn.take() {
-            pconn.queue.put_back(conn);
-        }
-    }
-
     // Amount of failures
     pub fn failures(&self) -> usize {
         self.failures.load(Ordering::Relaxed)
@@ -340,7 +353,7 @@ impl Node {
             conn.invalidate();
             return Err(e);
         }
-        self.put_connection(conn);
+
         res
     }
 
@@ -408,5 +421,11 @@ impl Eq for Node {}
 impl fmt::Display for Node {
     fn fmt(&self, f: &mut fmt::Formatter) -> StdResult<(), fmt::Error> {
         format!("{}: {}", self.name, self.host).fmt(f)
+    }
+}
+
+impl Drop for Node {
+    fn drop(&mut self) {
+        println!("{:?}", self.metrics.load());
     }
 }

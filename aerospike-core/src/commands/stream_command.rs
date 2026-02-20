@@ -21,7 +21,7 @@ use aerospike_rt::Mutex;
 use crate::cluster::Node;
 use crate::commands::buffer;
 use crate::commands::field_type::FieldType;
-use crate::commands::Command;
+use crate::commands::{Command, CommandType};
 use crate::errors::{Error, Result};
 use crate::net::{BufferedConn, Connection};
 use crate::query::{NodePartitions, Recordset};
@@ -30,7 +30,7 @@ use crate::{Key, Record, ResultCode, Value};
 
 pub struct StreamCommand {
     is_scan: bool,
-    node: Arc<Node>,
+    pub(crate) node: Arc<Node>,
     pub(crate) recordset: Arc<Recordset>,
     pub(crate) node_partitions: Arc<Mutex<NodePartitions>>,
 }
@@ -256,6 +256,10 @@ impl Command for StreamCommand {
 
     async fn get_node(&mut self) -> Result<Arc<Node>> {
         Ok(self.node.clone())
+    }
+
+    fn command_type(&self) -> CommandType {
+        unreachable!()
     }
 
     fn hint(&self) -> u8 {

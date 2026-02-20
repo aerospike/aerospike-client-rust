@@ -17,6 +17,7 @@ pub mod batch_executor;
 pub mod batch_record;
 
 use crate::commands::buffer::{FIELD_HEADER_SIZE, OPERATION_HEADER_SIZE};
+use crate::commands::CommandType;
 use crate::expressions::Expression;
 use crate::msgpack::encoder;
 use crate::operations::Operation;
@@ -484,6 +485,29 @@ impl BatchOperation {
                 br.result_code = Some(rc);
                 br.in_doubt = in_doubt;
             }
+        }
+    }
+
+    /// Returns the type of the batch operation for metrics.
+    pub(crate) fn command_type(&self) -> CommandType {
+        match self {
+            Self::Read { bins, ops, .. } if *bins == Bins::All && ops.is_none() => {
+                CommandType::GetHeader
+            }
+            Self::Read { .. } => CommandType::BatchRead,
+            Self::Write { .. } => CommandType::BatchWrite,
+            Self::Delete { .. } => CommandType::BatchWrite,
+            Self::UDF { .. } => CommandType::BatchWrite,
+        }
+    }
+
+    /// Returns the type of the batch operation for metrics.
+    pub(crate) fn namespace(&self) -> &str {
+        match self {
+            Self::Read { br, .. } => &br.key.namespace,
+            Self::Write { br, .. } => &br.key.namespace,
+            Self::Delete { br, .. } => &br.key.namespace,
+            Self::UDF { br, .. } => &br.key.namespace,
         }
     }
 }

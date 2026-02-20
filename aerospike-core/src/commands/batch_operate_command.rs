@@ -19,14 +19,17 @@ use std::sync::Arc;
 
 use crate::batch::BatchOperation;
 use crate::batch::BatchRecordIndex;
+use crate::cluster::metrics::SingleCommandMetric;
 use crate::cluster::partition::Partition;
 use crate::cluster::{Cluster, Node};
-use crate::commands::StreamCommand;
-use crate::commands::{self};
+use crate::commands::{self, BatchAttr};
+use crate::commands::{CommandType, NamespaceProvider, StreamCommand};
 use crate::errors::{Error, Result};
 use crate::net::{BufferedConn, Connection};
 use crate::policy::{BatchPolicy, Policy, Replica};
+use crate::{record_bytes, record_latency};
 use crate::{value, Record, ResultCode, Value};
+
 use aerospike_rt::sleep;
 use aerospike_rt::time::Duration;
 
@@ -50,11 +53,60 @@ impl BatchOperateCommand {
         }
     }
 
-    pub async fn execute(self, cluster: Arc<Cluster>) -> Result<Self> {
+    pub async fn execute(mut self, cluster: Arc<Cluster>) -> Result<Self> {
+        let mut attr = BatchAttr::default();
+
+        use aerospike_rt::time::Instant;
+        let mut single_metric = SingleCommandMetric::new();
+        let mut start = Instant::now();
+        let node = self.node.clone();
+        let res = self
+            .execute_timed(cluster, &mut attr, &mut single_metric)
+            .await;
+
+        record_latency!(node, start, single_metric.command_latency);
+
+        let cmd_type = if attr.has_write {
+            CommandType::BatchWrite
+        } else {
+            CommandType::BatchRead
+        };
+
+        node.metrics
+            .load()
+            .apply_latency(cmd_type, start.elapsed().as_micros() as u64);
+
+        node.metrics
+            .load()
+            .update_metrics_for_namespace(&self, &single_metric);
+
+        match res {
+            Ok(_) => Ok(self),
+            Err(e @ Error::ServerError(rc, _, _)) => {
+                node.metrics
+                    .load()
+                    .update_result_code_for_namespace(&self, rc);
+                Err(e)
+            }
+            Err(e) => {
+                node.metrics
+                    .load()
+                    .update_result_code_for_namespace(&self, ResultCode::Ok);
+                Err(e)
+            }
+        }
+    }
+
+    pub async fn execute_timed(
+        &mut self,
+        cluster: Arc<Cluster>,
+        attr: &mut BatchAttr,
+        metric: &mut SingleCommandMetric,
+    ) -> Result<()> {
         if self.policy.total_timeout() > 0 {
             let res = aerospike_rt::timeout(
                 Duration::from_millis(u64::from(self.policy.total_timeout())),
-                self.execute_command(cluster),
+                self.execute_command(cluster, attr, metric),
             )
             .await;
             match res {
@@ -62,11 +114,16 @@ impl BatchOperateCommand {
                 Err(_) => Err(Error::Timeout("Timeout".to_string())),
             }
         } else {
-            self.execute_command(cluster).await
+            self.execute_command(cluster, attr, metric).await
         }
     }
 
-    pub async fn execute_command(mut self, cluster: Arc<Cluster>) -> Result<Self> {
+    pub async fn execute_command(
+        &mut self,
+        cluster: Arc<Cluster>,
+        attr: &mut BatchAttr,
+        metric: &mut SingleCommandMetric,
+    ) -> Result<()> {
         let mut iterations = 0;
 
         // set timeout outside the loop
@@ -81,6 +138,8 @@ impl BatchOperateCommand {
                     &self.policy,
                     deadline,
                     self.node.clone(),
+                    attr,
+                    metric,
                 )
                 .await?
             } else {
@@ -96,7 +155,16 @@ impl BatchOperateCommand {
                         Arc::downgrade(&self.node),
                     )?;
 
-                    if !Self::request_group(individual_op, &self.policy, deadline, node).await? {
+                    if !Self::request_group(
+                        individual_op,
+                        &self.policy,
+                        deadline,
+                        node,
+                        attr,
+                        metric,
+                    )
+                    .await?
+                    {
                         all_successful = false;
                         break;
                     }
@@ -106,7 +174,7 @@ impl BatchOperateCommand {
 
             if success {
                 // command has completed successfully. Exit method.
-                return Ok(self);
+                return Ok(());
             }
 
             iterations += 1;
@@ -137,8 +205,16 @@ impl BatchOperateCommand {
         policy: &BatchPolicy,
         deadline: Option<Instant>,
         node: Arc<Node>,
+        attr: &mut BatchAttr,
+        metric: &mut SingleCommandMetric,
     ) -> Result<bool> {
-        let mut conn = match node.get_connection(0).await {
+        let mut start = Instant::now();
+        let hint = batch_ops
+            .first()
+            .map(|bop| bop.0.key().digest[0])
+            .or(Some(0))
+            .unwrap();
+        let mut conn = match node.get_connection(hint).await {
             Ok(conn) => conn,
             Err(err) => {
                 warn!("Node {node}: {err}");
@@ -146,9 +222,14 @@ impl BatchOperateCommand {
             }
         };
 
-        conn.buffer
+        record_latency!(node, start, metric.connection_acq);
+
+        *attr = conn
+            .buffer
             .set_batch_operate(policy, batch_ops)
             .map_err(|_| Error::ClientError("Failed to prepare send buffer".into()))?;
+
+        record_latency!(node, start, metric.command_encoding);
 
         conn.buffer.write_timeout(policy.server_timeout());
 
@@ -157,6 +238,9 @@ impl BatchOperateCommand {
 
         // Send command.
         if let Err(err) = conn.flush().await {
+            record_latency!(node, start, metric.command_transmission);
+            record_bytes!(node, conn, metric);
+
             // IO errors are considered temporary anomalies. Retry.
             // Close socket to flush out possible garbage. Do not put back in pool.
             conn.invalidate();
@@ -164,8 +248,13 @@ impl BatchOperateCommand {
             return Ok(false);
         }
 
+        record_latency!(node, start, metric.command_transmission);
+
         // Parse results.
         if let Err(err) = Self::parse_result(batch_ops, &mut conn).await {
+            record_latency!(node, start, metric.command_parsing);
+            record_bytes!(node, conn, metric);
+
             // close the connection
             // cancelling/closing the batch/multi commands will return an error, which will
             // close the connection to throw away its data and signal the server about the
@@ -175,6 +264,10 @@ impl BatchOperateCommand {
             }
             Err(err)
         } else {
+            record_latency!(node, start, metric.command_parsing);
+            record_bytes!(node, conn, metric);
+
+            conn.reset_state();
             Ok(true)
         }
     }
@@ -184,7 +277,7 @@ impl BatchOperateCommand {
         conn: &mut BufferedConn<'_>,
         size: usize,
     ) -> Result<bool> {
-        while conn.bytes_read() < size {
+        while conn.bytes_received() < size {
             conn.read_buffer(commands::buffer::MSG_REMAINING_HEADER_SIZE as usize)
                 .await?;
             match Self::parse_record(conn).await {
@@ -344,7 +437,14 @@ impl BatchOperateCommand {
             conn.drain(conn.conn.deadline()).await?;
         }
 
-        conn.reset_state();
         Ok(())
+    }
+}
+
+impl NamespaceProvider for BatchOperateCommand {
+    fn get_namespaces(&self) -> impl Iterator<Item = (&str, CommandType)> {
+        self.batch_ops
+            .iter()
+            .map(|op| (op.0.namespace(), op.0.command_type()))
     }
 }

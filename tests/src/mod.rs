@@ -37,6 +37,7 @@ mod query;
 mod scan;
 #[cfg(feature = "serialization")]
 mod serialization;
+mod special_cases;
 mod task;
 mod truncate;
 mod udf;

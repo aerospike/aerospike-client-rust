@@ -163,7 +163,7 @@ impl PartitionTracker {
                 (part.retry, part.id)
             };
             if retry || part_retry {
-                let node = cluster.get_master_node(namespace, part_id as usize).await?;
+                let node = cluster.get_master_node(namespace, part_id as usize)?;
 
                 // Use node name to check for single node equality because
                 // partition map may be in transitional state between

@@ -14,6 +14,8 @@
 
 use std::sync::{Arc, Weak};
 
+use crate::cluster::metrics::Metrics;
+use crate::cluster::metrics::SingleCommandMetric;
 use crate::cluster::partition::Partition;
 use crate::cluster::{Cluster, Node};
 use crate::commands::{self};
@@ -21,14 +23,15 @@ use crate::errors::{Error, Result};
 use crate::net::Connection;
 use crate::policy::Policy;
 use crate::Key;
+use crate::{record_bytes, record_latency};
 use aerospike_rt::sleep;
 use aerospike_rt::time::{Duration, Instant};
 
 pub struct SingleCommand<'a> {
-    cluster: Arc<Cluster>,
+    pub(crate) cluster: Arc<Cluster>,
     pub key: &'a Key,
     partition: Partition<'a>,
-    last_tried: Weak<Node>,
+    pub(crate) last_tried: Weak<Node>,
     replica: crate::policy::Replica,
 }
 
@@ -78,25 +81,29 @@ impl<'a> SingleCommand<'a> {
     pub async fn execute(
         policy: &(dyn Policy + Send + Sync),
         cmd: &'a mut (dyn commands::Command + Send),
+        metric: &mut SingleCommandMetric,
     ) -> Result<()> {
         if policy.total_timeout() > 0 {
-            match aerospike_rt::timeout(
+            let res = match aerospike_rt::timeout(
                 Duration::from_millis(u64::from(policy.total_timeout())),
-                Self::execute_command(policy, cmd),
+                Self::execute_command(policy, cmd, metric),
             )
             .await
             {
                 Ok(res) => res,
                 Err(_) => Err(Error::Timeout("Timeout".to_string())),
-            }
+            };
+
+            res
         } else {
-            Self::execute_command(policy, cmd).await
+            Self::execute_command(policy, cmd, metric).await
         }
     }
 
     pub async fn execute_command(
         policy: &(dyn Policy + Send + Sync),
         cmd: &'a mut (dyn commands::Command + Send),
+        metric: &mut SingleCommandMetric,
     ) -> Result<()> {
         let mut iterations = 0;
 
@@ -133,6 +140,8 @@ impl<'a> SingleCommand<'a> {
                 }
             }
 
+            let mut start = Instant::now();
+
             // set command node, so when you return a record it has the node
             let node_future = cmd.get_node();
             let node = match node_future.await {
@@ -152,6 +161,8 @@ impl<'a> SingleCommand<'a> {
                 }
             };
 
+            record_latency!(node, start, metric.connection_acq);
+
             conn.set_socket_timeout(deadline, policy.socket_timeout());
             conn.set_timeout_delay(cmd.can_recover_connection(), policy.timeout_delay());
 
@@ -162,8 +173,13 @@ impl<'a> SingleCommand<'a> {
                 .await
                 .map_err(|e| e.chain_error("Failed to set timeout for send buffer"))?;
 
+            record_latency!(node, start, metric.command_encoding);
+
             // Send command.
             if let Err(err) = cmd.write_buffer(&mut conn).await {
+                record_latency!(node, start, metric.command_transmission);
+                record_bytes!(node, conn, metric);
+
                 // IO errors are considered temporary anomalies. Retry.
                 // Close socket to flush out possible garbage. Do not put back in pool.
                 conn.invalidate();
@@ -171,8 +187,13 @@ impl<'a> SingleCommand<'a> {
                 continue;
             }
 
+            record_latency!(node, start, metric.command_transmission);
+
             // Parse results.
             if let Err(err) = cmd.parse_result(&mut conn).await {
+                record_latency!(node, start, metric.command_encoding);
+                record_bytes!(node, conn, metric);
+
                 // close the connection
                 // cancelling/closing the batch/multi commands will return an error, which will
                 // close the connection to throw away its data and signal the server about the
@@ -187,6 +208,9 @@ impl<'a> SingleCommand<'a> {
 
                 return Err(err);
             }
+
+            record_latency!(node, start, metric.command_parsing);
+            record_bytes!(node, conn, metric);
 
             // allow the connection to be put back in the connection pool
             conn.reset_state();

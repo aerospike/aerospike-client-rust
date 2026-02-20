@@ -17,7 +17,7 @@
 //!
 //! All maps maintain an index and a rank. The index is the item offset from the start of the map,
 //! for both unordered and ordered maps. The rank is the sorted index of the value component.
-//! Map supports negative indexing for indexjkj and rank.
+//! Map supports negative indexing for index and rank.
 //!
 //! The default unique key map is unordered.
 //!

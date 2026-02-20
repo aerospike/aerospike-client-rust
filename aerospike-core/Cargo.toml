@@ -33,6 +33,7 @@ tokio-rustls = { version = "0.26.0", optional = true }
 rustls = { version = "0.23.31", optional = true }
 async-channel = "2.5.0"
 hazarc = "0.2.0"
+num-traits = "0.2"
 
 [features]
 serialization = ["serde"]

@@ -23,223 +23,249 @@ use serde::Serialize;
 #[cfg_attr(feature = "serialization", derive(Serialize))]
 /// Database operation error codes. The error codes are defined in the server-side file proto.h.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
 pub enum ResultCode {
     /// `OperationType` was successful.
-    Ok,
+    Ok = 0,
 
     /// Unknown server failure.
-    ServerError,
+    ServerError = 1,
 
     /// On retrieving, touching or replacing a record that doesn't exist.
-    KeyNotFoundError,
+    KeyNotFoundError = 2,
 
     /// On modifying a record with unexpected generation.
-    GenerationError,
+    GenerationError = 3,
 
     /// Bad parameter(s) were passed in database operation call.
-    ParameterError,
+    ParameterError = 4,
 
     /// On create-only (write unique) operations on a record that already exists.
-    KeyExistsError,
+    KeyExistsError = 5,
 
     /// On create-only (write unique) operations on a bin that already exists.
-    BinExistsError,
+    BinExistsError = 6,
 
     /// Expected cluster Id was not received.
-    ClusterKeyMismatch,
+    ClusterKeyMismatch = 7,
 
     /// Server has run out of memory.
-    ServerMemError,
+    ServerMemError = 8,
 
     /// Client or server has timed out.
-    Timeout,
+    Timeout = 9,
 
     /// Operation not allowed in current configuration.
-    AlwaysForbidden,
+    AlwaysForbidden = 10,
 
     /// Partition is unavailable.
-    PartitionUnavailable,
+    PartitionUnavailable = 11,
 
     /// Operation type is not supported with configured bin type (single-bin or multi-bin).
-    BinTypeError,
+    BinTypeError = 12,
 
     /// Record size exceeds limit.
-    RecordTooBig,
+    RecordTooBig = 13,
 
     /// Too many concurrent operations on the same record.
-    KeyBusy,
+    KeyBusy = 14,
 
     /// Scan aborted by server.
-    ScanAbort,
+    ScanAbort = 15,
 
     /// Unsupported Server Feature (e.g. Scan + Udf)
-    UnsupportedFeature,
+    UnsupportedFeature = 16,
 
     /// Specified bin name does not exist in record.
-    BinNotFound,
+    BinNotFound = 17,
 
     /// Specified bin name does not exist in record.
-    DeviceOverload,
+    DeviceOverload = 18,
 
     /// Key type mismatch.
-    KeyMismatch,
+    KeyMismatch = 19,
 
     /// Invalid namespace.
-    InvalidNamespace,
+    InvalidNamespace = 20,
 
     /// Bin name length greater than 14 characters.
-    BinNameTooLong,
+    BinNameTooLong = 21,
 
     /// `OperationType` not allowed at this time.
-    FailForbidden,
+    FailForbidden = 22,
 
     /// Returned by Map put and `put_items` operations when policy is REPLACE but key was not found.
-    ElementNotFound,
+    ElementNotFound = 23,
 
     /// Returned by Map put and `put_items` operations when policy is `CREATE_ONLY` but key already
     /// exists.
-    ElementExists,
+    ElementExists = 24,
 
     /// Enterprise-only feature not supported by the community edition.
-    EnterpriseOnly,
+    EnterpriseOnly = 25,
 
     /// The operation cannot be applied to the current bin value on the server.
-    OpNotApplicable,
+    OpNotApplicable = 26,
 
     /// The command was not performed because the filter was false.
-    FilteredOut,
+    FilteredOut = 27,
 
     /// Write command loses conflict to XDR.
-    LostConflict,
+    LostConflict = 28,
 
     /// Write can't complete until XDR finishes shipping.
-    XDRKeyBusy,
+    XDRKeyBusy = 32,
 
     /// There are no more records left for query.
-    QueryEnd,
+    QueryEnd = 50,
 
     /// Security type not supported by connected server.
-    SecurityNotSupported,
+    SecurityNotSupported = 51,
 
     /// Administration command is invalid.
-    SecurityNotEnabled,
+    SecurityNotEnabled = 52,
 
     /// Administration field is invalid.
-    SecuritySchemeNotSupported,
+    SecuritySchemeNotSupported = 53,
 
     /// Administration command is invalid.
-    InvalidCommand,
+    InvalidCommand = 54,
 
     /// Administration field is invalid.
-    InvalidField,
+    InvalidField = 55,
 
     /// Security protocol not followed.
-    IllegalState,
+    IllegalState = 56,
 
     /// User name is invalid.
-    InvalidUser,
+    InvalidUser = 60,
 
     /// User was previously created.
-    UserAlreadyExists,
+    UserAlreadyExists = 61,
 
     /// Password is invalid.
-    InvalidPassword,
+    InvalidPassword = 62,
 
     /// Security credential is invalid.
-    ExpiredPassword,
+    ExpiredPassword = 63,
 
     /// Forbidden password (e.g. recently used)
-    ForbiddenPassword,
+    ForbiddenPassword = 64,
 
     /// Security credential is invalid.
-    InvalidCredential,
+    InvalidCredential = 65,
 
     /// Login session expired.
-    ExpiredSession,
+    ExpiredSession = 66,
 
     /// Role name is invalid.
-    InvalidRole,
+    InvalidRole = 70,
 
     /// Role already exists.
-    RoleAlreadyExists,
+    RoleAlreadyExists = 71,
 
     /// Privilege is invalid.
-    InvalidPrivilege,
+    InvalidPrivilege = 72,
 
     /// Invalid IP address allowlist.
-    InvalidAllowlist,
+    InvalidAllowlist = 73,
 
     /// Quotas not enabled on server.
-    QuotasNotEnabled,
+    QuotasNotEnabled = 74,
 
     /// Invalid quota value.
-    InvalidQuota,
+    InvalidQuota = 75,
 
     /// User must be authentication before performing database operations.
-    NotAuthenticated,
+    NotAuthenticated = 80,
 
     /// User does not posses the required role to perform the database operation.
-    RoleViolation,
+    RoleViolation = 81,
 
     /// Command not allowed because sender IP address not allowlisted.
-    NotAllowlisted,
+    NotAllowlisted = 82,
 
     /// Quota exceeded.
-    QuotaExceeded,
+    QuotaExceeded = 83,
 
     /// A user defined function returned an error code.
-    UdfBadResponse,
+    UdfBadResponse = 100,
+
+    /// Transaction record blocked by a different transaction.
+    MrtBlocked = 120,
+
+    /// Transaction read version mismatch identified during commit.
+    /// Some other command changed the record outside of the transaction.
+    MrtVersionMismatch = 121,
+
+    /// Transaction deadline reached without a successful commit or abort.
+    MrtExpired = 122,
+
+    /// Transaction write command limit (4096) exceeded.
+    MrtTooManyWrites = 123,
+
+    /// Transaction was already committed.
+    MrtCommitted = 124,
+
+    /// Transaction was already aborted.
+    MrtAborted = 125,
+
+    /// This record has been locked by a previous update in this transaction.
+    MrtAlreadyLocked = 126,
+
+    /// This transaction has already started. Writing to the same transaction with independent goroutines is unsafe.
+    MrtMonitorExists = 127,
 
     /// Batch functionality has been disabled.
-    BatchDisabled,
+    BatchDisabled = 150,
 
     /// Batch max requests have been exceeded.
-    BatchMaxRequestsExceeded,
+    BatchMaxRequestsExceeded = 151,
 
     /// All batch queues are full.
-    BatchQueuesFull,
+    BatchQueuesFull = 152,
 
     /// Invalid `GeoJSON` on insert/update
-    InvalidGeojson,
+    InvalidGeojson = 160,
 
     /// Secondary index already exists.
-    IndexFound,
+    IndexFound = 200,
 
     /// Requested secondary index does not exist.
-    IndexNotFound,
+    IndexNotFound = 201,
 
     /// Secondary index memory space exceeded.
-    IndexOom,
+    IndexOom = 202,
 
     /// Secondary index not available.
-    IndexNotReadable,
+    IndexNotReadable = 203,
 
     /// Generic secondary index error.
-    IndexGeneric,
+    IndexGeneric = 204,
 
     /// Index name maximum length exceeded.
-    IndexNameMaxLen,
+    IndexNameMaxLen = 205,
 
     /// Maximum number of indicies exceeded.
-    IndexMaxCount,
+    IndexMaxCount = 206,
 
     /// Secondary index query aborted.
-    QueryAborted,
+    QueryAborted = 210,
 
     /// Secondary index queue full.
-    QueryQueueFull,
+    QueryQueueFull = 211,
 
     /// Secondary index query timed out on server.
-    QueryTimeout,
+    QueryTimeout = 212,
 
     /// Generic query error.
-    QueryGeneric,
+    QueryGeneric = 213,
 
     /// Query `NetIo` error on server
-    QueryNetioErr,
+    QueryNetioErr = 214,
 
     /// Duplicate `TaskId` sent for the statement
-    QueryDuplicate,
+    QueryDuplicate = 215,
 
     /// Unknown server result code
     Unknown(u8),
@@ -304,6 +330,14 @@ impl ResultCode {
             82 => ResultCode::NotAllowlisted,
             83 => ResultCode::QuotaExceeded,
             100 => ResultCode::UdfBadResponse,
+            120 => ResultCode::MrtBlocked,
+            121 => ResultCode::MrtVersionMismatch,
+            122 => ResultCode::MrtExpired,
+            123 => ResultCode::MrtTooManyWrites,
+            124 => ResultCode::MrtCommitted,
+            125 => ResultCode::MrtAborted,
+            126 => ResultCode::MrtAlreadyLocked,
+            127 => ResultCode::MrtMonitorExists,
             150 => ResultCode::BatchDisabled,
             151 => ResultCode::BatchMaxRequestsExceeded,
             152 => ResultCode::BatchQueuesFull,
@@ -389,6 +423,14 @@ impl ResultCode {
             ResultCode::NotAllowlisted => String::from("Command not whitelisted"),
             ResultCode::QuotaExceeded => String::from("Quota exceeded"),
             ResultCode::UdfBadResponse => String::from("Udf returned error"),
+            ResultCode::MrtBlocked => String::from("Transaction record blocked by a different transaction"),
+            ResultCode::MrtVersionMismatch => String::from("Transaction read version mismatch identified during commit. Some other command changed the record outside of the transaction"),
+            ResultCode::MrtExpired => String::from("Transaction deadline reached without a successful commit or abort"),
+            ResultCode::MrtTooManyWrites => String::from("Transaction write command limit (4096) exceeded"),
+            ResultCode::MrtCommitted => String::from("Transaction was already committed"),
+            ResultCode::MrtAborted => String::from("Transaction was already aborted"),
+            ResultCode::MrtAlreadyLocked => String::from("This record has been locked by a previous update in this transaction"),
+            ResultCode::MrtMonitorExists => String::from("This transaction has already started. Writing to the same transaction with independent goroutines is unsafe"),
             ResultCode::BatchDisabled => String::from("Batch functionality has been disabled"),
             ResultCode::BatchMaxRequestsExceeded => {
                 String::from("Batch max requests have been exceeded")
@@ -422,6 +464,94 @@ impl From<u8> for ResultCode {
 impl From<ResultCode> for String {
     fn from(code: ResultCode) -> String {
         code.into_string()
+    }
+}
+
+impl From<ResultCode> for u8 {
+    fn from(rc: ResultCode) -> u8 {
+        match rc {
+            ResultCode::Ok => 0,
+            ResultCode::ServerError => 1,
+            ResultCode::KeyNotFoundError => 2,
+            ResultCode::GenerationError => 3,
+            ResultCode::ParameterError => 4,
+            ResultCode::KeyExistsError => 5,
+            ResultCode::BinExistsError => 6,
+            ResultCode::ClusterKeyMismatch => 7,
+            ResultCode::ServerMemError => 8,
+            ResultCode::Timeout => 9,
+            ResultCode::AlwaysForbidden => 10,
+            ResultCode::PartitionUnavailable => 11,
+            ResultCode::BinTypeError => 12,
+            ResultCode::RecordTooBig => 13,
+            ResultCode::KeyBusy => 14,
+            ResultCode::ScanAbort => 15,
+            ResultCode::UnsupportedFeature => 16,
+            ResultCode::BinNotFound => 17,
+            ResultCode::DeviceOverload => 18,
+            ResultCode::KeyMismatch => 19,
+            ResultCode::InvalidNamespace => 20,
+            ResultCode::BinNameTooLong => 21,
+            ResultCode::FailForbidden => 22,
+            ResultCode::ElementNotFound => 23,
+            ResultCode::ElementExists => 24,
+            ResultCode::OpNotApplicable => 26,
+            ResultCode::FilteredOut => 27,
+            ResultCode::LostConflict => 28,
+            ResultCode::XDRKeyBusy => 32,
+            ResultCode::EnterpriseOnly => 25,
+            ResultCode::QueryEnd => 50,
+            ResultCode::SecurityNotSupported => 51,
+            ResultCode::SecurityNotEnabled => 52,
+            ResultCode::SecuritySchemeNotSupported => 53,
+            ResultCode::InvalidCommand => 54,
+            ResultCode::InvalidField => 55,
+            ResultCode::IllegalState => 56,
+            ResultCode::InvalidUser => 60,
+            ResultCode::UserAlreadyExists => 61,
+            ResultCode::InvalidPassword => 62,
+            ResultCode::ExpiredPassword => 63,
+            ResultCode::ForbiddenPassword => 64,
+            ResultCode::InvalidCredential => 65,
+            ResultCode::ExpiredSession => 66,
+            ResultCode::InvalidRole => 70,
+            ResultCode::RoleAlreadyExists => 71,
+            ResultCode::InvalidPrivilege => 72,
+            ResultCode::InvalidAllowlist => 73,
+            ResultCode::QuotasNotEnabled => 74,
+            ResultCode::InvalidQuota => 75,
+            ResultCode::NotAuthenticated => 80,
+            ResultCode::RoleViolation => 81,
+            ResultCode::NotAllowlisted => 82,
+            ResultCode::QuotaExceeded => 83,
+            ResultCode::UdfBadResponse => 100,
+            ResultCode::MrtBlocked => 120,
+            ResultCode::MrtVersionMismatch => 121,
+            ResultCode::MrtExpired => 122,
+            ResultCode::MrtTooManyWrites => 123,
+            ResultCode::MrtCommitted => 124,
+            ResultCode::MrtAborted => 125,
+            ResultCode::MrtAlreadyLocked => 126,
+            ResultCode::MrtMonitorExists => 127,
+            ResultCode::BatchDisabled => 150,
+            ResultCode::BatchMaxRequestsExceeded => 151,
+            ResultCode::BatchQueuesFull => 152,
+            ResultCode::InvalidGeojson => 160,
+            ResultCode::IndexFound => 200,
+            ResultCode::IndexNotFound => 201,
+            ResultCode::IndexOom => 202,
+            ResultCode::IndexNotReadable => 203,
+            ResultCode::IndexGeneric => 204,
+            ResultCode::IndexNameMaxLen => 205,
+            ResultCode::IndexMaxCount => 206,
+            ResultCode::QueryAborted => 210,
+            ResultCode::QueryQueueFull => 211,
+            ResultCode::QueryTimeout => 212,
+            ResultCode::QueryGeneric => 213,
+            ResultCode::QueryNetioErr => 214,
+            ResultCode::QueryDuplicate => 215,
+            ResultCode::Unknown(code) => code,
+        }
     }
 }
 

@@ -159,6 +159,7 @@ pub use batch::BatchUDFPolicy;
 pub use batch::BatchWritePolicy;
 pub use bin::{Bin, Bins};
 pub use client::Client;
+pub use cluster::metrics::Metrics;
 pub use cluster::version_parser::Version;
 pub use cluster::Node;
 pub use commands::particle_type::ParticleType;
@@ -171,8 +172,8 @@ pub use operations::{ListOrderType, ListPolicy, ListReturnType, ListSortFlags, L
 pub use operations::{MapPolicy, MapReturnType, MapWriteMode};
 pub use policy::{
     AdminPolicy, AuthMode, BasePolicy, BatchPolicy, ClientPolicy, CommitLevel, Concurrency,
-    ConsistencyLevel, Expiration, GenerationPolicy, Policy, QueryDuration, QueryPolicy, ReadPolicy,
-    ReadTouchTTL, RecordExistsAction, WritePolicy,
+    ConsistencyLevel, Expiration, GenerationPolicy, MetricsPolicy, Policy, QueryDuration,
+    QueryPolicy, ReadPolicy, ReadTouchTTL, RecordExistsAction, WritePolicy,
 };
 pub use privilege::{Privilege, PrivilegeCode};
 pub use query::{CollectionIndexType, IndexType, PartitionFilter, Recordset, Statement, UDFLang};
