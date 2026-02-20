@@ -855,7 +855,6 @@ impl Buffer {
         if parts_full_size > 0 {
             self.write_field_header(parts_full_size, FieldType::PIDArray);
             for part in &node_partitions.parts_full {
-                let part = part.lock().await;
                 self.write_u16_little_endian(part.id);
             }
         }
@@ -863,7 +862,6 @@ impl Buffer {
         if parts_partial_size > 0 {
             self.write_field_header(parts_partial_size, FieldType::DigestArray);
             for part in &node_partitions.parts_partial {
-                let part = part.lock().await;
                 part.digest.map(|digest| self.write_bytes(&digest));
             }
         }
@@ -1102,7 +1100,6 @@ impl Buffer {
         if parts_full_size > 0 {
             self.write_field_header(parts_full_size, FieldType::PIDArray);
             for part in &node_partitions.parts_full {
-                let part = part.lock().await;
                 self.write_u16_little_endian(part.id);
             }
         }
@@ -1110,7 +1107,6 @@ impl Buffer {
         if parts_partial_size > 0 {
             self.write_field_header(parts_partial_size, FieldType::DigestArray);
             for part in &node_partitions.parts_partial {
-                let part = part.lock().await;
                 part.digest.map(|digest| self.write_bytes(&digest));
             }
         }
@@ -1118,7 +1114,6 @@ impl Buffer {
         if parts_partial_bval_size > 0 {
             self.write_field_header(parts_partial_bval_size, FieldType::BValArray);
             for part in &node_partitions.parts_partial {
-                let part = part.lock().await;
                 if let Some(bval) = part.bval {
                     self.write_u64_little_endian(bval);
                 } else {

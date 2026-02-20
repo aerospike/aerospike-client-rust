@@ -13,18 +13,17 @@
 // License for the specific language governing permissions and limitations under
 // the License.
 
+use crate::query::SemanticSync;
 use crate::query::PartitionStatus;
 use crate::Node;
 
 use std::sync::Arc;
 
-use aerospike_rt::Mutex;
-
 #[derive(Debug)]
 pub struct NodePartitions {
     pub(crate) node: Arc<Node>,
-    pub(crate) parts_full: Vec<Arc<Mutex<PartitionStatus>>>,
-    pub(crate) parts_partial: Vec<Arc<Mutex<PartitionStatus>>>,
+    pub(crate) parts_full: Vec<Arc<SemanticSync<PartitionStatus>>>,
+    pub(crate) parts_partial: Vec<Arc<SemanticSync<PartitionStatus>>>,
     pub(crate) record_count: u64,
     pub(crate) record_max: u64,
     pub(crate) disallowed_count: u64,
@@ -44,8 +43,8 @@ impl NodePartitions {
         }
     }
 
-    pub async fn add_partition(&mut self, part: Arc<Mutex<PartitionStatus>>) {
-        let digest = { part.lock().await.digest };
+    pub fn add_partition(&mut self, part: Arc<SemanticSync<PartitionStatus>>) {
+        let digest = part.digest;
 
         match digest {
             None => self.parts_full.push(part),

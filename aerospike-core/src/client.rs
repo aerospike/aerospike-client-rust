@@ -816,7 +816,6 @@ impl Client {
                                         recordset.clone(),
                                         node_partition,
                                     )
-                                    .await
                                     .execute()
                                     .await
                                 } else {
@@ -826,7 +825,6 @@ impl Client {
                                         recordset.clone(),
                                         node_partition,
                                     )
-                                    .await
                                     .execute()
                                     .await
                                 };

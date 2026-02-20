@@ -15,14 +15,12 @@
 use std::str;
 use std::sync::Arc;
 
-use aerospike_rt::Mutex;
-
 use crate::cluster::Node;
 use crate::commands::{Command, CommandType, NamespaceProvider, SingleCommand, StreamCommand};
 use crate::errors::Result;
 use crate::net::Connection;
 use crate::policy::QueryPolicy;
-use crate::query::NodePartitions;
+use crate::query::{NodePartitions, SemanticSync};
 use crate::{Bins, Recordset};
 
 pub struct ScanCommand<'a> {
@@ -34,18 +32,15 @@ pub struct ScanCommand<'a> {
 }
 
 impl<'a> ScanCommand<'a> {
-    pub async fn new(
+    pub fn new(
         policy: &'a QueryPolicy,
         namespace: &'a str,
         set_name: &'a str,
         bins: Bins,
         recordset: Arc<Recordset>,
-        node_partitions: Arc<Mutex<NodePartitions>>,
+        node_partitions: SemanticSync<NodePartitions>,
     ) -> Self {
-        let node = {
-            let node_partitions = node_partitions.lock().await;
-            node_partitions.node.clone()
-        };
+        let node = node_partitions.node.clone();
 
         ScanCommand {
             stream_command: StreamCommand::new(node, recordset, node_partitions, true),
@@ -81,7 +76,6 @@ impl Command for ScanCommand<'_> {
     }
 
     async fn prepare_buffer(&mut self, conn: &mut Connection) -> Result<()> {
-        let node_partitions = self.stream_command.node_partitions.lock().await;
         conn.buffer
             .set_scan(
                 self.policy,
@@ -89,7 +83,7 @@ impl Command for ScanCommand<'_> {
                 self.set_name,
                 &self.bins,
                 self.stream_command.recordset.task_id(),
-                &node_partitions,
+                self.stream_command.node_partitions.as_ref(),
             )
             .await
     }

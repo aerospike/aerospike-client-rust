@@ -16,15 +16,13 @@ use std::collections::hash_map::Entry::{Occupied, Vacant};
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use aerospike_rt::Mutex;
-
 use crate::cluster::Node;
 use crate::commands::buffer;
 use crate::commands::field_type::FieldType;
 use crate::commands::{Command, CommandType};
 use crate::errors::{Error, Result};
 use crate::net::{BufferedConn, Connection};
-use crate::query::{NodePartitions, Recordset};
+use crate::query::{NodePartitions, Recordset, SemanticSync};
 use crate::value::bytes_to_particle;
 use crate::{Key, Record, ResultCode, Value};
 
@@ -32,7 +30,7 @@ pub struct StreamCommand {
     is_scan: bool,
     pub(crate) node: Arc<Node>,
     pub(crate) recordset: Arc<Recordset>,
-    pub(crate) node_partitions: Arc<Mutex<NodePartitions>>,
+    pub(crate) node_partitions: SemanticSync<NodePartitions>,
 }
 
 impl Drop for StreamCommand {
@@ -46,7 +44,7 @@ impl StreamCommand {
     pub const fn new(
         node: Arc<Node>,
         recordset: Arc<Recordset>,
-        node_partitions: Arc<Mutex<NodePartitions>>,
+        node_partitions: SemanticSync<NodePartitions>,
         is_scan: bool,
     ) -> Self {
         StreamCommand {
@@ -99,9 +97,8 @@ impl StreamCommand {
             // return Ok((None, true));
             if result_code != ResultCode::Ok {
                 let tracker = self.recordset.tracker.lock().await;
-                let mut node_partitions = self.node_partitions.lock().await;
                 tracker
-                    .partition_unavailable(&mut node_partitions, generation as u16)
+                    .partition_unavailable(self.node_partitions.as_ref_mut(), generation as u16)
                     .await;
             }
             return Ok((None, None, true));
@@ -158,17 +155,17 @@ impl StreamCommand {
             match res {
                 Ok((Some(rec), bval, _)) => {
                     let tracker = self.recordset.tracker.lock().await;
-                    let mut node_partitions = self.node_partitions.lock().await;
-                    if !tracker.allow_record(&mut node_partitions) {
+                    let node_partitions = self.node_partitions.as_ref_mut();
+                    if !tracker.allow_record(node_partitions) {
                         continue 'outer;
                     }
                     let key = &rec.key.clone().unwrap();
                     self.recordset.push(Ok(rec)).await?;
 
                     if self.is_scan {
-                        tracker.set_digest(&mut node_partitions, key).await?;
+                        tracker.set_digest(node_partitions, key).await?;
                     } else {
-                        tracker.set_last(&mut node_partitions, key, bval).await?;
+                        tracker.set_last(node_partitions, key, bval).await?;
                     }
                 }
                 Ok((None, _, false)) => return Ok(false),

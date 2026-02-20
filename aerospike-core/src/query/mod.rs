@@ -26,6 +26,7 @@ pub use self::recordset::RecordStream;
 pub use self::recordset::Recordset;
 pub use self::statement::Statement;
 pub use self::udf::UDFLang;
+pub(crate) use self::semantic_sync::SemanticSync;
 
 mod filter;
 mod index_types;
@@ -34,5 +35,6 @@ mod partition_filter;
 mod partition_status;
 mod partition_tracker;
 mod recordset;
+mod semantic_sync;
 mod statement;
 mod udf;

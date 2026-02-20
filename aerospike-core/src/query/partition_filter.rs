@@ -14,10 +14,9 @@
 // the License.
 
 use crate::cluster::node;
+use crate::query::SemanticSync;
 use crate::query::PartitionStatus;
 use crate::Key;
-
-use aerospike_rt::Mutex;
 
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;
@@ -38,7 +37,7 @@ pub struct PartitionFilter {
     pub digest: Option<[u8; 20]>,
 
     /// status of the partitions
-    pub partitions: Option<Vec<Arc<Mutex<PartitionStatus>>>>,
+    pub partitions: Option<Vec<Arc<SemanticSync<PartitionStatus>>>>,
 
     /// Is partition completely scanned/queried.
     pub done: AtomicBool,
@@ -103,15 +102,15 @@ impl PartitionFilter {
         self.done.load(Ordering::Relaxed)
     }
 
-    pub(crate) fn set_partitions(&mut self, partitions: Vec<Arc<Mutex<PartitionStatus>>>) {
+    pub(crate) fn set_partitions(&mut self, partitions: Vec<Arc<SemanticSync<PartitionStatus>>>) {
         self.partitions = Some(partitions);
     }
 
-    pub(crate) async fn reset_partition_status(&mut self) {
+    pub(crate) fn reset_partition_status(&mut self) {
         if let Some(ref mut partitions) = self.partitions {
             // Reset replica sequence and last node used.
             for part in partitions.iter_mut() {
-                let mut part = part.lock().await;
+                let part = part.as_ref_mut();
                 part.reset_sequence();
                 part.reset_node();
             }

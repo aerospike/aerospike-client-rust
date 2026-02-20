@@ -21,6 +21,7 @@ use crate::policy::StreamPolicy;
 use crate::query::NodePartitions;
 use crate::query::PartitionFilter;
 use crate::query::PartitionStatus;
+use crate::query::SemanticSync;
 use crate::Key;
 use crate::Node;
 
@@ -41,7 +42,7 @@ pub struct PartitionTracker {
     partition_filter: Option<Arc<Mutex<PartitionFilter>>>,
     #[allow(dead_code)]
     replica: Replica,
-    node_partitions_list: Vec<Arc<Mutex<NodePartitions>>>,
+    node_partitions_list: Vec<SemanticSync<NodePartitions>>,
     record_count: AtomicUsize,
     max_records: u64,
     sleep_between_retries: Option<Duration>,
@@ -119,7 +120,7 @@ impl PartitionTracker {
                     partition_filter.retry.store(true, Ordering::Relaxed);
                 }
 
-                partition_filter.reset_partition_status().await;
+                partition_filter.reset_partition_status();
             }
             pt
         };
@@ -133,7 +134,7 @@ impl PartitionTracker {
     //     self.sleep_between_retries = duration;
     // }
 
-    pub(crate) fn node_partitions_list(&self) -> &[Arc<Mutex<NodePartitions>>] {
+    pub(crate) fn node_partitions_list(&self) -> &[SemanticSync<NodePartitions>] {
         &self.node_partitions_list
     }
 
@@ -142,7 +143,7 @@ impl PartitionTracker {
         cluster: Arc<Cluster>,
         namespace: &str,
     ) -> Result<()> {
-        let mut list = Vec::<Arc<Mutex<NodePartitions>>>::with_capacity(self.node_capacity);
+        let mut list = Vec::<SemanticSync<NodePartitions>>::with_capacity(self.node_capacity);
 
         let retry = self.partition_filter.is_none()
             || self
@@ -158,10 +159,7 @@ impl PartitionTracker {
         let partition_filter = self.partition_filter.as_mut().unwrap().lock().await;
         let partitions = partition_filter.partitions.as_ref().unwrap();
         for part in partitions {
-            let (part_retry, part_id) = {
-                let part = part.lock().await;
-                (part.retry, part.id)
-            };
+            let (part_retry, part_id) = (part.retry, part.id);
             if retry || part_retry {
                 let node = cluster.get_master_node(namespace, part_id as usize)?;
 
@@ -174,17 +172,16 @@ impl PartitionTracker {
                     }
                 }
 
-                let np = Self::find_node(&list, node.clone()).await;
+                let np = Self::find_node(&list, node.clone());
                 if let Some(np) = np {
-                    let mut np = np.lock().await;
-                    np.add_partition(part.clone()).await;
+                    np.as_ref_mut().add_partition(part.clone());
                 } else {
                     // If the partition map is in a transitional state, multiple
                     // nodePartitions instances (each with different partitions)
                     // may be created for a single node.
                     let mut np = NodePartitions::new(node.clone(), self.partitions_capacity);
-                    np.add_partition(part.clone()).await;
-                    list.push(Arc::new(Mutex::new(np)));
+                    np.add_partition(part.clone());
+                    list.push(SemanticSync::new(np));
                 }
             }
         }
@@ -209,19 +206,17 @@ impl PartitionTracker {
                 let rem = self.max_records - (max * node_size as u64);
 
                 for (i, np) in list.iter().enumerate() {
-                    let mut np = np.lock().await;
                     if (i as u64) < rem {
-                        np.record_max = max + 1;
+                        np.as_ref_mut().record_max = max + 1;
                     } else {
-                        np.record_max = max;
+                        np.as_ref_mut().record_max = max;
                     }
                 }
             } else {
                 // If max_records < nodeSize, the retry = true, ensure each node receives at least one max record
                 // allocation and filter out excess records when receiving records from the server.
                 for np in &list {
-                    let mut np = np.lock().await;
-                    np.record_max = 1;
+                    np.as_ref_mut().record_max = 1;
                 }
 
                 // Track records returned for this iteration.
@@ -245,13 +240,13 @@ impl PartitionTracker {
         // }
     }
 
-    pub(crate) async fn find_node(
-        list: &Vec<Arc<Mutex<NodePartitions>>>,
+    pub(crate) fn find_node(
+        list: &Vec<SemanticSync<NodePartitions>>,
         node: Arc<Node>,
-    ) -> Option<Arc<Mutex<NodePartitions>>> {
+    ) -> Option<SemanticSync<NodePartitions>> {
         for node_partition in list {
             // Use pointer equality for performance.
-            if node_partition.lock().await.node == node {
+            if node_partition.node == node {
                 return Some(node_partition.clone());
             }
         }
@@ -268,7 +263,7 @@ impl PartitionTracker {
 
         // let mut partitions = partitions.write();
         if let Some(ps) = partitions.get(partition_id as usize - self.partition_begin) {
-            let mut ps = ps.lock().await;
+            let ps = ps.as_ref_mut();
             ps.retry = true;
             if let Some(ref mut seq) = ps.sequence {
                 *seq += 1;
@@ -289,8 +284,7 @@ impl PartitionTracker {
         if let Some(partitions) = partitions {
             // let mut partitions = partitions.write();
             if let Some(ps) = partitions.get(partition_id - self.partition_begin) {
-                let mut ps = ps.lock().await;
-                ps.digest = Some(key.digest);
+                ps.as_ref_mut().digest = Some(key.digest);
             } else {
                 return Err(Error::ClientError(format!(
                     "Partition mismatch: key.partition_id: {}, partition_begin: {}",
@@ -322,7 +316,7 @@ impl PartitionTracker {
 
         if let Some(partitions) = partitions {
             if let Some(ps) = partitions.get(partition_id - self.partition_begin) {
-                let mut ps = ps.lock().await;
+                let ps = ps.as_ref_mut();
                 ps.digest = Some(key.digest);
                 if bval.is_some() {
                     ps.bval = bval;
@@ -359,7 +353,6 @@ impl PartitionTracker {
         let mut parts_unavailable = 0;
 
         for np in &self.node_partitions_list {
-            let np = np.lock().await;
             record_count += np.record_count;
             parts_unavailable += np.parts_unavailable;
         }
@@ -388,9 +381,8 @@ impl PartitionTracker {
                 let mut done = true;
 
                 for np in &self.node_partitions_list {
-                    let np = np.lock().await;
                     if np.record_count + np.disallowed_count >= np.record_max {
-                        self.mark_retry(&np).await;
+                        self.mark_retry(np.as_ref());
                         done = false;
                     }
                 }
@@ -446,16 +438,14 @@ impl PartitionTracker {
         Ok(false)
     }
 
-    pub(crate) async fn mark_retry(&self, node_partitions: &NodePartitions) {
+    pub(crate) fn mark_retry(&self, node_partitions: &NodePartitions) {
         // Mark retry for same replica.
         for ps in &node_partitions.parts_full {
-            let mut ps = ps.lock().await;
-            ps.retry = true;
+            ps.as_ref_mut().retry = true;
         }
 
         for ps in &node_partitions.parts_partial {
-            let mut ps = ps.lock().await;
-            ps.retry = true;
+            ps.as_ref_mut().retry = true;
         }
     }
 
@@ -471,15 +461,16 @@ impl PartitionTracker {
         partition_begin: usize,
         partition_count: usize,
         digest: Option<[u8; 20]>,
-    ) -> Vec<Arc<Mutex<PartitionStatus>>> {
-        let mut parts_all = Vec::<Arc<Mutex<PartitionStatus>>>::with_capacity(partition_count);
+    ) -> Vec<Arc<SemanticSync<PartitionStatus>>> {
+        let mut parts_all =
+            Vec::<Arc<SemanticSync<PartitionStatus>>>::with_capacity(partition_count);
 
         for i in 0..partition_count {
             let mut part = PartitionStatus::new(partition_begin + i);
             if i == 0 && digest.is_some() {
                 part.set_digest(digest);
             }
-            parts_all.push(Arc::new(Mutex::new(part)));
+            parts_all.push(Arc::new(SemanticSync::new(part)));
         }
 
         parts_all

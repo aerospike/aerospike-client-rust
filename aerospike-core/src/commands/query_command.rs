@@ -19,10 +19,8 @@ use crate::commands::{Command, CommandType, NamespaceProvider, SingleCommand, St
 use crate::errors::Result;
 use crate::net::Connection;
 use crate::policy::QueryPolicy;
-use crate::query::NodePartitions;
+use crate::query::{NodePartitions, SemanticSync};
 use crate::{Recordset, Statement};
-
-use aerospike_rt::Mutex;
 
 pub struct QueryCommand<'a> {
     stream_command: StreamCommand,
@@ -31,16 +29,13 @@ pub struct QueryCommand<'a> {
 }
 
 impl<'a> QueryCommand<'a> {
-    pub async fn new(
+    pub fn new(
         policy: &'a QueryPolicy,
         statement: Arc<Statement>,
         recordset: Arc<Recordset>,
-        node_partitions: Arc<Mutex<NodePartitions>>,
+        node_partitions: SemanticSync<NodePartitions>,
     ) -> Self {
-        let node = {
-            let node_partitions = node_partitions.lock().await;
-            node_partitions.node.clone()
-        };
+        let node = node_partitions.node.clone();
 
         QueryCommand {
             stream_command: StreamCommand::new(node, recordset, node_partitions, false),
@@ -74,14 +69,13 @@ impl Command for QueryCommand<'_> {
     }
 
     async fn prepare_buffer(&mut self, conn: &mut Connection) -> Result<()> {
-        let node_partitions = self.stream_command.node_partitions.lock().await;
         conn.buffer
             .set_query(
                 self.policy,
                 &self.statement,
                 false,
                 self.stream_command.recordset.task_id(),
-                &node_partitions,
+                self.stream_command.node_partitions.as_ref(),
             )
             .await
     }
