@@ -78,8 +78,10 @@ impl Client {
     ///
     /// Using an environment variable to set the list of seed hosts.
     ///
-    /// ```rust,edition2021,no_run
+    /// ```rust,edition2021
     /// use aerospike_sync::{Client, ClientPolicy};
+    /// # let rt = tokio::runtime::Runtime::new().unwrap();
+    /// # let _guard = rt.enter();
     ///
     /// let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap_or_else(|_| "127.0.0.1:3000".to_string());
     /// let client = Client::new(&ClientPolicy::default(), &hosts).unwrap();
@@ -125,8 +127,10 @@ impl Client {
     ///
     /// Fetch specified bins for a record with the given key.
     ///
-    /// ```rust,edition2021,no_run
+    /// ```rust,edition2021
     /// # use aerospike_sync::*;
+    /// # let rt = tokio::runtime::Runtime::new().unwrap();
+    /// # let _guard = rt.enter();
     ///
     /// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap_or_else(|_| "127.0.0.1:3000".to_string());
     /// # let client = Client::new(&ClientPolicy::default(), &hosts).unwrap();
@@ -143,8 +147,10 @@ impl Client {
     ///
     /// Determine the remaining time-to-live of a record.
     ///
-    /// ```rust,edition2021,no_run
+    /// ```rust,edition2021
     /// # use aerospike_sync::*;
+    /// # let rt = tokio::runtime::Runtime::new().unwrap();
+    /// # let _guard = rt.enter();
     ///
     /// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap_or_else(|_| "127.0.0.1:3000".to_string());
     /// # let client = Client::new(&ClientPolicy::default(), &hosts).unwrap();
@@ -182,8 +188,10 @@ impl Client {
     ///
     /// Fetch multiple records in a single client request
     ///
-    /// ```rust,edition2021,no_run
+    /// ```rust,edition2021
     /// # use aerospike_sync::*;
+    /// # let rt = tokio::runtime::Runtime::new().unwrap();
+    /// # let _guard = rt.enter();
     ///
     /// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap_or_else(|_| "127.0.0.1:3000".to_string());
     /// # let client = Client::new(&ClientPolicy::default(), &hosts).unwrap();
@@ -222,8 +230,10 @@ impl Client {
     ///
     /// Write a record with a single integer bin.
     ///
-    /// ```rust,edition2021,no_run
+    /// ```rust,edition2021
     /// # use aerospike_sync::*;
+    /// # let rt = tokio::runtime::Runtime::new().unwrap();
+    /// # let _guard = rt.enter();
     ///
     /// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap_or_else(|_| "127.0.0.1:3000".to_string());
     /// # let client = Client::new(&ClientPolicy::default(), &hosts).unwrap();
@@ -237,8 +247,10 @@ impl Client {
     ///
     /// Write a record with an expiration of 10 seconds.
     ///
-    /// ```rust,edition2021,no_run
+    /// ```rust,edition2021
     /// # use aerospike_sync::*;
+    /// # let rt = tokio::runtime::Runtime::new().unwrap();
+    /// # let _guard = rt.enter();
     ///
     /// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap_or_else(|_| "127.0.0.1:3000".to_string());
     /// # let client = Client::new(&ClientPolicy::default(), &hosts).unwrap();
@@ -268,8 +280,10 @@ impl Client {
     ///
     /// Add two integer values to two existing bin values.
     ///
-    /// ```rust,edition2021,no_run
+    /// ```rust,edition2021
     /// # use aerospike_sync::*;
+    /// # let rt = tokio::runtime::Runtime::new().unwrap();
+    /// # let _guard = rt.enter();
     ///
     /// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap_or_else(|_| "127.0.0.1:3000".to_string());
     /// # let client = Client::new(&ClientPolicy::default(), &hosts).unwrap();
@@ -322,8 +336,10 @@ impl Client {
     ///
     /// Delete a record.
     ///
-    /// ```rust,edition2021,no_run
+    /// ```rust,edition2021
     /// # use aerospike_sync::*;
+    /// # let rt = tokio::runtime::Runtime::new().unwrap();
+    /// # let _guard = rt.enter();
     ///
     /// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap_or_else(|_| "127.0.0.1:3000".to_string());
     /// # let client = Client::new(&ClientPolicy::default(), &hosts).unwrap();
@@ -345,8 +361,10 @@ impl Client {
     ///
     /// Reset a record's time to expiration to the default ttl for the namespace.
     ///
-    /// ```rust,edition2021,no_run
+    /// ```rust,edition2021
     /// # use aerospike_sync::*;
+    /// # let rt = tokio::runtime::Runtime::new().unwrap();
+    /// # let _guard = rt.enter();
     ///
     /// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap_or_else(|_| "127.0.0.1:3000".to_string());
     /// # let client = Client::new(&ClientPolicy::default(), &hosts).unwrap();
@@ -378,8 +396,10 @@ impl Client {
     /// Add an integer value to an existing record and then read the result, all in one database
     /// call.
     ///
-    /// ```rust,edition2021,no_run
+    /// ```rust,edition2021
     /// # use aerospike_sync::*;
+    /// # let rt = tokio::runtime::Runtime::new().unwrap();
+    /// # let _guard = rt.enter();
     ///
     /// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap_or_else(|_| "127.0.0.1:3000".to_string());
     /// # let client = Client::new(&ClientPolicy::default(), &hosts).unwrap();
@@ -409,8 +429,10 @@ impl Client {
     ///
     /// # Examples
     ///
-    /// ```rust,edition2021,no_run
+    /// ```rust,edition2021
     /// # use aerospike_sync::*;
+    /// # let rt = tokio::runtime::Runtime::new().unwrap();
+    /// # let _guard = rt.enter();
     ///
     /// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap_or_else(|_| "127.0.0.1:3000".to_string());
     /// # let client = Client::new(&ClientPolicy::default(), &hosts).unwrap();
@@ -505,8 +527,10 @@ impl Client {
     ///
     /// # Examples
     ///
-    /// ```rust,edition2021,no_run
+    /// ```rust,edition2021
     /// # use aerospike_sync::*;
+    /// # let rt = tokio::runtime::Runtime::new().unwrap();
+    /// # let _guard = rt.enter();
     ///
     /// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap_or_else(|_| "127.0.0.1:3000".to_string());
     /// # let client = Client::new(&ClientPolicy::default(), &hosts).unwrap();
@@ -582,8 +606,10 @@ impl Client {
     /// The following example creates an index `idx_foo_bar_baz`. The index is in namespace `foo`
     /// within set `bar` and bin `baz`:
     ///
-    /// ```rust,edition2021,no_run
+    /// ```rust,edition2021
     /// # use aerospike_sync::*;
+    /// # let rt = tokio::runtime::Runtime::new().unwrap();
+    /// # let _guard = rt.enter();
     ///
     /// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap_or_else(|_| "127.0.0.1:3000".to_string());
     /// # let client = Client::new(&ClientPolicy::default(), &hosts).unwrap();
@@ -622,9 +648,11 @@ impl Client {
     /// The following example creates an index `idx_foo_bar_baz`. The index is in namespace `foo`
     /// within set `bar` with the expression `int_bin("a") == 500`:
     ///
-    /// ```rust,edition2021,no_run
+    /// ```rust,edition2021
     /// # use aerospike_sync::*;
     /// # use aerospike_sync::expressions::{Expression, eq, int_bin, int_val};
+    /// # let rt = tokio::runtime::Runtime::new().unwrap();
+    /// # let _guard = rt.enter();
     ///
     /// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap_or_else(|_| "127.0.0.1:3000".to_string());
     /// # let client = Client::new(&ClientPolicy::default(), &hosts).unwrap();
