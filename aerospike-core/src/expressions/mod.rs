@@ -766,7 +766,7 @@ pub fn map_val<M: MapLike<Value, Value>>(val: M) -> Expression {
 
 /// Create geospatial json string value.
 pub fn geo_val(val: String) -> Expression {
-    Expression::new(None, Some(Value::from(val)), None, None, None, None)
+    Expression::new(None, Some(Value::GeoJSON(val)), None, None, None, None)
 }
 
 /// Create a Nil Value

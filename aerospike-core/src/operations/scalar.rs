@@ -29,7 +29,7 @@ pub const fn get() -> Operation {
     }
 }
 
-/// Create read record header database operation.
+/// Create a read record header database operation.
 pub const fn get_header() -> Operation {
     Operation {
         op: OperationType::Read,
@@ -89,7 +89,7 @@ pub fn add(bin: &Bin) -> Operation {
     }
 }
 
-/// Create touch database operation.
+/// Create a touch database operation.
 pub const fn touch() -> Operation {
     Operation {
         op: OperationType::Touch,

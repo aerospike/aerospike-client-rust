@@ -22,14 +22,14 @@ const DONT_UPDATE: u32 = 0xFFFF_FFFE; // -2 as i32
 /// Record expiration, also known as time-to-live (TTL).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Expiration {
-    /// Set the record to expire X seconds from now
+    /// Set the record to expire X seconds from now.
     Seconds(u32),
 
-    /// Set the record's expiry time using the default time-to-live (TTL) value for the namespace
+    /// Set the record's expiry time using the default time-to-live (TTL) value for the namespace.
     NamespaceDefault,
 
     /// Set the record to never expire. Requires Aerospike 2 server version 2.7.2 or later or
-    /// Aerospike 3 server version 3.1.4 or later. Do not use with older servers.
+    /// Aerospike 3 server version 3.1.4 or later. Do not use it with older servers.
     Never,
 
     /// Do not change the record's expiry time when updating the record; requires Aerospike server

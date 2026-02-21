@@ -167,8 +167,8 @@ pub enum MapReturnType {
     /// Returns an ordered map.
     OrderedMap = 17,
 
-    /// Invert meaning of map command and return values.
-    /// With the INVERTED flag enabled, the keys outside of the specified key range will be removed and returned.
+    /// Invert the meaning of the map command and return values.
+    /// With the INVERTED flag enabled, the keys outside the specified key range will be removed and returned.
     Inverted = 0x10000,
 }
 

@@ -85,7 +85,7 @@ pub enum ListOrderType {
     Ordered = 1,
 }
 
-/// `Cdtu64` determines the returned values in CDT List operations.
+/// [`ListReturnType`] determines the returned values in CDT List operations.
 #[derive(Debug, Clone, Copy)]
 pub enum ListReturnType {
     /// Do not return a result.
@@ -115,10 +115,10 @@ pub enum ListReturnType {
     Values = 7,
     /// Return true if count > 0.
     Exists = 13,
-    /// Invert meaning of list command and return values.
-    /// With the INVERTED flag enabled, the items outside of the specified index range will be returned.
+    /// Invert the meaning of the list command and return values.
+    /// With the INVERTED flag enabled, the items outside the specified index range will be returned.
     /// The meaning of the list command can also be inverted.
-    /// With the INVERTED flag enabled, the items outside of the specified index range will be removed and returned.
+    /// With the INVERTED flag enabled, the items outside the specified index range will be removed and returned.
     Inverted = 0x10000,
 }
 
@@ -144,7 +144,7 @@ impl ToListReturnTypeBitmask for InvertedListReturn {
     }
 }
 
-/// `CdtListSortFlags` determines sort flags for CDT lists
+/// [`ListSortFlags`] determines sort flags for CDT lists.
 #[derive(Debug, Clone, Copy)]
 pub enum ListSortFlags {
     /// Default is the default sort flag for CDT lists, and sort in Ascending order.
@@ -155,29 +155,27 @@ pub enum ListSortFlags {
     DropDuplicates = 2,
 }
 
-/// `CdtListWriteFlags` determines write flags for CDT lists
+/// Write flags for CDT list operations.
 #[derive(Debug, Clone, Copy)]
 pub enum ListWriteFlags {
-    /// Default is the default behavior. It means:  Allow duplicate values and insertions at any index.
+    /// Allow duplicate values and insertions at any index.
     Default = 0,
-    /// `AddUnique` means: Only add unique values.
+    /// Only add unique values; reject duplicates.
     AddUnique = 1,
-    /// `InsertBounded` means: Enforce list boundaries when inserting. Do not allow values to be inserted
-    /// at index outside current list boundaries.
+    /// Enforce list boundaries when inserting; do not allow insertions at an index outside the current list range.
     InsertBounded = 2,
-    /// `NoFail` means: do not raise error if a list item fails due to write flag constraints.
+    /// Do not raise an error if a list item fails due to write-flag constraints.
     NoFail = 4,
-    /// Partial means: allow other valid list items to be committed if a list item fails due to
-    /// write flag constraints.
+    /// If one list item fails due to write-flag constraints, still commit other valid list items.
     Partial = 8,
 }
 
-/// `ListPolicy` directives when creating a list and writing list items.
+/// [`ListPolicy`] directives when creating a list and writing list items.
 #[derive(Debug, Clone, Copy)]
 pub struct ListPolicy {
-    /// `CdtListOrderType`
+    /// [`ListOrderType`]
     pub attributes: ListOrderType,
-    /// `CdtListWriteFlags`
+    /// [`ListWriteFlags`] (bitmask)
     pub flags: u8,
 }
 

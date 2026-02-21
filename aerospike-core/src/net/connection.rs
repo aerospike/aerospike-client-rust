@@ -39,22 +39,34 @@ use rustls::pki_types::ServerName;
 #[cfg(feature = "tls")]
 use tokio_rustls::{client::TlsStream, rustls, TlsConnector};
 
+/// State of a connection in the wire protocol.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ConnectionState {
+    /// Connection is idle and ready for a command.
     Ready,
+    /// Connection is closed.
     Closed,
+    /// Writing request data.
     Writing,
+    /// Reading response header (payload size in bytes).
     ReadingHeader(usize),
+    /// Reading response body.
     ReadingBody(usize),
+    /// Reading stream response header.
     ReadingStreamHeader(usize),
+    /// Reading stream response body.
     ReadingStreamBody(usize),
 }
 
+/// Underlying socket type for a connection (TCP or TLS).
 #[derive(Debug)]
 pub enum Netsocket {
+    /// Plain TCP stream.
     Tcp(TcpStream),
+    /// TLS-wrapped TCP stream.
     #[cfg(feature = "tls")]
     Tls(TlsStream<TcpStream>),
+    /// Test double (tests only).
     #[cfg(test)]
     TestDummy,
 }

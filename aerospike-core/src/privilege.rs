@@ -31,14 +31,14 @@ pub enum PrivilegeCode {
     /// User can perform UDF and SINDEX administration actions. Global scope only.
     DataAdmin = 2,
 
-    /// User can perform user defined function(UDF) administration actions.
+    /// User can perform user-defined function(UDF) administration actions.
     /// Examples include create/drop UDF. Global scope only.
     /// Requires server version 6+
     UDFAdmin = 3,
 
     /// User can perform secondary index administration actions.
     /// Examples include create/drop index. Global scope only.
-    /// Requires server version 6+
+    /// Requires server version 6+.
     SIndexAdmin = 4,
 
     /// User can read data only.
@@ -47,10 +47,10 @@ pub enum PrivilegeCode {
     /// User can read and write data.
     ReadWrite = 11,
 
-    /// User can read and write data through user defined functions.
+    /// User can read and write data through user-defined functions.
     ReadWriteUDF = 12,
 
-    /// User can read and write data through user defined functions.
+    /// User can read and write data through user-defined functions.
     Write = 13,
 
     /// User can truncate data only.
