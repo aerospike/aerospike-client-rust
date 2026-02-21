@@ -76,8 +76,8 @@ impl Default for MetricsPolicy {
             latency_columns: 24,
             latency_base: 2,
             error_metrics_per_latency: false,
-            latency_metrics: true,
-            metrics_per_namespace: true,
+            latency_metrics: false,
+            metrics_per_namespace: false,
         }
     }
 }
