@@ -187,7 +187,7 @@ end
     ];
 
     let args1 = vec![as_val!(1)];
-    let batch = vec![
+    let mut batch = vec![
         BatchOperation::write(&bpw, key1.clone(), wops.clone()),
         BatchOperation::write(&bpw, key2.clone(), wops.clone()),
         BatchOperation::write(&bpw, key3.clone(), wops.clone()),
@@ -202,7 +202,7 @@ end
 
     bench.iter(|| {
         common::RUNTIME
-            .block_on(client.batch(&bpolicy, &batch))
+            .block_on(client.batch(&bpolicy, &mut batch))
             .unwrap();
     });
 }

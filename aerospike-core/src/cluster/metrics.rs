@@ -14,7 +14,7 @@
 // the License.
 
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::sync::Mutex;
 
 #[cfg(feature = "serialization")]
 use serde::{ser::Error, Serialize, Serializer};

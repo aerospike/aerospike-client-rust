@@ -15,6 +15,7 @@
 pub mod admin_command;
 pub mod batch_attr;
 pub mod batch_operate_command;
+pub mod batch_stream_command;
 pub mod buffer;
 pub mod delete_command;
 pub mod execute_udf_command;
@@ -40,6 +41,7 @@ use serde::Serialize;
 
 pub use self::batch_attr::BatchAttr;
 pub use self::batch_operate_command::BatchOperateCommand;
+pub use self::batch_stream_command::BatchStreamCommand;
 pub use self::delete_command::DeleteCommand;
 pub use self::execute_udf_command::ExecuteUDFCommand;
 pub use self::exists_command::ExistsCommand;
@@ -105,6 +107,7 @@ pub const fn is_network_error(err: &Error) -> bool {
 }
 
 #[macro_export]
+/// emits the metrics for a command to the node.
 macro_rules! report_latency {
     ($self:expr, $node:expr) => {{
         use crate::cluster::metrics::SingleCommandMetric;
@@ -147,16 +150,21 @@ macro_rules! report_latency {
 }
 
 #[macro_export]
+/// Records latency for a stage of the command.
 macro_rules! record_latency {
     ($node:ident, $timer:ident, $metric:expr) => {{
-        if $node.metrics.load().metric_policy.metrics_per_namespace {
-            $metric = $timer.elapsed().as_micros();
-            $timer = Instant::now();
+        #[allow(unused_assignments)]
+        {
+            if $node.metrics.load().metric_policy.metrics_per_namespace {
+                $metric = $timer.elapsed().as_micros();
+                $timer = Instant::now();
+            }
         }
     }};
 }
 
 #[macro_export]
+/// Records total read/write for the command.
 macro_rules! record_bytes {
     ($node:ident, $conn:ident, $metric:expr) => {{
         if $node.metrics.load().metric_policy.metrics_per_namespace {

@@ -14,7 +14,6 @@
 
 use std::sync::{Arc, Weak};
 
-use crate::cluster::metrics::Metrics;
 use crate::cluster::metrics::SingleCommandMetric;
 use crate::cluster::partition::Partition;
 use crate::cluster::{Cluster, Node};

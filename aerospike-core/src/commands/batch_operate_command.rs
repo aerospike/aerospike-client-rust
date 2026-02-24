@@ -27,33 +27,40 @@ use crate::commands::{CommandType, NamespaceProvider, StreamCommand};
 use crate::errors::{Error, Result};
 use crate::net::{BufferedConn, Connection};
 use crate::policy::{BatchPolicy, Policy, Replica};
+use crate::query::SemanticSync;
 use crate::{record_bytes, record_latency};
 use crate::{value, Record, ResultCode, Value};
 
 use aerospike_rt::sleep;
 use aerospike_rt::time::Duration;
 
-#[derive(Clone)]
 pub struct BatchOperateCommand {
     policy: BatchPolicy,
     pub node: Arc<Node>,
-    pub batch_ops: Vec<(BatchOperation, usize)>,
+    /// Indices into `all_ops` that this command is responsible for,
+    /// in the order they are sent to this node (matches server's batch_index).
+    pub owned_indices: Vec<usize>,
+    /// Shared, unsynchronized access to the full operations vec.
+    /// Each command only touches its own `owned_indices` elements.
+    pub all_ops: SemanticSync<Vec<BatchOperation>>,
 }
 
 impl BatchOperateCommand {
-    pub const fn new(
+    pub fn new(
         policy: BatchPolicy,
         node: Arc<Node>,
-        batch_ops: Vec<(BatchOperation, usize)>,
+        owned_indices: Vec<usize>,
+        all_ops: SemanticSync<Vec<BatchOperation>>,
     ) -> BatchOperateCommand {
         BatchOperateCommand {
             policy,
             node,
-            batch_ops,
+            owned_indices,
+            all_ops,
         }
     }
 
-    pub async fn execute(mut self, cluster: Arc<Cluster>) -> Result<Self> {
+    pub async fn execute(mut self, cluster: Arc<Cluster>) -> Result<()> {
         let mut attr = BatchAttr::default();
 
         use aerospike_rt::time::Instant;
@@ -81,7 +88,7 @@ impl BatchOperateCommand {
             .update_metrics_for_namespace(&self, &single_metric);
 
         match res {
-            Ok(_) => Ok(self),
+            Ok(_) => Ok(()),
             Err(e @ Error::ServerError(rc, _, _)) => {
                 node.metrics
                     .load()
@@ -134,7 +141,8 @@ impl BatchOperateCommand {
             let success = if iterations & 1 == 0 || matches!(self.policy.replica, Replica::Master) {
                 // For even iterations, we request all keys from the same node for efficiency.
                 Self::request_group(
-                    &mut self.batch_ops,
+                    &self.owned_indices,
+                    &self.all_ops,
                     &self.policy,
                     deadline,
                     self.node.clone(),
@@ -143,10 +151,12 @@ impl BatchOperateCommand {
                 )
                 .await?
             } else {
-                // However, for odd iterations try the second choice for each. Instead of re-sharding the batch (as the second choice may not correspond to the first), just try each by itself.
+                // However, for odd iterations try the second choice for each. Instead of
+                // re-sharding the batch (as the second choice may not correspond to the first),
+                // just try each by itself.
                 let mut all_successful = true;
-                for individual_op in self.batch_ops.chunks_mut(1) {
-                    let key = individual_op[0].0.key();
+                for individual_idx in self.owned_indices.chunks(1) {
+                    let key = self.all_ops.as_ref()[individual_idx[0]].key();
                     // Find somewhere else to try.
                     let partition = Partition::new_by_key(&key);
                     let node = cluster.get_node(
@@ -156,7 +166,8 @@ impl BatchOperateCommand {
                     )?;
 
                     if !Self::request_group(
-                        individual_op,
+                        individual_idx,
+                        &self.all_ops,
                         &self.policy,
                         deadline,
                         node,
@@ -201,7 +212,8 @@ impl BatchOperateCommand {
     }
 
     async fn request_group(
-        batch_ops: &mut [(BatchOperation, usize)],
+        owned_indices: &[usize],
+        all_ops: &SemanticSync<Vec<BatchOperation>>,
         policy: &BatchPolicy,
         deadline: Option<Instant>,
         node: Arc<Node>,
@@ -209,11 +221,10 @@ impl BatchOperateCommand {
         metric: &mut SingleCommandMetric,
     ) -> Result<bool> {
         let mut start = Instant::now();
-        let hint = batch_ops
+        let hint = owned_indices
             .first()
-            .map(|bop| bop.0.key().digest[0])
-            .or(Some(0))
-            .unwrap();
+            .map(|&i| all_ops.as_ref()[i].key().digest[0])
+            .unwrap_or(0);
         let mut conn = match node.get_connection(hint).await {
             Ok(conn) => conn,
             Err(err) => {
@@ -224,9 +235,11 @@ impl BatchOperateCommand {
 
         record_latency!(node, start, metric.connection_acq);
 
+        // Build a temporary borrowed view of operations for encoding — no cloning.
+
         *attr = conn
             .buffer
-            .set_batch_operate(policy, batch_ops)
+            .set_batch_operate(policy, all_ops.as_ref(), owned_indices)
             .map_err(|_| Error::ClientError("Failed to prepare send buffer".into()))?;
 
         record_latency!(node, start, metric.command_encoding);
@@ -251,7 +264,7 @@ impl BatchOperateCommand {
         record_latency!(node, start, metric.command_transmission);
 
         // Parse results.
-        if let Err(err) = Self::parse_result(batch_ops, &mut conn).await {
+        if let Err(err) = Self::parse_result(owned_indices, all_ops, &mut conn).await {
             record_latency!(node, start, metric.command_parsing);
             record_bytes!(node, conn, metric);
 
@@ -273,7 +286,8 @@ impl BatchOperateCommand {
     }
 
     async fn parse_group(
-        batch_ops: &mut [(BatchOperation, usize)],
+        owned_indices: &[usize],
+        all_ops: &SemanticSync<Vec<BatchOperation>>,
         conn: &mut BufferedConn<'_>,
         size: usize,
     ) -> Result<bool> {
@@ -283,24 +297,21 @@ impl BatchOperateCommand {
             match Self::parse_record(conn).await {
                 Ok(None) => return Ok(false),
                 Ok(Some(batch_record)) => {
-                    let batch_op = batch_ops
-                        .get_mut(batch_record.batch_index)
-                        .expect("Invalid batch index");
-                    batch_op.0.set_record(batch_record.record);
-                    batch_op.0.set_result_code(batch_record.result_code, false);
+                    let orig = owned_indices[batch_record.batch_index];
+                    let batch_op = &mut all_ops.as_ref_mut()[orig];
+                    batch_op.set_record(batch_record.record);
+                    batch_op.set_result_code(batch_record.result_code, false);
                 }
                 Err(Error::BatchLastError(batch_index, rc, in_doubt, ref msg)) => {
-                    let batch_op = batch_ops
-                        .get_mut(batch_index as usize)
-                        .expect("Invalid batch index");
-                    batch_op.0.set_result_code(rc, in_doubt);
+                    let orig = owned_indices[batch_index as usize];
+                    let batch_op = &mut all_ops.as_ref_mut()[orig];
+                    batch_op.set_result_code(rc, in_doubt);
                     return Err(Error::BatchError(batch_index, rc, in_doubt, msg.clone()));
                 }
                 Err(Error::BatchError(batch_index, rc, in_doubt, ..)) => {
-                    let batch_op = batch_ops
-                        .get_mut(batch_index as usize)
-                        .expect("Invalid batch index");
-                    batch_op.0.set_result_code(rc, in_doubt);
+                    let orig = owned_indices[batch_index as usize];
+                    let batch_op = &mut all_ops.as_ref_mut()[orig];
+                    batch_op.set_result_code(rc, in_doubt);
                 }
                 Err(err) => return Err(err),
             }
@@ -309,97 +320,7 @@ impl BatchOperateCommand {
     }
 
     async fn parse_record(conn: &mut BufferedConn<'_>) -> Result<Option<BatchRecordIndex>> {
-        // if cmd is the end marker of the response, do not proceed further
-        let info3 = conn.buffer().read_u8(Some(3));
-        let last_record = info3 & commands::buffer::INFO3_LAST == commands::buffer::INFO3_LAST;
-
-        let batch_index = conn.buffer().read_u32(Some(14));
-        let result_code = ResultCode::from(conn.buffer().read_u8(Some(5)));
-
-        match result_code {
-            ResultCode::Ok => (),
-            ResultCode::UdfBadResponse => (), // UDF errors will have a body that needs to be parsed
-            ResultCode::KeyNotFoundError | ResultCode::FilteredOut => (),
-            rc => {
-                if last_record {
-                    return Err(Error::BatchLastError(
-                        batch_index,
-                        rc,
-                        false,
-                        conn.conn.addr.clone(),
-                    ));
-                }
-
-                return Err(Error::BatchError(
-                    batch_index,
-                    rc,
-                    false,
-                    conn.conn.addr.clone(),
-                ));
-            }
-        }
-
-        // if cmd is the end marker of the response, do not proceed further
-        if last_record {
-            return Ok(None);
-        }
-
-        let found_key = match result_code {
-            ResultCode::Ok => true,
-            ResultCode::UdfBadResponse => true,
-            ResultCode::KeyNotFoundError | ResultCode::FilteredOut => false,
-            _ => unreachable!(),
-        };
-
-        conn.buffer().skip(6);
-        let generation = conn.buffer().read_u32(None);
-        let expiration = conn.buffer().read_u32(None);
-        let batch_index = conn.buffer().read_u32(None);
-        let field_count = conn.buffer().read_u16(None) as usize; // almost certainly 0
-        let op_count = conn.buffer().read_u16(None) as usize;
-
-        let (key, _) = StreamCommand::parse_key(conn, field_count).await?;
-
-        let record = if found_key {
-            let mut bins: HashMap<String, Value> = HashMap::with_capacity(op_count);
-
-            for _ in 0..op_count {
-                conn.read_buffer(8).await?;
-                let op_size = conn.buffer().read_u32(None) as usize;
-                conn.buffer().skip(1);
-                let particle_type = conn.buffer().read_u8(None);
-                conn.buffer().skip(1);
-                let name_size = conn.buffer().read_u8(None) as usize;
-                conn.read_buffer(name_size).await?;
-                let name = conn.buffer().read_str(name_size)?;
-                let particle_bytes_size = op_size - (4 + name_size);
-                conn.read_buffer(particle_bytes_size).await?;
-                let value =
-                    value::bytes_to_particle(particle_type, conn.buffer(), particle_bytes_size)?;
-
-                // list/map operations may return multiple values for the same bin.
-                match bins.entry(name) {
-                    Vacant(entry) => {
-                        entry.insert(value);
-                    }
-                    Occupied(entry) => match *entry.into_mut() {
-                        Value::MultiResult(ref mut list) => list.push(value),
-                        ref mut prev => {
-                            *prev = Value::MultiResult(vec![prev.clone(), value]);
-                        }
-                    },
-                }
-            }
-
-            Some(Record::new(Some(key), bins, generation, expiration))
-        } else {
-            None
-        };
-        Ok(Some(BatchRecordIndex {
-            batch_index: batch_index as usize,
-            record,
-            result_code,
-        }))
+        parse_batch_record(conn).await
     }
 
     const fn keep_connection(err: &Error) -> bool {
@@ -407,7 +328,8 @@ impl BatchOperateCommand {
     }
 
     async fn parse_result(
-        batch_ops: &mut [(BatchOperation, usize)],
+        owned_indices: &[usize],
+        all_ops: &SemanticSync<Vec<BatchOperation>>,
         conn: &mut Connection,
     ) -> Result<()> {
         let mut status = true;
@@ -423,7 +345,7 @@ impl BatchOperateCommand {
             status = false;
             if size > 0 {
                 conn.set_limit_body(size)?;
-                match Self::parse_group(batch_ops, &mut conn, size).await {
+                match Self::parse_group(owned_indices, all_ops, &mut conn, size).await {
                     Ok(stat) => status = stat,
                     Err(e @ Error::ServerError(_, _, _)) => {
                         conn.drain(conn.conn.deadline()).await?;
@@ -443,8 +365,107 @@ impl BatchOperateCommand {
 
 impl NamespaceProvider for BatchOperateCommand {
     fn get_namespaces(&self) -> impl Iterator<Item = (&str, CommandType)> {
-        self.batch_ops
+        let ops = self.all_ops.as_ref();
+        self.owned_indices
             .iter()
-            .map(|op| (op.0.namespace(), op.0.command_type()))
+            .map(move |&i| (ops[i].namespace(), ops[i].command_type()))
     }
+}
+
+/// Parse a single batch record from the connection header that has already been read into the
+/// buffer. Shared by `BatchOperateCommand` and `BatchStreamCommand`.
+pub(crate) async fn parse_batch_record(
+    conn: &mut BufferedConn<'_>,
+) -> Result<Option<BatchRecordIndex>> {
+    // if cmd is the end marker of the response, do not proceed further
+    let info3 = conn.buffer().read_u8(Some(3));
+    let last_record = info3 & commands::buffer::INFO3_LAST == commands::buffer::INFO3_LAST;
+
+    let batch_index = conn.buffer().read_u32(Some(14));
+    let result_code = ResultCode::from(conn.buffer().read_u8(Some(5)));
+
+    match result_code {
+        ResultCode::Ok => (),
+        ResultCode::UdfBadResponse => (), // UDF errors will have a body that needs to be parsed
+        ResultCode::KeyNotFoundError | ResultCode::FilteredOut => (),
+        rc => {
+            if last_record {
+                return Err(Error::BatchLastError(
+                    batch_index,
+                    rc,
+                    false,
+                    conn.conn.addr.clone(),
+                ));
+            }
+
+            return Err(Error::BatchError(
+                batch_index,
+                rc,
+                false,
+                conn.conn.addr.clone(),
+            ));
+        }
+    }
+
+    // if cmd is the end marker of the response, do not proceed further
+    if last_record {
+        return Ok(None);
+    }
+
+    let found_key = match result_code {
+        ResultCode::Ok => true,
+        ResultCode::UdfBadResponse => true,
+        ResultCode::KeyNotFoundError | ResultCode::FilteredOut => false,
+        _ => unreachable!(),
+    };
+
+    conn.buffer().skip(6);
+    let generation = conn.buffer().read_u32(None);
+    let expiration = conn.buffer().read_u32(None);
+    let batch_index = conn.buffer().read_u32(None);
+    let field_count = conn.buffer().read_u16(None) as usize; // almost certainly 0
+    let op_count = conn.buffer().read_u16(None) as usize;
+
+    let (key, _) = StreamCommand::parse_key(conn, field_count).await?;
+
+    let record = if found_key {
+        let mut bins: HashMap<String, Value> = HashMap::with_capacity(op_count);
+
+        for _ in 0..op_count {
+            conn.read_buffer(8).await?;
+            let op_size = conn.buffer().read_u32(None) as usize;
+            conn.buffer().skip(1);
+            let particle_type = conn.buffer().read_u8(None);
+            conn.buffer().skip(1);
+            let name_size = conn.buffer().read_u8(None) as usize;
+            conn.read_buffer(name_size).await?;
+            let name = conn.buffer().read_str(name_size)?;
+            let particle_bytes_size = op_size - (4 + name_size);
+            conn.read_buffer(particle_bytes_size).await?;
+            let value =
+                value::bytes_to_particle(particle_type, conn.buffer(), particle_bytes_size)?;
+
+            // list/map operations may return multiple values for the same bin.
+            match bins.entry(name) {
+                Vacant(entry) => {
+                    entry.insert(value);
+                }
+                Occupied(entry) => match *entry.into_mut() {
+                    Value::MultiResult(ref mut list) => list.push(value),
+                    ref mut prev => {
+                        *prev = Value::MultiResult(vec![prev.clone(), value]);
+                    }
+                },
+            }
+        }
+
+        Some(Record::new(Some(key), bins, generation, expiration))
+    } else {
+        None
+    };
+    Ok(Some(BatchRecordIndex {
+        batch_index: batch_index as usize,
+        record,
+        result_code,
+    }))
 }

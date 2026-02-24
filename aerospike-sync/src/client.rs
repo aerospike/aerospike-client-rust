@@ -24,7 +24,7 @@ use aerospike_core::query::PartitionFilter;
 use aerospike_core::DropIndexTask;
 use aerospike_core::UdfRemoveTask;
 use aerospike_core::{
-    AdminPolicy, BatchOperation, BatchPolicy, BatchRecord, Bin, Bins, ClientPolicy,
+    AdminPolicy, BatchOperation, BatchPolicy, Bin, Bins, ClientPolicy,
     CollectionIndexType, IndexTask, IndexType, Key, Node, Privilege, QueryPolicy, ReadPolicy,
     Record, Recordset, RegisterTask, Role, Statement, ToHosts, UDFLang, User, Value, WritePolicy,
 };
@@ -180,37 +180,31 @@ impl Client {
     ///
     /// # Examples
     ///
-    /// Fetch multiple records in a single client request
+    /// Execute multiple batch operations in one batch call. Results are written directly into
+    /// the `BatchRecord` embedded in each `BatchOperation`. On success or error (including
+    /// timeout), any operations that completed before the failure remain accessible in `ops`.
     ///
     /// ```rust,edition2018
     /// # use aerospike::*;
     ///
     /// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap();
     /// # let client = Client::new(&ClientPolicy::default(), &hosts).unwrap();
-    /// let bins = Bins::from(["name", "age"]);
-    /// let mut batch_reads = vec![];
-    /// for i in 0..10 {
-    ///   let key = as_key!("test", "test", i);
-    ///   batch_reads.push(BatchRead::new(key, bins.clone()));
-    /// }
-    /// match client.batch(&BatchPolicy::default(), batch_reads) {
-    ///     Ok(results) => {
-    ///       for result in results {
-    ///         match result.record {
-    ///           Some(record) => println!("{:?} => {:?}", result.key, record.bins),
-    ///           None => println!("No such record: {:?}", result.key),
+    /// let key = as_key!("test", "test", 1);
+    /// let mut batch = vec![BatchOperation::read(&BatchReadPolicy::default(), key, Bins::All)];
+    /// match client.batch(&BatchPolicy::default(), &mut batch) {
+    ///     Ok(()) => {
+    ///         for op in &batch {
+    ///             println!("{:?}", op.batch_record().record);
     ///         }
-    ///       }
     ///     }
-    ///     Err(err)
-    ///         => println!("Error executing batch request: {}", err),
+    ///     Err(err) => println!("Error executing batch request: {}", err),
     /// }
     /// ```
     pub fn batch(
         &self,
         policy: &BatchPolicy,
-        batch_records: &[BatchOperation],
-    ) -> Result<Vec<BatchRecord>> {
+        batch_records: &mut Vec<BatchOperation>,
+    ) -> Result<()> {
         block_on(self.async_client.batch(policy, batch_records))
     }
 

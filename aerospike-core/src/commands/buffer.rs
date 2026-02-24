@@ -505,7 +505,8 @@ impl Buffer {
     pub(crate) fn set_batch_operate(
         &mut self,
         policy: &BatchPolicy,
-        batch_ops: &[(BatchOperation, usize)],
+        batch_ops: &Vec<BatchOperation>,
+        batch_ops_indices: &[usize],
     ) -> Result<BatchAttr> {
         self.begin();
         let mut field_count = 1;
@@ -517,7 +518,8 @@ impl Buffer {
         }
 
         let mut prev: Option<&BatchOperation> = None;
-        for (batch_op, _) in batch_ops {
+        for batch_op_idx in batch_ops_indices {
+            let batch_op = &batch_ops[*batch_op_idx];
             self.data_offset += batch_op.key().digest.len() + 4;
             if batch_op.match_header(prev) {
                 self.data_offset += 1;
@@ -543,14 +545,15 @@ impl Buffer {
         let field_size_offset = self.data_offset;
         let field_type = FieldType::BatchIndex;
         self.write_field_header(0, field_type);
-        self.write_u32(batch_ops.len() as u32);
+        self.write_u32(batch_ops_indices.len() as u32);
         self.write_u8(Buffer::get_batch_flags(policy));
 
         let mut attr = BatchAttr::default();
         prev = None;
-        for (idx, (batch_op, _)) in batch_ops.iter().enumerate() {
+        for batch_op_idx in batch_ops_indices {
+            let batch_op = &batch_ops[*batch_op_idx];
             let key = &batch_op.key();
-            self.write_u32(idx as u32);
+            self.write_u32(*batch_op_idx as u32);
             self.write_bytes(&key.digest);
             if batch_op.match_header(prev) {
                 self.write_u8(BATCH_MSG_REPEAT);

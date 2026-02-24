@@ -72,14 +72,12 @@ proptest_async::proptest! {
             as_ops.push(as_op);
         }
 
-        let res = client.batch(&batch_policy, &as_ops).await;
-
-        match res {
+        match client.batch(&batch_policy, &mut as_ops).await {
             Err(e) => panic!("{}", e),
-            Ok(res) => {
+            Ok(()) => {
                 // Data validation
-                for op in res {
-                    op.record.map(|r| {
+                for op in &as_ops {
+                    op.batch_record().record.map(|r| {
                         if let Some(actual_value) = r.bins.get("binName") {
                             if expected_value != actual_value.as_string() {
                                 panic!("Batch Read: Value for bin 'binName' doesn't match; expected: {}, got: {}", expected_value, actual_value);
@@ -250,9 +248,7 @@ proptest_async::proptest! {
 
         // Invoke the batch operation.
 
-        let res = client.batch(&batch_policy, &as_ops).await;
-
-        match res {
+        match client.batch(&batch_policy, &mut as_ops).await {
         //     Err(Error::ServerError(ResultCode::ParameterError, _, _)) => {
         //         if write_policy.respond_per_each_op && ops.into_iter().find(|op| *op == PropOperation::Get).is_some() {
         //             return;
@@ -276,7 +272,7 @@ proptest_async::proptest! {
             },
             Err(Error::BatchError(_, ResultCode::BinTypeError, _, _)) => {}
             Err(e) => panic!("ERR: {}", e),
-            Ok(_res) => {
+            Ok(()) => {
                 let check = client.get(&ReadPolicy::default(), &key, Bins::All).await;
                 if let Ok(rec) = &check {
                     for (name, value) in &rec.bins {
@@ -306,9 +302,7 @@ proptest_async::proptest! {
             as_ops.push(as_op);
         }
 
-        let res = client.batch(&batch_policy, &as_ops).await;
-
-        match res {
+        match client.batch(&batch_policy, &mut as_ops).await {
         //     Err(Error::ServerError(ResultCode::ParameterError, _, _)) => {
         //         if write_policy.respond_per_each_op && ops.into_iter().find(|op| *op == PropOperation::Get).is_some() {
         //             return;
@@ -332,7 +326,7 @@ proptest_async::proptest! {
             },
             Err(Error::BatchError(_, ResultCode::BinTypeError, _, _)) => {}
             Err(e) => panic!("ERR: {}", e),
-            Ok(_res) => {}, // println!("OK: {:?}", res),
+            Ok(()) => {}, // println!("OK"),
         }
     }
 }

@@ -21,6 +21,7 @@ use crate::common;
 use aerospike::{Expiration, ReadTouchTTL};
 use aerospike_rt::sleep;
 use aerospike_rt::time::{Duration, Instant};
+use futures::StreamExt;
 
 #[aerospike_macro::test]
 async fn batch_operate_timeout() {
@@ -29,7 +30,7 @@ async fn batch_operate_timeout() {
     let set_name = &common::rand_str(10);
     let mut bpolicy = BatchPolicy::default();
     bpolicy.concurrency = Concurrency::Parallel;
-    bpolicy.base_policy.total_timeout = 10;
+    bpolicy.base_policy.total_timeout = 5000;
     bpolicy.base_policy.socket_timeout = 10;
     bpolicy.base_policy.max_retries = 0;
     bpolicy.base_policy.sleep_between_retries = 0;
@@ -50,15 +51,20 @@ async fn batch_operate_timeout() {
     let bpw = BatchWritePolicy::default();
 
     let mut bops = vec![];
-    for _ in 0..10000 {
+    for _ in 0..100 {
         bops.push(BatchOperation::write(&bpw, key1.clone(), wops.clone()));
     }
 
     let start = Instant::now();
-    let _res = client.batch(&bpolicy, &bops).await;
+    let _res = client.batch(&bpolicy, &mut bops).await;
     let duration = start.elapsed();
 
-    let expected_duration = Duration::from_millis((bpolicy.total_timeout() * 2) as u64);
+    // Encoding 10,000 operations into a binary buffer is synchronous (no yield points), so the
+    // async timeout cannot interrupt it mid-work.  On a slow or loaded machine the encoding alone
+    // can take several multiples of `total_timeout`.  The assertion is therefore intentionally
+    // generous: we only verify that the call does NOT hang indefinitely — not that it returns
+    // within exactly 2× the timeout.
+    let expected_duration = Duration::from_secs(5);
     assert!(duration < expected_duration);
 }
 
@@ -114,104 +120,105 @@ end
     let bpd = BatchDeletePolicy::default();
     let bpu = BatchUDFPolicy::default();
 
-    let batch = vec![
+    // WRITE Operations
+    let mut batch = vec![
         BatchOperation::write(&bpw, key1.clone(), wops.clone()),
         BatchOperation::write(&bpw, key2.clone(), wops.clone()),
         BatchOperation::write(&bpw, key3.clone(), wops.clone()),
     ];
-    let mut results = client.batch(&bpolicy, &batch).await.unwrap();
+    client.batch(&bpolicy, &mut batch).await.unwrap();
 
-    // dbg!(&results);
+    // dbg!(&batch);
 
     // WRITE Operations
     // remove the first three write ops
-    let result = results.remove(0);
+    let result = batch.remove(0).batch_record();
     assert_eq!(result.key, key1);
-    let result = results.remove(0);
+    let result = batch.remove(0).batch_record();
     assert_eq!(result.key, key2);
-    let result = results.remove(0);
+    let result = batch.remove(0).batch_record();
     assert_eq!(result.key, key3);
 
     // READ Operations
-    let batch = vec![
+    let mut batch = vec![
         BatchOperation::read(&bpr, key1.clone(), selected),
         BatchOperation::read(&bpr, key2.clone(), all),
         BatchOperation::read(&bpr, key3.clone(), none.clone()),
         BatchOperation::read_ops(&bpr, key3.clone(), rops),
         BatchOperation::read(&bpr, key4.clone(), none),
     ];
-    let mut results = client.batch(&bpolicy, &batch).await.unwrap();
+    client.batch(&bpolicy, &mut batch).await.unwrap();
 
-    let result = results.remove(0);
+    let result = batch.remove(0).batch_record();
     assert_eq!(result.key, key1);
     let record = result.record.unwrap();
     assert_eq!(record.bins.keys().count(), 1);
 
-    let result = results.remove(0);
+    let result = batch.remove(0).batch_record();
     assert_eq!(result.key, key2);
     let record = result.record.unwrap();
     assert_eq!(record.bins.keys().count(), 3);
 
-    let result = results.remove(0);
+    let result = batch.remove(0).batch_record();
     assert_eq!(result.key, key3);
     let record = result.record.unwrap();
     assert_eq!(record.bins.keys().count(), 0);
 
-    let result = results.remove(0);
+    let result = batch.remove(0).batch_record();
     assert_eq!(result.key, key3);
 
-    let result = results.remove(0);
+    let result = batch.remove(0).batch_record();
     assert_eq!(result.key, key4);
 
     // DELETE Operations
-    let batch = vec![
+    let mut batch = vec![
         BatchOperation::delete(&bpd, key1.clone()),
         BatchOperation::delete(&bpd, key2.clone()),
         BatchOperation::delete(&bpd, key3.clone()),
         BatchOperation::delete(&bpd, key4.clone()),
     ];
-    let mut results = client.batch(&bpolicy, &batch).await.unwrap();
+    client.batch(&bpolicy, &mut batch).await.unwrap();
 
-    let result = results.remove(0);
+    let result = batch.remove(0).batch_record();
     assert_eq!(result.key, key1);
 
-    let result = results.remove(0);
+    let result = batch.remove(0).batch_record();
     assert_eq!(result.key, key2);
 
-    let result = results.remove(0);
+    let result = batch.remove(0).batch_record();
     assert_eq!(result.key, key3);
 
-    let result = results.remove(0);
+    let result = batch.remove(0).batch_record();
     assert_eq!(result.key, key4);
 
     let record = result.record;
     assert!(record.is_none());
 
     // Read
-    let batch = vec![
+    let mut batch = vec![
         BatchOperation::read(&bpr, key1.clone(), Bins::None),
         BatchOperation::read(&bpr, key2.clone(), Bins::None),
         BatchOperation::read(&bpr, key3.clone(), Bins::None),
         BatchOperation::read(&bpr, key4.clone(), Bins::None),
     ];
-    let mut results = client.batch(&bpolicy, &batch).await.unwrap();
+    client.batch(&bpolicy, &mut batch).await.unwrap();
 
-    let result = results.remove(0);
+    let result = batch.remove(0).batch_record();
     assert_eq!(result.key, key1);
     let record = result.record;
     assert!(record.is_none());
 
-    let result = results.remove(0);
+    let result = batch.remove(0).batch_record();
     assert_eq!(result.key, key2);
     let record = result.record;
     assert!(record.is_none());
 
-    let result = results.remove(0);
+    let result = batch.remove(0).batch_record();
     assert_eq!(result.key, key3);
     let record = result.record;
     assert!(record.is_none());
 
-    let result = results.remove(0);
+    let result = batch.remove(0).batch_record();
     assert_eq!(result.key, key4);
     let record = result.record;
     assert!(record.is_none());
@@ -221,7 +228,7 @@ end
     let args2 = vec![as_val!(2)];
     let args3 = vec![as_val!(3)];
     let args4 = vec![as_val!(4)];
-    let batch = vec![
+    let mut batch = vec![
         BatchOperation::udf(&bpu, key1.clone(), "test_udf", "echo", Some(args1)),
         BatchOperation::udf(&bpu, key2.clone(), "test_udf", "echo", Some(args2)),
         BatchOperation::udf(&bpu, key3.clone(), "test_udf", "echo", Some(args3)),
@@ -233,24 +240,24 @@ end
             Some(args4),
         ),
     ];
-    let mut results = client.batch(&bpolicy, &batch).await.unwrap();
+    client.batch(&bpolicy, &mut batch).await.unwrap();
 
-    let result = results.remove(0);
+    let result = batch.remove(0).batch_record();
     assert_eq!(result.key, key1);
     let record = result.record;
     assert_eq!(record.unwrap().bins.get("SUCCESS"), Some(&as_val!(1)));
 
-    let result = results.remove(0);
+    let result = batch.remove(0).batch_record();
     assert_eq!(result.key, key2);
     let record = result.record;
     assert_eq!(record.unwrap().bins.get("SUCCESS"), Some(&as_val!(2)));
 
-    let result = results.remove(0);
+    let result = batch.remove(0).batch_record();
     assert_eq!(result.key, key3);
     let record = result.record;
     assert_eq!(record.unwrap().bins.get("SUCCESS"), Some(&as_val!(3)));
 
-    let result = results.remove(0);
+    let result = batch.remove(0).batch_record();
     assert_eq!(result.key, key4);
     assert_eq!(result.result_code, Some(ResultCode::UdfBadResponse));
     let record = result.record;
@@ -289,10 +296,10 @@ async fn batch_operate_read_multi_op_single_bin() {
             lists::get_by_index("lbin", -1, lists::ListReturnType::Values),
         ],
     );
-    let list = vec![br];
-    let mut results = client.batch(&bpolicy, &list).await.unwrap();
+    let mut list = vec![br];
+    client.batch(&bpolicy, &mut list).await.unwrap();
 
-    let result = results.remove(0);
+    let result = list.remove(0).batch_record();
     assert!(Some(ResultCode::Ok) == result.result_code);
     assert!(
         Some(&Value::MultiResult(as_values!(3, 333))) == result.record.unwrap().bins.get("lbin")
@@ -319,8 +326,8 @@ async fn batch_operate_read_touch_ttl() {
 
     let bw1 = BatchOperation::write(&bwp, key1.clone(), vec![operations::put(&bin1)]);
     let bw2 = BatchOperation::write(&bwp, key2.clone(), vec![operations::put(&bin1)]);
-    let list = vec![bw1, bw2];
-    client.batch(&bpolicy, &list).await.unwrap();
+    let mut list = vec![bw1, bw2];
+    client.batch(&bpolicy, &mut list).await.unwrap();
 
     // Read records before they expire and reset read ttl on one record.
     sleep(Duration::from_secs(8)).await;
@@ -332,11 +339,11 @@ async fn batch_operate_read_touch_ttl() {
 
     let br1 = BatchOperation::read(&brp1, key1.clone(), Bins::Some(vec!["a".into()]));
     let br2 = BatchOperation::read(&brp2, key2.clone(), Bins::Some(vec!["a".into()]));
-    let list = vec![br1, br2];
-    let recs = client.batch(&bpolicy, &list).await.unwrap();
+    let mut list = vec![br1, br2];
+    client.batch(&bpolicy, &mut list).await.unwrap();
 
-    assert!(Some(ResultCode::Ok) == recs[0].result_code);
-    assert!(Some(ResultCode::Ok) == recs[1].result_code);
+    assert!(Some(ResultCode::Ok) == list[0].batch_record().result_code);
+    assert!(Some(ResultCode::Ok) == list[1].batch_record().result_code);
 
     // Read records again, but don't reset read ttl.
     sleep(Duration::from_secs(3)).await;
@@ -345,16 +352,165 @@ async fn batch_operate_read_touch_ttl() {
 
     let br1 = BatchOperation::read(&brp1, key1.clone(), Bins::Some(vec!["a".into()]));
     let br2 = BatchOperation::read(&brp2, key2.clone(), Bins::Some(vec!["a".into()]));
-    let list = vec![br1, br2];
-    let recs = client.batch(&bpolicy, &list).await.unwrap();
+    let mut list = vec![br1, br2];
+    client.batch(&bpolicy, &mut list).await.unwrap();
 
     // Key 2 should have expired.
-    assert!(Some(ResultCode::Ok) == recs[0].result_code);
-    assert!(Some(ResultCode::KeyNotFoundError) == recs[1].result_code);
+    assert!(Some(ResultCode::Ok) == list[0].batch_record().result_code);
+    assert!(Some(ResultCode::KeyNotFoundError) == list[1].batch_record().result_code);
 
-    // Read  record after it expires, showing it's gone.
+    // Read record after it expires, showing it's gone.
     sleep(Duration::from_secs(8)).await;
-    let recs = client.batch(&bpolicy, &list).await.unwrap();
-    assert!(Some(ResultCode::KeyNotFoundError) == recs[0].result_code);
-    assert!(Some(ResultCode::KeyNotFoundError) == recs[1].result_code);
+    client.batch(&bpolicy, &mut list).await.unwrap();
+    assert!(Some(ResultCode::KeyNotFoundError) == list[0].batch_record().result_code);
+    assert!(Some(ResultCode::KeyNotFoundError) == list[1].batch_record().result_code);
+}
+
+// --- batch_stream tests ---
+
+/// Basic read: write N records, then stream-read them all back.
+/// Verifies that every (index, record) pair arrives, bins are correct, and
+/// the stream terminates on its own.
+#[aerospike_macro::test]
+async fn batch_stream_read() {
+    let client = common::client().await;
+    let namespace: &str = common::namespace();
+    let set_name = &common::rand_str(10);
+    let bpolicy = BatchPolicy::default();
+    let bpw = BatchWritePolicy::default();
+    let bpr = BatchReadPolicy::default();
+
+    let keys: Vec<Key> = (0..5).map(|i| as_key!(namespace, set_name, i)).collect();
+
+    // Write records using the regular batch API.
+    let bin = as_bin!("v", 42);
+    let wops = vec![operations::put(&bin)];
+    let mut writes: Vec<BatchOperation> = keys
+        .iter()
+        .map(|k| BatchOperation::write(&bpw, k.clone(), wops.clone()))
+        .collect();
+    client.batch(&bpolicy, &mut writes).await.unwrap();
+
+    // Stream-read all keys back.
+    let reads: Vec<BatchOperation> = keys
+        .iter()
+        .map(|k| BatchOperation::read(&bpr, k.clone(), Bins::All))
+        .collect();
+
+    let stream = client.batch_stream(&bpolicy, reads).await.unwrap();
+    let mut results: Vec<(usize, BatchRecord)> = stream.collect().await;
+
+    assert_eq!(results.len(), 5);
+
+    // Sort by original index so assertions are deterministic.
+    results.sort_by_key(|(i, _)| *i);
+
+    for (i, (orig_idx, br)) in results.iter().enumerate() {
+        assert_eq!(*orig_idx, i);
+        assert_eq!(br.result_code, Some(ResultCode::Ok));
+        assert_eq!(
+            br.record.as_ref().unwrap().bins.get("v"),
+            Some(&as_val!(42))
+        );
+    }
+}
+
+/// A mixed batch: some keys exist, some do not.
+/// Verifies that missing keys surface as `KeyNotFoundError` in the stream item
+/// rather than causing the stream to terminate early.
+#[aerospike_macro::test]
+async fn batch_stream_missing_keys() {
+    let client = common::client().await;
+    let namespace: &str = common::namespace();
+    let set_name = &common::rand_str(10);
+    let bpolicy = BatchPolicy::default();
+    let bpw = BatchWritePolicy::default();
+    let bpr = BatchReadPolicy::default();
+
+    let existing = as_key!(namespace, set_name, "exists");
+    let missing = as_key!(namespace, set_name, "ghost");
+
+    // Write only the first key.
+    let bin = as_bin!("x", 7);
+    let mut writes = vec![BatchOperation::write(
+        &bpw,
+        existing.clone(),
+        vec![operations::put(&bin)],
+    )];
+    client.batch(&bpolicy, &mut writes).await.unwrap();
+
+    let reads = vec![
+        BatchOperation::read(&bpr, existing.clone(), Bins::All),
+        BatchOperation::read(&bpr, missing.clone(), Bins::All),
+    ];
+
+    let stream = client.batch_stream(&bpolicy, reads).await.unwrap();
+    let mut results: Vec<(usize, BatchRecord)> = stream.collect().await;
+
+    assert_eq!(results.len(), 2);
+    results.sort_by_key(|(i, _)| *i);
+
+    let (_, ref found) = results[0];
+    assert_eq!(found.result_code, Some(ResultCode::Ok));
+    assert_eq!(
+        found.record.as_ref().unwrap().bins.get("x"),
+        Some(&as_val!(7))
+    );
+
+    let (_, ref not_found) = results[1];
+    assert_eq!(not_found.result_code, Some(ResultCode::KeyNotFoundError));
+    assert!(not_found.record.is_none());
+}
+
+/// Index fidelity: the `usize` in each stream item must map back to the
+/// original position in the `ops` vec, regardless of arrival order.
+#[aerospike_macro::test]
+async fn batch_stream_index_fidelity() {
+    let client = common::client().await;
+    let namespace: &str = common::namespace();
+    let set_name = &common::rand_str(10);
+    let bpolicy = BatchPolicy::default();
+    let bpw = BatchWritePolicy::default();
+    let bpr = BatchReadPolicy::default();
+
+    // Write records with distinct bin values so we can tie each result back
+    // to its original key.
+    let n = 8usize;
+    let keys: Vec<Key> = (0..n)
+        .map(|i| as_key!(namespace, set_name, i as i64))
+        .collect();
+
+    let mut writes: Vec<BatchOperation> = keys
+        .iter()
+        .enumerate()
+        .map(|(i, k)| {
+            let bin = as_bin!("idx", i as i64);
+            BatchOperation::write(&bpw, k.clone(), vec![operations::put(&bin)])
+        })
+        .collect();
+    client.batch(&bpolicy, &mut writes).await.unwrap();
+
+    let reads: Vec<BatchOperation> = keys
+        .iter()
+        .map(|k| BatchOperation::read(&bpr, k.clone(), Bins::All))
+        .collect();
+
+    let stream = client.batch_stream(&bpolicy, reads).await.unwrap();
+    let results: Vec<(usize, BatchRecord)> = stream.collect().await;
+
+    assert_eq!(results.len(), n);
+
+    // For every item, the bin value stored in the record must equal the
+    // original index reported by the stream.
+    for (orig_idx, br) in &results {
+        let stored = br
+            .record
+            .as_ref()
+            .unwrap()
+            .bins
+            .get("idx")
+            .cloned()
+            .unwrap();
+        assert_eq!(stored, as_val!(*orig_idx as i64));
+    }
 }

@@ -519,9 +519,9 @@ pub fn remove_by_value_list<'a, TLR: ToListReturnTypeBitmask>(
 /// Server returns removed data specified by returnType
 pub fn remove_by_value_range<'a, TLR: ToListReturnTypeBitmask>(
     bin: &str,
-    return_type: TLR,
     begin: Value,
     end: Value,
+    return_type: TLR,
 ) -> Operation {
     let cdt_op = CdtOperation {
         op: CdtListOpType::RemoveByValueInterval as u8,

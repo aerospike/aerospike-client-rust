@@ -77,27 +77,31 @@ end
 
     // WRITE Operations
     println!("\n--- Batch WRITE operations ---");
-    let batch = vec![
+    let mut batch = vec![
         BatchOperation::write(&bpw, key1.clone(), wops.clone()),
         BatchOperation::write(&bpw, key2.clone(), wops.clone()),
         BatchOperation::write(&bpw, key3.clone(), wops.clone()),
     ];
-    let results = client.batch(&bpolicy, &batch).await.unwrap();
+    client.batch(&bpolicy, &mut batch).await.unwrap();
     println!("Write results:");
-    dbg!(&results);
+    for op in &batch {
+        println!("{:?}", op.batch_record());
+    }
 
     // READ Operations
     println!("\n--- Batch READ operations ---");
-    let batch = vec![
+    let mut batch = vec![
         BatchOperation::read(&bpr, key1.clone(), selected),
         BatchOperation::read(&bpr, key2.clone(), all),
         BatchOperation::read(&bpr, key3.clone(), none.clone()),
         BatchOperation::read_ops(&bpr, key3.clone(), rops),
         BatchOperation::read(&bpr, key4.clone(), none.clone()),
     ];
-    let results = client.batch(&bpolicy, &batch).await.unwrap();
+    client.batch(&bpolicy, &mut batch).await.unwrap();
     println!("Read results:");
-    dbg!(&results);
+    for op in &batch {
+        println!("{:?}", op.batch_record());
+    }
 
     // UDF Operations
     println!("\n--- Batch UDF operations ---");
@@ -105,27 +109,31 @@ end
     let args2 = vec![as_val!(2)];
     let args3 = vec![as_val!(3)];
     let args4 = vec![as_val!(4)];
-    let batch = vec![
+    let mut batch = vec![
         BatchOperation::udf(&bpu, key1.clone(), "test_udf", "echo", Some(args1)),
         BatchOperation::udf(&bpu, key2.clone(), "test_udf", "echo", Some(args2)),
         BatchOperation::udf(&bpu, key3.clone(), "test_udf", "echo", Some(args3)),
         BatchOperation::udf(&bpu, key4.clone(), "test_udf", "echo", Some(args4)),
     ];
-    let results = client.batch(&bpolicy, &batch).await.unwrap();
+    client.batch(&bpolicy, &mut batch).await.unwrap();
     println!("UDF results:");
-    dbg!(&results);
+    for op in &batch {
+        println!("{:?}", op.batch_record());
+    }
 
     // DELETE Operations
     println!("\n--- Batch DELETE operations ---");
-    let batch = vec![
+    let mut batch = vec![
         BatchOperation::delete(&bpd, key1.clone()),
         BatchOperation::delete(&bpd, key2.clone()),
         BatchOperation::delete(&bpd, key3.clone()),
         BatchOperation::delete(&bpd, key4.clone()),
     ];
-    let results = client.batch(&bpolicy, &batch).await.unwrap();
+    client.batch(&bpolicy, &mut batch).await.unwrap();
     println!("Delete results:");
-    dbg!(&results);
+    for op in &batch {
+        println!("{:?}", op.batch_record());
+    }
 
     println!("\n✓ All batch operations completed!");
     client.close().await.unwrap();

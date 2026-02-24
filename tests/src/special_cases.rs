@@ -161,9 +161,9 @@ async fn mntn_pool_case_simple_batch_get() {
             let key = Key::new(namespace, &set_name, Value::String(key.to_string()))
                 .expect("Failed to create key");
 
-            let batch = vec![BatchOperation::read(&bpr, key, Bins::All)];
+            let mut batch = vec![BatchOperation::read(&bpr, key, Bins::All)];
             flood_task_client
-                .batch(&bp, &batch)
+                .batch(&bp, &mut batch)
                 .await
                 .expect("Failed to get value from Aerospike");
         });

@@ -29,6 +29,8 @@ use std::sync::atomic::{AtomicBool, AtomicIsize, Ordering};
 use std::sync::{Arc, Weak};
 use std::vec::Vec;
 
+use futures::StreamExt;
+
 pub use self::node::Node;
 
 use self::node_validator::NodeValidator;
@@ -205,7 +207,7 @@ impl Cluster {
         let tend_interval = cluster.client_policy.load().tend_interval;
 
         loop {
-            if rx.try_next().is_ok() {
+            if rx.next().await.is_some() {
                 unreachable!();
             } else if let Err(err) = cluster.tend().await {
                 log_error_chain!(err, "Error tending cluster");

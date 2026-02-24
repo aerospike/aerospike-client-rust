@@ -19,7 +19,6 @@ use std::sync::Arc;
 use hazarc::AtomicArc;
 
 use crate::cluster::metrics::Metrics;
-use crate::cluster::Node;
 use crate::errors::{Error, Result};
 use crate::net::{Connection, ConnectionState, Host};
 use crate::policy::ClientPolicy;
@@ -120,7 +119,11 @@ impl Queue {
                 .pop_front()
             {
                 if conn.is_idle() {
-                    *metrics.load().connections_idle_dropped.lock().unwrap_or_else(|poisoned| poisoned.into_inner()) += 1;
+                    *metrics
+                        .load()
+                        .connections_idle_dropped
+                        .lock()
+                        .unwrap_or_else(|poisoned| poisoned.into_inner()) += 1;
                     // let the connection drop and close
                     continue;
                 }
@@ -148,7 +151,11 @@ impl Queue {
         if conn.state == ConnectionState::Ready && connections.len() < self.0.capacity {
             connections.push_back(conn);
         } else {
-            *metrics.load().connections_pool_overflow.lock().unwrap_or_else(|poisoned| poisoned.into_inner()) += 1;
+            *metrics
+                .load()
+                .connections_pool_overflow
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner()) += 1;
         }
         // otherwise let it drop
     }
@@ -226,7 +233,12 @@ impl ConnectionPool {
         if self.num_queues == 1 {
             match self.queues[0].get(self.metrics.clone()) {
                 Err(e) => {
-                    *self.metrics.load().connections_pool_empty.lock().unwrap_or_else(|poisoned| poisoned.into_inner()) += 1;
+                    *self
+                        .metrics
+                        .load()
+                        .connections_pool_empty
+                        .lock()
+                        .unwrap_or_else(|poisoned| poisoned.into_inner()) += 1;
                     return Err(e);
                 }
                 Ok(conn) => Ok(conn),
@@ -249,7 +261,12 @@ impl ConnectionPool {
 
                 return match connection {
                     Err(e) => {
-                        *self.metrics.load().connections_pool_empty.lock().unwrap_or_else(|poisoned| poisoned.into_inner()) += 1;
+                        *self
+                            .metrics
+                            .load()
+                            .connections_pool_empty
+                            .lock()
+                            .unwrap_or_else(|poisoned| poisoned.into_inner()) += 1;
                         return Err(e);
                     }
                     Ok(conn) => Ok(conn),
@@ -271,10 +288,20 @@ impl ConnectionPool {
                 i = 0;
             }
             if queue.reserve_capacity() {
-                *self.metrics.load().connections_attempts.lock().unwrap_or_else(|poisoned| poisoned.into_inner()) += 1;
+                *self
+                    .metrics
+                    .load()
+                    .connections_attempts
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner()) += 1;
                 match queue.make_conn().await {
                     Ok(conn) => {
-                        *self.metrics.load().connections_successful.lock().unwrap_or_else(|poisoned| poisoned.into_inner()) += 1;
+                        *self
+                            .metrics
+                            .load()
+                            .connections_successful
+                            .lock()
+                            .unwrap_or_else(|poisoned| poisoned.into_inner()) += 1;
                         return Ok(PooledConnection {
                             metrics: self.metrics.clone(),
                             queue: queue.clone(),
@@ -282,7 +309,12 @@ impl ConnectionPool {
                         });
                     }
                     Err(e) => {
-                        *self.metrics.load().connections_failed.lock().unwrap_or_else(|poisoned| poisoned.into_inner()) += 1;
+                        *self
+                            .metrics
+                            .load()
+                            .connections_failed
+                            .lock()
+                            .unwrap_or_else(|poisoned| poisoned.into_inner()) += 1;
                         return Err(e);
                     }
                 }
@@ -336,13 +368,21 @@ impl ConnectionPool {
         let mut r = crate::net::connection::ConnectionRecovery::new(&mut conn);
         r.recover().await;
         if conn.state == ConnectionState::Ready {
-            *metrics.load().connections_recovered.lock().unwrap_or_else(|poisoned| poisoned.into_inner()) += 1;
+            *metrics
+                .load()
+                .connections_recovered
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner()) += 1;
             queue.put_back(conn, metrics.clone());
             return;
         }
 
         conn.close();
-        *metrics.load().connections_closed.lock().unwrap_or_else(|poisoned| poisoned.into_inner()) += 1;
+        *metrics
+            .load()
+            .connections_closed
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) += 1;
         queue.reduce_capacity();
     }
 }
@@ -368,7 +408,12 @@ impl Drop for PooledConnection {
             match conn.state {
                 ConnectionState::Closed => {
                     self.queue.reduce_capacity();
-                    *self.metrics.load().connections_closed.lock().unwrap_or_else(|poisoned| poisoned.into_inner()) += 1;
+                    *self
+                        .metrics
+                        .load()
+                        .connections_closed
+                        .lock()
+                        .unwrap_or_else(|poisoned| poisoned.into_inner()) += 1;
                 }
                 ConnectionState::Ready => self.queue.put_back(conn, self.metrics.clone()),
                 _ if conn.should_attempt_recovery() => {
@@ -381,7 +426,12 @@ impl Drop for PooledConnection {
                 }
                 _ => {
                     self.queue.reduce_capacity();
-                    *self.metrics.load().connections_closed.lock().unwrap_or_else(|poisoned| poisoned.into_inner()) += 1;
+                    *self
+                        .metrics
+                        .load()
+                        .connections_closed
+                        .lock()
+                        .unwrap_or_else(|poisoned| poisoned.into_inner()) += 1;
                 }
             }
         }

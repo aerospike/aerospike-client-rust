@@ -23,7 +23,7 @@ use std::sync::LazyLock;
 
 use aerospike_rt::{sleep, Mutex};
 
-use crate::batch::{BatchExecutor, BatchOperation};
+use crate::batch::{BatchExecutor, BatchOperation, BatchRecord};
 use crate::cluster::metrics::Metrics;
 use crate::cluster::{Cluster, Node};
 use crate::commands::admin_command::AdminCommand;
@@ -43,8 +43,8 @@ use crate::policy::{
 use crate::query::{PartitionFilter, PartitionTracker};
 use crate::task::{DropIndexTask, IndexTask, RegisterTask, UdfRemoveTask};
 use crate::{
-    BatchRecord, Bin, Bins, CollectionIndexType, IndexType, Key, Privilege, Record, Recordset,
-    ResultCode, Role, Statement, UDFLang, User, Value,
+    Bin, Bins, CollectionIndexType, IndexType, Key, Privilege, Record, Recordset, ResultCode, Role,
+    Statement, UDFLang, User, Value,
 };
 use crate::{Policy, Version};
 use aerospike_rt::fs::File;
@@ -352,11 +352,14 @@ impl Client {
         Ok(command.record.unwrap())
     }
 
-    /// Read multiple record for specified batch keys in one batch call. This method allows
-    /// different namespaces/bins to be requested for each key in the batch. If the `BatchRead` key
-    /// field is not found, the corresponding record field will be `None`. The policy can be used
-    /// to specify timeouts and maximum concurrent threads. This method requires Aerospike Server
-    /// version >= 3.6.0.
+    /// Execute multiple batch operations in one batch call. This method allows different
+    /// namespaces/bins to be requested for each key in the batch. Results are written
+    /// directly into the `BatchRecord` embedded in each `BatchOperation`. The policy can
+    /// be used to specify timeouts and maximum concurrent threads. This method requires
+    /// Aerospike Server version >= 3.6.0.
+    ///
+    /// On success **or** error (including timeout), any operations that completed before
+    /// the failure are already populated in `ops` and remain accessible to the caller.
     ///
     /// # Arguments
     ///
@@ -377,7 +380,7 @@ impl Client {
     ///
     /// # Examples
     ///
-    /// Fetch multiple records in a single client request
+    /// Fetch and write multiple records in a single client request
     ///
     /// ```rust,edition2021
     /// # use aerospike::*;
@@ -386,55 +389,28 @@ impl Client {
     /// # async fn main() {
     /// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap_or(String::from("127.0.0.1:3000"));
     /// # let client = Client::new(&ClientPolicy::default(), &hosts).await.unwrap();
-    /// let bins = Bins::from(["name", "age"]);
     /// let bin1 = as_bin!("a", "a value");
-    /// let bin2 = as_bin!("b", "another value");
-    /// let bin3 = as_bin!("c", 42);
-    ///
     /// let key1 = as_key!("test", "test", 1);
     /// let key2 = as_key!("test", "test", 2);
-    /// let key3 = as_key!("test", "test", 3);
-    ///
-    /// let key4 = as_key!("test", "test", -1);
-    /// // key does not exist
-    ///
-    /// let selected = Bins::from(["a"]);
-    /// let all = Bins::All;
-    /// let none = Bins::None;
-    ///
-    /// let wops = vec![
-    ///     operations::put(&bin1),
-    ///     operations::put(&bin2),
-    ///     operations::put(&bin3),
-    /// ];
-    ///
-    /// let rops = vec![
-    ///     operations::get_bin(&bin1.name),
-    ///     operations::get_bin(&bin2.name),
-    ///     operations::get_header(),
-    /// ];
     ///
     /// let bpolicy = BatchPolicy::default();
     /// let bpr = BatchReadPolicy::default();
     /// let bpw = BatchWritePolicy::default();
-    /// let bpd = BatchDeletePolicy::default();
-    /// let bpu = BatchUDFPolicy::default();
+    /// let wops = vec![operations::put(&bin1)];
     ///
-    /// let batch = vec![
-    ///     BatchOperation::write(&bpw, key1.clone(), wops.clone()),
-    ///     BatchOperation::read(&bpr, key1.clone(), selected),
-    ///     BatchOperation::read(&bpr, key2.clone(), all),
-    ///     BatchOperation::read(&bpr, key3.clone(), none.clone()),
-    ///     BatchOperation::read_ops(&bpr, key3.clone(), rops),
-    ///     BatchOperation::delete(&bpd, key1.clone()),
-    ///     BatchOperation::udf(&bpu, key1.clone(), "test_udf", "echo", None),
+    /// let mut batch = vec![
+    ///     BatchOperation::write(&bpw, key1.clone(), wops),
+    ///     BatchOperation::read(&bpr, key2.clone(), Bins::All),
     /// ];
-    /// match client.batch(&bpolicy, &batch).await {
-    ///     Ok(results) => {
-    ///         for result in results {
-    ///             match result.record {
-    ///                 Some(record) => println!("{:?} => {:?}", result.key, record.bins),
-    ///                 None => println!("No such record: {:?}", result.key),
+    ///
+    /// match client.batch(&BatchPolicy::default(), &mut batch).await {
+    ///     Ok(()) => {
+    ///         for op in &batch {
+    ///             match op {
+    ///                 BatchOperation::Read { br, .. } | BatchOperation::Write { br, .. } => {
+    ///                     println!("{:?}", br.record);
+    ///                 }
+    ///                 _ => {}
     ///             }
     ///         }
     ///     }
@@ -442,16 +418,47 @@ impl Client {
     /// }
     /// # }
     /// ```
-    pub async fn batch(
-        &self,
-        policy: &BatchPolicy,
-        ops: &[BatchOperation],
-    ) -> Result<Vec<BatchRecord>> {
+    pub async fn batch(&self, policy: &BatchPolicy, ops: &mut Vec<BatchOperation>) -> Result<()> {
         let executor = BatchExecutor::new(self.cluster.clone());
         executor.execute(policy, ops).await
     }
 
-    /// Write record bin(s). The policy specifies the transaction timeout, record expiration, and
+    /// Execute multiple batch operations and return results as an async stream.
+    ///
+    /// Unlike [`batch`](Self::batch), results arrive in the order they are received from each
+    /// server node rather than the order of `ops`. Each item is a pair of
+    /// `(original_index, BatchRecord)` so the caller can match results back to their input
+    /// operations. The stream ends automatically once all server nodes have responded.
+    ///
+    /// Ownership of `ops` is taken so it can be shared cheaply across per-node tasks without
+    /// cloning the operations themselves.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,edition2021
+    /// # use aerospike::*;
+    /// use futures::StreamExt;
+    ///
+    /// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap();
+    /// # let client = Client::new(&ClientPolicy::default(), &hosts).await.unwrap();
+    /// let key = as_key!("test", "test", 1);
+    /// let batch = vec![BatchOperation::read(&BatchReadPolicy::default(), key, Bins::All)];
+    ///
+    /// let mut stream = client.batch_stream(&BatchPolicy::default(), batch).await.unwrap();
+    /// while let Some((idx, br)) = stream.next().await {
+    ///     println!("op[{}]: {:?}", idx, br.record);
+    /// }
+    /// ```
+    pub async fn batch_stream(
+        &self,
+        policy: &BatchPolicy,
+        ops: Vec<BatchOperation>,
+    ) -> Result<impl futures::Stream<Item = (usize, BatchRecord)>> {
+        let executor = BatchExecutor::new(self.cluster.clone());
+        executor.execute_stream(policy, ops).await
+    }
+
+    /// Write record bin(s). The policy specifies the transaction timeout, record expiration and
     /// how the transaction is handled when the record already exists.
     ///
     /// # Arguments

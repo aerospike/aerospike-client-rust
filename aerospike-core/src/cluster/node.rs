@@ -29,7 +29,7 @@ use crate::cluster::CLIENT_VERSION;
 use crate::commands::Message;
 use crate::errors::{Error, Result};
 use crate::net::{ConnectionPool, Host, PooledConnection};
-use crate::policy::{AdminPolicy, ClientPolicy, MetricsPolicy};
+use crate::policy::{AdminPolicy, ClientPolicy};
 use crate::Version;
 
 pub const PARTITIONS: usize = 4096;
@@ -421,11 +421,5 @@ impl Eq for Node {}
 impl fmt::Display for Node {
     fn fmt(&self, f: &mut fmt::Formatter) -> StdResult<(), fmt::Error> {
         format!("{}: {}", self.name, self.host).fmt(f)
-    }
-}
-
-impl Drop for Node {
-    fn drop(&mut self) {
-        println!("{:?}", self.metrics.load());
     }
 }

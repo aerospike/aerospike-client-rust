@@ -780,9 +780,10 @@ async fn expression_commands() {
         batch_ops.push(bo);
     }
     bpolicy.base_policy.filter_expression = Some(gt(int_bin("bin".to_string()), int_val(84)));
-    match client.batch(&bpolicy, &batch_ops).await {
-        Ok(results) => {
-            for result in results {
+    match client.batch(&bpolicy, &mut batch_ops).await {
+        Ok(()) => {
+            for op in &batch_ops {
+                let result = op.batch_record();
                 let mut count = 0;
                 match result.record {
                     Some(_) => count += 1,

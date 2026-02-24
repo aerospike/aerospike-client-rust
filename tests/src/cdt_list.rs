@@ -198,9 +198,9 @@ fn cdt_list() {
     let end = Value::from(9);
     let ops = &vec![lists::remove_by_value_range(
         "bin",
-        ListReturnType::Count,
         beg,
         end,
+        ListReturnType::Count,
     )];
     let rec = client.operate(&wpolicy, &key, ops).await.unwrap();
     assert_eq!(*rec.bins.get("bin").unwrap(), Value::from(2));

@@ -18,7 +18,6 @@ use serde::Serialize;
 
 use num_traits::{Num, NumCast, ToPrimitive, Zero};
 use std::fmt;
-use std::ops::AddAssign;
 
 use crate::errors::{Error::ClientError, Result};
 
@@ -29,7 +28,7 @@ pub enum Type {
     Logarithmic,
 }
 
-trait HVal: Num + NumCast + ToPrimitive + Copy + PartialOrd + Zero {}
+pub trait HVal: Num + NumCast + ToPrimitive + Copy + PartialOrd + Zero {}
 impl<T> HVal for T where T: Num + NumCast + ToPrimitive + Copy + PartialOrd + Zero {}
 
 #[derive(Clone, Debug)]

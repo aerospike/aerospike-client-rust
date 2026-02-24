@@ -16,8 +16,6 @@ use std::collections::hash_map::Entry::{Occupied, Vacant};
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use futures::io::Read;
-
 use crate::cluster::{Cluster, Node};
 use crate::commands::{Command, CommandType, NamespaceProvider, SingleCommand};
 use crate::errors::{Error, Result};
