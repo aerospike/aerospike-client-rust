@@ -22,6 +22,7 @@ use clap::{App, Arg};
 
 use crate::{
     db_object_spec::{parse_object_spec_list, DBObjectSpec},
+    stats::ReportStyle,
     workers::Workload,
 };
 
@@ -74,6 +75,7 @@ pub struct Options {
     pub bin_name_base: String,
     pub object_specs: Vec<DBObjectSpec>,
     pub batch_size: usize,
+    pub report_style: ReportStyle,
 }
 
 pub fn parse_options() -> Result<Options, String> {
@@ -107,8 +109,16 @@ pub fn parse_options() -> Result<Options, String> {
             .map(|s| parse_object_spec_list(s).unwrap())
             .unwrap_or_else(|| vec![DBObjectSpec::default()]),
         batch_size: usize::from_str(matches.value_of("batch_size").unwrap()).unwrap(),
+        report_style: parse_report_style(matches.value_of("report_style").unwrap_or("asbench")),
     })
     .and_then(|opts| custom_validations(&opts).map(|()| opts))
+}
+
+fn parse_report_style(s: &str) -> ReportStyle {
+    match s {
+        "asbench" => ReportStyle::Asbench,
+        _ => ReportStyle::Pretty,
+    }
 }
 
 // put all custom validation here
@@ -214,6 +224,14 @@ fn build_cli() -> App<'static, 'static> {
                 .long("batch-size")
                 .help("Applicable only for RU workload. Disabled by default")
                 .default_value("1")
+        )
+        .arg(
+            Arg::with_name("report_style")
+                .long("report-style")
+                .help("Output format: default (sectioned) or asbench (C benchmark one-line style)")
+                .takes_value(true)
+                .possible_values(&["pretty", "asbench"])
+                .default_value("default")
         )
         .after_help(AFTER_HELP.trim())
 }

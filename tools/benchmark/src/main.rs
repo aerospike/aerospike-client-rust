@@ -102,7 +102,7 @@ async fn connect(options: &Options) -> AerospikeResult<Client> {
 async fn run_workload(client: Client, opts: Options) {
     let client = Arc::new(client);
     let (send, recv) = mpsc::unbounded_channel();
-    let collector = Collector::new(recv);
+    let collector = Collector::new(recv, opts.report_style);
 
     let collector_handle = tokio::spawn(async move {
         collector.collect().await;

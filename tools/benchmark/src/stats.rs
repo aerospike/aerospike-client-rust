@@ -16,6 +16,7 @@
 use std::f64;
 use std::time::{Duration, Instant};
 
+use chrono::Utc;
 use tokio::sync::mpsc::UnboundedReceiver;
 
 /// Read and write histograms sent by workers each collection interval.
@@ -27,6 +28,15 @@ use crate::workers::Status;
 // 6 buckets => "<1ms", "<2ms", "<4ms", "<8ms", "<16ms", ">=16ms"
 const HIST_BUCKETS: usize = 6;
 
+/// Upper bound (μs) of each bucket for asbench-style latency output.
+const BUCKET_UPPER_US: [u128; HIST_BUCKETS] = [1_000, 2_000, 4_000, 8_000, 16_000, 32_000];
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReportStyle {
+    Pretty,
+    Asbench,
+}
+
 lazy_static! {
     // How frequently histogram is printed
     pub static ref REPORT_MS: Duration = Duration::from_secs(1);
@@ -37,14 +47,16 @@ pub struct Collector {
     receiver: UnboundedReceiver<StatsPacket>,
     read_histogram: Histogram,
     write_histogram: Histogram,
+    report_style: ReportStyle,
 }
 
 impl Collector {
-    pub fn new(recv: UnboundedReceiver<StatsPacket>) -> Self {
+    pub fn new(recv: UnboundedReceiver<StatsPacket>, report_style: ReportStyle) -> Self {
         Collector {
             receiver: recv,
             read_histogram: Histogram::new(),
             write_histogram: Histogram::new(),
+            report_style,
         }
     }
 
@@ -78,8 +90,66 @@ impl Collector {
     }
 
     fn report(&self) {
-        Self::report_section("READ", &self.read_histogram);
-        Self::report_section("WRITE", &self.write_histogram);
+        match self.report_style {
+            ReportStyle::Pretty => {
+                Self::report_section("READ", &self.read_histogram);
+                Self::report_section("WRITE", &self.write_histogram);
+            }
+            ReportStyle::Asbench => {
+                self.report_asbench_tps();
+                self.report_asbench_latency();
+            }
+        }
+    }
+
+    // Asbench benchmark style: write(tps=N timeouts=N errors=N) read(...) total(...)
+    fn report_asbench_tps(&self) {
+        let r = &self.read_histogram;
+        let w = &self.write_histogram;
+        let write_tps = w.tps() as i64;
+        let read_tps = r.tps() as i64;
+        let total_tps = write_tps + read_tps;
+        let total_timeouts = w.timeouts() + r.timeouts();
+        let total_errors = w.errors() + r.errors();
+        println!(
+            "write(tps={} timeouts={} errors={}) read(tps={} timeouts={} errors={}) total(tps={} timeouts={} errors={})",
+            write_tps,
+            w.timeouts(),
+            w.errors(),
+            read_tps,
+            r.timeouts(),
+            r.errors(),
+            total_tps,
+            total_timeouts,
+            total_errors
+        );
+    }
+
+    // Asbench latency format: "dr: <op> <UTC> <period>, <total_count>, <bucket1>, <bucket2>, ..."
+    fn report_asbench_latency(&self) {
+        let period_sec = self.write_histogram.total_elapsed_as_secs() as i64;
+        let utc = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+        Self::report_asbench_latency_section("write", &self.write_histogram, &utc, period_sec);
+        Self::report_asbench_latency_section("read", &self.read_histogram, &utc, period_sec);
+    }
+
+    fn report_asbench_latency_section(
+        name: &str,
+        hist: &Histogram,
+        utc: &str,
+        period_sec: i64,
+    ) {
+        let total_cnt = hist.count();
+        let (min_us, max_us) = if total_cnt > 0 {
+            (hist.min(), hist.max())
+        } else {
+            (0u128, 0u128)
+        };
+        print!(
+            "HG: {} {} {}, {}, {}, {}",
+            name, utc, period_sec, total_cnt, min_us, max_us
+        );
+        println!();
     }
 
     fn report_section(label: &str, hist: &Histogram) {
@@ -126,7 +196,7 @@ impl Collector {
         let read = self.read_histogram;
         let write = self.write_histogram;
         println!(
-            "Total read requests: {},   Total write requests: {}",
+            "\nTotal read requests: {},   Total write requests: {}",
             read.total(),
             write.total()
         );
@@ -212,6 +282,11 @@ impl Histogram {
                 (c, pct)
             })
             .collect()
+    }
+
+    /// Raw bucket counts for asbench-style output (same order as BUCKET_UPPER_US).
+    pub fn buckets(&self) -> &[u128; HIST_BUCKETS] {
+        &self.buckets
     }
 
     fn percentile(&self, p: f64) -> u128 {
