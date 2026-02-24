@@ -101,7 +101,7 @@ async fn connect(options: &Options) -> AerospikeResult<Client> {
 
 async fn run_workload(client: Client, opts: Options) {
     let client = Arc::new(client);
-    let (send, recv) = mpsc::unbounded_channel();
+    let (send, recv) = mpsc::channel(opts.tasks as usize);
     let collector = Collector::new(recv, opts.report_style);
 
     let collector_handle = tokio::spawn(async move {
@@ -138,7 +138,7 @@ async fn run_workload(client: Client, opts: Options) {
     let set_ref: Arc<str> = Arc::from(set);
 
     if workload == Workload::Initialize {
-        for keys in KeyPartitions::new(namespace_ref, set_ref, start_key, keys, cores) {
+        for keys in KeyPartitions::new(namespace_ref, set_ref, start_key, keys, opts.tasks) {
             let mut worker =
                 Worker::for_workload(workload, client.clone(), send.clone(), args.clone());
             let handle = tokio::spawn(async move { worker.run(keys).await });

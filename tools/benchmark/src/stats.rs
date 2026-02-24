@@ -17,7 +17,7 @@ use std::f64;
 use std::time::{Duration, Instant};
 
 use chrono::Utc;
-use tokio::sync::mpsc::UnboundedReceiver;
+use tokio::sync::mpsc::Receiver;
 
 /// Read and write histograms sent by workers each collection interval.
 pub type StatsPacket = (Histogram, Histogram);
@@ -44,26 +44,34 @@ lazy_static! {
 
 #[derive(Debug)]
 pub struct Collector {
-    receiver: UnboundedReceiver<StatsPacket>,
+    receiver: Receiver<StatsPacket>,
     read_histogram: Histogram,
     write_histogram: Histogram,
     report_style: ReportStyle,
 }
 
 impl Collector {
-    pub fn new(recv: UnboundedReceiver<StatsPacket>, report_style: ReportStyle) -> Self {
+    pub fn new(recv: Receiver<StatsPacket>, report: ReportStyle) -> Self {
         Collector {
             receiver: recv,
             read_histogram: Histogram::new(),
             write_histogram: Histogram::new(),
-            report_style,
+            report_style: report,
+        }
+    }
+
+    /// Drains the channel and merges all received histograms into the aggregated state.
+    fn drain_and_merge(&mut self) {
+        while let Ok((read_hist, write_hist)) = self.receiver.try_recv() {
+            self.read_histogram.merge(read_hist);
+            self.write_histogram.merge(write_hist);
         }
     }
 
     pub async fn collect(mut self) {
-        let mut interval = tokio::time::interval(*REPORT_MS);
-        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-        interval.tick().await;
+        let mut report_interval = tokio::time::interval(*REPORT_MS);
+        report_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        report_interval.tick().await;
 
         loop {
             tokio::select! {
@@ -73,16 +81,20 @@ impl Collector {
                             self.read_histogram.merge(read_hist);
                             self.write_histogram.merge(write_hist);
                         }
-                        None => break,
+                        None => {
+                            break;
+                        }
                     }
                 }
-                _= interval.tick() => {
+                _ = report_interval.tick() => {
+                    self.drain_and_merge();
                     self.report();
                     self.read_histogram.reset();
                     self.write_histogram.reset();
                 }
             }
         }
+        self.drain_and_merge();
         self.report();
         self.read_histogram.reset();
         self.write_histogram.reset();
@@ -284,27 +296,22 @@ impl Histogram {
             .collect()
     }
 
-    /// Raw bucket counts for asbench-style output (same order as BUCKET_UPPER_US).
-    pub fn buckets(&self) -> &[u128; HIST_BUCKETS] {
-        &self.buckets
-    }
-
-    fn percentile(&self, p: f64) -> u128 {
-        if self.count == 0 {
-            return 0;
-        }
-        let target = p / 100.0 * self.count as f64;
-        // Upper bound (μs) of each bucket: <1ms, <2ms, <4ms, <8ms, <16ms, >=16ms
-        let bucket_upper_us: [u128; HIST_BUCKETS] = [1_000, 2_000, 4_000, 8_000, 16_000, 32_000];
-        let mut cum = 0u128;
-        for (i, &c) in self.buckets.iter().enumerate() {
-            cum += c;
-            if cum as f64 >= target {
-                return bucket_upper_us[i];
-            }
-        }
-        bucket_upper_us[HIST_BUCKETS - 1]
-    }
+    // fn percentile(&self, p: f64) -> u128 {
+    //     if self.count == 0 {
+    //         return 0;
+    //     }
+    //     let target = p / 100.0 * self.count as f64;
+    //     // Upper bound (μs) of each bucket: <1ms, <2ms, <4ms, <8ms, <16ms, >=16ms
+    //     let bucket_upper_us: [u128; HIST_BUCKETS] = [1_000, 2_000, 4_000, 8_000, 16_000, 32_000];
+    //     let mut cum = 0u128;
+    //     for (i, &c) in self.buckets.iter().enumerate() {
+    //         cum += c;
+    //         if cum as f64 >= target {
+    //             return bucket_upper_us[i];
+    //         }
+    //     }
+    //     bucket_upper_us[HIST_BUCKETS - 1]
+    // }
 
     pub fn total(&self) -> u128 {
         self.total

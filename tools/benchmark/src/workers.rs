@@ -13,11 +13,13 @@
 // License for the specific language governing permissions and limitations under
 // the License.
 
+use std::mem::swap;
 use std::str::FromStr;
 use std::sync::Arc;
+//use tokio::sync::mpsc::Receiver;
 use std::time::{Duration, Instant};
 
-use tokio::sync::mpsc::UnboundedSender;
+use tokio::sync::mpsc::{Sender, Receiver};
 
 use rand::rngs::StdRng;
 use rand::SeedableRng;
@@ -137,9 +139,11 @@ impl FromStr for Workload {
 }
 
 pub struct Worker {
-    read_histogram: Histogram,
-    write_histogram: Histogram,
-    collector: UnboundedSender<(Histogram, Histogram)>,
+    read_histogram_active: Histogram,
+    write_histogram_active: Histogram,
+    read_histogram_pending: Histogram,
+    write_histogram_pending: Histogram,
+    collector: Sender<(Histogram, Histogram)>,
     task: TaskType,
     rng: StdRng,
     batch_size: usize,
@@ -153,7 +157,7 @@ impl Worker {
     pub fn for_workload(
         workload: Workload,
         client: Arc<Client>,
-        sender: UnboundedSender<(Histogram, Histogram)>,
+        sender: Sender<(Histogram, Histogram)>,
         args: Arc<Args>,
     ) -> Self {
         let batch_size = args.batch_size;
@@ -182,8 +186,10 @@ impl Worker {
             }
         };
         Worker {
-            read_histogram: Histogram::new(),
-            write_histogram: Histogram::new(),
+            read_histogram_active: Histogram::new(),
+            write_histogram_active: Histogram::new(),
+            read_histogram_pending: Histogram::new(),
+            write_histogram_pending: Histogram::new(),
             collector: sender,
             task,
             rng: StdRng::from_entropy(),
@@ -219,24 +225,31 @@ impl Worker {
                 .await;
             for (status, duration, op_type) in self.results.iter() {
                 match op_type {
-                    OpType::Read => self.read_histogram.add(*duration, *status),
-                    OpType::Write => self.write_histogram.add(*duration, *status),
+                    OpType::Read => self.read_histogram_active.add(*duration, *status),
+                    OpType::Write => self.write_histogram_active.add(*duration, *status),
                 }
             }
             if last_collection.elapsed() > *COLLECT_MS {
-                self.collect();
+                self.collect().await;
                 last_collection = Instant::now();
             }
         }
-        self.collect();
+        self.collect().await;
     }
 
-    fn collect(&mut self) {
-        let _ = self
-            .collector
-            .send((self.read_histogram, self.write_histogram));
-        self.read_histogram.reset();
-        self.write_histogram.reset();
+    async fn collect(&mut self) {
+        swap(&mut self.read_histogram_active, &mut self.read_histogram_pending);
+        swap(&mut self.write_histogram_active, &mut self.write_histogram_pending);
+
+        let to_send_read =
+            std::mem::replace(&mut self.read_histogram_pending, Histogram::new());
+        let to_send_write =
+            std::mem::replace(&mut self.write_histogram_pending, Histogram::new());
+
+        let _ = self.collector.send((to_send_read, to_send_write)).await;
+        
+        self.read_histogram_active.reset();
+        self.write_histogram_active.reset();
     }
 }
 
