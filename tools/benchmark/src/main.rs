@@ -46,6 +46,8 @@ use generator::KeyPartitions;
 use stats::Collector;
 use workers::Worker;
 
+use std::time::Duration;
+
 use crate::args::Args;
 use crate::generator::{KeyRangeGen, RandomKeyRange};
 use crate::workers::Workload;
@@ -118,8 +120,9 @@ async fn run_workload(client: Client, opts: Options) {
         set,
         start_key,
         keys,
-        cores,
+        tasks,
         batch_size,
+        duration_secs,
         ..
     } = opts;
 
@@ -137,25 +140,37 @@ async fn run_workload(client: Client, opts: Options) {
     let namespace_ref: Arc<str> = Arc::from(namespace);
     let set_ref: Arc<str> = Arc::from(set);
 
+    let duration_limit = duration_secs.map(Duration::from_secs);
+
     if workload == Workload::Initialize {
-        for keys in KeyPartitions::new(namespace_ref, set_ref, start_key, keys, opts.tasks) {
+        for keys in KeyPartitions::new(namespace_ref, set_ref, start_key, keys, tasks) {
             let mut worker =
                 Worker::for_workload(workload, client.clone(), send.clone(), args.clone());
-            let handle = tokio::spawn(async move { worker.run(keys).await });
+            let handle = tokio::spawn(async move {
+                worker.run(keys, None).await;
+            });
             worker_handles.push(handle);
         }
     } else {
-        for _ in 0..opts.tasks {
+        for _ in 0..tasks {
             let mut worker =
                 Worker::for_workload(workload, client.clone(), send.clone(), args.clone());
-            let key_range = RandomKeyRange::new(
-                Arc::clone(&namespace_ref),
-                Arc::clone(&set_ref),
-                opts.start_key,
-                opts.keys,
-            );
+            let key_range = match duration_limit {
+                Some(_) => RandomKeyRange::new(
+                    Arc::clone(&namespace_ref),
+                    Arc::clone(&set_ref),
+                    start_key,
+                    keys,
+                    false
+                ),
+                None => return,
+            };
+
+            let duration_limit = duration_limit;
             let handle = tokio::spawn(Box::pin(async move {
-                worker.run(KeyRangeGen::Random(key_range)).await
+                worker
+                    .run(KeyRangeGen::Random(key_range), duration_limit)
+                    .await
             }));
             worker_handles.push(handle);
         }

@@ -76,6 +76,7 @@ pub struct Options {
     pub object_specs: Vec<DBObjectSpec>,
     pub batch_size: usize,
     pub report_style: ReportStyle,
+    pub duration_secs: Option<u64>,
 }
 
 pub fn parse_options() -> Result<Options, String> {
@@ -110,6 +111,10 @@ pub fn parse_options() -> Result<Options, String> {
             .unwrap_or_else(|| vec![DBObjectSpec::default()]),
         batch_size: usize::from_str(matches.value_of("batch_size").unwrap()).unwrap(),
         report_style: parse_report_style(matches.value_of("report_style").unwrap_or("asbench")),
+        duration_secs: matches
+            .value_of("duration")
+            .map(|s| u64::from_str(s).map_err(|_| "duration must be a positive number of seconds".to_string()))
+            .transpose()?,
     })
     .and_then(|opts| custom_validations(&opts).map(|()| opts))
 }
@@ -131,6 +136,15 @@ fn custom_validations(opts: &Options) -> Result<(), String> {
         return Err(
             "batch size (-b/--batch-size) is only applicable for RU/RR workload".to_string(),
         );
+    }
+    let is_insert = opts.workload == Workload::Initialize;
+    if is_insert && opts.duration_secs.is_some() {
+        return Err(
+            "--duration is only applicable for non-Insert workloads (RU, RR, RMU, etc.)".to_string(),
+        );
+    }
+    if opts.duration_secs.is_some_and(|secs| secs == 0) {
+        return Err("Second duration value must be greater than 0".to_string());
     }
     Ok(())
 }
@@ -231,7 +245,15 @@ fn build_cli() -> App<'static, 'static> {
                 .help("Output format: default (sectioned) or asbench (C benchmark one-line style)")
                 .takes_value(true)
                 .possible_values(&["pretty", "asbench"])
-                .default_value("default")
+                .default_value("pretty")
+        )
+        .arg(
+            Arg::with_name("duration")
+                .short("d")
+                .long("duration")
+                .help("Run non-Insert workload for this many seconds (instead of a fixed key count). Ignored for Insert (I).")
+                .takes_value(true)
+                .default_value("10")
         )
         .after_help(AFTER_HELP.trim())
 }

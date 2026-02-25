@@ -125,20 +125,20 @@ impl Iterator for KeyRange {
 pub struct RandomKeyRange {
     namespace: Arc<str>,
     set: Arc<str>,
-    remaining: i64,
+    remaining: Option<i64>,
     start: i64,
     end: i64,
     rng: StdRng,
 }
 
 impl RandomKeyRange {
-    pub fn new(namespace: Arc<str>, set: Arc<str>, start: i64, count: i64) -> Self {
+    pub fn new(namespace: Arc<str>, set: Arc<str>, start: i64, count: i64, is_finite: bool) -> Self {
         Self {
             namespace,
             set,
             start,
             end: start + count,
-            remaining: start + count,
+            remaining: if is_finite { Some(start + count) }  else { None },
             rng: StdRng::from_entropy(),
         }
     }
@@ -148,10 +148,12 @@ impl Iterator for RandomKeyRange {
     type Item = Key;
 
     fn next(&mut self) -> Option<Key> {
-        if self.remaining == 0 {
+        if self.remaining == Some(0) {
             return None;
         }
-        self.remaining -= 1;
+        if let Some(ref mut n) = self.remaining {
+            *n -= 1;
+        }
         let k = self.rng.gen_range(self.start..self.end);
         Some(as_key!(self.namespace.as_ref(), self.set.as_ref(), k))
     }

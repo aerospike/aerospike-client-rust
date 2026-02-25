@@ -16,10 +16,9 @@
 use std::mem::swap;
 use std::str::FromStr;
 use std::sync::Arc;
-//use tokio::sync::mpsc::Receiver;
 use std::time::{Duration, Instant};
 
-use tokio::sync::mpsc::{Sender, Receiver};
+use tokio::sync::mpsc::Sender;
 
 use rand::rngs::StdRng;
 use rand::SeedableRng;
@@ -195,15 +194,25 @@ impl Worker {
             rng: StdRng::from_entropy(),
             batch_size,
             batch: Vec::with_capacity(batch_size),
-            results: Vec::with_capacity(2), // max 2 per batch (e.g. RMU, RMI)
+            results: Vec::with_capacity(2),
             batch_ops: Vec::new(),
             bins_buffer: Vec::new(),
         }
     }
 
-    pub async fn run(&mut self, mut key_range: KeyRangeGen) {
+    pub async fn run(
+        &mut self,
+        mut key_range: KeyRangeGen,
+        duration_limit: Option<Duration>,
+    ) {
         let mut last_collection = Instant::now();
+        let run_start = Instant::now();
         loop {
+            if let Some(limit) = duration_limit {
+                if run_start.elapsed() >= limit {
+                    break;
+                }
+            }
             self.batch.clear();
             for _ in 0..self.batch_size {
                 match key_range.next() {
