@@ -40,6 +40,7 @@
 //! * Rank 1 Count 2: Second and third lowest ranked items in map.
 //! * Rank -3 Count 3: Top three ranked items in map.
 
+use std::convert::TryInto;
 use std::sync::Arc;
 
 use crate::msgpack::encoder::pack_cdt_op;
@@ -319,12 +320,13 @@ pub fn put(policy: &MapPolicy, bin: &str, key: Value, val: Value) -> Operation {
 /// The required map policy dictates the type of map to create when it does not exist. The map
 /// policy also specifies the mode used when writing items to the map.
 #[allow(clippy::implicit_hasher)]
-pub fn put_items<M: MapLike<Value, Value>>(policy: &MapPolicy, bin: &str, items: M) -> Operation {
-    let items = match items.value() {
-        (Some(hm), None) => CdtArgument::Map(hm),
-        (None, Some(btm)) => CdtArgument::OrderedMap(btm),
-        _ => unreachable!(),
-    };
+pub fn put_items<T>(policy: &MapPolicy, bin: &str, items: T) -> Operation
+where
+    T: TryInto<MapLike>,
+    T::Error: std::fmt::Debug,
+{
+    let items = items.try_into().expect("only map values are allowed");
+    let items = CdtArgument::Map(items);
     let mut args = vec![items];
     if let Some(arg) = map_order_arg(policy) {
         args.push(arg);

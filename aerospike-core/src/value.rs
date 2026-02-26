@@ -27,6 +27,8 @@ use ripemd::Ripemd160;
 
 use std::vec::Vec;
 
+use indexmap::IndexMap;
+
 use crate::commands::buffer::Buffer;
 use crate::commands::ParticleType;
 use crate::errors::{Error, Result};
@@ -144,7 +146,7 @@ impl fmt::Display for FloatValue {
 }
 
 /// Container for bin values stored in the Aerospike database.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Eq)]
 pub enum Value {
     /// Empty value.
     Nil,
@@ -179,6 +181,12 @@ pub enum Value {
     /// type.
     /// Map keys can only be of type String, Bytes, Integer, and that this will be enforced by the client and server.
     HashMap(HashMap<Value, Value>),
+
+    /// Map data type is a collection of key-value pairs. Each key can only appear once in a
+    /// collection and is associated with a value. Map values can be any supported data
+    /// type.
+    /// Map keys can only be of type String, Bytes, Integer, and that this will be enforced by the client and server.
+    IndexMap(IndexMap<Value, Value>),
 
     /// `OrderedMap` data type where the map entries are sorted based key ordering (K-ordered maps).
     /// Each key can only appear once in a collection and is associated with a value.
@@ -220,6 +228,7 @@ impl Hash for Value {
             Value::HLL(_) => panic!("HLL cannot be used as map keys."),
             Value::MultiResult(_) => panic!("MultiValues cannot be used as map keys."),
             Value::List(_) => panic!("Lists cannot be used as map keys."),
+            Value::IndexMap(_) => panic!("IndexMaps cannot be used as map keys."),
             Value::HashMap(_) => panic!("HashMaps cannot be used as map keys."),
             Value::OrderedMap(_) => panic!("OrderedMaps cannot be used as map keys."),
             Value::KeyValueList(_) => panic!("OrderedMaps cannot be used as map keys."),
@@ -247,6 +256,7 @@ impl Value {
             Value::Bool(_) => ParticleType::BOOL,
             Value::MultiResult(_) => ParticleType::LIST,
             Value::List(_) => ParticleType::LIST,
+            Value::IndexMap(_) => ParticleType::MAP,
             Value::HashMap(_) => ParticleType::MAP,
             Value::OrderedMap(_) => ParticleType::MAP,
             Value::KeyValueList(_) => ParticleType::MAP,
@@ -268,6 +278,7 @@ impl Value {
             Value::Blob(ref val) | Value::HLL(ref val) => format!("{val:?}"),
             Value::MultiResult(ref val) => format!("{val:?}"),
             Value::List(ref val) => format!("{val:?}"),
+            Value::IndexMap(ref val) => format!("{val:?}"),
             Value::HashMap(ref val) => format!("{val:?}"),
             Value::OrderedMap(ref val) => format!("{val:?}"),
             Value::KeyValueList(ref val) => format!("{val:?}"),
@@ -289,7 +300,7 @@ impl Value {
             Value::MultiResult(_) => {
                 return Err(Error::InvalidArgument("MultiValues are only returned as results from the server and never from the client.".into()));
             }
-            Value::List(_) | Value::HashMap(_) | Value::OrderedMap(_) => {
+            Value::List(_) | Value::HashMap(_) | Value::OrderedMap(_) | Value::IndexMap(_) => {
                 encoder::pack_value(&mut None, self)?
             }
             Value::KeyValueList(_) => {
@@ -320,7 +331,7 @@ impl Value {
             Value::MultiResult(_) => {
                 return Err(Error::InvalidArgument("MultiValues are only returned as results from the server and never from the client.".into()));
             }
-            Value::List(_) | Value::HashMap(_) | Value::OrderedMap(_) => {
+            Value::List(_) | Value::HashMap(_) | Value::OrderedMap(_) | Value::IndexMap(_) => {
                 encoder::pack_value(&mut Some(buf), self)?
             }
             Value::KeyValueList(_) => {
@@ -369,16 +380,17 @@ impl Value {
             Value::String(_) => 3,
             Value::List(_) => 4,
             Value::HashMap(_) => 5,
-            Value::OrderedMap(_) => 6,
-            Value::Blob(_) => 7,
-            Value::HLL(_) => 8,
-            Value::Float(_) => 9,
-            Value::GeoJSON(_) => 10,
+            Value::IndexMap(_) => 5,
+            Value::OrderedMap(_) => 5,
+            Value::Blob(_) => 8,
+            Value::HLL(_) => 9,
+            Value::Float(_) => 10,
+            Value::GeoJSON(_) => 11,
             // Just here for completion's sake
-            Value::Infinity => 11,
-            Value::Wildcard => 12,
-            Value::MultiResult(_) => 13,
-            Value::KeyValueList(_) => 14,
+            Value::Infinity => 12,
+            Value::Wildcard => 13,
+            Value::MultiResult(_) => 14,
+            Value::KeyValueList(_) => 15,
         }
     }
 }
@@ -395,15 +407,21 @@ impl Ord for Value {
                     (Value::HLL(a_val), Value::HLL(b_val)) => a_val.cmp(b_val),
                     (Value::Blob(a_val), Value::Blob(b_val)) => a_val.cmp(b_val),
                     (Value::Bool(a_val), Value::Bool(b_val)) => a_val.cmp(b_val),
+                    (Value::List(a_val), Value::List(b_val)) => a_val.cmp(b_val),
+                    (Value::MultiResult(a_val), Value::MultiResult(b_val)) => a_val.cmp(b_val),
+                    (Value::KeyValueList(a_val), Value::KeyValueList(b_val)) => a_val.cmp(b_val),
+                    (Value::IndexMap(ref a_val), Value::IndexMap(ref b_val)) => {
+                        a_val.len().cmp(&b_val.len())
+                    }
                     (Value::HashMap(ref a_val), Value::HashMap(ref b_val)) => {
                         a_val.len().cmp(&b_val.len())
                     }
                     (Value::OrderedMap(ref a_val), Value::OrderedMap(ref b_val)) => {
                         a_val.len().cmp(&b_val.len())
                     }
-                    (Value::KeyValueList(ref a_val), Value::KeyValueList(ref b_val)) => {
-                        a_val.len().cmp(&b_val.len())
-                    }
+                    (Value::Nil, Value::Nil) => Ordering::Equal,
+                    (Value::Infinity, Value::Infinity) => Ordering::Equal,
+                    (Value::Wildcard, Value::Wildcard) => Ordering::Equal,
                     (Value::Float(a_val), Value::Float(b_val)) => {
                         // Compare float bits for deterministic ordering
                         let a_bits = match a_val {
@@ -439,6 +457,25 @@ impl PartialOrd for Value {
                     (Value::HLL(a_val), Value::HLL(b_val)) => Some(a_val.cmp(b_val)),
                     (Value::Blob(a_val), Value::Blob(b_val)) => Some(a_val.cmp(b_val)),
                     (Value::Bool(a_val), Value::Bool(b_val)) => Some(a_val.cmp(b_val)),
+                    (Value::List(a_val), Value::List(b_val)) => Some(a_val.cmp(b_val)),
+                    (Value::MultiResult(a_val), Value::MultiResult(b_val)) => {
+                        Some(a_val.cmp(b_val))
+                    }
+                    (Value::KeyValueList(a_val), Value::KeyValueList(b_val)) => {
+                        Some(a_val.cmp(b_val))
+                    }
+                    (Value::IndexMap(ref a_val), Value::IndexMap(ref b_val)) => {
+                        Some(a_val.iter().cmp(b_val.iter()))
+                    }
+                    (Value::OrderedMap(ref a_val), Value::OrderedMap(ref b_val)) => {
+                        Some(a_val.iter().cmp(b_val.iter()))
+                    }
+                    (Value::HashMap(ref a_val), Value::HashMap(ref b_val)) => {
+                        Some(a_val.iter().cmp(b_val.iter()))
+                    }
+                    (Value::Nil, Value::Nil) => Some(Ordering::Equal),
+                    (Value::Infinity, Value::Infinity) => Some(Ordering::Equal),
+                    (Value::Wildcard, Value::Wildcard) => Some(Ordering::Equal),
                     (Value::Float(a_val), Value::Float(b_val)) => {
                         // Compare float bits for deterministic ordering
                         let a_bits = match a_val {
@@ -495,6 +532,12 @@ impl From<HashMap<Value, Value>> for Value {
 impl From<BTreeMap<Value, Value>> for Value {
     fn from(val: BTreeMap<Value, Value>) -> Value {
         Value::OrderedMap(val)
+    }
+}
+
+impl From<IndexMap<Value, Value>> for Value {
+    fn from(val: IndexMap<Value, Value>) -> Value {
+        Value::IndexMap(val)
     }
 }
 
@@ -956,11 +999,11 @@ macro_rules! as_values {
 macro_rules! as_map {
     ( $( $k:expr => $v:expr),* ) => {
         {
-            let mut temp_map = std::collections::HashMap::new();
+            let mut temp_map = indexmap::IndexMap::new();
             $(
                 temp_map.insert(as_val!($k), as_val!($v));
             )*
-            $crate::Value::HashMap(temp_map)
+            $crate::Value::IndexMap(temp_map)
         }
     };
 }
@@ -1021,6 +1064,13 @@ impl Serialize for Value {
                 }
                 seq.end()
             }
+            Value::IndexMap(m) => {
+                let mut map = serializer.serialize_map(Some(m.len()))?;
+                for (key, value) in m {
+                    map.serialize_entry(&key, &value)?;
+                }
+                map.end()
+            }
             Value::HashMap(m) => {
                 let mut map = serializer.serialize_map(Some(m.len()))?;
                 for (key, value) in m {
@@ -1049,29 +1099,42 @@ impl Serialize for Value {
     }
 }
 
-/// Allows either a `HashMap` or `BTreeMap` to be passed as arguments to certain methods.
-pub trait MapLike<K: Eq, V> {
-    fn value(self) -> (Option<HashMap<K, V>>, Option<BTreeMap<K, V>>);
-    fn value_as_ref(&self) -> (Option<&HashMap<K, V>>, Option<&BTreeMap<K, V>>);
+/// Allows either a `HashMap`, `BTreeMap` or `IndexMap`` to be passed as arguments to certain methods.
+#[derive(Debug, Clone)]
+pub struct MapLike(pub Value);
+
+impl TryFrom<Value> for MapLike {
+    type Error = ();
+
+    fn try_from(value: Value) -> std::result::Result<Self, Self::Error> {
+        match value {
+            Value::HashMap(_) | Value::OrderedMap(_) | Value::IndexMap(_) => Ok(MapLike(value)),
+            _ => Err(()),
+        }
+    }
 }
 
-impl<K: Eq + Ord, V> MapLike<K, V> for BTreeMap<K, V> {
-    fn value(self) -> (Option<HashMap<K, V>>, Option<BTreeMap<K, V>>) {
-        (None, Some(self))
-    }
+impl TryFrom<HashMap<Value, Value>> for MapLike {
+    type Error = ();
 
-    fn value_as_ref(&self) -> (Option<&HashMap<K, V>>, Option<&BTreeMap<K, V>>) {
-        (None, Some(self))
+    fn try_from(value: HashMap<Value, Value>) -> std::result::Result<Self, Self::Error> {
+        Ok(MapLike(Value::HashMap(value)))
     }
 }
 
-impl<K: Eq + Hash, V> MapLike<K, V> for HashMap<K, V> {
-    fn value(self) -> (Option<HashMap<K, V>>, Option<BTreeMap<K, V>>) {
-        (Some(self), None)
-    }
+impl TryFrom<IndexMap<Value, Value>> for MapLike {
+    type Error = ();
 
-    fn value_as_ref(&self) -> (Option<&HashMap<K, V>>, Option<&BTreeMap<K, V>>) {
-        (Some(self), None)
+    fn try_from(value: IndexMap<Value, Value>) -> std::result::Result<Self, Self::Error> {
+        Ok(MapLike(Value::IndexMap(value)))
+    }
+}
+
+impl TryFrom<BTreeMap<Value, Value>> for MapLike {
+    type Error = ();
+
+    fn try_from(value: BTreeMap<Value, Value>) -> std::result::Result<Self, Self::Error> {
+        Ok(MapLike(Value::OrderedMap(value)))
     }
 }
 
@@ -1080,6 +1143,28 @@ mod tests {
     use super::Value;
     use std::collections::{BTreeMap, HashMap};
     use std::convert::TryInto;
+
+    #[test]
+    fn value_cmp() {
+        assert_eq!(
+            Value::HashMap(HashMap::new()),
+            Value::IndexMap(indexmap::IndexMap::new())
+        );
+        assert_eq!(
+            Value::HashMap(HashMap::new()),
+            Value::OrderedMap(BTreeMap::new())
+        );
+
+        assert_eq!(
+            Value::IndexMap(indexmap::IndexMap::new()),
+            Value::OrderedMap(BTreeMap::new())
+        );
+
+        assert_eq!(
+            as_list!(Value::HashMap(HashMap::new())),
+            as_list!(Value::IndexMap(indexmap::IndexMap::new()))
+        );
+    }
 
     #[test]
     fn try_into() {
@@ -1145,4 +1230,86 @@ mod tests {
         // We only check for the len of the String because HashMap serialization does not keep the key order. Comparing like the list above is not possible.
         assert_eq!(json.unwrap().len(), 48, "Map Serialization failed");
     }
+}
+
+impl PartialEq<Value> for Value {
+    fn eq(&self, other: &Value) -> bool {
+        match (self, other) {
+            (Value::HashMap(hm), Value::IndexMap(im))
+            | (Value::IndexMap(im), Value::HashMap(hm)) => return compare_hash_index(hm, im),
+            (Value::HashMap(hm), Value::OrderedMap(btm))
+            | (Value::OrderedMap(btm), Value::HashMap(hm)) => return compare_hash_btree(hm, btm),
+            (Value::IndexMap(im), Value::OrderedMap(btm))
+            | (Value::OrderedMap(btm), Value::IndexMap(im)) => return compare_index_btree(im, btm),
+            (Value::List(l1), Value::List(l2)) => return l1 == l2,
+            (Value::MultiResult(l1), Value::MultiResult(l2)) => return l1 == l2,
+            (Value::KeyValueList(l1), Value::KeyValueList(l2)) => return l1 == l2,
+            (Value::HLL(l1), Value::HLL(l2)) => return l1 == l2,
+            (Value::Blob(l1), Value::Blob(l2)) => return l1 == l2,
+            _ => self.cmp(other) == Ordering::Equal,
+        }
+    }
+}
+fn compare_hash_index<K, V>(hm: &HashMap<K, V>, im: &IndexMap<K, V>) -> bool
+where
+    K: std::cmp::Eq,
+    K: std::hash::Hash,
+    V: std::cmp::PartialEq,
+{
+    if hm.len() != im.len() {
+        return false;
+    }
+
+    for (k, iv) in im {
+        if let Some(hv) = hm.get(k) {
+            if *iv != *hv {
+                return false;
+            }
+        }
+    }
+
+    true
+}
+
+fn compare_hash_btree<K, V>(hm: &HashMap<K, V>, btm: &BTreeMap<K, V>) -> bool
+where
+    K: std::cmp::Eq,
+    K: std::hash::Hash,
+    K: std::cmp::Ord,
+    V: std::cmp::PartialEq,
+{
+    if hm.len() != btm.len() {
+        return false;
+    }
+
+    for (k, btv) in btm {
+        if let Some(hv) = hm.get(k) {
+            if *hv != *btv {
+                return false;
+            }
+        }
+    }
+
+    true
+}
+
+fn compare_index_btree<K, V>(im: &IndexMap<K, V>, btm: &BTreeMap<K, V>) -> bool
+where
+    K: std::cmp::Eq,
+    K: std::hash::Hash,
+    V: std::cmp::PartialEq,
+{
+    if im.len() != btm.len() {
+        return false;
+    }
+
+    for (k, btv) in btm {
+        if let Some(iv) = im.get(k) {
+            if *iv != *btv {
+                return false;
+            }
+        }
+    }
+
+    true
 }

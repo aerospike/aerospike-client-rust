@@ -1,8 +1,10 @@
-use std::collections::{BTreeMap, HashMap};
-
 use crate::common;
 use crate::proptest::prelude::*;
 use crate::proptest_async;
+
+use indexmap::IndexMap;
+
+use std::collections::{BTreeMap, HashMap};
 
 use aerospike::*;
 
@@ -187,6 +189,14 @@ proptest_async::proptest! {
                         let bins = [as_bin!(put.0.clone(), Value::OrderedMap(hm))];
                         client.put(&write_policy, &key, &bins).await.unwrap();
                     }
+                    Value::IndexMap(_) => {
+                        let mut hm: IndexMap<Value, Value> = IndexMap::new();
+                        hm.insert(1.into(), 2.into());
+                        hm.insert(2.into(), 4.into());
+
+                        let bins = [as_bin!(put.0.clone(), Value::IndexMap(hm))];
+                        client.put(&write_policy, &key, &bins).await.unwrap();
+                    }
                     Value::KeyValueList(_) => {
                         let mut om: Vec<(Value, Value)> = vec![];
                         om.push((1.into(), 2.into()));
@@ -213,6 +223,7 @@ proptest_async::proptest! {
                     Value::HLL(_) |
                     Value::Wildcard |
                     Value::MultiResult(_) |
+                    Value::IndexMap(_) => (), // not sure how to handle prepends for these types.
                     Value::HashMap(_) => (), // not sure how to handle prepends for these types.
                     Value::OrderedMap(_) => (), // not sure how to handle prepends for these types.
 

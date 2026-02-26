@@ -74,3 +74,4 @@ tokio-rustls = {version = "0.26.0"}
 rustls = {version = "0.23.31"}
 webpki-roots = "1"
 #console-subscriber = "0.1.5"
+indexmap = { version = "2.13", features = ["serde"] }

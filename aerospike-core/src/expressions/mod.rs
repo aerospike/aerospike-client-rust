@@ -26,6 +26,7 @@ use crate::operations::cdt_context::CdtContext;
 use crate::value::MapLike;
 use crate::Result;
 use crate::{ParticleType, Value};
+use std::convert::TryInto;
 use std::fmt::Debug;
 
 /// Expression Data Types for usage in some `FilterExpressions` on for example Map and List
@@ -755,13 +756,13 @@ pub fn list_val(val: Vec<Value>) -> Expression {
 
 /// Create Map bin Value
 #[allow(clippy::implicit_hasher)]
-pub fn map_val<M: MapLike<Value, Value>>(val: M) -> Expression {
-    let val = match val.value() {
-        (Some(m), None) => Value::HashMap(m),
-        (None, Some(m)) => Value::OrderedMap(m),
-        _ => unreachable!(),
-    };
-    Expression::new(None, Some(val), None, None, None, None)
+pub fn map_val<T>(val: T) -> Expression
+where
+    T: TryInto<MapLike>,
+    T::Error: std::fmt::Debug,
+{
+    let val = val.try_into().expect("only map values are allowed");
+    Expression::new(None, Some(val.0), None, None, None, None)
 }
 
 /// Create geospatial json string value.

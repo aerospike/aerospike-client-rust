@@ -17,12 +17,14 @@ use std::collections::{BTreeMap, HashMap};
 use std::num::Wrapping;
 use std::{i16, i32, i64, i8};
 
+use indexmap::IndexMap;
+
 use crate::commands::buffer::Buffer;
 use crate::commands::ParticleType;
 use crate::operations::cdt::{CdtArgument, CdtOperation};
 use crate::operations::cdt_context::CdtContext;
 use crate::operations::maps::MapOrder;
-use crate::value::{FloatValue, Value};
+use crate::value::{FloatValue, MapLike, Value};
 use crate::{Error, Result};
 
 #[must_use]
@@ -38,7 +40,8 @@ pub fn pack_value(buf: &mut Option<&mut Buffer>, val: &Value) -> Result<usize> {
         },
         Value::Blob(ref val) | Value::HLL(ref val) => pack_blob(buf, val),
         Value::List(ref val) => pack_array(buf, val)?,
-        Value::HashMap(ref val) => pack_map(buf, val)?,
+        Value::IndexMap(ref val) => pack_index_map(buf, val)?,
+        Value::HashMap(ref val) => pack_hash_map(buf, val)?,
         Value::OrderedMap(ref val) => pack_ordered_map(buf, val)?,
         Value::MultiResult(_) => {
             return Err(Error::InvalidArgument(
@@ -110,8 +113,7 @@ pub fn pack_cdt_op(
                 CdtArgument::Int(int) => pack_value(buf, &Value::from(int)),
                 CdtArgument::Value(value) => pack_value(buf, value),
                 CdtArgument::List(list) => pack_array(buf, list),
-                CdtArgument::Map(map) => pack_map(buf, map),
-                CdtArgument::OrderedMap(map) => pack_ordered_map(buf, map),
+                CdtArgument::Map(ref map) => pack_map(buf, map),
                 CdtArgument::Bool(bool_val) => pack_value(buf, &Value::from(bool_val)),
             }?;
         }
@@ -136,8 +138,7 @@ pub fn pack_hll_op(
                 CdtArgument::Int(int) => pack_value(buf, &Value::from(int)),
                 CdtArgument::Value(value) => pack_value(buf, value),
                 CdtArgument::List(list) => pack_array(buf, list),
-                CdtArgument::Map(map) => pack_map(buf, map),
-                CdtArgument::OrderedMap(map) => pack_ordered_map(buf, map),
+                CdtArgument::Map(ref map) => pack_map(buf, map),
                 CdtArgument::Bool(bool_val) => pack_value(buf, &Value::from(bool_val)),
             }?;
         }
@@ -177,8 +178,7 @@ pub fn pack_cdt_bit_op(
                 CdtArgument::Int(int) => pack_value(buf, &Value::from(int)),
                 CdtArgument::Value(value) => pack_value(buf, value),
                 CdtArgument::List(list) => pack_array(buf, list),
-                CdtArgument::Map(map) => pack_map(buf, map),
-                CdtArgument::OrderedMap(map) => pack_ordered_map(buf, map),
+                CdtArgument::Map(ref map) => pack_map(buf, map),
                 CdtArgument::Bool(bool_val) => pack_value(buf, &Value::from(bool_val)),
             }?;
         }
@@ -199,7 +199,7 @@ pub fn pack_array(buf: &mut Option<&mut Buffer>, values: &[Value]) -> Result<usi
 }
 
 #[must_use]
-pub fn pack_map(buf: &mut Option<&mut Buffer>, map: &HashMap<Value, Value>) -> Result<usize> {
+pub fn pack_hash_map(buf: &mut Option<&mut Buffer>, map: &HashMap<Value, Value>) -> Result<usize> {
     let mut size = 0;
 
     size += pack_map_begin(buf, map.len(), MapOrder::Unordered);
@@ -212,6 +212,18 @@ pub fn pack_map(buf: &mut Option<&mut Buffer>, map: &HashMap<Value, Value>) -> R
 }
 
 #[must_use]
+pub fn pack_map(buf: &mut Option<&mut Buffer>, map: &MapLike) -> Result<usize> {
+    match &map.0 {
+        Value::OrderedMap(m) => pack_ordered_map(buf, &m),
+        Value::IndexMap(m) => pack_index_map(buf, &m),
+        Value::HashMap(m) => pack_hash_map(buf, &m),
+        _ => Err(Error::InvalidArgument(
+            "KeyValueList is not valid to send to the server. Use other map types".to_string(),
+        )),
+    }
+}
+
+#[must_use]
 pub fn pack_ordered_map(
     buf: &mut Option<&mut Buffer>,
     map: &BTreeMap<Value, Value>,
@@ -219,6 +231,21 @@ pub fn pack_ordered_map(
     let mut size = 0;
 
     size += pack_map_begin(buf, map.len(), MapOrder::KeyOrdered);
+    for (key, val) in map {
+        size += pack_value(buf, key)?;
+        size += pack_value(buf, val)?;
+    }
+
+    Ok(size)
+}
+
+pub fn pack_index_map(
+    buf: &mut Option<&mut Buffer>,
+    map: &IndexMap<Value, Value>,
+) -> Result<usize> {
+    let mut size = 0;
+
+    size += pack_map_begin(buf, map.len(), MapOrder::Unordered);
     for (key, val) in map {
         size += pack_value(buf, key)?;
         size += pack_value(buf, val)?;

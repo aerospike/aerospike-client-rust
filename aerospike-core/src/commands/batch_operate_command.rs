@@ -13,9 +13,10 @@
 // limitations under the License.
 
 use aerospike_rt::time::Instant;
-use std::collections::hash_map::Entry::{Occupied, Vacant};
-use std::collections::HashMap;
 use std::sync::Arc;
+
+use indexmap::map::Entry::{Occupied, Vacant};
+use indexmap::IndexMap;
 
 use crate::batch::BatchOperation;
 use crate::batch::BatchRecordIndex;
@@ -429,7 +430,7 @@ pub(crate) async fn parse_batch_record(
     let (key, _) = StreamCommand::parse_key(conn, field_count).await?;
 
     let record = if found_key {
-        let mut bins: HashMap<String, Value> = HashMap::with_capacity(op_count);
+        let mut bins: IndexMap<String, Value> = IndexMap::with_capacity(op_count);
 
         for _ in 0..op_count {
             conn.read_buffer(8).await?;

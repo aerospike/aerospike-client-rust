@@ -398,7 +398,7 @@ async fn query_large_i64() {
     let mut recordset = recordset.into_stream();
     while let Some(r) = recordset.next().await {
         assert!(r.is_ok());
-        let int = r.unwrap().bins.remove(BIN).unwrap();
+        let int = r.unwrap().bins.shift_remove(BIN).unwrap();
         assert_eq!(int, Value::Int(i64::max_value()));
     }
 

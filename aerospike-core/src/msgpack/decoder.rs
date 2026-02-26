@@ -16,6 +16,8 @@
 use std::collections::{BTreeMap, HashMap};
 use std::vec::Vec;
 
+use indexmap::IndexMap;
+
 use crate::commands::buffer::Buffer;
 use crate::commands::ParticleType;
 use crate::errors::{Error, Result};
@@ -105,7 +107,7 @@ fn unpack_map(buf: &mut Buffer, mut count: usize) -> Result<Value> {
 
     match order {
         MapOrder::Unordered => {
-            let mut map: HashMap<Value, Value> = HashMap::with_capacity(count);
+            let mut map: IndexMap<Value, Value> = IndexMap::with_capacity(count);
             for _ in 0..count {
                 let key = unpack_value(buf)?;
                 let val = unpack_value(buf)?;

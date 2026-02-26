@@ -137,6 +137,7 @@
 
 extern crate base64;
 extern crate byteorder;
+extern crate indexmap;
 #[macro_use]
 extern crate rhexdump;
 #[macro_use]

@@ -13,13 +13,13 @@
 // License for the specific language governing permissions and limitations under
 // the License.
 
-use std::collections::{BTreeMap, HashMap};
 use std::fmt;
 use std::sync::Arc;
 
 use crate::commands::buffer::Buffer;
 use crate::commands::ParticleType;
 pub use crate::operations::cdt_context::CdtContext;
+use crate::value::MapLike;
 use crate::Result;
 use crate::Value;
 
@@ -36,10 +36,8 @@ pub enum CdtArgument {
     Value(Value),
     /// List of values.
     List(Vec<Value>),
-    /// Unordered map (key-value pairs).
-    Map(HashMap<Value, Value>),
-    /// Ordered map (key-value pairs with key ordering).
-    OrderedMap(BTreeMap<Value, Value>),
+    /// Map (key-value pairs).
+    Map(MapLike),
 }
 
 pub type OperationEncoder = Arc<

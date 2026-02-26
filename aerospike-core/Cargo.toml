@@ -34,6 +34,7 @@ rustls = { version = "0.23.31", optional = true }
 async-channel = "2.5.0"
 hazarc = "0.2.0"
 num-traits = "0.2"
+indexmap = { version = "2.13", features = ["serde"] }
 
 [features]
 serialization = ["serde"]
