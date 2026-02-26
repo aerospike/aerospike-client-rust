@@ -16,7 +16,7 @@
 use std::sync::Arc;
 
 use aerospike::Key;
-use rand::{rngs::StdRng, Rng, SeedableRng};
+use rand::{rngs::SmallRng, Rng, SeedableRng};
 
 #[derive(Debug)]
 pub enum KeyRangeGen {
@@ -128,7 +128,7 @@ pub struct RandomKeyRange {
     remaining: Option<i64>,
     start: i64,
     end: i64,
-    rng: StdRng,
+    rng: SmallRng,
 }
 
 impl RandomKeyRange {
@@ -138,8 +138,8 @@ impl RandomKeyRange {
             set,
             start,
             end: start + count,
-            remaining: if is_finite { Some(start + count) }  else { None },
-            rng: StdRng::from_entropy(),
+            remaining: if is_finite { Some(start + count) } else { None },
+            rng: SmallRng::from_entropy(),
         }
     }
 }
