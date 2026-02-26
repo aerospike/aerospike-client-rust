@@ -132,7 +132,13 @@ pub struct RandomKeyRange {
 }
 
 impl RandomKeyRange {
-    pub fn new(namespace: Arc<str>, set: Arc<str>, start: i64, count: i64, is_finite: bool) -> Self {
+    pub fn new(
+        namespace: Arc<str>,
+        set: Arc<str>,
+        start: i64,
+        count: i64,
+        is_finite: bool,
+    ) -> Self {
         Self {
             namespace,
             set,

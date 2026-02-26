@@ -200,11 +200,7 @@ impl Worker {
         }
     }
 
-    pub async fn run(
-        &mut self,
-        mut key_range: KeyRangeGen,
-        duration_limit: Option<Duration>,
-    ) {
+    pub async fn run(&mut self, mut key_range: KeyRangeGen, duration_limit: Option<Duration>) {
         let mut last_collection = Instant::now();
         let run_start = Instant::now();
         loop {
@@ -247,16 +243,20 @@ impl Worker {
     }
 
     async fn collect(&mut self) {
-        swap(&mut self.read_histogram_active, &mut self.read_histogram_pending);
-        swap(&mut self.write_histogram_active, &mut self.write_histogram_pending);
+        swap(
+            &mut self.read_histogram_active,
+            &mut self.read_histogram_pending,
+        );
+        swap(
+            &mut self.write_histogram_active,
+            &mut self.write_histogram_pending,
+        );
 
-        let to_send_read =
-            std::mem::replace(&mut self.read_histogram_pending, Histogram::new());
-        let to_send_write =
-            std::mem::replace(&mut self.write_histogram_pending, Histogram::new());
+        let to_send_read = std::mem::replace(&mut self.read_histogram_pending, Histogram::new());
+        let to_send_write = std::mem::replace(&mut self.write_histogram_pending, Histogram::new());
 
         let _ = self.collector.send((to_send_read, to_send_write)).await;
-        
+
         self.read_histogram_active.reset();
         self.write_histogram_active.reset();
     }

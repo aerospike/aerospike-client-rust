@@ -161,7 +161,7 @@ async fn run_workload(client: Client, opts: Options) {
                     Arc::clone(&set_ref),
                     start_key,
                     keys,
-                    false
+                    false,
                 ),
                 None => return,
             };

@@ -60,7 +60,6 @@ impl Collector {
         }
     }
 
-    /// Drains the channel and merges all received histograms into the aggregated state.
     fn drain_and_merge(&mut self) {
         while let Ok((read_hist, write_hist)) = self.receiver.try_recv() {
             self.read_histogram.merge(read_hist);
@@ -145,21 +144,31 @@ impl Collector {
         Self::report_asbench_latency_section("read", &self.read_histogram, &utc, period_sec);
     }
 
-    fn report_asbench_latency_section(
-        name: &str,
-        hist: &Histogram,
-        utc: &str,
-        period_sec: i64,
-    ) {
+    fn report_asbench_latency_section(name: &str, hist: &Histogram, utc: &str, period_sec: i64) {
         let total_cnt = hist.count();
         let (min_us, max_us) = if total_cnt > 0 {
-            (hist.min(), hist.max())
+            let min_ns = hist.min();
+            let max_ns = hist.max();
+
+            let min_us = if min_ns == u128::max_value() {
+                0.0
+            } else {
+                min_ns as f64 / 1_000.0
+            };
+            let max_us = max_ns as f64 / 1_000.0;
+            (min_us, max_us)
         } else {
-            (0u128, 0u128)
+            (0.0, 0.0)
         };
+
         print!(
             "HG: {} {} {}, {}, {}, {}",
-            name, utc, period_sec, total_cnt, min_us, max_us
+            name,
+            utc,
+            period_sec,
+            total_cnt,
+            min_us.ceil() as i64,
+            max_us.ceil() as i64
         );
         println!();
     }
@@ -175,6 +184,12 @@ impl Collector {
         );
         if hist.count() > 0 {
             let bkt = hist.latencies();
+            let min_ms = if hist.min() == u128::max_value() {
+                // no sample recorded
+                0.001_f64
+            } else {
+                hist.min() as f64 / 1_000_000.0
+            };
             println!(
                 "  Latency:     min      avg      max    |        < 1 ms        < 2 ms        < 4 \
                  ms        < 8 ms       < 16 ms      >= 16 ms"
@@ -182,9 +197,9 @@ impl Collector {
             println!(
                 "         {:>8.3} {:>8.3} {:>8.3} ms | {:>7}/{:>4.1}% {:>7}/{:>4.1}% \
                  {:>7}/{:>4.1}% {:>7}/{:>4.1}% {:>7}/{:>4.1}% {:>7}/{:>4.1}%",
-                hist.min() as f64 / 1000.0,
-                hist.avg() as f64 / 1000.0,
-                hist.max() as f64 / 1000.0,
+                min_ms,
+                hist.avg() as f64 / 1_000_000.0,
+                hist.max() as f64 / 1_000_000.0,
                 bkt[0].0,
                 bkt[0].1,
                 bkt[1].0,
@@ -226,6 +241,7 @@ impl Collector {
 #[derive(Debug, Copy, Clone)]
 pub struct Histogram {
     buckets: [u128; HIST_BUCKETS],
+    /// Min latency in nanoseconds (avoids truncation from as_micros() for sub-µs ops)
     min: u128,
     max: u128,
     sum: u128,
@@ -335,19 +351,21 @@ impl Histogram {
     }
 
     pub fn add(&mut self, latency: Duration, status: Status) {
+        let nanos = latency.as_nanos();
         let micros = latency.as_micros();
-        if micros < self.min {
-            self.min = micros;
+
+        if nanos > 0 && nanos < self.min {
+            self.min = nanos;
         }
 
-        if micros > self.max {
-            self.max = micros;
+        if nanos > self.max {
+            self.max = nanos;
         }
 
         self.count += 1;
-        self.sum += micros;
+        self.sum += nanos;
 
-        let mut upper = 1_000;
+        let mut upper = 1_000u128;
         for (i, bucket) in self.buckets.iter_mut().enumerate() {
             if (micros < upper) || (i == HIST_BUCKETS - 1) {
                 *bucket += 1;
@@ -422,9 +440,9 @@ mod test {
             hist.add(Duration::from_millis(i), status);
         }
         assert_eq!(hist.buckets, [1, 1, 2, 4, 2, 0]);
-        assert_eq!(hist.min, 0);
-        assert_eq!(hist.max, 9_000);
-        assert_eq!(hist.sum, 45_000);
+        assert_eq!(hist.min, 1_000_000); // 0 is ignored (clock artifact)
+        assert_eq!(hist.max, 9_000_000); // 9 ms in nanos
+        assert_eq!(hist.sum, 45_000_000_000); // 0+1+..+9 ms in nanos
         assert_eq!(hist.count, 10);
         assert_eq!(hist.errors, 3);
         assert_eq!(hist.timeouts, 3);
@@ -457,8 +475,8 @@ mod test {
 
         hist1.merge(hist2);
         assert_eq!(hist1.buckets, [1, 1, 4, 8, 2, 0]);
-        assert_eq!(hist1.min, 0);
-        assert_eq!(hist1.max, 9_000);
+        assert_eq!(hist1.min, 1_000_000); // 0 ignored; hist1 had 1..7, hist2 had 2..9
+        assert_eq!(hist1.max, 9_000_000); // 9 ms in nanos
         assert_eq!(hist1.timeouts, 3);
         assert_eq!(hist1.errors, 2);
     }

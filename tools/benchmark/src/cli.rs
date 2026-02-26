@@ -113,7 +113,10 @@ pub fn parse_options() -> Result<Options, String> {
         report_style: parse_report_style(matches.value_of("report_style").unwrap_or("asbench")),
         duration_secs: matches
             .value_of("duration")
-            .map(|s| u64::from_str(s).map_err(|_| "duration must be a positive number of seconds".to_string()))
+            .map(|s| {
+                u64::from_str(s)
+                    .map_err(|_| "duration must be a positive number of seconds".to_string())
+            })
             .transpose()?,
     })
     .and_then(|opts| custom_validations(&opts).map(|()| opts))
@@ -140,7 +143,8 @@ fn custom_validations(opts: &Options) -> Result<(), String> {
     let is_insert = opts.workload == Workload::Initialize;
     if is_insert && opts.duration_secs.is_some() {
         return Err(
-            "--duration is only applicable for non-Insert workloads (RU, RR, RMU, etc.)".to_string(),
+            "--duration is only applicable for non-Insert workloads (RU, RR, RMU, etc.)"
+                .to_string(),
         );
     }
     if opts.duration_secs.is_some_and(|secs| secs == 0) {
