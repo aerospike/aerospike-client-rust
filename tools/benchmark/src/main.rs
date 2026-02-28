@@ -166,7 +166,6 @@ async fn run_workload(client: Client, opts: Options) {
                 None => return,
             };
 
-            let duration_limit = duration_limit;
             let handle = tokio::spawn(Box::pin(async move {
                 worker
                     .run(KeyRangeGen::Random(key_range), duration_limit)

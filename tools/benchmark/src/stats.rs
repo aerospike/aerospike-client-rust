@@ -28,9 +28,6 @@ use crate::workers::Status;
 // 6 buckets => "<1ms", "<2ms", "<4ms", "<8ms", "<16ms", ">=16ms"
 const HIST_BUCKETS: usize = 6;
 
-/// Upper bound (μs) of each bucket for asbench-style latency output.
-const BUCKET_UPPER_US: [u128; HIST_BUCKETS] = [1_000, 2_000, 4_000, 8_000, 16_000, 32_000];
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ReportStyle {
     Pretty,
@@ -136,7 +133,7 @@ impl Collector {
         );
     }
 
-    // Asbench latency format: "dr: <op> <UTC> <period>, <total_count>, <bucket1>, <bucket2>, ..."
+    // Asbench-style latency line (C benchmark compatible): "HG: <op> <UTC> <period_sec>, <total_count>, <min_us>, <max_us>"
     fn report_asbench_latency(&self) {
         let period_sec = self.write_histogram.total_elapsed_as_secs() as i64;
         let utc = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
@@ -150,7 +147,7 @@ impl Collector {
             let min_ns = hist.min();
             let max_ns = hist.max();
 
-            let min_us = if min_ns == u128::max_value() {
+            let min_us = if min_ns == u128::MAX {
                 0.001_f64
             } else {
                 min_ns as f64 / 1_000.0
@@ -167,8 +164,8 @@ impl Collector {
             utc,
             period_sec,
             total_cnt,
-            min_us as i64,
-            max_us as i64,
+            (min_us + 0.5) as i64, // rounding to nearest microseconds
+            (max_us + 0.5) as i64,
         );
         println!();
     }
@@ -184,7 +181,7 @@ impl Collector {
         );
         if hist.count() > 0 {
             let bkt = hist.latencies();
-            let min_ms = if hist.min() == u128::max_value() {
+            let min_ms = if hist.min() == u128::MAX {
                 0.001_f64
             } else {
                 hist.min() as f64 / 1_000_000.0
@@ -240,7 +237,6 @@ impl Collector {
 #[derive(Debug, Copy, Clone)]
 pub struct Histogram {
     buckets: [u128; HIST_BUCKETS],
-    /// Min latency in nanoseconds (avoids truncation from as_micros() for sub-µs ops)
     min: u128,
     max: u128,
     sum: u128,
@@ -259,8 +255,8 @@ impl Histogram {
         let now = Instant::now();
         Histogram {
             buckets: [0; HIST_BUCKETS],
-            min: u128::max_value(),
-            max: u128::min_value(),
+            min: u128::MAX,
+            max: u128::MIN,
             sum: 0,
             count: 0,
             timeouts: 0,
@@ -282,6 +278,9 @@ impl Histogram {
     }
 
     pub fn avg(&self) -> u128 {
+        if self.count == 0 {
+            return 0;
+        }
         self.sum / self.count
     }
 
@@ -310,23 +309,6 @@ impl Histogram {
             })
             .collect()
     }
-
-    // fn percentile(&self, p: f64) -> u128 {
-    //     if self.count == 0 {
-    //         return 0;
-    //     }
-    //     let target = p / 100.0 * self.count as f64;
-    //     // Upper bound (μs) of each bucket: <1ms, <2ms, <4ms, <8ms, <16ms, >=16ms
-    //     let bucket_upper_us: [u128; HIST_BUCKETS] = [1_000, 2_000, 4_000, 8_000, 16_000, 32_000];
-    //     let mut cum = 0u128;
-    //     for (i, &c) in self.buckets.iter().enumerate() {
-    //         cum += c;
-    //         if cum as f64 >= target {
-    //             return bucket_upper_us[i];
-    //         }
-    //     }
-    //     bucket_upper_us[HIST_BUCKETS - 1]
-    // }
 
     pub fn total(&self) -> u128 {
         self.total
@@ -361,25 +343,26 @@ impl Histogram {
             self.max = nanos;
         }
 
-        self.count += 1;
-        self.sum += nanos;
-
-        let mut upper = 1_000u128;
-        for (i, bucket) in self.buckets.iter_mut().enumerate() {
-            if (micros < upper) || (i == HIST_BUCKETS - 1) {
-                *bucket += 1;
-                break;
-            }
-            upper <<= 1;
-        }
-
         match status {
             Status::Timeout => self.timeouts += 1,
             Status::Error => self.errors += 1,
-            _ => {}
+            _ => {
+                self.count += 1;
+                self.sum += nanos;
+                let mut upper = 1_000u128;
+                for (i, bucket) in self.buckets.iter_mut().enumerate() {
+                    if (micros < upper) || (i == HIST_BUCKETS - 1) {
+                        *bucket += 1;
+                        break;
+                    }
+                    upper <<= 1;
+                }
+            }
         }
     }
 
+    // Merges interval counts from `other` into `self`.
+    // Intended for interval histograms only
     pub fn merge(&mut self, other: Histogram) {
         if other.min != u128::MAX && other.min != 0 {
             self.min = if self.min == u128::MAX {
@@ -413,8 +396,8 @@ impl Histogram {
         self.total += self.count;
         self.total_timeouts += self.timeouts;
         self.total_errors += self.errors;
-        self.min = u128::max_value();
-        self.max = u128::min_value();
+        self.min = u128::MAX;
+        self.max = u128::MIN;
         self.sum = 0;
         self.count = 0;
         self.timeouts = 0;
@@ -444,16 +427,16 @@ mod test {
             };
             hist.add(Duration::from_millis(i), status);
         }
-        assert_eq!(hist.buckets, [1, 1, 2, 4, 2, 0]);
+        assert_eq!(hist.buckets, [1, 0, 1, 1, 1, 0]);
         assert_eq!(hist.min, 1_000_000); // 0 is ignored (clock artifact)
         assert_eq!(hist.max, 9_000_000); // 9 ms in nanos
-        assert_eq!(hist.sum, 45_000_000_000); // 0+1+..+9 ms in nanos
-        assert_eq!(hist.count, 10);
+        assert_eq!(hist.sum, 18000000); // 0+1+..+9 ms in nanos
+        assert_eq!(hist.count, 4);
         assert_eq!(hist.errors, 3);
         assert_eq!(hist.timeouts, 3);
 
         hist.add(Duration::from_millis(42), Status::Success);
-        assert_eq!(hist.buckets, [1, 1, 2, 4, 2, 1]);
+        assert_eq!(hist.buckets, [1, 0, 1, 1, 1, 1]);
     }
 
     #[test]
@@ -479,7 +462,7 @@ mod test {
         }
 
         hist1.merge(hist2);
-        assert_eq!(hist1.buckets, [1, 1, 4, 8, 2, 0]);
+        assert_eq!(hist1.buckets, [1, 1, 4, 5, 0, 0]);
         assert_eq!(hist1.min, 1_000_000); // 0 ignored; hist1 had 1..7, hist2 had 2..9
         assert_eq!(hist1.max, 9_000_000); // 9 ms in nanos
         assert_eq!(hist1.timeouts, 3);
@@ -487,22 +470,31 @@ mod test {
     }
 
     #[test]
-    fn test_histogram_min_value() {
+    fn test_histogram_merge_handles_zero_and_valid_min() {
         let mut hist = Histogram::new();
         hist.add(Duration::ZERO, Status::Success);
         assert_eq!(hist.min(), u128::MAX);
         assert_eq!(hist.count(), 1);
 
-        // Merge with histogram that has a zero min
+        // Merge with histogram that has a zero min: both have no valid min (min stays MAX).
         let mut hist2 = Histogram::new();
         hist2.add(Duration::ZERO, Status::Success);
         hist2.merge(hist);
-        assert_eq!(hist.min(), u128::MAX, "when no sample recorded, expected would be MAX Bound value");
+        assert_eq!(
+            hist2.min(),
+            u128::MAX,
+            "when both have no valid min, merged min should remain MAX"
+        );
+        assert_eq!(hist2.count(), 2, "merged count should be sum of both");
 
         // Merge with histogram that has a non-zero min: 0 should not overwrite.
         let mut hist3 = Histogram::new();
         hist3.add(Duration::from_millis(5), Status::Success);
         hist.merge(hist3);
-        assert_eq!(hist.min(), 5000000, "after merge with 0 and 5ms, min should stay 5ms");
+        assert_eq!(
+            hist.min(),
+            5000000,
+            "after merge with 0 and 5ms, min should stay 5ms"
+        );
     }
 }

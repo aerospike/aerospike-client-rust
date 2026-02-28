@@ -86,7 +86,7 @@ pub fn parse_options() -> Result<Options, String> {
         .map(|s| s.to_owned())
         .or_else(|| env::var("AEROSPIKE_IP_MAP").ok());
 
-    let workload = Workload::from_str(matches.value_of("workload").unwrap()).unwrap();
+    let workload = Workload::from_str(matches.value_of("workload").unwrap_or("I"))?;
 
     Ok(Options {
         hosts: matches
@@ -112,13 +112,16 @@ pub fn parse_options() -> Result<Options, String> {
             .map(|s| parse_object_spec_list(s).unwrap())
             .unwrap_or_else(|| vec![DBObjectSpec::default()]),
         batch_size: usize::from_str(matches.value_of("batch_size").unwrap()).unwrap(),
-        report_style: parse_report_style(matches.value_of("report_style").unwrap_or("asbench")),
+        report_style: parse_report_style(matches.value_of("report_style").unwrap_or("pretty")),
         duration_secs: parse_duration_secs(matches.value_of("duration"), workload)?,
     })
     .and_then(|opts| custom_validations(&opts).map(|()| opts))
 }
 
-fn parse_duration_secs(duration_str: Option<&str>, workload: Workload) -> Result<Option<u64>, String> {
+fn parse_duration_secs(
+    duration_str: Option<&str>,
+    workload: Workload,
+) -> Result<Option<u64>, String> {
     let parsed = duration_str
         .map(|s| {
             u64::from_str(s)
@@ -128,11 +131,14 @@ fn parse_duration_secs(duration_str: Option<&str>, workload: Workload) -> Result
     Ok(match workload {
         Workload::Initialize => {
             if parsed.is_some() {
-                panic!("duration (-d/--duration) is not allowed for Initialize (I) workload");
+                return Err(
+                    "duration (-d/--duration) is not allowed for Initialize (I) workload"
+                        .to_string(),
+                );
             }
             None
         }
-        _ => parsed.or(Some(10))
+        _ => parsed.or(Some(10)),
     })
 }
 
@@ -155,7 +161,7 @@ fn custom_validations(opts: &Options) -> Result<(), String> {
         );
     }
     if opts.duration_secs.is_some_and(|secs| secs == 0) {
-        return Err("Second duration value must be greater than 0".to_string());
+        return Err("Duration must be greater than 0".to_string());
     }
     Ok(())
 }
@@ -256,7 +262,6 @@ fn build_cli() -> App<'static, 'static> {
                 .help("Output format: default (sectioned) or asbench (C benchmark one-line style)")
                 .takes_value(true)
                 .possible_values(&["pretty", "asbench"])
-                .default_value("pretty")
         )
         .arg(
             Arg::with_name("duration")
