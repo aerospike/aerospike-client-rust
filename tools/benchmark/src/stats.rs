@@ -151,7 +151,7 @@ impl Collector {
             let max_ns = hist.max();
 
             let min_us = if min_ns == u128::max_value() {
-                0.0
+                0.001_f64
             } else {
                 min_ns as f64 / 1_000.0
             };
@@ -167,8 +167,8 @@ impl Collector {
             utc,
             period_sec,
             total_cnt,
-            min_us.ceil() as i64,
-            max_us.ceil() as i64
+            min_us as i64,
+            max_us as i64,
         );
         println!();
     }
@@ -185,7 +185,6 @@ impl Collector {
         if hist.count() > 0 {
             let bkt = hist.latencies();
             let min_ms = if hist.min() == u128::max_value() {
-                // no sample recorded
                 0.001_f64
             } else {
                 hist.min() as f64 / 1_000_000.0
@@ -382,7 +381,13 @@ impl Histogram {
     }
 
     pub fn merge(&mut self, other: Histogram) {
-        self.min = self.min.min(other.min);
+        if other.min != u128::MAX && other.min != 0 {
+            self.min = if self.min == u128::MAX {
+                other.min
+            } else {
+                self.min.min(other.min)
+            };
+        }
 
         self.max = if self.max > other.max {
             self.max
@@ -479,5 +484,25 @@ mod test {
         assert_eq!(hist1.max, 9_000_000); // 9 ms in nanos
         assert_eq!(hist1.timeouts, 3);
         assert_eq!(hist1.errors, 2);
+    }
+
+    #[test]
+    fn test_histogram_min_value() {
+        let mut hist = Histogram::new();
+        hist.add(Duration::ZERO, Status::Success);
+        assert_eq!(hist.min(), u128::MAX);
+        assert_eq!(hist.count(), 1);
+
+        // Merge with histogram that has a zero min
+        let mut hist2 = Histogram::new();
+        hist2.add(Duration::ZERO, Status::Success);
+        hist2.merge(hist);
+        assert_eq!(hist.min(), u128::MAX, "when no sample recorded, expected would be MAX Bound value");
+
+        // Merge with histogram that has a non-zero min: 0 should not overwrite.
+        let mut hist3 = Histogram::new();
+        hist3.add(Duration::from_millis(5), Status::Success);
+        hist.merge(hist3);
+        assert_eq!(hist.min(), 5000000, "after merge with 0 and 5ms, min should stay 5ms");
     }
 }
