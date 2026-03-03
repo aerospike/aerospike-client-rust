@@ -22,6 +22,7 @@ pub mod exp;
 pub mod hll;
 pub mod lists;
 pub mod maps;
+pub mod path;
 pub mod scalar;
 
 use self::cdt::CdtOperation;

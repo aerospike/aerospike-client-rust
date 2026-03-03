@@ -33,6 +33,7 @@ mod exp_op;
 mod hll;
 mod index;
 mod kv;
+mod path_expressions;
 mod query;
 mod scan;
 #[cfg(feature = "serialization")]
