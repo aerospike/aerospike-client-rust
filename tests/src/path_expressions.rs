@@ -564,8 +564,442 @@ async fn loop_var_string_map_key() {
 // ===== exp_remove_result tests =====
 
 #[aerospike_macro::test]
-async fn exp_remove_result_usage() {
-    // This test checks that exp_remove_result() compiles and can be used in expressions.
-    // The actual server behavior depends on context.
-    let _exp = exp_remove_result();
+async fn remove_all_items_from_list() {
+    let client = common::client().await;
+    if !server_supports_cdt_path_expressions(&client).await {
+        eprintln!("Skipping: server does not support CDT path expressions (requires >= 8.1.1)");
+        return;
+    }
+
+    let namespace = common::namespace();
+    let set_name = common::rand_str(10);
+    let key = as_key!(namespace, &set_name, "rm_list_all");
+
+    let wpolicy = WritePolicy::default();
+    let rpolicy = ReadPolicy::default();
+    client.delete(&wpolicy, &key).await.unwrap();
+
+    let data = as_map!("items" => as_list!(1_i64, 2_i64, 3_i64, 4_i64, 5_i64));
+    let bin = as_bin!("testbin", data);
+    client.put(&wpolicy, &key, &[bin]).await.unwrap();
+
+    let ctx1 = ctx_map_key(Value::from("items"));
+    let ctx2 = ctx_all_children();
+
+    let op = modify_by_path(
+        "testbin",
+        ModifyFlag::DEFAULT,
+        exp_remove_result(),
+        &[ctx1, ctx2],
+    )
+    .unwrap();
+    client.operate(&wpolicy, &key, &[op]).await.unwrap();
+
+    let rec = client.get(&rpolicy, &key, Bins::All).await.unwrap();
+    if let Some(Value::HashMap(root_map)) = rec.bins.get("testbin") {
+        if let Some(Value::List(items)) = root_map.get(&Value::from("items")) {
+            assert_eq!(items.len(), 0, "All items should be removed");
+        } else {
+            panic!("Expected 'items' key to exist as a list");
+        }
+    } else {
+        panic!("Expected HashMap result for testbin");
+    }
+}
+
+#[aerospike_macro::test]
+async fn remove_filtered_items_from_list() {
+    let client = common::client().await;
+    if !server_supports_cdt_path_expressions(&client).await {
+        eprintln!("Skipping: server does not support CDT path expressions (requires >= 8.1.1)");
+        return;
+    }
+
+    let namespace = common::namespace();
+    let set_name = common::rand_str(10);
+    let key = as_key!(namespace, &set_name, "rm_list_filter");
+
+    let wpolicy = WritePolicy::default();
+    let rpolicy = ReadPolicy::default();
+    client.delete(&wpolicy, &key).await.unwrap();
+
+    let data = as_map!("numbers" => as_list!(1_i64, 5_i64, 10_i64, 15_i64, 20_i64, 25_i64, 30_i64));
+    let bin = as_bin!("testbin", data);
+    client.put(&wpolicy, &key, &[bin]).await.unwrap();
+
+    // Remove items where value > 10
+    let ctx1 = ctx_map_key(Value::from("numbers"));
+    let ctx2 = ctx_all_children_with_filter(gt(exp_int_loop_var(LoopVarPart::VALUE), int_val(10)));
+
+    let op = modify_by_path(
+        "testbin",
+        ModifyFlag::DEFAULT,
+        exp_remove_result(),
+        &[ctx1, ctx2],
+    )
+    .unwrap();
+    client.operate(&wpolicy, &key, &[op]).await.unwrap();
+
+    let rec = client.get(&rpolicy, &key, Bins::All).await.unwrap();
+    if let Some(Value::HashMap(root_map)) = rec.bins.get("testbin") {
+        if let Some(Value::List(numbers)) = root_map.get(&Value::from("numbers")) {
+            assert_eq!(numbers.len(), 3, "Should keep items <= 10");
+            assert!(numbers.contains(&Value::from(1_i64)));
+            assert!(numbers.contains(&Value::from(5_i64)));
+            assert!(numbers.contains(&Value::from(10_i64)));
+        } else {
+            panic!("Expected 'numbers' key to exist as a list");
+        }
+    } else {
+        panic!("Expected HashMap result for testbin");
+    }
+}
+
+#[aerospike_macro::test]
+async fn remove_all_items_from_map() {
+    let client = common::client().await;
+    if !server_supports_cdt_path_expressions(&client).await {
+        eprintln!("Skipping: server does not support CDT path expressions (requires >= 8.1.1)");
+        return;
+    }
+
+    let namespace = common::namespace();
+    let set_name = common::rand_str(10);
+    let key = as_key!(namespace, &set_name, "rm_map_all");
+
+    let wpolicy = WritePolicy::default();
+    let rpolicy = ReadPolicy::default();
+    client.delete(&wpolicy, &key).await.unwrap();
+
+    let config = as_map!("option1" => "value1", "option2" => "value2", "option3" => "value3");
+    let data = as_map!("config" => config);
+    let bin = as_bin!("testbin", data);
+    client.put(&wpolicy, &key, &[bin]).await.unwrap();
+
+    let ctx1 = ctx_map_key(Value::from("config"));
+    let ctx2 = ctx_all_children();
+
+    let op = modify_by_path(
+        "testbin",
+        ModifyFlag::DEFAULT,
+        exp_remove_result(),
+        &[ctx1, ctx2],
+    )
+    .unwrap();
+    client.operate(&wpolicy, &key, &[op]).await.unwrap();
+
+    let rec = client.get(&rpolicy, &key, Bins::All).await.unwrap();
+    if let Some(Value::HashMap(root_map)) = rec.bins.get("testbin") {
+        if let Some(Value::HashMap(config_map)) = root_map.get(&Value::from("config")) {
+            assert_eq!(config_map.len(), 0, "All map entries should be removed");
+        } else {
+            panic!("Expected 'config' key to exist as a map");
+        }
+    } else {
+        panic!("Expected HashMap result for testbin");
+    }
+}
+
+#[aerospike_macro::test]
+async fn remove_filtered_map_entries() {
+    let client = common::client().await;
+    if !server_supports_cdt_path_expressions(&client).await {
+        eprintln!("Skipping: server does not support CDT path expressions (requires >= 8.1.1)");
+        return;
+    }
+
+    let namespace = common::namespace();
+    let set_name = common::rand_str(10);
+    let key = as_key!(namespace, &set_name, "rm_map_filter");
+
+    let wpolicy = WritePolicy::default();
+    let rpolicy = ReadPolicy::default();
+    client.delete(&wpolicy, &key).await.unwrap();
+
+    let scores = as_map!("alice" => 95_i64, "bob" => 45_i64, "carol" => 75_i64, "dave" => 30_i64);
+    let data = as_map!("scores" => scores);
+    let bin = as_bin!("testbin", data);
+    client.put(&wpolicy, &key, &[bin]).await.unwrap();
+
+    // Remove entries where value < 50 (removes bob=45 and dave=30)
+    let ctx1 = ctx_map_key(Value::from("scores"));
+    let ctx2 = ctx_all_children_with_filter(lt(exp_int_loop_var(LoopVarPart::VALUE), int_val(50)));
+
+    let op = modify_by_path(
+        "testbin",
+        ModifyFlag::DEFAULT,
+        exp_remove_result(),
+        &[ctx1, ctx2],
+    )
+    .unwrap();
+    client.operate(&wpolicy, &key, &[op]).await.unwrap();
+
+    let rec = client.get(&rpolicy, &key, Bins::All).await.unwrap();
+    if let Some(Value::HashMap(root_map)) = rec.bins.get("testbin") {
+        if let Some(Value::HashMap(scores_map)) = root_map.get(&Value::from("scores")) {
+            assert_eq!(scores_map.len(), 2, "Should keep scores >= 50");
+            assert!(!scores_map.contains_key(&Value::from("bob")));
+            assert!(!scores_map.contains_key(&Value::from("dave")));
+            assert_eq!(
+                scores_map.get(&Value::from("alice")),
+                Some(&Value::from(95_i64))
+            );
+        } else {
+            panic!("Expected 'scores' key to exist as a map");
+        }
+    } else {
+        panic!("Expected HashMap result for testbin");
+    }
+}
+
+#[aerospike_macro::test]
+async fn remove_books_with_low_prices() {
+    let client = common::client().await;
+    if !server_supports_cdt_path_expressions(&client).await {
+        eprintln!("Skipping: server does not support CDT path expressions (requires >= 8.1.1)");
+        return;
+    }
+
+    let namespace = common::namespace();
+    let set_name = common::rand_str(10);
+    let key = as_key!(namespace, &set_name, "rm_books_price");
+
+    let wpolicy = WritePolicy::default();
+    let rpolicy = ReadPolicy::default();
+    client.delete(&wpolicy, &key).await.unwrap();
+
+    let books = as_list!(
+        as_map!("title" => "Cheap Book 1", "price" => 5.99_f64),
+        as_map!("title" => "Expensive Book", "price" => 25.99_f64),
+        as_map!("title" => "Cheap Book 2", "price" => 3.99_f64),
+        as_map!("title" => "Mid Price Book", "price" => 15.99_f64)
+    );
+    let root = as_map!("books" => books);
+    let bin = as_bin!("testbin", root);
+    client.put(&wpolicy, &key, &[bin]).await.unwrap();
+
+    // Remove books where price <= 10.0
+    let ctx1 = ctx_map_key(Value::from("books"));
+    let ctx2 = ctx_all_children_with_filter(le(
+        get_by_key(
+            MapReturnType::Value,
+            ExpType::FLOAT,
+            string_val("price".to_string()),
+            exp_map_loop_var(LoopVarPart::VALUE),
+            &[],
+        ),
+        float_val(10.0),
+    ));
+
+    let op = modify_by_path(
+        "testbin",
+        ModifyFlag::DEFAULT,
+        exp_remove_result(),
+        &[ctx1, ctx2],
+    )
+    .unwrap();
+    client.operate(&wpolicy, &key, &[op]).await.unwrap();
+
+    let rec = client.get(&rpolicy, &key, Bins::All).await.unwrap();
+    if let Some(Value::HashMap(root_map)) = rec.bins.get("testbin") {
+        if let Some(Value::List(book_list)) = root_map.get(&Value::from("books")) {
+            assert_eq!(book_list.len(), 2, "Should keep 2 expensive books");
+            for book_val in book_list {
+                if let Value::HashMap(book) = book_val {
+                    let price = book.get(&Value::from("price")).unwrap();
+                    let price_f = match price {
+                        Value::Float(f) => f64::from(f),
+                        Value::Int(i) => *i as f64,
+                        _ => panic!("Unexpected price type: {:?}", price),
+                    };
+                    assert!(price_f > 10.0, "Remaining books should have price > 10.0");
+                } else {
+                    panic!("Expected book to be a HashMap");
+                }
+            }
+        } else {
+            panic!("Expected 'books' key to exist as a list");
+        }
+    } else {
+        panic!("Expected HashMap result for testbin");
+    }
+}
+
+#[aerospike_macro::test]
+async fn remove_items_by_index_filter() {
+    let client = common::client().await;
+    if !server_supports_cdt_path_expressions(&client).await {
+        eprintln!("Skipping: server does not support CDT path expressions (requires >= 8.1.1)");
+        return;
+    }
+
+    let namespace = common::namespace();
+    let set_name = common::rand_str(10);
+    let key = as_key!(namespace, &set_name, "rm_idx_filter");
+
+    let wpolicy = WritePolicy::default();
+    let rpolicy = ReadPolicy::default();
+    client.delete(&wpolicy, &key).await.unwrap();
+
+    let data = as_map!("values" => as_list!(100_i64, 200_i64, 300_i64, 400_i64, 500_i64));
+    let bin = as_bin!("testbin", data);
+    client.put(&wpolicy, &key, &[bin]).await.unwrap();
+
+    // Remove items where index >= 3 (removes 400 and 500)
+    let ctx1 = ctx_map_key(Value::from("values"));
+    let ctx2 = ctx_all_children_with_filter(ge(exp_int_loop_var(LoopVarPart::INDEX), int_val(3)));
+
+    let op = modify_by_path(
+        "testbin",
+        ModifyFlag::DEFAULT,
+        exp_remove_result(),
+        &[ctx1, ctx2],
+    )
+    .unwrap();
+    client.operate(&wpolicy, &key, &[op]).await.unwrap();
+
+    let rec = client.get(&rpolicy, &key, Bins::All).await.unwrap();
+    if let Some(Value::HashMap(root_map)) = rec.bins.get("testbin") {
+        if let Some(Value::List(values)) = root_map.get(&Value::from("values")) {
+            assert_eq!(values.len(), 3, "Should keep first 3 items");
+            assert_eq!(values[0], Value::from(100_i64));
+            assert_eq!(values[1], Value::from(200_i64));
+            assert_eq!(values[2], Value::from(300_i64));
+        } else {
+            panic!("Expected 'values' key to exist as a list");
+        }
+    } else {
+        panic!("Expected HashMap result for testbin");
+    }
+}
+
+#[aerospike_macro::test]
+async fn remove_map_entries_by_key_filter() {
+    let client = common::client().await;
+    if !server_supports_cdt_path_expressions(&client).await {
+        eprintln!("Skipping: server does not support CDT path expressions (requires >= 8.1.1)");
+        return;
+    }
+
+    let namespace = common::namespace();
+    let set_name = common::rand_str(10);
+    let key = as_key!(namespace, &set_name, "rm_map_key_flt");
+
+    let wpolicy = WritePolicy::default();
+    let rpolicy = ReadPolicy::default();
+    client.delete(&wpolicy, &key).await.unwrap();
+
+    let inventory = as_map!(
+        "apple" => 10_i64,
+        "banana" => 5_i64,
+        "cherry" => 8_i64,
+        "date" => 3_i64
+    );
+    let data = as_map!("inventory" => inventory);
+    let bin = as_bin!("testbin", data);
+    client.put(&wpolicy, &key, &[bin]).await.unwrap();
+
+    // Remove entries where key >= "c" (removes cherry and date)
+    let ctx1 = ctx_map_key(Value::from("inventory"));
+    let ctx2 = ctx_all_children_with_filter(ge(
+        exp_string_loop_var(LoopVarPart::MAP_KEY),
+        string_val("c".to_string()),
+    ));
+
+    let op = modify_by_path(
+        "testbin",
+        ModifyFlag::DEFAULT,
+        exp_remove_result(),
+        &[ctx1, ctx2],
+    )
+    .unwrap();
+    client.operate(&wpolicy, &key, &[op]).await.unwrap();
+
+    let rec = client.get(&rpolicy, &key, Bins::All).await.unwrap();
+    if let Some(Value::HashMap(root_map)) = rec.bins.get("testbin") {
+        if let Some(Value::HashMap(inv_map)) = root_map.get(&Value::from("inventory")) {
+            assert_eq!(inv_map.len(), 2, "Should keep apple and banana");
+            assert!(inv_map.contains_key(&Value::from("apple")));
+            assert!(inv_map.contains_key(&Value::from("banana")));
+            assert!(!inv_map.contains_key(&Value::from("cherry")));
+            assert!(!inv_map.contains_key(&Value::from("date")));
+        } else {
+            panic!("Expected 'inventory' key to exist as a map");
+        }
+    } else {
+        panic!("Expected HashMap result for testbin");
+    }
+}
+
+#[aerospike_macro::test]
+async fn remove_nested_items_complex_path() {
+    let client = common::client().await;
+    if !server_supports_cdt_path_expressions(&client).await {
+        eprintln!("Skipping: server does not support CDT path expressions (requires >= 8.1.1)");
+        return;
+    }
+
+    let namespace = common::namespace();
+    let set_name = common::rand_str(10);
+    let key = as_key!(namespace, &set_name, "rm_nested");
+
+    let wpolicy = WritePolicy::default();
+    let rpolicy = ReadPolicy::default();
+    client.delete(&wpolicy, &key).await.unwrap();
+
+    let sales_dept = as_list!(
+        as_map!("name" => "John", "sales" => 1000_i64),
+        as_map!("name" => "Jane", "sales" => 5000_i64)
+    );
+    let eng_dept = as_list!(
+        as_map!("name" => "Bob", "sales" => 500_i64),
+        as_map!("name" => "Alice", "sales" => 3000_i64)
+    );
+    let departments = as_map!("sales" => sales_dept, "engineering" => eng_dept);
+    let data = as_map!("departments" => departments);
+    let bin = as_bin!("testbin", data);
+    client.put(&wpolicy, &key, &[bin]).await.unwrap();
+
+    // Navigate: departments -> all dept lists -> remove employees with sales < 2000
+    let ctx1 = ctx_map_key(Value::from("departments"));
+    let ctx2 = ctx_all_children(); // iterate over "sales" and "engineering" lists
+    let ctx3 = ctx_all_children_with_filter(lt(
+        get_by_key(
+            MapReturnType::Value,
+            ExpType::INT,
+            string_val("sales".to_string()),
+            exp_map_loop_var(LoopVarPart::VALUE),
+            &[],
+        ),
+        int_val(2000),
+    ));
+
+    let op = modify_by_path(
+        "testbin",
+        ModifyFlag::DEFAULT,
+        exp_remove_result(),
+        &[ctx1, ctx2, ctx3],
+    )
+    .unwrap();
+    client.operate(&wpolicy, &key, &[op]).await.unwrap();
+
+    let rec = client.get(&rpolicy, &key, Bins::All).await.unwrap();
+    if let Some(Value::HashMap(root_map)) = rec.bins.get("testbin") {
+        if let Some(Value::HashMap(depts)) = root_map.get(&Value::from("departments")) {
+            if let Some(Value::List(sales_list)) = depts.get(&Value::from("sales")) {
+                assert_eq!(sales_list.len(), 1, "Should keep Jane only (sales=5000)");
+            } else {
+                panic!("Expected 'sales' dept to be a list");
+            }
+            if let Some(Value::List(eng_list)) = depts.get(&Value::from("engineering")) {
+                assert_eq!(eng_list.len(), 1, "Should keep Alice only (sales=3000)");
+            } else {
+                panic!("Expected 'engineering' dept to be a list");
+            }
+        } else {
+            panic!("Expected 'departments' key to exist as a map");
+        }
+    } else {
+        panic!("Expected HashMap result for testbin");
+    }
 }

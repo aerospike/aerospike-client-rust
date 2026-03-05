@@ -88,4 +88,3 @@ pub fn modify_by_path(
         data: OperationData::Value(Value::Blob(bytes)),
     })
 }
-
