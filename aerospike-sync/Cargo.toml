@@ -26,3 +26,4 @@ rt-async-std = ["aerospike-core/rt-async-std"]
 
 [dev-dependencies]
 aerospike = {path = "../"}
+tokio = { version = "1", features = ["rt-multi-thread"] } # for doc tests

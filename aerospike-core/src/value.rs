@@ -880,8 +880,9 @@ macro_rules! as_blob {
 /// ```rust,edition2018
 /// # use aerospike::*;
 /// # use std::vec::Vec;
+/// # #[tokio::main]
 /// # async fn main() {
-/// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap();
+/// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap_or_else(|_| "127.0.0.1:3000".to_string());
 /// # let client = Client::new(&ClientPolicy::default(), &hosts).await.unwrap();
 /// # let key = as_key!("test", "test", "mykey");
 /// let list = as_list!("a", "b", "c");
@@ -911,8 +912,9 @@ macro_rules! as_list {
 /// ```rust,should_panic,edition2018
 /// # use aerospike::*;
 /// # use std::vec::Vec;
+///  # #[tokio::main]
 /// # async fn main() {
-/// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap();
+/// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap_or_else(|_| "127.0.0.1:3000".to_string());
 /// # let client = Client::new(&ClientPolicy::default(), &hosts).await.unwrap();
 /// # let key = as_key!("test", "test", "mykey");
 /// let module = "myUDF";
@@ -943,8 +945,9 @@ macro_rules! as_values {
 ///
 /// ```rust,edition2018
 /// # use aerospike::*;
+/// # #[tokio::main]
 /// # async fn main() {
-/// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap();
+/// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap_or_else(|_| "127.0.0.1:3000".to_string());
 /// # let client = Client::new(&ClientPolicy::default(), &hosts).await.unwrap();
 /// # let key = as_key!("test", "test", "mykey");
 /// let map = as_map!("a" => 1, "b" => 2);
@@ -973,8 +976,9 @@ macro_rules! as_map {
 ///
 /// ```rust,edition2018
 /// # use aerospike::*;
+/// # #[tokio::main]
 /// # async fn main() {
-/// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap();
+/// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap_or_else(|_| "127.0.0.1:3000".to_string());
 /// # let client = Client::new(&ClientPolicy::default(), &hosts).await.unwrap();
 /// # let key = as_key!("test", "test", "mykey");
 /// let map = as_ord_map!("a" => 1, "b" => 2);

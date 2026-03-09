@@ -53,7 +53,11 @@ pub struct ClientPolicy {
     ///
     /// Using cert files to allow for client authentication.
     ///
-    /// ```rust,edition2021
+    /// ```rust,edition2021,no_run
+    /// # use rustls::RootCertStore;
+    /// # use rustls::pki_types::CertificateDer;
+    /// # use rustls::pki_types::PrivateKeyDer;
+    /// # use rustls::pki_types::pem::PemObject;
     /// let mut root_store = RootCertStore {
     ///     roots: webpki_roots::TLS_SERVER_ROOTS.into(),
     /// };
@@ -70,12 +74,15 @@ pub struct ClientPolicy {
     /// let tls_config = rustls::ClientConfig::builder()
     ///     .with_root_certificates(root_store)
     ///     .with_client_auth_cert(vec![client_ca], client_key)
-    ///     .unwrap()
+    ///     .unwrap();
     /// ```
     ///
     /// Using cert files without enforcing client authentication.
     ///
-    /// ```rust,edition2021
+    /// ```rust,edition2021,no_run
+    /// # use rustls::RootCertStore;
+    /// # use rustls::pki_types::CertificateDer;
+    /// # use rustls::pki_types::pem::PemObject;
     /// let mut root_store = RootCertStore {
     ///     roots: webpki_roots::TLS_SERVER_ROOTS.into(),
     /// };
@@ -88,7 +95,7 @@ pub struct ClientPolicy {
     ///
     /// let tls_config = rustls::ClientConfig::builder()
     ///     .with_root_certificates(root_store)
-    ///     .with_no_client_auth()
+    ///     .with_no_client_auth();
     /// ```
     #[cfg(feature = "tls")]
     pub tls_config: Option<ClientConfig>,

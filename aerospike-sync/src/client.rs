@@ -78,10 +78,12 @@ impl Client {
     ///
     /// Using an environment variable to set the list of seed hosts.
     ///
-    /// ```rust,edition2018
-    /// use aerospike::{Client, ClientPolicy};
+    /// ```rust,edition2021
+    /// use aerospike_sync::{Client, ClientPolicy};
+    /// # let rt = tokio::runtime::Runtime::new().unwrap();
+    /// # let _guard = rt.enter();
     ///
-    /// let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap();
+    /// let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap_or_else(|_| "127.0.0.1:3000".to_string());
     /// let client = Client::new(&ClientPolicy::default(), &hosts).unwrap();
     /// ```
     pub fn new(policy: &ClientPolicy, hosts: &(dyn ToHosts + Send + Sync)) -> Result<Self> {
@@ -125,16 +127,18 @@ impl Client {
     ///
     /// Fetch specified bins for a record with the given key.
     ///
-    /// ```rust,edition2018
-    /// # use aerospike::*;
+    /// ```rust,edition2021
+    /// # use aerospike_sync::*;
+    /// # let rt = tokio::runtime::Runtime::new().unwrap();
+    /// # let _guard = rt.enter();
     ///
-    /// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap();
+    /// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap_or_else(|_| "127.0.0.1:3000".to_string());
     /// # let client = Client::new(&ClientPolicy::default(), &hosts).unwrap();
     /// let key = as_key!("test", "test", "mykey");
     /// match client.get(&ReadPolicy::default(), &key, ["a", "b"]) {
     ///     Ok(record)
     ///         => println!("a={:?}", record.bins.get("a")),
-    ///     Err(Error::ServerError(ResultCode::KeyNotFoundError))
+    ///     Err(Error::ServerError(ResultCode::KeyNotFoundError, _, _))
     ///         => println!("No such record: {}", key),
     ///     Err(err)
     ///         => println!("Error fetching record: {}", err),
@@ -143,10 +147,12 @@ impl Client {
     ///
     /// Determine the remaining time-to-live of a record.
     ///
-    /// ```rust,edition2018
-    /// # use aerospike::*;
+    /// ```rust,edition2021
+    /// # use aerospike_sync::*;
+    /// # let rt = tokio::runtime::Runtime::new().unwrap();
+    /// # let _guard = rt.enter();
     ///
-    /// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap();
+    /// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap_or_else(|_| "127.0.0.1:3000".to_string());
     /// # let client = Client::new(&ClientPolicy::default(), &hosts).unwrap();
     /// let key = as_key!("test", "test", "mykey");
     /// match client.get(&ReadPolicy::default(), &key, Bins::None) {
@@ -156,7 +162,7 @@ impl Client {
     ///             Some(duration) => println!("ttl: {} secs", duration.as_secs()),
     ///         }
     ///     },
-    ///     Err(Error::ServerError(ResultCode::KeyNotFoundError))
+    ///     Err(Error::ServerError(ResultCode::KeyNotFoundError, _, _))
     ///         => println!("No such record: {}", key),
     ///     Err(err)
     ///         => println!("Error fetching record: {}", err),
@@ -182,18 +188,21 @@ impl Client {
     ///
     /// Fetch multiple records in a single client request
     ///
-    /// ```rust,edition2018
-    /// # use aerospike::*;
+    /// ```rust,edition2021
+    /// # use aerospike_sync::*;
+    /// # let rt = tokio::runtime::Runtime::new().unwrap();
+    /// # let _guard = rt.enter();
     ///
-    /// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap();
+    /// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap_or_else(|_| "127.0.0.1:3000".to_string());
     /// # let client = Client::new(&ClientPolicy::default(), &hosts).unwrap();
     /// let bins = Bins::from(["name", "age"]);
-    /// let mut batch_reads = vec![];
+    /// let bpr = BatchReadPolicy::default();
+    /// let mut batch_ops = vec![];
     /// for i in 0..10 {
     ///   let key = as_key!("test", "test", i);
-    ///   batch_reads.push(BatchRead::new(key, bins.clone()));
+    ///   batch_ops.push(BatchOperation::read(&bpr, key, bins.clone()));
     /// }
-    /// match client.batch(&BatchPolicy::default(), batch_reads) {
+    /// match client.batch(&BatchPolicy::default(), &batch_ops) {
     ///     Ok(results) => {
     ///       for result in results {
     ///         match result.record {
@@ -221,10 +230,12 @@ impl Client {
     ///
     /// Write a record with a single integer bin.
     ///
-    /// ```rust,edition2018
-    /// # use aerospike::*;
+    /// ```rust,edition2021
+    /// # use aerospike_sync::*;
+    /// # let rt = tokio::runtime::Runtime::new().unwrap();
+    /// # let _guard = rt.enter();
     ///
-    /// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap();
+    /// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap_or_else(|_| "127.0.0.1:3000".to_string());
     /// # let client = Client::new(&ClientPolicy::default(), &hosts).unwrap();
     /// let key = as_key!("test", "test", "mykey");
     /// let bin = as_bin!("i", 42);
@@ -236,10 +247,12 @@ impl Client {
     ///
     /// Write a record with an expiration of 10 seconds.
     ///
-    /// ```rust,edition2018
-    /// # use aerospike::*;
+    /// ```rust,edition2021
+    /// # use aerospike_sync::*;
+    /// # let rt = tokio::runtime::Runtime::new().unwrap();
+    /// # let _guard = rt.enter();
     ///
-    /// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap();
+    /// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap_or_else(|_| "127.0.0.1:3000".to_string());
     /// # let client = Client::new(&ClientPolicy::default(), &hosts).unwrap();
     /// let key = as_key!("test", "test", "mykey");
     /// let bin = as_bin!("i", 42);
@@ -267,10 +280,12 @@ impl Client {
     ///
     /// Add two integer values to two existing bin values.
     ///
-    /// ```rust,edition2018
-    /// # use aerospike::*;
+    /// ```rust,edition2021
+    /// # use aerospike_sync::*;
+    /// # let rt = tokio::runtime::Runtime::new().unwrap();
+    /// # let _guard = rt.enter();
     ///
-    /// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap();
+    /// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap_or_else(|_| "127.0.0.1:3000".to_string());
     /// # let client = Client::new(&ClientPolicy::default(), &hosts).unwrap();
     /// let key = as_key!("test", "test", "mykey");
     /// let bina = as_bin!("a", 1);
@@ -321,10 +336,12 @@ impl Client {
     ///
     /// Delete a record.
     ///
-    /// ```rust,edition2018
-    /// # use aerospike::*;
+    /// ```rust,edition2021
+    /// # use aerospike_sync::*;
+    /// # let rt = tokio::runtime::Runtime::new().unwrap();
+    /// # let _guard = rt.enter();
     ///
-    /// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap();
+    /// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap_or_else(|_| "127.0.0.1:3000".to_string());
     /// # let client = Client::new(&ClientPolicy::default(), &hosts).unwrap();
     /// let key = as_key!("test", "test", "mykey");
     /// match client.delete(&WritePolicy::default(), &key) {
@@ -344,10 +361,12 @@ impl Client {
     ///
     /// Reset a record's time to expiration to the default ttl for the namespace.
     ///
-    /// ```rust,edition2018
-    /// # use aerospike::*;
+    /// ```rust,edition2021
+    /// # use aerospike_sync::*;
+    /// # let rt = tokio::runtime::Runtime::new().unwrap();
+    /// # let _guard = rt.enter();
     ///
-    /// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap();
+    /// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap_or_else(|_| "127.0.0.1:3000".to_string());
     /// # let client = Client::new(&ClientPolicy::default(), &hosts).unwrap();
     /// let key = as_key!("test", "test", "mykey");
     /// let mut policy = WritePolicy::default();
@@ -377,10 +396,12 @@ impl Client {
     /// Add an integer value to an existing record and then read the result, all in one database
     /// call.
     ///
-    /// ```rust,edition2018
-    /// # use aerospike::*;
+    /// ```rust,edition2021
+    /// # use aerospike_sync::*;
+    /// # let rt = tokio::runtime::Runtime::new().unwrap();
+    /// # let _guard = rt.enter();
     ///
-    /// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap();
+    /// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap_or_else(|_| "127.0.0.1:3000".to_string());
     /// # let client = Client::new(&ClientPolicy::default(), &hosts).unwrap();
     /// let key = as_key!("test", "test", "mykey");
     /// let bin = as_bin!("a", 42);
@@ -408,11 +429,12 @@ impl Client {
     ///
     /// # Examples
     ///
-    /// ```rust,edition2018
-    /// # extern crate aerospike;
-    /// # use aerospike::*;
+    /// ```rust,edition2021
+    /// # use aerospike_sync::*;
+    /// # let rt = tokio::runtime::Runtime::new().unwrap();
+    /// # let _guard = rt.enter();
     ///
-    /// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap();
+    /// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap_or_else(|_| "127.0.0.1:3000".to_string());
     /// # let client = Client::new(&ClientPolicy::default(), &hosts).unwrap();
     /// let code = r#"
     /// -- Validate value before writing.
@@ -438,7 +460,7 @@ impl Client {
     /// end
     /// "#;
     ///
-    /// client.register_udf(code.as_bytes(),
+    /// client.register_udf(&AdminPolicy::default(), code.as_bytes(),
     ///                     "example.lua", UDFLang::Lua).unwrap();
     /// ```
     pub fn register_udf(
@@ -505,11 +527,12 @@ impl Client {
     ///
     /// # Examples
     ///
-    /// ```rust,edition2018
-    /// # extern crate aerospike;
-    /// # use aerospike::*;
+    /// ```rust,edition2021
+    /// # use aerospike_sync::*;
+    /// # let rt = tokio::runtime::Runtime::new().unwrap();
+    /// # let _guard = rt.enter();
     ///
-    /// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap();
+    /// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap_or_else(|_| "127.0.0.1:3000".to_string());
     /// # let client = Client::new(&ClientPolicy::default(), &hosts).unwrap();
     /// let stmt = Statement::new("test", "test", Bins::All);
     /// let pf = PartitionFilter::all();
@@ -584,16 +607,15 @@ impl Client {
     /// within set `bar` and bin `baz`:
     ///
     /// ```rust,edition2021
-    /// # extern crate aerospike;
-    /// # use aerospike::*;
+    /// # use aerospike_sync::*;
+    /// # let rt = tokio::runtime::Runtime::new().unwrap();
+    /// # let _guard = rt.enter();
     ///
-    /// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap();
+    /// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap_or_else(|_| "127.0.0.1:3000".to_string());
     /// # let client = Client::new(&ClientPolicy::default(), &hosts).unwrap();
-    /// match client.create_index("foo", "bar", "baz",
-    ///     "idx_foo_bar_baz", IndexType::Numeric, CollectionIndexType::Default, None) {
-    ///     Err(err) => println!("Failed to create index: {}", err),
-    ///     _ => {}
-    /// }
+    /// // Returns a Future; use futures::executor::block_on or similar from sync code.
+    /// let _ = client.create_index_on_bin(&AdminPolicy::default(), "foo", "bar", "baz",
+    ///     "idx_foo_bar_baz", IndexType::Numeric, CollectionIndexType::Default, None);
     /// ```
     pub async fn create_index_on_bin(
         &self,
@@ -627,17 +649,17 @@ impl Client {
     /// within set `bar` with the expression `int_bin("a") == 500`:
     ///
     /// ```rust,edition2021
-    /// # extern crate aerospike;
-    /// # use aerospike::*;
+    /// # use aerospike_sync::*;
+    /// # use aerospike_sync::expressions::{Expression, eq, int_bin, int_val};
+    /// # let rt = tokio::runtime::Runtime::new().unwrap();
+    /// # let _guard = rt.enter();
     ///
-    /// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap();
+    /// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap_or_else(|_| "127.0.0.1:3000".to_string());
     /// # let client = Client::new(&ClientPolicy::default(), &hosts).unwrap();
     /// let fe: Expression = eq(int_bin("a".to_string()), int_val(500));
-    /// match client.create_index("foo", "bar", "baz",
-    ///     "idx_foo_bar_baz", IndexType::Numeric, CollectionIndexType::Default, &fe) {
-    ///     Err(err) => println!("Failed to create index: {}", err),
-    ///     _ => {}
-    /// }
+    /// // Returns a Future; use futures::executor::block_on or similar from sync code.
+    /// let _ = client.create_index_using_expression(&AdminPolicy::default(), "foo", "bar",
+    ///     "idx_foo_bar_baz", IndexType::Numeric, CollectionIndexType::Default, &fe);
     /// ```
     pub async fn create_index_using_expression(
         &self,

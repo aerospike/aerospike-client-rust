@@ -51,3 +51,4 @@ aerospike = { path = "../" }
 aerospike-macro = {path = "../aerospike-macro"}
 lazy_static = "1.4"
 tokio = { version = "1.48.0", features = ["full"] }
+webpki-roots = "1"
