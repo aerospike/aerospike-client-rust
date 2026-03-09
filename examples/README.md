@@ -5,7 +5,8 @@ This directory includes several Rust examples that demonstrate how to use the Ae
 ## Available Examples
 
 * `batch_operations`
-* `crud`
+* `crud` — async client
+* `crud_sync` — sync (blocking) client; see [How to run sync example](#sync-example-crud_sync) below
 * `query`
 * `timeout_configuration`
 
@@ -40,6 +41,14 @@ cargo run --example batch_operations
 cargo run --example crud
 cargo run --example query
 cargo run --example timeout_configuration
+```
+
+### Sync example (`crud_sync`)
+
+The `crud_sync` example uses the blocking client and requires the `sync` feature:
+
+```bash
+cargo run --example crud_sync --no-default-features --features "rt-tokio,sync"
 ```
 
 Cargo will compile and run the selected example binary.

@@ -11,6 +11,7 @@ homepage.workspace = true
 repository.workspace = true
 documentation.workspace = true
 readme.workspace = true
+rust-version.workspace = true
 
 exclude = [
     ".travis.yml",
@@ -21,6 +22,7 @@ exclude = [
 [workspace.package]
 version = "2.0.0-alpha.10"
 edition = "2018"
+rust-version = "1.87"
 authors = ["Khosrow Afroozeh <khosrow@aerospike.com>", "Jan Hecking <jhecking@aerospike.com>"]
 license = "Apache-2.0"
 description = "Aerospike Client for Rust"
@@ -74,3 +76,7 @@ tokio-rustls = {version = "0.26.0"}
 rustls = {version = "0.23.31"}
 webpki-roots = "1"
 #console-subscriber = "0.1.5"
+
+[[example]]
+name = "crud_sync"
+required-features = ["sync", "rt-tokio"]

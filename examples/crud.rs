@@ -11,7 +11,7 @@ use aerospike::{Bins, Client, ClientPolicy, ReadPolicy, WritePolicy};
 #[tokio::main]
 async fn main() {
     let cpolicy = ClientPolicy::default();
-    let hosts = env::var("AEROSPIKE_HOSTS").unwrap_or(String::from("127.0.0.1:3100"));
+    let hosts = env::var("AEROSPIKE_HOSTS").unwrap_or(String::from("127.0.0.1:3000"));
     let client = Client::new(&cpolicy, &hosts)
         .await
         .expect("Failed to connect to cluster");

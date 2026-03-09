@@ -60,33 +60,43 @@ other officially supported clients. Features on the roadmap include:
 Prerequisites:
 
 - [Aerospike Database](https://aerospike.com/download/server/community/) 6.4 or later.
-- [Rust](https://www.rust-lang.org/) version 1.75 or later 
+- [Rust](https://www.rust-lang.org/) version 1.87 or later 
 - [Tokio runtime](https://tokio.rs/) or [async-std](https://async.rs/)
 
 ## Installation
 
-1. Build from source code:
+### Build from source
+
+1. Clone the repository and change into the project directory:
 
    ```
    git clone --single-branch --branch v2 https://github.com/aerospike/aerospike-client-rust.git
    cd aerospike-client-rust
    ```
 
-1. Add the following to your `cargo.toml` file:
+2. Build the project:
 
    ```
-   [dependencies]  
+   cargo build
+   ```
+
+### Use as a dependency
+
+To use the client in your own project, add one of the following to your `Cargo.toml`:
+
+   ```
+   [dependencies]
    # Async API with tokio Runtime
    aerospike = { version = "<version>", features = ["rt-tokio"]}
-   
+
    # OR
 
    # Async API with async-std runtime
    aerospike = { version = "<version>", features = ["rt-async-std"]}
-   
+
    # The library still supports the old sync interface, but it will be deprecated in the future.
    # This is only for compatibility reasons and will be removed in a later stage.
-   
+
    # Sync API with tokio
    aerospike = { version = "<version>", default-features = false, features = ["rt-tokio", "sync"]}
 
@@ -96,11 +106,7 @@ Prerequisites:
    aerospike = { version = "<version>", default-features = false, features = ["rt-async-std", "sync"]}
    ```
 
-1. Run the following command:
-
-   ```
-   cargo build
-   ```
+   Then run `cargo build` in your project.
 
 ## Core feature examples
 
@@ -109,19 +115,72 @@ features.
 
 ### Client connection
 
+The examples below use the **async** client (default). For a blocking API with no `.await`, see [Sync client](#sync-client) below.
+
 #### Standard connection
 
 Connect to an Aerospike cluster without TLS:
 
 ```rust
+use std::env;
 use aerospike::{Client, ClientPolicy};
 
 let policy = ClientPolicy::default();
 let hosts = env::var("AEROSPIKE_HOSTS")
-    .unwrap_or(String::from("127.0.0.1:3000"));
-let client = Client::new(&policy, &hosts).await
+    .unwrap_or_else(|_| "127.0.0.1:3000".to_string());
+let client = Client::new(&policy, &hosts)
+    .await
     .expect("Failed to connect to cluster");
 ```
+
+#### Sync client
+
+The `sync` feature exposes blocking APIs — no `async`/`.await` at call sites. However, the client still uses Tokio 
+internally for cluster management, so **a Tokio runtime must be running** for the duration of your program.
+
+**Cargo.toml**
+```toml
+[dependencies]
+aerospike = { version = "<version>", default-features = false, features = ["rt-tokio", "sync"] }
+tokio = { version = "1", features = ["full"] }  # required even for sync usage
+```
+
+> Swap `rt-tokio` for `rt-async-std` if your project uses async-std instead.
+
+**Example:**
+```rust
+#[macro_use]
+extern crate aerospike;
+
+use std::env;
+use aerospike::{Bins, Client, ClientPolicy, ReadPolicy, WritePolicy};
+
+// #[tokio::main] is required — the sync client uses Tokio internally
+// for cluster tending, even though your code has no .await calls.
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let policy = ClientPolicy::default();
+    let hosts = env::var("AEROSPIKE_HOSTS")
+        .unwrap_or_else(|_| "127.0.0.1:3000".to_string());
+
+    let client = Client::new(&policy, &hosts)?;
+
+    let key = as_key!("test", "myset", "sync-key");
+    let bins = [as_bin!("name", "Alice"), as_bin!("count", 42)];
+    client.put(&WritePolicy::default(), &key, &bins)?;
+
+    let record = client.get(&ReadPolicy::default(), &key, Bins::All)?;
+    println!("Record: {:?}", record.bins);
+
+    client.close()?;
+    Ok(())
+}
+```
+
+> **Why does sync need a Tokio runtime?** The `sync` feature wraps the async client and provides blocking call 
+> sites — it does not replace the underlying async runtime. Cluster tending (node discovery, connection pooling) runs 
+> as a background Tokio task regardless of which API surface you use. Calling `Client::new` outside of a runtime context
+> will panic with `there is no reactor running`.
 
 #### TLS connection without client authentication
 
