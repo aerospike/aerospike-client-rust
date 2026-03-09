@@ -81,7 +81,7 @@ async fn select_by_path_price_filter() {
         string_val("title".to_string()),
     ));
 
-    let op = select_by_path("testbin", SelectFlag::VALUE, &[ctx1, ctx2, ctx3]).unwrap();
+    let op = select_by_path("testbin", SelectFlag::VALUE, &[ctx1, ctx2, ctx3]);
     let rec = client.operate(&wpolicy, &key, &[op]).await.unwrap();
 
     let result = rec.bins.get("testbin").unwrap();
@@ -139,7 +139,7 @@ async fn select_by_path_empty_result() {
         float_val(10.0),
     ));
 
-    let op = select_by_path("testbin", SelectFlag::VALUE, &[ctx1, ctx2]).unwrap();
+    let op = select_by_path("testbin", SelectFlag::VALUE, &[ctx1, ctx2]);
     let rec = client.operate(&wpolicy, &key, &[op]).await.unwrap();
 
     if let Some(Value::List(items)) = rec.bins.get("testbin") {
@@ -172,7 +172,7 @@ async fn select_by_path_ctx_all_children() {
     let ctx1 = ctx_map_key(Value::from("numbers"));
     let ctx2 = ctx_all_children();
 
-    let op = select_by_path("testbin", SelectFlag::VALUE, &[ctx1, ctx2]).unwrap();
+    let op = select_by_path("testbin", SelectFlag::VALUE, &[ctx1, ctx2]);
     let rec = client.operate(&wpolicy, &key, &[op]).await.unwrap();
 
     if let Some(Value::List(items)) = rec.bins.get("testbin") {
@@ -206,7 +206,7 @@ async fn select_by_path_index_loop_var() {
     let ctx1 = ctx_map_key(Value::from("numbers"));
     let ctx2 = ctx_all_children_with_filter(lt(exp_int_loop_var(LoopVarPart::INDEX), int_val(3)));
 
-    let op = select_by_path("testbin", SelectFlag::VALUE, &[ctx1, ctx2]).unwrap();
+    let op = select_by_path("testbin", SelectFlag::VALUE, &[ctx1, ctx2]);
     let rec = client.operate(&wpolicy, &key, &[op]).await.unwrap();
 
     if let Some(Value::List(items)) = rec.bins.get("testbin") {
@@ -275,7 +275,7 @@ async fn select_by_path_complex_nested() {
         string_val("title".to_string()),
     ));
 
-    let op = select_by_path("testbin", SelectFlag::VALUE, &[ctx1, ctx2, ctx3, ctx4]).unwrap();
+    let op = select_by_path("testbin", SelectFlag::VALUE, &[ctx1, ctx2, ctx3, ctx4]);
     let rec = client.operate(&wpolicy, &key, &[op]).await.unwrap();
 
     if let Some(Value::List(items)) = rec.bins.get("testbin") {
@@ -334,8 +334,7 @@ async fn modify_by_path_multiply_prices() {
         ModifyFlag::DEFAULT,
         modify_exp,
         &[ctx1, ctx2, ctx3],
-    )
-    .unwrap();
+    );
     client.operate(&wpolicy, &key, &[op]).await.unwrap();
 
     let rec = client.get(&rpolicy, &key, Bins::All).await.unwrap();
@@ -363,7 +362,7 @@ async fn modify_by_path_multiply_prices() {
     }
 }
 
-// ===== exp_select_by_path tests =====
+// ===== exp_select_by_path t=
 
 #[aerospike_macro::test]
 async fn exp_select_by_path_filter() {
@@ -401,7 +400,7 @@ async fn exp_select_by_path_filter() {
     ));
 
     let bin_exp = aerospike::expressions::map_bin("testbin".to_string());
-    let exp = exp_select_by_path(ExpType::LIST, SelectFlag::VALUE, bin_exp, &[ctx1, ctx2]).unwrap();
+    let exp = exp_select_by_path(ExpType::LIST, SelectFlag::VALUE, bin_exp, &[ctx1, ctx2]);
 
     let ops = &[aerospike::operations::exp::read_exp(
         "result",
@@ -451,8 +450,7 @@ async fn exp_modify_by_path_multiply() {
         bin_exp,
         modify_exp,
         &[ctx1, ctx2],
-    )
-    .unwrap();
+    );
 
     let ops = &[aerospike::operations::exp::write_exp(
         "testbin",
@@ -509,7 +507,7 @@ async fn loop_var_int_value() {
     let ctx1 = ctx_map_key(Value::from("items"));
     let ctx2 = ctx_all_children_with_filter(gt(exp_int_loop_var(LoopVarPart::VALUE), int_val(75)));
 
-    let op = select_by_path("testbin", SelectFlag::VALUE, &[ctx1, ctx2]).unwrap();
+    let op = select_by_path("testbin", SelectFlag::VALUE, &[ctx1, ctx2]);
     let rec = client.operate(&wpolicy, &key, &[op]).await.unwrap();
 
     if let Some(Value::List(items)) = rec.bins.get("testbin") {
@@ -550,7 +548,7 @@ async fn loop_var_string_map_key() {
         string_val("alpha".to_string()),
     ));
 
-    let op = select_by_path("testbin", SelectFlag::VALUE, &[ctx1, ctx2]).unwrap();
+    let op = select_by_path("testbin", SelectFlag::VALUE, &[ctx1, ctx2]);
     let rec = client.operate(&wpolicy, &key, &[op]).await.unwrap();
 
     if let Some(Value::List(items)) = rec.bins.get("testbin") {
@@ -591,8 +589,7 @@ async fn remove_all_items_from_list() {
         ModifyFlag::DEFAULT,
         exp_remove_result(),
         &[ctx1, ctx2],
-    )
-    .unwrap();
+    );
     client.operate(&wpolicy, &key, &[op]).await.unwrap();
 
     let rec = client.get(&rpolicy, &key, Bins::All).await.unwrap();
@@ -636,8 +633,7 @@ async fn remove_filtered_items_from_list() {
         ModifyFlag::DEFAULT,
         exp_remove_result(),
         &[ctx1, ctx2],
-    )
-    .unwrap();
+    );
     client.operate(&wpolicy, &key, &[op]).await.unwrap();
 
     let rec = client.get(&rpolicy, &key, Bins::All).await.unwrap();
@@ -684,8 +680,7 @@ async fn remove_all_items_from_map() {
         ModifyFlag::DEFAULT,
         exp_remove_result(),
         &[ctx1, ctx2],
-    )
-    .unwrap();
+    );
     client.operate(&wpolicy, &key, &[op]).await.unwrap();
 
     let rec = client.get(&rpolicy, &key, Bins::All).await.unwrap();
@@ -730,8 +725,7 @@ async fn remove_filtered_map_entries() {
         ModifyFlag::DEFAULT,
         exp_remove_result(),
         &[ctx1, ctx2],
-    )
-    .unwrap();
+    );
     client.operate(&wpolicy, &key, &[op]).await.unwrap();
 
     let rec = client.get(&rpolicy, &key, Bins::All).await.unwrap();
@@ -796,8 +790,7 @@ async fn remove_books_with_low_prices() {
         ModifyFlag::DEFAULT,
         exp_remove_result(),
         &[ctx1, ctx2],
-    )
-    .unwrap();
+    );
     client.operate(&wpolicy, &key, &[op]).await.unwrap();
 
     let rec = client.get(&rpolicy, &key, Bins::All).await.unwrap();
@@ -854,8 +847,7 @@ async fn remove_items_by_index_filter() {
         ModifyFlag::DEFAULT,
         exp_remove_result(),
         &[ctx1, ctx2],
-    )
-    .unwrap();
+    );
     client.operate(&wpolicy, &key, &[op]).await.unwrap();
 
     let rec = client.get(&rpolicy, &key, Bins::All).await.unwrap();
@@ -911,8 +903,7 @@ async fn remove_map_entries_by_key_filter() {
         ModifyFlag::DEFAULT,
         exp_remove_result(),
         &[ctx1, ctx2],
-    )
-    .unwrap();
+    );
     client.operate(&wpolicy, &key, &[op]).await.unwrap();
 
     let rec = client.get(&rpolicy, &key, Bins::All).await.unwrap();
@@ -979,8 +970,7 @@ async fn remove_nested_items_complex_path() {
         ModifyFlag::DEFAULT,
         exp_remove_result(),
         &[ctx1, ctx2, ctx3],
-    )
-    .unwrap();
+    );
     client.operate(&wpolicy, &key, &[op]).await.unwrap();
 
     let rec = client.get(&rpolicy, &key, Bins::All).await.unwrap();

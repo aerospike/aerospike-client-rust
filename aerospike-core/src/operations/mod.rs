@@ -30,8 +30,10 @@ pub use self::lists::{ListOrderType, ListPolicy, ListReturnType, ListSortFlags, 
 pub use self::maps::{MapOrder, MapPolicy, MapReturnType, MapWriteMode};
 pub use self::scalar::*;
 
+use self::path::{ModifyFlag, SelectFlag};
 use crate::commands::buffer::Buffer;
 use crate::commands::ParticleType;
+use crate::expressions::{pack_path_modify_exp, pack_path_select, Expression};
 pub use crate::operations::cdt_context::CdtContext;
 use crate::operations::exp::ExpOperation;
 use crate::Result;
@@ -63,6 +65,8 @@ pub(crate) enum OperationData {
     CdtListOp(CdtOperation),
     CdtMapOp(CdtOperation),
     CdtBitOp(CdtOperation),
+    CdtSelectByPath(Vec<CdtContext>, SelectFlag),
+    CdtModifyByPath(Vec<CdtContext>, ModifyFlag, Expression),
     HLLOp(CdtOperation),
     EXPOp(ExpOperation),
 }
@@ -118,6 +122,10 @@ impl Operation {
             OperationData::None => 0,
             OperationData::Value(value) => value.estimate_size()?,
             OperationData::EXPOp(ref exp_op) => exp_op.estimate_size()?,
+            OperationData::CdtSelectByPath(ctx, flag) => pack_path_select(&mut None, ctx, flag.0)?,
+            OperationData::CdtModifyByPath(ctx, flag, exp) => {
+                pack_path_modify_exp(&mut None, ctx, flag.0, exp)?
+            }
             OperationData::CdtListOp(ref cdt_op)
             | OperationData::CdtMapOp(ref cdt_op)
             | OperationData::CdtBitOp(ref cdt_op)
@@ -155,6 +163,14 @@ impl Operation {
             OperationData::EXPOp(ref exp) => {
                 size += self.write_op_header_to(buffer, ParticleType::BLOB as u8);
                 size += exp.write_to(buffer)?;
+            }
+            OperationData::CdtSelectByPath(ctx, flag) => {
+                size += self.write_op_header_to(buffer, ParticleType::BLOB as u8);
+                size += pack_path_select(&mut Some(buffer), ctx, flag.0)?
+            }
+            OperationData::CdtModifyByPath(ctx, flag, exp) => {
+                size += self.write_op_header_to(buffer, ParticleType::BLOB as u8);
+                size += pack_path_modify_exp(&mut Some(buffer), ctx, flag.0, exp)?
             }
         }
 

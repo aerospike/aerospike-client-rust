@@ -1708,28 +1708,6 @@ pub(crate) fn pack_path_select(
     Ok(size)
 }
 
-/// Pack and return bytes for a CDT path select expression.
-pub(crate) fn pack_path_select_bytes(ctx: &[CdtContext], flag: i64) -> Result<Vec<u8>> {
-    let size = pack_path_select(&mut None, ctx, flag)?;
-    let mut buf = Buffer::new(0);
-    buf.resize_buffer(size)?;
-    pack_path_select(&mut Some(&mut buf), ctx, flag)?;
-    Ok(buf.data_buffer[..size].to_vec())
-}
-
-/// Pack and return bytes for a CDT path modify expression.
-pub(crate) fn pack_path_modify_bytes(
-    ctx: &[CdtContext],
-    flag: i64,
-    exp: &Expression,
-) -> Result<Vec<u8>> {
-    let size = pack_path_modify_exp(&mut None, ctx, flag, exp)?;
-    let mut buf = Buffer::new(0);
-    buf.resize_buffer(size)?;
-    pack_path_modify_exp(&mut Some(&mut buf), ctx, flag, exp)?;
-    Ok(buf.data_buffer[..size].to_vec())
-}
-
 /// Pack CDT path modify content: array[4]: [0xfe, flat_ctx, flag|0x04, exp]
 /// The 0x04 bit (EXP_PATH_MODIFY_APPLY) is always OR'd into the flag.
 /// The expression is packed directly (no binary wrapper).
@@ -1899,8 +1877,8 @@ pub fn exp_select_by_path(
     flag: crate::operations::path::SelectFlag,
     bin_exp: Expression,
     ctx: &[CdtContext],
-) -> Result<Expression> {
-    Ok(Expression {
+) -> Expression {
+    Expression {
         cmd: Some(ExpOp::Call),
         val: None,
         bin: Some(Box::new(bin_exp)),
@@ -1911,7 +1889,7 @@ pub fn exp_select_by_path(
             flag,
             ctx.to_vec(),
         )]),
-    })
+    }
 }
 
 /// Create an expression that modifies a CDT bin using a path context.
@@ -1926,8 +1904,8 @@ pub fn exp_modify_by_path(
     bin_exp: Expression,
     modify_exp: Expression,
     ctx: &[CdtContext],
-) -> Result<Expression> {
-    Ok(Expression {
+) -> Expression {
+    Expression {
         cmd: Some(ExpOp::Call),
         val: None,
         bin: None, // bin_exp is stored in CdtModifyPathArg and written from there
@@ -1940,5 +1918,5 @@ pub fn exp_modify_by_path(
             modify_exp,
             ctx.to_vec(),
         )]),
-    })
+    }
 }

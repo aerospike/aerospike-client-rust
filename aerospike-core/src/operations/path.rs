@@ -15,10 +15,9 @@
 //! CDT Path Expression operations.
 //! Requires Aerospike Server version >= 8.1.1.
 
-use crate::expressions::{pack_path_modify_bytes, pack_path_select_bytes, Expression};
-use crate::operations::cdt_context::CdtContext;
+use crate::expressions::Expression;
+use crate::operations::cdt_context::{CdtContext, DEFAULT_CTX};
 use crate::operations::{Operation, OperationBin, OperationData, OperationType};
-use crate::{Result, Value};
 
 /// Flags for `select_by_path` operations.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -58,14 +57,14 @@ impl ModifyFlag {
 /// # Errors
 ///
 /// Returns an error if the path bytes cannot be packed.
-pub fn select_by_path(bin: &str, flag: SelectFlag, ctx: &[CdtContext]) -> Result<Operation> {
-    let bytes = pack_path_select_bytes(ctx, flag.0)?;
-    Ok(Operation {
+pub fn select_by_path(bin: &str, flag: SelectFlag, ctx: &[CdtContext]) -> Operation {
+    // let bytes = pack_path_select_bytes(ctx, flag.0)?;
+    Operation {
         op: OperationType::CdtRead,
-        ctx: vec![],
+        ctx: DEFAULT_CTX,
         bin: OperationBin::Name(bin.into()),
-        data: OperationData::Value(Value::Blob(bytes)),
-    })
+        data: OperationData::CdtSelectByPath(ctx.to_vec(), flag),
+    }
 }
 
 /// Creates a CDT operate write operation using a CDT path expression context.
@@ -79,12 +78,12 @@ pub fn modify_by_path(
     flag: ModifyFlag,
     exp: Expression,
     ctx: &[CdtContext],
-) -> Result<Operation> {
-    let bytes = pack_path_modify_bytes(ctx, flag.0, &exp)?;
-    Ok(Operation {
+) -> Operation {
+    // let bytes = pack_path_modify_bytes(ctx, flag.0, &exp)?;
+    Operation {
         op: OperationType::CdtWrite,
-        ctx: vec![],
+        ctx: DEFAULT_CTX,
         bin: OperationBin::Name(bin.into()),
-        data: OperationData::Value(Value::Blob(bytes)),
-    })
+        data: OperationData::CdtModifyByPath(ctx.to_vec(), flag, exp),
+    }
 }
