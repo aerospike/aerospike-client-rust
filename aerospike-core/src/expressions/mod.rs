@@ -106,6 +106,8 @@ pub(crate) enum ExpOp {
     Key = 80,
     Bin = 81,
     BinType = 82,
+    ResultRemove = 100,
+    VarBuiltIn = 122,
     Cond = 123,
     Var = 124,
     Let = 125,
@@ -120,6 +122,27 @@ pub(crate) enum ExpressionArgument {
     Value(Value),
     FilterExpression(Expression),
     Context(Vec<CdtContext>),
+    CdtSelectPathArg(crate::operations::path::SelectFlag, Vec<CdtContext>),
+    CdtModifyPathArg(
+        crate::operations::path::ModifyFlag,
+        Expression,
+        Expression,
+        Vec<CdtContext>,
+    ),
+}
+
+/// Identifies which element of a loop variable to use in path expressions.
+/// Requires Aerospike Server version >= 8.1.1.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LoopVarPart(pub i64);
+
+impl LoopVarPart {
+    /// Map key part of the loop variable.
+    pub const MAP_KEY: LoopVarPart = LoopVarPart(0);
+    /// Value part of the loop variable (list element or map value).
+    pub const VALUE: LoopVarPart = LoopVarPart(1);
+    /// Index part of the loop variable (list index).
+    pub const INDEX: LoopVarPart = LoopVarPart(2);
 }
 
 /// Filter expression, which can be applied to most commands, to control which records are
@@ -217,6 +240,9 @@ impl Expression {
                 // The Module (List/Map or Bitwise)
                 size += pack_integer(buf, self.flags.unwrap());
                 // Encoding the Arguments
+                // bin_from_arg is set when CdtModifyPathArg is encountered; its bin_exp
+                // is written as the Call's bin instead of self.bin (which is None for that case).
+                let mut bin_from_arg: Option<&Expression> = None;
                 if let Some(args) = &self.arguments {
                     let mut len = 0;
                     for arg in args {
@@ -224,6 +250,9 @@ impl Expression {
                         match arg {
                             ExpressionArgument::Value(_)
                             | ExpressionArgument::FilterExpression(_) => len += 1,
+                            // Path args are written as direct elements: [0xfe, flat_ctx, flag, ...]
+                            ExpressionArgument::CdtSelectPathArg(_, _) => len += 3,
+                            ExpressionArgument::CdtModifyPathArg(_, _, _, _) => len += 4,
                             ExpressionArgument::Context(ctx) => {
                                 if !ctx.is_empty() {
                                     size += pack_array_begin(buf, 3);
@@ -232,7 +261,11 @@ impl Expression {
 
                                     for c in ctx {
                                         size += pack_integer(buf, i64::from(c.id));
-                                        size += pack_value(buf, &c.value)?;
+                                        if let Some(ref exp) = c.expression {
+                                            size += exp.pack_binary(buf)?;
+                                        } else {
+                                            size += pack_value(buf, &c.value)?;
+                                        }
                                     }
                                 }
                             }
@@ -248,6 +281,25 @@ impl Expression {
                             ExpressionArgument::FilterExpression(cmd) => {
                                 size += cmd.pack(buf)?;
                             }
+                            ExpressionArgument::CdtSelectPathArg(flag, ctx) => {
+                                // Write [0xfe, flat_ctx, flag] as 3 direct args
+                                size += pack_integer(buf, 0xfe);
+                                size += pack_flat_ctx(buf, ctx)?;
+                                size += pack_integer(buf, flag.0);
+                            }
+                            ExpressionArgument::CdtModifyPathArg(
+                                flag,
+                                bin_exp,
+                                modify_exp,
+                                ctx,
+                            ) => {
+                                // Write [0xfe, flat_ctx, flag|0x04, modify_exp] as 4 direct args
+                                size += pack_integer(buf, 0xfe);
+                                size += pack_flat_ctx(buf, ctx)?;
+                                size += pack_integer(buf, flag.0 | 0x04);
+                                size += modify_exp.pack(buf)?;
+                                bin_from_arg = Some(bin_exp);
+                            }
                             ExpressionArgument::Context(_) => {}
                         }
                     }
@@ -255,8 +307,19 @@ impl Expression {
                     // No Arguments
                     size += pack_value(buf, &self.val.clone().unwrap())?;
                 }
-                // Write the Bin
-                size += self.bin.clone().unwrap().pack(buf)?;
+                // Write the Bin (5th element of the Call array)
+                if let Some(bin) = bin_from_arg {
+                    size += bin.pack(buf)?;
+                } else {
+                    size += self.bin.clone().unwrap().pack(buf)?;
+                }
+            }
+            ExpOp::VarBuiltIn => {
+                // Loop variable built-in: array[3]: [122, ExpType, LoopVarPart]
+                size += pack_array_begin(buf, 3);
+                size += pack_integer(buf, cmd as i64);
+                size += pack_integer(buf, self.flags.unwrap()); // ExpType value
+                size += pack_value(buf, self.val.as_ref().unwrap())?; // LoopVarPart
             }
             ExpOp::Bin => {
                 // Bin Encoder
@@ -322,6 +385,36 @@ impl Expression {
         }
 
         Ok(size)
+    }
+
+    /// Packs this expression wrapped in a msgpack binary value (bin8/bin16/bin32 format).
+    /// Used when an expression context needs to be encoded as binary bytes within CDT operations.
+    /// Calls `size()` to determine the expression size without pre-allocating, then writes
+    /// the binary header and the expression bytes lazily.
+    #[must_use]
+    pub(crate) fn pack_binary(&self, buf: &mut Option<&mut Buffer>) -> Result<usize> {
+        let exp_size = self.size()?;
+        let header_size = if exp_size < 256 {
+            if let Some(ref mut b) = *buf {
+                b.write_u8(0xc4);
+                b.write_u8(exp_size as u8);
+            }
+            2
+        } else if exp_size < 65536 {
+            if let Some(ref mut b) = *buf {
+                b.write_u8(0xc5);
+                b.write_u16(exp_size as u16);
+            }
+            3
+        } else {
+            if let Some(ref mut b) = *buf {
+                b.write_u8(0xc6);
+                b.write_u32(exp_size as u32);
+            }
+            5
+        };
+        self.pack(buf)?;
+        Ok(header_size + exp_size)
     }
 }
 
@@ -1584,5 +1677,250 @@ pub const fn unknown() -> Expression {
         module: None,
         exps: None,
         arguments: None,
+    }
+}
+
+// ===== Path Expression helpers =====
+
+/// Pack CDT context in "flat" format used by path-based operations.
+/// Expression values are written directly (no binary wrapper).
+pub(crate) fn pack_flat_ctx(buf: &mut Option<&mut Buffer>, ctx: &[CdtContext]) -> Result<usize> {
+    let mut size = 0;
+    size += pack_array_begin(buf, ctx.len() * 2);
+    for c in ctx {
+        size += pack_integer(buf, i64::from(c.id));
+        if let Some(ref exp) = c.expression {
+            size += exp.pack(buf)?;
+        } else {
+            size += pack_value(buf, &c.value)?;
+        }
+    }
+    Ok(size)
+}
+
+/// Pack the CDT path select bytes: array[3]: [0xfe, flat_ctx, flag]
+pub(crate) fn pack_path_select(
+    buf: &mut Option<&mut Buffer>,
+    ctx: &[CdtContext],
+    flag: i64,
+) -> Result<usize> {
+    let mut size = 0;
+    size += pack_array_begin(buf, 3);
+    size += pack_integer(buf, 0xfe);
+    size += pack_flat_ctx(buf, ctx)?;
+    size += pack_integer(buf, flag);
+    Ok(size)
+}
+
+/// Pack CDT path modify content: array[4]: [0xfe, flat_ctx, flag|0x04, exp]
+/// The 0x04 bit (EXP_PATH_MODIFY_APPLY) is always OR'd into the flag.
+/// The expression is packed directly (no binary wrapper).
+pub(crate) fn pack_path_modify_exp(
+    buf: &mut Option<&mut Buffer>,
+    ctx: &[CdtContext],
+    flag: i64,
+    exp: &Expression,
+) -> Result<usize> {
+    let mut size = 0;
+    size += pack_array_begin(buf, 4);
+    size += pack_integer(buf, 0xfe);
+    size += pack_flat_ctx(buf, ctx)?;
+    size += pack_integer(buf, flag | 0x04);
+    size += exp.pack(buf)?;
+    Ok(size)
+}
+
+// ===== Loop Variable Expressions =====
+
+/// Retrieve the boolean part of a loop variable.
+/// Requires Aerospike Server version >= 8.1.1.
+pub fn exp_bool_loop_var(part: LoopVarPart) -> Expression {
+    Expression::new(
+        Some(ExpOp::VarBuiltIn),
+        Some(Value::Int(part.0)),
+        None,
+        Some(ExpType::BOOL as i64),
+        None,
+        None,
+    )
+}
+
+/// Retrieve the integer part of a loop variable.
+/// Requires Aerospike Server version >= 8.1.1.
+pub fn exp_int_loop_var(part: LoopVarPart) -> Expression {
+    Expression::new(
+        Some(ExpOp::VarBuiltIn),
+        Some(Value::Int(part.0)),
+        None,
+        Some(ExpType::INT as i64),
+        None,
+        None,
+    )
+}
+
+/// Retrieve the float part of a loop variable.
+/// Requires Aerospike Server version >= 8.1.1.
+pub fn exp_float_loop_var(part: LoopVarPart) -> Expression {
+    Expression::new(
+        Some(ExpOp::VarBuiltIn),
+        Some(Value::Int(part.0)),
+        None,
+        Some(ExpType::FLOAT as i64),
+        None,
+        None,
+    )
+}
+
+/// Retrieve the string part of a loop variable.
+/// Requires Aerospike Server version >= 8.1.1.
+pub fn exp_string_loop_var(part: LoopVarPart) -> Expression {
+    Expression::new(
+        Some(ExpOp::VarBuiltIn),
+        Some(Value::Int(part.0)),
+        None,
+        Some(ExpType::STRING as i64),
+        None,
+        None,
+    )
+}
+
+/// Retrieve the list part of a loop variable.
+/// Requires Aerospike Server version >= 8.1.1.
+pub fn exp_list_loop_var(part: LoopVarPart) -> Expression {
+    Expression::new(
+        Some(ExpOp::VarBuiltIn),
+        Some(Value::Int(part.0)),
+        None,
+        Some(ExpType::LIST as i64),
+        None,
+        None,
+    )
+}
+
+/// Retrieve the map part of a loop variable.
+/// Requires Aerospike Server version >= 8.1.1.
+pub fn exp_map_loop_var(part: LoopVarPart) -> Expression {
+    Expression::new(
+        Some(ExpOp::VarBuiltIn),
+        Some(Value::Int(part.0)),
+        None,
+        Some(ExpType::MAP as i64),
+        None,
+        None,
+    )
+}
+
+/// Retrieve the blob part of a loop variable.
+/// Requires Aerospike Server version >= 8.1.1.
+pub fn exp_blob_loop_var(part: LoopVarPart) -> Expression {
+    Expression::new(
+        Some(ExpOp::VarBuiltIn),
+        Some(Value::Int(part.0)),
+        None,
+        Some(ExpType::BLOB as i64),
+        None,
+        None,
+    )
+}
+
+/// Retrieve the hll part of a loop variable.
+/// Requires Aerospike Server version >= 8.1.1.
+pub fn exp_hll_loop_var(part: LoopVarPart) -> Expression {
+    Expression::new(
+        Some(ExpOp::VarBuiltIn),
+        Some(Value::Int(part.0)),
+        None,
+        Some(ExpType::HLL as i64),
+        None,
+        None,
+    )
+}
+
+/// Retrieve the nil part of a loop variable.
+/// Requires Aerospike Server version >= 8.1.1.
+pub fn exp_nil_loop_var(part: LoopVarPart) -> Expression {
+    Expression::new(
+        Some(ExpOp::VarBuiltIn),
+        Some(Value::Int(part.0)),
+        None,
+        Some(ExpType::NIL as i64),
+        None,
+        None,
+    )
+}
+
+/// Retrieve the GeoJSON part of a loop variable.
+/// Requires Aerospike Server version >= 8.1.1.
+pub fn exp_geo_json_loop_var(part: LoopVarPart) -> Expression {
+    Expression::new(
+        Some(ExpOp::VarBuiltIn),
+        Some(Value::Int(part.0)),
+        None,
+        Some(ExpType::GEO as i64),
+        None,
+        None,
+    )
+}
+
+/// Remove the expression result from the return value.
+/// Requires Aerospike Server version >= 8.1.1.
+pub fn exp_remove_result() -> Expression {
+    Expression::new(Some(ExpOp::ResultRemove), None, None, None, None, None)
+}
+
+// ===== Path-based Expression Operations =====
+
+/// Create an expression that selects from a CDT bin using a path context.
+/// Requires Aerospike Server version >= 8.1.1.
+///
+/// # Errors
+///
+/// Returns an error if the path bytes cannot be packed.
+pub fn exp_select_by_path(
+    return_type: ExpType,
+    flag: crate::operations::path::SelectFlag,
+    bin_exp: Expression,
+    ctx: &[CdtContext],
+) -> Expression {
+    Expression {
+        cmd: Some(ExpOp::Call),
+        val: None,
+        bin: Some(Box::new(bin_exp)),
+        flags: Some(0),
+        module: Some(return_type),
+        exps: None,
+        arguments: Some(vec![ExpressionArgument::CdtSelectPathArg(
+            flag,
+            ctx.to_vec(),
+        )]),
+    }
+}
+
+/// Create an expression that modifies a CDT bin using a path context.
+/// Requires Aerospike Server version >= 8.1.1.
+///
+/// # Errors
+///
+/// Returns an error if the path bytes cannot be packed.
+pub fn exp_modify_by_path(
+    return_type: ExpType,
+    flag: crate::operations::path::ModifyFlag,
+    bin_exp: Expression,
+    modify_exp: Expression,
+    ctx: &[CdtContext],
+) -> Expression {
+    Expression {
+        cmd: Some(ExpOp::Call),
+        val: None,
+        bin: None, // bin_exp is stored in CdtModifyPathArg and written from there
+        flags: Some(MODIFY),
+        module: Some(return_type),
+        exps: None,
+        arguments: Some(vec![ExpressionArgument::CdtModifyPathArg(
+            flag,
+            bin_exp,
+            modify_exp,
+            ctx.to_vec(),
+        )]),
     }
 }

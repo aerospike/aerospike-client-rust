@@ -137,6 +137,14 @@ impl Error {
     pub fn wrap(self, e: Error) -> Error {
         Error::Chain(Box::new(e), Box::new(self))
     }
+
+    /// Chain `cause` as context for this error. If `cause` is `None`, returns `self` unchanged.
+    pub fn chain_cause(self, cause: Option<Error>) -> Error {
+        match cause {
+            Some(e) => Error::Chain(Box::new(self), Box::new(e)),
+            None => self,
+        }
+    }
 }
 
 pub type Result<T> = ::std::result::Result<T, Error>;

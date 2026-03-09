@@ -67,6 +67,11 @@ impl Version {
     pub fn supports_app_id(&self) -> bool {
         self >= &Version::new(8, 1, 0, 0)
     }
+
+    /// Server supports CDT path expression operations (select_by_path / modify_by_path).
+    pub fn supports_cdt_path_expressions(&self) -> bool {
+        self >= &Version::new(8, 1, 1, 0)
+    }
 }
 
 #[derive(Debug)]
