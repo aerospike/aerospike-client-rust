@@ -158,9 +158,14 @@ impl NodeValidator {
                 Ok(host) => {
                     let mut host: Vec<Host> = host
                         .into_iter()
-                        .map(|h| Host {
-                            tls_name: alias.tls_name.clone(),
-                            ..h
+                        .map(|mut h| {
+                            h.tls_name = alias.tls_name.clone();
+                            if let Some(ref ip_map) = self.client_policy.ip_map {
+                                if let Some(mapped) = ip_map.get(&h.name) {
+                                    h.name = mapped.clone();
+                                }
+                            }
+                            h
                         })
                         .collect();
                     self.services.append(&mut host);
