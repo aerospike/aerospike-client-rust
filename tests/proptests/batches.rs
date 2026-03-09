@@ -28,7 +28,7 @@ proptest_async::proptest! {
     ) {
         let client = common::singleton_client().await;
         let namespace: &str = common::namespace();
-        let set_name: &str = common::prop_setname();
+        let set_name = &format!("{}-batch-read", common::prop_setname());
 
         let write_policy = WritePolicy::default();
         let key = as_key!(namespace, set_name, i);
@@ -98,7 +98,7 @@ proptest_async::proptest! {
     ) {
         let client = common::singleton_client().await;
         let namespace: &str = common::namespace();
-        let set_name: &str = common::prop_setname();
+        let set_name = &format!("{}-batch-write", common::prop_setname());
 
         // Delete any previously existing record(s) associated with the key assigned to this test run.
         let write_policy = WritePolicy::default();
@@ -236,7 +236,7 @@ proptest_async::proptest! {
     ) {
         let client = common::singleton_client().await;
         let namespace: &str = common::namespace();
-        let set_name: &str = common::prop_setname();
+        let set_name = &format!("{}-batch-delete", common::prop_setname());
 
         let write_policy = WritePolicy::default();
         let key = as_key!(namespace, set_name, i);

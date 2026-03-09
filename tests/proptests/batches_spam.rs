@@ -44,6 +44,7 @@ proptest_async::proptest! {
             Err(Error::BatchError(_, ResultCode::FilteredOut, _, _)) => {}
             Err(Error::BatchError(_, ResultCode::KeyBusy, _, _)) => {}
             Err(Error::BatchError(_, ResultCode::BinTypeError, _, _)) => {}
+            Err(Error::BatchError(_, ResultCode::BinNameTooLong, _, _)) => {}
             Err(e) => panic!("ERR: {}", e),
             Ok(_) => (),
         }
