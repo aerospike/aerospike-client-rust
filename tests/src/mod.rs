@@ -21,6 +21,7 @@ use aerospike_core::Recordset;
 
 mod admin;
 mod batch;
+mod compression;
 mod cdt_bitwise;
 mod cdt_list;
 mod cdt_map;

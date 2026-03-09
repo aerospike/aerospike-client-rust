@@ -160,6 +160,7 @@ pub fn base_policy(
                 sleep_between_retries,
                 consistency_level,
                 read_touch_ttl,
+                use_compression: false,
                 filter_expression,
             },
         )

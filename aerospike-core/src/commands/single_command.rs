@@ -159,12 +159,20 @@ impl<'a> SingleCommand<'a> {
             conn.set_socket_timeout(deadline, policy.socket_timeout());
             conn.set_timeout_delay(cmd.can_recover_connection(), policy.timeout_delay());
 
+            conn.buffer.set_compress(policy.use_compression());
             cmd.prepare_buffer(&mut conn)
                 .await
                 .map_err(|e| e.chain_error("Failed to prepare send buffer"))?;
             cmd.write_timeout(&mut conn)
                 .await
                 .map_err(|e| e.chain_error("Failed to set timeout for send buffer"))?;
+
+            // Compress the buffer after timeout is written but before sending.
+            if policy.use_compression() {
+                conn.buffer
+                    .compress()
+                    .map_err(|e| e.chain_error("Failed to compress send buffer"))?;
+            }
 
             // Send command.
             if let Err(err) = cmd.write_buffer(&mut conn).await {
