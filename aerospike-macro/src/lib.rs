@@ -31,6 +31,7 @@ pub fn test(_attr: TokenStream, input: TokenStream) -> TokenStream {
             fn #name() #ret {
                 let _ = env_logger::try_init();
 
+                // Runtime is already shared for async_std
                 ::aerospike_rt::async_std::task::block_on( async {#body} )
             }
         }

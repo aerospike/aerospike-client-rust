@@ -21,7 +21,7 @@ use crate::errors::{Error, Result};
 #[cfg(feature = "tls")]
 use tokio_rustls::rustls::ClientConfig;
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 /// Determines authentication mode.
 pub enum AuthMode {
     /// No Authentication will be performed
@@ -32,8 +32,8 @@ pub enum AuthMode {
     Internal(String, String),
 
     /// Uses external authentication (like LDAP) when user/password defined. Specific external authentication is
-    /// configured on server. If TLSConfig is defined, sends clear password on node login via TLS.
-    /// Will return an error if TLSConfig is not defined.
+    /// configured on server. If `TLSConfig` is defined, sends clear password on node login via TLS.
+    /// Will return an error if `TLSConfig` is not defined.
     External(String, String),
 
     /// Allows authentication and authorization based on a certificate. No user name or
@@ -53,7 +53,11 @@ pub struct ClientPolicy {
     ///
     /// Using cert files to allow for client authentication.
     ///
-    /// ```rust,edition2021
+    /// ```rust,edition2021,no_run
+    /// # use rustls::RootCertStore;
+    /// # use rustls::pki_types::CertificateDer;
+    /// # use rustls::pki_types::PrivateKeyDer;
+    /// # use rustls::pki_types::pem::PemObject;
     /// let mut root_store = RootCertStore {
     ///     roots: webpki_roots::TLS_SERVER_ROOTS.into(),
     /// };
@@ -70,12 +74,15 @@ pub struct ClientPolicy {
     /// let tls_config = rustls::ClientConfig::builder()
     ///     .with_root_certificates(root_store)
     ///     .with_client_auth_cert(vec![client_ca], client_key)
-    ///     .unwrap()
+    ///     .unwrap();
     /// ```
     ///
     /// Using cert files without enforcing client authentication.
     ///
-    /// ```rust,edition2021
+    /// ```rust,edition2021,no_run
+    /// # use rustls::RootCertStore;
+    /// # use rustls::pki_types::CertificateDer;
+    /// # use rustls::pki_types::pem::PemObject;
     /// let mut root_store = RootCertStore {
     ///     roots: webpki_roots::TLS_SERVER_ROOTS.into(),
     /// };
@@ -88,7 +95,7 @@ pub struct ClientPolicy {
     ///
     /// let tls_config = rustls::ClientConfig::builder()
     ///     .with_root_certificates(root_store)
-    ///     .with_no_client_auth()
+    ///     .with_no_client_auth();
     /// ```
     #[cfg(feature = "tls")]
     pub tls_config: Option<ClientConfig>,
@@ -113,7 +120,7 @@ pub struct ClientPolicy {
     /// The proto-fd-idle-ms default directs the server to close connections that are idle for 60 seconds
     /// which can defeat the purpose of keeping connections in reserve for a future burst of activity.
     ///
-    /// If server proto-fd-idle-ms is changed, client ClientPolicy.idle_timeout should also be
+    /// If server proto-fd-idle-ms is changed, client `ClientPolicy.idle_timeout` should also be
     /// changed to be a few seconds less than proto-fd-idle-ms.
     ///
     ///  Servers 8.1+ have deprecated proto-fd-idle-ms. When proto-fd-idle-ms is ultimately removed,
@@ -127,9 +134,9 @@ pub struct ClientPolicy {
     /// need only one connection pool per node. Machines with larger number of CPU cores may have
     /// their performance limited by contention for pooled connections. Contention for pooled
     /// connections can be reduced by creating multiple mini connection pools per node.
-    pub conn_pools_per_node: usize,
+    pub conn_pools_per_node: u8,
 
-    /// Throw exception if host connection fails during addHost().
+    /// Throw exception if host connection fails during `addHost()`.
     pub fail_if_not_connected: bool,
 
     /// Threshold at which the buffer attached to the connection will be shrunk by deallocating
@@ -139,9 +146,9 @@ pub struct ClientPolicy {
     /// of the connection pool.
     pub buffer_reclaim_threshold: usize,
 
-    /// TendInterval determines interval for checking for cluster state changes.
+    /// `TendInterval` determines interval for checking for cluster state changes.
     /// Minimum possible interval is 10 Milliseconds.
-    pub tend_interval: Duration,
+    pub tend_interval: u32,
 
     /// A IP translation table is used in cases where different clients
     /// use different server IP addresses. This may be necessary when
@@ -151,12 +158,12 @@ pub struct ClientPolicy {
     /// The value is the real IP address used to connect to the server.
     pub ip_map: Option<HashMap<String, String>>,
 
-    /// UseServicesAlternate determines if the client should use "services-alternate"
+    /// `UseServicesAlternate` determines if the client should use "services-alternate"
     /// instead of "services" in info request during cluster tending.
     /// "services-alternate" returns server configured external IP addresses that client
     /// uses to talk to nodes. "services-alternate" can be used in place of
     /// providing a client "ipMap".
-    /// This feature is recommended instead of using the client-side IpMap above.
+    /// This feature is recommended instead of using the client-side `IpMap` above.
     ///
     /// "services-alternate" is available with Aerospike Server versions >= 3.7.1.
     pub use_services_alternate: bool,
@@ -190,7 +197,7 @@ impl Default for ClientPolicy {
             max_conns_per_node: 256,
             conn_pools_per_node: 1,
             fail_if_not_connected: true,
-            tend_interval: Duration::new(1, 0),
+            tend_interval: 1000,
             ip_map: None,
             use_services_alternate: false,
             cluster_name: None,
@@ -208,15 +215,15 @@ impl ClientPolicy {
     pub(crate) fn validate(&self) -> Result<()> {
         if self.max_conns_per_node > 0 && self.min_conns_per_node > self.max_conns_per_node {
             return Err(Error::ClientError("minimum number of connections specified in the ClientPolicy is bigger than total connection pool size".into()));
-        };
+        }
 
         Ok(())
     }
 
     pub(crate) fn application_id(&self) -> &str {
         if let Some(ref app_id) = self.application_id {
-            if app_id.len() > 0 {
-                return &app_id;
+            if !app_id.is_empty() {
+                return app_id;
             }
         }
 
@@ -231,7 +238,7 @@ impl ClientPolicy {
 
     pub(crate) fn timeout(&self) -> Duration {
         if self.timeout > 0 {
-            Duration::from_millis(self.timeout as u64)
+            Duration::from_millis(u64::from(self.timeout))
         } else {
             Duration::from_millis(30_000)
         }

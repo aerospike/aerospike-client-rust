@@ -21,7 +21,7 @@ use std::sync::Arc;
 use aerospike_rt::Mutex;
 
 #[derive(Debug)]
-pub(crate) struct NodePartitions {
+pub struct NodePartitions {
     pub(crate) node: Arc<Node>,
     pub(crate) parts_full: Vec<Arc<Mutex<PartitionStatus>>>,
     pub(crate) parts_partial: Vec<Arc<Mutex<PartitionStatus>>>,
@@ -34,7 +34,7 @@ pub(crate) struct NodePartitions {
 impl NodePartitions {
     pub fn new(node: Arc<Node>, capacity: usize) -> Self {
         NodePartitions {
-            node: node,
+            node,
             parts_full: Vec::with_capacity(capacity),
             parts_partial: Vec::with_capacity(capacity),
             record_count: 0,

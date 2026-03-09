@@ -23,6 +23,7 @@ use crate::commands::buffer::Buffer;
 use crate::expressions::Expression;
 use crate::msgpack::encoder::{pack_array_begin, pack_integer};
 use crate::operations::{Operation, OperationBin, OperationData, OperationType};
+use crate::Result;
 
 /// Expression write Flags
 #[derive(Clone, Copy)]
@@ -38,7 +39,7 @@ pub enum ExpWriteFlags {
     /// If bin does not exist, fail with Bin Not Found
     UpdateOnly = 1 << 1,
     /// If expression results in nil value, then delete the bin.
-    /// Otherwise, return OP Not Applicable when NoFail is not set
+    /// Otherwise, return OP Not Applicable when `NoFail` is not set
     AllowDelete = 1 << 2,
     /// Do not raise error if operation is denied.
     PolicyNoFail = 1 << 3,
@@ -46,7 +47,7 @@ pub enum ExpWriteFlags {
     EvalNoFail = 1 << 4,
 }
 
-/// Something that can be resolved into a set of ExpWriteFlags. Either a single `ExpWriteFlag`, `Option<ExpWriteFlag>`, `ExpWriteFlag`, etc.
+/// Something that can be resolved into a set of `ExpWriteFlags`. Either a single `ExpWriteFlag`, `Option<ExpWriteFlag>`, `ExpWriteFlag`, etc.
 pub trait ToExpWriteFlagBitmask {
     /// Convert to an i64 bitmask
     fn to_bitmask(self) -> i64;
@@ -69,31 +70,31 @@ impl<T: IntoIterator<Item = ExpWriteFlags>> ToExpWriteFlagBitmask for T {
 }
 
 pub(crate) type ExpressionEncoder =
-    Arc<dyn Fn(&mut Option<&mut Buffer>, &ExpOperation) -> usize + Send + Sync + 'static>;
+    Arc<dyn Fn(&mut Option<&mut Buffer>, &ExpOperation) -> Result<usize> + Send + Sync + 'static>;
 
 #[derive(Clone)]
-pub(crate) struct ExpOperation<'a> {
+pub(crate) struct ExpOperation {
     pub encoder: ExpressionEncoder,
     pub policy: i64,
-    pub exp: &'a Expression,
+    pub exp: Expression,
 }
 
-impl<'a> ExpOperation<'a> {
+impl ExpOperation {
     // pub(crate) const fn particle_type(&self) -> ParticleType {
     //     ParticleType::BLOB
     // }
-    pub(crate) fn estimate_size(&self) -> usize {
-        let size: usize = (self.encoder)(&mut None, self);
-        size
+    pub(crate) fn estimate_size(&self) -> Result<usize> {
+        let size: usize = (self.encoder)(&mut None, self)?;
+        Ok(size)
     }
-    pub(crate) fn write_to(&self, buffer: &mut Buffer) -> usize {
-        let size: usize = (self.encoder)(&mut Some(buffer), self);
-        size
+    pub(crate) fn write_to(&self, buffer: &mut Buffer) -> Result<usize> {
+        let size: usize = (self.encoder)(&mut Some(buffer), self)?;
+        Ok(size)
     }
 }
 
-impl<'a> fmt::Debug for ExpOperation<'a> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> Result<(), fmt::Error> {
+impl fmt::Debug for ExpOperation {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> std::result::Result<(), fmt::Error> {
         #[derive(Debug)]
         #[allow(unused)]
         struct ExpOperation<'a> {
@@ -119,7 +120,7 @@ pub enum ExpReadFlags {
     EvalNoFail = 1 << 4,
 }
 
-/// Something that can be resolved into a set of ExpWriteFlags. Either a single `ExpWriteFlag`, `Option<ExpWriteFlag>`, `ExpWriteFlag`, etc.
+/// Something that can be resolved into a set of `ExpWriteFlags`. Either a single `ExpWriteFlag`, `Option<ExpWriteFlag>`, `ExpWriteFlag`, etc.
 pub trait ToExpReadFlagBitmask {
     /// Convert to an i64 bitmask
     fn to_bitmask(self) -> i64;
@@ -142,11 +143,7 @@ impl<T: IntoIterator<Item = ExpReadFlags>> ToExpReadFlagBitmask for T {
 }
 
 /// Create operation that performs a expression that writes to record bin.
-pub fn write_exp<'a, E: ToExpWriteFlagBitmask>(
-    bin: &'a str,
-    exp: &'a Expression,
-    flags: E,
-) -> Operation<'a> {
+pub fn write_exp<E: ToExpWriteFlagBitmask>(bin: &str, exp: Expression, flags: E) -> Operation {
     let op = ExpOperation {
         encoder: Arc::new(pack_write_exp),
         policy: flags.to_bitmask(),
@@ -154,18 +151,14 @@ pub fn write_exp<'a, E: ToExpWriteFlagBitmask>(
     };
     Operation {
         op: OperationType::ExpWrite,
-        ctx: &[],
-        bin: OperationBin::Name(bin),
+        ctx: vec![],
+        bin: OperationBin::Name(bin.into()),
         data: OperationData::EXPOp(op),
     }
 }
 
 /// Create operation that performs a read expression.
-pub fn read_exp<'a, E: ToExpReadFlagBitmask>(
-    name: &'a str,
-    exp: &'a Expression,
-    flags: E,
-) -> Operation<'a> {
+pub fn read_exp<E: ToExpReadFlagBitmask>(name: &str, exp: Expression, flags: E) -> Operation {
     let op = ExpOperation {
         encoder: Arc::new(pack_read_exp),
         policy: flags.to_bitmask(),
@@ -173,24 +166,26 @@ pub fn read_exp<'a, E: ToExpReadFlagBitmask>(
     };
     Operation {
         op: OperationType::ExpRead,
-        ctx: &[],
-        bin: OperationBin::Name(name),
+        ctx: vec![],
+        bin: OperationBin::Name(name.into()),
         data: OperationData::EXPOp(op),
     }
 }
 
-fn pack_write_exp(buf: &mut Option<&mut Buffer>, exp_op: &ExpOperation) -> usize {
+#[must_use]
+fn pack_write_exp(buf: &mut Option<&mut Buffer>, exp_op: &ExpOperation) -> Result<usize> {
     let mut size = 0;
     size += pack_array_begin(buf, 2);
-    size += exp_op.exp.pack(buf);
+    size += exp_op.exp.pack(buf)?;
     size += pack_integer(buf, exp_op.policy);
-    size
+    Ok(size)
 }
 
-fn pack_read_exp(buf: &mut Option<&mut Buffer>, exp_op: &ExpOperation) -> usize {
+#[must_use]
+fn pack_read_exp(buf: &mut Option<&mut Buffer>, exp_op: &ExpOperation) -> Result<usize> {
     let mut size = 0;
     size += pack_array_begin(buf, 2);
-    size += exp_op.exp.pack(buf);
+    size += exp_op.exp.pack(buf)?;
     size += pack_integer(buf, exp_op.policy);
-    size
+    Ok(size)
 }

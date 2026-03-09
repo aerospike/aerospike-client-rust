@@ -37,7 +37,6 @@ pub struct RecordStream(Arc<Recordset>);
 /// queue.
 #[derive(Debug)]
 pub struct Recordset {
-    count: AtomicUsize,
     instances: AtomicUsize,
     rx: Receiver<Result<Record>>,
     tx: Sender<Result<Record>>,
@@ -64,13 +63,12 @@ impl Recordset {
 
         let (tx, rx) = async_channel::bounded(rec_queue_size);
         Recordset {
-            count: AtomicUsize::new(nodes),
             instances: AtomicUsize::new(nodes),
             rx,
             tx,
             active: AtomicBool::new(true),
             task_id: AtomicUsize::new(task_id),
-            tracker: tracker,
+            tracker,
         }
     }
 
@@ -106,7 +104,7 @@ impl Recordset {
             // Do not emit stream termination errors; they are used as signals only.
             Err(crate::Error::StreamTerminatedError()) => Ok(()),
             _ => match self.tx.send(record).await {
-                Ok(_) => Ok(()),
+                Ok(()) => Ok(()),
                 Err(_) => Err(crate::Error::StreamTerminatedError()),
             },
         }
@@ -120,11 +118,11 @@ impl Recordset {
     pub(crate) fn signal_end(&self) {
         if self.instances.fetch_sub(1, Ordering::Relaxed) == 1 {
             self.close();
-        };
+        }
     }
 
-    /// If the recordset is inactive, it will extract the PartitionFilter cursor to use in a future scan/query.
-    /// It will still return nil if the PartitionFilter is already extracted.
+    /// If the recordset is inactive, it will extract the `PartitionFilter` cursor to use in a future scan/query.
+    /// It will still return nil if the `PartitionFilter` is already extracted.
     pub async fn partition_filter(&self) -> Option<PartitionFilter> {
         if !self.is_active() {
             return self.tracker.lock().await.extract_partition_filter();
@@ -143,7 +141,7 @@ impl Recordset {
 
     /// Converts a reference to a [`Recordset`] into a [`RecordStream`] that can be used
     /// to iterate over records.
-    pub fn into_stream(self: Arc<Self>) -> RecordStream {
+    pub const fn into_stream(self: Arc<Self>) -> RecordStream {
         RecordStream(self)
     }
 }
@@ -181,10 +179,7 @@ impl futures::Stream for RecordStream {
         cx: &mut std::task::Context<'_>,
     ) -> std::task::Poll<Option<Self::Item>> {
         match self.0.rx.try_recv() {
-            Ok(r) => {
-                self.0.count.fetch_add(1, Ordering::Relaxed);
-                std::task::Poll::Ready(Some(r))
-            }
+            Ok(r) => std::task::Poll::Ready(Some(r)),
             Err(e) => {
                 if !self.0.is_active() && e.is_empty() {
                     std::task::Poll::Ready(None)
@@ -203,8 +198,8 @@ impl AsRef<Recordset> for RecordStream {
     }
 }
 
-/// If the record stream is inactive, it will extract the PartitionFilter cursor to use in a future scan/query.
-/// It will still return nil if the PartitionFilter is already extracted.
+/// If the record stream is inactive, it will extract the `PartitionFilter` cursor to use in a future scan/query.
+/// It will still return nil if the `PartitionFilter` is already extracted.
 impl RecordStream {
     /// Returns the partition filter from the recordset.
     pub async fn partition_filter(&self) -> Option<PartitionFilter> {

@@ -15,7 +15,7 @@ use aerospike::RecordExistsAction;
 
 use aerospike::{
     BatchDeletePolicy, BatchPolicy, BatchReadPolicy, BatchUDFPolicy, BatchWritePolicy, Expiration,
-    ReadPolicy, ScanPolicy, WritePolicy,
+    ReadPolicy, WritePolicy,
 };
 
 use proptest::bool;
@@ -137,7 +137,7 @@ pub fn base_policy(
         duration_ms(total_timeout_ms, total_timeout_ms * 3),
         duration_ms(0, 10000),
         max_retries(0, 100),
-        duration_ms_opt(100, 500),
+        100..500 as u32,
         consistency_level(),
         read_touch_ttl(),
         Just(None), //true_or_false_filter_expression(),
@@ -245,37 +245,6 @@ pub fn write_policy_without_replace(
         )
 }
 
-pub fn scan_policy(
-    socket_timeout_ms: u32,
-    total_timeout_ms: u32,
-) -> impl Strategy<Value = ScanPolicy> {
-    (
-        base_policy(socket_timeout_ms, total_timeout_ms),
-        0..256 as usize,
-        0..1000 as u64,
-        1..u32::MAX,
-        1..10_000 as usize,
-        replica(),
-    )
-        .prop_map(
-            |(
-                base_policy,
-                max_concurrent_nodes,
-                max_records,
-                records_per_second,
-                record_queue_size,
-                replica,
-            )| ScanPolicy {
-                base_policy,
-                max_concurrent_nodes,
-                max_records,
-                records_per_second,
-                record_queue_size,
-                replica,
-            },
-        )
-}
-
 pub fn query_policy(
     socket_timeout_ms: u32,
     total_timeout_ms: u32,
@@ -287,6 +256,40 @@ pub fn query_policy(
         1..u32::MAX,
         1..10_000 as usize,
         query_duration(),
+        replica(),
+    )
+        .prop_map(
+            |(
+                base_policy,
+                max_concurrent_nodes,
+                max_records,
+                records_per_second,
+                record_queue_size,
+                expected_duration,
+                replica,
+            )| QueryPolicy {
+                base_policy,
+                max_concurrent_nodes,
+                max_records,
+                records_per_second,
+                record_queue_size,
+                expected_duration,
+                replica,
+            },
+        )
+}
+
+pub fn query_policy_scan(
+    socket_timeout_ms: u32,
+    total_timeout_ms: u32,
+) -> impl Strategy<Value = QueryPolicy> {
+    (
+        base_policy(socket_timeout_ms, total_timeout_ms),
+        0..256 as usize,
+        0..1000 as u64,
+        1..u32::MAX,
+        1..10_000 as usize,
+        Just(QueryDuration::Long),
         replica(),
     )
         .prop_map(

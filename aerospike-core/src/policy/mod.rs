@@ -31,7 +31,6 @@ mod query_policy;
 mod read_policy;
 mod read_touch_ttl_percent;
 mod record_exists_action;
-mod scan_policy;
 mod stream_policy;
 mod write_policy;
 
@@ -49,7 +48,6 @@ pub use self::query_policy::QueryPolicy;
 pub use self::read_policy::ReadPolicy;
 pub use self::read_touch_ttl_percent::ReadTouchTTL;
 pub use self::record_exists_action::RecordExistsAction;
-pub use self::scan_policy::ScanPolicy;
 pub(crate) use self::stream_policy::StreamPolicy;
 pub use self::write_policy::WritePolicy;
 
@@ -136,7 +134,7 @@ where
 }
 
 /// Defines algorithm used to determine the target node for a command. The replica algorithm only affects single record and batch commands.
-#[derive(Debug, Copy, Clone, PartialEq)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Default)]
 pub enum Replica {
     /// Use node containing key's master partition.
     Master,
@@ -145,6 +143,7 @@ pub enum Replica {
     /// If connection fails, all commands try nodes containing replicated partitions.
     /// If socketTimeout is reached, reads also try nodes containing replicated partitions,
     /// but writes remain on master node.
+    #[default]
     Sequence,
 
     /// Try node on the same rack as the client first. If timeout or there are no nodes on the
@@ -153,12 +152,6 @@ pub enum Replica {
     /// {@link ClientPolicy#rackAware}, {@link ClientPolicy#rackId}, and server rack
     /// configuration must also be set to enable this functionality.
     PreferRack,
-}
-
-impl Default for Replica {
-    fn default() -> Self {
-        Replica::Sequence
-    }
 }
 
 /// Common parameters shared by all policy types.
@@ -176,8 +169,8 @@ pub struct BasePolicy {
     /// `socket_timeout` > `total_timeout`, then `socket_timeout` will be set to `total_timeout`. If both
     /// `socket_timeout` and `total_timeout` are zero, then there will be no socket idle limit.
     ///
-    /// If `socket_timeout` is non-zero and the socket has been idle for at least socket_timeout,
-    /// both max_retries and `total_timeout` are checked. If max_retries and `total_timeout` are not
+    /// If `socket_timeout` is non-zero and the socket has been idle for at least `socket_timeout`,
+    /// both `max_retries` and `total_timeout` are checked. If `max_retries` and `total_timeout` are not
     /// exceeded, the command is retried.
     pub socket_timeout: u32,
 
@@ -213,13 +206,13 @@ pub struct BasePolicy {
     /// Default: 0 (no delay, connection closed on timeout)
     pub timeout_delay: u32,
 
-    /// MaxRetries determines maximum number of retries before aborting the current transaction.
+    /// `max_retries` determines maximum number of retries before aborting the current transaction.
     /// A retry is attempted when there is a network error other than timeout.
     /// If maxRetries is exceeded, the abort will occur even if the timeout
     /// has not yet been exceeded.
     pub max_retries: usize,
 
-    /// read_touch_ttl determines how record TTL (time to live) is affected on reads. When enabled, the server can
+    /// Determines how record TTL (time to live) is affected on reads. When enabled, the server can
     /// efficiently operate as a read-based LRU cache where the least recently used records are expired.
     /// The value is expressed as a percentage of the TTL sent on the most recent write such that a read
     /// within this interval of the record’s end of life will generate a touch.
@@ -230,12 +223,14 @@ pub struct BasePolicy {
     ///
     /// Supported in server v8+.
     ///
-    /// Default: ReadTouchTTL::ServerDefault
+    /// Default: `ReadTouchTTL::ServerDefault`
     pub read_touch_ttl: ReadTouchTTL,
 
-    /// SleepBetweenReplies determines duration to sleep between retries if a
-    /// transaction fails and the timeout was not exceeded. Enter zero to skip sleep.
-    pub sleep_between_retries: Option<Duration>,
+    /// Duration to sleep between retries if a command fails and
+    /// the timeout was not exceeded. Enter zero to skip sleep.
+    ///
+    /// Default: 500
+    pub sleep_between_retries: u32,
 
     /// Optional filter Expression
     pub filter_expression: Option<Expression>,
@@ -244,7 +239,7 @@ pub struct BasePolicy {
 impl Policy for BasePolicy {
     fn deadline(&self) -> Option<Instant> {
         if self.total_timeout > 0 {
-            Some(Instant::now() + Duration::from_millis(self.total_timeout as u64))
+            Some(Instant::now() + Duration::from_millis(u64::from(self.total_timeout)))
         } else {
             None
         }
@@ -280,7 +275,11 @@ impl Policy for BasePolicy {
     }
 
     fn sleep_between_retries(&self) -> Option<Duration> {
-        self.sleep_between_retries
+        if self.sleep_between_retries > 0 {
+            Some(Duration::from_millis(u64::from(self.sleep_between_retries)))
+        } else {
+            None
+        }
     }
 
     fn consistency_level(&self) -> &ConsistencyLevel {

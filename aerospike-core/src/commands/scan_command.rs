@@ -21,13 +21,13 @@ use crate::cluster::Node;
 use crate::commands::{Command, SingleCommand, StreamCommand};
 use crate::errors::Result;
 use crate::net::Connection;
-use crate::policy::ScanPolicy;
+use crate::policy::QueryPolicy;
 use crate::query::NodePartitions;
 use crate::{Bins, Recordset};
 
-pub(crate) struct ScanCommand<'a> {
+pub struct ScanCommand<'a> {
     stream_command: StreamCommand,
-    policy: &'a ScanPolicy,
+    policy: &'a QueryPolicy,
     namespace: &'a str,
     set_name: &'a str,
     bins: Bins,
@@ -35,7 +35,7 @@ pub(crate) struct ScanCommand<'a> {
 
 impl<'a> ScanCommand<'a> {
     pub async fn new(
-        policy: &'a ScanPolicy,
+        policy: &'a QueryPolicy,
         namespace: &'a str,
         set_name: &'a str,
         bins: Bins,
@@ -62,7 +62,7 @@ impl<'a> ScanCommand<'a> {
 }
 
 #[async_trait::async_trait]
-impl<'a> Command for ScanCommand<'a> {
+impl Command for ScanCommand<'_> {
     async fn write_timeout(&mut self, conn: &mut Connection) -> Result<()> {
         let server_timeout = self
             .stream_command
@@ -96,6 +96,10 @@ impl<'a> Command for ScanCommand<'a> {
 
     async fn get_node(&mut self) -> Result<Arc<Node>> {
         self.stream_command.get_node().await
+    }
+
+    fn hint(&self) -> u8 {
+        0
     }
 
     fn can_retry(&mut self) -> bool {

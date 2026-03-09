@@ -43,7 +43,7 @@ pub enum HLLWriteFlags {
     AllowFold = 8,
 }
 
-/// Something that can be resolved into a set of ExpWriteFlags. Either a single [HLLWriteFlags], `Option<HLLWriteFlags>`, [HLLWriteFlags], etc.
+/// Something that can be resolved into a set of `ExpWriteFlags`. Either a single [`HLLWriteFlags`], `Option<HLLWriteFlags>`, [`HLLWriteFlags`], etc.
 pub trait ToHLLWriteFlagsBitmask {
     /// Convert to an i64 bitmask
     fn to_bitmask(self) -> i64;
@@ -68,7 +68,7 @@ impl<T: IntoIterator<Item = HLLWriteFlags>> ToHLLWriteFlagsBitmask for T {
 /// `HLLPolicy` operation policy.
 #[derive(Debug, Clone, Copy)]
 pub struct HLLPolicy {
-    /// CdtListWriteFlags
+    /// `CdtListWriteFlags`
     pub flags: i64,
 }
 
@@ -113,19 +113,19 @@ pub(crate) enum HLLOpType {
 /// Create HLL init operation.
 /// Server creates a new HLL or resets an existing HLL.
 /// Server does not return a value.
-pub fn init<'a>(policy: &HLLPolicy, bin: &'a str, index_bit_count: i64) -> Operation<'a> {
+pub fn init(policy: &HLLPolicy, bin: &str, index_bit_count: i64) -> Operation {
     init_with_min_hash(policy, bin, index_bit_count, -1)
 }
 
 /// Create HLL init operation with minhash bits.
 /// Server creates a new HLL or resets an existing HLL.
 /// Server does not return a value.
-pub fn init_with_min_hash<'a>(
+pub fn init_with_min_hash(
     policy: &HLLPolicy,
-    bin: &'a str,
+    bin: &str,
     index_bit_count: i64,
     min_hash_bit_count: i64,
-) -> Operation<'a> {
+) -> Operation {
     let cdt_op = CdtOperation {
         op: HLLOpType::Init as u8,
         encoder: Arc::new(pack_hll_op),
@@ -138,7 +138,7 @@ pub fn init_with_min_hash<'a>(
     Operation {
         op: OperationType::HllWrite,
         ctx: DEFAULT_CTX,
-        bin: OperationBin::Name(bin),
+        bin: OperationBin::Name(bin.into()),
         data: OperationData::HLLOp(cdt_op),
     }
 }
@@ -146,32 +146,33 @@ pub fn init_with_min_hash<'a>(
 /// Create HLL add operation. This operation assumes HLL bin already exists.
 /// Server adds values to the HLL set.
 /// Server returns number of entries that caused HLL to update a register.
-pub fn add<'a>(policy: &HLLPolicy, bin: &'a str, list: &'a [Value]) -> Operation<'a> {
+pub fn add(policy: &HLLPolicy, bin: &str, list: Vec<Value>) -> Operation {
     add_with_index_and_min_hash(policy, bin, list, -1, -1)
 }
 
 /// Create HLL add operation.
 /// Server adds values to HLL set. If HLL bin does not exist, use `indexBitCount` to create HLL bin.
 /// Server returns number of entries that caused HLL to update a register.
-pub fn add_with_index<'a>(
+pub fn add_with_index(
     policy: &HLLPolicy,
-    bin: &'a str,
-    list: &'a [Value],
+    bin: &str,
+    list: Vec<Value>,
     index_bit_count: i64,
-) -> Operation<'a> {
+) -> Operation {
     add_with_index_and_min_hash(policy, bin, list, index_bit_count, -1)
 }
 
 /// Create HLL add operation with minhash bits.
+///
 /// Server adds values to HLL set. If HLL bin does not exist, use `indexBitCount` and `minHashBitCount`
 /// to create HLL bin. Server returns number of entries that caused HLL to update a register.
-pub fn add_with_index_and_min_hash<'a>(
+pub fn add_with_index_and_min_hash(
     policy: &HLLPolicy,
-    bin: &'a str,
-    list: &'a [Value],
+    bin: &str,
+    list: Vec<Value>,
     index_bit_count: i64,
     min_hash_bit_count: i64,
-) -> Operation<'a> {
+) -> Operation {
     let cdt_op = CdtOperation {
         op: HLLOpType::Add as u8,
         encoder: Arc::new(pack_hll_op),
@@ -185,7 +186,7 @@ pub fn add_with_index_and_min_hash<'a>(
     Operation {
         op: OperationType::HllWrite,
         ctx: DEFAULT_CTX,
-        bin: OperationBin::Name(bin),
+        bin: OperationBin::Name(bin.into()),
         data: OperationData::HLLOp(cdt_op),
     }
 }
@@ -193,7 +194,7 @@ pub fn add_with_index_and_min_hash<'a>(
 /// Create HLL set union operation.
 /// Server sets union of specified HLL objects with HLL bin.
 /// Server does not return a value.
-pub fn set_union<'a>(policy: &HLLPolicy, bin: &'a str, list: &'a [Value]) -> Operation<'a> {
+pub fn set_union(policy: &HLLPolicy, bin: &str, list: Vec<Value>) -> Operation {
     let cdt_op = CdtOperation {
         op: HLLOpType::SetUnion as u8,
         encoder: Arc::new(pack_hll_op),
@@ -205,14 +206,14 @@ pub fn set_union<'a>(policy: &HLLPolicy, bin: &'a str, list: &'a [Value]) -> Ope
     Operation {
         op: OperationType::HllWrite,
         ctx: DEFAULT_CTX,
-        bin: OperationBin::Name(bin),
+        bin: OperationBin::Name(bin.into()),
         data: OperationData::HLLOp(cdt_op),
     }
 }
 
 /// Create HLL refresh operation.
 /// Server updates the cached count (if stale) and returns the count.
-pub fn refresh_count(bin: &str) -> Operation<'_> {
+pub fn refresh_count(bin: &str) -> Operation {
     let cdt_op = CdtOperation {
         op: HLLOpType::SetCount as u8,
         encoder: Arc::new(pack_hll_op),
@@ -221,7 +222,7 @@ pub fn refresh_count(bin: &str) -> Operation<'_> {
     Operation {
         op: OperationType::HllWrite,
         ctx: DEFAULT_CTX,
-        bin: OperationBin::Name(bin),
+        bin: OperationBin::Name(bin.into()),
         data: OperationData::HLLOp(cdt_op),
     }
 }
@@ -230,7 +231,7 @@ pub fn refresh_count(bin: &str) -> Operation<'_> {
 /// Servers folds `indexBitCount` to the specified value.
 /// This can only be applied when `minHashBitCount` on the HLL bin is 0.
 /// Server does not return a value.
-pub fn fold(bin: &str, index_bit_count: i64) -> Operation<'_> {
+pub fn fold(bin: &str, index_bit_count: i64) -> Operation {
     let cdt_op = CdtOperation {
         op: HLLOpType::Fold as u8,
         encoder: Arc::new(pack_hll_op),
@@ -239,14 +240,14 @@ pub fn fold(bin: &str, index_bit_count: i64) -> Operation<'_> {
     Operation {
         op: OperationType::HllWrite,
         ctx: DEFAULT_CTX,
-        bin: OperationBin::Name(bin),
+        bin: OperationBin::Name(bin.into()),
         data: OperationData::HLLOp(cdt_op),
     }
 }
 
 /// Create HLL getCount operation.
 /// Server returns estimated number of elements in the HLL bin.
-pub fn get_count(bin: &str) -> Operation<'_> {
+pub fn get_count(bin: &str) -> Operation {
     let cdt_op = CdtOperation {
         op: HLLOpType::Count as u8,
         encoder: Arc::new(pack_hll_op),
@@ -255,7 +256,7 @@ pub fn get_count(bin: &str) -> Operation<'_> {
     Operation {
         op: OperationType::HllRead,
         ctx: DEFAULT_CTX,
-        bin: OperationBin::Name(bin),
+        bin: OperationBin::Name(bin.into()),
         data: OperationData::HLLOp(cdt_op),
     }
 }
@@ -263,7 +264,7 @@ pub fn get_count(bin: &str) -> Operation<'_> {
 /// Create HLL getUnion operation.
 /// Server returns an HLL object that is the union of all specified HLL objects in the list
 /// with the HLL bin.
-pub fn get_union<'a>(bin: &'a str, list: &'a [Value]) -> Operation<'a> {
+pub fn get_union(bin: &str, list: Vec<Value>) -> Operation {
     let cdt_op = CdtOperation {
         op: HLLOpType::Union as u8,
         encoder: Arc::new(pack_hll_op),
@@ -272,7 +273,7 @@ pub fn get_union<'a>(bin: &'a str, list: &'a [Value]) -> Operation<'a> {
     Operation {
         op: OperationType::HllRead,
         ctx: DEFAULT_CTX,
-        bin: OperationBin::Name(bin),
+        bin: OperationBin::Name(bin.into()),
         data: OperationData::HLLOp(cdt_op),
     }
 }
@@ -280,7 +281,7 @@ pub fn get_union<'a>(bin: &'a str, list: &'a [Value]) -> Operation<'a> {
 /// Create HLL `get_union_count` operation.
 /// Server returns estimated number of elements that would be contained by the union of these
 /// HLL objects.
-pub fn get_union_count<'a>(bin: &'a str, list: &'a [Value]) -> Operation<'a> {
+pub fn get_union_count(bin: &str, list: Vec<Value>) -> Operation {
     let cdt_op = CdtOperation {
         op: HLLOpType::UnionCount as u8,
         encoder: Arc::new(pack_hll_op),
@@ -289,7 +290,7 @@ pub fn get_union_count<'a>(bin: &'a str, list: &'a [Value]) -> Operation<'a> {
     Operation {
         op: OperationType::HllRead,
         ctx: DEFAULT_CTX,
-        bin: OperationBin::Name(bin),
+        bin: OperationBin::Name(bin.into()),
         data: OperationData::HLLOp(cdt_op),
     }
 }
@@ -297,7 +298,7 @@ pub fn get_union_count<'a>(bin: &'a str, list: &'a [Value]) -> Operation<'a> {
 /// Create HLL `get_intersect_count` operation.
 /// Server returns estimated number of elements that would be contained by the intersection of
 /// these HLL objects.
-pub fn get_intersect_count<'a>(bin: &'a str, list: &'a [Value]) -> Operation<'a> {
+pub fn get_intersect_count(bin: &str, list: Vec<Value>) -> Operation {
     let cdt_op = CdtOperation {
         op: HLLOpType::IntersectCount as u8,
         encoder: Arc::new(pack_hll_op),
@@ -306,14 +307,14 @@ pub fn get_intersect_count<'a>(bin: &'a str, list: &'a [Value]) -> Operation<'a>
     Operation {
         op: OperationType::HllRead,
         ctx: DEFAULT_CTX,
-        bin: OperationBin::Name(bin),
+        bin: OperationBin::Name(bin.into()),
         data: OperationData::HLLOp(cdt_op),
     }
 }
 
 /// Create HLL getSimilarity operation.
 /// Server returns estimated similarity of these HLL objects. Return type is a double.
-pub fn get_similarity<'a>(bin: &'a str, list: &'a [Value]) -> Operation<'a> {
+pub fn get_similarity(bin: &str, list: Vec<Value>) -> Operation {
     let cdt_op = CdtOperation {
         op: HLLOpType::Similarity as u8,
         encoder: Arc::new(pack_hll_op),
@@ -322,7 +323,7 @@ pub fn get_similarity<'a>(bin: &'a str, list: &'a [Value]) -> Operation<'a> {
     Operation {
         op: OperationType::HllRead,
         ctx: DEFAULT_CTX,
-        bin: OperationBin::Name(bin),
+        bin: OperationBin::Name(bin.into()),
         data: OperationData::HLLOp(cdt_op),
     }
 }
@@ -330,7 +331,7 @@ pub fn get_similarity<'a>(bin: &'a str, list: &'a [Value]) -> Operation<'a> {
 /// Create HLL describe operation.
 /// Server returns `indexBitCount` and `minHashBitCount` used to create HLL bin in a list of longs.
 /// The list size is 2.
-pub fn describe(bin: &str) -> Operation<'_> {
+pub fn describe(bin: &str) -> Operation {
     let cdt_op = CdtOperation {
         op: HLLOpType::Describe as u8,
         encoder: Arc::new(pack_hll_op),
@@ -339,7 +340,7 @@ pub fn describe(bin: &str) -> Operation<'_> {
     Operation {
         op: OperationType::HllRead,
         ctx: DEFAULT_CTX,
-        bin: OperationBin::Name(bin),
+        bin: OperationBin::Name(bin.into()),
         data: OperationData::HLLOp(cdt_op),
     }
 }

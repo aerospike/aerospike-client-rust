@@ -601,6 +601,45 @@ fn expression_rec_ops() {
 }
 
 #[aerospike_macro::test]
+async fn test_geo_val_bug() {
+    let client = common::client().await;
+    let namespace = common::namespace();
+    let set_name = common::rand_str(10);
+
+    // Write one record with a GeoJSON Point
+    let key = as_key!(namespace, &set_name, "p1");
+    let bins = [as_bin!(
+        "point",
+        as_geo!(r#"{"type":"Point","coordinates":[-122.0,37.5]}"#)
+    )];
+
+    client
+        .put(&WritePolicy::default(), &key, &bins)
+        .await
+        .unwrap();
+
+    // geo_compare with a literal GeoJSON circle via geo_val()
+    let circle = r#"{"type":"AeroCircle","coordinates":[[-122.0,37.5],1000]}"#;
+    let expr = geo_compare(geo_bin("point".into()), geo_val(circle.into()));
+
+    let mut qp = QueryPolicy::default();
+    qp.base_policy.filter_expression = Some(expr);
+
+    let rs = client
+        .query(
+            &qp,
+            PartitionFilter::all(),
+            Statement::new(namespace, &set_name, Bins::All),
+        )
+        .await
+        .unwrap();
+    let mut stream = rs.into_stream();
+    while let Some(res) = stream.next().await {
+        res.unwrap(); // Expected: Ok(record) — the point is inside the circle
+    }
+}
+
+#[aerospike_macro::test]
 async fn expression_commands() {
     let client = common::client().await;
     let namespace = common::namespace();
@@ -617,7 +656,7 @@ async fn expression_commands() {
     }
     let mut wpolicy = WritePolicy::default();
     let mut rpolicy = ReadPolicy::default();
-    let mut spolicy = ScanPolicy::default();
+    let mut spolicy = QueryPolicy::default();
     let mut bpolicy = BatchPolicy::default();
 
     // DELETE
@@ -701,10 +740,8 @@ async fn expression_commands() {
     // SCAN
     spolicy.base_policy.filter_expression = Some(eq(int_bin("bin".to_string()), int_val(75)));
     let pf = PartitionFilter::all();
-    match client
-        .scan(&spolicy, pf, namespace, &set_name, Bins::All)
-        .await
-    {
+    let stmt = Statement::new(namespace, &set_name, Bins::All);
+    match client.query(&spolicy, pf, stmt).await {
         Ok(records) => {
             let mut records = records.into_stream();
             let mut count = 0;

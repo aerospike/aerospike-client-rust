@@ -66,6 +66,22 @@ async fn create_index_on_bin() {
         .unwrap();
     task.wait_till_complete(None).await.unwrap();
 
+    // redo to make sure it is supported
+    let task = client
+        .create_index_on_bin(
+            &apolicy,
+            ns,
+            &set,
+            bin,
+            &index,
+            IndexType::Numeric,
+            CollectionIndexType::Default,
+            None,
+        )
+        .await
+        .unwrap();
+    task.wait_till_complete(None).await.unwrap();
+
     client.close().await.unwrap();
 }
 
@@ -76,7 +92,6 @@ async fn create_index_using_expression() {
     if client
         .cluster
         .get_random_node()
-        .await
         .is_ok_and(|node| node.version() < &Version::new(8, 1, 0, 0))
     {
         info!("create_index_using_expression test is only supported in server versions 8.1.0.0+. Skipping.");
@@ -94,6 +109,21 @@ async fn create_index_using_expression() {
 
     let fe: Expression = num_add(vec![int_bin(common::rand_str(10)), int_val(0)]);
 
+    let task = client
+        .create_index_using_expression(
+            &apolicy,
+            ns,
+            &set,
+            &index,
+            IndexType::Numeric,
+            CollectionIndexType::Default,
+            &fe,
+        )
+        .await
+        .unwrap();
+    task.wait_till_complete(None).await.unwrap();
+
+    // redo to see if it is supported
     let task = client
         .create_index_using_expression(
             &apolicy,

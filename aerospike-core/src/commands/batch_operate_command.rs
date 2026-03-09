@@ -13,6 +13,7 @@
 // limitations under the License.
 
 use aerospike_rt::time::Instant;
+use std::collections::hash_map::Entry::{Occupied, Vacant};
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -27,58 +28,89 @@ use crate::net::{BufferedConn, Connection};
 use crate::policy::{BatchPolicy, Policy, Replica};
 use crate::{value, Record, ResultCode, Value};
 use aerospike_rt::sleep;
+use aerospike_rt::time::Duration;
 
 #[derive(Clone)]
-pub(crate) struct BatchOperateCommand<'a> {
+pub struct BatchOperateCommand {
     policy: BatchPolicy,
     pub node: Arc<Node>,
-    pub batch_ops: Vec<(BatchOperation<'a>, usize)>,
+    pub batch_ops: Vec<(BatchOperation, usize)>,
 }
 
-impl<'a> BatchOperateCommand<'a> {
-    pub fn new(
-        policy: &'a BatchPolicy,
+impl BatchOperateCommand {
+    pub const fn new(
+        policy: BatchPolicy,
         node: Arc<Node>,
-        batch_ops: Vec<(BatchOperation<'a>, usize)>,
-    ) -> BatchOperateCommand<'a> {
+        batch_ops: Vec<(BatchOperation, usize)>,
+    ) -> BatchOperateCommand {
         BatchOperateCommand {
-            policy: policy.clone(),
+            policy,
             node,
             batch_ops,
         }
     }
 
-    pub async fn execute(mut self, cluster: Arc<Cluster>) -> Result<Self> {
+    pub async fn execute(self, cluster: Arc<Cluster>) -> Result<Self> {
+        if self.policy.total_timeout() > 0 {
+            let res = aerospike_rt::timeout(
+                Duration::from_millis(u64::from(self.policy.total_timeout())),
+                self.execute_command(cluster),
+            )
+            .await;
+            match res {
+                Ok(res) => res,
+                Err(_) => Err(Error::Timeout("Timeout".to_string())),
+            }
+        } else {
+            self.execute_command(cluster).await
+        }
+    }
+
+    pub async fn execute_command(mut self, cluster: Arc<Cluster>) -> Result<Self> {
         let mut iterations = 0;
+        let mut last_err: Option<Error> = None;
 
         // set timeout outside the loop
         let deadline = self.policy.deadline();
 
         // Execute command until successful, timed out or maximum iterations have been reached.
         loop {
-            let success = if iterations & 1 == 0 || matches!(self.policy.replica, Replica::Master) {
+            let retry_err = if iterations & 1 == 0 || matches!(self.policy.replica, Replica::Master)
+            {
                 // For even iterations, we request all keys from the same node for efficiency.
-                Self::request_group(&mut self.batch_ops, &self.policy, self.node.clone()).await?
+                Self::request_group(
+                    &mut self.batch_ops,
+                    &self.policy,
+                    deadline,
+                    self.node.clone(),
+                )
+                .await?
             } else {
                 // However, for odd iterations try the second choice for each. Instead of re-sharding the batch (as the second choice may not correspond to the first), just try each by itself.
-                let mut all_successful = true;
+                let mut group_err = None;
                 for individual_op in self.batch_ops.chunks_mut(1) {
                     let key = individual_op[0].0.key();
                     // Find somewhere else to try.
                     let partition = Partition::new_by_key(&key);
-                    let node = cluster
-                        .get_node(&partition, self.policy.replica, Arc::downgrade(&self.node))
-                        .await?;
+                    let node = cluster.get_node(
+                        &partition,
+                        self.policy.replica,
+                        Arc::downgrade(&self.node),
+                    )?;
 
-                    if !Self::request_group(individual_op, &self.policy, node).await? {
-                        all_successful = false;
+                    if let Some(e) =
+                        Self::request_group(individual_op, &self.policy, deadline, node).await?
+                    {
+                        group_err = Some(e);
                         break;
                     }
                 }
-                all_successful
+                group_err
             };
 
-            if success {
+            if let Some(e) = retry_err {
+                last_err = Some(e.chain_cause(last_err));
+            } else {
                 // command has completed successfully. Exit method.
                 return Ok(self);
             }
@@ -86,13 +118,9 @@ impl<'a> BatchOperateCommand<'a> {
             iterations += 1;
 
             // too many retries
-            if self.policy.max_retries() > 0 {
-                if iterations > self.policy.max_retries() + 1 {
-                    return Err(Error::Timeout(format!(
-                        "Timeout after {} tries",
-                        iterations
-                    )));
-                }
+            if self.policy.max_retries() > 0 && iterations > self.policy.max_retries() + 1 {
+                return Err(Error::Timeout(format!("Timeout after {iterations} tries"))
+                    .chain_cause(last_err));
             }
 
             // Sleep before trying again, after the first iteration
@@ -103,25 +131,26 @@ impl<'a> BatchOperateCommand<'a> {
             // check for command timeout
             if let Some(deadline) = deadline {
                 if Instant::now() > deadline {
-                    return Err(Error::Connection("Timeout".to_string()));
+                    return Err(Error::Timeout(format!(
+                        "Command timed out after {iterations} tries"
+                    ))
+                    .chain_cause(last_err));
                 }
             }
-
-            // command has completed successfully. Exit method.
-            return Ok(self);
         }
     }
 
     async fn request_group(
-        batch_ops: &mut [(BatchOperation<'a>, usize)],
+        batch_ops: &mut [(BatchOperation, usize)],
         policy: &BatchPolicy,
+        deadline: Option<Instant>,
         node: Arc<Node>,
-    ) -> Result<bool> {
-        let mut conn = match node.get_connection().await {
+    ) -> Result<Option<Error>> {
+        let mut conn = match node.get_connection(0).await {
             Ok(conn) => conn,
             Err(err) => {
-                warn!("Node {}: {}", node, err);
-                return Ok(false);
+                warn!("Node {node}: {err}");
+                return Ok(Some(err));
             }
         };
 
@@ -131,17 +160,16 @@ impl<'a> BatchOperateCommand<'a> {
 
         conn.buffer.write_timeout(policy.server_timeout());
 
-        conn.set_socket_timeout(policy.socket_timeout());
-        // TODO: Support recovering_connection
-        conn.set_timeout_delay(false, policy.timeout_delay());
+        conn.set_socket_timeout(deadline, policy.socket_timeout());
+        conn.set_timeout_delay(true, policy.timeout_delay());
 
         // Send command.
         if let Err(err) = conn.flush().await {
             // IO errors are considered temporary anomalies. Retry.
             // Close socket to flush out possible garbage. Do not put back in pool.
-            conn.invalidate().await;
-            warn!("Node {}: {}", node, err);
-            return Ok(false);
+            conn.invalidate();
+            warn!("Node {node}: {err}");
+            return Ok(Some(err));
         }
 
         // Parse results.
@@ -150,17 +178,17 @@ impl<'a> BatchOperateCommand<'a> {
             // cancelling/closing the batch/multi commands will return an error, which will
             // close the connection to throw away its data and signal the server about the
             // situation. We will not put back the connection in the buffer.
-            // if !Self::keep_connection(&err) {
-            conn.invalidate().await;
-            // }
+            if !Self::keep_connection(&err) {
+                conn.invalidate();
+            }
             Err(err)
         } else {
-            Ok(true)
+            Ok(None)
         }
     }
 
     async fn parse_group(
-        batch_ops: &mut [(BatchOperation<'a>, usize)],
+        batch_ops: &mut [(BatchOperation, usize)],
         conn: &mut BufferedConn<'_>,
         size: usize,
     ) -> Result<bool> {
@@ -205,6 +233,7 @@ impl<'a> BatchOperateCommand<'a> {
 
         match result_code {
             ResultCode::Ok => (),
+            ResultCode::UdfBadResponse => (), // UDF errors will have a body that needs to be parsed
             ResultCode::KeyNotFoundError | ResultCode::FilteredOut => (),
             rc => {
                 if last_record {
@@ -223,7 +252,7 @@ impl<'a> BatchOperateCommand<'a> {
                     conn.conn.addr.clone(),
                 ));
             }
-        };
+        }
 
         // if cmd is the end marker of the response, do not proceed further
         if last_record {
@@ -232,6 +261,7 @@ impl<'a> BatchOperateCommand<'a> {
 
         let found_key = match result_code {
             ResultCode::Ok => true,
+            ResultCode::UdfBadResponse => true,
             ResultCode::KeyNotFoundError | ResultCode::FilteredOut => false,
             _ => unreachable!(),
         };
@@ -259,12 +289,21 @@ impl<'a> BatchOperateCommand<'a> {
                 let name = conn.buffer().read_str(name_size)?;
                 let particle_bytes_size = op_size - (4 + name_size);
                 conn.read_buffer(particle_bytes_size).await?;
-                let value = value::bytes_to_particle(
-                    particle_type,
-                    &mut conn.buffer(),
-                    particle_bytes_size,
-                )?;
-                bins.insert(name, value);
+                let value =
+                    value::bytes_to_particle(particle_type, conn.buffer(), particle_bytes_size)?;
+
+                // list/map operations may return multiple values for the same bin.
+                match bins.entry(name) {
+                    Vacant(entry) => {
+                        entry.insert(value);
+                    }
+                    Occupied(entry) => match *entry.into_mut() {
+                        Value::MultiResult(ref mut list) => list.push(value),
+                        ref mut prev => {
+                            *prev = Value::MultiResult(vec![prev.clone(), value]);
+                        }
+                    },
+                }
             }
 
             Some(Record::new(Some(key), bins, generation, expiration))
@@ -274,16 +313,16 @@ impl<'a> BatchOperateCommand<'a> {
         Ok(Some(BatchRecordIndex {
             batch_index: batch_index as usize,
             record,
-            result_code: result_code,
+            result_code,
         }))
     }
 
-    // const fn keep_connection(err: &Error) -> bool {
-    //     matches!(err, Error::ServerError(_, _, _) | Error::Timeout(_))
-    // }
+    const fn keep_connection(err: &Error) -> bool {
+        matches!(err, Error::ServerError(_, _, _) | Error::Timeout(_))
+    }
 
     async fn parse_result(
-        batch_ops: &mut [(BatchOperation<'a>, usize)],
+        batch_ops: &mut [(BatchOperation, usize)],
         conn: &mut Connection,
     ) -> Result<()> {
         let mut status = true;
@@ -299,10 +338,10 @@ impl<'a> BatchOperateCommand<'a> {
             status = false;
             if size > 0 {
                 conn.set_limit_body(size)?;
-                match Self::parse_group(batch_ops, &mut conn, size as usize).await {
+                match Self::parse_group(batch_ops, &mut conn, size).await {
                     Ok(stat) => status = stat,
                     Err(e @ Error::ServerError(_, _, _)) => {
-                        conn.drain(conn.conn.socket_timeout()).await?;
+                        conn.drain(conn.conn.deadline()).await?;
                         return Err(e);
                     }
                     Err(e) => {
@@ -310,8 +349,10 @@ impl<'a> BatchOperateCommand<'a> {
                     }
                 }
             }
-            conn.drain(conn.conn.socket_timeout()).await?;
+            conn.drain(conn.conn.deadline()).await?;
         }
+
+        conn.reset_state();
         Ok(())
     }
 }

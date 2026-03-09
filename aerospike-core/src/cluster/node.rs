@@ -20,6 +20,8 @@ use std::result::Result as StdResult;
 use std::sync::atomic::{AtomicBool, AtomicIsize, AtomicUsize, Ordering};
 use std::sync::Arc;
 
+use hazarc::AtomicArc;
+
 use crate::cluster::node_validator::NodeValidator;
 use crate::cluster::peers_parser::PeersParser;
 use crate::cluster::CLIENT_VERSION;
@@ -28,7 +30,6 @@ use crate::errors::{Error, Result};
 use crate::net::{ConnectionPool, Host, PooledConnection};
 use crate::policy::{AdminPolicy, ClientPolicy};
 use crate::Version;
-use aerospike_rt::RwLock;
 
 pub const PARTITIONS: usize = 4096;
 pub const PARTITION_GENERATION: &str = "partition-generation";
@@ -41,7 +42,7 @@ pub struct Node {
     client_policy: ClientPolicy,
     name: String,
     host: Host,
-    aliases: RwLock<Vec<Host>>,
+    aliases: AtomicArc<Vec<Host>>,
     address: String,
 
     connection_pool: ConnectionPool,
@@ -50,7 +51,7 @@ pub struct Node {
     partition_generation: AtomicIsize,
     rebalance_generation: AtomicIsize,
     // Which racks are these things part of
-    rack_ids: std::sync::Mutex<HashMap<String, usize>>,
+    rack_ids: AtomicArc<HashMap<String, usize>>,
     refresh_count: AtomicUsize,
     reference_count: AtomicUsize,
     responded: AtomicBool,
@@ -64,7 +65,7 @@ impl Node {
         Node {
             client_policy: client_policy.clone(),
             name: nv.name.clone(),
-            aliases: RwLock::new(nv.aliases.clone()),
+            aliases: AtomicArc::from(nv.aliases.clone()),
             address: nv.address.clone(),
 
             host: nv.aliases[0].clone(),
@@ -81,7 +82,7 @@ impl Node {
             responded: AtomicBool::new(false),
             active: AtomicBool::new(true),
             version: nv.version.clone(),
-            rack_ids: std::sync::Mutex::new(HashMap::new()),
+            rack_ids: AtomicArc::from(HashMap::new()),
         }
     }
 
@@ -96,7 +97,7 @@ impl Node {
     }
 
     /// Returns the Node name
-    pub fn version(&self) -> &Version {
+    pub const fn version(&self) -> &Version {
         &self.version
     }
 
@@ -161,15 +162,14 @@ impl Node {
 
     fn verify_node_name(&self, info_map: &HashMap<String, String>) -> Result<()> {
         match info_map.get("node") {
-            None => Err(Error::InvalidNode("Missing node name".to_string()).into()),
+            None => Err(Error::InvalidNode("Missing node name".to_string())),
             Some(info_name) if info_name == &self.name => Ok(()),
             Some(info_name) => {
                 self.inactivate();
                 Err(Error::InvalidNode(format!(
                     "Node name has changed: '{}' => '{}'",
                     self.name, info_name
-                ))
-                .into())
+                )))
             }
         }
     }
@@ -178,16 +178,14 @@ impl Node {
         match self.client_policy.cluster_name {
             None => Ok(()),
             Some(ref expected) => match info_map.get("cluster-name") {
-                None => Err(Error::InvalidNode("Missing cluster name".to_string()).into()),
+                None => Err(Error::InvalidNode("Missing cluster name".to_string())),
                 Some(info_name) if info_name == expected => Ok(()),
                 Some(info_name) => {
                     self.inactivate();
                     Err(Error::InvalidNode(format!(
-                        "Cluster name mismatch: expected={},
-                                                           got={}",
-                        expected, info_name
-                    ))
-                    .into())
+                        "Cluster name mismatch: expected={expected},
+                                                           got={info_name}"
+                    )))
                 }
             },
         }
@@ -207,7 +205,13 @@ impl Node {
         };
 
         let (_, hosts) = PeersParser::new(friend_string).parse()?;
-        for alias in hosts {
+        for mut alias in hosts {
+            if let Some(ref ip_map) = self.client_policy.ip_map {
+                if let Some(mapped) = ip_map.get(&alias.name) {
+                    alias.name = mapped.clone();
+                }
+            }
+
             if current_aliases.contains_key(&alias) {
                 self.reference_count.fetch_add(1, Ordering::Relaxed);
             } else if !friends.contains(&alias) {
@@ -244,11 +248,10 @@ impl Node {
     }
 
     pub fn is_in_rack(&self, namespace: &str, rack_ids: &HashSet<usize>) -> bool {
-        self.rack_ids.lock().map_or(false, |locked| {
-            locked
-                .get(namespace)
-                .map_or(false, |r| rack_ids.contains(r))
-        })
+        self.rack_ids
+            .load()
+            .get(namespace)
+            .is_some_and(|r| rack_ids.contains(r))
     }
 
     pub fn parse_rack(&self, buf: &str) -> Result<()> {
@@ -262,18 +265,24 @@ impl Node {
             })
             .collect::<Result<HashMap<_, _>>>()?;
 
-        *self
-            .rack_ids
-            .lock()
-            .map_err(|err| Error::ClientError(err.to_string()))? = new_table;
+        self.rack_ids.store(Arc::new(new_table));
         Ok(())
     }
 
     // Get a connection to the node from the connection pool
-    pub async fn get_connection(&self) -> Result<PooledConnection> {
-        self.connection_pool
-            .get(self.connection_pool.num_conns().await)
-            .await
+    pub async fn get_connection(&self, hint: u8) -> Result<PooledConnection> {
+        if let Ok(conn) = self.connection_pool.get(hint) {
+            return Ok(conn);
+        }
+
+        self.connection_pool.make_conn(0).await
+    }
+
+    // Put a connection to the node back in the connection pool
+    pub fn put_connection(&self, mut pconn: PooledConnection) {
+        if let Some(conn) = pconn.conn.take() {
+            pconn.queue.put_back(conn);
+        }
     }
 
     // Amount of failures
@@ -300,21 +309,22 @@ impl Node {
     }
 
     // Get a list of aliases to the node
-    pub async fn aliases(&self) -> Vec<Host> {
-        self.aliases.read().await.to_vec()
+    pub fn aliases(&self) -> Vec<Host> {
+        self.aliases.load().to_vec()
     }
 
     // Add an alias to the node
-    pub async fn add_alias(&self, alias: Host) {
-        let mut aliases = self.aliases.write().await;
+    pub fn add_alias(&self, alias: Host) {
+        let mut aliases = self.aliases();
         aliases.push(alias);
+        self.aliases.store(Arc::new(aliases));
         self.reference_count.fetch_add(1, Ordering::Relaxed);
     }
 
     // Set the node inactive and close all connections in the pool
-    pub async fn close(&mut self) {
+    pub fn close(&mut self) {
         self.inactivate();
-        self.connection_pool.close().await;
+        self.connection_pool.close();
     }
 
     // Send info commands to this node
@@ -323,13 +333,14 @@ impl Node {
         policy: &AdminPolicy,
         commands: &[&str],
     ) -> Result<HashMap<String, String>> {
-        let mut conn = self.get_connection().await?;
+        let mut conn = self.get_connection(0).await?;
         let res = Message::info(policy, &mut conn, commands).await;
 
         if let Err(e) = res {
-            conn.invalidate().await;
+            conn.invalidate();
             return Err(e);
         }
+        self.put_connection(conn);
         res
     }
 
@@ -351,10 +362,10 @@ impl Node {
         let app_id = self.client_policy().application_id();
 
         // Source user-agent payload
-        // Format: "1,go-<version>,<application-id>"
-        let user_agent_id = format!("1,rust-{},{}", CLIENT_VERSION, app_id);
+        // Format: "1,rust-<version>,<application-id>"
+        let user_agent_id = format!("1,rust-{CLIENT_VERSION},{app_id}");
         let user_agent_id = base64::encode(&user_agent_id);
-        let user_agent_command = format!("user-agent-set:value={}", user_agent_id);
+        let user_agent_command = format!("user-agent-set:value={user_agent_id}");
 
         let policy = AdminPolicy {
             timeout: self.client_policy().timeout,
@@ -363,20 +374,20 @@ impl Node {
     }
 
     /// Fills the connection pool to the minimum required
-    /// by the [ClientPolicy.min_conns_per_node]
+    /// by the [`ClientPolicy.min_conns_per_node`]
     pub(crate) async fn fill_min_conns(&self) -> Result<usize> {
         let mut count = 0;
 
         let client_policy = self.client_policy();
         if client_policy.min_conns_per_node > 0 {
-            let to_fill = client_policy.min_conns_per_node - self.connection_pool.num_conns().await;
+            let to_fill = client_policy.min_conns_per_node - self.connection_pool.num_conns();
             for _ in 0..to_fill {
-                self.connection_pool.make_conn().await?;
+                self.connection_pool.make_conn(count).await?;
                 count += 1;
             }
         }
 
-        return Ok(count);
+        Ok(count)
     }
 }
 

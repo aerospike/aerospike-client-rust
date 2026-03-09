@@ -19,24 +19,22 @@ use crate::ResultCode;
 #[cfg(feature = "serialization")]
 use serde::Serialize;
 
-/// Key and bin names used in batch read commands where variable bins are needed for each key.
+/// Encapsulates the Batch key and record result.
 #[cfg_attr(feature = "serialization", derive(Serialize))]
 #[derive(Debug, Clone)]
-
-/// Encapsulates the Batch key and record result.
 pub struct BatchRecord {
     /// Key.
     pub key: Key,
 
     /// Record result after batch command has completed. Will be nil if record was not found
-    /// or an error occurred. See ResultCode.
+    /// or an error occurred. See `ResultCode`.
     pub record: Option<Record>,
 
-    /// ResultCode for this returned record. See ResultCode.
+    /// `ResultCode` for this returned record. See `ResultCode`.
     /// If not OK, the record will be nil.
     pub result_code: Option<ResultCode>,
 
-    /// InDoubt signifies the possibility that the write command may have completed even though an error
+    /// `InDoubt` signifies the possibility that the write command may have completed even though an error
     /// occurred for this record. This may be the case when a client error occurs (like timeout)
     /// after the command was sent to the server.
     pub in_doubt: bool,
@@ -46,13 +44,13 @@ pub struct BatchRecord {
 }
 
 impl BatchRecord {
-    pub(crate) fn new(key: Key, has_write: bool) -> Self {
+    pub(crate) const fn new(key: Key, has_write: bool) -> Self {
         BatchRecord {
-            key: key,
+            key,
             record: None,
             result_code: None,
             in_doubt: false,
-            has_write: has_write,
+            has_write,
         }
     }
 }

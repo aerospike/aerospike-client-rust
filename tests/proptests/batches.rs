@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 use crate::common;
 use crate::proptest::prelude::*;
@@ -51,7 +51,7 @@ proptest_async::proptest! {
 
                 client.put(&write_policy, &key, &bins).await.expect("initial put should have succeeded");
 
-				std::thread::sleep(std::time::Duration::from_millis(500));
+                std::thread::sleep(std::time::Duration::from_millis(500));
 
                 // Make sure write went through using non-batch means.
 
@@ -289,12 +289,12 @@ proptest_async::proptest! {
                                 GenerationPolicy::None => { }
 
                                 GenerationPolicy::ExpectGenGreater => {
-									// The logic on this seems backwards, but it makes sense when you consider things from a database
-									// restore operation's point of view.  The idea is that if a backup restore's record has a _greater_
-									// generation than what already sits on the server, then it must be _newer_ data, and thus, eligible
-									// for restoration.  This means that the write/delete will succeed if the current record's generation
-									// is *less than or equal* to the provided generation, since the *provided* generation is the backup's
-									// generation.
+                                    // The logic on this seems backwards, but it makes sense when you consider things from a database
+                                    // restore operation's point of view.  The idea is that if a backup restore's record has a _greater_
+                                    // generation than what already sits on the server, then it must be _newer_ data, and thus, eligible
+                                    // for restoration.  This means that the write/delete will succeed if the current record's generation
+                                    // is *less than or equal* to the provided generation, since the *provided* generation is the backup's
+                                    // generation.
                                     if db_record.generation <= bdp.generation {
                                         panic!("ERROR: server record generation is {}, policy is looking for <= {}, but still got GenerationError.",
                                                 db_record.generation, bdp.generation);

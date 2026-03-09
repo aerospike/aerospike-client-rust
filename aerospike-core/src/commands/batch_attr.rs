@@ -24,7 +24,8 @@ use crate::CommitLevel;
 use crate::GenerationPolicy;
 use crate::RecordExistsAction;
 
-pub(crate) struct BatchAttr {
+#[derive(Default)]
+pub struct BatchAttr {
     pub(crate) filter_expression: Option<Expression>,
     pub(crate) read_attr: u8,
     pub(crate) write_attr: u8,
@@ -34,22 +35,6 @@ pub(crate) struct BatchAttr {
     pub(crate) generation: u32,
     pub(crate) has_write: bool,
     pub(crate) send_key: bool,
-}
-
-impl Default for BatchAttr {
-    fn default() -> Self {
-        BatchAttr {
-            filter_expression: None,
-            read_attr: 0,
-            write_attr: 0,
-            info_attr: 0,
-            txn_attr: 0,
-            expiration: 0,
-            generation: 0,
-            has_write: false,
-            send_key: false,
-        }
-    }
 }
 
 impl BatchAttr {
@@ -113,10 +98,10 @@ impl BatchAttr {
         self.send_key = false;
     }
 
-    pub(crate) fn adjust_read<'a>(&mut self, ops: &Vec<Operation<'a>>) {
+    pub(crate) fn adjust_read(&mut self, ops: &Vec<Operation>) {
         for op in ops {
-            match op.op {
-                OperationType::Read => match op.bin {
+            if matches!(op.op, OperationType::Read) {
+                match op.bin {
                     OperationBin::All => {
                         self.read_attr |= buffer::INFO1_GET_ALL;
                     }
@@ -124,13 +109,12 @@ impl BatchAttr {
                         self.read_attr |= buffer::INFO1_NOBINDATA;
                     }
                     _ => (),
-                },
-                _ => (),
+                }
             }
         }
     }
 
-    pub(crate) fn adjust_read_for_all_bins(&mut self, read_all_bins: bool) {
+    pub(crate) const fn adjust_read_for_all_bins(&mut self, read_all_bins: bool) {
         if read_all_bins {
             self.read_attr |= buffer::INFO1_GET_ALL;
         } else {
@@ -176,7 +160,7 @@ impl BatchAttr {
         }
 
         if wp.durable_delete {
-            self.write_attr |= buffer::INFO2_DURABLE_DELETE
+            self.write_attr |= buffer::INFO2_DURABLE_DELETE;
         }
 
         // if wp.on_locking_only {
@@ -184,11 +168,11 @@ impl BatchAttr {
         // }
 
         if wp.commit_level == CommitLevel::CommitMaster {
-            self.info_attr |= buffer::INFO3_COMMIT_MASTER
+            self.info_attr |= buffer::INFO3_COMMIT_MASTER;
         }
     }
 
-    pub(crate) fn adjust_write<'a>(&mut self, ops: &Vec<Operation<'a>>) {
+    pub(crate) fn adjust_write(&mut self, ops: &Vec<Operation>) {
         let mut read_all_bins = false;
         let mut read_header = false;
         let mut has_read = false;
@@ -250,7 +234,7 @@ impl BatchAttr {
         // }
 
         if up.commit_level == CommitLevel::CommitMaster {
-            self.info_attr |= buffer::INFO3_COMMIT_MASTER
+            self.info_attr |= buffer::INFO3_COMMIT_MASTER;
         }
     }
 

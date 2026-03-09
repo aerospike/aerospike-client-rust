@@ -38,7 +38,7 @@ use rustls::RootCertStore;
 lazy_static! {
     static ref AEROSPIKE_HOSTS: String =
         // env::var("AEROSPIKE_HOSTS").unwrap_or_else(|_| String::from("127.0.0.1:tls1:3111"));
-        env::var("AEROSPIKE_HOSTS").unwrap_or_else(|_| String::from("127.0.0.1:3100"));
+        env::var("AEROSPIKE_HOSTS").unwrap_or_else(|_| String::from("127.0.0.1:3000"));
     static ref AEROSPIKE_NAMESPACE: String =
         env::var("AEROSPIKE_NAMESPACE").unwrap_or_else(|_| String::from("test"));
     static ref AEROSPIKE_PROP_SET_NAME: String =
@@ -208,7 +208,7 @@ pub fn rand_str(sz: usize) -> String {
 
 pub async fn enterprise_edition() -> bool {
     let client = client().await;
-    let node = client.cluster.get_random_node().await;
+    let node = client.cluster.get_random_node();
     if let Err(_) = node {
         return false;
     }

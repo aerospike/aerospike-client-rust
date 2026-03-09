@@ -14,6 +14,7 @@
 // the License.
 
 use crate::commands::{buffer::Buffer, ParticleType};
+use crate::errors::Result;
 use crate::{CollectionIndexType, Value};
 
 /// Query filter definition. Currently, only one filter is allowed in a Statement, and must be on a
@@ -63,22 +64,25 @@ impl Filter {
         self.collection_index_type.clone()
     }
 
-    pub(crate) fn estimate_size(&self) -> usize {
+    #[must_use]
+    pub(crate) fn estimate_size(&self) -> Result<usize> {
         // bin name size(1) + particle type size(1)
         //     + begin particle size(4) + end particle size(4) = 10
-        self.bin_name.len() + self.begin.estimate_size() + self.end.estimate_size() + 10
+        Ok(self.bin_name.len() + self.begin.estimate_size()? + self.end.estimate_size()? + 10)
     }
 
-    pub(crate) fn write(&self, buffer: &mut Buffer) {
+    #[must_use]
+    pub(crate) fn write(&self, buffer: &mut Buffer) -> Result<()> {
         buffer.write_u8(self.bin_name.len() as u8);
         buffer.write_str(&self.bin_name);
         buffer.write_u8(self.value_particle_type.clone() as u8);
 
-        buffer.write_u32(self.begin.estimate_size() as u32);
-        self.begin.write_to(buffer);
+        buffer.write_u32(self.begin.estimate_size()? as u32);
+        self.begin.write_to(buffer)?;
 
-        buffer.write_u32(self.end.estimate_size() as u32);
-        self.end.write_to(buffer);
+        buffer.write_u32(self.end.estimate_size()? as u32);
+        self.end.write_to(buffer)?;
+        Ok(())
     }
 }
 

@@ -19,12 +19,13 @@
 //!
 //! Handling an error returned by the client.
 //!
-//! ```rust,edition2018
+//! ```rust,edition2021
 //! use aerospike::*;
 //!
-//! let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap();
+//! # async fn example() -> Result<()> {
+//! let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap_or_else(|_| "127.0.0.1:3000".to_string());
 //! let policy = ClientPolicy::default();
-//! let client = Client::new(&policy, &hosts).expect("Failed to connect to cluster").await;
+//! let client = Client::new(&policy, &hosts).await?;
 //! let key = as_key!("test", "test", "someKey");
 //! match client.get(&ReadPolicy::default(), &key, Bins::None).await {
 //!     Ok(record) => {
@@ -33,44 +34,51 @@
 //!             Some(duration) => println!("ttl: {} secs", duration.as_secs()),
 //!         }
 //!     },
-//!     Err(Error::ServerError(ResultCode::KeyNotFoundError)) => {
+//!     Err(Error::ServerError(ResultCode::KeyNotFoundError, _, _)) => {
 //!         println!("No such record: {}", key);
 //!     },
 //!     Err(err) => {
 //!         println!("Error fetching record: {}", err);
-//!         for err in err.iter().skip(1) {
-//!             println!("Caused by: {}", err);
-//!         }
-//!         // The backtrace is not always generated. Try to run this example
-//!         // with `RUST_BACKTRACE=1`.
-//!         if let Some(backtrace) = err.backtrace() {
-//!             println!("Backtrace: {:?}", backtrace);
+//!         let mut source = std::error::Error::source(&err);
+//!         while let Some(e) = source {
+//!             println!("Caused by: {}", e);
+//!             source = e.source();
 //!         }
 //!     }
 //! }
+//! # Ok(())
+//! # }
 //! ```
 
 #![allow(missing_docs)]
 
 use crate::ResultCode;
-#[cfg(all(any(feature = "rt-tokio"), not(feature = "rt-async-std")))]
+#[cfg(feature = "rt-tokio")]
 use aerospike_rt::task;
 
+/// Aerospike client and protocol errors.
 #[derive(Error, Debug)]
 pub enum Error {
+    /// Error decoding a Base64-encoded value.
     #[error("Error decoding Base64 encoded value")]
     Base64(#[from] ::base64::DecodeError),
+    /// Error interpreting a byte sequence as UTF-8.
     #[error("Error interpreting a sequence of u8 as a UTF-8 encoded string.")]
     InvalidUtf8(#[from] ::std::str::Utf8Error),
+    /// Error during an I/O operation.
     #[error("Error during an I/O operation")]
     Io(#[from] ::std::io::Error),
+    /// Error parsing an IP or socket address.
     #[error("Error parsing an IP or socket address")]
     ParseAddr(#[from] ::std::net::AddrParseError),
+    /// Error parsing a string as an integer.
     #[error("Error parsing an integer")]
     ParseInt(#[from] ::std::num::ParseIntError),
+    /// Error while hashing a password for user authentication.
     #[error("Error returned while hashing a password for user authentication")]
     PwHash(#[from] ::pwhash::error::Error),
     #[cfg(feature = "rt-tokio")]
+    /// Async runtime error (e.g. task join failure).
     #[error("Async runtime error {0}")]
     Async(#[from] task::JoinError),
     /// The client received a server response that it was not able to process.
@@ -105,18 +113,18 @@ pub enum Error {
     #[error("Client Timeout: {0}")]
     Timeout(String), // TODO: Should have Node
 
-    /// ClientError is an untyped Error happening on client-side
+    /// `ClientError` is an untyped Error happening on client-side
     #[error("{0}")]
     ClientError(String),
-    /// ParsePeersError occurs when parsing a peer string fails.
+    /// `ParsePeersError` occurs when parsing a peer string fails.
     #[error("{0}")]
     ParsePeersError(String),
 
-    /// StreamSendError is a client-side error that signifies the scan/query was terminated.
+    /// `StreamSendError` is a client-side error that signifies the scan/query was terminated.
     #[error("Record stream was terminated by user")]
     StreamTerminatedError(),
 
-    /// Error returned when a tasked timeed out before it could be completed.
+    /// Error returned when a task timed out before it could be completed.
     #[error("{0}\n\t{1}")]
     Chain(Box<Error>, Box<Error>),
 }
@@ -128,6 +136,14 @@ impl Error {
 
     pub fn wrap(self, e: Error) -> Error {
         Error::Chain(Box::new(e), Box::new(self))
+    }
+
+    /// Chain `cause` as context for this error. If `cause` is `None`, returns `self` unchanged.
+    pub fn chain_cause(self, cause: Option<Error>) -> Error {
+        match cause {
+            Some(e) => Error::Chain(Box::new(self), Box::new(e)),
+            None => self,
+        }
     }
 }
 

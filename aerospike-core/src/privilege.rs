@@ -12,10 +12,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use std::convert::TryFrom;
 use std::fmt;
 
+use crate::errors::Error;
+
 /// Default privileges defined on the server.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd)]
 pub enum PrivilegeCode {
     /// User can edit/remove other users. Global scope only.
     UserAdmin = 0,
@@ -28,14 +31,14 @@ pub enum PrivilegeCode {
     /// User can perform UDF and SINDEX administration actions. Global scope only.
     DataAdmin = 2,
 
-    /// User can perform user defined function(UDF) administration actions.
+    /// User can perform user-defined function(UDF) administration actions.
     /// Examples include create/drop UDF. Global scope only.
     /// Requires server version 6+
     UDFAdmin = 3,
 
     /// User can perform secondary index administration actions.
     /// Examples include create/drop index. Global scope only.
-    /// Requires server version 6+
+    /// Requires server version 6+.
     SIndexAdmin = 4,
 
     /// User can read data only.
@@ -44,27 +47,30 @@ pub enum PrivilegeCode {
     /// User can read and write data.
     ReadWrite = 11,
 
-    /// User can read and write data through user defined functions.
+    /// User can read and write data through user-defined functions.
     ReadWriteUDF = 12,
 
-    /// User can read and write data through user defined functions.
+    /// User can read and write data through user-defined functions.
     Write = 13,
 
     /// User can truncate data only.
     /// Requires server version 6+
     Truncate = 14,
+
+    /// User can perform data masking administration actions.
+    /// Global scope only.
+    MaskingAdmin = 15,
+
+    /// User can read masked data only.
+    ReadMasked = 16,
+
+    /// User can write masked data only.
+    WriteMasked = 17,
 }
 
 impl PrivilegeCode {
     pub(crate) fn can_scope(&self) -> bool {
-        match self {
-            PrivilegeCode::Read
-            | PrivilegeCode::ReadWrite
-            | PrivilegeCode::ReadWriteUDF
-            | PrivilegeCode::Write
-            | PrivilegeCode::Truncate => true,
-            _ => false,
-        }
+        *self >= Self::Read
     }
 }
 
@@ -75,7 +81,7 @@ impl fmt::Display for PrivilegeCode {
 }
 
 /// Privilege determines user access granularity.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Privilege {
     /// Role
     pub code: PrivilegeCode,
@@ -91,29 +97,37 @@ pub struct Privilege {
 
 impl Privilege {
     /// Initialize a new privilege
-    pub fn new(code: PrivilegeCode, namespace: Option<String>, set_name: Option<String>) -> Self {
+    pub const fn new(
+        code: PrivilegeCode,
+        namespace: Option<String>,
+        set_name: Option<String>,
+    ) -> Self {
         Privilege {
-            code: code,
-            namespace: namespace,
-            set_name: set_name,
+            code,
+            namespace,
+            set_name,
         }
     }
 }
 
-impl From<u8> for PrivilegeCode {
-    fn from(pc: u8) -> PrivilegeCode {
+impl TryFrom<u8> for PrivilegeCode {
+    type Error = Error;
+    fn try_from(pc: u8) -> std::result::Result<Self, Self::Error> {
         match pc {
-            0 => PrivilegeCode::UserAdmin,
-            1 => PrivilegeCode::SysAdmin,
-            2 => PrivilegeCode::DataAdmin,
-            3 => PrivilegeCode::UDFAdmin,
-            4 => PrivilegeCode::SIndexAdmin,
-            10 => PrivilegeCode::Read,
-            11 => PrivilegeCode::ReadWrite,
-            12 => PrivilegeCode::ReadWriteUDF,
-            13 => PrivilegeCode::Write,
-            14 => PrivilegeCode::Truncate,
-            _ => panic!("invalid privilege code {}", pc),
+            0 => Ok(PrivilegeCode::UserAdmin),
+            1 => Ok(PrivilegeCode::SysAdmin),
+            2 => Ok(PrivilegeCode::DataAdmin),
+            3 => Ok(PrivilegeCode::UDFAdmin),
+            4 => Ok(PrivilegeCode::SIndexAdmin),
+            10 => Ok(PrivilegeCode::Read),
+            11 => Ok(PrivilegeCode::ReadWrite),
+            12 => Ok(PrivilegeCode::ReadWriteUDF),
+            13 => Ok(PrivilegeCode::Write),
+            14 => Ok(PrivilegeCode::Truncate),
+            15 => Ok(PrivilegeCode::MaskingAdmin),
+            16 => Ok(PrivilegeCode::ReadMasked),
+            17 => Ok(PrivilegeCode::WriteMasked),
+            _ => Err(Error::BadResponse(format!("invalid privilege code {pc}"))),
         }
     }
 }
@@ -131,41 +145,51 @@ impl From<&PrivilegeCode> for u8 {
             PrivilegeCode::ReadWriteUDF => 12,
             PrivilegeCode::Write => 13,
             PrivilegeCode::Truncate => 14,
+            PrivilegeCode::MaskingAdmin => 15,
+            PrivilegeCode::ReadMasked => 16,
+            PrivilegeCode::WriteMasked => 17,
         }
     }
 }
 
 impl From<&PrivilegeCode> for String {
     fn from(pc: &PrivilegeCode) -> String {
-        match pc {
-            &PrivilegeCode::UserAdmin => "user-admin".into(),
-            &PrivilegeCode::SysAdmin => "sys-admin".into(),
-            &PrivilegeCode::DataAdmin => "data-admin".into(),
-            &PrivilegeCode::UDFAdmin => "udf-admin".into(),
-            &PrivilegeCode::SIndexAdmin => "sindex-admin".into(),
-            &PrivilegeCode::Read => "read".into(),
-            &PrivilegeCode::ReadWrite => "read-write".into(),
-            &PrivilegeCode::ReadWriteUDF => "read-write-udf".into(),
-            &PrivilegeCode::Write => "write".into(),
-            &PrivilegeCode::Truncate => "truncate".into(),
+        match *pc {
+            PrivilegeCode::UserAdmin => "user-admin".into(),
+            PrivilegeCode::SysAdmin => "sys-admin".into(),
+            PrivilegeCode::DataAdmin => "data-admin".into(),
+            PrivilegeCode::UDFAdmin => "udf-admin".into(),
+            PrivilegeCode::SIndexAdmin => "sindex-admin".into(),
+            PrivilegeCode::Read => "read".into(),
+            PrivilegeCode::ReadWrite => "read-write".into(),
+            PrivilegeCode::ReadWriteUDF => "read-write-udf".into(),
+            PrivilegeCode::Write => "write".into(),
+            PrivilegeCode::Truncate => "truncate".into(),
+            PrivilegeCode::MaskingAdmin => "masking-admin".into(),
+            PrivilegeCode::ReadMasked => "read-masked".into(),
+            PrivilegeCode::WriteMasked => "write-masked".into(),
         }
     }
 }
 
-impl From<&str> for PrivilegeCode {
-    fn from(pc: &str) -> PrivilegeCode {
+impl TryFrom<&str> for PrivilegeCode {
+    type Error = Error;
+    fn try_from(pc: &str) -> std::result::Result<Self, Self::Error> {
         match pc {
-            "user-admin" => PrivilegeCode::UserAdmin,
-            "sys-admin" => PrivilegeCode::SysAdmin,
-            "data-admin" => PrivilegeCode::DataAdmin,
-            "udf-admin" => PrivilegeCode::UDFAdmin,
-            "sindex-admin" => PrivilegeCode::SIndexAdmin,
-            "read" => PrivilegeCode::Read,
-            "read-write" => PrivilegeCode::ReadWrite,
-            "read-write-udf" => PrivilegeCode::ReadWriteUDF,
-            "write" => PrivilegeCode::Write,
-            "truncate" => PrivilegeCode::Truncate,
-            _ => panic!("invalid privilege code {}", pc),
+            "user-admin" => Ok(PrivilegeCode::UserAdmin),
+            "sys-admin" => Ok(PrivilegeCode::SysAdmin),
+            "data-admin" => Ok(PrivilegeCode::DataAdmin),
+            "udf-admin" => Ok(PrivilegeCode::UDFAdmin),
+            "sindex-admin" => Ok(PrivilegeCode::SIndexAdmin),
+            "read" => Ok(PrivilegeCode::Read),
+            "read-write" => Ok(PrivilegeCode::ReadWrite),
+            "read-write-udf" => Ok(PrivilegeCode::ReadWriteUDF),
+            "write" => Ok(PrivilegeCode::Write),
+            "truncate" => Ok(PrivilegeCode::Truncate),
+            "masking-admin" => Ok(PrivilegeCode::MaskingAdmin),
+            "read-masked" => Ok(PrivilegeCode::ReadMasked),
+            "write-masked" => Ok(PrivilegeCode::WriteMasked),
+            _ => Err(Error::BadResponse(format!("invalid privilege code {pc}"))),
         }
     }
 }

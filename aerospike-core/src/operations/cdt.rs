@@ -13,59 +13,74 @@
 // License for the specific language governing permissions and limitations under
 // the License.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::fmt;
 use std::sync::Arc;
 
 use crate::commands::buffer::Buffer;
 use crate::commands::ParticleType;
 pub use crate::operations::cdt_context::CdtContext;
+use crate::Result;
 use crate::Value;
 
+/// Argument value for CDT (list/map) operations in the wire protocol.
 #[derive(Debug, Clone)]
-pub(crate) enum CdtArgument<'a> {
+pub enum CdtArgument {
+    /// Single byte.
     Byte(u8),
+    /// 64-bit integer.
     Int(i64),
+    /// Boolean.
     Bool(bool),
-    Value(&'a Value),
-    List(&'a [Value]),
-    Map(&'a HashMap<Value, Value>),
+    /// Arbitrary Aerospike value.
+    Value(Value),
+    /// List of values.
+    List(Vec<Value>),
+    /// Unordered map (key-value pairs).
+    Map(HashMap<Value, Value>),
+    /// Ordered map (key-value pairs with key ordering).
+    OrderedMap(BTreeMap<Value, Value>),
 }
 
 pub type OperationEncoder = Arc<
-    dyn Fn(&mut Option<&mut Buffer>, &CdtOperation, &[CdtContext]) -> usize + Send + Sync + 'static,
+    dyn Fn(&mut Option<&mut Buffer>, &CdtOperation, &[CdtContext]) -> Result<usize>
+        + Send
+        + Sync
+        + 'static,
 >;
 
 #[derive(Clone)]
-pub(crate) struct CdtOperation<'a> {
+pub struct CdtOperation {
     pub op: u8,
     pub encoder: OperationEncoder,
-    pub args: Vec<CdtArgument<'a>>,
+    pub args: Vec<CdtArgument>,
 }
 
-impl<'a> CdtOperation<'a> {
+impl CdtOperation {
     pub const fn particle_type(&self) -> ParticleType {
         ParticleType::BLOB
     }
 
-    pub fn estimate_size(&self, ctx: &[CdtContext]) -> usize {
-        let size: usize = (self.encoder)(&mut None, self, ctx);
-        size
+    #[must_use]
+    pub fn estimate_size(&self, ctx: &[CdtContext]) -> Result<usize> {
+        let size: usize = (self.encoder)(&mut None, self, ctx)?;
+        Ok(size)
     }
 
-    pub fn write_to(&self, buffer: &mut Buffer, ctx: &[CdtContext]) -> usize {
-        let size: usize = (self.encoder)(&mut Some(buffer), self, ctx);
-        size
+    #[must_use]
+    pub fn write_to(&self, buffer: &mut Buffer, ctx: &[CdtContext]) -> Result<usize> {
+        let size: usize = (self.encoder)(&mut Some(buffer), self, ctx)?;
+        Ok(size)
     }
 }
 
-impl<'a> fmt::Debug for CdtOperation<'a> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> Result<(), fmt::Error> {
+impl<'a> fmt::Debug for CdtOperation {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> std::result::Result<(), fmt::Error> {
         #[derive(Debug)]
         #[allow(unused)]
         struct CdtOperation<'a> {
             pub op: &'a u8,
-            pub args: &'a Vec<CdtArgument<'a>>,
+            pub args: &'a Vec<CdtArgument>,
         }
 
         let Self {

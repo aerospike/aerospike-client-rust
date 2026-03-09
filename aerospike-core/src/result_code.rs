@@ -19,12 +19,11 @@ use std::result::Result as StdResult;
 #[cfg(feature = "serialization")]
 use serde::Serialize;
 
-/// Key and bin names used in batch read commands where variable bins are needed for each key.
-#[cfg_attr(feature = "serialization", derive(Serialize))]
 /// Database operation error codes. The error codes are defined in the server-side file proto.h.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[cfg_attr(feature = "serialization", derive(Serialize))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ResultCode {
-    /// OperationType was successful.
+    /// `OperationType` was successful.
     Ok,
 
     /// Unknown server failure.
@@ -90,13 +89,13 @@ pub enum ResultCode {
     /// Bin name length greater than 14 characters.
     BinNameTooLong,
 
-    /// OperationType not allowed at this time.
+    /// `OperationType` not allowed at this time.
     FailForbidden,
 
-    /// Returned by Map put and put_items operations when policy is REPLACE but key was not found.
+    /// Returned by Map put and `put_items` operations when policy is REPLACE but key was not found.
     ElementNotFound,
 
-    /// Returned by Map put and put_items operations when policy is CREATE_ONLY but key already
+    /// Returned by Map put and `put_items` operations when policy is `CREATE_ONLY` but key already
     /// exists.
     ElementExists,
 
@@ -199,7 +198,7 @@ pub enum ResultCode {
     /// All batch queues are full.
     BatchQueuesFull,
 
-    /// Invalid GeoJSON on insert/update
+    /// Invalid `GeoJSON` on insert/update
     InvalidGeojson,
 
     /// Secondary index already exists.
@@ -235,10 +234,10 @@ pub enum ResultCode {
     /// Generic query error.
     QueryGeneric,
 
-    /// Query NetIo error on server
+    /// Query `NetIo` error on server
     QueryNetioErr,
 
-    /// Duplicate TaskId sent for the statement
+    /// Duplicate `TaskId` sent for the statement
     QueryDuplicate,
 
     /// Unknown server result code
@@ -408,7 +407,7 @@ impl ResultCode {
             ResultCode::QueryGeneric => String::from("Query error"),
             ResultCode::QueryNetioErr => String::from("Query NetIo error on server"),
             ResultCode::QueryDuplicate => String::from("Duplicate TaskId sent for the statement"),
-            ResultCode::Unknown(code) => format!("Unknown server error code: {}", code),
+            ResultCode::Unknown(code) => format!("Unknown server error code: {code}"),
         }
     }
 }

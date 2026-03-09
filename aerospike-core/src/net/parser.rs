@@ -25,11 +25,11 @@ pub struct Parser<'a> {
 }
 
 impl<'a> Parser<'a> {
-    pub fn new(s: &'a str, default_port: u16) -> Self {
-        Parser { s: s, default_port }
+    pub const fn new(s: &'a str, default_port: u16) -> Self {
+        Parser { s, default_port }
     }
 
-    pub fn read_hosts(&mut self) -> Result<Vec<Host>> {
+    pub fn read_hosts(&self) -> Result<Vec<Host>> {
         static RE: LazyLock<Regex> = LazyLock::new(|| {
             Regex::new(r"^(((\[(?P<ipv6>(\S+))\])|(?P<ipv4>((\d{1,3})(\.\d{1,3}){3}))|(?P<host>([\S--:]+)))(:(?P<tls>[\S--[\d:]][\S--:]*))?(:(?P<port>(\d{1,5})))?)$")
             .unwrap()
@@ -37,15 +37,15 @@ impl<'a> Parser<'a> {
 
         let mut hosts = Vec::new();
 
-        let sne = self.s.split(",");
-        for (_, s) in sne.enumerate() {
+        let sne = self.s.split(',');
+        for s in sne {
             if !RE.is_match(s) {
-                return Err(Error::ClientError(format!("Could not parse `{}`", s)));
+                return Err(Error::ClientError(format!("Could not parse `{s}`")));
             }
 
             // 'm' is a 'Match', and 'as_str()' returns the matching part of the haystack.
             let addrs: (String, Option<String>, String) = RE
-                .captures(&s)
+                .captures(s)
                 .map(|caps| {
                     let host = match (caps.name("ipv6"), caps.name("ipv4"), caps.name("host")) {
                         (Some(ipv6), None, None) => ipv6,
@@ -57,8 +57,7 @@ impl<'a> Parser<'a> {
                     let tls = caps.name("tls").map(|tls| tls.as_str().into());
                     let port = caps
                         .name("port")
-                        .map_or_else(|| format!("{}", self.default_port), |p| p.as_str().into())
-                        .into();
+                        .map_or_else(|| format!("{}", self.default_port), |p| p.as_str().into());
                     (host, tls, port)
                 })
                 .unwrap();

@@ -16,7 +16,6 @@
 use crate::expressions::Expression;
 use crate::policy::BasePolicy;
 use crate::ConsistencyLevel;
-use aerospike_rt::time::Duration;
 
 use super::{PolicyLike, Replica};
 
@@ -34,11 +33,11 @@ pub struct ReadPolicy {
 impl Default for BasePolicy {
     fn default() -> BasePolicy {
         BasePolicy {
-            socket_timeout: 5000,
-            total_timeout: 0,
+            socket_timeout: 30000,
+            total_timeout: 1000,
             timeout_delay: 0,
             max_retries: 2,
-            sleep_between_retries: Some(Duration::from_millis(500)),
+            sleep_between_retries: 0,
             consistency_level: ConsistencyLevel::ConsistencyOne,
             read_touch_ttl: super::ReadTouchTTL::ServerDefault,
             filter_expression: None,

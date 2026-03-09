@@ -16,7 +16,7 @@
 use std::fmt;
 
 /// Underlying data type of secondary index.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum IndexType {
     /// Numeric index.
     Numeric,
@@ -29,7 +29,7 @@ pub enum IndexType {
 }
 
 /// Secondary index collection type.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CollectionIndexType {
     /// Normal, scalar index.
     Default = 0,
@@ -57,7 +57,7 @@ impl fmt::Display for IndexType {
 impl fmt::Display for CollectionIndexType {
     fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
         match *self {
-            CollectionIndexType::Default => panic!("Unknown IndexCollectionType value `Default`"),
+            CollectionIndexType::Default => "DEFAULT".fmt(f),
             CollectionIndexType::List => "LIST".fmt(f),
             CollectionIndexType::MapKeys => "MAPKEYS".fmt(f),
             CollectionIndexType::MapValues => "MAPVALUES".fmt(f),

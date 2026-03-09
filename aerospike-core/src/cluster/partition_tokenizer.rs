@@ -23,7 +23,7 @@ use crate::errors::{Error, Result};
 use crate::net::Connection;
 use crate::AdminPolicy;
 
-use super::{PartitionForNamespace, PartitionTable};
+use super::PartitionTable;
 
 // Validates a Database server node
 #[derive(Debug, Clone)]
@@ -32,7 +32,11 @@ pub struct PartitionTokenizer {
 }
 
 impl PartitionTokenizer {
-    pub async fn new(policy: &AdminPolicy, conn: &mut Connection, node: &Arc<Node>) -> Result<Self> {
+    pub async fn new(
+        policy: &AdminPolicy,
+        conn: &mut Connection,
+        node: &Arc<Node>,
+    ) -> Result<Self> {
         let command = "replicas";
         let info_map = Message::info(policy, conn, &[command, node::PARTITION_GENERATION]).await?;
         if let Some(buf) = info_map.get(command) {
@@ -44,7 +48,7 @@ impl PartitionTokenizer {
         // We re-update the partitions right now (in case its changed since it was last polled)
         node.update_partitions(&info_map)?;
 
-        return Err(Error::BadResponse("Missing replicas info".to_string()));
+        Err(Error::BadResponse("Missing replicas info".to_string()))
     }
 
     pub fn update_partition(&self, nmap: &mut PartitionTable, node: &Arc<Node>) -> Result<()> {
@@ -68,9 +72,7 @@ impl PartitionTokenizer {
                             Error::BadResponse(format!("Invalid replicas count: {err}"))
                         })?;
 
-                    let entry = nmap
-                        .entry(ns.to_string())
-                        .or_insert_with(PartitionForNamespace::default);
+                    let entry = nmap.entry(ns.to_string()).or_default();
 
                     if entry.replicas != n_replicas
                         && reigime

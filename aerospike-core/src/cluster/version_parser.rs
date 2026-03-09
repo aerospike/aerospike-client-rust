@@ -17,7 +17,7 @@ use crate::errors::{Error, Result};
 use regex::Regex;
 use std::sync::LazyLock;
 
-#[derive(Debug, Default, PartialEq, PartialOrd, Clone)]
+#[derive(Debug, Default, PartialEq, Eq, PartialOrd, Clone)]
 /// Holds version numbers.
 pub struct Version {
     /// Major value.
@@ -32,7 +32,7 @@ pub struct Version {
 
 impl Version {
     /// Initializes a version number.
-    pub fn new(major: u64, minor: u64, patch: u64, build: u64) -> Self {
+    pub const fn new(major: u64, minor: u64, patch: u64, build: u64) -> Self {
         Version {
             major,
             minor,
@@ -67,19 +67,24 @@ impl Version {
     pub fn supports_app_id(&self) -> bool {
         self >= &Version::new(8, 1, 0, 0)
     }
+
+    /// Server supports CDT path expression operations (select_by_path / modify_by_path).
+    pub fn supports_cdt_path_expressions(&self) -> bool {
+        self >= &Version::new(8, 1, 1, 0)
+    }
 }
 
 #[derive(Debug)]
-pub(crate) struct VersionParser<'a> {
+pub struct VersionParser<'a> {
     s: &'a str,
 }
 
 impl<'a> VersionParser<'a> {
-    pub fn new(s: &'a str) -> Self {
-        VersionParser { s: s }
+    pub const fn new(s: &'a str) -> Self {
+        VersionParser { s }
     }
 
-    pub fn parse(&mut self) -> Result<Version> {
+    pub fn parse(&self) -> Result<Version> {
         static RE: LazyLock<Regex> = LazyLock::new(|| {
             Regex::new(r"^(?P<major>(\d+))\.(?P<minor>(\d+))\.(?P<patch>(\d+))\.(?P<build>(\d+))")
                 .unwrap()
@@ -94,7 +99,7 @@ impl<'a> VersionParser<'a> {
 
         // 'm' is a 'Match', and 'as_str()' returns the matching part of the haystack.
         let (major, minor, patch, build) = RE
-            .captures(&self.s)
+            .captures(self.s)
             .map(|caps| {
                 (
                     caps.name("major").unwrap().as_str(),

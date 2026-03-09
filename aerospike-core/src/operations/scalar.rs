@@ -20,7 +20,7 @@ use crate::operations::{Operation, OperationBin, OperationData, OperationType};
 use crate::Bin;
 
 /// Create read all record bins database operation.
-pub const fn get<'a>() -> Operation<'a> {
+pub const fn get() -> Operation {
     Operation {
         op: OperationType::Read,
         ctx: DEFAULT_CTX,
@@ -29,8 +29,8 @@ pub const fn get<'a>() -> Operation<'a> {
     }
 }
 
-/// Create read record header database operation.
-pub const fn get_header<'a>() -> Operation<'a> {
+/// Create a read record header database operation.
+pub const fn get_header() -> Operation {
     Operation {
         op: OperationType::Read,
         ctx: DEFAULT_CTX,
@@ -40,57 +40,57 @@ pub const fn get_header<'a>() -> Operation<'a> {
 }
 
 /// Create read bin database operation.
-pub fn get_bin(bin_name: &str) -> Operation<'_> {
+pub fn get_bin(bin_name: &str) -> Operation {
     Operation {
         op: OperationType::Read,
         ctx: DEFAULT_CTX,
-        bin: OperationBin::Name(&bin_name),
+        bin: OperationBin::Name(bin_name.into()),
         data: OperationData::None,
     }
 }
 
 /// Create set database operation.
-pub fn put<'a>(bin: &'a Bin) -> Operation<'a> {
+pub fn put(bin: &Bin) -> Operation {
     Operation {
         op: OperationType::Write,
         ctx: DEFAULT_CTX,
-        bin: OperationBin::Name(&bin.name),
-        data: OperationData::Value(&bin.value),
+        bin: OperationBin::Name(bin.name.clone()),
+        data: OperationData::Value(bin.value.clone()),
     }
 }
 
 /// Create string append database operation.
-pub fn append<'a>(bin: &'a Bin) -> Operation<'a> {
+pub fn append(bin: &Bin) -> Operation {
     Operation {
         op: OperationType::Append,
         ctx: DEFAULT_CTX,
-        bin: OperationBin::Name(&bin.name),
-        data: OperationData::Value(&bin.value),
+        bin: OperationBin::Name(bin.name.clone()),
+        data: OperationData::Value(bin.value.clone()),
     }
 }
 
 /// Create string prepend database operation.
-pub fn prepend<'a>(bin: &'a Bin) -> Operation<'a> {
+pub fn prepend(bin: &Bin) -> Operation {
     Operation {
         op: OperationType::Prepend,
         ctx: DEFAULT_CTX,
-        bin: OperationBin::Name(&bin.name),
-        data: OperationData::Value(&bin.value),
+        bin: OperationBin::Name(bin.name.clone()),
+        data: OperationData::Value(bin.value.clone()),
     }
 }
 
 /// Create integer add database operation.
-pub fn add<'a>(bin: &'a Bin) -> Operation<'a> {
+pub fn add(bin: &Bin) -> Operation {
     Operation {
         op: OperationType::Incr,
         ctx: DEFAULT_CTX,
-        bin: OperationBin::Name(&bin.name),
-        data: OperationData::Value(&bin.value),
+        bin: OperationBin::Name(bin.name.clone()),
+        data: OperationData::Value(bin.value.clone()),
     }
 }
 
-/// Create touch database operation.
-pub const fn touch<'a>() -> Operation<'a> {
+/// Create a touch database operation.
+pub const fn touch() -> Operation {
     Operation {
         op: OperationType::Touch,
         ctx: DEFAULT_CTX,
@@ -100,7 +100,7 @@ pub const fn touch<'a>() -> Operation<'a> {
 }
 
 /// Create delete database operation
-pub const fn delete<'a>() -> Operation<'a> {
+pub const fn delete() -> Operation {
     Operation {
         op: OperationType::Delete,
         ctx: DEFAULT_CTX,

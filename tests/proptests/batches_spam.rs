@@ -1,10 +1,11 @@
 use crate::common;
 use crate::proptest::prelude::*;
 use crate::proptest_async;
+use crate::proptests::{batch_operation::*, policy::*};
 
 use aerospike::*;
 
-use crate::proptests::{ batch_operation::*, policy::*, };
+use crate::proptests::{batch_operation::*, policy::*};
 
 const STRING_DEFAULT: &str = "aerospike default value";
 

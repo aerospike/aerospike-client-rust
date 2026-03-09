@@ -13,12 +13,13 @@
 // License for the specific language governing permissions and limitations under
 // the License.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::vec::Vec;
 
 use crate::commands::buffer::Buffer;
 use crate::commands::ParticleType;
 use crate::errors::{Error, Result};
+use crate::operations::MapOrder;
 use crate::value::Value;
 
 pub fn unpack_value_list(buf: &mut Buffer) -> Result<Value> {
@@ -70,21 +71,70 @@ fn unpack_list(buf: &mut Buffer, mut count: usize) -> Result<Value> {
     Ok(Value::from(list))
 }
 
+fn map_order(buf: &Buffer) -> MapOrder {
+    let map_type = buf.peek();
+
+    // Check for extension that the server uses.
+    if map_type == 0xc7 {
+        let extension_type = buf.peek_n(1);
+        if extension_type == 0 {
+            let map_bits = buf.peek_n(2);
+
+            // Extension is a map type.  Determine which one.
+            if map_bits & 0x08 != 0 {
+                // Index/rank range result where order needs to be preserved.
+                return MapOrder::KeyValueOrdered;
+            } else if map_bits & 0x01 != 0 {
+                // Sorted map
+                return MapOrder::KeyOrdered;
+            }
+        }
+    }
+    MapOrder::Unordered
+}
+
 fn unpack_map(buf: &mut Buffer, mut count: usize) -> Result<Value> {
+    let mut order = MapOrder::Unordered;
     if count > 0 && is_ext(buf.peek()) {
+        order = map_order(buf);
+
         let _uv = unpack_value(buf);
         let _uv = unpack_value(buf);
         count -= 1;
     }
 
-    let mut map: HashMap<Value, Value> = HashMap::with_capacity(count);
-    for _ in 0..count {
-        let key = unpack_value(buf)?;
-        let val = unpack_value(buf)?;
-        map.insert(key, val);
-    }
+    match order {
+        MapOrder::Unordered => {
+            let mut map: HashMap<Value, Value> = HashMap::with_capacity(count);
+            for _ in 0..count {
+                let key = unpack_value(buf)?;
+                let val = unpack_value(buf)?;
+                map.insert(key, val);
+            }
 
-    Ok(Value::from(map))
+            Ok(Value::from(map))
+        }
+        MapOrder::KeyOrdered => {
+            let mut map: BTreeMap<Value, Value> = BTreeMap::new();
+            for _ in 0..count {
+                let key = unpack_value(buf)?;
+                let val = unpack_value(buf)?;
+                map.insert(key, val);
+            }
+
+            Ok(Value::OrderedMap(map))
+        }
+        MapOrder::KeyValueOrdered => {
+            let mut list: Vec<(Value, Value)> = Vec::with_capacity(count);
+            for _ in 0..count {
+                let key = unpack_value(buf)?;
+                let val = unpack_value(buf)?;
+                list.push((key, val));
+            }
+
+            Ok(Value::KeyValueList(list))
+        }
+    }
 }
 
 fn unpack_blob(buf: &mut Buffer, count: usize) -> Result<Value> {
@@ -98,18 +148,16 @@ fn unpack_blob(buf: &mut Buffer, count: usize) -> Result<Value> {
         }
 
         ParticleType::BLOB => Ok(Value::Blob(buf.read_blob(count))),
+        ParticleType::HLL => Ok(Value::HLL(buf.read_blob(count))),
 
         ParticleType::GEOJSON => {
             let val = buf.read_str(count)?;
             Ok(Value::GeoJSON(val))
         }
 
-        _ => {
-            return Err(Error::BadResponse(format!(
-                "Error while unpacking BLOB. Type-header with code `{}` not recognized.",
-                vtype
-            )))
-        }
+        _ => Err(Error::BadResponse(format!(
+            "Error while unpacking BLOB. Type-header with code `{vtype}` not recognized."
+        ))),
     }
 }
 
@@ -159,7 +207,7 @@ fn unpack_value(buf: &mut Buffer) -> Result<Value> {
         0xcc => Ok(Value::from(buf.read_u8(None))),
         0xcd => Ok(Value::from(buf.read_u16(None))),
         0xce => Ok(Value::from(buf.read_u32(None))),
-        0xcf => Ok(Value::from(buf.read_u64_value(None))),
+        0xcf => Ok(buf.read_u64_value(None)),
         0xd0 => Ok(Value::from(buf.read_i8(None))),
         0xd1 => Ok(Value::from(buf.read_i16(None))),
         0xd2 => Ok(Value::from(buf.read_i32(None))),
@@ -214,9 +262,9 @@ fn unpack_value(buf: &mut Buffer) -> Result<Value> {
             let value = i16::from(obj_type) - 0xe0 - 32;
             Ok(Value::from(value))
         }
-        _ => Err(
-            Error::BadResponse(format!("Error unpacking value of type '{:x}'", obj_type)).into(),
-        ),
+        _ => Err(Error::BadResponse(format!(
+            "Error unpacking value of type '{obj_type:x}'"
+        ))),
     }
 }
 

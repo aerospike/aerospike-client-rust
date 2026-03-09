@@ -77,24 +77,22 @@ impl<'a> PeersParser<'a> {
 
     pub fn read_generation(&mut self) -> Result<u64> {
         let gen = self.read_until(",");
-        if gen.len() == 0 {
+        if gen.is_empty() {
             return Err(Error::ParsePeersError("generation not specified".into()));
         }
 
-        gen.parse::<u64>().map_err(|_| {
-            Error::ParsePeersError(format!("expected generation but found {}", gen).to_string())
-        })
+        gen.parse::<u64>()
+            .map_err(|_| Error::ParsePeersError(format!("expected generation but found {gen}")))
     }
 
     pub fn read_port(&mut self) -> Result<u16> {
         let port = self.read_until("],");
-        if port.len() == 0 {
+        if port.is_empty() {
             return Err(Error::ParsePeersError("port not specified".into()));
         }
 
-        port.parse::<u16>().map_err(|_| {
-            Error::ParsePeersError(format!("expected port but found {}", port).to_string())
-        })
+        port.parse::<u16>()
+            .map_err(|_| Error::ParsePeersError(format!("expected port but found {port}")))
     }
 
     pub fn read_hosts(&mut self, tls_name: &str, default_port: u16) -> Result<Vec<Host>> {
@@ -106,7 +104,7 @@ impl<'a> PeersParser<'a> {
             match self.peek() {
                 Some(&c) if c == ',' => self.expect(",")?,
                 _ => break,
-            };
+            }
         }
 
         Ok(hosts)
@@ -176,16 +174,16 @@ impl<'a> PeersParser<'a> {
     fn expect(&mut self, sc: &str) -> Result<()> {
         if let Some(c) = self.s.next() {
             if !sc.contains(c) {
-                return Err(Error::InvalidArgument(
-                    format!("Expected one of `{}` but found {:?}", sc, c).to_string(),
-                ));
+                return Err(Error::InvalidArgument(format!(
+                    "Expected one of `{sc}` but found {c:?}"
+                )));
             }
             return Ok(());
         }
 
-        return Err(Error::InvalidArgument(
-            format!("Expected one of `{}` but EOF", sc).to_string(),
-        ));
+        Err(Error::InvalidArgument(format!(
+            "Expected one of `{sc}` but EOF"
+        )))
     }
 
     fn next_char(&mut self) -> Option<char> {

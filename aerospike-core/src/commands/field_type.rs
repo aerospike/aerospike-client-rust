@@ -13,34 +13,52 @@
 // License for the specific language governing permissions and limitations under
 // the License.
 
-// FieldType signifies the database operation error codes.
-// The positive numbers align with the server side file proto.h.
-
+/// Wire-protocol field type identifiers. Values align with the server-side proto definitions.
 pub enum FieldType {
+    /// Namespace.
     Namespace = 0,
+    /// Table (set).
     Table = 1,
+    /// Record key.
     Key = 2,
     // RecordVersion = 3,
+    /// Digest (Ripe).
     DigestRipe = 4,
     // MrtId = 5,
     // MrtDeadline = 6,
-    QueryId = 7, // user supplied transaction id, which is simply passed back,
+    /// Query/transaction ID (user-supplied, echoed back).
+    QueryId = 7,
+    /// Socket timeout.
     SocketTimeout = 9,
+    /// Records per second limit.
     RecordsPerSecond = 10,
+    /// PID array.
     PIDArray = 11,
+    /// Digest array.
     DigestArray = 12,
+    /// Max records.
     MaxRecords = 13,
+    /// Bin value array.
     BValArray = 15,
+    /// Index name.
     IndexName = 21,
+    /// Index range.
     IndexRange = 22,
     // IndexContext = 23,
+    /// Index type.
     IndexType = 26,
+    /// UDF package name.
     UdfPackageName = 30,
+    /// UDF function name.
     UdfFunction = 31,
+    /// UDF argument list.
     UdfArgList = 32,
+    /// UDF operation.
     UdfOp = 33,
     // QueryBinList = 40,
+    /// Batch index.
     BatchIndex = 41,
     // BatchIndexWithSet = 42,
+    /// Filter expression.
     FilterExp = 43,
 }

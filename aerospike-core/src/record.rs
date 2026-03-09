@@ -88,7 +88,7 @@ impl fmt::Display for Record {
             if i > 0 {
                 write!(f, ", ")?;
             }
-            write!(f, "{}: {}", k, v)?;
+            write!(f, "{k}: {v}")?;
         }
         write!(f, "}}, generation: {}", self.generation)?;
         write!(f, ", ttl: ")?;

@@ -7,16 +7,18 @@ homepage = "https://www.aerospike.com/"
 repository = "https://github.com/aerospike/aerospike-client-rust/"
 license = "Apache-2.0"
 edition = "2018"
+rust-version = "1.87"
 
 [dependencies]
+chrono = "0.4"
 clap = "2.33"
 log = "0.4"
 env_logger = "0.9"
 lazy_static = "1.4"
-num_cpus = "1.11"
-rand = "0.8"
+rand = { version = "0.8", features = ["getrandom", "small_rng"] }
 aerospike = { path = "../.." }
-tokio = { version = "1.0", features = ["full"] }
+# Minimal features to reduce Tokio task heap and binary size (no fs, process, signal, etc.)
+tokio = { version = "1.0", features = ["rt-multi-thread", "sync", "time", "macros"] }
 
 [[bin]]
 path = "src/main.rs"

@@ -51,12 +51,10 @@ async fn scan_single_consumer() {
     let set_name = create_test_set(&client, EXPECTED).await;
 
     let pf = PartitionFilter::all();
-    let spolicy = ScanPolicy::default();
+    let qpolicy = QueryPolicy::default();
 
-    let rs = client
-        .scan(&spolicy, pf, namespace, &set_name, Bins::All)
-        .await
-        .unwrap();
+    let stmt = Statement::new(namespace, &set_name, Bins::All);
+    let rs = client.query(&qpolicy, pf, stmt).await.unwrap();
 
     let count = rs
         .into_stream()
@@ -75,12 +73,10 @@ async fn scan_single_consumer_no_setname() {
     let set_name = "";
 
     let pf = PartitionFilter::all();
-    let spolicy = ScanPolicy::default();
+    let qpolicy = QueryPolicy::default();
 
-    let rs = client
-        .scan(&spolicy, pf, namespace, &set_name, Bins::All)
-        .await
-        .unwrap();
+    let stmt = Statement::new(namespace, &set_name, Bins::All);
+    let rs = client.query(&qpolicy, pf, stmt).await.unwrap();
 
     let count = rs
         .into_stream()
@@ -101,17 +97,15 @@ async fn scan_single_consumer_with_cancel() {
     let set_name = create_test_set(&client, EXPECTED).await;
 
     let mut pf = PartitionFilter::all();
-    let mut spolicy = ScanPolicy::default();
-    spolicy.max_records = (EXPECTED / 3) as u64;
-    // spolicy.records_per_second = (EXPECTED / 4) as u32;
-    // spolicy.record_queue_size = 1;
+    let mut qpolicy = QueryPolicy::default();
+    qpolicy.max_records = (EXPECTED / 3) as u64;
+    // qpolicy.records_per_second = (EXPECTED / 4) as u32;
+    // qpolicy.record_queue_size = 1;
 
     let mut count = 0;
     while !pf.done() {
-        let rs = client
-            .scan(&spolicy, pf, namespace, &set_name, Bins::All)
-            .await
-            .unwrap();
+        let stmt = Statement::new(namespace, &set_name, Bins::All);
+        let rs = client.query(&qpolicy, pf, stmt).await.unwrap();
 
         count += rs
             .clone()
@@ -142,15 +136,13 @@ async fn scan_single_consumer_with_cursor() {
     let set_name = create_test_set(&client, EXPECTED).await;
 
     let mut pf = PartitionFilter::all();
-    let mut spolicy = ScanPolicy::default();
-    spolicy.max_records = (EXPECTED / 3) as u64;
+    let mut qpolicy = QueryPolicy::default();
+    qpolicy.max_records = (EXPECTED / 3) as u64;
 
     let mut count = 0;
     while !pf.done() {
-        let rs = client
-            .scan(&spolicy, pf, namespace, &set_name, Bins::All)
-            .await
-            .unwrap();
+        let stmt = Statement::new(namespace, &set_name, Bins::All);
+        let rs = client.query(&qpolicy, pf, stmt).await.unwrap();
 
         count += rs
             .clone()
@@ -174,23 +166,21 @@ async fn scan_single_consumer_rps() {
     let client = common::client().await;
 
     // only run on single node clusters
-    if client.nodes().await.len() != 1 {
+    if client.nodes().len() != 1 {
         return;
     }
 
-    let node_count = client.cluster.nodes().await.len();
+    let node_count = client.cluster.nodes().len();
     let namespace = common::namespace();
     let set_name = create_test_set(&client, EXPECTED).await;
 
-    let mut spolicy = ScanPolicy::default();
-    spolicy.records_per_second = (EXPECTED / 3 / node_count) as u32;
+    let mut qpolicy = QueryPolicy::default();
+    qpolicy.records_per_second = (EXPECTED / 3 / node_count) as u32;
 
     let start_time = Instant::now();
     let pf = PartitionFilter::all();
-    let rs = client
-        .scan(&spolicy, pf, namespace, &set_name, Bins::All)
-        .await
-        .unwrap();
+    let stmt = Statement::new(namespace, &set_name, Bins::All);
+    let rs = client.query(&qpolicy, pf, stmt).await.unwrap();
 
     let count = rs
         .into_stream()
@@ -212,13 +202,11 @@ async fn scan_multi_consumer() {
     let namespace = common::namespace();
     let set_name = create_test_set(&client, EXPECTED).await;
 
-    let mut spolicy = ScanPolicy::default();
-    spolicy.record_queue_size = 4096;
+    let mut qpolicy = QueryPolicy::default();
+    qpolicy.record_queue_size = 4096;
     let pf = PartitionFilter::all();
-    let rs = client
-        .scan(&spolicy, pf, namespace, &set_name, Bins::All)
-        .await
-        .unwrap();
+    let stmt = Statement::new(namespace, &set_name, Bins::All);
+    let rs = client.query(&qpolicy, pf, stmt).await.unwrap();
 
     let count = Arc::new(AtomicUsize::new(0));
     let mut threads = vec![];
@@ -249,13 +237,11 @@ async fn scan_single_consumer_stream() {
     let namespace = common::namespace();
     let set_name = create_test_set(&client, EXPECTED).await;
 
-    let mut spolicy = ScanPolicy::default();
-    spolicy.record_queue_size = 4096;
+    let mut qpolicy = QueryPolicy::default();
+    qpolicy.record_queue_size = 4096;
     let pf = PartitionFilter::all();
-    let rs = client
-        .scan(&spolicy, pf, namespace, &set_name, Bins::All)
-        .await
-        .unwrap();
+    let stmt = Statement::new(namespace, &set_name, Bins::All);
+    let rs = client.query(&qpolicy, pf, stmt).await.unwrap();
 
     let count = Arc::new(AtomicUsize::new(0));
     let rs = rs.into_stream();
@@ -277,13 +263,11 @@ async fn scan_multi_consumer_stream() {
     let namespace = common::namespace();
     let set_name = create_test_set(&client, EXPECTED).await;
 
-    let mut spolicy = ScanPolicy::default();
-    spolicy.record_queue_size = 4096;
+    let mut qpolicy = QueryPolicy::default();
+    qpolicy.record_queue_size = 4096;
     let pf = PartitionFilter::all();
-    let rs = client
-        .scan(&spolicy, pf, namespace, &set_name, Bins::All)
-        .await
-        .unwrap();
+    let stmt = Statement::new(namespace, &set_name, Bins::All);
+    let rs = client.query(&qpolicy, pf, stmt).await.unwrap();
 
     let count = Arc::new(AtomicUsize::new(0));
     let mut threads = vec![];

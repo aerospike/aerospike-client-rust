@@ -21,6 +21,7 @@ pub mod peers_parser;
 pub mod version_parser;
 
 use aerospike_rt::time::{Duration, Instant};
+use std::cell::OnceCell;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicIsize, Ordering};
 use std::sync::{Arc, Weak};
@@ -40,27 +41,19 @@ use crate::policy::ClientPolicy;
 use crate::policy::Replica;
 use crate::AdminPolicy;
 use aerospike_rt::Mutex;
-use aerospike_rt::RwLock;
 use futures::channel::mpsc;
 use futures::channel::mpsc::{Receiver, Sender};
+use hazarc::AtomicArc;
 
 static CLIENT_VERSION: &str = env!("CARGO_PKG_VERSION");
 
-#[derive(Debug)]
+#[derive(Debug, Default, Clone)]
 pub struct PartitionForNamespace {
     nodes: Vec<(u32, Option<Arc<Node>>)>,
     replicas: usize,
 }
-type PartitionTable = HashMap<String, PartitionForNamespace>;
 
-impl Default for PartitionForNamespace {
-    fn default() -> Self {
-        Self {
-            nodes: Vec::default(),
-            replicas: 0,
-        }
-    }
-}
+type PartitionTable = HashMap<String, PartitionForNamespace>;
 
 impl PartitionForNamespace {
     fn all_replicas(&self, index: usize) -> impl Iterator<Item = Option<Arc<Node>>> + '_ {
@@ -71,7 +64,7 @@ impl PartitionForNamespace {
         })
     }
 
-    async fn get_node(
+    fn get_node(
         &self,
         cluster: &Cluster,
         partition: &Partition<'_>,
@@ -107,7 +100,7 @@ impl PartitionForNamespace {
                 last_tried,
             ),
             Replica::PreferRack => {
-                let rack_ids = cluster.client_policy().await.rack_ids;
+                let rack_ids = &cluster.client_policy.load().rack_ids;
                 let rack_ids = rack_ids.as_ref().ok_or_else(|| Error::InvalidArgument("Attempted to use Replica::PreferRack without configuring racks in client policy".to_string()))?;
                 get_next_in_sequence(
                     || {
@@ -140,22 +133,22 @@ impl PartitionForNamespace {
 #[derive(Debug)]
 pub struct Cluster {
     // Initial host nodes specified by user.
-    seeds: Arc<RwLock<Vec<Host>>>,
+    seeds: AtomicArc<Vec<Host>>,
 
     // All aliases for all nodes in cluster.
-    aliases: Arc<RwLock<HashMap<Host, Arc<Node>>>>,
+    aliases: AtomicArc<HashMap<Host, Arc<Node>>>,
 
     // Active nodes in cluster.
-    nodes: Arc<RwLock<Vec<Arc<Node>>>>,
+    nodes: AtomicArc<Vec<Arc<Node>>>,
 
     // Which partition contains the key.
-    partition_write_map: RwLock<PartitionTable>,
+    partition_map: AtomicArc<PartitionTable>,
 
     // Random node index.
     node_index: AtomicIsize,
 
-    client_policy: RwLock<ClientPolicy>,
-    hashed_pass: RwLock<Option<String>>,
+    client_policy: AtomicArc<ClientPolicy>,
+    hashed_pass: AtomicArc<Option<String>>,
 
     tend_channel: Mutex<Sender<()>>,
     closed: AtomicBool,
@@ -168,14 +161,14 @@ impl Cluster {
 
         let (tx, rx) = mpsc::channel(100);
         let cluster = Arc::new(Cluster {
-            hashed_pass: RwLock::new(policy.hashed_pass()),
-            client_policy: RwLock::new(policy),
+            hashed_pass: AtomicArc::from(policy.hashed_pass()),
+            client_policy: AtomicArc::from(policy),
 
-            seeds: Arc::new(RwLock::new(hosts.to_vec())),
-            aliases: Arc::new(RwLock::new(HashMap::new())),
-            nodes: Arc::new(RwLock::new(vec![])),
+            seeds: AtomicArc::from(hosts.to_vec()),
+            aliases: AtomicArc::from(HashMap::new()),
+            nodes: AtomicArc::from(vec![]),
 
-            partition_write_map: RwLock::new(HashMap::default()),
+            partition_map: AtomicArc::from(HashMap::default()),
             node_index: AtomicIsize::new(0),
 
             tend_channel: Mutex::new(tx),
@@ -185,7 +178,7 @@ impl Cluster {
         Cluster::wait_till_stabilized(cluster.clone()).await?;
 
         // apply policy rules
-        if cluster.client_policy().await.fail_if_not_connected && !cluster.is_connected().await {
+        if cluster.client_policy.load().fail_if_not_connected && !cluster.is_connected() {
             return Err(Error::Connection(
                 "Failed to connect to host(s). The network \
                  connection(s) to cluster nodes may have timed out, or \
@@ -201,7 +194,7 @@ impl Cluster {
     }
 
     async fn tend_thread(cluster: Arc<Cluster>, mut rx: Receiver<()>) {
-        let tend_interval = cluster.client_policy().await.tend_interval;
+        let tend_interval = cluster.client_policy.load().tend_interval;
 
         loop {
             if rx.try_next().is_ok() {
@@ -209,7 +202,7 @@ impl Cluster {
             } else if let Err(err) = cluster.tend().await {
                 log_error_chain!(err, "Error tending cluster");
             }
-            aerospike_rt::sleep(tend_interval).await;
+            aerospike_rt::sleep(Duration::from_millis(u64::from(tend_interval))).await;
         }
 
         // close all nodes
@@ -223,25 +216,27 @@ impl Cluster {
     }
 
     async fn tend(&self) -> Result<()> {
-        let mut nodes = self.nodes().await;
+        let mut nodes = self.nodes();
 
         // All node additions/deletions are performed in tend thread.
         // If active nodes don't exist, seed cluster.
         if nodes.is_empty() {
             debug!("No connections available; seeding...");
             self.seed_nodes().await;
-            nodes = self.nodes().await;
+            nodes = self.nodes();
         }
 
         let mut friend_list: Vec<Host> = vec![];
         let mut refresh_count = 0;
+
+        let mut partition_map = OnceCell::new();
 
         // Refresh all known nodes.
         for node in nodes {
             let old_gen = node.partition_generation();
             let old_rebalance_gen = node.rebalance_generation();
             if node.is_active() {
-                match node.refresh(self.aliases().await).await {
+                match node.refresh(self.aliases()).await {
                     Ok(friends) => {
                         refresh_count += 1;
 
@@ -250,7 +245,12 @@ impl Cluster {
                         }
 
                         if old_gen != node.partition_generation() {
-                            self.update_partitions(&node).await?;
+                            partition_map.get_or_init(|| {
+                                // this will clone the inner value
+                                (*self.partition_map.load().clone()).clone()
+                            });
+                            self.update_partitions(partition_map.get_mut().unwrap(), &node)
+                                .await?;
                         }
 
                         if old_rebalance_gen != node.rebalance_generation() {
@@ -259,39 +259,44 @@ impl Cluster {
                     }
                     Err(err) => {
                         node.increase_failures();
-                        warn!("Node `{}` refresh failed: {}", node, err);
+                        warn!("Node `{node}` refresh failed: {err}");
                     }
                 }
             }
         }
 
+        // if partition map has changed, store the new updated one
+        if let Some(partition_map) = partition_map.take() {
+            self.partition_map.store(Arc::new(partition_map));
+        }
+
         // Add nodes in a batch.
         let add_list = self.find_new_nodes_to_add(friend_list).await;
-        self.add_nodes_and_aliases(&add_list).await;
+        self.add_nodes_and_aliases(&add_list);
 
         // IMPORTANT: Remove must come after add to remove aliases
         // Handle nodes changes determined from refreshes.
         // Remove nodes in a batch.
         let remove_list = self.find_nodes_to_remove(refresh_count).await;
-        self.remove_nodes_and_aliases(remove_list).await;
+        self.remove_nodes_and_aliases(remove_list);
 
         let aliases: Vec<String> = self
-            .aliases()
-            .await
-            .iter()
-            .map(|(host, _)| host.to_string())
+            .aliases
+            .load()
+            .values()
+            .map(std::string::ToString::to_string)
             .collect();
 
-        debug!("Nodes {:?}", aliases);
+        debug!("Nodes {aliases:?}");
 
         Ok(())
     }
 
     async fn wait_till_stabilized(cluster: Arc<Cluster>) -> Result<()> {
         let timeout = {
-            let timeout = cluster.client_policy().await.timeout;
+            let timeout = cluster.client_policy.load().timeout;
             if timeout > 0 {
-                Duration::from_millis(timeout as u64)
+                Duration::from_millis(u64::from(timeout))
             } else {
                 Duration::from_secs(3)
             }
@@ -311,7 +316,7 @@ impl Cluster {
                 }
 
                 let old_count = count;
-                count = cluster.nodes().await.len() as isize;
+                count = cluster.nodes().len() as isize;
                 if count == old_count {
                     break;
                 }
@@ -322,7 +327,7 @@ impl Cluster {
 
         #[cfg(all(feature = "rt-tokio", not(feature = "rt-async-std")))]
         return handle.await.map_err(|err| {
-            Error::InvalidArgument(format!("Error during initial cluster tend: {:?}", err).into())
+            Error::InvalidArgument(format!("Error during initial cluster tend: {err:?}"))
         });
         #[cfg(all(feature = "rt-async-std", not(feature = "rt-tokio")))]
         return {
@@ -331,34 +336,34 @@ impl Cluster {
         };
     }
 
-    pub async fn cluster_name(&self) -> Option<String> {
-        self.client_policy().await.cluster_name
+    pub fn cluster_name(&self) -> Option<String> {
+        self.client_policy().cluster_name
     }
 
-    pub async fn client_policy(&self) -> ClientPolicy {
-        let cp = self.client_policy.read().await;
-        cp.clone()
+    pub fn client_policy(&self) -> ClientPolicy {
+        (*self.client_policy.load().clone()).clone()
     }
 
-    pub async fn add_seeds(&self, new_seeds: &[Host]) -> Result<()> {
-        let mut seeds = self.seeds.write().await;
+    pub fn add_seeds(&self, new_seeds: &[Host]) -> Result<()> {
+        let mut seeds = self.seeds.load().to_vec();
         seeds.extend_from_slice(new_seeds);
+        self.seeds.store(Arc::new(seeds));
 
         Ok(())
     }
 
-    pub async fn alias_exists(&self, host: &Host) -> Result<bool> {
-        let aliases = self.aliases.read().await;
+    pub fn alias_exists(&self, host: &Host) -> Result<bool> {
+        let aliases = self.aliases.load();
         Ok(aliases.contains_key(host))
     }
 
     pub async fn node_partitions(&self, node: &Node, namespace: &str) -> Vec<u16> {
         let mut res: Vec<u16> = vec![];
-        let partitions = self.partition_write_map.read().await;
+        let partitions = self.partition_map.load();
 
         if let Some(node_array) = partitions.get(namespace) {
             for (i, (_, tnode)) in node_array.nodes.iter().enumerate().take(node::PARTITIONS) {
-                if tnode.as_ref().map_or(false, |tnode| tnode.as_ref() == node) {
+                if tnode.as_ref().is_some_and(|tnode| tnode.as_ref() == node) {
                     res.push(i as u16);
                 }
             }
@@ -367,30 +372,33 @@ impl Cluster {
         res
     }
 
-    pub async fn update_partitions(&self, node: &Arc<Node>) -> Result<()> {
-        let mut conn = node.get_connection().await?;
+    pub async fn update_partitions(
+        &self,
+        partition_map: &mut PartitionTable,
+        node: &Arc<Node>,
+    ) -> Result<()> {
+        let mut conn = node.get_connection(0).await?;
 
         let admin_policy = AdminPolicy {
-            timeout: self.client_policy().await.timeout,
+            timeout: self.client_policy.load().timeout,
         };
         let tokens = PartitionTokenizer::new(&admin_policy, &mut conn, node).await;
         if let Err(e) = tokens {
-            conn.invalidate().await;
+            conn.invalidate();
             return Err(e);
         }
 
         let tokens = tokens.unwrap();
-        let mut partitions = self.partition_write_map.write().await;
-        tokens.update_partition(&mut partitions, node)?;
+        tokens.update_partition(partition_map, node)?;
 
         Ok(())
     }
 
     pub async fn update_rack_ids(&self, node: &Arc<Node>) -> Result<()> {
         const RACK_IDS: &str = "rack-ids";
-        let mut conn = node.get_connection().await?;
+        let mut conn = node.get_connection(0).await?;
         let admin_policy = AdminPolicy {
-            timeout: self.client_policy().await.timeout,
+            timeout: self.client_policy.load().timeout,
         };
         let info_map = Message::info(
             &admin_policy,
@@ -409,30 +417,30 @@ impl Cluster {
     }
 
     pub async fn seed_nodes(&self) -> bool {
-        let seed_array = self.seeds.read().await;
+        let seed_array = self.seeds.load();
 
         info!("Seeding the cluster. Seeds count: {}", seed_array.len());
 
         let mut list: Vec<Arc<Node>> = vec![];
-        for seed in &*seed_array {
-            let mut seed_node_validator = NodeValidator::new(self.client_policy().await);
+        for seed in seed_array.iter() {
+            let mut seed_node_validator = NodeValidator::new(self.client_policy());
             if let Err(err) = seed_node_validator.validate_node(self, seed).await {
                 log_error_chain!(err, "Failed to validate seed host: {}", seed);
                 continue;
-            };
+            }
 
-            let peers = if seed_node_validator.services().len() > 0 {
-                &*seed_node_validator.services()
-            } else {
+            let peers = if seed_node_validator.services().is_empty() {
                 &*seed_node_validator.aliases()
+            } else {
+                &*seed_node_validator.services()
             };
 
             for alias in peers {
-                let mut nv = NodeValidator::new(self.client_policy().await);
+                let mut nv = NodeValidator::new(self.client_policy());
                 if let Err(err) = nv.validate_node(self, alias).await {
                     log_error_chain!(err, "Seeding host {} failed with error", alias);
                     continue;
-                };
+                }
 
                 if self.find_node_name(&list, &nv.name) {
                     continue;
@@ -440,12 +448,12 @@ impl Cluster {
 
                 let node = self.create_node(nv).await;
                 let node = Arc::new(node);
-                self.add_aliases(node.clone()).await;
+                self.add_aliases(node.clone());
                 list.push(node);
             }
         }
 
-        self.add_nodes_and_aliases(&list).await;
+        self.add_nodes_and_aliases(&list);
         !list.is_empty()
     }
 
@@ -457,29 +465,29 @@ impl Cluster {
         let mut list: Vec<Arc<Node>> = vec![];
 
         for host in hosts {
-            let mut nv = NodeValidator::new(self.client_policy().await);
+            let mut nv = NodeValidator::new(self.client_policy());
             if let Err(err) = nv.validate_node(self, &host).await {
-                log_error_chain!(err, "Adding node {} failed with error: {}", host.name, err);
+                log_error_chain!(err, "Adding node {} failed with error: {}", host, err);
                 continue;
-            };
+            }
 
             // Duplicate node name found. This usually occurs when the server
             // services list contains both internal and external IP addresses
             // for the same node. Add new host to list of alias filters
             // and do not add new node.
             let mut dup = false;
-            match self.get_node_by_name(&nv.name).await {
+            match self.get_node_by_name(&nv.name) {
                 Ok(node) => {
-                    self.add_alias(host, node.clone()).await;
+                    self.add_alias(host, node.clone());
                     dup = true;
                 }
                 Err(_) => {
                     if let Some(node) = list.iter().find(|n| n.name() == nv.name) {
-                        self.add_alias(host, node.clone()).await;
+                        self.add_alias(host, node.clone());
                         dup = true;
                     }
                 }
-            };
+            }
 
             if !dup {
                 let node = self.create_node(nv).await;
@@ -491,13 +499,13 @@ impl Cluster {
     }
 
     async fn create_node(&self, nv: NodeValidator) -> Node {
-        let res = Node::new(self.client_policy().await, Arc::new(nv));
+        let res = Node::new(self.client_policy(), Arc::new(nv));
         res.send_user_agent_id().await;
         res
     }
 
     async fn find_nodes_to_remove(&self, refresh_count: usize) -> Vec<Arc<Node>> {
-        let nodes = self.nodes().await;
+        let nodes = self.nodes();
         let mut remove_list: Vec<Arc<Node>> = vec![];
         let cluster_size = nodes.len();
         for node in nodes {
@@ -544,67 +552,70 @@ impl Cluster {
         remove_list
     }
 
-    async fn add_nodes_and_aliases(&self, friend_list: &[Arc<Node>]) {
+    fn add_nodes_and_aliases(&self, friend_list: &[Arc<Node>]) {
         for node in friend_list {
-            self.add_aliases(node.clone()).await;
+            self.add_aliases(node.clone());
         }
-        self.add_nodes(friend_list).await;
+        self.add_nodes(friend_list);
     }
 
-    async fn remove_nodes_and_aliases(&self, mut nodes_to_remove: Vec<Arc<Node>>) {
+    fn remove_nodes_and_aliases(&self, mut nodes_to_remove: Vec<Arc<Node>>) {
         for node in &mut nodes_to_remove {
-            for alias in node.aliases().await {
-                self.remove_alias(&alias).await;
+            for alias in node.aliases() {
+                self.remove_alias(&alias);
             }
             if let Some(node) = Arc::get_mut(node) {
-                node.close().await;
+                node.close();
             }
         }
-        self.remove_nodes(&nodes_to_remove).await;
+        self.remove_nodes(&nodes_to_remove);
     }
 
-    async fn add_alias(&self, host: Host, node: Arc<Node>) {
-        let mut aliases = self.aliases.write().await;
-        node.add_alias(host.clone()).await;
+    fn add_alias(&self, host: Host, node: Arc<Node>) {
+        let mut aliases = self.aliases();
+        node.add_alias(host.clone());
         aliases.insert(host, node);
+        self.aliases.store(Arc::new(aliases));
     }
 
-    async fn remove_alias(&self, host: &Host) {
-        let mut aliases = self.aliases.write().await;
+    fn remove_alias(&self, host: &Host) {
+        let mut aliases = self.aliases();
         aliases.remove(host);
+        self.aliases.store(Arc::new(aliases));
     }
 
-    async fn add_aliases(&self, node: Arc<Node>) {
-        let mut aliases = self.aliases.write().await;
-        for alias in node.aliases().await {
+    fn add_aliases(&self, node: Arc<Node>) {
+        let mut aliases = self.aliases();
+        for alias in node.aliases() {
             aliases.insert(alias, node.clone());
         }
+        self.aliases.store(Arc::new(aliases));
     }
 
     async fn find_node_in_partition_map(&self, filter: Arc<Node>) -> bool {
         let filter = Some(filter);
-        let partitions = self.partition_write_map.read().await;
+        let partitions = self.partition_map.load();
         (*partitions)
             .values()
             .any(|map| map.nodes.iter().any(|(_, node)| *node == filter))
     }
 
-    async fn add_nodes(&self, friend_list: &[Arc<Node>]) {
+    fn add_nodes(&self, friend_list: &[Arc<Node>]) {
         if friend_list.is_empty() {
             return;
         }
 
-        let mut nodes = self.nodes().await;
+        let mut nodes = self.nodes();
         nodes.extend(friend_list.iter().cloned());
-        self.set_nodes(nodes).await;
+        self.set_nodes(nodes);
     }
 
-    async fn remove_nodes(&self, nodes_to_remove: &[Arc<Node>]) {
+    fn remove_nodes(&self, nodes_to_remove: &[Arc<Node>]) {
         if nodes_to_remove.is_empty() {
             return;
         }
 
-        let nodes = self.nodes().await;
+        let nodes = self.nodes();
         let mut node_array: Vec<Arc<Node>> = vec![];
 
         for node in &nodes {
@@ -613,35 +624,34 @@ impl Cluster {
             }
         }
 
-        self.set_nodes(node_array).await;
+        self.set_nodes(node_array);
     }
 
-    pub async fn is_connected(&self) -> bool {
-        let nodes = self.nodes().await;
+    pub fn is_connected(&self) -> bool {
+        let nodes = self.nodes();
         let closed = self.closed.load(Ordering::Relaxed);
         !nodes.is_empty() && !closed
     }
 
-    pub async fn aliases(&self) -> HashMap<Host, Arc<Node>> {
-        self.aliases.read().await.clone()
+    pub fn aliases(&self) -> HashMap<Host, Arc<Node>> {
+        (*self.aliases.load().clone()).clone()
     }
 
-    pub async fn nodes(&self) -> Vec<Arc<Node>> {
-        self.nodes.read().await.clone()
+    pub fn nodes(&self) -> Vec<Arc<Node>> {
+        (*self.nodes.load().clone()).clone()
     }
 
-    async fn set_nodes(&self, new_nodes: Vec<Arc<Node>>) {
-        let mut nodes = self.nodes.write().await;
-        *nodes = new_nodes;
+    fn set_nodes(&self, new_nodes: Vec<Arc<Node>>) {
+        self.nodes.store(Arc::new(new_nodes));
     }
 
-    pub async fn get_node(
+    pub fn get_node(
         &self,
         partition: &Partition<'_>,
         replica: crate::policy::Replica,
         last_tried: Weak<Node>,
     ) -> Result<Arc<Node>> {
-        let partitions = self.partition_write_map.read().await;
+        let partitions = self.partition_map.load();
 
         let namespace = partitions.get(partition.namespace).ok_or_else(|| {
             Error::InvalidNode(format!(
@@ -650,32 +660,28 @@ impl Cluster {
             ))
         })?;
 
-        namespace
-            .get_node(self, partition, replica, last_tried)
-            .await
+        namespace.get_node(self, partition, replica, last_tried)
     }
 
     pub async fn get_master_node(&self, namespace: &str, partition_id: usize) -> Result<Arc<Node>> {
-        let partitions = self.partition_write_map.read().await;
+        let partitions = self.partition_map.load();
 
         let ns_partition = partitions.get(namespace).ok_or_else(|| {
             Error::InvalidNode(format!(
-                "Cannot get appropriate node for namespace: {}",
-                namespace
+                "Cannot get appropriate node for namespace: {namespace}"
             ))
         })?;
 
         let node = ns_partition.all_replicas(partition_id).next().flatten();
         node.ok_or_else(|| {
             Error::InvalidNode(format!(
-                "Cannot get appropriate node for namespace: {} partition: {}",
-                namespace, partition_id
+                "Cannot get appropriate node for namespace: {namespace} partition: {partition_id}"
             ))
         })
     }
 
-    pub async fn get_random_node(&self) -> Result<Arc<Node>> {
-        let node_array = self.nodes().await;
+    pub fn get_random_node(&self) -> Result<Arc<Node>> {
+        let node_array = self.nodes();
         let length = node_array.len() as isize;
 
         for _ in 0..length {
@@ -687,11 +693,11 @@ impl Cluster {
             }
         }
 
-        return Err(Error::Connection("No active node".into()));
+        Err(Error::Connection("No active node".into()))
     }
 
-    pub async fn get_node_by_name(&self, node_name: &str) -> Result<Arc<Node>> {
-        let node_array = self.nodes().await;
+    pub fn get_node_by_name(&self, node_name: &str) -> Result<Arc<Node>> {
+        let node_array = self.nodes();
 
         for node in &node_array {
             if node.name() == node_name {
@@ -699,26 +705,25 @@ impl Cluster {
             }
         }
 
-        return Err(Error::InvalidNode(format!(
+        Err(Error::InvalidNode(format!(
             "Requested node `{node_name}` not found."
-        )));
+        )))
     }
 
     // Returns the hashed password for the cluster.
     // Hashing passwords is an expensive operation, se we ony do it once
     // and then cache it.
-    pub(crate) async fn hashed_pass(&self) -> Option<String> {
-        let res = self.hashed_pass.read().await;
-        res.clone()
+    pub(crate) fn hashed_pass(&self) -> Option<String> {
+        (*self.hashed_pass.load().clone()).clone()
     }
 
     // Will update the cluster password if the password change was for the current user.
-    pub(crate) async fn update_password(&self, user: &str, password: &str) -> Result<()> {
-        let auth_mode = { &self.client_policy.read().await.auth_mode };
+    pub(crate) fn update_password(&self, user: &str, password: &str) -> Result<()> {
+        let auth_mode = { &self.client_policy.load().auth_mode };
         match auth_mode {
             crate::AuthMode::Internal(u, _) | crate::AuthMode::External(u, _) if u == user => {
-                let mut hashed_pass = self.hashed_pass.write().await;
-                *hashed_pass = Some(AdminCommand::hash_password(password)?);
+                self.hashed_pass
+                    .store(Arc::new(Some(AdminCommand::hash_password(password)?)));
             }
             _ => (),
         }

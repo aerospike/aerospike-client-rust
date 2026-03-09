@@ -13,12 +13,54 @@
 // License for the specific language governing permissions and limitations under
 // the License.
 
+use aerospike::operations;
+use aerospike::operations::lists;
 use aerospike::*;
 
 use crate::common;
-use aerospike::{operations, Expiration, ReadTouchTTL};
+use aerospike::{Expiration, ReadTouchTTL};
 use aerospike_rt::sleep;
-use aerospike_rt::time::Duration;
+use aerospike_rt::time::{Duration, Instant};
+
+#[aerospike_macro::test]
+async fn batch_operate_timeout() {
+    let client = common::client().await;
+    let namespace: &str = common::namespace();
+    let set_name = &common::rand_str(10);
+    let mut bpolicy = BatchPolicy::default();
+    bpolicy.concurrency = Concurrency::Parallel;
+    bpolicy.base_policy.total_timeout = 10;
+    bpolicy.base_policy.socket_timeout = 10;
+    bpolicy.base_policy.max_retries = 0;
+    bpolicy.base_policy.sleep_between_retries = 0;
+
+    // aerospike_rt::sleep(Duration::from_secs(10)).await;
+
+    let key1 = as_key!(namespace, set_name, 1);
+    let bin1 = as_bin!("a", "a value");
+    let bin2 = as_bin!("b", "another value");
+    let bin3 = as_bin!("c", 42);
+
+    let wops = vec![
+        operations::put(&bin1),
+        operations::put(&bin2),
+        operations::put(&bin3),
+    ];
+
+    let bpw = BatchWritePolicy::default();
+
+    let mut bops = vec![];
+    for _ in 0..10000 {
+        bops.push(BatchOperation::write(&bpw, key1.clone(), wops.clone()));
+    }
+
+    let start = Instant::now();
+    let _res = client.batch(&bpolicy, &bops).await;
+    let duration = start.elapsed();
+
+    let expected_duration = Duration::from_millis((bpolicy.total_timeout() * 2) as u64);
+    assert!(duration < expected_duration);
+}
 
 #[aerospike_macro::test]
 async fn batch_operate_read() {
@@ -175,15 +217,21 @@ end
     assert!(record.is_none());
 
     // Read
-    let args1 = &[as_val!(1)];
-    let args2 = &[as_val!(2)];
-    let args3 = &[as_val!(3)];
-    let args4 = &[as_val!(4)];
+    let args1 = vec![as_val!(1)];
+    let args2 = vec![as_val!(2)];
+    let args3 = vec![as_val!(3)];
+    let args4 = vec![as_val!(4)];
     let batch = vec![
         BatchOperation::udf(&bpu, key1.clone(), "test_udf", "echo", Some(args1)),
         BatchOperation::udf(&bpu, key2.clone(), "test_udf", "echo", Some(args2)),
         BatchOperation::udf(&bpu, key3.clone(), "test_udf", "echo", Some(args3)),
-        BatchOperation::udf(&bpu, key4.clone(), "test_udf", "echo", Some(args4)),
+        BatchOperation::udf(
+            &bpu,
+            key4.clone(),
+            "test_udf",
+            "echo_not_exists",
+            Some(args4),
+        ),
     ];
     let mut results = client.batch(&bpolicy, &batch).await.unwrap();
 
@@ -204,10 +252,51 @@ end
 
     let result = results.remove(0);
     assert_eq!(result.key, key4);
+    assert_eq!(result.result_code, Some(ResultCode::UdfBadResponse));
     let record = result.record;
-    assert_eq!(record.unwrap().bins.get("SUCCESS"), Some(&as_val!(4)));
+    assert_eq!(
+        record.unwrap().bins.get("FAILURE"),
+        Some(&as_val!("function not found"))
+    );
 
     client.close().await.unwrap();
+}
+
+#[aerospike_macro::test]
+async fn batch_operate_read_multi_op_single_bin() {
+    let client = common::client().await;
+    let namespace: &str = common::namespace();
+    let set_name = &common::rand_str(10);
+    let mut bpolicy = BatchPolicy::default();
+    bpolicy.concurrency = Concurrency::Parallel;
+
+    let key = as_key!(namespace, set_name, common::rand_str(10));
+
+    let wp = WritePolicy::default();
+    let bin = as_bin!("lbin", Value::List(as_values!(111, 222, 333)));
+
+    client
+        .put(&wp, &key, &vec![bin])
+        .await
+        .expect("put failed.");
+
+    let brp = BatchReadPolicy::default();
+    let br = BatchOperation::read_ops(
+        &brp,
+        key.clone(),
+        vec![
+            lists::size("lbin"),
+            lists::get_by_index("lbin", -1, lists::ListReturnType::Values),
+        ],
+    );
+    let list = vec![br];
+    let mut results = client.batch(&bpolicy, &list).await.unwrap();
+
+    let result = results.remove(0);
+    assert!(Some(ResultCode::Ok) == result.result_code);
+    assert!(
+        Some(&Value::MultiResult(as_values!(3, 333))) == result.record.unwrap().bins.get("lbin")
+    );
 }
 
 #[aerospike_macro::test]

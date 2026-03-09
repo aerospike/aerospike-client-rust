@@ -26,7 +26,7 @@ async fn exp_ops() {
         "EXP OPs init failed"
     );
     let flt = num_add(vec![int_bin("bin".to_string()), int_val(4)]);
-    let ops = &vec![read_exp("example", &flt, ExpReadFlags::Default)];
+    let ops = &vec![read_exp("example", flt.clone(), ExpReadFlags::Default)];
     let rec = client.operate(&wpolicy, &key, ops).await;
     let rec = rec.unwrap();
 
@@ -38,8 +38,8 @@ async fn exp_ops() {
 
     let flt2 = int_bin("bin2".to_string());
     let ops = &vec![
-        write_exp("bin2", &flt, ExpWriteFlags::Default),
-        read_exp("example", &flt2, ExpReadFlags::Default),
+        write_exp("bin2", flt, ExpWriteFlags::Default),
+        read_exp("example", flt2, ExpReadFlags::Default),
     ];
 
     let rec = client.operate(&wpolicy, &key, ops).await;

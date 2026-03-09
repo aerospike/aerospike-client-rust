@@ -23,7 +23,7 @@ use crate::common;
 use aerospike::query::PartitionFilter;
 use aerospike::Task;
 use aerospike::*;
-use aerospike_rt::time::Instant;
+use aerospike_rt::time::{Duration, Instant};
 
 const EXPECTED: usize = 1000;
 
@@ -57,6 +57,39 @@ async fn create_test_set(client: &Client, no_records: usize) -> String {
     task.wait_till_complete(None).await.unwrap();
 
     set_name
+}
+
+#[aerospike_macro::test]
+async fn query_timeout() {
+    let client = common::client().await;
+    let namespace = common::namespace();
+    let set_name = create_test_set(&client, EXPECTED).await;
+    let mut qpolicy = QueryPolicy::default();
+    qpolicy.base_policy.total_timeout = 5;
+    qpolicy.base_policy.socket_timeout = 5;
+
+    // Filter Query
+    let statement = Statement::new(namespace, &set_name, Bins::All);
+    let pf = PartitionFilter::all();
+
+    let start = Instant::now();
+    let rs = client.query(&qpolicy, pf, statement).await.unwrap();
+    let mut rs = rs.into_stream();
+    let mut timed_out = false;
+    while let Some(res) = rs.next().await {
+        match res {
+            Ok(_) => (),
+            Err(Error::Timeout(_)) => timed_out = true,
+            Err(err) => panic!("{:?}", err),
+        }
+    }
+    let duration = start.elapsed();
+
+    let expected_duration = Duration::from_millis((qpolicy.total_timeout() * 2) as u64);
+    assert!(duration < expected_duration);
+    assert_eq!(timed_out, true);
+
+    client.close().await.unwrap();
 }
 
 #[aerospike_macro::test]
@@ -223,7 +256,7 @@ async fn query_single_consumer_rps() {
     let client = common::client().await;
 
     // only run on single node clusters
-    if client.nodes().await.len() != 1 {
+    if client.nodes().len() != 1 {
         return;
     }
 

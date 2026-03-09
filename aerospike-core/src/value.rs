@@ -13,7 +13,8 @@
 // License for the specific language governing permissions and limitations under
 // the License.
 
-use std::collections::HashMap;
+use std::cmp::{Ordering, PartialOrd};
+use std::collections::{BTreeMap, HashMap};
 use std::convert::TryFrom;
 use std::fmt;
 use std::hash::{Hash, Hasher};
@@ -28,7 +29,7 @@ use std::vec::Vec;
 
 use crate::commands::buffer::Buffer;
 use crate::commands::ParticleType;
-use crate::errors::Result;
+use crate::errors::{Error, Result};
 use crate::msgpack::{decoder, encoder};
 
 #[cfg(feature = "serialization")]
@@ -57,7 +58,7 @@ impl From<FloatValue> for f64 {
     }
 }
 
-impl<'a> From<&'a FloatValue> for f64 {
+impl From<&FloatValue> for f64 {
     fn from(val: &FloatValue) -> f64 {
         match *val {
             FloatValue::F32(_) => panic!(
@@ -79,7 +80,7 @@ impl From<f64> for FloatValue {
     }
 }
 
-impl<'a> From<&'a f64> for FloatValue {
+impl From<&f64> for FloatValue {
     fn from(val: &f64) -> FloatValue {
         let mut val = *val;
         if val.is_nan() {
@@ -98,7 +99,7 @@ impl From<FloatValue> for f32 {
     }
 }
 
-impl<'a> From<&'a FloatValue> for f32 {
+impl From<&FloatValue> for f32 {
     fn from(val: &FloatValue) -> f32 {
         match *val {
             FloatValue::F32(val) => f32::from_bits(val),
@@ -117,7 +118,7 @@ impl From<f32> for FloatValue {
     }
 }
 
-impl<'a> From<&'a f32> for FloatValue {
+impl From<&f32> for FloatValue {
     fn from(val: &f32) -> FloatValue {
         let mut val = *val;
         if val.is_nan() {
@@ -132,11 +133,11 @@ impl fmt::Display for FloatValue {
         match *self {
             FloatValue::F32(val) => {
                 let val: f32 = f32::from_bits(val);
-                write!(f, "{}", val)
+                write!(f, "{val}")
             }
             FloatValue::F64(val) => {
                 let val: f64 = f64::from_bits(val);
-                write!(f, "{}", val)
+                write!(f, "{val}")
             }
         }
     }
@@ -154,18 +155,6 @@ pub enum Value {
     /// Integer value. All integers are represented as 64-bit numerics in Aerospike.
     Int(i64),
 
-    /// Unsigned integer value. The largest integer value that can be stored in a record bin is
-    /// `i64::max_value()`; however the list and map data types can store integer values (and keys)
-    /// up to `u64::max_value()`.
-    /// This client will only return values > i64::MAX as `UInt`. If you put a smaller value as Uint,
-    /// it will return as `Int`.
-    ///
-    /// # Panics
-    ///
-    /// Attempting to store an `u64` value as a record bin value will cause a panic. Use casting to
-    /// store and retrieve `u64` values.
-    UInt(u64),
-
     /// Floating point value. All floating point values are stored in 64-bit IEEE-754 format in
     /// Aerospike. Aerospike server v3.6.0 and later support double data type.
     Float(FloatValue),
@@ -180,18 +169,28 @@ pub enum Value {
     /// supported data type. List data order is maintained on writes and reads.
     List(Vec<Value>),
 
+    /// Returned in cases where the server executes multiple operations for the same bin.
+    /// This value is only sent from the server to the client, and can't be sent from the
+    /// client to the server.
+    MultiResult(Vec<Value>),
+
     /// Map data type is a collection of key-value pairs. Each key can only appear once in a
-    /// collection and is associated with a value. Map keys and values can be any supported data
+    /// collection and is associated with a value. Map values can be any supported data
     /// type.
     /// Map keys can only be of type String, Bytes, Integer, and that this will be enforced by the client and server.
     HashMap(HashMap<Value, Value>),
 
-    /// Map data type where the map entries are sorted based key ordering (K-ordered maps) and may
-    /// have an additional value-order index depending the namespace configuration (KV-ordered
-    /// maps).
-    OrderedMap(Vec<(Value, Value)>),
+    /// `OrderedMap` data type where the map entries are sorted based key ordering (K-ordered maps).
+    /// Each key can only appear once in a collection and is associated with a value.
+    /// Map values can be any supported data type.
+    /// Map keys can only be of type String, Bytes, Integer, and that this will be enforced by the client and server.
+    OrderedMap(BTreeMap<Value, Value>),
 
-    /// GeoJSON data type are JSON formatted strings to encode geo-spatial information.
+    /// Result of any map operation in which the server returns a
+    /// map requested with [`MapReturnType::KeyValue`].
+    KeyValueList(Vec<(Value, Value)>),
+
+    /// `GeoJSON` data type are JSON formatted strings to encode geo-spatial information.
     GeoJSON(String),
 
     /// HLL value
@@ -204,7 +203,7 @@ pub enum Value {
     Wildcard,
 }
 
-#[allow(clippy::derive_hash_xor_eq)]
+#[allow(clippy::derived_hash_with_manual_eq)]
 impl Hash for Value {
     fn hash<H: Hasher>(&self, state: &mut H) {
         match *self {
@@ -214,15 +213,16 @@ impl Hash for Value {
             }
             Value::Bool(_) => panic!("Booleans cannot be used as map keys."),
             Value::Int(ref val) => val.hash(state),
-            Value::UInt(ref val) => val.hash(state),
             Value::Float(_) => panic!("Floats cannot be used as map keys."),
             Value::String(ref val) => val.hash(state),
             Value::GeoJSON(_) => panic!("GeoJson cannot be used as map keys."),
             Value::Blob(ref val) => val.hash(state),
             Value::HLL(_) => panic!("HLL cannot be used as map keys."),
+            Value::MultiResult(_) => panic!("MultiValues cannot be used as map keys."),
             Value::List(_) => panic!("Lists cannot be used as map keys."),
             Value::HashMap(_) => panic!("HashMaps cannot be used as map keys."),
             Value::OrderedMap(_) => panic!("OrderedMaps cannot be used as map keys."),
+            Value::KeyValueList(_) => panic!("OrderedMaps cannot be used as map keys."),
             Value::Infinity => panic!("Infinity cannot be used as map keys."),
             Value::Wildcard => panic!("Wildcard cannot be used as map keys."),
         }
@@ -241,17 +241,15 @@ impl Value {
         match *self {
             Value::Nil => ParticleType::NULL,
             Value::Int(_) => ParticleType::INTEGER,
-            Value::UInt(_) => panic!(
-                "Aerospike does not support u64 natively on server-side. Use casting to \
-                 store and retrieve u64 values."
-            ),
             Value::Float(_) => ParticleType::FLOAT,
             Value::String(_) => ParticleType::STRING,
             Value::Blob(_) => ParticleType::BLOB,
             Value::Bool(_) => ParticleType::BOOL,
+            Value::MultiResult(_) => ParticleType::LIST,
             Value::List(_) => ParticleType::LIST,
             Value::HashMap(_) => ParticleType::MAP,
-            Value::OrderedMap(_) => panic!("The library never passes ordered maps to the server."),
+            Value::OrderedMap(_) => ParticleType::MAP,
+            Value::KeyValueList(_) => ParticleType::MAP,
             Value::GeoJSON(_) => ParticleType::GEOJSON,
             Value::HLL(_) => ParticleType::HLL,
             Value::Infinity => unreachable!(),
@@ -264,14 +262,15 @@ impl Value {
         match *self {
             Value::Nil => "<null>".to_string(),
             Value::Int(ref val) => val.to_string(),
-            Value::UInt(ref val) => val.to_string(),
             Value::Bool(ref val) => val.to_string(),
             Value::Float(ref val) => val.to_string(),
-            Value::String(ref val) | Value::GeoJSON(ref val) => val.to_string(),
-            Value::Blob(ref val) | Value::HLL(ref val) => format!("{:?}", val),
-            Value::List(ref val) => format!("{:?}", val),
-            Value::HashMap(ref val) => format!("{:?}", val),
-            Value::OrderedMap(ref val) => format!("{:?}", val),
+            Value::String(ref val) | Value::GeoJSON(ref val) => val.clone(),
+            Value::Blob(ref val) | Value::HLL(ref val) => format!("{val:?}"),
+            Value::MultiResult(ref val) => format!("{val:?}"),
+            Value::List(ref val) => format!("{val:?}"),
+            Value::HashMap(ref val) => format!("{val:?}"),
+            Value::OrderedMap(ref val) => format!("{val:?}"),
+            Value::KeyValueList(ref val) => format!("{val:?}"),
             Value::Infinity => "INF".into(),
             Value::Wildcard => "*".into(),
         }
@@ -279,46 +278,62 @@ impl Value {
 
     /// Calculate the size in bytes that the representation on wire for this value will require.
     /// For internal use only.
-    pub(crate) fn estimate_size(&self) -> usize {
-        match *self {
+    #[must_use]
+    pub(crate) fn estimate_size(&self) -> Result<usize> {
+        let res = match *self {
             Value::Nil => 0,
             Value::Int(_) | Value::Float(_) => 8,
-            Value::UInt(_) => panic!(
-                "Aerospike does not support u64 natively on server-side. Use casting to \
-                 store and retrieve u64 values."
-            ),
             Value::String(ref s) => s.len(),
             Value::Blob(ref b) => b.len(),
             Value::Bool(_) => 1,
-            Value::List(_) | Value::HashMap(_) => encoder::pack_value(&mut None, self),
-            Value::OrderedMap(_) => panic!("The library never passes ordered maps to the server."),
+            Value::MultiResult(_) => {
+                return Err(Error::InvalidArgument("MultiValues are only returned as results from the server and never from the client.".into()));
+            }
+            Value::List(_) | Value::HashMap(_) | Value::OrderedMap(_) => {
+                encoder::pack_value(&mut None, self)?
+            }
+            Value::KeyValueList(_) => {
+                return Err(Error::InvalidArgument(
+                    "The library never passes ordered maps to the server.".into(),
+                ));
+            }
             Value::GeoJSON(ref s) => 1 + 2 + s.len(), // flags + ncells + jsonstr
             Value::HLL(ref h) => h.len(),
             Value::Infinity => 0,
             Value::Wildcard => 0,
-        }
+        };
+
+        Ok(res)
     }
 
     /// Serialize the value into the given buffer.
     /// For internal use only.
-    pub(crate) fn write_to(&self, buf: &mut Buffer) -> usize {
-        match *self {
+    #[must_use]
+    pub(crate) fn write_to(&self, buf: &mut Buffer) -> Result<usize> {
+        let res = match *self {
             Value::Nil => 0,
             Value::Int(ref val) => buf.write_i64(*val),
-            Value::UInt(_) => panic!(
-                "Aerospike does not support u64 natively on server-side. Use casting to \
-                 store and retrieve u64 values."
-            ),
             Value::Bool(ref val) => buf.write_bool(*val),
             Value::Float(ref val) => buf.write_f64(f64::from(val)),
             Value::String(ref val) => buf.write_str(val),
             Value::Blob(ref val) | Value::HLL(ref val) => buf.write_bytes(val),
-            Value::List(_) | Value::HashMap(_) => encoder::pack_value(&mut Some(buf), self),
-            Value::OrderedMap(_) => panic!("The library never passes ordered maps to the server."),
+            Value::MultiResult(_) => {
+                return Err(Error::InvalidArgument("MultiValues are only returned as results from the server and never from the client.".into()));
+            }
+            Value::List(_) | Value::HashMap(_) | Value::OrderedMap(_) => {
+                encoder::pack_value(&mut Some(buf), self)?
+            }
+            Value::KeyValueList(_) => {
+                return Err(Error::InvalidArgument(
+                    "The library never passes ordered maps to the server.".into(),
+                ));
+            }
             Value::GeoJSON(ref val) => buf.write_geo(val),
             Value::Infinity => encoder::pack_infinity(&mut Some(buf)),
             Value::Wildcard => encoder::pack_wildcard(&mut Some(buf)),
-        }
+        };
+
+        Ok(res)
     }
 
     /// Serialize the value as a record key.
@@ -328,7 +343,7 @@ impl Value {
             Value::Int(ref val) => {
                 let mut buf = [0; 8];
                 NetworkEndian::write_i64(&mut buf, *val);
-                h.update(&buf);
+                h.update(buf);
                 Ok(())
             }
             Value::String(ref val) => {
@@ -339,7 +354,110 @@ impl Value {
                 h.update(val);
                 Ok(())
             }
-            _ => panic!("Data type is not supported as Key value."),
+            _ => Err(Error::InvalidArgument(
+                "Data type is not supported as Key value.".into(),
+            )),
+        }
+    }
+
+    /// Order for Value types.
+    pub(crate) const fn value_type_order(&self) -> u8 {
+        match self {
+            Value::Nil => 0,
+            Value::Bool(_) => 1,
+            Value::Int(_) => 2,
+            Value::String(_) => 3,
+            Value::List(_) => 4,
+            Value::HashMap(_) => 5,
+            Value::OrderedMap(_) => 6,
+            Value::Blob(_) => 7,
+            Value::HLL(_) => 8,
+            Value::Float(_) => 9,
+            Value::GeoJSON(_) => 10,
+            // Just here for completion's sake
+            Value::Infinity => 11,
+            Value::Wildcard => 12,
+            Value::MultiResult(_) => 13,
+            Value::KeyValueList(_) => 14,
+        }
+    }
+}
+
+impl Ord for Value {
+    fn cmp(&self, other: &Self) -> Ordering {
+        match self.value_type_order().cmp(&other.value_type_order()) {
+            Ordering::Equal => {
+                // Same type, compare by value
+                match (self, other) {
+                    (Value::Int(a_val), Value::Int(b_val)) => a_val.cmp(b_val),
+                    (Value::String(a_val), Value::String(b_val)) => a_val.cmp(b_val),
+                    (Value::GeoJSON(a_val), Value::GeoJSON(b_val)) => a_val.cmp(b_val),
+                    (Value::HLL(a_val), Value::HLL(b_val)) => a_val.cmp(b_val),
+                    (Value::Blob(a_val), Value::Blob(b_val)) => a_val.cmp(b_val),
+                    (Value::Bool(a_val), Value::Bool(b_val)) => a_val.cmp(b_val),
+                    (Value::HashMap(ref a_val), Value::HashMap(ref b_val)) => {
+                        a_val.len().cmp(&b_val.len())
+                    }
+                    (Value::OrderedMap(ref a_val), Value::OrderedMap(ref b_val)) => {
+                        a_val.len().cmp(&b_val.len())
+                    }
+                    (Value::KeyValueList(ref a_val), Value::KeyValueList(ref b_val)) => {
+                        a_val.len().cmp(&b_val.len())
+                    }
+                    (Value::Float(a_val), Value::Float(b_val)) => {
+                        // Compare float bits for deterministic ordering
+                        let a_bits = match a_val {
+                            FloatValue::F32(bits) => u64::from(*bits),
+                            FloatValue::F64(bits) => *bits,
+                        };
+
+                        let b_bits = match b_val {
+                            FloatValue::F32(bits) => u64::from(*bits),
+                            FloatValue::F64(bits) => *bits,
+                        };
+
+                        a_bits.cmp(&b_bits)
+                    }
+                    _ => Ordering::Greater,
+                }
+            }
+
+            ord => ord,
+        }
+    }
+}
+
+impl PartialOrd for Value {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        match self.value_type_order().cmp(&other.value_type_order()) {
+            Ordering::Equal => {
+                // Same type, compare by value
+                match (self, other) {
+                    (Value::Int(a_val), Value::Int(b_val)) => Some(a_val.cmp(b_val)),
+                    (Value::String(a_val), Value::String(b_val)) => Some(a_val.cmp(b_val)),
+                    (Value::GeoJSON(a_val), Value::GeoJSON(b_val)) => Some(a_val.cmp(b_val)),
+                    (Value::HLL(a_val), Value::HLL(b_val)) => Some(a_val.cmp(b_val)),
+                    (Value::Blob(a_val), Value::Blob(b_val)) => Some(a_val.cmp(b_val)),
+                    (Value::Bool(a_val), Value::Bool(b_val)) => Some(a_val.cmp(b_val)),
+                    (Value::Float(a_val), Value::Float(b_val)) => {
+                        // Compare float bits for deterministic ordering
+                        let a_bits = match a_val {
+                            FloatValue::F32(bits) => u64::from(*bits),
+                            FloatValue::F64(bits) => *bits,
+                        };
+
+                        let b_bits = match b_val {
+                            FloatValue::F32(bits) => u64::from(*bits),
+                            FloatValue::F64(bits) => *bits,
+                        };
+
+                        Some(a_bits.cmp(&b_bits))
+                    }
+                    _ => None,
+                }
+            }
+
+            ord => Some(ord),
         }
     }
 }
@@ -371,6 +489,12 @@ impl From<Vec<Value>> for Value {
 impl From<HashMap<Value, Value>> for Value {
     fn from(val: HashMap<Value, Value>) -> Value {
         Value::HashMap(val)
+    }
+}
+
+impl From<BTreeMap<Value, Value>> for Value {
+    fn from(val: BTreeMap<Value, Value>) -> Value {
+        Value::OrderedMap(val)
     }
 }
 
@@ -472,7 +596,7 @@ impl From<i64> for Value {
 
 impl From<u64> for Value {
     fn from(val: u64) -> Value {
-        Value::UInt(val)
+        Value::Int(val as i64)
     }
 }
 
@@ -484,7 +608,7 @@ impl From<isize> for Value {
 
 impl From<usize> for Value {
     fn from(val: usize) -> Value {
-        Value::UInt(val as u64)
+        Value::Int(val as i64)
     }
 }
 
@@ -532,7 +656,7 @@ impl<'a> From<&'a i64> for Value {
 
 impl<'a> From<&'a u64> for Value {
     fn from(val: &'a u64) -> Value {
-        Value::UInt(*val)
+        Value::Int(*val as i64)
     }
 }
 
@@ -544,7 +668,7 @@ impl<'a> From<&'a isize> for Value {
 
 impl<'a> From<&'a usize> for Value {
     fn from(val: &'a usize) -> Value {
-        Value::UInt(*val as u64)
+        Value::Int(*val as i64)
     }
 }
 
@@ -558,7 +682,6 @@ impl From<Value> for i64 {
     fn from(val: Value) -> i64 {
         match val {
             Value::Int(val) => val,
-            Value::UInt(val) => val as i64,
             _ => panic!("Value is not an integer to convert."),
         }
     }
@@ -568,7 +691,6 @@ impl<'a> From<&'a Value> for i64 {
     fn from(val: &'a Value) -> i64 {
         match *val {
             Value::Int(val) => val,
-            Value::UInt(val) => val as i64,
             _ => panic!("Value is not an integer to convert."),
         }
     }
@@ -580,13 +702,11 @@ impl TryFrom<Value> for String {
         match val {
             Value::String(v) => Ok(v),
             Value::GeoJSON(v) => Ok(v),
-            _ => {
-                return Err(format!(
-                    "Invalid type conversion from Value::{} to {}",
-                    val.particle_type(),
-                    std::any::type_name::<Self>()
-                ))
-            }
+            _ => Err(format!(
+                "Invalid type conversion from Value::{} to {}",
+                val.particle_type(),
+                std::any::type_name::<Self>()
+            )),
         }
     }
 }
@@ -597,13 +717,11 @@ impl TryFrom<Value> for Vec<u8> {
         match val {
             Value::Blob(v) => Ok(v),
             Value::HLL(v) => Ok(v),
-            _ => {
-                return Err(format!(
-                    "Invalid type conversion from Value::{} to {}",
-                    val.particle_type(),
-                    std::any::type_name::<Self>()
-                ))
-            }
+            _ => Err(format!(
+                "Invalid type conversion from Value::{} to {}",
+                val.particle_type(),
+                std::any::type_name::<Self>()
+            )),
         }
     }
 }
@@ -613,13 +731,12 @@ impl TryFrom<Value> for Vec<Value> {
     fn try_from(val: Value) -> std::result::Result<Self, Self::Error> {
         match val {
             Value::List(v) => Ok(v),
-            _ => {
-                return Err(format!(
-                    "Invalid type conversion from Value::{} to {}",
-                    val.particle_type(),
-                    std::any::type_name::<Self>()
-                ))
-            }
+            Value::MultiResult(v) => Ok(v),
+            _ => Err(format!(
+                "Invalid type conversion from Value::{} to {}",
+                val.particle_type(),
+                std::any::type_name::<Self>()
+            )),
         }
     }
 }
@@ -629,13 +746,25 @@ impl TryFrom<Value> for HashMap<Value, Value> {
     fn try_from(val: Value) -> std::result::Result<Self, Self::Error> {
         match val {
             Value::HashMap(v) => Ok(v),
-            _ => {
-                return Err(format!(
-                    "Invalid type conversion from Value::{} to {}",
-                    val.particle_type(),
-                    std::any::type_name::<Self>()
-                ))
-            }
+            _ => Err(format!(
+                "Invalid type conversion from Value::{} to {}",
+                val.particle_type(),
+                std::any::type_name::<Self>()
+            )),
+        }
+    }
+}
+
+impl TryFrom<Value> for BTreeMap<Value, Value> {
+    type Error = String;
+    fn try_from(val: Value) -> std::result::Result<Self, Self::Error> {
+        match val {
+            Value::OrderedMap(v) => Ok(v),
+            _ => Err(format!(
+                "Invalid type conversion from Value::{} to {}",
+                val.particle_type(),
+                std::any::type_name::<Self>()
+            )),
         }
     }
 }
@@ -644,14 +773,12 @@ impl TryFrom<Value> for Vec<(Value, Value)> {
     type Error = String;
     fn try_from(val: Value) -> std::result::Result<Self, Self::Error> {
         match val {
-            Value::OrderedMap(v) => Ok(v),
-            _ => {
-                return Err(format!(
-                    "Invalid type conversion from Value::{} to {}",
-                    val.particle_type(),
-                    std::any::type_name::<Self>()
-                ))
-            }
+            Value::KeyValueList(v) => Ok(v),
+            _ => Err(format!(
+                "Invalid type conversion from Value::{} to {}",
+                val.particle_type(),
+                std::any::type_name::<Self>()
+            )),
         }
     }
 }
@@ -661,13 +788,11 @@ impl TryFrom<Value> for f64 {
     fn try_from(val: Value) -> std::result::Result<Self, Self::Error> {
         match val {
             Value::Float(v) => Ok(f64::from(v)),
-            _ => {
-                return Err(format!(
-                    "Invalid type conversion from Value::{} to {}",
-                    val.particle_type(),
-                    std::any::type_name::<Self>()
-                ))
-            }
+            _ => Err(format!(
+                "Invalid type conversion from Value::{} to {}",
+                val.particle_type(),
+                std::any::type_name::<Self>()
+            )),
         }
     }
 }
@@ -677,12 +802,12 @@ impl TryFrom<Value> for bool {
     fn try_from(val: Value) -> std::result::Result<Self, Self::Error> {
         match val {
             Value::Bool(v) => Ok(v),
-            _ => return Err("Invalid type bool".into()),
+            _ => Err("Invalid type bool".into()),
         }
     }
 }
 
-pub(crate) fn bytes_to_particle(ptype: u8, buf: &mut Buffer, len: usize) -> Result<Value> {
+pub fn bytes_to_particle(ptype: u8, buf: &mut Buffer, len: usize) -> Result<Value> {
     match ParticleType::from(ptype) {
         ParticleType::NULL => Ok(Value::Nil),
         ParticleType::INTEGER => {
@@ -755,8 +880,9 @@ macro_rules! as_blob {
 /// ```rust,edition2018
 /// # use aerospike::*;
 /// # use std::vec::Vec;
+/// # #[tokio::main]
 /// # async fn main() {
-/// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap();
+/// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap_or_else(|_| "127.0.0.1:3000".to_string());
 /// # let client = Client::new(&ClientPolicy::default(), &hosts).await.unwrap();
 /// # let key = as_key!("test", "test", "mykey");
 /// let list = as_list!("a", "b", "c");
@@ -786,8 +912,9 @@ macro_rules! as_list {
 /// ```rust,should_panic,edition2018
 /// # use aerospike::*;
 /// # use std::vec::Vec;
+///  # #[tokio::main]
 /// # async fn main() {
-/// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap();
+/// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap_or_else(|_| "127.0.0.1:3000".to_string());
 /// # let client = Client::new(&ClientPolicy::default(), &hosts).await.unwrap();
 /// # let key = as_key!("test", "test", "mykey");
 /// let module = "myUDF";
@@ -818,8 +945,9 @@ macro_rules! as_values {
 ///
 /// ```rust,edition2018
 /// # use aerospike::*;
+/// # #[tokio::main]
 /// # async fn main() {
-/// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap();
+/// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap_or_else(|_| "127.0.0.1:3000".to_string());
 /// # let client = Client::new(&ClientPolicy::default(), &hosts).await.unwrap();
 /// # let key = as_key!("test", "test", "mykey");
 /// let map = as_map!("a" => 1, "b" => 2);
@@ -840,6 +968,37 @@ macro_rules! as_map {
     };
 }
 
+/// Constructs an Ordered Map Value from a list of key/value pairs.
+///
+/// # Examples
+///
+/// Write a map value to a record bin.
+///
+/// ```rust,edition2018
+/// # use aerospike::*;
+/// # #[tokio::main]
+/// # async fn main() {
+/// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap_or_else(|_| "127.0.0.1:3000".to_string());
+/// # let client = Client::new(&ClientPolicy::default(), &hosts).await.unwrap();
+/// # let key = as_key!("test", "test", "mykey");
+/// let map = as_ord_map!("a" => 1, "b" => 2);
+/// let bin = as_bin!("map", map);
+/// client.put(&WritePolicy::default(), &key, &vec![bin]).await.unwrap();
+/// # }
+/// ```
+#[macro_export]
+macro_rules! as_ord_map {
+    ( $( $k:expr => $v:expr),* ) => {
+        {
+            let mut temp_map = std::collections::BTreeMap::new();
+            $(
+                temp_map.insert(as_val!($k), as_val!($v));
+            )*
+            $crate::Value::OrderedMap(temp_map)
+        }
+    };
+}
+
 #[cfg(feature = "serialization")]
 impl Serialize for Value {
     fn serialize<S>(
@@ -853,7 +1012,6 @@ impl Serialize for Value {
             Value::Nil => serializer.serialize_none(),
             Value::Bool(b) => serializer.serialize_bool(*b),
             Value::Int(i) => serializer.serialize_i64(*i),
-            Value::UInt(u) => serializer.serialize_u64(*u),
             Value::Float(f) => match f {
                 FloatValue::F32(u) => serializer.serialize_f32(f32::from_bits(*u)),
                 FloatValue::F64(u) => serializer.serialize_f64(f64::from_bits(*u)),
@@ -881,16 +1039,50 @@ impl Serialize for Value {
                 }
                 map.end()
             }
+            Value::KeyValueList(m) => {
+                let mut map = serializer.serialize_map(Some(m.len()))?;
+                for (key, value) in m {
+                    map.serialize_entry(&key, &value)?;
+                }
+                map.end()
+            }
             Value::Infinity => panic!("Infinity cannot be serialized"),
             Value::Wildcard => panic!("Wildcard cannot be serialized"),
+            Value::MultiResult(_) => panic!("MultiValue cannot be serialized"),
         }
+    }
+}
+
+/// Allows either a `HashMap` or `BTreeMap` to be passed as arguments to certain methods.
+pub trait MapLike<K: Eq, V> {
+    fn value(self) -> (Option<HashMap<K, V>>, Option<BTreeMap<K, V>>);
+    fn value_as_ref(&self) -> (Option<&HashMap<K, V>>, Option<&BTreeMap<K, V>>);
+}
+
+impl<K: Eq + Ord, V> MapLike<K, V> for BTreeMap<K, V> {
+    fn value(self) -> (Option<HashMap<K, V>>, Option<BTreeMap<K, V>>) {
+        (None, Some(self))
+    }
+
+    fn value_as_ref(&self) -> (Option<&HashMap<K, V>>, Option<&BTreeMap<K, V>>) {
+        (None, Some(self))
+    }
+}
+
+impl<K: Eq + Hash, V> MapLike<K, V> for HashMap<K, V> {
+    fn value(self) -> (Option<HashMap<K, V>>, Option<BTreeMap<K, V>>) {
+        (Some(self), None)
+    }
+
+    fn value_as_ref(&self) -> (Option<&HashMap<K, V>>, Option<&BTreeMap<K, V>>) {
+        (Some(self), None)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::Value;
-    use std::collections::HashMap;
+    use std::collections::{BTreeMap, HashMap};
     use std::convert::TryInto;
 
     #[test]
@@ -905,17 +1097,14 @@ mod tests {
         let _: Vec<u8> = Value::HLL("hello!".into()).try_into().unwrap();
         let _: bool = Value::Bool(false).try_into().unwrap();
         let _: HashMap<Value, Value> = Value::HashMap(HashMap::new()).try_into().unwrap();
-        let _: Vec<(Value, Value)> = Value::OrderedMap(Vec::new()).try_into().unwrap();
+        let _: BTreeMap<Value, Value> = Value::OrderedMap(BTreeMap::new()).try_into().unwrap();
+        let _: Vec<(Value, Value)> = Value::KeyValueList(Vec::new()).try_into().unwrap();
     }
 
     #[test]
     fn as_string() {
         assert_eq!(Value::Nil.as_string(), String::from("<null>"));
         assert_eq!(Value::Int(42).as_string(), String::from("42"));
-        assert_eq!(
-            Value::UInt(9_223_372_036_854_775_808).as_string(),
-            String::from("9223372036854775808")
-        );
         assert_eq!(Value::Bool(true).as_string(), String::from("true"));
         assert_eq!(Value::from(4.1416).as_string(), String::from("4.1416"));
         assert_eq!(

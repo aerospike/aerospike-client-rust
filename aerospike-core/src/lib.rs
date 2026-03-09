@@ -42,11 +42,11 @@
     clippy::missing_errors_doc
 )]
 
-//! A pure-rust client for the Aerospike NoSQL database.
+//! A pure-rust client for the Aerospike `NoSQL` database.
 //!
-//! Aerospike is an enterprise-class, NoSQL database solution for real-time operational
+//! Aerospike is an enterprise-class, `NoSQL` database solution for real-time operational
 //! applications, delivering predictable performance at scale, superior uptime, and high
-//! availability at the lowest TCO compared to first-generation NoSQL and relational databases. For
+//! availability at the lowest TCO compared to first-generation `NoSQL` and relational databases. For
 //! more information please refer to <https://www.aerospike.com/>.
 //!
 //! # Installation
@@ -69,24 +69,24 @@
 //! use std::env;
 //! use std::sync::Arc;
 //! use std::time::Instant;
-//! use std::thread;
 //!
 //! use aerospike::{Bins, Client, ClientPolicy, ReadPolicy, WritePolicy};
 //! use aerospike::operations;
 //!
 //! fn main() {
-//!     let cpolicy = ClientPolicy::default();
-//!     let hosts = env::var("AEROSPIKE_HOSTS")
-//!         .unwrap_or(String::from("127.0.0.1:3000"));
-//!     let client = Client::new(&cpolicy, &hosts)
-//!         .expect("Failed to connect to cluster");
-//!     let client = Arc::new(client);
+//!     let rt = tokio::runtime::Runtime::new().unwrap();
+//!     rt.block_on(async {
+//!         let cpolicy = ClientPolicy::default();
+//!         let hosts = env::var("AEROSPIKE_HOSTS")
+//!             .unwrap_or_else(|_| String::from("127.0.0.1:3000"));
+//!         let client = Client::new(&cpolicy, &hosts)
+//!             .await
+//!             .expect("Failed to connect to cluster");
+//!         let client = Arc::new(client);
 //!
-//!     let mut threads = vec![];
-//!     let now = Instant::now();
-//!     for i in 0..2 {
-//!         let client = client.clone();
-//!         let t = thread::spawn(move || {
+//!         let now = Instant::now();
+//!         for i in 0..2 {
+//!             let client = Arc::clone(&client);
 //!             let rpolicy = ReadPolicy::default();
 //!             let wpolicy = WritePolicy::default();
 //!             let key = as_key!("test", "test", i);
@@ -95,40 +95,34 @@
 //!                 as_bin!("str", "Hello, World!"),
 //!             ];
 //!
-//!             client.put(&wpolicy, &key, &bins).unwrap();
-//!             let rec = client.get(&rpolicy, &key, Bins::All);
+//!             client.put(&wpolicy, &key, &bins).await.unwrap();
+//!             let rec = client.get(&rpolicy, &key, Bins::All).await;
 //!             println!("Record: {}", rec.unwrap());
 //!
-//!             client.touch(&wpolicy, &key).unwrap();
-//!             let rec = client.get(&rpolicy, &key, Bins::All);
+//!             client.touch(&wpolicy, &key).await.unwrap();
+//!             let rec = client.get(&rpolicy, &key, Bins::All).await;
 //!             println!("Record: {}", rec.unwrap());
 //!
-//!             let rec = client.get(&rpolicy, &key, Bins::None);
+//!             let rec = client.get(&rpolicy, &key, Bins::None).await;
 //!             println!("Record Header: {}", rec.unwrap());
 //!
-//!             let exists = client.exists(&wpolicy, &key).unwrap();
+//!             let exists = client.exists(&rpolicy, &key).await.unwrap();
 //!             println!("exists: {}", exists);
 //!
 //!             let bin = as_bin!("int", 999);
 //!             let ops = &vec![operations::put(&bin), operations::get()];
-//!             let op_rec = client.operate(&wpolicy, &key, ops);
+//!             let op_rec = client.operate(&wpolicy, &key, ops).await;
 //!             println!("operate: {}", op_rec.unwrap());
 //!
-//!             let existed = client.delete(&wpolicy, &key).unwrap();
-//!             println!("existed (sould be true): {}", existed);
+//!             let existed = client.delete(&wpolicy, &key).await.unwrap();
+//!             println!("existed (should be true): {}", existed);
 //!
-//!             let existed = client.delete(&wpolicy, &key).unwrap();
+//!             let existed = client.delete(&wpolicy, &key).await.unwrap();
 //!             println!("existed (should be false): {}", existed);
-//!         });
+//!         }
 //!
-//!         threads.push(t);
-//!     }
-//!
-//!     for t in threads {
-//!         t.join().unwrap();
-//!     }
-//!
-//!     println!("total time: {:?}", now.elapsed());
+//!         println!("total time: {:?}", now.elapsed());
+//!     });
 //! }
 //! ```
 
@@ -137,7 +131,6 @@
 
 extern crate base64;
 extern crate byteorder;
-extern crate crossbeam_queue;
 #[macro_use]
 extern crate rhexdump;
 #[macro_use]
@@ -168,14 +161,15 @@ pub use expressions::regex_flag::RegexFlag;
 pub use key::Key;
 pub use net::Host;
 pub use net::ToHosts;
+pub use operations::{ListOrderType, ListPolicy, ListReturnType, ListSortFlags, ListWriteFlags};
 pub use operations::{MapPolicy, MapReturnType, MapWriteMode};
 pub use policy::{
-    AdminPolicy, AuthMode, BatchPolicy, ClientPolicy, CommitLevel, Concurrency, ConsistencyLevel,
-    Expiration, GenerationPolicy, Policy, QueryDuration, QueryPolicy, ReadPolicy, ReadTouchTTL,
-    RecordExistsAction, ScanPolicy, WritePolicy,
+    AdminPolicy, AuthMode, BasePolicy, BatchPolicy, ClientPolicy, CommitLevel, Concurrency,
+    ConsistencyLevel, Expiration, GenerationPolicy, Policy, QueryDuration, QueryPolicy, ReadPolicy,
+    ReadTouchTTL, RecordExistsAction, WritePolicy,
 };
 pub use privilege::{Privilege, PrivilegeCode};
-pub use query::{CollectionIndexType, IndexType, Recordset, Statement, UDFLang};
+pub use query::{CollectionIndexType, IndexType, PartitionFilter, Recordset, Statement, UDFLang};
 pub use record::Record;
 pub use result_code::ResultCode;
 pub use role::Role;
@@ -195,6 +189,7 @@ mod batch;
 mod client;
 mod cluster;
 pub(crate) mod commands;
+mod common;
 pub mod expressions;
 mod msgpack;
 mod net;

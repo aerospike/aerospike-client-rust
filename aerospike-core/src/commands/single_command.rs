@@ -22,9 +22,9 @@ use crate::net::Connection;
 use crate::policy::Policy;
 use crate::Key;
 use aerospike_rt::sleep;
-use aerospike_rt::time::Instant;
+use aerospike_rt::time::{Duration, Instant};
 
-pub(crate) struct SingleCommand<'a> {
+pub struct SingleCommand<'a> {
     cluster: Arc<Cluster>,
     pub key: &'a Key,
     partition: Partition<'a>,
@@ -44,11 +44,14 @@ impl<'a> SingleCommand<'a> {
         }
     }
 
+    pub const fn hint(&self) -> u8 {
+        self.key.digest[0]
+    }
+
     pub async fn get_node(&mut self) -> Result<Arc<Node>> {
-        let this_time = self
-            .cluster
-            .get_node(&self.partition, self.replica, self.last_tried.clone())
-            .await?;
+        let this_time =
+            self.cluster
+                .get_node(&self.partition, self.replica, self.last_tried.clone())?;
         self.last_tried = Arc::downgrade(&this_time);
         Ok(this_time)
     }
@@ -76,7 +79,27 @@ impl<'a> SingleCommand<'a> {
         policy: &(dyn Policy + Send + Sync),
         cmd: &'a mut (dyn commands::Command + Send),
     ) -> Result<()> {
+        if policy.total_timeout() > 0 {
+            match aerospike_rt::timeout(
+                Duration::from_millis(u64::from(policy.total_timeout())),
+                Self::execute_command(policy, cmd),
+            )
+            .await
+            {
+                Ok(res) => res,
+                Err(_) => Err(Error::Timeout("Timeout".to_string())),
+            }
+        } else {
+            Self::execute_command(policy, cmd).await
+        }
+    }
+
+    pub async fn execute_command(
+        policy: &(dyn Policy + Send + Sync),
+        cmd: &'a mut (dyn commands::Command + Send),
+    ) -> Result<()> {
         let mut iterations = 0;
+        let mut last_err: Option<Error> = None;
 
         // set timeout outside the loop
         let deadline = policy.deadline();
@@ -85,21 +108,23 @@ impl<'a> SingleCommand<'a> {
         loop {
             iterations += 1;
 
-            // Sleep before trying again, after the first iteration
-            if iterations > 1 {
-                if let Some(sleep_between_retries) = policy.sleep_between_retries() {
-                    sleep(sleep_between_retries).await;
-                }
+            // check for max retries
+            if policy.max_retries() > 0 && iterations > policy.max_retries() {
+                // first attempt isn't a retry
+                return Err(Error::Timeout(format!("Timeout after {iterations} tries"))
+                    .chain_cause(last_err));
             }
 
-            // check for max retries
-            if policy.max_retries() > 0 {
-                if iterations > policy.max_retries() + 1 {
-                    // first attempt isn't a retry
-                    return Err(Error::Timeout(format!(
-                        "Timeout after {} tries",
-                        iterations
-                    )));
+            // Sleep before trying again, after the first iteration
+            if iterations > 1 {
+                // DO NOT retry for streaming commands here. They retry in their own execution logic.
+                // DO NOT retry for any error other than network errors.
+                if !cmd.can_retry() {
+                    return Err(Error::Timeout("Timeout".to_string()).chain_cause(last_err));
+                }
+
+                if let Some(sleep_between_retries) = policy.sleep_between_retries() {
+                    sleep(sleep_between_retries).await;
                 }
             }
 
@@ -116,20 +141,22 @@ impl<'a> SingleCommand<'a> {
                 Ok(node) => node,
                 e @ Err(Error::InvalidArgument(_)) => e?,
                 Err(e) => {
-                    warn!("Error selecting node from the partition table: {}", e);
+                    warn!("Error selecting node from the partition table: {e}");
+                    last_err = Some(e.chain_cause(last_err));
                     continue;
                 } // Node is currently inactive. Retry.
             };
 
-            let mut conn = match node.get_connection().await {
+            let mut conn = match node.get_connection(cmd.hint()).await {
                 Ok(conn) => conn,
                 Err(err) => {
-                    warn!("Node {}: {}", node, err);
+                    warn!("Node {node}: {err}");
+                    last_err = Some(err.chain_cause(last_err));
                     continue;
                 }
             };
 
-            conn.set_socket_timeout(policy.socket_timeout());
+            conn.set_socket_timeout(deadline, policy.socket_timeout());
             conn.set_timeout_delay(cmd.can_recover_connection(), policy.timeout_delay());
 
             cmd.prepare_buffer(&mut conn)
@@ -143,42 +170,40 @@ impl<'a> SingleCommand<'a> {
             if let Err(err) = cmd.write_buffer(&mut conn).await {
                 // IO errors are considered temporary anomalies. Retry.
                 // Close socket to flush out possible garbage. Do not put back in pool.
-                conn.invalidate().await;
-                warn!("Node {}: {}", node, err);
+                conn.invalidate();
+                warn!("Node {node}: {err}");
+                last_err = Some(err.chain_cause(last_err));
                 continue;
             }
 
             // Parse results.
-            match cmd.parse_result(&mut conn).await {
-                Err(err) => {
-                    // close the connection
-                    // cancelling/closing the batch/multi commands will return an error, which will
-                    // close the connection to throw away its data and signal the server about the
-                    // situation. We will not put back the connection in the buffer.
-                    if !commands::keep_connection(&err) {
-                        conn.invalidate().await;
-                    }
-
-                    // DO NOT retry for streaming commands here. They retry in their own execution logic.
-                    // DO NOT retry for any error other than network errors.
-                    if cmd.can_retry() {
-                        if commands::is_network_error(&err) {
-                            continue;
-                        }
-                    }
-
-                    return Err(err);
+            if let Err(err) = cmd.parse_result(&mut conn).await {
+                // close the connection
+                // cancelling/closing the batch/multi commands will return an error, which will
+                // close the connection to throw away its data and signal the server about the
+                // situation. We will not put back the connection in the buffer.
+                if !commands::keep_connection(&err) {
+                    conn.invalidate();
                 }
-                Ok(_) => (),
+
+                if commands::is_network_error(&err) {
+                    last_err = Some(err.chain_cause(last_err));
+                    continue;
+                }
+
+                return Err(err);
             }
+
+            // allow the connection to be put back in the connection pool
+            conn.reset_state();
 
             // command has completed successfully. Exit method.
             return Ok(());
         }
 
-        return Err(Error::Timeout(format!(
-            "Command timed out after {} tries",
-            iterations
-        )));
+        Err(
+            Error::Timeout(format!("Command timed out after {iterations} tries"))
+                .chain_cause(last_err),
+        )
     }
 }

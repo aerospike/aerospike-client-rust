@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use std::collections::hash_map::Entry::{Occupied, Vacant};
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -27,7 +28,7 @@ use crate::query::{NodePartitions, Recordset};
 use crate::value::bytes_to_particle;
 use crate::{Key, Record, ResultCode, Value};
 
-pub(crate) struct StreamCommand {
+pub struct StreamCommand {
     is_scan: bool,
     node: Arc<Node>,
     pub(crate) recordset: Arc<Recordset>,
@@ -42,7 +43,7 @@ impl Drop for StreamCommand {
 }
 
 impl StreamCommand {
-    pub fn new(
+    pub const fn new(
         node: Arc<Node>,
         recordset: Arc<Recordset>,
         node_partitions: Arc<Mutex<NodePartitions>>,
@@ -120,23 +121,36 @@ impl StreamCommand {
 
             let particle_bytes_size = op_size - (4 + name_size);
             conn.read_buffer(particle_bytes_size).await?;
-            let value = bytes_to_particle(particle_type, &mut conn.buffer(), particle_bytes_size)?;
+            let value = bytes_to_particle(particle_type, conn.buffer(), particle_bytes_size)?;
 
-            bins.insert(name, value);
+            if !value.is_nil() {
+                // list/map operations may return multiple values for the same bin.
+                match bins.entry(name) {
+                    Vacant(entry) => {
+                        entry.insert(value);
+                    }
+                    Occupied(entry) => match *entry.into_mut() {
+                        Value::MultiResult(ref mut list) => list.push(value),
+                        ref mut prev => {
+                            *prev = Value::MultiResult(vec![prev.clone(), value]);
+                        }
+                    },
+                }
+            }
         }
 
         let record = Record::new(Some(key), bins, generation, expiration);
         Ok((Some(record), bval, true))
     }
 
-    async fn parse_stream(&mut self, conn: &mut BufferedConn<'_>, size: usize) -> Result<bool> {
+    async fn parse_stream(&self, conn: &mut BufferedConn<'_>, size: usize) -> Result<bool> {
         'outer: while !conn.exhausted() {
             // Read header.
             if let Err(err) = conn
                 .read_buffer(buffer::MSG_REMAINING_HEADER_SIZE as usize)
                 .await
             {
-                warn!("Parse result error: {}", err);
+                warn!("Parse result error: {err}");
                 return Err(err);
             }
 
@@ -163,7 +177,7 @@ impl StreamCommand {
                     // let _ = self.recordset.push(Err(err)).await;
                     return Err(err);
                 }
-            };
+            }
         }
 
         Ok(true)
@@ -174,8 +188,8 @@ impl StreamCommand {
         field_count: usize,
     ) -> Result<(Key, Option<u64>)> {
         let mut digest: [u8; 20] = [0; 20];
-        let mut namespace: String = "".to_string();
-        let mut set_name: String = "".to_string();
+        let mut namespace: String = String::new();
+        let mut set_name: String = String::new();
         let mut orig_key: Option<Value> = None;
         let mut bval = None;
 
@@ -200,7 +214,7 @@ impl StreamCommand {
                     let particle_bytes_size = field_len - 2;
                     orig_key = Some(bytes_to_particle(
                         particle_type,
-                        &mut conn.buffer(),
+                        conn.buffer(),
                         particle_bytes_size,
                     )?);
                 }
@@ -244,6 +258,10 @@ impl Command for StreamCommand {
         Ok(self.node.clone())
     }
 
+    fn hint(&self) -> u8 {
+        unreachable!()
+    }
+
     fn can_retry(&mut self) -> bool {
         unreachable!()
     }
@@ -266,10 +284,10 @@ impl Command for StreamCommand {
             status = false;
             if size > 0 {
                 conn.set_limit_body(size)?;
-                match self.parse_stream(&mut conn, size as usize).await {
+                match self.parse_stream(&mut conn, size).await {
                     Ok(stat) => status = stat,
                     Err(e @ Error::ServerError(_, _, _)) => {
-                        conn.drain(conn.conn.socket_timeout()).await?;
+                        conn.drain(conn.conn.deadline()).await?;
                         return Err(e);
                     }
                     Err(e) => {
@@ -277,7 +295,7 @@ impl Command for StreamCommand {
                     }
                 }
             }
-            conn.drain(conn.conn.socket_timeout()).await?;
+            conn.drain(conn.conn.deadline()).await?;
         }
 
         Ok(())

@@ -1,10 +1,10 @@
 use crate::proptest::prelude::*;
 
-use crate::proptests::operation::*;
-
 use aerospike::*;
 
-use crate::proptests::{bins::*, policy::*, value::*};
+use crate::proptests::{bins::*, operation::*, policy::*, value::*};
+
+use aerospike::*;
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum PropBatchOperation {
@@ -16,7 +16,7 @@ pub enum PropBatchOperation {
 }
 
 impl PropBatchOperation {
-    pub fn to_op(&self, key: Key) -> aerospike::BatchOperation<'_> {
+    pub fn to_op(&self, key: Key) -> aerospike::BatchOperation {
         match self {
             PropBatchOperation::ReadBins(brp, bins) => BatchOperation::read(brp, key, bins.clone()),
             PropBatchOperation::ReadOps(brp, ops) => {
@@ -26,13 +26,9 @@ impl PropBatchOperation {
                 BatchOperation::write(bwp, key, ops.iter().map(|op| op.to_op()).collect())
             }
             PropBatchOperation::Delete(bdp) => BatchOperation::delete(bdp, key),
-            PropBatchOperation::UDF(bup, server_path, function_name, args) => BatchOperation::udf(
-                bup,
-                key,
-                server_path,
-                function_name,
-                args.as_ref().map(|v| &**v),
-            ),
+            PropBatchOperation::UDF(bup, server_path, function_name, args) => {
+                BatchOperation::udf(bup, key, server_path, function_name, args.clone())
+            }
         }
     }
 }

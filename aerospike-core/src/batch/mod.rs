@@ -36,7 +36,7 @@ pub use self::batch_record::BatchRecord;
 
 use crate::errors::{Error, Result};
 
-pub(crate) struct BatchRecordIndex {
+pub struct BatchRecordIndex {
     pub batch_index: usize,
     pub record: Option<crate::Record>,
     pub result_code: ResultCode,
@@ -45,7 +45,7 @@ pub(crate) struct BatchRecordIndex {
 /// Policy for a single batch read operation.
 #[derive(Debug, Clone, PartialEq)]
 pub struct BatchReadPolicy {
-    /// read_touch_ttl determines how record TTL (time to live) is affected on reads. When enabled, the server can
+    /// `read_touch_ttl` determines how record TTL (time to live) is affected on reads. When enabled, the server can
     /// efficiently operate as a read-based LRU cache where the least recently used records are expired.
     /// The value is expressed as a percentage of the TTL sent on the most recent write such that a read
     /// within this interval of the record’s end of life will generate a touch.
@@ -56,11 +56,11 @@ pub struct BatchReadPolicy {
     ///
     /// Supported in server v8+.
     ///
-    /// Default: ReadTouchTTL::ServerDefault
+    /// Default: `ReadTouchTTL::ServerDefault`
     pub read_touch_ttl: ReadTouchTTL,
 
     /// Filter Expression is the optional expression filter. If filter Expression exists and evaluates to false, the specific batch key
-    /// request is not performed and BatchRecord.ResultCode is set to ResultCode::FILTERED_OUT.
+    /// request is not performed and BatchRecord.ResultCode is set to `ResultCode::FILTERED_OUT`.
     ///
     /// Default: None
     pub filter_expression: Option<Expression>,
@@ -78,15 +78,15 @@ impl Default for BatchReadPolicy {
 /// Policy for a single batch write operation.
 #[derive(Debug, Clone, PartialEq)]
 pub struct BatchWritePolicy {
-    /// RecordExistsAction qualifies how to handle writes where the record already exists.
+    /// `RecordExistsAction` qualifies how to handle writes where the record already exists.
     pub record_exists_action: RecordExistsAction,
 
-    /// GenerationPolicy qualifies how to handle record writes based on record generation.
+    /// `GenerationPolicy` qualifies how to handle record writes based on record generation.
     /// The default (NONE) indicates that the generation is not used to restrict writes.
     pub generation_policy: GenerationPolicy,
 
     /// Desired consistency guarantee when committing a transaction on the server. The default
-    /// (COMMIT_ALL) indicates that the server should wait for master and all replica commits to
+    /// (`COMMIT_ALL`) indicates that the server should wait for master and all replica commits to
     /// be successful before returning success to the client.
     pub commit_level: CommitLevel,
 
@@ -131,12 +131,12 @@ impl Default for BatchWritePolicy {
 #[derive(Debug, Clone, PartialEq)]
 /// Policy for a single batch delete operation.
 pub struct BatchDeletePolicy {
-    /// GenerationPolicy qualifies how to handle record writes based on record generation.
+    /// `GenerationPolicy` qualifies how to handle record writes based on record generation.
     /// The default (NONE) indicates that the generation is not used to restrict writes.
     pub generation_policy: GenerationPolicy,
 
     /// Desired consistency guarantee when committing a transaction on the server. The default
-    /// (COMMIT_ALL) indicates that the server should wait for master and all replica commits to
+    /// (`COMMIT_ALL`) indicates that the server should wait for master and all replica commits to
     /// be successful before returning success to the client.
     pub commit_level: CommitLevel,
 
@@ -176,7 +176,7 @@ impl Default for BatchDeletePolicy {
 #[derive(Debug, Clone, PartialEq)]
 pub struct BatchUDFPolicy {
     /// Desired consistency guarantee when committing a transaction on the server. The default
-    /// (CommitAll) indicates that the server should wait for master and all replica commits to
+    /// (`CommitAll`) indicates that the server should wait for master and all replica commits to
     /// be successful before returning success to the client.
     pub commit_level: CommitLevel,
 
@@ -212,87 +212,87 @@ impl Default for BatchUDFPolicy {
 /// Represents a batch operation.
 /// Do not directly create the batch operations. Use the helper methods instead.
 #[derive(Clone, Debug)]
-pub enum BatchOperation<'a> {
+pub enum BatchOperation {
     #[doc(hidden)]
     Read {
         br: BatchRecord,
-        policy: &'a BatchReadPolicy,
+        policy: BatchReadPolicy,
         bins: Bins,
-        ops: Option<Vec<Operation<'a>>>,
+        ops: Option<Vec<Operation>>,
     },
     #[doc(hidden)]
     Write {
         br: BatchRecord,
-        policy: &'a BatchWritePolicy,
-        ops: Vec<Operation<'a>>,
+        policy: BatchWritePolicy,
+        ops: Vec<Operation>,
     },
     #[doc(hidden)]
     Delete {
         br: BatchRecord,
-        policy: &'a BatchDeletePolicy,
+        policy: BatchDeletePolicy,
     },
     #[doc(hidden)]
     UDF {
         br: BatchRecord,
-        policy: &'a BatchUDFPolicy,
-        udf_name: &'a str,
-        function_name: &'a str,
-        args: Option<&'a [Value]>,
+        policy: BatchUDFPolicy,
+        udf_name: String,
+        function_name: String,
+        args: Option<Vec<Value>>,
     },
 }
 
-impl<'a> BatchOperation<'a> {
+impl BatchOperation {
     /// Create a batch read operation.
-    pub fn read(policy: &'a BatchReadPolicy, key: Key, bins: Bins) -> Self {
+    pub fn read(policy: &BatchReadPolicy, key: Key, bins: Bins) -> Self {
         BatchOperation::Read {
             br: BatchRecord::new(key, false),
-            policy: policy,
-            bins: bins,
+            policy: policy.clone(),
+            bins,
             ops: None,
         }
     }
 
     /// Create a batch read with multiple operations.
-    pub fn read_ops(policy: &'a BatchReadPolicy, key: Key, ops: Vec<Operation<'a>>) -> Self {
+    pub fn read_ops(policy: &BatchReadPolicy, key: Key, ops: Vec<Operation>) -> Self {
         BatchOperation::Read {
             br: BatchRecord::new(key, false),
-            policy: policy,
+            policy: policy.clone(),
             bins: Bins::None,
             ops: Some(ops),
         }
     }
 
     /// Create a batch write with multiple operations.
-    pub fn write(policy: &'a BatchWritePolicy, key: Key, ops: Vec<Operation<'a>>) -> Self {
+    pub fn write(policy: &BatchWritePolicy, key: Key, ops: Vec<Operation>) -> Self {
         BatchOperation::Write {
             br: BatchRecord::new(key, true),
-            policy: policy,
-            ops: ops,
+            policy: policy.clone(),
+            ops,
         }
     }
 
     /// Create a batch delete operation.
-    pub fn delete(policy: &'a BatchDeletePolicy, key: Key) -> Self {
+    pub fn delete(policy: &BatchDeletePolicy, key: Key) -> Self {
         BatchOperation::Delete {
             br: BatchRecord::new(key, true),
-            policy: policy,
+            policy: policy.clone(),
         }
     }
 
     /// Create a batch UDF operation.
     pub fn udf(
-        policy: &'a BatchUDFPolicy,
+        policy: &BatchUDFPolicy,
         key: Key,
-        udf_name: &'a str,
-        function_name: &'a str,
-        args: Option<&'a [Value]>,
+        udf_name: &str,
+        function_name: &str,
+        args: Option<Vec<Value>>,
     ) -> Self {
         BatchOperation::UDF {
             br: BatchRecord::new(key, true),
-            policy: policy,
-            udf_name: udf_name,
-            function_name: function_name,
-            args: args,
+            policy: policy.clone(),
+            udf_name: udf_name.into(),
+            function_name: function_name.into(),
+            args,
         }
     }
 
@@ -305,22 +305,19 @@ impl<'a> BatchOperation<'a> {
 
                 match (&policy.filter_expression, &parent_fe) {
                     (Some(fe), _) => {
-                        size += fe.size() + FIELD_HEADER_SIZE as usize;
+                        size += fe.size()? + FIELD_HEADER_SIZE as usize;
                     }
                     (_, Some(pfe)) => {
-                        size += pfe.size() + FIELD_HEADER_SIZE as usize;
+                        size += pfe.size()? + FIELD_HEADER_SIZE as usize;
                     }
                     _ => (),
                 }
 
-                match bins {
-                    Bins::Some(bin_names) => {
-                        for bin in bin_names {
-                            size += bin.len() + OPERATION_HEADER_SIZE as usize;
-                        }
+                if let Bins::Some(bin_names) = bins {
+                    for bin in bin_names {
+                        size += bin.len() + OPERATION_HEADER_SIZE as usize;
                     }
-                    _ => (),
-                };
+                }
 
                 if let Some(ops) = ops {
                     for op in ops {
@@ -329,7 +326,7 @@ impl<'a> BatchOperation<'a> {
                                 "Write operations not allowed in batch read".into(),
                             ));
                         }
-                        size += op.estimate_size() + 8;
+                        size += op.estimate_size()? + 8;
                     }
                 }
 
@@ -342,10 +339,10 @@ impl<'a> BatchOperation<'a> {
 
                 match (&policy.filter_expression, &parent_fe) {
                     (Some(fe), _) => {
-                        size += fe.size() + FIELD_HEADER_SIZE as usize;
+                        size += fe.size()? + FIELD_HEADER_SIZE as usize;
                     }
                     (_, Some(pfe)) => {
-                        size += pfe.size() + FIELD_HEADER_SIZE as usize;
+                        size += pfe.size()? + FIELD_HEADER_SIZE as usize;
                     }
                     _ => (),
                 }
@@ -353,7 +350,7 @@ impl<'a> BatchOperation<'a> {
                 if policy.send_key && br.key.has_value_to_send() {
                     if let Some(ref user_key) = br.key.user_key {
                         // field header size + key size
-                        size += user_key.estimate_size() + FIELD_HEADER_SIZE as usize + 1;
+                        size += user_key.estimate_size()? + FIELD_HEADER_SIZE as usize + 1;
                     }
                 }
 
@@ -361,9 +358,9 @@ impl<'a> BatchOperation<'a> {
 
                 for op in ops {
                     if op.is_write() {
-                        has_write = true
+                        has_write = true;
                     }
-                    size += op.estimate_size() + 8;
+                    size += op.estimate_size()? + 8;
                 }
 
                 if !has_write {
@@ -378,10 +375,10 @@ impl<'a> BatchOperation<'a> {
 
                 match (&policy.filter_expression, &parent_fe) {
                     (Some(fe), _) => {
-                        size += fe.size() + FIELD_HEADER_SIZE as usize;
+                        size += fe.size()? + FIELD_HEADER_SIZE as usize;
                     }
                     (_, Some(pfe)) => {
-                        size += pfe.size() + FIELD_HEADER_SIZE as usize;
+                        size += pfe.size()? + FIELD_HEADER_SIZE as usize;
                     }
                     _ => (),
                 }
@@ -389,7 +386,7 @@ impl<'a> BatchOperation<'a> {
                 if policy.send_key && br.key.has_value_to_send() {
                     if let Some(ref user_key) = br.key.user_key {
                         // field header size + key size
-                        size += user_key.estimate_size() + FIELD_HEADER_SIZE as usize + 1;
+                        size += user_key.estimate_size()? + FIELD_HEADER_SIZE as usize + 1;
                     }
                 }
 
@@ -406,10 +403,10 @@ impl<'a> BatchOperation<'a> {
 
                 match (&policy.filter_expression, &parent_fe) {
                     (Some(fe), _) => {
-                        size += fe.size() + FIELD_HEADER_SIZE as usize;
+                        size += fe.size()? + FIELD_HEADER_SIZE as usize;
                     }
                     (_, Some(pfe)) => {
-                        size += pfe.size() + FIELD_HEADER_SIZE as usize;
+                        size += pfe.size()? + FIELD_HEADER_SIZE as usize;
                     }
                     _ => (),
                 }
@@ -417,14 +414,14 @@ impl<'a> BatchOperation<'a> {
                 if policy.send_key && br.key.has_value_to_send() {
                     if let Some(ref user_key) = br.key.user_key {
                         // field header size + key size
-                        size += user_key.estimate_size() + FIELD_HEADER_SIZE as usize + 1;
+                        size += user_key.estimate_size()? + FIELD_HEADER_SIZE as usize + 1;
                     }
                 }
 
                 size += udf_name.len() + FIELD_HEADER_SIZE as usize;
                 size += function_name.len() + FIELD_HEADER_SIZE as usize;
                 if let Some(args) = args {
-                    size += encoder::pack_array(&mut None, args) + FIELD_HEADER_SIZE as usize;
+                    size += encoder::pack_array(&mut None, args)? + FIELD_HEADER_SIZE as usize;
                 } else {
                     size += encoder::pack_empty_args_array(&mut None) + FIELD_HEADER_SIZE as usize;
                 }
@@ -434,51 +431,42 @@ impl<'a> BatchOperation<'a> {
         }
     }
 
-    pub(crate) fn match_header(&self, _prev: Option<&BatchOperation<'a>>) -> bool {
+    pub(crate) const fn match_header(&self, _prev: Option<&BatchOperation>) -> bool {
         false
     }
 
     pub(crate) fn key(&self) -> Key {
         match self {
-            Self::Read { br, .. } => br.key.clone(),
-            Self::Write { br, .. } => br.key.clone(),
-            Self::Delete { br, .. } => br.key.clone(),
-            Self::UDF { br, .. } => br.key.clone(),
+            Self::Read { br, .. }
+            | Self::Write { br, .. }
+            | Self::Delete { br, .. }
+            | Self::UDF { br, .. } => br.key.clone(),
         }
     }
 
     /// Return the resulting batch record.
     pub fn batch_record(&self) -> BatchRecord {
         match self {
-            Self::Read { br, .. } => br.clone(),
-            Self::Write { br, .. } => br.clone(),
-            Self::Delete { br, .. } => br.clone(),
-            Self::UDF { br, .. } => br.clone(),
+            Self::Read { br, .. }
+            | Self::Write { br, .. }
+            | Self::Delete { br, .. }
+            | Self::UDF { br, .. } => br.clone(),
         }
     }
 
     pub(crate) fn set_record(&mut self, record: Option<Record>) {
         match self {
-            Self::Read { br, .. } => {
-                br.record = record;
-                br.result_code = Some(ResultCode::Ok);
-            }
-            Self::Write { br, .. } => {
-                br.record = record;
-                br.result_code = Some(ResultCode::Ok);
-            }
-            Self::Delete { br, .. } => {
-                br.record = record;
-                br.result_code = Some(ResultCode::Ok);
-            }
-            Self::UDF { br, .. } => {
+            Self::Read { br, .. }
+            | Self::Write { br, .. }
+            | Self::Delete { br, .. }
+            | Self::UDF { br, .. } => {
                 br.record = record;
                 br.result_code = Some(ResultCode::Ok);
             }
         }
     }
 
-    pub(crate) fn set_result_code(&mut self, rc: ResultCode, in_doubt: bool) {
+    pub(crate) const fn set_result_code(&mut self, rc: ResultCode, in_doubt: bool) {
         match self {
             Self::Read { br, .. } => {
                 br.result_code = Some(rc);

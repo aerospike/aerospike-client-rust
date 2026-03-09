@@ -19,7 +19,7 @@ use serde::Serialize;
 use std::convert::From;
 
 /// Container object for a record bin, comprising a name and a value.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Bin {
     /// Bin name
     pub name: String,
@@ -59,7 +59,7 @@ pub enum Bins {
     /// Read all bins.
     All,
 
-    /// Read record header (generation, expiration) only.
+    /// Read the record header (generation, expiration) only.
     None,
 
     /// Read specified bin names only.
