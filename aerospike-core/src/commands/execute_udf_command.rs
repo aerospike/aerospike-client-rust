@@ -39,14 +39,9 @@ impl<'a> ExecuteUDFCommand<'a> {
         function_name: &'a str,
         args: Option<&'a [Value]>,
     ) -> Self {
+        let partition = crate::cluster::partition::Partition::for_write(key);
         ExecuteUDFCommand {
-            read_command: ReadCommand::new(
-                &policy.base_policy,
-                cluster,
-                key,
-                Bins::All,
-                crate::policy::Replica::Master,
-            ),
+            read_command: ReadCommand::new_with_partition(&policy.base_policy, cluster, key, Bins::All, partition),
             policy,
             package_name,
             function_name,
@@ -94,6 +89,10 @@ impl Command for ExecuteUDFCommand<'_> {
 
     fn hint(&self) -> u8 {
         self.read_command.single_command.hint()
+    }
+
+    fn prepare_retry(&mut self, is_client_timeout: bool) {
+        self.read_command.single_command.prepare_retry(is_client_timeout);
     }
 
     async fn parse_result(&mut self, conn: &mut Connection) -> Result<()> {

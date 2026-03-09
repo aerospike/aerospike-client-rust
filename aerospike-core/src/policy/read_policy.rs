@@ -15,9 +15,7 @@
 
 use crate::expressions::Expression;
 use crate::policy::BasePolicy;
-use crate::ConsistencyLevel;
-
-use super::{PolicyLike, Replica};
+use super::{PolicyLike, ReadModeAP, ReadModeSC, Replica};
 
 /// `ReadPolicy` encapsulates parameters for transaction policy attributes
 /// used in all database operation calls.
@@ -38,7 +36,8 @@ impl Default for BasePolicy {
             timeout_delay: 0,
             max_retries: 2,
             sleep_between_retries: 0,
-            consistency_level: ConsistencyLevel::ConsistencyOne,
+            read_mode_ap: ReadModeAP::One,
+            read_mode_sc: ReadModeSC::Session,
             read_touch_ttl: super::ReadTouchTTL::ServerDefault,
             filter_expression: None,
         }

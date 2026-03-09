@@ -16,11 +16,12 @@ use std::collections::hash_map::Entry::{Occupied, Vacant};
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use crate::cluster::partition::Partition;
 use crate::cluster::{Cluster, Node};
 use crate::commands::{Command, SingleCommand};
 use crate::errors::{Error, Result};
 use crate::net::Connection;
-use crate::policy::{BasePolicy, Policy, Replica};
+use crate::policy::{BasePolicy, Policy, ReadPolicy};
 use crate::value::bytes_to_particle;
 use crate::{Bins, Key, Record, ResultCode, Value};
 
@@ -33,14 +34,34 @@ pub struct ReadCommand<'a> {
 
 impl<'a> ReadCommand<'a> {
     pub fn new(
+        policy: &'a ReadPolicy,
+        cluster: Arc<Cluster>,
+        key: &'a Key,
+        bins: Bins,
+    ) -> Self {
+        let partition = Partition::for_read(
+            &cluster,
+            key,
+            policy.replica,
+            policy.base_policy.read_mode_sc,
+        );
+        ReadCommand {
+            single_command: SingleCommand::new(cluster, key, partition),
+            bins,
+            policy: &policy.base_policy,
+            record: None,
+        }
+    }
+
+    pub fn new_with_partition(
         policy: &'a BasePolicy,
         cluster: Arc<Cluster>,
         key: &'a Key,
         bins: Bins,
-        replica: Replica,
+        partition: Partition<'a>,
     ) -> Self {
         ReadCommand {
-            single_command: SingleCommand::new(cluster, key, replica),
+            single_command: SingleCommand::new(cluster, key, partition),
             bins,
             policy,
             record: None,
@@ -129,6 +150,10 @@ impl Command for ReadCommand<'_> {
 
     fn can_recover_connection(&mut self) -> bool {
         true
+    }
+
+    fn prepare_retry(&mut self, is_client_timeout: bool) {
+        self.single_command.prepare_retry(is_client_timeout);
     }
 
     async fn parse_result(&mut self, conn: &mut Connection) -> Result<()> {

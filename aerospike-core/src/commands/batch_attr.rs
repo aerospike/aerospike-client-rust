@@ -22,6 +22,8 @@ use crate::operations::{Operation, OperationBin, OperationType};
 use crate::policy::BatchPolicy;
 use crate::CommitLevel;
 use crate::GenerationPolicy;
+use crate::ReadModeAP;
+use crate::ReadModeSC;
 use crate::RecordExistsAction;
 
 #[derive(Default)]
@@ -43,23 +45,20 @@ impl BatchAttr {
         self.filter_expression = None;
         self.read_attr = buffer::INFO1_READ;
 
-        // if rp.ReadModeAP == ReadModeAPAll {
-        // 	self.read_attr |= buffer::INFO1_READ_MODE_AP_ALL
-        // }
+        if rp.base_policy.read_mode_ap == ReadModeAP::All {
+            self.read_attr |= buffer::INFO1_READ_MODE_AP_ALL
+        }
 
         self.write_attr = 0;
 
-        // switch rp.ReadModeSC {
-        // default:
-        // case ReadModeSCSession:
-        // 	self.info_attr = 0
-        // case ReadModeSCLinearize:
-        // 	self.info_attr = buffer::INFO3_SC_READ_TYPE
-        // case ReadModeSCAllowReplica:
-        // 	self.info_attr = buffer::INFO3_SC_READ_RELAX
-        // case ReadModeSCAllowUnavailable:
-        // 	self.info_attr = buffer::INFO3_SC_READ_TYPE | buffer::INFO3_SC_READ_RELAX
-        // }
+        match rp.base_policy.read_mode_sc {
+            ReadModeSC::Session => self.info_attr = 0,
+            ReadModeSC::Linearize => self.info_attr = buffer::INFO3_SC_READ_TYPE,
+            ReadModeSC::AllowReplica => self.info_attr = buffer::INFO3_SC_READ_RELAX,
+            ReadModeSC::AllowUnavailable => {
+                self.info_attr = buffer::INFO3_SC_READ_TYPE | buffer::INFO3_SC_READ_RELAX
+            }
+        }
         self.txn_attr = 0;
         self.expiration = rp.base_policy.read_touch_ttl.into();
         self.generation = 0;
@@ -74,23 +73,20 @@ impl BatchAttr {
             .or(parent.filter_expression.clone());
         self.read_attr = buffer::INFO1_READ;
 
-        // if rp.ReadModeAP == ReadModeAPAll {
-        // 	self.read_attr |= buffer::INFO1_READ_MODE_AP_ALL
-        // }
+        if parent.base_policy.read_mode_ap == ReadModeAP::All {
+            self.read_attr |= buffer::INFO1_READ_MODE_AP_ALL
+        }
 
         self.write_attr = 0;
 
-        // switch rp.ReadModeSC {
-        // default:
-        // case ReadModeSCSession:
-        // 	self.info_attr = 0
-        // case ReadModeSCLinearize:
-        // 	self.info_attr = buffer::INFO3_SC_READ_TYPE
-        // case ReadModeSCAllowReplica:
-        // 	self.info_attr = buffer::INFO3_SC_READ_RELAX
-        // case ReadModeSCAllowUnavailable:
-        // 	self.info_attr = buffer::INFO3_SC_READ_TYPE | buffer::INFO3_SC_READ_RELAX
-        // }
+        match parent.base_policy.read_mode_sc {
+            ReadModeSC::Session => self.info_attr = 0,
+            ReadModeSC::Linearize => self.info_attr = buffer::INFO3_SC_READ_TYPE,
+            ReadModeSC::AllowReplica => self.info_attr = buffer::INFO3_SC_READ_RELAX,
+            ReadModeSC::AllowUnavailable => {
+                self.info_attr = buffer::INFO3_SC_READ_TYPE | buffer::INFO3_SC_READ_RELAX
+            }
+        }
         self.txn_attr = 0;
         self.expiration = rp.read_touch_ttl.into();
         self.generation = 0;

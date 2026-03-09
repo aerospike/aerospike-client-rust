@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::sync::{Arc, Weak};
+use std::sync::Arc;
 
 use crate::cluster::partition::Partition;
 use crate::cluster::{Cluster, Node};
@@ -27,20 +27,15 @@ use aerospike_rt::time::{Duration, Instant};
 pub struct SingleCommand<'a> {
     cluster: Arc<Cluster>,
     pub key: &'a Key,
-    partition: Partition<'a>,
-    last_tried: Weak<Node>,
-    replica: crate::policy::Replica,
+    pub partition: Partition<'a>,
 }
 
 impl<'a> SingleCommand<'a> {
-    pub fn new(cluster: Arc<Cluster>, key: &'a Key, replica: crate::policy::Replica) -> Self {
-        let partition = Partition::new_by_key(key);
+    pub fn new(cluster: Arc<Cluster>, key: &'a Key, partition: Partition<'a>) -> Self {
         SingleCommand {
             cluster,
             key,
             partition,
-            last_tried: Weak::new(),
-            replica,
         }
     }
 
@@ -49,11 +44,11 @@ impl<'a> SingleCommand<'a> {
     }
 
     pub async fn get_node(&mut self) -> Result<Arc<Node>> {
-        let this_time =
-            self.cluster
-                .get_node(&self.partition, self.replica, self.last_tried.clone())?;
-        self.last_tried = Arc::downgrade(&this_time);
-        Ok(this_time)
+        self.partition.get_node(&self.cluster)
+    }
+
+    pub fn prepare_retry(&mut self, is_client_timeout: bool) {
+        self.partition.prepare_retry(is_client_timeout);
     }
 
     pub async fn empty_socket(conn: &mut Connection) -> Result<()> {
@@ -122,6 +117,10 @@ impl<'a> SingleCommand<'a> {
                 if !cmd.can_retry() {
                     return Err(Error::Timeout("Timeout".to_string()).chain_cause(last_err));
                 }
+
+                // Advance the partition sequence for the retry
+                let is_client_timeout = matches!(&last_err, Some(Error::Timeout(_)));
+                cmd.prepare_retry(is_client_timeout);
 
                 if let Some(sleep_between_retries) = policy.sleep_between_retries() {
                     sleep(sleep_between_retries).await;

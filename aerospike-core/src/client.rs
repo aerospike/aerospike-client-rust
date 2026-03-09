@@ -329,11 +329,10 @@ impl Client {
     {
         let bins = bins.into();
         let mut command = ReadCommand::new(
-            &policy.base_policy,
+            policy,
             self.cluster.clone(),
             key,
             bins,
-            policy.replica,
         );
         command.execute().await?;
         Ok(command.record.unwrap())

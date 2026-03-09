@@ -21,7 +21,7 @@ use aerospike::{
 use proptest::bool;
 use proptest::prelude::*;
 
-use aerospike::ConsistencyLevel;
+use aerospike::{ReadModeAP, ReadModeSC};
 
 pub fn read_touch_ttl() -> impl Strategy<Value = ReadTouchTTL> {
     prop_oneof![
@@ -35,10 +35,16 @@ pub fn concurrency() -> impl Strategy<Value = Concurrency> {
     prop_oneof![Just(Concurrency::Sequential), Just(Concurrency::Parallel),]
 }
 
-pub fn consistency_level() -> impl Strategy<Value = ConsistencyLevel> {
+pub fn read_mode_ap() -> impl Strategy<Value = ReadModeAP> {
+    prop_oneof![Just(ReadModeAP::One), Just(ReadModeAP::All),]
+}
+
+pub fn read_mode_sc() -> impl Strategy<Value = ReadModeSC> {
     prop_oneof![
-        Just(ConsistencyLevel::ConsistencyOne),
-        Just(ConsistencyLevel::ConsistencyAll),
+        Just(ReadModeSC::Session),
+        // Just(ReadModeSC::Linearize),
+        // Just(ReadModeSC::AllowReplica),
+        // Just(ReadModeSC::AllowUnavailable),
     ]
 }
 
@@ -73,6 +79,8 @@ pub fn expiration_ns_default() -> impl Strategy<Value = Expiration> {
 pub fn replica() -> impl Strategy<Value = Replica> {
     prop_oneof![
         Just(Replica::Master),
+        Just(Replica::MasterProles),
+        Just(Replica::Random),
         Just(Replica::Sequence),
         // Just(Replica::PreferRack),
     ]
@@ -138,7 +146,8 @@ pub fn base_policy(
         duration_ms(0, 10000),
         max_retries(0, 100),
         100..500 as u32,
-        consistency_level(),
+        read_mode_ap(),
+        read_mode_sc(),
         read_touch_ttl(),
         Just(None), //true_or_false_filter_expression(),
     )
@@ -149,7 +158,8 @@ pub fn base_policy(
                 timeout_delay,
                 max_retries,
                 sleep_between_retries,
-                consistency_level,
+                read_mode_ap,
+                read_mode_sc,
                 read_touch_ttl,
                 filter_expression,
             )| BasePolicy {
@@ -158,7 +168,8 @@ pub fn base_policy(
                 timeout_delay,
                 max_retries,
                 sleep_between_retries,
-                consistency_level,
+                read_mode_ap,
+                read_mode_sc,
                 read_touch_ttl,
                 filter_expression,
             },

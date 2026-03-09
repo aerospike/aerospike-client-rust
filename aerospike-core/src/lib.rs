@@ -171,7 +171,8 @@ pub use operations::{ListOrderType, ListPolicy, ListReturnType, ListSortFlags, L
 pub use operations::{MapPolicy, MapReturnType, MapWriteMode};
 pub use policy::{
     AdminPolicy, AuthMode, BasePolicy, BatchPolicy, ClientPolicy, CommitLevel, Concurrency,
-    ConsistencyLevel, Expiration, GenerationPolicy, Policy, QueryDuration, QueryPolicy, ReadPolicy,
+    Expiration, GenerationPolicy, Policy, QueryDuration, QueryPolicy, ReadModeAP, ReadModeSC,
+    ReadPolicy,
     ReadTouchTTL, RecordExistsAction, WritePolicy,
 };
 pub use privilege::{Privilege, PrivilegeCode};

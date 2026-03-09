@@ -7,3 +7,4 @@ aerospike-client-rust.code-workspace
 Makefile
 proptest-regressions/
 .claude/
+aerospike-client-go/

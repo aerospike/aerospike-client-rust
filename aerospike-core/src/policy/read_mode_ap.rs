@@ -1,4 +1,4 @@
-// Copyright 2015-2018 Aerospike, Inc.
+// Copyright 2015-2020 Aerospike, Inc.
 //
 // Portions may be licensed to Aerospike, Inc. under one or more contributor
 // license agreements.
@@ -12,18 +12,16 @@
 // WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
 // License for the specific language governing permissions and limitations under
 // the License.
-//
 
-/// `ConsistencyLevel` indicates how replicas should be consulted in a read
-/// operation to provide the desired consistency guarantee.
-#[derive(Debug, PartialEq, Eq, Clone, Default)]
-pub enum ConsistencyLevel {
-    /// `ConsistencyOne` indicates only a single replica should be consulted in
-    /// the read operation.
+/// `ReadModeAP` is the read policy for AP (availability) namespaces.
+/// It indicates how duplicates should be consulted in a read operation.
+/// Only makes a difference during migrations and only applicable in AP mode.
+#[derive(Debug, PartialEq, Eq, Clone, Copy, Default)]
+pub enum ReadModeAP {
+    /// A single node should be involved in the read operation.
     #[default]
-    ConsistencyOne = 0,
+    One = 0,
 
-    /// `ConsistencyAll` indicates that all replicas should be consulted in
-    /// the read operation.
-    ConsistencyAll = 1,
+    /// All duplicates should be consulted in the read operation.
+    All = 1,
 }

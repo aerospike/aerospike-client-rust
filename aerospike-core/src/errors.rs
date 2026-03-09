@@ -97,6 +97,9 @@ pub enum Error {
     /// Cluster node is invalid.
     #[error("Invalid cluster node: {0}")]
     InvalidNode(String),
+    /// Invalid or unknown namespace.
+    #[error("Invalid namespace: {0}")]
+    InvalidNamespace(String),
     /// Exceeded max. number of connections per node.
     #[error("Too many connections")]
     NoMoreConnections,

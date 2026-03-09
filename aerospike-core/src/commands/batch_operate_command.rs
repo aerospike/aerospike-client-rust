@@ -91,12 +91,15 @@ impl BatchOperateCommand {
                 for individual_op in self.batch_ops.chunks_mut(1) {
                     let key = individual_op[0].0.key();
                     // Find somewhere else to try.
-                    let partition = Partition::new_by_key(&key);
-                    let node = cluster.get_node(
-                        &partition,
+                    let mut partition = Partition::for_read(
+                        &cluster,
+                        &key,
                         self.policy.replica,
-                        Arc::downgrade(&self.node),
-                    )?;
+                        self.policy.base_policy.read_mode_sc,
+                    );
+                    // Advance sequence to try a different node than the primary
+                    partition.sequence = 1;
+                    let node = partition.get_node(&cluster)?;
 
                     if let Some(e) =
                         Self::request_group(individual_op, &self.policy, deadline, node).await?

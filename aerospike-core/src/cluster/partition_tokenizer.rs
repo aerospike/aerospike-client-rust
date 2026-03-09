@@ -73,6 +73,7 @@ impl PartitionTokenizer {
                         })?;
 
                     let entry = nmap.entry(ns.to_string()).or_default();
+                    entry.sc_mode = reigime != 0;
 
                     if entry.replicas != n_replicas
                         && reigime

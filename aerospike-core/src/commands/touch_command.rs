@@ -28,8 +28,9 @@ pub struct TouchCommand<'a> {
 
 impl<'a> TouchCommand<'a> {
     pub fn new(policy: &'a WritePolicy, cluster: Arc<Cluster>, key: &'a Key) -> Self {
+        let partition = crate::cluster::partition::Partition::for_write(key);
         TouchCommand {
-            single_command: SingleCommand::new(cluster, key, crate::policy::Replica::Master),
+            single_command: SingleCommand::new(cluster, key, partition),
             policy,
         }
     }
@@ -68,6 +69,10 @@ impl Command for TouchCommand<'_> {
 
     fn can_recover_connection(&mut self) -> bool {
         true
+    }
+
+    fn prepare_retry(&mut self, is_client_timeout: bool) {
+        self.single_command.prepare_retry(is_client_timeout);
     }
 
     async fn parse_result(&mut self, conn: &mut Connection) -> Result<()> {

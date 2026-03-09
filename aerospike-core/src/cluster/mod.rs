@@ -24,13 +24,13 @@ use aerospike_rt::time::{Duration, Instant};
 use std::cell::OnceCell;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicIsize, Ordering};
-use std::sync::{Arc, Weak};
+use std::sync::Arc;
 use std::vec::Vec;
 
 pub use self::node::Node;
+pub use self::partition::Partition;
 
 use self::node_validator::NodeValidator;
-use self::partition::Partition;
 use self::partition_tokenizer::PartitionTokenizer;
 
 use crate::commands::admin_command::AdminCommand;
@@ -38,7 +38,6 @@ use crate::commands::Message;
 use crate::errors::{Error, Result};
 use crate::net::Host;
 use crate::policy::ClientPolicy;
-use crate::policy::Replica;
 use crate::AdminPolicy;
 use aerospike_rt::Mutex;
 use futures::channel::mpsc;
@@ -47,86 +46,18 @@ use hazarc::AtomicArc;
 
 static CLIENT_VERSION: &str = env!("CARGO_PKG_VERSION");
 
+/// Per-namespace partition data, equivalent to Go's `Partitions` struct.
+/// Contains replicated node arrays, SC mode flag, and regime tracking.
 #[derive(Debug, Default, Clone)]
-pub struct PartitionForNamespace {
-    nodes: Vec<(u32, Option<Arc<Node>>)>,
-    replicas: usize,
+pub struct Partitions {
+    pub(crate) nodes: Vec<(u32, Option<Arc<Node>>)>,
+    pub(crate) replicas: usize,
+    pub(crate) sc_mode: bool,
 }
 
-type PartitionTable = HashMap<String, PartitionForNamespace>;
+pub type PartitionTable = HashMap<String, Partitions>;
 
-impl PartitionForNamespace {
-    fn all_replicas(&self, index: usize) -> impl Iterator<Item = Option<Arc<Node>>> + '_ {
-        (0..self.replicas).map(move |i| {
-            self.nodes
-                .get(i * node::PARTITIONS + index)
-                .and_then(|(_, item)| item.clone())
-        })
-    }
-
-    fn get_node(
-        &self,
-        cluster: &Cluster,
-        partition: &Partition<'_>,
-        replica: crate::policy::Replica,
-        last_tried: Weak<Node>,
-    ) -> Result<Arc<Node>> {
-        fn get_next_in_sequence<I: Iterator<Item = Arc<Node>>, F: Fn() -> I>(
-            get_sequence: F,
-            last_tried: Weak<Node>,
-        ) -> Option<Arc<Node>> {
-            if let Some(last_tried) = last_tried.upgrade() {
-                // If this isn't the first attempt, try the replica immediately after in sequence (that is actually valid)
-                let mut replicas = get_sequence();
-                while let Some(replica) = replicas.next() {
-                    if Arc::ptr_eq(&replica, &last_tried) {
-                        if let Some(in_sequence_after) = replicas.next() {
-                            return Some(in_sequence_after);
-                        }
-
-                        // No more after this? Drop through to try from the beginning.
-                        break;
-                    }
-                }
-            }
-            // If we get here, we're on the first attempt, the last node is already gone, or there are no more nodes in sequence. Just find the next populated option.
-            get_sequence().next()
-        }
-
-        let node = match replica {
-            Replica::Master => self.all_replicas(partition.partition_id).next().flatten(),
-            Replica::Sequence => get_next_in_sequence(
-                || self.all_replicas(partition.partition_id).flatten(),
-                last_tried,
-            ),
-            Replica::PreferRack => {
-                let rack_ids = &cluster.client_policy.load().rack_ids;
-                let rack_ids = rack_ids.as_ref().ok_or_else(|| Error::InvalidArgument("Attempted to use Replica::PreferRack without configuring racks in client policy".to_string()))?;
-                get_next_in_sequence(
-                    || {
-                        self.all_replicas(partition.partition_id)
-                            .flatten()
-                            .filter(|node| node.is_in_rack(partition.namespace, rack_ids))
-                    },
-                    last_tried.clone(),
-                )
-                .or_else(|| {
-                    get_next_in_sequence(
-                        || self.all_replicas(partition.partition_id).flatten(),
-                        last_tried,
-                    )
-                })
-            }
-        };
-
-        node.ok_or_else(|| {
-            Error::InvalidNode(format!(
-                "Cannot get appropriate node for namespace: {} partition: {}",
-                partition.namespace, partition.partition_id
-            ))
-        })
-    }
-}
+impl Partitions {}
 
 // Cluster encapsulates the aerospike cluster nodes and manages
 // them.
@@ -142,12 +73,15 @@ pub struct Cluster {
     nodes: AtomicArc<Vec<Arc<Node>>>,
 
     // Which partition contains the key.
-    partition_map: AtomicArc<PartitionTable>,
+    pub(crate) partition_map: AtomicArc<PartitionTable>,
 
     // Random node index.
     node_index: AtomicIsize,
 
-    client_policy: AtomicArc<ClientPolicy>,
+    // Round-robin replica index for MasterProles policy.
+    pub(crate) replica_index: AtomicIsize,
+
+    pub(crate) client_policy: AtomicArc<ClientPolicy>,
     hashed_pass: AtomicArc<Option<String>>,
 
     tend_channel: Mutex<Sender<()>>,
@@ -170,6 +104,7 @@ impl Cluster {
 
             partition_map: AtomicArc::from(HashMap::default()),
             node_index: AtomicIsize::new(0),
+            replica_index: AtomicIsize::new(0),
 
             tend_channel: Mutex::new(tx),
             closed: AtomicBool::new(false),
@@ -645,39 +580,13 @@ impl Cluster {
         self.nodes.store(Arc::new(new_nodes));
     }
 
-    pub fn get_node(
-        &self,
-        partition: &Partition<'_>,
-        replica: crate::policy::Replica,
-        last_tried: Weak<Node>,
-    ) -> Result<Arc<Node>> {
-        let partitions = self.partition_map.load();
-
-        let namespace = partitions.get(partition.namespace).ok_or_else(|| {
-            Error::InvalidNode(format!(
-                "Cannot get appropriate node for namespace: {}",
-                partition.namespace
-            ))
-        })?;
-
-        namespace.get_node(self, partition, replica, last_tried)
+    pub fn get_node(&self, partition: &mut Partition<'_>) -> Result<Arc<Node>> {
+        partition.get_node(self)
     }
 
     pub async fn get_master_node(&self, namespace: &str, partition_id: usize) -> Result<Arc<Node>> {
-        let partitions = self.partition_map.load();
-
-        let ns_partition = partitions.get(namespace).ok_or_else(|| {
-            Error::InvalidNode(format!(
-                "Cannot get appropriate node for namespace: {namespace}"
-            ))
-        })?;
-
-        let node = ns_partition.all_replicas(partition_id).next().flatten();
-        node.ok_or_else(|| {
-            Error::InvalidNode(format!(
-                "Cannot get appropriate node for namespace: {namespace} partition: {partition_id}"
-            ))
-        })
+        let partition = Partition::new(namespace, partition_id);
+        partition.get_master_node(self)
     }
 
     pub fn get_random_node(&self) -> Result<Arc<Node>> {

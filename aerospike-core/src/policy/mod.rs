@@ -23,7 +23,8 @@ mod batch_policy;
 mod client_policy;
 mod commit_level;
 mod concurrency;
-mod consistency_level;
+mod read_mode_ap;
+mod read_mode_sc;
 mod expiration;
 mod generation_policy;
 mod query_duration;
@@ -40,7 +41,8 @@ pub use self::client_policy::AuthMode;
 pub use self::client_policy::ClientPolicy;
 pub use self::commit_level::CommitLevel;
 pub use self::concurrency::Concurrency;
-pub use self::consistency_level::ConsistencyLevel;
+pub use self::read_mode_ap::ReadModeAP;
+pub use self::read_mode_sc::ReadModeSC;
 pub use self::expiration::Expiration;
 pub use self::generation_policy::GenerationPolicy;
 pub use self::query_duration::QueryDuration;
@@ -85,9 +87,11 @@ pub trait Policy {
     /// Time to sleep between retries. Set to zero to skip sleep. Default: 500ms.
     fn sleep_between_retries(&self) -> Option<Duration>;
 
-    /// How replicas should be consulted in read operations to provide the desired consistency
-    /// guarantee.
-    fn consistency_level(&self) -> &ConsistencyLevel;
+    /// Read policy for AP (availability) namespaces.
+    fn read_mode_ap(&self) -> ReadModeAP;
+
+    /// Read policy for SC (strong consistency) namespaces.
+    fn read_mode_sc(&self) -> ReadModeSC;
 }
 
 /// Policy-like object that encapsulates a base policy instance.
@@ -100,8 +104,12 @@ impl<T> Policy for T
 where
     T: PolicyLike,
 {
-    fn consistency_level(&self) -> &ConsistencyLevel {
-        self.base().consistency_level()
+    fn read_mode_ap(&self) -> ReadModeAP {
+        self.base().read_mode_ap()
+    }
+
+    fn read_mode_sc(&self) -> ReadModeSC {
+        self.base().read_mode_sc()
     }
 
     fn deadline(&self) -> Option<Instant> {
@@ -139,6 +147,16 @@ pub enum Replica {
     /// Use node containing key's master partition.
     Master,
 
+    /// Distribute reads across nodes containing key's master and replicated partitions
+    /// in round-robin fashion. Writes always use the master node.
+    MasterProles,
+
+    /// Distribute reads across all nodes in the cluster in round-robin fashion.
+    /// This option is useful when the replication factor equals the number of nodes
+    /// in the cluster and the overhead of requesting proles is not desired.
+    /// Writes always use the master node.
+    Random,
+
     /// Try node containing master partition first.
     /// If connection fails, all commands try nodes containing replicated partitions.
     /// If socketTimeout is reached, reads also try nodes containing replicated partitions,
@@ -149,18 +167,22 @@ pub enum Replica {
     /// Try node on the same rack as the client first. If timeout or there are no nodes on the
     /// same rack, use SEQUENCE instead.
     ///
-    /// {@link ClientPolicy#rackAware}, {@link ClientPolicy#rackId}, and server rack
-    /// configuration must also be set to enable this functionality.
+    /// `ClientPolicy::rack_ids` and server rack configuration must also be set to enable
+    /// this functionality.
     PreferRack,
 }
 
 /// Common parameters shared by all policy types.
 #[derive(Debug, Clone)]
 pub struct BasePolicy {
-    /// How replicas should be consulted in a read operation to provide the desired
-    /// consistency guarantee. Default to allowing one replica to be used in the
-    /// read operation.
-    pub consistency_level: ConsistencyLevel,
+    /// Read policy for AP (availability) namespaces.
+    /// Indicates how duplicates should be consulted in a read operation.
+    /// Only makes a difference during migrations and only applicable in AP mode.
+    pub read_mode_ap: ReadModeAP,
+
+    /// Read policy for SC (strong consistency) namespaces.
+    /// Determines SC read consistency options.
+    pub read_mode_sc: ReadModeSC,
 
     /// Socket idle timeout when processing a database command.
     ///
@@ -282,7 +304,11 @@ impl Policy for BasePolicy {
         }
     }
 
-    fn consistency_level(&self) -> &ConsistencyLevel {
-        &self.consistency_level
+    fn read_mode_ap(&self) -> ReadModeAP {
+        self.read_mode_ap
+    }
+
+    fn read_mode_sc(&self) -> ReadModeSC {
+        self.read_mode_sc
     }
 }

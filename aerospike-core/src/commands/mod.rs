@@ -65,6 +65,8 @@ pub trait Command {
     async fn write_buffer(&mut self, conn: &mut Connection) -> Result<()>;
     fn can_retry(&mut self) -> bool;
     fn can_recover_connection(&mut self) -> bool;
+    /// Prepare the partition for a retry by advancing the sequence number.
+    fn prepare_retry(&mut self, _is_client_timeout: bool) {}
 }
 
 pub const fn keep_connection(err: &Error) -> bool {

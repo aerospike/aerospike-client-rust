@@ -29,8 +29,9 @@ pub struct DeleteCommand<'a> {
 
 impl<'a> DeleteCommand<'a> {
     pub fn new(policy: &'a WritePolicy, cluster: Arc<Cluster>, key: &'a Key) -> Self {
+        let partition = crate::cluster::partition::Partition::for_write(key);
         DeleteCommand {
-            single_command: SingleCommand::new(cluster, key, crate::policy::Replica::Master),
+            single_command: SingleCommand::new(cluster, key, partition),
             policy,
             existed: false,
         }
@@ -70,6 +71,10 @@ impl Command for DeleteCommand<'_> {
 
     fn can_retry(&mut self) -> bool {
         true
+    }
+
+    fn prepare_retry(&mut self, is_client_timeout: bool) {
+        self.single_command.prepare_retry(is_client_timeout);
     }
 
     async fn parse_result(&mut self, conn: &mut Connection) -> Result<()> {

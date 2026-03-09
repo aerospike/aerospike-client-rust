@@ -24,8 +24,8 @@ use crate::expressions::Expression;
 use crate::msgpack::encoder;
 use crate::operations::{Operation, OperationBin, OperationData, OperationType};
 use crate::policy::{
-    BasePolicy, BatchPolicy, CommitLevel, ConsistencyLevel, GenerationPolicy, Policy,
-    QueryDuration, QueryPolicy, ReadPolicy, RecordExistsAction, WritePolicy,
+    BasePolicy, BatchPolicy, CommitLevel, GenerationPolicy, Policy, QueryDuration, QueryPolicy,
+    ReadModeAP, ReadModeSC, ReadPolicy, RecordExistsAction, WritePolicy,
 };
 use crate::query::NodePartitions;
 use crate::{Bin, Bins, CollectionIndexType, Key, Statement, Value};
@@ -46,7 +46,7 @@ pub const INFO1_BATCH: u8 = 1 << 3;
 pub const INFO1_NOBINDATA: u8 = 1 << 5;
 
 // Involve all replicas in read operation.
-const INFO1_CONSISTENCY_ALL: u8 = 1 << 6;
+pub const INFO1_READ_MODE_AP_ALL: u8 = 1 << 6;
 
 // Create or update record
 pub const INFO2_WRITE: u8 = 1;
@@ -89,6 +89,10 @@ pub const INFO3_CREATE_OR_REPLACE: u8 = 1 << 4;
 
 // Completely replace existing record only.
 pub const INFO3_REPLACE_ONLY: u8 = 1 << 5;
+// SC read type bit.
+pub const INFO3_SC_READ_TYPE: u8 = 1 << 6;
+// SC read relax bit.
+pub const INFO3_SC_READ_RELAX: u8 = 1 << 7;
 
 // pub(crate) const BATCH_MSG_READ: u8 = 0x0;
 pub const BATCH_MSG_REPEAT: u8 = 0x1;
@@ -1265,17 +1269,28 @@ impl Buffer {
         operation_count: u16,
     ) {
         let mut read_attr = read_attr;
+        let mut info_attr: u8 = 0;
 
-        if policy.consistency_level == ConsistencyLevel::ConsistencyAll {
-            read_attr |= INFO1_CONSISTENCY_ALL;
+        match policy.read_mode_sc {
+            ReadModeSC::Session => {}
+            ReadModeSC::Linearize => info_attr |= INFO3_SC_READ_TYPE,
+            ReadModeSC::AllowReplica => info_attr |= INFO3_SC_READ_RELAX,
+            ReadModeSC::AllowUnavailable => {
+                info_attr |= INFO3_SC_READ_TYPE | INFO3_SC_READ_RELAX;
+            }
+        }
+
+        if policy.read_mode_ap == ReadModeAP::All {
+            read_attr |= INFO1_READ_MODE_AP_ALL;
         }
 
         // Write all header data except total size which must be written last.
         self.data_buffer[8] = MSG_REMAINING_HEADER_SIZE; // Message header length.
         self.data_buffer[9] = read_attr;
         self.data_buffer[10] = write_attr;
+        self.data_buffer[11] = info_attr;
 
-        for i in 11..26 {
+        for i in 12..26 {
             self.data_buffer[i] = 0;
         }
 
@@ -1299,9 +1314,19 @@ impl Buffer {
         operation_count: u16,
     ) {
         let mut read_attr = read_attr;
+        let mut info_attr = info_attr;
 
-        if policy.consistency_level == ConsistencyLevel::ConsistencyAll {
-            read_attr |= INFO1_CONSISTENCY_ALL;
+        match policy.read_mode_sc {
+            ReadModeSC::Session => {}
+            ReadModeSC::Linearize => info_attr |= INFO3_SC_READ_TYPE,
+            ReadModeSC::AllowReplica => info_attr |= INFO3_SC_READ_RELAX,
+            ReadModeSC::AllowUnavailable => {
+                info_attr |= INFO3_SC_READ_TYPE | INFO3_SC_READ_RELAX;
+            }
+        }
+
+        if policy.read_mode_ap == ReadModeAP::All {
+            read_attr |= INFO1_READ_MODE_AP_ALL;
         }
 
         // Write all header data except total size which must be written last.
@@ -1363,12 +1388,21 @@ impl Buffer {
             info_attr |= INFO3_COMMIT_MASTER;
         }
 
-        if policy.base_policy.consistency_level == ConsistencyLevel::ConsistencyAll {
-            read_attr |= INFO1_CONSISTENCY_ALL;
-        }
-
         if policy.durable_delete {
             write_attr |= INFO2_DURABLE_DELETE;
+        }
+
+        match policy.base_policy.read_mode_sc {
+            ReadModeSC::Session => {}
+            ReadModeSC::Linearize => info_attr |= INFO3_SC_READ_TYPE,
+            ReadModeSC::AllowReplica => info_attr |= INFO3_SC_READ_RELAX,
+            ReadModeSC::AllowUnavailable => {
+                info_attr |= INFO3_SC_READ_TYPE | INFO3_SC_READ_RELAX;
+            }
+        }
+
+        if policy.base_policy.read_mode_ap == ReadModeAP::All {
+            read_attr |= INFO1_READ_MODE_AP_ALL;
         }
 
         // Write all header data except total size which must be written last.

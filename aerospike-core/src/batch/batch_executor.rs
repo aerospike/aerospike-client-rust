@@ -14,7 +14,7 @@
 // the License.
 
 use std::collections::HashMap;
-use std::sync::{Arc, Weak};
+use std::sync::Arc;
 
 use crate::batch::BatchOperation;
 use crate::cluster::partition::Partition;
@@ -36,10 +36,14 @@ impl BatchExecutor {
         BatchExecutor { cluster }
     }
 
-    async fn node_for_key(&self, key: &Key, replica: crate::policy::Replica) -> Result<Arc<Node>> {
-        let partition = Partition::new_by_key(key);
-        let node = self.cluster.get_node(&partition, replica, Weak::new())?;
-        Ok(node)
+    fn node_for_key(
+        &self,
+        key: &Key,
+        replica: crate::policy::Replica,
+        read_mode_sc: crate::policy::ReadModeSC,
+    ) -> Result<Arc<Node>> {
+        let mut partition = Partition::for_read(&self.cluster, key, replica, read_mode_sc);
+        partition.get_node(&self.cluster)
     }
 
     pub async fn execute<'a>(
@@ -68,8 +72,7 @@ impl BatchExecutor {
         batch_ops: &[BatchOperation],
     ) -> Result<Vec<BatchRecord>> {
         let batch_nodes = self
-            .get_batch_operate_nodes(batch_ops, policy.replica)
-            .await?;
+            .get_batch_operate_nodes(batch_ops, policy.replica, policy.base_policy.read_mode_sc)?;
         let jobs = batch_nodes
             .into_iter()
             .map(|(node, ops)| BatchOperateCommand::new(policy.clone(), node, ops))
@@ -113,14 +116,15 @@ impl BatchExecutor {
         }
     }
 
-    async fn get_batch_operate_nodes(
+    fn get_batch_operate_nodes(
         &self,
         batch_ops: &[BatchOperation],
         replica: crate::policy::Replica,
+        read_mode_sc: crate::policy::ReadModeSC,
     ) -> Result<HashMap<Arc<Node>, Vec<(BatchOperation, usize)>>> {
         let mut map = HashMap::new();
         for (index, batch_op) in batch_ops.iter().enumerate() {
-            let node = self.node_for_key(&batch_op.key(), replica).await?;
+            let node = self.node_for_key(&batch_op.key(), replica, read_mode_sc)?;
             map.entry(node)
                 .or_insert_with(Vec::new)
                 .push((batch_op.clone(), index));
