@@ -181,6 +181,7 @@ pub use record::Record;
 pub use result_code::ResultCode;
 pub use role::Role;
 pub use task::{DropIndexTask, IndexTask, RegisterTask, Task, UdfRemoveTask};
+pub use txn::{AbortStatus, CommitErrorType, CommitStatus, Txn, TxnState};
 pub use user::User;
 pub use value::{FloatValue, Value};
 
@@ -208,6 +209,9 @@ mod record;
 mod result_code;
 mod role;
 pub mod task;
+pub mod txn;
+pub(crate) mod txn_monitor;
+pub(crate) mod txn_roll;
 mod user;
 
 #[cfg(test)]

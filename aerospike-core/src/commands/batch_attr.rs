@@ -159,9 +159,9 @@ impl BatchAttr {
             self.write_attr |= buffer::INFO2_DURABLE_DELETE;
         }
 
-        // if wp.on_locking_only {
-        // 	self.txn_attr |= buffer::INFO4_MRT_ON_LOCKING_ONLY
-        // }
+        if wp.on_locking_only {
+            self.txn_attr |= buffer::INFO4_MRT_ON_LOCKING_ONLY;
+        }
 
         if wp.commit_level == CommitLevel::CommitMaster {
             self.info_attr |= buffer::INFO3_COMMIT_MASTER;
@@ -225,9 +225,9 @@ impl BatchAttr {
             self.write_attr |= buffer::INFO2_DURABLE_DELETE;
         }
 
-        // if up.on_locking_only {
-        // 	self.txn_attr |= buffer::INFO4_MRT_ON_LOCKING_ONLY
-        // }
+        if up.on_locking_only {
+            self.txn_attr |= buffer::INFO4_MRT_ON_LOCKING_ONLY;
+        }
 
         if up.commit_level == CommitLevel::CommitMaster {
             self.info_attr |= buffer::INFO3_COMMIT_MASTER;

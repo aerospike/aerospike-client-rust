@@ -72,6 +72,11 @@ impl Version {
     pub fn supports_cdt_path_expressions(&self) -> bool {
         self >= &Version::new(8, 1, 1, 0)
     }
+
+    /// Server supports Multi-Record Transactions (MRT).
+    pub fn supports_mrt(&self) -> bool {
+        self >= &Version::new(8, 0, 0, 0)
+    }
 }
 
 #[derive(Debug)]

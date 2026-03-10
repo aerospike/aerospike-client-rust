@@ -40,6 +40,7 @@ mod scan;
 mod serialization;
 mod task;
 mod truncate;
+mod txn;
 mod udf;
 
 pub(crate) async fn count_results(rs: Arc<Recordset>) -> usize {

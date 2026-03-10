@@ -176,7 +176,7 @@ impl BatchOperateCommand {
         }
 
         // Parse results.
-        if let Err(err) = Self::parse_result(batch_ops, &mut conn).await {
+        if let Err(err) = Self::parse_result(batch_ops, &mut conn, policy.base_policy.txn.as_ref()).await {
             // close the connection
             // cancelling/closing the batch/multi commands will return an error, which will
             // close the connection to throw away its data and signal the server about the
@@ -194,6 +194,7 @@ impl BatchOperateCommand {
         batch_ops: &mut [(BatchOperation, usize)],
         conn: &mut BufferedConn<'_>,
         size: usize,
+        txn: Option<&Arc<crate::txn::Txn>>,
     ) -> Result<bool> {
         while conn.bytes_read() < size {
             conn.read_buffer(commands::buffer::MSG_REMAINING_HEADER_SIZE as usize)
@@ -204,6 +205,17 @@ impl BatchOperateCommand {
                     let batch_op = batch_ops
                         .get_mut(batch_record.batch_index)
                         .expect("Invalid batch index");
+
+                    // Update transaction state with version info
+                    if let Some(txn) = txn {
+                        let key = &batch_op.0.key();
+                        if batch_op.0.has_write() {
+                            txn.on_write(key, batch_record.version, batch_record.result_code);
+                        } else {
+                            txn.on_read(key, batch_record.version);
+                        }
+                    }
+
                     batch_op.0.set_record(batch_record.record);
                     batch_op.0.set_result_code(batch_record.result_code, false);
                 }
@@ -276,7 +288,7 @@ impl BatchOperateCommand {
         let field_count = conn.buffer().read_u16(None) as usize; // almost certainly 0
         let op_count = conn.buffer().read_u16(None) as usize;
 
-        let (key, _) = StreamCommand::parse_key(conn, field_count).await?;
+        let (key, _, version) = StreamCommand::parse_key_and_version(conn, field_count).await?;
 
         let record = if found_key {
             let mut bins: HashMap<String, Value> = HashMap::with_capacity(op_count);
@@ -317,6 +329,7 @@ impl BatchOperateCommand {
             batch_index: batch_index as usize,
             record,
             result_code,
+            version,
         }))
     }
 
@@ -327,6 +340,7 @@ impl BatchOperateCommand {
     async fn parse_result(
         batch_ops: &mut [(BatchOperation, usize)],
         conn: &mut Connection,
+        txn: Option<&Arc<crate::txn::Txn>>,
     ) -> Result<()> {
         let mut status = true;
 
@@ -341,7 +355,7 @@ impl BatchOperateCommand {
             status = false;
             if size > 0 {
                 conn.set_limit_body(size)?;
-                match Self::parse_group(batch_ops, &mut conn, size).await {
+                match Self::parse_group(batch_ops, &mut conn, size, txn).await {
                     Ok(stat) => status = stat,
                     Err(e @ Error::ServerError(_, _, _)) => {
                         conn.drain(conn.conn.deadline()).await?;

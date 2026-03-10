@@ -172,6 +172,8 @@ pub fn base_policy(
                 read_mode_sc,
                 read_touch_ttl,
                 filter_expression,
+                txn: None,
+                use_compression: false,
             },
         )
 }
@@ -212,6 +214,7 @@ pub fn write_policy(
                 send_key,
                 respond_per_each_op,
                 durable_delete,
+                on_locking_only: false,
             },
         )
 }
@@ -252,6 +255,7 @@ pub fn write_policy_without_replace(
                 send_key,
                 respond_per_each_op,
                 durable_delete,
+                on_locking_only: false,
             },
         )
 }

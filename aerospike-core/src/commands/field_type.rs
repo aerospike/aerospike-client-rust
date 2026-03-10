@@ -21,11 +21,14 @@ pub enum FieldType {
     Table = 1,
     /// Record key.
     Key = 2,
-    // RecordVersion = 3,
+    /// Record version (7 bytes, used for MRT verification).
+    RecordVersion = 3,
     /// Digest (Ripe).
     DigestRipe = 4,
-    // MrtId = 5,
-    // MrtDeadline = 6,
+    /// Multi-Record Transaction ID (8 bytes, LE64).
+    MrtId = 5,
+    /// Multi-Record Transaction deadline (4 bytes, LE32).
+    MrtDeadline = 6,
     /// Query/transaction ID (user-supplied, echoed back).
     QueryId = 7,
     /// Socket timeout.

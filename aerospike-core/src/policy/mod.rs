@@ -54,8 +54,10 @@ pub(crate) use self::stream_policy::StreamPolicy;
 pub use self::write_policy::WritePolicy;
 
 use crate::expressions::Expression;
+use crate::txn::Txn;
 use aerospike_rt::time::{Duration, Instant};
 use std::option::Option;
+use std::sync::Arc;
 
 /// Trait implemented by most policy types; policies that implement this trait typically encompass
 /// an instance of `BasePolicy`.
@@ -256,6 +258,13 @@ pub struct BasePolicy {
 
     /// Optional filter Expression
     pub filter_expression: Option<Expression>,
+
+    /// Optional Multi-Record Transaction (MRT). All commands in the transaction
+    /// must use the same namespace.
+    pub txn: Option<Arc<Txn>>,
+
+    /// If `true`, enable compression for this command.
+    pub use_compression: bool,
 }
 
 impl Policy for BasePolicy {

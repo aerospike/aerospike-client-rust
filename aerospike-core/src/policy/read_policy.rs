@@ -40,6 +40,8 @@ impl Default for BasePolicy {
             read_mode_sc: ReadModeSC::Session,
             read_touch_ttl: super::ReadTouchTTL::ServerDefault,
             filter_expression: None,
+            txn: None,
+            use_compression: false,
         }
     }
 }

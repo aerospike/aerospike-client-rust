@@ -16,6 +16,8 @@ use std::str;
 
 use byteorder::{ByteOrder, LittleEndian, NetworkEndian};
 
+use std::sync::Arc;
+
 use crate::batch::BatchOperation;
 use crate::commands::field_type::FieldType;
 use crate::commands::BatchAttr;
@@ -28,6 +30,7 @@ use crate::policy::{
     ReadModeAP, ReadModeSC, ReadPolicy, RecordExistsAction, WritePolicy,
 };
 use crate::query::NodePartitions;
+use crate::txn::Txn;
 use crate::{Bin, Bins, CollectionIndexType, Key, Statement, Value};
 
 // Contains a read operation.
@@ -99,7 +102,17 @@ pub const BATCH_MSG_REPEAT: u8 = 0x1;
 pub const BATCH_MSG_INFO: u8 = 0x2;
 pub const BATCH_MSG_GEN: u8 = 0x4;
 pub const BATCH_MSG_TTL: u8 = 0x8;
-// pub(crate) const BATCH_MSG_INFO4: u8 = 0x10;
+pub const BATCH_MSG_INFO4: u8 = 0x10;
+
+// INFO4 flags for Multi-Record Transactions (MRT).
+/// Verify read operation for MRT commit.
+pub const INFO4_MRT_VERIFY_READ: u8 = 1;
+/// Roll forward (commit) MRT.
+pub const INFO4_MRT_ROLL_FORWARD: u8 = 1 << 1;
+/// Roll back (abort) MRT.
+pub const INFO4_MRT_ROLL_BACK: u8 = 1 << 2;
+/// Apply operation on locking only (no data modification).
+pub const INFO4_MRT_ON_LOCKING_ONLY: u8 = 1 << 4;
 
 pub const MSG_TOTAL_HEADER_SIZE: u8 = 30;
 pub const FIELD_HEADER_SIZE: u8 = 5;
@@ -193,6 +206,9 @@ impl Buffer {
     ) -> Result<()> {
         self.begin();
         let mut field_count = self.estimate_key_size(key, policy.send_key)?;
+        let (txn_field_count, version) =
+            self.size_txn(key, policy.base_policy.txn.as_ref(), true);
+        field_count += txn_field_count;
         let filter_size = self.estimate_filter_size(policy.filter_expression())?;
         if filter_size > 0 {
             field_count += 1;
@@ -205,6 +221,7 @@ impl Buffer {
         self.size_buffer()?;
         self.write_header_with_policy(policy, 0, INFO2_WRITE, field_count, bins.len() as u16);
         self.write_key(key, policy.send_key)?;
+        self.write_txn(policy.base_policy.txn.as_ref(), version, true);
 
         if let Some(filter) = policy.filter_expression() {
             self.write_filter_expression(filter, filter_size);
@@ -217,10 +234,13 @@ impl Buffer {
         Ok(())
     }
 
-    // Writes the command for write operations
+    // Writes the command for delete operations
     pub(crate) fn set_delete(&mut self, policy: &WritePolicy, key: &Key) -> Result<()> {
         self.begin();
         let mut field_count = self.estimate_key_size(key, false)?;
+        let (txn_field_count, version) =
+            self.size_txn(key, policy.base_policy.txn.as_ref(), true);
+        field_count += txn_field_count;
         let filter_size = self.estimate_filter_size(policy.filter_expression())?;
         if filter_size > 0 {
             field_count += 1;
@@ -229,6 +249,7 @@ impl Buffer {
         self.size_buffer()?;
         self.write_header_with_policy(policy, 0, INFO2_WRITE | INFO2_DELETE, field_count, 0);
         self.write_key(key, false)?;
+        self.write_txn(policy.base_policy.txn.as_ref(), version, true);
 
         if let Some(filter) = policy.filter_expression() {
             self.write_filter_expression(filter, filter_size);
@@ -242,6 +263,9 @@ impl Buffer {
     pub(crate) fn set_touch(&mut self, policy: &WritePolicy, key: &Key) -> Result<()> {
         self.begin();
         let mut field_count = self.estimate_key_size(key, policy.send_key)?;
+        let (txn_field_count, version) =
+            self.size_txn(key, policy.base_policy.txn.as_ref(), true);
+        field_count += txn_field_count;
         let filter_size = self.estimate_filter_size(policy.filter_expression())?;
         if filter_size > 0 {
             field_count += 1;
@@ -250,6 +274,7 @@ impl Buffer {
         self.size_buffer()?;
         self.write_header_with_policy(policy, 0, INFO2_WRITE, field_count, 1);
         self.write_key(key, policy.send_key)?;
+        self.write_txn(policy.base_policy.txn.as_ref(), version, true);
 
         if let Some(filter) = policy.filter_expression() {
             self.write_filter_expression(filter, filter_size);
@@ -264,6 +289,9 @@ impl Buffer {
     pub(crate) fn set_exists(&mut self, policy: &ReadPolicy, key: &Key) -> Result<()> {
         self.begin();
         let mut field_count = self.estimate_key_size(key, false)?;
+        let (txn_field_count, version) =
+            self.size_txn(key, policy.base_policy.txn.as_ref(), false);
+        field_count += txn_field_count;
         let filter_size = self.estimate_filter_size(policy.base_policy.filter_expression())?;
         if filter_size > 0 {
             field_count += 1;
@@ -278,6 +306,7 @@ impl Buffer {
             0,
         );
         self.write_key(key, false)?;
+        self.write_txn(policy.base_policy.txn.as_ref(), version, false);
 
         if let Some(filter) = policy.base_policy.filter_expression() {
             self.write_filter_expression(filter, filter_size);
@@ -295,6 +324,9 @@ impl Buffer {
             Bins::Some(ref bin_names) => {
                 self.begin();
                 let mut field_count = self.estimate_key_size(key, false)?;
+                let (txn_field_count, version) =
+                    self.size_txn(key, policy.txn.as_ref(), false);
+                field_count += txn_field_count;
                 let filter_size = self.estimate_filter_size(policy.filter_expression())?;
                 if filter_size > 0 {
                     field_count += 1;
@@ -306,6 +338,7 @@ impl Buffer {
                 self.size_buffer()?;
                 self.write_header(policy, INFO1_READ, 0, field_count, bin_names.len() as u16);
                 self.write_key(key, false)?;
+                self.write_txn(policy.txn.as_ref(), version, false);
 
                 if let Some(filter) = policy.filter_expression() {
                     self.write_filter_expression(filter, filter_size);
@@ -325,6 +358,9 @@ impl Buffer {
     pub(crate) fn set_read_header(&mut self, policy: &BasePolicy, key: &Key) -> Result<()> {
         self.begin();
         let mut field_count = self.estimate_key_size(key, false)?;
+        let (txn_field_count, version) =
+            self.size_txn(key, policy.txn.as_ref(), false);
+        field_count += txn_field_count;
         let filter_size = self.estimate_filter_size(policy.filter_expression())?;
         if filter_size > 0 {
             field_count += 1;
@@ -334,6 +370,7 @@ impl Buffer {
         self.size_buffer()?;
         self.write_header(policy, INFO1_READ | INFO1_NOBINDATA, 0, field_count, 1);
         self.write_key(key, false)?;
+        self.write_txn(policy.txn.as_ref(), version, false);
 
         if let Some(filter) = policy.filter_expression() {
             self.write_filter_expression(filter, filter_size);
@@ -348,6 +385,9 @@ impl Buffer {
         self.begin();
 
         let mut field_count = self.estimate_key_size(key, false)?;
+        let (txn_field_count, version) =
+            self.size_txn(key, policy.txn.as_ref(), false);
+        field_count += txn_field_count;
         let filter_size = self.estimate_filter_size(policy.filter_expression())?;
         if filter_size > 0 {
             field_count += 1;
@@ -356,6 +396,7 @@ impl Buffer {
         self.size_buffer()?;
         self.write_header(policy, INFO1_READ | INFO1_GET_ALL, 0, field_count, 0);
         self.write_key(key, false)?;
+        self.write_txn(policy.txn.as_ref(), version, false);
 
         if let Some(filter) = policy.filter_expression() {
             self.write_filter_expression(filter, filter_size);
@@ -428,8 +469,10 @@ impl Buffer {
         bin_names: &Vec<String>,
         attr: &BatchAttr,
         filter: &Option<Expression>,
+        txn: Option<&Arc<Txn>>,
+        ver: Option<u64>,
     ) -> Result<()> {
-        self.write_batch_read(key, attr, filter, bin_names.len())?;
+        self.write_batch_read(key, attr, filter, bin_names.len(), txn, ver)?;
 
         for bin in bin_names {
             self.write_operation_for_bin_name(bin, OperationType::Read);
@@ -443,11 +486,13 @@ impl Buffer {
         ops: &Vec<Operation>,
         attr: &BatchAttr,
         filter: &Option<Expression>,
+        txn: Option<&Arc<Txn>>,
+        ver: Option<u64>,
     ) -> Result<()> {
         if attr.has_write {
-            self.write_batch_write(key, attr, filter, 0, ops.len())?;
+            self.write_batch_write(key, attr, filter, 0, ops.len(), txn, ver)?;
         } else {
-            self.write_batch_read(key, attr, filter, ops.len())?;
+            self.write_batch_read(key, attr, filter, ops.len(), txn, ver)?;
         }
 
         for op in ops {
@@ -462,13 +507,25 @@ impl Buffer {
         attr: &BatchAttr,
         filter: &Option<Expression>,
         op_count: usize,
+        txn: Option<&Arc<Txn>>,
+        ver: Option<u64>,
     ) -> Result<()> {
-        self.write_u8(BATCH_MSG_INFO | BATCH_MSG_TTL);
-        self.write_u8(attr.read_attr);
-        self.write_u8(attr.write_attr);
-        self.write_u8(attr.info_attr);
-        self.write_u32(attr.expiration);
-        self.write_batch_fields_with_filter(key, filter, 0, op_count)
+        if txn.is_some() {
+            self.write_u8(BATCH_MSG_INFO | BATCH_MSG_INFO4 | BATCH_MSG_TTL);
+            self.write_u8(attr.read_attr);
+            self.write_u8(attr.write_attr);
+            self.write_u8(attr.info_attr);
+            self.write_u8(attr.txn_attr);
+            self.write_u32(attr.expiration);
+            self.write_batch_fields_txn(key, txn, ver, attr, filter, 0, op_count)
+        } else {
+            self.write_u8(BATCH_MSG_INFO | BATCH_MSG_TTL);
+            self.write_u8(attr.read_attr);
+            self.write_u8(attr.write_attr);
+            self.write_u8(attr.info_attr);
+            self.write_u32(attr.expiration);
+            self.write_batch_fields_with_filter(key, filter, 0, op_count)
+        }
     }
 
     fn write_batch_write(
@@ -478,14 +535,87 @@ impl Buffer {
         filter: &Option<Expression>,
         field_count: usize,
         op_count: usize,
+        txn: Option<&Arc<Txn>>,
+        ver: Option<u64>,
     ) -> Result<()> {
-        self.write_u8(BATCH_MSG_INFO | BATCH_MSG_GEN | BATCH_MSG_TTL);
-        self.write_u8(attr.read_attr);
-        self.write_u8(attr.write_attr);
-        self.write_u8(attr.info_attr);
-        self.write_u16(attr.generation as u16);
-        self.write_u32(attr.expiration);
-        self.write_batch_fields_reg(key, attr, filter, field_count, op_count)
+        if txn.is_some() {
+            self.write_u8(BATCH_MSG_INFO | BATCH_MSG_INFO4 | BATCH_MSG_GEN | BATCH_MSG_TTL);
+            self.write_u8(attr.read_attr);
+            self.write_u8(attr.write_attr);
+            self.write_u8(attr.info_attr);
+            self.write_u8(attr.txn_attr);
+            self.write_u16(attr.generation as u16);
+            self.write_u32(attr.expiration);
+            self.write_batch_fields_txn(key, txn, ver, attr, filter, field_count, op_count)
+        } else {
+            self.write_u8(BATCH_MSG_INFO | BATCH_MSG_GEN | BATCH_MSG_TTL);
+            self.write_u8(attr.read_attr);
+            self.write_u8(attr.write_attr);
+            self.write_u8(attr.info_attr);
+            self.write_u16(attr.generation as u16);
+            self.write_u32(attr.expiration);
+            self.write_batch_fields_reg(key, attr, filter, field_count, op_count)
+        }
+    }
+
+    /// Write batch fields including transaction fields (MRT_ID, RECORD_VERSION, MRT_DEADLINE).
+    fn write_batch_fields_txn(
+        &mut self,
+        key: &Key,
+        txn: Option<&Arc<Txn>>,
+        ver: Option<u64>,
+        attr: &BatchAttr,
+        filter: &Option<Expression>,
+        mut field_count: usize,
+        op_count: usize,
+    ) -> Result<()> {
+        // Account for txn fields
+        field_count += 1; // MRT_ID always present
+
+        if ver.is_some() {
+            field_count += 1; // RECORD_VERSION
+        }
+
+        if let Some(txn) = txn {
+            if attr.has_write && txn.monitor_exists() {
+                field_count += 1; // MRT_DEADLINE
+            }
+        }
+
+        if filter.is_some() {
+            field_count += 1;
+        }
+
+        if attr.send_key && key.has_value_to_send() {
+            field_count += 1;
+        }
+
+        self.write_batch_fields(key, field_count, op_count)?;
+
+        // Write txn fields
+        if let Some(txn) = txn {
+            self.write_field_le64(txn.id(), FieldType::MrtId);
+
+            if let Some(ver) = ver {
+                self.write_field_version(ver);
+            }
+
+            if attr.has_write && txn.monitor_exists() {
+                self.write_field_le32(txn.get_deadline(), FieldType::MrtDeadline);
+            }
+        }
+
+        // Write filter expression
+        if let Some(filter) = filter {
+            let exp_size = filter.size()?;
+            self.write_filter_expression(filter, exp_size);
+        }
+
+        // Write user key
+        if attr.send_key && key.has_value_to_send() {
+            self.write_field_value(&key.user_key.clone().unwrap(), FieldType::Key)?;
+        }
+        Ok(())
     }
 
     pub(crate) const fn get_batch_flags(policy: &BatchPolicy) -> u8 {
@@ -520,23 +650,38 @@ impl Buffer {
             field_count += 1;
         }
 
+        let txn = policy.base_policy.txn.as_ref();
+
+        // Build versions array from txn reads
+        let versions: Vec<Option<u64>> = if let Some(txn) = txn {
+            batch_ops
+                .iter()
+                .map(|(batch_op, _)| txn.get_read_version(&batch_op.key()))
+                .collect()
+        } else {
+            Vec::new()
+        };
+
         let mut prev: Option<&BatchOperation> = None;
-        for (batch_op, _) in batch_ops {
+        for (i, (batch_op, _)) in batch_ops.iter().enumerate() {
             self.data_offset += batch_op.key().digest.len() + 4;
             if batch_op.match_header(prev) {
                 self.data_offset += 1;
             } else {
                 // Must write full header and namespace/set/bin names.
                 let key = &batch_op.key();
-                self.data_offset += 12; // header(4) + ttl(4) + fiel_count(2) + op_count(2) = 12
+                self.data_offset += 12; // header(4) + ttl(4) + field_count(2) + op_count(2) = 12
                 self.data_offset += key.namespace.len() + FIELD_HEADER_SIZE as usize;
                 self.data_offset += key.set_name.len() + FIELD_HEADER_SIZE as usize;
                 self.data_offset += batch_op.size(&policy.filter_expression)?; // + HEADER
+
+                // Add txn field sizes
+                let ver = versions.get(i).copied().flatten();
+                self.size_txn_batch(txn, ver, batch_op.has_write());
             }
             prev = Some(batch_op);
         }
 
-        // self.data_offset += 24 * batch_ops.len();
         self.size_buffer()?;
         self.write_header(&policy.base_policy, INFO1_BATCH, 0, field_count, 0);
 
@@ -554,6 +699,7 @@ impl Buffer {
         prev = None;
         for (idx, (batch_op, _)) in batch_ops.iter().enumerate() {
             let key = &batch_op.key();
+            let ver = versions.get(idx).copied().flatten();
             self.write_u32(idx as u32);
             self.write_bytes(&key.digest);
             if batch_op.match_header(prev) {
@@ -581,6 +727,8 @@ impl Buffer {
                                     bin_names,
                                     &attr,
                                     &attr.filter_expression,
+                                    txn,
+                                    ver,
                                 )?;
                             }
                             (_, Some(ops)) if !ops.is_empty() => {
@@ -590,11 +738,13 @@ impl Buffer {
                                     ops,
                                     &attr,
                                     &attr.filter_expression,
+                                    txn,
+                                    ver,
                                 )?;
                             }
                             _ => {
                                 attr.adjust_read_for_all_bins(matches!(bins, Bins::All));
-                                self.write_batch_read(key, &attr, &attr.filter_expression, 0)?;
+                                self.write_batch_read(key, &attr, &attr.filter_expression, 0, txn, ver)?;
                             }
                         }
                     }
@@ -605,14 +755,14 @@ impl Buffer {
                     } => {
                         attr.set_batch_write(bwpolicy, policy);
                         attr.adjust_write(ops);
-                        self.write_batch_operations(key, ops, &attr, &attr.filter_expression)?;
+                        self.write_batch_operations(key, ops, &attr, &attr.filter_expression, txn, ver)?;
                     }
                     BatchOperation::Delete {
                         br: _,
                         policy: bdpolicy,
                     } => {
                         attr.set_batch_delete(bdpolicy, policy);
-                        self.write_batch_write(key, &attr, &attr.filter_expression, 0, 0)?;
+                        self.write_batch_write(key, &attr, &attr.filter_expression, 0, 0, txn, ver)?;
                     }
                     BatchOperation::UDF {
                         br: _,
@@ -622,7 +772,7 @@ impl Buffer {
                         args,
                     } => {
                         attr.set_batch_udf(bupolicy, policy);
-                        self.write_batch_write(key, &attr, &attr.filter_expression, 3, 0)?;
+                        self.write_batch_write(key, &attr, &attr.filter_expression, 3, 0, txn, ver)?;
                         self.write_field_string(udf_name, FieldType::UdfPackageName);
                         self.write_field_string(function_name, FieldType::UdfFunction);
                         self.write_args(args.as_deref(), FieldType::UdfArgList)?;
@@ -693,14 +843,18 @@ impl Buffer {
             self.data_offset += operation.estimate_size()? + OPERATION_HEADER_SIZE as usize;
         }
 
-        let mut field_count = self.estimate_key_size(key, policy.send_key && write_attr != 0)?;
+        let has_write = write_attr != 0;
+        let mut field_count = self.estimate_key_size(key, policy.send_key && has_write)?;
+        let (txn_field_count, version) =
+            self.size_txn(key, policy.base_policy.txn.as_ref(), has_write);
+        field_count += txn_field_count;
         let filter_size = self.estimate_filter_size(policy.filter_expression())?;
         if filter_size > 0 {
             field_count += 1;
         }
         self.size_buffer()?;
 
-        if write_attr == 0 {
+        if !has_write {
             self.write_header(
                 &policy.base_policy,
                 read_attr,
@@ -717,7 +871,8 @@ impl Buffer {
                 operations.len() as u16,
             );
         }
-        self.write_key(key, policy.send_key && write_attr != 0)?;
+        self.write_key(key, policy.send_key && has_write)?;
+        self.write_txn(policy.base_policy.txn.as_ref(), version, has_write);
 
         if let Some(filter) = policy.filter_expression() {
             self.write_filter_expression(filter, filter_size);
@@ -1392,6 +1547,11 @@ impl Buffer {
             write_attr |= INFO2_DURABLE_DELETE;
         }
 
+        let mut txn_attr: u8 = 0;
+        if policy.on_locking_only {
+            txn_attr |= INFO4_MRT_ON_LOCKING_ONLY;
+        }
+
         match policy.base_policy.read_mode_sc {
             ReadModeSC::Session => {}
             ReadModeSC::Linearize => info_attr |= INFO3_SC_READ_TYPE,
@@ -1411,7 +1571,7 @@ impl Buffer {
         self.write_u8(read_attr);
         self.write_u8(write_attr);
         self.write_u8(info_attr);
-        self.write_u8(0); // unused
+        self.write_u8(txn_attr); // INFO4 byte for MRT attributes
         self.write_u8(0); // clear the result code
 
         self.write_u32(generation);
@@ -1617,6 +1777,20 @@ impl Buffer {
     pub(crate) fn read_i32(&mut self, pos: Option<usize>) -> i32 {
         let val = self.read_u32(pos);
         val as i32
+    }
+
+    #[allow(clippy::option_if_let_else)]
+    pub(crate) fn read_u32_little_endian(&mut self, pos: Option<usize>) -> u32 {
+        let len = 4;
+        if let Some(pos) = pos {
+            LittleEndian::read_u32(&self.data_buffer[pos..pos + len])
+        } else {
+            let res = LittleEndian::read_u32(
+                &self.data_buffer[self.data_offset..self.data_offset + len],
+            );
+            self.data_offset += len;
+            res
+        }
     }
 
     #[allow(clippy::option_if_let_else)]
@@ -1863,6 +2037,326 @@ impl Buffer {
 
     pub(crate) fn write_timeout(&mut self, millis: u32) {
         NetworkEndian::write_u32(&mut self.data_buffer[22..22 + 4], millis);
+    }
+
+    pub(crate) fn write_u32_little_endian(&mut self, val: u32) -> usize {
+        LittleEndian::write_u32(
+            &mut self.data_buffer[self.data_offset..self.data_offset + 4],
+            val,
+        );
+        self.data_offset += 4;
+        4
+    }
+
+    // --- MRT (Multi-Record Transaction) helpers ---
+
+    /// Write a little-endian 64-bit field (used for MRT_ID).
+    fn write_field_le64(&mut self, val: i64, ftype: FieldType) {
+        self.write_field_header(8, ftype);
+        self.write_u64_little_endian(val as u64);
+    }
+
+    /// Write a little-endian 32-bit field (used for MRT_DEADLINE).
+    fn write_field_le32(&mut self, val: i32, ftype: FieldType) {
+        self.write_field_header(4, ftype);
+        self.write_u32_little_endian(val as u32);
+    }
+
+    /// Write a 7-byte record version field (little-endian).
+    fn write_field_version(&mut self, ver: u64) {
+        self.write_field_header(7, FieldType::RecordVersion);
+        let offset = self.data_offset;
+        self.data_buffer[offset] = ver as u8;
+        self.data_buffer[offset + 1] = (ver >> 8) as u8;
+        self.data_buffer[offset + 2] = (ver >> 16) as u8;
+        self.data_buffer[offset + 3] = (ver >> 24) as u8;
+        self.data_buffer[offset + 4] = (ver >> 32) as u8;
+        self.data_buffer[offset + 5] = (ver >> 40) as u8;
+        self.data_buffer[offset + 6] = (ver >> 48) as u8;
+        self.data_offset += 7;
+    }
+
+    /// Read a 7-byte record version from a byte slice (little-endian) into a u64.
+    pub(crate) fn version_bytes_to_u64(buf: &[u8], offset: usize) -> u64 {
+        (u64::from(buf[offset]))
+            | (u64::from(buf[offset + 1]) << 8)
+            | (u64::from(buf[offset + 2]) << 16)
+            | (u64::from(buf[offset + 3]) << 24)
+            | (u64::from(buf[offset + 4]) << 32)
+            | (u64::from(buf[offset + 5]) << 40)
+            | (u64::from(buf[offset + 6]) << 48)
+    }
+
+    /// Parse response fields and extract the record version (if present).
+    /// Advances data_offset past all fields.
+    pub(crate) fn parse_fields_for_version(&mut self, field_count: usize) -> Option<u64> {
+        let mut version = None;
+        for _ in 0..field_count {
+            let field_len = self.read_u32(None) as usize;
+            let field_type = self.read_u8(None);
+            let data_size = field_len - 1;
+
+            if field_type == FieldType::RecordVersion as u8 && data_size == 7 {
+                version = Some(Self::version_bytes_to_u64(&self.data_buffer, self.data_offset));
+            }
+            self.data_offset += data_size;
+        }
+        version
+    }
+
+    /// Estimate the size of transaction fields and return the number of extra fields added.
+    /// `version` is the cached read version for the key, looked up from the txn.
+    pub(crate) fn size_txn(
+        &mut self,
+        key: &Key,
+        txn: Option<&Arc<Txn>>,
+        has_write: bool,
+    ) -> (u16, Option<u64>) {
+        let mut field_count: u16 = 0;
+        let mut version: Option<u64> = None;
+
+        if let Some(txn) = txn {
+            // MRT_ID field: 8 bytes + field header
+            self.data_offset += 8 + FIELD_HEADER_SIZE as usize;
+            field_count += 1;
+
+            version = txn.get_read_version(key);
+
+            if version.is_some() {
+                // RECORD_VERSION field: 7 bytes + field header
+                self.data_offset += 7 + FIELD_HEADER_SIZE as usize;
+                field_count += 1;
+            }
+
+            if has_write && txn.monitor_exists() {
+                // MRT_DEADLINE field: 4 bytes + field header
+                self.data_offset += 4 + FIELD_HEADER_SIZE as usize;
+                field_count += 1;
+            }
+        }
+        (field_count, version)
+    }
+
+    /// Estimate the size of transaction fields for batch commands.
+    pub(crate) fn size_txn_batch(
+        &mut self,
+        txn: Option<&Arc<Txn>>,
+        ver: Option<u64>,
+        has_write: bool,
+    ) {
+        if let Some(txn) = txn {
+            self.data_offset += 1; // info4 byte
+            self.data_offset += 8 + FIELD_HEADER_SIZE as usize;
+
+            if ver.is_some() {
+                self.data_offset += 7 + FIELD_HEADER_SIZE as usize;
+            }
+
+            if has_write && txn.monitor_exists() {
+                self.data_offset += 4 + FIELD_HEADER_SIZE as usize;
+            }
+        }
+    }
+
+    /// Write transaction fields (MRT_ID, RECORD_VERSION, MRT_DEADLINE).
+    pub(crate) fn write_txn(
+        &mut self,
+        txn: Option<&Arc<Txn>>,
+        version: Option<u64>,
+        send_deadline: bool,
+    ) {
+        if let Some(txn) = txn {
+            self.write_field_le64(txn.id(), FieldType::MrtId);
+
+            if let Some(ver) = version {
+                self.write_field_version(ver);
+            }
+
+            if send_deadline && txn.monitor_exists() {
+                self.write_field_le32(txn.get_deadline(), FieldType::MrtDeadline);
+            }
+        }
+    }
+
+    /// Estimate key size without send_key (for txn monitor commands).
+    fn estimate_raw_key_size(&mut self, key: &Key) -> u16 {
+        let mut field_count: u16 = 0;
+
+        if !key.namespace.is_empty() {
+            self.data_offset += key.namespace.len() + FIELD_HEADER_SIZE as usize;
+            field_count += 1;
+        }
+
+        if !key.set_name.is_empty() {
+            self.data_offset += key.set_name.len() + FIELD_HEADER_SIZE as usize;
+            field_count += 1;
+        }
+
+        self.data_offset += (DIGEST_SIZE + FIELD_HEADER_SIZE) as usize;
+        field_count += 1;
+
+        field_count
+    }
+
+    /// Write the txn monitor record header (simple header without policy-driven flags).
+    fn write_txn_monitor(
+        &mut self,
+        key: &Key,
+        read_attr: u8,
+        write_attr: u8,
+        field_count: u16,
+        op_count: u16,
+    ) -> Result<()> {
+        self.size_buffer()?;
+        self.data_offset = 8;
+        self.write_u8(MSG_REMAINING_HEADER_SIZE);
+        self.write_u8(read_attr);
+        self.write_u8(write_attr);
+        self.write_u8(0); // info3
+        self.write_u8(0); // info4
+        self.write_u8(0); // unused
+        self.write_u32(0); // generation
+        self.write_u32(0); // expiration
+        self.write_u32(0); // timeout
+        self.write_u16(field_count);
+        self.write_u16(op_count);
+        self.data_offset = MSG_TOTAL_HEADER_SIZE as usize;
+        self.write_key(key, false)?;
+        Ok(())
+    }
+
+    /// Build the command to verify a record version during MRT commit.
+    pub(crate) fn set_txn_verify(&mut self, _policy: &BasePolicy, key: &Key, ver: u64) -> Result<()> {
+        self.begin();
+        let mut field_count = self.estimate_raw_key_size(key);
+
+        // Version field: 7 bytes + field header
+        self.data_offset += 7 + FIELD_HEADER_SIZE as usize;
+        field_count += 1;
+
+        self.size_buffer()?;
+
+        self.data_offset = 8;
+        self.write_u8(MSG_REMAINING_HEADER_SIZE);
+        self.write_u8(INFO1_READ | INFO1_NOBINDATA);
+        self.write_u8(0);
+        self.write_u8(INFO3_SC_READ_TYPE);
+        self.write_u8(INFO4_MRT_VERIFY_READ);
+        self.write_u8(0);
+        self.write_u32(0);
+        self.write_u32(0);
+        self.write_u32(0);
+        self.write_u16(field_count);
+        self.write_u16(0);
+        self.data_offset = MSG_TOTAL_HEADER_SIZE as usize;
+
+        self.write_key(key, false)?;
+        self.write_field_version(ver);
+        self.end();
+        Ok(())
+    }
+
+    /// Build the command to roll forward or roll back a record during MRT commit/abort.
+    pub(crate) fn set_txn_roll(
+        &mut self,
+        key: &Key,
+        txn: &Arc<Txn>,
+        txn_attr: u8,
+    ) -> Result<()> {
+        self.begin();
+        let mut field_count = self.estimate_raw_key_size(key);
+
+        let (extra_fields, version) = self.size_txn(key, Some(txn), false);
+        field_count += extra_fields;
+
+        self.size_buffer()?;
+
+        self.data_offset = 8;
+        self.write_u8(MSG_REMAINING_HEADER_SIZE);
+        self.write_u8(0);
+        self.write_u8(INFO2_WRITE | INFO2_DURABLE_DELETE);
+        self.write_u8(0);
+        self.write_u8(txn_attr);
+        self.write_u8(0);
+        self.write_u32(0);
+        self.write_u32(0);
+        self.write_u32(0);
+        self.write_u16(field_count);
+        self.write_u16(0);
+        self.data_offset = MSG_TOTAL_HEADER_SIZE as usize;
+
+        self.write_key(key, false)?;
+        self.write_txn(Some(txn), version, false);
+        self.end();
+        Ok(())
+    }
+
+    /// Build the command to mark a transaction monitor record as roll-forward.
+    pub(crate) fn set_txn_mark_roll_forward(&mut self, key: &Key) -> Result<()> {
+        let bin = Bin::new("fwd".to_string(), Value::Bool(true));
+
+        self.begin();
+        let field_count = self.estimate_raw_key_size(key);
+        self.estimate_operation_size_for_bin(&bin)?;
+        self.write_txn_monitor(key, 0, INFO2_WRITE, field_count, 1)?;
+        self.write_operation_for_bin(&bin, OperationType::Write)?;
+        self.end();
+        Ok(())
+    }
+
+    /// Build the command to close (delete) a transaction monitor record.
+    pub(crate) fn set_txn_close(&mut self, key: &Key) -> Result<()> {
+        self.begin();
+        let field_count = self.estimate_raw_key_size(key);
+        self.write_txn_monitor(
+            key,
+            0,
+            INFO2_WRITE | INFO2_DELETE | INFO2_DURABLE_DELETE,
+            field_count,
+            0,
+        )?;
+        self.end();
+        Ok(())
+    }
+
+    /// Build the command to add keys to a transaction monitor record.
+    pub(crate) fn set_txn_add_keys(
+        &mut self,
+        policy: &WritePolicy,
+        key: &Key,
+        operations: &[Operation],
+    ) -> Result<()> {
+        self.begin();
+        let field_count = self.estimate_raw_key_size(key);
+
+        for op in operations {
+            self.data_offset += op.estimate_size()? + OPERATION_HEADER_SIZE as usize;
+        }
+
+        self.size_buffer()?;
+
+        self.data_offset = 8;
+        self.write_u8(MSG_REMAINING_HEADER_SIZE);
+        self.write_u8(0); // read_attr from args
+        self.write_u8(INFO2_WRITE | INFO2_RESPOND_ALL_OPS); // write_attr from args
+        self.write_u8(0);
+        self.write_u8(0);
+        self.write_u8(0);
+        self.write_u32(0);
+        self.write_u32(policy.expiration.into());
+        self.write_u32(0);
+        self.write_u16(field_count);
+        self.write_u16(operations.len() as u16);
+        self.data_offset = MSG_TOTAL_HEADER_SIZE as usize;
+
+        self.write_key(key, false)?;
+
+        for op in operations {
+            self.write_operation_for_operation(op)?;
+        }
+
+        self.end();
+        Ok(())
     }
 
     #[allow(dead_code)]

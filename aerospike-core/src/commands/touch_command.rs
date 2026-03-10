@@ -83,12 +83,32 @@ impl Command for TouchCommand<'_> {
         }
 
         conn.buffer.reset_offset();
-
+        let sz = conn.buffer.read_u64(Some(0));
+        let header_length = conn.buffer.read_u8(Some(8));
         let result_code = ResultCode::from(conn.buffer.read_u8(Some(13)));
+        let field_count = conn.buffer.read_u16(Some(26)) as usize;
+        let receive_size = ((sz & 0xFFFF_FFFF_FFFF) - u64::from(header_length)) as usize;
+
+        if receive_size > 0 {
+            conn.buffer.resize_buffer(receive_size)?;
+            conn.read_body(receive_size).await?;
+            conn.buffer.reset_offset();
+        }
+
+        let version = if field_count > 0 {
+            conn.buffer.parse_fields_for_version(field_count)
+        } else {
+            None
+        };
+
         if result_code != ResultCode::Ok {
             return Err(Error::ServerError(result_code, false, conn.addr.clone()));
         }
 
-        SingleCommand::empty_socket(conn).await
+        if let Some(txn) = &self.policy.base_policy.txn {
+            txn.on_write(self.single_command.key, version, result_code);
+        }
+
+        Ok(())
     }
 }

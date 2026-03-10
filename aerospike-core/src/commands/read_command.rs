@@ -30,6 +30,8 @@ pub struct ReadCommand<'a> {
     pub record: Option<Record>,
     policy: &'a BasePolicy,
     bins: Bins,
+    /// When true, txn notifications use on_write instead of on_read.
+    pub(crate) is_write: bool,
 }
 
 impl<'a> ReadCommand<'a> {
@@ -50,6 +52,7 @@ impl<'a> ReadCommand<'a> {
             bins,
             policy: &policy.base_policy,
             record: None,
+            is_write: false,
         }
     }
 
@@ -65,6 +68,7 @@ impl<'a> ReadCommand<'a> {
             bins,
             policy,
             record: None,
+            is_write: false,
         }
     }
 
@@ -79,15 +83,11 @@ impl<'a> ReadCommand<'a> {
         field_count: usize,
         generation: u32,
         expiration: u32,
-    ) -> Result<Record> {
+    ) -> Result<(Record, Option<u64>)> {
         let mut bins: HashMap<String, Value> = HashMap::with_capacity(op_count);
 
-        // There can be fields in the response (setname etc). For now, ignore them. Expose them to
-        // the API if needed in the future.
-        for _ in 0..field_count {
-            let field_size = conn.buffer.read_u32(None) as usize;
-            conn.buffer.skip(4 + field_size);
-        }
+        // Parse fields, extracting record version if present (used by MRT).
+        let version = conn.buffer.parse_fields_for_version(field_count);
 
         for _ in 0..op_count {
             let op_size = conn.buffer.read_u32(None) as usize;
@@ -116,7 +116,7 @@ impl<'a> ReadCommand<'a> {
             }
         }
 
-        Ok(Record::new(None, bins, generation, expiration))
+        Ok((Record::new(None, bins, generation, expiration), version))
     }
 }
 
@@ -180,19 +180,30 @@ impl Command for ReadCommand<'_> {
             }
         }
 
-        match ResultCode::from(result_code) {
+        let rc = ResultCode::from(result_code);
+        match rc {
             ResultCode::Ok => {
-                let record = if self.bins.is_none() {
-                    Record::new(None, HashMap::new(), generation, expiration)
+                let (record, version) = if self.bins.is_none() {
+                    let version = conn.buffer.parse_fields_for_version(field_count);
+                    (Record::new(None, HashMap::new(), generation, expiration), version)
                 } else {
                     self.parse_record(conn, op_count, field_count, generation, expiration)?
                 };
+
+                if let Some(txn) = &self.policy.txn {
+                    if self.is_write {
+                        txn.on_write(self.single_command.key, version, rc);
+                    } else {
+                        txn.on_read(self.single_command.key, version);
+                    }
+                }
+
                 self.record = Some(record);
                 Ok(())
             }
             ResultCode::UdfBadResponse => {
                 // record bin "FAILURE" contains details about the UDF error
-                let record =
+                let (record, _version) =
                     self.parse_record(conn, op_count, field_count, generation, expiration)?;
                 let reason = record
                     .bins

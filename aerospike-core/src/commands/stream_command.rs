@@ -19,7 +19,7 @@ use std::sync::Arc;
 use aerospike_rt::Mutex;
 
 use crate::cluster::Node;
-use crate::commands::buffer;
+use crate::commands::buffer::{self, Buffer};
 use crate::commands::field_type::FieldType;
 use crate::commands::Command;
 use crate::errors::{Error, Result};
@@ -187,31 +187,42 @@ impl StreamCommand {
         conn: &mut BufferedConn<'_>,
         field_count: usize,
     ) -> Result<(Key, Option<u64>)> {
+        Self::parse_key_and_version(conn, field_count).await
+            .map(|(key, bval, _version)| (key, bval))
+    }
+
+    /// Parse key fields from batch/stream response, also extracting record version if present.
+    pub async fn parse_key_and_version(
+        conn: &mut BufferedConn<'_>,
+        field_count: usize,
+    ) -> Result<(Key, Option<u64>, Option<u64>)> {
         let mut digest: [u8; 20] = [0; 20];
         let mut namespace: String = String::new();
         let mut set_name: String = String::new();
         let mut orig_key: Option<Value> = None;
         let mut bval = None;
+        let mut version = None;
 
         for _ in 0..field_count {
             conn.read_buffer(4).await?;
             let field_len = conn.buffer().read_u32(None) as usize;
             conn.read_buffer(field_len).await?;
             let field_type = conn.buffer().read_u8(None);
+            let data_size = field_len - 1;
 
             match field_type {
                 x if x == FieldType::DigestRipe as u8 => {
-                    digest.copy_from_slice(conn.buffer().read_slice(field_len - 1));
+                    digest.copy_from_slice(conn.buffer().read_slice(data_size));
                 }
                 x if x == FieldType::Namespace as u8 => {
-                    namespace = conn.buffer().read_str(field_len - 1)?;
+                    namespace = conn.buffer().read_str(data_size)?;
                 }
                 x if x == FieldType::Table as u8 => {
-                    set_name = conn.buffer().read_str(field_len - 1)?;
+                    set_name = conn.buffer().read_str(data_size)?;
                 }
                 x if x == FieldType::Key as u8 => {
                     let particle_type = conn.buffer().read_u8(None);
-                    let particle_bytes_size = field_len - 2;
+                    let particle_bytes_size = data_size - 1;
                     orig_key = Some(bytes_to_particle(
                         particle_type,
                         conn.buffer(),
@@ -221,7 +232,18 @@ impl StreamCommand {
                 x if x == FieldType::BValArray as u8 => {
                     bval = Some(conn.buffer().read_le_u64(None));
                 }
-                _ => unreachable!(),
+                x if x == FieldType::RecordVersion as u8 && data_size == 7 => {
+                    let buf = conn.buffer();
+                    version = Some(Buffer::version_bytes_to_u64(
+                        &buf.data_buffer,
+                        buf.data_offset(),
+                    ));
+                    buf.skip(data_size);
+                }
+                _ => {
+                    // Skip unknown field types
+                    conn.buffer().skip(data_size);
+                }
             }
         }
 
@@ -233,6 +255,7 @@ impl StreamCommand {
                 digest,
             },
             bval,
+            version,
         ))
     }
 }

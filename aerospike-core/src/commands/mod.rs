@@ -28,9 +28,14 @@ pub mod scan_command;
 pub mod single_command;
 pub mod stream_command;
 pub mod touch_command;
+pub mod txn_add_keys_command;
+pub mod txn_close_command;
+pub mod txn_mark_roll_forward_command;
+pub mod txn_roll_command;
+pub mod txn_verify_command;
 pub mod write_command;
 
-mod field_type;
+pub(crate) mod field_type;
 
 use std::sync::Arc;
 

@@ -1,4 +1,4 @@
-// Copyright 2015-2018 Aerospike, Inc.
+// Copyright 2015-2024 Aerospike, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -21,19 +21,21 @@ use crate::net::Connection;
 use crate::policy::{Policy, WritePolicy};
 use crate::{Key, ResultCode};
 
-pub struct DeleteCommand<'a> {
+pub struct TxnMarkRollForwardCommand<'a> {
     single_command: SingleCommand<'a>,
     policy: &'a WritePolicy,
-    pub existed: bool,
 }
 
-impl<'a> DeleteCommand<'a> {
-    pub fn new(policy: &'a WritePolicy, cluster: Arc<Cluster>, key: &'a Key) -> Self {
+impl<'a> TxnMarkRollForwardCommand<'a> {
+    pub fn new(
+        policy: &'a WritePolicy,
+        cluster: Arc<Cluster>,
+        key: &'a Key,
+    ) -> Self {
         let partition = crate::cluster::partition::Partition::for_write(key);
-        DeleteCommand {
+        TxnMarkRollForwardCommand {
             single_command: SingleCommand::new(cluster, key, partition),
             policy,
-            existed: false,
         }
     }
 
@@ -43,7 +45,7 @@ impl<'a> DeleteCommand<'a> {
 }
 
 #[async_trait::async_trait]
-impl Command for DeleteCommand<'_> {
+impl Command for TxnMarkRollForwardCommand<'_> {
     async fn write_timeout(&mut self, conn: &mut Connection) -> Result<()> {
         conn.buffer.write_timeout(self.policy.server_timeout());
         Ok(())
@@ -54,7 +56,7 @@ impl Command for DeleteCommand<'_> {
     }
 
     async fn prepare_buffer(&mut self, conn: &mut Connection) -> Result<()> {
-        conn.buffer.set_delete(self.policy, self.single_command.key)
+        conn.buffer.set_txn_mark_roll_forward(self.single_command.key)
     }
 
     async fn get_node(&mut self) -> Result<Arc<Node>> {
@@ -65,11 +67,11 @@ impl Command for DeleteCommand<'_> {
         self.single_command.hint()
     }
 
-    fn can_recover_connection(&mut self) -> bool {
+    fn can_retry(&mut self) -> bool {
         true
     }
 
-    fn can_retry(&mut self) -> bool {
+    fn can_recover_connection(&mut self) -> bool {
         true
     }
 
@@ -78,41 +80,21 @@ impl Command for DeleteCommand<'_> {
     }
 
     async fn parse_result(&mut self, conn: &mut Connection) -> Result<()> {
-        // Read header.
         if let Err(err) = conn.read_header().await {
             warn!("Parse result error: {err}");
             return Err(err);
         }
 
         conn.buffer.reset_offset();
-        let sz = conn.buffer.read_u64(Some(0));
-        let header_length = conn.buffer.read_u8(Some(8));
         let result_code = ResultCode::from(conn.buffer.read_u8(Some(13)));
-        let field_count = conn.buffer.read_u16(Some(26)) as usize;
-        let receive_size = ((sz & 0xFFFF_FFFF_FFFF) - u64::from(header_length)) as usize;
 
-        if receive_size > 0 {
-            conn.buffer.resize_buffer(receive_size)?;
-            conn.read_body(receive_size).await?;
-            conn.buffer.reset_offset();
-        }
+        match result_code {
+            ResultCode::Ok
+            | ResultCode::MrtCommitted
+            | ResultCode::MrtAborted => Ok(()),
+            _ => Err(Error::ServerError(result_code, false, conn.addr.clone())),
+        }?;
 
-        let version = if field_count > 0 {
-            conn.buffer.parse_fields_for_version(field_count)
-        } else {
-            None
-        };
-
-        if result_code != ResultCode::Ok && result_code != ResultCode::KeyNotFoundError {
-            return Err(Error::ServerError(result_code, false, conn.addr.clone()));
-        }
-
-        self.existed = result_code == ResultCode::Ok;
-
-        if let Some(txn) = &self.policy.base_policy.txn {
-            txn.on_write(self.single_command.key, version, result_code);
-        }
-
-        Ok(())
+        SingleCommand::empty_socket(conn).await
     }
 }

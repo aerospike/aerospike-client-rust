@@ -64,6 +64,11 @@ pub struct WritePolicy {
     /// prevents deleted records from reappearing after node failures. Valid for Aerospike Server
     /// Enterprise Edition 3.10+ only.
     pub durable_delete: bool,
+
+    /// If true, the MRT monitor record will only be written if the record is locked.
+    /// This is used internally by the transaction system.
+    /// Default: false
+    pub on_locking_only: bool,
 }
 
 impl WritePolicy {
@@ -94,6 +99,7 @@ impl Default for WritePolicy {
             send_key: false,
             respond_per_each_op: false,
             durable_delete: false,
+            on_locking_only: false,
         }
     }
 }
