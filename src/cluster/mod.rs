@@ -133,13 +133,13 @@ impl Cluster {
     fn tend(&self) -> Result<()> {
         let mut nodes = self.nodes();
 
-        // All node additions/deletions are performed in tend thread.
-        // If active nodes don't exist, seed cluster.
+        // Always refresh seeds on every tend cycle to pick up DNS changes and
+        // newly started nodes after cluster updates
         if nodes.is_empty() {
             debug!("No connections available; seeding...");
-            self.seed_nodes();
-            nodes = self.nodes();
         }
+        self.seed_nodes();
+        nodes = self.nodes();
 
         let mut friend_list: Vec<Host> = vec![];
         let mut refresh_count = 0;
@@ -278,13 +278,13 @@ impl Cluster {
     pub fn seed_nodes(&self) -> bool {
         let seed_array = self.seeds.read();
 
-        info!("Seeding the cluster. Seeds count: {}", seed_array.len());
+        debug!("Refreshing seeds. Seeds count: {}", seed_array.len());
 
         let mut list: Vec<Arc<Node>> = vec![];
         for seed in &*seed_array {
             let mut seed_node_validator = NodeValidator::new(self);
             if let Err(err) = seed_node_validator.validate_node(self, seed) {
-                log_error_chain!(err, "Failed to validate seed host: {}", seed);
+                debug!("Failed to validate seed host {}: {}", seed, err);
                 continue;
             };
 
@@ -294,11 +294,17 @@ impl Cluster {
                 } else {
                     let mut nv2 = NodeValidator::new(self);
                     if let Err(err) = nv2.validate_node(self, seed) {
-                        log_error_chain!(err, "Seeding host {} failed with error", alias);
+                        debug!("Seeding host {} failed: {}", alias, err);
                         continue;
                     };
                     nv2
                 };
+
+                // Skip nodes already tracked in the cluster to avoid duplicates
+                // when seed_nodes() is called on every tend cycle.
+                if self.get_node_by_name(&nv.name).is_ok() {
+                    continue;
+                }
 
                 if self.find_node_name(&list, &nv.name) {
                     continue;
