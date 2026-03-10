@@ -20,7 +20,7 @@ exclude = [
 ]
 
 [workspace.package]
-version = "2.0.0-alpha.10"
+version = "2.0.0-alpha.11"
 edition = "2018"
 rust-version = "1.87"
 authors = ["Khosrow Afroozeh <khosrow@aerospike.com>", "Jan Hecking <jhecking@aerospike.com>"]
@@ -38,9 +38,9 @@ travis-ci = { repository = "aerospike/aerospike-client-rust" }
 appveyor = { repository = "aerospike/aerospike-client-rust" }
 
 [dependencies]
-aerospike-core = {path = "aerospike-core", optional = true, version = "2.0.0-alpha.10"}
-aerospike-sync = {path = "aerospike-sync", optional = true, version = "2.0.0-alpha.10"}
-aerospike-macro = {path = "aerospike-macro", optional = true, version = "2.0.0-alpha.10"}
+aerospike-core = {path = "aerospike-core", optional = true, version = "2.0.0-alpha.11"}
+aerospike-sync = {path = "aerospike-sync", optional = true, version = "2.0.0-alpha.11"}
+aerospike-macro = {path = "aerospike-macro", optional = true, version = "2.0.0-alpha.11"}
 
 [features]
 default = ["async", "serialization", "rt-tokio", "tls"]
