@@ -2,6 +2,26 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.0.0-alpha.11]
+
+* **New Features**
+  * [CLIENT-3815] Support Path Expressions.
+  * [Client-4113] Rust performance testing `asbench`.
+
+* **Improvements**
+  * Chain all errors in `command.execute`
+  * [CLIENT-3815] Avoid preallocations, remove Result in path constructors.
+  * [CLIENT-4156] Fix rust-doc examples at remaining places in client, errors, and expressions.
+  * [CLIENT-4102] Update readme.
+  * [CLIENT-4023] Adds tests for `exp_remove_results()`.
+  * [CLIENT-4222] Update `map_remove_by_*` expression functions to accept a caller-specified `MapReturnType`.
+  * [CLIENT-4222] Update `list_remove_by*` calls to handle `ListReturnType` params.
+  * Add rust docs for enums.
+  * Update rust docs for client APIs.
+
+* **Bug Fixes**
+  * [CLIENT-4227] `expressions::geo_val()` creates `Value::String` instead of `Value::GeoJSON`
+
 ## [2.0.0-alpha.10]
 
 * **New Features**
