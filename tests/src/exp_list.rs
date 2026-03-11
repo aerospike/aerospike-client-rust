@@ -342,12 +342,7 @@ async fn expression_list() {
         &client,
         eq(
             size(
-                remove_by_value(
-                    ListReturnType::None,
-                    int_val(3),
-                    list_bin("bin".to_string()),
-                    &[],
-                ),
+                remove_by_value(ListReturnType::None, int_val(3), list_bin("bin".to_string()), &[]),
                 &[],
             ),
             int_val(3),
@@ -449,12 +444,7 @@ async fn expression_list() {
         &client,
         eq(
             size(
-                remove_by_index(
-                    ListReturnType::None,
-                    int_val(0),
-                    list_bin("bin".to_string()),
-                    &[],
-                ),
+                remove_by_index(ListReturnType::None, int_val(0), list_bin("bin".to_string()), &[]),
                 &[],
             ),
             int_val(3),
@@ -469,12 +459,7 @@ async fn expression_list() {
         &client,
         eq(
             size(
-                remove_by_index_range(
-                    ListReturnType::None,
-                    int_val(2),
-                    list_bin("bin".to_string()),
-                    &[],
-                ),
+                remove_by_index_range(ListReturnType::None, int_val(2), list_bin("bin".to_string()), &[]),
                 &[],
             ),
             int_val(2),
@@ -531,12 +516,7 @@ async fn expression_list() {
         &client,
         eq(
             size(
-                remove_by_rank(
-                    ListReturnType::None,
-                    int_val(2),
-                    list_bin("bin".to_string()),
-                    &[],
-                ),
+                remove_by_rank(ListReturnType::None, int_val(2), list_bin("bin".to_string()), &[]),
                 &[],
             ),
             int_val(3),
@@ -551,12 +531,7 @@ async fn expression_list() {
         &client,
         eq(
             size(
-                remove_by_rank_range(
-                    ListReturnType::None,
-                    int_val(2),
-                    list_bin("bin".to_string()),
-                    &[],
-                ),
+                remove_by_rank_range(ListReturnType::None, int_val(2), list_bin("bin".to_string()), &[]),
                 &[],
             ),
             int_val(2),

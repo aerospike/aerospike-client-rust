@@ -148,7 +148,6 @@ fn unpack_blob(buf: &mut Buffer, count: usize) -> Result<Value> {
         }
 
         ParticleType::BLOB => Ok(Value::Blob(buf.read_blob(count))),
-        ParticleType::HLL => Ok(Value::HLL(buf.read_blob(count))),
 
         ParticleType::GEOJSON => {
             let val = buf.read_str(count)?;

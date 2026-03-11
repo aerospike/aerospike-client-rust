@@ -36,8 +36,7 @@ pub fn pack_value(buf: &mut Option<&mut Buffer>, val: &Value) -> Result<usize> {
             FloatValue::F64(_) => pack_f64(buf, f64::from(val)),
             FloatValue::F32(_) => pack_f32(buf, f32::from(val)),
         },
-        Value::Blob(ref val) => pack_blob(buf, val),
-        Value::HLL(ref val) => pack_hll(buf, val),
+        Value::Blob(ref val) | Value::HLL(ref val) => pack_blob(buf, val),
         Value::List(ref val) => pack_array(buf, val)?,
         Value::HashMap(ref val) => pack_map(buf, val)?,
         Value::OrderedMap(ref val) => pack_ordered_map(buf, val)?,
@@ -73,11 +72,7 @@ pub fn pack_ctx_for_index(buf: &mut Option<&mut Buffer>, ctx: &[CdtContext]) -> 
 
     for c in ctx {
         size += pack_integer(buf, i64::from(c.id));
-        if let Some(ref exp) = c.expression {
-            size += exp.pack_binary(buf)?;
-        } else {
-            size += pack_value(buf, &c.value)?;
-        }
+        size += pack_value(buf, &c.value)?;
     }
 
     Ok(size)
@@ -101,11 +96,7 @@ pub fn pack_cdt_op(
             } else {
                 size += pack_integer(buf, i64::from(c.id | c.flags));
             }
-            if let Some(ref exp) = c.expression {
-                size += exp.pack_binary(buf)?;
-            } else {
-                size += pack_value(buf, &c.value)?;
-            }
+            size += pack_value(buf, &c.value)?;
         }
     }
 
@@ -172,11 +163,7 @@ pub fn pack_cdt_bit_op(
             } else {
                 size += pack_integer(buf, i64::from(c.id | c.flags));
             }
-            if let Some(ref exp) = c.expression {
-                size += exp.pack_binary(buf)?;
-            } else {
-                size += pack_value(buf, &c.value)?;
-            }
+            size += pack_value(buf, &c.value)?;
         }
     }
 
@@ -357,18 +344,6 @@ pub fn pack_blob(buf: &mut Option<&mut Buffer>, value: &[u8]) -> usize {
     size += pack_string_begin(buf, size);
     if let Some(ref mut buf) = *buf {
         buf.write_u8(ParticleType::BLOB as u8);
-        buf.write_bytes(value);
-    }
-
-    size
-}
-
-pub fn pack_hll(buf: &mut Option<&mut Buffer>, value: &[u8]) -> usize {
-    let mut size = value.len() + 1;
-
-    size += pack_string_begin(buf, size);
-    if let Some(ref mut buf) = *buf {
-        buf.write_u8(ParticleType::HLL as u8);
         buf.write_bytes(value);
     }
 

@@ -7,4 +7,3 @@ aerospike-client-rust.code-workspace
 Makefile
 .idea/
 proptest-regressions/
-.claude/

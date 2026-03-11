@@ -517,12 +517,7 @@ fn expression_map() {
         &client,
         eq(
             size(
-                remove_by_value(
-                    MapReturnType::None,
-                    int_val(5),
-                    map_bin("bin".to_string()),
-                    &[],
-                ),
+                remove_by_value(MapReturnType::None, int_val(5), map_bin("bin".to_string()), &[]),
                 &[],
             ),
             int_val(1),
@@ -578,12 +573,7 @@ fn expression_map() {
         &client,
         eq(
             size(
-                remove_by_index(
-                    MapReturnType::None,
-                    int_val(0),
-                    map_bin("bin".to_string()),
-                    &[],
-                ),
+                remove_by_index(MapReturnType::None, int_val(0), map_bin("bin".to_string()), &[]),
                 &[],
             ),
             int_val(1),
@@ -598,12 +588,7 @@ fn expression_map() {
         &client,
         eq(
             size(
-                remove_by_index_range(
-                    MapReturnType::None,
-                    int_val(0),
-                    map_bin("bin".to_string()),
-                    &[],
-                ),
+                remove_by_index_range(MapReturnType::None, int_val(0), map_bin("bin".to_string()), &[]),
                 &[],
             ),
             int_val(0),
@@ -639,12 +624,7 @@ fn expression_map() {
         &client,
         eq(
             size(
-                remove_by_rank(
-                    MapReturnType::None,
-                    int_val(0),
-                    map_bin("bin".to_string()),
-                    &[],
-                ),
+                remove_by_rank(MapReturnType::None, int_val(0), map_bin("bin".to_string()), &[]),
                 &[],
             ),
             int_val(1),
@@ -659,12 +639,7 @@ fn expression_map() {
         &client,
         eq(
             size(
-                remove_by_rank_range(
-                    MapReturnType::None,
-                    int_val(0),
-                    map_bin("bin".to_string()),
-                    &[],
-                ),
+                remove_by_rank_range(MapReturnType::None, int_val(0), map_bin("bin".to_string()), &[]),
                 &[],
             ),
             int_val(0),
@@ -679,13 +654,7 @@ fn expression_map() {
         &client,
         eq(
             size(
-                remove_by_rank_range_count(
-                    MapReturnType::None,
-                    int_val(0),
-                    int_val(1),
-                    map_bin("bin".to_string()),
-                    &[],
-                ),
+                remove_by_rank_range_count(MapReturnType::None, int_val(0), int_val(1), map_bin("bin".to_string()), &[]),
                 &[],
             ),
             int_val(1),

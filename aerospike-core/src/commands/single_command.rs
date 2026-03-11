@@ -99,7 +99,6 @@ impl<'a> SingleCommand<'a> {
         cmd: &'a mut (dyn commands::Command + Send),
     ) -> Result<()> {
         let mut iterations = 0;
-        let mut last_err: Option<Error> = None;
 
         // set timeout outside the loop
         let deadline = policy.deadline();
@@ -111,8 +110,7 @@ impl<'a> SingleCommand<'a> {
             // check for max retries
             if policy.max_retries() > 0 && iterations > policy.max_retries() {
                 // first attempt isn't a retry
-                return Err(Error::Timeout(format!("Timeout after {iterations} tries"))
-                    .chain_cause(last_err));
+                return Err(Error::Timeout(format!("Timeout after {iterations} tries")));
             }
 
             // Sleep before trying again, after the first iteration
@@ -120,7 +118,7 @@ impl<'a> SingleCommand<'a> {
                 // DO NOT retry for streaming commands here. They retry in their own execution logic.
                 // DO NOT retry for any error other than network errors.
                 if !cmd.can_retry() {
-                    return Err(Error::Timeout("Timeout".to_string()).chain_cause(last_err));
+                    return Err(Error::Timeout("Timeout".to_string()));
                 }
 
                 if let Some(sleep_between_retries) = policy.sleep_between_retries() {
@@ -142,7 +140,6 @@ impl<'a> SingleCommand<'a> {
                 e @ Err(Error::InvalidArgument(_)) => e?,
                 Err(e) => {
                     warn!("Error selecting node from the partition table: {e}");
-                    last_err = Some(e.chain_cause(last_err));
                     continue;
                 } // Node is currently inactive. Retry.
             };
@@ -151,7 +148,6 @@ impl<'a> SingleCommand<'a> {
                 Ok(conn) => conn,
                 Err(err) => {
                     warn!("Node {node}: {err}");
-                    last_err = Some(err.chain_cause(last_err));
                     continue;
                 }
             };
@@ -172,7 +168,6 @@ impl<'a> SingleCommand<'a> {
                 // Close socket to flush out possible garbage. Do not put back in pool.
                 conn.invalidate();
                 warn!("Node {node}: {err}");
-                last_err = Some(err.chain_cause(last_err));
                 continue;
             }
 
@@ -187,7 +182,6 @@ impl<'a> SingleCommand<'a> {
                 }
 
                 if commands::is_network_error(&err) {
-                    last_err = Some(err.chain_cause(last_err));
                     continue;
                 }
 
@@ -201,9 +195,8 @@ impl<'a> SingleCommand<'a> {
             return Ok(());
         }
 
-        Err(
-            Error::Timeout(format!("Command timed out after {iterations} tries"))
-                .chain_cause(last_err),
-        )
+        Err(Error::Timeout(format!(
+            "Command timed out after {iterations} tries"
+        )))
     }
 }
