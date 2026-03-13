@@ -836,6 +836,7 @@ pub(crate) fn add_read(
         module: Some(return_type),
         exps: None,
         arguments: Some(arguments),
+        bytes: None,
     }
 }
 
@@ -858,6 +859,7 @@ pub(crate) fn add_write(
         module: Some(return_type),
         exps: None,
         arguments: Some(arguments),
+        bytes: None,
     }
 }
 

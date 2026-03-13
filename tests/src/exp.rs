@@ -807,3 +807,32 @@ async fn test_filter(client: &Client, filter: Expression, set_name: &str) -> Arc
     let pf = PartitionFilter::all();
     client.query(&qpolicy, pf, statement).await.unwrap()
 }
+
+#[aerospike_macro::test]
+async fn expression_from_base64_query() {
+    let client = common::client().await;
+    let set_name = create_test_set(&client, EXPECTED).await;
+
+    // Build an expression, serialize to base64, deserialize, and use in a query
+    let original = eq(int_bin("bin".to_string()), int_val(1));
+    let b64 = original.base64().unwrap();
+    let restored = from_base64(&b64).unwrap();
+
+    let rs = test_filter(&client, restored, &set_name).await;
+    let count = count_results(rs).await;
+    assert_eq!(count, 1, "from_base64 single match test failed");
+
+    // Complex expression roundtrip: bin >= 10 AND bin < 20
+    let original = and(vec![
+        ge(int_bin("bin".to_string()), int_val(10)),
+        lt(int_bin("bin".to_string()), int_val(20)),
+    ]);
+    let b64 = original.base64().unwrap();
+    let restored = from_base64(&b64).unwrap();
+
+    let rs = test_filter(&client, restored, &set_name).await;
+    let count = count_results(rs).await;
+    assert_eq!(count, 10, "from_base64 range query test failed");
+
+    client.close().await.unwrap();
+}

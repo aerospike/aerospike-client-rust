@@ -294,6 +294,7 @@ pub(crate) fn add_read(
         module: Some(return_type),
         exps: None,
         arguments: Some(arguments),
+        bytes: None,
     }
 }
 
@@ -306,5 +307,6 @@ pub(crate) fn add_write(bin: Expression, arguments: Vec<ExpressionArgument>) -> 
         module: Some(ExpType::HLL),
         exps: None,
         arguments: Some(arguments),
+        bytes: None,
     }
 }

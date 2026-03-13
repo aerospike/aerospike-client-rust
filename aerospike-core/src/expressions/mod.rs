@@ -24,7 +24,7 @@ use crate::commands::buffer::Buffer;
 use crate::msgpack::encoder::{pack_array_begin, pack_integer, pack_raw_string, pack_value};
 use crate::operations::cdt_context::CdtContext;
 use crate::value::MapLike;
-use crate::Result;
+use crate::{Error, Result};
 use crate::{ParticleType, Value};
 use std::fmt::Debug;
 
@@ -141,6 +141,8 @@ pub struct Expression {
     exps: Option<Vec<Expression>>,
     /// Optional Arguments (CDT)
     arguments: Option<Vec<ExpressionArgument>>,
+    /// Pre-packed expression bytes (used by from_base64)
+    bytes: Option<Vec<u8>>,
 }
 
 impl Expression {
@@ -161,6 +163,7 @@ impl Expression {
             module,
             exps,
             arguments: None,
+            bytes: None,
         }
     }
 
@@ -312,6 +315,13 @@ impl Expression {
     /// Packs the expression.
     #[must_use]
     pub(crate) fn pack(&self, buf: &mut Option<&mut Buffer>) -> Result<usize> {
+        if let Some(bytes) = &self.bytes {
+            if let Some(buf) = buf {
+                return Ok(buf.write_bytes(bytes));
+            }
+            return Ok(bytes.len());
+        }
+
         let mut size = 0;
         if let Some(exps) = &self.exps {
             size += self.pack_expression(exps, buf)?;
@@ -322,6 +332,15 @@ impl Expression {
         }
 
         Ok(size)
+    }
+
+    /// Encode the expression to a base64 string.
+    pub fn base64(&self) -> Result<String> {
+        let sz = self.size()?;
+        let mut buf = Buffer::new(sz);
+        buf.resize_buffer(sz)?;
+        self.pack(&mut Some(&mut buf))?;
+        Ok(base64::encode(&buf.data_buffer[..buf.data_offset]))
     }
 }
 
@@ -340,6 +359,22 @@ pub fn key(exp_type: ExpType) -> Expression {
         None,
         None,
     )
+}
+
+/// Create an expression from a base64 encoded expression string.
+pub fn from_base64(b64: &str) -> Result<Expression> {
+    let bytes = base64::decode(b64)
+        .map_err(|e| Error::BadResponse(format!("Invalid base64 expression: {e}")))?;
+    Ok(Expression {
+        cmd: None,
+        val: None,
+        bin: None,
+        flags: None,
+        module: None,
+        exps: None,
+        arguments: None,
+        bytes: Some(bytes),
+    })
 }
 
 /// Create function that returns if the primary key is stored in the record meta data
@@ -803,6 +838,7 @@ pub fn not(exp: Expression) -> Expression {
         module: None,
         exps: Some(vec![exp]),
         arguments: None,
+        bytes: None,
     }
 }
 
@@ -821,6 +857,7 @@ pub const fn and(exps: Vec<Expression>) -> Expression {
         module: None,
         exps: Some(exps),
         arguments: None,
+        bytes: None,
     }
 }
 
@@ -839,6 +876,7 @@ pub const fn or(exps: Vec<Expression>) -> Expression {
         module: None,
         exps: Some(exps),
         arguments: None,
+        bytes: None,
     }
 }
 
@@ -857,6 +895,7 @@ pub const fn xor(exps: Vec<Expression>) -> Expression {
         module: None,
         exps: Some(exps),
         arguments: None,
+        bytes: None,
     }
 }
 
@@ -875,6 +914,7 @@ pub fn eq(left: Expression, right: Expression) -> Expression {
         module: None,
         exps: Some(vec![left, right]),
         arguments: None,
+        bytes: None,
     }
 }
 
@@ -893,6 +933,7 @@ pub fn ne(left: Expression, right: Expression) -> Expression {
         module: None,
         exps: Some(vec![left, right]),
         arguments: None,
+        bytes: None,
     }
 }
 
@@ -911,6 +952,7 @@ pub fn gt(left: Expression, right: Expression) -> Expression {
         module: None,
         exps: Some(vec![left, right]),
         arguments: None,
+        bytes: None,
     }
 }
 
@@ -929,6 +971,7 @@ pub fn ge(left: Expression, right: Expression) -> Expression {
         module: None,
         exps: Some(vec![left, right]),
         arguments: None,
+        bytes: None,
     }
 }
 
@@ -947,6 +990,7 @@ pub fn lt(left: Expression, right: Expression) -> Expression {
         module: None,
         exps: Some(vec![left, right]),
         arguments: None,
+        bytes: None,
     }
 }
 
@@ -965,6 +1009,7 @@ pub fn le(left: Expression, right: Expression) -> Expression {
         module: None,
         exps: Some(vec![left, right]),
         arguments: None,
+        bytes: None,
     }
 }
 
@@ -986,6 +1031,7 @@ pub const fn num_add(exps: Vec<Expression>) -> Expression {
         module: None,
         exps: Some(exps),
         arguments: None,
+        bytes: None,
     }
 }
 
@@ -1009,6 +1055,7 @@ pub const fn num_sub(exps: Vec<Expression>) -> Expression {
         module: None,
         exps: Some(exps),
         arguments: None,
+        bytes: None,
     }
 }
 
@@ -1031,6 +1078,7 @@ pub const fn num_mul(exps: Vec<Expression>) -> Expression {
         module: None,
         exps: Some(exps),
         arguments: None,
+        bytes: None,
     }
 }
 
@@ -1054,6 +1102,7 @@ pub const fn num_div(exps: Vec<Expression>) -> Expression {
         module: None,
         exps: Some(exps),
         arguments: None,
+        bytes: None,
     }
 }
 
@@ -1074,6 +1123,7 @@ pub fn num_pow(base: Expression, exponent: Expression) -> Expression {
         module: None,
         exps: Some(vec![base, exponent]),
         arguments: None,
+        bytes: None,
     }
 }
 
@@ -1094,6 +1144,7 @@ pub fn num_log(num: Expression, base: Expression) -> Expression {
         module: None,
         exps: Some(vec![num, base]),
         arguments: None,
+        bytes: None,
     }
 }
 
@@ -1114,6 +1165,7 @@ pub fn num_mod(numerator: Expression, denominator: Expression) -> Expression {
         module: None,
         exps: Some(vec![numerator, denominator]),
         arguments: None,
+        bytes: None,
     }
 }
 
@@ -1134,6 +1186,7 @@ pub fn num_abs(value: Expression) -> Expression {
         module: None,
         exps: Some(vec![value]),
         arguments: None,
+        bytes: None,
     }
 }
 
@@ -1154,6 +1207,7 @@ pub fn num_floor(num: Expression) -> Expression {
         module: None,
         exps: Some(vec![num]),
         arguments: None,
+        bytes: None,
     }
 }
 
@@ -1174,6 +1228,7 @@ pub fn num_ceil(num: Expression) -> Expression {
         module: None,
         exps: Some(vec![num]),
         arguments: None,
+        bytes: None,
     }
 }
 
@@ -1193,6 +1248,7 @@ pub fn to_int(num: Expression) -> Expression {
         module: None,
         exps: Some(vec![num]),
         arguments: None,
+        bytes: None,
     }
 }
 
@@ -1212,6 +1268,7 @@ pub fn to_float(num: Expression) -> Expression {
         module: None,
         exps: Some(vec![num]),
         arguments: None,
+        bytes: None,
     }
 }
 
@@ -1232,6 +1289,7 @@ pub const fn int_and(exps: Vec<Expression>) -> Expression {
         module: None,
         exps: Some(exps),
         arguments: None,
+        bytes: None,
     }
 }
 
@@ -1252,6 +1310,7 @@ pub const fn int_or(exps: Vec<Expression>) -> Expression {
         module: None,
         exps: Some(exps),
         arguments: None,
+        bytes: None,
     }
 }
 
@@ -1272,6 +1331,7 @@ pub const fn int_xor(exps: Vec<Expression>) -> Expression {
         module: None,
         exps: Some(exps),
         arguments: None,
+        bytes: None,
     }
 }
 
@@ -1291,6 +1351,7 @@ pub fn int_not(exp: Expression) -> Expression {
         module: None,
         exps: Some(vec![exp]),
         arguments: None,
+        bytes: None,
     }
 }
 
@@ -1310,6 +1371,7 @@ pub fn int_lshift(value: Expression, shift: Expression) -> Expression {
         module: None,
         exps: Some(vec![value, shift]),
         arguments: None,
+        bytes: None,
     }
 }
 
@@ -1329,6 +1391,7 @@ pub fn int_rshift(value: Expression, shift: Expression) -> Expression {
         module: None,
         exps: Some(vec![value, shift]),
         arguments: None,
+        bytes: None,
     }
 }
 
@@ -1349,6 +1412,7 @@ pub fn int_arshift(value: Expression, shift: Expression) -> Expression {
         module: None,
         exps: Some(vec![value, shift]),
         arguments: None,
+        bytes: None,
     }
 }
 
@@ -1368,6 +1432,7 @@ pub fn int_count(exp: Expression) -> Expression {
         module: None,
         exps: Some(vec![exp]),
         arguments: None,
+        bytes: None,
     }
 }
 
@@ -1391,6 +1456,7 @@ pub fn int_lscan(value: Expression, search: Expression) -> Expression {
         module: None,
         exps: Some(vec![value, search]),
         arguments: None,
+        bytes: None,
     }
 }
 
@@ -1414,6 +1480,7 @@ pub fn int_rscan(value: Expression, search: Expression) -> Expression {
         module: None,
         exps: Some(vec![value, search]),
         arguments: None,
+        bytes: None,
     }
 }
 
@@ -1434,6 +1501,7 @@ pub const fn min(exps: Vec<Expression>) -> Expression {
         module: None,
         exps: Some(exps),
         arguments: None,
+        bytes: None,
     }
 }
 
@@ -1454,6 +1522,7 @@ pub const fn max(exps: Vec<Expression>) -> Expression {
         module: None,
         exps: Some(exps),
         arguments: None,
+        bytes: None,
     }
 }
 
@@ -1487,6 +1556,7 @@ pub const fn cond(exps: Vec<Expression>) -> Expression {
         module: None,
         exps: Some(exps),
         arguments: None,
+        bytes: None,
     }
 }
 
@@ -1514,6 +1584,7 @@ pub const fn exp_let(exps: Vec<Expression>) -> Expression {
         module: None,
         exps: Some(exps),
         arguments: None,
+        bytes: None,
     }
 }
 
@@ -1541,6 +1612,7 @@ pub fn def(name: String, value: Expression) -> Expression {
         module: None,
         exps: Some(vec![value]),
         arguments: None,
+        bytes: None,
     }
 }
 
@@ -1555,6 +1627,7 @@ pub fn var(name: String) -> Expression {
         module: None,
         exps: None,
         arguments: None,
+        bytes: None,
     }
 }
 
@@ -1584,5 +1657,71 @@ pub const fn unknown() -> Expression {
         module: None,
         exps: None,
         arguments: None,
+        bytes: None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn base64_roundtrip_int_eq() {
+        let expr = eq(int_bin("bin".to_string()), int_val(42));
+        let b64 = expr.base64().unwrap();
+        assert!(!b64.is_empty());
+
+        let decoded = from_base64(&b64).unwrap();
+        let re_encoded = decoded.base64().unwrap();
+        assert_eq!(b64, re_encoded);
+    }
+
+    #[test]
+    fn base64_roundtrip_string_compare() {
+        let expr = eq(
+            string_bin("name".to_string()),
+            string_val("hello".to_string()),
+        );
+        let b64 = expr.base64().unwrap();
+
+        let decoded = from_base64(&b64).unwrap();
+        let re_encoded = decoded.base64().unwrap();
+        assert_eq!(b64, re_encoded);
+    }
+
+    #[test]
+    fn base64_roundtrip_complex_expression() {
+        let expr = and(vec![
+            gt(int_bin("age".to_string()), int_val(18)),
+            lt(int_bin("age".to_string()), int_val(65)),
+            eq(
+                string_bin("status".to_string()),
+                string_val("active".to_string()),
+            ),
+        ]);
+        let b64 = expr.base64().unwrap();
+
+        let decoded = from_base64(&b64).unwrap();
+        let re_encoded = decoded.base64().unwrap();
+        assert_eq!(b64, re_encoded);
+    }
+
+    #[test]
+    fn from_base64_invalid_input() {
+        let result = from_base64("not-valid-base64!!!");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn base64_roundtrip_bool_and_float() {
+        let expr = or(vec![
+            eq(float_bin("score".to_string()), float_val(3.14)),
+            bool_val(true),
+        ]);
+        let b64 = expr.base64().unwrap();
+
+        let decoded = from_base64(&b64).unwrap();
+        let re_encoded = decoded.base64().unwrap();
+        assert_eq!(b64, re_encoded);
     }
 }
