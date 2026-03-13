@@ -20,8 +20,8 @@ use crate::common;
 use aerospike::operations::cdt_context::{ctx_map_key, ctx_map_key_create};
 use aerospike::operations::{maps, MapOrder};
 use aerospike::{
-    as_bin, as_key, as_list, as_map, as_ord_map, as_val, as_values, Bins, MapPolicy, MapReturnType,
-    ReadPolicy, Value, WritePolicy,
+    as_bin, as_key, as_list, as_map, as_ord_map, as_val, as_values, Bins, MapPolicy,
+    MapReturnType, MapWriteMode, ReadPolicy, Value, WritePolicy,
 };
 
 #[aerospike_macro::test]
@@ -378,4 +378,125 @@ async fn map_operations_wildcard() {
     let ops = &vec![maps::get_by_value("bin", val, MapReturnType::Key)];
     let rec = client.operate(&wpolicy, &key, ops).await.unwrap();
     assert_eq!(*rec.bins.get("bin").unwrap(), as_list!(9));
+}
+
+#[aerospike_macro::test]
+async fn map_create_op() {
+    let client = common::client().await;
+    let namespace = common::namespace();
+    let set_name = &common::rand_str(10);
+
+    let wpolicy = WritePolicy::default();
+    let mpolicy = MapPolicy::default();
+
+    let key = as_key!(namespace, set_name, "map_create");
+
+    client.delete(&wpolicy, &key).await.unwrap();
+
+    // Create a nested map using map create with context
+    // First put a top-level key
+    let op = maps::put(&mpolicy, "bin", as_val!("key1"), as_val!(1));
+    client.operate(&wpolicy, &key, &[op]).await.unwrap();
+
+    // Create a nested map under "nested" key using ctx_map_key_create
+    let ctx = vec![ctx_map_key_create(as_val!("nested"), MapOrder::KeyOrdered)];
+    let op = maps::put(&mpolicy, "bin", as_val!("a"), as_val!(10)).set_context(ctx);
+    client.operate(&wpolicy, &key, &[op]).await.unwrap();
+
+    // Verify the nested map value
+    let ctx = vec![ctx_map_key(as_val!("nested"))];
+    let op = maps::get_by_key("bin", as_val!("a"), MapReturnType::Value).set_context(ctx);
+    let rec = client.operate(&wpolicy, &key, &[op]).await.unwrap();
+    assert_eq!(*rec.bins.get("bin").unwrap(), as_val!(10));
+
+    // Also test maps::create with empty context (should be same as set_order)
+    let key2 = as_key!(namespace, set_name, "map_create_empty_ctx");
+    client.delete(&wpolicy, &key2).await.unwrap();
+
+    let op = maps::create("bin", MapOrder::KeyOrdered, vec![]);
+    client.operate(&wpolicy, &key2, &[op]).await.unwrap();
+
+    // Put some values and verify they come back in key order
+    let op = maps::put(&mpolicy, "bin", as_val!("b"), as_val!(2));
+    client.operate(&wpolicy, &key2, &[op]).await.unwrap();
+    let op = maps::put(&mpolicy, "bin", as_val!("a"), as_val!(1));
+    client.operate(&wpolicy, &key2, &[op]).await.unwrap();
+
+    let op = maps::get_by_index_range_from("bin", 0, MapReturnType::Key);
+    let rec = client.operate(&wpolicy, &key2, &[op]).await.unwrap();
+    assert_eq!(*rec.bins.get("bin").unwrap(), as_list!("a", "b"));
+
+    client.close().await.unwrap();
+}
+
+#[aerospike_macro::test]
+async fn map_create_with_index_op() {
+    let client = common::client().await;
+    let namespace = common::namespace();
+    let set_name = &common::rand_str(10);
+
+    let wpolicy = WritePolicy::default();
+    let mpolicy = MapPolicy::default();
+
+    let key = as_key!(namespace, set_name, "map_create_idx");
+
+    client.delete(&wpolicy, &key).await.unwrap();
+
+    // Create key-ordered map with persisted index
+    let op = maps::create_with_index("bin", MapOrder::KeyOrdered);
+    client.operate(&wpolicy, &key, &[op]).await.unwrap();
+
+    // Put values
+    let op = maps::put(&mpolicy, "bin", as_val!("c"), as_val!(3));
+    client.operate(&wpolicy, &key, &[op]).await.unwrap();
+    let op = maps::put(&mpolicy, "bin", as_val!("a"), as_val!(1));
+    client.operate(&wpolicy, &key, &[op]).await.unwrap();
+    let op = maps::put(&mpolicy, "bin", as_val!("b"), as_val!(2));
+    client.operate(&wpolicy, &key, &[op]).await.unwrap();
+
+    // Verify map is key-ordered
+    let op = maps::get_by_index_range_from("bin", 0, MapReturnType::Key);
+    let rec = client.operate(&wpolicy, &key, &[op]).await.unwrap();
+    assert_eq!(*rec.bins.get("bin").unwrap(), as_list!("a", "b", "c"));
+
+    // Verify values are correct
+    let op = maps::get_by_key("bin", as_val!("b"), MapReturnType::Value);
+    let rec = client.operate(&wpolicy, &key, &[op]).await.unwrap();
+    assert_eq!(*rec.bins.get("bin").unwrap(), as_val!(2));
+
+    client.close().await.unwrap();
+}
+
+#[aerospike_macro::test]
+async fn map_set_policy_op() {
+    let client = common::client().await;
+    let namespace = common::namespace();
+    let set_name = &common::rand_str(10);
+
+    let wpolicy = WritePolicy::default();
+    let mpolicy = MapPolicy::default();
+
+    let key = as_key!(namespace, set_name, "map_set_policy");
+
+    client.delete(&wpolicy, &key).await.unwrap();
+
+    // Create an unordered map with some data
+    let mut items = HashMap::new();
+    items.insert(as_val!("c"), as_val!(3));
+    items.insert(as_val!("a"), as_val!(1));
+    items.insert(as_val!("b"), as_val!(2));
+    let op = maps::put_items(&mpolicy, "bin", items);
+    client.operate(&wpolicy, &key, &[op]).await.unwrap();
+
+    // Change to key-ordered using set_policy
+    let ordered_policy = MapPolicy::new(MapOrder::KeyOrdered, MapWriteMode::Update);
+    let op = maps::set_policy(&ordered_policy, "bin", vec![]);
+    client.operate(&wpolicy, &key, &[op]).await.unwrap();
+
+    // Verify the map is now key-ordered
+    let op = maps::get_by_index_range_from("bin", 0, MapReturnType::Key);
+    let rec = client.operate(&wpolicy, &key, &[op]).await.unwrap();
+    assert_eq!(*rec.bins.get("bin").unwrap(), as_list!("a", "b", "c"));
+
+    client.close().await.unwrap();
 }

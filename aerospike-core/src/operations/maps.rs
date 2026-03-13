@@ -44,7 +44,7 @@ use std::sync::Arc;
 
 use crate::msgpack::encoder::pack_cdt_op;
 use crate::operations::cdt::{CdtArgument, CdtOperation};
-use crate::operations::cdt_context::DEFAULT_CTX;
+use crate::operations::cdt_context::{CdtContext, DEFAULT_CTX};
 use crate::operations::{Operation, OperationBin, OperationData, OperationType};
 use crate::value::MapLike;
 use crate::Value;
@@ -266,6 +266,75 @@ const fn map_order_arg(policy: &MapPolicy) -> Option<CdtArgument> {
     match policy.write_mode {
         MapWriteMode::UpdateOnly => None,
         _ => Some(CdtArgument::Byte(policy.order as u8)),
+    }
+}
+
+/// Creates map create operation.
+///
+/// Server creates map at given context level. The context is allowed to be beyond map
+/// boundaries only if a parent context element uses a create-type context (e.g.,
+/// `ctx_map_key_create`).
+///
+/// If ctx is empty, this is equivalent to `set_order`.
+pub fn create(bin: &str, map_order: MapOrder, ctx: Vec<CdtContext>) -> Operation {
+    if ctx.is_empty() {
+        return set_order(bin, map_order);
+    }
+    let cdt_op = CdtOperation {
+        op: CdtMapOpType::SetType as u8,
+        encoder: Arc::new(pack_cdt_op),
+        args: vec![
+            CdtArgument::Byte(map_order.flag()),
+            CdtArgument::Byte(map_order as u8),
+        ],
+    };
+    Operation {
+        op: OperationType::CdtWrite,
+        ctx,
+        bin: OperationBin::Name(bin.into()),
+        data: OperationData::CdtMapOp(cdt_op),
+    }
+}
+
+/// Creates map create operation with a persisted index.
+///
+/// Server creates map at the top level with a persisted index. The persisted index flag (0x10)
+/// is OR'd with the map order to signal the server to maintain a separate index data structure.
+pub fn create_with_index(bin: &str, map_order: MapOrder) -> Operation {
+    let cdt_op = CdtOperation {
+        op: CdtMapOpType::SetType as u8,
+        encoder: Arc::new(pack_cdt_op),
+        args: vec![CdtArgument::Byte(map_order as u8 | 0x10)],
+    };
+    Operation {
+        op: OperationType::CdtWrite,
+        ctx: DEFAULT_CTX,
+        bin: OperationBin::Name(bin.into()),
+        data: OperationData::CdtMapOp(cdt_op),
+    }
+}
+
+/// Create set map policy operation. Server sets the map policy attributes.
+/// Server does not return a result.
+///
+/// The required map policy attributes can be changed after the map has been created.
+/// Supports optional CDT context for nested map operations.
+pub fn set_policy(policy: &MapPolicy, bin: &str, ctx: Vec<CdtContext>) -> Operation {
+    let mut attr = policy.order as u8;
+    // If nested context, remove persist flag if present
+    if !ctx.is_empty() {
+        attr &= !0x10;
+    }
+    let cdt_op = CdtOperation {
+        op: CdtMapOpType::SetType as u8,
+        encoder: Arc::new(pack_cdt_op),
+        args: vec![CdtArgument::Byte(attr)],
+    };
+    Operation {
+        op: OperationType::CdtWrite,
+        ctx,
+        bin: OperationBin::Name(bin.into()),
+        data: OperationData::CdtMapOp(cdt_op),
     }
 }
 

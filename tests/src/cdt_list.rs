@@ -17,7 +17,9 @@ use crate::common;
 
 use aerospike::operations;
 use aerospike::operations::lists;
-use aerospike::operations::lists::{ListPolicy, ListReturnType, ListSortFlags};
+use aerospike::operations::lists::{
+    ListOrderType, ListPolicy, ListReturnType, ListSortFlags, ListWriteFlags,
+};
 use aerospike::{as_bin, as_key, as_list, as_val, as_values, Bins, ReadPolicy, Value, WritePolicy};
 
 #[aerospike_macro::test]
@@ -482,4 +484,153 @@ fn cdt_list_wildcard() {
         *rec.bins.get("bin").unwrap(),
         Value::MultiResult(as_values!(3, as_list!(as_list!("Jim", 95))))
     );
+}
+
+#[aerospike_macro::test]
+fn cdt_list_create_with_index() {
+    let client = common::client().await;
+    let namespace = common::namespace();
+    let set_name = &common::rand_str(10);
+
+    let wpolicy = WritePolicy::default();
+    let key = as_key!(namespace, set_name, "create_with_index");
+    let lpolicy = ListPolicy::default();
+
+    client.delete(&wpolicy, &key).await.unwrap();
+
+    // Create an ordered list with persisted index, then populate and verify ordering
+    let ops = &vec![
+        lists::create_with_index("bin", ListOrderType::Ordered),
+        lists::append(&lpolicy, "bin", as_val!(3)),
+        lists::append(&lpolicy, "bin", as_val!(1)),
+        lists::append(&lpolicy, "bin", as_val!(2)),
+        operations::get_bin("bin"),
+    ];
+    let rec = client.operate(&wpolicy, &key, ops).await.unwrap();
+    // Ordered list should sort: [1, 2, 3]. Last result is the get_bin.
+    assert_eq!(
+        *rec.bins.get("bin").unwrap(),
+        Value::MultiResult(vec![as_val!(1), as_val!(2), as_val!(3), as_list!(1, 2, 3)])
+    );
+
+    client.close().await.unwrap();
+}
+
+#[aerospike_macro::test]
+fn cdt_list_set_order_with_index() {
+    let client = common::client().await;
+    let namespace = common::namespace();
+    let set_name = &common::rand_str(10);
+
+    let wpolicy = WritePolicy::default();
+    let key = as_key!(namespace, set_name, "set_order_with_index");
+    let lpolicy = ListPolicy::default();
+
+    client.delete(&wpolicy, &key).await.unwrap();
+
+    // Create an unordered list first
+    let values = as_values![3, 1, 2];
+    let ops = &vec![lists::append_items(&lpolicy, "bin", values)];
+    client.operate(&wpolicy, &key, ops).await.unwrap();
+
+    // Now set it to ordered with persisted index
+    let ops = &vec![
+        lists::set_order_with_index("bin", ListOrderType::Ordered),
+        operations::get_bin("bin"),
+    ];
+    let rec = client.operate(&wpolicy, &key, ops).await.unwrap();
+    // After setting to ordered, list should be sorted
+    assert_eq!(*rec.bins.get("bin").unwrap(), as_list!(1, 2, 3));
+
+    client.close().await.unwrap();
+}
+
+#[aerospike_macro::test]
+fn cdt_list_set_with_policy() {
+    let client = common::client().await;
+    let namespace = common::namespace();
+    let set_name = &common::rand_str(10);
+
+    let wpolicy = WritePolicy::default();
+    let key = as_key!(namespace, set_name, "set_with_policy");
+    let lpolicy = ListPolicy::default();
+
+    client.delete(&wpolicy, &key).await.unwrap();
+
+    // Create list [1, 2, 3]
+    let values = as_values![1, 2, 3];
+    let ops = &vec![lists::append_items(&lpolicy, "bin", values)];
+    client.operate(&wpolicy, &key, ops).await.unwrap();
+
+    // Set index 1 to value 99 using set_with_policy
+    let set_policy = ListPolicy::new(ListOrderType::Unordered, ListWriteFlags::Default);
+    let ops = &vec![
+        lists::set_with_policy(&set_policy, "bin", 1, as_val!(99)),
+        operations::get_bin("bin"),
+    ];
+    let rec = client.operate(&wpolicy, &key, ops).await.unwrap();
+    assert_eq!(*rec.bins.get("bin").unwrap(), as_list!(1, 99, 3));
+
+    client.close().await.unwrap();
+}
+
+#[aerospike_macro::test]
+fn cdt_list_increment_by_one() {
+    let client = common::client().await;
+    let namespace = common::namespace();
+    let set_name = &common::rand_str(10);
+
+    let wpolicy = WritePolicy::default();
+    let key = as_key!(namespace, set_name, "increment_by_one");
+    let lpolicy = ListPolicy::default();
+
+    client.delete(&wpolicy, &key).await.unwrap();
+
+    // Create list [10, 20, 30]
+    let values = as_values![10, 20, 30];
+    let ops = &vec![lists::append_items(&lpolicy, "bin", values)];
+    client.operate(&wpolicy, &key, ops).await.unwrap();
+
+    // Increment index 1 by one (20 -> 21)
+    let ops = &vec![lists::increment_by_one("bin", 1)];
+    let rec = client.operate(&wpolicy, &key, ops).await.unwrap();
+    // increment returns the new value
+    assert_eq!(*rec.bins.get("bin").unwrap(), Value::from(21));
+
+    // Verify the list
+    let ops = &vec![operations::get_bin("bin")];
+    let rec = client.operate(&wpolicy, &key, ops).await.unwrap();
+    assert_eq!(*rec.bins.get("bin").unwrap(), as_list!(10, 21, 30));
+
+    client.close().await.unwrap();
+}
+
+#[aerospike_macro::test]
+fn cdt_list_increment_by_one_with_policy() {
+    let client = common::client().await;
+    let namespace = common::namespace();
+    let set_name = &common::rand_str(10);
+
+    let wpolicy = WritePolicy::default();
+    let key = as_key!(namespace, set_name, "incr_by_one_policy");
+    let lpolicy = ListPolicy::default();
+
+    client.delete(&wpolicy, &key).await.unwrap();
+
+    // Create list [10, 20, 30]
+    let values = as_values![10, 20, 30];
+    let ops = &vec![lists::append_items(&lpolicy, "bin", values)];
+    client.operate(&wpolicy, &key, ops).await.unwrap();
+
+    // Increment index 0 by one with policy (10 -> 11)
+    let ops = &vec![lists::increment_by_one_with_policy(&lpolicy, "bin", 0)];
+    let rec = client.operate(&wpolicy, &key, ops).await.unwrap();
+    assert_eq!(*rec.bins.get("bin").unwrap(), Value::from(11));
+
+    // Verify the list
+    let ops = &vec![operations::get_bin("bin")];
+    let rec = client.operate(&wpolicy, &key, ops).await.unwrap();
+    assert_eq!(*rec.bins.get("bin").unwrap(), as_list!(11, 20, 30));
+
+    client.close().await.unwrap();
 }

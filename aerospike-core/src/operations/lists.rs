@@ -35,7 +35,7 @@ use std::sync::Arc;
 
 use crate::msgpack::encoder::pack_cdt_op;
 use crate::operations::cdt::{CdtArgument, CdtOperation};
-use crate::operations::cdt_context::{CdtContext, DEFAULT_CTX};
+use crate::operations::cdt_context::DEFAULT_CTX;
 use crate::operations::{Operation, OperationBin, OperationData, OperationType};
 use crate::Value;
 
@@ -264,9 +264,18 @@ pub fn create(bin: &str, list_order: ListOrderType, pad: bool) -> Operation {
     }
 }
 
+/// Creates list create operation with a persisted index.
+///
+/// Server creates list at given context level with a persisted index.
+/// Similar to `create`, but the server will maintain a separate index data structure
+/// for the list, improving lookup performance.
+pub fn create_with_index(bin: &str, list_order: ListOrderType) -> Operation {
+    set_order_with_index(bin, list_order)
+}
+
 /// Creates a set list order operation.
 /// Server sets list order. Server returns null.
-pub fn set_order(bin: &str, list_order: ListOrderType, ctx: Vec<CdtContext>) -> Operation {
+pub fn set_order(bin: &str, list_order: ListOrderType) -> Operation {
     let cdt_op = CdtOperation {
         op: CdtListOpType::SetType as u8,
         encoder: Arc::new(pack_cdt_op),
@@ -274,11 +283,30 @@ pub fn set_order(bin: &str, list_order: ListOrderType, ctx: Vec<CdtContext>) -> 
     };
     Operation {
         op: OperationType::CdtWrite,
-        ctx,
+        ctx: DEFAULT_CTX,
         bin: OperationBin::Name(bin.into()),
         data: OperationData::CdtListOp(cdt_op),
     }
 }
+/// Creates a set list order operation with a persisted index.
+///
+/// Server sets list order and enables a persisted index for the list.
+/// The persisted index flag (0x10) is OR'd with the list order to signal the server.
+/// Server returns null.
+pub fn set_order_with_index(bin: &str, list_order: ListOrderType) -> Operation {
+    let cdt_op = CdtOperation {
+        op: CdtListOpType::SetType as u8,
+        encoder: Arc::new(pack_cdt_op),
+        args: vec![CdtArgument::Byte(list_order as u8 | 0x10)],
+    };
+    Operation {
+        op: OperationType::CdtWrite,
+        ctx: DEFAULT_CTX,
+        bin: OperationBin::Name(bin.into()),
+        data: OperationData::CdtListOp(cdt_op),
+    }
+}
+
 /// Create list append operation. Server appends value to the end of list bin. Server returns
 /// list size.
 pub fn append(policy: &ListPolicy, bin: &str, value: Value) -> Operation {
@@ -782,6 +810,32 @@ pub fn set(bin: &str, index: i64, value: Value) -> Operation {
     }
 }
 
+/// Create list set operation with policy. Server sets the item value at the specified index
+/// in the list bin, applying the given write policy flags. Server does not return a result
+/// by default.
+///
+/// # Panics
+/// Panics if value is empty
+pub fn set_with_policy(policy: &ListPolicy, bin: &str, index: i64, value: Value) -> Operation {
+    assert!(!value.is_nil());
+
+    let cdt_op = CdtOperation {
+        op: CdtListOpType::Set as u8,
+        encoder: Arc::new(pack_cdt_op),
+        args: vec![
+            CdtArgument::Int(index),
+            CdtArgument::Value(value),
+            CdtArgument::Byte(policy.flags),
+        ],
+    };
+    Operation {
+        op: OperationType::CdtWrite,
+        ctx: DEFAULT_CTX,
+        bin: OperationBin::Name(bin.into()),
+        data: OperationData::CdtListOp(cdt_op),
+    }
+}
+
 /// Create list trim operation. Server removes `count` items in the list bin that do not fall
 /// into the range specified by `index` and `count`. If the range is out of bounds, then all
 /// items will be removed. Server returns list size after trim.
@@ -824,6 +878,43 @@ pub fn increment(policy: &ListPolicy, bin: &str, index: i64, value: i64) -> Oper
         args: vec![
             CdtArgument::Int(index),
             CdtArgument::Int(value),
+            CdtArgument::Byte(policy.flags),
+        ],
+    };
+    Operation {
+        op: OperationType::CdtWrite,
+        ctx: DEFAULT_CTX,
+        bin: OperationBin::Name(bin.into()),
+        data: OperationData::CdtListOp(cdt_op),
+    }
+}
+
+/// Create list increment by one operation. Server increments the item value at the specified
+/// index by 1 and returns the final result.
+pub fn increment_by_one(bin: &str, index: i64) -> Operation {
+    let cdt_op = CdtOperation {
+        op: CdtListOpType::Increment as u8,
+        encoder: Arc::new(pack_cdt_op),
+        args: vec![CdtArgument::Int(index)],
+    };
+    Operation {
+        op: OperationType::CdtWrite,
+        ctx: DEFAULT_CTX,
+        bin: OperationBin::Name(bin.into()),
+        data: OperationData::CdtListOp(cdt_op),
+    }
+}
+
+/// Create list increment by one operation with policy. Server increments the item value at the
+/// specified index by 1 and returns the final result.
+pub fn increment_by_one_with_policy(policy: &ListPolicy, bin: &str, index: i64) -> Operation {
+    let cdt_op = CdtOperation {
+        op: CdtListOpType::Increment as u8,
+        encoder: Arc::new(pack_cdt_op),
+        args: vec![
+            CdtArgument::Int(index),
+            CdtArgument::Int(1),
+            CdtArgument::Byte(policy.attributes as u8),
             CdtArgument::Byte(policy.flags),
         ],
     };
