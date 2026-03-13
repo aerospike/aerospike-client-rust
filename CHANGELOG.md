@@ -5,8 +5,21 @@ All notable changes to this project will be documented in this file.
 ## [2.0.0-alpha.11]
 
 * **New Features**
-  * [CLIENT-3815] Support Path Expressions.
+  * [CLIENT-4413] Support background Execute UDF.
+  * [CLIENT-4412] Support background query operations.
   * [Client-4113] Rust performance testing `asbench`.
+  * [CLIENT-2023] Add `to_base64` encoding methods to `operations::cdt_context`
+  * [CLIENT-2128][CLIENT-3956] Add missing APIs for importing/exporting compiled expressions.
+  * Add a few missing map and list operations:
+    `cdt_list_create_with_index`,
+    `cdt_list_set_order_with_index`,
+    `cdt_list_set_with_policy`,
+    `cdt_list_increment_by_one`,
+    `cdt_list_increment_by_one_with_policy`,
+    `map_create_op`,
+    `map_create_with_index_op`,
+    `map_set_policy_op`,
+    `set_policy`
 
 * **Improvements**
   * Chain all errors in `command.execute`
@@ -18,9 +31,11 @@ All notable changes to this project will be documented in this file.
   * [CLIENT-4222] Update `list_remove_by*` calls to handle `ListReturnType` params.
   * Add rust docs for enums.
   * Update rust docs for client APIs.
+  * Updated the `IndexTask` with the latest logic.
 
 * **Bug Fixes**
   * [CLIENT-4227] `expressions::geo_val()` creates `Value::String` instead of `Value::GeoJSON`
+  * [CLIENT-4411] Fix sindex Query with Bin selection.
 
 ## [2.0.0-alpha.10]
 
