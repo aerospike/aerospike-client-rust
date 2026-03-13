@@ -21,7 +21,7 @@ use aerospike::operations::cdt_context::{ctx_map_key, ctx_map_key_create};
 use aerospike::operations::{maps, MapOrder};
 use aerospike::{
     as_bin, as_key, as_list, as_map, as_ord_map, as_val, as_values, Bins, MapPolicy,
-    MapReturnType, MapWriteMode, ReadPolicy, Value, WritePolicy,
+    MapReturnType, MapWriteFlags, MapWriteMode, ReadPolicy, Value, WritePolicy,
 };
 
 #[aerospike_macro::test]
@@ -494,6 +494,132 @@ async fn map_set_policy_op() {
     client.operate(&wpolicy, &key, &[op]).await.unwrap();
 
     // Verify the map is now key-ordered
+    let op = maps::get_by_index_range_from("bin", 0, MapReturnType::Key);
+    let rec = client.operate(&wpolicy, &key, &[op]).await.unwrap();
+    assert_eq!(*rec.bins.get("bin").unwrap(), as_list!("a", "b", "c"));
+
+    client.close().await.unwrap();
+}
+
+#[aerospike_macro::test]
+async fn map_put_with_flags_create_only() {
+    let client = common::client().await;
+    let namespace = common::namespace();
+    let set_name = &common::rand_str(10);
+
+    let wpolicy = WritePolicy::default();
+    let key = as_key!(namespace, set_name, "map_flags_create");
+
+    client.delete(&wpolicy, &key).await.unwrap();
+
+    // Use CREATE_ONLY flag - first put should succeed
+    let policy = MapPolicy::new_with_flags(MapOrder::Unordered, MapWriteFlags::CREATE_ONLY);
+    let op = maps::put(&policy, "bin", as_val!("a"), as_val!(1));
+    client.operate(&wpolicy, &key, &[op]).await.unwrap();
+
+    // Second put with same key should fail with CREATE_ONLY
+    let op = maps::put(&policy, "bin", as_val!("a"), as_val!(2));
+    let result = client.operate(&wpolicy, &key, &[op]).await;
+    assert!(result.is_err(), "CREATE_ONLY should fail on existing key");
+
+    // Verify original value preserved
+    let op = maps::get_by_key("bin", as_val!("a"), MapReturnType::Value);
+    let rec = client.operate(&wpolicy, &key, &[op]).await.unwrap();
+    assert_eq!(*rec.bins.get("bin").unwrap(), as_val!(1));
+
+    client.close().await.unwrap();
+}
+
+#[aerospike_macro::test]
+async fn map_put_with_flags_no_fail() {
+    let client = common::client().await;
+    let namespace = common::namespace();
+    let set_name = &common::rand_str(10);
+
+    let wpolicy = WritePolicy::default();
+    let key = as_key!(namespace, set_name, "map_flags_nofail");
+
+    client.delete(&wpolicy, &key).await.unwrap();
+
+    // Create initial map entry
+    let policy = MapPolicy::default();
+    let op = maps::put(&policy, "bin", as_val!("a"), as_val!(1));
+    client.operate(&wpolicy, &key, &[op]).await.unwrap();
+
+    // Use CREATE_ONLY | NO_FAIL - should silently skip existing key
+    let policy =
+        MapPolicy::new_with_flags(MapOrder::Unordered, MapWriteFlags::CREATE_ONLY | MapWriteFlags::NO_FAIL);
+    let op = maps::put(&policy, "bin", as_val!("a"), as_val!(99));
+    client.operate(&wpolicy, &key, &[op]).await.unwrap();
+
+    // Verify original value preserved (silently skipped, no error)
+    let op = maps::get_by_key("bin", as_val!("a"), MapReturnType::Value);
+    let rec = client.operate(&wpolicy, &key, &[op]).await.unwrap();
+    assert_eq!(*rec.bins.get("bin").unwrap(), as_val!(1));
+
+    client.close().await.unwrap();
+}
+
+#[aerospike_macro::test]
+async fn map_put_with_flags_update_only() {
+    let client = common::client().await;
+    let namespace = common::namespace();
+    let set_name = &common::rand_str(10);
+
+    let wpolicy = WritePolicy::default();
+    let key = as_key!(namespace, set_name, "map_flags_update");
+
+    client.delete(&wpolicy, &key).await.unwrap();
+
+    // Create initial map entry
+    let policy = MapPolicy::default();
+    let op = maps::put(&policy, "bin", as_val!("a"), as_val!(1));
+    client.operate(&wpolicy, &key, &[op]).await.unwrap();
+
+    // UPDATE_ONLY on existing key should succeed
+    let policy = MapPolicy::new_with_flags(MapOrder::Unordered, MapWriteFlags::UPDATE_ONLY);
+    let op = maps::put(&policy, "bin", as_val!("a"), as_val!(2));
+    client.operate(&wpolicy, &key, &[op]).await.unwrap();
+
+    // Verify value updated
+    let op = maps::get_by_key("bin", as_val!("a"), MapReturnType::Value);
+    let rec = client.operate(&wpolicy, &key, &[op]).await.unwrap();
+    assert_eq!(*rec.bins.get("bin").unwrap(), as_val!(2));
+
+    // UPDATE_ONLY on non-existing key should fail
+    let op = maps::put(&policy, "bin", as_val!("z"), as_val!(99));
+    let result = client.operate(&wpolicy, &key, &[op]).await;
+    assert!(result.is_err(), "UPDATE_ONLY should fail on non-existing key");
+
+    client.close().await.unwrap();
+}
+
+#[aerospike_macro::test]
+async fn map_new_with_flags_and_persisted_index() {
+    let client = common::client().await;
+    let namespace = common::namespace();
+    let set_name = &common::rand_str(10);
+
+    let wpolicy = WritePolicy::default();
+    let key = as_key!(namespace, set_name, "map_persist_idx");
+
+    client.delete(&wpolicy, &key).await.unwrap();
+
+    // Create key-ordered map with persisted index via flags constructor
+    let policy = MapPolicy::new_with_flags_and_persisted_index(
+        MapOrder::KeyOrdered,
+        MapWriteFlags::DEFAULT,
+    );
+    let op = maps::put(&policy, "bin", as_val!("c"), as_val!(3));
+    client.operate(&wpolicy, &key, &[op]).await.unwrap();
+
+    let op = maps::put(&policy, "bin", as_val!("a"), as_val!(1));
+    client.operate(&wpolicy, &key, &[op]).await.unwrap();
+
+    let op = maps::put(&policy, "bin", as_val!("b"), as_val!(2));
+    client.operate(&wpolicy, &key, &[op]).await.unwrap();
+
+    // Verify map is key-ordered
     let op = maps::get_by_index_range_from("bin", 0, MapReturnType::Key);
     let rec = client.operate(&wpolicy, &key, &[op]).await.unwrap();
     assert_eq!(*rec.bins.get("bin").unwrap(), as_list!("a", "b", "c"));

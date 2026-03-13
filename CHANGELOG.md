@@ -8,6 +8,7 @@ All notable changes to this project will be documented in this file.
   * [CLIENT-4413] Support background Execute UDF.
   * [CLIENT-4412] Support background query operations.
   * [Client-4113] Rust performance testing `asbench`.
+  * [CLIENT-4342] `MapPolicy` missing `MapWriteFlags` support.
   * [CLIENT-2023] Add `to_base64` encoding methods to `operations::cdt_context`
   * [CLIENT-2128][CLIENT-3956] Add missing APIs for importing/exporting compiled expressions.
   * Add a few missing map and list operations:

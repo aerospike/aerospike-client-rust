@@ -26,7 +26,7 @@ pub mod scalar;
 
 use self::cdt::CdtOperation;
 pub use self::lists::{ListOrderType, ListPolicy, ListReturnType, ListSortFlags, ListWriteFlags};
-pub use self::maps::{MapOrder, MapPolicy, MapReturnType, MapWriteMode};
+pub use self::maps::{MapOrder, MapPolicy, MapReturnType, MapWriteFlags, MapWriteMode};
 pub use self::scalar::*;
 
 use crate::commands::buffer::Buffer;

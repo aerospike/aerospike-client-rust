@@ -194,6 +194,29 @@ impl ToMapReturnTypeBitmask for InvertedMapReturn {
     }
 }
 
+/// Map write bit flags.
+/// Requires server version 4.3+.
+#[allow(non_snake_case)]
+pub mod MapWriteFlags {
+    /// Default. Allow create or update.
+    pub const DEFAULT: u8 = 0;
+
+    /// If the key already exists, the item will be denied.
+    /// If the key does not exist, a new item will be created.
+    pub const CREATE_ONLY: u8 = 1;
+
+    /// If the key already exists, the item will be overwritten.
+    /// If the key does not exist, the item will be denied.
+    pub const UPDATE_ONLY: u8 = 2;
+
+    /// Do not raise error if a map item is denied due to write flag constraints.
+    pub const NO_FAIL: u8 = 4;
+
+    /// Allow other valid map items to be committed if a map item is denied due to
+    /// write flag constraints.
+    pub const PARTIAL: u8 = 8;
+}
+
 /// Unique key map write type.
 #[derive(Debug, Clone, Copy)]
 pub enum MapWriteMode {
@@ -217,12 +240,56 @@ pub struct MapPolicy {
     pub order: MapOrder,
     /// The Map Write Mode
     pub write_mode: MapWriteMode,
+    /// The Map Write Flags (see `MapWriteFlags`).
+    /// When flags are non-zero, they are used instead of `write_mode` for put operations.
+    /// Requires server version 4.3+.
+    pub flags: u8,
+    /// Whether to persist the index for this map.
+    pub persist_index: bool,
 }
 
 impl MapPolicy {
     /// Create a new map policy given the ordering for the map and the write mode.
     pub const fn new(order: MapOrder, write_mode: MapWriteMode) -> Self {
-        MapPolicy { order, write_mode }
+        MapPolicy {
+            order,
+            write_mode,
+            flags: MapWriteFlags::DEFAULT,
+            persist_index: false,
+        }
+    }
+
+    /// Create a new map policy with write flags instead of a write mode.
+    /// When flags are non-zero, they take precedence over write mode for put operations.
+    /// Requires server version 4.3+.
+    pub const fn new_with_flags(order: MapOrder, flags: u8) -> Self {
+        MapPolicy {
+            order,
+            write_mode: MapWriteMode::Update,
+            flags,
+            persist_index: false,
+        }
+    }
+
+    /// Create a new map policy with write flags and a persisted index.
+    /// The persisted index flag (0x10) is OR'd into the map order attribute.
+    /// Requires server version 4.3+.
+    pub const fn new_with_flags_and_persisted_index(order: MapOrder, flags: u8) -> Self {
+        MapPolicy {
+            order,
+            write_mode: MapWriteMode::Update,
+            flags,
+            persist_index: true,
+        }
+    }
+
+    /// Returns the order attribute byte, including the persist index flag if set.
+    pub(crate) const fn order_attr(&self) -> u8 {
+        if self.persist_index {
+            self.order as u8 | 0x10
+        } else {
+            self.order as u8
+        }
     }
 }
 
@@ -265,7 +332,7 @@ pub(crate) const fn map_write_op(policy: &MapPolicy, multi: bool) -> CdtMapOpTyp
 const fn map_order_arg(policy: &MapPolicy) -> Option<CdtArgument> {
     match policy.write_mode {
         MapWriteMode::UpdateOnly => None,
-        _ => Some(CdtArgument::Byte(policy.order as u8)),
+        _ => Some(CdtArgument::Byte(policy.order_attr())),
     }
 }
 
@@ -320,7 +387,7 @@ pub fn create_with_index(bin: &str, map_order: MapOrder) -> Operation {
 /// The required map policy attributes can be changed after the map has been created.
 /// Supports optional CDT context for nested map operations.
 pub fn set_policy(policy: &MapPolicy, bin: &str, ctx: Vec<CdtContext>) -> Operation {
-    let mut attr = policy.order as u8;
+    let mut attr = policy.order_attr();
     // If nested context, remove persist flag if present
     if !ctx.is_empty() {
         attr &= !0x10;
@@ -362,6 +429,27 @@ pub fn set_order(bin: &str, map_order: MapOrder) -> Operation {
 /// The required map policy dictates the type of map to create when it does not exist. The map
 /// policy also specifies the mode used when writing items to the map.
 pub fn put(policy: &MapPolicy, bin: &str, key: Value, val: Value) -> Operation {
+    if policy.flags != 0 {
+        // Use flags-based put (server 4.3+)
+        let args = vec![
+            CdtArgument::Value(key),
+            CdtArgument::Value(val),
+            CdtArgument::Byte(policy.order_attr()),
+            CdtArgument::Byte(policy.flags),
+        ];
+        let cdt_op = CdtOperation {
+            op: CdtMapOpType::Put as u8,
+            encoder: Arc::new(pack_cdt_op),
+            args,
+        };
+        return Operation {
+            op: OperationType::CdtWrite,
+            ctx: DEFAULT_CTX,
+            bin: OperationBin::Name(bin.into()),
+            data: OperationData::CdtMapOp(cdt_op),
+        };
+    }
+
     let mut args = vec![CdtArgument::Value(key)];
     if !val.is_nil() {
         args.push(CdtArgument::Value(val));
@@ -394,6 +482,27 @@ pub fn put_items<M: MapLike<Value, Value>>(policy: &MapPolicy, bin: &str, items:
         (None, Some(btm)) => CdtArgument::OrderedMap(btm),
         _ => unreachable!(),
     };
+
+    if policy.flags != 0 {
+        // Use flags-based put items (server 4.3+)
+        let args = vec![
+            items,
+            CdtArgument::Byte(policy.order_attr()),
+            CdtArgument::Byte(policy.flags),
+        ];
+        let cdt_op = CdtOperation {
+            op: CdtMapOpType::PutItems as u8,
+            encoder: Arc::new(pack_cdt_op),
+            args,
+        };
+        return Operation {
+            op: OperationType::CdtWrite,
+            ctx: DEFAULT_CTX,
+            bin: OperationBin::Name(bin.into()),
+            data: OperationData::CdtMapOp(cdt_op),
+        };
+    }
+
     let mut args = vec![items];
     if let Some(arg) = map_order_arg(policy) {
         args.push(arg);

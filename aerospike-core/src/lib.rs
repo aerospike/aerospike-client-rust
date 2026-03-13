@@ -162,7 +162,7 @@ pub use key::Key;
 pub use net::Host;
 pub use net::ToHosts;
 pub use operations::{ListOrderType, ListPolicy, ListReturnType, ListSortFlags, ListWriteFlags};
-pub use operations::{MapPolicy, MapReturnType, MapWriteMode};
+pub use operations::{MapPolicy, MapReturnType, MapWriteFlags, MapWriteMode};
 pub use policy::{
     AdminPolicy, AuthMode, BasePolicy, BatchPolicy, ClientPolicy, CommitLevel, Concurrency,
     ConsistencyLevel, Expiration, GenerationPolicy, Policy, QueryDuration, QueryPolicy, ReadPolicy,
