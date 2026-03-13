@@ -80,7 +80,7 @@ pub struct BatchPolicy {
 }
 
 impl BatchPolicy {
-    /// Create a new batch policy instance.
+    /// Creates a new batch policy instance.
     pub fn new() -> Self {
         BatchPolicy::default()
     }

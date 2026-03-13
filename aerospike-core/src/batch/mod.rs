@@ -242,7 +242,7 @@ pub enum BatchOperation {
 }
 
 impl BatchOperation {
-    /// Create a batch read operation.
+    /// Creates a batch read operation.
     pub fn read(policy: &BatchReadPolicy, key: Key, bins: Bins) -> Self {
         BatchOperation::Read {
             br: BatchRecord::new(key, false),
@@ -252,7 +252,7 @@ impl BatchOperation {
         }
     }
 
-    /// Create a batch read with multiple operations.
+    /// Creates a batch read with multiple operations.
     pub fn read_ops(policy: &BatchReadPolicy, key: Key, ops: Vec<Operation>) -> Self {
         BatchOperation::Read {
             br: BatchRecord::new(key, false),
@@ -262,7 +262,7 @@ impl BatchOperation {
         }
     }
 
-    /// Create a batch write with multiple operations.
+    /// Creates a batch write with multiple operations.
     pub fn write(policy: &BatchWritePolicy, key: Key, ops: Vec<Operation>) -> Self {
         BatchOperation::Write {
             br: BatchRecord::new(key, true),
@@ -271,7 +271,7 @@ impl BatchOperation {
         }
     }
 
-    /// Create a batch delete operation.
+    /// Creates a batch delete operation.
     pub fn delete(policy: &BatchDeletePolicy, key: Key) -> Self {
         BatchOperation::Delete {
             br: BatchRecord::new(key, true),
@@ -279,7 +279,7 @@ impl BatchOperation {
         }
     }
 
-    /// Create a batch UDF operation.
+    /// Creates a batch UDF operation.
     pub fn udf(
         policy: &BatchUDFPolicy,
         key: Key,

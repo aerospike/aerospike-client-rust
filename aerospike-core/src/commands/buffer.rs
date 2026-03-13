@@ -1336,14 +1336,7 @@ impl Buffer {
 
         // Use query protocol header (write_header_read), not the key-value write header.
         // UDF background execution does not set INFO2_WRITE.
-        self.write_header_read(
-            &write_policy.base_policy,
-            INFO1_READ,
-            0,
-            0,
-            field_count,
-            0,
-        );
+        self.write_header_read(&write_policy.base_policy, INFO1_READ, 0, 0, field_count, 0);
 
         if !statement.namespace.is_empty() {
             self.write_field_string(&statement.namespace, FieldType::Namespace);

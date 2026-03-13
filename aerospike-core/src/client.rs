@@ -1635,7 +1635,7 @@ impl Client {
             .map_err(|e| e.chain_error("Error truncating ns/set"))
     }
 
-    /// Create a secondary index on a bin. This asynchronous server call
+    /// Creates a secondary index on a bin. This asynchronous server call
     /// returns before the command is complete.
     ///
     /// # Arguments
@@ -1711,7 +1711,7 @@ impl Client {
         .await
     }
 
-    /// Create a secondary index using an expression. This asynchronous server call
+    /// Creates a secondary index using an expression. This asynchronous server call
     /// returns before the command is complete.
     ///
     /// # Arguments
@@ -1784,7 +1784,7 @@ impl Client {
         .await
     }
 
-    /// Create a secondary index on a bin or using expression. This asynchronous server call
+    /// Creates a secondary index on a bin or using expression. This asynchronous server call
     /// returns before the command is complete.
     ///
     /// For internal use only. `bin_name` and expression cannot both be passed.

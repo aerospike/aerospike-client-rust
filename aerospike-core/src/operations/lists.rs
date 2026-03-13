@@ -202,7 +202,7 @@ impl<T: IntoIterator<Item = ListWriteFlags>> ToListWriteFlagsBitmask for T {
 }
 
 impl ListPolicy {
-    /// Create unique key list with specified order when list does not exist.
+    /// Creates unique key list with specified order when list does not exist.
     /// Use specified write mode when writing list items.
     pub const fn new(order: ListOrderType, write_flags: ListWriteFlags) -> Self {
         ListPolicy {
@@ -211,7 +211,7 @@ impl ListPolicy {
         }
     }
 
-    /// Create unique key list with specified order when list does not exist.
+    /// Creates unique key list with specified order when list does not exist.
     /// Use specified write mode when writing list items.
     /// This is non-const, but allows specifying multiple flags.
     pub fn new_with_flags<LWF: ToListWriteFlagsBitmask>(
@@ -307,7 +307,7 @@ pub fn set_order_with_index(bin: &str, list_order: ListOrderType) -> Operation {
     }
 }
 
-/// Create list append operation. Server appends value to the end of list bin. Server returns
+/// Creates list append operation. Server appends value to the end of list bin. Server returns
 /// list size.
 pub fn append(policy: &ListPolicy, bin: &str, value: Value) -> Operation {
     let cdt_op = CdtOperation {
@@ -327,7 +327,7 @@ pub fn append(policy: &ListPolicy, bin: &str, value: Value) -> Operation {
     }
 }
 
-/// Create list append items operation. Server appends each input list item to the end of list
+/// Creates list append items operation. Server appends each input list item to the end of list
 /// bin. Server returns list size.
 ///
 /// # Panics
@@ -352,7 +352,7 @@ pub fn append_items(policy: &ListPolicy, bin: &str, values: Vec<Value>) -> Opera
     }
 }
 
-/// Create list insert operation. Server inserts value to the specified index of the list bin.
+/// Creates list insert operation. Server inserts value to the specified index of the list bin.
 /// Server returns list size.
 pub fn insert(policy: &ListPolicy, bin: &str, index: i64, value: Value) -> Operation {
     let cdt_op = CdtOperation {
@@ -372,7 +372,7 @@ pub fn insert(policy: &ListPolicy, bin: &str, index: i64, value: Value) -> Opera
     }
 }
 
-/// Create list insert items operation. Server inserts each input list item starting at the
+/// Creates list insert items operation. Server inserts each input list item starting at the
 /// specified index of the list bin. Server returns list size.
 ///
 /// # Panics
@@ -397,7 +397,7 @@ pub fn insert_items(policy: &ListPolicy, bin: &str, index: i64, values: Vec<Valu
     }
 }
 
-/// Create list pop operation. Server returns the item at the specified index and removes the
+/// Creates list pop operation. Server returns the item at the specified index and removes the
 /// item from the list bin.
 pub fn pop(bin: &str, index: i64) -> Operation {
     let cdt_op = CdtOperation {
@@ -413,7 +413,7 @@ pub fn pop(bin: &str, index: i64) -> Operation {
     }
 }
 
-/// Create list pop range operation. Server returns `count` items starting at the specified
+/// Creates list pop range operation. Server returns `count` items starting at the specified
 /// index and removes the items from the list bin.
 pub fn pop_range(bin: &str, index: i64, count: i64) -> Operation {
     let cdt_op = CdtOperation {
@@ -429,7 +429,7 @@ pub fn pop_range(bin: &str, index: i64, count: i64) -> Operation {
     }
 }
 
-/// Create list pop range operation. Server returns the items starting at the specified index
+/// Creates list pop range operation. Server returns the items starting at the specified index
 /// to the end of the list and removes those items from the list bin.
 pub fn pop_range_from(bin: &str, index: i64) -> Operation {
     let cdt_op = CdtOperation {
@@ -445,7 +445,7 @@ pub fn pop_range_from(bin: &str, index: i64) -> Operation {
     }
 }
 
-/// Create list remove operation. Server removes the item at the specified index from the list
+/// Creates list remove operation. Server removes the item at the specified index from the list
 /// bin. Server returns the number of items removed.
 pub fn remove(bin: &str, index: i64) -> Operation {
     let cdt_op = CdtOperation {
@@ -461,7 +461,7 @@ pub fn remove(bin: &str, index: i64) -> Operation {
     }
 }
 
-/// Create list remove range operation. Server removes `count` items starting at the specified
+/// Creates list remove range operation. Server removes `count` items starting at the specified
 /// index from the list bin. Server returns the number of items removed.
 pub fn remove_range(bin: &str, index: i64, count: i64) -> Operation {
     let cdt_op = CdtOperation {
@@ -477,7 +477,7 @@ pub fn remove_range(bin: &str, index: i64, count: i64) -> Operation {
     }
 }
 
-/// Create list remove range operation. Server removes the items starting at the specified
+/// Creates list remove range operation. Server removes the items starting at the specified
 /// index to the end of the list. Server returns the number of items removed.
 pub fn remove_range_from(bin: &str, index: i64) -> Operation {
     let cdt_op = CdtOperation {
@@ -493,7 +493,7 @@ pub fn remove_range_from(bin: &str, index: i64) -> Operation {
     }
 }
 
-/// Create list remove value operation. Server removes all items that are equal to the
+/// Creates list remove value operation. Server removes all items that are equal to the
 /// specified value. Server returns the number of items removed.
 pub fn remove_by_value<'a, TLR: ToListReturnTypeBitmask>(
     bin: &str,
@@ -516,7 +516,7 @@ pub fn remove_by_value<'a, TLR: ToListReturnTypeBitmask>(
     }
 }
 
-/// Create list remove by value list operation. Server removes all items that are equal to
+/// Creates list remove by value list operation. Server removes all items that are equal to
 /// one of the specified values. Server returns the number of items removed
 pub fn remove_by_value_list<'a, TLR: ToListReturnTypeBitmask>(
     bin: &str,
@@ -789,7 +789,7 @@ pub fn remove_by_rank_range_count<TLR: ToListReturnTypeBitmask>(
     }
 }
 
-/// Create list set operation. Server sets the item value at the specified index in the list
+/// Creates list set operation. Server sets the item value at the specified index in the list
 /// bin. Server does not return a result by default.
 ///
 /// # Panics
@@ -810,7 +810,7 @@ pub fn set(bin: &str, index: i64, value: Value) -> Operation {
     }
 }
 
-/// Create list set operation with policy. Server sets the item value at the specified index
+/// Creates list set operation with policy. Server sets the item value at the specified index
 /// in the list bin, applying the given write policy flags. Server does not return a result
 /// by default.
 ///
@@ -836,7 +836,7 @@ pub fn set_with_policy(policy: &ListPolicy, bin: &str, index: i64, value: Value)
     }
 }
 
-/// Create list trim operation. Server removes `count` items in the list bin that do not fall
+/// Creates list trim operation. Server removes `count` items in the list bin that do not fall
 /// into the range specified by `index` and `count`. If the range is out of bounds, then all
 /// items will be removed. Server returns list size after trim.
 pub fn trim(bin: &str, index: i64, count: i64) -> Operation {
@@ -853,7 +853,7 @@ pub fn trim(bin: &str, index: i64, count: i64) -> Operation {
     }
 }
 
-/// Create list clear operation. Server removes all items in the list bin. Server does not
+/// Creates list clear operation. Server removes all items in the list bin. Server does not
 /// return a result by default.
 pub fn clear(bin: &str) -> Operation {
     let cdt_op = CdtOperation {
@@ -869,7 +869,7 @@ pub fn clear(bin: &str) -> Operation {
     }
 }
 
-/// Create list increment operation. Server increments the item value at the specified index by the
+/// Creates list increment operation. Server increments the item value at the specified index by the
 /// given amount and returns the final result.
 pub fn increment(policy: &ListPolicy, bin: &str, index: i64, value: i64) -> Operation {
     let cdt_op = CdtOperation {
@@ -889,7 +889,7 @@ pub fn increment(policy: &ListPolicy, bin: &str, index: i64, value: i64) -> Oper
     }
 }
 
-/// Create list increment by one operation. Server increments the item value at the specified
+/// Creates list increment by one operation. Server increments the item value at the specified
 /// index by 1 and returns the final result.
 pub fn increment_by_one(bin: &str, index: i64) -> Operation {
     let cdt_op = CdtOperation {
@@ -905,7 +905,7 @@ pub fn increment_by_one(bin: &str, index: i64) -> Operation {
     }
 }
 
-/// Create list increment by one operation with policy. Server increments the item value at the
+/// Creates list increment by one operation with policy. Server increments the item value at the
 /// specified index by 1 and returns the final result.
 pub fn increment_by_one_with_policy(policy: &ListPolicy, bin: &str, index: i64) -> Operation {
     let cdt_op = CdtOperation {
@@ -926,7 +926,7 @@ pub fn increment_by_one_with_policy(policy: &ListPolicy, bin: &str, index: i64) 
     }
 }
 
-/// Create list size operation. Server returns size of the list.
+/// Creates list size operation. Server returns size of the list.
 pub fn size(bin: &str) -> Operation {
     let cdt_op = CdtOperation {
         op: CdtListOpType::Size as u8,
@@ -941,7 +941,7 @@ pub fn size(bin: &str) -> Operation {
     }
 }
 
-/// Create list get operation. Server returns the item at the specified index in the list bin.
+/// Creates list get operation. Server returns the item at the specified index in the list bin.
 pub fn get(bin: &str, index: i64) -> Operation {
     let cdt_op = CdtOperation {
         op: CdtListOpType::Get as u8,
@@ -956,7 +956,7 @@ pub fn get(bin: &str, index: i64) -> Operation {
     }
 }
 
-/// Create list get range operation. Server returns `count` items starting at the specified
+/// Creates list get range operation. Server returns `count` items starting at the specified
 /// index in the list bin.
 pub fn get_range(bin: &str, index: i64, count: i64) -> Operation {
     let cdt_op = CdtOperation {
@@ -972,7 +972,7 @@ pub fn get_range(bin: &str, index: i64, count: i64) -> Operation {
     }
 }
 
-/// Create list get range operation. Server returns items starting at the index to the end of
+/// Creates list get range operation. Server returns items starting at the index to the end of
 /// the list.
 pub fn get_range_from(bin: &str, index: i64) -> Operation {
     let cdt_op = CdtOperation {

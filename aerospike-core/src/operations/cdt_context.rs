@@ -143,7 +143,7 @@ pub const fn ctx_map_key(key: Value) -> CdtContext {
     }
 }
 
-/// Create map with given type at map key.
+/// Creates map with given type at map key.
 pub const fn ctx_map_key_create(key: Value, order: MapOrder) -> CdtContext {
     CdtContext {
         id: CtxType::MapKey as u8,

@@ -67,7 +67,7 @@ pub struct WritePolicy {
 }
 
 impl WritePolicy {
-    /// Create a new write policy instance with the specified generation and expiration parameters.
+    /// Creates a new write policy instance with the specified generation and expiration parameters.
     pub fn new(gen: u32, exp: Expiration) -> Self {
         Self {
             generation: gen,

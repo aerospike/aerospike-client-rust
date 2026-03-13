@@ -41,7 +41,7 @@ pub struct Filter {
 }
 
 impl Filter {
-    /// Create a new filter instance. For internal use only. Applications should use one of the
+    /// Creates a new filter instance. For internal use only. Applications should use one of the
     /// provided macros to create new filters.
     #[doc(hidden)]
     pub fn new(
@@ -86,7 +86,7 @@ impl Filter {
     }
 }
 
-/// Create equality filter for queries; supports integer and string values.
+/// Creates equality filter for queries; supports integer and string values.
 #[macro_export]
 macro_rules! as_eq {
     ($bin_name:expr, $val:expr) => {{
@@ -101,7 +101,7 @@ macro_rules! as_eq {
     }};
 }
 
-/// Create range filter for queries; supports integer values.
+/// Creates range filter for queries; supports integer values.
 #[macro_export]
 macro_rules! as_range {
     ($bin_name:expr, $begin:expr, $end:expr) => {{
@@ -117,7 +117,7 @@ macro_rules! as_range {
     }};
 }
 
-/// Create contains number filter for queries on a collection index.
+/// Creates contains number filter for queries on a collection index.
 #[macro_export]
 macro_rules! as_contains {
     ($bin_name:expr, $val:expr, $cit:expr) => {{
@@ -132,7 +132,7 @@ macro_rules! as_contains {
     }};
 }
 
-/// Create contains range filter for queries on a collection index.
+/// Creates contains range filter for queries on a collection index.
 #[macro_export]
 macro_rules! as_contains_range {
     ($bin_name:expr, $begin:expr, $end:expr, $cit:expr) => {{
@@ -142,7 +142,7 @@ macro_rules! as_contains_range {
     }};
 }
 
-/// Create geospatial "points within region" filter for queries. For queries on a collection index
+/// Creates geospatial "points within region" filter for queries. For queries on a collection index
 /// the collection index type must be specified.
 #[macro_export]
 macro_rules! as_within_region {
@@ -169,7 +169,7 @@ macro_rules! as_within_region {
     }};
 }
 
-/// Create geospatial "points within radius" filter for queries. For queries on a collection index
+/// Creates geospatial "points within radius" filter for queries. For queries on a collection index
 /// the collection index type must be specified.
 #[macro_export]
 macro_rules! as_within_radius {
@@ -210,7 +210,7 @@ macro_rules! as_within_radius {
     }};
 }
 
-/// Create geospatial "regions containing point" filter for queries. For queries on a collection
+/// Creates geospatial "regions containing point" filter for queries. For queries on a collection
 /// index the collection index type must be specified.
 #[macro_export]
 macro_rules! as_regions_containing_point {

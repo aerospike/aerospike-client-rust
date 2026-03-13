@@ -35,7 +35,7 @@ pub struct Host {
 }
 
 impl Host {
-    /// Create a new host instance given a hostname/IP and a port number.
+    /// Creates a new host instance given a hostname/IP and a port number.
     pub fn new(name: &str, port: u16) -> Self {
         Host {
             name: name.to_string(),
@@ -44,7 +44,7 @@ impl Host {
         }
     }
 
-    /// Create a new tls host instance given a hostname/IP and a port number.
+    /// Creates a new tls host instance given a hostname/IP and a port number.
     pub fn new_tls(name: &str, tls_name: &str, port: u16) -> Self {
         let tls_name = match tls_name.trim().len() {
             0 => None,

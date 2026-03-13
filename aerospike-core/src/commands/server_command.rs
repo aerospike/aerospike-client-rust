@@ -98,11 +98,10 @@ impl Command for ServerCommand<'_> {
                 self.task_id,
                 operations,
             ),
-            ServerCommandPayload::Udf => conn.buffer.set_query_udf_execute(
-                self.write_policy,
-                self.statement,
-                self.task_id,
-            ),
+            ServerCommandPayload::Udf => {
+                conn.buffer
+                    .set_query_udf_execute(self.write_policy, self.statement, self.task_id)
+            }
         }
     }
 

@@ -102,8 +102,7 @@ impl Task for IndexTask {
 
         let admin_policy = AdminPolicy { timeout: 3_000 };
         for node in &nodes {
-            let command =
-                IndexTask::build_command(node, &self.namespace, &self.index_name);
+            let command = IndexTask::build_command(node, &self.namespace, &self.index_name);
             let response = node.info(&admin_policy, &[&command[..]]).await?;
 
             match response.get(&command) {

@@ -14,11 +14,11 @@
 
 use std::sync::Arc;
 
+use crate::cluster::version_parser::Version;
 use crate::cluster::Cluster;
 use crate::errors::{Error, Result};
 use crate::task::{Status, Task};
 use crate::AdminPolicy;
-use crate::cluster::version_parser::Version;
 
 /// Task used to poll for long running query execute job completion.
 #[derive(Debug, Clone)]

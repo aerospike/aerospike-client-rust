@@ -49,12 +49,12 @@ pub struct Statement {
 }
 
 impl Statement {
-    /// Create a new query statement with the given namespace, set name and optional list of bin
+    /// Creates a new query statement with the given namespace, set name and optional list of bin
     /// names.
     ///
     /// # Examples
     ///
-    /// Create a new statement to query the namespace "foo" and set "bar" and return the "name" and
+    /// Creates a new statement to query the namespace "foo" and set "bar" and return the "name" and
     /// "age" bins for each matching record.
     ///
     /// ```rust

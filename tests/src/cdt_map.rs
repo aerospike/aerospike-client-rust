@@ -20,8 +20,8 @@ use crate::common;
 use aerospike::operations::cdt_context::{ctx_map_key, ctx_map_key_create};
 use aerospike::operations::{maps, MapOrder};
 use aerospike::{
-    as_bin, as_key, as_list, as_map, as_ord_map, as_val, as_values, Bins, MapPolicy,
-    MapReturnType, MapWriteFlags, MapWriteMode, ReadPolicy, Value, WritePolicy,
+    as_bin, as_key, as_list, as_map, as_ord_map, as_val, as_values, Bins, MapPolicy, MapReturnType,
+    MapWriteFlags, MapWriteMode, ReadPolicy, Value, WritePolicy,
 };
 
 #[aerospike_macro::test]
@@ -547,8 +547,10 @@ async fn map_put_with_flags_no_fail() {
     client.operate(&wpolicy, &key, &[op]).await.unwrap();
 
     // Use CREATE_ONLY | NO_FAIL - should silently skip existing key
-    let policy =
-        MapPolicy::new_with_flags(MapOrder::Unordered, MapWriteFlags::CREATE_ONLY | MapWriteFlags::NO_FAIL);
+    let policy = MapPolicy::new_with_flags(
+        MapOrder::Unordered,
+        MapWriteFlags::CREATE_ONLY | MapWriteFlags::NO_FAIL,
+    );
     let op = maps::put(&policy, "bin", as_val!("a"), as_val!(99));
     client.operate(&wpolicy, &key, &[op]).await.unwrap();
 
@@ -589,7 +591,10 @@ async fn map_put_with_flags_update_only() {
     // UPDATE_ONLY on non-existing key should fail
     let op = maps::put(&policy, "bin", as_val!("z"), as_val!(99));
     let result = client.operate(&wpolicy, &key, &[op]).await;
-    assert!(result.is_err(), "UPDATE_ONLY should fail on non-existing key");
+    assert!(
+        result.is_err(),
+        "UPDATE_ONLY should fail on non-existing key"
+    );
 
     client.close().await.unwrap();
 }
@@ -606,10 +611,8 @@ async fn map_new_with_flags_and_persisted_index() {
     client.delete(&wpolicy, &key).await.unwrap();
 
     // Create key-ordered map with persisted index via flags constructor
-    let policy = MapPolicy::new_with_flags_and_persisted_index(
-        MapOrder::KeyOrdered,
-        MapWriteFlags::DEFAULT,
-    );
+    let policy =
+        MapPolicy::new_with_flags_and_persisted_index(MapOrder::KeyOrdered, MapWriteFlags::DEFAULT);
     let op = maps::put(&policy, "bin", as_val!("c"), as_val!(3));
     client.operate(&wpolicy, &key, &[op]).await.unwrap();
 

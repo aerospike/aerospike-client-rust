@@ -63,7 +63,7 @@ pub struct QueryPolicy {
 }
 
 impl QueryPolicy {
-    /// Create a new query policy instance with default parameters.
+    /// Creates a new query policy instance with default parameters.
     pub fn new() -> Self {
         QueryPolicy::default()
     }

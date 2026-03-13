@@ -28,7 +28,7 @@ use crate::{Error, Result};
 use crate::{ParticleType, Value};
 use std::fmt::Debug;
 
-/// Expression Data Types for usage in some `FilterExpressions` on for example Map and List
+/// Expression data types for use in filter expressions on Map and List operations.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ExpType {
     /// NIL Expression Type
@@ -141,7 +141,7 @@ pub struct Expression {
     exps: Option<Vec<Expression>>,
     /// Optional Arguments (CDT)
     arguments: Option<Vec<ExpressionArgument>>,
-    /// Pre-packed expression bytes (used by from_base64)
+    /// Pre-packed expression bytes (used by [`from_base64`]).
     bytes: Option<Vec<u8>>,
 }
 
@@ -344,7 +344,7 @@ impl Expression {
     }
 }
 
-/// Create a record key expression of specified type.
+/// Creates a record key expression of specified type.
 /// ```
 /// use aerospike::expressions::{ExpType, ge, int_val, key};
 /// // Integer record key >= 100000
@@ -361,7 +361,7 @@ pub fn key(exp_type: ExpType) -> Expression {
     )
 }
 
-/// Create an expression from a base64 encoded expression string.
+/// Creates an expression from a base64-encoded expression string.
 pub fn from_base64(b64: &str) -> Result<Expression> {
     let bytes = base64::decode(b64)
         .map_err(|e| Error::BadResponse(format!("Invalid base64 expression: {e}")))?;
@@ -377,8 +377,8 @@ pub fn from_base64(b64: &str) -> Result<Expression> {
     })
 }
 
-/// Create function that returns if the primary key is stored in the record meta data
-/// as a boolean expression. This would occur when `send_key` is true on record write.
+/// Creates an expression that returns if the primary key is stored in the record meta data
+/// as a boolean expression. This would occur when [`WritePolicy::send_key`](crate::WritePolicy::send_key) is true on record write.
 /// ```
 /// // Key exists in record meta data
 /// use aerospike::expressions::key_exists;
@@ -388,7 +388,7 @@ pub fn key_exists() -> Expression {
     Expression::new(Some(ExpOp::KeyExists), None, None, None, None, None)
 }
 
-/// Create 64 bit int bin expression.
+/// Creates 64 bit int bin expression.
 /// ```
 /// // Integer bin "a" == 500
 /// use aerospike::expressions::{int_bin, int_val, eq};
@@ -405,7 +405,7 @@ pub fn int_bin(name: String) -> Expression {
     )
 }
 
-/// Create boolean bin expression.
+/// Creates boolean bin expression.
 /// ```
 /// // Boolean bin "a" == true
 /// use aerospike::expressions::{bool_bin, bool_val, eq};
@@ -422,7 +422,7 @@ pub fn bool_bin(name: String) -> Expression {
     )
 }
 
-/// Create string bin expression.
+/// Creates string bin expression.
 /// ```
 /// // String bin "a" == "views"
 /// use aerospike::expressions::{eq, string_bin, string_val};
@@ -439,7 +439,7 @@ pub fn string_bin(name: String) -> Expression {
     )
 }
 
-/// Create blob bin expression.
+/// Creates blob bin expression.
 /// ```
 /// // String bin "a" == [1,2,3]
 /// use aerospike::expressions::{eq, blob_bin, blob_val};
@@ -457,7 +457,7 @@ pub fn blob_bin(name: String) -> Expression {
     )
 }
 
-/// Create 64 bit float bin expression.
+/// Creates 64 bit float bin expression.
 /// ```
 /// use aerospike::expressions::{float_val, float_bin, eq};
 /// // Integer bin "a" == 500.5
@@ -474,7 +474,7 @@ pub fn float_bin(name: String) -> Expression {
     )
 }
 
-/// Create geo bin expression.
+/// Creates geo bin expression.
 /// ```
 /// // String bin "a" == region
 /// use aerospike::expressions::{eq, geo_bin, string_val};
@@ -492,7 +492,7 @@ pub fn geo_bin(name: String) -> Expression {
     )
 }
 
-/// Create list bin expression.
+/// Creates list bin expression.
 /// ```
 /// use aerospike::expressions::{ExpType, eq, int_val, list_bin};
 /// use aerospike::operations::lists::ListReturnType;
@@ -511,7 +511,7 @@ pub fn list_bin(name: String) -> Expression {
     )
 }
 
-/// Create map bin expression.
+/// Creates map bin expression.
 ///
 /// ```
 /// // Bin a["key"] == "value"
@@ -534,7 +534,7 @@ pub fn map_bin(name: String) -> Expression {
     )
 }
 
-/// Create a HLL bin expression
+/// Creates an HLL bin expression.
 ///
 /// ```
 /// use aerospike::expressions::{gt, list_val, hll_bin, int_val};
@@ -557,7 +557,7 @@ pub fn hll_bin(name: String) -> Expression {
     )
 }
 
-/// Create function that returns if bin of specified name exists.
+/// Creates an expression that returns if bin of specified name exists.
 /// ```
 /// // Bin "a" exists in record
 /// use aerospike::expressions::bin_exists;
@@ -567,7 +567,7 @@ pub fn bin_exists(name: String) -> Expression {
     ne(bin_type(name), int_val(ParticleType::NULL as i64))
 }
 
-/// Create function that returns bin's integer particle type.
+/// Creates an expression that returns bin's integer particle type.
 /// ```
 /// use aerospike::ParticleType;
 /// use aerospike::expressions::{eq, bin_type, int_val};
@@ -585,7 +585,7 @@ pub fn bin_type(name: String) -> Expression {
     )
 }
 
-/// Create function that returns record set name string.
+/// Creates an expression that returns record set name string.
 /// ```
 /// use aerospike::expressions::{eq, set_name, string_val};
 /// // Record set name == "myset
@@ -595,7 +595,7 @@ pub fn set_name() -> Expression {
     Expression::new(Some(ExpOp::SetName), None, None, None, None, None)
 }
 
-/// Create expression that returns the record size. This expression usually evaluates
+/// Creates expression that returns the record size. This expression usually evaluates
 /// quickly because record meta data is cached in memory.
 ///
 /// Requires server version 7.0+. This expression replaces [`device_size()`](device_size) and
@@ -610,7 +610,7 @@ pub fn record_size() -> Expression {
     Expression::new(Some(ExpOp::RecordSize), None, None, None, None, None)
 }
 
-/// Create function that returns record size on disk.
+/// Creates an expression that returns record size on disk.
 /// If server storage-engine is memory, then zero is returned.
 ///
 /// Deprecated: `memory_size` has been deprecated since server version 8.1. Use [`record_size()`].
@@ -626,7 +626,7 @@ pub fn device_size() -> Expression {
     Expression::new(Some(ExpOp::DeviceSize), None, None, None, None, None)
 }
 
-/// Create expression that returns record size in memory. If server storage-engine is
+/// Creates expression that returns record size in memory. If server storage-engine is
 /// not memory nor data-in-memory, then zero is returned. This expression usually evaluates
 /// quickly because record meta data is cached in memory.
 ///
@@ -646,7 +646,7 @@ pub fn memory_size() -> Expression {
     Expression::new(Some(ExpOp::MemorySize), None, None, None, None, None)
 }
 
-/// Create function that returns record last update time expressed as 64 bit integer
+/// Creates an expression that returns record last update time expressed as 64 bit integer
 /// nanoseconds since 1970-01-01 epoch.
 /// ```
 /// // Record last update time >=2020-08-01
@@ -657,7 +657,7 @@ pub fn last_update() -> Expression {
     Expression::new(Some(ExpOp::LastUpdate), None, None, None, None, None)
 }
 
-/// Create expression that returns milliseconds since the record was last updated.
+/// Creates expression that returns milliseconds since the record was last updated.
 /// This expression usually evaluates quickly because record meta data is cached in memory.
 ///
 /// ```
@@ -669,7 +669,7 @@ pub fn since_update() -> Expression {
     Expression::new(Some(ExpOp::SinceUpdate), None, None, None, None, None)
 }
 
-/// Create function that returns record expiration time expressed as 64 bit integer
+/// Creates an expression that returns record expiration time expressed as 64 bit integer
 /// nanoseconds since 1970-01-01 epoch.
 /// ```
 /// // Expires on 2020-08-01
@@ -680,7 +680,7 @@ pub fn void_time() -> Expression {
     Expression::new(Some(ExpOp::VoidTime), None, None, None, None, None)
 }
 
-/// Create function that returns record expiration time (time to live) in integer seconds.
+/// Creates an expression that returns record expiration time (time to live) in integer seconds.
 /// ```
 /// // Record expires in less than 1 hour
 /// use aerospike::expressions::{lt, ttl, int_val};
@@ -690,7 +690,7 @@ pub fn ttl() -> Expression {
     Expression::new(Some(ExpOp::TTL), None, None, None, None, None)
 }
 
-/// Create expression that returns if record has been deleted and is still in tombstone state.
+/// Creates expression that returns if record has been deleted and is still in tombstone state.
 /// This expression usually evaluates quickly because record meta data is cached in memory.
 ///
 /// ```
@@ -701,7 +701,7 @@ pub fn ttl() -> Expression {
 pub fn is_tombstone() -> Expression {
     Expression::new(Some(ExpOp::IsTombstone), None, None, None, None, None)
 }
-/// Create function that returns record digest modulo as integer.
+/// Creates an expression that returns record digest modulo as integer.
 /// ```
 /// // Records that have digest(key) % 3 == 1
 /// use aerospike::expressions::{int_val, eq, digest_modulo};
@@ -718,7 +718,7 @@ pub fn digest_modulo(modulo: i64) -> Expression {
     )
 }
 
-/// Create function like regular expression string operation.
+/// Creates a regular expression string comparison expression.
 /// ```
 /// use aerospike::RegexFlag;
 /// use aerospike::expressions::{regex_compare, string_bin};
@@ -737,7 +737,7 @@ pub fn regex_compare(regex: String, flags: i64, bin: Expression) -> Expression {
     )
 }
 
-/// Create compare geospatial operation.
+/// Creates a geospatial comparison expression.
 /// ```
 /// use aerospike::expressions::{geo_compare, geo_bin, geo_val};
 /// // Query region within coordinates.
@@ -755,32 +755,32 @@ pub fn geo_compare(left: Expression, right: Expression) -> Expression {
     )
 }
 
-/// Creates 64 bit integer value
+/// Creates a 64-bit integer value.
 pub fn int_val(val: i64) -> Expression {
     Expression::new(None, Some(Value::from(val)), None, None, None, None)
 }
 
-/// Creates a Boolean value
+/// Creates a boolean value.
 pub fn bool_val(val: bool) -> Expression {
     Expression::new(None, Some(Value::from(val)), None, None, None, None)
 }
 
-/// Creates String bin value
+/// Creates a string bin value.
 pub fn string_val(val: String) -> Expression {
     Expression::new(None, Some(Value::from(val)), None, None, None, None)
 }
 
-/// Creates 64 bit float bin value
+/// Creates a 64-bit float bin value.
 pub fn float_val(val: f64) -> Expression {
     Expression::new(None, Some(Value::from(val)), None, None, None, None)
 }
 
-/// Creates Blob bin value
+/// Creates a blob bin value.
 pub fn blob_val(val: Vec<u8>) -> Expression {
     Expression::new(None, Some(Value::from(val)), None, None, None, None)
 }
 
-/// Create List bin Value
+/// Creates a list bin value.
 pub fn list_val(val: Vec<Value>) -> Expression {
     Expression::new(
         Some(ExpOp::Quoted),
@@ -792,7 +792,7 @@ pub fn list_val(val: Vec<Value>) -> Expression {
     )
 }
 
-/// Create Map bin Value
+/// Creates a map bin value.
 #[allow(clippy::implicit_hasher)]
 pub fn map_val<M: MapLike<Value, Value>>(val: M) -> Expression {
     let val = match val.value() {
@@ -803,27 +803,27 @@ pub fn map_val<M: MapLike<Value, Value>>(val: M) -> Expression {
     Expression::new(None, Some(val), None, None, None, None)
 }
 
-/// Create geospatial json string value.
+/// Creates a geospatial JSON string value.
 pub fn geo_val(val: String) -> Expression {
     Expression::new(None, Some(Value::GeoJSON(val)), None, None, None, None)
 }
 
-/// Create a Nil Value
+/// Creates a nil value.
 pub fn nil() -> Expression {
     Expression::new(None, Some(Value::Nil), None, None, None, None)
 }
 
-/// Create a Infinity Value
+/// Creates an infinity value.
 pub fn infinity() -> Expression {
     Expression::new(None, Some(Value::Infinity), None, None, None, None)
 }
 
-/// Create a Wildcard Value
+/// Creates a wildcard value.
 pub fn wildcard() -> Expression {
     Expression::new(None, Some(Value::Wildcard), None, None, None, None)
 }
 
-/// Create "not" operator expression.
+/// Creates "not" operator expression.
 /// ```
 /// // ! (a == 0 || a == 10)
 /// use aerospike::expressions::{not, or, eq, int_bin, int_val};
@@ -842,7 +842,7 @@ pub fn not(exp: Expression) -> Expression {
     }
 }
 
-/// Create "and" (&&) operator that applies to a variable number of expressions.
+/// Creates "and" (&&) operator that applies to a variable number of expressions.
 /// ```
 /// // (a > 5 || a == 0) && b < 3
 /// use aerospike::expressions::{and, or, gt, int_bin, int_val, eq, lt};
@@ -861,7 +861,7 @@ pub const fn and(exps: Vec<Expression>) -> Expression {
     }
 }
 
-/// Create "or" (||) operator that applies to a variable number of expressions.
+/// Creates "or" (||) operator that applies to a variable number of expressions.
 /// ```
 /// // a == 0 || b == 0
 /// use aerospike::expressions::{or, eq, int_bin, int_val};
@@ -880,7 +880,7 @@ pub const fn or(exps: Vec<Expression>) -> Expression {
     }
 }
 
-/// Create "xor" (^) operator that applies to a variable number of expressions.
+/// Creates "xor" (^) operator that applies to a variable number of expressions.
 /// ```
 /// // a == 0 ^ b == 0
 /// use aerospike::expressions::{xor, eq, int_bin, int_val};
@@ -899,7 +899,7 @@ pub const fn xor(exps: Vec<Expression>) -> Expression {
     }
 }
 
-/// Create equal (==) expression.
+/// Creates equal (==) expression.
 /// ```
 /// // a == 11
 /// use aerospike::expressions::{eq, int_bin, int_val};
@@ -918,7 +918,7 @@ pub fn eq(left: Expression, right: Expression) -> Expression {
     }
 }
 
-/// Create not equal (!=) expression
+/// Creates not equal (!=) expression
 /// ```
 /// // a != 13
 /// use aerospike::expressions::{ne, int_bin, int_val};
@@ -937,7 +937,7 @@ pub fn ne(left: Expression, right: Expression) -> Expression {
     }
 }
 
-/// Create greater than (>) operation.
+/// Creates greater than (>) operation.
 /// ```
 /// // a > 8
 /// use aerospike::expressions::{gt, int_bin, int_val};
@@ -956,7 +956,7 @@ pub fn gt(left: Expression, right: Expression) -> Expression {
     }
 }
 
-/// Create greater than or equal (>=) operation.
+/// Creates greater than or equal (>=) operation.
 /// ```
 /// use aerospike::expressions::{ge, int_bin, int_val};
 /// // a >= 88
@@ -975,7 +975,7 @@ pub fn ge(left: Expression, right: Expression) -> Expression {
     }
 }
 
-/// Create less than (<) operation.
+/// Creates less than (<) operation.
 /// ```
 /// // a < 1000
 /// use aerospike::expressions::{lt, int_bin, int_val};
@@ -994,7 +994,7 @@ pub fn lt(left: Expression, right: Expression) -> Expression {
     }
 }
 
-/// Create less than or equals (<=) operation.
+/// Creates less than or equals (<=) operation.
 /// ```
 /// use aerospike::expressions::{le, int_bin, int_val};
 /// // a <= 1
@@ -1013,7 +1013,7 @@ pub fn le(left: Expression, right: Expression) -> Expression {
     }
 }
 
-/// Create "add" (+) operator that applies to a variable number of expressions.
+/// Creates "add" (+) operator that applies to a variable number of expressions.
 ///
 /// Return sum of all `FilterExpressions` given. All arguments must resolve to the same type (integer or float).
 /// Requires server version 5.6.0+.
@@ -1035,7 +1035,7 @@ pub const fn num_add(exps: Vec<Expression>) -> Expression {
     }
 }
 
-/// Create "subtract" (-) operator that applies to a variable number of expressions.
+/// Creates "subtract" (-) operator that applies to a variable number of expressions.
 ///
 /// If only one `FilterExpressions` is provided, return the negation of that argument.
 /// Otherwise, return the sum of the 2nd to Nth `FilterExpressions` subtracted from the 1st
@@ -1059,7 +1059,7 @@ pub const fn num_sub(exps: Vec<Expression>) -> Expression {
     }
 }
 
-/// Create "multiply" (*) operator that applies to a variable number of expressions.
+/// Creates "multiply" (*) operator that applies to a variable number of expressions.
 ///
 /// Return the product of all `FilterExpressions`. If only one `FilterExpressions` is supplied, return
 /// that `FilterExpressions`. All `FilterExpressions` must resolve to the same type (integer or float).
@@ -1082,7 +1082,7 @@ pub const fn num_mul(exps: Vec<Expression>) -> Expression {
     }
 }
 
-/// Create "divide" (/) operator that applies to a variable number of expressions.
+/// Creates "divide" (/) operator that applies to a variable number of expressions.
 ///
 /// If there is only one `FilterExpressions`, returns the reciprocal for that `FilterExpressions`.
 /// Otherwise, return the first `FilterExpressions` divided by the product of the rest.
@@ -1106,7 +1106,7 @@ pub const fn num_div(exps: Vec<Expression>) -> Expression {
     }
 }
 
-/// Create "power" operator that raises a "base" to the "exponent" power.
+/// Creates "power" operator that raises a "base" to the "exponent" power.
 /// All arguments must resolve to floats.
 /// Requires server version 5.6.0+.
 /// ```
@@ -1127,7 +1127,7 @@ pub fn num_pow(base: Expression, exponent: Expression) -> Expression {
     }
 }
 
-/// Create "log" operator for logarithm of "num" with base "base".
+/// Creates "log" operator for logarithm of "num" with base "base".
 /// All arguments must resolve to floats.
 /// Requires server version 5.6.0+.
 /// ```
@@ -1148,7 +1148,7 @@ pub fn num_log(num: Expression, base: Expression) -> Expression {
     }
 }
 
-/// Create "modulo" (%) operator that determines the remainder of "numerator"
+/// Creates "modulo" (%) operator that determines the remainder of "numerator"
 /// divided by "denominator". All arguments must resolve to integers.
 /// Requires server version 5.6.0+.
 /// ```
@@ -1169,7 +1169,7 @@ pub fn num_mod(numerator: Expression, denominator: Expression) -> Expression {
     }
 }
 
-/// Create operator that returns absolute value of a number.
+/// Creates operator that returns absolute value of a number.
 /// All arguments must resolve to integer or float.
 /// Requires server version 5.6.0+.
 /// ```
@@ -1190,7 +1190,7 @@ pub fn num_abs(value: Expression) -> Expression {
     }
 }
 
-/// Create expression that rounds a floating point number down to the closest integer value.
+/// Creates expression that rounds a floating point number down to the closest integer value.
 /// The return type is float.
 // Requires server version 5.6.0+.
 /// ```
@@ -1211,7 +1211,7 @@ pub fn num_floor(num: Expression) -> Expression {
     }
 }
 
-/// Create expression that rounds a floating point number up to the closest integer value.
+/// Creates expression that rounds a floating point number up to the closest integer value.
 /// The return type is float.
 /// Requires server version 5.6.0+.
 /// ```
@@ -1232,7 +1232,7 @@ pub fn num_ceil(num: Expression) -> Expression {
     }
 }
 
-/// Create expression that converts an integer to a float.
+/// Creates expression that converts an integer to a float.
 /// Requires server version 5.6.0+.
 /// ```
 /// // int(2.5) == 2
@@ -1252,7 +1252,7 @@ pub fn to_int(num: Expression) -> Expression {
     }
 }
 
-/// Create expression that converts a float to an integer.
+/// Creates expression that converts a float to an integer.
 /// Requires server version 5.6.0+.
 /// ```
 /// // float(2) == 2.0
@@ -1272,7 +1272,7 @@ pub fn to_float(num: Expression) -> Expression {
     }
 }
 
-/// Create integer "and" (&) operator that is applied to two or more integers.
+/// Creates integer "and" (&) operator that is applied to two or more integers.
 /// All arguments must resolve to integers.
 /// Requires server version 5.6.0+.
 /// ```
@@ -1293,7 +1293,7 @@ pub const fn int_and(exps: Vec<Expression>) -> Expression {
     }
 }
 
-/// Create integer "or" (|) operator that is applied to two or more integers.
+/// Creates integer "or" (|) operator that is applied to two or more integers.
 /// All arguments must resolve to integers.
 /// Requires server version 5.6.0+.
 /// ```
@@ -1314,7 +1314,7 @@ pub const fn int_or(exps: Vec<Expression>) -> Expression {
     }
 }
 
-/// Create integer "xor" (^) operator that is applied to two or more integers.
+/// Creates integer "xor" (^) operator that is applied to two or more integers.
 /// All arguments must resolve to integers.
 /// Requires server version 5.6.0+.
 /// ```
@@ -1335,7 +1335,7 @@ pub const fn int_xor(exps: Vec<Expression>) -> Expression {
     }
 }
 
-/// Create integer "not" (~) operator.
+/// Creates integer "not" (~) operator.
 /// Requires server version 5.6.0+.
 /// ```
 /// // ~a == 7
@@ -1355,7 +1355,7 @@ pub fn int_not(exp: Expression) -> Expression {
     }
 }
 
-/// Create integer "left shift" (<<) operator.
+/// Creates integer "left shift" (<<) operator.
 /// Requires server version 5.6.0+.
 /// ```
 /// // a << 8 > 0xff
@@ -1375,7 +1375,7 @@ pub fn int_lshift(value: Expression, shift: Expression) -> Expression {
     }
 }
 
-/// Create integer "logical right shift" (>>>) operator.
+/// Creates integer "logical right shift" (>>>) operator.
 /// Requires server version 5.6.0+.
 /// ```
 /// // a >> 8 > 0xff
@@ -1395,7 +1395,7 @@ pub fn int_rshift(value: Expression, shift: Expression) -> Expression {
     }
 }
 
-/// Create integer "arithmetic right shift" (>>) operator.
+/// Creates integer "arithmetic right shift" (>>) operator.
 /// The sign bit is preserved and not shifted.
 /// Requires server version 5.6.0+.
 /// ```
@@ -1416,7 +1416,7 @@ pub fn int_arshift(value: Expression, shift: Expression) -> Expression {
     }
 }
 
-/// Create expression that returns count of integer bits that are set to 1.
+/// Creates expression that returns count of integer bits that are set to 1.
 /// Requires server version 5.6.0+.
 /// ```
 /// // count(a) == 4
@@ -1436,7 +1436,7 @@ pub fn int_count(exp: Expression) -> Expression {
     }
 }
 
-/// Create expression that scans integer bits from left (most significant bit) to
+/// Creates expression that scans integer bits from left (most significant bit) to
 /// right (least significant bit), looking for a search bit value. When the
 /// search value is found, the index of that bit (where the most significant bit is
 /// index 0) is returned. If "search" is true, the scan will search for the bit
@@ -1460,7 +1460,7 @@ pub fn int_lscan(value: Expression, search: Expression) -> Expression {
     }
 }
 
-/// Create expression that scans integer bits from right (least significant bit) to
+/// Creates expression that scans integer bits from right (least significant bit) to
 /// left (most significant bit), looking for a search bit value. When the
 /// search value is found, the index of that bit (where the most significant bit is
 /// index 0) is returned. If "search" is true, the scan will search for the bit
@@ -1484,7 +1484,7 @@ pub fn int_rscan(value: Expression, search: Expression) -> Expression {
     }
 }
 
-/// Create expression that returns the minimum value in a variable number of expressions.
+/// Creates expression that returns the minimum value in a variable number of expressions.
 /// All arguments must be the same type (integer or float).
 /// Requires server version 5.6.0+.
 /// ```
@@ -1505,7 +1505,7 @@ pub const fn min(exps: Vec<Expression>) -> Expression {
     }
 }
 
-/// Create expression that returns the maximum value in a variable number of expressions.
+/// Creates expression that returns the maximum value in a variable number of expressions.
 /// All arguments must be the same type (integer or float).
 /// Requires server version 5.6.0+.
 /// ```
@@ -1631,9 +1631,9 @@ pub fn var(name: String) -> Expression {
     }
 }
 
-/// Create unknown value. Used to intentionally fail an expression.
-/// The failure can be ignored with `ExpWriteFlags` `EVAL_NO_FAIL`
-/// or `ExpReadFlags` `EVAL_NO_FAIL`.
+/// Creates unknown value. Used to intentionally fail an expression.
+/// The failure can be ignored with [`ExpWriteFlags::EvalNoFail`](crate::operations::exp::ExpWriteFlags::EvalNoFail)
+/// or [`ExpReadFlags::EvalNoFail`](crate::operations::exp::ExpReadFlags::EvalNoFail).
 /// Requires server version 5.6.0+.
 ///
 /// ```

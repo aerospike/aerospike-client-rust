@@ -33,12 +33,12 @@ pub(crate) enum HllExpOp {
     MayContain = 56,
 }
 
-/// Create expression that creates a new HLL or resets an existing HLL.
+/// Creates expression that creates a new HLL or resets an existing HLL.
 pub fn init(policy: HLLPolicy, index_bit_count: Expression, bin: Expression) -> Expression {
     init_with_min_hash(policy, index_bit_count, int_val(-1), bin)
 }
 
-/// Create expression that creates a new HLL or resets an existing HLL with minhash bits.
+/// Creates expression that creates a new HLL or resets an existing HLL with minhash bits.
 pub fn init_with_min_hash(
     policy: HLLPolicy,
     index_bit_count: Expression,
@@ -56,7 +56,7 @@ pub fn init_with_min_hash(
     )
 }
 
-/// Create expression that adds list values to a HLL set and returns HLL set.
+/// Creates expression that adds list values to a HLL set and returns HLL set.
 /// The function assumes HLL bin already exists.
 /// ```
 /// use aerospike::operations::hll::HLLPolicy;
@@ -72,7 +72,7 @@ pub fn add(policy: HLLPolicy, list: Expression, bin: Expression) -> Expression {
     add_with_index_and_min_hash(policy, list, int_val(-1), int_val(-1), bin)
 }
 
-/// Create expression that adds values to a HLL set and returns HLL set.
+/// Creates expression that adds values to a HLL set and returns HLL set.
 /// If HLL bin does not exist, use `indexBitCount` to create HLL bin.
 /// ```
 /// use aerospike::operations::hll::HLLPolicy;
@@ -93,7 +93,7 @@ pub fn add_with_index(
     add_with_index_and_min_hash(policy, list, index_bit_count, int_val(-1), bin)
 }
 
-/// Create expression that adds values to a HLL set and returns HLL set. If HLL bin does not
+/// Creates expression that adds values to a HLL set and returns HLL set. If HLL bin does not
 /// exist, use `indexBitCount` and `minHashBitCount` to create HLL set.
 /// ```
 /// use aerospike::expressions::{gt, list_val, int_val, hll_bin};
@@ -124,7 +124,7 @@ pub fn add_with_index_and_min_hash(
     )
 }
 
-/// Create expression that returns estimated number of elements in the HLL bin.
+/// Creates expression that returns estimated number of elements in the HLL bin.
 ///
 /// ```
 /// // HLL bin "a" count > 7
@@ -142,7 +142,7 @@ pub fn get_count(bin: Expression) -> Expression {
     )
 }
 
-/// Create expression that returns a HLL object that is the union of all specified HLL objects
+/// Creates expression that returns a HLL object that is the union of all specified HLL objects
 /// in the list with the HLL bin.
 ///
 /// ```
@@ -167,7 +167,7 @@ pub fn get_union(list: Expression, bin: Expression) -> Expression {
     )
 }
 
-/// Create expression that returns estimated number of elements that would be contained by
+/// Creates expression that returns estimated number of elements that would be contained by
 /// the union of these HLL objects.
 ///
 /// ```
@@ -192,7 +192,7 @@ pub fn get_union_count(list: Expression, bin: Expression) -> Expression {
     )
 }
 
-/// Create expression that returns estimated number of elements that would be contained by
+/// Creates expression that returns estimated number of elements that would be contained by
 /// the intersection of these HLL objects.
 ///
 /// ```
@@ -217,7 +217,7 @@ pub fn get_intersect_count(list: Expression, bin: Expression) -> Expression {
     )
 }
 
-/// Create expression that returns estimated similarity of these HLL objects as a 64 bit float.
+/// Creates expression that returns estimated similarity of these HLL objects as a 64 bit float.
 ///
 /// ```
 /// use aerospike::expressions::{hll_bin, ge, float_val};
@@ -237,7 +237,7 @@ pub fn get_similarity(list: Expression, bin: Expression) -> Expression {
     )
 }
 
-/// Create expression that returns `indexBitCount` and `minHashBitCount` used to create HLL bin
+/// Creates expression that returns `indexBitCount` and `minHashBitCount` used to create HLL bin
 /// in a list of longs. `list[0]` is `indexBitCount` and `list[1]` is `minHashBitCount`.
 ///
 /// ```
@@ -259,7 +259,7 @@ pub fn describe(bin: Expression) -> Expression {
     )
 }
 
-/// Create expression that returns one if HLL bin may contain all items in the list.
+/// Creates expression that returns one if HLL bin may contain all items in the list.
 ///
 /// ```
 /// use aerospike::Value;
