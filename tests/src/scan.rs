@@ -68,7 +68,7 @@ async fn scan_single_consumer() {
     // ================================ Select bins ====================
 
     let pf = PartitionFilter::all();
-    let mut stmt = Statement::new(
+    let stmt = Statement::new(
         namespace,
         &set_name,
         Bins::Some(vec!["bin".into(), "bin2".into()]),

@@ -173,7 +173,7 @@ pub use query::{CollectionIndexType, IndexType, PartitionFilter, Recordset, Stat
 pub use record::Record;
 pub use result_code::ResultCode;
 pub use role::Role;
-pub use task::{DropIndexTask, IndexTask, RegisterTask, Task, UdfRemoveTask};
+pub use task::{DropIndexTask, ExecuteTask, IndexTask, RegisterTask, Task, UdfRemoveTask};
 pub use user::User;
 pub use value::{FloatValue, Value};
 

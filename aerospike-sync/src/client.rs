@@ -25,8 +25,9 @@ use aerospike_core::DropIndexTask;
 use aerospike_core::UdfRemoveTask;
 use aerospike_core::{
     AdminPolicy, BatchOperation, BatchPolicy, BatchRecord, Bin, Bins, ClientPolicy,
-    CollectionIndexType, IndexTask, IndexType, Key, Node, Privilege, QueryPolicy, ReadPolicy,
-    Record, Recordset, RegisterTask, Role, Statement, ToHosts, UDFLang, User, Value, WritePolicy,
+    CollectionIndexType, ExecuteTask, IndexTask, IndexType, Key, Node, Privilege, QueryPolicy,
+    ReadPolicy, Record, Recordset, RegisterTask, Role, Statement, ToHosts, UDFLang, User, Value,
+    WritePolicy,
 };
 use futures::executor::block_on;
 
@@ -555,6 +556,21 @@ impl Client {
         statement: Statement,
     ) -> Result<Arc<Recordset>> {
         block_on(self.async_client.query(policy, partition_filter, statement))
+    }
+
+    /// Execute a query and apply operations to matching records on the server.
+    /// Returns an `ExecuteTask` that can be used to monitor the progress of the
+    /// background job.
+    pub fn query_operate(
+        &self,
+        write_policy: &WritePolicy,
+        statement: Statement,
+        operations: &[Operation],
+    ) -> Result<ExecuteTask> {
+        block_on(
+            self.async_client
+                .query_operate(write_policy, statement, operations),
+        )
     }
 
     /// Sets XDR filter for given datacenter name and namespace. The expression filter indicates

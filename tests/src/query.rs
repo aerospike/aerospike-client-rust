@@ -533,3 +533,66 @@ async fn test_query_geo_within_geojson_region() {
 
     let _ = client.truncate(&apolicy, namespace, set_name, 0).await;
 }
+
+#[aerospike_macro::test]
+async fn query_operate_write() {
+    let client = common::client().await;
+    let namespace = common::namespace();
+    let set_name = create_test_set(&client, EXPECTED).await;
+
+    let wpolicy = WritePolicy::default();
+
+    // Use query_operate to add 100 to every record's "bin" value in range [0, 99]
+    let mut statement = Statement::new(namespace, &set_name, Bins::All);
+    statement.add_filter(as_range!("bin", 0, 99));
+    let ops = vec![operations::add(&as_bin!("bin", 100))];
+    let task = client
+        .query_operate(&wpolicy, statement, &ops)
+        .await
+        .expect("query_operate failed");
+    task.wait_till_complete(Some(Duration::from_secs(30)))
+        .await
+        .expect("task did not complete");
+
+    // Verify the records were updated
+    let rpolicy = ReadPolicy::default();
+    for i in 0..100_i64 {
+        let key = as_key!(namespace, &set_name, i);
+        let rec = client.get(&rpolicy, &key, Bins::All).await.unwrap();
+        let val: i64 = rec.bins["bin"].clone().into();
+        assert_eq!(val, i + 100, "record {i} was not updated correctly");
+    }
+
+    client.close().await.unwrap();
+}
+
+#[aerospike_macro::test]
+async fn query_operate_scan_all() {
+    let client = common::client().await;
+    let namespace = common::namespace();
+    let set_name = create_test_set(&client, 50).await;
+
+    let wpolicy = WritePolicy::default();
+
+    // Use query_operate without filter (scan mode) to set a new bin on all records
+    let statement = Statement::new(namespace, &set_name, Bins::All);
+    let ops = vec![operations::put(&as_bin!("new_bin", 999))];
+    let task = client
+        .query_operate(&wpolicy, statement, &ops)
+        .await
+        .expect("query_operate scan failed");
+    task.wait_till_complete(Some(Duration::from_secs(30)))
+        .await
+        .expect("task did not complete");
+
+    // Verify all records have the new bin
+    let rpolicy = ReadPolicy::default();
+    for i in 0..50_i64 {
+        let key = as_key!(namespace, &set_name, i);
+        let rec = client.get(&rpolicy, &key, Bins::All).await.unwrap();
+        let val: i64 = rec.bins["new_bin"].clone().into();
+        assert_eq!(val, 999, "record {i} missing new_bin");
+    }
+
+    client.close().await.unwrap();
+}

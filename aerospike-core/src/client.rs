@@ -29,7 +29,7 @@ use crate::commands::admin_command::AdminCommand;
 use crate::commands::buffer::Buffer;
 use crate::commands::{
     DeleteCommand, ExecuteUDFCommand, ExistsCommand, OperateCommand, QueryCommand, ReadCommand,
-    ScanCommand, TouchCommand, WriteCommand,
+    ScanCommand, ServerCommand, TouchCommand, WriteCommand,
 };
 use crate::errors::{Error, Result};
 use crate::expressions::Expression;
@@ -38,7 +38,7 @@ use crate::net::ToHosts;
 use crate::operations::{CdtContext, Operation, OperationType};
 use crate::policy::{AdminPolicy, BatchPolicy, ClientPolicy, QueryPolicy, ReadPolicy, WritePolicy};
 use crate::query::{PartitionFilter, PartitionTracker};
-use crate::task::{DropIndexTask, IndexTask, RegisterTask, UdfRemoveTask};
+use crate::task::{DropIndexTask, ExecuteTask, IndexTask, RegisterTask, UdfRemoveTask};
 use crate::{
     BatchRecord, Bin, Bins, CollectionIndexType, IndexType, Key, Privilege, Record, Recordset,
     ResultCode, Role, Statement, UDFLang, User, Value,
@@ -1226,6 +1226,60 @@ impl Client {
         });
 
         Ok(recordset)
+    }
+
+    /// Execute a query and apply operations to matching records on the server.
+    /// This method sends the command to all nodes and returns an `ExecuteTask`
+    /// that can be used to monitor the progress of the background job.
+    ///
+    /// The statement's filters determine which records are affected. If no filter
+    /// is specified, all records in the namespace/set are processed (scan mode).
+    ///
+    /// Only write operations are allowed. Read operations will result in an error.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// # use aerospike::*;
+    /// # async fn example(client: &Client) -> Result<()> {
+    /// let wpolicy = WritePolicy::default();
+    /// let statement = Statement::new("ns", "set", Bins::All);
+    /// let ops = vec![operations::put(&Bin::new("bin", 42))];
+    /// let task = client.query_operate(&wpolicy, statement, &ops).await?;
+    /// task.wait_till_complete(None).await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn query_operate(
+        &self,
+        write_policy: &WritePolicy,
+        statement: Statement,
+        operations: &[Operation],
+    ) -> Result<ExecuteTask> {
+        statement.validate()?;
+
+        let nodes = self.cluster.nodes();
+        if nodes.is_empty() {
+            return Err(Error::Connection("No connections available".to_string()));
+        }
+
+        let task_id: u64 = rand::random();
+        let scan = statement.filters.is_none();
+
+        let mut last_err: Option<Error> = None;
+        for node in &nodes {
+            let mut cmd =
+                ServerCommand::new(node.clone(), write_policy, &statement, task_id, operations);
+            if let Err(err) = cmd.execute().await {
+                last_err = Some(err);
+            }
+        }
+
+        if let Some(err) = last_err {
+            return Err(err);
+        }
+
+        Ok(ExecuteTask::new(self.cluster.clone(), task_id, scan))
     }
 
     async fn execute_query_timeout(
