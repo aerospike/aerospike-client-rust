@@ -1,4 +1,4 @@
-// Copyright 2015-2018 Aerospike, Inc.
+// Copyright 2015-2024 Aerospike, Inc.
 //
 // Portions may be licensed to Aerospike, Inc. under one or more contributor
 // license agreements.
@@ -23,6 +23,7 @@ use std::sync::Arc;
 use hazarc::AtomicArc;
 
 use crate::cluster::node_validator::NodeValidator;
+use crate::cluster::peers::Peers;
 use crate::cluster::peers_parser::PeersParser;
 use crate::cluster::CLIENT_VERSION;
 use crate::commands::Message;
@@ -34,6 +35,7 @@ use crate::Version;
 pub const PARTITIONS: usize = 4096;
 pub const PARTITION_GENERATION: &str = "partition-generation";
 pub const REBALANCE_GENERATION: &str = "rebalance-generation";
+pub const PEERS_GENERATION: &str = "peers-generation";
 
 /// The node instance holding connections and node settings.
 /// Exposed for usage in the sync client interface.
@@ -50,9 +52,11 @@ pub struct Node {
 
     partition_generation: AtomicIsize,
     rebalance_generation: AtomicIsize,
+    peers_generation: AtomicIsize,
+    peers_count: AtomicUsize,
+    partition_changed: AtomicBool,
     // Which racks are these things part of
     rack_ids: AtomicArc<HashMap<String, usize>>,
-    refresh_count: AtomicUsize,
     reference_count: AtomicUsize,
     responded: AtomicBool,
     active: AtomicBool,
@@ -77,7 +81,9 @@ impl Node {
             connection_pool: ConnectionPool::new(nv.aliases[0].clone(), client_policy),
             failures: AtomicUsize::new(0),
             partition_generation: AtomicIsize::new(-1),
-            refresh_count: AtomicUsize::new(0),
+            peers_generation: AtomicIsize::new(-1),
+            peers_count: AtomicUsize::new(0),
+            partition_changed: AtomicBool::new(false),
             reference_count: AtomicUsize::new(0),
             responded: AtomicBool::new(false),
             active: AtomicBool::new(true),
@@ -115,20 +121,44 @@ impl Node {
         self.reference_count.load(Ordering::Relaxed)
     }
 
-    // Refresh the node
-    pub async fn refresh(&self, current_aliases: HashMap<Host, Arc<Node>>) -> Result<Vec<Host>> {
+    /// Increments the reference count by 1.
+    pub fn increment_reference_count(&self) {
+        self.reference_count.fetch_add(1, Ordering::Relaxed);
+    }
+
+    // Returns the peers count
+    pub fn peers_count(&self) -> usize {
+        self.peers_count.load(Ordering::Relaxed)
+    }
+
+    // Returns whether partition changed during this tend cycle
+    pub fn partition_changed(&self) -> bool {
+        self.partition_changed.load(Ordering::Relaxed)
+    }
+
+    /// Phase 1 of the tend cycle: Refresh node metadata and check generation numbers.
+    ///
+    /// Sends lightweight info commands to verify node identity and check
+    /// peers-generation and partition-generation. Does NOT fetch the full peer list.
+    /// Sets `peers.gen_changed` if the peers generation differs from the last known value.
+    pub async fn refresh(&self, peers: &Peers) -> Result<()> {
+        if !self.is_active() {
+            return Ok(());
+        }
+
         self.reference_count.store(0, Ordering::Relaxed);
         self.responded.store(false, Ordering::Relaxed);
-        self.refresh_count.fetch_add(1, Ordering::Relaxed);
+        self.partition_changed.store(false, Ordering::Relaxed);
+
         let mut commands = vec![
             "node",
             "cluster-name",
+            PEERS_GENERATION,
             PARTITION_GENERATION,
-            self.client_policy.peers_string(),
         ];
 
         if self.client_policy.rack_ids.is_some() {
-            commands.push(REBALANCE_GENERATION);
+            commands.push("rack-ids");
         }
 
         let admin_policy = AdminPolicy {
@@ -139,19 +169,87 @@ impl Node {
             .info(&admin_policy, &commands)
             .await
             .map_err(|e| e.chain_error("Info command failed"))?;
+
         self.validate_node(&info_map)
             .map_err(|e| e.chain_error("Failed to validate node"))?;
+
+        self.verify_peers_generation(&info_map, peers)
+            .map_err(|e| e.chain_error("Failed to verify peers generation"))?;
+
+        self.verify_partition_generation(&info_map)
+            .map_err(|e| e.chain_error("Failed to verify partition generation"))?;
+
+        if let Err(err) = self.update_rack_info(&info_map) {
+            warn!("Updating node rack info failed: {err}");
+        }
+
         self.responded.store(true, Ordering::Relaxed);
-        let friends = self
-            .add_friends(current_aliases, &info_map)
-            .map_err(|e| e.chain_error("Failed to add friends"))?;
-        self.update_partitions(&info_map)
-            .map_err(|e| e.chain_error("Failed to update partitions"))?;
-        self.update_rebalance_generation(&info_map)
-            .map_err(|e| e.chain_error("Failed to update rebalance generation"))?;
         self.reset_failures();
+        peers.increment_refresh_count();
+        self.reference_count.fetch_add(1, Ordering::Relaxed);
+
         let _ = self.fill_min_conns().await;
-        Ok(friends)
+        Ok(())
+    }
+
+    /// Phase 2: Fetch and parse the full peer list from the server.
+    ///
+    /// Only called when `peers.gen_changed` is true (i.e., when any node's
+    /// peers generation changed during phase 1).
+    pub async fn refresh_peers(&self, peers: &mut Peers) -> Result<()> {
+        // Don't refresh peers when node connection has already failed during this tend.
+        if self.failures() > 0 || !self.is_active() {
+            return Ok(());
+        }
+
+        let admin_policy = AdminPolicy {
+            timeout: self.client_policy.timeout,
+        };
+
+        let peers_cmd = self.client_policy.peers_string();
+        let info_map = self.info(&admin_policy, &[peers_cmd]).await.map_err(|e| {
+            self.refresh_failed();
+            e.chain_error("Failed to fetch peers info")
+        })?;
+
+        let peer_string = match info_map.get(peers_cmd) {
+            None => {
+                self.refresh_failed();
+                return Err(Error::BadResponse("Missing peers list".to_string()));
+            }
+            Some(s) if s.is_empty() => return Ok(()),
+            Some(s) => s,
+        };
+
+        let result = PeersParser::new(peer_string).parse().map_err(|e| {
+            self.refresh_failed();
+            e
+        })?;
+
+        if !result.peers.is_empty() {
+            peers.increment_refresh_count();
+            peers.append_peers(result.peers);
+        }
+
+        self.peers_generation
+            .store(result.generation as isize, Ordering::Relaxed);
+        self.peers_count
+            .store(peers.peer_count(), Ordering::Relaxed);
+
+        Ok(())
+    }
+
+    /// Called when a refresh step fails. Resets generation numbers to force
+    /// re-discovery on the next tend cycle.
+    fn refresh_failed(&self) {
+        self.peers_generation.store(-1, Ordering::Relaxed);
+        self.partition_generation.store(-1, Ordering::Relaxed);
+
+        if self.client_policy.rack_ids.is_some() {
+            self.rebalance_generation.store(-1, Ordering::Relaxed);
+        }
+
+        self.increase_failures();
     }
 
     fn validate_node(&self, info_map: &HashMap<String, String>) -> Result<()> {
@@ -191,35 +289,58 @@ impl Node {
         }
     }
 
-    fn add_friends(
+    /// Compares the server's peers-generation with the node's last known value.
+    /// Sets `peers.gen_changed` to true if they differ.
+    fn verify_peers_generation(
         &self,
-        current_aliases: HashMap<Host, Arc<Node>>,
         info_map: &HashMap<String, String>,
-    ) -> Result<Vec<Host>> {
-        let mut friends: Vec<Host> = vec![];
-
-        let friend_string = match info_map.get(self.client_policy.peers_string()) {
-            None => return Err(Error::BadResponse("Missing services list".to_string())),
-            Some(friend_string) if friend_string.is_empty() => return Ok(friends),
-            Some(friend_string) => friend_string,
-        };
-
-        let (_, hosts) = PeersParser::new(friend_string).parse()?;
-        for mut alias in hosts {
-            if let Some(ref ip_map) = self.client_policy.ip_map {
-                if let Some(mapped) = ip_map.get(&alias.name) {
-                    alias.name = mapped.clone();
-                }
-            }
-
-            if current_aliases.contains_key(&alias) {
-                self.reference_count.fetch_add(1, Ordering::Relaxed);
-            } else if !friends.contains(&alias) {
-                friends.push(alias);
+        peers: &Peers,
+    ) -> Result<()> {
+        match info_map.get(PEERS_GENERATION) {
+            None => Err(Error::BadResponse("Missing peers-generation".to_string())),
+            Some(gen_string) => {
+                let gen = gen_string.parse::<isize>()?;
+                let changed = self.peers_generation.load(Ordering::Relaxed) != gen;
+                peers.set_gen_changed(changed);
+                Ok(())
             }
         }
+    }
 
-        Ok(friends)
+    /// Compares the server's partition-generation with the node's last known value.
+    /// Sets `partition_changed` flag if they differ.
+    fn verify_partition_generation(&self, info_map: &HashMap<String, String>) -> Result<()> {
+        match info_map.get(PARTITION_GENERATION) {
+            None => Err(Error::BadResponse(
+                "Missing partition generation".to_string(),
+            )),
+            Some(gen_string) => {
+                let gen = gen_string.parse::<isize>()?;
+                if self.partition_generation.load(Ordering::Relaxed) != gen {
+                    self.partition_changed.store(true, Ordering::Relaxed);
+                }
+                Ok(())
+            }
+        }
+    }
+
+    fn update_rack_info(&self, info_map: &HashMap<String, String>) -> Result<()> {
+        if self.client_policy.rack_ids.is_none() {
+            return Ok(());
+        }
+
+        // Receive format: <ns1>:<rack1>;<ns2>:<rack2>...
+        let rack_ids = info_map.get("rack-ids").map(String::as_str).unwrap_or("");
+
+        // Server does not support rack-aware
+        if rack_ids.is_empty() || rack_ids.to_uppercase().starts_with("ERROR") {
+            return Err(Error::BadResponse(
+                "ClientPolicy.rack_ids is set, but the server does not support this feature."
+                    .to_string(),
+            ));
+        }
+
+        self.parse_rack(rack_ids)
     }
 
     pub fn update_partitions(&self, info_map: &HashMap<String, String>) -> Result<()> {
@@ -236,6 +357,10 @@ impl Node {
         }
 
         Ok(())
+    }
+
+    pub fn set_partition_generation(&self, gen: isize) {
+        self.partition_generation.store(gen, Ordering::Relaxed);
     }
 
     pub fn update_rebalance_generation(&self, info_map: &HashMap<String, String>) -> Result<()> {

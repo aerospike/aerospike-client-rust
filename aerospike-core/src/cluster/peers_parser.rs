@@ -1,18 +1,18 @@
-// Copyright 2015-2018 Aerospike, Inc.
+// Copyright 2015-2024 Aerospike, Inc.
 //
-// Portions may be licensed to Aerospike, Inc. under one or more contributor
-// license agreements.
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License"); you may not
-// use this file except in compliance with the License. You may obtain a copy of
-// the License at http://www.apache.org/licenses/LICENSE-2.0
+// http://www.apache.org/licenses/LICENSE-2.0
 //
 // Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
-// WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
-// License for the specific language governing permissions and limitations under
-// the License.
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 
+use crate::cluster::peers::Peer;
 use crate::errors::{Error, Result};
 use crate::Host;
 use std::iter::Peekable;
@@ -22,6 +22,12 @@ pub struct PeersParser<'a> {
     s: Peekable<Chars<'a>>,
 }
 
+/// Result of parsing a peers response: generation number and list of peers.
+pub struct PeersParseResult {
+    pub generation: u64,
+    pub peers: Vec<Peer>,
+}
+
 impl<'a> PeersParser<'a> {
     pub fn new(s: &'a str) -> Self {
         PeersParser {
@@ -29,50 +35,77 @@ impl<'a> PeersParser<'a> {
         }
     }
 
-    pub fn parse(&mut self) -> Result<(u64, Vec<Host>)> {
-        let mut hosts = vec![];
-
+    /// Parses the peers response string and returns generation + peer list.
+    ///
+    /// Format: `generation,defaultPort,[peer1],[peer2],...`
+    /// Where each peer is: `[nodeName,tlsName,[host1:port,host2:port,...]]`
+    pub fn parse(&mut self) -> Result<PeersParseResult> {
         let gen = self.read_generation()?;
         self.expect(",")?;
         let default_port = self.read_port()?;
+
+        let mut peers = vec![];
+
+        // Server format: gen,port,[[peer1],[peer2],...]
+        // The peer list is wrapped in outer brackets.
+        match self.peek() {
+            Some(&',') => {}
+            _ => return Ok(PeersParseResult { generation: gen, peers }),
+        }
+        self.expect(",")?;
+        self.expect("[")?;
+
+        // Read peers until closing outer bracket
         loop {
-            match self.peek() {
-                Some(&c) if c == ',' => self.next_char(),
-                _ => break,
-            };
-            hosts.append(&mut self.parse_hosts(default_port)?);
+            if self.peek_is_one_of("]") {
+                break;
+            }
+            if let Some(peer) = self.parse_peer(default_port)? {
+                peers.push(peer);
+            }
+            if !self.peek_is_one_of(",") {
+                break;
+            }
+            self.expect(",")?;
         }
 
-        Ok((gen, hosts))
+        self.expect("]")?;
+
+        Ok(PeersParseResult { generation: gen, peers })
     }
 
-    pub fn parse_hosts(&mut self, default_port: u16) -> Result<Vec<Host>> {
-        let mut hosts = Vec::new();
-
+    /// Parses a single peer entry: `[nodeName,tlsName,[host1,host2,...]]`
+    fn parse_peer(&mut self, default_port: u16) -> Result<Option<Peer>> {
         self.expect("[")?;
-        // hosts may be empty
+        // Peer may be empty: `[]`
         if self.peek_is_one_of("]") {
             self.expect("]")?;
-            return Ok(hosts);
+            return Ok(None);
         }
 
-        let _node_name = self.read_until(",");
+        let node_name = self.read_until(",");
         self.expect(",")?;
         let tls_name = self.read_until(",");
 
+        let mut hosts = Vec::new();
         while self.peek_is_one_of(",") {
             self.expect(",")?;
             self.expect("[")?;
             if !self.peek_is_one_of("]") {
-                let mut host = self.read_hosts(&tls_name, default_port)?;
-                hosts.append(&mut host);
+                let mut h = self.read_hosts(&tls_name, default_port)?;
+                hosts.append(&mut h);
             }
             self.expect("]")?;
         }
 
         self.expect("]")?;
 
-        Ok(hosts)
+        Ok(Some(Peer {
+            node_name,
+            tls_name,
+            hosts,
+            replace_node: None,
+        }))
     }
 
     pub fn read_generation(&mut self) -> Result<u64> {
@@ -193,65 +226,92 @@ impl<'a> PeersParser<'a> {
 
 #[cfg(test)]
 mod tests {
-    use super::{Host, PeersParser};
+    use super::*;
 
     #[test]
     fn parse_peers() {
-        let (gen, hosts) = PeersParser::new("1234567,3000,[n1,t1,[192.168.4.10,192.168.3.10]],[n2,t2,[[2018::0002],[2018::0001]:4000]],[n3,t3,[foo1.aerocluster.com,foo2.aerocluster.new:3100]],[n4,t4,[foo2.aerocluster.com:5000]]")
+        // Server format: gen,port,[[peer1],[peer2],...]
+        let result = PeersParser::new("1234567,3000,[[n1,t1,[192.168.4.10,192.168.3.10]],[n2,t2,[[2018::0002],[2018::0001]:4000]],[n3,t3,[foo1.aerocluster.com,foo2.aerocluster.new:3100]],[n4,t4,[foo2.aerocluster.com:5000]]]")
         .parse()
         .expect("Error parsing peer_string");
 
-        assert_eq!(gen, 1234567);
+        assert_eq!(result.generation, 1234567);
+        assert_eq!(result.peers.len(), 4);
+
+        assert_eq!(result.peers[0].node_name, "n1");
+        assert_eq!(result.peers[0].tls_name, "t1");
         assert_eq!(
-            hosts,
+            result.peers[0].hosts,
             vec![
                 Host::new_tls("192.168.4.10", "t1", 3000),
                 Host::new_tls("192.168.3.10", "t1", 3000),
-                Host::new_tls("2018::0002", "t2", 3000),
-                Host::new_tls("2018::0001", "t2", 4000),
-                Host::new_tls("foo1.aerocluster.com", "t3", 3000),
-                Host::new_tls("foo2.aerocluster.new", "t3", 3100),
-                Host::new_tls("foo2.aerocluster.com", "t4", 5000),
             ]
         );
 
-        let (gen, hosts) = PeersParser::new("12,3010,[n1,t1,[192.168.4.10,192.168.3.10:3100]],[n2,t2,[[2018::0001]]],[n3,t3,[foo1.aerocluster.com:3100]],[n4,t4,[]]")
+        assert_eq!(result.peers[1].node_name, "n2");
+        assert_eq!(
+            result.peers[1].hosts,
+            vec![
+                Host::new_tls("2018::0002", "t2", 3000),
+                Host::new_tls("2018::0001", "t2", 4000),
+            ]
+        );
+
+        assert_eq!(result.peers[2].node_name, "n3");
+        assert_eq!(
+            result.peers[2].hosts,
+            vec![
+                Host::new_tls("foo1.aerocluster.com", "t3", 3000),
+                Host::new_tls("foo2.aerocluster.new", "t3", 3100),
+            ]
+        );
+
+        assert_eq!(result.peers[3].node_name, "n4");
+        assert_eq!(
+            result.peers[3].hosts,
+            vec![Host::new_tls("foo2.aerocluster.com", "t4", 5000)]
+        );
+
+        // Second test case
+        let result = PeersParser::new("12,3010,[[n1,t1,[192.168.4.10,192.168.3.10:3100]],[n2,t2,[[2018::0001]]],[n3,t3,[foo1.aerocluster.com:3100]],[n4,t4,[]]]")
         .parse()
         .expect("Error parsing peer_string");
 
-        assert_eq!(gen, 12);
-        assert_eq!(
-            hosts,
-            vec![
-                Host::new_tls("192.168.4.10", "t1", 3010),
-                Host::new_tls("192.168.3.10", "t1", 3100),
-                Host::new_tls("2018::0001", "t2", 3010),
-                Host::new_tls("foo1.aerocluster.com", "t3", 3100),
-            ]
-        );
+        assert_eq!(result.generation, 12);
+        assert_eq!(result.peers.len(), 4);
+        assert_eq!(result.peers[0].hosts.len(), 2);
+        assert_eq!(result.peers[1].hosts.len(), 1);
+        assert_eq!(result.peers[2].hosts.len(), 1);
+        assert_eq!(result.peers[3].hosts.len(), 0); // n4 has empty host list
 
-        let (gen, hosts) = PeersParser::new(
+        // Third test case
+        let result = PeersParser::new(
             "7,3000,[[BB924A0A129825A,,[127.0.0.1:3109]],[BB9A14D609EE096,,[127.0.0.1:3110]],[BB9A14D609EE099,t1,[127.0.0.1]]]",
         )
         .parse()
         .expect("Error parsing peer_string");
 
-        assert_eq!(gen, 7);
+        assert_eq!(result.generation, 7);
+        assert_eq!(result.peers.len(), 3);
+        assert_eq!(result.peers[0].node_name, "BB924A0A129825A");
+        assert_eq!(result.peers[0].tls_name, "");
+        assert_eq!(result.peers[0].hosts, vec![Host::new("127.0.0.1", 3109)]);
+        assert_eq!(result.peers[1].node_name, "BB9A14D609EE096");
+        assert_eq!(result.peers[1].hosts, vec![Host::new("127.0.0.1", 3110)]);
+        assert_eq!(result.peers[2].node_name, "BB9A14D609EE099");
+        assert_eq!(result.peers[2].tls_name, "t1");
         assert_eq!(
-            hosts,
-            vec![
-                Host::new("127.0.0.1", 3109),
-                Host::new("127.0.0.1", 3110),
-                Host::new_tls("127.0.0.1", "t1", 3000)
-            ]
+            result.peers[2].hosts,
+            vec![Host::new_tls("127.0.0.1", "t1", 3000)]
         );
 
-        let (gen, hosts) = PeersParser::new("0,3000,[]")
+        // Empty peers list
+        let result = PeersParser::new("0,3000,[]")
             .parse()
             .expect("Error parsing peer_string");
 
-        assert_eq!(gen, 0);
-        assert_eq!(hosts, vec![]);
+        assert_eq!(result.generation, 0);
+        assert_eq!(result.peers.len(), 0);
     }
 
     #[test]

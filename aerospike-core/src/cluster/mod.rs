@@ -1,4 +1,4 @@
-// Copyright 2015-2018 Aerospike, Inc.
+// Copyright 2015-2024 Aerospike, Inc.
 //
 // Portions may be licensed to Aerospike, Inc. under one or more contributor
 // license agreements.
@@ -17,6 +17,7 @@ pub mod node;
 pub mod node_validator;
 pub mod partition;
 pub mod partition_tokenizer;
+pub mod peers;
 pub mod peers_parser;
 pub mod version_parser;
 
@@ -32,6 +33,7 @@ pub use self::node::Node;
 use self::node_validator::NodeValidator;
 use self::partition::Partition;
 use self::partition_tokenizer::PartitionTokenizer;
+use self::peers::{Peer, Peers};
 
 use crate::commands::admin_command::AdminCommand;
 use crate::commands::Message;
@@ -204,19 +206,11 @@ impl Cluster {
             }
             aerospike_rt::sleep(Duration::from_millis(u64::from(tend_interval))).await;
         }
-
-        // close all nodes
-        //let nodes = cluster.nodes().await;
-        //for mut node in nodes {
-        //    if let Some(node) = Arc::get_mut(&mut node) {
-        //        node.close().await;
-        //    }
-        //}
-        //cluster.set_nodes(vec![]).await;
     }
 
     async fn tend(&self) -> Result<()> {
         let mut nodes = self.nodes();
+        let node_count_before_tend = nodes.len();
 
         // All node additions/deletions are performed in tend thread.
         // If active nodes don't exist, seed cluster.
@@ -226,59 +220,108 @@ impl Cluster {
             nodes = self.nodes();
         }
 
-        let mut friend_list: Vec<Host> = vec![];
-        let mut refresh_count = 0;
+        // Phase 1: Create new peers tracker for this tend cycle.
+        let mut peers = Peers::new(nodes.len() + 16, 16);
 
-        let mut partition_map = OnceCell::new();
-
-        // Refresh all known nodes.
-        for node in nodes {
-            let old_gen = node.partition_generation();
-            let old_rebalance_gen = node.rebalance_generation();
+        // Phase 2: Refresh all known nodes (lightweight: check generations only).
+        for node in &nodes {
             if node.is_active() {
-                match node.refresh(self.aliases()).await {
-                    Ok(friends) => {
-                        refresh_count += 1;
-
-                        if !friends.is_empty() {
-                            friend_list.extend_from_slice(&friends);
-                        }
-
-                        if old_gen != node.partition_generation() {
-                            partition_map.get_or_init(|| {
-                                // this will clone the inner value
-                                (*self.partition_map.load().clone()).clone()
-                            });
-                            self.update_partitions(partition_map.get_mut().unwrap(), &node)
-                                .await?;
-                        }
-
-                        if old_rebalance_gen != node.rebalance_generation() {
-                            self.update_rack_ids(&node).await?;
-                        }
-                    }
-                    Err(err) => {
-                        node.increase_failures();
-                        warn!("Node `{node}` refresh failed: {err}");
-                    }
+                if let Err(err) = node.refresh(&peers).await {
+                    node.increase_failures();
+                    warn!("Node `{node}` refresh failed: {err}");
                 }
             }
         }
 
-        // if partition map has changed, store the new updated one
+        // Phase 3: Refresh peers when necessary.
+        // Only fetch full peer lists if any node's peers generation changed
+        // or the peer count differs from the node count.
+        if peers.gen_changed() || peers.peer_count() != node_count_before_tend {
+            peers.reset_refresh_count();
+
+            for node in &nodes {
+                if let Err(err) = node.refresh_peers(&mut peers).await {
+                    warn!("Node `{node}` peer refresh failed: {err}");
+                }
+            }
+        }
+
+        // Phase 4: Discover and connect to new peer nodes.
+        let peers_list = peers.peers_list();
+        for mut peer in peers_list {
+            if self.peer_exists(&mut peers, &mut peer) {
+                continue;
+            }
+
+            // Try each host address for this peer until one connects.
+            for host in &peer.hosts {
+                let mut nv = NodeValidator::new(self.client_policy());
+                if let Err(err) = nv.validate_node(self, host).await {
+                    warn!("Add peer node `{host}` failed: `{err}`");
+                    continue;
+                }
+
+                if peer.node_name != nv.name {
+                    warn!(
+                        "Peer node `{}` is different than actual node `{}` for host `{}`",
+                        peer.node_name, nv.name, host
+                    );
+                }
+
+                let node_name = nv.name.clone();
+                let node = self.create_node(nv).await;
+                let node = Arc::new(node);
+                peers.add_node(node_name, node);
+
+                // If this peer replaces an existing node, mark the old one for removal.
+                if let Some(ref replace_node) = peer.replace_node {
+                    if !peers.contains_node_to_remove(replace_node) {
+                        peers.add_node_to_remove(replace_node.clone());
+                    }
+                }
+                break; // Successfully connected to this peer.
+            }
+        }
+
+        // Phase 5: Refresh partition map for nodes with changed partition generation.
+        let mut partition_map = OnceCell::new();
+        for node in &nodes {
+            if node.partition_changed() {
+                partition_map.get_or_init(|| (*self.partition_map.load().clone()).clone());
+                if let Err(err) = self
+                    .update_partitions(partition_map.get_mut().unwrap(), node)
+                    .await
+                {
+                    warn!("Node `{node}` partition update failed: {err}");
+                }
+            }
+
+            // Also handle rebalance generation changes.
+            let old_rebalance_gen = node.rebalance_generation();
+            if old_rebalance_gen == -1 && node.is_active() && node.failures() == 0 {
+                // Rebalance generation was reset; re-fetch rack info.
+                if let Err(err) = self.update_rack_ids(node).await {
+                    warn!("Node `{node}` rack update failed: {err}");
+                }
+            }
+        }
+
+        // Store updated partition map if it changed.
         if let Some(partition_map) = partition_map.take() {
             self.partition_map.store(Arc::new(partition_map));
         }
 
-        // Add nodes in a batch.
-        let add_list = self.find_new_nodes_to_add(friend_list).await;
-        self.add_nodes_and_aliases(&add_list);
+        // Phase 6: Find and remove nodes (only when gen changed).
+        if peers.gen_changed() {
+            self.find_nodes_to_remove(&mut peers).await;
 
-        // IMPORTANT: Remove must come after add to remove aliases
-        // Handle nodes changes determined from refreshes.
-        // Remove nodes in a batch.
-        let remove_list = self.find_nodes_to_remove(refresh_count).await;
-        self.remove_nodes_and_aliases(remove_list);
+            let nodes_to_remove = peers.get_nodes_to_remove();
+            self.remove_nodes_and_aliases(nodes_to_remove);
+        }
+
+        // Phase 7: Add new nodes in a batch.
+        let new_nodes: Vec<Arc<Node>> = peers.nodes().into_values().collect();
+        self.add_nodes_and_aliases(&new_nodes);
 
         let aliases: Vec<String> = self
             .aliases
@@ -290,6 +333,44 @@ impl Cluster {
         debug!("Nodes {aliases:?}");
 
         Ok(())
+    }
+
+    /// Checks if a peer represents an already-known node.
+    ///
+    /// Following logic:
+    /// - If node found by name and healthy (or localhost), increment reference count.
+    /// - If node has failures, verify host addresses match before reusing.
+    /// - If host mismatch on a failing node, mark as replace_node.
+    /// - Also check if already added during this tend cycle.
+    fn peer_exists(&self, peers: &mut Peers, peer: &mut Peer) -> bool {
+        // Check 1: Find by node name in current cluster nodes.
+        if let Ok(node) = self.get_node_by_name(&peer.node_name) {
+            if node.failures() == 0 {
+                // Node is healthy - no need to update IP.
+                node.increment_reference_count();
+                return true;
+            }
+
+            // Node has failures - check if host addresses match.
+            for host in &peer.hosts {
+                if host.port == node.host().port && host.name == node.host().name {
+                    node.increment_reference_count();
+                    return true;
+                }
+            }
+
+            // Host mismatch on a failing node - this peer should replace it.
+            peer.replace_node = Some(node);
+        }
+
+        // Check 2: Already added during this tend cycle.
+        if let Some(node) = peers.node_by_name(&peer.node_name) {
+            node.increment_reference_count();
+            peer.replace_node = None;
+            return true;
+        }
+
+        false
     }
 
     async fn wait_till_stabilized(cluster: Arc<Cluster>) -> Result<()> {
@@ -461,95 +542,65 @@ impl Cluster {
         list.iter().any(|node| node.name() == name)
     }
 
-    async fn find_new_nodes_to_add(&self, hosts: Vec<Host>) -> Vec<Arc<Node>> {
-        let mut list: Vec<Arc<Node>> = vec![];
-
-        for host in hosts {
-            let mut nv = NodeValidator::new(self.client_policy());
-            if let Err(err) = nv.validate_node(self, &host).await {
-                log_error_chain!(err, "Adding node {} failed with error: {}", host, err);
-                continue;
-            }
-
-            // Duplicate node name found. This usually occurs when the server
-            // services list contains both internal and external IP addresses
-            // for the same node. Add new host to list of alias filters
-            // and do not add new node.
-            let mut dup = false;
-            match self.get_node_by_name(&nv.name) {
-                Ok(node) => {
-                    self.add_alias(host, node.clone());
-                    dup = true;
-                }
-                Err(_) => {
-                    if let Some(node) = list.iter().find(|n| n.name() == nv.name) {
-                        self.add_alias(host, node.clone());
-                        dup = true;
-                    }
-                }
-            }
-
-            if !dup {
-                let node = self.create_node(nv).await;
-                list.push(Arc::new(node));
-            }
-        }
-
-        list
-    }
-
     async fn create_node(&self, nv: NodeValidator) -> Node {
         let res = Node::new(self.client_policy(), Arc::new(nv));
         res.send_user_agent_id().await;
         res
     }
 
-    async fn find_nodes_to_remove(&self, refresh_count: usize) -> Vec<Arc<Node>> {
+    /// Identifies nodes that should be removed from the cluster.
+    ///
+    /// Following logic:
+    /// - Inactive nodes are always removed.
+    /// - Single-node clusters: remove after 5 consecutive failures if all peer
+    ///   refreshes also failed (refreshCount == 0).
+    /// - Multi-node clusters: remove if referenceCount == 0 (not referenced by
+    ///   any peer) AND either failing or not in partition map.
+    async fn find_nodes_to_remove(&self, peers: &mut Peers) {
+        let refresh_count = peers.refresh_count();
         let nodes = self.nodes();
-        let mut remove_list: Vec<Arc<Node>> = vec![];
-        let cluster_size = nodes.len();
-        for node in nodes {
-            let tnode = node.clone();
 
+        for node in &nodes {
             if !node.is_active() {
-                remove_list.push(tnode);
+                // Inactive nodes must be removed.
+                if !peers.contains_node_to_remove(node) {
+                    peers.add_node_to_remove(node.clone());
+                }
                 continue;
             }
 
-            match cluster_size {
-                // Single node clusters rely on whether it responded to info requests.
-                1 if node.failures() > 5 => {
-                    // 5 consecutive info requests failed. Try seeds.
-                    if self.seed_nodes().await {
-                        remove_list.push(tnode);
-                    }
+            // Single-node cluster: remove after 5 consecutive failures
+            // when all peer refreshes failed.
+            if refresh_count == 0 && node.failures() >= 5 {
+                if !peers.contains_node_to_remove(node) {
+                    peers.add_node_to_remove(node.clone());
                 }
+                continue;
+            }
 
-                // Two node clusters require at least one successful refresh before removing.
-                2 if refresh_count == 1 && node.reference_count() == 0 && node.failures() > 0 => {
-                    remove_list.push(node);
-                }
-
-                _ => {
-                    // Multi-node clusters require two successful node refreshes before removing.
-                    if refresh_count >= 2 && node.reference_count() == 0 {
-                        // Node is not referenced by other nodes.
-                        // Check if node responded to info request.
-                        if node.failures() == 0 {
-                            // Node is alive, but not referenced by other nodes. Check if mapped.
-                            if !self.find_node_in_partition_map(node).await {
-                                remove_list.push(tnode);
-                            }
-                        } else {
-                            // Node not responding. Remove it.
-                            remove_list.push(tnode);
+            // Multi-node cluster: remove if not referenced by any other node.
+            if nodes.len() > 1 && refresh_count >= 1 && node.reference_count() == 0 {
+                if node.failures() == 0 {
+                    // Node is alive but not referenced. Check if it's in the partition map.
+                    if !self.find_node_in_partition_map(node.clone()).await {
+                        if !peers.contains_node_to_remove(node) {
+                            peers.add_node_to_remove(node.clone());
                         }
+                    }
+                    // Also remove orphan nodes with no references and no peers.
+                    if node.reference_count() == 0 && node.peers_count() == 0 {
+                        if !peers.contains_node_to_remove(node) {
+                            peers.add_node_to_remove(node.clone());
+                        }
+                    }
+                } else {
+                    // Node not responding. Remove it.
+                    if !peers.contains_node_to_remove(node) {
+                        peers.add_node_to_remove(node.clone());
                     }
                 }
             }
         }
-
-        remove_list
     }
 
     fn add_nodes_and_aliases(&self, friend_list: &[Arc<Node>]) {
@@ -569,13 +620,6 @@ impl Cluster {
             }
         }
         self.remove_nodes(&nodes_to_remove);
-    }
-
-    fn add_alias(&self, host: Host, node: Arc<Node>) {
-        let mut aliases = self.aliases();
-        node.add_alias(host.clone());
-        aliases.insert(host, node);
-        self.aliases.store(Arc::new(aliases));
     }
 
     fn remove_alias(&self, host: &Host) {
