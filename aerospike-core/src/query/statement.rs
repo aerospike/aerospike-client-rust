@@ -111,13 +111,6 @@ impl Statement {
         self.aggregation = Some(agg);
     }
 
-    pub(crate) const fn is_scan(&self) -> bool {
-        match self.filters {
-            Some(ref filters) => filters.is_empty(),
-            None => true,
-        }
-    }
-
     pub(crate) fn validate(&self) -> Result<()> {
         if let Some(ref filters) = self.filters {
             if filters.len() > 1 {

@@ -956,18 +956,6 @@ impl Buffer {
             filter_size = 1 + filter.estimate_size()?;
             self.data_offset += filter_size + FIELD_HEADER_SIZE as usize;
             field_count += 1;
-
-            // if let Bins::Some(ref bin_names) = statement.bins {
-            //     self.data_offset += FIELD_HEADER_SIZE as usize;
-            //     bin_name_size += 1;
-
-            //     for bin_name in bin_names {
-            //         bin_name_size += bin_name.len() + 1;
-            //     }
-
-            //     self.data_offset += bin_name_size;
-            //     field_count += 1;
-            // }
         }
 
         let parts_full_size = node_partitions.parts_full.len() * 2;
@@ -1016,22 +1004,15 @@ impl Buffer {
             field_count += 4;
         }
 
-        if statement.is_scan() {
-            if let Bins::Some(ref bin_names) = statement.bins {
-                for bin_name in bin_names {
-                    self.estimate_operation_size_for_bin_name(bin_name)?;
-                }
+        let mut operation_count = 0;
+        if let Bins::Some(ref bin_names) = statement.bins {
+            for bin_name in bin_names {
+                self.estimate_operation_size_for_bin_name(bin_name)?;
             }
-        }
+            operation_count = bin_names.len();
+        };
 
         self.size_buffer()?;
-
-        let mut operation_count: usize = 0;
-        if statement.is_scan() {
-            if let Bins::Some(ref bin_names) = statement.bins {
-                operation_count += bin_names.len();
-            }
-        }
 
         let mut info1 = if statement.bins.is_none() {
             INFO1_READ | INFO1_NOBINDATA
@@ -1085,18 +1066,6 @@ impl Buffer {
             self.write_u8(1);
 
             filter.write(self)?;
-
-            // if let Bins::Some(ref bin_names) = statement.bins {
-            //     if !bin_names.is_empty() {
-            //         self.write_field_header(bin_name_size, FieldType::QueryBinList);
-            //         self.write_u8(bin_names.len() as u8);
-
-            //         for bin_name in bin_names {
-            //             self.write_u8(bin_name.len() as u8);
-            //             self.write_str(bin_name);
-            //         }
-            //     }
-            // }
         }
 
         if parts_full_size > 0 {
@@ -1161,11 +1130,9 @@ impl Buffer {
         }
 
         // scan binNames come last
-        if statement.is_scan() {
-            if let Bins::Some(ref bin_names) = statement.bins {
-                for bin_name in bin_names {
-                    self.write_operation_for_bin_name(bin_name, OperationType::Read);
-                }
+        if let Bins::Some(ref bin_names) = statement.bins {
+            for bin_name in bin_names {
+                self.write_operation_for_bin_name(bin_name, OperationType::Read);
             }
         }
 

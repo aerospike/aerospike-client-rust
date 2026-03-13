@@ -35,8 +35,10 @@ async fn create_test_set(client: &Client, no_records: usize) -> String {
     let apolicy = AdminPolicy::default();
     for i in 0..no_records as i64 {
         let key = as_key!(namespace, &set_name, i);
-        let wbin = as_bin!("bin", i);
-        let bins = vec![wbin];
+        let wbin1 = as_bin!("bin", i);
+        let wbin2 = as_bin!("bin2", "hello");
+        let wbin3 = as_bin!("extra", "extra");
+        let bins = vec![wbin1, wbin2, wbin3];
         client.delete(&wpolicy, &key).await.unwrap();
         client.put(&wpolicy, &key, &bins).await.unwrap();
     }
@@ -313,6 +315,34 @@ async fn query_nobins() {
                 count += 1;
                 assert!(rec.generation > 0);
                 assert_eq!(0, rec.bins.len());
+            }
+            Err(err) => panic!("{:?}", err),
+        }
+    }
+    assert_eq!(count, 10);
+
+    client.close().await.unwrap();
+}
+
+#[aerospike_macro::test]
+async fn query_some_bins() {
+    let client = common::client().await;
+    let namespace = common::namespace();
+    let set_name = create_test_set(&client, EXPECTED).await;
+    let qpolicy = QueryPolicy::default();
+
+    let mut statement = Statement::new(namespace, &set_name, Bins::Some(vec!["bin".into()]));
+    statement.add_filter(as_range!("bin", 0, 9));
+    let pf = PartitionFilter::all();
+    let rs = client.query(&qpolicy, pf, statement).await.unwrap();
+    let mut count = 0;
+    let mut rs = rs.into_stream();
+    while let Some(res) = rs.next().await {
+        match res {
+            Ok(rec) => {
+                count += 1;
+                assert!(rec.generation > 0);
+                assert_eq!(1, rec.bins.len());
             }
             Err(err) => panic!("{:?}", err),
         }

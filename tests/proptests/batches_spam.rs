@@ -5,8 +5,6 @@ use crate::proptests::{batch_operation::*, policy::*};
 
 use aerospike::*;
 
-use crate::proptests::{batch_operation::*, policy::*};
-
 const STRING_DEFAULT: &str = "aerospike default value";
 
 prop_compose! {

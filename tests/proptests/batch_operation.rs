@@ -4,8 +4,6 @@ use aerospike::*;
 
 use crate::proptests::{bins::*, operation::*, policy::*, value::*};
 
-use aerospike::*;
-
 #[derive(Clone, Debug, PartialEq)]
 pub enum PropBatchOperation {
     ReadBins(BatchReadPolicy, Bins),
