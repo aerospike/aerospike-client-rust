@@ -1263,6 +1263,139 @@ impl Buffer {
         Ok(())
     }
 
+    /// Builds a background query/scan command buffer that applies a UDF
+    /// to matching records on the server without returning data to the client.
+    #[allow(clippy::cognitive_complexity)]
+    pub(crate) fn set_query_udf_execute(
+        &mut self,
+        write_policy: &WritePolicy,
+        statement: &Statement,
+        task_id: u64,
+    ) -> Result<()> {
+        let filter = statement.filters.as_ref().map(|filters| &filters[0]);
+        let aggregation = statement
+            .aggregation
+            .as_ref()
+            .ok_or_else(|| Error::InvalidArgument("Statement must have aggregation set".into()))?;
+
+        self.begin();
+
+        let mut field_count: u16 = 0;
+        let mut filter_size = 0;
+
+        if !statement.namespace.is_empty() {
+            self.data_offset += statement.namespace.len() + FIELD_HEADER_SIZE as usize;
+            field_count += 1;
+        }
+
+        if !statement.set_name.is_empty() {
+            self.data_offset += statement.set_name.len() + FIELD_HEADER_SIZE as usize;
+            field_count += 1;
+        }
+
+        // Socket timeout field
+        self.data_offset += 4 + FIELD_HEADER_SIZE as usize;
+        field_count += 1;
+
+        if let Some(ref index_name) = statement.index_name {
+            if !index_name.is_empty() {
+                self.data_offset += index_name.len() + FIELD_HEADER_SIZE as usize;
+                field_count += 1;
+            }
+        }
+
+        // TaskId field
+        self.data_offset += 8 + FIELD_HEADER_SIZE as usize;
+        field_count += 1;
+
+        if let Some(filter) = filter {
+            let idx_type = filter.collection_index_type();
+            if idx_type != CollectionIndexType::Default {
+                self.data_offset += 1 + FIELD_HEADER_SIZE as usize;
+                field_count += 1;
+            }
+
+            filter_size = 1 + filter.estimate_size()?;
+            self.data_offset += filter_size + FIELD_HEADER_SIZE as usize;
+            field_count += 1;
+        }
+
+        let filter_exp_size = self.estimate_filter_size(write_policy.filter_expression())?;
+        if filter_exp_size > 0 {
+            field_count += 1;
+        }
+
+        // UDF fields: UdfOp, UdfPackageName, UdfFunction, UdfArgList
+        self.data_offset += 1 + FIELD_HEADER_SIZE as usize; // UdfOp
+        self.data_offset += aggregation.package_name.len() + FIELD_HEADER_SIZE as usize;
+        self.data_offset += aggregation.function_name.len() + FIELD_HEADER_SIZE as usize;
+        self.estimate_args_size(aggregation.function_args.as_deref())?;
+        field_count += 4;
+
+        self.size_buffer()?;
+
+        // Use query protocol header (write_header_read), not the key-value write header.
+        // UDF background execution does not set INFO2_WRITE.
+        self.write_header_read(
+            &write_policy.base_policy,
+            INFO1_READ,
+            0,
+            0,
+            field_count,
+            0,
+        );
+
+        if !statement.namespace.is_empty() {
+            self.write_field_string(&statement.namespace, FieldType::Namespace);
+        }
+
+        if let Some(ref index_name) = statement.index_name {
+            if !index_name.is_empty() {
+                self.write_field_string(index_name, FieldType::IndexName);
+            }
+        }
+
+        if !statement.set_name.is_empty() {
+            self.write_field_string(&statement.set_name, FieldType::Table);
+        }
+
+        self.write_field_header(8, FieldType::QueryId);
+        self.write_u64(task_id);
+
+        if let Some(filter) = filter {
+            let idx_type = filter.collection_index_type();
+
+            if idx_type != CollectionIndexType::Default {
+                self.write_field_header(1, FieldType::IndexType);
+                self.write_u8(idx_type as u8);
+            }
+
+            self.write_field_header(filter_size, FieldType::IndexRange);
+            self.write_u8(1);
+
+            filter.write(self)?;
+        }
+
+        if let Some(filter_exp) = write_policy.filter_expression() {
+            self.write_filter_expression(filter_exp, filter_exp_size);
+        }
+
+        // Write socket timeout
+        self.write_field_header(4, FieldType::SocketTimeout);
+        self.write_u32(write_policy.socket_timeout());
+
+        // Write UDF fields
+        self.write_field_header(1, FieldType::UdfOp);
+        self.write_u8(2); // 2 = no return data
+
+        self.write_field_string(&aggregation.package_name, FieldType::UdfPackageName);
+        self.write_field_string(&aggregation.function_name, FieldType::UdfFunction);
+        self.write_args(aggregation.function_args.as_deref(), FieldType::UdfArgList)?;
+
+        self.end();
+        Ok(())
+    }
+
     #[must_use]
     fn estimate_filter_size(&mut self, filter: &Option<Expression>) -> Result<usize> {
         filter.clone().map_or(Ok(0), |filter| {

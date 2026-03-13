@@ -1282,6 +1282,75 @@ impl Client {
         Ok(ExecuteTask::new(self.cluster.clone(), task_id, scan))
     }
 
+    /// Apply a user-defined function to records matching the statement filter.
+    /// Records are not returned to the client. This asynchronous server call
+    /// returns before the command completes. Use the returned [`ExecuteTask`]
+    /// to poll for completion.
+    ///
+    /// If no filter is specified on the statement, the UDF is applied to all
+    /// records in the namespace/set (scan mode).
+    ///
+    /// # Arguments
+    ///
+    /// * `write_policy` — Policy for the background write operation.
+    /// * `statement` — Namespace, set, and optional filters.
+    /// * `package_name` — Server-side UDF package name (registered via [`Client::register_udf`]).
+    /// * `function_name` — UDF function to invoke.
+    /// * `args` — Optional arguments passed to the UDF function.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// # use aerospike::*;
+    /// # async fn example(client: &Client) -> Result<()> {
+    /// let wpolicy = WritePolicy::default();
+    /// let statement = Statement::new("ns", "set", Bins::All);
+    /// let task = client.query_execute_udf(
+    ///     &wpolicy,
+    ///     statement,
+    ///     "my_udf_package",
+    ///     "my_function",
+    ///     Some(&[as_val!(42)]),
+    /// ).await?;
+    /// task.wait_till_complete(None).await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn query_execute_udf(
+        &self,
+        write_policy: &WritePolicy,
+        mut statement: Statement,
+        package_name: &str,
+        function_name: &str,
+        args: Option<&[Value]>,
+    ) -> Result<ExecuteTask> {
+        statement.set_aggregate_function(package_name, function_name, args);
+        statement.validate()?;
+
+        let nodes = self.cluster.nodes();
+        if nodes.is_empty() {
+            return Err(Error::Connection("No connections available".to_string()));
+        }
+
+        let task_id: u64 = rand::random();
+        let scan = statement.filters.is_none();
+
+        let mut last_err: Option<Error> = None;
+        for node in &nodes {
+            let mut cmd =
+                ServerCommand::new_udf(node.clone(), write_policy, &statement, task_id);
+            if let Err(err) = cmd.execute().await {
+                last_err = Some(err);
+            }
+        }
+
+        if let Some(err) = last_err {
+            return Err(err);
+        }
+
+        Ok(ExecuteTask::new(self.cluster.clone(), task_id, scan))
+    }
+
     async fn execute_query_timeout(
         cluster: Arc<Cluster>,
         policy: &QueryPolicy,

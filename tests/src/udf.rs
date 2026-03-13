@@ -15,7 +15,9 @@
 
 use crate::common;
 
+use aerospike::Task;
 use aerospike::*;
+use aerospike_rt::time::Duration;
 
 #[aerospike_macro::test]
 async fn execute_udf() {
@@ -98,6 +100,208 @@ end
         assert_eq!(response, "function not found".to_string());
     } else {
         panic!("UDF function did not return the expected error");
+    }
+
+    client.close().await.unwrap();
+}
+
+#[aerospike_macro::test]
+async fn query_execute_udf_with_filter() {
+    let client = common::client().await;
+    let namespace = common::namespace();
+    let set_name = common::rand_str(10);
+
+    let apolicy = AdminPolicy::default();
+    let wpolicy = WritePolicy::default();
+
+    // Create test records
+    for i in 0..50_i64 {
+        let key = as_key!(namespace, &set_name, i);
+        let bins = vec![as_bin!("bin", i)];
+        client.put(&wpolicy, &key, &bins).await.unwrap();
+    }
+
+    // Create index for filter query
+    let task = client
+        .create_index_on_bin(
+            &apolicy,
+            namespace,
+            &set_name,
+            "bin",
+            &format!("{}_{}_{}", namespace, set_name, "bin"),
+            IndexType::Numeric,
+            CollectionIndexType::Default,
+            None,
+        )
+        .await
+        .expect("Failed to create index");
+    task.wait_till_complete(None).await.unwrap();
+
+    // Register a UDF that doubles the bin value
+    let udf_body = r#"
+function double_bin(rec)
+  rec['bin'] = rec['bin'] * 2
+  aerospike:update(rec)
+end
+"#;
+    let task = client
+        .register_udf(
+            &apolicy,
+            udf_body.as_bytes(),
+            "test_bg_udf.lua",
+            UDFLang::Lua,
+        )
+        .await
+        .unwrap();
+    task.wait_till_complete(None).await.unwrap();
+
+    // Apply UDF to records in range [0, 9] using a filter
+    let mut statement = Statement::new(namespace, &set_name, Bins::All);
+    statement.add_filter(as_range!("bin", 0, 9));
+    let task = client
+        .query_execute_udf(&wpolicy, statement, "test_bg_udf", "double_bin", None)
+        .await
+        .expect("query_execute_udf failed");
+    task.wait_till_complete(Some(Duration::from_secs(30)))
+        .await
+        .expect("task did not complete");
+
+    // Verify the affected records were doubled
+    let rpolicy = ReadPolicy::default();
+    for i in 0..10_i64 {
+        let key = as_key!(namespace, &set_name, i);
+        let rec = client.get(&rpolicy, &key, Bins::All).await.unwrap();
+        let val: i64 = rec.bins["bin"].clone().into();
+        assert_eq!(val, i * 2, "record {i} was not doubled");
+    }
+
+    // Verify records outside the filter were NOT modified
+    for i in 10..50_i64 {
+        let key = as_key!(namespace, &set_name, i);
+        let rec = client.get(&rpolicy, &key, Bins::All).await.unwrap();
+        let val: i64 = rec.bins["bin"].clone().into();
+        assert_eq!(val, i, "record {i} should not have been modified");
+    }
+
+    client.close().await.unwrap();
+}
+
+#[aerospike_macro::test]
+async fn query_execute_udf_scan_all() {
+    let client = common::client().await;
+    let namespace = common::namespace();
+    let set_name = common::rand_str(10);
+
+    let apolicy = AdminPolicy::default();
+    let wpolicy = WritePolicy::default();
+
+    // Create test records
+    for i in 0..50_i64 {
+        let key = as_key!(namespace, &set_name, i);
+        let bins = vec![as_bin!("bin", i)];
+        client.put(&wpolicy, &key, &bins).await.unwrap();
+    }
+
+    // Register a UDF that adds a new bin
+    let udf_body = r#"
+function add_marker(rec)
+  rec['marker'] = 'tagged'
+  aerospike:update(rec)
+end
+"#;
+    let task = client
+        .register_udf(
+            &apolicy,
+            udf_body.as_bytes(),
+            "test_bg_udf2.lua",
+            UDFLang::Lua,
+        )
+        .await
+        .unwrap();
+    task.wait_till_complete(None).await.unwrap();
+
+    // Apply UDF without filter (scan mode) to all records
+    let statement = Statement::new(namespace, &set_name, Bins::All);
+    let task = client
+        .query_execute_udf(&wpolicy, statement, "test_bg_udf2", "add_marker", None)
+        .await
+        .expect("query_execute_udf scan failed");
+    task.wait_till_complete(Some(Duration::from_secs(30)))
+        .await
+        .expect("task did not complete");
+
+    // Verify all records have the marker bin
+    let rpolicy = ReadPolicy::default();
+    for i in 0..50_i64 {
+        let key = as_key!(namespace, &set_name, i);
+        let rec = client.get(&rpolicy, &key, Bins::All).await.unwrap();
+        assert_eq!(
+            rec.bins["marker"],
+            as_val!("tagged"),
+            "record {i} missing marker"
+        );
+    }
+
+    client.close().await.unwrap();
+}
+
+#[aerospike_macro::test]
+async fn query_execute_udf_with_args() {
+    let client = common::client().await;
+    let namespace = common::namespace();
+    let set_name = common::rand_str(10);
+
+    let apolicy = AdminPolicy::default();
+    let wpolicy = WritePolicy::default();
+
+    // Create test records
+    for i in 0..20_i64 {
+        let key = as_key!(namespace, &set_name, i);
+        let bins = vec![as_bin!("bin", i)];
+        client.put(&wpolicy, &key, &bins).await.unwrap();
+    }
+
+    // Register a UDF that adds a value to the bin
+    let udf_body = r#"
+function add_val(rec, val)
+  rec['bin'] = rec['bin'] + val
+  aerospike:update(rec)
+end
+"#;
+    let task = client
+        .register_udf(
+            &apolicy,
+            udf_body.as_bytes(),
+            "test_bg_udf3.lua",
+            UDFLang::Lua,
+        )
+        .await
+        .unwrap();
+    task.wait_till_complete(None).await.unwrap();
+
+    // Apply UDF with arguments (scan mode)
+    let statement = Statement::new(namespace, &set_name, Bins::All);
+    let task = client
+        .query_execute_udf(
+            &wpolicy,
+            statement,
+            "test_bg_udf3",
+            "add_val",
+            Some(&[as_val!(100)]),
+        )
+        .await
+        .expect("query_execute_udf with args failed");
+    task.wait_till_complete(Some(Duration::from_secs(30)))
+        .await
+        .expect("task did not complete");
+
+    // Verify all records had 100 added
+    let rpolicy = ReadPolicy::default();
+    for i in 0..20_i64 {
+        let key = as_key!(namespace, &set_name, i);
+        let rec = client.get(&rpolicy, &key, Bins::All).await.unwrap();
+        let val: i64 = rec.bins["bin"].clone().into();
+        assert_eq!(val, i + 100, "record {i} not updated correctly");
     }
 
     client.close().await.unwrap();

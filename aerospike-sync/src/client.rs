@@ -573,6 +573,26 @@ impl Client {
         )
     }
 
+    /// Apply a user-defined function to records matching the statement filter.
+    /// Returns an `ExecuteTask` that can be used to monitor the progress of the
+    /// background job.
+    pub fn query_execute_udf(
+        &self,
+        write_policy: &WritePolicy,
+        statement: Statement,
+        package_name: &str,
+        function_name: &str,
+        args: Option<&[Value]>,
+    ) -> Result<ExecuteTask> {
+        block_on(self.async_client.query_execute_udf(
+            write_policy,
+            statement,
+            package_name,
+            function_name,
+            args,
+        ))
+    }
+
     /// Sets XDR filter for given datacenter name and namespace. The expression filter indicates
     /// which records XDR should ship to the datacenter.
     /// Pass nil as filter to remove the current filter on the server.

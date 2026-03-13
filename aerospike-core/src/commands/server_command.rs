@@ -23,14 +23,22 @@ use crate::operations::Operation;
 use crate::policy::{Policy, WritePolicy};
 use crate::{ResultCode, Statement};
 
+/// Payload type for background server commands.
+pub enum ServerCommandPayload<'a> {
+    /// Apply write operations to matching records.
+    Operations(&'a [Operation]),
+    /// Apply a UDF to matching records.
+    Udf,
+}
+
 /// Command that executes a background query/scan on a single node,
-/// applying write operations to matching records without returning data.
+/// applying write operations or a UDF to matching records without returning data.
 pub struct ServerCommand<'a> {
     node: Arc<Node>,
     write_policy: &'a WritePolicy,
     statement: &'a Statement,
     task_id: u64,
-    operations: &'a [Operation],
+    payload: ServerCommandPayload<'a>,
 }
 
 impl<'a> ServerCommand<'a> {
@@ -46,7 +54,22 @@ impl<'a> ServerCommand<'a> {
             write_policy,
             statement,
             task_id,
-            operations,
+            payload: ServerCommandPayload::Operations(operations),
+        }
+    }
+
+    pub fn new_udf(
+        node: Arc<Node>,
+        write_policy: &'a WritePolicy,
+        statement: &'a Statement,
+        task_id: u64,
+    ) -> Self {
+        ServerCommand {
+            node,
+            write_policy,
+            statement,
+            task_id,
+            payload: ServerCommandPayload::Udf,
         }
     }
 
@@ -68,12 +91,19 @@ impl Command for ServerCommand<'_> {
     }
 
     async fn prepare_buffer(&mut self, conn: &mut Connection) -> Result<()> {
-        conn.buffer.set_query_operate(
-            self.write_policy,
-            self.statement,
-            self.task_id,
-            self.operations,
-        )
+        match &self.payload {
+            ServerCommandPayload::Operations(operations) => conn.buffer.set_query_operate(
+                self.write_policy,
+                self.statement,
+                self.task_id,
+                operations,
+            ),
+            ServerCommandPayload::Udf => conn.buffer.set_query_udf_execute(
+                self.write_policy,
+                self.statement,
+                self.task_id,
+            ),
+        }
     }
 
     async fn get_node(&mut self) -> Result<Arc<Node>> {
