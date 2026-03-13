@@ -13,6 +13,9 @@
 // limitations under the License.
 
 //! Operation Context for nested Operations
+use crate::commands::buffer::Buffer;
+use crate::errors::Result;
+use crate::msgpack::encoder::pack_ctx_for_index;
 use crate::operations::lists::{list_order_flag, ListOrderType};
 use crate::operations::MapOrder;
 use crate::Value;
@@ -45,6 +48,15 @@ pub struct CdtContext {
 
     /// Context Value
     pub value: Value,
+}
+
+/// Converts a context array to base64 to be used in info commands.
+pub fn to_base64(ctx: &[CdtContext]) -> Result<String> {
+    let size = pack_ctx_for_index(&mut None, ctx)?;
+    let mut buf = Buffer::new(0);
+    buf.resize_buffer(size)?;
+    let _ = pack_ctx_for_index(&mut Some(&mut buf), ctx);
+    Ok(base64::encode(&buf.data_buffer))
 }
 
 /// Defines Lookup list by index offset.

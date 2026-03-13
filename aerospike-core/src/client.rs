@@ -33,9 +33,9 @@ use crate::commands::{
 };
 use crate::errors::{Error, Result};
 use crate::expressions::Expression;
-use crate::msgpack::encoder::pack_ctx_for_index;
 use crate::net::ToHosts;
-use crate::operations::{CdtContext, Operation, OperationType};
+use crate::operations::cdt_context::{to_base64, CdtContext};
+use crate::operations::{Operation, OperationType};
 use crate::policy::{AdminPolicy, BatchPolicy, ClientPolicy, QueryPolicy, ReadPolicy, WritePolicy};
 use crate::query::{PartitionFilter, PartitionTracker};
 use crate::task::{DropIndexTask, ExecuteTask, IndexTask, RegisterTask, UdfRemoveTask};
@@ -1337,8 +1337,7 @@ impl Client {
 
         let mut last_err: Option<Error> = None;
         for node in &nodes {
-            let mut cmd =
-                ServerCommand::new_udf(node.clone(), write_policy, &statement, task_id);
+            let mut cmd = ServerCommand::new_udf(node.clone(), write_policy, &statement, task_id);
             if let Err(err) = cmd.execute().await {
                 last_err = Some(err);
             }
@@ -1821,22 +1820,14 @@ impl Client {
 
         if let Some(ctx) = ctx {
             if !ctx.is_empty() {
-                let size = pack_ctx_for_index(&mut None, ctx)?;
-                let mut buf = Buffer::new(0);
-                buf.resize_buffer(size)?;
-                let _ = pack_ctx_for_index(&mut Some(&mut buf), ctx);
-                let ctx_str = base64::encode(&buf.data_buffer);
+                let ctx_str = to_base64(ctx)?;
                 cmd.push_str(";context=");
                 cmd.push_str(&ctx_str);
             }
         }
 
         if let Some(expression) = expression {
-            let size = expression.size()?;
-            let mut buf = Buffer::new(0);
-            buf.resize_buffer(size)?;
-            let _ = expression.pack(&mut Some(&mut buf));
-            let exp_str = base64::encode(&buf.data_buffer);
+            let exp_str = expression.base64()?;
             cmd.push_str(";exp=");
             cmd.push_str(&exp_str);
         }
