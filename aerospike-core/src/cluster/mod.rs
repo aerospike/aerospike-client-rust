@@ -224,6 +224,12 @@ impl Cluster {
             debug!("No connections available; seeding...");
             self.seed_nodes().await;
             nodes = self.nodes();
+        } else {
+            // Clear reference counts at start of tend
+            // Nodes not refreshed this cycle keep 0, so dead nodes can be removed.
+            for node in &nodes {
+                node.reset_reference_count();
+            }
         }
 
         let mut friend_list: Vec<Host> = vec![];
@@ -516,6 +522,13 @@ impl Cluster {
                 continue;
             }
 
+            // All node info requests failed and this node had more than5 consecutive failures.
+            // Remove node. If no nodes are left, seeds will be tried in next tend 
+            if refresh_count == 0 && node.failures() > 5 {
+                remove_list.push(tnode);
+                continue;
+            }
+
             match cluster_size {
                 // Single node clusters rely on whether it responded to info requests.
                 1 if node.failures() > 5 => {
@@ -527,7 +540,7 @@ impl Cluster {
 
                 // Two node clusters require at least one successful refresh before removing.
                 2 if refresh_count == 1 && node.reference_count() == 0 && node.failures() > 0 => {
-                    remove_list.push(node);
+                    remove_list.push(tnode);
                 }
 
                 _ => {
