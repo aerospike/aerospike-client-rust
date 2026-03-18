@@ -93,26 +93,29 @@ impl PartitionForNamespace {
             get_sequence().next()
         }
 
-        // Only consider active nodes (skip removed/closed nodes that may still be in the map).
-        let active_replicas = || {
-            self.all_replicas(partition.partition_id)
-                .flatten()
-                .filter(|n| n.is_active())
-        };
-        let node = match replica {
-            Replica::Master => active_replicas().next(),
-            Replica::Sequence => get_next_in_sequence(active_replicas, last_tried),
+            let node = match replica {
+            Replica::Master => self.all_replicas(partition.partition_id).next().flatten(),
+            Replica::Sequence => get_next_in_sequence(
+                || self.all_replicas(partition.partition_id).flatten(),
+                last_tried,
+            ),
             Replica::PreferRack => {
                 let rack_ids = &cluster.client_policy.load().rack_ids;
                 let rack_ids = rack_ids.as_ref().ok_or_else(|| Error::InvalidArgument("Attempted to use Replica::PreferRack without configuring racks in client policy".to_string()))?;
                 get_next_in_sequence(
                     || {
-                        active_replicas()
+                        self.all_replicas(partition.partition_id)
+                            .flatten()
                             .filter(|node| node.is_in_rack(partition.namespace, rack_ids))
                     },
                     last_tried.clone(),
                 )
-                .or_else(|| get_next_in_sequence(active_replicas, last_tried))
+                .or_else(|| {
+                    get_next_in_sequence(
+                        || self.all_replicas(partition.partition_id).flatten(),
+                        last_tried,
+                    )
+                })
             }
         };
 
@@ -218,16 +221,13 @@ impl Cluster {
         // All node additions/deletions are performed in tend thread.
         // If active nodes don't exist, seed cluster.
         if nodes.is_empty() {
-            debug!("No connections available; seeding...");
+            info!("No connections available; seeding...");
             self.seed_nodes().await;
             nodes = self.nodes();
-        } else {
-            // Clear reference counts at start of tend
-            // Nodes not refreshed this cycle keep 0, so dead nodes can be removed.
-            for node in &nodes {
-                node.reset_reference_count();
-            }
-        }
+        } 
+
+        info!("Resetting ref count...");
+
 
         let mut friend_list: Vec<Host> = vec![];
         let mut refresh_count = 0;
@@ -281,28 +281,7 @@ impl Cluster {
         // Handle nodes changes determined from refreshes.
         // Remove nodes in a batch.
         let remove_list = self.find_nodes_to_remove(refresh_count).await;
-        let need_partition_refresh = !remove_list.is_empty();
         self.remove_nodes_and_aliases(remove_list);
-
-        // After removing nodes, refresh the partition map from every remaining node so the map
-        // no longer references removed (closed) nodes. Each node's "replicas" response only fills
-        // its own replica slots, so we must ask all remaining nodes to rebuild the full map.
-        if need_partition_refresh {
-            let remaining = self.nodes();
-            if remaining.is_empty() {
-                // No nodes left (e.g. scale to 0). Clear partition map so we don't keep
-                // references to closed nodes; scale-up from 0 will then build a fresh map.
-                self.partition_map.store(Arc::new(HashMap::default()));
-            } else {
-                let mut pm = (*self.partition_map.load().clone()).clone();
-                for node in &remaining {
-                    if let Err(e) = self.update_partitions(&mut pm, node).await {
-                        log_error_chain!(e, "Failed to refresh partition map after node removal (node {node})");
-                    }
-                }
-                self.partition_map.store(Arc::new(pm));
-            }
-        }
 
         let aliases: Vec<String> = self
             .aliases
@@ -311,7 +290,7 @@ impl Cluster {
             .map(std::string::ToString::to_string)
             .collect();
 
-        debug!("Nodes {aliases:?}");
+        info!("Nodes {aliases:?}");
 
         Ok(())
     }
@@ -458,6 +437,16 @@ impl Cluster {
             } else {
                 &*seed_node_validator.services()
             };
+            debug!(
+                "Seed {} used for discovery; adding nodes from {} list: {:?}",
+                seed,
+                if seed_node_validator.services().is_empty() {
+                    "alias"
+                } else {
+                    "services"
+                },
+                peers
+            );
 
             for alias in peers {
                 let mut nv = NodeValidator::new(self.client_policy());
@@ -541,8 +530,13 @@ impl Cluster {
             }
 
             // All node info requests failed and this node had 5+ consecutive failures.
-            // Remove node. If no nodes are left, seeds will be tried in next tend (Java: >= 5).
+            // Remove node. If no nodes are left, seeds will be tried (same tend or next).
             if refresh_count == 0 && node.failures() >= 5 {
+                info!(
+                    "Removing node `{}` ({} failures, no successful refresh). Cluster will reseed from seeds when list is empty.",
+                    node.name(),
+                    node.failures()
+                );
                 remove_list.push(tnode);
                 continue;
             }
@@ -567,6 +561,7 @@ impl Cluster {
                     // since the reference comes from another node's possibly stale peer list (e.g. scale-down
                     // to 1 where the remaining server still reports the old cluster).
                     if refresh_count >= 1 && node.failures() > 0 {
+                        info!("Multi node refrsh count > 1 and node failure > 0");
                         remove_list.push(tnode);
                         continue;
                     }
@@ -576,6 +571,7 @@ impl Cluster {
                             // Node is alive, but not referenced. Check if in partition map.
                             if !self.find_node_in_partition_map(node).await {
                                 remove_list.push(tnode);
+                                info!("Multi node refrsh count > 1 and ref count = 0 and node failure = 0");
                             }
                         }
                     }

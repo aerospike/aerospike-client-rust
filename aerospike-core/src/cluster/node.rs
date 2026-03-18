@@ -117,9 +117,9 @@ impl Node {
 
     // Reset reference count for the start of a tend cycle
     // Nodes that are not refreshed this cycle will keep 0 and can be removed when appropriate.
-    pub(crate) fn reset_reference_count(&self) {
-        self.reference_count.store(0, Ordering::Relaxed);
-    }
+    // pub(crate) fn reset_reference_count(&self) {
+    //     self.reference_count.store(0, Ordering::Relaxed);
+    // }
 
     // Refresh the node
     pub async fn refresh(&self, current_aliases: HashMap<Host, Arc<Node>>) -> Result<Vec<Host>> {
