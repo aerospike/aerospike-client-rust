@@ -93,29 +93,26 @@ impl PartitionForNamespace {
             get_sequence().next()
         }
 
+        // Only consider active nodes (skip removed/closed nodes that may still be in the map).
+        let active_replicas = || {
+            self.all_replicas(partition.partition_id)
+                .flatten()
+                .filter(|n| n.is_active())
+        };
         let node = match replica {
-            Replica::Master => self.all_replicas(partition.partition_id).next().flatten(),
-            Replica::Sequence => get_next_in_sequence(
-                || self.all_replicas(partition.partition_id).flatten(),
-                last_tried,
-            ),
+            Replica::Master => active_replicas().next(),
+            Replica::Sequence => get_next_in_sequence(active_replicas, last_tried),
             Replica::PreferRack => {
                 let rack_ids = &cluster.client_policy.load().rack_ids;
                 let rack_ids = rack_ids.as_ref().ok_or_else(|| Error::InvalidArgument("Attempted to use Replica::PreferRack without configuring racks in client policy".to_string()))?;
                 get_next_in_sequence(
                     || {
-                        self.all_replicas(partition.partition_id)
-                            .flatten()
+                        active_replicas()
                             .filter(|node| node.is_in_rack(partition.namespace, rack_ids))
                     },
                     last_tried.clone(),
                 )
-                .or_else(|| {
-                    get_next_in_sequence(
-                        || self.all_replicas(partition.partition_id).flatten(),
-                        last_tried,
-                    )
-                })
+                .or_else(|| get_next_in_sequence(active_replicas, last_tried))
             }
         };
 
@@ -284,7 +281,22 @@ impl Cluster {
         // Handle nodes changes determined from refreshes.
         // Remove nodes in a batch.
         let remove_list = self.find_nodes_to_remove(refresh_count).await;
+        let need_partition_refresh = !remove_list.is_empty();
         self.remove_nodes_and_aliases(remove_list);
+
+        // After removing nodes, refresh the partition map from every remaining node so the map
+        // no longer references removed (closed) nodes. Each node's "replicas" response only fills
+        // its own replica slots, so we must ask all remaining nodes to rebuild the full map.
+        if need_partition_refresh {
+            let remaining = self.nodes();
+            let mut pm = (*self.partition_map.load().clone()).clone();
+            for node in &remaining {
+                if let Err(e) = self.update_partitions(&mut pm, node).await {
+                    log_error_chain!(e, "Failed to refresh partition map after node removal (node {node})");
+                }
+            }
+            self.partition_map.store(Arc::new(pm));
+        }
 
         let aliases: Vec<String> = self
             .aliases
@@ -522,7 +534,7 @@ impl Cluster {
                 continue;
             }
 
-            // All node info requests failed and this node had more than5 consecutive failures.
+            // All node info requests failed and this node had more than 5 consecutive failures.
             // Remove node. If no nodes are left, seeds will be tried in next tend 
             if refresh_count == 0 && node.failures() > 5 {
                 remove_list.push(tnode);
@@ -544,8 +556,10 @@ impl Cluster {
                 }
 
                 _ => {
-                    // Multi-node clusters require two successful node refreshes before removing.
-                    if refresh_count >= 2 && node.reference_count() == 0 {
+                    // Multi-node clusters requires at least one successful refresh so we have a live node's view with
+                    // only one node left (e.g. scale-down from 3 to 1) and also remove nodes that didn't respond 
+                    // and are not referenced.
+                    if refresh_count >= 1 && node.reference_count() == 0 {
                         // Node is not referenced by other nodes.
                         // Check if node responded to info request.
                         if node.failures() == 0 {
