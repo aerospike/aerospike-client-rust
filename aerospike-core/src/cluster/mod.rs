@@ -289,13 +289,19 @@ impl Cluster {
         // its own replica slots, so we must ask all remaining nodes to rebuild the full map.
         if need_partition_refresh {
             let remaining = self.nodes();
-            let mut pm = (*self.partition_map.load().clone()).clone();
-            for node in &remaining {
-                if let Err(e) = self.update_partitions(&mut pm, node).await {
-                    log_error_chain!(e, "Failed to refresh partition map after node removal (node {node})");
+            if remaining.is_empty() {
+                // No nodes left (e.g. scale to 0). Clear partition map so we don't keep
+                // references to closed nodes; scale-up from 0 will then build a fresh map.
+                self.partition_map.store(Arc::new(HashMap::default()));
+            } else {
+                let mut pm = (*self.partition_map.load().clone()).clone();
+                for node in &remaining {
+                    if let Err(e) = self.update_partitions(&mut pm, node).await {
+                        log_error_chain!(e, "Failed to refresh partition map after node removal (node {node})");
+                    }
                 }
+                self.partition_map.store(Arc::new(pm));
             }
-            self.partition_map.store(Arc::new(pm));
         }
 
         let aliases: Vec<String> = self
@@ -534,16 +540,16 @@ impl Cluster {
                 continue;
             }
 
-            // All node info requests failed and this node had more than 5 consecutive failures.
-            // Remove node. If no nodes are left, seeds will be tried in next tend 
-            if refresh_count == 0 && node.failures() > 5 {
+            // All node info requests failed and this node had 5+ consecutive failures.
+            // Remove node. If no nodes are left, seeds will be tried in next tend (Java: >= 5).
+            if refresh_count == 0 && node.failures() >= 5 {
                 remove_list.push(tnode);
                 continue;
             }
 
             match cluster_size {
                 // Single node clusters rely on whether it responded to info requests.
-                1 if node.failures() > 5 => {
+                1 if node.failures() >= 5 => {
                     // 5 consecutive info requests failed. Try seeds.
                     if self.seed_nodes().await {
                         remove_list.push(tnode);
@@ -556,20 +562,21 @@ impl Cluster {
                 }
 
                 _ => {
-                    // Multi-node clusters requires at least one successful refresh so we have a live node's view with
-                    // only one node left (e.g. scale-down from 3 to 1) and also remove nodes that didn't respond 
-                    // and are not referenced.
+                    // Multi-node clusters: remove nodes that didn't respond when we have a live node's view.
+                    // If the node didn't respond (failures > 0), remove it even if reference_count > 0,
+                    // since the reference comes from another node's possibly stale peer list (e.g. scale-down
+                    // to 1 where the remaining server still reports the old cluster).
+                    if refresh_count >= 1 && node.failures() > 0 {
+                        remove_list.push(tnode);
+                        continue;
+                    }
                     if refresh_count >= 1 && node.reference_count() == 0 {
                         // Node is not referenced by other nodes.
-                        // Check if node responded to info request.
                         if node.failures() == 0 {
-                            // Node is alive, but not referenced by other nodes. Check if mapped.
+                            // Node is alive, but not referenced. Check if in partition map.
                             if !self.find_node_in_partition_map(node).await {
                                 remove_list.push(tnode);
                             }
-                        } else {
-                            // Node not responding. Remove it.
-                            remove_list.push(tnode);
                         }
                     }
                 }
