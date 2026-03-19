@@ -531,7 +531,7 @@ impl Cluster {
 
             // All node info requests failed and this node had 5+ consecutive failures.
             // Remove node. If no nodes are left, seeds will be tried (same tend or next).
-            if refresh_count == 0 && node.failures() >= 5 {
+            if refresh_count == 0 && node.failures() > 2 {
                 info!(
                     "Removing node `{}` ({} failures, no successful refresh). Cluster will reseed from seeds when list is empty.",
                     node.name(),
@@ -561,7 +561,7 @@ impl Cluster {
                     // since the reference comes from another node's possibly stale peer list (e.g. scale-down
                     // to 1 where the remaining server still reports the old cluster).
                     if refresh_count >= 1 && node.failures() > 0 {
-                        info!("Multi node refrsh count > 1 and node failure > 0");
+                        info!("Multi node refresh count > 1 and node failure > 0");
                         remove_list.push(tnode);
                         continue;
                     }
@@ -569,9 +569,17 @@ impl Cluster {
                         // Node is not referenced by other nodes.
                         if node.failures() == 0 {
                             // Node is alive, but not referenced. Check if in partition map.
-                            if !self.find_node_in_partition_map(node).await {
+                            // Skip removal if this node has never completed a successful refresh:
+                            // it may have been added from the friend list in this same tend, so
+                            // ref_count is still 0 and the partition map may not include it yet
+                            // (e.g. scale-up 1→N). Next tend will refresh it and re-evaluate.
+                            if node.has_responded()
+                                && !self.find_node_in_partition_map(node).await
+                            {
                                 remove_list.push(tnode);
-                                info!("Multi node refrsh count > 1 and ref count = 0 and node failure = 0");
+                                info!(
+                                    "Multi node refresh count > 1 and ref count = 0 and node failure = 0"
+                                );
                             }
                         }
                     }
