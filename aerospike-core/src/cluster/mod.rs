@@ -93,7 +93,7 @@ impl PartitionForNamespace {
             get_sequence().next()
         }
 
-            let node = match replica {
+        let node = match replica {
             Replica::Master => self.all_replicas(partition.partition_id).next().flatten(),
             Replica::Sequence => get_next_in_sequence(
                 || self.all_replicas(partition.partition_id).flatten(),
@@ -221,13 +221,10 @@ impl Cluster {
         // All node additions/deletions are performed in tend thread.
         // If active nodes don't exist, seed cluster.
         if nodes.is_empty() {
-            info!("No connections available; seeding...");
+            debug!("No connections available; seeding...");
             self.seed_nodes().await;
             nodes = self.nodes();
-        } 
-
-        info!("Resetting ref count...");
-
+        }
 
         let mut friend_list: Vec<Host> = vec![];
         let mut refresh_count = 0;
@@ -290,7 +287,7 @@ impl Cluster {
             .map(std::string::ToString::to_string)
             .collect();
 
-        info!("Nodes {aliases:?}");
+        debug!("Nodes {aliases:?}");
 
         Ok(())
     }
@@ -437,16 +434,6 @@ impl Cluster {
             } else {
                 &*seed_node_validator.services()
             };
-            debug!(
-                "Seed {} used for discovery; adding nodes from {} list: {:?}",
-                seed,
-                if seed_node_validator.services().is_empty() {
-                    "alias"
-                } else {
-                    "services"
-                },
-                peers
-            );
 
             for alias in peers {
                 let mut nv = NodeValidator::new(self.client_policy());
@@ -529,39 +516,36 @@ impl Cluster {
                 continue;
             }
 
-            // All node info requests failed and this node had 5+ consecutive failures.
-            // Remove node. If no nodes are left, seeds will be tried (same tend or next).
-            if refresh_count == 0 && node.failures() > 2 {
-                info!(
-                    "Removing node `{}` ({} failures, no successful refresh). Cluster will reseed from seeds when list is empty.",
-                    node.name(),
-                    node.failures()
-                );
-                remove_list.push(tnode);
-                continue;
-            }
-
             match cluster_size {
                 // Single node clusters rely on whether it responded to info requests.
                 1 if node.failures() >= 5 => {
                     // 5 consecutive info requests failed. Try seeds.
                     if self.seed_nodes().await {
+                        debug!(
+                            "Removing nodes in single node cluster after waiting for some failures"
+                        );
                         remove_list.push(tnode);
                     }
                 }
 
-                // Two node clusters require at least one successful refresh before removing.
-                2 if refresh_count == 1 && node.reference_count() == 0 && node.failures() > 0 => {
-                    remove_list.push(tnode);
+                2 => {
+                    // Either all nodes are down then wait for some min threshold failures
+                    // or one node refreshes and other failed durign refresh
+                    if (refresh_count == 0 && node.failures() > 2)
+                        || (refresh_count == 1
+                            && node.reference_count() == 0
+                            && node.failures() > 0)
+                    {
+                        debug!("no node refreshed or one refreshed and other had failures in cluster size = 2");
+                        remove_list.push(tnode);
+                    }
                 }
 
                 _ => {
                     // Multi-node clusters: remove nodes that didn't respond when we have a live node's view.
-                    // If the node didn't respond (failures > 0), remove it even if reference_count > 0,
-                    // since the reference comes from another node's possibly stale peer list (e.g. scale-down
-                    // to 1 where the remaining server still reports the old cluster).
-                    if refresh_count >= 1 && node.failures() > 0 {
-                        info!("Multi node refresh count > 1 and node failure > 0");
+                    // If the node didn't respond (failures > 0)
+                    if refresh_count == 0 && node.failures() > 0 {
+                        debug!("no node refreshed in cluster size > 2 and had failures than min threshold");
                         remove_list.push(tnode);
                         continue;
                     }
@@ -573,14 +557,16 @@ impl Cluster {
                             // it may have been added from the friend list in this same tend, so
                             // ref_count is still 0 and the partition map may not include it yet
                             // (e.g. scale-up 1→N). Next tend will refresh it and re-evaluate.
-                            if node.has_responded()
-                                && !self.find_node_in_partition_map(node).await
+                            if node.has_responded() && !self.find_node_in_partition_map(node).await
                             {
                                 remove_list.push(tnode);
-                                info!(
-                                    "Multi node refresh count > 1 and ref count = 0 and node failure = 0"
+                                debug!(
+                                    "some node refreshes but the node in action not referenced in partitionmap"
                                 );
                             }
+                        } else {
+                            remove_list.push(tnode);
+                            debug!("some node refreshes but the node in action has failures");
                         }
                     }
                 }
