@@ -528,46 +528,37 @@ impl Cluster {
                     }
                 }
 
-                2 => {
-                    // Either all nodes are down then wait for some min threshold failures
-                    // or one node refreshes and other failed durign refresh
-                    if (refresh_count == 0 && node.failures() > 2)
-                        || (refresh_count == 1
-                            && node.reference_count() == 0
-                            && node.failures() > 0)
-                    {
-                        debug!("no node refreshed or one refreshed and other had failures in cluster size = 2");
-                        remove_list.push(tnode);
-                    }
+                // Either all nodes are down then wait for some min threshold failures
+                // or one node refreshes and other failed durign refresh
+                // For small size cluster, don't be aggressive could be transient failures
+                2 if refresh_count <= 1 && node.failures() >= 5 => {
+                    debug!("no node refreshed or one refreshed and other had failures in cluster size eq 2");
+                    remove_list.push(tnode);
                 }
 
                 _ => {
-                    // Multi-node clusters: remove nodes that didn't respond when we have a live node's view.
-                    // If the node didn't respond (failures > 0)
-                    if refresh_count == 0 && node.failures() > 0 {
-                        debug!("no node refreshed in cluster size > 2 and had failures than min threshold");
+                    // Multi-node: prefer a live node's view; drop non-responders or repeatedly failing peers.
+                    // Another node's refresh can bump reference_count via add_friends while this node's refresh failed.
+                    let failures = node.failures();
+                    if refresh_count == 0 && failures > 0 {
+                        debug!(
+                            "no node refreshed in cluster size gte 2 and failures above min threshold"
+                        );
                         remove_list.push(tnode);
-                        continue;
-                    }
-                    if refresh_count >= 1 && node.reference_count() == 0 {
-                        // Node is not referenced by other nodes.
-                        if node.failures() == 0 {
-                            // Node is alive, but not referenced. Check if in partition map.
-                            // Skip removal if this node has never completed a successful refresh:
-                            // it may have been added from the friend list in this same tend, so
-                            // ref_count is still 0 and the partition map may not include it yet
-                            // (e.g. scale-up 1→N). Next tend will refresh it and re-evaluate.
-                            if node.has_responded() && !self.find_node_in_partition_map(node).await
+                    } else if refresh_count >= 1 && node.reference_count() == 0 && failures == 0 {
+                        if node.has_responded()
+                                && !self.find_node_in_partition_map(node).await
                             {
                                 remove_list.push(tnode);
                                 debug!(
-                                    "some node refreshes but the node in action not referenced in partitionmap"
+                                    "some node refreshes but the current node is active but not referenced in partition-map"
                                 );
                             }
-                        } else {
-                            remove_list.push(tnode);
-                            debug!("some node refreshes but the node in action has failures");
-                        }
+                    } else if refresh_count >= 1 && failures > 2 {
+                        remove_list.push(tnode);
+                        debug!(
+                            "multi-node: refresh failed repeatedly, removing node despite peer reference_count"
+                        );
                     }
                 }
             }
