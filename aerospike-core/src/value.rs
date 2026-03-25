@@ -207,6 +207,7 @@ pub enum Value {
 impl Hash for Value {
     fn hash<H: Hasher>(&self, state: &mut H) {
         match *self {
+            #[allow(clippy::collection_is_never_read)]
             Value::Nil => {
                 let v: Option<u8> = None;
                 v.hash(state);
@@ -221,8 +222,9 @@ impl Hash for Value {
             Value::MultiResult(_) => panic!("MultiValues cannot be used as map keys."),
             Value::List(_) => panic!("Lists cannot be used as map keys."),
             Value::HashMap(_) => panic!("HashMaps cannot be used as map keys."),
-            Value::OrderedMap(_) => panic!("OrderedMaps cannot be used as map keys."),
-            Value::KeyValueList(_) => panic!("OrderedMaps cannot be used as map keys."),
+            Value::OrderedMap(_) | Value::KeyValueList(_) => {
+                panic!("OrderedMaps cannot be used as map keys.")
+            }
             Value::Infinity => panic!("Infinity cannot be used as map keys."),
             Value::Wildcard => panic!("Wildcard cannot be used as map keys."),
         }
@@ -245,15 +247,11 @@ impl Value {
             Value::String(_) => ParticleType::STRING,
             Value::Blob(_) => ParticleType::BLOB,
             Value::Bool(_) => ParticleType::BOOL,
-            Value::MultiResult(_) => ParticleType::LIST,
-            Value::List(_) => ParticleType::LIST,
-            Value::HashMap(_) => ParticleType::MAP,
-            Value::OrderedMap(_) => ParticleType::MAP,
-            Value::KeyValueList(_) => ParticleType::MAP,
+            Value::MultiResult(_) | Value::List(_) => ParticleType::LIST,
+            Value::HashMap(_) | Value::OrderedMap(_) | Value::KeyValueList(_) => ParticleType::MAP,
             Value::GeoJSON(_) => ParticleType::GEOJSON,
             Value::HLL(_) => ParticleType::HLL,
-            Value::Infinity => unreachable!(),
-            Value::Wildcard => unreachable!(),
+            Value::Infinity | Value::Wildcard => unreachable!(),
         }
     }
 
@@ -266,8 +264,7 @@ impl Value {
             Value::Float(ref val) => val.to_string(),
             Value::String(ref val) | Value::GeoJSON(ref val) => val.clone(),
             Value::Blob(ref val) | Value::HLL(ref val) => format!("{val:?}"),
-            Value::MultiResult(ref val) => format!("{val:?}"),
-            Value::List(ref val) => format!("{val:?}"),
+            Value::MultiResult(ref val) | Value::List(ref val) => format!("{val:?}"),
             Value::HashMap(ref val) => format!("{val:?}"),
             Value::OrderedMap(ref val) => format!("{val:?}"),
             Value::KeyValueList(ref val) => format!("{val:?}"),
@@ -278,10 +275,8 @@ impl Value {
 
     /// Calculate the size in bytes that the representation on wire for this value will require.
     /// For internal use only.
-    #[must_use]
     pub(crate) fn estimate_size(&self) -> Result<usize> {
         let res = match *self {
-            Value::Nil => 0,
             Value::Int(_) | Value::Float(_) => 8,
             Value::String(ref s) => s.len(),
             Value::Blob(ref b) => b.len(),
@@ -299,8 +294,7 @@ impl Value {
             }
             Value::GeoJSON(ref s) => 1 + 2 + s.len(), // flags + ncells + jsonstr
             Value::HLL(ref h) => h.len(),
-            Value::Infinity => 0,
-            Value::Wildcard => 0,
+            Value::Nil | Value::Infinity | Value::Wildcard => 0,
         };
 
         Ok(res)
@@ -308,7 +302,6 @@ impl Value {
 
     /// Serialize the value into the given buffer.
     /// For internal use only.
-    #[must_use]
     pub(crate) fn write_to(&self, buf: &mut Buffer) -> Result<usize> {
         let res = match *self {
             Value::Nil => 0,
@@ -390,10 +383,10 @@ impl Ord for Value {
                 // Same type, compare by value
                 match (self, other) {
                     (Value::Int(a_val), Value::Int(b_val)) => a_val.cmp(b_val),
-                    (Value::String(a_val), Value::String(b_val)) => a_val.cmp(b_val),
-                    (Value::GeoJSON(a_val), Value::GeoJSON(b_val)) => a_val.cmp(b_val),
-                    (Value::HLL(a_val), Value::HLL(b_val)) => a_val.cmp(b_val),
-                    (Value::Blob(a_val), Value::Blob(b_val)) => a_val.cmp(b_val),
+                    (Value::String(a_val), Value::String(b_val))
+                    | (Value::GeoJSON(a_val), Value::GeoJSON(b_val)) => a_val.cmp(b_val),
+                    (Value::HLL(a_val), Value::HLL(b_val))
+                    | (Value::Blob(a_val), Value::Blob(b_val)) => a_val.cmp(b_val),
                     (Value::Bool(a_val), Value::Bool(b_val)) => a_val.cmp(b_val),
                     (Value::HashMap(ref a_val), Value::HashMap(ref b_val)) => {
                         a_val.len().cmp(&b_val.len())
@@ -429,36 +422,7 @@ impl Ord for Value {
 
 impl PartialOrd for Value {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        match self.value_type_order().cmp(&other.value_type_order()) {
-            Ordering::Equal => {
-                // Same type, compare by value
-                match (self, other) {
-                    (Value::Int(a_val), Value::Int(b_val)) => Some(a_val.cmp(b_val)),
-                    (Value::String(a_val), Value::String(b_val)) => Some(a_val.cmp(b_val)),
-                    (Value::GeoJSON(a_val), Value::GeoJSON(b_val)) => Some(a_val.cmp(b_val)),
-                    (Value::HLL(a_val), Value::HLL(b_val)) => Some(a_val.cmp(b_val)),
-                    (Value::Blob(a_val), Value::Blob(b_val)) => Some(a_val.cmp(b_val)),
-                    (Value::Bool(a_val), Value::Bool(b_val)) => Some(a_val.cmp(b_val)),
-                    (Value::Float(a_val), Value::Float(b_val)) => {
-                        // Compare float bits for deterministic ordering
-                        let a_bits = match a_val {
-                            FloatValue::F32(bits) => u64::from(*bits),
-                            FloatValue::F64(bits) => *bits,
-                        };
-
-                        let b_bits = match b_val {
-                            FloatValue::F32(bits) => u64::from(*bits),
-                            FloatValue::F64(bits) => *bits,
-                        };
-
-                        Some(a_bits.cmp(&b_bits))
-                    }
-                    _ => None,
-                }
-            }
-
-            ord => Some(ord),
-        }
+        Some(self.cmp(other))
     }
 }
 
@@ -700,8 +664,7 @@ impl TryFrom<Value> for String {
     type Error = String;
     fn try_from(val: Value) -> std::result::Result<Self, Self::Error> {
         match val {
-            Value::String(v) => Ok(v),
-            Value::GeoJSON(v) => Ok(v),
+            Value::String(v) | Value::GeoJSON(v) => Ok(v),
             _ => Err(format!(
                 "Invalid type conversion from Value::{} to {}",
                 val.particle_type(),
@@ -715,8 +678,7 @@ impl TryFrom<Value> for Vec<u8> {
     type Error = String;
     fn try_from(val: Value) -> std::result::Result<Self, Self::Error> {
         match val {
-            Value::Blob(v) => Ok(v),
-            Value::HLL(v) => Ok(v),
+            Value::Blob(v) | Value::HLL(v) => Ok(v),
             _ => Err(format!(
                 "Invalid type conversion from Value::{} to {}",
                 val.particle_type(),
@@ -730,8 +692,7 @@ impl TryFrom<Value> for Vec<Value> {
     type Error = String;
     fn try_from(val: Value) -> std::result::Result<Self, Self::Error> {
         match val {
-            Value::List(v) => Ok(v),
-            Value::MultiResult(v) => Ok(v),
+            Value::List(v) | Value::MultiResult(v) => Ok(v),
             _ => Err(format!(
                 "Invalid type conversion from Value::{} to {}",
                 val.particle_type(),
@@ -741,6 +702,7 @@ impl TryFrom<Value> for Vec<Value> {
     }
 }
 
+#[allow(clippy::implicit_hasher)]
 impl TryFrom<Value> for HashMap<Value, Value> {
     type Error = String;
     fn try_from(val: Value) -> std::result::Result<Self, Self::Error> {
@@ -1054,6 +1016,7 @@ impl Serialize for Value {
 }
 
 /// Allows either a `HashMap` or `BTreeMap` to be passed as arguments to certain methods.
+#[allow(clippy::type_complexity)]
 pub trait MapLike<K: Eq, V> {
     fn value(self) -> (Option<HashMap<K, V>>, Option<BTreeMap<K, V>>);
     fn value_as_ref(&self) -> (Option<&HashMap<K, V>>, Option<&BTreeMap<K, V>>);

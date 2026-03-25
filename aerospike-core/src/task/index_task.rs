@@ -69,7 +69,7 @@ impl IndexTask {
                 let start = index + find.len();
                 let pct_str: String = response[start..]
                     .chars()
-                    .take_while(|c| c.is_ascii_digit())
+                    .take_while(char::is_ascii_digit)
                     .collect();
 
                 if pct_str.is_empty() {

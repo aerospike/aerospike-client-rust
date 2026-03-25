@@ -63,6 +63,7 @@ impl Queue {
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         if *reserved < self.0.capacity {
             *reserved += 1;
+            drop(reserved);
             return true;
         }
         false
@@ -109,13 +110,13 @@ impl Queue {
     pub fn get(&self) -> Result<PooledConnection> {
         let connection;
         loop {
-            if let Some(conn) = self
+            let mut connections = self
                 .0
                 .connections
                 .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .pop_front()
-            {
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            if let Some(conn) = connections.pop_front() {
+                drop(connections);
                 if conn.is_idle() {
                     // let the connection drop and close
                     continue;
@@ -147,7 +148,7 @@ impl Queue {
     }
 
     /// Removes all the connections from the queue.
-    pub fn clear(&mut self) {
+    pub fn clear(&self) {
         let mut connections = self
             .0
             .connections
@@ -259,10 +260,9 @@ impl ConnectionPool {
                 }
             }
             attempts -= 1;
-            if attempts <= 0 {
+            if attempts == 0 {
                 break;
             }
-            continue;
         }
 
         Err(Error::ClientError(
@@ -273,7 +273,7 @@ impl ConnectionPool {
     /// Closes the connection pool and clears all the internal queues from connection,
     /// closing then in the process.
     pub fn close(&mut self) {
-        for mut queue in self.queues.drain(..) {
+        for queue in self.queues.drain(..) {
             queue.clear();
         }
     }

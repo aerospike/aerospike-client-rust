@@ -27,9 +27,11 @@ use ripemd::Ripemd160;
 
 #[cfg(feature = "serialization")]
 use serde::Serialize;
-/// Unique record identifier. Records can be identified using a specified namespace, an optional
-/// set name and a user defined key which must be uique within a set. Records can also be
-/// identified by namespace/digest, which is the combination used on the server.
+/// Unique record identifier.
+///
+/// Records can be identified using a specified namespace, an optional set name and a user defined
+/// key which must be unique within a set. Records can also be identified by namespace/digest,
+/// which is the combination used on the server.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serialization", derive(Serialize))]
 pub struct Key {
@@ -107,6 +109,10 @@ impl Key {
     }
 
     /// Returns the partitionId of the key.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the digest slice cannot be read as a `u32` in little-endian byte order.
     pub fn partition_id(&self) -> usize {
         let mut rdr = Cursor::new(&self.digest[0..4]);
 

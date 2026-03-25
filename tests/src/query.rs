@@ -565,7 +565,10 @@ async fn query_filter_with_specific_bins() {
                 assert_eq!(rec.bins.len(), 2, "expected 2 bins, got {:?}", rec.bins);
                 assert!(rec.bins.contains_key("bin"), "missing 'bin'");
                 assert!(rec.bins.contains_key("bin2"), "missing 'bin2'");
-                assert!(!rec.bins.contains_key("extra"), "'extra' should not be returned");
+                assert!(
+                    !rec.bins.contains_key("extra"),
+                    "'extra' should not be returned"
+                );
                 let v: i64 = rec.bins["bin"].clone().into();
                 assert!(v >= 0 && v < 10);
                 assert_eq!(rec.bins["bin2"], as_val!("hello"));
@@ -682,7 +685,10 @@ async fn query_scan_with_specific_bins() {
                 assert_eq!(rec.bins.len(), 2, "expected 2 bins, got {:?}", rec.bins);
                 assert!(rec.bins.contains_key("bin"), "missing 'bin'");
                 assert!(rec.bins.contains_key("bin2"), "missing 'bin2'");
-                assert!(!rec.bins.contains_key("extra"), "'extra' should not be returned");
+                assert!(
+                    !rec.bins.contains_key("extra"),
+                    "'extra' should not be returned"
+                );
             }
             Err(err) => panic!("{:?}", err),
         }
@@ -876,7 +882,11 @@ async fn query_filter_contains_list() {
 
     // Value 1 is in record 0's list [0,1,2] and record 1's list [1,2,3]
     let mut statement = Statement::new(namespace, &set_name, Bins::All);
-    statement.add_filter(Filter::contains("list_bin", 1_i64, CollectionIndexType::List));
+    statement.add_filter(Filter::contains(
+        "list_bin",
+        1_i64,
+        CollectionIndexType::List,
+    ));
 
     let pf = PartitionFilter::all();
     let rs = client.query(&qpolicy, pf, statement).await.unwrap();
@@ -1068,12 +1078,14 @@ async fn query_filter_geo_contains() {
             &key1,
             &vec![as_bin!(
                 bin_name,
-                as_geo!(r#"{
+                as_geo!(
+                    r#"{
                     "type": "Polygon",
                     "coordinates": [[[-123.0, 37.0], [-121.0, 37.0],
                                      [-121.0, 38.0], [-123.0, 38.0],
                                      [-123.0, 37.0]]]
-                }"#)
+                }"#
+                )
             )],
         )
         .await
@@ -1087,12 +1099,14 @@ async fn query_filter_geo_contains() {
             &key2,
             &vec![as_bin!(
                 bin_name,
-                as_geo!(r#"{
+                as_geo!(
+                    r#"{
                     "type": "Polygon",
                     "coordinates": [[[-74.0, 40.0], [-73.0, 40.0],
                                      [-73.0, 41.0], [-74.0, 41.0],
                                      [-74.0, 40.0]]]
-                }"#)
+                }"#
+                )
             )],
         )
         .await
@@ -1222,9 +1236,7 @@ async fn query_filter_with_context_builder() {
 
     // Query using Filter::range().context() builder
     let mut stmt = Statement::new(namespace, &set_name, Bins::All);
-    stmt.add_filter(
-        Filter::range(bin_name, 0_i64, 4_i64).context(vec![ctx_list_index(0)]),
-    );
+    stmt.add_filter(Filter::range(bin_name, 0_i64, 4_i64).context(vec![ctx_list_index(0)]));
 
     let qpolicy = QueryPolicy::default();
     let pf = PartitionFilter::all();
@@ -1287,12 +1299,13 @@ async fn query_filter_expression_with_policy_filter() {
     // Filter.expression: use the expression-based index to find records with a in [0, 9]
     // QueryPolicy.filter_expression: post-filter to only return records where b == 0 (even a)
     let mut qpolicy = QueryPolicy::default();
-    qpolicy.base_policy.filter_expression.replace(
-        aerospike::expressions::eq(
+    qpolicy
+        .base_policy
+        .filter_expression
+        .replace(aerospike::expressions::eq(
             aerospike::expressions::int_bin("b".to_string()),
             aerospike::expressions::int_val(0),
-        ),
-    );
+        ));
 
     let mut stmt = Statement::new(namespace, &set_name, Bins::All);
     stmt.add_filter(Filter::range("a", 0_i64, 9_i64).expression(idx_exp));

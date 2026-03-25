@@ -15,7 +15,6 @@
 
 use std::collections::{BTreeMap, HashMap};
 use std::num::Wrapping;
-use std::{i16, i32, i64, i8};
 
 use crate::commands::buffer::Buffer;
 use crate::commands::ParticleType;
@@ -25,7 +24,6 @@ use crate::operations::maps::MapOrder;
 use crate::value::{FloatValue, Value};
 use crate::{Error, Result};
 
-#[must_use]
 pub fn pack_value(buf: &mut Option<&mut Buffer>, val: &Value) -> Result<usize> {
     let res = match *val {
         Value::Nil => pack_nil(buf),
@@ -65,7 +63,6 @@ pub fn pack_empty_args_array(buf: &mut Option<&mut Buffer>) -> usize {
     size
 }
 
-#[must_use]
 pub fn pack_ctx_for_index(buf: &mut Option<&mut Buffer>, ctx: &[CdtContext]) -> Result<usize> {
     let mut size: usize = 0;
     size += pack_array_begin(buf, ctx.len() * 2);
@@ -78,7 +75,6 @@ pub fn pack_ctx_for_index(buf: &mut Option<&mut Buffer>, ctx: &[CdtContext]) -> 
     Ok(size)
 }
 
-#[must_use]
 pub fn pack_cdt_op(
     buf: &mut Option<&mut Buffer>,
     cdt_op: &CdtOperation,
@@ -120,7 +116,6 @@ pub fn pack_cdt_op(
     Ok(size)
 }
 
-#[must_use]
 pub fn pack_hll_op(
     buf: &mut Option<&mut Buffer>,
     hll_op: &CdtOperation,
@@ -145,7 +140,6 @@ pub fn pack_hll_op(
     Ok(size)
 }
 
-#[must_use]
 pub fn pack_cdt_bit_op(
     buf: &mut Option<&mut Buffer>,
     cdt_op: &CdtOperation,
@@ -186,7 +180,6 @@ pub fn pack_cdt_bit_op(
     Ok(size)
 }
 
-#[must_use]
 pub fn pack_array(buf: &mut Option<&mut Buffer>, values: &[Value]) -> Result<usize> {
     let mut size = 0;
 
@@ -198,7 +191,6 @@ pub fn pack_array(buf: &mut Option<&mut Buffer>, values: &[Value]) -> Result<usi
     Ok(size)
 }
 
-#[must_use]
 pub fn pack_map(buf: &mut Option<&mut Buffer>, map: &HashMap<Value, Value>) -> Result<usize> {
     let mut size = 0;
 
@@ -211,7 +203,6 @@ pub fn pack_map(buf: &mut Option<&mut Buffer>, map: &HashMap<Value, Value>) -> R
     Ok(size)
 }
 
-#[must_use]
 pub fn pack_ordered_map(
     buf: &mut Option<&mut Buffer>,
     map: &BTreeMap<Value, Value>,
@@ -244,8 +235,6 @@ pub fn pack_wildcard(buf: &mut Option<&mut Buffer>) -> usize {
     }
     3
 }
-
-/// ///////////////////////////////////////////////////////////////////
 
 const MSGPACK_MARKER_NIL: u8 = 0xc0;
 const MSGPACK_MARKER_BOOL_TRUE: u8 = 0xc3;
@@ -304,7 +293,7 @@ pub fn pack_map_begin(buf: &mut Option<&mut Buffer>, length: usize, order: MapOr
             size += pack_byte(buf, 0xc0);
             size
         }
-        _ => unreachable!(),
+        MapOrder::KeyValueOrdered => unreachable!(),
     }
 }
 

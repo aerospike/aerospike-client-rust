@@ -172,7 +172,6 @@ pub fn read_exp<E: ToExpReadFlagBitmask>(name: &str, exp: Expression, flags: E) 
     }
 }
 
-#[must_use]
 fn pack_write_exp(buf: &mut Option<&mut Buffer>, exp_op: &ExpOperation) -> Result<usize> {
     let mut size = 0;
     size += pack_array_begin(buf, 2);
@@ -181,7 +180,6 @@ fn pack_write_exp(buf: &mut Option<&mut Buffer>, exp_op: &ExpOperation) -> Resul
     Ok(size)
 }
 
-#[must_use]
 fn pack_read_exp(buf: &mut Option<&mut Buffer>, exp_op: &ExpOperation) -> Result<usize> {
     let mut size = 0;
     size += pack_array_begin(buf, 2);

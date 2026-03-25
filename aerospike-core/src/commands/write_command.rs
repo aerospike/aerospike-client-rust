@@ -71,7 +71,7 @@ impl Command for WriteCommand<'_> {
     }
 
     async fn get_node(&mut self) -> Result<Arc<Node>> {
-        self.single_command.get_node().await
+        self.single_command.get_node()
     }
 
     fn hint(&self) -> u8 {

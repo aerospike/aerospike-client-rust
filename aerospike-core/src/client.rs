@@ -13,10 +13,11 @@
 // License for the specific language governing permissions and limitations under
 // the License.
 
+use std::fmt::Write as FmtWrite;
 use std::path::Path;
+use std::str;
 use std::sync::Arc;
 use std::vec::Vec;
-use std::{str, usize};
 
 use regex::Regex;
 use std::sync::LazyLock;
@@ -1359,11 +1360,12 @@ impl Client {
     ) {
         if policy.total_timeout() > 0 {
             let rs_closer = recordset.clone();
-            if let Err(_) = aerospike_rt::timeout(
+            if aerospike_rt::timeout(
                 Duration::from_millis(u64::from(policy.total_timeout())),
                 Self::execute_query(cluster, policy, tracker, statement, recordset),
             )
             .await
+            .is_err()
             {
                 let _ = rs_closer
                     .push(Err(Error::Timeout("Timeout".to_string())))
@@ -1420,30 +1422,29 @@ impl Client {
                         let statement = statement.clone();
                         let handle = aerospike_rt::spawn(async move {
                             let permit = semaphore.acquire().await;
-                            let result =
-                                if statement.filters.is_none() {
-                                    ScanCommand::new(
-                                        &policy,
-                                        &statement.namespace,
-                                        &statement.set_name,
-                                        statement.bins.clone(),
-                                        recordset.clone(),
-                                        node_partition,
-                                    )
-                                    .await
-                                    .execute()
-                                    .await
-                                } else {
-                                    QueryCommand::new(
-                                        &policy,
-                                        statement,
-                                        recordset.clone(),
-                                        node_partition,
-                                    )
-                                    .await
-                                    .execute()
-                                    .await
-                                };
+                            let result = if statement.filters.is_none() {
+                                ScanCommand::new(
+                                    &policy,
+                                    &statement.namespace,
+                                    &statement.set_name,
+                                    statement.bins.clone(),
+                                    recordset.clone(),
+                                    node_partition,
+                                )
+                                .await
+                                .execute()
+                                .await
+                            } else {
+                                QueryCommand::new(
+                                    &policy,
+                                    statement,
+                                    recordset.clone(),
+                                    node_partition,
+                                )
+                                .await
+                                .execute()
+                                .await
+                            };
 
                             drop(permit);
                             result
@@ -1478,11 +1479,11 @@ impl Client {
             let mut tracker = tracker.lock().await;
             let done = tracker.is_complete(policy, timed_out).await;
             match (done, recordset.is_active()) {
-                (Ok(true), _) => return,
-                (Ok(_), false) => return,
+                (Ok(true), _) | (Ok(_), false) => return,
                 (Err(e), _) => {
                     tracker.partition_error().await;
                     recordset.err(e).await;
+                    drop(tracker);
                     return;
                 }
                 _ => (),
@@ -1612,10 +1613,10 @@ impl Client {
         before_nanos: i64,
     ) -> Result<()> {
         let mut cmd = String::with_capacity(160);
-        if !set_name.is_empty() {
-            cmd.push_str("truncate:namespace=");
-        } else {
+        if set_name.is_empty() {
             cmd.push_str("truncate-namespace:namespace=");
+        } else {
+            cmd.push_str("truncate:namespace=");
         }
         cmd.push_str(namespace);
 
@@ -1626,7 +1627,7 @@ impl Client {
 
         if before_nanos > 0 {
             cmd.push_str(";lut=");
-            cmd.push_str(&format!("{before_nanos}"));
+            write!(cmd, "{before_nanos}").unwrap();
         }
 
         let node = self.cluster.get_random_node()?;
@@ -1834,7 +1835,8 @@ impl Client {
 
         if CollectionIndexType::Default != collection_index_type {
             cmd.push_str(";indextype=");
-            cmd.push_str(&format!("{collection_index_type}"));
+            let cit = format!("{collection_index_type}");
+            cmd.push_str(&cit);
         }
 
         if bin_name.is_empty() {
@@ -1849,7 +1851,7 @@ impl Client {
             cmd.push(',');
         }
 
-        cmd.push_str(&format!("{index_type}"));
+        write!(cmd, "{index_type}").unwrap();
 
         self.send_info_cmd(policy, node, &cmd)
             .await

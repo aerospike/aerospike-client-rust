@@ -53,6 +53,7 @@ pub enum ExpType {
     HLL = 9,
 }
 
+#[allow(clippy::upper_case_acronyms)]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) enum ExpOp {
     Unknown = 0,
@@ -122,8 +123,9 @@ pub(crate) enum ExpressionArgument {
     Context(Vec<CdtContext>),
 }
 
-/// Filter expression, which can be applied to most commands, to control which records are
-/// affected by the command. Filter expression are created using the functions in the
+/// Filter expression, which can be applied to most commands to control which records are affected.
+///
+/// Filter expressions are created using the functions in the
 /// [expressions](crate::expressions) module and its submodules.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Expression {
@@ -167,7 +169,6 @@ impl Expression {
         }
     }
 
-    #[must_use]
     fn pack_expression(&self, exps: &[Expression], buf: &mut Option<&mut Buffer>) -> Result<usize> {
         let mut size = 0;
         if let Some(val) = &self.val {
@@ -194,7 +195,6 @@ impl Expression {
         Ok(size)
     }
 
-    #[must_use]
     fn pack_command(&self, cmd: ExpOp, buf: &mut Option<&mut Buffer>) -> Result<usize> {
         let mut size = 0;
 
@@ -300,20 +300,17 @@ impl Expression {
         Ok(size)
     }
 
-    #[must_use]
     fn pack_value(&self, buf: &mut Option<&mut Buffer>) -> Result<usize> {
         // Packing logic for Value based Ops
         pack_value(buf, &self.val.clone().unwrap())
     }
 
     /// Returns the packed size of the expression.
-    #[must_use]
     pub(crate) fn size(&self) -> Result<usize> {
         self.pack(&mut None)
     }
 
     /// Packs the expression.
-    #[must_use]
     pub(crate) fn pack(&self, buf: &mut Option<&mut Buffer>) -> Result<usize> {
         if let Some(bytes) = &self.bytes {
             if let Some(buf) = buf {
@@ -377,8 +374,9 @@ pub fn from_base64(b64: &str) -> Result<Expression> {
     })
 }
 
-/// Creates an expression that returns if the primary key is stored in the record meta data
-/// as a boolean expression. This would occur when [`WritePolicy::send_key`](crate::WritePolicy::send_key) is true on record write.
+/// Creates an expression that returns whether the primary key is stored in the record meta data.
+///
+/// This would occur when [`WritePolicy::send_key`](crate::WritePolicy::send_key) is true on record write.
 /// ```
 /// // Key exists in record meta data
 /// use aerospike::expressions::key_exists;
@@ -626,9 +624,10 @@ pub fn device_size() -> Expression {
     Expression::new(Some(ExpOp::DeviceSize), None, None, None, None, None)
 }
 
-/// Creates expression that returns record size in memory. If server storage-engine is
-/// not memory nor data-in-memory, then zero is returned. This expression usually evaluates
-/// quickly because record meta data is cached in memory.
+/// Creates expression that returns record size in memory.
+///
+/// If server storage-engine is not memory nor data-in-memory, then zero is returned.
+/// This expression usually evaluates quickly because record meta data is cached in memory.
 ///
 /// Requires server version between 5.3 inclusive and 7.0 exclusive.
 /// Use [`record_size()`](record_size) for server version 7.0+.
@@ -1436,9 +1435,9 @@ pub fn int_count(exp: Expression) -> Expression {
     }
 }
 
-/// Creates expression that scans integer bits from left (most significant bit) to
-/// right (least significant bit), looking for a search bit value. When the
-/// search value is found, the index of that bit (where the most significant bit is
+/// Creates expression that scans integer bits from left (most significant bit) to right, looking for a search bit value.
+///
+/// When the search value is found, the index of that bit (where the most significant bit is
 /// index 0) is returned. If "search" is true, the scan will search for the bit
 /// value 1. If "search" is false it will search for bit value 0.
 /// Requires server version 5.6.0+.
@@ -1460,9 +1459,9 @@ pub fn int_lscan(value: Expression, search: Expression) -> Expression {
     }
 }
 
-/// Creates expression that scans integer bits from right (least significant bit) to
-/// left (most significant bit), looking for a search bit value. When the
-/// search value is found, the index of that bit (where the most significant bit is
+/// Creates expression that scans integer bits from right (least significant bit) to left, looking for a search bit value.
+///
+/// When the search value is found, the index of that bit (where the most significant bit is
 /// index 0) is returned. If "search" is true, the scan will search for the bit
 /// value 1. If "search" is false it will search for bit value 0.
 /// Requires server version 5.6.0+.
@@ -1632,6 +1631,7 @@ pub fn var(name: String) -> Expression {
 }
 
 /// Creates unknown value. Used to intentionally fail an expression.
+///
 /// The failure can be ignored with [`ExpWriteFlags::EvalNoFail`](crate::operations::exp::ExpWriteFlags::EvalNoFail)
 /// or [`ExpReadFlags::EvalNoFail`](crate::operations::exp::ExpReadFlags::EvalNoFail).
 /// Requires server version 5.6.0+.

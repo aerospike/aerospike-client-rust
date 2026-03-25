@@ -35,11 +35,8 @@ impl<'a> PeersParser<'a> {
         let gen = self.read_generation()?;
         self.expect(",")?;
         let default_port = self.read_port()?;
-        loop {
-            match self.peek() {
-                Some(&c) if c == ',' => self.next_char(),
-                _ => break,
-            };
+        while self.peek() == Some(&',') {
+            self.next_char();
             hosts.append(&mut self.parse_hosts(default_port)?);
         }
 
@@ -102,7 +99,7 @@ impl<'a> PeersParser<'a> {
             hosts.push(Host::new_tls(&addr, tls_name, port.unwrap_or(default_port)));
 
             match self.peek() {
-                Some(&c) if c == ',' => self.expect(",")?,
+                Some(&',') => self.expect(",")?,
                 _ => break,
             }
         }
@@ -113,7 +110,7 @@ impl<'a> PeersParser<'a> {
     fn read_addr_tuple(&mut self) -> Result<(String, Option<u16>)> {
         let addr = self.read_addr_part()?;
         let port = match self.peek() {
-            Some(&c) if c == ':' => {
+            Some(&':') => {
                 self.expect(":")?;
                 Some(self.read_port()?)
             }
@@ -125,7 +122,7 @@ impl<'a> PeersParser<'a> {
     fn read_addr_part(&mut self) -> Result<String> {
         let addr = match self.peek() {
             // ipv6 or dns
-            Some(&c) if c == '[' => {
+            Some(&'[') => {
                 self.expect("[")?;
                 let res = self.read_until("]");
                 self.expect("]")?;

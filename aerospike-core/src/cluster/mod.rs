@@ -344,20 +344,18 @@ impl Cluster {
         (*self.client_policy.load().clone()).clone()
     }
 
-    pub fn add_seeds(&self, new_seeds: &[Host]) -> Result<()> {
+    pub fn add_seeds(&self, new_seeds: &[Host]) {
         let mut seeds = self.seeds.load().to_vec();
         seeds.extend_from_slice(new_seeds);
         self.seeds.store(Arc::new(seeds));
-
-        Ok(())
     }
 
-    pub fn alias_exists(&self, host: &Host) -> Result<bool> {
+    pub fn alias_exists(&self, host: &Host) -> bool {
         let aliases = self.aliases.load();
-        Ok(aliases.contains_key(host))
+        aliases.contains_key(host)
     }
 
-    pub async fn node_partitions(&self, node: &Node, namespace: &str) -> Vec<u16> {
+    pub fn node_partitions(&self, node: &Node, namespace: &str) -> Vec<u16> {
         let mut res: Vec<u16> = vec![];
         let partitions = self.partition_map.load();
 
@@ -546,14 +544,12 @@ impl Cluster {
                         );
                         remove_list.push(tnode);
                     } else if refresh_count >= 1 && node.reference_count() == 0 && failures == 0 {
-                        if node.has_responded()
-                                && !self.find_node_in_partition_map(node).await
-                            {
-                                remove_list.push(tnode);
-                                debug!(
+                        if node.has_responded() && !self.find_node_in_partition_map(node) {
+                            remove_list.push(tnode);
+                            debug!(
                                     "some node refreshes but the current node is active but not referenced in partition-map"
                                 );
-                            }
+                        }
                     } else if refresh_count >= 1 && failures > 2 {
                         remove_list.push(tnode);
                         debug!(
@@ -607,7 +603,7 @@ impl Cluster {
         self.aliases.store(Arc::new(aliases));
     }
 
-    async fn find_node_in_partition_map(&self, filter: Arc<Node>) -> bool {
+    fn find_node_in_partition_map(&self, filter: Arc<Node>) -> bool {
         let filter = Some(filter);
         let partitions = self.partition_map.load();
         (*partitions)
@@ -678,7 +674,7 @@ impl Cluster {
         namespace.get_node(self, partition, replica, last_tried)
     }
 
-    pub async fn get_master_node(&self, namespace: &str, partition_id: usize) -> Result<Arc<Node>> {
+    pub fn get_master_node(&self, namespace: &str, partition_id: usize) -> Result<Arc<Node>> {
         let partitions = self.partition_map.load();
 
         let ns_partition = partitions.get(namespace).ok_or_else(|| {

@@ -103,6 +103,8 @@ impl StreamCommand {
                 tracker
                     .partition_unavailable(&mut node_partitions, generation as u16)
                     .await;
+                drop(tracker);
+                drop(node_partitions);
             }
             return Ok((None, None, true));
         }
@@ -170,9 +172,11 @@ impl StreamCommand {
                     } else {
                         tracker.set_last(&mut node_partitions, key, bval).await?;
                     }
+                    drop(tracker);
+                    drop(node_partitions);
                 }
                 Ok((None, _, false)) => return Ok(false),
-                Ok((None, _, true)) => continue, // handle partition done
+                Ok((None, _, true)) => {} // handle partition done
                 Err(err) => {
                     // let _ = self.recordset.push(Err(err)).await;
                     return Err(err);

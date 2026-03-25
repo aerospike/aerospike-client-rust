@@ -296,14 +296,14 @@ impl BatchOperation {
         }
     }
 
-    pub(crate) fn size(&self, parent_fe: &Option<Expression>) -> Result<usize> {
+    pub(crate) fn size(&self, parent_fe: Option<&Expression>) -> Result<usize> {
         match self {
             Self::Read {
                 policy, bins, ops, ..
             } => {
                 let mut size: usize = 0;
 
-                match (&policy.filter_expression, &parent_fe) {
+                match (&policy.filter_expression, parent_fe) {
                     (Some(fe), _) => {
                         size += fe.size()? + FIELD_HEADER_SIZE as usize;
                     }
@@ -337,7 +337,7 @@ impl BatchOperation {
             } => {
                 let mut size: usize = 2; // gen(2) = 2
 
-                match (&policy.filter_expression, &parent_fe) {
+                match (&policy.filter_expression, parent_fe) {
                     (Some(fe), _) => {
                         size += fe.size()? + FIELD_HEADER_SIZE as usize;
                     }
@@ -373,7 +373,7 @@ impl BatchOperation {
             Self::Delete { br, policy } => {
                 let mut size: usize = 2; // gen(2) = 2
 
-                match (&policy.filter_expression, &parent_fe) {
+                match (&policy.filter_expression, parent_fe) {
                     (Some(fe), _) => {
                         size += fe.size()? + FIELD_HEADER_SIZE as usize;
                     }
@@ -401,7 +401,7 @@ impl BatchOperation {
             } => {
                 let mut size: usize = 2; // gen(2) = 2
 
-                match (&policy.filter_expression, &parent_fe) {
+                match (&policy.filter_expression, parent_fe) {
                     (Some(fe), _) => {
                         size += fe.size()? + FIELD_HEADER_SIZE as usize;
                     }
@@ -472,15 +472,7 @@ impl BatchOperation {
                 br.result_code = Some(rc);
                 br.in_doubt = false;
             }
-            Self::Write { br, .. } => {
-                br.result_code = Some(rc);
-                br.in_doubt = in_doubt;
-            }
-            Self::Delete { br, .. } => {
-                br.result_code = Some(rc);
-                br.in_doubt = in_doubt;
-            }
-            Self::UDF { br, .. } => {
+            Self::Write { br, .. } | Self::Delete { br, .. } | Self::UDF { br, .. } => {
                 br.result_code = Some(rc);
                 br.in_doubt = in_doubt;
             }

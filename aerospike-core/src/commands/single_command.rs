@@ -48,7 +48,7 @@ impl<'a> SingleCommand<'a> {
         self.key.digest[0]
     }
 
-    pub async fn get_node(&mut self) -> Result<Arc<Node>> {
+    pub fn get_node(&mut self) -> Result<Arc<Node>> {
         let this_time =
             self.cluster
                 .get_node(&self.partition, self.replica, self.last_tried.clone())?;
@@ -75,6 +75,7 @@ impl<'a> SingleCommand<'a> {
     // EXECUTE
     //
 
+    #[allow(clippy::option_if_let_else)]
     pub async fn execute(
         policy: &(dyn Policy + Send + Sync),
         cmd: &'a mut (dyn commands::Command + Send),

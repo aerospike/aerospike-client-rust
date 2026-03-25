@@ -42,7 +42,7 @@ pub struct ServerCommand<'a> {
 }
 
 impl<'a> ServerCommand<'a> {
-    pub fn new(
+    pub const fn new(
         node: Arc<Node>,
         write_policy: &'a WritePolicy,
         statement: &'a Statement,
@@ -58,7 +58,7 @@ impl<'a> ServerCommand<'a> {
         }
     }
 
-    pub fn new_udf(
+    pub const fn new_udf(
         node: Arc<Node>,
         write_policy: &'a WritePolicy,
         statement: &'a Statement,

@@ -495,7 +495,7 @@ pub fn remove_range_from(bin: &str, index: i64) -> Operation {
 
 /// Creates list remove value operation. Server removes all items that are equal to the
 /// specified value. Server returns the number of items removed.
-pub fn remove_by_value<'a, TLR: ToListReturnTypeBitmask>(
+pub fn remove_by_value<TLR: ToListReturnTypeBitmask>(
     bin: &str,
     value: Value,
     return_type: TLR,
@@ -518,7 +518,7 @@ pub fn remove_by_value<'a, TLR: ToListReturnTypeBitmask>(
 
 /// Creates list remove by value list operation. Server removes all items that are equal to
 /// one of the specified values. Server returns the number of items removed
-pub fn remove_by_value_list<'a, TLR: ToListReturnTypeBitmask>(
+pub fn remove_by_value_list<TLR: ToListReturnTypeBitmask>(
     bin: &str,
     values: Vec<Value>,
     return_type: TLR,
@@ -545,7 +545,7 @@ pub fn remove_by_value_list<'a, TLR: ToListReturnTypeBitmask>(
 /// If valueBegin is nil, the range is less than valueEnd.
 /// If valueEnd is nil, the range is greater than equal to valueBegin.
 /// Server returns removed data specified by returnType
-pub fn remove_by_value_range<'a, TLR: ToListReturnTypeBitmask>(
+pub fn remove_by_value_range<TLR: ToListReturnTypeBitmask>(
     bin: &str,
     return_type: TLR,
     begin: Value,
@@ -582,7 +582,7 @@ pub fn remove_by_value_range<'a, TLR: ToListReturnTypeBitmask>(
 /// (3,3) = [11,15]
 /// (3,-3) = [0,4,5,9,11,15]
 /// ```
-pub fn remove_by_value_relative_rank_range<'a, TLR: ToListReturnTypeBitmask>(
+pub fn remove_by_value_relative_rank_range<TLR: ToListReturnTypeBitmask>(
     bin: &str,
     return_type: TLR,
     value: Value,
@@ -620,7 +620,7 @@ pub fn remove_by_value_relative_rank_range<'a, TLR: ToListReturnTypeBitmask>(
 /// (3,3,7) = [11,15]
 /// (3,-3,2) = []
 /// ```
-pub fn remove_by_value_relative_rank_range_count<'a, TLR: ToListReturnTypeBitmask>(
+pub fn remove_by_value_relative_rank_range_count<TLR: ToListReturnTypeBitmask>(
     bin: &str,
     return_type: TLR,
     value: Value,
@@ -836,9 +836,11 @@ pub fn set_with_policy(policy: &ListPolicy, bin: &str, index: i64, value: Value)
     }
 }
 
-/// Creates list trim operation. Server removes `count` items in the list bin that do not fall
-/// into the range specified by `index` and `count`. If the range is out of bounds, then all
-/// items will be removed. Server returns list size after trim.
+/// Creates list trim operation.
+///
+/// Server removes `count` items in the list bin that do not fall into the range specified by
+/// `index` and `count`. If the range is out of bounds, then all items will be removed.
+/// Server returns list size after trim.
 pub fn trim(bin: &str, index: i64, count: i64) -> Operation {
     let cdt_op = CdtOperation {
         op: CdtListOpType::Trim as u8,
@@ -990,7 +992,7 @@ pub fn get_range_from(bin: &str, index: i64) -> Operation {
 
 /// Creates a list get by value operation.
 /// Server selects list items identified by value and returns selected data specified by returnType.
-pub fn get_by_value<'a, TLR: ToListReturnTypeBitmask>(
+pub fn get_by_value<TLR: ToListReturnTypeBitmask>(
     bin: &str,
     value: Value,
     return_type: TLR,
@@ -1014,7 +1016,7 @@ pub fn get_by_value<'a, TLR: ToListReturnTypeBitmask>(
 
 /// Creates list get by value list operation.
 /// Server selects list items identified by values and returns selected data specified by returnType.
-pub fn get_by_value_list<'a, TLR: ToListReturnTypeBitmask>(
+pub fn get_by_value_list<TLR: ToListReturnTypeBitmask>(
     bin: &str,
     values: Vec<Value>,
     return_type: TLR,
@@ -1041,7 +1043,7 @@ pub fn get_by_value_list<'a, TLR: ToListReturnTypeBitmask>(
 /// If valueBegin is null, the range is less than valueEnd.
 /// If valueEnd is null, the range is greater than equal to valueBegin.
 /// Server returns selected data specified by returnType.
-pub fn get_by_value_range<'a, TLR: ToListReturnTypeBitmask>(
+pub fn get_by_value_range<TLR: ToListReturnTypeBitmask>(
     bin: &str,
     begin: Value,
     end: Value,
@@ -1226,7 +1228,7 @@ pub fn get_by_rank_range_count<TLR: ToListReturnTypeBitmask>(
 /// (3,3) = [11,15]
 /// (3,-3) = [0,4,5,9,11,15]
 /// ```
-pub fn get_by_value_relative_rank_range<'a, TLR: ToListReturnTypeBitmask>(
+pub fn get_by_value_relative_rank_range<TLR: ToListReturnTypeBitmask>(
     bin: &str,
     value: Value,
     rank: i64,
@@ -1264,7 +1266,7 @@ pub fn get_by_value_relative_rank_range<'a, TLR: ToListReturnTypeBitmask>(
 /// (3,3,7) = [11,15]
 /// (3,-3,2) = []
 /// ```
-pub fn get_by_value_relative_rank_range_count<'a, TLR: ToListReturnTypeBitmask>(
+pub fn get_by_value_relative_rank_range_count<TLR: ToListReturnTypeBitmask>(
     bin: &str,
     value: Value,
     rank: i64,

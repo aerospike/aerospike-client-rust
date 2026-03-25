@@ -49,11 +49,11 @@ impl DropIndexTask {
         }
     }
 
-    fn parse_response(response: &str) -> Result<Status> {
+    fn parse_response(response: &str) -> Status {
         if response.to_lowercase() == SUCCESS_PATTERN {
-            Ok(Status::Complete)
+            Status::Complete
         } else {
-            Ok(Status::InProgress)
+            Status::InProgress
         }
     }
 }
@@ -78,8 +78,8 @@ impl Task for DropIndexTask {
             }
 
             match DropIndexTask::parse_response(&response[command]) {
-                Ok(Status::Complete) => {}
-                in_progress_or_error => return in_progress_or_error,
+                Status::Complete => {}
+                status => return Ok(status),
             }
         }
         Ok(Status::Complete)

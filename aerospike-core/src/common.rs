@@ -14,11 +14,10 @@
 // the License.
 
 #[cfg(all(test, feature = "rt-tokio"))]
-lazy_static! {
-    pub static ref RUNTIME: aerospike_rt::runtime::Runtime = {
+pub static RUNTIME: std::sync::LazyLock<aerospike_rt::runtime::Runtime> =
+    std::sync::LazyLock::new(|| {
         aerospike_rt::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
             .unwrap()
-    };
-}
+    });

@@ -60,6 +60,7 @@ pub enum ConnectionState {
 
 /// Underlying socket type for a connection (TCP or TLS).
 #[derive(Debug)]
+#[allow(clippy::large_enum_variant)]
 pub enum Netsocket {
     /// Plain TCP stream.
     Tcp(TcpStream),
@@ -72,6 +73,7 @@ pub enum Netsocket {
 }
 
 #[derive(Debug)]
+#[allow(clippy::struct_field_names)]
 pub struct Connection {
     pub(crate) addr: String,
     socket_timeout: u32,
@@ -104,7 +106,7 @@ impl Connection {
             let server_name = host
                 .tls_name
                 .clone()
-                .unwrap_or(policy.cluster_name.clone().unwrap_or_default());
+                .unwrap_or_else(|| policy.cluster_name.clone().unwrap_or_default());
             let domain = ServerName::try_from(server_name.as_str())
                 .map_err(|e| Error::ClientError(e.to_string()))?
                 .to_owned();
@@ -199,6 +201,7 @@ impl Connection {
 
     pub fn close(&mut self) {
         self.state = ConnectionState::Closed;
+        #[allow(clippy::let_underscore_future)]
         let () = match self.conn {
             Netsocket::Tcp(ref mut conn) => {
                 #[cfg(feature = "rt-tokio")]
@@ -282,11 +285,9 @@ impl Connection {
         let now = Instant::now();
         let socket_deadline = now + self.socket_timeout();
 
-        let deadline = if let Some(deadline) = self.deadline {
-            min(deadline, socket_deadline)
-        } else {
-            socket_deadline
-        };
+        let deadline = self
+            .deadline
+            .map_or(socket_deadline, |deadline| min(deadline, socket_deadline));
 
         deadline - now
     }
@@ -616,7 +617,7 @@ impl<'a> BufferedConn<'a> {
     async fn fill_buffer(&mut self) -> Result<usize> {
         // fill_buffer fills the buffer from the beginning.
         // The buffer should have been completely consumed before calling this function
-        if self.pos != self.cache.len() || self.limit <= 0 {
+        if self.pos != self.cache.len() || self.limit == 0 {
             return Ok(0);
         }
 
@@ -696,7 +697,7 @@ impl<'a> BufferedConn<'a> {
 
     #[inline]
     pub(crate) const fn exhausted(&self) -> bool {
-        self.limit <= 0 && self.empty()
+        self.limit == 0 && self.empty()
     }
 
     #[inline]
@@ -709,19 +710,19 @@ impl<'a> BufferedConn<'a> {
         self.len() == 0
     }
 
-    async fn cached_read_rest(&mut self) -> Result<usize> {
+    fn cached_read_rest(&mut self) -> usize {
         if !self.empty() {
             return self.cached_read(0, self.len());
         }
-        Ok(0)
+        0
     }
 
-    fn cached_read(&mut self, pos: usize, size: usize) -> Result<usize> {
+    fn cached_read(&mut self, pos: usize, size: usize) -> usize {
         self.conn.buffer.data_buffer[pos..pos + size]
             .copy_from_slice(&self.cache[self.pos..self.pos + size]);
 
         self.pos += size;
-        Ok(size)
+        size
     }
 
     pub async fn read_buffer(&mut self, size: usize) -> Result<usize> {
@@ -732,10 +733,10 @@ impl<'a> BufferedConn<'a> {
         }
 
         if size <= self.len() {
-            self.cached_read(0, size)?;
+            self.cached_read(0, size);
         } else if size > self.len() {
             // we have data left in the buffer, but we need more
-            let cached = self.cached_read_rest().await?;
+            let cached = self.cached_read_rest();
             let remaining = size - cached;
             if remaining > self.cache.capacity() / 2 {
                 // read directly
@@ -744,7 +745,7 @@ impl<'a> BufferedConn<'a> {
             } else {
                 // fill the buffer and read the rest of requested bytes
                 self.fill_buffer().await?;
-                self.cached_read(cached, remaining)?;
+                self.cached_read(cached, remaining);
             }
         }
 
@@ -773,7 +774,7 @@ impl<'a> ConnectionRecovery<'a> {
     }
 
     pub async fn recover(&mut self) {
-        if !self.conn.can_recover_connection || self.conn.timeout_delay <= 0 {
+        if !self.conn.can_recover_connection || self.conn.timeout_delay == 0 {
             return;
         }
 
@@ -781,9 +782,8 @@ impl<'a> ConnectionRecovery<'a> {
         match self.conn.state {
             ConnectionState::Ready | ConnectionState::Closed | ConnectionState::Writing => (),
             ConnectionState::ReadingHeader(total_size) => {
-                let receive_size = match self.read_header(total_size).await {
-                    Ok(v) => v,
-                    Err(_) => return,
+                let Ok(receive_size) = self.read_header(total_size).await else {
+                    return;
                 };
 
                 self.conn
@@ -801,9 +801,8 @@ impl<'a> ConnectionRecovery<'a> {
             }
 
             ConnectionState::ReadingStreamHeader(total_size) => {
-                let mut receive_size = match self.read_stream_header(total_size).await {
-                    Ok(v) => v,
-                    Err(_) => return,
+                let Ok(mut receive_size) = self.read_stream_header(total_size).await else {
+                    return;
                 };
 
                 while receive_size > 0 {
@@ -854,10 +853,11 @@ impl<'a> ConnectionRecovery<'a> {
     async fn read_header(&mut self, total_size: usize) -> Result<usize> {
         if total_size > self.conn.bytes_read {
             // read the rest of the header
-            if let Err(_) = self
+            if self
                 .conn
                 .read_buffer_at(self.conn.bytes_read, total_size - self.conn.bytes_read)
                 .await
+                .is_err()
             {
                 // return early and don't update the connection state
                 return Err(Error::StreamTerminatedError());
@@ -875,13 +875,14 @@ impl<'a> ConnectionRecovery<'a> {
     async fn read_body(&mut self, total_size: usize) -> Result<()> {
         if total_size > self.conn.bytes_read {
             // read the rest of the body
-            if let Err(_) = self
+            if self
                 .conn
                 .drain(
                     total_size - self.conn.bytes_read,
                     Duration::from_millis(u64::from(self.conn.timeout_delay)),
                 )
                 .await
+                .is_err()
             {
                 // return early and don't update the connection state
                 return Err(Error::StreamTerminatedError());
@@ -896,10 +897,11 @@ impl<'a> ConnectionRecovery<'a> {
         assert_eq!(total_size, 8);
         if total_size > self.conn.bytes_read {
             // read the rest of the header
-            if let Err(_) = self
+            if self
                 .conn
                 .read_buffer_at(self.conn.bytes_read, total_size - self.conn.bytes_read)
                 .await
+                .is_err()
             {
                 // return early and don't update the connection state
                 return Err(Error::StreamTerminatedError());
@@ -915,18 +917,18 @@ impl<'a> ConnectionRecovery<'a> {
         if self.conn.bytes_read > usize::from(crate::commands::buffer::MSG_TOTAL_HEADER_SIZE) {
             // we are past the header portion, clearly not the last message.
             // We can safely drain the connection
-            if total_size > self.conn.bytes_read {
-                if let Err(_) = self
+            if total_size > self.conn.bytes_read
+                && self
                     .conn
                     .drain(
                         total_size - self.conn.bytes_read,
                         Duration::from_millis(u64::from(self.conn.timeout_delay)),
                     )
                     .await
-                {
-                    // return early and don't update the connection state
-                    return Err(Error::StreamTerminatedError());
-                }
+                    .is_err()
+            {
+                // return early and don't update the connection state
+                return Err(Error::StreamTerminatedError());
             }
 
             assert!(self.conn.bytes_read == total_size);
@@ -940,10 +942,11 @@ impl<'a> ConnectionRecovery<'a> {
                 total_size,
                 usize::from(crate::commands::buffer::MSG_TOTAL_HEADER_SIZE) - self.conn.bytes_read,
             );
-            if let Err(_) = self
+            if self
                 .conn
                 .read_buffer_at(self.conn.bytes_read, remaining)
                 .await
+                .is_err()
             {
                 // return early and don't update the connection state
                 return Err(Error::StreamTerminatedError());
@@ -955,18 +958,18 @@ impl<'a> ConnectionRecovery<'a> {
             info3 & crate::commands::buffer::INFO3_LAST == crate::commands::buffer::INFO3_LAST;
 
         // read the rest of the body
-        if total_size > self.conn.bytes_read {
-            if let Err(_) = self
+        if total_size > self.conn.bytes_read
+            && self
                 .conn
                 .drain(
                     total_size - self.conn.bytes_read,
                     Duration::from_millis(u64::from(self.conn.timeout_delay)),
                 )
                 .await
-            {
-                // return early and don't update the connection state
-                return Err(Error::StreamTerminatedError());
-            }
+                .is_err()
+        {
+            // return early and don't update the connection state
+            return Err(Error::StreamTerminatedError());
         }
 
         assert!(self.conn.bytes_read == total_size);

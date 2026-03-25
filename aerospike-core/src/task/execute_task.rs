@@ -31,7 +31,7 @@ pub struct ExecuteTask {
 
 impl ExecuteTask {
     /// Creates a new `ExecuteTask`.
-    pub fn new(cluster: Arc<Cluster>, task_id: u64, scan: bool) -> Self {
+    pub const fn new(cluster: Arc<Cluster>, task_id: u64, scan: bool) -> Self {
         ExecuteTask {
             cluster,
             task_id,

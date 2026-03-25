@@ -116,7 +116,7 @@ impl Command for ReadCommand<'_> {
     }
 
     async fn get_node(&mut self) -> Result<Arc<Node>> {
-        self.single_command.get_node().await
+        self.single_command.get_node()
     }
 
     fn hint(&self) -> u8 {
@@ -172,7 +172,7 @@ impl Command for ReadCommand<'_> {
                 let reason = record
                     .bins
                     .get("FAILURE")
-                    .map_or(String::from("UDF Error"), ToString::to_string);
+                    .map_or_else(|| String::from("UDF Error"), ToString::to_string);
                 Err(Error::UdfBadResponse(reason))
             }
             rc => Err(Error::ServerError(rc, false, conn.addr.clone())),

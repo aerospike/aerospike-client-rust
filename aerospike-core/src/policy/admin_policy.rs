@@ -20,7 +20,7 @@ pub struct AdminPolicy {
 }
 
 impl AdminPolicy {
-    pub(crate) const fn timeout(&self) -> u32 {
+    pub(crate) const fn timeout(self) -> u32 {
         if self.timeout > 0 {
             self.timeout
         } else {

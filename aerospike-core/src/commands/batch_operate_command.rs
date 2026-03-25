@@ -50,6 +50,7 @@ impl BatchOperateCommand {
         }
     }
 
+    #[allow(clippy::option_if_let_else)]
     pub async fn execute(self, cluster: Arc<Cluster>) -> Result<Self> {
         if self.policy.total_timeout() > 0 {
             let res = aerospike_rt::timeout(
@@ -224,9 +225,10 @@ impl BatchOperateCommand {
         let result_code = ResultCode::from(conn.buffer().read_u8(Some(5)));
 
         match result_code {
-            ResultCode::Ok => (),
-            ResultCode::UdfBadResponse => (), // UDF errors will have a body that needs to be parsed
-            ResultCode::KeyNotFoundError | ResultCode::FilteredOut => (),
+            ResultCode::Ok
+            | ResultCode::UdfBadResponse // UDF errors will have a body that needs to be parsed
+            | ResultCode::KeyNotFoundError
+            | ResultCode::FilteredOut => (),
             rc => {
                 if last_record {
                     return Err(Error::BatchLastError(
@@ -252,8 +254,7 @@ impl BatchOperateCommand {
         }
 
         let found_key = match result_code {
-            ResultCode::Ok => true,
-            ResultCode::UdfBadResponse => true,
+            ResultCode::Ok | ResultCode::UdfBadResponse => true,
             ResultCode::KeyNotFoundError | ResultCode::FilteredOut => false,
             _ => unreachable!(),
         };

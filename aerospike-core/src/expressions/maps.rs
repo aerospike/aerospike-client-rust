@@ -30,24 +30,23 @@ pub fn put(
     bin: Expression,
     ctx: &[CdtContext],
 ) -> Expression {
-    let args: Vec<ExpressionArgument>;
     let op = map_write_op(policy, false);
-    if op as u8 == CdtMapOpType::Replace as u8 {
-        args = vec![
+    let args: Vec<ExpressionArgument> = if op as u8 == CdtMapOpType::Replace as u8 {
+        vec![
             ExpressionArgument::Context(ctx.to_vec()),
             ExpressionArgument::Value(Value::from(op as u8)),
             ExpressionArgument::FilterExpression(key),
             ExpressionArgument::FilterExpression(value),
-        ];
+        ]
     } else {
-        args = vec![
+        vec![
             ExpressionArgument::Context(ctx.to_vec()),
             ExpressionArgument::Value(Value::from(op as u8)),
             ExpressionArgument::FilterExpression(key),
             ExpressionArgument::FilterExpression(value),
             ExpressionArgument::Value(Value::from(policy.order as u8)),
-        ];
-    }
+        ]
+    };
     add_write(bin, ctx, args)
 }
 
@@ -59,22 +58,21 @@ pub fn put_items(
     bin: Expression,
     ctx: &[CdtContext],
 ) -> Expression {
-    let args: Vec<ExpressionArgument>;
     let op = map_write_op(policy, true);
-    if op as u8 == CdtMapOpType::Replace as u8 {
-        args = vec![
+    let args: Vec<ExpressionArgument> = if op as u8 == CdtMapOpType::Replace as u8 {
+        vec![
             ExpressionArgument::Context(ctx.to_vec()),
             ExpressionArgument::Value(Value::from(op as u8)),
             ExpressionArgument::FilterExpression(map),
-        ];
+        ]
     } else {
-        args = vec![
+        vec![
             ExpressionArgument::Context(ctx.to_vec()),
             ExpressionArgument::Value(Value::from(op as u8)),
             ExpressionArgument::FilterExpression(map),
             ExpressionArgument::Value(Value::from(policy.order as u8)),
-        ];
-    }
+        ]
+    };
     add_write(bin, ctx, args)
 }
 
@@ -611,7 +609,8 @@ pub fn get_by_value<TMR: ToMapReturnTypeBitmask>(
     add_read(bin, get_value_type(return_type), args)
 }
 
-/// Creates expression that selects map items identified by value range (valueBegin inclusive, valueEnd exclusive)
+/// Creates expression that selects map items identified by value range (valueBegin inclusive, valueEnd exclusive).
+///
 /// If valueBegin is null, the range is less than valueEnd.
 /// If valueEnd is null, the range is greater than equal to valueBegin.
 ///

@@ -71,7 +71,7 @@ impl BatchAttr {
         self.filter_expression = rp
             .filter_expression
             .clone()
-            .or(parent.filter_expression.clone());
+            .or_else(|| parent.filter_expression.clone());
         self.read_attr = buffer::INFO1_READ;
 
         // if rp.ReadModeAP == ReadModeAPAll {
@@ -108,7 +108,7 @@ impl BatchAttr {
                     OperationBin::None => {
                         self.read_attr |= buffer::INFO1_NOBINDATA;
                     }
-                    _ => (),
+                    OperationBin::Name(_) => (),
                 }
             }
         }
@@ -126,7 +126,7 @@ impl BatchAttr {
         self.filter_expression = wp
             .filter_expression
             .clone()
-            .or(parent.filter_expression.clone());
+            .or_else(|| parent.filter_expression.clone());
         self.read_attr = 0;
         self.write_attr = buffer::INFO2_WRITE | buffer::INFO2_RESPOND_ALL_OPS;
         self.info_attr = 0;
@@ -192,7 +192,7 @@ impl BatchAttr {
                         OperationBin::None => {
                             read_header = true;
                         }
-                        _ => (),
+                        OperationBin::Name(_) => (),
                     }
                     has_read = true;
                 }
@@ -215,7 +215,7 @@ impl BatchAttr {
         self.filter_expression = up
             .filter_expression
             .clone()
-            .or(parent.filter_expression.clone());
+            .or_else(|| parent.filter_expression.clone());
         self.read_attr = 0;
         self.write_attr = buffer::INFO2_WRITE;
         self.info_attr = 0;
@@ -242,7 +242,7 @@ impl BatchAttr {
         self.filter_expression = dp
             .filter_expression
             .clone()
-            .or(parent.filter_expression.clone());
+            .or_else(|| parent.filter_expression.clone());
         self.read_attr = 0;
         self.write_attr =
             buffer::INFO2_WRITE | buffer::INFO2_RESPOND_ALL_OPS | buffer::INFO2_DELETE;

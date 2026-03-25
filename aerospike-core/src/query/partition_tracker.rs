@@ -52,6 +52,7 @@ pub struct PartitionTracker {
 }
 
 impl PartitionTracker {
+    #[allow(clippy::significant_drop_tightening)]
     pub(crate) async fn new(
         policy: impl StreamPolicy,
         partition_filter: Arc<Mutex<PartitionFilter>>,
@@ -71,7 +72,7 @@ impl PartitionTracker {
                 )));
             }
 
-            if partition_filter.count <= 0 {
+            if partition_filter.count == 0 {
                 return Err(Error::InvalidArgument(format!(
                     "Invalid partition count {}",
                     partition_filter.count
@@ -137,6 +138,7 @@ impl PartitionTracker {
         &self.node_partitions_list
     }
 
+    #[allow(clippy::significant_drop_tightening)]
     pub(crate) async fn assign_partitions_to_nodes(
         &mut self,
         cluster: Arc<Cluster>,
@@ -163,7 +165,7 @@ impl PartitionTracker {
                 (part.retry, part.id)
             };
             if retry || part_retry {
-                let node = cluster.get_master_node(namespace, part_id as usize).await?;
+                let node = cluster.get_master_node(namespace, part_id as usize)?;
 
                 // Use node name to check for single node equality because
                 // partition map may be in transitional state between
@@ -190,7 +192,7 @@ impl PartitionTracker {
         }
 
         let node_size = list.len();
-        if node_size <= 0 {
+        if node_size == 0 {
             return Err(Error::ClientError("No nodes were assigned".into()));
         }
 
@@ -258,6 +260,7 @@ impl PartitionTracker {
         None
     }
 
+    #[allow(clippy::significant_drop_tightening)]
     pub(crate) async fn partition_unavailable(
         &self,
         node_partitions: &mut NodePartitions,
@@ -277,6 +280,7 @@ impl PartitionTracker {
         node_partitions.parts_unavailable += 1;
     }
 
+    #[allow(clippy::significant_drop_tightening)]
     pub(crate) async fn set_digest(
         &self,
         node_partitions: &mut NodePartitions,
@@ -303,6 +307,7 @@ impl PartitionTracker {
         Ok(())
     }
 
+    #[allow(clippy::significant_drop_tightening)]
     pub(crate) async fn set_last(
         &self,
         node_partitions: &mut NodePartitions,
@@ -350,6 +355,7 @@ impl PartitionTracker {
         false
     }
 
+    #[allow(clippy::significant_drop_tightening)]
     pub(crate) async fn is_complete(
         &mut self,
         policy: impl StreamPolicy,
@@ -365,7 +371,7 @@ impl PartitionTracker {
         }
 
         if !timed_out && parts_unavailable == 0 {
-            if self.max_records <= 0 {
+            if self.max_records == 0 {
                 if let Some(pf) = &self.partition_filter {
                     let pf = pf.lock().await;
                     pf.retry.store(false, Ordering::Relaxed);
@@ -486,14 +492,9 @@ impl PartitionTracker {
     }
 
     pub(crate) fn extract_partition_filter(&mut self) -> Option<PartitionFilter> {
-        let pf = self.partition_filter.take();
-        match pf {
-            Some(pf) => match Arc::try_unwrap(pf) {
-                Ok(pf) => Some(pf.into_inner()),
-                Err(_) => None,
-            },
-            None => None,
-        }
+        self.partition_filter
+            .take()
+            .and_then(|pf| Arc::try_unwrap(pf).ok().map(Mutex::into_inner))
     }
 
     pub(crate) const fn server_timeout(&self) -> u32 {

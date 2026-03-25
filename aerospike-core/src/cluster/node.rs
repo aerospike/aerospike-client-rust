@@ -181,6 +181,7 @@ impl Node {
         }
     }
 
+    #[allow(clippy::option_if_let_else)]
     fn verify_cluster_name(&self, info_map: &HashMap<String, String>) -> Result<()> {
         match self.client_policy.cluster_name {
             None => Ok(()),
@@ -215,7 +216,7 @@ impl Node {
         for mut alias in hosts {
             if let Some(ref ip_map) = self.client_policy.ip_map {
                 if let Some(mapped) = ip_map.get(&alias.name) {
-                    alias.name = mapped.clone();
+                    alias.name.clone_from(mapped);
                 }
             }
 

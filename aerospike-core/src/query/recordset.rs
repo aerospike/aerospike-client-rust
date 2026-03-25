@@ -31,10 +31,11 @@ use crate::Record;
 /// A stream over incoming records for a [`Recordset`] that can be iterated over either synchronously or asynchronously.
 pub struct RecordStream(Arc<Recordset>);
 
-/// Virtual collection of records retrieved through queries and scans. During a query/scan,
-/// multiple threads will retrieve records from the server nodes and put these records on an
-/// internal queue managed by the recordset. The single user thread consumes these records from the
-/// queue.
+/// Virtual collection of records retrieved through queries and scans.
+///
+/// During a query/scan, multiple threads will retrieve records from the server nodes and put
+/// these records on an internal queue managed by the recordset. The single user thread consumes
+/// these records from the queue.
 #[derive(Debug)]
 pub struct Recordset {
     instances: AtomicUsize,
@@ -133,10 +134,7 @@ impl Recordset {
     #[cfg(feature = "sync")]
     /// Returns a result from the queue if it exists. Otherwise, returns None.
     pub fn next_record(&self) -> Option<Result<Record>> {
-        match self.rx.try_recv() {
-            Ok(r) => Some(r),
-            Err(_) => None,
-        }
+        self.rx.try_recv().ok()
     }
 
     /// Converts a reference to a [`Recordset`] into a [`RecordStream`] that can be used
@@ -147,7 +145,7 @@ impl Recordset {
 }
 
 #[cfg(feature = "sync")]
-impl<'a> Iterator for &'a Recordset {
+impl Iterator for &Recordset {
     type Item = Result<Record>;
 
     /// Implements a blocking iterator.

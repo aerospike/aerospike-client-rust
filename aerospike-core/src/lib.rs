@@ -128,6 +128,7 @@
 
 // `error_chain` can recurse deeply
 #![recursion_limit = "1024"]
+#![allow(clippy::too_many_arguments)]
 
 extern crate base64;
 extern crate byteorder;
@@ -135,8 +136,6 @@ extern crate byteorder;
 extern crate rhexdump;
 #[macro_use]
 extern crate thiserror;
-#[macro_use]
-extern crate lazy_static;
 #[macro_use]
 extern crate log;
 extern crate pwhash;

@@ -91,22 +91,21 @@ pub struct Operation {
 
 impl Operation {
     pub(crate) const fn is_write(&self) -> bool {
-        match self.op {
+        matches!(
+            self.op,
             OperationType::Write
-            | OperationType::CdtWrite
-            | OperationType::Incr
-            | OperationType::ExpWrite
-            | OperationType::Append
-            | OperationType::Prepend
-            | OperationType::Touch
-            | OperationType::BitWrite
-            | OperationType::Delete
-            | OperationType::HllWrite => true,
-            _ => false,
-        }
+                | OperationType::CdtWrite
+                | OperationType::Incr
+                | OperationType::ExpWrite
+                | OperationType::Append
+                | OperationType::Prepend
+                | OperationType::Touch
+                | OperationType::BitWrite
+                | OperationType::Delete
+                | OperationType::HllWrite
+        )
     }
 
-    #[must_use]
     pub(crate) fn estimate_size(&self) -> Result<usize> {
         let mut size: usize = 0;
         size += match &self.bin {
@@ -126,7 +125,6 @@ impl Operation {
         Ok(size)
     }
 
-    #[must_use]
     pub(crate) fn write_to(&self, buffer: &mut Buffer) -> Result<usize> {
         let mut size: usize = 0;
 
@@ -176,7 +174,8 @@ impl Operation {
     }
 
     /// Set the context of the operation. Required for nested structures
-    pub fn set_context(mut self, ctx: Vec<CdtContext>) -> Operation {
+    #[must_use]
+    pub fn context(mut self, ctx: Vec<CdtContext>) -> Self {
         self.ctx = ctx;
         self
     }

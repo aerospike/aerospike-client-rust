@@ -112,6 +112,7 @@ pub const MAX_BUFFER_SIZE: usize = 120 * 1024 * 1024 + 8; // 120 MB + header
 
 // Holds data buffer for the command
 #[derive(Debug, Default)]
+#[allow(clippy::struct_field_names)]
 pub struct Buffer {
     pub data_buffer: Vec<u8>,
     pub data_offset: usize,
@@ -361,6 +362,7 @@ impl Buffer {
         Ok(())
     }
 
+    #[allow(clippy::ref_option)]
     fn write_batch_fields_with_filter(
         &mut self,
         key: &Key,
@@ -370,15 +372,16 @@ impl Buffer {
     ) -> Result<()> {
         if let Some(filter) = filter {
             let field_count = field_count + 1;
-            self.write_batch_fields(key, field_count, op_count)?;
+            self.write_batch_fields(key, field_count, op_count);
             let exp_size = filter.size()?;
             self.write_filter_expression(filter, exp_size);
         } else {
-            self.write_batch_fields(key, field_count, op_count)?;
+            self.write_batch_fields(key, field_count, op_count);
         }
         Ok(())
     }
 
+    #[allow(clippy::ref_option)]
     fn write_batch_fields_reg(
         &mut self,
         key: &Key,
@@ -395,7 +398,7 @@ impl Buffer {
             field_count += 1;
         }
 
-        self.write_batch_fields(key, field_count, op_count)?;
+        self.write_batch_fields(key, field_count, op_count);
 
         if let Some(filter) = filter {
             let exp_size = filter.size()?;
@@ -408,16 +411,15 @@ impl Buffer {
         Ok(())
     }
 
-    fn write_batch_fields(&mut self, key: &Key, field_count: usize, op_count: usize) -> Result<()> {
+    fn write_batch_fields(&mut self, key: &Key, field_count: usize, op_count: usize) {
         let field_count = field_count + 2;
         self.write_u16(field_count as u16);
         self.write_u16(op_count as u16);
         self.write_field_string(&key.namespace, FieldType::Namespace);
         self.write_field_string(&key.set_name, FieldType::Table);
-
-        Ok(())
     }
 
+    #[allow(clippy::ref_option)]
     fn write_batch_bin_names(
         &mut self,
         key: &Key,
@@ -433,6 +435,7 @@ impl Buffer {
         Ok(())
     }
 
+    #[allow(clippy::ref_option)]
     fn write_batch_operations(
         &mut self,
         key: &Key,
@@ -452,6 +455,7 @@ impl Buffer {
         Ok(())
     }
 
+    #[allow(clippy::ref_option)]
     fn write_batch_read(
         &mut self,
         key: &Key,
@@ -467,6 +471,7 @@ impl Buffer {
         self.write_batch_fields_with_filter(key, filter, 0, op_count)
     }
 
+    #[allow(clippy::ref_option)]
     fn write_batch_write(
         &mut self,
         key: &Key,
@@ -485,10 +490,7 @@ impl Buffer {
     }
 
     pub(crate) const fn get_batch_flags(policy: &BatchPolicy) -> u8 {
-        let mut flags = 0;
-        if policy.allow_inline {
-            flags = 1;
-        }
+        let mut flags: u8 = if policy.allow_inline { 1 } else { 0 };
 
         if policy.allow_inline_ssd {
             flags |= 0x2;
@@ -527,7 +529,8 @@ impl Buffer {
                 self.data_offset += 12; // header(4) + ttl(4) + fiel_count(2) + op_count(2) = 12
                 self.data_offset += key.namespace.len() + FIELD_HEADER_SIZE as usize;
                 self.data_offset += key.set_name.len() + FIELD_HEADER_SIZE as usize;
-                self.data_offset += batch_op.size(&policy.filter_expression)?; // + HEADER
+                self.data_offset += batch_op.size(policy.filter_expression.as_ref())?;
+                // + HEADER
             }
             prev = Some(batch_op);
         }
@@ -951,7 +954,7 @@ impl Buffer {
             field_count += 1;
 
             if let Some(ref ctx) = filter.context {
-                let ctx_size = encoder::pack_ctx_for_index(&mut None, &ctx)?;
+                let ctx_size = encoder::pack_ctx_for_index(&mut None, ctx)?;
                 self.data_offset += ctx_size + FIELD_HEADER_SIZE as usize;
                 field_count += 1;
             }
@@ -1016,12 +1019,13 @@ impl Buffer {
             field_count += 4;
         }
 
-        let mut operation_count = 0;
-        if let Bins::Some(ref bin_names) = statement.bins {
+        let operation_count = if let Bins::Some(ref bin_names) = statement.bins {
             for bin_name in bin_names {
                 self.estimate_operation_size_for_bin_name(bin_name)?;
             }
-            operation_count = bin_names.len();
+            bin_names.len()
+        } else {
+            0
         };
 
         self.size_buffer()?;
@@ -1036,7 +1040,7 @@ impl Buffer {
         match policy.expected_duration {
             QueryDuration::Short => info1 |= INFO1_SHORT_QUERY,
             QueryDuration::LongRelaxAP => info2 |= INFO2_RELAX_AP_LONG_QUERY,
-            _ => (),
+            QueryDuration::Long => (),
         }
 
         self.write_header_read(
@@ -1080,7 +1084,7 @@ impl Buffer {
 
             if let Some(ref index_name) = filter.index_name {
                 if !index_name.is_empty() {
-                    self.write_field_string(&index_name, FieldType::IndexName);
+                    self.write_field_string(index_name, FieldType::IndexName);
                 }
             }
 
@@ -1460,7 +1464,7 @@ impl Buffer {
         Ok(())
     }
 
-    #[must_use]
+    #[allow(clippy::ref_option)]
     fn estimate_filter_size(&mut self, filter: &Option<Expression>) -> Result<usize> {
         filter.clone().map_or(Ok(0), |filter| {
             let filter_size = filter.pack(&mut None)?;
@@ -1497,7 +1501,6 @@ impl Buffer {
         Ok(field_count)
     }
 
-    #[must_use]
     fn estimate_args_size(&mut self, args: Option<&[Value]>) -> Result<()> {
         if let Some(args) = args {
             self.data_offset += encoder::pack_array(&mut None, args)? + FIELD_HEADER_SIZE as usize;
@@ -1508,7 +1511,6 @@ impl Buffer {
         Ok(())
     }
 
-    #[must_use]
     fn estimate_udf_size(
         &mut self,
         package_name: &str,
@@ -1521,14 +1523,12 @@ impl Buffer {
         Ok(3)
     }
 
-    #[must_use]
     fn estimate_operation_size_for_bin(&mut self, bin: &Bin) -> Result<()> {
         self.estimate_operation_size_for_bin_name(&bin.name)?;
         self.data_offset += bin.value.estimate_size()?;
         Ok(())
     }
 
-    #[must_use]
     fn estimate_operation_size_for_bin_name(&mut self, bin_name: &str) -> Result<()> {
         if bin_name.len() > 15 {
             return Err(Error::InvalidArgument(
@@ -1681,7 +1681,6 @@ impl Buffer {
         self.data_offset = MSG_TOTAL_HEADER_SIZE as usize;
     }
 
-    #[must_use]
     fn write_key(&mut self, key: &Key, send_key: bool) -> Result<()> {
         // Write key into buffer.
         if !key.namespace.is_empty() {
@@ -1733,7 +1732,6 @@ impl Buffer {
         self.write_bytes(bytes);
     }
 
-    #[must_use]
     fn write_field_value(&mut self, value: &Value, ftype: FieldType) -> Result<()> {
         self.write_field_header(value.estimate_size()? + 1, ftype);
         self.write_u8(value.particle_type() as u8);
@@ -1741,7 +1739,6 @@ impl Buffer {
         Ok(())
     }
 
-    #[must_use]
     fn write_args(&mut self, args: Option<&[Value]>, ftype: FieldType) -> Result<()> {
         if let Some(args) = args {
             self.write_field_header(encoder::pack_array(&mut None, args)?, ftype);
@@ -1753,7 +1750,6 @@ impl Buffer {
         Ok(())
     }
 
-    #[must_use]
     fn write_operation_for_bin(&mut self, bin: &Bin, op_type: OperationType) -> Result<()> {
         let name_length = bin.name.len();
         let value_length = bin.value.estimate_size()?;
@@ -1777,7 +1773,6 @@ impl Buffer {
         self.write_str(name);
     }
 
-    #[must_use]
     fn write_operation_for_operation(&mut self, op: &Operation) -> Result<usize> {
         op.write_to(self)
     }
@@ -1989,7 +1984,7 @@ impl Buffer {
     }
 
     pub(crate) fn read_bool(&mut self, len: usize) -> bool {
-        if len <= 0 {
+        if len == 0 {
             false
         } else {
             let val = self.data_buffer[self.data_offset];

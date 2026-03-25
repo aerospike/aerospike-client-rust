@@ -51,6 +51,7 @@ impl NodeValidator {
         }
     }
 
+    #[allow(clippy::option_if_let_else)]
     pub async fn validate_node(&mut self, cluster: &Cluster, host: &Host) -> Result<()> {
         self.resolve_aliases(host)
             .map_err(|e| e.chain_error("Failed to resolve host aliases"))?;
@@ -118,7 +119,7 @@ impl NodeValidator {
 
         match info_map.get("node") {
             None => return Err(Error::InvalidNode(String::from("Missing node name"))),
-            Some(node_name) => self.name = node_name.clone(),
+            Some(node_name) => self.name.clone_from(node_name),
         }
 
         if let Some(ref cluster_name) = cluster.cluster_name() {
@@ -159,7 +160,7 @@ impl NodeValidator {
                     let mut host: Vec<Host> = host
                         .into_iter()
                         .map(|mut h| {
-                            h.tls_name = alias.tls_name.clone();
+                            h.tls_name.clone_from(&alias.tls_name);
                             if let Some(ref ip_map) = self.client_policy.ip_map {
                                 if let Some(mapped) = ip_map.get(&h.name) {
                                     h.name = mapped.clone();

@@ -264,12 +264,7 @@ impl Client {
     ///     Err(err) => println!("Error writing record: {}", err),
     /// }
     /// ```
-    pub fn put<'a, 'b>(
-        &self,
-        policy: &'a WritePolicy,
-        key: &'a Key,
-        bins: &'a [Bin],
-    ) -> Result<()> {
+    pub fn put<'a>(&self, policy: &'a WritePolicy, key: &'a Key, bins: &'a [Bin]) -> Result<()> {
         block_on(self.async_client.put(policy, key, bins))
     }
 
@@ -297,31 +292,21 @@ impl Client {
     ///     Err(err) => println!("Error writing record: {}", err),
     /// }
     /// ```
-    pub fn add<'a, 'b>(
-        &self,
-        policy: &'a WritePolicy,
-        key: &'a Key,
-        bins: &'a [Bin],
-    ) -> Result<()> {
+    pub fn add<'a>(&self, policy: &'a WritePolicy, key: &'a Key, bins: &'a [Bin]) -> Result<()> {
         block_on(self.async_client.add(policy, key, bins))
     }
 
     /// Append bin string values to existing record bin values. The policy specifies the
     /// transaction timeout, record expiration and how the transaction is handled when the record
     /// already exists. This call only works for string values.
-    pub fn append<'a, 'b>(
-        &self,
-        policy: &'a WritePolicy,
-        key: &'a Key,
-        bins: &'a [Bin],
-    ) -> Result<()> {
+    pub fn append<'a>(&self, policy: &'a WritePolicy, key: &'a Key, bins: &'a [Bin]) -> Result<()> {
         block_on(self.async_client.append(policy, key, bins))
     }
 
     /// Prepend bin string values to existing record bin values. The policy specifies the
     /// transaction timeout, record expiration and how the transaction is handled when the record
     /// already exists. This call only works for string values.
-    pub fn prepend<'a, 'b>(
+    pub fn prepend<'a>(
         &self,
         policy: &'a WritePolicy,
         key: &'a Key,

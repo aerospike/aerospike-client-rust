@@ -228,8 +228,9 @@ impl ClientPolicy {
         }
 
         match self.auth_mode {
-            crate::AuthMode::Internal(ref user, _) => return user,
-            crate::AuthMode::External(ref user, _) => return user,
+            crate::AuthMode::Internal(ref user, _) | crate::AuthMode::External(ref user, _) => {
+                return user
+            }
             _ => (),
         }
 

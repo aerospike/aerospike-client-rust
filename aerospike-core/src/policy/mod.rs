@@ -277,8 +277,7 @@ impl Policy for BasePolicy {
     fn socket_timeout(&self) -> u32 {
         match (self.socket_timeout, self.total_timeout) {
             (0, 0) => 0,
-            (d, 0) => d,
-            (0, d) => d,
+            (d, 0) | (0, d) => d,
             (d1, d2) => min(d1, d2),
         }
     }

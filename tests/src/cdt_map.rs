@@ -320,7 +320,7 @@ async fn map_operations() {
 
     let ctx = vec![ctx_map_key(mkey)];
     let xkey = as_val!("y");
-    let op = maps::get_by_key(bin_name, xkey, MapReturnType::Value).set_context(ctx);
+    let op = maps::get_by_key(bin_name, xkey, MapReturnType::Value).context(ctx);
     let rec = client.operate(&wpolicy, &key, &[op]).await.unwrap();
     assert_eq!(*rec.bins.get(bin_name).unwrap(), as_val!(8));
 
@@ -328,9 +328,9 @@ async fn map_operations() {
     let ctx = vec![ctx_map_key_create(mkey.clone(), MapOrder::KeyOrdered)];
     let xkey = as_val!("y");
     let xval = as_val!(8);
-    let op = [maps::put(&mpolicy, bin_name, xkey.clone(), xval).set_context(ctx.clone())];
+    let op = [maps::put(&mpolicy, bin_name, xkey.clone(), xval).context(ctx.clone())];
     client.operate(&wpolicy, &key, &op).await.unwrap();
-    let op = [maps::get_by_key(bin_name, xkey, MapReturnType::Value).set_context(ctx)];
+    let op = [maps::get_by_key(bin_name, xkey, MapReturnType::Value).context(ctx)];
     let rec = client.operate(&wpolicy, &key, &op).await.unwrap();
     assert_eq!(*rec.bins.get(bin_name).unwrap(), as_val!(8));
 
@@ -341,9 +341,9 @@ async fn map_operations() {
     ];
     let xkey = as_val!("c");
     let xval = as_val!(9);
-    let op = [maps::put(&mpolicy, bin_name, xkey.clone(), xval).set_context(ctx.clone())];
+    let op = [maps::put(&mpolicy, bin_name, xkey.clone(), xval).context(ctx.clone())];
     client.operate(&wpolicy, &key, &op).await.unwrap();
-    let op = [maps::get_by_key(bin_name, xkey, MapReturnType::Value).set_context(ctx)];
+    let op = [maps::get_by_key(bin_name, xkey, MapReturnType::Value).context(ctx)];
     let rec = client.operate(&wpolicy, &key, &op).await.unwrap();
     assert_eq!(*rec.bins.get(bin_name).unwrap(), as_val!(9));
 
@@ -400,12 +400,12 @@ async fn map_create_op() {
 
     // Create a nested map under "nested" key using ctx_map_key_create
     let ctx = vec![ctx_map_key_create(as_val!("nested"), MapOrder::KeyOrdered)];
-    let op = maps::put(&mpolicy, "bin", as_val!("a"), as_val!(10)).set_context(ctx);
+    let op = maps::put(&mpolicy, "bin", as_val!("a"), as_val!(10)).context(ctx);
     client.operate(&wpolicy, &key, &[op]).await.unwrap();
 
     // Verify the nested map value
     let ctx = vec![ctx_map_key(as_val!("nested"))];
-    let op = maps::get_by_key("bin", as_val!("a"), MapReturnType::Value).set_context(ctx);
+    let op = maps::get_by_key("bin", as_val!("a"), MapReturnType::Value).context(ctx);
     let rec = client.operate(&wpolicy, &key, &[op]).await.unwrap();
     assert_eq!(*rec.bins.get("bin").unwrap(), as_val!(10));
 

@@ -101,7 +101,7 @@ pub enum MapOrder {
 }
 
 impl MapOrder {
-    pub(crate) const fn flag(&self) -> u8 {
+    pub(crate) const fn flag(self) -> u8 {
         match self {
             MapOrder::Unordered => 0x40,
             MapOrder::KeyOrdered => 0x80,
@@ -285,7 +285,7 @@ impl MapPolicy {
     }
 
     /// Returns the order attribute byte, including the persist index flag if set.
-    pub(crate) const fn order_attr(&self) -> u8 {
+    pub(crate) const fn order_attr(self) -> u8 {
         if self.persist_index {
             self.order as u8 | 0x10
         } else {
@@ -591,7 +591,7 @@ pub fn clear(bin: &str) -> Operation {
 
 /// Creates map remove operation. Server removes the map item identified by the key and returns
 /// the removed data specified by `return_type`.
-pub fn remove_by_key<'a, TMR: ToMapReturnTypeBitmask>(
+pub fn remove_by_key<TMR: ToMapReturnTypeBitmask>(
     bin: &str,
     key: Value,
     return_type: TMR,
@@ -614,7 +614,7 @@ pub fn remove_by_key<'a, TMR: ToMapReturnTypeBitmask>(
 
 /// Creates map remove operation. Server removes map items identified by keys and returns
 /// removed data specified by `return_type`.
-pub fn remove_by_key_list<'a, TMR: ToMapReturnTypeBitmask>(
+pub fn remove_by_key_list<TMR: ToMapReturnTypeBitmask>(
     bin: &str,
     keys: Vec<Value>,
     return_type: TMR,
@@ -635,11 +635,12 @@ pub fn remove_by_key_list<'a, TMR: ToMapReturnTypeBitmask>(
     }
 }
 
-/// Creates map remove operation. Server removes map items identified by the key range
-/// (`begin` inclusive, `end` exclusive). If `begin` is `Value::Nil`, the range is less than
-/// `end`. If `end` is `Value::Nil`, the range is greater than equal to `begin`. Server returns
-/// removed data specified by `return_type`.
-pub fn remove_by_key_range<'a, TMR: ToMapReturnTypeBitmask>(
+/// Creates map remove operation.
+///
+/// Server removes map items identified by the key range (`begin` inclusive, `end` exclusive).
+/// If `begin` is `Value::Nil`, the range is less than `end`. If `end` is `Value::Nil`, the
+/// range is greater than equal to `begin`. Server returns removed data specified by `return_type`.
+pub fn remove_by_key_range<TMR: ToMapReturnTypeBitmask>(
     bin: &str,
     begin: Value,
     end: Value,
@@ -667,7 +668,7 @@ pub fn remove_by_key_range<'a, TMR: ToMapReturnTypeBitmask>(
 
 /// Creates map remove operation. Server removes the map items identified by value and returns
 /// the removed data specified by `return_type`.
-pub fn remove_by_value<'a, TMR: ToMapReturnTypeBitmask>(
+pub fn remove_by_value<TMR: ToMapReturnTypeBitmask>(
     bin: &str,
     value: Value,
     return_type: TMR,
@@ -690,7 +691,7 @@ pub fn remove_by_value<'a, TMR: ToMapReturnTypeBitmask>(
 
 /// Creates map remove operation. Server removes the map items identified by values and returns
 /// the removed data specified by `return_type`.
-pub fn remove_by_value_list<'a, TMR: ToMapReturnTypeBitmask>(
+pub fn remove_by_value_list<TMR: ToMapReturnTypeBitmask>(
     bin: &str,
     values: Vec<Value>,
     return_type: TMR,
@@ -711,11 +712,13 @@ pub fn remove_by_value_list<'a, TMR: ToMapReturnTypeBitmask>(
     }
 }
 
-/// Creates map remove operation. Server removes map items identified by value range (`begin`
-/// inclusive, `end` exclusive). If `begin` is `Value::Nil`, the range is less than `end`. If
-/// `end` is `Value::Nil`, the range is greater than equal to `begin`. Server returns the
-/// removed data specified by `return_type`.
-pub fn remove_by_value_range<'a, TMR: ToMapReturnTypeBitmask>(
+/// Creates map remove operation.
+///
+/// Server removes map items identified by value range (`begin` inclusive, `end` exclusive).
+/// If `begin` is `Value::Nil`, the range is less than `end`. If `end` is `Value::Nil`, the
+/// range is greater than equal to `begin`. Server returns the removed data specified by
+/// `return_type`.
+pub fn remove_by_value_range<TMR: ToMapReturnTypeBitmask>(
     bin: &str,
     begin: Value,
     end: Value,
@@ -900,7 +903,7 @@ pub fn size(bin: &str) -> Operation {
 
 /// Creates map get by key operation. Server selects the map item identified by the key and
 /// returns the selected data specified by `return_type`.
-pub fn get_by_key<'a, TMR: ToMapReturnTypeBitmask>(
+pub fn get_by_key<TMR: ToMapReturnTypeBitmask>(
     bin: &str,
     key: Value,
     return_type: TMR,
@@ -921,11 +924,13 @@ pub fn get_by_key<'a, TMR: ToMapReturnTypeBitmask>(
     }
 }
 
-/// Creates map get by key range operation. Server selects the map items identified by the key
-/// range (`begin` inclusive, `end` exclusive). If `begin` is `Value::Nil`, the range is less
-/// than `end`. If `end` is `Value::Nil` the range is greater than equal to `begin`. Server
-/// returns the selected data specified by `return_type`.
-pub fn get_by_key_range<'a, TMR: ToMapReturnTypeBitmask>(
+/// Creates map get by key range operation.
+///
+/// Server selects the map items identified by the key range (`begin` inclusive, `end`
+/// exclusive). If `begin` is `Value::Nil`, the range is less than `end`. If `end` is
+/// `Value::Nil` the range is greater than equal to `begin`. Server returns the selected data
+/// specified by `return_type`.
+pub fn get_by_key_range<TMR: ToMapReturnTypeBitmask>(
     bin: &str,
     begin: Value,
     end: Value,
@@ -953,7 +958,7 @@ pub fn get_by_key_range<'a, TMR: ToMapReturnTypeBitmask>(
 
 /// Creates map get by value operation. Server selects the map items identified by value and
 /// returns the selected data specified by `return_type`.
-pub fn get_by_value<'a, TMR: ToMapReturnTypeBitmask>(
+pub fn get_by_value<TMR: ToMapReturnTypeBitmask>(
     bin: &str,
     value: Value,
     return_type: TMR,
@@ -974,11 +979,13 @@ pub fn get_by_value<'a, TMR: ToMapReturnTypeBitmask>(
     }
 }
 
-/// Creates map get by value range operation. Server selects the map items identified by the
-/// value range (`begin` inclusive, `end` exclusive). If `begin` is `Value::Nil`, the range is
-/// less than `end`. If `end` is `Value::Nil`, the range is greater than equal to `begin`.
-/// Server returns the selected data specified by `return_type`.
-pub fn get_by_value_range<'a, TMR: ToMapReturnTypeBitmask>(
+/// Creates map get by value range operation.
+///
+/// Server selects the map items identified by the value range (`begin` inclusive, `end`
+/// exclusive). If `begin` is `Value::Nil`, the range is less than `end`. If `end` is
+/// `Value::Nil`, the range is greater than equal to `begin`. Server returns the selected data
+/// specified by `return_type`.
+pub fn get_by_value_range<TMR: ToMapReturnTypeBitmask>(
     bin: &str,
     begin: Value,
     end: Value,
@@ -1160,7 +1167,7 @@ pub fn get_by_rank_range_from<TMR: ToMapReturnTypeBitmask>(
 /// (5,-1) = [{4=2},{5=15},{9=10}]
 /// (3,2) = [{9=10}]
 /// (3,-2) = [{0=17},{4=2},{5=15},{9=10}]
-pub fn remove_by_key_relative_index_range<'a, TMR: ToMapReturnTypeBitmask>(
+pub fn remove_by_key_relative_index_range<TMR: ToMapReturnTypeBitmask>(
     bin: &str,
     key: Value,
     index: i64,
@@ -1195,7 +1202,7 @@ pub fn remove_by_key_relative_index_range<'a, TMR: ToMapReturnTypeBitmask>(
 /// (5,-1,1) = [{4=2}]
 /// (3,2,1) = [{9=10}]
 /// (3,-2,2) = [{0=17}]
-pub fn remove_by_key_relative_index_range_count<'a, TMR: ToMapReturnTypeBitmask>(
+pub fn remove_by_key_relative_index_range_count<TMR: ToMapReturnTypeBitmask>(
     bin: &str,
     key: Value,
     index: i64,
@@ -1229,7 +1236,7 @@ pub fn remove_by_key_relative_index_range_count<'a, TMR: ToMapReturnTypeBitmask>
 /// (value,rank) = [removed items]
 /// (11,1) = [{0=17}]
 /// (11,-1) = [{9=10},{5=15},{0=17}]
-pub fn remove_by_value_relative_rank_range<'a, TMR: ToMapReturnTypeBitmask>(
+pub fn remove_by_value_relative_rank_range<TMR: ToMapReturnTypeBitmask>(
     bin: &str,
     value: Value,
     rank: i64,
@@ -1262,7 +1269,7 @@ pub fn remove_by_value_relative_rank_range<'a, TMR: ToMapReturnTypeBitmask>(
 /// (value,rank,count) = [removed items]
 /// (11,1,1) = [{0=17}]
 /// (11,-1,1) = [{9=10}]
-pub fn remove_by_value_relative_rank_range_count<'a, TMR: ToMapReturnTypeBitmask>(
+pub fn remove_by_value_relative_rank_range_count<TMR: ToMapReturnTypeBitmask>(
     bin: &str,
     value: Value,
     rank: i64,
@@ -1289,7 +1296,7 @@ pub fn remove_by_value_relative_rank_range_count<'a, TMR: ToMapReturnTypeBitmask
 
 /// Creates a map get by key list operation.
 /// Server selects map items identified by keys and returns selected data specified by returnType.
-pub fn get_by_key_list<'a, TMR: ToMapReturnTypeBitmask>(
+pub fn get_by_key_list<TMR: ToMapReturnTypeBitmask>(
     bin: &str,
     keys: Vec<Value>,
     return_type: TMR,
@@ -1312,7 +1319,7 @@ pub fn get_by_key_list<'a, TMR: ToMapReturnTypeBitmask>(
 
 /// Creates a map get by value list operation.
 /// Server selects map items identified by values and returns selected data specified by returnType.
-pub fn get_by_value_list<'a, TMR: ToMapReturnTypeBitmask>(
+pub fn get_by_value_list<TMR: ToMapReturnTypeBitmask>(
     bin: &str,
     values: Vec<Value>,
     return_type: TMR,
@@ -1345,7 +1352,7 @@ pub fn get_by_value_list<'a, TMR: ToMapReturnTypeBitmask>(
 /// (5,-1) = [{4=2},{5=15},{9=10}]
 /// (3,2) = [{9=10}]
 /// (3,-2) = [{0=17},{4=2},{5=15},{9=10}]
-pub fn get_by_key_relative_index_range<'a, TMR: ToMapReturnTypeBitmask>(
+pub fn get_by_key_relative_index_range<TMR: ToMapReturnTypeBitmask>(
     bin: &str,
     key: Value,
     index: i64,
@@ -1380,7 +1387,7 @@ pub fn get_by_key_relative_index_range<'a, TMR: ToMapReturnTypeBitmask>(
 /// (5,-1,1) = [{4=2}]
 /// (3,2,1) = [{9=10}]
 /// (3,-2,2) = [{0=17}]
-pub fn get_by_key_relative_index_range_count<'a, TMR: ToMapReturnTypeBitmask>(
+pub fn get_by_key_relative_index_range_count<TMR: ToMapReturnTypeBitmask>(
     bin: &str,
     key: Value,
     index: i64,
@@ -1414,7 +1421,7 @@ pub fn get_by_key_relative_index_range_count<'a, TMR: ToMapReturnTypeBitmask>(
 /// (value,rank) = [selected items]
 /// (11,1) = [{0=17}]
 /// (11,-1) = [{9=10},{5=15},{0=17}]
-pub fn get_by_value_relative_rank_range<'a, TMR: ToMapReturnTypeBitmask>(
+pub fn get_by_value_relative_rank_range<TMR: ToMapReturnTypeBitmask>(
     bin: &str,
     value: Value,
     rank: i64,
@@ -1447,7 +1454,7 @@ pub fn get_by_value_relative_rank_range<'a, TMR: ToMapReturnTypeBitmask>(
 /// (value,rank,count) = [selected items]
 /// (11,1,1) = [{0=17}]
 /// (11,-1,1) = [{9=10}]
-pub fn get_by_value_relative_rank_range_count<'a, TMR: ToMapReturnTypeBitmask>(
+pub fn get_by_value_relative_rank_range_count<TMR: ToMapReturnTypeBitmask>(
     bin: &str,
     value: Value,
     rank: i64,

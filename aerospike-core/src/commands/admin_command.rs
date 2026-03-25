@@ -149,7 +149,7 @@ impl AdminCommand {
             if receive_size > 0 {
                 conn.read_buffer(receive_size as usize).await?;
 
-                let (res_status, mut list) = AdminCommand::parse_users(conn, receive_size).await?;
+                let (res_status, mut list) = AdminCommand::parse_users(conn, receive_size)?;
                 users.append(&mut list);
                 status = res_status;
             } else {
@@ -160,7 +160,7 @@ impl AdminCommand {
         Ok(users)
     }
 
-    async fn parse_users(conn: &mut Connection, receive_size: u64) -> Result<(i8, Vec<User>)> {
+    fn parse_users(conn: &mut Connection, receive_size: u64) -> Result<(i8, Vec<User>)> {
         let mut users = vec![];
 
         while (conn.buffer.data_offset as u64) < receive_size {
@@ -192,8 +192,8 @@ impl AdminCommand {
                 match id {
                     USER => user_name = conn.buffer.read_str(len)?,
                     ROLES => roles = AdminCommand::parse_roles(conn)?,
-                    READ_INFO => read_info = AdminCommand::parse_info(conn)?,
-                    WRITE_INFO => write_info = AdminCommand::parse_info(conn)?,
+                    READ_INFO => read_info = AdminCommand::parse_info(conn),
+                    WRITE_INFO => write_info = AdminCommand::parse_info(conn),
                     CONNECTIONS => conns_in_use = conn.buffer.read_u32(None),
                     _ => conn.buffer.data_offset += len,
                 }
@@ -253,8 +253,7 @@ impl AdminCommand {
             let receive_size = sz & 0xFFFF_FFFF_FFFF;
             if receive_size > 0 {
                 conn.read_buffer(receive_size as usize).await?;
-                let (res_status, mut list) =
-                    AdminCommand::parse_roles_full(conn, receive_size).await?;
+                let (res_status, mut list) = AdminCommand::parse_roles_full(conn, receive_size)?;
                 roles.append(&mut list);
                 status = res_status;
             } else {
@@ -264,7 +263,7 @@ impl AdminCommand {
         Ok(roles)
     }
 
-    async fn parse_roles_full(conn: &mut Connection, receive_size: u64) -> Result<(i8, Vec<Role>)> {
+    fn parse_roles_full(conn: &mut Connection, receive_size: u64) -> Result<(i8, Vec<Role>)> {
         let mut roles = vec![];
 
         while (conn.buffer.data_offset as u64) < receive_size {
@@ -372,7 +371,7 @@ impl AdminCommand {
         Ok(list)
     }
 
-    pub(crate) fn parse_info(conn: &mut Connection) -> Result<Vec<u32>> {
+    pub(crate) fn parse_info(conn: &mut Connection) -> Vec<u32> {
         let size = conn.buffer.read_u8(None) as usize;
         let mut list = Vec::with_capacity(size);
 
@@ -381,7 +380,7 @@ impl AdminCommand {
             list.push(val);
         }
 
-        Ok(list)
+        list
     }
 
     pub(crate) async fn authenticate(

@@ -130,10 +130,12 @@ pub enum Error {
 }
 
 impl Error {
+    #[must_use]
     pub fn chain_error(self, e: &str) -> Error {
         Error::Chain(Box::new(Error::ClientError(e.into())), Box::new(self))
     }
 
+    #[must_use]
     pub fn wrap(self, e: Error) -> Error {
         Error::Chain(Box::new(e), Box::new(self))
     }
