@@ -518,32 +518,47 @@ impl Cluster {
 
             match cluster_size {
                 // Single node clusters rely on whether it responded to info requests.
-                1 if node.failures() > 5 => {
+                1 if node.failures() >= 5 => {
                     // 5 consecutive info requests failed. Try seeds.
                     if self.seed_nodes().await {
+                        debug!(
+                            "Removing nodes in single node cluster after waiting for some failures"
+                        );
                         remove_list.push(tnode);
                     }
                 }
 
-                // Two node clusters require at least one successful refresh before removing.
-                2 if refresh_count == 1 && node.reference_count() == 0 && node.failures() > 0 => {
-                    remove_list.push(node);
+                // Either all nodes are down then wait for some min threshold failures
+                // or one node refreshes and other failed durign refresh
+                // For small size cluster, don't be aggressive could be transient failures
+                2 if refresh_count <= 1 && node.failures() >= 5 => {
+                    debug!("no node refreshed or one refreshed and other had failures in cluster size eq 2");
+                    remove_list.push(tnode);
                 }
 
                 _ => {
-                    // Multi-node clusters require two successful node refreshes before removing.
-                    if refresh_count >= 2 && node.reference_count() == 0 {
-                        // Node is not referenced by other nodes.
-                        // Check if node responded to info request.
-                        if node.failures() == 0 {
-                            // Node is alive, but not referenced by other nodes. Check if mapped.
-                            if !self.find_node_in_partition_map(node).await {
+                    // Multi-node: prefer a live node's view; drop non-responders or repeatedly failing peers.
+                    // Another node's refresh can bump reference_count via add_friends while this node's refresh failed.
+                    let failures = node.failures();
+                    if refresh_count == 0 && failures > 0 {
+                        debug!(
+                            "no node refreshed in cluster size gte 2 and failures above min threshold"
+                        );
+                        remove_list.push(tnode);
+                    } else if refresh_count >= 1 && node.reference_count() == 0 && failures == 0 {
+                        if node.has_responded()
+                                && !self.find_node_in_partition_map(node).await
+                            {
                                 remove_list.push(tnode);
+                                debug!(
+                                    "some node refreshes but the current node is active but not referenced in partition-map"
+                                );
                             }
-                        } else {
-                            // Node not responding. Remove it.
-                            remove_list.push(tnode);
-                        }
+                    } else if refresh_count >= 1 && failures > 2 {
+                        remove_list.push(tnode);
+                        debug!(
+                            "multi-node: refresh failed repeatedly, removing node despite peer reference_count"
+                        );
                     }
                 }
             }
