@@ -11,6 +11,7 @@ All notable changes to this project will be documented in this file.
   * [CLIENT-4342] `MapPolicy` missing `MapWriteFlags` support.
   * [CLIENT-2023] Add `to_base64` encoding methods to `operations::cdt_context`
   * [CLIENT-2128][CLIENT-3956] Add missing APIs for importing/exporting compiled expressions.
+  * Adds new filters to the `Filter`, deprecates the old macros for filter instantiation.
   * Add a few missing map and list operations:
     `cdt_list_create_with_index`,
     `cdt_list_set_order_with_index`,
@@ -33,6 +34,7 @@ All notable changes to this project will be documented in this file.
   * Add rust docs for enums.
   * Update rust docs for client APIs.
   * Updated the `IndexTask` with the latest logic.
+  * Address linter issues.
 
 * **Bug Fixes**
   * [CLIENT-4227] `expressions::geo_val()` creates `Value::String` instead of `Value::GeoJSON`
