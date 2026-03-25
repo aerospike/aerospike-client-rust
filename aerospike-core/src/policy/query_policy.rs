@@ -58,6 +58,12 @@ pub struct QueryPolicy {
     /// Default: `QueryDuration::Long`
     pub expected_duration: QueryDuration,
 
+    /// Indicates if bin data is retrieved. If false, only record digests (and user keys
+    /// if stored on the server) are retrieved.
+    ///
+    /// Default: `true`
+    pub include_bin_data: bool,
+
     /// Defines algorithm used to determine the target node for a command. The replica algorithm only affects single record and batch commands.
     pub replica: Replica,
 }
@@ -83,6 +89,7 @@ impl Default for QueryPolicy {
             records_per_second: 0,
             record_queue_size: 1024,
             expected_duration: QueryDuration::Long,
+            include_bin_data: true,
             replica: Replica::default(),
         };
 

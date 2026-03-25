@@ -62,25 +62,25 @@ pub fn filter(bin_name: String) -> impl Strategy<Value = Filter> {
 
 prop_compose! {
     pub fn filter_eq(bin_name: String)(val in value_for_eq_filter()) -> Filter {
-        as_eq!(&bin_name, val)
+        Filter::equal(&bin_name, val)
    }
 }
 
 prop_compose! {
     pub fn filter_range(bin_name: String)((begin, end) in value_for_range_filter()) -> Filter {
-        as_range!(&bin_name, begin, end)
+        Filter::range(&bin_name, begin, end)
    }
 }
 
 prop_compose! {
     pub fn filter_contains(bin_name: String)(val in value_any(), cit in collection_index_type()) -> Filter {
-        as_contains!(&bin_name, val, cit)
+        Filter::contains(&bin_name, val, cit)
    }
 }
 
 prop_compose! {
     pub fn filter_contains_range(bin_name: String)(begin in value_any(), end in value_any(), cit in collection_index_type()) -> Filter {
-        as_contains_range!(&bin_name, begin, end, cit)
+        Filter::contains_range(&bin_name, begin, end, cit)
    }
 }
 

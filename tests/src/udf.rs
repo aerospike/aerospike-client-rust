@@ -15,6 +15,7 @@
 
 use crate::common;
 
+use aerospike::query::Filter;
 use aerospike::Task;
 use aerospike::*;
 use aerospike_rt::time::Duration;
@@ -157,7 +158,7 @@ end
 
     // Apply UDF to records in range [0, 9] using a filter
     let mut statement = Statement::new(namespace, &set_name, Bins::All);
-    statement.add_filter(as_range!("bin", 0, 9));
+    statement.add_filter(Filter::range("bin", 0, 9));
     let task = client
         .query_execute_udf(&wpolicy, statement, "test_bg_udf", "double_bin", None)
         .await

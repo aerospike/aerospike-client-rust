@@ -44,7 +44,10 @@ pub enum FieldType {
     IndexName = 21,
     /// Index range.
     IndexRange = 22,
-    // IndexContext = 23,
+    /// Index context (packed CDT context bytes).
+    IndexContext = 23,
+    /// Index expression (packed expression bytes for expression-based SI).
+    IndexExpression = 24,
     /// Index type.
     IndexType = 26,
     /// UDF package name.

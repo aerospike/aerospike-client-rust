@@ -232,7 +232,28 @@ pub struct BasePolicy {
     /// Default: 500
     pub sleep_between_retries: u32,
 
-    /// Optional filter Expression
+    /// Optional expression filter applied to each record **after** the server performs the
+    /// primary operation (index lookup, scan, read, write, etc.). If the expression evaluates
+    /// to `false` for a record, that record is excluded from the results (or the write is
+    /// skipped).
+    ///
+    /// This is different from [`Filter::expression`](crate::query::Filter::expression), which
+    /// selects which **expression-based secondary index** to use for a query. In contrast,
+    /// `filter_expression` is a post-filter that narrows down the records returned by any
+    /// operation.
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// # use aerospike_core::QueryPolicy;
+    /// # use aerospike_core::expressions::{eq, int_bin, int_val};
+    /// let mut qpolicy = QueryPolicy::default();
+    /// // Only return records where bin "status" equals 1
+    /// qpolicy.base_policy.filter_expression
+    ///     .replace(eq(int_bin("status".to_string()), int_val(1)));
+    /// ```
+    ///
+    /// Default: `None`
     pub filter_expression: Option<Expression>,
 }
 

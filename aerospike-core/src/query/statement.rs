@@ -34,9 +34,6 @@ pub struct Statement {
     /// Set name. If left empty, all the sets within the namespace will be scanned.
     pub set_name: String,
 
-    /// Optional index name
-    pub index_name: Option<String>,
-
     /// Optional list of bin names to return in query.
     pub bins: Bins,
 
@@ -67,7 +64,6 @@ impl Statement {
             namespace: namespace.to_owned(),
             set_name: set_name.to_owned(),
             bins,
-            index_name: None,
             aggregation: None,
             filters: None,
         }
@@ -83,9 +79,10 @@ impl Statement {
     ///
     /// ```rust
     /// # use aerospike::*;
+    /// # use aerospike::query::Filter;
     ///
     /// let mut stmt = Statement::new("foo", "bar", Bins::from(["name", "age"]));
-    /// stmt.add_filter(as_range!("baz", 0, 100));
+    /// stmt.add_filter(Filter::range("baz", 0, 100));
     /// ```
     pub fn add_filter(&mut self, filter: Filter) {
         if let Some(ref mut filters) = self.filters {
@@ -117,12 +114,6 @@ impl Statement {
                 return Err(Error::InvalidArgument(
                     "Too many filter expressions".to_string(),
                 ));
-            }
-        }
-
-        if let Some(ref index_name) = self.index_name {
-            if index_name.is_empty() {
-                return Err(Error::InvalidArgument("Empty index name".to_string()));
             }
         }
 

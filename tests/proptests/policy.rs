@@ -274,6 +274,7 @@ pub fn query_policy(
                 records_per_second,
                 record_queue_size,
                 expected_duration,
+                include_bin_data: true,
                 replica,
             },
         )
@@ -308,6 +309,7 @@ pub fn query_policy_scan(
                 records_per_second,
                 record_queue_size,
                 expected_duration,
+                include_bin_data: true,
                 replica,
             },
         )

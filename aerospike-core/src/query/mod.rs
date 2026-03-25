@@ -16,7 +16,7 @@
 //! Types and methods used for database queries and scans.
 #![allow(clippy::missing_errors_doc)]
 
-pub use self::filter::Filter;
+pub use self::filter::{EqFilterValue, Filter, RangeFilterValue};
 pub use self::index_types::{CollectionIndexType, IndexType};
 pub(crate) use self::node_partitions::NodePartitions;
 pub use self::partition_filter::PartitionFilter;
@@ -27,7 +27,8 @@ pub use self::recordset::Recordset;
 pub use self::statement::Statement;
 pub use self::udf::UDFLang;
 
-mod filter;
+/// Query filter definitions and filter value traits.
+pub mod filter;
 mod index_types;
 mod node_partitions;
 mod partition_filter;

@@ -2,7 +2,7 @@
 extern crate aerospike;
 extern crate tokio;
 
-use aerospike::query::PartitionFilter;
+use aerospike::query::{Filter, PartitionFilter};
 use aerospike::{Bins, Client, ClientPolicy, QueryPolicy, Statement};
 use aerospike_core::expressions::{eq, int_bin, int_val};
 use aerospike_core::{AdminPolicy, CollectionIndexType, IndexType, Task, WritePolicy};
@@ -50,7 +50,7 @@ async fn simple_equality_query(client: &Client, namespace: &str, set_name: &str)
 
     let policy = QueryPolicy::default();
     let mut stmt = Statement::new(namespace, set_name, Bins::All);
-    stmt.add_filter(as_eq!(BIN_NAME, 5));
+    stmt.add_filter(Filter::equal(BIN_NAME, 5));
 
     let rs = client
         .query(&policy, PartitionFilter::all(), stmt)
@@ -68,7 +68,7 @@ async fn range_query(client: &Client, namespace: &str, set_name: &str) {
 
     let policy = QueryPolicy::default();
     let mut stmt = Statement::new(namespace, set_name, Bins::All);
-    stmt.add_filter(as_range!(BIN_NAME, 0, 9));
+    stmt.add_filter(Filter::range(BIN_NAME, 0, 9));
 
     let rs = client
         .query(&policy, PartitionFilter::all(), stmt)
@@ -86,7 +86,7 @@ async fn metadata_only_query(client: &Client, namespace: &str, set_name: &str) {
 
     let policy = QueryPolicy::default();
     let mut stmt = Statement::new(namespace, set_name, Bins::None);
-    stmt.add_filter(as_range!(BIN_NAME, 0, 4));
+    stmt.add_filter(Filter::range(BIN_NAME, 0, 4));
 
     let rs = client
         .query(&policy, PartitionFilter::all(), stmt)
@@ -128,7 +128,7 @@ async fn parallel_query(client: &Client, namespace: &str, set_name: &str) {
     const NUM_WORKERS: usize = 4;
     let policy = QueryPolicy::default();
     let mut stmt = Statement::new(namespace, set_name, Bins::All);
-    stmt.add_filter(as_range!(BIN_NAME, 0, 9));
+    stmt.add_filter(Filter::range(BIN_NAME, 0, 9));
 
     let rs = client
         .query(&policy, PartitionFilter::all(), stmt)
@@ -194,7 +194,7 @@ async fn rate_limited_query(client: &Client, namespace: &str, _set_name: &str) {
 
     // Query only a subset of records, matching the test pattern
     let mut stmt = Statement::new(namespace, &test_set_name, Bins::All);
-    stmt.add_filter(as_range!(BIN_NAME, 0, range_end));
+    stmt.add_filter(Filter::range(BIN_NAME, 0, range_end));
 
     let expected_count = range_end + 1;
     println!("Rate limit set to {} records/second", RATE_LIMIT);

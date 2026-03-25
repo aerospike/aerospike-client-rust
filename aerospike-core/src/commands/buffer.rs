@@ -935,19 +935,12 @@ impl Buffer {
         self.data_offset += 4 + FIELD_HEADER_SIZE as usize;
         field_count += 1;
 
-        if let Some(ref index_name) = statement.index_name {
-            if !index_name.is_empty() {
-                self.data_offset += index_name.len() + FIELD_HEADER_SIZE as usize;
-                field_count += 1;
-            }
-        }
-
         // Allocate space for TaskId field.
         self.data_offset += 8 + FIELD_HEADER_SIZE as usize;
         field_count += 1;
 
         if let Some(filter) = filter {
-            let idx_type = filter.collection_index_type();
+            let idx_type = filter.collection_index_type.clone();
             if idx_type != CollectionIndexType::Default {
                 self.data_offset += 1 + FIELD_HEADER_SIZE as usize;
                 field_count += 1;
@@ -956,6 +949,25 @@ impl Buffer {
             filter_size = 1 + filter.estimate_size()?;
             self.data_offset += filter_size + FIELD_HEADER_SIZE as usize;
             field_count += 1;
+
+            if let Some(ref ctx) = filter.context {
+                let ctx_size = encoder::pack_ctx_for_index(&mut None, &ctx)?;
+                self.data_offset += ctx_size + FIELD_HEADER_SIZE as usize;
+                field_count += 1;
+            }
+
+            if let Some(ref index_name) = filter.index_name {
+                if !index_name.is_empty() {
+                    self.data_offset += index_name.len() + FIELD_HEADER_SIZE as usize;
+                    field_count += 1;
+                }
+            }
+
+            if let Some(ref exp) = filter.expression {
+                let exp_size = exp.pack(&mut None)?;
+                self.data_offset += exp_size + FIELD_HEADER_SIZE as usize;
+                field_count += 1;
+            }
         }
 
         let parts_full_size = node_partitions.parts_full.len() * 2;
@@ -1014,19 +1026,18 @@ impl Buffer {
 
         self.size_buffer()?;
 
-        let mut info1 = if statement.bins.is_none() {
-            INFO1_READ | INFO1_NOBINDATA
-        } else {
-            INFO1_READ
-        };
+        let mut info1 = INFO1_READ;
+        if !policy.include_bin_data || statement.bins.is_none() {
+            info1 |= INFO1_NOBINDATA;
+        }
+
+        let mut info2 = if write { INFO2_WRITE } else { 0 };
 
         match policy.expected_duration {
             QueryDuration::Short => info1 |= INFO1_SHORT_QUERY,
-            QueryDuration::LongRelaxAP => info1 |= INFO2_RELAX_AP_LONG_QUERY,
+            QueryDuration::LongRelaxAP => info2 |= INFO2_RELAX_AP_LONG_QUERY,
             _ => (),
         }
-
-        let info2 = if write { INFO2_WRITE } else { 0 };
 
         self.write_header_read(
             &policy.base_policy,
@@ -1041,12 +1052,6 @@ impl Buffer {
             self.write_field_string(&statement.namespace, FieldType::Namespace);
         }
 
-        if let Some(ref index_name) = statement.index_name {
-            if !index_name.is_empty() {
-                self.write_field_string(index_name, FieldType::IndexName);
-            }
-        }
-
         if !statement.set_name.is_empty() {
             self.write_field_string(&statement.set_name, FieldType::Table);
         }
@@ -1055,7 +1060,7 @@ impl Buffer {
         self.write_u64(task_id);
 
         if let Some(filter) = filter {
-            let idx_type = filter.collection_index_type();
+            let idx_type = filter.collection_index_type.clone();
 
             if idx_type != CollectionIndexType::Default {
                 self.write_field_header(1, FieldType::IndexType);
@@ -1066,6 +1071,24 @@ impl Buffer {
             self.write_u8(1);
 
             filter.write(self)?;
+
+            if let Some(ref ctx) = filter.context {
+                let ctx_size = encoder::pack_ctx_for_index(&mut None, ctx)?;
+                self.write_field_header(ctx_size, FieldType::IndexContext);
+                encoder::pack_ctx_for_index(&mut Some(self), ctx)?;
+            }
+
+            if let Some(ref index_name) = filter.index_name {
+                if !index_name.is_empty() {
+                    self.write_field_string(&index_name, FieldType::IndexName);
+                }
+            }
+
+            if let Some(ref exp) = filter.expression {
+                let exp_size = exp.pack(&mut None)?;
+                self.write_field_header(exp_size, FieldType::IndexExpression);
+                exp.pack(&mut Some(self))?;
+            }
         }
 
         if parts_full_size > 0 {
@@ -1129,7 +1152,7 @@ impl Buffer {
             }
         }
 
-        // scan binNames come last
+        // Bin names are sent as READ operations (new server / partition query path).
         if let Bins::Some(ref bin_names) = statement.bins {
             for bin_name in bin_names {
                 self.write_operation_for_bin_name(bin_name, OperationType::Read);
@@ -1171,19 +1194,12 @@ impl Buffer {
         self.data_offset += 4 + FIELD_HEADER_SIZE as usize;
         field_count += 1;
 
-        if let Some(ref index_name) = statement.index_name {
-            if !index_name.is_empty() {
-                self.data_offset += index_name.len() + FIELD_HEADER_SIZE as usize;
-                field_count += 1;
-            }
-        }
-
         // TaskId field
         self.data_offset += 8 + FIELD_HEADER_SIZE as usize;
         field_count += 1;
 
         if let Some(filter) = filter {
-            let idx_type = filter.collection_index_type();
+            let idx_type = filter.collection_index_type.clone();
             if idx_type != CollectionIndexType::Default {
                 self.data_offset += 1 + FIELD_HEADER_SIZE as usize;
                 field_count += 1;
@@ -1192,6 +1208,25 @@ impl Buffer {
             filter_size = 1 + filter.estimate_size()?;
             self.data_offset += filter_size + FIELD_HEADER_SIZE as usize;
             field_count += 1;
+
+            if let Some(ref ctx) = filter.context {
+                let ctx_size = encoder::pack_ctx_for_index(&mut None, ctx)?;
+                self.data_offset += ctx_size + FIELD_HEADER_SIZE as usize;
+                field_count += 1;
+            }
+
+            if let Some(ref index_name) = filter.index_name {
+                if !index_name.is_empty() {
+                    self.data_offset += index_name.len() + FIELD_HEADER_SIZE as usize;
+                    field_count += 1;
+                }
+            }
+
+            if let Some(ref exp) = filter.expression {
+                let exp_size = exp.pack(&mut None)?;
+                self.data_offset += exp_size + FIELD_HEADER_SIZE as usize;
+                field_count += 1;
+            }
         }
 
         let filter_exp_size = self.estimate_filter_size(write_policy.filter_expression())?;
@@ -1219,12 +1254,6 @@ impl Buffer {
             self.write_field_string(&statement.namespace, FieldType::Namespace);
         }
 
-        if let Some(ref index_name) = statement.index_name {
-            if !index_name.is_empty() {
-                self.write_field_string(index_name, FieldType::IndexName);
-            }
-        }
-
         if !statement.set_name.is_empty() {
             self.write_field_string(&statement.set_name, FieldType::Table);
         }
@@ -1233,7 +1262,7 @@ impl Buffer {
         self.write_u64(task_id);
 
         if let Some(filter) = filter {
-            let idx_type = filter.collection_index_type();
+            let idx_type = filter.collection_index_type.clone();
 
             if idx_type != CollectionIndexType::Default {
                 self.write_field_header(1, FieldType::IndexType);
@@ -1244,6 +1273,24 @@ impl Buffer {
             self.write_u8(1);
 
             filter.write(self)?;
+
+            if let Some(ref ctx) = filter.context {
+                let ctx_size = encoder::pack_ctx_for_index(&mut None, ctx)?;
+                self.write_field_header(ctx_size, FieldType::IndexContext);
+                encoder::pack_ctx_for_index(&mut Some(self), ctx)?;
+            }
+
+            if let Some(ref index_name) = filter.index_name {
+                if !index_name.is_empty() {
+                    self.write_field_string(index_name, FieldType::IndexName);
+                }
+            }
+
+            if let Some(ref exp) = filter.expression {
+                let exp_size = exp.pack(&mut None)?;
+                self.write_field_header(exp_size, FieldType::IndexExpression);
+                exp.pack(&mut Some(self))?;
+            }
         }
 
         if let Some(filter_exp) = write_policy.filter_expression() {
@@ -1297,19 +1344,12 @@ impl Buffer {
         self.data_offset += 4 + FIELD_HEADER_SIZE as usize;
         field_count += 1;
 
-        if let Some(ref index_name) = statement.index_name {
-            if !index_name.is_empty() {
-                self.data_offset += index_name.len() + FIELD_HEADER_SIZE as usize;
-                field_count += 1;
-            }
-        }
-
         // TaskId field
         self.data_offset += 8 + FIELD_HEADER_SIZE as usize;
         field_count += 1;
 
         if let Some(filter) = filter {
-            let idx_type = filter.collection_index_type();
+            let idx_type = filter.collection_index_type.clone();
             if idx_type != CollectionIndexType::Default {
                 self.data_offset += 1 + FIELD_HEADER_SIZE as usize;
                 field_count += 1;
@@ -1318,6 +1358,25 @@ impl Buffer {
             filter_size = 1 + filter.estimate_size()?;
             self.data_offset += filter_size + FIELD_HEADER_SIZE as usize;
             field_count += 1;
+
+            if let Some(ref ctx) = filter.context {
+                let ctx_size = encoder::pack_ctx_for_index(&mut None, ctx)?;
+                self.data_offset += ctx_size + FIELD_HEADER_SIZE as usize;
+                field_count += 1;
+            }
+
+            if let Some(ref index_name) = filter.index_name {
+                if !index_name.is_empty() {
+                    self.data_offset += index_name.len() + FIELD_HEADER_SIZE as usize;
+                    field_count += 1;
+                }
+            }
+
+            if let Some(ref exp) = filter.expression {
+                let exp_size = exp.pack(&mut None)?;
+                self.data_offset += exp_size + FIELD_HEADER_SIZE as usize;
+                field_count += 1;
+            }
         }
 
         let filter_exp_size = self.estimate_filter_size(write_policy.filter_expression())?;
@@ -1342,12 +1401,6 @@ impl Buffer {
             self.write_field_string(&statement.namespace, FieldType::Namespace);
         }
 
-        if let Some(ref index_name) = statement.index_name {
-            if !index_name.is_empty() {
-                self.write_field_string(index_name, FieldType::IndexName);
-            }
-        }
-
         if !statement.set_name.is_empty() {
             self.write_field_string(&statement.set_name, FieldType::Table);
         }
@@ -1356,7 +1409,7 @@ impl Buffer {
         self.write_u64(task_id);
 
         if let Some(filter) = filter {
-            let idx_type = filter.collection_index_type();
+            let idx_type = filter.collection_index_type.clone();
 
             if idx_type != CollectionIndexType::Default {
                 self.write_field_header(1, FieldType::IndexType);
@@ -1367,6 +1420,24 @@ impl Buffer {
             self.write_u8(1);
 
             filter.write(self)?;
+
+            if let Some(ref ctx) = filter.context {
+                let ctx_size = encoder::pack_ctx_for_index(&mut None, ctx)?;
+                self.write_field_header(ctx_size, FieldType::IndexContext);
+                encoder::pack_ctx_for_index(&mut Some(self), ctx)?;
+            }
+
+            if let Some(ref index_name) = filter.index_name {
+                if !index_name.is_empty() {
+                    self.write_field_string(index_name, FieldType::IndexName);
+                }
+            }
+
+            if let Some(ref exp) = filter.expression {
+                let exp_size = exp.pack(&mut None)?;
+                self.write_field_header(exp_size, FieldType::IndexExpression);
+                exp.pack(&mut Some(self))?;
+            }
         }
 
         if let Some(filter_exp) = write_policy.filter_expression() {

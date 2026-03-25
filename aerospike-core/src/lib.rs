@@ -169,7 +169,10 @@ pub use policy::{
     ReadTouchTTL, RecordExistsAction, WritePolicy,
 };
 pub use privilege::{Privilege, PrivilegeCode};
-pub use query::{CollectionIndexType, IndexType, PartitionFilter, Recordset, Statement, UDFLang};
+pub use query::{
+    CollectionIndexType, EqFilterValue, IndexType, PartitionFilter, RangeFilterValue, Recordset,
+    Statement, UDFLang,
+};
 pub use record::Record;
 pub use result_code::ResultCode;
 pub use role::Role;

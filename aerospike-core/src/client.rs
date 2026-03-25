@@ -1421,7 +1421,7 @@ impl Client {
                         let handle = aerospike_rt::spawn(async move {
                             let permit = semaphore.acquire().await;
                             let result =
-                                if statement.index_name.is_none() && statement.filters.is_none() {
+                                if statement.filters.is_none() {
                                     ScanCommand::new(
                                         &policy,
                                         &statement.namespace,
@@ -1833,7 +1833,7 @@ impl Client {
         }
 
         if CollectionIndexType::Default != collection_index_type {
-            cmd.push_str("indextype=");
+            cmd.push_str(";indextype=");
             cmd.push_str(&format!("{collection_index_type}"));
         }
 
