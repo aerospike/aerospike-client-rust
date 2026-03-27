@@ -634,3 +634,70 @@ fn cdt_list_increment_by_one_with_policy() {
 
     client.close().await.unwrap();
 }
+
+#[aerospike_macro::test]
+async fn list_get_by_value_range_nil_end_returns_empty() {
+    let client = common::client().await;
+    let ns = common::namespace();
+    let set = "lv_range_nil";
+
+    let wpolicy = WritePolicy::default();
+    let key = as_key!(ns, set, "list_key1");
+
+    let list = as_list!(7, 6, 5, 8, 9, 10);
+    let bins = vec![as_bin!("int_bin", list)];
+    client.delete(&wpolicy, &key).await.unwrap();
+    client.put(&wpolicy, &key, &bins).await.unwrap();
+
+    // Get
+    let op1 = lists::get_by_value_range(
+        "int_bin",
+        Value::from(7),
+        Value::from(9),
+        ListReturnType::Values,
+    ); // expect: [7, 8]
+    let op2 = lists::get_by_value_range(
+        "int_bin",
+        Value::from(7),
+        Value::Nil,
+        ListReturnType::Values,
+    ); // expect: [7, 8, 9, 10]
+    let op3 =
+        lists::get_by_value_range("int_bin", Value::from(7), Value::Nil, ListReturnType::Index); // expect: [0, 3, 4, 5]
+    let op4 =
+        lists::get_by_value_range("int_bin", Value::from(7), Value::Nil, ListReturnType::Rank); // expect: [2, 3, 4, 5]
+    let op5 = lists::get_by_value_range(
+        "int_bin",
+        Value::Nil,
+        Value::from(9),
+        ListReturnType::Values,
+    ); // expect: [7, 6, 5, 8]
+    let ops = &vec![op1, op2, op3, op4, op5];
+    let rec = client.operate(&wpolicy, &key, ops).await.unwrap();
+    assert_eq!(
+        rec.bins.get("int_bin").unwrap(),
+        &aerospike::Value::MultiResult(vec![
+            as_list![7, 8],
+            as_list![7, 8, 9, 10],
+            as_list![0, 3, 4, 5],
+            as_list![2, 3, 4, 5],
+            as_list![7, 6, 5, 8],
+        ])
+    );
+
+    // Remove
+    let op6 =
+        lists::remove_by_value_range("int_bin", ListReturnType::Index, Value::from(7), Value::Nil); // expect: [0, 3, 4, 5]
+    let ops = &vec![op6];
+    let rec2 = client.operate(&wpolicy, &key, ops).await.unwrap();
+    assert_eq!(rec2.bins.get("int_bin").unwrap(), &as_list!(0, 3, 4, 5));
+
+    let rec3 = client
+        .get(&aerospike::ReadPolicy::default(), &key, Bins::All)
+        .await
+        .unwrap(); // expect: [6, 5]
+    assert_eq!(rec3.bins.get("int_bin").unwrap(), &as_list!(6, 5));
+
+    client.delete(&wpolicy, &key).await.unwrap();
+    client.close().await.unwrap();
+}

@@ -551,14 +551,19 @@ pub fn remove_by_value_range<TLR: ToListReturnTypeBitmask>(
     begin: Value,
     end: Value,
 ) -> Operation {
+    let mut args = vec![
+        CdtArgument::Int(return_type.to_bitmask()),
+        CdtArgument::Value(begin),
+    ];
+
+    if !end.is_nil() {
+        args.push(CdtArgument::Value(end))
+    }
+
     let cdt_op = CdtOperation {
         op: CdtListOpType::RemoveByValueInterval as u8,
         encoder: Arc::new(pack_cdt_op),
-        args: vec![
-            CdtArgument::Int(return_type.to_bitmask()),
-            CdtArgument::Value(begin),
-            CdtArgument::Value(end),
-        ],
+        args,
     };
     Operation {
         op: OperationType::CdtWrite,
@@ -1049,14 +1054,19 @@ pub fn get_by_value_range<TLR: ToListReturnTypeBitmask>(
     end: Value,
     return_type: TLR,
 ) -> Operation {
+    let mut args = vec![
+        CdtArgument::Int(return_type.to_bitmask()),
+        CdtArgument::Value(begin),
+    ];
+
+    if !end.is_nil() {
+        args.push(CdtArgument::Value(end))
+    }
+
     let cdt_op = CdtOperation {
         op: CdtListOpType::GetByValueInterval as u8,
         encoder: Arc::new(pack_cdt_op),
-        args: vec![
-            CdtArgument::Int(return_type.to_bitmask()),
-            CdtArgument::Value(begin),
-            CdtArgument::Value(end),
-        ],
+        args,
     };
     Operation {
         op: OperationType::CdtRead,
