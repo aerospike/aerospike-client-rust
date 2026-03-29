@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.0.0]
+
+* **Bug Fixes**
+  * [CLIENT-4530] `lists::get_by_value_range` and `lists::remove_by_value_range` return empty results when end is `Value::Nil`.
+
 ## [2.0.0-alpha.11]
 
 * **New Features**
