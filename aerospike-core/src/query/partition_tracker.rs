@@ -14,6 +14,7 @@
 // the License.
 
 use crate::cluster::node;
+use crate::cluster::partition::Partition;
 use crate::cluster::Cluster;
 use crate::errors::{Error, Result};
 use crate::policy::Replica;
@@ -32,6 +33,7 @@ use aerospike_rt::{
 use std::cmp::max;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::Weak;
 #[derive(Debug)]
 pub struct PartitionTracker {
     partitions_capacity: usize,
@@ -165,7 +167,8 @@ impl PartitionTracker {
                 (part.retry, part.id)
             };
             if retry || part_retry {
-                let node = cluster.get_master_node(namespace, part_id as usize)?;
+                let partition = Partition::new(namespace, part_id as usize);
+                let node = cluster.get_node(&partition, self.replica, Weak::new())?;
 
                 // Use node name to check for single node equality because
                 // partition map may be in transitional state between

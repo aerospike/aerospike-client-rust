@@ -94,9 +94,17 @@ impl PartitionForNamespace {
         }
 
         let node = match replica {
-            Replica::Master => self.all_replicas(partition.partition_id).next().flatten(),
+            Replica::Master => self
+                .all_replicas(partition.partition_id)
+                .next()
+                .flatten()
+                .filter(|node| node.is_active()),
             Replica::Sequence => get_next_in_sequence(
-                || self.all_replicas(partition.partition_id).flatten(),
+                || {
+                    self.all_replicas(partition.partition_id)
+                        .flatten()
+                        .filter(|node| node.is_active())
+                },
                 last_tried,
             ),
             Replica::PreferRack => {
@@ -106,13 +114,19 @@ impl PartitionForNamespace {
                     || {
                         self.all_replicas(partition.partition_id)
                             .flatten()
-                            .filter(|node| node.is_in_rack(partition.namespace, rack_ids))
+                            .filter(|node| {
+                                node.is_in_rack(partition.namespace, rack_ids) && node.is_active()
+                            })
                     },
                     last_tried.clone(),
                 )
                 .or_else(|| {
                     get_next_in_sequence(
-                        || self.all_replicas(partition.partition_id).flatten(),
+                        || {
+                            self.all_replicas(partition.partition_id)
+                                .flatten()
+                                .filter(|node| node.is_active())
+                        },
                         last_tried,
                     )
                 })
@@ -550,11 +564,11 @@ impl Cluster {
                                     "some node refreshes but the current node is active but not referenced in partition-map"
                                 );
                         }
-                    } else if refresh_count >= 1 && failures > 2 {
-                        remove_list.push(tnode);
+                    } else if refresh_count >= 1 && failures > 0 {
                         debug!(
-                            "multi-node: refresh failed repeatedly, removing node despite peer reference_count"
+                            "multi-node: refresh failed repeatedly, removing node despite peer reference_count {}", tnode
                         );
+                        remove_list.push(tnode);
                     }
                 }
             }
@@ -572,11 +586,17 @@ impl Cluster {
 
     fn remove_nodes_and_aliases(&self, mut nodes_to_remove: Vec<Arc<Node>>) {
         for node in &mut nodes_to_remove {
+            debug!("Removing alias for node {}", node);
+
             for alias in node.aliases() {
                 self.remove_alias(&alias);
             }
+            debug!("Attempt to close node {}", node);
             if let Some(node) = Arc::get_mut(node) {
+                debug!("Node closed {}", node);
                 node.close();
+            } else {
+                debug!("Fail to closed node {}", node);
             }
         }
         self.remove_nodes(&nodes_to_remove);
@@ -674,22 +694,22 @@ impl Cluster {
         namespace.get_node(self, partition, replica, last_tried)
     }
 
-    pub fn get_master_node(&self, namespace: &str, partition_id: usize) -> Result<Arc<Node>> {
-        let partitions = self.partition_map.load();
+    // pub fn get_master_node(&self, namespace: &str, partition_id: usize) -> Result<Arc<Node>> {
+    //     let partitions = self.partition_map.load();
 
-        let ns_partition = partitions.get(namespace).ok_or_else(|| {
-            Error::InvalidNode(format!(
-                "Cannot get appropriate node for namespace: {namespace}"
-            ))
-        })?;
+    //     let ns_partition = partitions.get(namespace).ok_or_else(|| {
+    //         Error::InvalidNode(format!(
+    //             "Cannot get appropriate node for namespace: {namespace}"
+    //         ))
+    //     })?;
 
-        let node = ns_partition.all_replicas(partition_id).next().flatten();
-        node.ok_or_else(|| {
-            Error::InvalidNode(format!(
-                "Cannot get appropriate node for namespace: {namespace} partition: {partition_id}"
-            ))
-        })
-    }
+    //     let node = ns_partition.all_replicas(partition_id).next().flatten();
+    //     node.ok_or_else(|| {
+    //         Error::InvalidNode(format!(
+    //             "Cannot get appropriate node for namespace: {namespace} partition: {partition_id}"
+    //         ))
+    //     })
+    // }
 
     pub fn get_random_node(&self) -> Result<Arc<Node>> {
         let node_array = self.nodes();
