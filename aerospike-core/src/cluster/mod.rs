@@ -586,11 +586,15 @@ impl Cluster {
 
     fn remove_nodes_and_aliases(&self, mut nodes_to_remove: Vec<Arc<Node>>) {
         self.scrub_nodes_from_partition_map(&nodes_to_remove);
-        for node in &mut nodes_to_remove {
+        for node in &nodes_to_remove {
             debug!("Removing alias for node {}", node);
             for alias in node.aliases() {
                 self.remove_alias(&alias);
             }
+        }
+        self.remove_nodes(&nodes_to_remove);
+        for node in &mut nodes_to_remove {
+            debug!("Attempt to close node {}", node);
             if let Some(node) = Arc::get_mut(node) {
                 debug!("Node closed {}", node);
                 node.close();
@@ -601,7 +605,6 @@ impl Cluster {
                 );
             }
         }
-        self.remove_nodes(&nodes_to_remove);
     }
 
     fn add_alias(&self, host: Host, node: Arc<Node>) {
