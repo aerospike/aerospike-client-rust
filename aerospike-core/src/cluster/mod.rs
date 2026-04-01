@@ -585,26 +585,23 @@ impl Cluster {
     }
 
     fn remove_nodes_and_aliases(&self, mut nodes_to_remove: Vec<Arc<Node>>) {
-        for node in &nodes_to_remove {
+        self.scrub_nodes_from_partition_map(&nodes_to_remove);
+        for node in &mut nodes_to_remove {
             debug!("Removing alias for node {}", node);
-
             for alias in node.aliases() {
                 self.remove_alias(&alias);
             }
-        }
-        self.remove_nodes(&nodes_to_remove);
-        for node in &mut nodes_to_remove {
-            debug!("Attempt to close node {}", node);
             if let Some(node) = Arc::get_mut(node) {
                 debug!("Node closed {}", node);
                 node.close();
             } else {
                 debug!(
-                    "Failed to close node {} — other strong or weak refs to this allocation remain",
+                    "Failed to close node {}",
                     node
                 );
             }
         }
+        self.remove_nodes(&nodes_to_remove);
     }
 
     fn add_alias(&self, host: Host, node: Arc<Node>) {
@@ -634,6 +631,25 @@ impl Cluster {
         (*partitions)
             .values()
             .any(|map| map.nodes.iter().any(|(_, node)| *node == filter))
+    }
+
+    /// Clears replica slots that still point at removed nodes so extra `Arc` handles from the
+    /// partition table are dropped before `Arc::get_mut` runs `Node::close`.
+    fn scrub_nodes_from_partition_map(&self, removed: &[Arc<Node>]) {
+        if removed.is_empty() {
+            return;
+        }
+        let mut local_pmap = (*self.partition_map.load().clone()).clone();
+        for partition_namespace in local_pmap.values_mut() {
+            for (_, slot) in partition_namespace.nodes.iter_mut() {
+                if let Some(arc) = slot {
+                    if removed.iter().any(|r| r.name() == arc.name()) {
+                        *slot = None;
+                    }
+                }
+            }
+        }
+        self.partition_map.store(Arc::new(local_pmap));
     }
 
     fn add_nodes(&self, friend_list: &[Arc<Node>]) {
