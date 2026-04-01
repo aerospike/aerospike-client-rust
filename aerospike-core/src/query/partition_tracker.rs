@@ -168,7 +168,15 @@ impl PartitionTracker {
             };
             if retry || part_retry {
                 let partition = Partition::new(namespace, part_id as usize);
-                let node = cluster.get_node(&partition, self.replica, Weak::new())?;
+                let last_tried = {
+                   let ps = part.lock().await;
+                   ps.node
+                   .as_ref()
+                   .map(Arc::downgrade)
+                   .unwrap_or_else(Weak::new)
+                };
+
+                let node = cluster.get_node(&partition, self.replica, last_tried)?;
 
                 // Use node name to check for single node equality because
                 // partition map may be in transitional state between
