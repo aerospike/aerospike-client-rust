@@ -599,10 +599,7 @@ impl Cluster {
                 debug!("Node closed {}", node);
                 node.close();
             } else {
-                debug!(
-                    "Failed to close node {}",
-                    node
-                );
+                debug!("Failed to close node {}", node);
             }
         }
     }
@@ -717,23 +714,6 @@ impl Cluster {
 
         namespace.get_node(self, partition, replica, last_tried)
     }
-
-    // pub fn get_master_node(&self, namespace: &str, partition_id: usize) -> Result<Arc<Node>> {
-    //     let partitions = self.partition_map.load();
-
-    //     let ns_partition = partitions.get(namespace).ok_or_else(|| {
-    //         Error::InvalidNode(format!(
-    //             "Cannot get appropriate node for namespace: {namespace}"
-    //         ))
-    //     })?;
-
-    //     let node = ns_partition.all_replicas(partition_id).next().flatten();
-    //     node.ok_or_else(|| {
-    //         Error::InvalidNode(format!(
-    //             "Cannot get appropriate node for namespace: {namespace} partition: {partition_id}"
-    //         ))
-    //     })
-    // }
 
     pub fn get_random_node(&self) -> Result<Arc<Node>> {
         let node_array = self.nodes();

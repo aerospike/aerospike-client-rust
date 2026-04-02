@@ -169,11 +169,11 @@ impl PartitionTracker {
             if retry || part_retry {
                 let partition = Partition::new(namespace, part_id as usize);
                 let last_tried = {
-                   let ps = part.lock().await;
-                   ps.node
-                   .as_ref()
-                   .map(Arc::downgrade)
-                   .unwrap_or_else(Weak::new)
+                    let ps = part.lock().await;
+                    ps.node
+                        .as_ref()
+                        .map(Arc::downgrade)
+                        .unwrap_or_else(Weak::new)
                 };
 
                 let node = cluster.get_node(&partition, self.replica, last_tried)?;
