@@ -33,7 +33,6 @@ use aerospike_rt::{
 use std::cmp::max;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
-use std::sync::Weak;
 #[derive(Debug)]
 pub struct PartitionTracker {
     partitions_capacity: usize,
@@ -168,14 +167,7 @@ impl PartitionTracker {
             };
             if retry || part_retry {
                 let partition = Partition::new(namespace, part_id as usize);
-                let last_tried = {
-                    let ps = part.lock().await;
-                    ps.node
-                        .as_ref()
-                        .map(Arc::downgrade)
-                        .unwrap_or_else(Weak::new)
-                };
-
+                let last_tried = part.lock().await.node.as_ref().map(Arc::clone);
                 let node = cluster.get_node(&partition, self.replica, last_tried)?;
 
                 // Use node name to check for single node equality because

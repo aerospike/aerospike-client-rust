@@ -59,6 +59,13 @@ pub struct Node {
     version: Version,
 }
 
+impl Drop for Node {
+    fn drop(&mut self) {
+        debug!("Node closed {}", self);
+        self.close();
+    }
+}
+
 impl Node {
     #![allow(missing_docs)]
     pub fn new(client_policy: ClientPolicy, nv: Arc<NodeValidator>) -> Self {

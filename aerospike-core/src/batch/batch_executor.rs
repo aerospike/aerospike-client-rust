@@ -14,8 +14,7 @@
 // the License.
 
 use std::collections::HashMap;
-use std::sync::{Arc, Weak};
-
+use std::sync::Arc;
 use crate::batch::BatchOperation;
 use crate::cluster::partition::Partition;
 use crate::cluster::{Cluster, Node};
@@ -38,7 +37,7 @@ impl BatchExecutor {
 
     fn node_for_key(&self, key: &Key, replica: crate::policy::Replica) -> Result<Arc<Node>> {
         let partition = Partition::new_by_key(key);
-        let node = self.cluster.get_node(&partition, replica, Weak::new())?;
+        let node = self.cluster.get_node(&partition, replica, None)?;
         Ok(node)
     }
 

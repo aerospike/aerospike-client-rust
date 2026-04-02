@@ -23,8 +23,8 @@ pub mod version_parser;
 use aerospike_rt::time::{Duration, Instant};
 use std::cell::OnceCell;
 use std::collections::HashMap;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicIsize, Ordering};
-use std::sync::{Arc, Weak};
 use std::vec::Vec;
 
 pub use self::node::Node;
@@ -69,13 +69,13 @@ impl PartitionForNamespace {
         cluster: &Cluster,
         partition: &Partition<'_>,
         replica: crate::policy::Replica,
-        last_tried: Weak<Node>,
+        last_tried: Option<Arc<Node>>,
     ) -> Result<Arc<Node>> {
         fn get_next_in_sequence<I: Iterator<Item = Arc<Node>>, F: Fn() -> I>(
             get_sequence: F,
-            last_tried: Weak<Node>,
+            last_tried: Option<Arc<Node>>,
         ) -> Option<Arc<Node>> {
-            if let Some(last_tried) = last_tried.upgrade() {
+            if let Some(last_tried) = last_tried {
                 // If this isn't the first attempt, try the replica immediately after in sequence (that is actually valid)
                 let mut replicas = get_sequence();
                 while let Some(replica) = replicas.next() {
@@ -585,21 +585,19 @@ impl Cluster {
     }
 
     fn remove_nodes_and_aliases(&self, mut nodes_to_remove: Vec<Arc<Node>>) {
-        self.scrub_nodes_from_partition_map(&nodes_to_remove);
         for node in &nodes_to_remove {
             debug!("Removing alias for node {}", node);
             for alias in node.aliases() {
                 self.remove_alias(&alias);
-            }
+            }    
         }
         self.remove_nodes(&nodes_to_remove);
+        
         for node in &mut nodes_to_remove {
             debug!("Attempt to close node {}", node);
             if let Some(node) = Arc::get_mut(node) {
-                debug!("Node closed {}", node);
+                debug!("Closing node {}", node);
                 node.close();
-            } else {
-                debug!("Failed to close node {}", node);
             }
         }
     }
@@ -633,25 +631,6 @@ impl Cluster {
             .any(|map| map.nodes.iter().any(|(_, node)| *node == filter))
     }
 
-    /// Clears replica slots that still point at removed nodes so extra `Arc` handles from the
-    /// partition table are dropped before `Arc::get_mut` runs `Node::close`.
-    fn scrub_nodes_from_partition_map(&self, removed: &[Arc<Node>]) {
-        if removed.is_empty() {
-            return;
-        }
-        let mut local_pmap = (*self.partition_map.load().clone()).clone();
-        for partition_namespace in local_pmap.values_mut() {
-            for (_, slot) in partition_namespace.nodes.iter_mut() {
-                if let Some(arc) = slot {
-                    if removed.iter().any(|r| r.name() == arc.name()) {
-                        *slot = None;
-                    }
-                }
-            }
-        }
-        self.partition_map.store(Arc::new(local_pmap));
-    }
-
     fn add_nodes(&self, friend_list: &[Arc<Node>]) {
         if friend_list.is_empty() {
             return;
@@ -675,7 +654,6 @@ impl Cluster {
                 node_array.push(node.clone());
             }
         }
-
         self.set_nodes(node_array);
     }
 
@@ -701,7 +679,7 @@ impl Cluster {
         &self,
         partition: &Partition<'_>,
         replica: crate::policy::Replica,
-        last_tried: Weak<Node>,
+        last_tried: Option<Arc<Node>>,
     ) -> Result<Arc<Node>> {
         let partitions = self.partition_map.load();
 
