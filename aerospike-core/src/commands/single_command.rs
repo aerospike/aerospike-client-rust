@@ -142,6 +142,8 @@ impl<'a> SingleCommand<'a> {
                 e @ Err(Error::InvalidArgument(_)) => e?,
                 Err(e) => {
                     warn!("Error selecting node from the partition table: {e}");
+                    // Brief async sleep so tend/refresh can run; avoids a tight retry loop when get_node fails fast.
+                    sleep(Duration::from_micros(50)).await;
                     continue;
                 } // Node is currently inactive. Retry.
             };
@@ -186,7 +188,6 @@ impl<'a> SingleCommand<'a> {
                 if commands::is_network_error(&err) {
                     continue;
                 }
-
                 return Err(err);
             }
 

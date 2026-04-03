@@ -42,7 +42,7 @@ use crate::policy::Replica;
 use crate::AdminPolicy;
 use aerospike_rt::Mutex;
 use futures::channel::mpsc;
-use futures::channel::mpsc::{Receiver, Sender};
+use futures::channel::mpsc::{Receiver, Sender, TryRecvError};
 use hazarc::AtomicArc;
 
 static CLIENT_VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -83,7 +83,6 @@ impl PartitionForNamespace {
                         if let Some(in_sequence_after) = replicas.next() {
                             return Some(in_sequence_after);
                         }
-
                         // No more after this? Drop through to try from the beginning.
                         break;
                     }
@@ -211,22 +210,17 @@ impl Cluster {
         let tend_interval = cluster.client_policy.load().tend_interval;
 
         loop {
-            if rx.try_recv().is_ok() {
-                unreachable!();
-            } else if let Err(err) = cluster.tend().await {
-                log_error_chain!(err, "Error tending cluster");
+            match rx.try_recv() {
+                Ok(()) => unreachable!(),
+                Err(TryRecvError::Closed) => break,
+                Err(TryRecvError::Empty) => {
+                    if let Err(err) = cluster.tend().await {
+                        log_error_chain!(err, "Error tending cluster");
+                    }
+                    aerospike_rt::sleep(Duration::from_millis(u64::from(tend_interval))).await;
+                }
             }
-            aerospike_rt::sleep(Duration::from_millis(u64::from(tend_interval))).await;
         }
-
-        // close all nodes
-        //let nodes = cluster.nodes().await;
-        //for mut node in nodes {
-        //    if let Some(node) = Arc::get_mut(&mut node) {
-        //        node.close().await;
-        //    }
-        //}
-        //cluster.set_nodes(vec![]).await;
     }
 
     async fn tend(&self) -> Result<()> {
@@ -591,12 +585,11 @@ impl Cluster {
                 self.remove_alias(&alias);
             }
         }
-        self.remove_nodes(&nodes_to_remove);
-
         for node in &mut nodes_to_remove {
             debug!("Closing node {node}");
             node.close();
         }
+        self.remove_nodes(&nodes_to_remove);
     }
 
     fn add_alias(&self, host: Host, node: Arc<Node>) {
