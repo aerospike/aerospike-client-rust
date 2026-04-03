@@ -23,8 +23,8 @@ pub mod version_parser;
 use aerospike_rt::time::{Duration, Instant};
 use std::cell::OnceCell;
 use std::collections::HashMap;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicIsize, Ordering};
+use std::sync::Arc;
 use std::vec::Vec;
 
 pub use self::node::Node;
@@ -211,7 +211,7 @@ impl Cluster {
         let tend_interval = cluster.client_policy.load().tend_interval;
 
         loop {
-            if rx.try_next().is_ok() {
+            if rx.try_recv().is_ok() {
                 unreachable!();
             } else if let Err(err) = cluster.tend().await {
                 log_error_chain!(err, "Error tending cluster");
@@ -566,7 +566,7 @@ impl Cluster {
                         }
                     } else if refresh_count >= 1 && failures > 0 {
                         debug!(
-                            "multi-node: refresh failed repeatedly, removing node despite peer reference_count {}", tnode
+                            "multi-node: refresh failed repeatedly, removing node despite peer reference_count {tnode}"
                         );
                         remove_list.push(tnode);
                     }
@@ -586,19 +586,16 @@ impl Cluster {
 
     fn remove_nodes_and_aliases(&self, mut nodes_to_remove: Vec<Arc<Node>>) {
         for node in &nodes_to_remove {
-            debug!("Removing alias for node {}", node);
+            debug!("Removing alias for node {node}");
             for alias in node.aliases() {
                 self.remove_alias(&alias);
-            }    
+            }
         }
         self.remove_nodes(&nodes_to_remove);
-        
+
         for node in &mut nodes_to_remove {
-            debug!("Attempt to close node {}", node);
-            if let Some(node) = Arc::get_mut(node) {
-                debug!("Closing node {}", node);
-                node.close();
-            }
+            debug!("Closing node {node}");
+            node.close();
         }
     }
 

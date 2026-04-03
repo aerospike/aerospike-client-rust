@@ -61,8 +61,9 @@ pub struct Node {
 
 impl Drop for Node {
     fn drop(&mut self) {
-        debug!("Node closed {}", self);
+        debug!("Node closed {self}");
         self.close();
+        self.connection_pool.close();
     }
 }
 
@@ -286,17 +287,25 @@ impl Node {
 
     // Get a connection to the node from the connection pool
     pub async fn get_connection(&self, hint: u8) -> Result<PooledConnection> {
-        if let Ok(conn) = self.connection_pool.get(hint) {
-            return Ok(conn);
-        }
+        if self.is_active() {
+            if let Ok(conn) = self.connection_pool.get(hint) {
+                return Ok(conn);
+            }
 
-        self.connection_pool.make_conn(0).await
+            self.connection_pool.make_conn(0).await
+        } else {
+            Err(Error::InvalidNode(format!(
+                "Cannot get a connection for node. The node `{self}` is inactive"
+            )))
+        }
     }
 
     // Put a connection to the node back in the connection pool
     pub fn put_connection(&self, mut pconn: PooledConnection) {
-        if let Some(conn) = pconn.conn.take() {
-            pconn.queue.put_back(conn);
+        if self.is_active() {
+            if let Some(conn) = pconn.conn.take() {
+                pconn.queue.put_back(conn);
+            }
         }
     }
 
@@ -337,9 +346,8 @@ impl Node {
     }
 
     // Set the node inactive and close all connections in the pool
-    pub fn close(&mut self) {
+    pub fn close(&self) {
         self.inactivate();
-        self.connection_pool.close();
     }
 
     // Send info commands to this node
@@ -391,18 +399,24 @@ impl Node {
     /// Fills the connection pool to the minimum required
     /// by the [`ClientPolicy.min_conns_per_node`]
     pub(crate) async fn fill_min_conns(&self) -> Result<usize> {
-        let mut count = 0;
+        if self.is_active() {
+            let mut count = 0;
 
-        let client_policy = self.client_policy();
-        if client_policy.min_conns_per_node > 0 {
-            let to_fill = client_policy.min_conns_per_node - self.connection_pool.num_conns();
-            for _ in 0..to_fill {
-                self.connection_pool.make_conn(count).await?;
-                count += 1;
+            let client_policy = self.client_policy();
+            if client_policy.min_conns_per_node > 0 {
+                let to_fill = client_policy.min_conns_per_node - self.connection_pool.num_conns();
+                for _ in 0..to_fill {
+                    self.connection_pool.make_conn(count).await?;
+                    count += 1;
+                }
             }
-        }
 
-        Ok(count)
+            Ok(count)
+        } else {
+            Err(Error::InvalidNode(format!(
+                "Cannot fill the connection pool to 'policy.min_conns_per_node'. The node `{self}` is inactive"
+            )))
+        }
     }
 }
 
