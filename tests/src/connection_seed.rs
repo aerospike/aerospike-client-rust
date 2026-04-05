@@ -67,7 +67,7 @@ use crate::common;
 ///     STOP_CMD="docker kill aerolab-mydc_3" \
 ///     START_CMD="docker start aerolab-mydc_3" \
 ///     RESTART_ASD_CMD="docker exec aerolab-mydc_3 /usr/bin/asd --config-file /etc/aerospike/aerospike.conf" \
-///     cargo test --features rt-tokio -- test_seed_connection_and_partition_map_staleness --nocapture
+///     cargo test --features rt-tokio -- --ignored test_seed_connection_and_partition_map_staleness --nocapture
 ///
 /// RUN (with debug logging):
 ///   RUST_LOG=debug RUN_WRITE_BUG=1 \
@@ -76,7 +76,7 @@ use crate::common;
 ///     STOP_CMD="docker kill aerolab-mydc_3" \
 ///     START_CMD="docker start aerolab-mydc_3" \
 ///     RESTART_ASD_CMD="docker exec aerolab-mydc_3 /usr/bin/asd --config-file /etc/aerospike/aerospike.conf" \
-///     cargo test --features rt-tokio -- test_seed_connection_and_partition_map_staleness --nocapture 2>&1 | tee /tmp/write_bug.log
+///     cargo test --features rt-tokio -- --ignored test_seed_connection_and_partition_map_staleness --nocapture 2>&1 | tee /tmp/write_bug.log
 #[aerospike_macro::test]
 #[ignore = "manual repro: needs aerolab cluster; run with cargo test -- --ignored and RUN_WRITE_BUG=1"]
 async fn test_seed_connection_and_partition_map_staleness() {
@@ -195,8 +195,6 @@ async fn test_seed_connection_and_partition_map_staleness() {
         get_ok, get_fail, get_elapsed
     );
 
-    let (put_ok, put_fail) = (0, 0);
-    let put_elapsed = start.elapsed().as_secs_f64();
     let start = Instant::now();
     let (put_ok, put_fail) = probe_put(&client, namespace, set_name, bin_name, num_records).await;
     let put_elapsed = start.elapsed().as_secs_f64();
@@ -276,7 +274,8 @@ async fn test_seed_connection_and_partition_map_staleness() {
 async fn probe_get(client: &Client, ns: &str, set: &str, _bin: &str, n: i64) -> (i64, i64) {
     let mut rp = ReadPolicy::default();
     rp.base_policy.total_timeout = 3000;
-    rp.base_policy.max_retries = 0;
+    println!("   rp.base_policy.max_retries={}: ", rp.base_policy.max_retries);
+    // rp.base_policy.max_retries = 0;
 
     let (mut ok, mut fail) = (0i64, 0i64);
     for i in 0..n {
@@ -297,8 +296,10 @@ async fn probe_get(client: &Client, ns: &str, set: &str, _bin: &str, n: i64) -> 
 async fn probe_put(client: &Client, ns: &str, set: &str, bin: &str, n: i64) -> (i64, i64) {
     let mut wp = WritePolicy::default();
     wp.base_policy.total_timeout = 3000;
-    wp.base_policy.max_retries = 0;
-
+    wp.base_policy.sleep_between_retries = 200;
+    wp.base_policy.max_retries = 2;
+    // wp.base_policy.max_retries = 0;
+   
     let (mut ok, mut fail) = (0i64, 0i64);
     for i in 0..n {
         let key = as_key!(ns, set, i);
@@ -325,7 +326,10 @@ fn partition_id_for_key(key: &Key) -> usize {
 async fn probe_remove(client: &Client, ns: &str, set: &str, _bin: &str, n: i64) -> (i64, i64) {
     let mut wp = WritePolicy::default();
     wp.base_policy.total_timeout = 3000;
-    wp.base_policy.max_retries = 0;
+    wp.base_policy.max_retries = 2;
+    wp.base_policy.sleep_between_retries = 200;
+
+    // wp.base_policy.max_retries = 0;
 
     let (mut ok, mut fail) = (0i64, 0i64);
     for i in 0..n {
