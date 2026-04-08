@@ -306,6 +306,10 @@ impl Node {
             if let Some(conn) = pconn.conn.take() {
                 pconn.queue.put_back(conn);
             }
+        } else {
+            // Inactive: do not return a Ready connection to the pool — `PooledConnection`'s
+            // `Drop` would otherwise `put_back` it.
+            pconn.invalidate();
         }
     }
 
@@ -438,4 +442,114 @@ impl fmt::Display for Node {
     fn fmt(&self, f: &mut fmt::Formatter) -> StdResult<(), fmt::Error> {
         format!("{}: {}", self.name, self.host).fmt(f)
     }
+}
+
+#[cfg(test)]
+mod node_tests {
+    use std::sync::Arc;
+
+    use crate::cluster::node_validator::NodeValidator;
+    use crate::errors::Error;
+    use crate::net::Host;
+    use crate::policy::ClientPolicy;
+    use crate::Version;
+
+    use super::Node;
+
+    fn test_node() -> Node {
+        let policy = ClientPolicy::default();
+        let nv = Arc::new(NodeValidator {
+            name: "test-node".to_string(),
+            aliases: vec![Host::new("127.0.0.1", 3000)],
+            services: vec![],
+            address: "127.0.0.1:3000".to_string(),
+            client_policy: policy.clone(),
+            use_new_info: true,
+            version: Version::default(),
+        });
+        Node::new(policy, nv)
+    }
+
+    /// One idle connection in the pool, using the test [`crate::net::Connection`] (no real socket).
+    async fn create_node_with_connection() -> Node {
+        let node = test_node();
+        let pconn = node
+            .connection_pool
+            .make_conn(0)
+            .await
+            .expect("make_conn uses test Connection");
+        node.put_connection(pconn);
+        assert_eq!(node.connection_pool.num_conns(), 1);
+        node
+    }
+
+    #[aerospike_macro::test]
+    async fn get_connection_returns_invalid_node_when_inactive() {
+        let node = create_node_with_connection().await;
+        let before = node.connection_pool.num_conns();
+        node.close();
+        assert!(!node.is_active());
+
+        let err = node.get_connection(0).await.unwrap_err();
+        match err {
+            Error::InvalidNode(msg) => assert!(msg.contains("inactive"), "unexpected: {}", msg),
+            other => panic!("expected InvalidNode, got {:?}", other),
+        }
+        assert_eq!(
+            node.connection_pool.num_conns(),
+            before,
+            "inactive node must not open or hand out pool connections"
+        );
+    }
+
+    #[aerospike_macro::test]
+    async fn put_connection_does_not_return_conn_to_pool_when_inactive() {
+        let node = create_node_with_connection().await;
+        let pconn = node
+            .get_connection(0)
+            .await
+            .expect("active node with one mock conn in pool");
+        assert_eq!(node.connection_pool.num_conns(), 0);
+
+        node.close();
+        assert!(!node.is_active());
+
+        node.put_connection(pconn);
+        assert_eq!(
+            node.connection_pool.num_conns(),
+            0,
+            "inactive node must not return connections to the pool"
+        );
+    }
+
+    #[aerospike_macro::test]
+    async fn node_drop_inactivates_and_closes_pool_when_last_arc_dropped() {
+        let arc = Arc::new(create_node_with_connection().await);
+        let queue_witness = {
+            let pconn = arc
+                .get_connection(0)
+                .await
+                .expect("pool should have one connection");
+            let q = pconn.queue.clone();
+            arc.put_connection(pconn);
+            q
+        };
+        let weak = Arc::downgrade(&arc);
+        assert_eq!(Arc::strong_count(&arc), 1);
+
+        assert!(arc.is_active());
+        assert_eq!(arc.connection_pool.num_conns(), 1);
+
+        drop(arc);
+        assert!(
+            weak.upgrade().is_none(),
+            "expected Node to be dropped after the last Arc was released"
+        );
+        assert_eq!(
+            queue_witness.num_conns(),
+            0,
+            "Node::drop should clear pooled connections"
+        );
+    }
+
 }

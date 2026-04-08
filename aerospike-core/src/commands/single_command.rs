@@ -104,13 +104,14 @@ impl<'a> SingleCommand<'a> {
 
         // set timeout outside the loop
         let deadline = policy.deadline();
+        let effective_attempt = policy.max_retries() + 1;
 
         // Execute command until successful, timed out or maximum iterations have been reached.
         loop {
             iterations += 1;
 
             // check for max retries
-            if policy.max_retries() > 0 && iterations > policy.max_retries() {
+            if iterations > effective_attempt {
                 // first attempt isn't a retry
                 return Err(Error::Timeout(format!("Timeout after {iterations} tries")));
             }
