@@ -84,8 +84,11 @@ impl WritePolicy {
 
 impl Default for WritePolicy {
     fn default() -> Self {
-        let mut base_policy = BasePolicy::default();
-        base_policy.max_retries = 0;
+        let base_policy = BasePolicy {
+            max_retries: 0,
+            ..BasePolicy::default()
+        };
+
         WritePolicy {
             base_policy,
             record_exists_action: RecordExistsAction::Update,
@@ -105,7 +108,6 @@ impl PolicyLike for WritePolicy {
         &self.base_policy
     }
 }
-
 
 #[cfg(test)]
 mod tests {

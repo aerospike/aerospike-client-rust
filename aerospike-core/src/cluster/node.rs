@@ -287,17 +287,17 @@ impl Node {
 
     // Get a connection to the node from the connection pool
     pub async fn get_connection(&self, hint: u8) -> Result<PooledConnection> {
-        if self.is_active() {
-            if let Ok(conn) = self.connection_pool.get(hint) {
-                return Ok(conn);
-            }
-
-            self.connection_pool.make_conn(0).await
-        } else {
-            Err(Error::InvalidNode(format!(
+        if !self.is_active() {
+            return Err(Error::InvalidNode(format!(
                 "Cannot get a connection for node. The node `{self}` is inactive"
-            )))
+            )));
         }
+
+        if let Ok(conn) = self.connection_pool.get(hint) {
+            return Ok(conn);
+        }
+
+        self.connection_pool.make_conn(0).await
     }
 
     // Put a connection to the node back in the connection pool
@@ -551,5 +551,4 @@ mod node_tests {
             "Node::drop should clear pooled connections"
         );
     }
-
 }
