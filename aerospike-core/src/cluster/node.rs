@@ -166,6 +166,7 @@ impl Node {
             .map_err(|e| e.chain_error("Failed to update rebalance generation"))?;
         self.reset_failures();
         let _ = self.fill_min_conns().await;
+        debug!("Update partition map for node {:?} {:?}", self.name(), self.host());
         Ok(friends)
     }
 

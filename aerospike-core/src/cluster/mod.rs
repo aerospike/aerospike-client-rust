@@ -224,6 +224,7 @@ impl Cluster {
     }
 
     async fn tend(&self) -> Result<()> {
+        debug!("Tend started: ");
         let mut nodes = self.nodes();
 
         // All node additions/deletions are performed in tend thread.
@@ -296,7 +297,7 @@ impl Cluster {
             .collect();
 
         debug!("Nodes {aliases:?}");
-
+        debug!("Tend ended: ");
         Ok(())
     }
 
