@@ -1,0 +1,70 @@
+# CLIENT-4405 reproduction: Rust client stale partition map on bridge network
+#
+# Usage:
+#   cd tools/docker-bridge-test
+#
+#   docker compose up --build
+#   # View results:
+#   docker compose logs rust-test
+#
+#   # Cleanup:
+#   docker compose down -v
+
+services:
+  as-bridge-1:
+    build:
+      context: .
+      dockerfile: Dockerfile.aerospike
+    container_name: as-bridge-1
+    networks:
+      - as-bridge-net
+
+  as-bridge-2:
+    build:
+      context: .
+      dockerfile: Dockerfile.aerospike
+    container_name: as-bridge-2
+    networks:
+      - as-bridge-net
+
+  as-bridge-3:
+    build:
+      context: .
+      dockerfile: Dockerfile.aerospike
+    container_name: as-bridge-3
+    networks:
+      - as-bridge-net
+
+  as-bridge-4:
+    build:
+      context: .
+      dockerfile: Dockerfile.aerospike
+    container_name: as-bridge-4
+    networks:
+      - as-bridge-net
+
+  rust-test:
+    container_name: rust-bridge-test
+    build:
+      context: ../..
+      dockerfile: tools/docker-bridge-test/Dockerfile.rust-test
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      - RUST_LOG=debug
+      - RUN_BRIDGE_REPLACEMENT=1
+      - AEROSPIKE_HOSTS=as-bridge-1:3000
+      - AEROSPIKE_NAMESPACE=test
+      - AS_CONTAINER_PREFIX=as-bridge-
+      - AS_NODE_COUNT=4
+    networks:
+      - as-bridge-net
+    depends_on:
+      - as-bridge-1
+      - as-bridge-2
+      - as-bridge-3
+      - as-bridge-4
+
+networks:
+  as-bridge-net:
+    driver: bridge

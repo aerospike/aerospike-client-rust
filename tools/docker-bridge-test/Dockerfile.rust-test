@@ -1,0 +1,21 @@
+FROM rust:1.87-bookworm
+
+RUN apt-get update && \
+    apt-get install -y docker.io && \
+    rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+COPY . .
+COPY tools/docker-bridge-test/run-test.sh ./run-test.sh
+
+RUN cargo build --test lib --no-default-features --features async,serialization,rt-tokio 2>&1 | tail -5
+
+ENV RUST_LOG=debug
+ENV RUN_BRIDGE_REPLACEMENT=1
+ENV AEROSPIKE_HOSTS=as-bridge-1:3000
+ENV AEROSPIKE_NAMESPACE=test
+ENV AS_CONTAINER_PREFIX=as-bridge-
+ENV AS_NODE_COUNT=4
+
+CMD ["/bin/bash", "./run-test.sh"]

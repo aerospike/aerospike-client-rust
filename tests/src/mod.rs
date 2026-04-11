@@ -41,6 +41,7 @@ mod connection_seed;
 mod task;
 mod truncate;
 mod udf;
+mod dt_bridge_replacement_loop;
 
 pub(crate) async fn count_results(rs: Arc<Recordset>) -> usize {
     let mut count = 0;

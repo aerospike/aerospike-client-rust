@@ -1,0 +1,3 @@
+FROM aerospike/aerospike-server:8.0.0.4
+RUN rm -f /etc/aerospike/aerospike.template.conf
+COPY aerospike.conf /etc/aerospike/aerospike.conf
