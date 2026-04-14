@@ -88,6 +88,9 @@ pub trait Policy {
     /// How replicas should be consulted in read operations to provide the desired consistency
     /// guarantee.
     fn consistency_level(&self) -> &ConsistencyLevel;
+
+    /// Whether to use zlib compression on command buffers.
+    fn use_compression(&self) -> bool;
 }
 
 /// Policy-like object that encapsulates a base policy instance.
@@ -102,6 +105,10 @@ where
 {
     fn consistency_level(&self) -> &ConsistencyLevel {
         self.base().consistency_level()
+    }
+
+    fn use_compression(&self) -> bool {
+        self.base().use_compression()
     }
 
     fn deadline(&self) -> Option<Instant> {
@@ -232,6 +239,17 @@ pub struct BasePolicy {
     /// Default: 500
     pub sleep_between_retries: u32,
 
+    /// Use zlib compression on command buffers sent to the server and responses received
+    /// from the server when the buffer size is greater than 128 bytes.
+    ///
+    /// This option will increase cpu and memory usage (for extra compressed buffers), but
+    /// decrease the size of data sent over the network.
+    ///
+    /// Valid for Aerospike Server Enterprise Edition only.
+    ///
+    /// Default: false
+    pub use_compression: bool,
+
     /// Optional expression filter applied to each record **after** the server performs the
     /// primary operation (index lookup, scan, read, write, etc.). If the expression evaluates
     /// to `false` for a record, that record is excluded from the results (or the write is
@@ -304,5 +322,9 @@ impl Policy for BasePolicy {
 
     fn consistency_level(&self) -> &ConsistencyLevel {
         &self.consistency_level
+    }
+
+    fn use_compression(&self) -> bool {
+        self.use_compression
     }
 }

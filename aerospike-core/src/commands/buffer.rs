@@ -12,9 +12,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use std::io::Write;
 use std::str;
 
 use byteorder::{ByteOrder, LittleEndian, NetworkEndian};
+use flate2::write::ZlibEncoder;
+use flate2::Compression;
 
 use crate::batch::BatchOperation;
 use crate::commands::field_type::FieldType;
@@ -47,6 +50,9 @@ pub const INFO1_NOBINDATA: u8 = 1 << 5;
 
 // Involve all replicas in read operation.
 const INFO1_CONSISTENCY_ALL: u8 = 1 << 6;
+
+// Tell server to compress its response.
+pub const INFO1_COMPRESS_RESPONSE: u8 = 1 << 7;
 
 // Create or update record
 pub const INFO2_WRITE: u8 = 1;
@@ -104,6 +110,10 @@ pub const MSG_REMAINING_HEADER_SIZE: u8 = 22;
 const DIGEST_SIZE: u8 = 20;
 const CL_MSG_VERSION: u8 = 2;
 const AS_MSG_TYPE: u8 = 3;
+pub const AS_MSG_TYPE_COMPRESSED: u8 = 4;
+
+/// Minimum message size to trigger compression.
+pub const COMPRESS_THRESHOLD: usize = 128;
 
 // MAX_BUFFER_SIZE protects against allocating massive memory blocks
 // for buffers. Tweak this number if you are returning a lot of
@@ -118,6 +128,11 @@ pub struct Buffer {
     pub data_offset: usize,
     // pub estimated_data_offset: usize,
     pub reclaim_threshold: usize,
+    /// When compression is enabled, all command data is written starting at this
+    /// offset (16), reserving space for the compressed proto header (8 bytes) and
+    /// uncompressed size (8 bytes). This mirrors the Go client's pre-padding
+    /// approach, allowing `compress()` to work in-place without copying.
+    compress_offset: usize,
 }
 
 impl Buffer {
@@ -127,11 +142,19 @@ impl Buffer {
             data_offset: 0,
             // estimated_data_offset: 0,
             reclaim_threshold,
+            compress_offset: 0,
         }
     }
 
+    /// Enable or disable compression pre-padding. Must be called before `begin()`.
+    /// When enabled, reserves 16 bytes at the start of the buffer for the
+    /// compressed message header.
+    pub(crate) const fn set_compress(&mut self, enabled: bool) {
+        self.compress_offset = if enabled { 16 } else { 0 };
+    }
+
     const fn begin(&mut self) {
-        self.data_offset = MSG_TOTAL_HEADER_SIZE as usize;
+        self.data_offset = self.compress_offset + MSG_TOTAL_HEADER_SIZE as usize;
     }
 
     pub(crate) fn size_buffer(&mut self) -> Result<()> {
@@ -164,20 +187,103 @@ impl Buffer {
     }
 
     pub(crate) fn end(&mut self) {
-        let size = ((self.data_offset - 8) as i64)
+        let proto_offset = self.compress_offset;
+        let size = ((self.data_offset - proto_offset - 8) as i64)
             | (i64::from(CL_MSG_VERSION) << 56)
             | (i64::from(AS_MSG_TYPE) << 48);
 
-        // assert!(
-        // self.data_offset == self.estimated_data_offset,
-        //     "estimated command size was not correct: est {} != {} actual",
-        // self.estimated_data_offset,
-        //     self.data_offset
-        // );
-
-        // reset data offset
-        self.reset_offset();
+        // Write proto header at the start of the command data (after any compression pad).
+        self.data_offset = proto_offset;
         self.write_u64(size as u64);
+    }
+
+    /// Compress the command buffer in-place using zlib, matching the Go client's approach.
+    ///
+    /// Because `begin()` wrote command data starting at `compress_offset` (16),
+    /// the first 16 bytes of `data_buffer` are already reserved for the compressed
+    /// header. We split the buffer at the command-data boundary and compress from
+    /// one region into the other, avoiding any copy or separate allocation.
+    ///
+    /// Buffer layout (when compress_offset == 16):
+    ///   `[0 ..16]`                 → space for compressed proto header + uncompressed size
+    ///   `[16 .. data_offset]`      → uncompressed command data (source)
+    ///
+    /// After compression:
+    ///   `[0 .. 8]`                 → compressed proto header
+    ///   `[8 .. 16]`               → original uncompressed size
+    ///   `[16 .. 16+compressed]`   → compressed data
+    pub(crate) fn compress(&mut self) -> Result<()> {
+        let cmd_start = self.compress_offset;
+        // After end() is called, data_offset no longer reflects the command length.
+        // Use the buffer length instead.
+        let cmd_end = self.data_buffer.len();
+        let uncompressed_size = cmd_end - cmd_start;
+
+        if uncompressed_size <= COMPRESS_THRESHOLD {
+            // Below threshold: shift data to position 0 and skip compression.
+            if cmd_start > 0 {
+                self.data_buffer.copy_within(cmd_start..cmd_end, 0);
+                self.data_offset = uncompressed_size;
+                self.data_buffer.truncate(self.data_offset);
+            }
+            return Ok(());
+        }
+
+        // Extend the buffer so there's room for the compressed output after the
+        // source data. zlib worst-case expansion is ~0.1% + 13 bytes.
+        let extra = uncompressed_size / 100 + 64;
+        let output_start = cmd_end; // right after the source data
+        let output_len = uncompressed_size + extra;
+        self.data_buffer.resize(output_start + output_len, 0);
+
+        // Split into non-overlapping source and output regions.
+        let compressed_size;
+        {
+            let (src_region, output_region) = self.data_buffer.split_at_mut(output_start);
+            let src = &src_region[cmd_start..cmd_end]; // the uncompressed command data
+
+            let cursor = std::io::Cursor::new(&mut output_region[..output_len]);
+            let mut encoder = ZlibEncoder::new(cursor, Compression::default());
+
+            // Write in 64KB chunks to work around zlib issues (matching Go client behavior).
+            let mut pos = 0;
+            const STEP: usize = 64 * 1024;
+            while pos + STEP < uncompressed_size {
+                encoder
+                    .write_all(&src[pos..pos + STEP])
+                    .map_err(|e| Error::ClientError(format!("Compression error: {e}")))?;
+                pos += STEP;
+            }
+            if pos < uncompressed_size {
+                encoder
+                    .write_all(&src[pos..uncompressed_size])
+                    .map_err(|e| Error::ClientError(format!("Compression error: {e}")))?;
+            }
+
+            let cursor = encoder
+                .finish()
+                .map_err(|e| Error::ClientError(format!("Compression error: {e}")))?;
+            compressed_size = cursor.position() as usize;
+        }
+
+        // Copy compressed data from the tail into the pre-reserved space at [16..].
+        self.data_buffer
+            .copy_within(output_start..output_start + compressed_size, 16);
+
+        // Write compressed proto header at [0..8].
+        let proto = ((compressed_size + 8) as u64)
+            | (u64::from(CL_MSG_VERSION) << 56)
+            | (u64::from(AS_MSG_TYPE_COMPRESSED) << 48);
+        NetworkEndian::write_u64(&mut self.data_buffer[0..8], proto);
+
+        // Write original uncompressed size at [8..16].
+        NetworkEndian::write_u64(&mut self.data_buffer[8..16], uncompressed_size as u64);
+
+        // Truncate to actual compressed message size.
+        self.data_offset = 16 + compressed_size;
+        self.data_buffer.truncate(self.data_offset);
+
+        Ok(())
     }
 
     // Writes the command for write operations
@@ -631,7 +737,8 @@ impl Buffer {
             prev = Some(batch_op);
         }
 
-        let field_size = self.data_offset - MSG_TOTAL_HEADER_SIZE as usize - 4;
+        let field_size =
+            self.data_offset - self.compress_offset - MSG_TOTAL_HEADER_SIZE as usize - 4;
         NetworkEndian::write_u32(
             &mut self.data_buffer[field_size_offset..field_size_offset + 4],
             field_size as u32,
@@ -1552,28 +1659,33 @@ impl Buffer {
         operation_count: u16,
     ) {
         let mut read_attr = read_attr;
+        let b = self.compress_offset;
 
         if policy.consistency_level == ConsistencyLevel::ConsistencyAll {
             read_attr |= INFO1_CONSISTENCY_ALL;
         }
 
-        // Write all header data except total size which must be written last.
-        self.data_buffer[8] = MSG_REMAINING_HEADER_SIZE; // Message header length.
-        self.data_buffer[9] = read_attr;
-        self.data_buffer[10] = write_attr;
-
-        for i in 11..26 {
-            self.data_buffer[i] = 0;
+        if policy.use_compression {
+            read_attr |= INFO1_COMPRESS_RESPONSE;
         }
 
-        self.data_offset = 18;
+        // Write all header data except total size which must be written last.
+        self.data_buffer[b + 8] = MSG_REMAINING_HEADER_SIZE; // Message header length.
+        self.data_buffer[b + 9] = read_attr;
+        self.data_buffer[b + 10] = write_attr;
+
+        for i in 11..26 {
+            self.data_buffer[b + i] = 0;
+        }
+
+        self.data_offset = b + 18;
         self.write_u32(policy.read_touch_ttl.into());
 
-        self.data_offset = 26;
+        self.data_offset = b + 26;
         self.write_u16(field_count);
         self.write_u16(operation_count);
 
-        self.data_offset = MSG_TOTAL_HEADER_SIZE as usize;
+        self.data_offset = b + MSG_TOTAL_HEADER_SIZE as usize;
     }
 
     fn write_header_read(
@@ -1586,29 +1698,34 @@ impl Buffer {
         operation_count: u16,
     ) {
         let mut read_attr = read_attr;
+        let b = self.compress_offset;
 
         if policy.consistency_level == ConsistencyLevel::ConsistencyAll {
             read_attr |= INFO1_CONSISTENCY_ALL;
         }
 
-        // Write all header data except total size which must be written last.
-        self.data_buffer[8] = MSG_REMAINING_HEADER_SIZE; // Message header length.
-        self.data_buffer[9] = read_attr;
-        self.data_buffer[10] = write_attr;
-        self.data_buffer[11] = info_attr;
-
-        for i in 12..26 {
-            self.data_buffer[i] = 0;
+        if policy.use_compression {
+            read_attr |= INFO1_COMPRESS_RESPONSE;
         }
 
-        self.data_offset = 18;
+        // Write all header data except total size which must be written last.
+        self.data_buffer[b + 8] = MSG_REMAINING_HEADER_SIZE; // Message header length.
+        self.data_buffer[b + 9] = read_attr;
+        self.data_buffer[b + 10] = write_attr;
+        self.data_buffer[b + 11] = info_attr;
+
+        for i in 12..26 {
+            self.data_buffer[b + i] = 0;
+        }
+
+        self.data_offset = b + 18;
         self.write_u32(policy.read_touch_ttl.into());
 
-        self.data_offset = 26;
+        self.data_offset = b + 26;
         self.write_u16(field_count);
         self.write_u16(operation_count);
 
-        self.data_offset = MSG_TOTAL_HEADER_SIZE as usize;
+        self.data_offset = b + MSG_TOTAL_HEADER_SIZE as usize;
     }
 
     // Header write for write operations.
@@ -1658,8 +1775,13 @@ impl Buffer {
             write_attr |= INFO2_DURABLE_DELETE;
         }
 
+        if policy.base_policy.use_compression {
+            read_attr |= INFO1_COMPRESS_RESPONSE;
+        }
+
         // Write all header data except total size which must be written last.
-        self.data_offset = 8;
+        let b = self.compress_offset;
+        self.data_offset = b + 8;
         self.write_u8(MSG_REMAINING_HEADER_SIZE); // Message header length.
         self.write_u8(read_attr);
         self.write_u8(write_attr);
@@ -1678,7 +1800,7 @@ impl Buffer {
 
         self.write_u16(field_count);
         self.write_u16(operation_count);
-        self.data_offset = MSG_TOTAL_HEADER_SIZE as usize;
+        self.data_offset = b + MSG_TOTAL_HEADER_SIZE as usize;
     }
 
     fn write_key(&mut self, key: &Key, send_key: bool) -> Result<()> {
@@ -1915,12 +2037,6 @@ impl Buffer {
         val as i64
     }
 
-    pub(crate) fn read_msg_size(&mut self, pos: Option<usize>) -> usize {
-        let size = self.read_i64(pos);
-        let size = size & 0xFFFF_FFFF_FFFF;
-        size as usize
-    }
-
     #[allow(clippy::option_if_let_else)]
     pub(crate) fn read_f32(&mut self, pos: Option<usize>) -> f32 {
         let len = 4;
@@ -2110,12 +2226,230 @@ impl Buffer {
     }
 
     pub(crate) fn write_timeout(&mut self, millis: u32) {
-        NetworkEndian::write_u32(&mut self.data_buffer[22..22 + 4], millis);
+        let b = self.compress_offset;
+        NetworkEndian::write_u32(&mut self.data_buffer[b + 22..b + 22 + 4], millis);
     }
 
     #[allow(dead_code)]
     pub(crate) fn dump_buffer(&self) {
         rhexdump!(&self.data_buffer);
         println!();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use flate2::read::ZlibDecoder;
+    use std::io::Read;
+
+    /// Helper: build a Buffer that looks like a real command was written.
+    /// Returns (buffer, uncompressed_payload) where uncompressed_payload is
+    /// the command bytes at [compress_offset .. data_offset] before end() is called.
+    fn make_command_buffer(payload_size: usize, use_compress: bool) -> Buffer {
+        let mut buf = Buffer::new(0);
+        buf.set_compress(use_compress);
+        buf.begin();
+
+        // Simulate writing a header via write_header (read-only command)
+        let b = buf.compress_offset;
+        buf.size_buffer().unwrap();
+        // Manually fill the header area
+        buf.data_buffer[b + 8] = MSG_REMAINING_HEADER_SIZE;
+        buf.data_buffer[b + 9] = INFO1_READ;
+        for i in 10..26 {
+            buf.data_buffer[b + i] = 0;
+        }
+        buf.data_offset = b + MSG_TOTAL_HEADER_SIZE as usize;
+
+        // Append payload bytes to reach the desired size
+        let total = b + MSG_TOTAL_HEADER_SIZE as usize + payload_size;
+        buf.data_buffer.resize(total, 0);
+        for i in (b + MSG_TOTAL_HEADER_SIZE as usize)..total {
+            buf.data_buffer[i] = (i % 251) as u8; // deterministic pattern
+        }
+        buf.data_offset = total;
+
+        buf.end();
+        buf
+    }
+
+    #[test]
+    fn set_compress_sets_offset() {
+        let mut buf = Buffer::new(0);
+        assert_eq!(buf.compress_offset, 0);
+
+        buf.set_compress(true);
+        assert_eq!(buf.compress_offset, 16);
+
+        buf.set_compress(false);
+        assert_eq!(buf.compress_offset, 0);
+    }
+
+    #[test]
+    fn begin_accounts_for_compress_offset() {
+        let mut buf = Buffer::new(0);
+
+        buf.set_compress(false);
+        buf.begin();
+        assert_eq!(buf.data_offset, MSG_TOTAL_HEADER_SIZE as usize);
+
+        buf.set_compress(true);
+        buf.begin();
+        assert_eq!(buf.data_offset, 16 + MSG_TOTAL_HEADER_SIZE as usize);
+    }
+
+    #[test]
+    fn end_writes_proto_at_compress_offset() {
+        // Without compression: proto at [0..8]
+        let buf_no = make_command_buffer(100, false);
+        let proto_no = NetworkEndian::read_u64(&buf_no.data_buffer[0..8]);
+        let msg_type_no = ((proto_no >> 48) & 0xFF) as u8;
+        assert_eq!(msg_type_no, AS_MSG_TYPE);
+
+        // With compression: proto at [16..24]
+        let buf_yes = make_command_buffer(100, true);
+        let proto_yes = NetworkEndian::read_u64(&buf_yes.data_buffer[16..24]);
+        let msg_type_yes = ((proto_yes >> 48) & 0xFF) as u8;
+        assert_eq!(msg_type_yes, AS_MSG_TYPE);
+
+        // The first 16 bytes should be zeroed (reserved for compress header)
+        assert!(buf_yes.data_buffer[0..16].iter().all(|&b| b == 0));
+    }
+
+    #[test]
+    fn compress_below_threshold_returns_uncompressed() {
+        // A small command (header + 10 bytes payload = 40 bytes total, well below 128)
+        let mut buf = make_command_buffer(10, true);
+        let original_buf_len = buf.data_buffer.len();
+
+        buf.compress().unwrap();
+
+        // Should have shifted data to position 0 (removed the 16-byte pad)
+        assert_eq!(buf.data_buffer.len(), original_buf_len - 16);
+        assert_eq!(buf.data_offset, buf.data_buffer.len());
+
+        // Proto header should be at [0..8] with type AS_MSG_TYPE (3), not compressed
+        let proto = NetworkEndian::read_u64(&buf.data_buffer[0..8]);
+        let msg_type = ((proto >> 48) & 0xFF) as u8;
+        assert_eq!(msg_type, AS_MSG_TYPE);
+    }
+
+    #[test]
+    fn compress_round_trip() {
+        // Build a command large enough to trigger compression (> 128 bytes payload)
+        let payload_size = 500;
+        let mut buf = make_command_buffer(payload_size, true);
+
+        // Save the uncompressed command bytes (at [16..buf_len])
+        let uncompressed = buf.data_buffer[16..].to_vec();
+
+        buf.compress().unwrap();
+
+        // Verify compressed message structure
+        let proto = NetworkEndian::read_u64(&buf.data_buffer[0..8]);
+        let msg_type = ((proto >> 48) & 0xFF) as u8;
+        let compressed_payload_size = (proto & 0x0000_FFFF_FFFF_FFFF) as usize;
+        assert_eq!(msg_type, AS_MSG_TYPE_COMPRESSED);
+
+        // compressed_payload_size includes the 8-byte uncompressed size field
+        assert!(compressed_payload_size >= 8);
+
+        let stored_uncompressed_size = NetworkEndian::read_u64(&buf.data_buffer[8..16]) as usize;
+        assert_eq!(stored_uncompressed_size, uncompressed.len());
+
+        // Decompress and verify round-trip
+        let compressed_data = &buf.data_buffer[16..16 + compressed_payload_size - 8];
+        let mut decoder = ZlibDecoder::new(compressed_data);
+        let mut decompressed = vec![0u8; stored_uncompressed_size];
+        decoder.read_exact(&mut decompressed).unwrap();
+
+        assert_eq!(decompressed, uncompressed);
+    }
+
+    #[test]
+    fn compress_without_pad_is_noop() {
+        // compress_offset == 0: compress() should detect nothing above threshold
+        // since the command itself is only 30 + 10 = 40 bytes.
+        let mut buf = make_command_buffer(10, false);
+        let before = buf.data_buffer.clone();
+
+        buf.compress().unwrap();
+
+        assert_eq!(buf.data_buffer, before);
+    }
+
+    #[test]
+    fn compress_large_payload_round_trip() {
+        // Test with a payload larger than the 64KB chunk step
+        let payload_size = 128 * 1024;
+        let mut buf = make_command_buffer(payload_size, true);
+
+        let uncompressed = buf.data_buffer[16..].to_vec();
+        buf.compress().unwrap();
+
+        // Verify message type
+        let proto = NetworkEndian::read_u64(&buf.data_buffer[0..8]);
+        let msg_type = ((proto >> 48) & 0xFF) as u8;
+        assert_eq!(msg_type, AS_MSG_TYPE_COMPRESSED);
+
+        // Compressed should be smaller than uncompressed for patterned data
+        assert!(buf.data_buffer.len() < 16 + uncompressed.len());
+
+        // Round-trip
+        let compressed_payload_size = (proto & 0x0000_FFFF_FFFF_FFFF) as usize;
+        let stored_uncompressed_size = NetworkEndian::read_u64(&buf.data_buffer[8..16]) as usize;
+        let compressed_data = &buf.data_buffer[16..16 + compressed_payload_size - 8];
+
+        let mut decoder = ZlibDecoder::new(compressed_data);
+        let mut decompressed = vec![0u8; stored_uncompressed_size];
+        decoder.read_exact(&mut decompressed).unwrap();
+
+        assert_eq!(decompressed, uncompressed);
+    }
+
+    #[test]
+    fn write_timeout_respects_compress_offset() {
+        let mut buf = make_command_buffer(100, false);
+        buf.write_timeout(42_000);
+        let val_no_pad = NetworkEndian::read_u32(&buf.data_buffer[22..26]);
+        assert_eq!(val_no_pad, 42_000);
+
+        let mut buf = make_command_buffer(100, true);
+        buf.write_timeout(42_000);
+        let val_with_pad = NetworkEndian::read_u32(&buf.data_buffer[16 + 22..16 + 26]);
+        assert_eq!(val_with_pad, 42_000);
+    }
+
+    #[test]
+    fn connection_inflate_round_trip() {
+        // Simulate what Connection::inflate does: given compressed data and
+        // uncompressed size, decompress and verify the inner proto header.
+        let payload_size = 300;
+        let mut buf = make_command_buffer(payload_size, true);
+        let uncompressed = buf.data_buffer[16..].to_vec();
+
+        buf.compress().unwrap();
+
+        // Extract compressed data (what the server would send)
+        let proto = NetworkEndian::read_u64(&buf.data_buffer[0..8]);
+        let compressed_payload_size = (proto & 0x0000_FFFF_FFFF_FFFF) as usize;
+        let stored_uncompressed_size = NetworkEndian::read_u64(&buf.data_buffer[8..16]) as usize;
+        let compressed_data = &buf.data_buffer[16..16 + compressed_payload_size - 8];
+
+        // Decompress like Connection::inflate would
+        let mut decoder = ZlibDecoder::new(compressed_data);
+        let mut decompressed = vec![0u8; stored_uncompressed_size];
+        decoder.read_exact(&mut decompressed).unwrap();
+
+        // The decompressed data should start with a valid proto header
+        let inner_proto = NetworkEndian::read_u64(&decompressed[0..8]);
+        let inner_msg_type = ((inner_proto >> 48) & 0xFF) as u8;
+        let inner_version = ((inner_proto >> 56) & 0xFF) as u8;
+        assert_eq!(inner_version, CL_MSG_VERSION);
+        assert_eq!(inner_msg_type, AS_MSG_TYPE);
+
+        // And the body should match
+        assert_eq!(decompressed, uncompressed);
     }
 }

@@ -15,14 +15,17 @@
 use aerospike_rt::time::Instant;
 use std::collections::hash_map::Entry::{Occupied, Vacant};
 use std::collections::HashMap;
+use std::io::Read;
 use std::sync::Arc;
+
+use flate2::read::ZlibDecoder;
 
 use crate::batch::BatchOperation;
 use crate::batch::BatchRecordIndex;
 use crate::cluster::partition::Partition;
 use crate::cluster::{Cluster, Node};
 use crate::commands::StreamCommand;
-use crate::commands::{self};
+use crate::commands::{self, buffer};
 use crate::errors::{Error, Result};
 use crate::net::{BufferedConn, Connection};
 use crate::policy::{BatchPolicy, Policy, Replica};
@@ -147,11 +150,18 @@ impl BatchOperateCommand {
             }
         };
 
+        conn.buffer.set_compress(policy.use_compression());
         conn.buffer
             .set_batch_operate(policy, batch_ops)
             .map_err(|_| Error::ClientError("Failed to prepare send buffer".into()))?;
 
         conn.buffer.write_timeout(policy.server_timeout());
+
+        if policy.use_compression() {
+            conn.buffer
+                .compress()
+                .map_err(|_| Error::ClientError("Failed to compress send buffer".into()))?;
+        }
 
         conn.set_socket_timeout(deadline, policy.socket_timeout());
         conn.set_timeout_delay(true, policy.timeout_delay());
@@ -325,24 +335,77 @@ impl BatchOperateCommand {
 
             conn.set_limit_header(8)?;
             conn.read_buffer(8).await?;
-            let size = conn.buffer().read_msg_size(None);
-            conn.bookmark();
 
-            status = false;
-            if size > 0 {
+            let proto = conn.buffer().read_u64(Some(0));
+            let msg_type = ((proto >> 48) & 0xFF) as u8;
+            let size = (proto & 0x0000_FFFF_FFFF_FFFF) as usize;
+
+            if msg_type == buffer::AS_MSG_TYPE_COMPRESSED {
+                // Compressed batch response
+                conn.conn.compressed_stream_body = true;
+                conn.bookmark();
                 conn.set_limit_body(size)?;
-                match Self::parse_group(batch_ops, &mut conn, size).await {
-                    Ok(stat) => status = stat,
-                    Err(e @ Error::ServerError(_, _, _)) => {
-                        conn.drain(conn.conn.deadline()).await?;
-                        return Err(e);
+
+                // Read the 8-byte uncompressed size
+                conn.read_buffer(8).await?;
+                let uncompressed_size = conn.buffer().read_u64(Some(0)) as usize;
+
+                // Read all remaining compressed data
+                let compressed_len = size - 8;
+                conn.read_buffer(compressed_len).await?;
+                let compressed_data = conn.buffer().data_buffer[..compressed_len].to_vec();
+
+                // Drain any remaining bytes from the network
+                // conn.drain(conn.conn.deadline()).await?;
+
+                // All compressed data read from network; clear the flag.
+                conn.conn.compressed_stream_body = false;
+
+                // Read only the 8-byte inner proto header to get the message size.
+                let mut decoder = ZlibDecoder::new(std::io::Cursor::new(compressed_data));
+                let mut proto_buf = [0u8; 8];
+                decoder
+                    .read_exact(&mut proto_buf)
+                    .map_err(|e| Error::ClientError(format!("Batch decompression error: {e}")))?;
+                let inner_proto = u64::from_be_bytes(proto_buf);
+                let inner_size = (inner_proto & 0x0000_FFFF_FFFF_FFFF) as usize;
+
+                status = false;
+                if inner_size > 0 {
+                    // Stream-decompress the rest on demand.
+                    let body_decompressed_size = uncompressed_size - 8;
+                    let mut inner_conn =
+                        BufferedConn::new_with_decoder(conn.conn, decoder, body_decompressed_size);
+
+                    match Self::parse_group(batch_ops, &mut inner_conn, inner_size).await {
+                        Ok(stat) => status = stat,
+                        Err(e @ Error::ServerError(_, _, _)) => {
+                            inner_conn.drain(inner_conn.conn.deadline()).await?;
+                            return Err(e);
+                        }
+                        Err(e) => return Err(e),
                     }
-                    Err(e) => {
-                        return Err(e);
+                    inner_conn.drain(inner_conn.conn.deadline()).await?;
+                }
+            } else {
+                conn.bookmark();
+
+                status = false;
+                if size > 0 {
+                    conn.set_limit_body(size)?;
+                    match Self::parse_group(batch_ops, &mut conn, size).await {
+                        Ok(stat) => status = stat,
+                        Err(e @ Error::ServerError(_, _, _)) => {
+                            conn.drain(conn.conn.deadline()).await?;
+                            return Err(e);
+                        }
+                        Err(e) => {
+                            return Err(e);
+                        }
                     }
                 }
+                conn.drain(conn.conn.deadline()).await?;
             }
-            conn.drain(conn.conn.deadline()).await?;
         }
 
         conn.reset_state();

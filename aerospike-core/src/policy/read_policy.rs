@@ -40,6 +40,7 @@ impl Default for BasePolicy {
             sleep_between_retries: 0,
             consistency_level: ConsistencyLevel::ConsistencyOne,
             read_touch_ttl: super::ReadTouchTTL::ServerDefault,
+            use_compression: false,
             filter_expression: None,
         }
     }
