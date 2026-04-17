@@ -29,9 +29,14 @@ pub mod server_command;
 pub mod single_command;
 pub mod stream_command;
 pub mod touch_command;
+pub mod txn_add_keys_command;
+pub mod txn_close_command;
+pub mod txn_mark_roll_forward_command;
+pub mod txn_roll_command;
+pub mod txn_verify_command;
 pub mod write_command;
 
-mod field_type;
+pub(crate) mod field_type;
 
 use std::sync::Arc;
 
@@ -62,11 +67,13 @@ pub trait Command {
     fn hint(&self) -> u8;
     async fn write_timeout(&mut self, conn: &mut Connection) -> Result<()>;
     async fn prepare_buffer(&mut self, conn: &mut Connection) -> Result<()>;
-    async fn get_node(&mut self) -> Result<Arc<Node>>;
+    fn get_node(&mut self) -> Result<Arc<Node>>;
     async fn parse_result(&mut self, conn: &mut Connection) -> Result<()>;
     async fn write_buffer(&mut self, conn: &mut Connection) -> Result<()>;
     fn can_retry(&mut self) -> bool;
     fn can_recover_connection(&mut self) -> bool;
+    /// Prepare the partition for a retry by advancing the sequence number.
+    fn prepare_retry(&mut self, _is_client_timeout: bool) {}
 }
 
 pub const fn keep_connection(err: &Error) -> bool {

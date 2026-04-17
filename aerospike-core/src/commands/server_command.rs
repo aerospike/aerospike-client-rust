@@ -108,7 +108,7 @@ impl Command for ServerCommand<'_> {
         }
     }
 
-    async fn get_node(&mut self) -> Result<Arc<Node>> {
+    fn get_node(&mut self) -> Result<Arc<Node>> {
         Ok(self.node.clone())
     }
 
@@ -171,11 +171,8 @@ impl Command for ServerCommand<'_> {
                     // Stream-decompress the rest on demand (body after the
                     // 8-byte proto header we already consumed).
                     let body_decompressed_size = uncompressed_size - 8;
-                    let mut inner_conn = BufferedConn::new_with_decoder(
-                        conn.conn,
-                        decoder,
-                        body_decompressed_size,
-                    );
+                    let mut inner_conn =
+                        BufferedConn::new_with_decoder(conn.conn, decoder, body_decompressed_size);
 
                     match self.parse_record_results(&mut inner_conn).await {
                         Ok(stat) => status = stat,

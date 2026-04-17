@@ -1,4 +1,4 @@
-// Copyright 2015-2018 Aerospike, Inc.
+// Copyright 2015-2024 Aerospike, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -18,31 +18,26 @@ use crate::cluster::{Cluster, Node};
 use crate::commands::{Command, SingleCommand};
 use crate::errors::{Error, Result};
 use crate::net::Connection;
-use crate::operations::OperationType;
-use crate::policy::{Policy, WritePolicy};
-use crate::{Bin, Key, ResultCode};
+use crate::policy::{BasePolicy, Policy};
+use crate::{Key, ResultCode};
 
-pub struct WriteCommand<'a> {
+pub struct TxnVerifyCommand<'a> {
     single_command: SingleCommand<'a>,
-    policy: &'a WritePolicy,
-    bins: &'a [Bin],
-    operation: OperationType,
+    policy: &'a BasePolicy,
+    version: u64,
+    /// Result code reported by the server on the last attempt. `None` until
+    /// a response is parsed.
+    pub result_code: Option<ResultCode>,
 }
 
-impl<'a> WriteCommand<'a> {
-    pub fn new(
-        policy: &'a WritePolicy,
-        cluster: Arc<Cluster>,
-        key: &'a Key,
-        bins: &'a [Bin],
-        operation: OperationType,
-    ) -> Self {
+impl<'a> TxnVerifyCommand<'a> {
+    pub fn new(policy: &'a BasePolicy, cluster: Arc<Cluster>, key: &'a Key, version: u64) -> Self {
         let partition = crate::cluster::partition::Partition::for_write(key);
-        WriteCommand {
+        TxnVerifyCommand {
             single_command: SingleCommand::new(cluster, key, partition),
-            bins,
             policy,
-            operation,
+            version,
+            result_code: None,
         }
     }
 
@@ -52,7 +47,7 @@ impl<'a> WriteCommand<'a> {
 }
 
 #[async_trait::async_trait]
-impl Command for WriteCommand<'_> {
+impl Command for TxnVerifyCommand<'_> {
     async fn write_timeout(&mut self, conn: &mut Connection) -> Result<()> {
         conn.buffer.write_timeout(self.policy.server_timeout());
         Ok(())
@@ -63,12 +58,8 @@ impl Command for WriteCommand<'_> {
     }
 
     async fn prepare_buffer(&mut self, conn: &mut Connection) -> Result<()> {
-        conn.buffer.set_write(
-            self.policy,
-            self.operation,
-            self.single_command.key,
-            self.bins,
-        )
+        conn.buffer
+            .set_txn_verify(self.policy, self.single_command.key, self.version)
     }
 
     fn get_node(&mut self) -> Result<Arc<Node>> {
@@ -92,39 +83,21 @@ impl Command for WriteCommand<'_> {
     }
 
     async fn parse_result(&mut self, conn: &mut Connection) -> Result<()> {
-        // Read header.
         if let Err(err) = conn.read_header().await {
             warn!("Parse result error: {err}");
             return Err(err);
         }
 
         conn.buffer.reset_offset();
-        let sz = conn.buffer.read_u64(Some(0));
-        let header_length = conn.buffer.read_u8(Some(8));
         let result_code = ResultCode::from(conn.buffer.read_u8(Some(13)));
-        let field_count = conn.buffer.read_u16(Some(26)) as usize;
-        let receive_size = ((sz & 0xFFFF_FFFF_FFFF) - u64::from(header_length)) as usize;
+        self.result_code = Some(result_code);
 
-        if receive_size > 0 {
-            conn.buffer.resize_buffer(receive_size)?;
-            conn.read_body(receive_size).await?;
-            conn.buffer.reset_offset();
-        }
-
-        let version = if field_count > 0 {
-            conn.buffer.parse_fields_for_version(field_count)
-        } else {
-            None
-        };
-
+        // Only Ok means the record version matched. Any other code — including
+        // KeyNotFoundError or MrtVersionMismatch — is a verify failure.
         if result_code != ResultCode::Ok {
             return Err(Error::ServerError(result_code, false, conn.addr.clone()));
         }
 
-        if let Some(txn) = &self.policy.base_policy.txn {
-            txn.on_write(self.single_command.key, version, result_code);
-        }
-
-        Ok(())
+        SingleCommand::empty_socket(conn).await
     }
 }

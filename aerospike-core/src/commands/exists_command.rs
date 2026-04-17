@@ -29,8 +29,14 @@ pub struct ExistsCommand<'a> {
 
 impl<'a> ExistsCommand<'a> {
     pub fn new(policy: &'a ReadPolicy, cluster: Arc<Cluster>, key: &'a Key) -> Self {
+        let partition = crate::cluster::partition::Partition::for_read(
+            &cluster,
+            key,
+            policy.replica,
+            policy.base_policy.read_mode_sc,
+        );
         ExistsCommand {
-            single_command: SingleCommand::new(cluster, key, crate::policy::Replica::Master),
+            single_command: SingleCommand::new(cluster, key, partition),
             policy,
             exists: false,
         }
@@ -56,7 +62,7 @@ impl Command for ExistsCommand<'_> {
         conn.buffer.set_exists(self.policy, self.single_command.key)
     }
 
-    async fn get_node(&mut self) -> Result<Arc<Node>> {
+    fn get_node(&mut self) -> Result<Arc<Node>> {
         self.single_command.get_node()
     }
 
@@ -70,6 +76,10 @@ impl Command for ExistsCommand<'_> {
 
     fn can_recover_connection(&mut self) -> bool {
         true
+    }
+
+    fn prepare_retry(&mut self, is_client_timeout: bool) {
+        self.single_command.prepare_retry(is_client_timeout);
     }
 
     async fn parse_result(&mut self, conn: &mut Connection) -> Result<()> {

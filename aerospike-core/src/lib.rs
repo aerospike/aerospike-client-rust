@@ -164,8 +164,8 @@ pub use operations::{ListOrderType, ListPolicy, ListReturnType, ListSortFlags, L
 pub use operations::{MapPolicy, MapReturnType, MapWriteFlags, MapWriteMode};
 pub use policy::{
     AdminPolicy, AuthMode, BasePolicy, BatchPolicy, ClientPolicy, CommitLevel, Concurrency,
-    ConsistencyLevel, Expiration, GenerationPolicy, Policy, QueryDuration, QueryPolicy, ReadPolicy,
-    ReadTouchTTL, RecordExistsAction, WritePolicy,
+    Expiration, GenerationPolicy, Policy, QueryDuration, QueryPolicy, ReadModeAP, ReadModeSC,
+    ReadPolicy, ReadTouchTTL, RecordExistsAction, WritePolicy,
 };
 pub use privilege::{Privilege, PrivilegeCode};
 pub use query::{
@@ -176,6 +176,7 @@ pub use record::Record;
 pub use result_code::ResultCode;
 pub use role::Role;
 pub use task::{DropIndexTask, ExecuteTask, IndexTask, RegisterTask, Task, UdfRemoveTask};
+pub use txn::{AbortStatus, CommitErrorType, CommitStatus, Txn, TxnState};
 pub use user::User;
 pub use value::{FloatValue, Value};
 
@@ -203,6 +204,9 @@ mod record;
 mod result_code;
 mod role;
 pub mod task;
+pub mod txn;
+pub(crate) mod txn_monitor;
+pub(crate) mod txn_roll;
 mod user;
 
 #[cfg(test)]

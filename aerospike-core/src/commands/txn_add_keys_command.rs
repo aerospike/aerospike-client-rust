@@ -1,4 +1,4 @@
-// Copyright 2015-2018 Aerospike, Inc.
+// Copyright 2015-2024 Aerospike, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -18,31 +18,32 @@ use crate::cluster::{Cluster, Node};
 use crate::commands::{Command, SingleCommand};
 use crate::errors::{Error, Result};
 use crate::net::Connection;
-use crate::operations::OperationType;
+use crate::operations::Operation;
 use crate::policy::{Policy, WritePolicy};
-use crate::{Bin, Key, ResultCode};
+use crate::txn::Txn;
+use crate::{Key, ResultCode};
 
-pub struct WriteCommand<'a> {
+pub struct TxnAddKeysCommand<'a> {
     single_command: SingleCommand<'a>,
     policy: &'a WritePolicy,
-    bins: &'a [Bin],
-    operation: OperationType,
+    operations: Vec<Operation>,
+    txn: Arc<Txn>,
 }
 
-impl<'a> WriteCommand<'a> {
+impl<'a> TxnAddKeysCommand<'a> {
     pub fn new(
         policy: &'a WritePolicy,
         cluster: Arc<Cluster>,
         key: &'a Key,
-        bins: &'a [Bin],
-        operation: OperationType,
+        operations: Vec<Operation>,
+        txn: Arc<Txn>,
     ) -> Self {
         let partition = crate::cluster::partition::Partition::for_write(key);
-        WriteCommand {
+        TxnAddKeysCommand {
             single_command: SingleCommand::new(cluster, key, partition),
-            bins,
             policy,
-            operation,
+            operations,
+            txn,
         }
     }
 
@@ -52,7 +53,7 @@ impl<'a> WriteCommand<'a> {
 }
 
 #[async_trait::async_trait]
-impl Command for WriteCommand<'_> {
+impl Command for TxnAddKeysCommand<'_> {
     async fn write_timeout(&mut self, conn: &mut Connection) -> Result<()> {
         conn.buffer.write_timeout(self.policy.server_timeout());
         Ok(())
@@ -63,12 +64,8 @@ impl Command for WriteCommand<'_> {
     }
 
     async fn prepare_buffer(&mut self, conn: &mut Connection) -> Result<()> {
-        conn.buffer.set_write(
-            self.policy,
-            self.operation,
-            self.single_command.key,
-            self.bins,
-        )
+        conn.buffer
+            .set_txn_add_keys(self.policy, self.single_command.key, &self.operations)
     }
 
     fn get_node(&mut self) -> Result<Arc<Node>> {
@@ -92,37 +89,46 @@ impl Command for WriteCommand<'_> {
     }
 
     async fn parse_result(&mut self, conn: &mut Connection) -> Result<()> {
-        // Read header.
         if let Err(err) = conn.read_header().await {
             warn!("Parse result error: {err}");
             return Err(err);
         }
 
         conn.buffer.reset_offset();
-        let sz = conn.buffer.read_u64(Some(0));
-        let header_length = conn.buffer.read_u8(Some(8));
         let result_code = ResultCode::from(conn.buffer.read_u8(Some(13)));
-        let field_count = conn.buffer.read_u16(Some(26)) as usize;
-        let receive_size = ((sz & 0xFFFF_FFFF_FFFF) - u64::from(header_length)) as usize;
-
-        if receive_size > 0 {
-            conn.buffer.resize_buffer(receive_size)?;
-            conn.read_body(receive_size).await?;
-            conn.buffer.reset_offset();
-        }
-
-        let version = if field_count > 0 {
-            conn.buffer.parse_fields_for_version(field_count)
-        } else {
-            None
-        };
 
         if result_code != ResultCode::Ok {
             return Err(Error::ServerError(result_code, false, conn.addr.clone()));
         }
 
-        if let Some(txn) = &self.policy.base_policy.txn {
-            txn.on_write(self.single_command.key, version, result_code);
+        // Parse the deadline from the response fields.
+        let sz = conn.buffer.read_i64(None);
+        let header_length = i64::from(conn.buffer.read_u8(None));
+        let receive_size = ((sz & 0xFFFF_FFFF_FFFF) - header_length) as usize;
+
+        conn.buffer.reset_offset();
+        let field_count = conn.buffer.read_u16(Some(26)) as usize;
+
+        if receive_size > 0 {
+            conn.buffer.resize_buffer(receive_size)?;
+            conn.read_body(receive_size).await?;
+            conn.buffer.reset_offset();
+
+            // Parse MRT_DEADLINE from fields.
+            for _ in 0..field_count {
+                let field_len = conn.buffer.read_i32(None) as usize;
+                let field_type = conn.buffer.read_u8(None);
+                let data_size = field_len - 1;
+
+                if field_type == crate::commands::field_type::FieldType::MrtDeadline as u8
+                    && data_size == 4
+                {
+                    let deadline = conn.buffer.read_u32_little_endian(None) as i32;
+                    self.txn.set_deadline(deadline);
+                } else {
+                    conn.buffer.data_offset += data_size;
+                }
+            }
         }
 
         Ok(())

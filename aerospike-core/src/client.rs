@@ -37,9 +37,13 @@ use crate::expressions::Expression;
 use crate::net::ToHosts;
 use crate::operations::cdt_context::{to_base64, CdtContext};
 use crate::operations::{Operation, OperationType};
-use crate::policy::{AdminPolicy, BatchPolicy, ClientPolicy, QueryPolicy, ReadPolicy, WritePolicy};
+use crate::policy::{
+    AdminPolicy, BasePolicy, BatchPolicy, ClientPolicy, QueryPolicy, ReadPolicy, WritePolicy,
+};
 use crate::query::{PartitionFilter, PartitionTracker};
 use crate::task::{DropIndexTask, ExecuteTask, IndexTask, RegisterTask, UdfRemoveTask};
+use crate::txn::{AbortStatus, CommitStatus, Txn, TxnState};
+use crate::txn_roll::TxnRoll;
 use crate::{
     BatchRecord, Bin, Bins, CollectionIndexType, IndexType, Key, Privilege, Record, Recordset,
     ResultCode, Role, Statement, UDFLang, User, Value,
@@ -328,14 +332,11 @@ impl Client {
     where
         T: Into<Bins> + Send + Sync + 'static,
     {
+        if let Some(txn) = &policy.base_policy.txn {
+            txn.prepare_read(&key.namespace)?;
+        }
         let bins = bins.into();
-        let mut command = ReadCommand::new(
-            &policy.base_policy,
-            self.cluster.clone(),
-            key,
-            bins,
-            policy.replica,
-        );
+        let mut command = ReadCommand::new(policy, self.cluster.clone(), key, bins);
         command.execute().await?;
         Ok(command.record.unwrap())
     }
@@ -435,6 +436,15 @@ impl Client {
         policy: &BatchPolicy,
         ops: &[BatchOperation],
     ) -> Result<Vec<BatchRecord>> {
+        if let Some(txn) = &policy.base_policy.txn {
+            crate::txn_monitor::add_keys_from_records(
+                self.cluster.clone(),
+                &policy.base_policy,
+                txn,
+                ops,
+            )
+            .await?;
+        }
         let executor = BatchExecutor::new(self.cluster.clone());
         executor.execute(policy, ops).await
     }
@@ -500,6 +510,10 @@ impl Client {
     /// # }
     /// ```
     pub async fn put(&self, policy: &WritePolicy, key: &Key, bins: &[Bin]) -> Result<()> {
+        if let Some(txn) = &policy.base_policy.txn {
+            crate::txn_monitor::add_key(self.cluster.clone(), &policy.base_policy, txn, key)
+                .await?;
+        }
         let mut command = WriteCommand::new(
             policy,
             self.cluster.clone(),
@@ -554,6 +568,10 @@ impl Client {
     /// # }
     /// ```
     pub async fn add(&self, policy: &WritePolicy, key: &Key, bins: &[Bin]) -> Result<()> {
+        if let Some(txn) = &policy.base_policy.txn {
+            crate::txn_monitor::add_key(self.cluster.clone(), &policy.base_policy, txn, key)
+                .await?;
+        }
         let mut command =
             WriteCommand::new(policy, self.cluster.clone(), key, bins, OperationType::Incr);
         command.execute().await
@@ -598,6 +616,10 @@ impl Client {
     /// # }
     /// ```
     pub async fn append(&self, policy: &WritePolicy, key: &Key, bins: &[Bin]) -> Result<()> {
+        if let Some(txn) = &policy.base_policy.txn {
+            crate::txn_monitor::add_key(self.cluster.clone(), &policy.base_policy, txn, key)
+                .await?;
+        }
         let mut command = WriteCommand::new(
             policy,
             self.cluster.clone(),
@@ -643,6 +665,10 @@ impl Client {
     /// # }
     /// ```
     pub async fn prepend(&self, policy: &WritePolicy, key: &Key, bins: &[Bin]) -> Result<()> {
+        if let Some(txn) = &policy.base_policy.txn {
+            crate::txn_monitor::add_key(self.cluster.clone(), &policy.base_policy, txn, key)
+                .await?;
+        }
         let mut command = WriteCommand::new(
             policy,
             self.cluster.clone(),
@@ -693,6 +719,10 @@ impl Client {
     /// # }
     /// ```
     pub async fn delete(&self, policy: &WritePolicy, key: &Key) -> Result<bool> {
+        if let Some(txn) = &policy.base_policy.txn {
+            crate::txn_monitor::add_key(self.cluster.clone(), &policy.base_policy, txn, key)
+                .await?;
+        }
         let mut command = DeleteCommand::new(policy, self.cluster.clone(), key);
         command.execute().await?;
         Ok(command.existed)
@@ -735,6 +765,10 @@ impl Client {
     /// # }
     /// ```
     pub async fn touch(&self, policy: &WritePolicy, key: &Key) -> Result<()> {
+        if let Some(txn) = &policy.base_policy.txn {
+            crate::txn_monitor::add_key(self.cluster.clone(), &policy.base_policy, txn, key)
+                .await?;
+        }
         let mut command = TouchCommand::new(policy, self.cluster.clone(), key);
         command.execute().await
     }
@@ -775,6 +809,9 @@ impl Client {
     /// # }
     /// ```
     pub async fn exists(&self, policy: &ReadPolicy, key: &Key) -> Result<bool> {
+        if let Some(txn) = &policy.base_policy.txn {
+            txn.prepare_read(&key.namespace)?;
+        }
         let mut command = ExistsCommand::new(policy, self.cluster.clone(), key);
         command.execute().await?;
         Ok(command.exists)
@@ -837,6 +874,10 @@ impl Client {
         key: &Key,
         ops: &[Operation],
     ) -> Result<Record> {
+        if let Some(txn) = &policy.base_policy.txn {
+            crate::txn_monitor::add_key(self.cluster.clone(), &policy.base_policy, txn, key)
+                .await?;
+        }
         let mut command = OperateCommand::new(policy, self.cluster.clone(), key, ops);
         command.execute().await?;
         Ok(command.read_command.record.unwrap())
@@ -2600,5 +2641,82 @@ impl Client {
             .unwrap();
 
         Error::ServerError(parts.0, false, parts.1.into())
+    }
+
+    /// Commit a multi-record transaction (MRT). This will verify record versions,
+    /// mark the transaction as roll-forward, commit all written records, and close
+    /// the transaction monitor.
+    ///
+    /// Uses default policies for verify and roll. Use
+    /// [`commit_with_policies`](Self::commit_with_policies) to control timeouts
+    /// and retries.
+    ///
+    /// # Arguments
+    /// * `txn` - The transaction to commit (wrapped in `Arc`).
+    ///
+    /// # Returns
+    /// `CommitStatus` indicating the outcome of the commit operation on success,
+    /// or `Error::CommitFailed` with per-key records and an `in_doubt` flag on
+    /// failure.
+    pub async fn commit(&self, txn: &Arc<Txn>) -> Result<CommitStatus> {
+        let policy = BasePolicy::default();
+        self.commit_with_policies(&policy, &policy, txn).await
+    }
+
+    /// Commit a multi-record transaction with explicit verify and roll policies.
+    pub async fn commit_with_policies(
+        &self,
+        verify_policy: &BasePolicy,
+        roll_policy: &BasePolicy,
+        txn: &Arc<Txn>,
+    ) -> Result<CommitStatus> {
+        let mut tr = TxnRoll::new(self.cluster.clone(), txn.clone());
+
+        match txn.state() {
+            TxnState::Open => {
+                tr.verify(verify_policy, roll_policy).await?;
+                tr.commit(roll_policy).await
+            }
+            TxnState::Verified => tr.commit(roll_policy).await,
+            TxnState::Committed => Ok(CommitStatus::AlreadyCommitted),
+            TxnState::Aborted => Err(Error::ServerError(
+                ResultCode::MrtAborted,
+                false,
+                "Transaction already aborted".to_string(),
+            )),
+        }
+    }
+
+    /// Abort a multi-record transaction (MRT). This will roll back all written
+    /// records and close the transaction monitor.
+    ///
+    /// Uses a default policy for the roll. Use
+    /// [`abort_with_policy`](Self::abort_with_policy) to control timeouts and
+    /// retries.
+    ///
+    /// # Arguments
+    /// * `txn` - The transaction to abort (wrapped in `Arc`).
+    pub async fn abort(&self, txn: &Arc<Txn>) -> Result<AbortStatus> {
+        let policy = BasePolicy::default();
+        self.abort_with_policy(&policy, txn).await
+    }
+
+    /// Abort a multi-record transaction with an explicit roll policy.
+    pub async fn abort_with_policy(
+        &self,
+        roll_policy: &BasePolicy,
+        txn: &Arc<Txn>,
+    ) -> Result<AbortStatus> {
+        let mut tr = TxnRoll::new(self.cluster.clone(), txn.clone());
+
+        match txn.state() {
+            TxnState::Open | TxnState::Verified => tr.abort(roll_policy).await,
+            TxnState::Committed => Err(Error::ServerError(
+                ResultCode::MrtCommitted,
+                false,
+                "Transaction already committed".to_string(),
+            )),
+            TxnState::Aborted => Ok(AbortStatus::AlreadyAborted),
+        }
     }
 }

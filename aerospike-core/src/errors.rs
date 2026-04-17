@@ -94,6 +94,9 @@ pub enum Error {
     /// Cluster node is invalid.
     #[error("Invalid cluster node: {0}")]
     InvalidNode(String),
+    /// Invalid or unknown namespace.
+    #[error("Invalid namespace: {0}")]
+    InvalidNamespace(String),
     /// Exceeded max. number of connections per node.
     #[error("Too many connections")]
     NoMoreConnections,
@@ -127,6 +130,25 @@ pub enum Error {
     /// Error returned when a task timed out before it could be completed.
     #[error("{0}\n\t{1}")]
     Chain(Box<Error>, Box<Error>),
+
+    /// Transaction commit failed. Carries per-stage records and an in-doubt flag
+    /// so callers can implement selective recovery. Returned by `Client::commit`.
+    #[error("Commit failed: {error_type} (in_doubt={in_doubt}){}",
+        .source.as_ref().map(|e| format!("\n\t{e}")).unwrap_or_default()
+    )]
+    CommitFailed {
+        /// Which stage of the commit failed.
+        error_type: crate::txn::CommitErrorType,
+        /// Per-key outcomes of the verify phase. Empty when verify didn't run.
+        verify_records: Vec<crate::BatchRecord>,
+        /// Per-key outcomes of the roll phase. Empty when roll didn't run.
+        roll_records: Vec<crate::BatchRecord>,
+        /// Whether the outcome is in doubt (client can't tell if the server
+        /// committed or aborted the transaction).
+        in_doubt: bool,
+        /// Underlying error that triggered the failure, if any.
+        source: Option<Box<Error>>,
+    },
 }
 
 impl Error {

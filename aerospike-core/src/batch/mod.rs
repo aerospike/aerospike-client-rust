@@ -40,6 +40,7 @@ pub struct BatchRecordIndex {
     pub batch_index: usize,
     pub record: Option<crate::Record>,
     pub result_code: ResultCode,
+    pub version: Option<u64>,
 }
 
 /// Policy for a single batch read operation.
@@ -109,6 +110,10 @@ pub struct BatchWritePolicy {
     /// Enterprise Edition 3.10+ only.
     pub durable_delete: bool,
 
+    /// If true, the MRT monitor record will only be written if the record is locked.
+    /// Default: false
+    pub on_locking_only: bool,
+
     /// Optional Filter Expression
     pub filter_expression: Option<Expression>,
 }
@@ -123,6 +128,7 @@ impl Default for BatchWritePolicy {
             expiration: Expiration::NamespaceDefault,
             send_key: false,
             durable_delete: false,
+            on_locking_only: false,
             filter_expression: None,
         }
     }
@@ -193,6 +199,10 @@ pub struct BatchUDFPolicy {
     /// Enterprise Edition 3.10+ only.
     pub durable_delete: bool,
 
+    /// If true, the MRT monitor record will only be written if the record is locked.
+    /// Default: false
+    pub on_locking_only: bool,
+
     /// Optional Filter Expression
     pub filter_expression: Option<Expression>,
 }
@@ -204,6 +214,7 @@ impl Default for BatchUDFPolicy {
             expiration: Expiration::NamespaceDefault,
             send_key: false,
             durable_delete: false,
+            on_locking_only: false,
             filter_expression: None,
         }
     }
@@ -296,7 +307,15 @@ impl BatchOperation {
         }
     }
 
-    pub(crate) fn size(&self, parent_fe: Option<&Expression>) -> Result<usize> {
+    /// Returns true if this batch operation contains a write.
+    pub(crate) const fn has_write(&self) -> bool {
+        match self {
+            Self::Read { .. } => false,
+            Self::Write { .. } | Self::Delete { .. } | Self::UDF { .. } => true,
+        }
+    }
+
+    pub(crate) fn size(&self, parent_fe: &Option<Expression>) -> Result<usize> {
         match self {
             Self::Read {
                 policy, bins, ops, ..

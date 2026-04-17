@@ -114,6 +114,30 @@ pub enum ResultCode {
     /// Write can't complete until XDR finishes shipping.
     XDRKeyBusy,
 
+    /// Transaction record blocked by another transaction.
+    MrtBlocked,
+
+    /// Expected transaction version mismatch.
+    MrtVersionMismatch,
+
+    /// Transaction expired.
+    MrtExpired,
+
+    /// Transaction write command limit (4096) exceeded.
+    MrtTooManyWrites,
+
+    /// Transaction was already committed.
+    MrtCommitted,
+
+    /// Transaction was already aborted.
+    MrtAborted,
+
+    /// Record already locked by this transaction.
+    MrtAlreadyLocked,
+
+    /// Transaction monitor record already exists.
+    MrtMonitorExists,
+
     /// There are no more records left for query.
     QueryEnd,
 
@@ -277,6 +301,14 @@ impl ResultCode {
             27 => ResultCode::FilteredOut,
             28 => ResultCode::LostConflict,
             32 => ResultCode::XDRKeyBusy,
+            120 => ResultCode::MrtBlocked,
+            121 => ResultCode::MrtVersionMismatch,
+            122 => ResultCode::MrtExpired,
+            123 => ResultCode::MrtTooManyWrites,
+            124 => ResultCode::MrtCommitted,
+            125 => ResultCode::MrtAborted,
+            126 => ResultCode::MrtAlreadyLocked,
+            127 => ResultCode::MrtMonitorExists,
             25 => ResultCode::EnterpriseOnly,
             50 => ResultCode::QueryEnd,
             51 => ResultCode::SecurityNotSupported,
@@ -360,6 +392,14 @@ impl ResultCode {
             ResultCode::XDRKeyBusy => {
                 String::from("Write can't complete until XDR finishes shipping")
             }
+            ResultCode::MrtBlocked => String::from("Transaction record blocked by another transaction"),
+            ResultCode::MrtVersionMismatch => String::from("Expected transaction version mismatch"),
+            ResultCode::MrtExpired => String::from("Transaction expired"),
+            ResultCode::MrtTooManyWrites => String::from("Transaction write command limit (4096) exceeded"),
+            ResultCode::MrtCommitted => String::from("Transaction was already committed"),
+            ResultCode::MrtAborted => String::from("Transaction was already aborted"),
+            ResultCode::MrtAlreadyLocked => String::from("Record already locked by this transaction"),
+            ResultCode::MrtMonitorExists => String::from("Transaction monitor record already exists"),
             ResultCode::EnterpriseOnly => {
                 String::from("Enterprise-only feature not supported by community edition")
             }

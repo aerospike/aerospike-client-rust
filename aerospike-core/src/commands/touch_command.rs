@@ -28,8 +28,9 @@ pub struct TouchCommand<'a> {
 
 impl<'a> TouchCommand<'a> {
     pub fn new(policy: &'a WritePolicy, cluster: Arc<Cluster>, key: &'a Key) -> Self {
+        let partition = crate::cluster::partition::Partition::for_write(key);
         TouchCommand {
-            single_command: SingleCommand::new(cluster, key, crate::policy::Replica::Master),
+            single_command: SingleCommand::new(cluster, key, partition),
             policy,
         }
     }
@@ -54,7 +55,7 @@ impl Command for TouchCommand<'_> {
         conn.buffer.set_touch(self.policy, self.single_command.key)
     }
 
-    async fn get_node(&mut self) -> Result<Arc<Node>> {
+    fn get_node(&mut self) -> Result<Arc<Node>> {
         self.single_command.get_node()
     }
 
@@ -70,6 +71,10 @@ impl Command for TouchCommand<'_> {
         true
     }
 
+    fn prepare_retry(&mut self, is_client_timeout: bool) {
+        self.single_command.prepare_retry(is_client_timeout);
+    }
+
     async fn parse_result(&mut self, conn: &mut Connection) -> Result<()> {
         // Read header.
         if let Err(err) = conn.read_header().await {
@@ -78,12 +83,32 @@ impl Command for TouchCommand<'_> {
         }
 
         conn.buffer.reset_offset();
-
+        let sz = conn.buffer.read_u64(Some(0));
+        let header_length = conn.buffer.read_u8(Some(8));
         let result_code = ResultCode::from(conn.buffer.read_u8(Some(13)));
+        let field_count = conn.buffer.read_u16(Some(26)) as usize;
+        let receive_size = ((sz & 0xFFFF_FFFF_FFFF) - u64::from(header_length)) as usize;
+
+        if receive_size > 0 {
+            conn.buffer.resize_buffer(receive_size)?;
+            conn.read_body(receive_size).await?;
+            conn.buffer.reset_offset();
+        }
+
+        let version = if field_count > 0 {
+            conn.buffer.parse_fields_for_version(field_count)
+        } else {
+            None
+        };
+
         if result_code != ResultCode::Ok {
             return Err(Error::ServerError(result_code, false, conn.addr.clone()));
         }
 
-        SingleCommand::empty_socket(conn).await
+        if let Some(txn) = &self.policy.base_policy.txn {
+            txn.on_write(self.single_command.key, version, result_code);
+        }
+
+        Ok(())
     }
 }
