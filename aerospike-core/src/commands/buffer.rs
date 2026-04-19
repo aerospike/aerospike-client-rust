@@ -221,7 +221,7 @@ impl Buffer {
     /// header. We split the buffer at the command-data boundary and compress from
     /// one region into the other, avoiding any copy or separate allocation.
     ///
-    /// Buffer layout (when compress_offset == 16):
+    /// Buffer layout (when `compress_offset` == 16):
     ///   `[0 ..16]`                 → space for compressed proto header + uncompressed size
     ///   `[16 .. data_offset]`      → uncompressed command data (source)
     ///
@@ -662,7 +662,7 @@ impl Buffer {
         }
     }
 
-    /// Write batch fields including transaction fields (MRT_ID, RECORD_VERSION, MRT_DEADLINE).
+    /// Write batch fields including transaction fields (`MRT_ID`, `RECORD_VERSION`, `MRT_DEADLINE`).
     fn write_batch_fields_txn(
         &mut self,
         key: &Key,
@@ -764,9 +764,11 @@ impl Buffer {
         };
 
         let mut prev: Option<&BatchOperation> = None;
+        let mut ver_prev: Option<u64> = None;
         for (i, (batch_op, _)) in batch_ops.iter().enumerate() {
+            let ver = versions.get(i).copied().flatten();
             self.data_offset += batch_op.key().digest.len() + 4;
-            if batch_op.match_header(prev) {
+            if batch_op.match_header(prev, ver, ver_prev) {
                 self.data_offset += 1;
             } else {
                 // Must write full header and namespace/set/bin names.
@@ -777,10 +779,10 @@ impl Buffer {
                 self.data_offset += batch_op.size(&policy.filter_expression)?; // + HEADER
 
                 // Add txn field sizes
-                let ver = versions.get(i).copied().flatten();
                 self.size_txn_batch(txn, ver, batch_op.has_write());
             }
             prev = Some(batch_op);
+            ver_prev = ver;
         }
 
         self.size_buffer()?;
@@ -798,12 +800,13 @@ impl Buffer {
 
         let mut attr = BatchAttr::default();
         prev = None;
+        ver_prev = None;
         for (idx, (batch_op, _)) in batch_ops.iter().enumerate() {
             let key = &batch_op.key();
             let ver = versions.get(idx).copied().flatten();
             self.write_u32(idx as u32);
             self.write_bytes(&key.digest);
-            if batch_op.match_header(prev) {
+            if batch_op.match_header(prev, ver, ver_prev) {
                 self.write_u8(BATCH_MSG_REPEAT);
             } else {
                 match batch_op {
@@ -911,6 +914,7 @@ impl Buffer {
                 }
             }
             prev = Some(batch_op);
+            ver_prev = ver;
         }
 
         let field_size =
@@ -986,17 +990,17 @@ impl Buffer {
         }
         self.size_buffer()?;
 
-        if !has_write {
-            self.write_header(
-                &policy.base_policy,
+        if has_write {
+            self.write_header_with_policy(
+                policy,
                 read_attr,
                 write_attr,
                 field_count,
                 operations.len() as u16,
             );
         } else {
-            self.write_header_with_policy(
-                policy,
+            self.write_header(
+                &policy.base_policy,
                 read_attr,
                 write_attr,
                 field_count,
@@ -2479,13 +2483,13 @@ impl Buffer {
 
     // --- MRT (Multi-Record Transaction) helpers ---
 
-    /// Write a little-endian 64-bit field (used for MRT_ID).
+    /// Write a little-endian 64-bit field (used for `MRT_ID`).
     fn write_field_le64(&mut self, val: i64, ftype: FieldType) {
         self.write_field_header(8, ftype);
         self.write_u64_little_endian(val as u64);
     }
 
-    /// Write a little-endian 32-bit field (used for MRT_DEADLINE).
+    /// Write a little-endian 32-bit field (used for `MRT_DEADLINE`).
     fn write_field_le32(&mut self, val: i32, ftype: FieldType) {
         self.write_field_header(4, ftype);
         self.write_u32_little_endian(val as u32);
@@ -2517,7 +2521,7 @@ impl Buffer {
     }
 
     /// Parse response fields and extract the record version (if present).
-    /// Advances data_offset past all fields.
+    /// Advances `data_offset` past all fields.
     pub(crate) fn parse_fields_for_version(&mut self, field_count: usize) -> Option<u64> {
         let mut version = None;
         for _ in 0..field_count {
@@ -2590,7 +2594,7 @@ impl Buffer {
         }
     }
 
-    /// Write transaction fields (MRT_ID, RECORD_VERSION, MRT_DEADLINE).
+    /// Write transaction fields (`MRT_ID`, `RECORD_VERSION`, `MRT_DEADLINE`).
     pub(crate) fn write_txn(
         &mut self,
         txn: Option<&Arc<Txn>>,
@@ -2610,8 +2614,8 @@ impl Buffer {
         }
     }
 
-    /// Estimate key size without send_key (for txn monitor commands).
-    fn estimate_raw_key_size(&mut self, key: &Key) -> u16 {
+    /// Estimate key size without `send_key` (for txn monitor commands).
+    const fn estimate_raw_key_size(&mut self, key: &Key) -> u16 {
         let mut field_count: u16 = 0;
 
         if !key.namespace.is_empty() {

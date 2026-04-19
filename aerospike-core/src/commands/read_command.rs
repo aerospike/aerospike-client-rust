@@ -30,7 +30,7 @@ pub struct ReadCommand<'a> {
     pub record: Option<Record>,
     policy: &'a BasePolicy,
     bins: Bins,
-    /// When true, txn notifications use on_write instead of on_read.
+    /// When true, txn notifications use `on_write` instead of `on_read`.
     pub(crate) is_write: bool,
 }
 
@@ -51,7 +51,7 @@ impl<'a> ReadCommand<'a> {
         }
     }
 
-    pub fn new_with_partition(
+    pub const fn new_with_partition(
         policy: &'a BasePolicy,
         cluster: Arc<Cluster>,
         key: &'a Key,

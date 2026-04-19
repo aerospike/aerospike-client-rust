@@ -450,8 +450,70 @@ impl BatchOperation {
         }
     }
 
-    pub(crate) const fn match_header(&self, _prev: Option<&BatchOperation>) -> bool {
-        false
+    /// Returns true if this op's header can be encoded as a `BATCH_MSG_REPEAT` of `prev`
+    /// (i.e. identical namespace/set/policy/payload). When true, the wire protocol writes
+    /// only the repeat flag and digest, saving the full namespace/set/bin payload.
+    ///
+    /// Safe conservative fallback: returns false whenever we can't cheaply prove equality.
+    /// Correctness-critical: a false-positive here produces a wrong request.
+    pub(crate) fn match_header(
+        &self,
+        prev: Option<&BatchOperation>,
+        ver: Option<u64>,
+        ver_prev: Option<u64>,
+    ) -> bool {
+        let Some(prev) = prev else { return false };
+
+        // Same txn read version.
+        if ver != ver_prev {
+            return false;
+        }
+
+        // Same namespace & set.
+        let key = match self {
+            Self::Read { br, .. }
+            | Self::Write { br, .. }
+            | Self::Delete { br, .. }
+            | Self::UDF { br, .. } => &br.key,
+        };
+        let key_prev = match prev {
+            Self::Read { br, .. }
+            | Self::Write { br, .. }
+            | Self::Delete { br, .. }
+            | Self::UDF { br, .. } => &br.key,
+        };
+        if key.namespace != key_prev.namespace || key.set_name != key_prev.set_name {
+            return false;
+        }
+
+        // Variant-specific payload match. send_key=true forces non-repeat because
+        // the user_key field in the per-record header differs across records.
+        match (self, prev) {
+            (
+                Self::Read {
+                    policy: p,
+                    bins: b,
+                    ops: o,
+                    ..
+                },
+                Self::Read {
+                    policy: pp,
+                    bins: bp,
+                    ops: op,
+                    ..
+                },
+            ) => {
+                // Read ops can contain arbitrary Operations which we can't cheaply compare.
+                // Only dedup bins-only reads.
+                o.is_none() && op.is_none() && p == pp && b == bp
+            }
+            (Self::Delete { policy: p, .. }, Self::Delete { policy: pp, .. }) => {
+                !p.send_key && !pp.send_key && p == pp
+            }
+            // Write / UDF / mixed variants: ops and udf args are not cheaply comparable.
+            // Fall back to writing full headers (correct, just not optimally compressed).
+            _ => false,
+        }
     }
 
     pub(crate) fn key(&self) -> Key {

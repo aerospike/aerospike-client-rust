@@ -17,11 +17,11 @@
 
 use std::sync::Arc;
 
+use crate::common;
 use aerospike::{
     as_bin, as_key, operations, AbortStatus, Bins, CommitErrorType, CommitStatus, Error,
     ReadPolicy, ResultCode, Txn, Value, WritePolicy,
 };
-use crate::common;
 
 /// Check if the server supports MRT (version >= 8.0).
 async fn server_supports_mrt(client: &aerospike::Client) -> bool {

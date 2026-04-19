@@ -392,14 +392,22 @@ impl ResultCode {
             ResultCode::XDRKeyBusy => {
                 String::from("Write can't complete until XDR finishes shipping")
             }
-            ResultCode::MrtBlocked => String::from("Transaction record blocked by another transaction"),
+            ResultCode::MrtBlocked => {
+                String::from("Transaction record blocked by another transaction")
+            }
             ResultCode::MrtVersionMismatch => String::from("Expected transaction version mismatch"),
             ResultCode::MrtExpired => String::from("Transaction expired"),
-            ResultCode::MrtTooManyWrites => String::from("Transaction write command limit (4096) exceeded"),
+            ResultCode::MrtTooManyWrites => {
+                String::from("Transaction write command limit (4096) exceeded")
+            }
             ResultCode::MrtCommitted => String::from("Transaction was already committed"),
             ResultCode::MrtAborted => String::from("Transaction was already aborted"),
-            ResultCode::MrtAlreadyLocked => String::from("Record already locked by this transaction"),
-            ResultCode::MrtMonitorExists => String::from("Transaction monitor record already exists"),
+            ResultCode::MrtAlreadyLocked => {
+                String::from("Record already locked by this transaction")
+            }
+            ResultCode::MrtMonitorExists => {
+                String::from("Transaction monitor record already exists")
+            }
             ResultCode::EnterpriseOnly => {
                 String::from("Enterprise-only feature not supported by community edition")
             }

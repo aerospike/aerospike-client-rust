@@ -46,7 +46,7 @@ impl BatchAttr {
         self.read_attr = buffer::INFO1_READ;
 
         if rp.base_policy.read_mode_ap == ReadModeAP::All {
-            self.read_attr |= buffer::INFO1_READ_MODE_AP_ALL
+            self.read_attr |= buffer::INFO1_READ_MODE_AP_ALL;
         }
 
         self.write_attr = 0;
@@ -56,7 +56,7 @@ impl BatchAttr {
             ReadModeSC::Linearize => self.info_attr = buffer::INFO3_SC_READ_TYPE,
             ReadModeSC::AllowReplica => self.info_attr = buffer::INFO3_SC_READ_RELAX,
             ReadModeSC::AllowUnavailable => {
-                self.info_attr = buffer::INFO3_SC_READ_TYPE | buffer::INFO3_SC_READ_RELAX
+                self.info_attr = buffer::INFO3_SC_READ_TYPE | buffer::INFO3_SC_READ_RELAX;
             }
         }
         self.txn_attr = 0;
@@ -74,7 +74,7 @@ impl BatchAttr {
         self.read_attr = buffer::INFO1_READ;
 
         if parent.base_policy.read_mode_ap == ReadModeAP::All {
-            self.read_attr |= buffer::INFO1_READ_MODE_AP_ALL
+            self.read_attr |= buffer::INFO1_READ_MODE_AP_ALL;
         }
 
         self.write_attr = 0;
@@ -84,7 +84,7 @@ impl BatchAttr {
             ReadModeSC::Linearize => self.info_attr = buffer::INFO3_SC_READ_TYPE,
             ReadModeSC::AllowReplica => self.info_attr = buffer::INFO3_SC_READ_RELAX,
             ReadModeSC::AllowUnavailable => {
-                self.info_attr = buffer::INFO3_SC_READ_TYPE | buffer::INFO3_SC_READ_RELAX
+                self.info_attr = buffer::INFO3_SC_READ_TYPE | buffer::INFO3_SC_READ_RELAX;
             }
         }
         self.txn_attr = 0;

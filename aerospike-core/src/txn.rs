@@ -192,7 +192,7 @@ impl Txn {
     }
 
     /// Return the transaction ID.
-    pub fn id(&self) -> i64 {
+    pub const fn id(&self) -> i64 {
         self.id
     }
 
@@ -296,8 +296,7 @@ impl Txn {
             }
             Some(existing) if existing == ns => Ok(()),
             Some(existing) => Err(Error::ClientError(format!(
-                "Namespace must be the same for all commands in the Transaction. orig: {} new: {}",
-                existing, ns
+                "Namespace must be the same for all commands in the Transaction. orig: {existing} new: {ns}"
             ))),
         }
     }
@@ -308,12 +307,12 @@ impl Txn {
     }
 
     /// Set transaction timeout in seconds.
-    pub fn set_timeout(&mut self, timeout: Duration) {
+    pub const fn set_timeout(&mut self, timeout: Duration) {
         self.timeout = timeout.as_secs() as u32;
     }
 
     /// Get raw timeout value in seconds (for protocol encoding).
-    pub(crate) fn timeout_secs(&self) -> u32 {
+    pub(crate) const fn timeout_secs(&self) -> u32 {
         self.timeout
     }
 
@@ -373,6 +372,7 @@ impl Default for Txn {
 /// Generate the transaction monitor key.
 pub(crate) fn get_txn_monitor_key(txn: &Txn) -> Option<Key> {
     txn.namespace().map(|ns| {
-        Key::new(ns, "<ERO~MRT".to_string(), crate::Value::Int(txn.id())).expect("Failed to create transaction monitor key")
+        Key::new(ns, "<ERO~MRT".to_string(), crate::Value::Int(txn.id()))
+            .expect("Failed to create transaction monitor key")
     })
 }

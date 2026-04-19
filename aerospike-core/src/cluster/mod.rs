@@ -126,11 +126,7 @@ impl Cluster {
         // recovery still has reachable addresses if the originally-configured
         // seeds go offline. Mirrors Java `Cluster.initTendThread`:
         // iterate nodes, add any whose host isn't already in the seed list.
-        let discovered: Vec<Host> = cluster
-            .nodes()
-            .iter()
-            .map(|n| n.host())
-            .collect();
+        let discovered: Vec<Host> = cluster.nodes().iter().map(|n| n.host()).collect();
         cluster.merge_seeds(&discovered);
 
         let cluster_for_tend = cluster.clone();

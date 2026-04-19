@@ -224,14 +224,20 @@ impl BatchOperateCommand {
                     batch_op.0.set_record(batch_record.record);
                     batch_op.0.set_result_code(batch_record.result_code, false);
                 }
-                Err(Error::BatchLastError(batch_index, rc, in_doubt, ref msg)) => {
+                Err(Error::BatchLastError(batch_index, rc, in_doubt, ..)) => {
+                    // Per-key error on the final record of the response. Record the
+                    // error on the individual BatchRecord and treat the stream as
+                    // ended — do not propagate as a batch-level failure, matching
+                    // Java's behavior (BatchStatus.setRowError keeps other records).
                     let batch_op = batch_ops
                         .get_mut(batch_index as usize)
                         .expect("Invalid batch index");
                     batch_op.0.set_result_code(rc, in_doubt);
-                    return Err(Error::BatchError(batch_index, rc, in_doubt, msg.clone()));
+                    return Ok(false);
                 }
                 Err(Error::BatchError(batch_index, rc, in_doubt, ..)) => {
+                    // Per-key error mid-stream. Record on the individual BatchRecord
+                    // and continue parsing remaining records in the response.
                     let batch_op = batch_ops
                         .get_mut(batch_index as usize)
                         .expect("Invalid batch index");

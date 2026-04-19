@@ -29,7 +29,7 @@ use crate::{Bin, Key, Value};
 const BIN_NAME_ID: &str = "id";
 const BIN_NAME_DIGESTS: &str = "keyds";
 
-fn txn_ordered_list_policy() -> ListPolicy {
+const fn txn_ordered_list_policy() -> ListPolicy {
     ListPolicy {
         attributes: ListOrderType::Ordered,
         flags: ListWriteFlags::AddUnique as u8
@@ -39,7 +39,7 @@ fn txn_ordered_list_policy() -> ListPolicy {
 }
 
 /// Add a single write key to the transaction monitor record.
-pub(crate) async fn add_key(
+pub async fn add_key(
     cluster: Arc<Cluster>,
     policy: &BasePolicy,
     txn: &Arc<Txn>,
@@ -58,7 +58,7 @@ pub(crate) async fn add_key(
 
 /// Add write keys from batch records to the transaction monitor record.
 /// Only tracks keys for write operations (writes, deletes, UDFs).
-pub(crate) async fn add_keys_from_records(
+pub async fn add_keys_from_records(
     cluster: Arc<Cluster>,
     policy: &BasePolicy,
     txn: &Arc<Txn>,
@@ -87,8 +87,7 @@ pub(crate) async fn add_keys_from_records(
 }
 
 /// Add multiple write keys (by Key slice) to the transaction monitor record.
-#[allow(dead_code)] // Used by batch delete with simple keys (not yet wired)
-pub(crate) async fn add_keys(
+pub async fn add_keys(
     cluster: Arc<Cluster>,
     policy: &BasePolicy,
     txn: &Arc<Txn>,
@@ -155,20 +154,13 @@ async fn add_write_keys(
     txn: &Arc<Txn>,
     ops: &[Operation],
 ) -> Result<()> {
-    let txn_key = get_txn_monitor_key(txn)
-        .ok_or_else(|| crate::errors::Error::ClientError(
-            "Transaction namespace not set".to_string(),
-        ))?;
+    let txn_key = get_txn_monitor_key(txn).ok_or_else(|| {
+        crate::errors::Error::ClientError("Transaction namespace not set".to_string())
+    })?;
 
     let wp = copy_timeout_policy(policy, txn);
 
-    let mut cmd = TxnAddKeysCommand::new(
-        &wp,
-        cluster,
-        &txn_key,
-        ops.to_vec(),
-        txn.clone(),
-    );
+    let mut cmd = TxnAddKeysCommand::new(&wp, cluster, &txn_key, ops.to_vec(), txn.clone());
     cmd.execute().await
 }
 

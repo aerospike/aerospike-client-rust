@@ -14,6 +14,7 @@
 // the License.
 
 /// `ReadModeAP` is the read policy for AP (availability) namespaces.
+///
 /// It indicates how duplicates should be consulted in a read operation.
 /// Only makes a difference during migrations and only applicable in AP mode.
 #[derive(Debug, PartialEq, Eq, Clone, Copy, Default)]

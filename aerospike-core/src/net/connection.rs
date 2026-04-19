@@ -99,8 +99,8 @@ pub struct Connection {
     /// The full message body is already in the buffer; skip network reads.
     response_decompressed: bool,
     /// Tracks whether the current stream/batch message body being read is
-    /// compressed (type 4). Set by stream_command/batch_operate_command when
-    /// a compressed message is detected. Used by ConnectionRecovery to know
+    /// compressed (type 4). Set by `stream_command/batch_operate_command` when
+    /// a compressed message is detected. Used by `ConnectionRecovery` to know
     /// that info3 inspection is invalid for the current body.
     pub(crate) compressed_stream_body: bool,
 }
@@ -315,7 +315,7 @@ impl Connection {
         if self.socket_timeout > 0 {
             Duration::from_millis(u64::from(self.socket_timeout))
         } else {
-            Duration::from_millis(30_000) // 30 secs
+            Duration::from_secs(30) // 30 secs
         }
     }
 
@@ -873,7 +873,7 @@ impl<'a> BufferedConn<'a> {
     }
 
     #[inline]
-    pub(crate) fn exhausted(&self) -> bool {
+    pub(crate) const fn exhausted(&self) -> bool {
         self.limit <= 0 && self.decoder_remaining == 0 && self.empty()
     }
 
@@ -1068,7 +1068,7 @@ impl<'a> ConnectionRecovery<'a> {
             Ok(receive_size)
         } else {
             let header_length = self.conn.buffer.read_u8(Some(8));
-            let receive_size = (proto_size - usize::from(header_length)) as usize;
+            let receive_size = proto_size - usize::from(header_length);
             Ok(receive_size)
         }
     }

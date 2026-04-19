@@ -193,7 +193,8 @@ impl StreamCommand {
         conn: &mut BufferedConn<'_>,
         field_count: usize,
     ) -> Result<(Key, Option<u64>)> {
-        Self::parse_key_and_version(conn, field_count).await
+        Self::parse_key_and_version(conn, field_count)
+            .await
             .map(|(key, bval, _version)| (key, bval))
     }
 
@@ -337,9 +338,9 @@ impl Command for StreamCommand {
                 // Read only the 8-byte inner proto header to get the message size.
                 let mut decoder = ZlibDecoder::new(std::io::Cursor::new(compressed_data));
                 let mut proto_buf = [0u8; 8];
-                decoder.read_exact(&mut proto_buf).map_err(|e| {
-                    Error::ClientError(format!("Stream decompression error: {e}"))
-                })?;
+                decoder
+                    .read_exact(&mut proto_buf)
+                    .map_err(|e| Error::ClientError(format!("Stream decompression error: {e}")))?;
                 let inner_proto = u64::from_be_bytes(proto_buf);
                 let inner_size = (inner_proto & 0x0000_FFFF_FFFF_FFFF) as usize;
 
@@ -348,11 +349,8 @@ impl Command for StreamCommand {
                     // Stream-decompress the rest on demand (body after the
                     // 8-byte proto header we already consumed).
                     let body_decompressed_size = uncompressed_size - 8;
-                    let mut inner_conn = BufferedConn::new_with_decoder(
-                        conn.conn,
-                        decoder,
-                        body_decompressed_size,
-                    );
+                    let mut inner_conn =
+                        BufferedConn::new_with_decoder(conn.conn, decoder, body_decompressed_size);
 
                     match self.parse_stream(&mut inner_conn, inner_size).await {
                         Ok(stat) => status = stat,

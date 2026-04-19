@@ -21,10 +21,10 @@ use aerospike_core::Recordset;
 
 mod admin;
 mod batch;
-mod compression;
 mod cdt_bitwise;
 mod cdt_list;
 mod cdt_map;
+mod compression;
 mod exp;
 mod exp_bitwise;
 mod exp_hll;

@@ -241,7 +241,7 @@ impl ClientPolicy {
         if self.timeout > 0 {
             Duration::from_millis(u64::from(self.timeout))
         } else {
-            Duration::from_millis(30_000)
+            Duration::from_secs(30)
         }
     }
 

@@ -31,7 +31,7 @@ pub struct SingleCommand<'a> {
 }
 
 impl<'a> SingleCommand<'a> {
-    pub fn new(cluster: Arc<Cluster>, key: &'a Key, partition: Partition<'a>) -> Self {
+    pub const fn new(cluster: Arc<Cluster>, key: &'a Key, partition: Partition<'a>) -> Self {
         SingleCommand {
             cluster,
             key,
@@ -47,7 +47,7 @@ impl<'a> SingleCommand<'a> {
         self.partition.get_node(&self.cluster)
     }
 
-    pub fn prepare_retry(&mut self, is_client_timeout: bool) {
+    pub const fn prepare_retry(&mut self, is_client_timeout: bool) {
         self.partition.prepare_retry(is_client_timeout);
     }
 
@@ -215,9 +215,7 @@ impl<'a> SingleCommand<'a> {
             return Ok(());
         }
 
-        let err = Error::Timeout(format!(
-            "Command timed out after {iterations} tries"
-        ));
+        let err = Error::Timeout(format!("Command timed out after {iterations} tries"));
         Err(match last_err {
             Some(e) => e.wrap(err),
             None => err,

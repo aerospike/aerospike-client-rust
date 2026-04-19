@@ -73,7 +73,7 @@ impl<'a> Partition<'a> {
     }
 
     /// Create a partition for read operations, applying SC mode overrides
-    /// based on the namespace's SC mode and the policy's ReadModeSC setting.
+    /// based on the namespace's SC mode and the policy's `ReadModeSC` setting.
     pub fn for_read(
         cluster: &Cluster,
         key: &'a Key,
@@ -138,7 +138,7 @@ impl<'a> Partition<'a> {
 
     /// Prepare the partition for a retry attempt by advancing the sequence number.
     /// Dispatches to read or write retry logic based on `is_write`.
-    pub fn prepare_retry(&mut self, is_client_timeout: bool) {
+    pub const fn prepare_retry(&mut self, is_client_timeout: bool) {
         if self.is_write {
             // Write retries: advance sequence unless client timeout
             if !is_client_timeout {

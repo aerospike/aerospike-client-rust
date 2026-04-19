@@ -36,7 +36,7 @@ pub mod txn_roll_command;
 pub mod txn_verify_command;
 pub mod write_command;
 
-pub(crate) mod field_type;
+pub mod field_type;
 
 use std::sync::Arc;
 

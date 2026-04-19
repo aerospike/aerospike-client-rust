@@ -209,7 +209,7 @@ impl Node {
 
     /// When peers-generation did not change, still scan the advertised peers
     /// to bump `reference_count` for aliases we already know. This mirrors
-    /// the reference-counting that add_friends does so cluster-level
+    /// the reference-counting that `add_friends` does so cluster-level
     /// removal decisions stay accurate between generation bumps.
     fn count_existing_peers(
         &self,
@@ -493,7 +493,7 @@ impl Node {
     /// Reap idle connections, but for any idle connection that would take
     /// the pool below `min_conns_per_node`, send a cheap info probe to keep
     /// it alive instead of dropping it. A successful probe reads a response
-    /// which in turn resets the connection's idle deadline (Message::info
+    /// which in turn resets the connection's idle deadline (`Message::info`
     /// calls `conn.refresh()` internally), so the probed connection goes
     /// back into the pool as fresh.
     ///
@@ -536,9 +536,7 @@ impl Node {
             // many idle conns to keep alive via probe.
             let reserved = queue.reserved_count();
             let effective_live = reserved.saturating_sub(idle.len());
-            let to_keep = per_queue_min
-                .saturating_sub(effective_live)
-                .min(idle.len());
+            let to_keep = per_queue_min.saturating_sub(effective_live).min(idle.len());
 
             let mut idle_iter = idle.into_iter();
             let keepers: Vec<Connection> = idle_iter.by_ref().take(to_keep).collect();
@@ -569,19 +567,16 @@ impl Node {
             let results = futures::future::join_all(probes).await;
 
             for result in results {
-                match result {
-                    Some(conn) => {
-                        // `put_back` uses a blocking `lock()` but only
-                        // briefly (push one element) — no async I/O is
-                        // held under it. Keeps the API simple and the
-                        // probed conns go back in order.
-                        queue.put_back(conn);
-                        total_processed += 1;
-                    }
-                    None => {
-                        queue.reduce_capacity();
-                        total_processed += 1;
-                    }
+                if let Some(conn) = result {
+                    // `put_back` uses a blocking `lock()` but only
+                    // briefly (push one element) — no async I/O is
+                    // held under it. Keeps the API simple and the
+                    // probed conns go back in order.
+                    queue.put_back(conn);
+                    total_processed += 1;
+                } else {
+                    queue.reduce_capacity();
+                    total_processed += 1;
                 }
             }
         }

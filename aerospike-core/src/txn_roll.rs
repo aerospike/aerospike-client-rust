@@ -27,12 +27,10 @@ use crate::commands::txn_roll_command::TxnRollCommand;
 use crate::commands::txn_verify_command::TxnVerifyCommand;
 use crate::errors::{Error, Result};
 use crate::policy::{BasePolicy, WritePolicy};
-use crate::txn::{
-    get_txn_monitor_key, AbortStatus, CommitErrorType, CommitStatus, Txn, TxnState,
-};
+use crate::txn::{get_txn_monitor_key, AbortStatus, CommitErrorType, CommitStatus, Txn, TxnState};
 use crate::{Key, ResultCode};
 
-pub(crate) struct TxnRoll {
+pub struct TxnRoll {
     cluster: Arc<Cluster>,
     txn: Arc<Txn>,
     verify_records: Vec<BatchRecord>,
@@ -40,7 +38,7 @@ pub(crate) struct TxnRoll {
 }
 
 impl TxnRoll {
-    pub fn new(cluster: Arc<Cluster>, txn: Arc<Txn>) -> Self {
+    pub const fn new(cluster: Arc<Cluster>, txn: Arc<Txn>) -> Self {
         TxnRoll {
             cluster,
             txn,
@@ -103,10 +101,8 @@ impl TxnRoll {
                     // this transaction. Flip the client state to Aborted and
                     // clear the in-doubt flag so callers don't treat the
                     // failure as ambiguous.
-                    let is_aborted = matches!(
-                        &err,
-                        Error::ServerError(ResultCode::MrtAborted, _, _)
-                    );
+                    let is_aborted =
+                        matches!(&err, Error::ServerError(ResultCode::MrtAborted, _, _));
 
                     if is_aborted {
                         self.txn.set_in_doubt(false);
@@ -141,7 +137,11 @@ impl TxnRoll {
         self.txn.set_state(TxnState::Committed);
         self.txn.set_in_doubt(false);
 
-        if self.roll(roll_policy, INFO4_MRT_ROLL_FORWARD).await.is_err() {
+        if self
+            .roll(roll_policy, INFO4_MRT_ROLL_FORWARD)
+            .await
+            .is_err()
+        {
             return Ok(CommitStatus::RollForwardAbandoned);
         }
 
@@ -298,9 +298,7 @@ impl TxnRoll {
                 "abort"
             };
             return Err(last_err.unwrap_or_else(|| {
-                Error::ClientError(format!(
-                    "Failed to {action} one or more records"
-                ))
+                Error::ClientError(format!("Failed to {action} one or more records"))
             }));
         }
 
