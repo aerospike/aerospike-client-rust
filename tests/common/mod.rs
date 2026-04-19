@@ -226,6 +226,27 @@ pub async fn enterprise_edition() -> bool {
     false
 }
 
+/// Check whether the given namespace is configured with strong-consistency.
+/// Returns `false` on any communication error so tests that key off this
+/// default to the AP-compatible path.
+pub async fn namespace_is_sc(client: &aerospike::Client, ns: &str) -> bool {
+    let node = match client.cluster.get_random_node() {
+        Ok(n) => n,
+        Err(_) => return false,
+    };
+    let info_key = format!("namespace/{ns}");
+    match node.info(&AdminPolicy::default(), &[&info_key]).await {
+        Ok(map) => map
+            .get(&info_key)
+            .map(|info| {
+                info.contains("strong-consistency=true")
+                    || info.contains("strong-consistency-allow-expunge=true")
+            })
+            .unwrap_or(false),
+        Err(_) => false,
+    }
+}
+
 pub async fn security_enabled() -> bool {
     if !enterprise_edition().await {
         return false;

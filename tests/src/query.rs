@@ -701,10 +701,18 @@ async fn query_scan_with_specific_bins() {
 /// Query using `QueryDuration::LongRelaxAP`.
 /// This exercises the fix where `INFO2_RELAX_AP_LONG_QUERY` is correctly
 /// written into the info2 byte instead of info1.
+///
+/// `LongRelaxAP` relaxes AP-only read consistency during long queries; the
+/// server rejects it on strong-consistency namespaces with `ParameterError`,
+/// so skip there.
 #[aerospike_macro::test]
 async fn query_long_relax_ap_duration() {
     let client = common::client().await;
     let namespace = common::namespace();
+    if common::namespace_is_sc(&client, namespace).await {
+        eprintln!("Skipping query_long_relax_ap_duration: AP-only feature on SC namespace");
+        return;
+    }
     let set_name = create_test_set(&client, EXPECTED).await;
     let mut qpolicy = QueryPolicy::default();
     qpolicy.expected_duration = QueryDuration::LongRelaxAP;

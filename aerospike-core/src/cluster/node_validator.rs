@@ -117,6 +117,13 @@ impl NodeValidator {
         )
         .await?;
 
+        // Validation is a one-shot probe — close the socket now so we
+        // don't rely on `Drop` running at a specific point later (matters
+        // for debuggability and for parity with Java's try/finally pattern
+        // in `NodeValidator.validateAddress`).
+        conn.close();
+        drop(conn);
+
         match info_map.get("node") {
             None => return Err(Error::InvalidNode(String::from("Missing node name"))),
             Some(node_name) => self.name.clone_from(node_name),

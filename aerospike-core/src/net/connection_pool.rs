@@ -167,6 +167,43 @@ impl Queue {
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .len()
     }
+
+    /// Reserved count: total connections owned by this queue, including
+    /// ones currently out on loan to callers. Reaped conns must have
+    /// [`reduce_capacity`] called separately to release their slot.
+    pub fn reserved_count(&self) -> usize {
+        *self
+            .0
+            .reserved
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    /// Pull every currently-idle connection out of the queue without
+    /// blocking — uses `try_lock` so a contended pool returns `None`
+    /// and the caller can skip this iteration.
+    ///
+    /// Ownership of the returned connections transfers to the caller: they
+    /// must either put survivors back with [`put_back`] or drop + call
+    /// [`reduce_capacity`] for each one that goes away. Non-idle connections
+    /// stay in the queue.
+    pub fn try_extract_idle(&self) -> Option<Vec<Connection>> {
+        let mut connections = self.0.connections.try_lock().ok()?;
+        if connections.is_empty() {
+            return Some(Vec::new());
+        }
+        let mut idle = Vec::new();
+        let mut kept = VecDeque::with_capacity(connections.len());
+        for conn in connections.drain(..) {
+            if conn.is_idle() {
+                idle.push(conn);
+            } else {
+                kept.push_back(conn);
+            }
+        }
+        *connections = kept;
+        Some(idle)
+    }
 }
 
 impl Clone for Queue {
@@ -276,6 +313,12 @@ impl ConnectionPool {
         for queue in self.queues.drain(..) {
             queue.clear();
         }
+    }
+
+    /// Internal queues — exposed so the Node layer can implement
+    /// reap-and-refresh semantics that are aware of `min_conns_per_node`.
+    pub fn queues(&self) -> &[Queue] {
+        &self.queues
     }
 
     /// Returns sum total of connections inside all the internal queues.

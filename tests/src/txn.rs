@@ -21,36 +21,12 @@ use aerospike::{
     as_bin, as_key, operations, AbortStatus, Bins, CommitErrorType, CommitStatus, Error,
     ReadPolicy, ResultCode, Txn, Value, WritePolicy,
 };
-use aerospike::policy::AdminPolicy;
-
 use crate::common;
 
 /// Check if the server supports MRT (version >= 8.0).
 async fn server_supports_mrt(client: &aerospike::Client) -> bool {
     match client.cluster.get_random_node() {
         Ok(node) => node.version().supports_mrt(),
-        Err(_) => false,
-    }
-}
-
-/// Check if the namespace is configured with strong-consistency.
-async fn namespace_is_sc(client: &aerospike::Client, ns: &str) -> bool {
-    let node = match client.cluster.get_random_node() {
-        Ok(n) => n,
-        Err(_) => return false,
-    };
-
-    let info_key = format!("namespace/{ns}");
-    let result = node.info(&AdminPolicy::default(), &[&info_key]).await;
-    match result {
-        Ok(map) => {
-            if let Some(info) = map.get(&info_key) {
-                info.contains("strong-consistency=true")
-                    || info.contains("strong-consistency-allow-expunge=true")
-            } else {
-                false
-            }
-        }
         Err(_) => false,
     }
 }
@@ -62,7 +38,7 @@ macro_rules! skip_if_no_mrt {
             eprintln!("Skipping MRT test: server version < 8.0");
             return;
         }
-        if !namespace_is_sc($client, common::namespace()).await {
+        if !common::namespace_is_sc($client, common::namespace()).await {
             eprintln!("Skipping MRT test: namespace not configured with strong-consistency");
             return;
         }

@@ -122,6 +122,17 @@ impl Cluster {
             ));
         }
 
+        // Expand the seed list with every discovered node's primary host so
+        // recovery still has reachable addresses if the originally-configured
+        // seeds go offline. Mirrors Java `Cluster.initTendThread`:
+        // iterate nodes, add any whose host isn't already in the seed list.
+        let discovered: Vec<Host> = cluster
+            .nodes()
+            .iter()
+            .map(|n| n.host())
+            .collect();
+        cluster.merge_seeds(&discovered);
+
         let cluster_for_tend = cluster.clone();
         let _res = aerospike_rt::spawn(Cluster::tend_thread(cluster_for_tend, rx));
         debug!("New cluster initialized and ready to be used...");
@@ -161,6 +172,11 @@ impl Cluster {
             nodes = self.nodes();
         }
 
+        // Snapshot the cluster size for this tend. Used by the split-cluster
+        // guard below — the guard only makes sense when the cluster already
+        // believes it has multiple nodes.
+        let cluster_size = nodes.len();
+
         let mut friend_list: Vec<Host> = vec![];
         let mut refresh_count = 0;
 
@@ -168,6 +184,17 @@ impl Cluster {
 
         // Refresh all known nodes.
         for node in nodes {
+            // Reap idle connections, but keep enough of them alive via a
+            // cheap info probe to stay at or above `min_conns_per_node` —
+            // avoids the full TCP-connect round-trip that `fill_min_conns`
+            // would otherwise pay to replace them. Uses `try_lock` per
+            // queue so this never blocks in-flight callers; contended
+            // pools are simply retried on the next tend.
+            let processed = node.reap_and_refresh_idle_connections().await;
+            if processed > 0 {
+                debug!("Reap/refresh processed {processed} idle connections on {node}");
+            }
+
             let old_gen = node.partition_generation();
             let old_rebalance_gen = node.rebalance_generation();
             if node.is_active() {
@@ -180,12 +207,32 @@ impl Cluster {
                         }
 
                         if old_gen != node.partition_generation() {
-                            partition_map.get_or_init(|| {
-                                // this will clone the inner value
-                                (*self.partition_map.load().clone()).clone()
-                            });
-                            self.update_partitions(partition_map.get_mut().unwrap(), &node)
-                                .await?;
+                            // Split-cluster guard: if the cluster currently
+                            // believes it has multiple nodes but this node
+                            // advertises zero peers after at least one prior
+                            // refresh, it's likely isolated — don't let its
+                            // partition view overwrite the shared map.
+                            // A single-node cluster has cluster_size == 1 and
+                            // is expected to report 0 peers, so the guard
+                            // does not fire. Matches Java
+                            // `Node.refreshPartitions`'s intent (peersCount == 0
+                            // && refreshCount > 1) where refreshCount is per-tend
+                            // and > 1 implies multiple peer-refreshes this tend.
+                            let suspect_split = cluster_size > 1
+                                && node.peers_count() == 0
+                                && node.refresh_count() > 1;
+                            if suspect_split {
+                                debug!(
+                                    "Skipping partition update for node {node}: reports 0 peers in {cluster_size}-node cluster (likely split)"
+                                );
+                            } else {
+                                partition_map.get_or_init(|| {
+                                    // this will clone the inner value
+                                    (*self.partition_map.load().clone()).clone()
+                                });
+                                self.update_partitions(partition_map.get_mut().unwrap(), &node)
+                                    .await?;
+                            }
                         }
 
                         if old_rebalance_gen != node.rebalance_generation() {
@@ -285,6 +332,23 @@ impl Cluster {
         self.seeds.store(Arc::new(seeds));
     }
 
+    /// Append only those hosts that aren't already in the seed list.
+    /// Used after cluster stabilization to promote discovered nodes to
+    /// fallback seeds without creating duplicates on repeated calls.
+    pub fn merge_seeds(&self, new_seeds: &[Host]) {
+        let mut seeds = self.seeds.load().to_vec();
+        let mut changed = false;
+        for host in new_seeds {
+            if !seeds.iter().any(|s| s == host) {
+                seeds.push(host.clone());
+                changed = true;
+            }
+        }
+        if changed {
+            self.seeds.store(Arc::new(seeds));
+        }
+    }
+
     pub fn alias_exists(&self, host: &Host) -> bool {
         let aliases = self.aliases.load();
         aliases.contains_key(host)
@@ -355,6 +419,12 @@ impl Cluster {
         info!("Seeding the cluster. Seeds count: {}", seed_array.len());
 
         let mut list: Vec<Arc<Node>> = vec![];
+        // Fallback retention: if a seed validates but advertises no peers, it
+        // may be an isolated node or a restarting one. Retain the first such
+        // validator as a fallback and only use it if no other seed yields a
+        // populated peer list. Mirrors Java `NodeValidator.seedNode` logic.
+        let mut fallback: Option<NodeValidator> = None;
+
         for seed in seed_array.iter() {
             let mut seed_node_validator = NodeValidator::new(self.client_policy());
             if let Err(err) = seed_node_validator.validate_node(self, seed).await {
@@ -362,15 +432,28 @@ impl Cluster {
                 continue;
             }
 
-            let peers = if seed_node_validator.services().is_empty() {
-                &*seed_node_validator.aliases()
-            } else {
-                &*seed_node_validator.services()
-            };
+            if seed_node_validator.services().is_empty() {
+                // Seed reports no peers — defer it. If a later seed returns
+                // a real peer list we'll drop this candidate.
+                if fallback.is_none() {
+                    debug!("Seed {seed} has no peers; retaining as fallback");
+                    fallback = Some(seed_node_validator);
+                } else {
+                    debug!("Discarding additional peerless seed {seed}");
+                }
+                continue;
+            }
 
-            for alias in peers {
+            // A previously-retained fallback is orthogonal once a real peer
+            // list shows up — drop it.
+            if fallback.is_some() {
+                debug!("Dropping fallback seed in favor of {seed}");
+                fallback = None;
+            }
+
+            for alias in seed_node_validator.services() {
                 let mut nv = NodeValidator::new(self.client_policy());
-                if let Err(err) = nv.validate_node(self, alias).await {
+                if let Err(err) = nv.validate_node(self, &alias).await {
                     log_error_chain!(err, "Seeding host {} failed with error", alias);
                     continue;
                 }
@@ -383,6 +466,29 @@ impl Cluster {
                 let node = Arc::new(node);
                 self.add_aliases(node.clone());
                 list.push(node);
+            }
+        }
+
+        // No seed yielded peers. Use the fallback (if any) as the single
+        // cluster node so the client can still make progress.
+        if list.is_empty() {
+            if let Some(nv) = fallback {
+                info!("Using fallback seed node: {}", nv.name);
+                for alias in nv.aliases() {
+                    let mut peer_nv = NodeValidator::new(self.client_policy());
+                    if let Err(err) = peer_nv.validate_node(self, &alias).await {
+                        log_error_chain!(err, "Fallback seed {} failed", alias);
+                        continue;
+                    }
+                    if self.find_node_name(&list, &peer_nv.name) {
+                        continue;
+                    }
+                    let node = self.create_node(peer_nv).await;
+                    let node = Arc::new(node);
+                    self.add_aliases(node.clone());
+                    list.push(node);
+                    break; // one fallback node is enough
+                }
             }
         }
 
