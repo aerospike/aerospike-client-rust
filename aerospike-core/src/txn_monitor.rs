@@ -86,26 +86,6 @@ pub async fn add_keys_from_records(
     add_write_keys(cluster, policy, txn, &ops).await
 }
 
-/// Add multiple write keys (by Key slice) to the transaction monitor record.
-pub async fn add_keys(
-    cluster: Arc<Cluster>,
-    policy: &BasePolicy,
-    txn: &Arc<Txn>,
-    keys: &[Key],
-) -> Result<()> {
-    txn.verify_command()?;
-
-    let list_policy = txn_ordered_list_policy();
-    let mut digest_values: Vec<Value> = Vec::with_capacity(keys.len());
-
-    for key in keys {
-        digest_values.push(Value::Blob(key.digest.to_vec()));
-    }
-
-    let ops = get_txn_ops_from_value_list(txn, &list_policy, digest_values);
-    add_write_keys(cluster, policy, txn, &ops).await
-}
-
 fn get_txn_ops(txn: &Arc<Txn>, cmd_key: &Key) -> Result<Vec<Operation>> {
     let list_policy = txn_ordered_list_policy();
 
