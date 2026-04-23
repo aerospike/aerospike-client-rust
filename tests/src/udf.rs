@@ -22,7 +22,7 @@ use aerospike_rt::time::Duration;
 
 #[aerospike_macro::test]
 async fn execute_udf() {
-    let client = common::client().await;
+    let client = common::singleton_client().await;
     let namespace = common::namespace();
     let set_name = &common::rand_str(10);
 
@@ -102,13 +102,11 @@ end
     } else {
         panic!("UDF function did not return the expected error");
     }
-
-    client.close().await.unwrap();
 }
 
 #[aerospike_macro::test]
 async fn query_execute_udf_with_filter() {
-    let client = common::client().await;
+    let client = common::singleton_client().await;
     let namespace = common::namespace();
     let set_name = common::rand_str(10);
 
@@ -183,13 +181,11 @@ end
         let val: i64 = rec.bins["bin"].clone().into();
         assert_eq!(val, i, "record {i} should not have been modified");
     }
-
-    client.close().await.unwrap();
 }
 
 #[aerospike_macro::test]
 async fn query_execute_udf_scan_all() {
-    let client = common::client().await;
+    let client = common::singleton_client().await;
     let namespace = common::namespace();
     let set_name = common::rand_str(10);
 
@@ -242,13 +238,11 @@ end
             "record {i} missing marker"
         );
     }
-
-    client.close().await.unwrap();
 }
 
 #[aerospike_macro::test]
 async fn query_execute_udf_with_args() {
-    let client = common::client().await;
+    let client = common::singleton_client().await;
     let namespace = common::namespace();
     let set_name = common::rand_str(10);
 
@@ -304,6 +298,4 @@ end
         let val: i64 = rec.bins["bin"].clone().into();
         assert_eq!(val, i + 100, "record {i} not updated correctly");
     }
-
-    client.close().await.unwrap();
 }

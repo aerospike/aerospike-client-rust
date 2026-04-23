@@ -175,7 +175,15 @@ pub fn client_policy() -> &'static ClientPolicy {
 pub async fn client() -> Client {
     Client::new(&GLOBAL_CLIENT_POLICY, &*AEROSPIKE_HOSTS)
         .await
-        .unwrap()
+        .unwrap_or_else(|e| {
+            panic!(
+                "integration tests: could not connect to AEROSPIKE_HOSTS={}: {}\n\
+                 Start a node or set AEROSPIKE_HOSTS. For Docker/advertised addresses try \
+                 AEROSPIKE_USE_SERVICES_ALTERNATE=true (default in this repo's test common).",
+                hosts(),
+                e
+            );
+        })
 }
 
 pub async fn singleton_client() -> &'static Client {
@@ -194,7 +202,14 @@ pub async fn singleton_client() -> &'static Client {
                 .unwrap();
             let client = Client::new(&GLOBAL_CLIENT_POLICY, &*AEROSPIKE_HOSTS)
                 .await
-                .unwrap();
+                .unwrap_or_else(|e| {
+                    panic!(
+                        "singleton_client: could not connect to AEROSPIKE_HOSTS={}: {}\n\
+                         Start a node or set AEROSPIKE_HOSTS; see also AEROSPIKE_USE_SERVICES_ALTERNATE.",
+                        hosts(),
+                        e
+                    );
+                });
 
             client
         })
@@ -247,6 +262,48 @@ pub async fn namespace_is_sc(client: &aerospike::Client, ns: &str) -> bool {
             })
             .unwrap_or(false),
         Err(_) => false,
+    }
+}
+
+/// Namespace and host behavior for integration tests. Call [`ServerCapabilities::detect`] once at
+/// the start of a test (or module setup), then branch or `return` early instead of scattering
+/// probes. Strong-consistency vs AP affects several server features; explicit client TTL is
+/// orthogonal but commonly disallowed when nsup/TTL rules reject `Expiration::Seconds` writes.
+#[derive(Clone, Copy, Debug)]
+pub struct ServerCapabilities {
+    pub namespace_strong_consistency: bool,
+    pub explicit_record_ttl_allowed: bool,
+}
+
+impl ServerCapabilities {
+    pub async fn detect(client: &aerospike::Client) -> Self {
+        let ns = namespace();
+        Self {
+            namespace_strong_consistency: namespace_is_sc(client, ns).await,
+            explicit_record_ttl_allowed: explicit_record_ttl_probe(client).await,
+        }
+    }
+}
+
+async fn explicit_record_ttl_probe(client: &aerospike::Client) -> bool {
+    let ns = namespace();
+    let set_name = format!("ttlchk{}", rand_str(6));
+    let key = aerospike::as_key!(ns, &set_name, 0i64);
+    let wpolicy = aerospike::WritePolicy::new(0, aerospike::Expiration::Seconds(60));
+    let bins = vec![aerospike::as_bin!("bin", 0i64)];
+    match client.put(&wpolicy, &key, &bins).await {
+        Ok(()) => {
+            let _ = client
+                .delete(&aerospike::WritePolicy::default(), &key)
+                .await;
+            true
+        }
+        Err(aerospike::Error::ServerError(
+            aerospike::ResultCode::FailForbidden,
+            _,
+            _,
+        )) => false,
+        Err(e) => panic!("explicit TTL probe put: {}", e),
     }
 }
 

@@ -10,7 +10,7 @@ proptest_async::proptest! {
     async fn cdt_list_insert(
         v1 in 0..100, v2 in 0..100, v3 in 0..100
     ) {
-        let client = common::client().await;
+        let client = common::singleton_client().await;
         let namespace = common::namespace();
         let set_name = &common::prop_setname();
 

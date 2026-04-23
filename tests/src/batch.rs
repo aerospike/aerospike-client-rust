@@ -316,6 +316,15 @@ async fn batch_operate_read_multi_op_single_bin() {
 #[aerospike_macro::test]
 async fn batch_operate_read_touch_ttl() {
     let client = common::client().await;
+    let caps = common::ServerCapabilities::detect(&client).await;
+    if !caps.explicit_record_ttl_allowed {
+        eprintln!(
+            "batch_operate_read_touch_ttl: skipped (explicit_record_ttl_allowed=false; namespace_sc={})",
+            caps.namespace_strong_consistency
+        );
+        return;
+    }
+
     let namespace: &str = common::namespace();
     let set_name = &common::rand_str(10);
     let mut bpolicy = BatchPolicy::default();

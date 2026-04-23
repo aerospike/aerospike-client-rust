@@ -26,6 +26,9 @@ use aerospike::query::PartitionFilter;
 use aerospike::*;
 use aerospike_rt::time::Instant;
 
+// Use `singleton_client` in every test: libtest runs tests in parallel; each `client()` builds a
+// new cluster handle and can transiently fail seed validation (I/O / fds) while the node is fine.
+
 const EXPECTED: usize = 1000;
 
 async fn create_test_set(client: &Client, no_records: usize) -> String {
@@ -48,7 +51,7 @@ async fn create_test_set(client: &Client, no_records: usize) -> String {
 
 #[aerospike_macro::test]
 async fn scan_single_consumer() {
-    let client = common::client().await;
+    let client = common::singleton_client().await;
     let namespace = common::namespace();
     let set_name = create_test_set(&client, EXPECTED).await;
 
@@ -81,12 +84,11 @@ async fn scan_single_consumer() {
         .await;
     assert_eq!(count, EXPECTED);
 
-    client.close().await.unwrap();
 }
 
 #[aerospike_macro::test]
 async fn scan_single_consumer_no_setname() {
-    let client = common::client().await;
+    let client = common::singleton_client().await;
     let namespace = common::namespace();
     let set_name = "";
 
@@ -105,12 +107,11 @@ async fn scan_single_consumer_no_setname() {
     // no need to check anything;
     assert!(count > 0);
 
-    client.close().await.unwrap();
 }
 
 #[aerospike_macro::test]
 async fn scan_single_consumer_with_cancel() {
-    let client = common::client().await;
+    let client = common::singleton_client().await;
     let namespace = common::namespace();
     let set_name = create_test_set(&client, EXPECTED).await;
 
@@ -144,12 +145,11 @@ async fn scan_single_consumer_with_cancel() {
     }
     assert_eq!(count, EXPECTED);
 
-    client.close().await.unwrap();
 }
 
 #[aerospike_macro::test]
 async fn scan_single_consumer_with_cursor() {
-    let client = common::client().await;
+    let client = common::singleton_client().await;
     let namespace = common::namespace();
     let set_name = create_test_set(&client, EXPECTED).await;
 
@@ -176,12 +176,11 @@ async fn scan_single_consumer_with_cursor() {
     }
     assert_eq!(count, EXPECTED);
 
-    client.close().await.unwrap();
 }
 
 #[aerospike_macro::test]
 async fn scan_single_consumer_rps() {
-    let client = common::client().await;
+    let client = common::singleton_client().await;
 
     // only run on single node clusters
     if client.nodes().len() != 1 {
@@ -211,12 +210,11 @@ async fn scan_single_consumer_rps() {
     // Should take at least 3 seconds due to rps
     assert!(duration.as_millis() > 3000);
 
-    client.close().await.unwrap();
 }
 
 #[aerospike_macro::test]
 async fn scan_multi_consumer() {
-    let client = common::client().await;
+    let client = common::singleton_client().await;
     let namespace = common::namespace();
     let set_name = create_test_set(&client, EXPECTED).await;
 
@@ -246,12 +244,11 @@ async fn scan_multi_consumer() {
 
     assert_eq!(count.load(Ordering::Relaxed), EXPECTED);
 
-    client.close().await.unwrap();
 }
 
 #[aerospike_macro::test]
 async fn scan_single_consumer_stream() {
-    let client = common::client().await;
+    let client = common::singleton_client().await;
     let namespace = common::namespace();
     let set_name = create_test_set(&client, EXPECTED).await;
 
@@ -272,12 +269,11 @@ async fn scan_single_consumer_stream() {
 
     assert_eq!(count.load(Ordering::Relaxed), EXPECTED);
 
-    client.close().await.unwrap();
 }
 
 #[aerospike_macro::test]
 async fn scan_multi_consumer_stream() {
-    let client = common::client().await;
+    let client = common::singleton_client().await;
     let namespace = common::namespace();
     let set_name = create_test_set(&client, EXPECTED).await;
 
@@ -312,5 +308,4 @@ async fn scan_multi_consumer_stream() {
 
     assert_eq!(count.load(Ordering::Relaxed), EXPECTED);
 
-    client.close().await.unwrap();
 }

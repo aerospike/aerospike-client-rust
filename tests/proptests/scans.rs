@@ -3,13 +3,16 @@ use crate::proptest_async;
 use crate::proptests::{policy::*, queries::*};
 
 use futures::stream::StreamExt;
+use proptest::prelude::*;
 
-use aerospike::*;
+use aerospike::{QueryDuration, *};
 
 proptest_async::proptest! {
     #[test]
     async fn scan(
-        query_policy in query_policy_scan(1000, 5000),
+        query_policy in query_policy(1000, 5000)
+            .prop_filter("ShortQuery and rps together are invalid",
+                |qp| !(qp.expected_duration == QueryDuration::Short && qp.records_per_second > 0)),
         stmt in statement_scan(common::namespace().into(), common::prop_setname_multi().into()))
     {
         let client = common::singleton_client().await;

@@ -26,11 +26,23 @@ use std::sync::Arc;
 
 const EXPECTED: usize = 100;
 
-async fn create_test_set(client: &Client, no_records: usize) -> String {
+/// Seeds a fresh random set. Uses `WritePolicy::new(…, Seconds(60))` when
+/// `caps.explicit_record_ttl_allowed`, else namespace-default TTL; optional `delete` before each
+/// `put` only when not `caps.namespace_strong_consistency` (non-durable delete can fail on SC).
+async fn create_test_set(
+    client: &Client,
+    no_records: usize,
+    caps: &common::ServerCapabilities,
+) -> String {
     let namespace = common::namespace();
     let set_name = common::rand_str(10);
 
-    let wpolicy = WritePolicy::new(0, Expiration::Seconds(60));
+    let wpolicy = if caps.explicit_record_ttl_allowed {
+        WritePolicy::new(0, Expiration::Seconds(60))
+    } else {
+        WritePolicy::default()
+    };
+
     for i in 0..no_records as i64 {
         let key = as_key!(namespace, &set_name, i);
         let ibin = as_bin!("bin", i);
@@ -41,7 +53,9 @@ async fn create_test_set(client: &Client, no_records: usize) -> String {
         let lbin = as_bin!("bin5", as_list!("a", "b", i));
         let mbin = as_bin!("bin6", as_map!("a" => "test", "b" => i));
         let bins = vec![ibin, sbin, fbin, bbin, lbin, mbin];
-        client.delete(&wpolicy, &key).await.unwrap();
+        if !caps.namespace_strong_consistency {
+            client.delete(&wpolicy, &key).await.unwrap();
+        }
         client.put(&wpolicy, &key, &bins).await.unwrap();
     }
     set_name
@@ -50,8 +64,9 @@ async fn create_test_set(client: &Client, no_records: usize) -> String {
 #[aerospike_macro::test]
 async fn expression_compare() {
     let client = common::client().await;
+    let caps = common::ServerCapabilities::detect(&client).await;
 
-    let set_name = create_test_set(&client, EXPECTED).await;
+    let set_name = create_test_set(&client, EXPECTED, &caps).await;
 
     // EQ
     let rs = test_filter(
@@ -119,8 +134,9 @@ async fn expression_compare() {
 #[aerospike_macro::test]
 async fn expression_condition() {
     let client = common::client().await;
+    let caps = common::ServerCapabilities::detect(&client).await;
 
-    let set_name = create_test_set(&client, EXPECTED).await;
+    let set_name = create_test_set(&client, EXPECTED, &caps).await;
 
     // AND
     let rs = test_filter(
@@ -164,8 +180,9 @@ async fn expression_condition() {
 #[aerospike_macro::test]
 async fn expression_data_types() {
     let client = common::client().await;
+    let caps = common::ServerCapabilities::detect(&client).await;
 
-    let set_name = create_test_set(&client, EXPECTED).await;
+    let set_name = create_test_set(&client, EXPECTED, &caps).await;
 
     // INT
     let rs = test_filter(
@@ -225,8 +242,9 @@ async fn expression_data_types() {
 #[aerospike_macro::test]
 fn expression_aero_5_6() {
     let client = common::client().await;
+    let caps = common::ServerCapabilities::detect(&client).await;
 
-    let set_name = create_test_set(&client, EXPECTED).await;
+    let set_name = create_test_set(&client, EXPECTED, &caps).await;
 
     let rs = test_filter(
         &client,
@@ -521,7 +539,14 @@ fn expression_aero_5_6() {
 fn expression_rec_ops() {
     let client = common::client().await;
 
-    let set_name = create_test_set(&client, EXPECTED).await;
+    let caps = common::ServerCapabilities::detect(&client).await;
+    if !caps.explicit_record_ttl_allowed {
+        eprintln!(
+            "expression_rec_ops: explicit_record_ttl_allowed=false (namespace_sc={}); void_time/ttl skipped",
+            caps.namespace_strong_consistency
+        );
+    }
+    let set_name = create_test_set(&client, EXPECTED, &caps).await;
 
     let rs = test_filter(&client, le(record_size(), int_val(0)), &set_name).await;
     let mut count = count_results(rs).await;
@@ -540,14 +565,16 @@ fn expression_rec_ops() {
     let count = count_results(rs).await;
     assert_eq!(count, 100, "SINCE UPDATE Test Failed");
 
-    // Records don't expire
-    let rs = test_filter(&client, ge(void_time(), int_val(50)), &set_name).await;
-    let count = count_results(rs).await;
-    assert_eq!(count, 100, "VOID TIME Test Failed");
+    if caps.explicit_record_ttl_allowed {
+        // Records were written with explicit TTL (see `create_test_set`).
+        let rs = test_filter(&client, ge(void_time(), int_val(50)), &set_name).await;
+        let count = count_results(rs).await;
+        assert_eq!(count, 100, "VOID TIME Test Failed");
 
-    let rs = test_filter(&client, ge(ttl(), int_val(0)), &set_name).await;
-    let count = count_results(rs).await;
-    assert_eq!(count, 100, "TTL Test Failed");
+        let rs = test_filter(&client, ge(ttl(), int_val(0)), &set_name).await;
+        let count = count_results(rs).await;
+        assert_eq!(count, 100, "TTL Test Failed");
+    }
 
     let rs = test_filter(&client, not(is_tombstone()), &set_name).await;
     let count = count_results(rs).await;
@@ -642,6 +669,7 @@ async fn test_geo_val_bug() {
 #[aerospike_macro::test]
 async fn expression_commands() {
     let client = common::client().await;
+    let caps = common::ServerCapabilities::detect(&client).await;
     let namespace = common::namespace();
     let set_name = common::rand_str(10);
 
@@ -651,7 +679,11 @@ async fn expression_commands() {
         let ibin = as_bin!("bin", i);
 
         let bins = vec![ibin];
-        client.delete(&wpolicy, &key).await.unwrap();
+        // Non-durable delete before put can return FailForbidden on SC namespaces; fresh keys
+        // do not need delete on AP either.
+        if !caps.namespace_strong_consistency {
+            client.delete(&wpolicy, &key).await.unwrap();
+        }
         client.put(&wpolicy, &key, &bins).await.unwrap();
     }
     let mut wpolicy = WritePolicy::default();
@@ -811,7 +843,8 @@ async fn test_filter(client: &Client, filter: Expression, set_name: &str) -> Arc
 #[aerospike_macro::test]
 async fn expression_from_base64_query() {
     let client = common::client().await;
-    let set_name = create_test_set(&client, EXPECTED).await;
+    let caps = common::ServerCapabilities::detect(&client).await;
+    let set_name = create_test_set(&client, EXPECTED, &caps).await;
 
     // Build an expression, serialize to base64, deserialize, and use in a query
     let original = eq(int_bin("bin".to_string()), int_val(1));

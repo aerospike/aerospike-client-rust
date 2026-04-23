@@ -269,7 +269,9 @@ pub fn query_policy(
         base_policy(socket_timeout_ms, total_timeout_ms),
         0..256 as usize,
         0..1000 as u64,
-        1..u32::MAX,
+        // 0 = no throttling; cap positive values to avoid multi-billion "RPS" (caused spurious
+        // client timeouts; see proptests::scans::scan and QueryPolicy::records_per_second docs).
+        0u32..500_000u32,
         1..10_000 as usize,
         query_duration(),
         replica(),
@@ -304,7 +306,7 @@ pub fn query_policy_scan(
         base_policy(socket_timeout_ms, total_timeout_ms),
         0..256 as usize,
         0..1000 as u64,
-        1..u32::MAX,
+        0u32..500_000u32,
         1..10_000 as usize,
         Just(QueryDuration::Long),
         replica(),
