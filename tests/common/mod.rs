@@ -45,7 +45,7 @@ lazy_static! {
         env::var("AEROSPIKE_PROP_SET_NAME").unwrap_or_else(|_| String::from("test"));
     static ref AEROSPIKE_CLUSTER: Option<String> = env::var("AEROSPIKE_CLUSTER").ok();
     static ref AEROSPIKE_USE_SERVICES_ALTERNATE: bool =
-        env::var("AEROSPIKE_USE_SERVICES_ALTERNATE").map(|v| v.trim().eq_ignore_ascii_case("true") || v.trim().eq_ignore_ascii_case("1")).unwrap_or(false);
+        env::var("AEROSPIKE_USE_SERVICES_ALTERNATE").map(|v| v.trim().eq_ignore_ascii_case("true") || v.trim().eq_ignore_ascii_case("1")).unwrap_or(true);
 }
 
 #[cfg(all(any(feature = "rt-tokio"), not(feature = "rt-async-std")))]
