@@ -10,7 +10,9 @@ use aerospike::{QueryDuration, *};
 proptest_async::proptest! {
     #[test]
     async fn scan(
-        query_policy in query_policy(1000, 5000)
+        // Full-partition scans over `insert_bins` data (many bins / records) often exceed
+        // short socket reads; keep floor timeouts well above interactive defaults.
+        query_policy in query_policy(20_000, 60_000)
             .prop_filter("ShortQuery and rps together are invalid",
                 |qp| !(qp.expected_duration == QueryDuration::Short && qp.records_per_second > 0)),
         stmt in statement_scan(common::namespace().into(), common::prop_setname_multi().into()))

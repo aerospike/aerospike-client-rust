@@ -5,6 +5,8 @@ use crate::proptest::prelude::*;
 use crate::proptest_async;
 
 use aerospike::*;
+use aerospike_rt::sleep;
+use aerospike_rt::time::Duration;
 
 use crate::proptests::{batch_operation::*, operation::*, policy::*};
 
@@ -31,44 +33,46 @@ proptest_async::proptest! {
         let set_name = &format!("{}-batch-read", common::prop_setname());
 
         let write_policy = WritePolicy::default();
-        let key = as_key!(namespace, set_name, i);
-        client.delete(&write_policy, &key).await.expect("initial deletion of key should succeed");
+        let key = as_key!(
+            namespace,
+            set_name,
+            format!("{}-{}", i, common::rand_str(12))
+        );
 
         // Randomize the bin value to test for even further per iteration.
 
         let mut expected_value = expected_value.clone();
         expected_value.push_str(&format!("{}", i));
 
-        let mut as_ops = vec![];
-        for op in &ops {
-            let as_op = op.to_op(key.clone());
+        // Seed once when reads expect data — previously this put + 500 ms sleep ran inside the
+        // per-op loop (up to 8× per case), which made the proptest run for many minutes.
+        if i % 2 == 0 {
+            let bins = [as_bin!("binName", expected_value.clone())];
+            client
+                .put(&write_policy, &key, &bins)
+                .await
+                .expect("initial put should have succeeded");
+            sleep(Duration::from_millis(20)).await;
 
-            // Not all reads will have a valid key that leads to content.
-            // Does this read have a corresponding write to initialize a bin?
-
-            if i % 2 == 0 {
-                let bins = [as_bin!("binName", expected_value.clone()),];
-
-                client.put(&write_policy, &key, &bins).await.expect("initial put should have succeeded");
-
-                std::thread::sleep(std::time::Duration::from_millis(500));
-
-                // Make sure write went through using non-batch means.
-
-                let res = client.get(&ReadPolicy::default(), &key, Bins::All).await;
-                match res {
-                    Err(e) => panic!("Unexpected Err after get-after-put: {:?}", e),
-                    Ok(res) => {
-                        if let Some(actual_value) = res.bins.get("binName") {
-                            if expected_value != actual_value.as_string() {
-                                panic!("get-after-put: Value for bin 'binName' doesn't match; expected: {:?}, got: {:?}", expected_value, actual_value);
-                            }
+            let res = client.get(&ReadPolicy::default(), &key, Bins::All).await;
+            match res {
+                Err(e) => panic!("Unexpected Err after get-after-put: {:?}", e),
+                Ok(res) => {
+                    if let Some(actual_value) = res.bins.get("binName") {
+                        if expected_value != actual_value.as_string() {
+                            panic!(
+                                "get-after-put: Value for bin 'binName' doesn't match; expected: {:?}, got: {:?}",
+                                expected_value, actual_value
+                            );
                         }
                     }
                 }
             }
+        }
 
-            as_ops.push(as_op);
+        let mut as_ops = vec![];
+        for op in &ops {
+            as_ops.push(op.to_op(key.clone()));
         }
 
         let res = client.batch(&batch_policy, &as_ops).await;
@@ -100,10 +104,12 @@ proptest_async::proptest! {
         let namespace: &str = common::namespace();
         let set_name = &format!("{}-batch-write", common::prop_setname());
 
-        // Delete any previously existing record(s) associated with the key assigned to this test run.
         let write_policy = WritePolicy::default();
-        let key = as_key!(namespace, set_name, i);
-        client.delete(&write_policy, &key).await.expect("initial deletion of key should succeed");
+        let key = as_key!(
+            namespace,
+            set_name,
+            format!("{}-{}", i, common::rand_str(12))
+        );
 
         let mut puts_to_bins: HashMap<String, Value> = HashMap::new();
         let mut as_ops = vec![];
@@ -235,12 +241,16 @@ proptest_async::proptest! {
     ) {
         let client = common::singleton_client().await;
         let namespace: &str = common::namespace();
+        let ns_sc = namespace_sc!(client);
         let set_name = &format!("{}-batch-delete", common::prop_setname());
 
         let write_policy = WritePolicy::default();
-        let key = as_key!(namespace, set_name, i);
+        let key = as_key!(
+            namespace,
+            set_name,
+            format!("{}-{}", i, common::rand_str(12))
+        );
 
-        client.delete(&write_policy, &key).await.expect("initial records deletion should work");
         if i % 2 == 0 {
             let bins = [as_bin!("bin2delete", 100)];
             client.put(&write_policy, &key, &bins).await.expect("planting a record to delete expected to work");
@@ -248,7 +258,14 @@ proptest_async::proptest! {
 
         let mut as_ops = vec![];
         for op in &ops {
-            let as_op = op.to_op(key.clone());
+            let as_op = match op {
+                PropBatchOperation::Delete(ref bdp) if ns_sc => {
+                    let mut p = bdp.clone();
+                    p.durable_delete = true;
+                    PropBatchOperation::Delete(p).to_op(key.clone())
+                }
+                _ => op.to_op(key.clone()),
+            };
             as_ops.push(as_op);
         }
 

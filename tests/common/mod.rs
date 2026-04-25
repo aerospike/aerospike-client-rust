@@ -26,7 +26,7 @@ use rand::RngExt;
 
 use tokio::sync::OnceCell;
 
-use aerospike::{AdminPolicy, AuthMode, Client, ClientPolicy};
+use aerospike::{AdminPolicy, AuthMode, Client, ClientPolicy, Key, WritePolicy};
 
 #[cfg(feature = "tls")]
 use rustls::pki_types::pem::PemObject;
@@ -265,24 +265,68 @@ pub async fn namespace_is_sc(client: &aerospike::Client, ns: &str) -> bool {
     }
 }
 
+/// True when the integration-test namespace uses strong consistency (`info namespace/...`).
+/// Expands to an `.await` expression; use only inside `async` functions.
+macro_rules! namespace_sc {
+    ($client:expr) => {
+        $crate::common::namespace_is_sc($client, $crate::common::namespace()).await
+    };
+}
+
 /// Namespace and host behavior for integration tests. Call [`ServerCapabilities::detect`] once at
 /// the start of a test (or module setup), then branch or `return` early instead of scattering
-/// probes. Strong-consistency vs AP affects several server features; explicit client TTL is
-/// orthogonal but commonly disallowed when nsup/TTL rules reject `Expiration::Seconds` writes.
+/// probes. Use [`namespace_sc!`] when you need to know if the namespace is SC. Explicit client TTL
+/// is orthogonal but commonly disallowed when nsup/TTL rules reject `Expiration::Seconds` writes.
 #[derive(Clone, Copy, Debug)]
 pub struct ServerCapabilities {
-    pub namespace_strong_consistency: bool,
     pub explicit_record_ttl_allowed: bool,
 }
 
 impl ServerCapabilities {
     pub async fn detect(client: &aerospike::Client) -> Self {
-        let ns = namespace();
         Self {
-            namespace_strong_consistency: namespace_is_sc(client, ns).await,
             explicit_record_ttl_allowed: explicit_record_ttl_probe(client).await,
         }
     }
+}
+
+static CACHED_SERVER_CAPS: OnceCell<ServerCapabilities> = OnceCell::const_new();
+
+/// Cached [`ServerCapabilities::detect`] for the process. Prefer this in hot loops (e.g. proptests)
+/// so each case does not re-run the TTL probe or create new `ttlchk*` sets.
+pub async fn server_capabilities_cached(client: &Client) -> ServerCapabilities {
+    *CACHED_SERVER_CAPS
+        .get_or_init(|| async { ServerCapabilities::detect(client).await })
+        .await
+}
+
+/// Deletes `key` before test setup on AP namespaces. On strong-consistency namespaces a default
+/// `delete` often returns [`aerospike::ResultCode::FailForbidden`]; this becomes a no-op and
+/// callers should reset record state with `put` (for example `RecordExistsAction::Replace`).
+pub async fn delete_for_test_reset(
+    client: &Client,
+    policy: &WritePolicy,
+    key: &Key,
+) -> aerospike::Result<bool> {
+    if namespace_sc!(client) {
+        Ok(false)
+    } else {
+        client.delete(policy, key).await
+    }
+}
+
+/// [`Client::delete`] with [`WritePolicy::durable_delete`] set on strong-consistency namespaces,
+/// where a non-durable delete often returns [`aerospike::ResultCode::FailForbidden`].
+pub async fn delete_on_cluster(
+    client: &Client,
+    policy: &WritePolicy,
+    key: &Key,
+) -> aerospike::Result<bool> {
+    let mut p = policy.clone();
+    if namespace_sc!(client) {
+        p.durable_delete = true;
+    }
+    client.delete(&p, key).await
 }
 
 async fn explicit_record_ttl_probe(client: &aerospike::Client) -> bool {
@@ -300,6 +344,11 @@ async fn explicit_record_ttl_probe(client: &aerospike::Client) -> bool {
         }
         Err(aerospike::Error::ServerError(
             aerospike::ResultCode::FailForbidden,
+            _,
+            _,
+        ))
+        | Err(aerospike::Error::ServerError(
+            aerospike::ResultCode::ParameterError,
             _,
             _,
         )) => false,

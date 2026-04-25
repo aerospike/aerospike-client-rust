@@ -22,6 +22,7 @@ extern crate rand;
 #[cfg(feature = "tls")]
 extern crate webpki_roots;
 
+#[macro_use]
 mod common;
 mod proptest_async;
 #[macro_use]

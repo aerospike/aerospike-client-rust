@@ -21,7 +21,9 @@ proptest_async::proptest! {
         let val = as_list!("0", 1, 2.1f64);
         let bins = vec![as_bin!("bin", val.clone())];
 
-        client.delete(&wpolicy, &key).await.unwrap();
+        common::delete_for_test_reset(client, &wpolicy, &key)
+            .await
+            .unwrap();
 
         client.put(&wpolicy, &key, &bins).await.unwrap();
         let rec = client.get(&rpolicy, &key, Bins::All).await.unwrap();

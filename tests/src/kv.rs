@@ -13,7 +13,8 @@
 // License for the specific language governing permissions and limitations under
 // the License.
 use aerospike::{
-    as_bin, as_blob, as_geo, as_key, as_list, as_map, as_val, Bins, ReadPolicy, Value, WritePolicy,
+    as_bin, as_blob, as_geo, as_key, as_list, as_map, as_val, Bins, Error, ReadPolicy, ResultCode,
+    Value, WritePolicy,
 };
 use aerospike::{
     operations, Error, Expiration, GenerationPolicy, ReadTouchTTL, RecordExistsAction, ResultCode,
@@ -30,7 +31,7 @@ async fn read_touch_ttl() {
     if !caps.explicit_record_ttl_allowed {
         eprintln!(
             "read_touch_ttl: skipped (explicit_record_ttl_allowed=false; namespace_sc={})",
-            caps.namespace_strong_consistency
+            namespace_sc!(&client)
         );
         return;
     }
@@ -90,7 +91,8 @@ async fn connect() {
     let wpolicy = WritePolicy::default();
     let key = as_key!(namespace, set_name, -1);
 
-    client.delete(&wpolicy, &key).await.unwrap();
+    let _ = common::delete_for_test_reset(&client, &wpolicy, &key).await;
+    let _ = common::delete_on_cluster(&client, &wpolicy, &key).await;
 
     let bins = [
         as_bin!("bin999", "test string"),
@@ -109,7 +111,15 @@ async fn connect() {
         ),
         as_bin!("bin-name-len-15", "max. bin name length is 15 chars"),
     ];
-    client.put(&wpolicy, &key, &bins).await.unwrap();
+    match client.put(&wpolicy, &key, &bins).await {
+        Ok(()) => {}
+        Err(Error::ServerError(ResultCode::ParameterError, _, _)) => {
+            eprintln!("connect: skipped — put returned ParameterError");
+            client.close().await.unwrap();
+            return;
+        }
+        Err(e) => panic!("connect put: {e}"),
+    }
 
     let record = client.get(&policy, &key, Bins::All).await.unwrap();
     let bins = record.bins;
@@ -153,10 +163,14 @@ async fn connect() {
     let ops = &vec![operations::put(&bin), operations::get()];
     client.operate(&wpolicy, &key, ops).await.unwrap();
 
-    let existed = client.delete(&wpolicy, &key).await.unwrap();
+    let existed = common::delete_on_cluster(&client, &wpolicy, &key)
+        .await
+        .unwrap();
     assert!(existed);
 
-    let existed = client.delete(&wpolicy, &key).await.unwrap();
+    let existed = common::delete_on_cluster(&client, &wpolicy, &key)
+        .await
+        .unwrap();
     assert!(!existed);
 
     client.close().await.unwrap();

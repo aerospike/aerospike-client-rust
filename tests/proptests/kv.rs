@@ -51,7 +51,9 @@ proptest_async::proptest! {
 
         let wp = WritePolicy{record_exists_action: RecordExistsAction::Replace, ..WritePolicy::default()};
 
-        client.delete(&wp, &key).await.unwrap();
+        common::delete_for_test_reset(client, &wp, &key)
+            .await
+            .unwrap();
         client.put(&wp, &key, bins).await.unwrap();
         let rec = client.get(&ReadPolicy::default(), &key, Bins::All).await.unwrap();
 
