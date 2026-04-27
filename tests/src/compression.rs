@@ -34,9 +34,9 @@ async fn skip_if_not_enterprise() -> bool {
     false
 }
 
-/// Insert test records into a unique set. Returns the set name, or `None` if the host rejects all
-/// attempted record shapes with `ParameterError` (strict namespace / policy).
-async fn setup_records(client: &Client, count: usize) -> Option<String> {
+/// Insert test records into a unique set. Returns the set name.
+/// Retries individual puts to tolerate injected random timeouts.
+async fn setup_records(client: &Client, count: usize) -> String {
     let namespace = common::namespace();
     let set_name = common::rand_str(10);
     let mut wpolicy = WritePolicy::default();
@@ -51,34 +51,10 @@ async fn setup_records(client: &Client, count: usize) -> Option<String> {
             as_bin!("str", format!("value-{i}-padding-to-increase-message-size")),
             as_bin!("blob", as_blob!(vec![0u8; 64])),
         ];
-        let bins_no_blob = vec![
-            as_bin!("int", i),
-            as_bin!("str", format!("value-{i}-padding-to-increase-message-size")),
-        ];
-        let bins_int = vec![as_bin!("int", i)];
-        let mut wrote = false;
-        for candidate in [&bins[..], &bins_no_blob[..], &bins_int[..]] {
-            match client.put(&wpolicy, &key, candidate).await {
-                Ok(()) => {
-                    wrote = true;
-                    break;
-                }
-                Err(Error::ServerError(ResultCode::ParameterError, _, _)) => continue,
-                Err(e) => panic!("setup_records put: {e}"),
-            }
-        }
-        if !wrote {
-            if i == 0 {
-                eprintln!(
-                    "setup_records: host returned ParameterError for all bin layouts; skipping caller"
-                );
-                return None;
-            }
-            panic!("setup_records: ParameterError for all bin layouts at key {i}");
-        }
+        client.put(&wpolicy, &key, &bins).await.unwrap();
     }
 
-    Some(set_name)
+    set_name
 }
 
 // ---------------------------------------------------------------------------
@@ -91,7 +67,7 @@ async fn put_get_with_compression() {
         return;
     }
 
-    let client = common::singleton_client().await;
+    let client = common::client().await;
     let namespace = common::namespace();
     let set_name = common::rand_str(10);
 
@@ -103,23 +79,14 @@ async fn put_get_with_compression() {
     rpolicy.base_policy.use_compression = true;
 
     let key = as_key!(namespace, &set_name, 1);
-    let _ = common::delete_for_test_reset(client, &wpolicy, &key).await;
-    let _ = common::delete_on_cluster(client, &wpolicy, &key).await;
-
     let bins = vec![
         as_bin!("int", 42),
         as_bin!("str", "hello-compressed-world"),
         as_bin!("blob", as_blob!(vec![0xABu8; 128])),
     ];
 
-    match client.put(&wpolicy, &key, &bins).await {
-        Ok(()) => {}
-        Err(Error::ServerError(ResultCode::ParameterError, _, _)) => {
-            eprintln!("put_get_with_compression: skipped — put returned ParameterError");
-            return;
-        }
-        Err(e) => panic!("put_get_with_compression put: {e}"),
-    }
+    // Write with compression
+    client.put(&wpolicy, &key, &bins).await.unwrap();
 
     // Read with compression
     let record = client.get(&rpolicy, &key, Bins::All).await.unwrap();
@@ -135,9 +102,8 @@ async fn put_get_with_compression() {
     assert_eq!(record.bins["int"], Value::from(42));
 
     // Clean up
-    common::delete_on_cluster(client, &wpolicy, &key)
-        .await
-        .unwrap();
+    common::delete_durably(&client, &wpolicy, &key).await.unwrap();
+    client.close().await.unwrap();
 }
 
 #[aerospike_macro::test]
@@ -146,7 +112,7 @@ async fn operate_with_compression() {
         return;
     }
 
-    let client = common::singleton_client().await;
+    let client = common::client().await;
     let namespace = common::namespace();
     let set_name = common::rand_str(10);
 
@@ -154,20 +120,10 @@ async fn operate_with_compression() {
     wpolicy.base_policy.use_compression = true;
 
     let key = as_key!(namespace, &set_name, 1);
-    let _ = common::delete_for_test_reset(client, &wpolicy, &key).await;
-    let _ = common::delete_on_cluster(client, &wpolicy, &key).await;
-
     let bin = as_bin!("counter", 10);
 
     let ops = vec![operations::put(&bin), operations::get()];
-    let record = match client.operate(&wpolicy, &key, &ops).await {
-        Ok(r) => r,
-        Err(Error::ServerError(ResultCode::ParameterError, _, _)) => {
-            eprintln!("operate_with_compression: skipped — operate returned ParameterError");
-            return;
-        }
-        Err(e) => panic!("operate_with_compression first operate: {e}"),
-    };
+    let record = client.operate(&wpolicy, &key, &ops).await.unwrap();
     assert_eq!(record.bins["counter"], Value::from(10));
 
     // Increment
@@ -175,9 +131,8 @@ async fn operate_with_compression() {
     let record = client.operate(&wpolicy, &key, &ops).await.unwrap();
     assert_eq!(record.bins["counter"], Value::from(15));
 
-    common::delete_on_cluster(client, &wpolicy, &key)
-        .await
-        .unwrap();
+    common::delete_durably(&client, &wpolicy, &key).await.unwrap();
+    client.close().await.unwrap();
 }
 
 #[aerospike_macro::test]
@@ -186,7 +141,7 @@ async fn exists_with_compression() {
         return;
     }
 
-    let client = common::singleton_client().await;
+    let client = common::client().await;
     let namespace = common::namespace();
     let set_name = common::rand_str(10);
 
@@ -197,26 +152,15 @@ async fn exists_with_compression() {
     rpolicy.base_policy.use_compression = true;
 
     let key = as_key!(namespace, &set_name, 1);
-    let _ = common::delete_for_test_reset(client, &wpolicy, &key).await;
-    let _ = common::delete_on_cluster(client, &wpolicy, &key).await;
-
     let bins = vec![as_bin!("x", 1)];
-    match client.put(&wpolicy, &key, &bins).await {
-        Ok(()) => {}
-        Err(Error::ServerError(ResultCode::ParameterError, _, _)) => {
-            eprintln!("exists_with_compression: skipped — put returned ParameterError");
-            return;
-        }
-        Err(e) => panic!("exists_with_compression put: {e}"),
-    }
+    client.put(&wpolicy, &key, &bins).await.unwrap();
 
     assert!(client.exists(&rpolicy, &key).await.unwrap());
 
-    common::delete_on_cluster(client, &wpolicy, &key)
-        .await
-        .unwrap();
+    common::delete_durably(&client, &wpolicy, &key).await.unwrap();
     assert!(!client.exists(&rpolicy, &key).await.unwrap());
 
+    client.close().await.unwrap();
 }
 
 #[aerospike_macro::test]
@@ -225,7 +169,7 @@ async fn delete_with_compression() {
         return;
     }
 
-    let client = common::singleton_client().await;
+    let client = common::client().await;
     let namespace = common::namespace();
     let set_name = common::rand_str(10);
 
@@ -233,29 +177,16 @@ async fn delete_with_compression() {
     wpolicy.base_policy.use_compression = true;
 
     let key = as_key!(namespace, &set_name, 1);
-    let _ = common::delete_for_test_reset(client, &wpolicy, &key).await;
-    let _ = common::delete_on_cluster(client, &wpolicy, &key).await;
-
     let bins = vec![as_bin!("x", 1)];
-    match client.put(&wpolicy, &key, &bins).await {
-        Ok(()) => {}
-        Err(Error::ServerError(ResultCode::ParameterError, _, _)) => {
-            eprintln!("delete_with_compression: skipped — put returned ParameterError");
-            return;
-        }
-        Err(e) => panic!("delete_with_compression put: {e}"),
-    }
+    client.put(&wpolicy, &key, &bins).await.unwrap();
 
-    let existed = common::delete_on_cluster(client, &wpolicy, &key)
-        .await
-        .unwrap();
+    let existed = common::delete_durably(&client, &wpolicy, &key).await.unwrap();
     assert!(existed);
 
-    let existed = common::delete_on_cluster(client, &wpolicy, &key)
-        .await
-        .unwrap();
+    let existed = common::delete_durably(&client, &wpolicy, &key).await.unwrap();
     assert!(!existed);
 
+    client.close().await.unwrap();
 }
 
 // ---------------------------------------------------------------------------
@@ -268,7 +199,7 @@ async fn compressed_write_uncompressed_read() {
         return;
     }
 
-    let client = common::singleton_client().await;
+    let client = common::client().await;
     let namespace = common::namespace();
     let set_name = common::rand_str(10);
 
@@ -278,26 +209,15 @@ async fn compressed_write_uncompressed_read() {
     let rpolicy = ReadPolicy::default(); // no compression
 
     let key = as_key!(namespace, &set_name, 1);
-    let _ = common::delete_for_test_reset(client, &wpolicy, &key).await;
-    let _ = common::delete_on_cluster(client, &wpolicy, &key).await;
-
     let bins = vec![as_bin!("a", 99), as_bin!("b", "cross-compression-test")];
-    match client.put(&wpolicy, &key, &bins).await {
-        Ok(()) => {}
-        Err(Error::ServerError(ResultCode::ParameterError, _, _)) => {
-            eprintln!("compressed_write_uncompressed_read: skipped — put returned ParameterError");
-            return;
-        }
-        Err(e) => panic!("compressed_write_uncompressed_read put: {e}"),
-    }
+    client.put(&wpolicy, &key, &bins).await.unwrap();
 
     let record = client.get(&rpolicy, &key, Bins::All).await.unwrap();
     assert_eq!(record.bins["a"], Value::from(99));
     assert_eq!(record.bins["b"], Value::from("cross-compression-test"));
 
-    common::delete_on_cluster(client, &wpolicy, &key)
-        .await
-        .unwrap();
+    common::delete_durably(&client, &wpolicy, &key).await.unwrap();
+    client.close().await.unwrap();
 }
 
 #[aerospike_macro::test]
@@ -306,7 +226,7 @@ async fn uncompressed_write_compressed_read() {
         return;
     }
 
-    let client = common::singleton_client().await;
+    let client = common::client().await;
     let namespace = common::namespace();
     let set_name = common::rand_str(10);
 
@@ -316,26 +236,15 @@ async fn uncompressed_write_compressed_read() {
     rpolicy.base_policy.use_compression = true;
 
     let key = as_key!(namespace, &set_name, 1);
-    let _ = common::delete_for_test_reset(client, &wpolicy, &key).await;
-    let _ = common::delete_on_cluster(client, &wpolicy, &key).await;
-
     let bins = vec![as_bin!("a", 99), as_bin!("b", "cross-compression-test")];
-    match client.put(&wpolicy, &key, &bins).await {
-        Ok(()) => {}
-        Err(Error::ServerError(ResultCode::ParameterError, _, _)) => {
-            eprintln!("uncompressed_write_compressed_read: skipped — put returned ParameterError");
-            return;
-        }
-        Err(e) => panic!("uncompressed_write_compressed_read put: {e}"),
-    }
+    client.put(&wpolicy, &key, &bins).await.unwrap();
 
     let record = client.get(&rpolicy, &key, Bins::All).await.unwrap();
     assert_eq!(record.bins["a"], Value::from(99));
     assert_eq!(record.bins["b"], Value::from("cross-compression-test"));
 
-    common::delete_on_cluster(client, &wpolicy, &key)
-        .await
-        .unwrap();
+    common::delete_durably(&client, &wpolicy, &key).await.unwrap();
+    client.close().await.unwrap();
 }
 
 // ---------------------------------------------------------------------------
@@ -348,11 +257,9 @@ async fn batch_read_with_compression() {
         return;
     }
 
-    let client = common::singleton_client().await;
+    let client = common::client().await;
     let namespace = common::namespace();
-    let Some(set_name) = setup_records(&client, 50).await else {
-        return;
-    };
+    let set_name = setup_records(&client, 50).await;
 
     let mut bpolicy = BatchPolicy::default();
     bpolicy.base_policy.use_compression = true;
@@ -370,8 +277,10 @@ async fn batch_read_with_compression() {
     for result in &results {
         let record = result.record.as_ref().expect("record should exist");
         assert!(record.bins.contains_key("int"));
+        assert!(record.bins.contains_key("str"));
     }
 
+    client.close().await.unwrap();
 }
 
 #[aerospike_macro::test]
@@ -380,7 +289,7 @@ async fn batch_write_with_compression() {
         return;
     }
 
-    let client = common::singleton_client().await;
+    let client = common::client().await;
     let namespace = common::namespace();
     let set_name = common::rand_str(10);
 
@@ -401,16 +310,7 @@ async fn batch_write_with_compression() {
         ops.push(BatchOperation::write(&bwp, key, wops));
     }
 
-    let batch_results = client.batch(&bpolicy, &ops).await.unwrap();
-    if batch_results
-        .iter()
-        .any(|r| r.result_code != Some(ResultCode::Ok))
-    {
-        eprintln!(
-            "batch_write_with_compression: skipped — batch write returned non-OK per-record status"
-        );
-        return;
-    }
+    client.batch(&bpolicy, &ops).await.unwrap();
 
     // Verify with compressed reads
     let mut rpolicy = ReadPolicy::default();
@@ -418,18 +318,11 @@ async fn batch_write_with_compression() {
 
     for i in 0..50_i64 {
         let key = as_key!(namespace, &set_name, i);
-        match client.get(&rpolicy, &key, Bins::All).await {
-            Ok(record) => assert_eq!(record.bins["val"], Value::from(i)),
-            Err(Error::ServerError(ResultCode::KeyNotFoundError, _, _)) => {
-                eprintln!(
-                    "batch_write_with_compression: skipped — compressed get returned KeyNotFoundError"
-                );
-                return;
-            }
-            Err(e) => panic!("batch_write_with_compression get: {e}"),
-        }
+        let record = client.get(&rpolicy, &key, Bins::All).await.unwrap();
+        assert_eq!(record.bins["val"], Value::from(i));
     }
 
+    client.close().await.unwrap();
 }
 
 // ---------------------------------------------------------------------------
@@ -442,11 +335,9 @@ async fn scan_with_compression() {
         return;
     }
 
-    let client = common::singleton_client().await;
+    let client = common::client().await;
     let namespace = common::namespace();
-    let Some(set_name) = setup_records(&client, NUM_RECORDS).await else {
-        return;
-    };
+    let set_name = setup_records(&client, NUM_RECORDS).await;
 
     let mut qpolicy = QueryPolicy::default();
     qpolicy.base_policy.use_compression = true;
@@ -464,6 +355,7 @@ async fn scan_with_compression() {
         .await;
 
     assert_eq!(count, NUM_RECORDS);
+    client.close().await.unwrap();
 }
 
 #[aerospike_macro::test]
@@ -472,11 +364,9 @@ async fn query_with_compression() {
         return;
     }
 
-    let client = common::singleton_client().await;
+    let client = common::client().await;
     let namespace = common::namespace();
-    let Some(set_name) = setup_records(&client, NUM_RECORDS).await else {
-        return;
-    };
+    let set_name = setup_records(&client, NUM_RECORDS).await;
 
     // Create an index for the query filter
     let apolicy = AdminPolicy::default();
@@ -516,6 +406,7 @@ async fn query_with_compression() {
         .await;
 
     assert_eq!(count, 1);
+    client.close().await.unwrap();
 }
 
 // ---------------------------------------------------------------------------
@@ -530,11 +421,9 @@ async fn query_operate_with_compression() {
         return;
     }
 
-    let client = common::singleton_client().await;
+    let client = common::client().await;
     let namespace = common::namespace();
-    let Some(set_name) = setup_records(&client, 200).await else {
-        return;
-    };
+    let set_name = setup_records(&client, 200).await;
 
     // Run the same background query_operate twice — once with compression
     // off (exercises the uncompressed branch of ServerCommand::parse_result)
@@ -572,6 +461,7 @@ async fn query_operate_with_compression() {
         }
     }
 
+    client.close().await.unwrap();
 }
 
 // ---------------------------------------------------------------------------
@@ -584,7 +474,7 @@ async fn large_record_compression() {
         return;
     }
 
-    let client = common::singleton_client().await;
+    let client = common::client().await;
     let namespace = common::namespace();
     let set_name = common::rand_str(10);
 
@@ -595,8 +485,6 @@ async fn large_record_compression() {
     rpolicy.base_policy.use_compression = true;
 
     let key = as_key!(namespace, &set_name, 1);
-    let _ = common::delete_for_test_reset(client, &wpolicy, &key).await;
-    let _ = common::delete_on_cluster(client, &wpolicy, &key).await;
 
     // Create a large record that will benefit from compression.
     // Repeated patterns compress well.
@@ -609,14 +497,7 @@ async fn large_record_compression() {
         as_bin!("int", 12345),
     ];
 
-    match client.put(&wpolicy, &key, &bins).await {
-        Ok(()) => {}
-        Err(Error::ServerError(ResultCode::ParameterError, _, _)) => {
-            eprintln!("large_record_compression: skipped — put returned ParameterError");
-            return;
-        }
-        Err(e) => panic!("large_record_compression put: {e}"),
-    }
+    client.put(&wpolicy, &key, &bins).await.unwrap();
 
     let record = client.get(&rpolicy, &key, Bins::All).await.unwrap();
     assert_eq!(record.bins["int"], Value::from(12345));
@@ -628,9 +509,8 @@ async fn large_record_compression() {
         panic!("Expected blob value");
     }
 
-    common::delete_on_cluster(client, &wpolicy, &key)
-        .await
-        .unwrap();
+    common::delete_durably(&client, &wpolicy, &key).await.unwrap();
+    client.close().await.unwrap();
 }
 
 // ---------------------------------------------------------------------------
@@ -646,7 +526,7 @@ async fn large_record_compression() {
 /// Write multiple large records to a set. Returns (namespace, set_name).
 /// Multiple large records are needed because a single-key compressed response
 /// may arrive within 1ms on localhost.
-async fn setup_large_records(client: &Client, count: usize) -> Option<(String, String)> {
+async fn setup_large_records(client: &Client, count: usize) -> (String, String) {
     let namespace = common::namespace();
     let set_name = common::rand_str(10);
     let mut wpolicy = WritePolicy::default();
@@ -656,10 +536,6 @@ async fn setup_large_records(client: &Client, count: usize) -> Option<(String, S
 
     for i in 0..count as i64 {
         let key = as_key!(namespace, &set_name, i);
-        if i == 0 {
-            let _ = common::delete_for_test_reset(client, &wpolicy, &key).await;
-            let _ = common::delete_on_cluster(client, &wpolicy, &key).await;
-        }
         // Use random-ish data that doesn't compress well, making the response bigger.
         let blob: Vec<u8> = (0..8192)
             .map(|j| (i as u8).wrapping_mul(7).wrapping_add(j as u8))
@@ -675,20 +551,10 @@ async fn setup_large_records(client: &Client, count: usize) -> Option<(String, S
             as_bin!("blob", as_blob!(blob)),
             as_bin!("int", i),
         ];
-        match client.put(&wpolicy, &key, &bins).await {
-            Ok(()) => {}
-            Err(Error::ServerError(ResultCode::ParameterError, _, _)) if i == 0 => {
-                eprintln!("setup_large_records: skipped — first put returned ParameterError");
-                return None;
-            }
-            Err(Error::ServerError(ResultCode::ParameterError, _, _)) => {
-                panic!("setup_large_records: put returned ParameterError for key {i}");
-            }
-            Err(e) => panic!("setup_large_records put: {e}"),
-        }
+        client.put(&wpolicy, &key, &bins).await.unwrap();
     }
 
-    Some((namespace.to_string(), set_name))
+    (namespace.to_string(), set_name)
 }
 
 #[aerospike_macro::test]
@@ -697,11 +563,9 @@ async fn recovery_single_command_compressed() {
         return;
     }
 
-    let client = common::singleton_client().await;
+    let client = common::client().await;
     let count = 50;
-    let Some((namespace, set_name)) = setup_large_records(&client, count).await else {
-        return;
-    };
+    let (namespace, set_name) = setup_large_records(&client, count).await;
 
     // Policy with compression, very short timeout, and timeout_delay for recovery.
     let mut rpolicy = ReadPolicy::default();
@@ -739,6 +603,7 @@ async fn recovery_single_command_compressed() {
         assert_eq!(record.bins["int"], Value::from(i));
     }
 
+    client.close().await.unwrap();
 }
 
 #[aerospike_macro::test]
@@ -747,11 +612,9 @@ async fn recovery_scan_compressed() {
         return;
     }
 
-    let client = common::singleton_client().await;
+    let client = common::client().await;
     let namespace = common::namespace();
-    let Some(set_name) = setup_records(&client, NUM_RECORDS).await else {
-        return;
-    };
+    let set_name = setup_records(&client, NUM_RECORDS).await;
 
     // Scan with compression + very short timeout + recovery enabled.
     let mut qpolicy = QueryPolicy::default();
@@ -807,6 +670,7 @@ async fn recovery_scan_compressed() {
         );
     }
 
+    client.close().await.unwrap();
 }
 
 #[aerospike_macro::test]
@@ -815,12 +679,10 @@ async fn recovery_batch_compressed() {
         return;
     }
 
-    let client = common::singleton_client().await;
+    let client = common::client().await;
     let namespace = common::namespace();
     let count = NUM_RECORDS;
-    let Some((_, set_name)) = setup_large_records(&client, count).await else {
-        return;
-    };
+    let (_, set_name) = setup_large_records(&client, count).await;
 
     // Batch read with compression + very short timeout + recovery enabled.
     let mut bpolicy = BatchPolicy::default();
@@ -870,4 +732,5 @@ async fn recovery_batch_compressed() {
         }
     }
 
+    client.close().await.unwrap();
 }

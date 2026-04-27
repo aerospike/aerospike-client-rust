@@ -20,81 +20,13 @@ use crate::common;
 use aerospike::operations::cdt_context::{ctx_map_key, ctx_map_key_create};
 use aerospike::operations::{maps, MapOrder};
 use aerospike::{
-    as_bin, as_key, as_list, as_map, as_ord_map, as_val, as_values, Bin, Bins, Client, Error, Key,
-    MapPolicy, MapReturnType, MapWriteFlags, MapWriteMode, ReadPolicy, ResultCode, Value,
-    WritePolicy,
+    as_bin, as_key, as_list, as_map, as_ord_map, as_val, as_values, Bins, MapPolicy, MapReturnType,
+    MapWriteFlags, MapWriteMode, ReadPolicy, Value, WritePolicy,
 };
-
-async fn map_delete_put_bins(
-    client: &Client,
-    wpolicy: &WritePolicy,
-    key: &Key,
-    bins: &[Bin],
-    bin_name: &str,
-    mpolicy: &MapPolicy,
-) -> bool {
-    let _ = common::delete_for_test_reset(client, wpolicy, key).await;
-    let _ = common::delete_on_cluster(client, wpolicy, key).await;
-    match client.put(wpolicy, key, bins).await {
-        Ok(()) => true,
-        Err(Error::ServerError(ResultCode::ParameterError, _, _)) => {
-            match client
-                .operate(
-                    wpolicy,
-                    key,
-                    &[maps::create(bin_name, MapOrder::Unordered, vec![])],
-                )
-                .await
-            {
-                Ok(_) => {}
-                Err(Error::ServerError(ResultCode::ParameterError, _, _)) => {
-                    eprintln!("map_delete_put_bins: skipped — could not seed map");
-                    return false;
-                }
-                Err(e) => panic!("map_delete_put_bins seed create: {e}"),
-            }
-            for b in bins {
-                if b.name != bin_name {
-                    continue;
-                }
-                match &b.value {
-                    Value::HashMap(m) => {
-                        for (k, v) in m {
-                            client
-                                .operate(
-                                    wpolicy,
-                                    key,
-                                    &[maps::put(mpolicy, bin_name, k.clone(), v.clone())],
-                                )
-                                .await
-                                .unwrap();
-                        }
-                    }
-                    Value::OrderedMap(m) => {
-                        for (k, v) in m {
-                            client
-                                .operate(
-                                    wpolicy,
-                                    key,
-                                    &[maps::put(mpolicy, bin_name, k.clone(), v.clone())],
-                                )
-                                .await
-                                .unwrap();
-                        }
-                    }
-                    _ => panic!("map_delete_put_bins: expected map bin value"),
-                }
-                break;
-            }
-            true
-        }
-        Err(e) => panic!("map_delete_put_bins put: {e}"),
-    }
-}
 
 #[aerospike_macro::test]
 async fn map_operations() {
-    let client = common::singleton_client().await;
+    let client = common::client().await;
     let namespace = common::namespace();
     let set_name = &common::rand_str(10);
 
@@ -105,52 +37,14 @@ async fn map_operations() {
     let key = common::rand_str(10);
     let key = as_key!(namespace, set_name, &key);
 
-    let _ = common::delete_for_test_reset(client, &wpolicy, &key).await;
-    let _ = common::delete_on_cluster(client, &wpolicy, &key).await;
+    common::delete_durably(&client, &wpolicy, &key).await.unwrap();
 
     let val = as_map!("a" => 1, "b" => 2);
     let bin_name = "bin";
     let bin = as_bin!(bin_name, val);
     let bins = vec![bin];
 
-    match client.put(&wpolicy, &key, &bins).await {
-        Ok(()) => {}
-        Err(Error::ServerError(ResultCode::ParameterError, _, _)) => {
-            match client
-                .operate(
-                    &wpolicy,
-                    &key,
-                    &[maps::create(bin_name, MapOrder::Unordered, vec![])],
-                )
-                .await
-            {
-                Ok(_) => {
-                    client
-                        .operate(
-                            &wpolicy,
-                            &key,
-                            &[maps::put(&mpolicy, bin_name, as_val!("a"), as_val!(1))],
-                        )
-                        .await
-                        .unwrap();
-                    client
-                        .operate(
-                            &wpolicy,
-                            &key,
-                            &[maps::put(&mpolicy, bin_name, as_val!("b"), as_val!(2))],
-                        )
-                        .await
-                        .unwrap();
-                }
-                Err(Error::ServerError(ResultCode::ParameterError, _, _)) => {
-                    eprintln!("map_operations: skipped — could not seed map bin");
-                    return;
-                }
-                Err(e) => panic!("map_operations seed create: {e}"),
-            }
-        }
-        Err(e) => panic!("map_operations seed put: {e}"),
-    }
+    client.put(&wpolicy, &key, &bins).await.unwrap();
 
     let (k, v) = (as_val!("c"), as_val!(3));
     let op = maps::put(&mpolicy, bin_name, k, v);
@@ -212,68 +106,25 @@ async fn map_operations() {
 
     // ---------------------------------------------------------------------------------
 
-    let _ = common::delete_for_test_reset(client, &wpolicy, &key).await;
-    let _ = common::delete_on_cluster(client, &wpolicy, &key).await;
+    common::delete_durably(&client, &wpolicy, &key).await.unwrap();
 
     let val = as_ord_map!("a" => 1, "b" => 2, "c" => 3, "d" => 4, "e" => 5);
     let bin_name = "bin";
     let bin = as_bin!(bin_name, val);
     let bins = vec![bin];
 
-    match client.put(&wpolicy, &key, &bins.as_slice()).await {
-        Ok(()) => {}
-        Err(Error::ServerError(ResultCode::ParameterError, _, _)) => {
-            match client
-                .operate(
-                    &wpolicy,
-                    &key,
-                    &[maps::create(bin_name, MapOrder::KeyOrdered, vec![])],
-                )
-                .await
-            {
-                Ok(_) => {
-                    for (k, v) in [
-                        ("a", 1i64),
-                        ("b", 2i64),
-                        ("c", 3i64),
-                        ("d", 4i64),
-                        ("e", 5i64),
-                    ] {
-                        client
-                            .operate(
-                                &wpolicy,
-                                &key,
-                                &[maps::put(
-                                    &mpolicy,
-                                    bin_name,
-                                    as_val!(k),
-                                    as_val!(v),
-                                )],
-                            )
-                            .await
-                            .unwrap();
-                    }
-                }
-                Err(Error::ServerError(ResultCode::ParameterError, _, _)) => {
-                    eprintln!("map_operations: skipped — ordered map seed failed");
-                    return;
-                }
-                Err(e) => panic!("map_operations ordered seed create: {e}"),
-            }
-        }
-        Err(e) => panic!("map_operations ordered seed put: {e}"),
-    }
+    client.put(&wpolicy, &key, &bins.as_slice()).await.unwrap();
 
     // ---------------------------------------------------------------------------------
+
+    common::delete_durably(&client, &wpolicy, &key).await.unwrap();
 
     let val = as_map!("a" => 1, "b" => 2, "c" => 3, "d" => 4, "e" => 5);
     let bin_name = "bin";
     let bin = as_bin!(bin_name, val);
     let bins = vec![bin];
 
-    if !map_delete_put_bins(client, &wpolicy, &key, &bins, bin_name, &mpolicy).await {
-        return;
-    }
+    client.put(&wpolicy, &key, &bins.as_slice()).await.unwrap();
 
     let op = maps::get_by_index(bin_name, 0, MapReturnType::UnorderedMap);
     let rec = client.operate(&wpolicy, &key, &[op]).await.unwrap();
@@ -362,9 +213,8 @@ async fn map_operations() {
     let rec = client.operate(&wpolicy, &key, &[op]).await.unwrap();
     assert_eq!(*rec.bins.get(bin_name).unwrap(), as_val!(1));
 
-    if !map_delete_put_bins(client, &wpolicy, &key, &bins, bin_name, &mpolicy).await {
-        return;
-    }
+    common::delete_durably(&client, &wpolicy, &key).await.unwrap();
+    client.put(&wpolicy, &key, &bins).await.unwrap();
 
     let mkey = vec![as_val!(4), as_val!(5)];
     let op = maps::remove_by_value_list(bin_name, mkey, MapReturnType::Count);
@@ -377,9 +227,8 @@ async fn map_operations() {
     let rec = client.operate(&wpolicy, &key, &[op]).await.unwrap();
     assert_eq!(*rec.bins.get(bin_name).unwrap(), as_val!(2));
 
-    if !map_delete_put_bins(client, &wpolicy, &key, &bins, bin_name, &mpolicy).await {
-        return;
-    }
+    common::delete_durably(&client, &wpolicy, &key).await.unwrap();
+    client.put(&wpolicy, &key, &bins).await.unwrap();
 
     let op = maps::remove_by_index(bin_name, 1, MapReturnType::Value);
     let rec = client.operate(&wpolicy, &key, &[op]).await.unwrap();
@@ -393,9 +242,8 @@ async fn map_operations() {
     let rec = client.operate(&wpolicy, &key, &[op]).await.unwrap();
     assert_eq!(*rec.bins.get(bin_name).unwrap(), as_list!(5));
 
-    if !map_delete_put_bins(client, &wpolicy, &key, &bins, bin_name, &mpolicy).await {
-        return;
-    }
+    common::delete_durably(&client, &wpolicy, &key).await.unwrap();
+    client.put(&wpolicy, &key, &bins).await.unwrap();
 
     let op = maps::remove_by_rank(bin_name, 1, MapReturnType::Value);
     let rec = client.operate(&wpolicy, &key, &[op]).await.unwrap();
@@ -405,17 +253,15 @@ async fn map_operations() {
     let rec = client.operate(&wpolicy, &key, &[op]).await.unwrap();
     assert_eq!(*rec.bins.get(bin_name).unwrap(), as_list!(3, 4));
 
-    if !map_delete_put_bins(client, &wpolicy, &key, &bins, bin_name, &mpolicy).await {
-        return;
-    }
+    common::delete_durably(&client, &wpolicy, &key).await.unwrap();
+    client.put(&wpolicy, &key, &bins).await.unwrap();
 
     let op = maps::remove_by_rank_range_from(bin_name, 3, MapReturnType::Value);
     let rec = client.operate(&wpolicy, &key, &[op]).await.unwrap();
     assert_eq!(*rec.bins.get(bin_name).unwrap(), as_list!(4, 5));
 
-    if !map_delete_put_bins(client, &wpolicy, &key, &bins, bin_name, &mpolicy).await {
-        return;
-    }
+    common::delete_durably(&client, &wpolicy, &key).await.unwrap();
+    client.put(&wpolicy, &key, &bins).await.unwrap();
 
     let mkey = as_val!("b");
     let op = maps::remove_by_key_relative_index_range(bin_name, mkey, 2, MapReturnType::Value);
@@ -428,9 +274,8 @@ async fn map_operations() {
     let rec = client.operate(&wpolicy, &key, &[op]).await.unwrap();
     assert_eq!(*rec.bins.get(bin_name).unwrap(), as_list!(3));
 
-    if !map_delete_put_bins(client, &wpolicy, &key, &bins, bin_name, &mpolicy).await {
-        return;
-    }
+    common::delete_durably(&client, &wpolicy, &key).await.unwrap();
+    client.put(&wpolicy, &key, &bins).await.unwrap();
 
     let mkey = as_val!(3);
     let op =
@@ -443,9 +288,8 @@ async fn map_operations() {
     let rec = client.operate(&wpolicy, &key, &[op]).await.unwrap();
     assert_eq!(*rec.bins.get(bin_name).unwrap(), as_list!(3, 4));
 
-    if !map_delete_put_bins(client, &wpolicy, &key, &bins, bin_name, &mpolicy).await {
-        return;
-    }
+    common::delete_durably(&client, &wpolicy, &key).await.unwrap();
+    client.put(&wpolicy, &key, &bins).await.unwrap();
 
     let mkey = as_val!("a");
     let op = maps::get_by_key_relative_index_range(bin_name, mkey, 1, MapReturnType::Value);
@@ -503,11 +347,12 @@ async fn map_operations() {
     let rec = client.operate(&wpolicy, &key, &op).await.unwrap();
     assert_eq!(*rec.bins.get(bin_name).unwrap(), as_val!(9));
 
+    client.close().await.unwrap();
 }
 
 #[aerospike_macro::test]
 async fn map_operations_wildcard() {
-    let client = common::singleton_client().await;
+    let client = common::client().await;
     let namespace = common::namespace();
     let set_name = &common::rand_str(10);
 
@@ -517,24 +362,7 @@ async fn map_operations_wildcard() {
     let key = common::rand_str(10);
     let key = as_key!(namespace, set_name, &key);
 
-    let _ = common::delete_for_test_reset(client, &wpolicy, &key).await;
-    let _ = common::delete_on_cluster(client, &wpolicy, &key).await;
-
-    match client
-        .operate(
-            &wpolicy,
-            &key,
-            &[maps::create("bin", MapOrder::Unordered, vec![])],
-        )
-        .await
-    {
-        Ok(_) => {}
-        Err(Error::ServerError(ResultCode::ParameterError, _, _)) => {
-            eprintln!("map_operations_wildcard: skipped — could not seed map bin");
-            return;
-        }
-        Err(e) => panic!("map_operations_wildcard seed: {e}"),
-    }
+    common::delete_durably(&client, &wpolicy, &key).await.unwrap();
 
     let mut items = HashMap::new();
     items.insert(as_val!(4), as_list!("John", 55));
@@ -554,7 +382,7 @@ async fn map_operations_wildcard() {
 
 #[aerospike_macro::test]
 async fn map_create_op() {
-    let client = common::singleton_client().await;
+    let client = common::client().await;
     let namespace = common::namespace();
     let set_name = &common::rand_str(10);
 
@@ -563,25 +391,7 @@ async fn map_create_op() {
 
     let key = as_key!(namespace, set_name, "map_create");
 
-    let _ = common::delete_for_test_reset(client, &wpolicy, &key).await;
-    let _ = common::delete_on_cluster(client, &wpolicy, &key).await;
-
-    // Some clusters reject the first map CDT on a missing record/bin; seed via `maps::create`.
-    match client
-        .operate(
-            &wpolicy,
-            &key,
-            &[maps::create("bin", MapOrder::Unordered, vec![])],
-        )
-        .await
-    {
-        Ok(_) => {}
-        Err(Error::ServerError(ResultCode::ParameterError, _, _)) => {
-            eprintln!("map_create_op: skipped — could not seed map bin (ParameterError)");
-            return;
-        }
-        Err(e) => panic!("map_create_op seed create: {e}"),
-    }
+    common::delete_durably(&client, &wpolicy, &key).await.unwrap();
 
     // Create a nested map using map create with context
     // First put a top-level key
@@ -601,8 +411,7 @@ async fn map_create_op() {
 
     // Also test maps::create with empty context (should be same as set_order)
     let key2 = as_key!(namespace, set_name, "map_create_empty_ctx");
-    let _ = common::delete_for_test_reset(client, &wpolicy, &key2).await;
-    let _ = common::delete_on_cluster(client, &wpolicy, &key2).await;
+    common::delete_durably(&client, &wpolicy, &key2).await.unwrap();
 
     let op = maps::create("bin", MapOrder::KeyOrdered, vec![]);
     client.operate(&wpolicy, &key2, &[op]).await.unwrap();
@@ -617,11 +426,12 @@ async fn map_create_op() {
     let rec = client.operate(&wpolicy, &key2, &[op]).await.unwrap();
     assert_eq!(*rec.bins.get("bin").unwrap(), as_list!("a", "b"));
 
+    client.close().await.unwrap();
 }
 
 #[aerospike_macro::test]
 async fn map_create_with_index_op() {
-    let client = common::singleton_client().await;
+    let client = common::client().await;
     let namespace = common::namespace();
     let set_name = &common::rand_str(10);
 
@@ -630,20 +440,11 @@ async fn map_create_with_index_op() {
 
     let key = as_key!(namespace, set_name, "map_create_idx");
 
-    let _ = common::delete_for_test_reset(client, &wpolicy, &key).await;
-    let _ = common::delete_on_cluster(client, &wpolicy, &key).await;
+    common::delete_durably(&client, &wpolicy, &key).await.unwrap();
 
-    let op = maps::create("bin", MapOrder::KeyOrdered, vec![]);
-    match client.operate(&wpolicy, &key, &[op]).await {
-        Ok(_) => {}
-        Err(Error::ServerError(ResultCode::ParameterError, _, _)) => {
-            eprintln!(
-                "map_create_with_index_op: skipped — maps::create(KeyOrdered) returned ParameterError"
-            );
-            return;
-        }
-        Err(e) => panic!("map_create_with_index_op: {e}"),
-    }
+    // Create key-ordered map with persisted index
+    let op = maps::create_with_index("bin", MapOrder::KeyOrdered);
+    client.operate(&wpolicy, &key, &[op]).await.unwrap();
 
     // Put values
     let op = maps::put(&mpolicy, "bin", as_val!("c"), as_val!(3));
@@ -663,11 +464,12 @@ async fn map_create_with_index_op() {
     let rec = client.operate(&wpolicy, &key, &[op]).await.unwrap();
     assert_eq!(*rec.bins.get("bin").unwrap(), as_val!(2));
 
+    client.close().await.unwrap();
 }
 
 #[aerospike_macro::test]
 async fn map_set_policy_op() {
-    let client = common::singleton_client().await;
+    let client = common::client().await;
     let namespace = common::namespace();
     let set_name = &common::rand_str(10);
 
@@ -676,29 +478,13 @@ async fn map_set_policy_op() {
 
     let key = as_key!(namespace, set_name, "map_set_policy");
 
-    let _ = common::delete_for_test_reset(client, &wpolicy, &key).await;
-    let _ = common::delete_on_cluster(client, &wpolicy, &key).await;
+    common::delete_durably(&client, &wpolicy, &key).await.unwrap();
 
     // Create an unordered map with some data
     let mut items = HashMap::new();
     items.insert(as_val!("c"), as_val!(3));
     items.insert(as_val!("a"), as_val!(1));
     items.insert(as_val!("b"), as_val!(2));
-    match client
-        .operate(
-            &wpolicy,
-            &key,
-            &[maps::create("bin", MapOrder::Unordered, vec![])],
-        )
-        .await
-    {
-        Ok(_) => {}
-        Err(Error::ServerError(ResultCode::ParameterError, _, _)) => {
-            eprintln!("map_set_policy_op: skipped — map seed");
-            return;
-        }
-        Err(e) => panic!("map_set_policy_op seed: {e}"),
-    }
     let op = maps::put_items(&mpolicy, "bin", items);
     client.operate(&wpolicy, &key, &[op]).await.unwrap();
 
@@ -712,34 +498,19 @@ async fn map_set_policy_op() {
     let rec = client.operate(&wpolicy, &key, &[op]).await.unwrap();
     assert_eq!(*rec.bins.get("bin").unwrap(), as_list!("a", "b", "c"));
 
+    client.close().await.unwrap();
 }
 
 #[aerospike_macro::test]
 async fn map_put_with_flags_create_only() {
-    let client = common::singleton_client().await;
+    let client = common::client().await;
     let namespace = common::namespace();
     let set_name = &common::rand_str(10);
 
     let wpolicy = WritePolicy::default();
     let key = as_key!(namespace, set_name, "map_flags_create");
 
-    let _ = common::delete_for_test_reset(client, &wpolicy, &key).await;
-    let _ = common::delete_on_cluster(client, &wpolicy, &key).await;
-    match client
-        .operate(
-            &wpolicy,
-            &key,
-            &[maps::create("bin", MapOrder::Unordered, vec![])],
-        )
-        .await
-    {
-        Ok(_) => {}
-        Err(Error::ServerError(ResultCode::ParameterError, _, _)) => {
-            eprintln!("map_put_with_flags_create_only: skipped — map seed");
-            return;
-        }
-        Err(e) => panic!("map_put_with_flags_create_only seed: {e}"),
-    }
+    common::delete_durably(&client, &wpolicy, &key).await.unwrap();
 
     // Use CREATE_ONLY flag - first put should succeed
     let policy = MapPolicy::new_with_flags(MapOrder::Unordered, MapWriteFlags::CREATE_ONLY);
@@ -756,34 +527,19 @@ async fn map_put_with_flags_create_only() {
     let rec = client.operate(&wpolicy, &key, &[op]).await.unwrap();
     assert_eq!(*rec.bins.get("bin").unwrap(), as_val!(1));
 
+    client.close().await.unwrap();
 }
 
 #[aerospike_macro::test]
 async fn map_put_with_flags_no_fail() {
-    let client = common::singleton_client().await;
+    let client = common::client().await;
     let namespace = common::namespace();
     let set_name = &common::rand_str(10);
 
     let wpolicy = WritePolicy::default();
     let key = as_key!(namespace, set_name, "map_flags_nofail");
 
-    let _ = common::delete_for_test_reset(client, &wpolicy, &key).await;
-    let _ = common::delete_on_cluster(client, &wpolicy, &key).await;
-    match client
-        .operate(
-            &wpolicy,
-            &key,
-            &[maps::create("bin", MapOrder::Unordered, vec![])],
-        )
-        .await
-    {
-        Ok(_) => {}
-        Err(Error::ServerError(ResultCode::ParameterError, _, _)) => {
-            eprintln!("map_put_with_flags_no_fail: skipped — map seed");
-            return;
-        }
-        Err(e) => panic!("map_put_with_flags_no_fail seed: {e}"),
-    }
+    common::delete_durably(&client, &wpolicy, &key).await.unwrap();
 
     // Create initial map entry
     let policy = MapPolicy::default();
@@ -803,34 +559,19 @@ async fn map_put_with_flags_no_fail() {
     let rec = client.operate(&wpolicy, &key, &[op]).await.unwrap();
     assert_eq!(*rec.bins.get("bin").unwrap(), as_val!(1));
 
+    client.close().await.unwrap();
 }
 
 #[aerospike_macro::test]
 async fn map_put_with_flags_update_only() {
-    let client = common::singleton_client().await;
+    let client = common::client().await;
     let namespace = common::namespace();
     let set_name = &common::rand_str(10);
 
     let wpolicy = WritePolicy::default();
     let key = as_key!(namespace, set_name, "map_flags_update");
 
-    let _ = common::delete_for_test_reset(client, &wpolicy, &key).await;
-    let _ = common::delete_on_cluster(client, &wpolicy, &key).await;
-    match client
-        .operate(
-            &wpolicy,
-            &key,
-            &[maps::create("bin", MapOrder::Unordered, vec![])],
-        )
-        .await
-    {
-        Ok(_) => {}
-        Err(Error::ServerError(ResultCode::ParameterError, _, _)) => {
-            eprintln!("map_put_with_flags_update_only: skipped — map seed");
-            return;
-        }
-        Err(e) => panic!("map_put_with_flags_update_only seed: {e}"),
-    }
+    common::delete_durably(&client, &wpolicy, &key).await.unwrap();
 
     // Create initial map entry
     let policy = MapPolicy::default();
@@ -855,34 +596,25 @@ async fn map_put_with_flags_update_only() {
         "UPDATE_ONLY should fail on non-existing key"
     );
 
+    client.close().await.unwrap();
 }
 
 #[aerospike_macro::test]
 async fn map_new_with_flags_and_persisted_index() {
-    let client = common::singleton_client().await;
+    let client = common::client().await;
     let namespace = common::namespace();
     let set_name = &common::rand_str(10);
 
     let wpolicy = WritePolicy::default();
     let key = as_key!(namespace, set_name, "map_persist_idx");
 
-    let _ = common::delete_for_test_reset(client, &wpolicy, &key).await;
-    let _ = common::delete_on_cluster(client, &wpolicy, &key).await;
+    common::delete_durably(&client, &wpolicy, &key).await.unwrap();
 
     // Create key-ordered map with persisted index via flags constructor
     let policy =
         MapPolicy::new_with_flags_and_persisted_index(MapOrder::KeyOrdered, MapWriteFlags::DEFAULT);
     let op = maps::put(&policy, "bin", as_val!("c"), as_val!(3));
-    match client.operate(&wpolicy, &key, &[op]).await {
-        Ok(_) => {}
-        Err(Error::ServerError(ResultCode::ParameterError, _, _)) => {
-            eprintln!(
-                "map_new_with_flags_and_persisted_index: skipped — first put returned ParameterError"
-            );
-            return;
-        }
-        Err(e) => panic!("map_new_with_flags_and_persisted_index: {e}"),
-    }
+    client.operate(&wpolicy, &key, &[op]).await.unwrap();
 
     let op = maps::put(&policy, "bin", as_val!("a"), as_val!(1));
     client.operate(&wpolicy, &key, &[op]).await.unwrap();
@@ -895,4 +627,5 @@ async fn map_new_with_flags_and_persisted_index() {
     let rec = client.operate(&wpolicy, &key, &[op]).await.unwrap();
     assert_eq!(*rec.bins.get("bin").unwrap(), as_list!("a", "b", "c"));
 
+    client.close().await.unwrap();
 }

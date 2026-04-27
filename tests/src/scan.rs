@@ -26,14 +26,12 @@ use aerospike::query::PartitionFilter;
 use aerospike::*;
 use aerospike_rt::time::Instant;
 
-// Use `singleton_client` in every test: libtest runs tests in parallel; each `client()` builds a
-// new cluster handle and can transiently fail seed validation (I/O / fds) while the node is fine.
-
 const EXPECTED: usize = 1000;
 
-async fn create_test_set(client: &Client, no_records: usize) -> Option<String> {
+async fn create_test_set(client: &Client, no_records: usize) -> String {
     let namespace = common::namespace();
     let set_name = common::rand_str(10);
+
     let wpolicy = WritePolicy::default();
     for i in 0..no_records as i64 {
         let key = as_key!(namespace, &set_name, i);
@@ -41,31 +39,18 @@ async fn create_test_set(client: &Client, no_records: usize) -> Option<String> {
         let wbin2 = as_bin!("bin2", "hello");
         let wbin3 = as_bin!("extra", "extra");
         let bins = vec![wbin1, wbin2, wbin3];
-        let _ = common::delete_for_test_reset(client, &wpolicy, &key).await;
-        let _ = common::delete_on_cluster(client, &wpolicy, &key).await;
-        match client.put(&wpolicy, &key, &bins).await {
-            Ok(()) => {}
-            Err(Error::ServerError(ResultCode::ParameterError, _, _)) if i == 0 => {
-                eprintln!("scan create_test_set: skipped — put returned ParameterError");
-                return None;
-            }
-            Err(Error::ServerError(ResultCode::ParameterError, _, _)) => {
-                panic!("scan create_test_set: put ParameterError at key {i}");
-            }
-            Err(e) => panic!("scan create_test_set put: {e}"),
-        }
+        common::delete_durably(client, &wpolicy, &key).await.unwrap();
+        client.put(&wpolicy, &key, &bins).await.unwrap();
     }
 
-    Some(set_name)
+    set_name
 }
 
 #[aerospike_macro::test]
 async fn scan_single_consumer() {
     let client = common::singleton_client().await;
     let namespace = common::namespace();
-    let Some(set_name) = create_test_set(&client, EXPECTED).await else {
-        return;
-    };
+    let set_name = create_test_set(&client, EXPECTED).await;
 
     let pf = PartitionFilter::all();
     let qpolicy = QueryPolicy::default();
@@ -125,9 +110,7 @@ async fn scan_single_consumer_no_setname() {
 async fn scan_single_consumer_with_cancel() {
     let client = common::singleton_client().await;
     let namespace = common::namespace();
-    let Some(set_name) = create_test_set(&client, EXPECTED).await else {
-        return;
-    };
+    let set_name = create_test_set(&client, EXPECTED).await;
 
     let mut pf = PartitionFilter::all();
     let mut qpolicy = QueryPolicy::default();
@@ -165,9 +148,7 @@ async fn scan_single_consumer_with_cancel() {
 async fn scan_single_consumer_with_cursor() {
     let client = common::singleton_client().await;
     let namespace = common::namespace();
-    let Some(set_name) = create_test_set(&client, EXPECTED).await else {
-        return;
-    };
+    let set_name = create_test_set(&client, EXPECTED).await;
 
     let mut pf = PartitionFilter::all();
     let mut qpolicy = QueryPolicy::default();
@@ -205,9 +186,7 @@ async fn scan_single_consumer_rps() {
 
     let node_count = client.cluster.nodes().len();
     let namespace = common::namespace();
-    let Some(set_name) = create_test_set(&client, EXPECTED).await else {
-        return;
-    };
+    let set_name = create_test_set(&client, EXPECTED).await;
 
     let mut qpolicy = QueryPolicy::default();
     qpolicy.records_per_second = (EXPECTED / 3 / node_count) as u32;
@@ -234,9 +213,7 @@ async fn scan_single_consumer_rps() {
 async fn scan_multi_consumer() {
     let client = common::singleton_client().await;
     let namespace = common::namespace();
-    let Some(set_name) = create_test_set(&client, EXPECTED).await else {
-        return;
-    };
+    let set_name = create_test_set(&client, EXPECTED).await;
 
     let mut qpolicy = QueryPolicy::default();
     qpolicy.record_queue_size = 4096;
@@ -270,9 +247,7 @@ async fn scan_multi_consumer() {
 async fn scan_single_consumer_stream() {
     let client = common::singleton_client().await;
     let namespace = common::namespace();
-    let Some(set_name) = create_test_set(&client, EXPECTED).await else {
-        return;
-    };
+    let set_name = create_test_set(&client, EXPECTED).await;
 
     let mut qpolicy = QueryPolicy::default();
     qpolicy.record_queue_size = 4096;
@@ -297,9 +272,7 @@ async fn scan_single_consumer_stream() {
 async fn scan_multi_consumer_stream() {
     let client = common::singleton_client().await;
     let namespace = common::namespace();
-    let Some(set_name) = create_test_set(&client, EXPECTED).await else {
-        return;
-    };
+    let set_name = create_test_set(&client, EXPECTED).await;
 
     let mut qpolicy = QueryPolicy::default();
     qpolicy.record_queue_size = 4096;

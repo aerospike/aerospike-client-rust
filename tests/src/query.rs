@@ -20,9 +20,6 @@ use futures::stream::StreamExt;
 
 use crate::common;
 
-// Prefer `singleton_client` in every test: parallel libtest + per-test `client()` caused transient
-// seed / I/O failures against a healthy single-node cluster.
-
 use aerospike::query::{Filter, PartitionFilter};
 use aerospike::Task;
 use aerospike::*;
@@ -30,9 +27,10 @@ use aerospike_rt::time::{Duration, Instant};
 
 const EXPECTED: usize = 1000;
 
-async fn create_test_set(client: &Client, no_records: usize) -> Option<String> {
+async fn create_test_set(client: &Client, no_records: usize) -> String {
     let namespace = common::namespace();
     let set_name = common::rand_str(10);
+
     let wpolicy = WritePolicy::default();
     let apolicy = AdminPolicy::default();
     for i in 0..no_records as i64 {
@@ -41,22 +39,11 @@ async fn create_test_set(client: &Client, no_records: usize) -> Option<String> {
         let wbin2 = as_bin!("bin2", "hello");
         let wbin3 = as_bin!("extra", "extra");
         let bins = vec![wbin1, wbin2, wbin3];
-        let _ = common::delete_for_test_reset(client, &wpolicy, &key).await;
-        let _ = common::delete_on_cluster(client, &wpolicy, &key).await;
-        match client.put(&wpolicy, &key, &bins).await {
-            Ok(()) => {}
-            Err(Error::ServerError(ResultCode::ParameterError, _, _)) if i == 0 => {
-                eprintln!("query create_test_set: skipped — put returned ParameterError");
-                return None;
-            }
-            Err(Error::ServerError(ResultCode::ParameterError, _, _)) => {
-                panic!("query create_test_set: put ParameterError at key {i}");
-            }
-            Err(e) => panic!("query create_test_set put: {e}"),
-        }
+        common::delete_durably(client, &wpolicy, &key).await.unwrap();
+        client.put(&wpolicy, &key, &bins).await.unwrap();
     }
 
-    let task = match client
+    let task = client
         .create_index_on_bin(
             &apolicy,
             namespace,
@@ -68,26 +55,17 @@ async fn create_test_set(client: &Client, no_records: usize) -> Option<String> {
             None,
         )
         .await
-    {
-        Ok(t) => t,
-        Err(Error::ServerError(ResultCode::FailForbidden, _, _)) => {
-            eprintln!("query create_test_set: skipped — create_index FailForbidden");
-            return None;
-        }
-        Err(e) => panic!("query create_test_set create_index: {e}"),
-    };
+        .expect("Failed to create index");
     task.wait_till_complete(None).await.unwrap();
 
-    Some(set_name)
+    set_name
 }
 
 #[aerospike_macro::test]
 async fn query_timeout() {
-    let client = common::singleton_client().await;
+    let client = common::client().await;
     let namespace = common::namespace();
-    let Some(set_name) = create_test_set(&client, EXPECTED).await else {
-        return;
-    };
+    let set_name = create_test_set(&client, EXPECTED).await;
     let mut qpolicy = QueryPolicy::default();
     qpolicy.base_policy.total_timeout = 5;
     qpolicy.base_policy.socket_timeout = 5;
@@ -113,11 +91,12 @@ async fn query_timeout() {
     assert!(duration < expected_duration);
     assert_eq!(timed_out, true);
 
+    client.close().await.unwrap();
 }
 
 #[aerospike_macro::test]
 async fn query_single_consumer_no_setname() {
-    let client = common::singleton_client().await;
+    let client = common::client().await;
     let namespace = common::namespace();
     let set_name = "";
     let mut qpolicy = QueryPolicy::default();
@@ -139,15 +118,14 @@ async fn query_single_consumer_no_setname() {
     }
     assert!(count > 0);
 
+    client.close().await.unwrap();
 }
 
 #[aerospike_macro::test]
 async fn query_single_consumer() {
-    let client = common::singleton_client().await;
+    let client = common::client().await;
     let namespace = common::namespace();
-    let Some(set_name) = create_test_set(&client, EXPECTED).await else {
-        return;
-    };
+    let set_name = create_test_set(&client, EXPECTED).await;
     let mut qpolicy = QueryPolicy::default();
     qpolicy.expected_duration = QueryDuration::Short;
 
@@ -189,15 +167,14 @@ async fn query_single_consumer() {
     }
     assert_eq!(count, 10);
 
+    client.close().await.unwrap();
 }
 
 #[aerospike_macro::test]
 async fn query_single_consumer_with_cursor() {
-    let client = common::singleton_client().await;
+    let client = common::client().await;
     let namespace = common::namespace();
-    let Some(set_name) = create_test_set(&client, EXPECTED).await else {
-        return;
-    };
+    let set_name = create_test_set(&client, EXPECTED).await;
     let mut qpolicy = QueryPolicy::default();
     qpolicy.expected_duration = QueryDuration::Short;
 
@@ -273,11 +250,12 @@ async fn query_single_consumer_with_cursor() {
     assert_eq!(count, EXPECTED);
     assert_eq!(iter, 4);
 
+    client.close().await.unwrap();
 }
 
 #[aerospike_macro::test]
 async fn query_single_consumer_rps() {
-    let client = common::singleton_client().await;
+    let client = common::client().await;
 
     // only run on single node clusters
     if client.nodes().len() != 1 {
@@ -285,9 +263,7 @@ async fn query_single_consumer_rps() {
     }
 
     let namespace = common::namespace();
-    let Some(set_name) = create_test_set(&client, EXPECTED).await else {
-        return;
-    };
+    let set_name = create_test_set(&client, EXPECTED).await;
     let mut qpolicy = QueryPolicy::default();
 
     // Range Query
@@ -317,15 +293,14 @@ async fn query_single_consumer_rps() {
     let duration = Instant::now() - start_time;
     assert!(duration.as_millis() > 3000);
 
+    client.close().await.unwrap();
 }
 
 #[aerospike_macro::test]
 async fn query_nobins() {
-    let client = common::singleton_client().await;
+    let client = common::client().await;
     let namespace = common::namespace();
-    let Some(set_name) = create_test_set(&client, EXPECTED).await else {
-        return;
-    };
+    let set_name = create_test_set(&client, EXPECTED).await;
     let qpolicy = QueryPolicy::default();
 
     let mut statement = Statement::new(namespace, &set_name, Bins::None);
@@ -346,15 +321,14 @@ async fn query_nobins() {
     }
     assert_eq!(count, 10);
 
+    client.close().await.unwrap();
 }
 
 #[aerospike_macro::test]
 async fn query_some_bins() {
-    let client = common::singleton_client().await;
+    let client = common::client().await;
     let namespace = common::namespace();
-    let Some(set_name) = create_test_set(&client, EXPECTED).await else {
-        return;
-    };
+    let set_name = create_test_set(&client, EXPECTED).await;
     let qpolicy = QueryPolicy::default();
 
     let mut statement = Statement::new(namespace, &set_name, Bins::Some(vec!["bin".into()]));
@@ -375,15 +349,14 @@ async fn query_some_bins() {
     }
     assert_eq!(count, 10);
 
+    client.close().await.unwrap();
 }
 
 #[aerospike_macro::test]
 async fn query_multi_consumer() {
-    let client = common::singleton_client().await;
+    let client = common::client().await;
     let namespace = common::namespace();
-    let Some(set_name) = create_test_set(&client, EXPECTED).await else {
-        return;
-    };
+    let set_name = create_test_set(&client, EXPECTED).await;
     let qpolicy = QueryPolicy::default();
 
     // Range Query
@@ -420,6 +393,7 @@ async fn query_multi_consumer() {
 
     assert_eq!(count.load(Ordering::Relaxed), 10);
 
+    client.close().await.unwrap();
 }
 
 // https://github.com/aerospike/aerospike-client-rust/issues/115
@@ -428,26 +402,17 @@ async fn query_large_i64() {
     const SET: &str = "large_i64";
     const BIN: &str = "val";
 
-    let client = common::singleton_client().await;
+    let client = Arc::new(common::client().await);
     let value = Value::from(i64::max_value());
     let key = Key::new(common::namespace(), SET, value.clone()).unwrap();
     let wpolicy = WritePolicy::default();
     let apolicy = AdminPolicy::default();
-    let _ = common::delete_for_test_reset(client, &wpolicy, &key).await;
-    let _ = common::delete_on_cluster(client, &wpolicy, &key).await;
 
-    match client
+    let res = client
         .put(&wpolicy, &key, &[aerospike::Bin::new(BIN.into(), value)])
-        .await
-    {
-        Ok(()) => {}
-        Err(Error::ServerError(ResultCode::ParameterError, _, _))
-        | Err(Error::ServerError(ResultCode::FailForbidden, _, _)) => {
-            eprintln!("query_large_i64: skipped — put rejected by server policy");
-            return;
-        }
-        Err(e) => panic!("query_large_i64 put: {e}"),
-    }
+        .await;
+
+    assert!(res.is_ok());
 
     let mut qpolicy = aerospike::QueryPolicy::new();
     let bin_name = aerospike::expressions::int_bin(BIN.into());
@@ -476,10 +441,10 @@ async fn test_query_geo_within_geojson_region() {
     let set_name = &common::rand_str(10);
     let bin_name = "geo_bin";
 
-    let client = common::singleton_client().await;
+    let client = Arc::new(common::client().await);
     let apolicy = AdminPolicy::default();
 
-    let task = match client
+    let task = client
         .create_index_on_bin(
             &apolicy,
             namespace,
@@ -491,18 +456,8 @@ async fn test_query_geo_within_geojson_region() {
             None,
         )
         .await
-    {
-        Ok(t) => t,
-        Err(Error::ServerError(ResultCode::FailForbidden, _, _)) => {
-            eprintln!("test_query_geo_within_geojson_region: skipped — create_index FailForbidden");
-            return;
-        }
-        Err(e) => panic!("test_query_geo_within_geojson_region create_index: {e}"),
-    };
-    if let Err(e) = task.wait_till_complete(None).await {
-        eprintln!("test_query_geo_within_geojson_region: skipped — index task: {e:?}");
-        return;
-    }
+        .expect("Failed to create index");
+    task.wait_till_complete(None).await.unwrap();
 
     let wp = WritePolicy::default();
 
@@ -585,11 +540,9 @@ async fn test_query_geo_within_geojson_region() {
 /// individual READ operations.
 #[aerospike_macro::test]
 async fn query_filter_with_specific_bins() {
-    let client = common::singleton_client().await;
+    let client = common::client().await;
     let namespace = common::namespace();
-    let Some(set_name) = create_test_set(&client, EXPECTED).await else {
-        return;
-    };
+    let set_name = create_test_set(&client, EXPECTED).await;
     let qpolicy = QueryPolicy::default();
 
     // Request only "bin" and "bin2" out of three bins (bin, bin2, extra)
@@ -625,17 +578,16 @@ async fn query_filter_with_specific_bins() {
     }
     assert_eq!(count, 10);
 
+    client.close().await.unwrap();
 }
 
 /// Query using `Filter::new_by_index` to target a specific secondary index by name.
 /// The server should use the named index instead of performing an index lookup by bin name.
 #[aerospike_macro::test]
 async fn query_filter_with_index_name() {
-    let client = common::singleton_client().await;
+    let client = common::client().await;
     let namespace = common::namespace();
-    let Some(set_name) = create_test_set(&client, EXPECTED).await else {
-        return;
-    };
+    let set_name = create_test_set(&client, EXPECTED).await;
     let qpolicy = QueryPolicy::default();
 
     // The index name created by create_test_set
@@ -669,6 +621,7 @@ async fn query_filter_with_index_name() {
     }
     assert_eq!(count, 10);
 
+    client.close().await.unwrap();
 }
 
 /// Query with `include_bin_data` set to false.
@@ -676,11 +629,9 @@ async fn query_filter_with_index_name() {
 /// Records should be returned with metadata but no bin data.
 #[aerospike_macro::test]
 async fn query_include_bin_data_false() {
-    let client = common::singleton_client().await;
+    let client = common::client().await;
     let namespace = common::namespace();
-    let Some(set_name) = create_test_set(&client, EXPECTED).await else {
-        return;
-    };
+    let set_name = create_test_set(&client, EXPECTED).await;
     let mut qpolicy = QueryPolicy::default();
     qpolicy.include_bin_data = false;
 
@@ -703,6 +654,7 @@ async fn query_include_bin_data_false() {
     }
     assert_eq!(count, 10);
 
+    client.close().await.unwrap();
 }
 
 /// Scan (no filter) with specific bin selection.
@@ -710,11 +662,9 @@ async fn query_include_bin_data_false() {
 /// QUERY_BINLIST. This verifies that path still works correctly.
 #[aerospike_macro::test]
 async fn query_scan_with_specific_bins() {
-    let client = common::singleton_client().await;
+    let client = common::client().await;
     let namespace = common::namespace();
-    let Some(set_name) = create_test_set(&client, 50).await else {
-        return;
-    };
+    let set_name = create_test_set(&client, 50).await;
     let qpolicy = QueryPolicy::default();
 
     // Scan (no filter) requesting only "bin" and "bin2"
@@ -745,6 +695,7 @@ async fn query_scan_with_specific_bins() {
     }
     assert_eq!(count, 50);
 
+    client.close().await.unwrap();
 }
 
 /// Query using `QueryDuration::LongRelaxAP`.
@@ -756,15 +707,13 @@ async fn query_scan_with_specific_bins() {
 /// so skip there.
 #[aerospike_macro::test]
 async fn query_long_relax_ap_duration() {
-    let client = common::singleton_client().await;
+    let client = common::client().await;
     let namespace = common::namespace();
-    if namespace_sc!(&client) {
+    if common::namespace_is_sc(&client, namespace).await {
         eprintln!("Skipping query_long_relax_ap_duration: AP-only feature on SC namespace");
         return;
     }
-    let Some(set_name) = create_test_set(&client, EXPECTED).await else {
-        return;
-    };
+    let set_name = create_test_set(&client, EXPECTED).await;
     let mut qpolicy = QueryPolicy::default();
     qpolicy.expected_duration = QueryDuration::LongRelaxAP;
 
@@ -787,15 +736,14 @@ async fn query_long_relax_ap_duration() {
     }
     assert_eq!(count, 10);
 
+    client.close().await.unwrap();
 }
 
 #[aerospike_macro::test]
 async fn query_operate_write() {
-    let client = common::singleton_client().await;
+    let client = common::client().await;
     let namespace = common::namespace();
-    let Some(set_name) = create_test_set(&client, EXPECTED).await else {
-        return;
-    };
+    let set_name = create_test_set(&client, EXPECTED).await;
 
     let wpolicy = WritePolicy::default();
 
@@ -820,15 +768,14 @@ async fn query_operate_write() {
         assert_eq!(val, i + 100, "record {i} was not updated correctly");
     }
 
+    client.close().await.unwrap();
 }
 
 #[aerospike_macro::test]
 async fn query_operate_scan_all() {
-    let client = common::singleton_client().await;
+    let client = common::client().await;
     let namespace = common::namespace();
-    let Some(set_name) = create_test_set(&client, 50).await else {
-        return;
-    };
+    let set_name = create_test_set(&client, 50).await;
 
     let wpolicy = WritePolicy::default();
 
@@ -852,6 +799,7 @@ async fn query_operate_scan_all() {
         assert_eq!(val, 999, "record {i} missing new_bin");
     }
 
+    client.close().await.unwrap();
 }
 
 #[aerospike_macro::test]
@@ -890,11 +838,9 @@ async fn query_operate_empty_ops_returns_parameter_error() {
 
 #[aerospike_macro::test]
 async fn query_filter_equal_by_index() {
-    let client = common::singleton_client().await;
+    let client = common::client().await;
     let namespace = common::namespace();
-    let Some(set_name) = create_test_set(&client, EXPECTED).await else {
-        return;
-    };
+    let set_name = create_test_set(&client, EXPECTED).await;
     let qpolicy = QueryPolicy::default();
 
     let index_name = format!("{}_{}_{}", namespace, set_name, "bin");
@@ -918,15 +864,17 @@ async fn query_filter_equal_by_index() {
     }
     assert_eq!(count, 1);
 
+    client.close().await.unwrap();
 }
 
 // ============================================================================
 // Filter::contains — list collection index
 // ============================================================================
 
-async fn create_list_test_set(client: &Client) -> Option<String> {
+async fn create_list_test_set(client: &Client) -> String {
     let namespace = common::namespace();
     let set_name = common::rand_str(10);
+
     let wpolicy = WritePolicy::default();
     let apolicy = AdminPolicy::default();
 
@@ -935,29 +883,17 @@ async fn create_list_test_set(client: &Client) -> Option<String> {
     let list_policy = aerospike::operations::lists::ListPolicy::default();
     for i in 0..20_i64 {
         let key = as_key!(namespace, &set_name, i);
-        let _ = common::delete_for_test_reset(client, &wpolicy, &key).await;
-        let _ = common::delete_on_cluster(client, &wpolicy, &key).await;
         let ops = vec![operations::lists::append_items(
             &list_policy,
             "list_bin",
             vec![as_val!(i), as_val!(i + 1), as_val!(i + 2)],
         )];
-        match client.operate(&wpolicy, &key, &ops).await {
-            Ok(_) => {}
-            Err(Error::ServerError(ResultCode::ParameterError, _, _)) if i == 0 => {
-                eprintln!("create_list_test_set: skipped — operate returned ParameterError");
-                return None;
-            }
-            Err(Error::ServerError(ResultCode::ParameterError, _, _)) => {
-                panic!("create_list_test_set: operate ParameterError at key {i}");
-            }
-            Err(e) => panic!("create_list_test_set operate: {e}"),
-        }
+        client.operate(&wpolicy, &key, &ops).await.unwrap();
     }
 
     // Create a secondary index on list elements
     let idx_name = format!("{}_{}_list_bin", namespace, set_name);
-    let task = match client
+    let task = client
         .create_index_on_bin(
             &apolicy,
             namespace,
@@ -969,26 +905,17 @@ async fn create_list_test_set(client: &Client) -> Option<String> {
             None,
         )
         .await
-    {
-        Ok(t) => t,
-        Err(Error::ServerError(ResultCode::FailForbidden, _, _)) => {
-            eprintln!("create_list_test_set: skipped — create_index FailForbidden");
-            return None;
-        }
-        Err(e) => panic!("create_list_test_set create_index: {e}"),
-    };
+        .expect("Failed to create list index");
     task.wait_till_complete(None).await.unwrap();
 
-    Some(set_name)
+    set_name
 }
 
 #[aerospike_macro::test]
 async fn query_filter_contains_list() {
-    let client = common::singleton_client().await;
+    let client = common::client().await;
     let namespace = common::namespace();
-    let Some(set_name) = create_list_test_set(&client).await else {
-        return;
-    };
+    let set_name = create_list_test_set(&client).await;
     let qpolicy = QueryPolicy::default();
 
     // Value 1 is in record 0's list [0,1,2] and record 1's list [1,2,3]
@@ -1011,6 +938,7 @@ async fn query_filter_contains_list() {
     }
     assert_eq!(count, 2);
 
+    client.close().await.unwrap();
 }
 
 // ============================================================================
@@ -1019,11 +947,9 @@ async fn query_filter_contains_list() {
 
 #[aerospike_macro::test]
 async fn query_filter_contains_range_list() {
-    let client = common::singleton_client().await;
+    let client = common::client().await;
     let namespace = common::namespace();
-    let Some(set_name) = create_list_test_set(&client).await else {
-        return;
-    };
+    let set_name = create_list_test_set(&client).await;
     let qpolicy = QueryPolicy::default();
 
     // Range [0, 1]: matches any record whose list contains a value in [0, 1]
@@ -1050,13 +976,14 @@ async fn query_filter_contains_range_list() {
     }
     assert_eq!(count, 2);
 
+    client.close().await.unwrap();
 }
 
 // ============================================================================
 // Filter::geo_within_radius — points within a radius
 // ============================================================================
 
-async fn create_geo_test_set(client: &Client) -> Option<String> {
+async fn create_geo_test_set(client: &Client) -> String {
     let namespace = common::namespace();
     let set_name = common::rand_str(10);
     let bin_name = "geo_bin";
@@ -1064,7 +991,7 @@ async fn create_geo_test_set(client: &Client) -> Option<String> {
     let apolicy = AdminPolicy::default();
     let wp = WritePolicy::default();
 
-    let task = match client
+    let task = client
         .create_index_on_bin(
             &apolicy,
             namespace,
@@ -1076,18 +1003,8 @@ async fn create_geo_test_set(client: &Client) -> Option<String> {
             None,
         )
         .await
-    {
-        Ok(t) => t,
-        Err(Error::ServerError(ResultCode::FailForbidden, _, _)) => {
-            eprintln!("create_geo_test_set: skipped — create_index FailForbidden");
-            return None;
-        }
-        Err(e) => panic!("create_geo_test_set create_index: {e}"),
-    };
-    if let Err(e) = task.wait_till_complete(None).await {
-        eprintln!("create_geo_test_set: skipped — index task: {e:?}");
-        return None;
-    }
+        .expect("Failed to create geo index");
+    task.wait_till_complete(None).await.unwrap();
 
     // Points near San Francisco
     let key1 = as_key!(namespace, &set_name, "close1");
@@ -1130,16 +1047,14 @@ async fn create_geo_test_set(client: &Client) -> Option<String> {
         .await
         .unwrap();
 
-    Some(set_name)
+    set_name
 }
 
 #[aerospike_macro::test]
 async fn query_filter_geo_within_radius() {
-    let client = common::singleton_client().await;
+    let client = Arc::new(common::client().await);
     let namespace = common::namespace();
-    let Some(set_name) = create_geo_test_set(&client).await else {
-        return;
-    };
+    let set_name = create_geo_test_set(&client).await;
     let qpolicy = QueryPolicy::default();
 
     // 50km radius around [-122.0, 37.5] should include close1 and close2 but not far
@@ -1174,11 +1089,11 @@ async fn query_filter_geo_contains() {
     let set_name = &common::rand_str(10);
     let bin_name = "region_bin";
 
-    let client = common::singleton_client().await;
+    let client = Arc::new(common::client().await);
     let apolicy = AdminPolicy::default();
     let wp = WritePolicy::default();
 
-    let task = match client
+    let task = client
         .create_index_on_bin(
             &apolicy,
             namespace,
@@ -1190,18 +1105,8 @@ async fn query_filter_geo_contains() {
             None,
         )
         .await
-    {
-        Ok(t) => t,
-        Err(Error::ServerError(ResultCode::FailForbidden, _, _)) => {
-            eprintln!("query_filter_geo_contains: skipped — create_index FailForbidden");
-            return;
-        }
-        Err(e) => panic!("query_filter_geo_contains create_index: {e}"),
-    };
-    if let Err(e) = task.wait_till_complete(None).await {
-        eprintln!("query_filter_geo_contains: skipped — index task: {e:?}");
-        return;
-    }
+        .expect("Failed to create geo index");
+    task.wait_till_complete(None).await.unwrap();
 
     // Region that contains the test point [-122.0, 37.5]
     let key1 = as_key!(namespace, set_name, "region1");
@@ -1273,35 +1178,22 @@ async fn query_filter_geo_contains() {
 
 #[aerospike_macro::test]
 async fn query_filter_with_expression_builder() {
-    let client = common::singleton_client().await;
+    let client = common::client().await;
     let namespace = common::namespace();
     let set_name = common::rand_str(10);
     let apolicy = AdminPolicy::default();
     let wpolicy = WritePolicy::default();
+
     for i in 0..50_i64 {
         let key = as_key!(namespace, &set_name, i);
-        let _ = common::delete_for_test_reset(client, &wpolicy, &key).await;
-        let _ = common::delete_on_cluster(client, &wpolicy, &key).await;
         let bins = vec![as_bin!("a", i)];
-        match client.put(&wpolicy, &key, &bins).await {
-            Ok(()) => {}
-            Err(Error::ServerError(ResultCode::ParameterError, _, _)) if i == 0 => {
-                eprintln!(
-                    "query_filter_with_expression_builder: skipped — put returned ParameterError"
-                );
-                return;
-            }
-            Err(Error::ServerError(ResultCode::ParameterError, _, _)) => {
-                panic!("query_filter_with_expression_builder: put ParameterError at key {i}");
-            }
-            Err(e) => panic!("query_filter_with_expression_builder put: {e}"),
-        }
+        client.put(&wpolicy, &key, &bins).await.unwrap();
     }
 
     // Create an expression-based secondary index: int_bin("a")
     let exp = aerospike::expressions::int_bin("a".to_string());
     let idx_name = format!("{}_{}_exp_a", namespace, set_name);
-    let task = match client
+    let task = client
         .create_index_using_expression(
             &apolicy,
             namespace,
@@ -1312,16 +1204,7 @@ async fn query_filter_with_expression_builder() {
             &exp,
         )
         .await
-    {
-        Ok(t) => t,
-        Err(Error::ServerError(ResultCode::FailForbidden, _, _)) => {
-            eprintln!(
-                "query_filter_with_expression_builder: skipped — create_index_using_expression FailForbidden"
-            );
-            return;
-        }
-        Err(e) => panic!("query_filter_with_expression_builder create_index: {e}"),
-    };
+        .expect("Failed to create expression index");
     task.wait_till_complete(None).await.unwrap();
 
     // Query using Filter::range().expression() builder
@@ -1345,6 +1228,7 @@ async fn query_filter_with_expression_builder() {
     }
     assert_eq!(count, 10);
 
+    client.close().await.unwrap();
 }
 
 // ============================================================================
@@ -1353,40 +1237,27 @@ async fn query_filter_with_expression_builder() {
 
 #[aerospike_macro::test]
 async fn query_filter_with_context_builder() {
-    let client = common::singleton_client().await;
+    let client = common::client().await;
     let namespace = common::namespace();
     let set_name = common::rand_str(10);
     let apolicy = AdminPolicy::default();
     let wpolicy = WritePolicy::default();
+
     let bin_name = "nested";
 
     // Each record has a "nested" bin containing a list with a single integer: [i]
     for i in 0..20_i64 {
         let key = as_key!(namespace, &set_name, i);
-        let _ = common::delete_for_test_reset(client, &wpolicy, &key).await;
-        let _ = common::delete_on_cluster(client, &wpolicy, &key).await;
         let list_val = as_list!(i);
         let bins = vec![as_bin!(bin_name, list_val)];
-        match client.put(&wpolicy, &key, &bins).await {
-            Ok(()) => {}
-            Err(Error::ServerError(ResultCode::ParameterError, _, _)) if i == 0 => {
-                eprintln!(
-                    "query_filter_with_context_builder: skipped — put returned ParameterError"
-                );
-                return;
-            }
-            Err(Error::ServerError(ResultCode::ParameterError, _, _)) => {
-                panic!("query_filter_with_context_builder: put ParameterError at key {i}");
-            }
-            Err(e) => panic!("query_filter_with_context_builder put: {e}"),
-        }
+        client.put(&wpolicy, &key, &bins).await.unwrap();
     }
 
     // Create a secondary index on list element at index 0 using CDT context
     use aerospike::operations::cdt_context::ctx_list_index;
     let ctx = vec![ctx_list_index(0)];
     let idx_name = format!("{}_{}_nested_ctx", namespace, set_name);
-    let task = match client
+    let task = client
         .create_index_on_bin(
             &apolicy,
             namespace,
@@ -1398,16 +1269,7 @@ async fn query_filter_with_context_builder() {
             Some(&ctx),
         )
         .await
-    {
-        Ok(t) => t,
-        Err(Error::ServerError(ResultCode::FailForbidden, _, _)) => {
-            eprintln!(
-                "query_filter_with_context_builder: skipped — create_index_on_bin FailForbidden"
-            );
-            return;
-        }
-        Err(e) => panic!("query_filter_with_context_builder create_index: {e}"),
-    };
+        .expect("Failed to create context index");
     task.wait_till_complete(None).await.unwrap();
 
     // Query using Filter::range().context() builder
@@ -1428,6 +1290,7 @@ async fn query_filter_with_context_builder() {
     // Records 0..=4 have list [0]..[4], all in range [0,4]
     assert_eq!(count, 5);
 
+    client.close().await.unwrap();
 }
 
 // ============================================================================
@@ -1441,36 +1304,23 @@ async fn query_filter_with_context_builder() {
 /// QueryPolicy.filter_expression further narrows down the returned records.
 #[aerospike_macro::test]
 async fn query_filter_expression_with_policy_filter() {
-    let client = common::singleton_client().await;
+    let client = common::client().await;
     let namespace = common::namespace();
     let set_name = common::rand_str(10);
     let apolicy = AdminPolicy::default();
     let wpolicy = WritePolicy::default();
+
     // Write 50 records: bin "a" = i, bin "b" = i % 2 (0 or 1)
     for i in 0..50_i64 {
         let key = as_key!(namespace, &set_name, i);
-        let _ = common::delete_for_test_reset(client, &wpolicy, &key).await;
-        let _ = common::delete_on_cluster(client, &wpolicy, &key).await;
         let bins = vec![as_bin!("a", i), as_bin!("b", i % 2)];
-        match client.put(&wpolicy, &key, &bins).await {
-            Ok(()) => {}
-            Err(Error::ServerError(ResultCode::ParameterError, _, _)) if i == 0 => {
-                eprintln!(
-                    "query_filter_expression_with_policy_filter: skipped — put returned ParameterError"
-                );
-                return;
-            }
-            Err(Error::ServerError(ResultCode::ParameterError, _, _)) => {
-                panic!("query_filter_expression_with_policy_filter: put ParameterError at key {i}");
-            }
-            Err(e) => panic!("query_filter_expression_with_policy_filter put: {e}"),
-        }
+        client.put(&wpolicy, &key, &bins).await.unwrap();
     }
 
     // Create an expression-based secondary index on int_bin("a")
     let idx_exp = aerospike::expressions::int_bin("a".to_string());
     let idx_name = format!("{}_{}_exp_ab", namespace, set_name);
-    let task = match client
+    let task = client
         .create_index_using_expression(
             &apolicy,
             namespace,
@@ -1481,16 +1331,7 @@ async fn query_filter_expression_with_policy_filter() {
             &idx_exp,
         )
         .await
-    {
-        Ok(t) => t,
-        Err(Error::ServerError(ResultCode::FailForbidden, _, _)) => {
-            eprintln!(
-                "query_filter_expression_with_policy_filter: skipped — create_index_using_expression FailForbidden"
-            );
-            return;
-        }
-        Err(e) => panic!("create_index_using_expression: {e}"),
-    };
+        .expect("Failed to create expression index");
     task.wait_till_complete(None).await.unwrap();
 
     // Filter.expression: use the expression-based index to find records with a in [0, 9]
@@ -1526,6 +1367,7 @@ async fn query_filter_expression_with_policy_filter() {
     // a in [0,9] => 10 records, but only even a values have b==0: {0,2,4,6,8} => 5
     assert_eq!(count, 5);
 
+    client.close().await.unwrap();
 }
 
 #[aerospike_macro::test]

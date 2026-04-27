@@ -38,26 +38,11 @@ macro_rules! skip_if_no_mrt {
             eprintln!("Skipping MRT test: server version < 8.0");
             return;
         }
-        if !namespace_sc!($client) {
+        if !common::namespace_is_sc($client, common::namespace()).await {
             eprintln!("Skipping MRT test: namespace not configured with strong-consistency");
             return;
         }
     };
-}
-
-async fn txn_seed_record(
-    client: &aerospike::Client,
-    key: &aerospike::Key,
-    bins: &[aerospike::Bin],
-) -> bool {
-    let wp = WritePolicy::default();
-    let _ = common::delete_for_test_reset(client, &wp, key).await;
-    let _ = common::delete_on_cluster(client, &wp, key).await;
-    match client.put(&wp, key, bins).await {
-        Ok(()) => true,
-        Err(Error::ServerError(ResultCode::ParameterError, _, _)) => false,
-        Err(e) => panic!("txn seed put: {e}"),
-    }
 }
 
 // =============================================================================
@@ -98,11 +83,10 @@ async fn txn_write_and_commit() {
     let key = as_key!(ns, set, &common::rand_str(50));
 
     // Pre-populate
-    if !txn_seed_record(&client, &key, &[as_bin!("bin", "val1")]).await {
-        eprintln!("MRT test: skipped — seed put returned ParameterError");
-        client.close().await.unwrap();
-        return;
-    }
+    client
+        .put(&WritePolicy::default(), &key, &[as_bin!("bin", "val1")])
+        .await
+        .unwrap();
 
     // Write inside txn
     let txn = Arc::new(Txn::new());
@@ -143,11 +127,10 @@ async fn txn_write_twice() {
     wp.base_policy.txn = Some(txn.clone());
 
     // Pre-populate without txn
-    if !txn_seed_record(&client, &key, &[as_bin!("bin", "val1")]).await {
-        eprintln!("MRT test: skipped — seed put returned ParameterError");
-        client.close().await.unwrap();
-        return;
-    }
+    client
+        .put(&WritePolicy::default(), &key, &[as_bin!("bin", "val1")])
+        .await
+        .unwrap();
 
     // Write twice in txn
     client
@@ -186,25 +169,11 @@ async fn txn_write_conflict() {
     let mut wp2 = WritePolicy::default();
     wp2.base_policy.txn = Some(txn2.clone());
 
-    if !txn_seed_record(&client, &key, &[as_bin!("bin", "pre")]).await {
-        eprintln!("MRT test: skipped — seed put returned ParameterError");
-        client.close().await.unwrap();
-        return;
-    }
-
     // txn1 writes first
-    match client
+    client
         .put(&wp1, &key, &[as_bin!("bin", "val1")])
         .await
-    {
-        Ok(()) => {}
-        Err(Error::ServerError(ResultCode::ParameterError, _, _)) => {
-            eprintln!("MRT test: skipped — txn put returned ParameterError");
-            client.close().await.unwrap();
-            return;
-        }
-        Err(e) => panic!("txn_write_conflict txn1 put: {e}"),
-    }
+        .unwrap();
 
     // txn2 should be blocked
     let err = client
@@ -247,11 +216,10 @@ async fn txn_blocked_before_commit() {
     let key = as_key!(ns, set, &common::rand_str(50));
 
     // Pre-populate
-    if !txn_seed_record(&client, &key, &[as_bin!("bin", "val1")]).await {
-        eprintln!("MRT test: skipped — seed put returned ParameterError");
-        client.close().await.unwrap();
-        return;
-    }
+    client
+        .put(&WritePolicy::default(), &key, &[as_bin!("bin", "val1")])
+        .await
+        .unwrap();
 
     let txn = Arc::new(Txn::new());
     let mut wp = WritePolicy::default();
@@ -292,11 +260,10 @@ async fn txn_write_and_read() {
     let key = as_key!(ns, set, &common::rand_str(50));
 
     // Pre-populate
-    if !txn_seed_record(&client, &key, &[as_bin!("bin", "val1")]).await {
-        eprintln!("MRT test: skipped — seed put returned ParameterError");
-        client.close().await.unwrap();
-        return;
-    }
+    client
+        .put(&WritePolicy::default(), &key, &[as_bin!("bin", "val1")])
+        .await
+        .unwrap();
 
     let txn = Arc::new(Txn::new());
     let mut wp = WritePolicy::default();
@@ -331,11 +298,10 @@ async fn txn_write_and_abort() {
     let key = as_key!(ns, set, &common::rand_str(50));
 
     // Pre-populate
-    if !txn_seed_record(&client, &key, &[as_bin!("bin", "val1")]).await {
-        eprintln!("MRT test: skipped — seed put returned ParameterError");
-        client.close().await.unwrap();
-        return;
-    }
+    client
+        .put(&WritePolicy::default(), &key, &[as_bin!("bin", "val1")])
+        .await
+        .unwrap();
 
     let txn = Arc::new(Txn::new());
     let mut wp = WritePolicy::default();
@@ -379,18 +345,17 @@ async fn txn_delete_and_commit() {
     let key = as_key!(ns, set, &common::rand_str(50));
 
     // Pre-populate
-    if !txn_seed_record(&client, &key, &[as_bin!("bin", "val1")]).await {
-        eprintln!("MRT test: skipped — seed put returned ParameterError");
-        client.close().await.unwrap();
-        return;
-    }
+    client
+        .put(&WritePolicy::default(), &key, &[as_bin!("bin", "val1")])
+        .await
+        .unwrap();
 
     let txn = Arc::new(Txn::new());
     let mut wp = WritePolicy::default();
     wp.durable_delete = true;
     wp.base_policy.txn = Some(txn.clone());
 
-    let existed = client.delete(&wp, &key).await.unwrap();
+    let existed = common::delete_durably(&client, &wp, &key).await.unwrap();
     assert!(existed);
 
     let status = client.commit(&txn).await.unwrap();
@@ -418,18 +383,17 @@ async fn txn_delete_and_abort() {
     let key = as_key!(ns, set, &common::rand_str(50));
 
     // Pre-populate
-    if !txn_seed_record(&client, &key, &[as_bin!("bin", "val1")]).await {
-        eprintln!("MRT test: skipped — seed put returned ParameterError");
-        client.close().await.unwrap();
-        return;
-    }
+    client
+        .put(&WritePolicy::default(), &key, &[as_bin!("bin", "val1")])
+        .await
+        .unwrap();
 
     let txn = Arc::new(Txn::new());
     let mut wp = WritePolicy::default();
     wp.durable_delete = true;
     wp.base_policy.txn = Some(txn.clone());
 
-    let existed = client.delete(&wp, &key).await.unwrap();
+    let existed = common::delete_durably(&client, &wp, &key).await.unwrap();
     assert!(existed);
 
     let status = client.abort(&txn).await.unwrap();
@@ -457,21 +421,20 @@ async fn txn_delete_twice() {
     let key = as_key!(ns, set, &common::rand_str(50));
 
     // Pre-populate
-    if !txn_seed_record(&client, &key, &[as_bin!("bin", "val1")]).await {
-        eprintln!("MRT test: skipped — seed put returned ParameterError");
-        client.close().await.unwrap();
-        return;
-    }
+    client
+        .put(&WritePolicy::default(), &key, &[as_bin!("bin", "val1")])
+        .await
+        .unwrap();
 
     let txn = Arc::new(Txn::new());
     let mut wp = WritePolicy::default();
     wp.durable_delete = true;
     wp.base_policy.txn = Some(txn.clone());
 
-    let existed = client.delete(&wp, &key).await.unwrap();
+    let existed = common::delete_durably(&client, &wp, &key).await.unwrap();
     assert!(existed);
 
-    let existed = client.delete(&wp, &key).await.unwrap();
+    let existed = common::delete_durably(&client, &wp, &key).await.unwrap();
     assert!(!existed);
 
     let status = client.commit(&txn).await.unwrap();
@@ -499,11 +462,10 @@ async fn txn_touch_and_commit() {
     let key = as_key!(ns, set, &common::rand_str(50));
 
     // Pre-populate
-    if !txn_seed_record(&client, &key, &[as_bin!("bin", "val1")]).await {
-        eprintln!("MRT test: skipped — seed put returned ParameterError");
-        client.close().await.unwrap();
-        return;
-    }
+    client
+        .put(&WritePolicy::default(), &key, &[as_bin!("bin", "val1")])
+        .await
+        .unwrap();
 
     let txn = Arc::new(Txn::new());
     let mut wp = WritePolicy::default();
@@ -536,11 +498,10 @@ async fn txn_touch_and_abort() {
     let key = as_key!(ns, set, &common::rand_str(50));
 
     // Pre-populate
-    if !txn_seed_record(&client, &key, &[as_bin!("bin", "val1")]).await {
-        eprintln!("MRT test: skipped — seed put returned ParameterError");
-        client.close().await.unwrap();
-        return;
-    }
+    client
+        .put(&WritePolicy::default(), &key, &[as_bin!("bin", "val1")])
+        .await
+        .unwrap();
 
     let txn = Arc::new(Txn::new());
     let mut wp = WritePolicy::default();
@@ -572,17 +533,14 @@ async fn txn_operate_write_and_commit() {
     let key = as_key!(ns, set, &common::rand_str(50));
 
     // Pre-populate with two bins
-    if !txn_seed_record(
-        &client,
-        &key,
-        &[as_bin!("bin", "val1"), as_bin!("bin2", "bal1")],
-    )
-    .await
-    {
-        eprintln!("MRT test: skipped — seed put returned ParameterError");
-        client.close().await.unwrap();
-        return;
-    }
+    client
+        .put(
+            &WritePolicy::default(),
+            &key,
+            &[as_bin!("bin", "val1"), as_bin!("bin2", "bal1")],
+        )
+        .await
+        .unwrap();
 
     let txn = Arc::new(Txn::new());
     let mut wp = WritePolicy::default();
@@ -623,17 +581,14 @@ async fn txn_operate_write_and_abort() {
     let key = as_key!(ns, set, &common::rand_str(50));
 
     // Pre-populate with two bins
-    if !txn_seed_record(
-        &client,
-        &key,
-        &[as_bin!("bin", "val1"), as_bin!("bin2", "bal1")],
-    )
-    .await
-    {
-        eprintln!("MRT test: skipped — seed put returned ParameterError");
-        client.close().await.unwrap();
-        return;
-    }
+    client
+        .put(
+            &WritePolicy::default(),
+            &key,
+            &[as_bin!("bin", "val1"), as_bin!("bin2", "bal1")],
+        )
+        .await
+        .unwrap();
 
     let txn = Arc::new(Txn::new());
     let mut wp = WritePolicy::default();
@@ -676,11 +631,10 @@ async fn txn_version_mismatch_on_commit() {
         let mut keys = Vec::with_capacity(count);
         for i in 0..count {
             let key = as_key!(ns, set, i as i64);
-            if !txn_seed_record(&client, &key, &[as_bin!("bin", 1000)]).await {
-                eprintln!("MRT test: skipped — seed put returned ParameterError");
-                client.close().await.unwrap();
-                return;
-            }
+            client
+                .put(&WritePolicy::default(), &key, &[as_bin!("bin", 1000)])
+                .await
+                .unwrap();
             keys.push(key);
         }
 
@@ -755,11 +709,10 @@ async fn txn_verify_deleted_key_fails() {
     let key = as_key!(ns, set, &common::rand_str(50));
 
     // Pre-populate.
-    if !txn_seed_record(&client, &key, &[as_bin!("bin", 1)]).await {
-        eprintln!("MRT test: skipped — seed put returned ParameterError");
-        client.close().await.unwrap();
-        return;
-    }
+    client
+        .put(&WritePolicy::default(), &key, &[as_bin!("bin", 1)])
+        .await
+        .unwrap();
 
     // Read inside txn (records the version).
     let txn = Arc::new(Txn::new());
@@ -773,7 +726,7 @@ async fn txn_verify_deleted_key_fails() {
     // KeyNotFoundError as verify success; commit must now fail.
     let mut wp = WritePolicy::default();
     wp.durable_delete = true;
-    let existed = client.delete(&wp, &key).await.unwrap();
+    let existed = common::delete_durably(&client, &wp, &key).await.unwrap();
     assert!(existed);
 
     let err = client.commit(&txn).await.unwrap_err();
@@ -806,11 +759,10 @@ async fn txn_cleared_after_commit() {
     let set = &common::rand_str(10);
     let key = as_key!(ns, set, &common::rand_str(50));
 
-    if !txn_seed_record(&client, &key, &[as_bin!("bin", "val1")]).await {
-        eprintln!("MRT test: skipped — seed put returned ParameterError");
-        client.close().await.unwrap();
-        return;
-    }
+    client
+        .put(&WritePolicy::default(), &key, &[as_bin!("bin", "val1")])
+        .await
+        .unwrap();
 
     let txn = Arc::new(Txn::new());
     let mut wp = WritePolicy::default();
@@ -845,11 +797,10 @@ async fn txn_cleared_after_abort() {
     let set = &common::rand_str(10);
     let key = as_key!(ns, set, &common::rand_str(50));
 
-    if !txn_seed_record(&client, &key, &[as_bin!("bin", "val1")]).await {
-        eprintln!("MRT test: skipped — seed put returned ParameterError");
-        client.close().await.unwrap();
-        return;
-    }
+    client
+        .put(&WritePolicy::default(), &key, &[as_bin!("bin", "val1")])
+        .await
+        .unwrap();
 
     let txn = Arc::new(Txn::new());
     let mut wp = WritePolicy::default();

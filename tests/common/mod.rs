@@ -45,7 +45,7 @@ lazy_static! {
         env::var("AEROSPIKE_PROP_SET_NAME").unwrap_or_else(|_| String::from("test"));
     static ref AEROSPIKE_CLUSTER: Option<String> = env::var("AEROSPIKE_CLUSTER").ok();
     static ref AEROSPIKE_USE_SERVICES_ALTERNATE: bool =
-        env::var("AEROSPIKE_USE_SERVICES_ALTERNATE").map(|v| v.trim().eq_ignore_ascii_case("true") || v.trim().eq_ignore_ascii_case("1")).unwrap_or(true);
+        env::var("AEROSPIKE_USE_SERVICES_ALTERNATE").map(|v| v.trim().eq_ignore_ascii_case("true") || v.trim().eq_ignore_ascii_case("1")).unwrap_or(false);
 }
 
 #[cfg(all(any(feature = "rt-tokio"), not(feature = "rt-async-std")))]
@@ -300,13 +300,11 @@ pub async fn server_capabilities_cached(client: &Client) -> ServerCapabilities {
         .await
 }
 
-/// Deletes `key` once for test setup or teardown.
-///
-/// On strong-consistency namespaces, [`WritePolicy::durable_delete`] is set so the delete is
-/// allowed; on AP namespaces, `policy` is used unchanged. Prefer this over calling
-/// [`delete_for_test_reset`] and [`delete_on_cluster`] together (the latter pair was redundant on
-/// AP and split SC behavior across two non-obvious calls).
-pub async fn delete_before_test(
+/// Deletes `key` via [`Client::delete`], setting [`WritePolicy::durable_delete`] on
+/// strong-consistency namespaces so the delete is allowed; on AP namespaces, `policy` is used
+/// unchanged. Use anywhere a durable delete may be required (setup, teardown, or mid-test), not
+/// only at the start of a test.
+pub async fn delete_durably(
     client: &Client,
     policy: &WritePolicy,
     key: &Key,
@@ -347,12 +345,12 @@ async fn explicit_record_ttl_probe(client: &aerospike::Client) -> bool {
     let ns = namespace();
     let set_name = format!("ttlchk{}", rand_str(6));
     let key = aerospike::as_key!(ns, &set_name, 0i64);
-    let wpolicy = aerospike::WritePolicy::new(0, aerospike::Expiration::Seconds(60));
+    let wpolicy = WritePolicy::new(0, aerospike::Expiration::Seconds(60));
     let bins = vec![aerospike::as_bin!("bin", 0i64)];
     match client.put(&wpolicy, &key, &bins).await {
         Ok(()) => {
             let _ = client
-                .delete(&aerospike::WritePolicy::default(), &key)
+                .delete(&WritePolicy::default(), &key)
                 .await;
             true
         }
@@ -385,9 +383,9 @@ pub async fn security_enabled() -> bool {
 }
 
 pub async fn insert_bins(ns: &str, set_name: &str, num_recs: u32) -> aerospike::Result<()> {
-    let client = crate::common::client().await;
-    let wp = aerospike::WritePolicy::default();
-    let ap = aerospike::AdminPolicy::default();
+    let client = client().await;
+    let wp = WritePolicy::default();
+    let ap = AdminPolicy::default();
 
     client
         .truncate(&AdminPolicy::default(), ns, set_name, 0)

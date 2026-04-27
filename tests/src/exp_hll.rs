@@ -28,32 +28,18 @@ use std::sync::Arc;
 
 const EXPECTED: usize = 100;
 
-async fn create_test_set(client: &Client, no_records: usize) -> Option<String> {
+async fn create_test_set(client: &Client, no_records: usize) -> String {
     let namespace = common::namespace();
     let set_name = common::rand_str(10);
 
-    let mut wpolicy = WritePolicy::default();
-    wpolicy.record_exists_action = RecordExistsAction::Replace;
+    let wpolicy = WritePolicy::default();
     for i in 0..no_records as i64 {
         let key = as_key!(namespace, &set_name, i);
-        let _ = common::delete_for_test_reset(client, &wpolicy, &key).await;
-        let _ = common::delete_on_cluster(client, &wpolicy, &key).await;
-
         let ibin = as_bin!("bin", i);
         let lbin = as_bin!("lbin", as_list!(i, "a"));
         let bins = vec![ibin, lbin];
-        match client.put(&wpolicy, &key, &bins).await {
-            Ok(()) => {}
-            Err(Error::ServerError(ResultCode::ParameterError, _, _)) if i == 0 => {
-                eprintln!("exp_hll create_test_set: skipped — put returned ParameterError");
-                return None;
-            }
-            Err(Error::ServerError(ResultCode::ParameterError, _, _)) => {
-                panic!("exp_hll create_test_set: put ParameterError at key {i}");
-            }
-            Err(e) => panic!("exp_hll create_test_set put: {e}"),
-        }
-
+        common::delete_durably(client, &wpolicy, &key).await.unwrap();
+        client.put(&wpolicy, &key, &bins).await.unwrap();
         let data = vec![Value::from("asd"), Value::from(i)];
         let data2 = vec![Value::from("asd"), Value::from(i), Value::from(i + 1)];
         let ops = [
@@ -72,30 +58,18 @@ async fn create_test_set(client: &Client, no_records: usize) -> Option<String> {
                 0,
             ),
         ];
-        match client
+        client
             .operate(&WritePolicy::default(), &key, &ops)
             .await
-        {
-            Ok(_) => {}
-            Err(Error::ServerError(ResultCode::ParameterError, _, _)) if i == 0 => {
-                eprintln!("exp_hll create_test_set: skipped — HLL operate returned ParameterError");
-                return None;
-            }
-            Err(Error::ServerError(ResultCode::ParameterError, _, _)) => {
-                panic!("exp_hll create_test_set: operate ParameterError at key {i}");
-            }
-            Err(e) => panic!("exp_hll create_test_set operate: {e}"),
-        }
+            .unwrap();
     }
-    Some(set_name)
+    set_name
 }
 
 #[aerospike_macro::test]
 async fn expression_hll() {
-    let client = common::singleton_client().await;
-    let Some(set_name) = create_test_set(client, EXPECTED).await else {
-        return;
-    };
+    let client = common::client().await;
+    let set_name = create_test_set(&client, EXPECTED).await;
 
     let rs = test_filter(
         &client,
@@ -207,6 +181,8 @@ async fn expression_hll() {
     .await;
     let count = count_results(rs).await;
     assert_eq!(count, 99, "HLL GET INTERSECT COUNT Test Failed");
+
+    client.close().await.unwrap();
 }
 
 async fn test_filter(client: &Client, filter: Expression, set_name: &str) -> Arc<Recordset> {

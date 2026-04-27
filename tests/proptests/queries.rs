@@ -14,12 +14,10 @@ use crate::proptests::{bins::*, partition_filter::*, policy::*};
 proptest_async::proptest! {
     #[test]
     async fn query(
-        // Secondary-index queries over `insert_bins` can stream many rows; sub-second socket
-        // timeouts (from `query_policy(1000, 5000)`) spuriously fail on loaded or remote hosts.
-        query_policy in query_policy(20_000, 60_000)
+        query_policy in query_policy(1000, 5000)
             .prop_filter("ShortQuery and rps together are invalid",
                 |qp| !(qp.expected_duration == QueryDuration::Short && qp.records_per_second > 0)),
-            mut pf in partition_filter_secondary_index_query(common::namespace().into(), common::prop_setname_multi().into()),
+            mut pf in partition_filter(common::namespace().into(), common::prop_setname_multi().into()),
             stmt in statement(common::namespace().into(), common::prop_setname_multi().into()))
     {
         let client = common::singleton_client().await;
@@ -40,7 +38,6 @@ proptest_async::proptest! {
                 match res {
                     Ok(_) => count+=1,
                     Err(Error::ServerError(ResultCode::IndexNotFound, _, _)) => (), // it's fine
-                    Err(Error::ServerError(ResultCode::ParameterError, _, _)) => (), // strict ns / filter combo
                     Err(e) => panic!("{}", e),
                 }
             }
@@ -64,9 +61,7 @@ pub fn filter(bin_name: String) -> impl Strategy<Value = Filter> {
 }
 
 prop_compose! {
-    // `prop_setname_multi` / `insert_bins` only define a numeric index on `bin_i`; string/blob
-    // equality filters yield ParameterError from the server.
-    pub fn filter_eq(bin_name: String)(val in value_i64()) -> Filter {
+    pub fn filter_eq(bin_name: String)(val in value_for_eq_filter()) -> Filter {
         Filter::equal(&bin_name, val)
    }
 }

@@ -49,28 +49,6 @@ async fn server_supports_enhanced_expression_api(client: &aerospike::Client) -> 
     }
 }
 
-async fn delete_key_for_test(client: &aerospike::Client, wpolicy: &WritePolicy, key: &aerospike::Key) {
-    let _ = common::delete_for_test_reset(client, wpolicy, key).await;
-    let _ = common::delete_on_cluster(client, wpolicy, key).await;
-}
-
-async fn seed_path_expr_record(
-    client: &aerospike::Client,
-    wpolicy: &WritePolicy,
-    key: &aerospike::Key,
-    bins: &[aerospike::Bin],
-) -> bool {
-    delete_key_for_test(client, wpolicy, key).await;
-    match client.put(wpolicy, key, bins).await {
-        Ok(()) => true,
-        Err(aerospike::Error::ServerError(aerospike::ResultCode::ParameterError, _, _)) => {
-            eprintln!("path_expressions: skipped — seed put returned ParameterError");
-            false
-        }
-        Err(e) => panic!("path_expressions seed put: {e}"),
-    }
-}
-
 // ===== select_by_path tests =====
 
 #[aerospike_macro::test]
@@ -86,6 +64,8 @@ async fn select_by_path_price_filter() {
     let key = as_key!(namespace, &set_name, "path_sel1");
 
     let wpolicy = WritePolicy::default();
+    common::delete_durably(&client, &wpolicy, &key).await.unwrap();
+
     // Build: { "book": [ {title, price}, ... ] }
     let books = as_list!(
         as_map!("title" => "Sayings of the Century", "price" => 8.95_f64),
@@ -95,9 +75,7 @@ async fn select_by_path_price_filter() {
     );
     let root = as_map!("book" => books);
     let bin = as_bin!("testbin", root);
-    if !seed_path_expr_record(&client, &wpolicy, &key, &[bin]).await {
-        return;
-    }
+    client.put(&wpolicy, &key, &[bin]).await.unwrap();
 
     // Context: root["book"] -> children where price <= 10.0 -> children where key == "title"
     let ctx1 = ctx_map_key(Value::from("book"));
@@ -152,15 +130,15 @@ async fn select_by_path_empty_result() {
     let key = as_key!(namespace, &set_name, "path_sel_empty");
 
     let wpolicy = WritePolicy::default();
+    common::delete_durably(&client, &wpolicy, &key).await.unwrap();
+
     let books = as_list!(
         as_map!("title" => "Expensive Book 1", "price" => 25.99_f64),
         as_map!("title" => "Expensive Book 2", "price" => 30.50_f64)
     );
     let root = as_map!("book" => books);
     let bin = as_bin!("testbin", root);
-    if !seed_path_expr_record(&client, &wpolicy, &key, &[bin]).await {
-        return;
-    }
+    client.put(&wpolicy, &key, &[bin]).await.unwrap();
 
     let ctx1 = ctx_map_key(Value::from("book"));
     let ctx2 = ctx_all_children_with_filter(le(
@@ -196,12 +174,12 @@ async fn select_by_path_ctx_all_children() {
     let key = as_key!(namespace, &set_name, "path_sel_all");
 
     let wpolicy = WritePolicy::default();
+    common::delete_durably(&client, &wpolicy, &key).await.unwrap();
+
     let numbers = as_list!(10_i64, 20_i64, 30_i64);
     let root = as_map!("numbers" => numbers);
     let bin = as_bin!("testbin", root);
-    if !seed_path_expr_record(&client, &wpolicy, &key, &[bin]).await {
-        return;
-    }
+    client.put(&wpolicy, &key, &[bin]).await.unwrap();
 
     // Select all children (no filter)
     let ctx1 = ctx_map_key(Value::from("numbers"));
@@ -230,12 +208,12 @@ async fn select_by_path_index_loop_var() {
     let key = as_key!(namespace, &set_name, "path_sel_idx");
 
     let wpolicy = WritePolicy::default();
+    common::delete_durably(&client, &wpolicy, &key).await.unwrap();
+
     let numbers = as_list!(10_i64, 20_i64, 30_i64, 40_i64, 50_i64);
     let root = as_map!("numbers" => numbers);
     let bin = as_bin!("testbin", root);
-    if !seed_path_expr_record(&client, &wpolicy, &key, &[bin]).await {
-        return;
-    }
+    client.put(&wpolicy, &key, &[bin]).await.unwrap();
 
     // Select items where index < 3
     let ctx1 = ctx_map_key(Value::from("numbers"));
@@ -268,6 +246,8 @@ async fn select_by_path_complex_nested() {
     let key = as_key!(namespace, &set_name, "path_sel_nested");
 
     let wpolicy = WritePolicy::default();
+    common::delete_durably(&client, &wpolicy, &key).await.unwrap();
+
     let books = as_list!(
         as_map!("category" => "reference", "title" => "Sayings of the Century", "price" => 8.95_f64),
         as_map!("category" => "fiction", "title" => "Sword of Honour", "price" => 12.99_f64),
@@ -276,9 +256,7 @@ async fn select_by_path_complex_nested() {
     let store = as_map!("books" => books);
     let root = as_map!("store" => store);
     let bin = as_bin!("testbin", root);
-    if !seed_path_expr_record(&client, &wpolicy, &key, &[bin]).await {
-        return;
-    }
+    client.put(&wpolicy, &key, &[bin]).await.unwrap();
 
     // Select titles of fiction books with price < 10.0
     let ctx1 = ctx_map_key(Value::from("store"));
@@ -341,15 +319,15 @@ async fn modify_by_path_multiply_prices() {
 
     let wpolicy = WritePolicy::default();
     let rpolicy = ReadPolicy::default();
+    common::delete_durably(&client, &wpolicy, &key).await.unwrap();
+
     let books = as_list!(
         as_map!("title" => "Book A", "price" => 8.95_f64),
         as_map!("title" => "Book B", "price" => 12.99_f64)
     );
     let root = as_map!("book" => books);
     let bin = as_bin!("testbin", root);
-    if !seed_path_expr_record(&client, &wpolicy, &key, &[bin]).await {
-        return;
-    }
+    client.put(&wpolicy, &key, &[bin]).await.unwrap();
 
     // Multiply all prices by 1.10
     let ctx1 = ctx_map_key(Value::from("book"));
@@ -412,15 +390,15 @@ async fn exp_select_by_path_filter() {
     let key = as_key!(namespace, &set_name, "exp_sel_filter");
 
     let wpolicy = WritePolicy::default();
+    common::delete_durably(&client, &wpolicy, &key).await.unwrap();
+
     let books = as_list!(
         as_map!("title" => "Cheap Book", "price" => 5.99_f64),
         as_map!("title" => "Expensive Book", "price" => 25.99_f64)
     );
     let root = as_map!("book" => books);
     let bin = as_bin!("testbin", root);
-    if !seed_path_expr_record(&client, &wpolicy, &key, &[bin]).await {
-        return;
-    }
+    client.put(&wpolicy, &key, &[bin]).await.unwrap();
 
     let ctx1 = ctx_map_key(Value::from("book"));
     let ctx2 = ctx_all_children_with_filter(le(
@@ -466,12 +444,12 @@ async fn exp_modify_by_path_multiply() {
 
     let wpolicy = WritePolicy::default();
     let rpolicy = ReadPolicy::default();
+    common::delete_durably(&client, &wpolicy, &key).await.unwrap();
+
     let items = as_list!(1.0_f64, 2.0_f64, 3.0_f64);
     let root = as_map!("vals" => items);
     let bin = as_bin!("testbin", root);
-    if !seed_path_expr_record(&client, &wpolicy, &key, &[bin]).await {
-        return;
-    }
+    client.put(&wpolicy, &key, &[bin]).await.unwrap();
 
     let ctx1 = ctx_map_key(Value::from("vals"));
     let ctx2 = ctx_all_children();
@@ -531,13 +509,13 @@ async fn loop_var_int_value() {
     let key = as_key!(namespace, &set_name, "loop_int");
 
     let wpolicy = WritePolicy::default();
+    common::delete_durably(&client, &wpolicy, &key).await.unwrap();
+
     // Map where values are integers - select entries with value > 75
     let items = as_map!("a" => 100_i64, "b" => 50_i64, "c" => 200_i64);
     let root = as_map!("items" => items);
     let bin = as_bin!("testbin", root);
-    if !seed_path_expr_record(&client, &wpolicy, &key, &[bin]).await {
-        return;
-    }
+    client.put(&wpolicy, &key, &[bin]).await.unwrap();
 
     let ctx1 = ctx_map_key(Value::from("items"));
     let ctx2 = ctx_all_children_with_filter(gt(exp_int_loop_var(LoopVarPart::VALUE), int_val(75)));
@@ -569,12 +547,12 @@ async fn loop_var_string_map_key() {
     let key = as_key!(namespace, &set_name, "loop_str_key");
 
     let wpolicy = WritePolicy::default();
+    common::delete_durably(&client, &wpolicy, &key).await.unwrap();
+
     let data = as_map!("alpha" => 1_i64, "beta" => 2_i64, "gamma" => 3_i64);
     let root = as_map!("data" => data);
     let bin = as_bin!("testbin", root);
-    if !seed_path_expr_record(&client, &wpolicy, &key, &[bin]).await {
-        return;
-    }
+    client.put(&wpolicy, &key, &[bin]).await.unwrap();
 
     // Select entries where the MAP_KEY == "alpha"
     let ctx1 = ctx_map_key(Value::from("data"));
@@ -610,11 +588,11 @@ async fn remove_all_items_from_list() {
 
     let wpolicy = WritePolicy::default();
     let rpolicy = ReadPolicy::default();
+    common::delete_durably(&client, &wpolicy, &key).await.unwrap();
+
     let data = as_map!("items" => as_list!(1_i64, 2_i64, 3_i64, 4_i64, 5_i64));
     let bin = as_bin!("testbin", data);
-    if !seed_path_expr_record(&client, &wpolicy, &key, &[bin]).await {
-        return;
-    }
+    client.put(&wpolicy, &key, &[bin]).await.unwrap();
 
     let ctx1 = ctx_map_key(Value::from("items"));
     let ctx2 = ctx_all_children();
@@ -653,11 +631,11 @@ async fn remove_filtered_items_from_list() {
 
     let wpolicy = WritePolicy::default();
     let rpolicy = ReadPolicy::default();
+    common::delete_durably(&client, &wpolicy, &key).await.unwrap();
+
     let data = as_map!("numbers" => as_list!(1_i64, 5_i64, 10_i64, 15_i64, 20_i64, 25_i64, 30_i64));
     let bin = as_bin!("testbin", data);
-    if !seed_path_expr_record(&client, &wpolicy, &key, &[bin]).await {
-        return;
-    }
+    client.put(&wpolicy, &key, &[bin]).await.unwrap();
 
     // Remove items where value > 10
     let ctx1 = ctx_map_key(Value::from("numbers"));
@@ -700,12 +678,12 @@ async fn remove_all_items_from_map() {
 
     let wpolicy = WritePolicy::default();
     let rpolicy = ReadPolicy::default();
+    common::delete_durably(&client, &wpolicy, &key).await.unwrap();
+
     let config = as_map!("option1" => "value1", "option2" => "value2", "option3" => "value3");
     let data = as_map!("config" => config);
     let bin = as_bin!("testbin", data);
-    if !seed_path_expr_record(&client, &wpolicy, &key, &[bin]).await {
-        return;
-    }
+    client.put(&wpolicy, &key, &[bin]).await.unwrap();
 
     let ctx1 = ctx_map_key(Value::from("config"));
     let ctx2 = ctx_all_children();
@@ -744,12 +722,12 @@ async fn remove_filtered_map_entries() {
 
     let wpolicy = WritePolicy::default();
     let rpolicy = ReadPolicy::default();
+    common::delete_durably(&client, &wpolicy, &key).await.unwrap();
+
     let scores = as_map!("alice" => 95_i64, "bob" => 45_i64, "carol" => 75_i64, "dave" => 30_i64);
     let data = as_map!("scores" => scores);
     let bin = as_bin!("testbin", data);
-    if !seed_path_expr_record(&client, &wpolicy, &key, &[bin]).await {
-        return;
-    }
+    client.put(&wpolicy, &key, &[bin]).await.unwrap();
 
     // Remove entries where value < 50 (removes bob=45 and dave=30)
     let ctx1 = ctx_map_key(Value::from("scores"));
@@ -795,6 +773,8 @@ async fn remove_books_with_low_prices() {
 
     let wpolicy = WritePolicy::default();
     let rpolicy = ReadPolicy::default();
+    common::delete_durably(&client, &wpolicy, &key).await.unwrap();
+
     let books = as_list!(
         as_map!("title" => "Cheap Book 1", "price" => 5.99_f64),
         as_map!("title" => "Expensive Book", "price" => 25.99_f64),
@@ -803,9 +783,7 @@ async fn remove_books_with_low_prices() {
     );
     let root = as_map!("books" => books);
     let bin = as_bin!("testbin", root);
-    if !seed_path_expr_record(&client, &wpolicy, &key, &[bin]).await {
-        return;
-    }
+    client.put(&wpolicy, &key, &[bin]).await.unwrap();
 
     // Remove books where price <= 10.0
     let ctx1 = ctx_map_key(Value::from("books"));
@@ -867,11 +845,11 @@ async fn remove_items_by_index_filter() {
 
     let wpolicy = WritePolicy::default();
     let rpolicy = ReadPolicy::default();
+    common::delete_durably(&client, &wpolicy, &key).await.unwrap();
+
     let data = as_map!("values" => as_list!(100_i64, 200_i64, 300_i64, 400_i64, 500_i64));
     let bin = as_bin!("testbin", data);
-    if !seed_path_expr_record(&client, &wpolicy, &key, &[bin]).await {
-        return;
-    }
+    client.put(&wpolicy, &key, &[bin]).await.unwrap();
 
     // Remove items where index >= 3 (removes 400 and 500)
     let ctx1 = ctx_map_key(Value::from("values"));
@@ -914,6 +892,8 @@ async fn remove_map_entries_by_key_filter() {
 
     let wpolicy = WritePolicy::default();
     let rpolicy = ReadPolicy::default();
+    common::delete_durably(&client, &wpolicy, &key).await.unwrap();
+
     let inventory = as_map!(
         "apple" => 10_i64,
         "banana" => 5_i64,
@@ -922,9 +902,7 @@ async fn remove_map_entries_by_key_filter() {
     );
     let data = as_map!("inventory" => inventory);
     let bin = as_bin!("testbin", data);
-    if !seed_path_expr_record(&client, &wpolicy, &key, &[bin]).await {
-        return;
-    }
+    client.put(&wpolicy, &key, &[bin]).await.unwrap();
 
     // Remove entries where key >= "c" (removes cherry and date)
     let ctx1 = ctx_map_key(Value::from("inventory"));
@@ -971,6 +949,8 @@ async fn remove_nested_items_complex_path() {
 
     let wpolicy = WritePolicy::default();
     let rpolicy = ReadPolicy::default();
+    common::delete_durably(&client, &wpolicy, &key).await.unwrap();
+
     let sales_dept = as_list!(
         as_map!("name" => "John", "sales" => 1000_i64),
         as_map!("name" => "Jane", "sales" => 5000_i64)
@@ -982,9 +962,7 @@ async fn remove_nested_items_complex_path() {
     let departments = as_map!("sales" => sales_dept, "engineering" => eng_dept);
     let data = as_map!("departments" => departments);
     let bin = as_bin!("testbin", data);
-    if !seed_path_expr_record(&client, &wpolicy, &key, &[bin]).await {
-        return;
-    }
+    client.put(&wpolicy, &key, &[bin]).await.unwrap();
 
     // Navigate: departments -> all dept lists -> remove employees with sales < 2000
     let ctx1 = ctx_map_key(Value::from("departments"));

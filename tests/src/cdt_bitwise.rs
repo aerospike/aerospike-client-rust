@@ -32,7 +32,7 @@ async fn cdt_bitwise() {
     ]);
     let bpolicy = BitPolicy::default();
 
-    let _ = common::delete_before_test(&client, &wpolicy, &key).await;
+    let _ = common::delete_durably(&client, &wpolicy, &key).await;
 
     // Verify the insert and Get Command
     let ops = &vec![

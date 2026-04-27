@@ -20,46 +20,18 @@ use aerospike::Task;
 use aerospike::*;
 use aerospike_rt::time::Duration;
 
-async fn udf_seed_bin_records(client: &Client, namespace: &str, set_name: &str, count: i64) -> bool {
-    let wpolicy = WritePolicy::default();
-    for i in 0..count {
-        let key = as_key!(namespace, set_name, i);
-        let _ = common::delete_for_test_reset(client, &wpolicy, &key).await;
-        let _ = common::delete_on_cluster(client, &wpolicy, &key).await;
-        let bins = vec![as_bin!("bin", i)];
-        match client.put(&wpolicy, &key, &bins).await {
-            Ok(()) => {}
-            Err(Error::ServerError(ResultCode::ParameterError, _, _)) if i == 0 => return false,
-            Err(Error::ServerError(ResultCode::ParameterError, _, _)) => {
-                panic!("udf_seed_bin_records: ParameterError at key {i}");
-            }
-            Err(e) => panic!("udf_seed_bin_records put: {e}"),
-        }
-    }
-    true
-}
-
 #[aerospike_macro::test]
 async fn execute_udf() {
-    let client = common::singleton_client().await;
+    let client = common::client().await;
     let namespace = common::namespace();
     let set_name = &common::rand_str(10);
 
     let apolicy = AdminPolicy::default();
     let wpolicy = WritePolicy::default();
     let key = as_key!(namespace, set_name, 1);
-    let _ = common::delete_for_test_reset(client, &wpolicy, &key).await;
-    let _ = common::delete_on_cluster(client, &wpolicy, &key).await;
     let wbin = as_bin!("bin", 10);
     let bins = vec![wbin];
-    match client.put(&wpolicy, &key, &bins).await {
-        Ok(()) => {}
-        Err(Error::ServerError(ResultCode::ParameterError, _, _)) => {
-            eprintln!("execute_udf: skipped — put returned ParameterError");
-            return;
-        }
-        Err(e) => panic!("execute_udf put: {e}"),
-    }
+    client.put(&wpolicy, &key, &bins).await.unwrap();
 
     let udf_body1 = r#"
 function func_div(rec, div)
@@ -130,24 +102,28 @@ end
     } else {
         panic!("UDF function did not return the expected error");
     }
+
+    client.close().await.unwrap();
 }
 
 #[aerospike_macro::test]
 async fn query_execute_udf_with_filter() {
-    let client = common::singleton_client().await;
+    let client = common::client().await;
     let namespace = common::namespace();
     let set_name = common::rand_str(10);
 
     let apolicy = AdminPolicy::default();
     let wpolicy = WritePolicy::default();
 
-    if !udf_seed_bin_records(&client, namespace, &set_name, 50).await {
-        eprintln!("query_execute_udf_with_filter: skipped — seed put returned ParameterError");
-        return;
+    // Create test records
+    for i in 0..50_i64 {
+        let key = as_key!(namespace, &set_name, i);
+        let bins = vec![as_bin!("bin", i)];
+        client.put(&wpolicy, &key, &bins).await.unwrap();
     }
 
     // Create index for filter query
-    let task = match client
+    let task = client
         .create_index_on_bin(
             &apolicy,
             namespace,
@@ -159,14 +135,7 @@ async fn query_execute_udf_with_filter() {
             None,
         )
         .await
-    {
-        Ok(t) => t,
-        Err(Error::ServerError(ResultCode::FailForbidden, _, _)) => {
-            eprintln!("query_execute_udf_with_filter: skipped — create_index FailForbidden");
-            return;
-        }
-        Err(e) => panic!("query_execute_udf_with_filter create_index: {e}"),
-    };
+        .expect("Failed to create index");
     task.wait_till_complete(None).await.unwrap();
 
     // Register a UDF that doubles the bin value
@@ -214,20 +183,24 @@ end
         let val: i64 = rec.bins["bin"].clone().into();
         assert_eq!(val, i, "record {i} should not have been modified");
     }
+
+    client.close().await.unwrap();
 }
 
 #[aerospike_macro::test]
 async fn query_execute_udf_scan_all() {
-    let client = common::singleton_client().await;
+    let client = common::client().await;
     let namespace = common::namespace();
     let set_name = common::rand_str(10);
 
     let apolicy = AdminPolicy::default();
     let wpolicy = WritePolicy::default();
 
-    if !udf_seed_bin_records(&client, namespace, &set_name, 50).await {
-        eprintln!("query_execute_udf_scan_all: skipped — seed put returned ParameterError");
-        return;
+    // Create test records
+    for i in 0..50_i64 {
+        let key = as_key!(namespace, &set_name, i);
+        let bins = vec![as_bin!("bin", i)];
+        client.put(&wpolicy, &key, &bins).await.unwrap();
     }
 
     // Register a UDF that adds a new bin
@@ -269,20 +242,24 @@ end
             "record {i} missing marker"
         );
     }
+
+    client.close().await.unwrap();
 }
 
 #[aerospike_macro::test]
 async fn query_execute_udf_with_args() {
-    let client = common::singleton_client().await;
+    let client = common::client().await;
     let namespace = common::namespace();
     let set_name = common::rand_str(10);
 
     let apolicy = AdminPolicy::default();
     let wpolicy = WritePolicy::default();
 
-    if !udf_seed_bin_records(&client, namespace, &set_name, 20).await {
-        eprintln!("query_execute_udf_with_args: skipped — seed put returned ParameterError");
-        return;
+    // Create test records
+    for i in 0..20_i64 {
+        let key = as_key!(namespace, &set_name, i);
+        let bins = vec![as_bin!("bin", i)];
+        client.put(&wpolicy, &key, &bins).await.unwrap();
     }
 
     // Register a UDF that adds a value to the bin
@@ -327,4 +304,6 @@ end
         let val: i64 = rec.bins["bin"].clone().into();
         assert_eq!(val, i + 100, "record {i} not updated correctly");
     }
+
+    client.close().await.unwrap();
 }

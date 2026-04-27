@@ -77,8 +77,8 @@ pub fn value_any() -> impl Strategy<Value = aerospike::Value> {
     ]
 }
 
-// Range filters only accept integer bounds.
 pub fn value_for_range_filter() -> impl Strategy<Value = (aerospike::Value, aerospike::Value)> {
+    // `Filter::range` only accepts integer bounds (see `RangeFilterValue` in aerospike-core).
     (0..i64::MAX / 2, 0..i64::MAX / 2).prop_map(|(v1, v2)| (as_val!(v1), as_val!(v1 + v2)))
 }
 

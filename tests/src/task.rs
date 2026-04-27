@@ -75,24 +75,12 @@ async fn index_task_test() {
     let apolicy = AdminPolicy::default();
     for i in 0..2 as i64 {
         let key = as_key!(namespace, &set_name, i);
-        let _ = common::delete_for_test_reset(&client, &wpolicy, &key).await;
-        let _ = common::delete_on_cluster(&client, &wpolicy, &key).await;
         let wbin = as_bin!(&bin_name, i);
         let bins = vec![wbin];
-        match client.put(&wpolicy, &key, &bins).await {
-            Ok(()) => {}
-            Err(aerospike::Error::ServerError(aerospike::ResultCode::ParameterError, _, _))
-                if i == 0 =>
-            {
-                eprintln!("index_task_test: skipped — put returned ParameterError");
-                client.close().await.unwrap();
-                return;
-            }
-            Err(e) => panic!("index_task_test put: {e}"),
-        }
+        client.put(&wpolicy, &key, &bins).await.unwrap();
     }
 
-    let index_task = match client
+    let index_task = client
         .create_index_on_bin(
             &apolicy,
             &namespace,
@@ -104,32 +92,17 @@ async fn index_task_test() {
             None,
         )
         .await
-    {
-        Ok(t) => t,
-        Err(aerospike::Error::ServerError(aerospike::ResultCode::FailForbidden, _, _)) => {
-            eprintln!("index_task_test: skipped — create_index FailForbidden");
-            client.close().await.unwrap();
-            return;
-        }
-        Err(e) => panic!("index_task_test create_index: {e}"),
-    };
+        .unwrap();
 
     assert!(matches!(
         index_task.wait_till_complete(None).await,
         Ok(Status::Complete)
     ));
 
-    let task = match client
+    let task = client
         .drop_index(&apolicy, namespace, &set_name, &index_name)
         .await
-    {
-        Ok(t) => t,
-        Err(aerospike::Error::ServerError(aerospike::ResultCode::FailForbidden, _, _)) => {
-            client.close().await.unwrap();
-            return;
-        }
-        Err(e) => panic!("index_task_test drop_index: {e}"),
-    };
+        .unwrap();
     assert!(matches!(
         task.wait_till_complete(None).await,
         Ok(Status::Complete)

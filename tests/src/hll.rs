@@ -2,9 +2,7 @@ use crate::common;
 
 use aerospike::operations::hll;
 use aerospike::operations::hll::HLLPolicy;
-use aerospike::{
-    as_key, as_list, as_val, Bins, Error, FloatValue, ReadPolicy, ResultCode, Value, WritePolicy,
-};
+use aerospike::{as_key, as_list, as_val, Bins, FloatValue, ReadPolicy, Value, WritePolicy};
 
 #[aerospike_macro::test]
 async fn hll() {
@@ -18,19 +16,8 @@ async fn hll() {
     let wpolicy = WritePolicy::default();
     let rpolicy = ReadPolicy::default();
 
-    let _ = common::delete_for_test_reset(&client, &wpolicy, &key).await;
-    let _ = common::delete_on_cluster(&client, &wpolicy, &key).await;
-
     let ops = &vec![hll::init(&hpolicy, "bin", 4)];
-    match client.operate(&wpolicy, &key, ops).await {
-        Ok(_) => {}
-        Err(Error::ServerError(ResultCode::ParameterError, _, _)) => {
-            eprintln!("hll: skipped — HLL init returned ParameterError");
-            client.close().await.unwrap();
-            return;
-        }
-        Err(e) => panic!("hll init: {e}"),
-    }
+    client.operate(&wpolicy, &key, ops).await.unwrap();
 
     let v = vec![Value::from("asd123")];
     let ops = &vec![hll::add(&hpolicy, "bin", v)];

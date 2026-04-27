@@ -3,18 +3,13 @@ use crate::proptest_async;
 use crate::proptests::{policy::*, queries::*};
 
 use futures::stream::StreamExt;
-use proptest::prelude::*;
 
-use aerospike::{QueryDuration, *};
+use aerospike::*;
 
 proptest_async::proptest! {
     #[test]
     async fn scan(
-        // Full-partition scans over `insert_bins` data (many bins / records) often exceed
-        // short socket reads; keep floor timeouts well above interactive defaults.
-        query_policy in query_policy(20_000, 60_000)
-            .prop_filter("ShortQuery and rps together are invalid",
-                |qp| !(qp.expected_duration == QueryDuration::Short && qp.records_per_second > 0)),
+        query_policy in query_policy(1000, 5000),
         stmt in statement_scan(common::namespace().into(), common::prop_setname_multi().into()))
     {
         let client = common::singleton_client().await;
