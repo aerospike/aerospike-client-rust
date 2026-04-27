@@ -300,6 +300,20 @@ pub async fn server_capabilities_cached(client: &Client) -> ServerCapabilities {
         .await
 }
 
+/// Deletes `key` once for test setup or teardown.
+///
+/// On strong-consistency namespaces, [`WritePolicy::durable_delete`] is set so the delete is
+/// allowed; on AP namespaces, `policy` is used unchanged. Prefer this over calling
+/// [`delete_for_test_reset`] and [`delete_on_cluster`] together (the latter pair was redundant on
+/// AP and split SC behavior across two non-obvious calls).
+pub async fn delete_before_test(
+    client: &Client,
+    policy: &WritePolicy,
+    key: &Key,
+) -> aerospike::Result<bool> {
+    delete_on_cluster(client, policy, key).await
+}
+
 /// Deletes `key` before test setup on AP namespaces. On strong-consistency namespaces a default
 /// `delete` often returns [`aerospike::ResultCode::FailForbidden`]; this becomes a no-op and
 /// callers should reset record state with `put` (for example `RecordExistsAction::Replace`).

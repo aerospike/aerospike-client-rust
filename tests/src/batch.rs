@@ -78,7 +78,7 @@ async fn batch_operate_timeout() {
 
 #[aerospike_macro::test]
 async fn batch_operate_read() {
-    let client = common::singleton_client().await;
+    let client = common::client().await;
     let namespace: &str = common::namespace();
     let set_name = &common::rand_str(10);
     let mut bpolicy = BatchPolicy::default();
@@ -126,7 +126,7 @@ end
     let bpr = BatchReadPolicy::default();
     let bpw = BatchWritePolicy::default();
     let mut bpd = BatchDeletePolicy::default();
-    if namespace_sc!(client) {
+    if namespace_sc!(&client) {
         bpd.durable_delete = true;
     }
     let bpu = BatchUDFPolicy::default();
@@ -283,48 +283,27 @@ end
         record.unwrap().bins.get("FAILURE"),
         Some(&as_val!("function not found"))
     );
+
+    client.close().await.unwrap();
 }
 
 #[aerospike_macro::test]
 async fn batch_operate_read_multi_op_single_bin() {
-    // Own client so this test is not tied to singleton seeding (indexes / UDF on `prop_setname_multi`).
     let client = common::client().await;
     let namespace: &str = common::namespace();
-    let set_name = common::rand_str(16);
+    let set_name = &common::rand_str(10);
     let mut bpolicy = BatchPolicy::default();
     bpolicy.concurrency = Concurrency::Parallel;
 
-    let key = as_key!(namespace, &set_name, 42_i64);
+    let key = as_key!(namespace, set_name, common::rand_str(10));
+
     let wp = WritePolicy::default();
-    let list_bins = [as_bin!("lbin", as_list!(111_i64, 222_i64, 333_i64))];
-    match client.put(&wp, &key, &list_bins).await {
-        Ok(()) => {}
-        Err(Error::ServerError(ResultCode::ParameterError, _, _)) => {
-            match client.put(&wp, &key, &[as_bin!("z", 0_i64)]).await {
-                Ok(()) => {
-                    let lp = lists::ListPolicy::default();
-                    let init = vec![lists::append_items(
-                        &lp,
-                        "lbin",
-                        vec![Value::from(111_i64), Value::from(222_i64), Value::from(333_i64)],
-                    )];
-                    client
-                        .operate(&wp, &key, &init)
-                        .await
-                        .expect("list append after ParameterError on list put");
-                }
-                Err(Error::ServerError(ResultCode::ParameterError, _, _)) => {
-                    eprintln!(
-                        "batch_operate_read_multi_op_single_bin: skipped — writes returned ParameterError \
-                         (no usable Aerospike on AEROSPIKE_HOSTS / namespace policy)."
-                    );
-                    return;
-                }
-                Err(e) => panic!("seed put after ParameterError on list put: {}", e),
-            }
-        }
-        Err(e) => panic!("put failed: {}", e),
-    }
+    let bin = as_bin!("lbin", Value::List(as_values!(111, 222, 333)));
+
+    client
+        .put(&wp, &key, &vec![bin])
+        .await
+        .expect("put failed.");
 
     let brp = BatchReadPolicy::default();
     let br = BatchOperation::read_ops(

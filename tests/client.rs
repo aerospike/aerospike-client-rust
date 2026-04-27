@@ -27,24 +27,11 @@ use aerospike_rt::time::Duration;
 mod common;
 
 #[aerospike_macro::test]
-#[should_panic(expected = "Failed to connect to")]
+#[should_panic(expected = "Failed to connect to host(s).")]
 async fn cluster_name() {
     let policy = &mut common::client_policy().clone();
     policy.cluster_name = Some(String::from("notTheRealClusterName"));
-    let err = match Client::new(policy, &common::hosts()).await {
-        Err(e) => e,
-        Ok(_) => panic!("wrong cluster name must fail client init"),
-    };
-    let msg = err.to_string();
-    // During seed tend, cluster name mismatch is logged then tend errors are ignored until
-    // stabilization ends with no nodes; `fail_if_not_connected` then yields `Connection`.
-    // If that path changes, we may still see `InvalidNode` with the mismatch text.
-    assert!(
-        msg.contains("Failed to connect to host(s)")
-            || msg.contains("Cluster name mismatch"),
-        "unexpected error: {}",
-        msg
-    );
+    Client::new(policy, &common::hosts()).await.unwrap();
 }
 
 #[aerospike_macro::test]
