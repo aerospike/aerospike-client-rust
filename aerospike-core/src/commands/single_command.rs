@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::sync::{Arc, Weak};
+use std::sync::Arc;
 
 use crate::cluster::partition::Partition;
 use crate::cluster::{Cluster, Node};
@@ -28,7 +28,7 @@ pub struct SingleCommand<'a> {
     cluster: Arc<Cluster>,
     pub key: &'a Key,
     partition: Partition<'a>,
-    last_tried: Weak<Node>,
+    last_tried: Option<Arc<Node>>,
     replica: crate::policy::Replica,
 }
 
@@ -39,7 +39,7 @@ impl<'a> SingleCommand<'a> {
             cluster,
             key,
             partition,
-            last_tried: Weak::new(),
+            last_tried: None,
             replica,
         }
     }
@@ -49,11 +49,12 @@ impl<'a> SingleCommand<'a> {
     }
 
     pub fn get_node(&mut self) -> Result<Arc<Node>> {
-        let this_time =
-            self.cluster
-                .get_node(&self.partition, self.replica, self.last_tried.clone())?;
-        self.last_tried = Arc::downgrade(&this_time);
-        Ok(this_time)
+        let node = self
+            .cluster
+            .get_node(&self.partition, self.replica, self.last_tried.clone())?;
+
+        self.last_tried = Some(node.clone());
+        Ok(node)
     }
 
     pub async fn empty_socket(conn: &mut Connection) -> Result<()> {
@@ -103,13 +104,14 @@ impl<'a> SingleCommand<'a> {
 
         // set timeout outside the loop
         let deadline = policy.deadline();
+        let effective_attempt = policy.max_retries() + 1;
 
         // Execute command until successful, timed out or maximum iterations have been reached.
         loop {
             iterations += 1;
 
             // check for max retries
-            if policy.max_retries() > 0 && iterations > policy.max_retries() {
+            if iterations > effective_attempt {
                 // first attempt isn't a retry
                 return Err(Error::Timeout(format!("Timeout after {iterations} tries")));
             }
@@ -185,7 +187,6 @@ impl<'a> SingleCommand<'a> {
                 if commands::is_network_error(&err) {
                     continue;
                 }
-
                 return Err(err);
             }
 
