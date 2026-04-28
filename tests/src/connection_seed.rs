@@ -274,7 +274,10 @@ async fn test_seed_connection_and_partition_map_staleness() {
 async fn probe_get(client: &Client, ns: &str, set: &str, _bin: &str, n: i64) -> (i64, i64) {
     let mut rp = ReadPolicy::default();
     rp.base_policy.total_timeout = 3000;
-    println!("   rp.base_policy.max_retries={}: ", rp.base_policy.max_retries);
+    println!(
+        "   rp.base_policy.max_retries={}: ",
+        rp.base_policy.max_retries
+    );
     // rp.base_policy.max_retries = 0;
 
     let (mut ok, mut fail) = (0i64, 0i64);
@@ -299,7 +302,7 @@ async fn probe_put(client: &Client, ns: &str, set: &str, bin: &str, n: i64) -> (
     wp.base_policy.sleep_between_retries = 200;
     wp.base_policy.max_retries = 2;
     // wp.base_policy.max_retries = 0;
-   
+
     let (mut ok, mut fail) = (0i64, 0i64);
     for i in 0..n {
         let key = as_key!(ns, set, i);

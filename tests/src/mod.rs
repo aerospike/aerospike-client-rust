@@ -24,6 +24,7 @@ mod batch;
 mod cdt_bitwise;
 mod cdt_list;
 mod cdt_map;
+mod connection_seed;
 mod exp;
 mod exp_bitwise;
 mod exp_hll;
@@ -37,7 +38,6 @@ mod query;
 mod scan;
 #[cfg(feature = "serialization")]
 mod serialization;
-mod connection_seed;
 mod task;
 mod truncate;
 mod udf;

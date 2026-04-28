@@ -298,7 +298,7 @@ impl Connection {
         if self.socket_timeout > 0 {
             Duration::from_millis(u64::from(self.socket_timeout))
         } else {
-            Duration::from_millis(30_000) // 30 secs
+            Duration::from_secs(30) // 30 secs
         }
     }
 
