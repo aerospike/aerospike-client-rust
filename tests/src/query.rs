@@ -794,6 +794,36 @@ async fn query_operate_scan_all() {
     client.close().await.unwrap();
 }
 
+#[aerospike_macro::test]
+async fn query_operate_empty_ops_returns_parameter_error() {
+    let client = common::client().await;
+    let namespace = common::namespace();
+    let set_name = &common::rand_str(10);
+
+    let wpolicy = WritePolicy::default();
+    let statement = Statement::new(namespace, set_name, Bins::All);
+
+    // Calling query_operate with no operations must be rejected client-side
+    // with a ParameterError before any server fan-out. We verify the message
+    // contains "no operations" so the assertion would not be satisfied by an
+    // accidental server-returned ParameterError (server fills the node addr
+    // in that field instead).
+    let result = client.query_operate(&wpolicy, statement, &[]).await;
+
+    match result {
+        Err(Error::ServerError(ResultCode::ParameterError, _, ref msg))
+            if msg.contains("no operations") => {}
+        Err(other) => panic!(
+            "expected client-side ParameterError ('query_operate called with no \
+             operations'); got {:?}",
+            other
+        ),
+        Ok(_) => panic!("expected ParameterError, got Ok"),
+    }
+
+    client.close().await.unwrap();
+}
+
 // ============================================================================
 // Filter::equal_by_index — equality filter targeting a named secondary index
 // ============================================================================

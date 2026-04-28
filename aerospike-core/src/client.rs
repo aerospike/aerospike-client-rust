@@ -837,6 +837,13 @@ impl Client {
         key: &Key,
         ops: &[Operation],
     ) -> Result<Record> {
+        if ops.is_empty() {
+            return Err(Error::ServerError(
+                ResultCode::ParameterError,
+                false,
+                "no operations defined".into(),
+            ));
+        }
         let mut command = OperateCommand::new(policy, self.cluster.clone(), key, ops);
         command.execute().await?;
         Ok(command.read_command.record.unwrap())
@@ -1257,6 +1264,13 @@ impl Client {
         statement: Statement,
         operations: &[Operation],
     ) -> Result<ExecuteTask> {
+        if operations.is_empty() {
+            return Err(Error::ServerError(
+                ResultCode::ParameterError,
+                false,
+                "no operations defined".into(),
+            ));
+        }
         statement.validate()?;
 
         let nodes = self.cluster.nodes();
