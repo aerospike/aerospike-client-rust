@@ -17,7 +17,7 @@ publish = true
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-aerospike-core = {path = "../aerospike-core", version = "2.0.0", features = ["sync"]}
+aerospike-core = {path = "../aerospike-core", version = "2.1.0", features = ["sync"]}
 futures = { version = "0.3.32" }
 
 [features]
