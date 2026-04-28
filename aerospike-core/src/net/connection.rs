@@ -1043,14 +1043,13 @@ impl<'a> ConnectionRecovery<'a> {
     async fn read_header(&mut self, total_size: usize) -> Result<usize> {
         if total_size > self.conn.bytes_read {
             // read the rest of the header
-            if self
+            if let Err(cause) = self
                 .conn
                 .read_buffer_at(self.conn.bytes_read, total_size - self.conn.bytes_read)
                 .await
-                .is_err()
             {
                 // return early and don't update the connection state
-                return Err(Error::StreamTerminatedError());
+                return Err(Error::StreamTerminatedError(Some(Box::new(cause))));
             };
         }
 
@@ -1076,17 +1075,16 @@ impl<'a> ConnectionRecovery<'a> {
     async fn read_body(&mut self, total_size: usize) -> Result<()> {
         if total_size > self.conn.bytes_read {
             // read the rest of the body
-            if self
+            if let Err(cause) = self
                 .conn
                 .drain(
                     total_size - self.conn.bytes_read,
                     Duration::from_millis(u64::from(self.conn.timeout_delay)),
                 )
                 .await
-                .is_err()
             {
                 // return early and don't update the connection state
-                return Err(Error::StreamTerminatedError());
+                return Err(Error::StreamTerminatedError(Some(Box::new(cause))));
             }
         }
 
@@ -1098,14 +1096,13 @@ impl<'a> ConnectionRecovery<'a> {
         assert_eq!(total_size, 8);
         if total_size > self.conn.bytes_read {
             // read the rest of the header
-            if self
+            if let Err(cause) = self
                 .conn
                 .read_buffer_at(self.conn.bytes_read, total_size - self.conn.bytes_read)
                 .await
-                .is_err()
             {
                 // return early and don't update the connection state
-                return Err(Error::StreamTerminatedError());
+                return Err(Error::StreamTerminatedError(Some(Box::new(cause))));
             };
         }
 
@@ -1123,7 +1120,7 @@ impl<'a> ConnectionRecovery<'a> {
             // We cannot inspect info3 to detect the last record; just drain
             // the entire body and continue to the next message.
             if total_size > self.conn.bytes_read {
-                if let Err(_) = self
+                if let Err(cause) = self
                     .conn
                     .drain(
                         total_size - self.conn.bytes_read,
@@ -1131,7 +1128,7 @@ impl<'a> ConnectionRecovery<'a> {
                     )
                     .await
                 {
-                    return Err(Error::StreamTerminatedError());
+                    return Err(Error::StreamTerminatedError(Some(Box::new(cause))));
                 }
             }
 
@@ -1144,18 +1141,18 @@ impl<'a> ConnectionRecovery<'a> {
         if self.conn.bytes_read > usize::from(crate::commands::buffer::MSG_TOTAL_HEADER_SIZE) {
             // we are past the header portion, clearly not the last message.
             // We can safely drain the connection
-            if total_size > self.conn.bytes_read
-                && self
+            if total_size > self.conn.bytes_read {
+                if let Err(cause) = self
                     .conn
                     .drain(
                         total_size - self.conn.bytes_read,
                         Duration::from_millis(u64::from(self.conn.timeout_delay)),
                     )
                     .await
-                    .is_err()
-            {
-                // return early and don't update the connection state
-                return Err(Error::StreamTerminatedError());
+                {
+                    // return early and don't update the connection state
+                    return Err(Error::StreamTerminatedError(Some(Box::new(cause))));
+                }
             }
 
             assert!(self.conn.bytes_read == total_size);
@@ -1169,14 +1166,13 @@ impl<'a> ConnectionRecovery<'a> {
                 total_size,
                 usize::from(crate::commands::buffer::MSG_TOTAL_HEADER_SIZE) - self.conn.bytes_read,
             );
-            if self
+            if let Err(cause) = self
                 .conn
                 .read_buffer_at(self.conn.bytes_read, remaining)
                 .await
-                .is_err()
             {
                 // return early and don't update the connection state
-                return Err(Error::StreamTerminatedError());
+                return Err(Error::StreamTerminatedError(Some(Box::new(cause))));
             }
         }
 
@@ -1185,18 +1181,18 @@ impl<'a> ConnectionRecovery<'a> {
             info3 & crate::commands::buffer::INFO3_LAST == crate::commands::buffer::INFO3_LAST;
 
         // read the rest of the body
-        if total_size > self.conn.bytes_read
-            && self
+        if total_size > self.conn.bytes_read {
+            if let Err(cause) = self
                 .conn
                 .drain(
                     total_size - self.conn.bytes_read,
                     Duration::from_millis(u64::from(self.conn.timeout_delay)),
                 )
                 .await
-                .is_err()
-        {
-            // return early and don't update the connection state
-            return Err(Error::StreamTerminatedError());
+            {
+                // return early and don't update the connection state
+                return Err(Error::StreamTerminatedError(Some(Box::new(cause))));
+            }
         }
 
         assert!(self.conn.bytes_read == total_size);

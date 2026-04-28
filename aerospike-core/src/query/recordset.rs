@@ -103,10 +103,10 @@ impl Recordset {
     pub(crate) async fn push(&self, record: Result<Record>) -> Result<()> {
         match record {
             // Do not emit stream termination errors; they are used as signals only.
-            Err(crate::Error::StreamTerminatedError()) => Ok(()),
+            Err(crate::Error::StreamTerminatedError(_)) => Ok(()),
             _ => match self.tx.send(record).await {
                 Ok(()) => Ok(()),
-                Err(_) => Err(crate::Error::StreamTerminatedError()),
+                Err(_) => Err(crate::Error::StreamTerminatedError(None)),
             },
         }
     }

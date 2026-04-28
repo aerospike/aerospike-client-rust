@@ -71,8 +71,9 @@ impl BatchOperateCommand {
     }
 
     pub async fn execute_command(mut self, cluster: Arc<Cluster>) -> Result<Self> {
-        let mut iterations = 0;
+        let mut iterations: usize = 0;
         let mut last_err: Option<Error> = None;
+        let node_addr = self.node.to_string();
 
         // set timeout outside the loop
         let deadline = self.policy.deadline();
@@ -126,8 +127,14 @@ impl BatchOperateCommand {
 
             // too many retries
             if self.policy.max_retries() > 0 && iterations > self.policy.max_retries() + 1 {
+                let u32_iters = if iterations > u32::MAX as usize {
+                    u32::MAX
+                } else {
+                    iterations as u32
+                };
                 return Err(Error::Timeout(format!("Timeout after {iterations} tries"))
-                    .chain_cause(last_err));
+                    .chain_cause(last_err)
+                    .with_retry_context(u32_iters, Some(&node_addr), Vec::new()));
             }
 
             // Sleep before trying again, after the first iteration
@@ -138,10 +145,16 @@ impl BatchOperateCommand {
             // check for command timeout
             if let Some(deadline) = deadline {
                 if Instant::now() > deadline {
+                    let u32_iters = if iterations > u32::MAX as usize {
+                    u32::MAX
+                } else {
+                    iterations as u32
+                };
                     return Err(Error::Timeout(format!(
                         "Command timed out after {iterations} tries"
                     ))
-                    .chain_cause(last_err));
+                    .chain_cause(last_err)
+                    .with_retry_context(u32_iters, Some(&node_addr), Vec::new()));
                 }
             }
         }
@@ -197,7 +210,15 @@ impl BatchOperateCommand {
             if !Self::keep_connection(&err) {
                 conn.invalidate();
             }
-            Err(err)
+            // Retriable server errors (TIMEOUT / DEVICE_OVERLOAD / KEY_BUSY /
+            // PARTITION_UNAVAILABLE) should drive another retry iteration, not
+            // abort the whole batch. Return them as recoverable so the outer
+            // loop can loop again.
+            if commands::should_retry(&err) {
+                Ok(Some(err))
+            } else {
+                Err(err)
+            }
         } else {
             Ok(None)
         }
@@ -352,8 +373,8 @@ impl BatchOperateCommand {
         }))
     }
 
-    const fn keep_connection(err: &Error) -> bool {
-        matches!(err, Error::ServerError(_, _, _) | Error::Timeout(_))
+    fn keep_connection(err: &Error) -> bool {
+        commands::keep_connection(err)
     }
 
     async fn parse_result(

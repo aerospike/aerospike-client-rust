@@ -89,6 +89,10 @@ impl Command for ExecuteUDFCommand<'_> {
         true
     }
 
+    fn is_write(&self) -> bool {
+        true
+    }
+
     fn get_node(&mut self) -> Result<Arc<Node>> {
         self.read_command.get_node()
     }

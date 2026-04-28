@@ -183,7 +183,7 @@ async fn txn_write_conflict() {
 
     match err {
         Error::ServerError(ResultCode::MrtBlocked, _, _) => {}
-        other => panic!("Expected MrtBlocked, got: {other:?}"),
+        other => panic!("Expected MrtBlocked, got: {:?}", other),
     }
 
     // Commit txn1
@@ -239,7 +239,7 @@ async fn txn_blocked_before_commit() {
 
     match err {
         Error::ServerError(ResultCode::MrtBlocked, _, _) => {}
-        other => panic!("Expected MrtBlocked, got: {other:?}"),
+        other => panic!("Expected MrtBlocked, got: {:?}", other),
     }
 
     // Clean up: commit the txn
@@ -365,7 +365,7 @@ async fn txn_delete_and_commit() {
     let result = client.get(&ReadPolicy::default(), &key, Bins::All).await;
     match result {
         Err(Error::ServerError(ResultCode::KeyNotFoundError, _, _)) => {}
-        other => panic!("Expected KeyNotFoundError, got: {other:?}"),
+        other => panic!("Expected KeyNotFoundError, got: {:?}", other),
     }
 }
 
@@ -444,7 +444,7 @@ async fn txn_delete_twice() {
     let result = client.get(&ReadPolicy::default(), &key, Bins::All).await;
     match result {
         Err(Error::ServerError(ResultCode::KeyNotFoundError, _, _)) => {}
-        other => panic!("Expected KeyNotFoundError, got: {other:?}"),
+        other => panic!("Expected KeyNotFoundError, got: {:?}", other),
     }
 }
 
@@ -690,7 +690,7 @@ async fn txn_version_mismatch_on_commit() {
                 // empty too — just ensure it's accessible, not null.
                 let _ = roll_records.len();
             }
-            other => panic!("Expected Error::CommitFailed, got: {other:?}"),
+            other => panic!("Expected Error::CommitFailed, got: {:?}", other),
         }
     }
 }
@@ -742,7 +742,7 @@ async fn txn_verify_deleted_key_fails() {
             assert_eq!(verify_records.len(), 1);
             assert_ne!(verify_records[0].result_code, Some(ResultCode::Ok));
         }
-        other => panic!("Expected Error::CommitFailed, got: {other:?}"),
+        other => panic!("Expected Error::CommitFailed, got: {:?}", other),
     }
 }
 

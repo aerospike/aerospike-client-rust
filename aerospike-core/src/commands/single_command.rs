@@ -94,11 +94,35 @@ impl<'a> SingleCommand<'a> {
         policy: &(dyn Policy + Send + Sync),
         cmd: &'a mut (dyn commands::Command + Send),
     ) -> Result<()> {
-        let mut iterations = 0;
+        let mut iterations: usize = 0;
+        // Number of times the command was actually sent on the wire (matches
+        // Java's `commandSentCounter`). Used to compute `in_doubt` on failure.
+        let mut commands_sent: u32 = 0;
+        let iterations_as_u32 =
+            |n: usize| if n > u32::MAX as usize { u32::MAX } else { n as u32 };
         let mut last_err: Option<Error> = None;
+        let mut sub_errors: Vec<Error> = Vec::new();
+        let mut last_node_addr: Option<String> = None;
+        let is_write = cmd.is_write();
 
         // set timeout outside the loop
         let deadline = policy.deadline();
+
+        // Finalizes an error before returning to the caller: applies `in_doubt`
+        // per Java's rule and attaches retry context (iteration count, last
+        // node, sub-error history).
+        let finalize = |err: Error,
+                        iterations: u32,
+                        commands_sent: u32,
+                        last_node_addr: Option<String>,
+                        sub_errors: Vec<Error>|
+         -> Error {
+            err.set_in_doubt(is_write, commands_sent).with_retry_context(
+                iterations,
+                last_node_addr.as_deref(),
+                sub_errors,
+            )
+        };
 
         // Execute command until successful, timed out or maximum iterations have been reached.
         loop {
@@ -108,10 +132,17 @@ impl<'a> SingleCommand<'a> {
             if policy.max_retries() > 0 && iterations > policy.max_retries() {
                 // first attempt isn't a retry
                 let err = Error::Timeout(format!("Timeout after {iterations} tries"));
-                return Err(match last_err {
+                let tail = match last_err.take() {
                     Some(e) => e.wrap(err),
                     None => err,
-                });
+                };
+                return Err(finalize(
+                    tail,
+                    iterations_as_u32(iterations),
+                    commands_sent,
+                    last_node_addr,
+                    sub_errors,
+                ));
             }
 
             // Sleep before trying again, after the first iteration
@@ -120,13 +151,22 @@ impl<'a> SingleCommand<'a> {
                 // DO NOT retry for any error other than network errors.
                 if !cmd.can_retry() {
                     let err = Error::Timeout("Timeout".to_string());
-                    return Err(match last_err {
+                    let tail = match last_err.take() {
                         Some(e) => e.wrap(err),
                         None => err,
-                    });
+                    };
+                    return Err(finalize(
+                        tail,
+                        iterations_as_u32(iterations),
+                        commands_sent,
+                        last_node_addr,
+                        sub_errors,
+                    ));
                 }
 
-                // Advance the partition sequence for the retry
+                // Advance the partition sequence for the retry. Only treat a
+                // client-side timeout as a timeout for partition sequencing —
+                // a server-reported TIMEOUT should still advance the sequence.
                 let is_client_timeout = matches!(&last_err, Some(Error::Timeout(_)));
                 cmd.prepare_retry(is_client_timeout);
 
@@ -142,6 +182,12 @@ impl<'a> SingleCommand<'a> {
                 }
             }
 
+            // Record the previous iteration's error as a sub-error once we're
+            // committing to another attempt.
+            if let Some(prev) = last_err.take() {
+                sub_errors.push(prev);
+            }
+
             // set command node, so when you return a record it has the node
             let node = match cmd.get_node() {
                 Ok(node) => node,
@@ -152,6 +198,7 @@ impl<'a> SingleCommand<'a> {
                     continue;
                 } // Node is currently inactive. Retry.
             };
+            last_node_addr = Some(node.to_string());
 
             let mut conn = match node.get_connection(cmd.hint()).await {
                 Ok(conn) => conn,
@@ -189,23 +236,30 @@ impl<'a> SingleCommand<'a> {
                 last_err = Some(err);
                 continue;
             }
+            commands_sent += 1;
 
             // Parse results.
             if let Err(err) = cmd.parse_result(&mut conn).await {
-                // close the connection
-                // cancelling/closing the batch/multi commands will return an error, which will
-                // close the connection to throw away its data and signal the server about the
-                // situation. We will not put back the connection in the buffer.
+                // close the connection if the error is not safe to pool
                 if !commands::keep_connection(&err) {
                     conn.invalidate();
                 }
 
-                if commands::is_network_error(&err) {
+                // Retry on network errors (client side) and on explicit
+                // server-side retriables (TIMEOUT / DEVICE_OVERLOAD / KEY_BUSY
+                // / PARTITION_UNAVAILABLE) — matching Java's SyncCommand.
+                if commands::should_retry(&err) {
                     last_err = Some(err);
                     continue;
                 }
 
-                return Err(err);
+                return Err(finalize(
+                    err,
+                    iterations_as_u32(iterations),
+                    commands_sent,
+                    last_node_addr,
+                    sub_errors,
+                ));
             }
 
             // allow the connection to be put back in the connection pool
@@ -216,9 +270,16 @@ impl<'a> SingleCommand<'a> {
         }
 
         let err = Error::Timeout(format!("Command timed out after {iterations} tries"));
-        Err(match last_err {
+        let tail = match last_err.take() {
             Some(e) => e.wrap(err),
             None => err,
-        })
+        };
+        Err(finalize(
+            tail,
+            iterations_as_u32(iterations),
+            commands_sent,
+            last_node_addr,
+            sub_errors,
+        ))
     }
 }

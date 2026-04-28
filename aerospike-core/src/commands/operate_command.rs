@@ -83,6 +83,14 @@ impl Command for OperateCommand<'_> {
         true
     }
 
+    fn is_write(&self) -> bool {
+        // Operate may be all-read or include writes. Inspect the requested
+        // operations and report write only when at least one is a write op,
+        // so `in_doubt` is set on retry-exhaustion only when retries could
+        // have produced a server-side mutation.
+        self.operations.iter().any(Operation::is_write)
+    }
+
     fn get_node(&mut self) -> Result<Arc<Node>> {
         self.read_command.get_node()
     }

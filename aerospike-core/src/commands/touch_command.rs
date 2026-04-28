@@ -71,6 +71,10 @@ impl Command for TouchCommand<'_> {
         true
     }
 
+    fn is_write(&self) -> bool {
+        true
+    }
+
     fn prepare_retry(&mut self, is_client_timeout: bool) {
         self.single_command.prepare_retry(is_client_timeout);
     }
