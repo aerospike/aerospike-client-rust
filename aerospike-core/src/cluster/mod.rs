@@ -221,9 +221,25 @@ impl Cluster {
                 }
             }
         }
+
+        // Cleanup is performed here — as the last act of the tend thread —
+        // rather than in `close()`, so the "all node additions/deletions are
+        // performed in tend thread" invariant (see `tend()`) is preserved.
+        // This makes the cleanup race-free without any cross-thread sync.
+        cluster.partition_map.store(Arc::new(HashMap::default()));
+        cluster.hashed_pass.store(Arc::new(None));
+        cluster.set_nodes(vec![]);
+        cluster.aliases.store(Arc::new(HashMap::new()));
+        cluster.seeds.store(Arc::new(vec![]));
     }
 
     async fn tend(&self) -> Result<()> {
+        // If close() has been called, bail before any work — otherwise an
+        // in-flight cycle would repopulate nodes after close() cleared them.
+        if self.closed.load(Ordering::Relaxed) {
+            return Ok(());
+        }
+
         let mut nodes = self.nodes();
 
         // All node additions/deletions are performed in tend thread.
@@ -734,13 +750,19 @@ impl Cluster {
     }
 
     pub async fn close(&self) -> Result<()> {
-        if !self.closed.load(Ordering::Relaxed) {
-            // close tend by closing the channel
-            let tx = self.tend_channel.lock().await;
-            drop(tx);
-            self.closed.store(true, Ordering::Relaxed);
+        // Mark closed first so any in-flight tend cycle bails early.
+        if self.closed.swap(true, Ordering::SeqCst) {
+            return Ok(());
         }
 
+        // Actually close the tend channel: locking the Mutex and dropping
+        // the *guard* only releases the lock — it doesn't drop the Sender,
+        // which is what tend_thread's `try_recv` watches via TryRecvError::
+        // Closed. Use Sender::close_channel() to signal closure. The tend
+        // thread itself clears `nodes` and `aliases` as its last act before
+        // exiting (see `tend_thread`), preserving the single-writer
+        // invariant on those fields.
+        self.tend_channel.lock().await.close_channel();
         Ok(())
     }
 }
