@@ -3,6 +3,7 @@
 ## [2.1.0]
 
 * **Bug Fixes**
+  * [CLIENT-4711] `close()` does not stop the `tend_thread`.
   * [CLIENT-4685] Reject `operate` calls with empty ops list.
   * [CLIENT-4686] Fix unexpected behavior for partition-based query with `QueryDuration::Short`.
   * [CLIENT-4405] Execute query failing during node churn (#195)
@@ -13,6 +14,11 @@
     * Removed deprecated `try_next`.
     * Change default policy for `max-retries` to `0` for writes, honoring `max-retries=0` as no retries.
     * Change policy to sequence for write/delete commands.
+
+* **Improvements**
+  * Update all dependencies to the latest, and adapt the code to the deprecation and removals.
+  * Adds a cleanup test that is ignored by default.
+    Can be manually invoked to remove indexes and then truncate of the tested namespace
 
 ## [2.0.0]
 
