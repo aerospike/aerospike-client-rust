@@ -9,7 +9,7 @@ use aerospike::*;
 proptest_async::proptest! {
     #[test]
     async fn scan(
-        query_policy in query_policy(1000, 5000),
+        query_policy in query_policy_scan(1000, 5000),
         stmt in statement_scan(common::namespace().into(), common::prop_setname_multi().into()))
     {
         let client = common::singleton_client().await;

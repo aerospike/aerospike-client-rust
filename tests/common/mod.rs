@@ -21,8 +21,8 @@ use aerospike::CollectionIndexType;
 use aerospike::Task;
 
 use rand;
-use rand::distributions::Alphanumeric;
-use rand::Rng;
+use rand::distr::Alphanumeric;
+use rand::RngExt;
 
 use tokio::sync::OnceCell;
 
@@ -202,8 +202,11 @@ pub async fn singleton_client() -> &'static Client {
 }
 
 pub fn rand_str(sz: usize) -> String {
-    let rng = rand::thread_rng();
-    rng.sample_iter(&Alphanumeric).take(sz).collect()
+    rand::rng()
+        .sample_iter(&Alphanumeric)
+        .take(sz)
+        .map(char::from)
+        .collect()
 }
 
 pub async fn enterprise_edition() -> bool {

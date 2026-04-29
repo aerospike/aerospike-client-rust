@@ -20,6 +20,7 @@ use std::result::Result as StdResult;
 use std::sync::atomic::{AtomicBool, AtomicIsize, AtomicUsize, Ordering};
 use std::sync::Arc;
 
+use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use hazarc::AtomicArc;
 
 use crate::cluster::node_validator::NodeValidator;
@@ -391,7 +392,7 @@ impl Node {
         // Source user-agent payload
         // Format: "1,rust-<version>,<application-id>"
         let user_agent_id = format!("1,rust-{CLIENT_VERSION},{app_id}");
-        let user_agent_id = base64::encode(&user_agent_id);
+        let user_agent_id = BASE64.encode(&user_agent_id);
         let user_agent_command = format!("user-agent-set:value={user_agent_id}");
 
         let policy = AdminPolicy {

@@ -19,6 +19,7 @@ use std::str;
 use std::sync::Arc;
 use std::vec::Vec;
 
+use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use regex::Regex;
 use std::sync::LazyLock;
 
@@ -923,7 +924,7 @@ impl Client {
         server_path: &str,
         language: UDFLang,
     ) -> Result<RegisterTask> {
-        let udf_body = base64::encode(udf_body);
+        let udf_body = BASE64.encode(udf_body);
 
         let cmd = format!(
             "udf-put:filename={};content={};content-len={};udf-type={};",
@@ -1564,7 +1565,7 @@ impl Client {
             let mut buf = Buffer::new(0);
             buf.resize_buffer(size)?;
             let _ = expression.pack(&mut Some(&mut buf));
-            let exp_str = base64::encode(&buf.data_buffer);
+            let exp_str = BASE64.encode(&buf.data_buffer);
 
             format!("xdr-set-filter:dc={datacenter};namespace={namespace};exp={exp_str}")
         } else {

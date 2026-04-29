@@ -7,8 +7,8 @@ use aerospike::{Bins, Client, ClientPolicy, QueryPolicy, Statement};
 use aerospike_core::expressions::{eq, int_bin, int_val};
 use aerospike_core::{AdminPolicy, CollectionIndexType, IndexType, Task, WritePolicy};
 use futures::stream::StreamExt;
-use rand::distributions::Alphanumeric;
-use rand::Rng;
+use rand::distr::Alphanumeric;
+use rand::RngExt;
 use std::env;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
@@ -258,8 +258,8 @@ async fn create_test_set(client: &Client, namespace: &str, num_records: usize) -
 }
 
 fn generate_random_set_name() -> String {
-    let rng = rand::thread_rng();
-    rng.sample_iter(&Alphanumeric)
+    rand::rng()
+        .sample_iter(&Alphanumeric)
         .take(10)
         .map(char::from)
         .collect()
