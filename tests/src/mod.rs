@@ -24,6 +24,7 @@ mod batch;
 mod cdt_bitwise;
 mod cdt_list;
 mod cdt_map;
+mod cleanup;
 mod connection_seed;
 mod exp;
 mod exp_bitwise;
