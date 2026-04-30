@@ -55,6 +55,7 @@ pub use self::write_command::WriteCommand;
 use crate::cluster::Node;
 use crate::errors::{Error, Result};
 use crate::net::Connection;
+use crate::ResultCode;
 
 // Command interface describes all commands available
 #[async_trait::async_trait]
@@ -75,4 +76,28 @@ pub const fn keep_connection(err: &Error) -> bool {
 
 pub const fn is_network_error(err: &Error) -> bool {
     matches!(err, Error::Connection(_) | Error::Timeout(_))
+}
+
+/// Server-reported result codes that are safe to retry on (TIMEOUT,
+/// `DEVICE_OVERLOAD`, `KEY_BUSY`). We also treat `PartitionUnavailable` as
+/// retriable so callers eventually see the partition recover from a
+/// transitional state.
+pub const fn is_retriable_server_error(err: &Error) -> bool {
+    match err {
+        Error::ServerError(rc, _, _)
+        | Error::BatchError(_, rc, _, _)
+        | Error::BatchLastError(_, rc, _, _) => matches!(
+            rc,
+            ResultCode::Timeout
+                | ResultCode::DeviceOverload
+                | ResultCode::KeyBusy
+                | ResultCode::PartitionUnavailable
+        ),
+        _ => false,
+    }
+}
+
+/// Overall retry gate: either a network failure or a retriable server error.
+pub const fn should_retry(err: &Error) -> bool {
+    is_network_error(err) || is_retriable_server_error(err)
 }

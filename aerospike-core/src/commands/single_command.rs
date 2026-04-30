@@ -101,7 +101,11 @@ impl<'a> SingleCommand<'a> {
         cmd: &'a mut (dyn commands::Command + Send),
     ) -> Result<()> {
         let mut iterations = 0;
-
+        // Remember the most recent failure so that when retries are exhausted
+        // the caller gets a meaningful error — in particular the circuit
+        // breaker's `MaxErrorRate` — instead of a bare timeout. This is what
+        // lets the breaker "return an error informing the user it tripped".
+        let mut last_err: Option<Error> = None;
         // set timeout outside the loop
         let deadline = policy.deadline();
         let effective_attempt = policy.max_retries() + 1;
@@ -113,7 +117,9 @@ impl<'a> SingleCommand<'a> {
             // check for max retries
             if iterations > effective_attempt {
                 // first attempt isn't a retry
-                return Err(Error::Timeout(format!("Timeout after {iterations} tries")));
+                return Err(last_err.unwrap_or_else(|| {
+                    Error::Timeout(format!("Timeout after {iterations} tries"))
+                }));
             }
 
             // Sleep before trying again, after the first iteration
@@ -121,7 +127,7 @@ impl<'a> SingleCommand<'a> {
                 // DO NOT retry for streaming commands here. They retry in their own execution logic.
                 // DO NOT retry for any error other than network errors.
                 if !cmd.can_retry() {
-                    return Err(Error::Timeout("Timeout".to_string()));
+                    return Err(last_err.unwrap_or_else(|| Error::Timeout("Timeout".to_string())));
                 }
 
                 if let Some(sleep_between_retries) = policy.sleep_between_retries() {
@@ -147,10 +153,22 @@ impl<'a> SingleCommand<'a> {
                 } // Node is currently inactive. Retry.
             };
 
+            // Per-node circuit breaker: if this node has tripped its
+            // error-rate window, refuse the command outright (no socket
+            // open, no retry on this node) and let the caller back off.
+            // Mirrors Java `SyncCommand.executeCommand` calling
+            // `node.validateErrorCount()` before `getConnection`.
+            if let Err(err) = node.validate_error_count() {
+                last_err = Some(err);
+                continue;
+            }
+
             let mut conn = match node.get_connection(cmd.hint()).await {
                 Ok(conn) => conn,
                 Err(err) => {
                     warn!("Node {node}: {err}");
+                    node.incr_error_rate();
+                    last_err = Some(err);
                     continue;
                 }
             };
@@ -171,6 +189,8 @@ impl<'a> SingleCommand<'a> {
                 // Close socket to flush out possible garbage. Do not put back in pool.
                 conn.invalidate();
                 warn!("Node {node}: {err}");
+                node.incr_error_rate();
+                last_err = Some(err);
                 continue;
             }
 
@@ -183,8 +203,15 @@ impl<'a> SingleCommand<'a> {
                 if !commands::keep_connection(&err) {
                     conn.invalidate();
                 }
-
-                if commands::is_network_error(&err) {
+                if commands::should_retry(&err) {
+                    // Bump the per-node breaker for the retriable error subset
+                    // Java counts: TIMEOUT, DEVICE_OVERLOAD, KEY_BUSY, plus
+                    // client-side network failures.
+                    if commands::is_network_error(&err) || commands::is_retriable_server_error(&err)
+                    {
+                        node.incr_error_rate();
+                    }
+                    last_err = Some(err);
                     continue;
                 }
                 return Err(err);
@@ -197,8 +224,8 @@ impl<'a> SingleCommand<'a> {
             return Ok(());
         }
 
-        Err(Error::Timeout(format!(
-            "Command timed out after {iterations} tries"
-        )))
+        Err(last_err.unwrap_or_else(|| {
+            Error::Timeout(format!("Command timed out after {iterations} tries"))
+        }))
     }
 }
