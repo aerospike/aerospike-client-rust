@@ -23,7 +23,7 @@ use crate::operations::lists::{
 use crate::Value;
 
 const MODULE: i64 = 0;
-/// Create expression that appends value to end of list.
+/// Creates expression that appends value to end of list.
 pub fn append(
     policy: ListPolicy,
     value: Expression,
@@ -40,7 +40,7 @@ pub fn append(
     add_write(bin, ctx, args)
 }
 
-/// Create expression that appends list items to end of list.
+/// Creates expression that appends list items to end of list.
 pub fn append_items(
     policy: ListPolicy,
     list: Expression,
@@ -57,7 +57,7 @@ pub fn append_items(
     add_write(bin, ctx, args)
 }
 
-/// Create expression that inserts value to specified index of list.
+/// Creates expression that inserts value to specified index of list.
 pub fn insert(
     policy: ListPolicy,
     index: Expression,
@@ -75,7 +75,7 @@ pub fn insert(
     add_write(bin, ctx, args)
 }
 
-/// Create expression that inserts each input list item starting at specified index of list.
+/// Creates expression that inserts each input list item starting at specified index of list.
 pub fn insert_items(
     policy: ListPolicy,
     index: Expression,
@@ -93,7 +93,7 @@ pub fn insert_items(
     add_write(bin, ctx, args)
 }
 
-/// Create expression that increments `list[index]` by value.
+/// Creates expression that increments `list[index]` by value.
 /// Value expression should resolve to a number.
 pub fn increment(
     policy: ListPolicy,
@@ -113,7 +113,7 @@ pub fn increment(
     add_write(bin, ctx, args)
 }
 
-/// Create expression that sets item value at specified index in list.
+/// Creates expression that sets item value at specified index in list.
 pub fn set(
     policy: ListPolicy,
     index: Expression,
@@ -131,7 +131,7 @@ pub fn set(
     add_write(bin, ctx, args)
 }
 
-/// Create expression that removes all items in list.
+/// Creates expression that removes all items in list.
 pub fn clear(bin: Expression, ctx: &[CdtContext]) -> Expression {
     let args = vec![
         ExpressionArgument::Value(Value::from(CdtListOpType::Clear as i64)),
@@ -140,7 +140,7 @@ pub fn clear(bin: Expression, ctx: &[CdtContext]) -> Expression {
     add_write(bin, ctx, args)
 }
 
-/// Create expression that sorts list according to sortFlags.
+/// Creates expression that sorts list according to sortFlags.
 pub fn sort(sort_flags: ListSortFlags, bin: Expression, ctx: &[CdtContext]) -> Expression {
     let args = vec![
         ExpressionArgument::Value(Value::from(CdtListOpType::Sort as i64)),
@@ -150,7 +150,7 @@ pub fn sort(sort_flags: ListSortFlags, bin: Expression, ctx: &[CdtContext]) -> E
     add_write(bin, ctx, args)
 }
 
-/// Create expression that removes list items identified by value.
+/// Creates expression that removes list items identified by value.
 pub fn remove_by_value<TLR: ToListReturnTypeBitmask>(
     return_type: TLR,
     value: Expression,
@@ -166,7 +166,7 @@ pub fn remove_by_value<TLR: ToListReturnTypeBitmask>(
     add_write(bin, ctx, args)
 }
 
-/// Create expression that removes list items identified by values.
+/// Creates expression that removes list items identified by values.
 pub fn remove_by_value_list<TLR: ToListReturnTypeBitmask>(
     return_type: TLR,
     values: Expression,
@@ -182,7 +182,7 @@ pub fn remove_by_value_list<TLR: ToListReturnTypeBitmask>(
     add_write(bin, ctx, args)
 }
 
-/// Create expression that removes list items identified by value range (valueBegin inclusive, valueEnd exclusive).
+/// Creates expression that removes list items identified by value range (valueBegin inclusive, valueEnd exclusive).
 ///
 /// If valueBegin is null, the range is less than valueEnd. If valueEnd is null, the range is
 /// greater than equal to valueBegin.
@@ -209,7 +209,7 @@ pub fn remove_by_value_range<TLR: ToListReturnTypeBitmask>(
     add_write(bin, ctx, args)
 }
 
-/// Create expression that removes list items nearest to value and greater by relative rank.
+/// Creates expression that removes list items nearest to value and greater by relative rank.
 ///
 /// Examples for ordered list \[0, 4, 5, 9, 11, 15\]:
 /// ```text
@@ -238,7 +238,7 @@ pub fn remove_by_value_relative_rank_range<TLR: ToListReturnTypeBitmask>(
     add_write(bin, ctx, args)
 }
 
-/// Create expression that removes list items nearest to value and greater by relative rank with a count limit.
+/// Creates expression that removes list items nearest to value and greater by relative rank with a count limit.
 ///
 /// Examples for ordered list \[0, 4, 5, 9, 11, 15\]:
 /// ```text
@@ -269,7 +269,7 @@ pub fn remove_by_value_relative_rank_range_count<TLR: ToListReturnTypeBitmask>(
     add_write(bin, ctx, args)
 }
 
-/// Create expression that removes list item identified by index.
+/// Creates expression that removes list item identified by index.
 pub fn remove_by_index<TLR: ToListReturnTypeBitmask>(
     return_type: TLR,
     index: Expression,
@@ -285,7 +285,7 @@ pub fn remove_by_index<TLR: ToListReturnTypeBitmask>(
     add_write(bin, ctx, args)
 }
 
-/// Create expression that removes list items starting at specified index to the end of list.
+/// Creates expression that removes list items starting at specified index to the end of list.
 pub fn remove_by_index_range<TLR: ToListReturnTypeBitmask>(
     return_type: TLR,
     index: Expression,
@@ -301,7 +301,7 @@ pub fn remove_by_index_range<TLR: ToListReturnTypeBitmask>(
     add_write(bin, ctx, args)
 }
 
-/// Create expression that removes "count" list items starting at specified index.
+/// Creates expression that removes "count" list items starting at specified index.
 pub fn remove_by_index_range_count<TLR: ToListReturnTypeBitmask>(
     return_type: TLR,
     index: Expression,
@@ -319,7 +319,7 @@ pub fn remove_by_index_range_count<TLR: ToListReturnTypeBitmask>(
     add_write(bin, ctx, args)
 }
 
-/// Create expression that removes list item identified by rank.
+/// Creates expression that removes list item identified by rank.
 pub fn remove_by_rank<TLR: ToListReturnTypeBitmask>(
     return_type: TLR,
     rank: Expression,
@@ -335,7 +335,7 @@ pub fn remove_by_rank<TLR: ToListReturnTypeBitmask>(
     add_write(bin, ctx, args)
 }
 
-/// Create expression that removes list items starting at specified rank to the last ranked item.
+/// Creates expression that removes list items starting at specified rank to the last ranked item.
 pub fn remove_by_rank_range<TLR: ToListReturnTypeBitmask>(
     return_type: TLR,
     rank: Expression,
@@ -351,7 +351,7 @@ pub fn remove_by_rank_range<TLR: ToListReturnTypeBitmask>(
     add_write(bin, ctx, args)
 }
 
-/// Create expression that removes "count" list items starting at specified rank.
+/// Creates expression that removes "count" list items starting at specified rank.
 pub fn remove_by_rank_range_count<TLR: ToListReturnTypeBitmask>(
     return_type: TLR,
     rank: Expression,
@@ -369,7 +369,7 @@ pub fn remove_by_rank_range_count<TLR: ToListReturnTypeBitmask>(
     add_write(bin, ctx, args)
 }
 
-/// Create expression that returns list size.
+/// Creates expression that returns list size.
 ///
 /// ```
 /// // List bin "a" size > 7
@@ -385,7 +385,7 @@ pub fn size(bin: Expression, ctx: &[CdtContext]) -> Expression {
     add_read(bin, ExpType::INT, args)
 }
 
-/// Create expression that selects list items identified by value and returns selected
+/// Creates expression that selects list items identified by value and returns selected
 /// data specified by returnType.
 ///
 /// ```
@@ -414,7 +414,7 @@ pub fn get_by_value<TLR: ToListReturnTypeBitmask>(
     add_read(bin, get_value_type(return_type), args)
 }
 
-/// Create expression that selects list items identified by value range and returns selected data
+/// Creates expression that selects list items identified by value range and returns selected data
 /// specified by returnType.
 ///
 /// ```
@@ -449,7 +449,7 @@ pub fn get_by_value_range<TLR: ToListReturnTypeBitmask>(
     add_read(bin, get_value_type(return_type), args)
 }
 
-/// Create expression that selects list items identified by values and returns selected data
+/// Creates expression that selects list items identified by values and returns selected data
 /// specified by returnType.
 pub fn get_by_value_list<TLR: ToListReturnTypeBitmask>(
     return_type: TLR,
@@ -467,7 +467,7 @@ pub fn get_by_value_list<TLR: ToListReturnTypeBitmask>(
     add_read(bin, get_value_type(return_type), args)
 }
 
-/// Create expression that selects list items nearest to value and greater by relative rank
+/// Creates expression that selects list items nearest to value and greater by relative rank
 /// and returns selected data specified by returnType.
 ///
 /// Examples for ordered list \[0, 4, 5, 9, 11, 15\]:
@@ -498,7 +498,7 @@ pub fn get_by_value_relative_rank_range<TLR: ToListReturnTypeBitmask>(
     add_read(bin, get_value_type(return_type), args)
 }
 
-/// Create expression that selects list items nearest to value and greater by relative rank with a count limit
+/// Creates expression that selects list items nearest to value and greater by relative rank with a count limit
 /// and returns selected data specified by returnType.
 ///
 /// Examples for ordered list \[0, 4, 5, 9, 11, 15\]:
@@ -531,7 +531,7 @@ pub fn get_by_value_relative_rank_range_count<TLR: ToListReturnTypeBitmask>(
     add_read(bin, get_value_type(return_type), args)
 }
 
-/// Create expression that selects list item identified by index and returns
+/// Creates expression that selects list item identified by index and returns
 /// selected data specified by returnType.
 ///
 /// ```
@@ -561,7 +561,7 @@ pub fn get_by_index<TLR: ToListReturnTypeBitmask>(
     add_read(bin, value_type, args)
 }
 
-/// Create expression that selects list items starting at specified index to the end of list
+/// Creates expression that selects list items starting at specified index to the end of list
 /// and returns selected data specified by returnType .
 pub fn get_by_index_range<TLR: ToListReturnTypeBitmask>(
     return_type: TLR,
@@ -579,7 +579,7 @@ pub fn get_by_index_range<TLR: ToListReturnTypeBitmask>(
     add_read(bin, get_value_type(return_type), args)
 }
 
-/// Create expression that selects "count" list items starting at specified index
+/// Creates expression that selects "count" list items starting at specified index
 /// and returns selected data specified by returnType.
 pub fn get_by_index_range_count<TLR: ToListReturnTypeBitmask>(
     return_type: TLR,
@@ -599,7 +599,7 @@ pub fn get_by_index_range_count<TLR: ToListReturnTypeBitmask>(
     add_read(bin, get_value_type(return_type), args)
 }
 
-/// Create expression that selects list item identified by rank and returns selected
+/// Creates expression that selects list item identified by rank and returns selected
 /// data specified by returnType.
 ///
 /// ```
@@ -626,7 +626,7 @@ pub fn get_by_rank<TLR: ToListReturnTypeBitmask>(
     add_read(bin, value_type, args)
 }
 
-/// Create expression that selects list items starting at specified rank to the last ranked item
+/// Creates expression that selects list items starting at specified rank to the last ranked item
 /// and returns selected data specified by returnType.
 pub fn get_by_rank_range<TLR: ToListReturnTypeBitmask>(
     return_type: TLR,
@@ -644,7 +644,7 @@ pub fn get_by_rank_range<TLR: ToListReturnTypeBitmask>(
     add_read(bin, get_value_type(return_type), args)
 }
 
-/// Create expression that selects "count" list items starting at specified rank and returns
+/// Creates expression that selects "count" list items starting at specified rank and returns
 /// selected data specified by returnType.
 pub fn get_by_rank_range_count<TLR: ToListReturnTypeBitmask>(
     return_type: TLR,
@@ -677,6 +677,7 @@ pub(crate) fn add_read(
         module: Some(return_type),
         exps: None,
         arguments: Some(arguments),
+        bytes: None,
     }
 }
 
@@ -702,6 +703,7 @@ pub(crate) fn add_write(
         module: Some(return_type),
         exps: None,
         arguments: Some(arguments),
+        bytes: None,
     }
 }
 

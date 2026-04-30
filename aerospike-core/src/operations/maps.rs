@@ -44,7 +44,7 @@ use std::sync::Arc;
 
 use crate::msgpack::encoder::pack_cdt_op;
 use crate::operations::cdt::{CdtArgument, CdtOperation};
-use crate::operations::cdt_context::DEFAULT_CTX;
+use crate::operations::cdt_context::{CdtContext, DEFAULT_CTX};
 use crate::operations::{Operation, OperationBin, OperationData, OperationType};
 use crate::value::MapLike;
 use crate::Value;
@@ -101,7 +101,7 @@ pub enum MapOrder {
 }
 
 impl MapOrder {
-    pub(crate) const fn flag(&self) -> u8 {
+    pub(crate) const fn flag(self) -> u8 {
         match self {
             MapOrder::Unordered => 0x40,
             MapOrder::KeyOrdered => 0x80,
@@ -167,18 +167,19 @@ pub enum MapReturnType {
     /// Returns an ordered map.
     OrderedMap = 17,
 
-    /// Invert the meaning of the map command and return values.
+    /// Inverts the meaning of the map command and return values.
     /// With the INVERTED flag enabled, the keys outside the specified key range will be removed and returned.
     Inverted = 0x10000,
 }
 
 #[derive(Debug, Clone, Copy)]
-/// Inverts the returned values in CDT List operations.
+/// Inverts the returned values in CDT Map operations.
 pub struct InvertedMapReturn(MapReturnType);
 
-/// Something that can be resolved into a set of `MapReturnType`. Either a single `MapReturnType`, or InvertedMapReturn(MapReturnType).
+/// Something that can be resolved into a set of [`MapReturnType`]. Either a single
+/// [`MapReturnType`], or [`InvertedMapReturn`].
 pub trait ToMapReturnTypeBitmask {
-    /// Convert to an u64 bitmask
+    /// Converts to a u64 bitmask
     fn to_bitmask(self) -> i64;
 }
 
@@ -192,6 +193,29 @@ impl ToMapReturnTypeBitmask for InvertedMapReturn {
     fn to_bitmask(self) -> i64 {
         MapReturnType::Inverted as i64 ^ self.0.to_bitmask()
     }
+}
+
+/// Map write bit flags.
+/// Requires server version 4.3+.
+#[allow(non_snake_case)]
+pub mod MapWriteFlags {
+    /// Default. Allow create or update.
+    pub const DEFAULT: u8 = 0;
+
+    /// If the key already exists, the item will be denied.
+    /// If the key does not exist, a new item will be created.
+    pub const CREATE_ONLY: u8 = 1;
+
+    /// If the key already exists, the item will be overwritten.
+    /// If the key does not exist, the item will be denied.
+    pub const UPDATE_ONLY: u8 = 2;
+
+    /// Do not raise error if a map item is denied due to write flag constraints.
+    pub const NO_FAIL: u8 = 4;
+
+    /// Allow other valid map items to be committed if a map item is denied due to
+    /// write flag constraints.
+    pub const PARTIAL: u8 = 8;
 }
 
 /// Unique key map write type.
@@ -210,19 +234,63 @@ pub enum MapWriteMode {
     CreateOnly,
 }
 
-/// `MapPolicy` directives when creating a map and writing map items.
+/// [`MapPolicy`] directives when creating a map and writing map items.
 #[derive(Debug, Clone, Copy)]
 pub struct MapPolicy {
     /// The Order of the Map
     pub order: MapOrder,
     /// The Map Write Mode
     pub write_mode: MapWriteMode,
+    /// The map write flags (see [`MapWriteFlags`]).
+    /// When flags are non-zero, they are used instead of `write_mode` for put operations.
+    /// Requires server version 4.3+.
+    pub flags: u8,
+    /// Whether to persist the index for this map.
+    pub persist_index: bool,
 }
 
 impl MapPolicy {
-    /// Create a new map policy given the ordering for the map and the write mode.
+    /// Creates a new map policy given the ordering for the map and the write mode.
     pub const fn new(order: MapOrder, write_mode: MapWriteMode) -> Self {
-        MapPolicy { order, write_mode }
+        MapPolicy {
+            order,
+            write_mode,
+            flags: MapWriteFlags::DEFAULT,
+            persist_index: false,
+        }
+    }
+
+    /// Creates a new map policy with write flags instead of a write mode.
+    /// When flags are non-zero, they take precedence over write mode for put operations.
+    /// Requires server version 4.3+.
+    pub const fn new_with_flags(order: MapOrder, flags: u8) -> Self {
+        MapPolicy {
+            order,
+            write_mode: MapWriteMode::Update,
+            flags,
+            persist_index: false,
+        }
+    }
+
+    /// Creates a new map policy with write flags and a persisted index.
+    /// The persisted index flag (0x10) is OR'd into the map order attribute.
+    /// Requires server version 4.3+.
+    pub const fn new_with_flags_and_persisted_index(order: MapOrder, flags: u8) -> Self {
+        MapPolicy {
+            order,
+            write_mode: MapWriteMode::Update,
+            flags,
+            persist_index: true,
+        }
+    }
+
+    /// Returns the order attribute byte, including the persist index flag if set.
+    pub(crate) const fn order_attr(self) -> u8 {
+        if self.persist_index {
+            self.order as u8 | 0x10
+        } else {
+            self.order as u8
+        }
     }
 }
 
@@ -265,11 +333,80 @@ pub(crate) const fn map_write_op(policy: &MapPolicy, multi: bool) -> CdtMapOpTyp
 const fn map_order_arg(policy: &MapPolicy) -> Option<CdtArgument> {
     match policy.write_mode {
         MapWriteMode::UpdateOnly => None,
-        _ => Some(CdtArgument::Byte(policy.order as u8)),
+        _ => Some(CdtArgument::Byte(policy.order_attr())),
     }
 }
 
-/// Create set map policy operation. Server set the map policy attributes. Server does not
+/// Creates map create operation.
+///
+/// Server creates map at given context level. The context is allowed to be beyond map
+/// boundaries only if a parent context element uses a create-type context (e.g.,
+/// [`ctx_map_key_create`](crate::operations::cdt_context::ctx_map_key_create)).
+///
+/// If ctx is empty, this is equivalent to [`set_order`].
+pub fn create(bin: &str, map_order: MapOrder, ctx: Vec<CdtContext>) -> Operation {
+    if ctx.is_empty() {
+        return set_order(bin, map_order);
+    }
+    let cdt_op = CdtOperation {
+        op: CdtMapOpType::SetType as u8,
+        encoder: Arc::new(pack_cdt_op),
+        args: vec![
+            CdtArgument::Byte(map_order.flag()),
+            CdtArgument::Byte(map_order as u8),
+        ],
+    };
+    Operation {
+        op: OperationType::CdtWrite,
+        ctx,
+        bin: OperationBin::Name(bin.into()),
+        data: OperationData::CdtMapOp(cdt_op),
+    }
+}
+
+/// Creates map create operation with a persisted index.
+///
+/// Server creates map at the top level with a persisted index. The persisted index flag (0x10)
+/// is OR'd with the map order to signal the server to maintain a separate index data structure.
+pub fn create_with_index(bin: &str, map_order: MapOrder) -> Operation {
+    let cdt_op = CdtOperation {
+        op: CdtMapOpType::SetType as u8,
+        encoder: Arc::new(pack_cdt_op),
+        args: vec![CdtArgument::Byte(map_order as u8 | 0x10)],
+    };
+    Operation {
+        op: OperationType::CdtWrite,
+        ctx: DEFAULT_CTX,
+        bin: OperationBin::Name(bin.into()),
+        data: OperationData::CdtMapOp(cdt_op),
+    }
+}
+
+/// Creates set map policy operation. Server sets the map policy attributes.
+/// Server does not return a result.
+///
+/// The required map policy attributes can be changed after the map has been created.
+/// Supports optional CDT context for nested map operations.
+pub fn set_policy(policy: &MapPolicy, bin: &str, ctx: Vec<CdtContext>) -> Operation {
+    let mut attr = policy.order_attr();
+    // If nested context, remove persist flag if present
+    if !ctx.is_empty() {
+        attr &= !0x10;
+    }
+    let cdt_op = CdtOperation {
+        op: CdtMapOpType::SetType as u8,
+        encoder: Arc::new(pack_cdt_op),
+        args: vec![CdtArgument::Byte(attr)],
+    };
+    Operation {
+        op: OperationType::CdtWrite,
+        ctx,
+        bin: OperationBin::Name(bin.into()),
+        data: OperationData::CdtMapOp(cdt_op),
+    }
+}
+
+/// Creates set map policy operation. Server set the map policy attributes. Server does not
 /// return a result.
 ///
 /// The required map policy attributes can be changed after the map has been created.
@@ -287,12 +424,33 @@ pub fn set_order(bin: &str, map_order: MapOrder) -> Operation {
     }
 }
 
-/// Create map put operation. Server writes the key/value item to the map bin and returns the
+/// Creates map put operation. Server writes the key/value item to the map bin and returns the
 /// map size.
 ///
 /// The required map policy dictates the type of map to create when it does not exist. The map
 /// policy also specifies the mode used when writing items to the map.
 pub fn put(policy: &MapPolicy, bin: &str, key: Value, val: Value) -> Operation {
+    if policy.flags != 0 {
+        // Use flags-based put (server 4.3+)
+        let args = vec![
+            CdtArgument::Value(key),
+            CdtArgument::Value(val),
+            CdtArgument::Byte(policy.order_attr()),
+            CdtArgument::Byte(policy.flags),
+        ];
+        let cdt_op = CdtOperation {
+            op: CdtMapOpType::Put as u8,
+            encoder: Arc::new(pack_cdt_op),
+            args,
+        };
+        return Operation {
+            op: OperationType::CdtWrite,
+            ctx: DEFAULT_CTX,
+            bin: OperationBin::Name(bin.into()),
+            data: OperationData::CdtMapOp(cdt_op),
+        };
+    }
+
     let mut args = vec![CdtArgument::Value(key)];
     if !val.is_nil() {
         args.push(CdtArgument::Value(val));
@@ -313,7 +471,7 @@ pub fn put(policy: &MapPolicy, bin: &str, key: Value, val: Value) -> Operation {
     }
 }
 
-/// Create map put items operation. Server writes each map item to the map bin and returns the
+/// Creates map put items operation. Server writes each map item to the map bin and returns the
 /// map size.
 ///
 /// The required map policy dictates the type of map to create when it does not exist. The map
@@ -325,6 +483,27 @@ pub fn put_items<M: MapLike<Value, Value>>(policy: &MapPolicy, bin: &str, items:
         (None, Some(btm)) => CdtArgument::OrderedMap(btm),
         _ => unreachable!(),
     };
+
+    if policy.flags != 0 {
+        // Use flags-based put items (server 4.3+)
+        let args = vec![
+            items,
+            CdtArgument::Byte(policy.order_attr()),
+            CdtArgument::Byte(policy.flags),
+        ];
+        let cdt_op = CdtOperation {
+            op: CdtMapOpType::PutItems as u8,
+            encoder: Arc::new(pack_cdt_op),
+            args,
+        };
+        return Operation {
+            op: OperationType::CdtWrite,
+            ctx: DEFAULT_CTX,
+            bin: OperationBin::Name(bin.into()),
+            data: OperationData::CdtMapOp(cdt_op),
+        };
+    }
+
     let mut args = vec![items];
     if let Some(arg) = map_order_arg(policy) {
         args.push(arg);
@@ -342,7 +521,7 @@ pub fn put_items<M: MapLike<Value, Value>>(policy: &MapPolicy, bin: &str, items:
     }
 }
 
-/// Create map increment operation. Server increments values by `incr` for all items identified
+/// Creates map increment operation. Server increments values by `incr` for all items identified
 /// by the key and returns the final result. Valid only for numbers.
 ///
 /// The required map policy dictates the type of map to create when it does not exist. The map
@@ -368,7 +547,7 @@ pub fn increment_value(policy: &MapPolicy, bin: &str, key: Value, incr: Value) -
     }
 }
 
-/// Create map decrement operation. Server decrements values by `decr` for all items identified
+/// Creates map decrement operation. Server decrements values by `decr` for all items identified
 /// by the key and returns the final result. Valid only for numbers.
 ///
 /// The required map policy dictates the type of map to create when it does not exist. The map
@@ -394,7 +573,7 @@ pub fn decrement_value(policy: &MapPolicy, bin: &str, key: Value, decr: Value) -
     }
 }
 
-/// Create map clear operation. Server removes all items in the map. Server does not return a
+/// Creates map clear operation. Server removes all items in the map. Server does not return a
 /// result.
 pub fn clear(bin: &str) -> Operation {
     let cdt_op = CdtOperation {
@@ -410,9 +589,9 @@ pub fn clear(bin: &str) -> Operation {
     }
 }
 
-/// Create map remove operation. Server removes the map item identified by the key and returns
+/// Creates map remove operation. Server removes the map item identified by the key and returns
 /// the removed data specified by `return_type`.
-pub fn remove_by_key<'a, TMR: ToMapReturnTypeBitmask>(
+pub fn remove_by_key<TMR: ToMapReturnTypeBitmask>(
     bin: &str,
     key: Value,
     return_type: TMR,
@@ -433,9 +612,9 @@ pub fn remove_by_key<'a, TMR: ToMapReturnTypeBitmask>(
     }
 }
 
-/// Create map remove operation. Server removes map items identified by keys and returns
+/// Creates map remove operation. Server removes map items identified by keys and returns
 /// removed data specified by `return_type`.
-pub fn remove_by_key_list<'a, TMR: ToMapReturnTypeBitmask>(
+pub fn remove_by_key_list<TMR: ToMapReturnTypeBitmask>(
     bin: &str,
     keys: Vec<Value>,
     return_type: TMR,
@@ -456,11 +635,12 @@ pub fn remove_by_key_list<'a, TMR: ToMapReturnTypeBitmask>(
     }
 }
 
-/// Create map remove operation. Server removes map items identified by the key range
-/// (`begin` inclusive, `end` exclusive). If `begin` is `Value::Nil`, the range is less than
-/// `end`. If `end` is `Value::Nil`, the range is greater than equal to `begin`. Server returns
-/// removed data specified by `return_type`.
-pub fn remove_by_key_range<'a, TMR: ToMapReturnTypeBitmask>(
+/// Creates map remove operation.
+///
+/// Server removes map items identified by the key range (`begin` inclusive, `end` exclusive).
+/// If `begin` is `Value::Nil`, the range is less than `end`. If `end` is `Value::Nil`, the
+/// range is greater than equal to `begin`. Server returns removed data specified by `return_type`.
+pub fn remove_by_key_range<TMR: ToMapReturnTypeBitmask>(
     bin: &str,
     begin: Value,
     end: Value,
@@ -486,9 +666,9 @@ pub fn remove_by_key_range<'a, TMR: ToMapReturnTypeBitmask>(
     }
 }
 
-/// Create map remove operation. Server removes the map items identified by value and returns
+/// Creates map remove operation. Server removes the map items identified by value and returns
 /// the removed data specified by `return_type`.
-pub fn remove_by_value<'a, TMR: ToMapReturnTypeBitmask>(
+pub fn remove_by_value<TMR: ToMapReturnTypeBitmask>(
     bin: &str,
     value: Value,
     return_type: TMR,
@@ -509,9 +689,9 @@ pub fn remove_by_value<'a, TMR: ToMapReturnTypeBitmask>(
     }
 }
 
-/// Create map remove operation. Server removes the map items identified by values and returns
+/// Creates map remove operation. Server removes the map items identified by values and returns
 /// the removed data specified by `return_type`.
-pub fn remove_by_value_list<'a, TMR: ToMapReturnTypeBitmask>(
+pub fn remove_by_value_list<TMR: ToMapReturnTypeBitmask>(
     bin: &str,
     values: Vec<Value>,
     return_type: TMR,
@@ -532,11 +712,13 @@ pub fn remove_by_value_list<'a, TMR: ToMapReturnTypeBitmask>(
     }
 }
 
-/// Create map remove operation. Server removes map items identified by value range (`begin`
-/// inclusive, `end` exclusive). If `begin` is `Value::Nil`, the range is less than `end`. If
-/// `end` is `Value::Nil`, the range is greater than equal to `begin`. Server returns the
-/// removed data specified by `return_type`.
-pub fn remove_by_value_range<'a, TMR: ToMapReturnTypeBitmask>(
+/// Creates map remove operation.
+///
+/// Server removes map items identified by value range (`begin` inclusive, `end` exclusive).
+/// If `begin` is `Value::Nil`, the range is less than `end`. If `end` is `Value::Nil`, the
+/// range is greater than equal to `begin`. Server returns the removed data specified by
+/// `return_type`.
+pub fn remove_by_value_range<TMR: ToMapReturnTypeBitmask>(
     bin: &str,
     begin: Value,
     end: Value,
@@ -562,7 +744,7 @@ pub fn remove_by_value_range<'a, TMR: ToMapReturnTypeBitmask>(
     }
 }
 
-/// Create map remove operation. Server removes the map item identified by the index and return
+/// Creates map remove operation. Server removes the map item identified by the index and return
 /// the removed data specified by `return_type`.
 pub fn remove_by_index<TMR: ToMapReturnTypeBitmask>(
     bin: &str,
@@ -585,7 +767,7 @@ pub fn remove_by_index<TMR: ToMapReturnTypeBitmask>(
     }
 }
 
-/// Create map remove operation. Server removes `count` map items starting at the specified
+/// Creates map remove operation. Server removes `count` map items starting at the specified
 /// index and returns the removed data specified by `return_type`.
 pub fn remove_by_index_range<TMR: ToMapReturnTypeBitmask>(
     bin: &str,
@@ -610,7 +792,7 @@ pub fn remove_by_index_range<TMR: ToMapReturnTypeBitmask>(
     }
 }
 
-/// Create map remove operation. Server removes the map items starting at the specified index
+/// Creates map remove operation. Server removes the map items starting at the specified index
 /// to the end of the map and returns the removed data specified by `return_type`.
 pub fn remove_by_index_range_from<TMR: ToMapReturnTypeBitmask>(
     bin: &str,
@@ -633,7 +815,7 @@ pub fn remove_by_index_range_from<TMR: ToMapReturnTypeBitmask>(
     }
 }
 
-/// Create map remove operation. Server removes the map item identified by rank and returns the
+/// Creates map remove operation. Server removes the map item identified by rank and returns the
 /// removed data specified by `return_type`.
 pub fn remove_by_rank<TMR: ToMapReturnTypeBitmask>(
     bin: &str,
@@ -656,7 +838,7 @@ pub fn remove_by_rank<TMR: ToMapReturnTypeBitmask>(
     }
 }
 
-/// Create map remove operation. Server removes `count` map items starting at the specified
+/// Creates map remove operation. Server removes `count` map items starting at the specified
 /// rank and returns the removed data specified by `return_type`.
 pub fn remove_by_rank_range<TMR: ToMapReturnTypeBitmask>(
     bin: &str,
@@ -681,7 +863,7 @@ pub fn remove_by_rank_range<TMR: ToMapReturnTypeBitmask>(
     }
 }
 
-/// Create map remove operation. Server removes the map items starting at the specified rank to
+/// Creates map remove operation. Server removes the map items starting at the specified rank to
 /// the last ranked item and returns the removed data specified by `return_type`.
 pub fn remove_by_rank_range_from<TMR: ToMapReturnTypeBitmask>(
     bin: &str,
@@ -704,7 +886,7 @@ pub fn remove_by_rank_range_from<TMR: ToMapReturnTypeBitmask>(
     }
 }
 
-/// Create map size operation. Server returns the size of the map.
+/// Creates map size operation. Server returns the size of the map.
 pub fn size(bin: &str) -> Operation {
     let cdt_op = CdtOperation {
         op: CdtMapOpType::Size as u8,
@@ -719,9 +901,9 @@ pub fn size(bin: &str) -> Operation {
     }
 }
 
-/// Create map get by key operation. Server selects the map item identified by the key and
+/// Creates map get by key operation. Server selects the map item identified by the key and
 /// returns the selected data specified by `return_type`.
-pub fn get_by_key<'a, TMR: ToMapReturnTypeBitmask>(
+pub fn get_by_key<TMR: ToMapReturnTypeBitmask>(
     bin: &str,
     key: Value,
     return_type: TMR,
@@ -742,11 +924,13 @@ pub fn get_by_key<'a, TMR: ToMapReturnTypeBitmask>(
     }
 }
 
-/// Create map get by key range operation. Server selects the map items identified by the key
-/// range (`begin` inclusive, `end` exclusive). If `begin` is `Value::Nil`, the range is less
-/// than `end`. If `end` is `Value::Nil` the range is greater than equal to `begin`. Server
-/// returns the selected data specified by `return_type`.
-pub fn get_by_key_range<'a, TMR: ToMapReturnTypeBitmask>(
+/// Creates map get by key range operation.
+///
+/// Server selects the map items identified by the key range (`begin` inclusive, `end`
+/// exclusive). If `begin` is `Value::Nil`, the range is less than `end`. If `end` is
+/// `Value::Nil` the range is greater than equal to `begin`. Server returns the selected data
+/// specified by `return_type`.
+pub fn get_by_key_range<TMR: ToMapReturnTypeBitmask>(
     bin: &str,
     begin: Value,
     end: Value,
@@ -772,9 +956,9 @@ pub fn get_by_key_range<'a, TMR: ToMapReturnTypeBitmask>(
     }
 }
 
-/// Create map get by value operation. Server selects the map items identified by value and
+/// Creates map get by value operation. Server selects the map items identified by value and
 /// returns the selected data specified by `return_type`.
-pub fn get_by_value<'a, TMR: ToMapReturnTypeBitmask>(
+pub fn get_by_value<TMR: ToMapReturnTypeBitmask>(
     bin: &str,
     value: Value,
     return_type: TMR,
@@ -795,11 +979,13 @@ pub fn get_by_value<'a, TMR: ToMapReturnTypeBitmask>(
     }
 }
 
-/// Create map get by value range operation. Server selects the map items identified by the
-/// value range (`begin` inclusive, `end` exclusive). If `begin` is `Value::Nil`, the range is
-/// less than `end`. If `end` is `Value::Nil`, the range is greater than equal to `begin`.
-/// Server returns the selected data specified by `return_type`.
-pub fn get_by_value_range<'a, TMR: ToMapReturnTypeBitmask>(
+/// Creates map get by value range operation.
+///
+/// Server selects the map items identified by the value range (`begin` inclusive, `end`
+/// exclusive). If `begin` is `Value::Nil`, the range is less than `end`. If `end` is
+/// `Value::Nil`, the range is greater than equal to `begin`. Server returns the selected data
+/// specified by `return_type`.
+pub fn get_by_value_range<TMR: ToMapReturnTypeBitmask>(
     bin: &str,
     begin: Value,
     end: Value,
@@ -825,7 +1011,7 @@ pub fn get_by_value_range<'a, TMR: ToMapReturnTypeBitmask>(
     }
 }
 
-/// Create map get by index operation. Server selects the map item identified by index and
+/// Creates map get by index operation. Server selects the map item identified by index and
 /// returns the selected data specified by `return_type`.
 pub fn get_by_index<TMR: ToMapReturnTypeBitmask>(
     bin: &str,
@@ -848,7 +1034,7 @@ pub fn get_by_index<TMR: ToMapReturnTypeBitmask>(
     }
 }
 
-/// Create map get by index range operation. Server selects `count` map items starting at the
+/// Creates map get by index range operation. Server selects `count` map items starting at the
 /// specified index and returns the selected data specified by `return_type`.
 pub fn get_by_index_range<TMR: ToMapReturnTypeBitmask>(
     bin: &str,
@@ -873,7 +1059,7 @@ pub fn get_by_index_range<TMR: ToMapReturnTypeBitmask>(
     }
 }
 
-/// Create map get by index range operation. Server selects the map items starting at the
+/// Creates map get by index range operation. Server selects the map items starting at the
 /// specified index to the end of the map and returns the selected data specified by
 /// `return_type`.
 pub fn get_by_index_range_from<TMR: ToMapReturnTypeBitmask>(
@@ -897,7 +1083,7 @@ pub fn get_by_index_range_from<TMR: ToMapReturnTypeBitmask>(
     }
 }
 
-/// Create map get by rank operation. Server selects the map item identified by rank and
+/// Creates map get by rank operation. Server selects the map item identified by rank and
 /// returns the selected data specified by `return_type`.
 pub fn get_by_rank<TMR: ToMapReturnTypeBitmask>(
     bin: &str,
@@ -920,7 +1106,7 @@ pub fn get_by_rank<TMR: ToMapReturnTypeBitmask>(
     }
 }
 
-/// Create map get rank range operation. Server selects `count` map items at the specified
+/// Creates map get rank range operation. Server selects `count` map items at the specified
 /// rank and returns the selected data specified by `return_type`.
 pub fn get_by_rank_range<TMR: ToMapReturnTypeBitmask>(
     bin: &str,
@@ -945,7 +1131,7 @@ pub fn get_by_rank_range<TMR: ToMapReturnTypeBitmask>(
     }
 }
 
-/// Create map get by rank range operation. Server selects the map items starting at the
+/// Creates map get by rank range operation. Server selects the map items starting at the
 /// specified rank to the last ranked item and returns the selected data specified by
 /// `return_type`.
 pub fn get_by_rank_range_from<TMR: ToMapReturnTypeBitmask>(
@@ -981,7 +1167,7 @@ pub fn get_by_rank_range_from<TMR: ToMapReturnTypeBitmask>(
 /// (5,-1) = [{4=2},{5=15},{9=10}]
 /// (3,2) = [{9=10}]
 /// (3,-2) = [{0=17},{4=2},{5=15},{9=10}]
-pub fn remove_by_key_relative_index_range<'a, TMR: ToMapReturnTypeBitmask>(
+pub fn remove_by_key_relative_index_range<TMR: ToMapReturnTypeBitmask>(
     bin: &str,
     key: Value,
     index: i64,
@@ -1004,7 +1190,7 @@ pub fn remove_by_key_relative_index_range<'a, TMR: ToMapReturnTypeBitmask>(
     }
 }
 
-/// Create map remove by key relative to index range operation.
+/// Creates map remove by key relative to index range operation.
 /// Server removes map items nearest to key and greater by index with a count limit.
 /// Server returns removed data specified by returnType.
 ///
@@ -1016,7 +1202,7 @@ pub fn remove_by_key_relative_index_range<'a, TMR: ToMapReturnTypeBitmask>(
 /// (5,-1,1) = [{4=2}]
 /// (3,2,1) = [{9=10}]
 /// (3,-2,2) = [{0=17}]
-pub fn remove_by_key_relative_index_range_count<'a, TMR: ToMapReturnTypeBitmask>(
+pub fn remove_by_key_relative_index_range_count<TMR: ToMapReturnTypeBitmask>(
     bin: &str,
     key: Value,
     index: i64,
@@ -1050,7 +1236,7 @@ pub fn remove_by_key_relative_index_range_count<'a, TMR: ToMapReturnTypeBitmask>
 /// (value,rank) = [removed items]
 /// (11,1) = [{0=17}]
 /// (11,-1) = [{9=10},{5=15},{0=17}]
-pub fn remove_by_value_relative_rank_range<'a, TMR: ToMapReturnTypeBitmask>(
+pub fn remove_by_value_relative_rank_range<TMR: ToMapReturnTypeBitmask>(
     bin: &str,
     value: Value,
     rank: i64,
@@ -1083,7 +1269,7 @@ pub fn remove_by_value_relative_rank_range<'a, TMR: ToMapReturnTypeBitmask>(
 /// (value,rank,count) = [removed items]
 /// (11,1,1) = [{0=17}]
 /// (11,-1,1) = [{9=10}]
-pub fn remove_by_value_relative_rank_range_count<'a, TMR: ToMapReturnTypeBitmask>(
+pub fn remove_by_value_relative_rank_range_count<TMR: ToMapReturnTypeBitmask>(
     bin: &str,
     value: Value,
     rank: i64,
@@ -1110,7 +1296,7 @@ pub fn remove_by_value_relative_rank_range_count<'a, TMR: ToMapReturnTypeBitmask
 
 /// Creates a map get by key list operation.
 /// Server selects map items identified by keys and returns selected data specified by returnType.
-pub fn get_by_key_list<'a, TMR: ToMapReturnTypeBitmask>(
+pub fn get_by_key_list<TMR: ToMapReturnTypeBitmask>(
     bin: &str,
     keys: Vec<Value>,
     return_type: TMR,
@@ -1133,7 +1319,7 @@ pub fn get_by_key_list<'a, TMR: ToMapReturnTypeBitmask>(
 
 /// Creates a map get by value list operation.
 /// Server selects map items identified by values and returns selected data specified by returnType.
-pub fn get_by_value_list<'a, TMR: ToMapReturnTypeBitmask>(
+pub fn get_by_value_list<TMR: ToMapReturnTypeBitmask>(
     bin: &str,
     values: Vec<Value>,
     return_type: TMR,
@@ -1166,7 +1352,7 @@ pub fn get_by_value_list<'a, TMR: ToMapReturnTypeBitmask>(
 /// (5,-1) = [{4=2},{5=15},{9=10}]
 /// (3,2) = [{9=10}]
 /// (3,-2) = [{0=17},{4=2},{5=15},{9=10}]
-pub fn get_by_key_relative_index_range<'a, TMR: ToMapReturnTypeBitmask>(
+pub fn get_by_key_relative_index_range<TMR: ToMapReturnTypeBitmask>(
     bin: &str,
     key: Value,
     index: i64,
@@ -1201,7 +1387,7 @@ pub fn get_by_key_relative_index_range<'a, TMR: ToMapReturnTypeBitmask>(
 /// (5,-1,1) = [{4=2}]
 /// (3,2,1) = [{9=10}]
 /// (3,-2,2) = [{0=17}]
-pub fn get_by_key_relative_index_range_count<'a, TMR: ToMapReturnTypeBitmask>(
+pub fn get_by_key_relative_index_range_count<TMR: ToMapReturnTypeBitmask>(
     bin: &str,
     key: Value,
     index: i64,
@@ -1235,7 +1421,7 @@ pub fn get_by_key_relative_index_range_count<'a, TMR: ToMapReturnTypeBitmask>(
 /// (value,rank) = [selected items]
 /// (11,1) = [{0=17}]
 /// (11,-1) = [{9=10},{5=15},{0=17}]
-pub fn get_by_value_relative_rank_range<'a, TMR: ToMapReturnTypeBitmask>(
+pub fn get_by_value_relative_rank_range<TMR: ToMapReturnTypeBitmask>(
     bin: &str,
     value: Value,
     rank: i64,
@@ -1268,7 +1454,7 @@ pub fn get_by_value_relative_rank_range<'a, TMR: ToMapReturnTypeBitmask>(
 /// (value,rank,count) = [selected items]
 /// (11,1,1) = [{0=17}]
 /// (11,-1,1) = [{9=10}]
-pub fn get_by_value_relative_rank_range_count<'a, TMR: ToMapReturnTypeBitmask>(
+pub fn get_by_value_relative_rank_range_count<TMR: ToMapReturnTypeBitmask>(
     bin: &str,
     value: Value,
     rank: i64,

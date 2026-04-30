@@ -39,12 +39,12 @@ impl UdfRemoveTask {
         String::from("udf-list")
     }
 
-    fn parse_response(response: &str, package_name: &str) -> Result<Status> {
+    fn parse_response(response: &str, package_name: &str) -> Status {
         let find = format!("filename={package_name}");
         if response.contains(&find) {
-            Ok(Status::InProgress)
+            Status::InProgress
         } else {
-            Ok(Status::Complete)
+            Status::Complete
         }
     }
 }
@@ -69,8 +69,8 @@ impl Task for UdfRemoveTask {
             }
 
             match UdfRemoveTask::parse_response(&response[command], &self.package_name) {
-                Ok(Status::Complete) => {}
-                in_progress_or_error => return in_progress_or_error,
+                Status::Complete => {}
+                status => return Ok(status),
             }
         }
         Ok(Status::Complete)

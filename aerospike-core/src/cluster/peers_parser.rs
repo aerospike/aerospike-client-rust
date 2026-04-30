@@ -15,11 +15,13 @@
 use crate::cluster::peers::Peer;
 use crate::errors::{Error, Result};
 use crate::Host;
+use std::collections::HashMap;
 use std::iter::Peekable;
 use std::str::Chars;
 
 pub struct PeersParser<'a> {
     s: Peekable<Chars<'a>>,
+    ip_map: Option<&'a HashMap<String, String>>,
 }
 
 /// Result of parsing a peers response: generation number and list of peers.
@@ -32,7 +34,16 @@ impl<'a> PeersParser<'a> {
     pub fn new(s: &'a str) -> Self {
         PeersParser {
             s: s.chars().peekable(),
+            ip_map: None,
         }
+    }
+
+    /// Apply the `client_policy.ip_map` substitution to every host parsed
+    /// out of the response. Mirrors Java's `PeerParser.parseHost`, which
+    /// rewrites hosts at parse time (not later in the validator).
+    pub fn with_ip_map(mut self, ip_map: Option<&'a HashMap<String, String>>) -> Self {
+        self.ip_map = ip_map;
+        self
     }
 
     /// Parses the peers response string and returns generation + peer list.
@@ -50,7 +61,12 @@ impl<'a> PeersParser<'a> {
         // The peer list is wrapped in outer brackets.
         match self.peek() {
             Some(&',') => {}
-            _ => return Ok(PeersParseResult { generation: gen, peers }),
+            _ => {
+                return Ok(PeersParseResult {
+                    generation: gen,
+                    peers,
+                })
+            }
         }
         self.expect(",")?;
         self.expect("[")?;
@@ -71,7 +87,10 @@ impl<'a> PeersParser<'a> {
 
         self.expect("]")?;
 
-        Ok(PeersParseResult { generation: gen, peers })
+        Ok(PeersParseResult {
+            generation: gen,
+            peers,
+        })
     }
 
     /// Parses a single peer entry: `[nodeName,tlsName,[host1,host2,...]]`
@@ -105,6 +124,7 @@ impl<'a> PeersParser<'a> {
             tls_name,
             hosts,
             replace_node: None,
+            from_node_name: None,
         }))
     }
 
@@ -135,7 +155,7 @@ impl<'a> PeersParser<'a> {
             hosts.push(Host::new_tls(&addr, tls_name, port.unwrap_or(default_port)));
 
             match self.peek() {
-                Some(&c) if c == ',' => self.expect(",")?,
+                Some(&',') => self.expect(",")?,
                 _ => break,
             }
         }
@@ -146,7 +166,7 @@ impl<'a> PeersParser<'a> {
     fn read_addr_tuple(&mut self) -> Result<(String, Option<u16>)> {
         let addr = self.read_addr_part()?;
         let port = match self.peek() {
-            Some(&c) if c == ':' => {
+            Some(&':') => {
                 self.expect(":")?;
                 Some(self.read_port()?)
             }
@@ -158,7 +178,7 @@ impl<'a> PeersParser<'a> {
     fn read_addr_part(&mut self) -> Result<String> {
         let addr = match self.peek() {
             // ipv6 or dns
-            Some(&c) if c == '[' => {
+            Some(&'[') => {
                 self.expect("[")?;
                 let res = self.read_until("]");
                 self.expect("]")?;
@@ -172,6 +192,15 @@ impl<'a> PeersParser<'a> {
             return Err(Error::ParsePeersError(
                 "Empty address string for peer".into(),
             ));
+        }
+
+        // Apply ip_map substitution at parse time, matching Java's
+        // PeerParser.parseHost. Done here so every host (regardless of how
+        // it's later consumed) sees a consistent address.
+        if let Some(map) = self.ip_map {
+            if let Some(mapped) = map.get(&addr) {
+                return Ok(mapped.clone());
+            }
         }
 
         Ok(addr)

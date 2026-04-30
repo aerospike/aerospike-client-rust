@@ -61,20 +61,18 @@ impl CdtOperation {
         ParticleType::BLOB
     }
 
-    #[must_use]
     pub fn estimate_size(&self, ctx: &[CdtContext]) -> Result<usize> {
         let size: usize = (self.encoder)(&mut None, self, ctx)?;
         Ok(size)
     }
 
-    #[must_use]
     pub fn write_to(&self, buffer: &mut Buffer, ctx: &[CdtContext]) -> Result<usize> {
         let size: usize = (self.encoder)(&mut Some(buffer), self, ctx)?;
         Ok(size)
     }
 }
 
-impl<'a> fmt::Debug for CdtOperation {
+impl fmt::Debug for CdtOperation {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> std::result::Result<(), fmt::Error> {
         #[derive(Debug)]
         #[allow(unused)]

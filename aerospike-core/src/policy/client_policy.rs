@@ -228,8 +228,9 @@ impl ClientPolicy {
         }
 
         match self.auth_mode {
-            crate::AuthMode::Internal(ref user, _) => return user,
-            crate::AuthMode::External(ref user, _) => return user,
+            crate::AuthMode::Internal(ref user, _) | crate::AuthMode::External(ref user, _) => {
+                return user
+            }
             _ => (),
         }
 
@@ -240,7 +241,7 @@ impl ClientPolicy {
         if self.timeout > 0 {
             Duration::from_millis(u64::from(self.timeout))
         } else {
-            Duration::from_millis(30_000)
+            Duration::from_secs(30)
         }
     }
 

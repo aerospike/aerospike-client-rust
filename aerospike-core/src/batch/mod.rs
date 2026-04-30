@@ -40,6 +40,7 @@ pub struct BatchRecordIndex {
     pub batch_index: usize,
     pub record: Option<crate::Record>,
     pub result_code: ResultCode,
+    pub version: Option<u64>,
 }
 
 /// Policy for a single batch read operation.
@@ -109,6 +110,10 @@ pub struct BatchWritePolicy {
     /// Enterprise Edition 3.10+ only.
     pub durable_delete: bool,
 
+    /// If true, the MRT monitor record will only be written if the record is locked.
+    /// Default: false
+    pub on_locking_only: bool,
+
     /// Optional Filter Expression
     pub filter_expression: Option<Expression>,
 }
@@ -123,6 +128,7 @@ impl Default for BatchWritePolicy {
             expiration: Expiration::NamespaceDefault,
             send_key: false,
             durable_delete: false,
+            on_locking_only: false,
             filter_expression: None,
         }
     }
@@ -193,6 +199,10 @@ pub struct BatchUDFPolicy {
     /// Enterprise Edition 3.10+ only.
     pub durable_delete: bool,
 
+    /// If true, the MRT monitor record will only be written if the record is locked.
+    /// Default: false
+    pub on_locking_only: bool,
+
     /// Optional Filter Expression
     pub filter_expression: Option<Expression>,
 }
@@ -204,6 +214,7 @@ impl Default for BatchUDFPolicy {
             expiration: Expiration::NamespaceDefault,
             send_key: false,
             durable_delete: false,
+            on_locking_only: false,
             filter_expression: None,
         }
     }
@@ -242,7 +253,7 @@ pub enum BatchOperation {
 }
 
 impl BatchOperation {
-    /// Create a batch read operation.
+    /// Creates a batch read operation.
     pub fn read(policy: &BatchReadPolicy, key: Key, bins: Bins) -> Self {
         BatchOperation::Read {
             br: BatchRecord::new(key, false),
@@ -252,7 +263,7 @@ impl BatchOperation {
         }
     }
 
-    /// Create a batch read with multiple operations.
+    /// Creates a batch read with multiple operations.
     pub fn read_ops(policy: &BatchReadPolicy, key: Key, ops: Vec<Operation>) -> Self {
         BatchOperation::Read {
             br: BatchRecord::new(key, false),
@@ -262,7 +273,7 @@ impl BatchOperation {
         }
     }
 
-    /// Create a batch write with multiple operations.
+    /// Creates a batch write with multiple operations.
     pub fn write(policy: &BatchWritePolicy, key: Key, ops: Vec<Operation>) -> Self {
         BatchOperation::Write {
             br: BatchRecord::new(key, true),
@@ -271,7 +282,7 @@ impl BatchOperation {
         }
     }
 
-    /// Create a batch delete operation.
+    /// Creates a batch delete operation.
     pub fn delete(policy: &BatchDeletePolicy, key: Key) -> Self {
         BatchOperation::Delete {
             br: BatchRecord::new(key, true),
@@ -279,7 +290,7 @@ impl BatchOperation {
         }
     }
 
-    /// Create a batch UDF operation.
+    /// Creates a batch UDF operation.
     pub fn udf(
         policy: &BatchUDFPolicy,
         key: Key,
@@ -296,6 +307,14 @@ impl BatchOperation {
         }
     }
 
+    /// Returns true if this batch operation contains a write.
+    pub(crate) const fn has_write(&self) -> bool {
+        match self {
+            Self::Read { .. } => false,
+            Self::Write { .. } | Self::Delete { .. } | Self::UDF { .. } => true,
+        }
+    }
+
     pub(crate) fn size(&self, parent_fe: &Option<Expression>) -> Result<usize> {
         match self {
             Self::Read {
@@ -303,7 +322,7 @@ impl BatchOperation {
             } => {
                 let mut size: usize = 0;
 
-                match (&policy.filter_expression, &parent_fe) {
+                match (&policy.filter_expression, parent_fe) {
                     (Some(fe), _) => {
                         size += fe.size()? + FIELD_HEADER_SIZE as usize;
                     }
@@ -337,7 +356,7 @@ impl BatchOperation {
             } => {
                 let mut size: usize = 2; // gen(2) = 2
 
-                match (&policy.filter_expression, &parent_fe) {
+                match (&policy.filter_expression, parent_fe) {
                     (Some(fe), _) => {
                         size += fe.size()? + FIELD_HEADER_SIZE as usize;
                     }
@@ -373,7 +392,7 @@ impl BatchOperation {
             Self::Delete { br, policy } => {
                 let mut size: usize = 2; // gen(2) = 2
 
-                match (&policy.filter_expression, &parent_fe) {
+                match (&policy.filter_expression, parent_fe) {
                     (Some(fe), _) => {
                         size += fe.size()? + FIELD_HEADER_SIZE as usize;
                     }
@@ -401,7 +420,7 @@ impl BatchOperation {
             } => {
                 let mut size: usize = 2; // gen(2) = 2
 
-                match (&policy.filter_expression, &parent_fe) {
+                match (&policy.filter_expression, parent_fe) {
                     (Some(fe), _) => {
                         size += fe.size()? + FIELD_HEADER_SIZE as usize;
                     }
@@ -431,8 +450,70 @@ impl BatchOperation {
         }
     }
 
-    pub(crate) const fn match_header(&self, _prev: Option<&BatchOperation>) -> bool {
-        false
+    /// Returns true if this op's header can be encoded as a `BATCH_MSG_REPEAT` of `prev`
+    /// (i.e. identical namespace/set/policy/payload). When true, the wire protocol writes
+    /// only the repeat flag and digest, saving the full namespace/set/bin payload.
+    ///
+    /// Safe conservative fallback: returns false whenever we can't cheaply prove equality.
+    /// Correctness-critical: a false-positive here produces a wrong request.
+    pub(crate) fn match_header(
+        &self,
+        prev: Option<&BatchOperation>,
+        ver: Option<u64>,
+        ver_prev: Option<u64>,
+    ) -> bool {
+        let Some(prev) = prev else { return false };
+
+        // Same txn read version.
+        if ver != ver_prev {
+            return false;
+        }
+
+        // Same namespace & set.
+        let key = match self {
+            Self::Read { br, .. }
+            | Self::Write { br, .. }
+            | Self::Delete { br, .. }
+            | Self::UDF { br, .. } => &br.key,
+        };
+        let key_prev = match prev {
+            Self::Read { br, .. }
+            | Self::Write { br, .. }
+            | Self::Delete { br, .. }
+            | Self::UDF { br, .. } => &br.key,
+        };
+        if key.namespace != key_prev.namespace || key.set_name != key_prev.set_name {
+            return false;
+        }
+
+        // Variant-specific payload match. send_key=true forces non-repeat because
+        // the user_key field in the per-record header differs across records.
+        match (self, prev) {
+            (
+                Self::Read {
+                    policy: p,
+                    bins: b,
+                    ops: o,
+                    ..
+                },
+                Self::Read {
+                    policy: pp,
+                    bins: bp,
+                    ops: op,
+                    ..
+                },
+            ) => {
+                // Read ops can contain arbitrary Operations which we can't cheaply compare.
+                // Only dedup bins-only reads.
+                o.is_none() && op.is_none() && p == pp && b == bp
+            }
+            (Self::Delete { policy: p, .. }, Self::Delete { policy: pp, .. }) => {
+                !p.send_key && !pp.send_key && p == pp
+            }
+            // Write / UDF / mixed variants: ops and udf args are not cheaply comparable.
+            // Fall back to writing full headers (correct, just not optimally compressed).
+            _ => false,
+        }
     }
 
     pub(crate) fn key(&self) -> Key {
@@ -472,15 +553,7 @@ impl BatchOperation {
                 br.result_code = Some(rc);
                 br.in_doubt = false;
             }
-            Self::Write { br, .. } => {
-                br.result_code = Some(rc);
-                br.in_doubt = in_doubt;
-            }
-            Self::Delete { br, .. } => {
-                br.result_code = Some(rc);
-                br.in_doubt = in_doubt;
-            }
-            Self::UDF { br, .. } => {
+            Self::Write { br, .. } | Self::Delete { br, .. } | Self::UDF { br, .. } => {
                 br.result_code = Some(rc);
                 br.in_doubt = in_doubt;
             }

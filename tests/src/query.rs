@@ -20,7 +20,7 @@ use futures::stream::StreamExt;
 
 use crate::common;
 
-use aerospike::query::PartitionFilter;
+use aerospike::query::{Filter, PartitionFilter};
 use aerospike::Task;
 use aerospike::*;
 use aerospike_rt::time::{Duration, Instant};
@@ -35,8 +35,10 @@ async fn create_test_set(client: &Client, no_records: usize) -> String {
     let apolicy = AdminPolicy::default();
     for i in 0..no_records as i64 {
         let key = as_key!(namespace, &set_name, i);
-        let wbin = as_bin!("bin", i);
-        let bins = vec![wbin];
+        let wbin1 = as_bin!("bin", i);
+        let wbin2 = as_bin!("bin2", "hello");
+        let wbin3 = as_bin!("extra", "extra");
+        let bins = vec![wbin1, wbin2, wbin3];
         client.delete(&wpolicy, &key).await.unwrap();
         client.put(&wpolicy, &key, &bins).await.unwrap();
     }
@@ -98,7 +100,7 @@ async fn query_single_consumer_no_setname() {
     let namespace = common::namespace();
     let set_name = "";
     let mut qpolicy = QueryPolicy::default();
-    qpolicy.expected_duration = QueryDuration::Short;
+    qpolicy.expected_duration = QueryDuration::Long;
 
     // Filter Query
     let statement = Statement::new(namespace, &set_name, Bins::All);
@@ -129,7 +131,7 @@ async fn query_single_consumer() {
 
     // Filter Query
     let mut statement = Statement::new(namespace, &set_name, Bins::All);
-    statement.add_filter(as_eq!("bin", 1));
+    statement.add_filter(Filter::equal("bin", 1));
     let pf = PartitionFilter::all();
     let rs = client.query(&qpolicy, pf, statement).await.unwrap();
     let mut count = 0;
@@ -147,7 +149,7 @@ async fn query_single_consumer() {
 
     // Range Query
     let mut statement = Statement::new(namespace, &set_name, Bins::All);
-    statement.add_filter(as_range!("bin", 0, 9));
+    statement.add_filter(Filter::range("bin", 0, 9));
     let pf = PartitionFilter::all();
     let rs = client.query(&qpolicy, pf, statement).await.unwrap();
     let mut count = 0;
@@ -181,7 +183,7 @@ async fn query_single_consumer_with_cursor() {
     while !pf.done() {
         // Filter Query
         let mut statement = Statement::new(namespace, &set_name, Bins::All);
-        statement.add_filter(as_eq!("bin", 1));
+        statement.add_filter(Filter::equal("bin", 1));
         let rs = client.query(&qpolicy, pf, statement).await.unwrap();
         let mut rs = rs.into_stream();
         while let Some(res) = rs.next().await {
@@ -205,7 +207,7 @@ async fn query_single_consumer_with_cursor() {
         iter += 1;
         // Range Query
         let mut statement = Statement::new(namespace, &set_name, Bins::Some(vec!["bin".into()]));
-        statement.add_filter(as_range!("bin", 0, 9));
+        statement.add_filter(Filter::range("bin", 0, 9));
         let rs = client.query(&qpolicy, pf, statement).await.unwrap();
         let mut rs = rs.into_stream();
         while let Some(res) = rs.next().await {
@@ -266,7 +268,7 @@ async fn query_single_consumer_rps() {
 
     // Range Query
     let mut statement = Statement::new(namespace, &set_name, Bins::All);
-    statement.add_filter(as_range!("bin", 0, (EXPECTED / 3) as i64));
+    statement.add_filter(Filter::range("bin", 0, (EXPECTED / 3) as i64));
 
     qpolicy.records_per_second = 3;
     let start_time = Instant::now();
@@ -302,7 +304,7 @@ async fn query_nobins() {
     let qpolicy = QueryPolicy::default();
 
     let mut statement = Statement::new(namespace, &set_name, Bins::None);
-    statement.add_filter(as_range!("bin", 0, 9));
+    statement.add_filter(Filter::range("bin", 0, 9));
     let pf = PartitionFilter::all();
     let rs = client.query(&qpolicy, pf, statement).await.unwrap();
     let mut count = 0;
@@ -323,6 +325,34 @@ async fn query_nobins() {
 }
 
 #[aerospike_macro::test]
+async fn query_some_bins() {
+    let client = common::client().await;
+    let namespace = common::namespace();
+    let set_name = create_test_set(&client, EXPECTED).await;
+    let qpolicy = QueryPolicy::default();
+
+    let mut statement = Statement::new(namespace, &set_name, Bins::Some(vec!["bin".into()]));
+    statement.add_filter(Filter::range("bin", 0, 9));
+    let pf = PartitionFilter::all();
+    let rs = client.query(&qpolicy, pf, statement).await.unwrap();
+    let mut count = 0;
+    let mut rs = rs.into_stream();
+    while let Some(res) = rs.next().await {
+        match res {
+            Ok(rec) => {
+                count += 1;
+                assert!(rec.generation > 0);
+                assert_eq!(1, rec.bins.len());
+            }
+            Err(err) => panic!("{:?}", err),
+        }
+    }
+    assert_eq!(count, 10);
+
+    client.close().await.unwrap();
+}
+
+#[aerospike_macro::test]
 async fn query_multi_consumer() {
     let client = common::client().await;
     let namespace = common::namespace();
@@ -331,7 +361,7 @@ async fn query_multi_consumer() {
 
     // Range Query
     let mut statement = Statement::new(namespace, &set_name, Bins::All);
-    let f = as_range!("bin", 0, 9);
+    let f = Filter::range("bin", 0, 9);
     statement.add_filter(f);
 
     let pf = PartitionFilter::all();
@@ -481,7 +511,7 @@ async fn test_query_geo_within_geojson_region() {
                              [-122.500000, 37.000000]]]
         }"#;
 
-    let predicate = as_within_region!(bin_name, region_str);
+    let predicate = Filter::geo_within_region(bin_name, region_str);
 
     let qpolicy = QueryPolicy::default();
     let mut stmt = aerospike::Statement::new(namespace, set_name, aerospike::Bins::All);
@@ -502,4 +532,954 @@ async fn test_query_geo_within_geojson_region() {
     assert!(count == 2);
 
     let _ = client.truncate(&apolicy, namespace, set_name, 0).await;
+}
+
+/// Query with a secondary index filter and specific bin selection.
+/// This exercises the QUERY_BINLIST wire-protocol field: when a filter is
+/// present, bin names are sent as a compact QUERY_BINLIST field rather than
+/// individual READ operations.
+#[aerospike_macro::test]
+async fn query_filter_with_specific_bins() {
+    let client = common::client().await;
+    let namespace = common::namespace();
+    let set_name = create_test_set(&client, EXPECTED).await;
+    let qpolicy = QueryPolicy::default();
+
+    // Request only "bin" and "bin2" out of three bins (bin, bin2, extra)
+    let mut statement = Statement::new(
+        namespace,
+        &set_name,
+        Bins::Some(vec!["bin".into(), "bin2".into()]),
+    );
+    statement.add_filter(Filter::range("bin", 0, 9));
+
+    let pf = PartitionFilter::all();
+    let rs = client.query(&qpolicy, pf, statement).await.unwrap();
+    let mut count = 0;
+    let mut rs = rs.into_stream();
+    while let Some(res) = rs.next().await {
+        match res {
+            Ok(rec) => {
+                count += 1;
+                // Exactly the two requested bins should be present
+                assert_eq!(rec.bins.len(), 2, "expected 2 bins, got {:?}", rec.bins);
+                assert!(rec.bins.contains_key("bin"), "missing 'bin'");
+                assert!(rec.bins.contains_key("bin2"), "missing 'bin2'");
+                assert!(
+                    !rec.bins.contains_key("extra"),
+                    "'extra' should not be returned"
+                );
+                let v: i64 = rec.bins["bin"].clone().into();
+                assert!(v >= 0 && v < 10);
+                assert_eq!(rec.bins["bin2"], as_val!("hello"));
+            }
+            Err(err) => panic!("{:?}", err),
+        }
+    }
+    assert_eq!(count, 10);
+
+    client.close().await.unwrap();
+}
+
+/// Query using `Filter::new_by_index` to target a specific secondary index by name.
+/// The server should use the named index instead of performing an index lookup by bin name.
+#[aerospike_macro::test]
+async fn query_filter_with_index_name() {
+    let client = common::client().await;
+    let namespace = common::namespace();
+    let set_name = create_test_set(&client, EXPECTED).await;
+    let qpolicy = QueryPolicy::default();
+
+    // The index name created by create_test_set
+    let index_name = format!("{}_{}_{}", namespace, set_name, "bin");
+
+    let mut statement = Statement::new(
+        namespace,
+        &set_name,
+        Bins::Some(vec!["bin".into(), "bin2".into()]),
+    );
+    // Use Filter::range_by_index to target the index by name
+    let filter = Filter::range_by_index(&index_name, 0, 9);
+    statement.add_filter(filter);
+
+    let pf = PartitionFilter::all();
+    let rs = client.query(&qpolicy, pf, statement).await.unwrap();
+    let mut count = 0;
+    let mut rs = rs.into_stream();
+    while let Some(res) = rs.next().await {
+        match res {
+            Ok(rec) => {
+                count += 1;
+                assert_eq!(rec.bins.len(), 2, "expected 2 bins, got {:?}", rec.bins);
+                assert!(rec.bins.contains_key("bin"), "missing 'bin'");
+                assert!(rec.bins.contains_key("bin2"), "missing 'bin2'");
+                let v: i64 = rec.bins["bin"].clone().into();
+                assert!(v >= 0 && v < 10);
+            }
+            Err(err) => panic!("{:?}", err),
+        }
+    }
+    assert_eq!(count, 10);
+
+    client.close().await.unwrap();
+}
+
+/// Query with `include_bin_data` set to false.
+/// This exercises the `NOBINDATA` flag via the `QueryPolicy.include_bin_data` field.
+/// Records should be returned with metadata but no bin data.
+#[aerospike_macro::test]
+async fn query_include_bin_data_false() {
+    let client = common::client().await;
+    let namespace = common::namespace();
+    let set_name = create_test_set(&client, EXPECTED).await;
+    let mut qpolicy = QueryPolicy::default();
+    qpolicy.include_bin_data = false;
+
+    let mut statement = Statement::new(namespace, &set_name, Bins::All);
+    statement.add_filter(Filter::range("bin", 0, 9));
+
+    let pf = PartitionFilter::all();
+    let rs = client.query(&qpolicy, pf, statement).await.unwrap();
+    let mut count = 0;
+    let mut rs = rs.into_stream();
+    while let Some(res) = rs.next().await {
+        match res {
+            Ok(rec) => {
+                count += 1;
+                assert!(rec.generation > 0);
+                assert_eq!(rec.bins.len(), 0, "expected no bins, got {:?}", rec.bins);
+            }
+            Err(err) => panic!("{:?}", err),
+        }
+    }
+    assert_eq!(count, 10);
+
+    client.close().await.unwrap();
+}
+
+/// Scan (no filter) with specific bin selection.
+/// Without a filter, bin names are encoded as READ operations rather than
+/// QUERY_BINLIST. This verifies that path still works correctly.
+#[aerospike_macro::test]
+async fn query_scan_with_specific_bins() {
+    let client = common::client().await;
+    let namespace = common::namespace();
+    let set_name = create_test_set(&client, 50).await;
+    let qpolicy = QueryPolicy::default();
+
+    // Scan (no filter) requesting only "bin" and "bin2"
+    let statement = Statement::new(
+        namespace,
+        &set_name,
+        Bins::Some(vec!["bin".into(), "bin2".into()]),
+    );
+
+    let pf = PartitionFilter::all();
+    let rs = client.query(&qpolicy, pf, statement).await.unwrap();
+    let mut count = 0;
+    let mut rs = rs.into_stream();
+    while let Some(res) = rs.next().await {
+        match res {
+            Ok(rec) => {
+                count += 1;
+                assert_eq!(rec.bins.len(), 2, "expected 2 bins, got {:?}", rec.bins);
+                assert!(rec.bins.contains_key("bin"), "missing 'bin'");
+                assert!(rec.bins.contains_key("bin2"), "missing 'bin2'");
+                assert!(
+                    !rec.bins.contains_key("extra"),
+                    "'extra' should not be returned"
+                );
+            }
+            Err(err) => panic!("{:?}", err),
+        }
+    }
+    assert_eq!(count, 50);
+
+    client.close().await.unwrap();
+}
+
+/// Query using `QueryDuration::LongRelaxAP`.
+/// This exercises the fix where `INFO2_RELAX_AP_LONG_QUERY` is correctly
+/// written into the info2 byte instead of info1.
+///
+/// `LongRelaxAP` relaxes AP-only read consistency during long queries; the
+/// server rejects it on strong-consistency namespaces with `ParameterError`,
+/// so skip there.
+#[aerospike_macro::test]
+async fn query_long_relax_ap_duration() {
+    let client = common::client().await;
+    let namespace = common::namespace();
+    if common::namespace_is_sc(&client, namespace).await {
+        eprintln!("Skipping query_long_relax_ap_duration: AP-only feature on SC namespace");
+        return;
+    }
+    let set_name = create_test_set(&client, EXPECTED).await;
+    let mut qpolicy = QueryPolicy::default();
+    qpolicy.expected_duration = QueryDuration::LongRelaxAP;
+
+    let mut statement = Statement::new(namespace, &set_name, Bins::All);
+    statement.add_filter(Filter::range("bin", 0, 9));
+
+    let pf = PartitionFilter::all();
+    let rs = client.query(&qpolicy, pf, statement).await.unwrap();
+    let mut count = 0;
+    let mut rs = rs.into_stream();
+    while let Some(res) = rs.next().await {
+        match res {
+            Ok(rec) => {
+                count += 1;
+                let v: i64 = rec.bins["bin"].clone().into();
+                assert!(v >= 0 && v < 10);
+            }
+            Err(err) => panic!("{:?}", err),
+        }
+    }
+    assert_eq!(count, 10);
+
+    client.close().await.unwrap();
+}
+
+#[aerospike_macro::test]
+async fn query_operate_write() {
+    let client = common::client().await;
+    let namespace = common::namespace();
+    let set_name = create_test_set(&client, EXPECTED).await;
+
+    let wpolicy = WritePolicy::default();
+
+    // Use query_operate to add 100 to every record's "bin" value in range [0, 99]
+    let mut statement = Statement::new(namespace, &set_name, Bins::All);
+    statement.add_filter(Filter::range("bin", 0, 99));
+    let ops = vec![operations::add(&as_bin!("bin", 100))];
+    let task = client
+        .query_operate(&wpolicy, statement, &ops)
+        .await
+        .expect("query_operate failed");
+    task.wait_till_complete(Some(Duration::from_secs(30)))
+        .await
+        .expect("task did not complete");
+
+    // Verify the records were updated
+    let rpolicy = ReadPolicy::default();
+    for i in 0..100_i64 {
+        let key = as_key!(namespace, &set_name, i);
+        let rec = client.get(&rpolicy, &key, Bins::All).await.unwrap();
+        let val: i64 = rec.bins["bin"].clone().into();
+        assert_eq!(val, i + 100, "record {i} was not updated correctly");
+    }
+
+    client.close().await.unwrap();
+}
+
+#[aerospike_macro::test]
+async fn query_operate_scan_all() {
+    let client = common::client().await;
+    let namespace = common::namespace();
+    let set_name = create_test_set(&client, 50).await;
+
+    let wpolicy = WritePolicy::default();
+
+    // Use query_operate without filter (scan mode) to set a new bin on all records
+    let statement = Statement::new(namespace, &set_name, Bins::All);
+    let ops = vec![operations::put(&as_bin!("new_bin", 999))];
+    let task = client
+        .query_operate(&wpolicy, statement, &ops)
+        .await
+        .expect("query_operate scan failed");
+    task.wait_till_complete(Some(Duration::from_secs(30)))
+        .await
+        .expect("task did not complete");
+
+    // Verify all records have the new bin
+    let rpolicy = ReadPolicy::default();
+    for i in 0..50_i64 {
+        let key = as_key!(namespace, &set_name, i);
+        let rec = client.get(&rpolicy, &key, Bins::All).await.unwrap();
+        let val: i64 = rec.bins["new_bin"].clone().into();
+        assert_eq!(val, 999, "record {i} missing new_bin");
+    }
+
+    client.close().await.unwrap();
+}
+
+#[aerospike_macro::test]
+async fn query_operate_empty_ops_returns_parameter_error() {
+    let client = common::client().await;
+    let namespace = common::namespace();
+    let set_name = &common::rand_str(10);
+
+    let wpolicy = WritePolicy::default();
+    let statement = Statement::new(namespace, set_name, Bins::All);
+
+    // Calling query_operate with no operations must be rejected client-side
+    // with a ParameterError before any server fan-out. We verify the message
+    // contains "no operations" so the assertion would not be satisfied by an
+    // accidental server-returned ParameterError (server fills the node addr
+    // in that field instead).
+    let result = client.query_operate(&wpolicy, statement, &[]).await;
+
+    match result {
+        Err(Error::ServerError(ResultCode::ParameterError, _, ref msg))
+            if msg.contains("no operations") => {}
+        Err(other) => panic!(
+            "expected client-side ParameterError ('query_operate called with no \
+             operations'); got {:?}",
+            other
+        ),
+        Ok(_) => panic!("expected ParameterError, got Ok"),
+    }
+
+    client.close().await.unwrap();
+}
+
+// ============================================================================
+// Filter::equal_by_index — equality filter targeting a named secondary index
+// ============================================================================
+
+#[aerospike_macro::test]
+async fn query_filter_equal_by_index() {
+    let client = common::client().await;
+    let namespace = common::namespace();
+    let set_name = create_test_set(&client, EXPECTED).await;
+    let qpolicy = QueryPolicy::default();
+
+    let index_name = format!("{}_{}_{}", namespace, set_name, "bin");
+
+    let mut statement = Statement::new(namespace, &set_name, Bins::All);
+    statement.add_filter(Filter::equal_by_index(&index_name, 5_i64));
+
+    let pf = PartitionFilter::all();
+    let rs = client.query(&qpolicy, pf, statement).await.unwrap();
+    let mut count = 0;
+    let mut rs = rs.into_stream();
+    while let Some(res) = rs.next().await {
+        match res {
+            Ok(rec) => {
+                count += 1;
+                let v: i64 = rec.bins["bin"].clone().into();
+                assert_eq!(v, 5);
+            }
+            Err(err) => panic!("{:?}", err),
+        }
+    }
+    assert_eq!(count, 1);
+
+    client.close().await.unwrap();
+}
+
+// ============================================================================
+// Filter::contains — list collection index
+// ============================================================================
+
+async fn create_list_test_set(client: &Client) -> String {
+    let namespace = common::namespace();
+    let set_name = common::rand_str(10);
+
+    let wpolicy = WritePolicy::default();
+    let apolicy = AdminPolicy::default();
+
+    // Each record has a "list_bin" containing a list of integers [i, i+1, i+2],
+    // built via list_append_items so the server stores native CDT lists.
+    let list_policy = aerospike::operations::lists::ListPolicy::default();
+    for i in 0..20_i64 {
+        let key = as_key!(namespace, &set_name, i);
+        let ops = vec![operations::lists::append_items(
+            &list_policy,
+            "list_bin",
+            vec![as_val!(i), as_val!(i + 1), as_val!(i + 2)],
+        )];
+        client.operate(&wpolicy, &key, &ops).await.unwrap();
+    }
+
+    // Create a secondary index on list elements
+    let idx_name = format!("{}_{}_list_bin", namespace, set_name);
+    let task = client
+        .create_index_on_bin(
+            &apolicy,
+            namespace,
+            &set_name,
+            "list_bin",
+            &idx_name,
+            IndexType::Numeric,
+            CollectionIndexType::List,
+            None,
+        )
+        .await
+        .expect("Failed to create list index");
+    task.wait_till_complete(None).await.unwrap();
+
+    set_name
+}
+
+#[aerospike_macro::test]
+async fn query_filter_contains_list() {
+    let client = common::client().await;
+    let namespace = common::namespace();
+    let set_name = create_list_test_set(&client).await;
+    let qpolicy = QueryPolicy::default();
+
+    // Value 1 is in record 0's list [0,1,2] and record 1's list [1,2,3]
+    let mut statement = Statement::new(namespace, &set_name, Bins::All);
+    statement.add_filter(Filter::contains(
+        "list_bin",
+        1_i64,
+        CollectionIndexType::List,
+    ));
+
+    let pf = PartitionFilter::all();
+    let rs = client.query(&qpolicy, pf, statement).await.unwrap();
+    let mut count = 0;
+    let mut rs = rs.into_stream();
+    while let Some(res) = rs.next().await {
+        match res {
+            Ok(_) => count += 1,
+            Err(err) => panic!("{:?}", err),
+        }
+    }
+    assert_eq!(count, 2);
+
+    client.close().await.unwrap();
+}
+
+// ============================================================================
+// Filter::contains_range — list collection index with range
+// ============================================================================
+
+#[aerospike_macro::test]
+async fn query_filter_contains_range_list() {
+    let client = common::client().await;
+    let namespace = common::namespace();
+    let set_name = create_list_test_set(&client).await;
+    let qpolicy = QueryPolicy::default();
+
+    // Range [0, 1]: matches any record whose list contains a value in [0, 1]
+    // record 0: [0,1,2] has 0 and 1 => match
+    // record 1: [1,2,3] has 1 => match
+    // record 2: [2,3,4] has neither 0 nor 1 => no match
+    let mut statement = Statement::new(namespace, &set_name, Bins::All);
+    statement.add_filter(Filter::contains_range(
+        "list_bin",
+        0_i64,
+        1_i64,
+        CollectionIndexType::List,
+    ));
+
+    let pf = PartitionFilter::all();
+    let rs = client.query(&qpolicy, pf, statement).await.unwrap();
+    let mut count = 0;
+    let mut rs = rs.into_stream();
+    while let Some(res) = rs.next().await {
+        match res {
+            Ok(_) => count += 1,
+            Err(err) => panic!("{:?}", err),
+        }
+    }
+    assert_eq!(count, 2);
+
+    client.close().await.unwrap();
+}
+
+// ============================================================================
+// Filter::geo_within_radius — points within a radius
+// ============================================================================
+
+async fn create_geo_test_set(client: &Client) -> String {
+    let namespace = common::namespace();
+    let set_name = common::rand_str(10);
+    let bin_name = "geo_bin";
+
+    let apolicy = AdminPolicy::default();
+    let wp = WritePolicy::default();
+
+    let task = client
+        .create_index_on_bin(
+            &apolicy,
+            namespace,
+            &set_name,
+            bin_name,
+            &format!("{}_{}_{}", namespace, set_name, bin_name),
+            IndexType::Geo2DSphere,
+            CollectionIndexType::Default,
+            None,
+        )
+        .await
+        .expect("Failed to create geo index");
+    task.wait_till_complete(None).await.unwrap();
+
+    // Points near San Francisco
+    let key1 = as_key!(namespace, &set_name, "close1");
+    client
+        .put(
+            &wp,
+            &key1,
+            &vec![as_bin!(
+                bin_name,
+                as_geo!(r#"{"type": "Point", "coordinates": [-122.0, 37.5]}"#)
+            )],
+        )
+        .await
+        .unwrap();
+
+    let key2 = as_key!(namespace, &set_name, "close2");
+    client
+        .put(
+            &wp,
+            &key2,
+            &vec![as_bin!(
+                bin_name,
+                as_geo!(r#"{"type": "Point", "coordinates": [-122.1, 37.5]}"#)
+            )],
+        )
+        .await
+        .unwrap();
+
+    // Point far away (New York)
+    let key3 = as_key!(namespace, &set_name, "far");
+    client
+        .put(
+            &wp,
+            &key3,
+            &vec![as_bin!(
+                bin_name,
+                as_geo!(r#"{"type": "Point", "coordinates": [-73.9, 40.7]}"#)
+            )],
+        )
+        .await
+        .unwrap();
+
+    set_name
+}
+
+#[aerospike_macro::test]
+async fn query_filter_geo_within_radius() {
+    let client = Arc::new(common::client().await);
+    let namespace = common::namespace();
+    let set_name = create_geo_test_set(&client).await;
+    let qpolicy = QueryPolicy::default();
+
+    // 50km radius around [-122.0, 37.5] should include close1 and close2 but not far
+    let mut stmt = Statement::new(namespace, &set_name, Bins::All);
+    stmt.add_filter(Filter::geo_within_radius("geo_bin", -122.0, 37.5, 50000.0));
+
+    let pf = PartitionFilter::all();
+    let mut rs = client
+        .query(&qpolicy, pf, stmt)
+        .await
+        .unwrap()
+        .into_stream();
+
+    let mut count = 0;
+    while let Some(r) = rs.next().await {
+        assert!(r.is_ok());
+        count += 1;
+    }
+    assert_eq!(count, 2);
+
+    let apolicy = AdminPolicy::default();
+    let _ = client.truncate(&apolicy, namespace, &set_name, 0).await;
+}
+
+// ============================================================================
+// Filter::geo_contains — regions containing a point
+// ============================================================================
+
+#[aerospike_macro::test]
+async fn query_filter_geo_contains() {
+    let namespace = common::namespace();
+    let set_name = &common::rand_str(10);
+    let bin_name = "region_bin";
+
+    let client = Arc::new(common::client().await);
+    let apolicy = AdminPolicy::default();
+    let wp = WritePolicy::default();
+
+    let task = client
+        .create_index_on_bin(
+            &apolicy,
+            namespace,
+            set_name,
+            bin_name,
+            &format!("{}_{}_{}", namespace, set_name, bin_name),
+            IndexType::Geo2DSphere,
+            CollectionIndexType::Default,
+            None,
+        )
+        .await
+        .expect("Failed to create geo index");
+    task.wait_till_complete(None).await.unwrap();
+
+    // Region that contains the test point [-122.0, 37.5]
+    let key1 = as_key!(namespace, set_name, "region1");
+    client
+        .put(
+            &wp,
+            &key1,
+            &vec![as_bin!(
+                bin_name,
+                as_geo!(
+                    r#"{
+                    "type": "Polygon",
+                    "coordinates": [[[-123.0, 37.0], [-121.0, 37.0],
+                                     [-121.0, 38.0], [-123.0, 38.0],
+                                     [-123.0, 37.0]]]
+                }"#
+                )
+            )],
+        )
+        .await
+        .unwrap();
+
+    // Region that does NOT contain the test point
+    let key2 = as_key!(namespace, set_name, "region2");
+    client
+        .put(
+            &wp,
+            &key2,
+            &vec![as_bin!(
+                bin_name,
+                as_geo!(
+                    r#"{
+                    "type": "Polygon",
+                    "coordinates": [[[-74.0, 40.0], [-73.0, 40.0],
+                                     [-73.0, 41.0], [-74.0, 41.0],
+                                     [-74.0, 40.0]]]
+                }"#
+                )
+            )],
+        )
+        .await
+        .unwrap();
+
+    // Query: which regions contain the point [-122.0, 37.5]?
+    let point = r#"{"type": "Point", "coordinates": [-122.0, 37.5]}"#;
+    let mut stmt = Statement::new(namespace, set_name, Bins::All);
+    stmt.add_filter(Filter::geo_contains(bin_name, point));
+
+    let pf = PartitionFilter::all();
+    let mut rs = client
+        .query(&QueryPolicy::default(), pf, stmt)
+        .await
+        .unwrap()
+        .into_stream();
+
+    let mut count = 0;
+    while let Some(r) = rs.next().await {
+        assert!(r.is_ok());
+        count += 1;
+    }
+    assert_eq!(count, 1);
+
+    let _ = client.truncate(&apolicy, namespace, set_name, 0).await;
+}
+
+// ============================================================================
+// Filter::expression() builder — expression-based secondary index on filter
+// ============================================================================
+
+#[aerospike_macro::test]
+async fn query_filter_with_expression_builder() {
+    let client = common::client().await;
+    let namespace = common::namespace();
+    let set_name = common::rand_str(10);
+    let apolicy = AdminPolicy::default();
+    let wpolicy = WritePolicy::default();
+
+    for i in 0..50_i64 {
+        let key = as_key!(namespace, &set_name, i);
+        let bins = vec![as_bin!("a", i)];
+        client.put(&wpolicy, &key, &bins).await.unwrap();
+    }
+
+    // Create an expression-based secondary index: int_bin("a")
+    let exp = aerospike::expressions::int_bin("a".to_string());
+    let idx_name = format!("{}_{}_exp_a", namespace, set_name);
+    let task = client
+        .create_index_using_expression(
+            &apolicy,
+            namespace,
+            &set_name,
+            &idx_name,
+            IndexType::Numeric,
+            CollectionIndexType::Default,
+            &exp,
+        )
+        .await
+        .expect("Failed to create expression index");
+    task.wait_till_complete(None).await.unwrap();
+
+    // Query using Filter::range().expression() builder
+    let mut stmt = Statement::new(namespace, &set_name, Bins::All);
+    stmt.add_filter(Filter::range("a", 0_i64, 9_i64).expression(exp));
+
+    let qpolicy = QueryPolicy::default();
+    let pf = PartitionFilter::all();
+    let rs = client.query(&qpolicy, pf, stmt).await.unwrap();
+    let mut count = 0;
+    let mut rs = rs.into_stream();
+    while let Some(res) = rs.next().await {
+        match res {
+            Ok(rec) => {
+                count += 1;
+                let v: i64 = rec.bins["a"].clone().into();
+                assert!(v >= 0 && v <= 9);
+            }
+            Err(err) => panic!("{:?}", err),
+        }
+    }
+    assert_eq!(count, 10);
+
+    client.close().await.unwrap();
+}
+
+// ============================================================================
+// Filter::context() builder — CDT context on secondary index filter
+// ============================================================================
+
+#[aerospike_macro::test]
+async fn query_filter_with_context_builder() {
+    let client = common::client().await;
+    let namespace = common::namespace();
+    let set_name = common::rand_str(10);
+    let apolicy = AdminPolicy::default();
+    let wpolicy = WritePolicy::default();
+
+    let bin_name = "nested";
+
+    // Each record has a "nested" bin containing a list with a single integer: [i]
+    for i in 0..20_i64 {
+        let key = as_key!(namespace, &set_name, i);
+        let list_val = as_list!(i);
+        let bins = vec![as_bin!(bin_name, list_val)];
+        client.put(&wpolicy, &key, &bins).await.unwrap();
+    }
+
+    // Create a secondary index on list element at index 0 using CDT context
+    use aerospike::operations::cdt_context::ctx_list_index;
+    let ctx = vec![ctx_list_index(0)];
+    let idx_name = format!("{}_{}_nested_ctx", namespace, set_name);
+    let task = client
+        .create_index_on_bin(
+            &apolicy,
+            namespace,
+            &set_name,
+            bin_name,
+            &idx_name,
+            IndexType::Numeric,
+            CollectionIndexType::Default,
+            Some(&ctx),
+        )
+        .await
+        .expect("Failed to create context index");
+    task.wait_till_complete(None).await.unwrap();
+
+    // Query using Filter::range().context() builder
+    let mut stmt = Statement::new(namespace, &set_name, Bins::All);
+    stmt.add_filter(Filter::range(bin_name, 0_i64, 4_i64).context(vec![ctx_list_index(0)]));
+
+    let qpolicy = QueryPolicy::default();
+    let pf = PartitionFilter::all();
+    let rs = client.query(&qpolicy, pf, stmt).await.unwrap();
+    let mut count = 0;
+    let mut rs = rs.into_stream();
+    while let Some(res) = rs.next().await {
+        match res {
+            Ok(_) => count += 1,
+            Err(err) => panic!("{:?}", err),
+        }
+    }
+    // Records 0..=4 have list [0]..[4], all in range [0,4]
+    assert_eq!(count, 5);
+
+    client.close().await.unwrap();
+}
+
+// ============================================================================
+// Filter::expression() + QueryPolicy.filter_expression combined
+// ============================================================================
+
+/// Tests that Filter.expression (index selection) and QueryPolicy.filter_expression
+/// (post-filter) work correctly together in the same query.
+///
+/// Filter.expression selects the expression-based secondary index for the lookup.
+/// QueryPolicy.filter_expression further narrows down the returned records.
+#[aerospike_macro::test]
+async fn query_filter_expression_with_policy_filter() {
+    let client = common::client().await;
+    let namespace = common::namespace();
+    let set_name = common::rand_str(10);
+    let apolicy = AdminPolicy::default();
+    let wpolicy = WritePolicy::default();
+
+    // Write 50 records: bin "a" = i, bin "b" = i % 2 (0 or 1)
+    for i in 0..50_i64 {
+        let key = as_key!(namespace, &set_name, i);
+        let bins = vec![as_bin!("a", i), as_bin!("b", i % 2)];
+        client.put(&wpolicy, &key, &bins).await.unwrap();
+    }
+
+    // Create an expression-based secondary index on int_bin("a")
+    let idx_exp = aerospike::expressions::int_bin("a".to_string());
+    let idx_name = format!("{}_{}_exp_ab", namespace, set_name);
+    let task = client
+        .create_index_using_expression(
+            &apolicy,
+            namespace,
+            &set_name,
+            &idx_name,
+            IndexType::Numeric,
+            CollectionIndexType::Default,
+            &idx_exp,
+        )
+        .await
+        .expect("Failed to create expression index");
+    task.wait_till_complete(None).await.unwrap();
+
+    // Filter.expression: use the expression-based index to find records with a in [0, 9]
+    // QueryPolicy.filter_expression: post-filter to only return records where b == 0 (even a)
+    let mut qpolicy = QueryPolicy::default();
+    qpolicy
+        .base_policy
+        .filter_expression
+        .replace(aerospike::expressions::eq(
+            aerospike::expressions::int_bin("b".to_string()),
+            aerospike::expressions::int_val(0),
+        ));
+
+    let mut stmt = Statement::new(namespace, &set_name, Bins::All);
+    stmt.add_filter(Filter::range("a", 0_i64, 9_i64).expression(idx_exp));
+
+    let pf = PartitionFilter::all();
+    let rs = client.query(&qpolicy, pf, stmt).await.unwrap();
+    let mut count = 0;
+    let mut rs = rs.into_stream();
+    while let Some(res) = rs.next().await {
+        match res {
+            Ok(rec) => {
+                count += 1;
+                let a: i64 = rec.bins["a"].clone().into();
+                let b: i64 = rec.bins["b"].clone().into();
+                assert!(a >= 0 && a <= 9, "a={} out of index range", a);
+                assert_eq!(b, 0, "post-filter should exclude odd records, a={}", a);
+            }
+            Err(err) => panic!("{:?}", err),
+        }
+    }
+    // a in [0,9] => 10 records, but only even a values have b==0: {0,2,4,6,8} => 5
+    assert_eq!(count, 5);
+
+    client.close().await.unwrap();
+}
+
+#[aerospike_macro::test]
+async fn test_short_query_not_tracked() {
+    let client = common::client().await;
+    let ns = common::namespace();
+    // Use a unique per-run set name so we can filter `query-show` to only
+    // entries from this test, and avoid clashing with concurrent tests.
+    let set_owned = format!("short_q_bug_{}", common::rand_str(10));
+    let set: &str = &set_owned;
+    let bin_name = "val";
+    let num_records: i64 = 100;
+
+    let wp = WritePolicy::default();
+    let ap = AdminPolicy::default();
+
+    // Load test data
+    // println!(
+    //     "\n[SETUP] Loading {} records into {}.{}",
+    //     num_records, ns, set
+    // );
+    for i in 0..num_records {
+        let key = as_key!(ns, set, i);
+        let bins = vec![as_bin!(bin_name, i)];
+        client.put(&wp, &key, &bins).await.unwrap();
+    }
+
+    // Set query-max-done to 100 so completed queries are tracked
+    // println!("[SETUP] Setting query-max-done=100 on all nodes");
+    let nodes = client.nodes();
+    for node in &nodes {
+        let set_cfg_cmd: &str = "set-config:context=service;query-max-done=100";
+        let _ = node.info(&ap, &vec![set_cfg_cmd]).await;
+    }
+    aerospike_rt::sleep(Duration::from_secs(1)).await;
+
+    // Clear any stale tracked queries: set to 0, wait, set back to 100
+    for node in &nodes {
+        let reset_cmd: &str = "set-config:context=service;query-max-done=0";
+        let _ = node.info(&ap, &vec![reset_cmd]).await;
+    }
+    aerospike_rt::sleep(Duration::from_millis(500)).await;
+    for node in &nodes {
+        let set_cmd: &str = "set-config:context=service;query-max-done=100";
+        let _ = node.info(&ap, &vec![set_cmd]).await;
+    }
+    aerospike_rt::sleep(Duration::from_millis(500)).await;
+
+    // ──────────────────────────────────────────────────────────────
+    // Test: PI query (no filter) with QueryDuration::Short
+    //         Server should NOT track this in query-show
+    // ──────────────────────────────────────────────────────────────
+    // println!("\n[TEST 1] PI query with QueryDuration::Short (Rust partition-based)");
+    {
+        let mut qpolicy = QueryPolicy::default();
+        qpolicy.expected_duration = QueryDuration::Short;
+
+        let stmt = Statement::new(ns, set, Bins::All);
+        let pf = PartitionFilter::all();
+
+        let rs = client.query(&qpolicy, pf, stmt).await.unwrap();
+        let mut rs = rs.into_stream();
+        let mut count = 0;
+        while let Some(res) = rs.next().await {
+            match res {
+                Ok(_) => count += 1,
+                Err(err) => panic!("  Error: {:?}", err),
+            }
+        }
+        // println!("  Returned {} records", count);
+        assert_eq!(
+            count, num_records,
+            "Expected {} records, but got {}",
+            num_records, count
+        );
+    }
+    aerospike_rt::sleep(Duration::from_millis(500)).await;
+
+    // Check query-show for tracked queries belonging to *this* test only.
+    // `query-show` returns server-wide tracked queries; concurrent tests
+    // running long queries (the default duration) would otherwise pollute
+    // this count and make the assertion flaky in parallel runs.
+    let set_marker = format!(":set={}", set);
+    let mut total_tracked = 0;
+    for node in &nodes {
+        let result = node.info(&ap, &vec!["query-show"]).await;
+        match result {
+            Ok(info_map) => {
+                for (_, value) in &info_map {
+                    if !value.is_empty() && value != "ok" {
+                        for entry in value.split(';').filter(|s| !s.is_empty()) {
+                            if entry.contains(&set_marker) {
+                                total_tracked += 1;
+                            }
+                        }
+                    }
+                }
+            }
+            Err(e) => panic!("  Info error: {:?}", e),
+        }
+    }
+
+    // println!(
+    //     "\n[RESULT 1] Total tracked queries after SHORT pi_query: {}",
+    //     total_tracked
+    // );
+
+    client.close().await.unwrap();
+
+    assert_eq!(
+        total_tracked, 0,
+        "QueryDuration::Short should not be tracked by the server's query monitor; \
+         got {total_tracked} tracked entries — set_scan likely failed to set INFO1_SHORT_QUERY"
+    );
 }

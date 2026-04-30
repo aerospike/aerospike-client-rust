@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, HashMap};
+use std::collections::HashMap;
 
 use crate::common;
 use crate::proptest::prelude::*;
@@ -231,7 +231,6 @@ proptest_async::proptest! {
     #[test]
     async fn batch_delete(
         i in 0..10,
-        batch_policy in batch_policy(1000, 5000),
         ops in many_batch_delete_operations(2),
     ) {
         let client = common::singleton_client().await;

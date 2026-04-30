@@ -25,12 +25,18 @@ pub mod particle_type;
 pub mod query_command;
 pub mod read_command;
 pub mod scan_command;
+pub mod server_command;
 pub mod single_command;
 pub mod stream_command;
 pub mod touch_command;
+pub mod txn_add_keys_command;
+pub mod txn_close_command;
+pub mod txn_mark_roll_forward_command;
+pub mod txn_roll_command;
+pub mod txn_verify_command;
 pub mod write_command;
 
-mod field_type;
+pub mod field_type;
 
 use std::sync::Arc;
 
@@ -45,6 +51,7 @@ pub use self::particle_type::ParticleType;
 pub use self::query_command::QueryCommand;
 pub use self::read_command::ReadCommand;
 pub use self::scan_command::ScanCommand;
+pub use self::server_command::ServerCommand;
 pub use self::single_command::SingleCommand;
 pub use self::stream_command::StreamCommand;
 pub use self::touch_command::TouchCommand;
@@ -53,6 +60,7 @@ pub use self::write_command::WriteCommand;
 use crate::cluster::Node;
 use crate::errors::{Error, Result};
 use crate::net::Connection;
+use crate::ResultCode;
 
 // Command interface describes all commands available
 #[async_trait::async_trait]
@@ -60,17 +68,61 @@ pub trait Command {
     fn hint(&self) -> u8;
     async fn write_timeout(&mut self, conn: &mut Connection) -> Result<()>;
     async fn prepare_buffer(&mut self, conn: &mut Connection) -> Result<()>;
-    async fn get_node(&mut self) -> Result<Arc<Node>>;
+    fn get_node(&mut self) -> Result<Arc<Node>>;
     async fn parse_result(&mut self, conn: &mut Connection) -> Result<()>;
     async fn write_buffer(&mut self, conn: &mut Connection) -> Result<()>;
     fn can_retry(&mut self) -> bool;
     fn can_recover_connection(&mut self) -> bool;
+    /// True if this command performs a write (for `in_doubt` computation on failure).
+    fn is_write(&self) -> bool {
+        false
+    }
+    /// Prepare the partition for a retry by advancing the sequence number.
+    fn prepare_retry(&mut self, _is_client_timeout: bool) {}
 }
 
-pub const fn keep_connection(err: &Error) -> bool {
-    matches!(err, Error::ServerError(_, _, _) | Error::Timeout(_))
+/// Whether the connection may be returned to the pool after this error.
+/// Mirrors Java's `ResultCode.keepConnection(int)`: client-side errors and the
+/// `SCAN_ABORT` / `QUERY_ABORTED` server codes require the socket to be
+/// discarded (it may still have stream bytes pending).
+pub fn keep_connection(err: &Error) -> bool {
+    match err {
+        Error::ServerError(rc, _, _)
+        | Error::BatchError(_, rc, _, _)
+        | Error::BatchLastError(_, rc, _, _) => !matches!(
+            rc,
+            ResultCode::ScanAbort | ResultCode::QueryAborted
+        ),
+        Error::Timeout(_) => true,
+        _ => false,
+    }
 }
 
+/// Client-initiated network error (broken connection or socket timeout).
 pub const fn is_network_error(err: &Error) -> bool {
     matches!(err, Error::Connection(_) | Error::Timeout(_))
+}
+
+/// Server-reported result codes that are safe to retry on. Mirrors the explicit
+/// branches in Java's `SyncCommand.executeCommand` (TIMEOUT, DEVICE_OVERLOAD,
+/// KEY_BUSY). We also treat `PartitionUnavailable` as retriable so callers
+/// eventually see the partition recover from a transitional state.
+pub fn is_retriable_server_error(err: &Error) -> bool {
+    match err {
+        Error::ServerError(rc, _, _)
+        | Error::BatchError(_, rc, _, _)
+        | Error::BatchLastError(_, rc, _, _) => matches!(
+            rc,
+            ResultCode::Timeout
+                | ResultCode::DeviceOverload
+                | ResultCode::KeyBusy
+                | ResultCode::PartitionUnavailable
+        ),
+        _ => false,
+    }
+}
+
+/// Overall retry gate: either a network failure or a retriable server error.
+pub fn should_retry(err: &Error) -> bool {
+    is_network_error(err) || is_retriable_server_error(err)
 }

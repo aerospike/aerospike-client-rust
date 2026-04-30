@@ -25,8 +25,9 @@ use aerospike_core::DropIndexTask;
 use aerospike_core::UdfRemoveTask;
 use aerospike_core::{
     AdminPolicy, BatchOperation, BatchPolicy, BatchRecord, Bin, Bins, ClientPolicy,
-    CollectionIndexType, IndexTask, IndexType, Key, Node, Privilege, QueryPolicy, ReadPolicy,
-    Record, Recordset, RegisterTask, Role, Statement, ToHosts, UDFLang, User, Value, WritePolicy,
+    CollectionIndexType, ExecuteTask, IndexTask, IndexType, Key, Node, Privilege, QueryPolicy,
+    ReadPolicy, Record, Recordset, RegisterTask, Role, Statement, ToHosts, UDFLang, User, Value,
+    WritePolicy,
 };
 use futures::executor::block_on;
 
@@ -263,12 +264,7 @@ impl Client {
     ///     Err(err) => println!("Error writing record: {}", err),
     /// }
     /// ```
-    pub fn put<'a, 'b>(
-        &self,
-        policy: &'a WritePolicy,
-        key: &'a Key,
-        bins: &'a [Bin],
-    ) -> Result<()> {
+    pub fn put<'a>(&self, policy: &'a WritePolicy, key: &'a Key, bins: &'a [Bin]) -> Result<()> {
         block_on(self.async_client.put(policy, key, bins))
     }
 
@@ -296,31 +292,21 @@ impl Client {
     ///     Err(err) => println!("Error writing record: {}", err),
     /// }
     /// ```
-    pub fn add<'a, 'b>(
-        &self,
-        policy: &'a WritePolicy,
-        key: &'a Key,
-        bins: &'a [Bin],
-    ) -> Result<()> {
+    pub fn add<'a>(&self, policy: &'a WritePolicy, key: &'a Key, bins: &'a [Bin]) -> Result<()> {
         block_on(self.async_client.add(policy, key, bins))
     }
 
     /// Append bin string values to existing record bin values. The policy specifies the
     /// transaction timeout, record expiration and how the transaction is handled when the record
     /// already exists. This call only works for string values.
-    pub fn append<'a, 'b>(
-        &self,
-        policy: &'a WritePolicy,
-        key: &'a Key,
-        bins: &'a [Bin],
-    ) -> Result<()> {
+    pub fn append<'a>(&self, policy: &'a WritePolicy, key: &'a Key, bins: &'a [Bin]) -> Result<()> {
         block_on(self.async_client.append(policy, key, bins))
     }
 
     /// Prepend bin string values to existing record bin values. The policy specifies the
     /// transaction timeout, record expiration and how the transaction is handled when the record
     /// already exists. This call only works for string values.
-    pub fn prepend<'a, 'b>(
+    pub fn prepend<'a>(
         &self,
         policy: &'a WritePolicy,
         key: &'a Key,
@@ -555,6 +541,41 @@ impl Client {
         statement: Statement,
     ) -> Result<Arc<Recordset>> {
         block_on(self.async_client.query(policy, partition_filter, statement))
+    }
+
+    /// Execute a query and apply operations to matching records on the server.
+    /// Returns an `ExecuteTask` that can be used to monitor the progress of the
+    /// background job.
+    pub fn query_operate(
+        &self,
+        write_policy: &WritePolicy,
+        statement: Statement,
+        operations: &[Operation],
+    ) -> Result<ExecuteTask> {
+        block_on(
+            self.async_client
+                .query_operate(write_policy, statement, operations),
+        )
+    }
+
+    /// Apply a user-defined function to records matching the statement filter.
+    /// Returns an `ExecuteTask` that can be used to monitor the progress of the
+    /// background job.
+    pub fn query_execute_udf(
+        &self,
+        write_policy: &WritePolicy,
+        statement: Statement,
+        package_name: &str,
+        function_name: &str,
+        args: Option<&[Value]>,
+    ) -> Result<ExecuteTask> {
+        block_on(self.async_client.query_execute_udf(
+            write_policy,
+            statement,
+            package_name,
+            function_name,
+            args,
+        ))
     }
 
     /// Sets XDR filter for given datacenter name and namespace. The expression filter indicates

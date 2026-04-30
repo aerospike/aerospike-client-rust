@@ -13,8 +13,6 @@
 // License for the specific language governing permissions and limitations under
 // the License.
 
-use std::u32;
-
 const NAMESPACE_DEFAULT: u32 = 0x0000_0000;
 const NEVER_EXPIRE: u32 = 0xFFFF_FFFF; // -1 as i32
 const DONT_UPDATE: u32 = 0xFFFF_FFFE; // -2 as i32

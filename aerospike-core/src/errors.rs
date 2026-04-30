@@ -94,6 +94,9 @@ pub enum Error {
     /// Cluster node is invalid.
     #[error("Invalid cluster node: {0}")]
     InvalidNode(String),
+    /// Invalid or unknown namespace.
+    #[error("Invalid namespace: {0}")]
+    InvalidNamespace(String),
     /// Exceeded max. number of connections per node.
     #[error("Too many connections")]
     NoMoreConnections,
@@ -121,21 +124,133 @@ pub enum Error {
     ParsePeersError(String),
 
     /// `StreamSendError` is a client-side error that signifies the scan/query was terminated.
-    #[error("Record stream was terminated by user")]
-    StreamTerminatedError(),
+    /// Carries the originating cause (e.g. parse error, socket error) when one is available.
+    #[error("Record stream was terminated{}",
+        .0.as_ref().map(|e| format!(": {e}")).unwrap_or_default()
+    )]
+    StreamTerminatedError(Option<Box<Error>>),
 
     /// Error returned when a task timed out before it could be completed.
     #[error("{0}\n\t{1}")]
     Chain(Box<Error>, Box<Error>),
+
+    /// Transaction commit failed. Carries per-stage records and an in-doubt flag
+    /// so callers can implement selective recovery. Returned by `Client::commit`.
+    #[error("Commit failed: {error_type} (in_doubt={in_doubt}){}",
+        .source.as_ref().map(|e| format!("\n\t{e}")).unwrap_or_default()
+    )]
+    CommitFailed {
+        /// Which stage of the commit failed.
+        error_type: crate::txn::CommitErrorType,
+        /// Per-key outcomes of the verify phase. Empty when verify didn't run.
+        verify_records: Vec<crate::BatchRecord>,
+        /// Per-key outcomes of the roll phase. Empty when roll didn't run.
+        roll_records: Vec<crate::BatchRecord>,
+        /// Whether the outcome is in doubt (client can't tell if the server
+        /// committed or aborted the transaction).
+        in_doubt: bool,
+        /// Underlying error that triggered the failure, if any.
+        source: Option<Box<Error>>,
+    },
 }
 
 impl Error {
+    #[must_use]
     pub fn chain_error(self, e: &str) -> Error {
         Error::Chain(Box::new(Error::ClientError(e.into())), Box::new(self))
     }
 
+    #[must_use]
     pub fn wrap(self, e: Error) -> Error {
         Error::Chain(Box::new(e), Box::new(self))
+    }
+
+    /// Chain `cause` as context for this error. If `cause` is `None`, returns `self` unchanged.
+    pub fn chain_cause(self, cause: Option<Error>) -> Error {
+        match cause {
+            Some(e) => Error::Chain(Box::new(self), Box::new(e)),
+            None => self,
+        }
+    }
+
+    /// Returns the server result code carried by this error, if any. Drills through
+    /// `Chain` wrappers so pattern-style checks still work after retry decoration.
+    #[must_use]
+    pub fn server_result_code(&self) -> Option<ResultCode> {
+        match self {
+            Error::ServerError(rc, _, _)
+            | Error::BatchError(_, rc, _, _)
+            | Error::BatchLastError(_, rc, _, _) => Some(*rc),
+            Error::Chain(a, b) => a.server_result_code().or_else(|| b.server_result_code()),
+            _ => None,
+        }
+    }
+
+    /// Recompute the `in_doubt` flag per Java's rule
+    /// (`AerospikeException.setInDoubt(isWrite, commandSentCounter)`):
+    /// `in_doubt = true` when this is a write AND we sent more than one command OR
+    /// sent exactly one and the failure was a client-side error or server TIMEOUT.
+    /// No-op for non-write commands or non-server error variants.
+    #[must_use]
+    pub fn set_in_doubt(mut self, is_write: bool, commands_sent: u32) -> Self {
+        if !is_write {
+            return self;
+        }
+        match &mut self {
+            Error::ServerError(rc, in_doubt, _)
+            | Error::BatchError(_, rc, in_doubt, _)
+            | Error::BatchLastError(_, rc, in_doubt, _) => {
+                if commands_sent > 1
+                    || (commands_sent == 1 && matches!(rc, ResultCode::Timeout))
+                {
+                    *in_doubt = true;
+                }
+            }
+            // Client-side timeouts / connection failures on a write command
+            // where we sent at least one command are always in-doubt.
+            Error::Timeout(_) | Error::Connection(_) => {
+                if commands_sent >= 1 {
+                    // No in_doubt field on these variants; wrap with context so
+                    // callers can observe via the Display chain.
+                    self = Error::Chain(
+                        Box::new(Error::ClientError("in_doubt=true".into())),
+                        Box::new(self),
+                    );
+                }
+            }
+            _ => (),
+        }
+        self
+    }
+
+    /// Attach retry context (iteration count, last node attempted, prior errors)
+    /// as a leading `Chain` wrapper. Only wraps when there is something to report
+    /// (iterations > 1 or a non-empty history), so happy-path errors are
+    /// unaffected and existing pattern matches continue to work.
+    #[must_use]
+    pub fn with_retry_context(
+        self,
+        iterations: u32,
+        node: Option<&str>,
+        mut history: Vec<Error>,
+    ) -> Self {
+        if iterations <= 1 && history.is_empty() {
+            return self;
+        }
+        use std::fmt::Write as _;
+        let mut ctx = format!("iterations={iterations}");
+        if let Some(n) = node {
+            let _ = write!(ctx, " last_node={n}");
+        }
+        if !history.is_empty() {
+            let _ = write!(ctx, " sub_errors={}", history.len());
+        }
+        // Build a nested chain so all prior sub-errors are reachable via Display.
+        let mut chained = self;
+        while let Some(prev) = history.pop() {
+            chained = Error::Chain(Box::new(chained), Box::new(prev));
+        }
+        Error::Chain(Box::new(Error::ClientError(ctx)), Box::new(chained))
     }
 }
 

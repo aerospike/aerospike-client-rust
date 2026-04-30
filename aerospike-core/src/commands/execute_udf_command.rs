@@ -39,13 +39,14 @@ impl<'a> ExecuteUDFCommand<'a> {
         function_name: &'a str,
         args: Option<&'a [Value]>,
     ) -> Self {
+        let partition = crate::cluster::partition::Partition::for_write(key);
         ExecuteUDFCommand {
-            read_command: ReadCommand::new(
+            read_command: ReadCommand::new_with_partition(
                 &policy.base_policy,
                 cluster,
                 key,
                 Bins::All,
-                crate::policy::Replica::Master,
+                partition,
             ),
             policy,
             package_name,
@@ -88,12 +89,22 @@ impl Command for ExecuteUDFCommand<'_> {
         true
     }
 
-    async fn get_node(&mut self) -> Result<Arc<Node>> {
-        self.read_command.get_node().await
+    fn is_write(&self) -> bool {
+        true
+    }
+
+    fn get_node(&mut self) -> Result<Arc<Node>> {
+        self.read_command.get_node()
     }
 
     fn hint(&self) -> u8 {
         self.read_command.single_command.hint()
+    }
+
+    fn prepare_retry(&mut self, is_client_timeout: bool) {
+        self.read_command
+            .single_command
+            .prepare_retry(is_client_timeout);
     }
 
     async fn parse_result(&mut self, conn: &mut Connection) -> Result<()> {

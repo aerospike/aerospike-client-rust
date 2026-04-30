@@ -16,6 +16,7 @@
 use std::ops::{Deref, DerefMut, Drop};
 use std::sync::Arc;
 
+use crate::commands::admin_command::SessionInfo;
 use crate::errors::{Error, Result};
 use crate::net::{Connection, ConnectionState, Host};
 use crate::policy::ClientPolicy;
@@ -32,6 +33,12 @@ struct SharedQueue {
     host: Host,
     policy: ClientPolicy,
     hashed_pass: Option<String>,
+    /// Latest session token produced by a successful LOGIN against this
+    /// host. Subsequent connections in the same pool authenticate via
+    /// AUTHENTICATE with the token instead of paying for a full login,
+    /// matching Java's per-node `sessionToken` cache. Cleared on token
+    /// rejection (server restart / token revocation).
+    session: Mutex<Option<SessionInfo>>,
 }
 
 #[derive(Debug)]
@@ -48,6 +55,7 @@ impl Queue {
             host,
             policy,
             hashed_pass,
+            session: Mutex::new(None),
         };
         Queue(Arc::new(shared))
     }
@@ -63,6 +71,7 @@ impl Queue {
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         if *reserved < self.0.capacity {
             *reserved += 1;
+            drop(reserved);
             return true;
         }
         false
@@ -89,33 +98,64 @@ impl Queue {
 
     /// Creates a new connection based on the queue's `ClientPolicy`.
     /// It does not check for the capacity of the queue.
+    ///
+    /// Auth strategy mirrors Java's per-node `sessionToken` cache: if the
+    /// pool already holds a non-expired session, the new connection
+    /// authenticates via AUTHENTICATE with that token; otherwise it does a
+    /// full LOGIN and stores the resulting session for the next caller.
     pub async fn make_conn(&self) -> Result<Connection> {
-        let conn = aerospike_rt::timeout(
+        // Snapshot the current session under the lock, then drop the guard
+        // before any await so the mutex doesn't get held across .await
+        // points (it's a std::sync::Mutex, not async-aware).
+        let cached_session: Option<SessionInfo> = {
+            let guard = self
+                .0
+                .session
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            guard.as_ref().filter(|s| !s.is_expired()).cloned()
+        };
+
+        let result = aerospike_rt::timeout(
             self.0.policy.timeout(),
-            Connection::new(&self.0.host, &self.0.policy, self.0.hashed_pass.as_ref()),
+            Connection::new_with_session(
+                &self.0.host,
+                &self.0.policy,
+                self.0.hashed_pass.as_ref(),
+                cached_session.as_ref(),
+            ),
         )
         .await;
 
-        if let Ok(Ok(conn)) = conn {
-            return Ok(conn);
+        match result {
+            Ok(Ok((conn, fresh_session))) => {
+                if let Some(s) = fresh_session {
+                    let mut guard = self
+                        .0
+                        .session
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner);
+                    *guard = Some(s);
+                }
+                Ok(conn)
+            }
+            _ => Err(Error::Connection(
+                "Could not open network connection".to_string(),
+            )),
         }
-
-        Err(Error::Connection(
-            "Could not open network connection".to_string(),
-        ))
     }
 
     /// Takes a connection out of the queue.
     pub fn get(&self) -> Result<PooledConnection> {
         let connection;
         loop {
-            if let Some(conn) = self
+            let mut connections = self
                 .0
                 .connections
                 .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .pop_front()
-            {
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            if let Some(conn) = connections.pop_front() {
+                drop(connections);
                 if conn.is_idle() {
                     // let the connection drop and close
                     continue;
@@ -147,7 +187,7 @@ impl Queue {
     }
 
     /// Removes all the connections from the queue.
-    pub fn clear(&mut self) {
+    pub fn clear(&self) {
         let mut connections = self
             .0
             .connections
@@ -165,6 +205,43 @@ impl Queue {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .len()
+    }
+
+    /// Reserved count: total connections owned by this queue, including
+    /// ones currently out on loan to callers. Reaped conns must have
+    /// [`reduce_capacity`] called separately to release their slot.
+    pub fn reserved_count(&self) -> usize {
+        *self
+            .0
+            .reserved
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    /// Pull every currently-idle connection out of the queue without
+    /// blocking — uses `try_lock` so a contended pool returns `None`
+    /// and the caller can skip this iteration.
+    ///
+    /// Ownership of the returned connections transfers to the caller: they
+    /// must either put survivors back with [`put_back`] or drop + call
+    /// [`reduce_capacity`] for each one that goes away. Non-idle connections
+    /// stay in the queue.
+    pub fn try_extract_idle(&self) -> Option<Vec<Connection>> {
+        let mut connections = self.0.connections.try_lock().ok()?;
+        if connections.is_empty() {
+            return Some(Vec::new());
+        }
+        let mut idle = Vec::new();
+        let mut kept = VecDeque::with_capacity(connections.len());
+        for conn in connections.drain(..) {
+            if conn.is_idle() {
+                idle.push(conn);
+            } else {
+                kept.push_back(conn);
+            }
+        }
+        *connections = kept;
+        Some(idle)
     }
 }
 
@@ -259,10 +336,9 @@ impl ConnectionPool {
                 }
             }
             attempts -= 1;
-            if attempts <= 0 {
+            if attempts == 0 {
                 break;
             }
-            continue;
         }
 
         Err(Error::ClientError(
@@ -273,9 +349,15 @@ impl ConnectionPool {
     /// Closes the connection pool and clears all the internal queues from connection,
     /// closing then in the process.
     pub fn close(&mut self) {
-        for mut queue in self.queues.drain(..) {
+        for queue in self.queues.drain(..) {
             queue.clear();
         }
+    }
+
+    /// Internal queues — exposed so the Node layer can implement
+    /// reap-and-refresh semantics that are aware of `min_conns_per_node`.
+    pub fn queues(&self) -> &[Queue] {
+        &self.queues
     }
 
     /// Returns sum total of connections inside all the internal queues.

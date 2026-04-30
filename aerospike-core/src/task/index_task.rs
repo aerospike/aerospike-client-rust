@@ -27,11 +27,6 @@ pub struct IndexTask {
     index_name: String,
 }
 
-static SUCCESS_PATTERN: &str = "load_pct=";
-static FAIL_PATTERN_201: &str = "FAIL:201";
-static FAIL_PATTERN_203: &str = "FAIL:203";
-static DELMITER: &str = ";";
-
 impl IndexTask {
     /// Initializes `IndexTask` from a client, creation should only be exposed to Client
     pub const fn new(cluster: Arc<Cluster>, namespace: String, index_name: String) -> Self {
@@ -42,7 +37,7 @@ impl IndexTask {
         }
     }
 
-    fn build_command(node: &Arc<Node>, namespace: String, index_name: String) -> String {
+    fn build_command(node: &Arc<Node>, namespace: &str, index_name: &str) -> String {
         if node.version() >= &Version::new(8, 1, 0, 0) {
             format!("sindex-stat:namespace={namespace};indexname={index_name}")
         } else {
@@ -51,34 +46,44 @@ impl IndexTask {
     }
 
     fn parse_response(response: &str) -> Result<Status> {
-        match response.find(SUCCESS_PATTERN) {
+        if response.is_empty() {
+            return Err(Error::BadResponse(
+                "sindex-stat failed: empty response".to_string(),
+            ));
+        }
+
+        let find = "load_pct=";
+        match response.find(find) {
             None => {
-                if response.contains(FAIL_PATTERN_201) || response.contains(FAIL_PATTERN_203) {
-                    Ok(Status::NotFound)
-                } else {
+                // Check if it's an error response
+                if response.contains("FAIL") || response.contains("ERROR") {
                     Err(Error::BadResponse(format!(
-                        "Code 201 and 203 missing. Response: {response}"
+                        "sindex-stat failed: {response}"
                     )))
+                } else {
+                    // Index not readable yet, continue polling
+                    Ok(Status::InProgress)
                 }
             }
-            Some(pattern_index) => {
-                let percent_begin = pattern_index + SUCCESS_PATTERN.len();
+            Some(index) => {
+                let start = index + find.len();
+                let pct_str: String = response[start..]
+                    .chars()
+                    .take_while(char::is_ascii_digit)
+                    .collect();
 
-                let percent_end = match response[percent_begin..].find(DELMITER) {
-                    None => {
-                        return Err(Error::BadResponse(format!(
-                            "delimiter missing in response. Response: {response}"
-                        )))
-                    }
-                    Some(percent_end) => percent_end,
-                };
-                let percent_str = &response[percent_begin..percent_begin + percent_end];
-                match percent_str.parse::<isize>() {
-                    Ok(100) => Ok(Status::Complete),
+                if pct_str.is_empty() {
+                    return Err(Error::BadResponse(format!(
+                        "sindex-stat failed: could not parse load_pct from response '{response}'"
+                    )));
+                }
+
+                match pct_str.parse::<usize>() {
+                    Ok(pct) if pct >= 100 => Ok(Status::Complete),
                     Ok(_) => Ok(Status::InProgress),
-                    Err(_) => Err(Error::BadResponse(
-                        "Unexpected load_pct value from server".to_string(),
-                    )),
+                    Err(_) => Err(Error::BadResponse(format!(
+                        "sindex-stat failed: invalid load_pct value '{pct_str}'"
+                    ))),
                 }
             }
         }
@@ -97,17 +102,19 @@ impl Task for IndexTask {
 
         let admin_policy = AdminPolicy { timeout: 3_000 };
         for node in &nodes {
-            let command =
-                &IndexTask::build_command(node, self.namespace.clone(), self.index_name.clone());
+            let command = IndexTask::build_command(node, &self.namespace, &self.index_name);
             let response = node.info(&admin_policy, &[&command[..]]).await?;
 
-            if !response.contains_key(command) {
-                return Ok(Status::NotFound);
-            }
-
-            match IndexTask::parse_response(&response[command]) {
-                Ok(Status::Complete) => {}
-                in_progress_or_error => return in_progress_or_error,
+            match response.get(&command) {
+                None => {
+                    return Err(Error::BadResponse(
+                        "sindex-stat failed: missing response".to_string(),
+                    ));
+                }
+                Some(resp) => match IndexTask::parse_response(resp) {
+                    Ok(Status::Complete) => {}
+                    in_progress_or_error => return in_progress_or_error,
+                },
             }
         }
         Ok(Status::Complete)

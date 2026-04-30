@@ -22,6 +22,8 @@ use crate::operations::{Operation, OperationBin, OperationType};
 use crate::policy::BatchPolicy;
 use crate::CommitLevel;
 use crate::GenerationPolicy;
+use crate::ReadModeAP;
+use crate::ReadModeSC;
 use crate::RecordExistsAction;
 
 #[derive(Default)]
@@ -38,59 +40,27 @@ pub struct BatchAttr {
 }
 
 impl BatchAttr {
-    #[allow(dead_code)]
-    pub(crate) fn set_read(&mut self, rp: &BatchPolicy) {
-        self.filter_expression = None;
-        self.read_attr = buffer::INFO1_READ;
-
-        // if rp.ReadModeAP == ReadModeAPAll {
-        // 	self.read_attr |= buffer::INFO1_READ_MODE_AP_ALL
-        // }
-
-        self.write_attr = 0;
-
-        // switch rp.ReadModeSC {
-        // default:
-        // case ReadModeSCSession:
-        // 	self.info_attr = 0
-        // case ReadModeSCLinearize:
-        // 	self.info_attr = buffer::INFO3_SC_READ_TYPE
-        // case ReadModeSCAllowReplica:
-        // 	self.info_attr = buffer::INFO3_SC_READ_RELAX
-        // case ReadModeSCAllowUnavailable:
-        // 	self.info_attr = buffer::INFO3_SC_READ_TYPE | buffer::INFO3_SC_READ_RELAX
-        // }
-        self.txn_attr = 0;
-        self.expiration = rp.base_policy.read_touch_ttl.into();
-        self.generation = 0;
-        self.has_write = false;
-        self.send_key = false;
-    }
-
     pub(crate) fn set_batch_read(&mut self, rp: &BatchReadPolicy, parent: &BatchPolicy) {
         self.filter_expression = rp
             .filter_expression
             .clone()
-            .or(parent.filter_expression.clone());
+            .or_else(|| parent.filter_expression.clone());
         self.read_attr = buffer::INFO1_READ;
 
-        // if rp.ReadModeAP == ReadModeAPAll {
-        // 	self.read_attr |= buffer::INFO1_READ_MODE_AP_ALL
-        // }
+        if parent.base_policy.read_mode_ap == ReadModeAP::All {
+            self.read_attr |= buffer::INFO1_READ_MODE_AP_ALL;
+        }
 
         self.write_attr = 0;
 
-        // switch rp.ReadModeSC {
-        // default:
-        // case ReadModeSCSession:
-        // 	self.info_attr = 0
-        // case ReadModeSCLinearize:
-        // 	self.info_attr = buffer::INFO3_SC_READ_TYPE
-        // case ReadModeSCAllowReplica:
-        // 	self.info_attr = buffer::INFO3_SC_READ_RELAX
-        // case ReadModeSCAllowUnavailable:
-        // 	self.info_attr = buffer::INFO3_SC_READ_TYPE | buffer::INFO3_SC_READ_RELAX
-        // }
+        match parent.base_policy.read_mode_sc {
+            ReadModeSC::Session => self.info_attr = 0,
+            ReadModeSC::Linearize => self.info_attr = buffer::INFO3_SC_READ_TYPE,
+            ReadModeSC::AllowReplica => self.info_attr = buffer::INFO3_SC_READ_RELAX,
+            ReadModeSC::AllowUnavailable => {
+                self.info_attr = buffer::INFO3_SC_READ_TYPE | buffer::INFO3_SC_READ_RELAX;
+            }
+        }
         self.txn_attr = 0;
         self.expiration = rp.read_touch_ttl.into();
         self.generation = 0;
@@ -108,7 +78,7 @@ impl BatchAttr {
                     OperationBin::None => {
                         self.read_attr |= buffer::INFO1_NOBINDATA;
                     }
-                    _ => (),
+                    OperationBin::Name(_) => (),
                 }
             }
         }
@@ -126,7 +96,7 @@ impl BatchAttr {
         self.filter_expression = wp
             .filter_expression
             .clone()
-            .or(parent.filter_expression.clone());
+            .or_else(|| parent.filter_expression.clone());
         self.read_attr = 0;
         self.write_attr = buffer::INFO2_WRITE | buffer::INFO2_RESPOND_ALL_OPS;
         self.info_attr = 0;
@@ -163,9 +133,9 @@ impl BatchAttr {
             self.write_attr |= buffer::INFO2_DURABLE_DELETE;
         }
 
-        // if wp.on_locking_only {
-        // 	self.txn_attr |= buffer::INFO4_MRT_ON_LOCKING_ONLY
-        // }
+        if wp.on_locking_only {
+            self.txn_attr |= buffer::INFO4_MRT_ON_LOCKING_ONLY;
+        }
 
         if wp.commit_level == CommitLevel::CommitMaster {
             self.info_attr |= buffer::INFO3_COMMIT_MASTER;
@@ -192,7 +162,7 @@ impl BatchAttr {
                         OperationBin::None => {
                             read_header = true;
                         }
-                        _ => (),
+                        OperationBin::Name(_) => (),
                     }
                     has_read = true;
                 }
@@ -215,7 +185,7 @@ impl BatchAttr {
         self.filter_expression = up
             .filter_expression
             .clone()
-            .or(parent.filter_expression.clone());
+            .or_else(|| parent.filter_expression.clone());
         self.read_attr = 0;
         self.write_attr = buffer::INFO2_WRITE;
         self.info_attr = 0;
@@ -229,9 +199,9 @@ impl BatchAttr {
             self.write_attr |= buffer::INFO2_DURABLE_DELETE;
         }
 
-        // if up.on_locking_only {
-        // 	self.txn_attr |= buffer::INFO4_MRT_ON_LOCKING_ONLY
-        // }
+        if up.on_locking_only {
+            self.txn_attr |= buffer::INFO4_MRT_ON_LOCKING_ONLY;
+        }
 
         if up.commit_level == CommitLevel::CommitMaster {
             self.info_attr |= buffer::INFO3_COMMIT_MASTER;
@@ -242,7 +212,7 @@ impl BatchAttr {
         self.filter_expression = dp
             .filter_expression
             .clone()
-            .or(parent.filter_expression.clone());
+            .or_else(|| parent.filter_expression.clone());
         self.read_attr = 0;
         self.write_attr =
             buffer::INFO2_WRITE | buffer::INFO2_RESPOND_ALL_OPS | buffer::INFO2_DELETE;

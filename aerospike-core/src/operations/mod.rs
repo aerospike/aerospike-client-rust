@@ -22,15 +22,18 @@ pub mod exp;
 pub mod hll;
 pub mod lists;
 pub mod maps;
+pub mod path;
 pub mod scalar;
 
 use self::cdt::CdtOperation;
 pub use self::lists::{ListOrderType, ListPolicy, ListReturnType, ListSortFlags, ListWriteFlags};
-pub use self::maps::{MapOrder, MapPolicy, MapReturnType, MapWriteMode};
+pub use self::maps::{MapOrder, MapPolicy, MapReturnType, MapWriteFlags, MapWriteMode};
 pub use self::scalar::*;
 
+use self::path::{ModifyFlag, SelectFlag};
 use crate::commands::buffer::Buffer;
 use crate::commands::ParticleType;
+use crate::expressions::{pack_path_modify_exp, pack_path_select, Expression};
 pub use crate::operations::cdt_context::CdtContext;
 use crate::operations::exp::ExpOperation;
 use crate::Result;
@@ -62,6 +65,8 @@ pub(crate) enum OperationData {
     CdtListOp(CdtOperation),
     CdtMapOp(CdtOperation),
     CdtBitOp(CdtOperation),
+    CdtSelectByPath(Vec<CdtContext>, SelectFlag),
+    CdtModifyByPath(Vec<CdtContext>, ModifyFlag, Expression),
     HLLOp(CdtOperation),
     EXPOp(ExpOperation),
 }
@@ -91,22 +96,21 @@ pub struct Operation {
 
 impl Operation {
     pub(crate) const fn is_write(&self) -> bool {
-        match self.op {
+        matches!(
+            self.op,
             OperationType::Write
-            | OperationType::CdtWrite
-            | OperationType::Incr
-            | OperationType::ExpWrite
-            | OperationType::Append
-            | OperationType::Prepend
-            | OperationType::Touch
-            | OperationType::BitWrite
-            | OperationType::Delete
-            | OperationType::HllWrite => true,
-            _ => false,
-        }
+                | OperationType::CdtWrite
+                | OperationType::Incr
+                | OperationType::ExpWrite
+                | OperationType::Append
+                | OperationType::Prepend
+                | OperationType::Touch
+                | OperationType::BitWrite
+                | OperationType::Delete
+                | OperationType::HllWrite
+        )
     }
 
-    #[must_use]
     pub(crate) fn estimate_size(&self) -> Result<usize> {
         let mut size: usize = 0;
         size += match &self.bin {
@@ -117,6 +121,10 @@ impl Operation {
             OperationData::None => 0,
             OperationData::Value(value) => value.estimate_size()?,
             OperationData::EXPOp(ref exp_op) => exp_op.estimate_size()?,
+            OperationData::CdtSelectByPath(ctx, flag) => pack_path_select(&mut None, ctx, flag.0)?,
+            OperationData::CdtModifyByPath(ctx, flag, exp) => {
+                pack_path_modify_exp(&mut None, ctx, flag.0, exp)?
+            }
             OperationData::CdtListOp(ref cdt_op)
             | OperationData::CdtMapOp(ref cdt_op)
             | OperationData::CdtBitOp(ref cdt_op)
@@ -126,7 +134,6 @@ impl Operation {
         Ok(size)
     }
 
-    #[must_use]
     pub(crate) fn write_to(&self, buffer: &mut Buffer) -> Result<usize> {
         let mut size: usize = 0;
 
@@ -155,6 +162,14 @@ impl Operation {
                 size += self.write_op_header_to(buffer, ParticleType::BLOB as u8);
                 size += exp.write_to(buffer)?;
             }
+            OperationData::CdtSelectByPath(ctx, flag) => {
+                size += self.write_op_header_to(buffer, ParticleType::BLOB as u8);
+                size += pack_path_select(&mut Some(buffer), ctx, flag.0)?
+            }
+            OperationData::CdtModifyByPath(ctx, flag, exp) => {
+                size += self.write_op_header_to(buffer, ParticleType::BLOB as u8);
+                size += pack_path_modify_exp(&mut Some(buffer), ctx, flag.0, exp)?
+            }
         }
 
         Ok(size)
@@ -176,7 +191,8 @@ impl Operation {
     }
 
     /// Set the context of the operation. Required for nested structures
-    pub fn set_context(mut self, ctx: Vec<CdtContext>) -> Operation {
+    #[must_use]
+    pub fn context(mut self, ctx: Vec<CdtContext>) -> Self {
         self.ctx = ctx;
         self
     }

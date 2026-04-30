@@ -64,10 +64,15 @@ pub struct WritePolicy {
     /// prevents deleted records from reappearing after node failures. Valid for Aerospike Server
     /// Enterprise Edition 3.10+ only.
     pub durable_delete: bool,
+
+    /// If true, the MRT monitor record will only be written if the record is locked.
+    /// This is used internally by the transaction system.
+    /// Default: false
+    pub on_locking_only: bool,
 }
 
 impl WritePolicy {
-    /// Create a new write policy instance with the specified generation and expiration parameters.
+    /// Creates a new write policy instance with the specified generation and expiration parameters.
     pub fn new(gen: u32, exp: Expiration) -> Self {
         Self {
             generation: gen,
@@ -84,8 +89,13 @@ impl WritePolicy {
 
 impl Default for WritePolicy {
     fn default() -> Self {
+        let base_policy = BasePolicy {
+            max_retries: 0,
+            ..BasePolicy::default()
+        };
+
         WritePolicy {
-            base_policy: BasePolicy::default(),
+            base_policy,
             record_exists_action: RecordExistsAction::Update,
             generation_policy: GenerationPolicy::None,
             commit_level: CommitLevel::CommitAll,
@@ -94,6 +104,7 @@ impl Default for WritePolicy {
             send_key: false,
             respond_per_each_op: false,
             durable_delete: false,
+            on_locking_only: false,
         }
     }
 }
@@ -101,5 +112,17 @@ impl Default for WritePolicy {
 impl PolicyLike for WritePolicy {
     fn base(&self) -> &BasePolicy {
         &self.base_policy
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::policy::{Policy, WritePolicy};
+
+    #[test]
+    fn default_write_policy_max_retries_is_zero() {
+        let policy = WritePolicy::default();
+        assert_eq!(policy.max_retries(), 0);
+        assert_eq!(policy.base_policy.max_retries, 0);
     }
 }

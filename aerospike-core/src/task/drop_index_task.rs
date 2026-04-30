@@ -43,17 +43,17 @@ impl DropIndexTask {
         let node_version = node.version();
 
         if node_version >= &Version::new(8, 1, 0, 0) {
-            format!("sindex-exists:namespace={namespace};indexname={index_name}",)
+            format!("sindex-exists:namespace={namespace};indexname={index_name}")
         } else {
             format!("sindex-exists:ns={namespace};indexname={index_name}")
         }
     }
 
-    fn parse_response(response: &str) -> Result<Status> {
+    fn parse_response(response: &str) -> Status {
         if response.to_lowercase() == SUCCESS_PATTERN {
-            Ok(Status::Complete)
+            Status::Complete
         } else {
-            Ok(Status::InProgress)
+            Status::InProgress
         }
     }
 }
@@ -78,8 +78,8 @@ impl Task for DropIndexTask {
             }
 
             match DropIndexTask::parse_response(&response[command]) {
-                Ok(Status::Complete) => {}
-                in_progress_or_error => return in_progress_or_error,
+                Status::Complete => {}
+                status => return Ok(status),
             }
         }
         Ok(Status::Complete)

@@ -42,7 +42,7 @@ pub(crate) enum BitExpOp {
     GetInt = 54,
 }
 
-/// Create expression that resizes byte[] to byteSize according to resizeFlags
+/// Creates expression that resizes byte[] to byteSize according to resizeFlags
 /// and returns byte[].
 ///
 /// ```
@@ -75,7 +75,7 @@ pub fn resize(
     add_write(bin, args)
 }
 
-/// Create expression that inserts value bytes into byte[] bin at byteOffset and returns byte[].
+/// Creates expression that inserts value bytes into byte[] bin at byteOffset and returns byte[].
 ///
 ///
 /// ```
@@ -109,7 +109,7 @@ pub fn insert(
     add_write(bin, args)
 }
 
-/// Create expression that removes bytes from byte[] bin at byteOffset for byteSize and returns byte[].
+/// Creates expression that removes bytes from byte[] bin at byteOffset for byteSize and returns byte[].
 ///
 /// ```
 /// // Remove bytes from bin "a" and compare bit count
@@ -141,7 +141,7 @@ pub fn remove(
     add_write(bin, args)
 }
 
-/// Create expression that sets value on byte[] bin at bitOffset for bitSize and returns byte[].
+/// Creates expression that sets value on byte[] bin at bitOffset for bitSize and returns byte[].
 ///
 /// ```
 /// // Set bytes in bin "a" and compare bit count
@@ -177,7 +177,7 @@ pub fn set(
     add_write(bin, args)
 }
 
-/// Create expression that performs bitwise "or" on value and byte[] bin at bitOffset for bitSize
+/// Creates expression that performs bitwise "or" on value and byte[] bin at bitOffset for bitSize
 /// and returns byte[].
 ///
 /// ```text
@@ -205,7 +205,7 @@ pub fn or(
     add_write(bin, args)
 }
 
-/// Create expression that performs bitwise "xor" on value and byte[] bin at bitOffset for bitSize
+/// Creates expression that performs bitwise "xor" on value and byte[] bin at bitOffset for bitSize
 /// and returns byte[].
 ///
 /// ```text
@@ -233,7 +233,7 @@ pub fn xor(
     add_write(bin, args)
 }
 
-/// Create expression that performs bitwise "and" on value and byte[] bin at bitOffset for bitSize
+/// Creates expression that performs bitwise "and" on value and byte[] bin at bitOffset for bitSize
 /// and returns byte[].
 ///
 /// ```text
@@ -261,7 +261,7 @@ pub fn and(
     add_write(bin, args)
 }
 
-/// Create expression that negates byte[] bin starting at bitOffset for bitSize and returns byte[].
+/// Creates expression that negates byte[] bin starting at bitOffset for bitSize and returns byte[].
 ///
 /// ```text
 /// bin = [0b00000001, 0b01000010, 0b00000011, 0b00000100, 0b00000101]
@@ -285,7 +285,7 @@ pub fn not(
     add_write(bin, args)
 }
 
-/// Create expression that shifts left byte[] bin starting at bitOffset for bitSize and returns byte[].
+/// Creates expression that shifts left byte[] bin starting at bitOffset for bitSize and returns byte[].
 ///
 /// ```text
 /// bin = [0b00000001, 0b01000010, 0b00000011, 0b00000100, 0b00000101]
@@ -312,7 +312,7 @@ pub fn lshift(
     add_write(bin, args)
 }
 
-/// Create expression that shifts right byte[] bin starting at bitOffset for bitSize and returns byte[].
+/// Creates expression that shifts right byte[] bin starting at bitOffset for bitSize and returns byte[].
 ///
 /// ```text
 /// bin = [0b00000001, 0b01000010, 0b00000011, 0b00000100, 0b00000101]
@@ -339,7 +339,7 @@ pub fn rshift(
     add_write(bin, args)
 }
 
-/// Create expression that adds value to byte[] bin starting at bitOffset for bitSize and returns byte[].
+/// Creates expression that adds value to byte[] bin starting at bitOffset for bitSize and returns byte[].
 ///
 /// `BitSize` must be <= 64. Signed indicates if bits should be treated as a signed number.
 /// If add overflows/underflows, `BitwiseOverflowActions` is used.
@@ -377,7 +377,7 @@ pub fn add(
     add_write(bin, args)
 }
 
-/// Create expression that subtracts value from byte[] bin starting at bitOffset for bitSize and returns byte[].
+/// Creates expression that subtracts value from byte[] bin starting at bitOffset for bitSize and returns byte[].
 ///
 /// `BitSize` must be <= 64. Signed indicates if bits should be treated as a signed number.
 /// If add overflows/underflows, `BitwiseOverflowActions` is used.
@@ -415,7 +415,7 @@ pub fn subtract(
     add_write(bin, args)
 }
 
-/// Create expression that sets value to byte[] bin starting at bitOffset for bitSize and returns byte[].
+/// Creates expression that sets value to byte[] bin starting at bitOffset for bitSize and returns byte[].
 /// `BitSize` must be <= 64.
 ///
 /// ```text
@@ -443,7 +443,7 @@ pub fn set_int(
     add_write(bin, args)
 }
 
-/// Create expression that returns bits from byte[] bin starting at bitOffset for bitSize.
+/// Creates expression that returns bits from byte[] bin starting at bitOffset for bitSize.
 ///
 /// ```
 /// // Bin "a" bits = [0b10000000]
@@ -467,7 +467,7 @@ pub fn get(bit_offset: Expression, bit_size: Expression, bin: Expression) -> Exp
     add_read(bin, ExpType::BLOB, args)
 }
 
-/// Create expression that returns integer count of set bits from byte[] bin starting at
+/// Creates expression that returns integer count of set bits from byte[] bin starting at
 /// bitOffset for bitSize.
 ///
 /// ```
@@ -490,7 +490,7 @@ pub fn count(bit_offset: Expression, bit_size: Expression, bin: Expression) -> E
     add_read(bin, ExpType::INT, args)
 }
 
-/// Create expression that returns integer bit offset of the first specified value bit in byte[] bin
+/// Creates expression that returns integer bit offset of the first specified value bit in byte[] bin
 /// starting at bitOffset for bitSize.
 ///
 /// ```
@@ -520,7 +520,7 @@ pub fn lscan(
     add_read(bin, ExpType::INT, args)
 }
 
-/// Create expression that returns integer bit offset of the last specified value bit in byte[] bin
+/// Creates expression that returns integer bit offset of the last specified value bit in byte[] bin
 /// starting at bitOffset for bitSize.
 /// Example:
 ///
@@ -552,7 +552,7 @@ pub fn rscan(
     add_read(bin, ExpType::INT, args)
 }
 
-/// Create expression that returns integer from byte[] bin starting at bitOffset for bitSize.
+/// Creates expression that returns integer from byte[] bin starting at bitOffset for bitSize.
 /// Signed indicates if bits should be treated as a signed number.
 ///
 /// ```
@@ -592,6 +592,7 @@ pub(crate) fn add_write(bin: Expression, arguments: Vec<ExpressionArgument>) -> 
         module: Some(ExpType::BLOB),
         exps: None,
         arguments: Some(arguments),
+        bytes: None,
     }
 }
 
@@ -608,5 +609,6 @@ pub(crate) fn add_read(
         module: Some(return_type),
         exps: None,
         arguments: Some(arguments),
+        bytes: None,
     }
 }

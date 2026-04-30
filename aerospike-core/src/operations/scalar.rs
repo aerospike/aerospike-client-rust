@@ -19,7 +19,7 @@ use crate::operations::cdt_context::DEFAULT_CTX;
 use crate::operations::{Operation, OperationBin, OperationData, OperationType};
 use crate::Bin;
 
-/// Create read all record bins database operation.
+/// Creates read all record bins database operation.
 pub const fn get() -> Operation {
     Operation {
         op: OperationType::Read,
@@ -29,7 +29,7 @@ pub const fn get() -> Operation {
     }
 }
 
-/// Create a read record header database operation.
+/// Creates a read record header database operation.
 pub const fn get_header() -> Operation {
     Operation {
         op: OperationType::Read,
@@ -39,7 +39,7 @@ pub const fn get_header() -> Operation {
     }
 }
 
-/// Create read bin database operation.
+/// Creates read bin database operation.
 pub fn get_bin(bin_name: &str) -> Operation {
     Operation {
         op: OperationType::Read,
@@ -49,7 +49,7 @@ pub fn get_bin(bin_name: &str) -> Operation {
     }
 }
 
-/// Create set database operation.
+/// Creates set database operation.
 pub fn put(bin: &Bin) -> Operation {
     Operation {
         op: OperationType::Write,
@@ -59,7 +59,7 @@ pub fn put(bin: &Bin) -> Operation {
     }
 }
 
-/// Create string append database operation.
+/// Creates string append database operation.
 pub fn append(bin: &Bin) -> Operation {
     Operation {
         op: OperationType::Append,
@@ -69,7 +69,7 @@ pub fn append(bin: &Bin) -> Operation {
     }
 }
 
-/// Create string prepend database operation.
+/// Creates string prepend database operation.
 pub fn prepend(bin: &Bin) -> Operation {
     Operation {
         op: OperationType::Prepend,
@@ -79,7 +79,7 @@ pub fn prepend(bin: &Bin) -> Operation {
     }
 }
 
-/// Create integer add database operation.
+/// Creates integer add database operation.
 pub fn add(bin: &Bin) -> Operation {
     Operation {
         op: OperationType::Incr,
@@ -89,7 +89,7 @@ pub fn add(bin: &Bin) -> Operation {
     }
 }
 
-/// Create a touch database operation.
+/// Creates a touch database operation.
 pub const fn touch() -> Operation {
     Operation {
         op: OperationType::Touch,
@@ -99,7 +99,7 @@ pub const fn touch() -> Operation {
     }
 }
 
-/// Create delete database operation
+/// Creates delete database operation
 pub const fn delete() -> Operation {
     Operation {
         op: OperationType::Delete,

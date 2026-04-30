@@ -15,14 +15,17 @@
 use aerospike_rt::time::Instant;
 use std::collections::hash_map::Entry::{Occupied, Vacant};
 use std::collections::HashMap;
+use std::io::Read;
 use std::sync::Arc;
+
+use flate2::read::ZlibDecoder;
 
 use crate::batch::BatchOperation;
 use crate::batch::BatchRecordIndex;
 use crate::cluster::partition::Partition;
 use crate::cluster::{Cluster, Node};
 use crate::commands::StreamCommand;
-use crate::commands::{self};
+use crate::commands::{self, buffer};
 use crate::errors::{Error, Result};
 use crate::net::{BufferedConn, Connection};
 use crate::policy::{BatchPolicy, Policy, Replica};
@@ -50,6 +53,7 @@ impl BatchOperateCommand {
         }
     }
 
+    #[allow(clippy::option_if_let_else)]
     pub async fn execute(self, cluster: Arc<Cluster>) -> Result<Self> {
         if self.policy.total_timeout() > 0 {
             let res = aerospike_rt::timeout(
@@ -67,14 +71,17 @@ impl BatchOperateCommand {
     }
 
     pub async fn execute_command(mut self, cluster: Arc<Cluster>) -> Result<Self> {
-        let mut iterations = 0;
+        let mut iterations: usize = 0;
+        let mut last_err: Option<Error> = None;
+        let node_addr = self.node.to_string();
 
         // set timeout outside the loop
         let deadline = self.policy.deadline();
 
         // Execute command until successful, timed out or maximum iterations have been reached.
         loop {
-            let success = if iterations & 1 == 0 || matches!(self.policy.replica, Replica::Master) {
+            let retry_err = if iterations & 1 == 0 || matches!(self.policy.replica, Replica::Master)
+            {
                 // For even iterations, we request all keys from the same node for efficiency.
                 Self::request_group(
                     &mut self.batch_ops,
@@ -85,26 +92,33 @@ impl BatchOperateCommand {
                 .await?
             } else {
                 // However, for odd iterations try the second choice for each. Instead of re-sharding the batch (as the second choice may not correspond to the first), just try each by itself.
-                let mut all_successful = true;
+                let mut group_err = None;
                 for individual_op in self.batch_ops.chunks_mut(1) {
                     let key = individual_op[0].0.key();
                     // Find somewhere else to try.
-                    let partition = Partition::new_by_key(&key);
-                    let node = cluster.get_node(
-                        &partition,
+                    let mut partition = Partition::for_read(
+                        &cluster,
+                        &key,
                         self.policy.replica,
-                        Arc::downgrade(&self.node),
-                    )?;
+                        self.policy.base_policy.read_mode_sc,
+                    );
+                    // Advance sequence to try a different node than the primary
+                    partition.sequence = 1;
+                    let node = partition.get_node(&cluster)?;
 
-                    if !Self::request_group(individual_op, &self.policy, deadline, node).await? {
-                        all_successful = false;
+                    if let Some(e) =
+                        Self::request_group(individual_op, &self.policy, deadline, node).await?
+                    {
+                        group_err = Some(e);
                         break;
                     }
                 }
-                all_successful
+                group_err
             };
 
-            if success {
+            if let Some(e) = retry_err {
+                last_err = Some(e.chain_cause(last_err));
+            } else {
                 // command has completed successfully. Exit method.
                 return Ok(self);
             }
@@ -113,7 +127,14 @@ impl BatchOperateCommand {
 
             // too many retries
             if self.policy.max_retries() > 0 && iterations > self.policy.max_retries() + 1 {
-                return Err(Error::Timeout(format!("Timeout after {iterations} tries")));
+                let u32_iters = if iterations > u32::MAX as usize {
+                    u32::MAX
+                } else {
+                    iterations as u32
+                };
+                return Err(Error::Timeout(format!("Timeout after {iterations} tries"))
+                    .chain_cause(last_err)
+                    .with_retry_context(u32_iters, Some(&node_addr), Vec::new()));
             }
 
             // Sleep before trying again, after the first iteration
@@ -124,9 +145,16 @@ impl BatchOperateCommand {
             // check for command timeout
             if let Some(deadline) = deadline {
                 if Instant::now() > deadline {
+                    let u32_iters = if iterations > u32::MAX as usize {
+                    u32::MAX
+                } else {
+                    iterations as u32
+                };
                     return Err(Error::Timeout(format!(
                         "Command timed out after {iterations} tries"
-                    )));
+                    ))
+                    .chain_cause(last_err)
+                    .with_retry_context(u32_iters, Some(&node_addr), Vec::new()));
                 }
             }
         }
@@ -137,20 +165,27 @@ impl BatchOperateCommand {
         policy: &BatchPolicy,
         deadline: Option<Instant>,
         node: Arc<Node>,
-    ) -> Result<bool> {
+    ) -> Result<Option<Error>> {
         let mut conn = match node.get_connection(0).await {
             Ok(conn) => conn,
             Err(err) => {
                 warn!("Node {node}: {err}");
-                return Ok(false);
+                return Ok(Some(err));
             }
         };
 
+        conn.buffer.set_compress(policy.use_compression());
         conn.buffer
             .set_batch_operate(policy, batch_ops)
             .map_err(|_| Error::ClientError("Failed to prepare send buffer".into()))?;
 
         conn.buffer.write_timeout(policy.server_timeout());
+
+        if policy.use_compression() {
+            conn.buffer
+                .compress()
+                .map_err(|_| Error::ClientError("Failed to compress send buffer".into()))?;
+        }
 
         conn.set_socket_timeout(deadline, policy.socket_timeout());
         conn.set_timeout_delay(true, policy.timeout_delay());
@@ -161,11 +196,13 @@ impl BatchOperateCommand {
             // Close socket to flush out possible garbage. Do not put back in pool.
             conn.invalidate();
             warn!("Node {node}: {err}");
-            return Ok(false);
+            return Ok(Some(err));
         }
 
         // Parse results.
-        if let Err(err) = Self::parse_result(batch_ops, &mut conn).await {
+        if let Err(err) =
+            Self::parse_result(batch_ops, &mut conn, policy.base_policy.txn.as_ref()).await
+        {
             // close the connection
             // cancelling/closing the batch/multi commands will return an error, which will
             // close the connection to throw away its data and signal the server about the
@@ -173,9 +210,17 @@ impl BatchOperateCommand {
             if !Self::keep_connection(&err) {
                 conn.invalidate();
             }
-            Err(err)
+            // Retriable server errors (TIMEOUT / DEVICE_OVERLOAD / KEY_BUSY /
+            // PARTITION_UNAVAILABLE) should drive another retry iteration, not
+            // abort the whole batch. Return them as recoverable so the outer
+            // loop can loop again.
+            if commands::should_retry(&err) {
+                Ok(Some(err))
+            } else {
+                Err(err)
+            }
         } else {
-            Ok(true)
+            Ok(None)
         }
     }
 
@@ -183,6 +228,7 @@ impl BatchOperateCommand {
         batch_ops: &mut [(BatchOperation, usize)],
         conn: &mut BufferedConn<'_>,
         size: usize,
+        txn: Option<&Arc<crate::txn::Txn>>,
     ) -> Result<bool> {
         while conn.bytes_read() < size {
             conn.read_buffer(commands::buffer::MSG_REMAINING_HEADER_SIZE as usize)
@@ -193,17 +239,34 @@ impl BatchOperateCommand {
                     let batch_op = batch_ops
                         .get_mut(batch_record.batch_index)
                         .expect("Invalid batch index");
+
+                    // Update transaction state with version info
+                    if let Some(txn) = txn {
+                        let key = &batch_op.0.key();
+                        if batch_op.0.has_write() {
+                            txn.on_write(key, batch_record.version, batch_record.result_code);
+                        } else {
+                            txn.on_read(key, batch_record.version);
+                        }
+                    }
+
                     batch_op.0.set_record(batch_record.record);
                     batch_op.0.set_result_code(batch_record.result_code, false);
                 }
-                Err(Error::BatchLastError(batch_index, rc, in_doubt, ref msg)) => {
+                Err(Error::BatchLastError(batch_index, rc, in_doubt, ..)) => {
+                    // Per-key error on the final record of the response. Record the
+                    // error on the individual BatchRecord and treat the stream as
+                    // ended — do not propagate as a batch-level failure, matching
+                    // Java's behavior (BatchStatus.setRowError keeps other records).
                     let batch_op = batch_ops
                         .get_mut(batch_index as usize)
                         .expect("Invalid batch index");
                     batch_op.0.set_result_code(rc, in_doubt);
-                    return Err(Error::BatchError(batch_index, rc, in_doubt, msg.clone()));
+                    return Ok(false);
                 }
                 Err(Error::BatchError(batch_index, rc, in_doubt, ..)) => {
+                    // Per-key error mid-stream. Record on the individual BatchRecord
+                    // and continue parsing remaining records in the response.
                     let batch_op = batch_ops
                         .get_mut(batch_index as usize)
                         .expect("Invalid batch index");
@@ -224,9 +287,10 @@ impl BatchOperateCommand {
         let result_code = ResultCode::from(conn.buffer().read_u8(Some(5)));
 
         match result_code {
-            ResultCode::Ok => (),
-            ResultCode::UdfBadResponse => (), // UDF errors will have a body that needs to be parsed
-            ResultCode::KeyNotFoundError | ResultCode::FilteredOut => (),
+            ResultCode::Ok
+            | ResultCode::UdfBadResponse // UDF errors will have a body that needs to be parsed
+            | ResultCode::KeyNotFoundError
+            | ResultCode::FilteredOut => (),
             rc => {
                 if last_record {
                     return Err(Error::BatchLastError(
@@ -252,8 +316,7 @@ impl BatchOperateCommand {
         }
 
         let found_key = match result_code {
-            ResultCode::Ok => true,
-            ResultCode::UdfBadResponse => true,
+            ResultCode::Ok | ResultCode::UdfBadResponse => true,
             ResultCode::KeyNotFoundError | ResultCode::FilteredOut => false,
             _ => unreachable!(),
         };
@@ -265,7 +328,7 @@ impl BatchOperateCommand {
         let field_count = conn.buffer().read_u16(None) as usize; // almost certainly 0
         let op_count = conn.buffer().read_u16(None) as usize;
 
-        let (key, _) = StreamCommand::parse_key(conn, field_count).await?;
+        let (key, _, version) = StreamCommand::parse_key_and_version(conn, field_count).await?;
 
         let record = if found_key {
             let mut bins: HashMap<String, Value> = HashMap::with_capacity(op_count);
@@ -306,16 +369,18 @@ impl BatchOperateCommand {
             batch_index: batch_index as usize,
             record,
             result_code,
+            version,
         }))
     }
 
-    const fn keep_connection(err: &Error) -> bool {
-        matches!(err, Error::ServerError(_, _, _) | Error::Timeout(_))
+    fn keep_connection(err: &Error) -> bool {
+        commands::keep_connection(err)
     }
 
     async fn parse_result(
         batch_ops: &mut [(BatchOperation, usize)],
         conn: &mut Connection,
+        txn: Option<&Arc<crate::txn::Txn>>,
     ) -> Result<()> {
         let mut status = true;
 
@@ -324,24 +389,77 @@ impl BatchOperateCommand {
 
             conn.set_limit_header(8)?;
             conn.read_buffer(8).await?;
-            let size = conn.buffer().read_msg_size(None);
-            conn.bookmark();
 
-            status = false;
-            if size > 0 {
+            let proto = conn.buffer().read_u64(Some(0));
+            let msg_type = ((proto >> 48) & 0xFF) as u8;
+            let size = (proto & 0x0000_FFFF_FFFF_FFFF) as usize;
+
+            if msg_type == buffer::AS_MSG_TYPE_COMPRESSED {
+                // Compressed batch response
+                conn.conn.compressed_stream_body = true;
+                conn.bookmark();
                 conn.set_limit_body(size)?;
-                match Self::parse_group(batch_ops, &mut conn, size).await {
-                    Ok(stat) => status = stat,
-                    Err(e @ Error::ServerError(_, _, _)) => {
-                        conn.drain(conn.conn.deadline()).await?;
-                        return Err(e);
+
+                // Read the 8-byte uncompressed size
+                conn.read_buffer(8).await?;
+                let uncompressed_size = conn.buffer().read_u64(Some(0)) as usize;
+
+                // Read all remaining compressed data
+                let compressed_len = size - 8;
+                conn.read_buffer(compressed_len).await?;
+                let compressed_data = conn.buffer().data_buffer[..compressed_len].to_vec();
+
+                // Drain any remaining bytes from the network
+                // conn.drain(conn.conn.deadline()).await?;
+
+                // All compressed data read from network; clear the flag.
+                conn.conn.compressed_stream_body = false;
+
+                // Read only the 8-byte inner proto header to get the message size.
+                let mut decoder = ZlibDecoder::new(std::io::Cursor::new(compressed_data));
+                let mut proto_buf = [0u8; 8];
+                decoder
+                    .read_exact(&mut proto_buf)
+                    .map_err(|e| Error::ClientError(format!("Batch decompression error: {e}")))?;
+                let inner_proto = u64::from_be_bytes(proto_buf);
+                let inner_size = (inner_proto & 0x0000_FFFF_FFFF_FFFF) as usize;
+
+                status = false;
+                if inner_size > 0 {
+                    // Stream-decompress the rest on demand.
+                    let body_decompressed_size = uncompressed_size - 8;
+                    let mut inner_conn =
+                        BufferedConn::new_with_decoder(conn.conn, decoder, body_decompressed_size);
+
+                    match Self::parse_group(batch_ops, &mut inner_conn, inner_size, txn).await {
+                        Ok(stat) => status = stat,
+                        Err(e @ Error::ServerError(_, _, _)) => {
+                            inner_conn.drain(inner_conn.conn.deadline()).await?;
+                            return Err(e);
+                        }
+                        Err(e) => return Err(e),
                     }
-                    Err(e) => {
-                        return Err(e);
+                    inner_conn.drain(inner_conn.conn.deadline()).await?;
+                }
+            } else {
+                conn.bookmark();
+
+                status = false;
+                if size > 0 {
+                    conn.set_limit_body(size)?;
+                    match Self::parse_group(batch_ops, &mut conn, size, txn).await {
+                        Ok(stat) => status = stat,
+                        Err(e @ Error::ServerError(_, _, _)) => {
+                            conn.drain(conn.conn.deadline()).await?;
+                            return Err(e);
+                        }
+                        Err(e) => {
+                            return Err(e);
+                        }
                     }
                 }
+                conn.drain(conn.conn.deadline()).await?;
             }
-            conn.drain(conn.conn.deadline()).await?;
         }
 
         conn.reset_state();

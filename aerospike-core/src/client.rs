@@ -13,11 +13,13 @@
 // License for the specific language governing permissions and limitations under
 // the License.
 
+use std::fmt::Write as FmtWrite;
 use std::path::Path;
+use std::str;
 use std::sync::Arc;
 use std::vec::Vec;
-use std::{str, usize};
 
+use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use regex::Regex;
 use std::sync::LazyLock;
 
@@ -29,16 +31,20 @@ use crate::commands::admin_command::AdminCommand;
 use crate::commands::buffer::Buffer;
 use crate::commands::{
     DeleteCommand, ExecuteUDFCommand, ExistsCommand, OperateCommand, QueryCommand, ReadCommand,
-    ScanCommand, TouchCommand, WriteCommand,
+    ScanCommand, ServerCommand, TouchCommand, WriteCommand,
 };
 use crate::errors::{Error, Result};
 use crate::expressions::Expression;
-use crate::msgpack::encoder::pack_ctx_for_index;
 use crate::net::ToHosts;
-use crate::operations::{CdtContext, Operation, OperationType};
-use crate::policy::{AdminPolicy, BatchPolicy, ClientPolicy, QueryPolicy, ReadPolicy, WritePolicy};
+use crate::operations::cdt_context::{to_base64, CdtContext};
+use crate::operations::{Operation, OperationType};
+use crate::policy::{
+    AdminPolicy, BasePolicy, BatchPolicy, ClientPolicy, QueryPolicy, ReadPolicy, WritePolicy,
+};
 use crate::query::{PartitionFilter, PartitionTracker};
-use crate::task::{DropIndexTask, IndexTask, RegisterTask, UdfRemoveTask};
+use crate::task::{DropIndexTask, ExecuteTask, IndexTask, RegisterTask, UdfRemoveTask};
+use crate::txn::{AbortStatus, CommitStatus, Txn, TxnState};
+use crate::txn_roll::TxnRoll;
 use crate::{
     BatchRecord, Bin, Bins, CollectionIndexType, IndexType, Key, Privilege, Record, Recordset,
     ResultCode, Role, Statement, UDFLang, User, Value,
@@ -327,14 +333,11 @@ impl Client {
     where
         T: Into<Bins> + Send + Sync + 'static,
     {
+        if let Some(txn) = &policy.base_policy.txn {
+            txn.prepare_read(&key.namespace)?;
+        }
         let bins = bins.into();
-        let mut command = ReadCommand::new(
-            &policy.base_policy,
-            self.cluster.clone(),
-            key,
-            bins,
-            policy.replica,
-        );
+        let mut command = ReadCommand::new(policy, self.cluster.clone(), key, bins);
         command.execute().await?;
         Ok(command.record.unwrap())
     }
@@ -434,6 +437,15 @@ impl Client {
         policy: &BatchPolicy,
         ops: &[BatchOperation],
     ) -> Result<Vec<BatchRecord>> {
+        if let Some(txn) = &policy.base_policy.txn {
+            crate::txn_monitor::add_keys_from_records(
+                self.cluster.clone(),
+                &policy.base_policy,
+                txn,
+                ops,
+            )
+            .await?;
+        }
         let executor = BatchExecutor::new(self.cluster.clone());
         executor.execute(policy, ops).await
     }
@@ -499,6 +511,10 @@ impl Client {
     /// # }
     /// ```
     pub async fn put(&self, policy: &WritePolicy, key: &Key, bins: &[Bin]) -> Result<()> {
+        if let Some(txn) = &policy.base_policy.txn {
+            crate::txn_monitor::add_key(self.cluster.clone(), &policy.base_policy, txn, key)
+                .await?;
+        }
         let mut command = WriteCommand::new(
             policy,
             self.cluster.clone(),
@@ -553,6 +569,10 @@ impl Client {
     /// # }
     /// ```
     pub async fn add(&self, policy: &WritePolicy, key: &Key, bins: &[Bin]) -> Result<()> {
+        if let Some(txn) = &policy.base_policy.txn {
+            crate::txn_monitor::add_key(self.cluster.clone(), &policy.base_policy, txn, key)
+                .await?;
+        }
         let mut command =
             WriteCommand::new(policy, self.cluster.clone(), key, bins, OperationType::Incr);
         command.execute().await
@@ -597,6 +617,10 @@ impl Client {
     /// # }
     /// ```
     pub async fn append(&self, policy: &WritePolicy, key: &Key, bins: &[Bin]) -> Result<()> {
+        if let Some(txn) = &policy.base_policy.txn {
+            crate::txn_monitor::add_key(self.cluster.clone(), &policy.base_policy, txn, key)
+                .await?;
+        }
         let mut command = WriteCommand::new(
             policy,
             self.cluster.clone(),
@@ -642,6 +666,10 @@ impl Client {
     /// # }
     /// ```
     pub async fn prepend(&self, policy: &WritePolicy, key: &Key, bins: &[Bin]) -> Result<()> {
+        if let Some(txn) = &policy.base_policy.txn {
+            crate::txn_monitor::add_key(self.cluster.clone(), &policy.base_policy, txn, key)
+                .await?;
+        }
         let mut command = WriteCommand::new(
             policy,
             self.cluster.clone(),
@@ -692,6 +720,10 @@ impl Client {
     /// # }
     /// ```
     pub async fn delete(&self, policy: &WritePolicy, key: &Key) -> Result<bool> {
+        if let Some(txn) = &policy.base_policy.txn {
+            crate::txn_monitor::add_key(self.cluster.clone(), &policy.base_policy, txn, key)
+                .await?;
+        }
         let mut command = DeleteCommand::new(policy, self.cluster.clone(), key);
         command.execute().await?;
         Ok(command.existed)
@@ -734,6 +766,10 @@ impl Client {
     /// # }
     /// ```
     pub async fn touch(&self, policy: &WritePolicy, key: &Key) -> Result<()> {
+        if let Some(txn) = &policy.base_policy.txn {
+            crate::txn_monitor::add_key(self.cluster.clone(), &policy.base_policy, txn, key)
+                .await?;
+        }
         let mut command = TouchCommand::new(policy, self.cluster.clone(), key);
         command.execute().await
     }
@@ -774,6 +810,9 @@ impl Client {
     /// # }
     /// ```
     pub async fn exists(&self, policy: &ReadPolicy, key: &Key) -> Result<bool> {
+        if let Some(txn) = &policy.base_policy.txn {
+            txn.prepare_read(&key.namespace)?;
+        }
         let mut command = ExistsCommand::new(policy, self.cluster.clone(), key);
         command.execute().await?;
         Ok(command.exists)
@@ -836,6 +875,17 @@ impl Client {
         key: &Key,
         ops: &[Operation],
     ) -> Result<Record> {
+        if ops.is_empty() {
+            return Err(Error::ServerError(
+                ResultCode::ParameterError,
+                false,
+                "no operations defined".into(),
+            ));
+        }
+        if let Some(txn) = &policy.base_policy.txn {
+            crate::txn_monitor::add_key(self.cluster.clone(), &policy.base_policy, txn, key)
+                .await?;
+        }
         let mut command = OperateCommand::new(policy, self.cluster.clone(), key, ops);
         command.execute().await?;
         Ok(command.read_command.record.unwrap())
@@ -915,7 +965,7 @@ impl Client {
         server_path: &str,
         language: UDFLang,
     ) -> Result<RegisterTask> {
-        let udf_body = base64::encode(udf_body);
+        let udf_body = BASE64.encode(udf_body);
 
         let cmd = format!(
             "udf-put:filename={};content={};content-len={};udf-type={};",
@@ -1228,6 +1278,135 @@ impl Client {
         Ok(recordset)
     }
 
+    /// Execute a query and apply operations to matching records on the server.
+    /// This method sends the command to all nodes and returns an `ExecuteTask`
+    /// that can be used to monitor the progress of the background job.
+    ///
+    /// The statement's filters determine which records are affected. If no filter
+    /// is specified, all records in the namespace/set are processed (scan mode).
+    ///
+    /// Only write operations are allowed. Read operations will result in an error.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// # use aerospike::*;
+    /// # async fn example(client: &Client) -> Result<()> {
+    /// let wpolicy = WritePolicy::default();
+    /// let statement = Statement::new("ns", "set", Bins::All);
+    /// let ops = vec![operations::put(&Bin::new("bin", 42))];
+    /// let task = client.query_operate(&wpolicy, statement, &ops).await?;
+    /// task.wait_till_complete(None).await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn query_operate(
+        &self,
+        write_policy: &WritePolicy,
+        statement: Statement,
+        operations: &[Operation],
+    ) -> Result<ExecuteTask> {
+        if operations.is_empty() {
+            return Err(Error::ServerError(
+                ResultCode::ParameterError,
+                false,
+                "no operations defined".into(),
+            ));
+        }
+        statement.validate()?;
+
+        let nodes = self.cluster.nodes();
+        if nodes.is_empty() {
+            return Err(Error::Connection("No connections available".to_string()));
+        }
+
+        let task_id: u64 = rand::random();
+        let scan = statement.filters.is_none();
+
+        let mut last_err: Option<Error> = None;
+        for node in &nodes {
+            let mut cmd =
+                ServerCommand::new(node.clone(), write_policy, &statement, task_id, operations);
+            if let Err(err) = cmd.execute().await {
+                last_err = Some(err);
+            }
+        }
+
+        if let Some(err) = last_err {
+            return Err(err);
+        }
+
+        Ok(ExecuteTask::new(self.cluster.clone(), task_id, scan))
+    }
+
+    /// Apply a user-defined function to records matching the statement filter.
+    /// Records are not returned to the client. This asynchronous server call
+    /// returns before the command completes. Use the returned [`ExecuteTask`]
+    /// to poll for completion.
+    ///
+    /// If no filter is specified on the statement, the UDF is applied to all
+    /// records in the namespace/set (scan mode).
+    ///
+    /// # Arguments
+    ///
+    /// * `write_policy` — Policy for the background write operation.
+    /// * `statement` — Namespace, set, and optional filters.
+    /// * `package_name` — Server-side UDF package name (registered via [`Client::register_udf`]).
+    /// * `function_name` — UDF function to invoke.
+    /// * `args` — Optional arguments passed to the UDF function.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// # use aerospike::*;
+    /// # async fn example(client: &Client) -> Result<()> {
+    /// let wpolicy = WritePolicy::default();
+    /// let statement = Statement::new("ns", "set", Bins::All);
+    /// let task = client.query_execute_udf(
+    ///     &wpolicy,
+    ///     statement,
+    ///     "my_udf_package",
+    ///     "my_function",
+    ///     Some(&[as_val!(42)]),
+    /// ).await?;
+    /// task.wait_till_complete(None).await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn query_execute_udf(
+        &self,
+        write_policy: &WritePolicy,
+        mut statement: Statement,
+        package_name: &str,
+        function_name: &str,
+        args: Option<&[Value]>,
+    ) -> Result<ExecuteTask> {
+        statement.set_aggregate_function(package_name, function_name, args);
+        statement.validate()?;
+
+        let nodes = self.cluster.nodes();
+        if nodes.is_empty() {
+            return Err(Error::Connection("No connections available".to_string()));
+        }
+
+        let task_id: u64 = rand::random();
+        let scan = statement.filters.is_none();
+
+        let mut last_err: Option<Error> = None;
+        for node in &nodes {
+            let mut cmd = ServerCommand::new_udf(node.clone(), write_policy, &statement, task_id);
+            if let Err(err) = cmd.execute().await {
+                last_err = Some(err);
+            }
+        }
+
+        if let Some(err) = last_err {
+            return Err(err);
+        }
+
+        Ok(ExecuteTask::new(self.cluster.clone(), task_id, scan))
+    }
+
     async fn execute_query_timeout(
         cluster: Arc<Cluster>,
         policy: &QueryPolicy,
@@ -1237,11 +1416,12 @@ impl Client {
     ) {
         if policy.total_timeout() > 0 {
             let rs_closer = recordset.clone();
-            if let Err(_) = aerospike_rt::timeout(
+            if aerospike_rt::timeout(
                 Duration::from_millis(u64::from(policy.total_timeout())),
                 Self::execute_query(cluster, policy, tracker, statement, recordset),
             )
             .await
+            .is_err()
             {
                 let _ = rs_closer
                     .push(Err(Error::Timeout("Timeout".to_string())))
@@ -1298,30 +1478,29 @@ impl Client {
                         let statement = statement.clone();
                         let handle = aerospike_rt::spawn(async move {
                             let permit = semaphore.acquire().await;
-                            let result =
-                                if statement.index_name.is_none() && statement.filters.is_none() {
-                                    ScanCommand::new(
-                                        &policy,
-                                        &statement.namespace,
-                                        &statement.set_name,
-                                        statement.bins.clone(),
-                                        recordset.clone(),
-                                        node_partition,
-                                    )
-                                    .await
-                                    .execute()
-                                    .await
-                                } else {
-                                    QueryCommand::new(
-                                        &policy,
-                                        statement,
-                                        recordset.clone(),
-                                        node_partition,
-                                    )
-                                    .await
-                                    .execute()
-                                    .await
-                                };
+                            let result = if statement.filters.is_none() {
+                                ScanCommand::new(
+                                    &policy,
+                                    &statement.namespace,
+                                    &statement.set_name,
+                                    statement.bins.clone(),
+                                    recordset.clone(),
+                                    node_partition,
+                                )
+                                .await
+                                .execute()
+                                .await
+                            } else {
+                                QueryCommand::new(
+                                    &policy,
+                                    statement,
+                                    recordset.clone(),
+                                    node_partition,
+                                )
+                                .await
+                                .execute()
+                                .await
+                            };
 
                             drop(permit);
                             result
@@ -1356,11 +1535,11 @@ impl Client {
             let mut tracker = tracker.lock().await;
             let done = tracker.is_complete(policy, timed_out).await;
             match (done, recordset.is_active()) {
-                (Ok(true), _) => return,
-                (Ok(_), false) => return,
+                (Ok(true), _) | (Ok(_), false) => return,
                 (Err(e), _) => {
                     tracker.partition_error().await;
                     recordset.err(e).await;
+                    drop(tracker);
                     return;
                 }
                 _ => (),
@@ -1427,7 +1606,7 @@ impl Client {
             let mut buf = Buffer::new(0);
             buf.resize_buffer(size)?;
             let _ = expression.pack(&mut Some(&mut buf));
-            let exp_str = base64::encode(&buf.data_buffer);
+            let exp_str = BASE64.encode(&buf.data_buffer);
 
             format!("xdr-set-filter:dc={datacenter};namespace={namespace};exp={exp_str}")
         } else {
@@ -1490,10 +1669,10 @@ impl Client {
         before_nanos: i64,
     ) -> Result<()> {
         let mut cmd = String::with_capacity(160);
-        if !set_name.is_empty() {
-            cmd.push_str("truncate:namespace=");
-        } else {
+        if set_name.is_empty() {
             cmd.push_str("truncate-namespace:namespace=");
+        } else {
+            cmd.push_str("truncate:namespace=");
         }
         cmd.push_str(namespace);
 
@@ -1504,7 +1683,7 @@ impl Client {
 
         if before_nanos > 0 {
             cmd.push_str(";lut=");
-            cmd.push_str(&format!("{before_nanos}"));
+            write!(cmd, "{before_nanos}").unwrap();
         }
 
         let node = self.cluster.get_random_node()?;
@@ -1513,7 +1692,7 @@ impl Client {
             .map_err(|e| e.chain_error("Error truncating ns/set"))
     }
 
-    /// Create a secondary index on a bin. This asynchronous server call
+    /// Creates a secondary index on a bin. This asynchronous server call
     /// returns before the command is complete.
     ///
     /// # Arguments
@@ -1589,7 +1768,7 @@ impl Client {
         .await
     }
 
-    /// Create a secondary index using an expression. This asynchronous server call
+    /// Creates a secondary index using an expression. This asynchronous server call
     /// returns before the command is complete.
     ///
     /// # Arguments
@@ -1662,7 +1841,7 @@ impl Client {
         .await
     }
 
-    /// Create a secondary index on a bin or using expression. This asynchronous server call
+    /// Creates a secondary index on a bin or using expression. This asynchronous server call
     /// returns before the command is complete.
     ///
     /// For internal use only. `bin_name` and expression cannot both be passed.
@@ -1698,29 +1877,22 @@ impl Client {
 
         if let Some(ctx) = ctx {
             if !ctx.is_empty() {
-                let size = pack_ctx_for_index(&mut None, ctx)?;
-                let mut buf = Buffer::new(0);
-                buf.resize_buffer(size)?;
-                let _ = pack_ctx_for_index(&mut Some(&mut buf), ctx);
-                let ctx_str = base64::encode(&buf.data_buffer);
+                let ctx_str = to_base64(ctx)?;
                 cmd.push_str(";context=");
                 cmd.push_str(&ctx_str);
             }
         }
 
         if let Some(expression) = expression {
-            let size = expression.size()?;
-            let mut buf = Buffer::new(0);
-            buf.resize_buffer(size)?;
-            let _ = expression.pack(&mut Some(&mut buf));
-            let exp_str = base64::encode(&buf.data_buffer);
+            let exp_str = expression.base64()?;
             cmd.push_str(";exp=");
             cmd.push_str(&exp_str);
         }
 
         if CollectionIndexType::Default != collection_index_type {
-            cmd.push_str("indextype=");
-            cmd.push_str(&format!("{collection_index_type}"));
+            cmd.push_str(";indextype=");
+            let cit = format!("{collection_index_type}");
+            cmd.push_str(&cit);
         }
 
         if bin_name.is_empty() {
@@ -1735,7 +1907,7 @@ impl Client {
             cmd.push(',');
         }
 
-        cmd.push_str(&format!("{index_type}"));
+        write!(cmd, "{index_type}").unwrap();
 
         self.send_info_cmd(policy, node, &cmd)
             .await
@@ -2484,5 +2656,82 @@ impl Client {
             .unwrap();
 
         Error::ServerError(parts.0, false, parts.1.into())
+    }
+
+    /// Commit a multi-record transaction (MRT). This will verify record versions,
+    /// mark the transaction as roll-forward, commit all written records, and close
+    /// the transaction monitor.
+    ///
+    /// Uses default policies for verify and roll. Use
+    /// [`commit_with_policies`](Self::commit_with_policies) to control timeouts
+    /// and retries.
+    ///
+    /// # Arguments
+    /// * `txn` - The transaction to commit (wrapped in `Arc`).
+    ///
+    /// # Returns
+    /// `CommitStatus` indicating the outcome of the commit operation on success,
+    /// or `Error::CommitFailed` with per-key records and an `in_doubt` flag on
+    /// failure.
+    pub async fn commit(&self, txn: &Arc<Txn>) -> Result<CommitStatus> {
+        let policy = BasePolicy::default();
+        self.commit_with_policies(&policy, &policy, txn).await
+    }
+
+    /// Commit a multi-record transaction with explicit verify and roll policies.
+    pub async fn commit_with_policies(
+        &self,
+        verify_policy: &BasePolicy,
+        roll_policy: &BasePolicy,
+        txn: &Arc<Txn>,
+    ) -> Result<CommitStatus> {
+        let mut tr = TxnRoll::new(self.cluster.clone(), txn.clone());
+
+        match txn.state() {
+            TxnState::Open => {
+                tr.verify(verify_policy, roll_policy).await?;
+                tr.commit(roll_policy).await
+            }
+            TxnState::Verified => tr.commit(roll_policy).await,
+            TxnState::Committed => Ok(CommitStatus::AlreadyCommitted),
+            TxnState::Aborted => Err(Error::ServerError(
+                ResultCode::MrtAborted,
+                false,
+                "Transaction already aborted".to_string(),
+            )),
+        }
+    }
+
+    /// Abort a multi-record transaction (MRT). This will roll back all written
+    /// records and close the transaction monitor.
+    ///
+    /// Uses a default policy for the roll. Use
+    /// [`abort_with_policy`](Self::abort_with_policy) to control timeouts and
+    /// retries.
+    ///
+    /// # Arguments
+    /// * `txn` - The transaction to abort (wrapped in `Arc`).
+    pub async fn abort(&self, txn: &Arc<Txn>) -> Result<AbortStatus> {
+        let policy = BasePolicy::default();
+        self.abort_with_policy(&policy, txn).await
+    }
+
+    /// Abort a multi-record transaction with an explicit roll policy.
+    pub async fn abort_with_policy(
+        &self,
+        roll_policy: &BasePolicy,
+        txn: &Arc<Txn>,
+    ) -> Result<AbortStatus> {
+        let mut tr = TxnRoll::new(self.cluster.clone(), txn.clone());
+
+        match txn.state() {
+            TxnState::Open | TxnState::Verified => tr.abort(roll_policy).await,
+            TxnState::Committed => Err(Error::ServerError(
+                ResultCode::MrtCommitted,
+                false,
+                "Transaction already committed".to_string(),
+            )),
+            TxnState::Aborted => Ok(AbortStatus::AlreadyAborted),
+        }
     }
 }

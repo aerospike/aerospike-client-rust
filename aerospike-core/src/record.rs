@@ -23,10 +23,9 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use crate::Key;
 use crate::Value;
 
-lazy_static! {
-  // Fri Jan  1 00:00:00 UTC 2010
-  pub static ref CITRUSLEAF_EPOCH: SystemTime = UNIX_EPOCH + Duration::new(1_262_304_000, 0);
-}
+// Fri Jan  1 00:00:00 UTC 2010
+pub static CITRUSLEAF_EPOCH: std::sync::LazyLock<SystemTime> =
+    std::sync::LazyLock::new(|| UNIX_EPOCH + Duration::new(1_262_304_000, 0));
 
 /// Container object for a database record.
 #[derive(Debug, Clone)]
@@ -64,6 +63,7 @@ impl Record {
 
     /// Returns the remaining time-to-live (TTL, a.k.a. expiration time) for the record or `None`
     /// if the record never expires.
+    #[allow(clippy::option_if_let_else)]
     pub fn time_to_live(&self) -> Option<Duration> {
         match self.expiration {
             0 => None,

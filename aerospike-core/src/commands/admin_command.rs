@@ -72,7 +72,28 @@ const MSG_TYPE: i64 = 2;
 const HEADER_SIZE: usize = 24;
 const HEADER_REMAINING: usize = 16;
 const RESULT_CODE: usize = 9;
+const FIELD_COUNT_OFFSET: usize = 11;
 const QUERY_END: usize = 50;
+
+/// Session credentials returned by a successful `LOGIN`. Mirrors Java's
+/// `LoginCommand.{sessionToken, sessionExpiration}` — subsequent
+/// connections can authenticate via `AUTHENTICATE` with this token instead
+/// of re-running the full login round-trip.
+#[derive(Debug, Clone)]
+pub struct SessionInfo {
+    pub token: Vec<u8>,
+    /// Wall-clock instant (monotonic) at which the token must be considered
+    /// expired. We pre-subtract 60 s from the server-reported TTL so the
+    /// client retires its copy a minute before the server does (matches
+    /// Java's `LoginCommand.login` rule).
+    pub expiration: aerospike_rt::time::Instant,
+}
+
+impl SessionInfo {
+    pub fn is_expired(&self) -> bool {
+        aerospike_rt::time::Instant::now() >= self.expiration
+    }
+}
 
 pub struct AdminCommand {}
 
@@ -149,7 +170,7 @@ impl AdminCommand {
             if receive_size > 0 {
                 conn.read_buffer(receive_size as usize).await?;
 
-                let (res_status, mut list) = AdminCommand::parse_users(conn, receive_size).await?;
+                let (res_status, mut list) = AdminCommand::parse_users(conn, receive_size)?;
                 users.append(&mut list);
                 status = res_status;
             } else {
@@ -160,7 +181,7 @@ impl AdminCommand {
         Ok(users)
     }
 
-    async fn parse_users(conn: &mut Connection, receive_size: u64) -> Result<(i8, Vec<User>)> {
+    fn parse_users(conn: &mut Connection, receive_size: u64) -> Result<(i8, Vec<User>)> {
         let mut users = vec![];
 
         while (conn.buffer.data_offset as u64) < receive_size {
@@ -192,8 +213,8 @@ impl AdminCommand {
                 match id {
                     USER => user_name = conn.buffer.read_str(len)?,
                     ROLES => roles = AdminCommand::parse_roles(conn)?,
-                    READ_INFO => read_info = AdminCommand::parse_info(conn)?,
-                    WRITE_INFO => write_info = AdminCommand::parse_info(conn)?,
+                    READ_INFO => read_info = AdminCommand::parse_info(conn),
+                    WRITE_INFO => write_info = AdminCommand::parse_info(conn),
                     CONNECTIONS => conns_in_use = conn.buffer.read_u32(None),
                     _ => conn.buffer.data_offset += len,
                 }
@@ -253,8 +274,7 @@ impl AdminCommand {
             let receive_size = sz & 0xFFFF_FFFF_FFFF;
             if receive_size > 0 {
                 conn.read_buffer(receive_size as usize).await?;
-                let (res_status, mut list) =
-                    AdminCommand::parse_roles_full(conn, receive_size).await?;
+                let (res_status, mut list) = AdminCommand::parse_roles_full(conn, receive_size)?;
                 roles.append(&mut list);
                 status = res_status;
             } else {
@@ -264,7 +284,7 @@ impl AdminCommand {
         Ok(roles)
     }
 
-    async fn parse_roles_full(conn: &mut Connection, receive_size: u64) -> Result<(i8, Vec<Role>)> {
+    fn parse_roles_full(conn: &mut Connection, receive_size: u64) -> Result<(i8, Vec<Role>)> {
         let mut roles = vec![];
 
         while (conn.buffer.data_offset as u64) < receive_size {
@@ -372,7 +392,7 @@ impl AdminCommand {
         Ok(list)
     }
 
-    pub(crate) fn parse_info(conn: &mut Connection) -> Result<Vec<u32>> {
+    pub(crate) fn parse_info(conn: &mut Connection) -> Vec<u32> {
         let size = conn.buffer.read_u8(None) as usize;
         let mut list = Vec::with_capacity(size);
 
@@ -381,14 +401,20 @@ impl AdminCommand {
             list.push(val);
         }
 
-        Ok(list)
+        list
     }
 
+    /// Run a `LOGIN` round-trip and, on success, return the server-issued
+    /// session token + expiration. Subsequent connections in the same
+    /// pool can then use [`authenticate_session`](Self::authenticate_session)
+    /// to skip the full credential exchange. Returns `None` only when
+    /// `auth_mode` is `None` (security disabled at the policy level) or
+    /// when the server reports `SecurityNotEnabled`.
     pub(crate) async fn authenticate(
         conn: &mut Connection,
         auth_mode: &AuthMode,
         hashed_pass: Option<&String>,
-    ) -> Result<()> {
+    ) -> Result<Option<SessionInfo>> {
         conn.buffer.resize_buffer(1024)?;
         conn.buffer.reset_offset();
         match auth_mode {
@@ -404,7 +430,128 @@ impl AdminCommand {
                 AdminCommand::write_field_str(conn, CLEAR_PASSWORD, password);
             }
             AuthMode::PKI => AdminCommand::write_header(conn, LOGIN, 0),
-            AuthMode::None => return Ok(()),
+            AuthMode::None => return Ok(None),
+        }
+
+        conn.buffer.size_buffer()?;
+        let size = conn.buffer.data_offset;
+        conn.buffer.reset_offset();
+        AdminCommand::write_size(conn, size as i64);
+
+        conn.flush().await?;
+        conn.read_buffer(HEADER_SIZE).await?;
+        let result_code = conn.buffer.read_u8(Some(RESULT_CODE));
+        let field_count = conn.buffer.read_u8(Some(FIELD_COUNT_OFFSET)) as usize;
+        let result_code = ResultCode::from(result_code);
+        if result_code == ResultCode::SecurityNotEnabled {
+            // Drain any trailing body the server still queued, then bail —
+            // there's no token to extract on a security-disabled cluster.
+            let sz = conn.buffer.read_u64(Some(0));
+            let receive_size = (sz & 0xFFFF_FFFF_FFFF) as i64 - HEADER_REMAINING as i64;
+            if receive_size > 0 {
+                conn.read_buffer(receive_size as usize).await?;
+            }
+            return Ok(None);
+        }
+        if result_code != ResultCode::Ok {
+            return Err(Error::ServerError(result_code, false, conn.addr.clone()));
+        }
+
+        // Parse the body: each field is `len(u32) | id(u8) | bytes(len-1)`.
+        let sz = conn.buffer.read_u64(Some(0));
+        let receive_size = (sz & 0xFFFF_FFFF_FFFF) as i64 - HEADER_REMAINING as i64;
+        if receive_size <= 0 || field_count == 0 {
+            return Err(Error::ServerError(
+                result_code,
+                false,
+                "Failed to retrieve session token".to_string(),
+            ));
+        }
+        conn.read_buffer(receive_size as usize).await?;
+        conn.buffer.reset_offset();
+
+        let mut session_token: Option<Vec<u8>> = None;
+        let mut session_expiration: Option<aerospike_rt::time::Instant> = None;
+        for _ in 0..field_count {
+            let raw_len = conn.buffer.read_u32(None) as usize;
+            if raw_len == 0 {
+                break;
+            }
+            let id = conn.buffer.read_u8(None);
+            let len = raw_len - 1;
+            match id {
+                SESSION_TOKEN => {
+                    let mut bytes = vec![0u8; len];
+                    for byte in &mut bytes {
+                        *byte = conn.buffer.read_u8(None);
+                    }
+                    session_token = Some(bytes);
+                }
+                SESSION_TTL => {
+                    // 4-byte big-endian unsigned seconds. Subtract 60s so
+                    // the client-side TTL expires just before the server
+                    // does — same fudge factor as Java.
+                    let seconds_raw = conn.buffer.read_u32(None) as i64;
+                    let seconds = seconds_raw - 60;
+                    if seconds > 0 {
+                        session_expiration = Some(
+                            aerospike_rt::time::Instant::now()
+                                + std::time::Duration::from_secs(seconds as u64),
+                        );
+                    }
+                    // Skip any remaining bytes from this field.
+                    if len > 4 {
+                        conn.buffer.data_offset += len - 4;
+                    }
+                }
+                _ => {
+                    conn.buffer.data_offset += len;
+                }
+            }
+        }
+
+        match (session_token, session_expiration) {
+            (Some(token), Some(expiration)) => Ok(Some(SessionInfo { token, expiration })),
+            // PKI / hashed_pass-only setups won't return a TTL on every
+            // build; fall back to a short default so we at least retry
+            // login soon rather than caching a permanent token.
+            (Some(token), None) => Ok(Some(SessionInfo {
+                token,
+                expiration: aerospike_rt::time::Instant::now()
+                    + std::time::Duration::from_secs(60 * 60), // 1h default
+            })),
+            _ => Err(Error::ServerError(
+                result_code,
+                false,
+                "Failed to retrieve session token".to_string(),
+            )),
+        }
+    }
+
+    /// Run an `AUTHENTICATE` round-trip using a previously-obtained session
+    /// token. Mirrors Java `AdminCommand.authenticate(cluster, conn,
+    /// sessionToken)` — much cheaper than a fresh login because no
+    /// credentials are exchanged. Returns `Ok(true)` on success, `Ok(false)`
+    /// when the server rejects the token (caller should fall back to a
+    /// full login), or `Err` on transport / parse errors.
+    pub(crate) async fn authenticate_session(
+        conn: &mut Connection,
+        auth_mode: &AuthMode,
+        token: &[u8],
+    ) -> Result<bool> {
+        conn.buffer.resize_buffer(1024)?;
+        conn.buffer.reset_offset();
+        match auth_mode {
+            AuthMode::Internal(ref user, _) | AuthMode::External(ref user, _) => {
+                AdminCommand::write_header(conn, AUTHENTICATE, 2);
+                AdminCommand::write_field_str(conn, USER, user);
+                AdminCommand::write_field_bytes(conn, SESSION_TOKEN, token);
+            }
+            AuthMode::PKI => {
+                AdminCommand::write_header(conn, AUTHENTICATE, 1);
+                AdminCommand::write_field_bytes(conn, SESSION_TOKEN, token);
+            }
+            AuthMode::None => return Ok(true),
         }
 
         conn.buffer.size_buffer()?;
@@ -416,16 +563,7 @@ impl AdminCommand {
         conn.read_buffer(HEADER_SIZE).await?;
         let result_code = conn.buffer.read_u8(Some(RESULT_CODE));
         let result_code = ResultCode::from(result_code);
-        if ResultCode::SecurityNotEnabled != result_code && ResultCode::Ok != result_code {
-            return Err(Error::ServerError(result_code, false, conn.addr.clone()));
-        }
-
-        // consume the rest of the buffer
-        let sz = conn.buffer.read_u64(Some(0));
-        let receive_size = (sz & 0xFFFF_FFFF_FFFF) - HEADER_REMAINING as u64;
-        conn.read_buffer(receive_size as usize).await?;
-
-        Ok(())
+        Ok(result_code == ResultCode::Ok || result_code == ResultCode::SecurityNotEnabled)
     }
 
     pub(crate) async fn create_user(

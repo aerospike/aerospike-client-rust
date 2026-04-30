@@ -24,14 +24,15 @@ pub mod version_parser;
 use aerospike_rt::time::{Duration, Instant};
 use std::cell::OnceCell;
 use std::collections::HashMap;
+use std::net::ToSocketAddrs;
 use std::sync::atomic::{AtomicBool, AtomicIsize, Ordering};
-use std::sync::{Arc, Weak};
+use std::sync::Arc;
 use std::vec::Vec;
 
 pub use self::node::Node;
+pub use self::partition::Partition;
 
 use self::node_validator::NodeValidator;
-use self::partition::Partition;
 use self::partition_tokenizer::PartitionTokenizer;
 use self::peers::{Peer, Peers};
 
@@ -40,95 +41,26 @@ use crate::commands::Message;
 use crate::errors::{Error, Result};
 use crate::net::Host;
 use crate::policy::ClientPolicy;
-use crate::policy::Replica;
 use crate::AdminPolicy;
 use aerospike_rt::Mutex;
 use futures::channel::mpsc;
-use futures::channel::mpsc::{Receiver, Sender};
+use futures::channel::mpsc::{Receiver, Sender, TryRecvError};
 use hazarc::AtomicArc;
 
 static CLIENT_VERSION: &str = env!("CARGO_PKG_VERSION");
 
+/// Per-namespace partition data, equivalent to Go's `Partitions` struct.
+/// Contains replicated node arrays, SC mode flag, and regime tracking.
 #[derive(Debug, Default, Clone)]
-pub struct PartitionForNamespace {
-    nodes: Vec<(u32, Option<Arc<Node>>)>,
-    replicas: usize,
+pub struct Partitions {
+    pub(crate) nodes: Vec<(u32, Option<Arc<Node>>)>,
+    pub(crate) replicas: usize,
+    pub(crate) sc_mode: bool,
 }
 
-type PartitionTable = HashMap<String, PartitionForNamespace>;
+pub type PartitionTable = HashMap<String, Partitions>;
 
-impl PartitionForNamespace {
-    fn all_replicas(&self, index: usize) -> impl Iterator<Item = Option<Arc<Node>>> + '_ {
-        (0..self.replicas).map(move |i| {
-            self.nodes
-                .get(i * node::PARTITIONS + index)
-                .and_then(|(_, item)| item.clone())
-        })
-    }
-
-    fn get_node(
-        &self,
-        cluster: &Cluster,
-        partition: &Partition<'_>,
-        replica: crate::policy::Replica,
-        last_tried: Weak<Node>,
-    ) -> Result<Arc<Node>> {
-        fn get_next_in_sequence<I: Iterator<Item = Arc<Node>>, F: Fn() -> I>(
-            get_sequence: F,
-            last_tried: Weak<Node>,
-        ) -> Option<Arc<Node>> {
-            if let Some(last_tried) = last_tried.upgrade() {
-                // If this isn't the first attempt, try the replica immediately after in sequence (that is actually valid)
-                let mut replicas = get_sequence();
-                while let Some(replica) = replicas.next() {
-                    if Arc::ptr_eq(&replica, &last_tried) {
-                        if let Some(in_sequence_after) = replicas.next() {
-                            return Some(in_sequence_after);
-                        }
-
-                        // No more after this? Drop through to try from the beginning.
-                        break;
-                    }
-                }
-            }
-            // If we get here, we're on the first attempt, the last node is already gone, or there are no more nodes in sequence. Just find the next populated option.
-            get_sequence().next()
-        }
-
-        let node = match replica {
-            Replica::Master => self.all_replicas(partition.partition_id).next().flatten(),
-            Replica::Sequence => get_next_in_sequence(
-                || self.all_replicas(partition.partition_id).flatten(),
-                last_tried,
-            ),
-            Replica::PreferRack => {
-                let rack_ids = &cluster.client_policy.load().rack_ids;
-                let rack_ids = rack_ids.as_ref().ok_or_else(|| Error::InvalidArgument("Attempted to use Replica::PreferRack without configuring racks in client policy".to_string()))?;
-                get_next_in_sequence(
-                    || {
-                        self.all_replicas(partition.partition_id)
-                            .flatten()
-                            .filter(|node| node.is_in_rack(partition.namespace, rack_ids))
-                    },
-                    last_tried.clone(),
-                )
-                .or_else(|| {
-                    get_next_in_sequence(
-                        || self.all_replicas(partition.partition_id).flatten(),
-                        last_tried,
-                    )
-                })
-            }
-        };
-
-        node.ok_or_else(|| {
-            Error::InvalidNode(format!(
-                "Cannot get appropriate node for namespace: {} partition: {}",
-                partition.namespace, partition.partition_id
-            ))
-        })
-    }
-}
+impl Partitions {}
 
 // Cluster encapsulates the aerospike cluster nodes and manages
 // them.
@@ -144,16 +76,37 @@ pub struct Cluster {
     nodes: AtomicArc<Vec<Arc<Node>>>,
 
     // Which partition contains the key.
-    partition_map: AtomicArc<PartitionTable>,
+    pub(crate) partition_map: AtomicArc<PartitionTable>,
 
     // Random node index.
     node_index: AtomicIsize,
 
-    client_policy: AtomicArc<ClientPolicy>,
+    // Round-robin replica index for MasterProles policy.
+    pub(crate) replica_index: AtomicIsize,
+
+    pub(crate) client_policy: AtomicArc<ClientPolicy>,
     hashed_pass: AtomicArc<Option<String>>,
 
     tend_channel: Mutex<Sender<()>>,
     closed: AtomicBool,
+
+    // Per-host seed validation errors recorded during the most recent
+    // `seed_nodes` call. Used by `Cluster::new` to build a Java-style
+    // `clusterInitError` aggregated message when `fail_if_not_connected`
+    // is set and no node validates. Only meaningful during init — cleared
+    // at the start of each `seed_nodes` invocation.
+    last_seed_errors: std::sync::Mutex<Vec<(Host, String)>>,
+}
+
+/// `true` when `node.host().name` parses to a loopback address, or is the
+/// `localhost` / `::1` literal. Used by `peer_exists` to mirror Java's
+/// `node.address.isLoopbackAddress()` shortcut.
+fn node_address_is_loopback(node: &Node) -> bool {
+    let name = node.host().name;
+    if let Ok(ip) = name.parse::<std::net::IpAddr>() {
+        return ip.is_loopback();
+    }
+    matches!(name.as_str(), "localhost" | "::1")
 }
 
 impl Cluster {
@@ -172,22 +125,29 @@ impl Cluster {
 
             partition_map: AtomicArc::from(HashMap::default()),
             node_index: AtomicIsize::new(0),
+            replica_index: AtomicIsize::new(0),
 
             tend_channel: Mutex::new(tx),
             closed: AtomicBool::new(false),
+            last_seed_errors: std::sync::Mutex::new(Vec::new()),
         });
         // try to seed connections for first use
         Cluster::wait_till_stabilized(cluster.clone()).await?;
 
         // apply policy rules
         if cluster.client_policy.load().fail_if_not_connected && !cluster.is_connected() {
-            return Err(Error::Connection(
-                "Failed to connect to host(s). The network \
-                 connection(s) to cluster nodes may have timed out, or \
-                 the cluster may be in a state of flux."
-                    .to_string(),
-            ));
+            // Mirrors Java's `Peers.clusterInitError`: surface every per-seed
+            // error from the most recent seed pass so callers know *why*
+            // each host failed, not just that "host(s) failed".
+            return Err(Error::Connection(cluster.format_init_error()));
         }
+
+        // Expand the seed list with every discovered node's primary host so
+        // recovery still has reachable addresses if the originally-configured
+        // seeds go offline. Mirrors Java `Cluster.initTendThread`:
+        // iterate nodes, add any whose host isn't already in the seed list.
+        let discovered: Vec<Host> = cluster.nodes().iter().map(|n| n.host()).collect();
+        cluster.merge_seeds(&discovered);
 
         let cluster_for_tend = cluster.clone();
         let _res = aerospike_rt::spawn(Cluster::tend_thread(cluster_for_tend, rx));
@@ -199,129 +159,175 @@ impl Cluster {
         let tend_interval = cluster.client_policy.load().tend_interval;
 
         loop {
-            if rx.try_next().is_ok() {
-                unreachable!();
-            } else if let Err(err) = cluster.tend().await {
-                log_error_chain!(err, "Error tending cluster");
+            match rx.try_recv() {
+                Ok(()) => unreachable!(),
+                Err(TryRecvError::Closed) => break,
+                Err(TryRecvError::Empty) => {
+                    if let Err(err) = cluster.tend().await {
+                        log_error_chain!(err, "Error tending cluster");
+                    }
+                    aerospike_rt::sleep(Duration::from_millis(u64::from(tend_interval))).await;
+                }
             }
-            aerospike_rt::sleep(Duration::from_millis(u64::from(tend_interval))).await;
         }
+
+        // Cleanup is performed here — as the last act of the tend thread —
+        // rather than in `close()`, so the "all node additions/deletions are
+        // performed in tend thread" invariant (see `tend()`) is preserved.
+        // This makes the cleanup race-free without any cross-thread sync.
+        cluster.partition_map.store(Arc::new(HashMap::default()));
+        cluster.hashed_pass.store(Arc::new(None));
+        cluster.set_nodes(vec![]);
+        cluster.aliases.store(Arc::new(HashMap::new()));
+        cluster.seeds.store(Arc::new(vec![]));
     }
 
     async fn tend(&self) -> Result<()> {
-        let mut nodes = self.nodes();
-        let node_count_before_tend = nodes.len();
+        // If close() has been called, bail before any work — otherwise an
+        // in-flight cycle would repopulate nodes after close() cleared them.
+        if self.closed.load(Ordering::Relaxed) {
+            return Ok(());
+        }
 
-        // All node additions/deletions are performed in tend thread.
+        // Per-tend peer state. `gen_changed` is initialized to false (Java's
+        // default) and set to true if any node's peers-generation differs.
+        let mut peers = Peers::new(16, 16);
+        peers.set_gen_changed(false);
+
+        let nodes = self.nodes();
+
+        // Mirror Java: clear per-tend node flags before refreshing.
+        for node in &nodes {
+            node.reset_reference_count();
+            node.set_partition_changed(false);
+            node.set_rebalance_changed(false);
+        }
+
         // If active nodes don't exist, seed cluster.
         if nodes.is_empty() {
             debug!("No connections available; seeding...");
             self.seed_nodes().await;
-            nodes = self.nodes();
-        }
+        } else {
+            // Phase 1: refresh all known nodes (light info commands only).
+            for node in &nodes {
+                // Reap idle connections, but keep enough of them alive via a
+                // cheap info probe to stay at or above `min_conns_per_node` —
+                // avoids the full TCP-connect round-trip that `fill_min_conns`
+                // would otherwise pay to replace them.
+                let processed = node.reap_and_refresh_idle_connections().await;
+                if processed > 0 {
+                    debug!("Reap/refresh processed {processed} idle connections on {node}");
+                }
 
-        // Phase 1: Create new peers tracker for this tend cycle.
-        let mut peers = Peers::new(nodes.len() + 16, 16);
-
-        // Phase 2: Refresh all known nodes (lightweight: check generations only).
-        for node in &nodes {
-            if node.is_active() {
                 if let Err(err) = node.refresh(&peers).await {
-                    node.increase_failures();
                     warn!("Node `{node}` refresh failed: {err}");
                 }
             }
-        }
 
-        // Phase 3: Refresh peers when necessary.
-        // Only fetch full peer lists if any node's peers generation changed
-        // or the peer count differs from the node count.
-        if peers.gen_changed() || peers.peer_count() != node_count_before_tend {
-            peers.reset_refresh_count();
+            // Phase 2: when peers-generation changed on any node, refresh
+            // the full peer list and reconcile add/remove decisions. Each
+            // node's peer list is parsed and materialized in isolation so
+            // a single unreachable peer doesn't prevent the others from
+            // committing their generation (Java's `peersValidated`).
+            if peers.gen_changed() {
+                peers.reset_refresh_count();
 
-            for node in &nodes {
-                if let Err(err) = node.refresh_peers(&mut peers).await {
-                    warn!("Node `{node}` peer refresh failed: {err}");
+                for node in &nodes {
+                    if let Err(err) = node.refresh_peers(&mut peers).await {
+                        warn!("Node `{node}` peer refresh failed: {err}");
+                    }
+                    self.materialize_peers(&mut peers).await;
                 }
+
+                // Decide which existing nodes can be dropped.
+                self.find_nodes_to_remove(&mut peers).await;
+
+                let nodes_to_remove = peers.get_nodes_to_remove();
+                if !nodes_to_remove.is_empty() {
+                    self.remove_nodes_and_aliases(nodes_to_remove);
+                }
+            }
+
+            // Phase 3: add any newly-discovered peer nodes, then iterate
+            // refresh-peers-of-peers until no further peers turn up. This
+            // mirrors Java's `Cluster.refreshPeers` loop and lets multi-hop
+            // discovery converge in a single tend cycle (seed → A → B → C).
+            loop {
+                let drained = peers.drain_nodes();
+                if drained.is_empty() {
+                    break;
+                }
+                self.add_nodes_and_aliases(&drained);
+
+                for node in &drained {
+                    if let Err(err) = node.refresh_peers(&mut peers).await {
+                        warn!("Node `{node}` peer refresh failed: {err}");
+                    }
+                    self.materialize_peers(&mut peers).await;
+                }
+            }
+
+            // Commit pending peers-generations: each parsing node's
+            // generation only advances if every peer it reported was
+            // materialized into the cluster. Otherwise we re-parse next
+            // tend and retry the unreachable hosts.
+            let pending = peers.take_pending_generations();
+            for (name, generation) in pending {
+                if let Ok(node) = self.get_node_by_name(&name) {
+                    node.commit_peers_generation(generation);
+                }
+            }
+
+            // If any seed-host failed during this tend, surface a warning so
+            // operators have visibility into init-time connection errors.
+            if peers.invalid_count() > 0 {
+                debug!(
+                    "Tend cycle saw {} invalid peer host(s): {:?}",
+                    peers.invalid_count(),
+                    peers.invalid_hosts()
+                );
             }
         }
 
-        // Phase 4: Discover and connect to new peer nodes.
-        let peers_list = peers.peers_list();
-        for mut peer in peers_list {
-            if self.peer_exists(&mut peers, &mut peer) {
-                continue;
-            }
-
-            // Try each host address for this peer until one connects.
-            for host in &peer.hosts {
-                let mut nv = NodeValidator::new(self.client_policy());
-                if let Err(err) = nv.validate_node(self, host).await {
-                    warn!("Add peer node `{host}` failed: `{err}`");
-                    continue;
-                }
-
-                if peer.node_name != nv.name {
-                    warn!(
-                        "Peer node `{}` is different than actual node `{}` for host `{}`",
-                        peer.node_name, nv.name, host
+        // Phase 4: refresh partition map / rack info for any node whose
+        // generation flag flipped during phase 1.
+        let active_nodes = self.nodes();
+        let peers_refresh_count = peers.refresh_count();
+        let mut partition_map = OnceCell::new();
+        for node in &active_nodes {
+            if node.partition_changed() {
+                // Split-cluster guard: skip a node that thinks it's the only
+                // one in the cluster (peers_count == 0) when we've already
+                // refreshed peers from at least two nodes this tend
+                // (`peers.refresh_count > 1`). Lets the rest of the cluster's
+                // map win when an isolated node has stale or zero-peer view.
+                // Mirrors Java `Node.refreshPartitions`.
+                if node.peers_count() == 0 && peers_refresh_count > 1 {
+                    debug!(
+                        "Skipping partition update for node {node}: reports 0 peers in {}-node cluster (likely split)",
+                        active_nodes.len()
                     );
-                }
-
-                let node_name = nv.name.clone();
-                let node = self.create_node(nv).await;
-                let node = Arc::new(node);
-                peers.add_node(node_name, node);
-
-                // If this peer replaces an existing node, mark the old one for removal.
-                if let Some(ref replace_node) = peer.replace_node {
-                    if !peers.contains_node_to_remove(replace_node) {
-                        peers.add_node_to_remove(replace_node.clone());
+                } else {
+                    partition_map.get_or_init(|| (*self.partition_map.load().clone()).clone());
+                    if let Err(err) = self
+                        .update_partitions(partition_map.get_mut().unwrap(), node)
+                        .await
+                    {
+                        warn!("Node `{node}` partition update failed: {err}");
                     }
                 }
-                break; // Successfully connected to this peer.
-            }
-        }
-
-        // Phase 5: Refresh partition map for nodes with changed partition generation.
-        let mut partition_map = OnceCell::new();
-        for node in &nodes {
-            if node.partition_changed() {
-                partition_map.get_or_init(|| (*self.partition_map.load().clone()).clone());
-                if let Err(err) = self
-                    .update_partitions(partition_map.get_mut().unwrap(), node)
-                    .await
-                {
-                    warn!("Node `{node}` partition update failed: {err}");
-                }
             }
 
-            // Also handle rebalance generation changes.
-            let old_rebalance_gen = node.rebalance_generation();
-            if old_rebalance_gen == -1 && node.is_active() && node.failures() == 0 {
-                // Rebalance generation was reset; re-fetch rack info.
+            if node.rebalance_changed() {
                 if let Err(err) = self.update_rack_ids(node).await {
                     warn!("Node `{node}` rack update failed: {err}");
                 }
             }
         }
 
-        // Store updated partition map if it changed.
         if let Some(partition_map) = partition_map.take() {
             self.partition_map.store(Arc::new(partition_map));
         }
-
-        // Phase 6: Find and remove nodes (only when gen changed).
-        if peers.gen_changed() {
-            self.find_nodes_to_remove(&mut peers).await;
-
-            let nodes_to_remove = peers.get_nodes_to_remove();
-            self.remove_nodes_and_aliases(nodes_to_remove);
-        }
-
-        // Phase 7: Add new nodes in a batch.
-        let new_nodes: Vec<Arc<Node>> = peers.nodes().into_values().collect();
-        self.add_nodes_and_aliases(&new_nodes);
 
         let aliases: Vec<String> = self
             .aliases
@@ -335,31 +341,133 @@ impl Cluster {
         Ok(())
     }
 
+    /// Walks the discovered peer list and validates each peer host until one
+    /// connects, creating a new `Node` for the first successful host. Mirrors
+    /// the inner loop of Java's `Node.refreshPeers` but split out so the
+    /// network-bound validation step can stay async.
+    ///
+    /// Tracks per-source-node "every peer materialized" so the caller can
+    /// commit each parsing node's `peers-generation` (Java's
+    /// `peersValidated`). If any peer parsed by node X is unreachable, X's
+    /// pending generation is invalidated and the next tend will re-parse
+    /// and retry.
+    async fn materialize_peers(&self, peers: &mut Peers) {
+        let peers_list = peers.peers_list();
+        // Reset the working set for the next parsing-node iteration; we've
+        // taken a copy of what was in there.
+        peers.clear_peers();
+
+        for mut peer in peers_list {
+            if self.peer_exists(peers, &mut peer).await {
+                continue;
+            }
+
+            let mut materialized = false;
+            for host in &peer.hosts {
+                if peers.has_failed(host) {
+                    continue;
+                }
+
+                let mut nv = NodeValidator::new(self.client_policy());
+                if let Err(err) = nv.validate_node(self, host).await {
+                    peers.fail(host.clone());
+                    warn!("Add peer node `{host}` failed: `{err}`");
+                    continue;
+                }
+
+                if peer.node_name != nv.name {
+                    warn!(
+                        "Peer node `{}` is different than actual node `{}` for host `{}`",
+                        peer.node_name, nv.name, host
+                    );
+                }
+
+                let node_name = nv.name.clone();
+                let node = Arc::new(self.create_node(nv).await);
+                peers.add_node(node_name, node);
+
+                if let Some(ref replace_node) = peer.replace_node {
+                    if !peers.contains_node_to_remove(replace_node) {
+                        peers.add_node_to_remove(replace_node.clone());
+                    }
+                }
+                materialized = true;
+                break;
+            }
+
+            // If none of the peer's hosts validated, invalidate the parsing
+            // node's pending generation so it won't be committed at the end
+            // of the tend. The peer (and any siblings from the same node)
+            // will be re-parsed next tend.
+            if !materialized {
+                if let Some(ref source) = peer.from_node_name {
+                    peers.invalidate_pending_generation(source);
+                }
+            }
+        }
+    }
+
     /// Checks if a peer represents an already-known node.
     ///
     /// Following logic:
     /// - If node found by name and healthy (or localhost), increment reference count.
     /// - If node has failures, verify host addresses match before reusing.
+    /// - If a peer host is a hostname, resolve it via DNS and compare each
+    ///   resolved IP against the existing node's address. Cache the
+    ///   hostname on the node on success. Mirrors Java's `findPeerNode`.
     /// - If host mismatch on a failing node, mark as replace_node.
     /// - Also check if already added during this tend cycle.
-    fn peer_exists(&self, peers: &mut Peers, peer: &mut Peer) -> bool {
+    async fn peer_exists(&self, peers: &mut Peers, peer: &mut Peer) -> bool {
         // Check 1: Find by node name in current cluster nodes.
         if let Ok(node) = self.get_node_by_name(&peer.node_name) {
-            if node.failures() == 0 {
-                // Node is healthy - no need to update IP.
+            // Mirrors Java's `findPeerNode`:
+            //   `node.failures <= 0 || node.address.isLoopbackAddress()`.
+            // A node bound to localhost is never going to be replaced by a
+            // peer reachable via a different address, so even when it has
+            // stale failures we treat it as "still us" and skip the
+            // host-match scan.
+            if node.failures() == 0 || node_address_is_loopback(&node) {
+                // Node is healthy (or localhost) — no need to update IP.
                 node.increment_reference_count();
                 return true;
             }
 
-            // Node has failures - check if host addresses match.
+            // Node has failures — check if any peer host points at the
+            // same address. Direct name match is cheap and covers the
+            // common case; cached-hostname match handles the previous
+            // tend's resolution; DNS resolution is the fallback.
+            let node_host = node.host();
             for host in &peer.hosts {
-                if host.port == node.host().port && host.name == node.host().name {
+                if host.port != node_host.port {
+                    continue;
+                }
+
+                if host.name == node_host.name
+                    || node
+                        .cached_hostname()
+                        .is_some_and(|cached| cached == host.name)
+                {
                     node.increment_reference_count();
                     return true;
                 }
+
+                if let Ok(addrs) =
+                    (host.name.as_str(), host.port).to_socket_addrs()
+                {
+                    for addr in addrs {
+                        let ip_str = addr.ip().to_string();
+                        if ip_str == node_host.name || addr.ip().is_loopback() {
+                            // Cache for next tend so we don't pay the
+                            // resolution cost again.
+                            node.cache_hostname(host.name.clone());
+                            node.increment_reference_count();
+                            return true;
+                        }
+                    }
+                }
             }
 
-            // Host mismatch on a failing node - this peer should replace it.
+            // Host mismatch on a failing node — this peer should replace it.
             peer.replace_node = Some(node);
         }
 
@@ -425,20 +533,35 @@ impl Cluster {
         (*self.client_policy.load().clone()).clone()
     }
 
-    pub fn add_seeds(&self, new_seeds: &[Host]) -> Result<()> {
+    pub fn add_seeds(&self, new_seeds: &[Host]) {
         let mut seeds = self.seeds.load().to_vec();
         seeds.extend_from_slice(new_seeds);
         self.seeds.store(Arc::new(seeds));
-
-        Ok(())
     }
 
-    pub fn alias_exists(&self, host: &Host) -> Result<bool> {
+    /// Append only those hosts that aren't already in the seed list.
+    /// Used after cluster stabilization to promote discovered nodes to
+    /// fallback seeds without creating duplicates on repeated calls.
+    pub fn merge_seeds(&self, new_seeds: &[Host]) {
+        let mut seeds = self.seeds.load().to_vec();
+        let mut changed = false;
+        for host in new_seeds {
+            if !seeds.iter().any(|s| s == host) {
+                seeds.push(host.clone());
+                changed = true;
+            }
+        }
+        if changed {
+            self.seeds.store(Arc::new(seeds));
+        }
+    }
+
+    pub fn alias_exists(&self, host: &Host) -> bool {
         let aliases = self.aliases.load();
-        Ok(aliases.contains_key(host))
+        aliases.contains_key(host)
     }
 
-    pub async fn node_partitions(&self, node: &Node, namespace: &str) -> Vec<u16> {
+    pub fn node_partitions(&self, node: &Node, namespace: &str) -> Vec<u16> {
         let mut res: Vec<u16> = vec![];
         let partitions = self.partition_map.load();
 
@@ -487,8 +610,21 @@ impl Cluster {
             &[RACK_IDS, node::REBALANCE_GENERATION],
         )
         .await?;
-        if let Some(buf) = info_map.get(RACK_IDS) {
-            node.parse_rack(buf.as_str())?;
+
+        // Reject explicit "rack-ids not supported" replies. The server
+        // returns the literal string "ERROR..." (or an empty value) when the
+        // feature is disabled, even though `rack_ids` is configured on the
+        // client policy. Letting it pass would silently strip the rack table.
+        match info_map.get(RACK_IDS) {
+            Some(buf) if !buf.is_empty() && !buf.to_uppercase().starts_with("ERROR") => {
+                node.parse_rack(buf.as_str())?;
+            }
+            _ => {
+                return Err(Error::BadResponse(
+                    "ClientPolicy.rack_ids is set, but the server does not support this feature."
+                        .to_string(),
+                ));
+            }
         }
 
         // We re-update the rebalance generation right now (in case its changed since it was last polled)
@@ -497,41 +633,199 @@ impl Cluster {
         Ok(())
     }
 
+    fn record_seed_error(&self, host: Host, err: &Error) {
+        if let Ok(mut errs) = self.last_seed_errors.lock() {
+            errs.push((host, err.to_string()));
+        }
+    }
+
+    /// Format the per-seed errors recorded during the most recent
+    /// `seed_nodes` call into a single connection-error message. Falls back
+    /// to a generic message when nothing was recorded (e.g. seed list was
+    /// empty).
+    fn format_init_error(&self) -> String {
+        let errs = self
+            .last_seed_errors
+            .lock()
+            .map(|guard| guard.clone())
+            .unwrap_or_default();
+
+        if errs.is_empty() {
+            return "Failed to connect to host(s). The network connection(s) \
+                 to cluster nodes may have timed out, or the cluster may \
+                 be in a state of flux."
+                .to_string();
+        }
+
+        let mut sb = String::with_capacity(64 + errs.len() * 80);
+        sb.push_str(&format!("Failed to connect to [{}] host(s):\n", errs.len()));
+        for (host, err) in &errs {
+            sb.push_str(&format!("  {host} {err}\n"));
+        }
+        sb
+    }
+
     pub async fn seed_nodes(&self) -> bool {
         let seed_array = self.seeds.load();
 
         info!("Seeding the cluster. Seeds count: {}", seed_array.len());
 
+        // Mirrors Java `addSeedAndPeers`: on a full reseed we must drop any
+        // alias rows that survived from the previous, now-empty cluster
+        // view. Otherwise an old IP can keep mapping to a stale node and
+        // distort `peer_exists` lookups in this and future tends.
+        self.aliases.store(Arc::new(HashMap::new()));
+
+        // Reset the error log for this attempt so `Cluster::new` only sees
+        // failures from the most recent seed pass.
+        if let Ok(mut errs) = self.last_seed_errors.lock() {
+            errs.clear();
+        }
+
         let mut list: Vec<Arc<Node>> = vec![];
+        // Fallback retention: a seed whose `peers-…` response is empty
+        // might be a new or recovering single-node cluster; keep the
+        // already-validated `Node` aside in case no other seed yields a
+        // populated peer list. Mirrors Java `NodeValidator.fallback` plus
+        // `Cluster.seedNode`'s post-loop `addSeedAndPeers(nv.fallback, …)`.
+        let mut fallback: Option<Arc<Node>> = None;
+
         for seed in seed_array.iter() {
-            let mut seed_node_validator = NodeValidator::new(self.client_policy());
+            let mut seed_node_validator = NodeValidator::new_for_seed(self.client_policy());
             if let Err(err) = seed_node_validator.validate_node(self, seed).await {
+                self.record_seed_error(seed.clone(), &err);
                 log_error_chain!(err, "Failed to validate seed host: {}", seed);
                 continue;
             }
 
-            let peers = if seed_node_validator.services().is_empty() {
-                &*seed_node_validator.aliases()
-            } else {
-                &*seed_node_validator.services()
-            };
+            // Construct the seed Node up front — Java's
+            // `validatePeers → Node.refreshPeers` flow needs a Node so it
+            // can issue `peers-…` over its own pool.
+            let seed_node = Arc::new(self.create_node(seed_node_validator).await);
 
-            for alias in peers {
-                let mut nv = NodeValidator::new(self.client_policy());
-                if let Err(err) = nv.validate_node(self, alias).await {
-                    log_error_chain!(err, "Seeding host {} failed with error", alias);
+            // Pull the rich peer list (`peers-{tls,clear}-{std,alt}`):
+            // node names + per-peer multi-host fallback. Use a throwaway
+            // `Peers` so any pending generation produced here doesn't bleed
+            // into the next tend cycle's accounting.
+            let mut harvest = Peers::new(16, 16);
+            harvest.set_gen_changed(false);
+            harvest.reset_refresh_count();
+            if let Err(err) = seed_node.refresh_peers(&mut harvest).await {
+                self.record_seed_error(seed.clone(), &err);
+                log_error_chain!(err, "Seed peer fetch failed: {}", seed);
+                seed_node.close();
+                continue;
+            }
+
+            // Empty peer list → single-node cluster or recovering node;
+            // hold the seed aside as a fallback.
+            if harvest.peer_count() == 0 {
+                if fallback.is_none() {
+                    debug!("Seed {seed} has no peers; retaining as fallback");
+                    fallback = Some(seed_node);
+                } else {
+                    debug!("Discarding additional peerless seed {seed}");
+                    seed_node.close();
+                }
+                continue;
+            }
+
+            // Real peer list arrived — abandon the previously retained
+            // fallback (only one needs to be alive at a time).
+            if let Some(prev) = fallback.take() {
+                debug!("Dropping fallback seed in favor of {seed}");
+                prev.close();
+            }
+
+            // Add the seed itself as a real cluster node.
+            if !self.find_node_name(&list, seed_node.name()) {
+                self.add_aliases(seed_node.clone());
+                list.push(seed_node);
+            }
+
+            // Materialize each peer once. Java's `Node.refreshPeers` tries
+            // every `peer.hosts` entry until one connects — we do the same,
+            // skipping hosts already proven unreachable in this seed pass
+            // (Java's `peers.hasFailed(host)` short-circuit).
+            for peer in harvest.peers_list() {
+                if self.find_node_name(&list, &peer.node_name) {
                     continue;
                 }
 
-                if self.find_node_name(&list, &nv.name) {
-                    continue;
+                let mut peer_validated = false;
+                for host in &peer.hosts {
+                    if harvest.has_failed(host) {
+                        continue;
+                    }
+
+                    let mut peer_nv = NodeValidator::new(self.client_policy());
+                    if let Err(err) = peer_nv.validate_node(self, host).await {
+                        self.record_seed_error(host.clone(), &err);
+                        harvest.fail(host.clone());
+                        log_error_chain!(err, "Seeding peer host {} failed", host);
+                        continue;
+                    }
+
+                    if peer.node_name != peer_nv.name {
+                        warn!(
+                            "Peer node `{}` is different than actual node `{}` for host `{}`",
+                            peer.node_name, peer_nv.name, host
+                        );
+                    }
+
+                    if self.find_node_name(&list, &peer_nv.name) {
+                        peer_validated = true;
+                        break;
+                    }
+
+                    let node = Arc::new(self.create_node(peer_nv).await);
+                    self.add_aliases(node.clone());
+                    list.push(node);
+                    peer_validated = true;
+                    break; // first reachable host wins
                 }
 
-                let node = self.create_node(nv).await;
-                let node = Arc::new(node);
+                if !peer_validated {
+                    // A peer that fails on every host invalidates its
+                    // parsing source's pending generation, mirroring Java's
+                    // `peersValidated = false` rule. We'll re-parse this
+                    // node's peers next tend and retry the unreachable host.
+                    if let Some(ref source) = peer.from_node_name {
+                        harvest.invalidate_pending_generation(source);
+                    }
+                    debug!(
+                        "Peer {} unreachable on every advertised host",
+                        peer.node_name
+                    );
+                }
+            }
+
+            // Commit the seed's `peers-generation` if every peer it parsed
+            // was successfully materialized. Mirrors Java's
+            // `peersGeneration = parser.generation` inside `Node.refreshPeers`
+            // — without this the next tend would re-fetch every seed's
+            // peer list because the stored generation would still be `-1`.
+            // The new nodes only live in `list` at this point (they haven't
+            // been published to `self.nodes()` yet), so look them up there.
+            for (name, generation) in harvest.take_pending_generations() {
+                if let Some(node) = list.iter().find(|n| n.name() == name) {
+                    node.commit_peers_generation(generation);
+                }
+            }
+        }
+
+        // No seed yielded peers; install the fallback as the cluster's
+        // single node so the client can still make progress.
+        if list.is_empty() {
+            if let Some(node) = fallback.take() {
+                info!("Using fallback seed node: {}", node.name());
                 self.add_aliases(node.clone());
                 list.push(node);
             }
+        } else if let Some(prev) = fallback.take() {
+            // We accumulated a real peer list along the way; the retained
+            // fallback is no longer needed.
+            prev.close();
         }
 
         self.add_nodes_and_aliases(&list);
@@ -561,16 +855,18 @@ impl Cluster {
         let nodes = self.nodes();
 
         for node in &nodes {
+            // Inactive nodes must be removed.
             if !node.is_active() {
-                // Inactive nodes must be removed.
                 if !peers.contains_node_to_remove(node) {
                     peers.add_node_to_remove(node.clone());
                 }
                 continue;
             }
 
-            // Single-node cluster: remove after 5 consecutive failures
-            // when all peer refreshes failed.
+            // All node info requests failed and this node had 5 consecutive
+            // failures. Remove it. If no nodes are left, seeds will be tried
+            // in the next cluster tend iteration. Mirrors Java's
+            // `findNodesToRemove`.
             if refresh_count == 0 && node.failures() >= 5 {
                 if !peers.contains_node_to_remove(node) {
                     peers.add_node_to_remove(node.clone());
@@ -581,23 +877,16 @@ impl Cluster {
             // Multi-node cluster: remove if not referenced by any other node.
             if nodes.len() > 1 && refresh_count >= 1 && node.reference_count() == 0 {
                 if node.failures() == 0 {
-                    // Node is alive but not referenced. Check if it's in the partition map.
-                    if !self.find_node_in_partition_map(node.clone()).await {
-                        if !peers.contains_node_to_remove(node) {
-                            peers.add_node_to_remove(node.clone());
-                        }
-                    }
-                    // Also remove orphan nodes with no references and no peers.
-                    if node.reference_count() == 0 && node.peers_count() == 0 {
-                        if !peers.contains_node_to_remove(node) {
-                            peers.add_node_to_remove(node.clone());
-                        }
-                    }
-                } else {
-                    // Node not responding. Remove it.
-                    if !peers.contains_node_to_remove(node) {
+                    // Node is alive but not referenced. Drop only if it's
+                    // also not mapped to any partition.
+                    if !self.find_node_in_partition_map(node.clone())
+                        && !peers.contains_node_to_remove(node)
+                    {
                         peers.add_node_to_remove(node.clone());
                     }
+                } else if !peers.contains_node_to_remove(node) {
+                    // Node not responding. Remove it.
+                    peers.add_node_to_remove(node.clone());
                 }
             }
         }
@@ -611,13 +900,15 @@ impl Cluster {
     }
 
     fn remove_nodes_and_aliases(&self, mut nodes_to_remove: Vec<Arc<Node>>) {
-        for node in &mut nodes_to_remove {
+        for node in &nodes_to_remove {
+            debug!("Removing alias for node {node}");
             for alias in node.aliases() {
                 self.remove_alias(&alias);
             }
-            if let Some(node) = Arc::get_mut(node) {
-                node.close();
-            }
+        }
+        for node in &mut nodes_to_remove {
+            debug!("Closing node {node}");
+            node.close();
         }
         self.remove_nodes(&nodes_to_remove);
     }
@@ -636,7 +927,7 @@ impl Cluster {
         self.aliases.store(Arc::new(aliases));
     }
 
-    async fn find_node_in_partition_map(&self, filter: Arc<Node>) -> bool {
+    fn find_node_in_partition_map(&self, filter: Arc<Node>) -> bool {
         let filter = Some(filter);
         let partitions = self.partition_map.load();
         (*partitions)
@@ -667,7 +958,6 @@ impl Cluster {
                 node_array.push(node.clone());
             }
         }
-
         self.set_nodes(node_array);
     }
 
@@ -689,39 +979,13 @@ impl Cluster {
         self.nodes.store(Arc::new(new_nodes));
     }
 
-    pub fn get_node(
-        &self,
-        partition: &Partition<'_>,
-        replica: crate::policy::Replica,
-        last_tried: Weak<Node>,
-    ) -> Result<Arc<Node>> {
-        let partitions = self.partition_map.load();
-
-        let namespace = partitions.get(partition.namespace).ok_or_else(|| {
-            Error::InvalidNode(format!(
-                "Cannot get appropriate node for namespace: {}",
-                partition.namespace
-            ))
-        })?;
-
-        namespace.get_node(self, partition, replica, last_tried)
+    pub fn get_node(&self, partition: &mut Partition<'_>) -> Result<Arc<Node>> {
+        partition.get_node(self)
     }
 
-    pub async fn get_master_node(&self, namespace: &str, partition_id: usize) -> Result<Arc<Node>> {
-        let partitions = self.partition_map.load();
-
-        let ns_partition = partitions.get(namespace).ok_or_else(|| {
-            Error::InvalidNode(format!(
-                "Cannot get appropriate node for namespace: {namespace}"
-            ))
-        })?;
-
-        let node = ns_partition.all_replicas(partition_id).next().flatten();
-        node.ok_or_else(|| {
-            Error::InvalidNode(format!(
-                "Cannot get appropriate node for namespace: {namespace} partition: {partition_id}"
-            ))
-        })
+    pub fn get_master_node(&self, namespace: &str, partition_id: usize) -> Result<Arc<Node>> {
+        let partition = Partition::new(namespace, partition_id);
+        partition.get_master_node(self)
     }
 
     pub fn get_random_node(&self) -> Result<Arc<Node>> {
@@ -775,13 +1039,19 @@ impl Cluster {
     }
 
     pub async fn close(&self) -> Result<()> {
-        if !self.closed.load(Ordering::Relaxed) {
-            // close tend by closing the channel
-            let tx = self.tend_channel.lock().await;
-            drop(tx);
-            self.closed.store(true, Ordering::Relaxed);
+        // Mark closed first so any in-flight tend cycle bails early.
+        if self.closed.swap(true, Ordering::SeqCst) {
+            return Ok(());
         }
 
+        // Actually close the tend channel: locking the Mutex and dropping
+        // the *guard* only releases the lock — it doesn't drop the Sender,
+        // which is what tend_thread's `try_recv` watches via TryRecvError::
+        // Closed. Use Sender::close_channel() to signal closure. The tend
+        // thread itself clears `nodes` and `aliases` as its last act before
+        // exiting (see `tend_thread`), preserving the single-writer
+        // invariant on those fields.
+        self.tend_channel.lock().await.close_channel();
         Ok(())
     }
 }

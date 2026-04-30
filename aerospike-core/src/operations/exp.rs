@@ -142,7 +142,7 @@ impl<T: IntoIterator<Item = ExpReadFlags>> ToExpReadFlagBitmask for T {
     }
 }
 
-/// Create operation that performs a expression that writes to record bin.
+/// Creates operation that performs a expression that writes to record bin.
 pub fn write_exp<E: ToExpWriteFlagBitmask>(bin: &str, exp: Expression, flags: E) -> Operation {
     let op = ExpOperation {
         encoder: Arc::new(pack_write_exp),
@@ -157,7 +157,7 @@ pub fn write_exp<E: ToExpWriteFlagBitmask>(bin: &str, exp: Expression, flags: E)
     }
 }
 
-/// Create operation that performs a read expression.
+/// Creates operation that performs a read expression.
 pub fn read_exp<E: ToExpReadFlagBitmask>(name: &str, exp: Expression, flags: E) -> Operation {
     let op = ExpOperation {
         encoder: Arc::new(pack_read_exp),
@@ -172,7 +172,6 @@ pub fn read_exp<E: ToExpReadFlagBitmask>(name: &str, exp: Expression, flags: E) 
     }
 }
 
-#[must_use]
 fn pack_write_exp(buf: &mut Option<&mut Buffer>, exp_op: &ExpOperation) -> Result<usize> {
     let mut size = 0;
     size += pack_array_begin(buf, 2);
@@ -181,7 +180,6 @@ fn pack_write_exp(buf: &mut Option<&mut Buffer>, exp_op: &ExpOperation) -> Resul
     Ok(size)
 }
 
-#[must_use]
 fn pack_read_exp(buf: &mut Option<&mut Buffer>, exp_op: &ExpOperation) -> Result<usize> {
     let mut size = 0;
     size += pack_array_begin(buf, 2);

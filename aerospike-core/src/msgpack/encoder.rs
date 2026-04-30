@@ -15,7 +15,6 @@
 
 use std::collections::{BTreeMap, HashMap};
 use std::num::Wrapping;
-use std::{i16, i32, i64, i8};
 
 use crate::commands::buffer::Buffer;
 use crate::commands::ParticleType;
@@ -25,7 +24,6 @@ use crate::operations::maps::MapOrder;
 use crate::value::{FloatValue, Value};
 use crate::{Error, Result};
 
-#[must_use]
 pub fn pack_value(buf: &mut Option<&mut Buffer>, val: &Value) -> Result<usize> {
     let res = match *val {
         Value::Nil => pack_nil(buf),
@@ -36,7 +34,8 @@ pub fn pack_value(buf: &mut Option<&mut Buffer>, val: &Value) -> Result<usize> {
             FloatValue::F64(_) => pack_f64(buf, f64::from(val)),
             FloatValue::F32(_) => pack_f32(buf, f32::from(val)),
         },
-        Value::Blob(ref val) | Value::HLL(ref val) => pack_blob(buf, val),
+        Value::Blob(ref val) => pack_blob(buf, val),
+        Value::HLL(ref val) => pack_hll(buf, val),
         Value::List(ref val) => pack_array(buf, val)?,
         Value::HashMap(ref val) => pack_map(buf, val)?,
         Value::OrderedMap(ref val) => pack_ordered_map(buf, val)?,
@@ -65,20 +64,22 @@ pub fn pack_empty_args_array(buf: &mut Option<&mut Buffer>) -> usize {
     size
 }
 
-#[must_use]
 pub fn pack_ctx_for_index(buf: &mut Option<&mut Buffer>, ctx: &[CdtContext]) -> Result<usize> {
     let mut size: usize = 0;
     size += pack_array_begin(buf, ctx.len() * 2);
 
     for c in ctx {
         size += pack_integer(buf, i64::from(c.id));
-        size += pack_value(buf, &c.value)?;
+        if let Some(ref exp) = c.expression {
+            size += exp.pack_binary(buf)?;
+        } else {
+            size += pack_value(buf, &c.value)?;
+        }
     }
 
     Ok(size)
 }
 
-#[must_use]
 pub fn pack_cdt_op(
     buf: &mut Option<&mut Buffer>,
     cdt_op: &CdtOperation,
@@ -96,7 +97,11 @@ pub fn pack_cdt_op(
             } else {
                 size += pack_integer(buf, i64::from(c.id | c.flags));
             }
-            size += pack_value(buf, &c.value)?;
+            if let Some(ref exp) = c.expression {
+                size += exp.pack_binary(buf)?;
+            } else {
+                size += pack_value(buf, &c.value)?;
+            }
         }
     }
 
@@ -120,7 +125,6 @@ pub fn pack_cdt_op(
     Ok(size)
 }
 
-#[must_use]
 pub fn pack_hll_op(
     buf: &mut Option<&mut Buffer>,
     hll_op: &CdtOperation,
@@ -145,7 +149,6 @@ pub fn pack_hll_op(
     Ok(size)
 }
 
-#[must_use]
 pub fn pack_cdt_bit_op(
     buf: &mut Option<&mut Buffer>,
     cdt_op: &CdtOperation,
@@ -163,7 +166,11 @@ pub fn pack_cdt_bit_op(
             } else {
                 size += pack_integer(buf, i64::from(c.id | c.flags));
             }
-            size += pack_value(buf, &c.value)?;
+            if let Some(ref exp) = c.expression {
+                size += exp.pack_binary(buf)?;
+            } else {
+                size += pack_value(buf, &c.value)?;
+            }
         }
     }
 
@@ -186,7 +193,6 @@ pub fn pack_cdt_bit_op(
     Ok(size)
 }
 
-#[must_use]
 pub fn pack_array(buf: &mut Option<&mut Buffer>, values: &[Value]) -> Result<usize> {
     let mut size = 0;
 
@@ -198,7 +204,6 @@ pub fn pack_array(buf: &mut Option<&mut Buffer>, values: &[Value]) -> Result<usi
     Ok(size)
 }
 
-#[must_use]
 pub fn pack_map(buf: &mut Option<&mut Buffer>, map: &HashMap<Value, Value>) -> Result<usize> {
     let mut size = 0;
 
@@ -211,7 +216,6 @@ pub fn pack_map(buf: &mut Option<&mut Buffer>, map: &HashMap<Value, Value>) -> R
     Ok(size)
 }
 
-#[must_use]
 pub fn pack_ordered_map(
     buf: &mut Option<&mut Buffer>,
     map: &BTreeMap<Value, Value>,
@@ -244,8 +248,6 @@ pub fn pack_wildcard(buf: &mut Option<&mut Buffer>) -> usize {
     }
     3
 }
-
-/// ///////////////////////////////////////////////////////////////////
 
 const MSGPACK_MARKER_NIL: u8 = 0xc0;
 const MSGPACK_MARKER_BOOL_TRUE: u8 = 0xc3;
@@ -304,7 +306,7 @@ pub fn pack_map_begin(buf: &mut Option<&mut Buffer>, length: usize, order: MapOr
             size += pack_byte(buf, 0xc0);
             size
         }
-        _ => unreachable!(),
+        MapOrder::KeyValueOrdered => unreachable!(),
     }
 }
 
@@ -344,6 +346,18 @@ pub fn pack_blob(buf: &mut Option<&mut Buffer>, value: &[u8]) -> usize {
     size += pack_string_begin(buf, size);
     if let Some(ref mut buf) = *buf {
         buf.write_u8(ParticleType::BLOB as u8);
+        buf.write_bytes(value);
+    }
+
+    size
+}
+
+pub fn pack_hll(buf: &mut Option<&mut Buffer>, value: &[u8]) -> usize {
+    let mut size = value.len() + 1;
+
+    size += pack_string_begin(buf, size);
+    if let Some(ref mut buf) = *buf {
+        buf.write_u8(ParticleType::HLL as u8);
         buf.write_bytes(value);
     }
 

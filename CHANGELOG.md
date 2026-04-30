@@ -1,12 +1,50 @@
 # Changelog
 
-All notable changes to this project will be documented in this file.
+## [2.1.0]
+
+* **Bug Fixes**
+  * [CLIENT-4711] `close()` does not stop the `tend_thread`.
+  * [CLIENT-4685] Reject `operate` calls with empty ops list.
+  * [CLIENT-4686] Fix unexpected behavior for partition-based query with `QueryDuration::Short`.
+  * [CLIENT-4405] Execute query failing during node churn (#195)
+    * Check node active status before selecting node for partition.
+    * State to remember last tried node for a partition retry.
+    * added drop trait for node, to close node eventually and removed all weak ref to Arc node for last tried node
+    * Check for node active status before returning a connection. Drain the conn pool on Node drop.
+    * Removed deprecated `try_next`.
+    * Change default policy for `max-retries` to `0` for writes, honoring `max-retries=0` as no retries.
+    * Change policy to sequence for write/delete commands.
+
+* **Improvements**
+  * Update all dependencies to the latest, and adapt the code to the deprecation and removals.
+  * Adds a cleanup test that is ignored by default.
+    Can be manually invoked to remove indexes and then truncate of the tested namespace
+
+## [2.0.0]
+
+* **Bug Fixes**
+  * [CLIENT-4530] `lists::get_by_value_range` and `lists::remove_by_value_range` return empty results when end is `Value::Nil`.
 
 ## [2.0.0-alpha.11]
 
 * **New Features**
-  * [CLIENT-3815] Support Path Expressions.
+  * [CLIENT-4413] Support background Execute UDF.
+  * [CLIENT-4412] Support background query operations.
   * [Client-4113] Rust performance testing `asbench`.
+  * [CLIENT-4342] `MapPolicy` missing `MapWriteFlags` support.
+  * [CLIENT-2023] Add `to_base64` encoding methods to `operations::cdt_context`
+  * [CLIENT-2128][CLIENT-3956] Add missing APIs for importing/exporting compiled expressions.
+  * Adds new filters to the `Filter`, deprecates the old macros for filter instantiation.
+  * Add a few missing map and list operations:
+    `cdt_list_create_with_index`,
+    `cdt_list_set_order_with_index`,
+    `cdt_list_set_with_policy`,
+    `cdt_list_increment_by_one`,
+    `cdt_list_increment_by_one_with_policy`,
+    `map_create_op`,
+    `map_create_with_index_op`,
+    `map_set_policy_op`,
+    `set_policy`
 
 * **Improvements**
   * Chain all errors in `command.execute`
@@ -18,9 +56,12 @@ All notable changes to this project will be documented in this file.
   * [CLIENT-4222] Update `list_remove_by*` calls to handle `ListReturnType` params.
   * Add rust docs for enums.
   * Update rust docs for client APIs.
+  * Updated the `IndexTask` with the latest logic.
+  * Address linter issues.
 
 * **Bug Fixes**
   * [CLIENT-4227] `expressions::geo_val()` creates `Value::String` instead of `Value::GeoJSON`
+  * [CLIENT-4411] Fix sindex Query with Bin selection.
 
 ## [2.0.0-alpha.10]
 

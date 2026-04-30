@@ -28,6 +28,10 @@ pub struct Peer {
     /// If set, this peer should replace the given existing node
     /// (e.g. when a node's IP address has changed).
     pub replace_node: Option<Arc<Node>>,
+    /// Name of the node that *parsed* this peer. Mirrors Java's
+    /// peer-source bookkeeping so we can advance only that node's
+    /// `peers_generation` after every peer of its set has materialized.
+    pub from_node_name: Option<String>,
 }
 
 /// Tracks peer state during a single cluster tend cycle.
@@ -36,12 +40,25 @@ pub struct Peer {
 /// information about discovered peers, new nodes, and nodes to remove.
 #[derive(Debug)]
 pub struct Peers {
-    /// Discovered peers keyed by node name.
-    peers: HashMap<String, Peer>,
+    /// Discovered peers in parse order. Mirrors Java's `ArrayList<Peer>`:
+    /// duplicates from the same parsing node are preserved (let the
+    /// materialization step decide), and order is meaningful for debug
+    /// logs. Each parsing node clears this before populating.
+    peers: Vec<Peer>,
     /// New nodes to add to the cluster, keyed by node name.
     nodes: HashMap<String, Arc<Node>>,
     /// Nodes marked for removal, keyed by node string representation.
     nodes_to_remove: HashMap<String, Arc<Node>>,
+    /// Per-tend list of hosts that already failed to validate. Mirrors
+    /// Java's `Peers.invalidHosts`. Used to short-circuit retries against
+    /// hosts whose connection just failed within this same tend.
+    invalid_hosts: HashMap<Host, ()>,
+    /// Per-source-node `peers-generation` values waiting to be committed
+    /// once every peer parsed by that node has successfully materialized.
+    /// Mirrors Java's `peersValidated` rule: advance the node's generation
+    /// only when its full peer set is reachable; otherwise let the next
+    /// tend re-parse and retry. Keyed by parsing-node name.
+    pending_generations: HashMap<String, isize>,
     /// Number of nodes that successfully refreshed peers.
     refresh_count: AtomicUsize,
     /// Whether any node's peers generation changed during this tend cycle.
@@ -53,12 +70,54 @@ impl Peers {
     /// `gen_changed` starts as `true` to force initial peer discovery.
     pub fn new(peer_capacity: usize, add_capacity: usize) -> Self {
         Peers {
-            peers: HashMap::with_capacity(peer_capacity),
+            peers: Vec::with_capacity(peer_capacity),
             nodes: HashMap::with_capacity(add_capacity),
             nodes_to_remove: HashMap::with_capacity(add_capacity),
+            invalid_hosts: HashMap::with_capacity(8),
+            pending_generations: HashMap::with_capacity(add_capacity),
             refresh_count: AtomicUsize::new(0),
             gen_changed: AtomicBool::new(true),
         }
+    }
+
+    /// Mark a host as already-failed for the rest of this tend cycle. Mirrors
+    /// Java's `Peers.fail(Host)`.
+    pub fn fail(&mut self, host: Host) {
+        self.invalid_hosts.insert(host, ());
+    }
+
+    /// `true` when [`fail`](Self::fail) was called on this host earlier in
+    /// the same tend cycle.
+    pub fn has_failed(&self, host: &Host) -> bool {
+        self.invalid_hosts.contains_key(host)
+    }
+
+    /// Number of hosts that failed to validate during this tend.
+    pub fn invalid_count(&self) -> usize {
+        self.invalid_hosts.len()
+    }
+
+    /// Snapshot of the failed-host set, for diagnostic messages.
+    pub fn invalid_hosts(&self) -> Vec<Host> {
+        self.invalid_hosts.keys().cloned().collect()
+    }
+
+    /// Stage a `peers-generation` reported by `parsing_node` so it can be
+    /// committed later, once `materialize_peers` confirms every peer that
+    /// node parsed has been added to the cluster (Java's `peersValidated`).
+    pub fn set_pending_generation(&mut self, parsing_node: String, generation: isize) {
+        self.pending_generations.insert(parsing_node, generation);
+    }
+
+    /// Drop one pending generation. Called by `materialize_peers` when one
+    /// of the parsing node's peers couldn't be reached on any host.
+    pub fn invalidate_pending_generation(&mut self, parsing_node: &str) {
+        self.pending_generations.remove(parsing_node);
+    }
+
+    /// Return and clear all pending generations that survived materialization.
+    pub fn take_pending_generations(&mut self) -> HashMap<String, isize> {
+        std::mem::take(&mut self.pending_generations)
     }
 
     /// Adds a newly created node.
@@ -76,16 +135,29 @@ impl Peers {
         self.nodes.clone()
     }
 
-    /// Appends parsed peers into the peers map.
+    /// Removes and returns all newly created nodes. Used by the tend loop
+    /// to drain `peers.nodes` between iterations of the peers-of-peers
+    /// refresh, mirroring Java's `Cluster.refreshPeers` clear-then-iterate.
+    pub fn drain_nodes(&mut self) -> Vec<Arc<Node>> {
+        std::mem::take(&mut self.nodes).into_values().collect()
+    }
+
+    /// Appends parsed peers into the peers list, preserving order and
+    /// duplicates exactly as Java's `ArrayList<Peer>` would.
     pub fn append_peers(&mut self, new_peers: Vec<Peer>) {
-        for peer in new_peers {
-            self.peers.insert(peer.node_name.clone(), peer);
-        }
+        self.peers.extend(new_peers);
+    }
+
+    /// Drop the current peer list. Mirrors Java's `peers.clear()` at the
+    /// start of `PeerParser`: each parsing node replaces the working set so
+    /// it can be materialized in isolation.
+    pub fn clear_peers(&mut self) {
+        self.peers.clear();
     }
 
     /// Returns a snapshot of all discovered peers.
     pub fn peers_list(&self) -> Vec<Peer> {
-        self.peers.values().cloned().collect()
+        self.peers.clone()
     }
 
     /// Returns the number of discovered peers.

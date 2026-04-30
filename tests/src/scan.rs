@@ -35,8 +35,10 @@ async fn create_test_set(client: &Client, no_records: usize) -> String {
     let wpolicy = WritePolicy::default();
     for i in 0..no_records as i64 {
         let key = as_key!(namespace, &set_name, i);
-        let wbin = as_bin!("bin", i);
-        let bins = vec![wbin];
+        let wbin1 = as_bin!("bin", i);
+        let wbin2 = as_bin!("bin2", "hello");
+        let wbin3 = as_bin!("extra", "extra");
+        let bins = vec![wbin1, wbin2, wbin3];
         client.delete(&wpolicy, &key).await.unwrap();
         client.put(&wpolicy, &key, &bins).await.unwrap();
     }
@@ -59,6 +61,22 @@ async fn scan_single_consumer() {
     let count = rs
         .into_stream()
         .filter(|res| futures::future::ready(res.is_ok()))
+        .count()
+        .await;
+    assert_eq!(count, EXPECTED);
+
+    // ================================ Select bins ====================
+
+    let pf = PartitionFilter::all();
+    let stmt = Statement::new(
+        namespace,
+        &set_name,
+        Bins::Some(vec!["bin".into(), "bin2".into()]),
+    );
+    let rs = client.query(&qpolicy, pf, stmt).await.unwrap();
+    let count = rs
+        .into_stream()
+        .filter(|res| futures::future::ready(res.is_ok() && res.as_ref().unwrap().bins.len() == 2))
         .count()
         .await;
     assert_eq!(count, EXPECTED);

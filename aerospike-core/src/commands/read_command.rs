@@ -16,11 +16,12 @@ use std::collections::hash_map::Entry::{Occupied, Vacant};
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use crate::cluster::partition::Partition;
 use crate::cluster::{Cluster, Node};
 use crate::commands::{Command, SingleCommand};
 use crate::errors::{Error, Result};
 use crate::net::Connection;
-use crate::policy::{BasePolicy, Policy, Replica};
+use crate::policy::{BasePolicy, Policy, ReadPolicy};
 use crate::value::bytes_to_particle;
 use crate::{Bins, Key, Record, ResultCode, Value};
 
@@ -29,21 +30,40 @@ pub struct ReadCommand<'a> {
     pub record: Option<Record>,
     policy: &'a BasePolicy,
     bins: Bins,
+    /// When true, txn notifications use `on_write` instead of `on_read`.
+    pub(crate) is_write: bool,
 }
 
 impl<'a> ReadCommand<'a> {
-    pub fn new(
+    pub fn new(policy: &'a ReadPolicy, cluster: Arc<Cluster>, key: &'a Key, bins: Bins) -> Self {
+        let partition = Partition::for_read(
+            &cluster,
+            key,
+            policy.replica,
+            policy.base_policy.read_mode_sc,
+        );
+        ReadCommand {
+            single_command: SingleCommand::new(cluster, key, partition),
+            bins,
+            policy: &policy.base_policy,
+            record: None,
+            is_write: false,
+        }
+    }
+
+    pub const fn new_with_partition(
         policy: &'a BasePolicy,
         cluster: Arc<Cluster>,
         key: &'a Key,
         bins: Bins,
-        replica: Replica,
+        partition: Partition<'a>,
     ) -> Self {
         ReadCommand {
-            single_command: SingleCommand::new(cluster, key, replica),
+            single_command: SingleCommand::new(cluster, key, partition),
             bins,
             policy,
             record: None,
+            is_write: false,
         }
     }
 
@@ -58,15 +78,11 @@ impl<'a> ReadCommand<'a> {
         field_count: usize,
         generation: u32,
         expiration: u32,
-    ) -> Result<Record> {
+    ) -> Result<(Record, Option<u64>)> {
         let mut bins: HashMap<String, Value> = HashMap::with_capacity(op_count);
 
-        // There can be fields in the response (setname etc). For now, ignore them. Expose them to
-        // the API if needed in the future.
-        for _ in 0..field_count {
-            let field_size = conn.buffer.read_u32(None) as usize;
-            conn.buffer.skip(4 + field_size);
-        }
+        // Parse fields, extracting record version if present (used by MRT).
+        let version = conn.buffer.parse_fields_for_version(field_count);
 
         for _ in 0..op_count {
             let op_size = conn.buffer.read_u32(None) as usize;
@@ -95,7 +111,7 @@ impl<'a> ReadCommand<'a> {
             }
         }
 
-        Ok(Record::new(None, bins, generation, expiration))
+        Ok((Record::new(None, bins, generation, expiration), version))
     }
 }
 
@@ -115,8 +131,8 @@ impl Command for ReadCommand<'_> {
             .set_read(self.policy, self.single_command.key, &self.bins)
     }
 
-    async fn get_node(&mut self) -> Result<Arc<Node>> {
-        self.single_command.get_node().await
+    fn get_node(&mut self) -> Result<Arc<Node>> {
+        self.single_command.get_node()
     }
 
     fn hint(&self) -> u8 {
@@ -129,6 +145,10 @@ impl Command for ReadCommand<'_> {
 
     fn can_recover_connection(&mut self) -> bool {
         true
+    }
+
+    fn prepare_retry(&mut self, is_client_timeout: bool) {
+        self.single_command.prepare_retry(is_client_timeout);
     }
 
     async fn parse_result(&mut self, conn: &mut Connection) -> Result<()> {
@@ -155,24 +175,38 @@ impl Command for ReadCommand<'_> {
             }
         }
 
-        match ResultCode::from(result_code) {
+        let rc = ResultCode::from(result_code);
+        match rc {
             ResultCode::Ok => {
-                let record = if self.bins.is_none() {
-                    Record::new(None, HashMap::new(), generation, expiration)
+                let (record, version) = if self.bins.is_none() {
+                    let version = conn.buffer.parse_fields_for_version(field_count);
+                    (
+                        Record::new(None, HashMap::new(), generation, expiration),
+                        version,
+                    )
                 } else {
                     self.parse_record(conn, op_count, field_count, generation, expiration)?
                 };
+
+                if let Some(txn) = &self.policy.txn {
+                    if self.is_write {
+                        txn.on_write(self.single_command.key, version, rc);
+                    } else {
+                        txn.on_read(self.single_command.key, version);
+                    }
+                }
+
                 self.record = Some(record);
                 Ok(())
             }
             ResultCode::UdfBadResponse => {
                 // record bin "FAILURE" contains details about the UDF error
-                let record =
+                let (record, _version) =
                     self.parse_record(conn, op_count, field_count, generation, expiration)?;
                 let reason = record
                     .bins
                     .get("FAILURE")
-                    .map_or(String::from("UDF Error"), ToString::to_string);
+                    .map_or_else(|| String::from("UDF Error"), ToString::to_string);
                 Err(Error::UdfBadResponse(reason))
             }
             rc => Err(Error::ServerError(rc, false, conn.addr.clone())),

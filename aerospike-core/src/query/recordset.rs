@@ -13,16 +13,12 @@
 // License for the specific language governing permissions and limitations under
 // the License.
 
-extern crate rand;
-
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
 
 use aerospike_rt::Mutex;
 
 use async_channel::{Receiver, Sender};
-
-use rand::Rng;
 
 use crate::errors::Result;
 use crate::query::{PartitionFilter, PartitionTracker};
@@ -31,17 +27,18 @@ use crate::Record;
 /// A stream over incoming records for a [`Recordset`] that can be iterated over either synchronously or asynchronously.
 pub struct RecordStream(Arc<Recordset>);
 
-/// Virtual collection of records retrieved through queries and scans. During a query/scan,
-/// multiple threads will retrieve records from the server nodes and put these records on an
-/// internal queue managed by the recordset. The single user thread consumes these records from the
-/// queue.
+/// Virtual collection of records retrieved through queries and scans.
+///
+/// During a query/scan, multiple threads will retrieve records from the server nodes and put
+/// these records on an internal queue managed by the recordset. The single user thread consumes
+/// these records from the queue.
 #[derive(Debug)]
 pub struct Recordset {
     instances: AtomicUsize,
     rx: Receiver<Result<Record>>,
     tx: Sender<Result<Record>>,
     active: AtomicBool,
-    task_id: AtomicUsize,
+    task_id: AtomicU64,
     pub(crate) tracker: Arc<Mutex<PartitionTracker>>,
 }
 
@@ -58,8 +55,7 @@ impl Recordset {
         nodes: usize,
         tracker: Arc<Mutex<PartitionTracker>>,
     ) -> Self {
-        let mut rng = rand::thread_rng();
-        let task_id = rng.gen::<usize>();
+        let task_id = rand::random::<u64>();
 
         let (tx, rx) = async_channel::bounded(rec_queue_size);
         Recordset {
@@ -67,7 +63,7 @@ impl Recordset {
             rx,
             tx,
             active: AtomicBool::new(true),
-            task_id: AtomicUsize::new(task_id),
+            task_id: AtomicU64::new(task_id),
             tracker,
         }
     }
@@ -90,8 +86,7 @@ impl Recordset {
     }
 
     pub(crate) fn reset_task_id(&self) {
-        let mut rng = rand::thread_rng();
-        let task_id = rng.gen::<usize>();
+        let task_id = rand::random::<u64>();
         self.task_id.store(task_id, Ordering::Relaxed);
     }
 
@@ -102,10 +97,10 @@ impl Recordset {
     pub(crate) async fn push(&self, record: Result<Record>) -> Result<()> {
         match record {
             // Do not emit stream termination errors; they are used as signals only.
-            Err(crate::Error::StreamTerminatedError()) => Ok(()),
+            Err(crate::Error::StreamTerminatedError(_)) => Ok(()),
             _ => match self.tx.send(record).await {
                 Ok(()) => Ok(()),
-                Err(_) => Err(crate::Error::StreamTerminatedError()),
+                Err(_) => Err(crate::Error::StreamTerminatedError(None)),
             },
         }
     }
@@ -133,10 +128,7 @@ impl Recordset {
     #[cfg(feature = "sync")]
     /// Returns a result from the queue if it exists. Otherwise, returns None.
     pub fn next_record(&self) -> Option<Result<Record>> {
-        match self.rx.try_recv() {
-            Ok(r) => Some(r),
-            Err(_) => None,
-        }
+        self.rx.try_recv().ok()
     }
 
     /// Converts a reference to a [`Recordset`] into a [`RecordStream`] that can be used
@@ -147,7 +139,7 @@ impl Recordset {
 }
 
 #[cfg(feature = "sync")]
-impl<'a> Iterator for &'a Recordset {
+impl Iterator for &Recordset {
     type Item = Result<Record>;
 
     /// Implements a blocking iterator.

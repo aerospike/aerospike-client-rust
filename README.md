@@ -1,12 +1,6 @@
 # Aerospike Rust Client 
 
-Welcome to the preview of Aerospike's official [Rust client](https://aerospike.com/docs/develop/client/rust).
-This is your opportunity to help shape the direction of the Rust
-client's ongoing development.
-
-This early-release library brings async-native database operations to Rust 
-developers, with support for batch updates and partition queries. 
-We welcome your feedback as we work toward production readiness.
+Welcome to Aerospike's official [Rust client](https://aerospike.com/docs/develop/client/rust).
 
 ## Feature highlights
 
@@ -47,13 +41,13 @@ We welcome your feedback as we work toward production readiness.
 Take a look at the [changelog](https://github.com/aerospike/aerospike-client-rust/blob/v2/CHANGELOG.md) for more details.
 
 ## What’s coming next?
+
 We are working toward full functional parity with our 
 other officially supported clients. Features on the roadmap include:
 
 - Partition queries
 - Distributed ACID transactions
 - Strong consistency
-- Full TLS support for secure, production-ready deployments
 
 ## Getting started
 

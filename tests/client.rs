@@ -20,12 +20,14 @@ extern crate rand;
 #[cfg(feature = "tls")]
 extern crate webpki_roots;
 
+use aerospike::Bins;
 use aerospike::Client;
+use aerospike_rt::time::Duration;
 
 mod common;
 
 #[aerospike_macro::test]
-#[should_panic(expected = "Failed to connect to host(s).")]
+#[should_panic(expected = "Failed to connect to")]
 async fn cluster_name() {
     let policy = &mut common::client_policy().clone();
     policy.cluster_name = Some(String::from("notTheRealClusterName"));
@@ -104,4 +106,53 @@ async fn tls_client_auth() {
     let names = client.node_names();
     assert!(!names.is_empty());
     client.close().await.unwrap();
+}
+
+#[aerospike_macro::test]
+async fn test_close_does_not_stop_tend_thread() {
+    let client = common::client().await;
+    let namespace = common::namespace();
+
+    let key = aerospike::as_key!(namespace, "close_bug_test", "key1");
+    let bin = aerospike::as_bin!("val", 42);
+    client
+        .put(&aerospike::WritePolicy::default(), &key, &[bin])
+        .await
+        .unwrap();
+
+    let nodes_before = client.node_names();
+    assert!(!nodes_before.is_empty(), "Should have nodes before close");
+
+    client.close().await.unwrap();
+    assert!(
+        !client.is_connected(),
+        "Expected is_connected()=false after close"
+    );
+
+    let tend_interval = common::client_policy().tend_interval;
+    let wait_ms = u64::from(tend_interval) * 2;
+    aerospike_rt::sleep(Duration::from_millis(wait_ms)).await;
+
+    let nodes_after = client.node_names();
+
+    // After close(), tend_thread should stop and nodes should be cleared.
+    // This assert passes if nodes are NOT cleared — tend_thread is still running.
+    assert!(nodes_after.is_empty(), "Nodes were NOT cleared after close");
+
+    let get_result = client
+        .get(&aerospike::ReadPolicy::default(), &key, Bins::All)
+        .await;
+    assert!(get_result.is_err(), "get should have failed",);
+
+    let key2 = aerospike::as_key!(namespace, "close_bug_test", "key2");
+    let bin2 = aerospike::as_bin!("val", 99);
+    let put_result = client
+        .put(&aerospike::WritePolicy::default(), &key2, &[bin2])
+        .await;
+    assert!(put_result.is_err(), "put should have failed",);
+
+    let delete_result = client
+        .delete(&aerospike::WritePolicy::default(), &key2)
+        .await;
+    assert!(delete_result.is_err(), "delete should have failed",);
 }

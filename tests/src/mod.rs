@@ -24,6 +24,9 @@ mod batch;
 mod cdt_bitwise;
 mod cdt_list;
 mod cdt_map;
+mod cleanup;
+mod compression;
+mod connection_seed;
 mod exp;
 mod exp_bitwise;
 mod exp_hll;
@@ -33,12 +36,14 @@ mod exp_op;
 mod hll;
 mod index;
 mod kv;
+mod path_expressions;
 mod query;
 mod scan;
 #[cfg(feature = "serialization")]
 mod serialization;
 mod task;
 mod truncate;
+mod txn;
 mod udf;
 
 pub(crate) async fn count_results(rs: Arc<Recordset>) -> usize {

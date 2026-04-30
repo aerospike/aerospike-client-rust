@@ -110,14 +110,14 @@ pub(crate) enum HLLOpType {
     Describe = 55,
 }
 
-/// Create HLL init operation.
+/// Creates HLL init operation.
 /// Server creates a new HLL or resets an existing HLL.
 /// Server does not return a value.
 pub fn init(policy: &HLLPolicy, bin: &str, index_bit_count: i64) -> Operation {
     init_with_min_hash(policy, bin, index_bit_count, -1)
 }
 
-/// Create HLL init operation with minhash bits.
+/// Creates HLL init operation with minhash bits.
 /// Server creates a new HLL or resets an existing HLL.
 /// Server does not return a value.
 pub fn init_with_min_hash(
@@ -143,14 +143,14 @@ pub fn init_with_min_hash(
     }
 }
 
-/// Create HLL add operation. This operation assumes HLL bin already exists.
+/// Creates HLL add operation. This operation assumes HLL bin already exists.
 /// Server adds values to the HLL set.
 /// Server returns number of entries that caused HLL to update a register.
 pub fn add(policy: &HLLPolicy, bin: &str, list: Vec<Value>) -> Operation {
     add_with_index_and_min_hash(policy, bin, list, -1, -1)
 }
 
-/// Create HLL add operation.
+/// Creates HLL add operation.
 /// Server adds values to HLL set. If HLL bin does not exist, use `indexBitCount` to create HLL bin.
 /// Server returns number of entries that caused HLL to update a register.
 pub fn add_with_index(
@@ -162,7 +162,7 @@ pub fn add_with_index(
     add_with_index_and_min_hash(policy, bin, list, index_bit_count, -1)
 }
 
-/// Create HLL add operation with minhash bits.
+/// Creates HLL add operation with minhash bits.
 ///
 /// Server adds values to HLL set. If HLL bin does not exist, use `indexBitCount` and `minHashBitCount`
 /// to create HLL bin. Server returns number of entries that caused HLL to update a register.
@@ -191,7 +191,7 @@ pub fn add_with_index_and_min_hash(
     }
 }
 
-/// Create HLL set union operation.
+/// Creates HLL set union operation.
 /// Server sets union of specified HLL objects with HLL bin.
 /// Server does not return a value.
 pub fn set_union(policy: &HLLPolicy, bin: &str, list: Vec<Value>) -> Operation {
@@ -211,7 +211,7 @@ pub fn set_union(policy: &HLLPolicy, bin: &str, list: Vec<Value>) -> Operation {
     }
 }
 
-/// Create HLL refresh operation.
+/// Creates HLL refresh operation.
 /// Server updates the cached count (if stale) and returns the count.
 pub fn refresh_count(bin: &str) -> Operation {
     let cdt_op = CdtOperation {
@@ -227,7 +227,7 @@ pub fn refresh_count(bin: &str) -> Operation {
     }
 }
 
-/// Create HLL fold operation.
+/// Creates HLL fold operation.
 /// Servers folds `indexBitCount` to the specified value.
 /// This can only be applied when `minHashBitCount` on the HLL bin is 0.
 /// Server does not return a value.
@@ -245,7 +245,7 @@ pub fn fold(bin: &str, index_bit_count: i64) -> Operation {
     }
 }
 
-/// Create HLL getCount operation.
+/// Creates HLL getCount operation.
 /// Server returns estimated number of elements in the HLL bin.
 pub fn get_count(bin: &str) -> Operation {
     let cdt_op = CdtOperation {
@@ -261,7 +261,7 @@ pub fn get_count(bin: &str) -> Operation {
     }
 }
 
-/// Create HLL getUnion operation.
+/// Creates HLL getUnion operation.
 /// Server returns an HLL object that is the union of all specified HLL objects in the list
 /// with the HLL bin.
 pub fn get_union(bin: &str, list: Vec<Value>) -> Operation {
@@ -278,7 +278,7 @@ pub fn get_union(bin: &str, list: Vec<Value>) -> Operation {
     }
 }
 
-/// Create HLL `get_union_count` operation.
+/// Creates HLL `get_union_count` operation.
 /// Server returns estimated number of elements that would be contained by the union of these
 /// HLL objects.
 pub fn get_union_count(bin: &str, list: Vec<Value>) -> Operation {
@@ -295,7 +295,7 @@ pub fn get_union_count(bin: &str, list: Vec<Value>) -> Operation {
     }
 }
 
-/// Create HLL `get_intersect_count` operation.
+/// Creates HLL `get_intersect_count` operation.
 /// Server returns estimated number of elements that would be contained by the intersection of
 /// these HLL objects.
 pub fn get_intersect_count(bin: &str, list: Vec<Value>) -> Operation {
@@ -312,7 +312,7 @@ pub fn get_intersect_count(bin: &str, list: Vec<Value>) -> Operation {
     }
 }
 
-/// Create HLL getSimilarity operation.
+/// Creates HLL getSimilarity operation.
 /// Server returns estimated similarity of these HLL objects. Return type is a double.
 pub fn get_similarity(bin: &str, list: Vec<Value>) -> Operation {
     let cdt_op = CdtOperation {
@@ -328,7 +328,7 @@ pub fn get_similarity(bin: &str, list: Vec<Value>) -> Operation {
     }
 }
 
-/// Create HLL describe operation.
+/// Creates HLL describe operation.
 /// Server returns `indexBitCount` and `minHashBitCount` used to create HLL bin in a list of longs.
 /// The list size is 2.
 pub fn describe(bin: &str) -> Operation {

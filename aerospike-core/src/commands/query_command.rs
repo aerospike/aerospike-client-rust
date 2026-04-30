@@ -86,8 +86,8 @@ impl Command for QueryCommand<'_> {
             .await
     }
 
-    async fn get_node(&mut self) -> Result<Arc<Node>> {
-        self.stream_command.get_node().await
+    fn get_node(&mut self) -> Result<Arc<Node>> {
+        self.stream_command.get_node()
     }
 
     fn hint(&self) -> u8 {

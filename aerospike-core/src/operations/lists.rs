@@ -35,7 +35,7 @@ use std::sync::Arc;
 
 use crate::msgpack::encoder::pack_cdt_op;
 use crate::operations::cdt::{CdtArgument, CdtOperation};
-use crate::operations::cdt_context::{CdtContext, DEFAULT_CTX};
+use crate::operations::cdt_context::DEFAULT_CTX;
 use crate::operations::{Operation, OperationBin, OperationData, OperationType};
 use crate::Value;
 
@@ -202,7 +202,7 @@ impl<T: IntoIterator<Item = ListWriteFlags>> ToListWriteFlagsBitmask for T {
 }
 
 impl ListPolicy {
-    /// Create unique key list with specified order when list does not exist.
+    /// Creates unique key list with specified order when list does not exist.
     /// Use specified write mode when writing list items.
     pub const fn new(order: ListOrderType, write_flags: ListWriteFlags) -> Self {
         ListPolicy {
@@ -211,7 +211,7 @@ impl ListPolicy {
         }
     }
 
-    /// Create unique key list with specified order when list does not exist.
+    /// Creates unique key list with specified order when list does not exist.
     /// Use specified write mode when writing list items.
     /// This is non-const, but allows specifying multiple flags.
     pub fn new_with_flags<LWF: ToListWriteFlagsBitmask>(
@@ -264,9 +264,18 @@ pub fn create(bin: &str, list_order: ListOrderType, pad: bool) -> Operation {
     }
 }
 
+/// Creates list create operation with a persisted index.
+///
+/// Server creates list at given context level with a persisted index.
+/// Similar to `create`, but the server will maintain a separate index data structure
+/// for the list, improving lookup performance.
+pub fn create_with_index(bin: &str, list_order: ListOrderType) -> Operation {
+    set_order_with_index(bin, list_order)
+}
+
 /// Creates a set list order operation.
 /// Server sets list order. Server returns null.
-pub fn set_order(bin: &str, list_order: ListOrderType, ctx: Vec<CdtContext>) -> Operation {
+pub fn set_order(bin: &str, list_order: ListOrderType) -> Operation {
     let cdt_op = CdtOperation {
         op: CdtListOpType::SetType as u8,
         encoder: Arc::new(pack_cdt_op),
@@ -274,12 +283,31 @@ pub fn set_order(bin: &str, list_order: ListOrderType, ctx: Vec<CdtContext>) -> 
     };
     Operation {
         op: OperationType::CdtWrite,
-        ctx,
+        ctx: DEFAULT_CTX,
         bin: OperationBin::Name(bin.into()),
         data: OperationData::CdtListOp(cdt_op),
     }
 }
-/// Create list append operation. Server appends value to the end of list bin. Server returns
+/// Creates a set list order operation with a persisted index.
+///
+/// Server sets list order and enables a persisted index for the list.
+/// The persisted index flag (0x10) is OR'd with the list order to signal the server.
+/// Server returns null.
+pub fn set_order_with_index(bin: &str, list_order: ListOrderType) -> Operation {
+    let cdt_op = CdtOperation {
+        op: CdtListOpType::SetType as u8,
+        encoder: Arc::new(pack_cdt_op),
+        args: vec![CdtArgument::Byte(list_order as u8 | 0x10)],
+    };
+    Operation {
+        op: OperationType::CdtWrite,
+        ctx: DEFAULT_CTX,
+        bin: OperationBin::Name(bin.into()),
+        data: OperationData::CdtListOp(cdt_op),
+    }
+}
+
+/// Creates list append operation. Server appends value to the end of list bin. Server returns
 /// list size.
 pub fn append(policy: &ListPolicy, bin: &str, value: Value) -> Operation {
     let cdt_op = CdtOperation {
@@ -299,7 +327,7 @@ pub fn append(policy: &ListPolicy, bin: &str, value: Value) -> Operation {
     }
 }
 
-/// Create list append items operation. Server appends each input list item to the end of list
+/// Creates list append items operation. Server appends each input list item to the end of list
 /// bin. Server returns list size.
 ///
 /// # Panics
@@ -324,7 +352,7 @@ pub fn append_items(policy: &ListPolicy, bin: &str, values: Vec<Value>) -> Opera
     }
 }
 
-/// Create list insert operation. Server inserts value to the specified index of the list bin.
+/// Creates list insert operation. Server inserts value to the specified index of the list bin.
 /// Server returns list size.
 pub fn insert(policy: &ListPolicy, bin: &str, index: i64, value: Value) -> Operation {
     let cdt_op = CdtOperation {
@@ -344,7 +372,7 @@ pub fn insert(policy: &ListPolicy, bin: &str, index: i64, value: Value) -> Opera
     }
 }
 
-/// Create list insert items operation. Server inserts each input list item starting at the
+/// Creates list insert items operation. Server inserts each input list item starting at the
 /// specified index of the list bin. Server returns list size.
 ///
 /// # Panics
@@ -369,7 +397,7 @@ pub fn insert_items(policy: &ListPolicy, bin: &str, index: i64, values: Vec<Valu
     }
 }
 
-/// Create list pop operation. Server returns the item at the specified index and removes the
+/// Creates list pop operation. Server returns the item at the specified index and removes the
 /// item from the list bin.
 pub fn pop(bin: &str, index: i64) -> Operation {
     let cdt_op = CdtOperation {
@@ -385,7 +413,7 @@ pub fn pop(bin: &str, index: i64) -> Operation {
     }
 }
 
-/// Create list pop range operation. Server returns `count` items starting at the specified
+/// Creates list pop range operation. Server returns `count` items starting at the specified
 /// index and removes the items from the list bin.
 pub fn pop_range(bin: &str, index: i64, count: i64) -> Operation {
     let cdt_op = CdtOperation {
@@ -401,7 +429,7 @@ pub fn pop_range(bin: &str, index: i64, count: i64) -> Operation {
     }
 }
 
-/// Create list pop range operation. Server returns the items starting at the specified index
+/// Creates list pop range operation. Server returns the items starting at the specified index
 /// to the end of the list and removes those items from the list bin.
 pub fn pop_range_from(bin: &str, index: i64) -> Operation {
     let cdt_op = CdtOperation {
@@ -417,7 +445,7 @@ pub fn pop_range_from(bin: &str, index: i64) -> Operation {
     }
 }
 
-/// Create list remove operation. Server removes the item at the specified index from the list
+/// Creates list remove operation. Server removes the item at the specified index from the list
 /// bin. Server returns the number of items removed.
 pub fn remove(bin: &str, index: i64) -> Operation {
     let cdt_op = CdtOperation {
@@ -433,7 +461,7 @@ pub fn remove(bin: &str, index: i64) -> Operation {
     }
 }
 
-/// Create list remove range operation. Server removes `count` items starting at the specified
+/// Creates list remove range operation. Server removes `count` items starting at the specified
 /// index from the list bin. Server returns the number of items removed.
 pub fn remove_range(bin: &str, index: i64, count: i64) -> Operation {
     let cdt_op = CdtOperation {
@@ -449,7 +477,7 @@ pub fn remove_range(bin: &str, index: i64, count: i64) -> Operation {
     }
 }
 
-/// Create list remove range operation. Server removes the items starting at the specified
+/// Creates list remove range operation. Server removes the items starting at the specified
 /// index to the end of the list. Server returns the number of items removed.
 pub fn remove_range_from(bin: &str, index: i64) -> Operation {
     let cdt_op = CdtOperation {
@@ -465,9 +493,9 @@ pub fn remove_range_from(bin: &str, index: i64) -> Operation {
     }
 }
 
-/// Create list remove value operation. Server removes all items that are equal to the
+/// Creates list remove value operation. Server removes all items that are equal to the
 /// specified value. Server returns the number of items removed.
-pub fn remove_by_value<'a, TLR: ToListReturnTypeBitmask>(
+pub fn remove_by_value<TLR: ToListReturnTypeBitmask>(
     bin: &str,
     value: Value,
     return_type: TLR,
@@ -488,9 +516,9 @@ pub fn remove_by_value<'a, TLR: ToListReturnTypeBitmask>(
     }
 }
 
-/// Create list remove by value list operation. Server removes all items that are equal to
+/// Creates list remove by value list operation. Server removes all items that are equal to
 /// one of the specified values. Server returns the number of items removed
-pub fn remove_by_value_list<'a, TLR: ToListReturnTypeBitmask>(
+pub fn remove_by_value_list<TLR: ToListReturnTypeBitmask>(
     bin: &str,
     values: Vec<Value>,
     return_type: TLR,
@@ -517,20 +545,25 @@ pub fn remove_by_value_list<'a, TLR: ToListReturnTypeBitmask>(
 /// If valueBegin is nil, the range is less than valueEnd.
 /// If valueEnd is nil, the range is greater than equal to valueBegin.
 /// Server returns removed data specified by returnType
-pub fn remove_by_value_range<'a, TLR: ToListReturnTypeBitmask>(
+pub fn remove_by_value_range<TLR: ToListReturnTypeBitmask>(
     bin: &str,
     return_type: TLR,
     begin: Value,
     end: Value,
 ) -> Operation {
+    let mut args = vec![
+        CdtArgument::Int(return_type.to_bitmask()),
+        CdtArgument::Value(begin),
+    ];
+
+    if !end.is_nil() {
+        args.push(CdtArgument::Value(end));
+    }
+
     let cdt_op = CdtOperation {
         op: CdtListOpType::RemoveByValueInterval as u8,
         encoder: Arc::new(pack_cdt_op),
-        args: vec![
-            CdtArgument::Int(return_type.to_bitmask()),
-            CdtArgument::Value(begin),
-            CdtArgument::Value(end),
-        ],
+        args,
     };
     Operation {
         op: OperationType::CdtWrite,
@@ -554,7 +587,7 @@ pub fn remove_by_value_range<'a, TLR: ToListReturnTypeBitmask>(
 /// (3,3) = [11,15]
 /// (3,-3) = [0,4,5,9,11,15]
 /// ```
-pub fn remove_by_value_relative_rank_range<'a, TLR: ToListReturnTypeBitmask>(
+pub fn remove_by_value_relative_rank_range<TLR: ToListReturnTypeBitmask>(
     bin: &str,
     return_type: TLR,
     value: Value,
@@ -592,7 +625,7 @@ pub fn remove_by_value_relative_rank_range<'a, TLR: ToListReturnTypeBitmask>(
 /// (3,3,7) = [11,15]
 /// (3,-3,2) = []
 /// ```
-pub fn remove_by_value_relative_rank_range_count<'a, TLR: ToListReturnTypeBitmask>(
+pub fn remove_by_value_relative_rank_range_count<TLR: ToListReturnTypeBitmask>(
     bin: &str,
     return_type: TLR,
     value: Value,
@@ -761,7 +794,7 @@ pub fn remove_by_rank_range_count<TLR: ToListReturnTypeBitmask>(
     }
 }
 
-/// Create list set operation. Server sets the item value at the specified index in the list
+/// Creates list set operation. Server sets the item value at the specified index in the list
 /// bin. Server does not return a result by default.
 ///
 /// # Panics
@@ -782,9 +815,37 @@ pub fn set(bin: &str, index: i64, value: Value) -> Operation {
     }
 }
 
-/// Create list trim operation. Server removes `count` items in the list bin that do not fall
-/// into the range specified by `index` and `count`. If the range is out of bounds, then all
-/// items will be removed. Server returns list size after trim.
+/// Creates list set operation with policy. Server sets the item value at the specified index
+/// in the list bin, applying the given write policy flags. Server does not return a result
+/// by default.
+///
+/// # Panics
+/// Panics if value is empty
+pub fn set_with_policy(policy: &ListPolicy, bin: &str, index: i64, value: Value) -> Operation {
+    assert!(!value.is_nil());
+
+    let cdt_op = CdtOperation {
+        op: CdtListOpType::Set as u8,
+        encoder: Arc::new(pack_cdt_op),
+        args: vec![
+            CdtArgument::Int(index),
+            CdtArgument::Value(value),
+            CdtArgument::Byte(policy.flags),
+        ],
+    };
+    Operation {
+        op: OperationType::CdtWrite,
+        ctx: DEFAULT_CTX,
+        bin: OperationBin::Name(bin.into()),
+        data: OperationData::CdtListOp(cdt_op),
+    }
+}
+
+/// Creates list trim operation.
+///
+/// Server removes `count` items in the list bin that do not fall into the range specified by
+/// `index` and `count`. If the range is out of bounds, then all items will be removed.
+/// Server returns list size after trim.
 pub fn trim(bin: &str, index: i64, count: i64) -> Operation {
     let cdt_op = CdtOperation {
         op: CdtListOpType::Trim as u8,
@@ -799,7 +860,7 @@ pub fn trim(bin: &str, index: i64, count: i64) -> Operation {
     }
 }
 
-/// Create list clear operation. Server removes all items in the list bin. Server does not
+/// Creates list clear operation. Server removes all items in the list bin. Server does not
 /// return a result by default.
 pub fn clear(bin: &str) -> Operation {
     let cdt_op = CdtOperation {
@@ -815,7 +876,7 @@ pub fn clear(bin: &str) -> Operation {
     }
 }
 
-/// Create list increment operation. Server increments the item value at the specified index by the
+/// Creates list increment operation. Server increments the item value at the specified index by the
 /// given amount and returns the final result.
 pub fn increment(policy: &ListPolicy, bin: &str, index: i64, value: i64) -> Operation {
     let cdt_op = CdtOperation {
@@ -835,7 +896,44 @@ pub fn increment(policy: &ListPolicy, bin: &str, index: i64, value: i64) -> Oper
     }
 }
 
-/// Create list size operation. Server returns size of the list.
+/// Creates list increment by one operation. Server increments the item value at the specified
+/// index by 1 and returns the final result.
+pub fn increment_by_one(bin: &str, index: i64) -> Operation {
+    let cdt_op = CdtOperation {
+        op: CdtListOpType::Increment as u8,
+        encoder: Arc::new(pack_cdt_op),
+        args: vec![CdtArgument::Int(index)],
+    };
+    Operation {
+        op: OperationType::CdtWrite,
+        ctx: DEFAULT_CTX,
+        bin: OperationBin::Name(bin.into()),
+        data: OperationData::CdtListOp(cdt_op),
+    }
+}
+
+/// Creates list increment by one operation with policy. Server increments the item value at the
+/// specified index by 1 and returns the final result.
+pub fn increment_by_one_with_policy(policy: &ListPolicy, bin: &str, index: i64) -> Operation {
+    let cdt_op = CdtOperation {
+        op: CdtListOpType::Increment as u8,
+        encoder: Arc::new(pack_cdt_op),
+        args: vec![
+            CdtArgument::Int(index),
+            CdtArgument::Int(1),
+            CdtArgument::Byte(policy.attributes as u8),
+            CdtArgument::Byte(policy.flags),
+        ],
+    };
+    Operation {
+        op: OperationType::CdtWrite,
+        ctx: DEFAULT_CTX,
+        bin: OperationBin::Name(bin.into()),
+        data: OperationData::CdtListOp(cdt_op),
+    }
+}
+
+/// Creates list size operation. Server returns size of the list.
 pub fn size(bin: &str) -> Operation {
     let cdt_op = CdtOperation {
         op: CdtListOpType::Size as u8,
@@ -850,7 +948,7 @@ pub fn size(bin: &str) -> Operation {
     }
 }
 
-/// Create list get operation. Server returns the item at the specified index in the list bin.
+/// Creates list get operation. Server returns the item at the specified index in the list bin.
 pub fn get(bin: &str, index: i64) -> Operation {
     let cdt_op = CdtOperation {
         op: CdtListOpType::Get as u8,
@@ -865,7 +963,7 @@ pub fn get(bin: &str, index: i64) -> Operation {
     }
 }
 
-/// Create list get range operation. Server returns `count` items starting at the specified
+/// Creates list get range operation. Server returns `count` items starting at the specified
 /// index in the list bin.
 pub fn get_range(bin: &str, index: i64, count: i64) -> Operation {
     let cdt_op = CdtOperation {
@@ -881,7 +979,7 @@ pub fn get_range(bin: &str, index: i64, count: i64) -> Operation {
     }
 }
 
-/// Create list get range operation. Server returns items starting at the index to the end of
+/// Creates list get range operation. Server returns items starting at the index to the end of
 /// the list.
 pub fn get_range_from(bin: &str, index: i64) -> Operation {
     let cdt_op = CdtOperation {
@@ -899,7 +997,7 @@ pub fn get_range_from(bin: &str, index: i64) -> Operation {
 
 /// Creates a list get by value operation.
 /// Server selects list items identified by value and returns selected data specified by returnType.
-pub fn get_by_value<'a, TLR: ToListReturnTypeBitmask>(
+pub fn get_by_value<TLR: ToListReturnTypeBitmask>(
     bin: &str,
     value: Value,
     return_type: TLR,
@@ -923,7 +1021,7 @@ pub fn get_by_value<'a, TLR: ToListReturnTypeBitmask>(
 
 /// Creates list get by value list operation.
 /// Server selects list items identified by values and returns selected data specified by returnType.
-pub fn get_by_value_list<'a, TLR: ToListReturnTypeBitmask>(
+pub fn get_by_value_list<TLR: ToListReturnTypeBitmask>(
     bin: &str,
     values: Vec<Value>,
     return_type: TLR,
@@ -950,20 +1048,25 @@ pub fn get_by_value_list<'a, TLR: ToListReturnTypeBitmask>(
 /// If valueBegin is null, the range is less than valueEnd.
 /// If valueEnd is null, the range is greater than equal to valueBegin.
 /// Server returns selected data specified by returnType.
-pub fn get_by_value_range<'a, TLR: ToListReturnTypeBitmask>(
+pub fn get_by_value_range<TLR: ToListReturnTypeBitmask>(
     bin: &str,
     begin: Value,
     end: Value,
     return_type: TLR,
 ) -> Operation {
+    let mut args = vec![
+        CdtArgument::Int(return_type.to_bitmask()),
+        CdtArgument::Value(begin),
+    ];
+
+    if !end.is_nil() {
+        args.push(CdtArgument::Value(end));
+    }
+
     let cdt_op = CdtOperation {
         op: CdtListOpType::GetByValueInterval as u8,
         encoder: Arc::new(pack_cdt_op),
-        args: vec![
-            CdtArgument::Int(return_type.to_bitmask()),
-            CdtArgument::Value(begin),
-            CdtArgument::Value(end),
-        ],
+        args,
     };
     Operation {
         op: OperationType::CdtRead,
@@ -1135,7 +1238,7 @@ pub fn get_by_rank_range_count<TLR: ToListReturnTypeBitmask>(
 /// (3,3) = [11,15]
 /// (3,-3) = [0,4,5,9,11,15]
 /// ```
-pub fn get_by_value_relative_rank_range<'a, TLR: ToListReturnTypeBitmask>(
+pub fn get_by_value_relative_rank_range<TLR: ToListReturnTypeBitmask>(
     bin: &str,
     value: Value,
     rank: i64,
@@ -1173,7 +1276,7 @@ pub fn get_by_value_relative_rank_range<'a, TLR: ToListReturnTypeBitmask>(
 /// (3,3,7) = [11,15]
 /// (3,-3,2) = []
 /// ```
-pub fn get_by_value_relative_rank_range_count<'a, TLR: ToListReturnTypeBitmask>(
+pub fn get_by_value_relative_rank_range_count<TLR: ToListReturnTypeBitmask>(
     bin: &str,
     value: Value,
     rank: i64,

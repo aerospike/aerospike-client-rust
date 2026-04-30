@@ -128,6 +128,7 @@
 
 // `error_chain` can recurse deeply
 #![recursion_limit = "1024"]
+#![allow(clippy::too_many_arguments)]
 
 extern crate base64;
 extern crate byteorder;
@@ -135,8 +136,6 @@ extern crate byteorder;
 extern crate rhexdump;
 #[macro_use]
 extern crate thiserror;
-#[macro_use]
-extern crate lazy_static;
 #[macro_use]
 extern crate log;
 extern crate pwhash;
@@ -162,18 +161,22 @@ pub use key::Key;
 pub use net::Host;
 pub use net::ToHosts;
 pub use operations::{ListOrderType, ListPolicy, ListReturnType, ListSortFlags, ListWriteFlags};
-pub use operations::{MapPolicy, MapReturnType, MapWriteMode};
+pub use operations::{MapPolicy, MapReturnType, MapWriteFlags, MapWriteMode};
 pub use policy::{
     AdminPolicy, AuthMode, BasePolicy, BatchPolicy, ClientPolicy, CommitLevel, Concurrency,
-    ConsistencyLevel, Expiration, GenerationPolicy, Policy, QueryDuration, QueryPolicy, ReadPolicy,
-    ReadTouchTTL, RecordExistsAction, WritePolicy,
+    Expiration, GenerationPolicy, Policy, QueryDuration, QueryPolicy, ReadModeAP, ReadModeSC,
+    ReadPolicy, ReadTouchTTL, RecordExistsAction, WritePolicy,
 };
 pub use privilege::{Privilege, PrivilegeCode};
-pub use query::{CollectionIndexType, IndexType, PartitionFilter, Recordset, Statement, UDFLang};
+pub use query::{
+    CollectionIndexType, EqFilterValue, IndexType, PartitionFilter, RangeFilterValue, Recordset,
+    Statement, UDFLang,
+};
 pub use record::Record;
 pub use result_code::ResultCode;
 pub use role::Role;
-pub use task::{DropIndexTask, IndexTask, RegisterTask, Task, UdfRemoveTask};
+pub use task::{DropIndexTask, ExecuteTask, IndexTask, RegisterTask, Task, UdfRemoveTask};
+pub use txn::{AbortStatus, CommitErrorType, CommitStatus, Txn, TxnState};
 pub use user::User;
 pub use value::{FloatValue, Value};
 
@@ -201,6 +204,9 @@ mod record;
 mod result_code;
 mod role;
 pub mod task;
+pub mod txn;
+pub(crate) mod txn_monitor;
+pub(crate) mod txn_roll;
 mod user;
 
 #[cfg(test)]
