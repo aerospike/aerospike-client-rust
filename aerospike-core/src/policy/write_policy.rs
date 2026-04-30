@@ -89,8 +89,13 @@ impl WritePolicy {
 
 impl Default for WritePolicy {
     fn default() -> Self {
+        let base_policy = BasePolicy {
+            max_retries: 0,
+            ..BasePolicy::default()
+        };
+
         WritePolicy {
-            base_policy: BasePolicy::default(),
+            base_policy,
             record_exists_action: RecordExistsAction::Update,
             generation_policy: GenerationPolicy::None,
             commit_level: CommitLevel::CommitAll,
@@ -107,5 +112,17 @@ impl Default for WritePolicy {
 impl PolicyLike for WritePolicy {
     fn base(&self) -> &BasePolicy {
         &self.base_policy
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::policy::{Policy, WritePolicy};
+
+    #[test]
+    fn default_write_policy_max_retries_is_zero() {
+        let policy = WritePolicy::default();
+        assert_eq!(policy.max_retries(), 0);
+        assert_eq!(policy.base_policy.max_retries, 0);
     }
 }

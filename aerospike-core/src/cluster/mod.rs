@@ -41,7 +41,7 @@ use crate::policy::ClientPolicy;
 use crate::AdminPolicy;
 use aerospike_rt::Mutex;
 use futures::channel::mpsc;
-use futures::channel::mpsc::{Receiver, Sender};
+use futures::channel::mpsc::{Receiver, Sender, TryRecvError};
 use hazarc::AtomicArc;
 
 static CLIENT_VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -139,25 +139,36 @@ impl Cluster {
         let tend_interval = cluster.client_policy.load().tend_interval;
 
         loop {
-            if rx.try_next().is_ok() {
-                unreachable!();
-            } else if let Err(err) = cluster.tend().await {
-                log_error_chain!(err, "Error tending cluster");
+            match rx.try_recv() {
+                Ok(()) => unreachable!(),
+                Err(TryRecvError::Closed) => break,
+                Err(TryRecvError::Empty) => {
+                    if let Err(err) = cluster.tend().await {
+                        log_error_chain!(err, "Error tending cluster");
+                    }
+                    aerospike_rt::sleep(Duration::from_millis(u64::from(tend_interval))).await;
+                }
             }
-            aerospike_rt::sleep(Duration::from_millis(u64::from(tend_interval))).await;
         }
 
-        // close all nodes
-        //let nodes = cluster.nodes().await;
-        //for mut node in nodes {
-        //    if let Some(node) = Arc::get_mut(&mut node) {
-        //        node.close().await;
-        //    }
-        //}
-        //cluster.set_nodes(vec![]).await;
+        // Cleanup is performed here — as the last act of the tend thread —
+        // rather than in `close()`, so the "all node additions/deletions are
+        // performed in tend thread" invariant (see `tend()`) is preserved.
+        // This makes the cleanup race-free without any cross-thread sync.
+        cluster.partition_map.store(Arc::new(HashMap::default()));
+        cluster.hashed_pass.store(Arc::new(None));
+        cluster.set_nodes(vec![]);
+        cluster.aliases.store(Arc::new(HashMap::new()));
+        cluster.seeds.store(Arc::new(vec![]));
     }
 
     async fn tend(&self) -> Result<()> {
+        // If close() has been called, bail before any work — otherwise an
+        // in-flight cycle would repopulate nodes after close() cleared them.
+        if self.closed.load(Ordering::Relaxed) {
+            return Ok(());
+        }
+
         let mut nodes = self.nodes();
 
         // All node additions/deletions are performed in tend thread.
@@ -587,11 +598,11 @@ impl Cluster {
                                     "some node refreshes but the current node is active but not referenced in partition-map"
                                 );
                         }
-                    } else if refresh_count >= 1 && failures > 2 {
-                        remove_list.push(tnode);
+                    } else if refresh_count >= 1 && failures > 0 {
                         debug!(
-                            "multi-node: refresh failed repeatedly, removing node despite peer reference_count"
+                            "multi-node: refresh failed repeatedly, removing node despite peer reference_count {tnode}"
                         );
+                        remove_list.push(tnode);
                     }
                 }
             }
@@ -608,13 +619,15 @@ impl Cluster {
     }
 
     fn remove_nodes_and_aliases(&self, mut nodes_to_remove: Vec<Arc<Node>>) {
-        for node in &mut nodes_to_remove {
+        for node in &nodes_to_remove {
+            debug!("Removing alias for node {node}");
             for alias in node.aliases() {
                 self.remove_alias(&alias);
             }
-            if let Some(node) = Arc::get_mut(node) {
-                node.close();
-            }
+        }
+        for node in &mut nodes_to_remove {
+            debug!("Closing node {node}");
+            node.close();
         }
         self.remove_nodes(&nodes_to_remove);
     }
@@ -671,7 +684,6 @@ impl Cluster {
                 node_array.push(node.clone());
             }
         }
-
         self.set_nodes(node_array);
     }
 
@@ -753,13 +765,19 @@ impl Cluster {
     }
 
     pub async fn close(&self) -> Result<()> {
-        if !self.closed.load(Ordering::Relaxed) {
-            // close tend by closing the channel
-            let tx = self.tend_channel.lock().await;
-            drop(tx);
-            self.closed.store(true, Ordering::Relaxed);
+        // Mark closed first so any in-flight tend cycle bails early.
+        if self.closed.swap(true, Ordering::SeqCst) {
+            return Ok(());
         }
 
+        // Actually close the tend channel: locking the Mutex and dropping
+        // the *guard* only releases the lock — it doesn't drop the Sender,
+        // which is what tend_thread's `try_recv` watches via TryRecvError::
+        // Closed. Use Sender::close_channel() to signal closure. The tend
+        // thread itself clears `nodes` and `aliases` as its last act before
+        // exiting (see `tend_thread`), preserving the single-writer
+        // invariant on those fields.
+        self.tend_channel.lock().await.close_channel();
         Ok(())
     }
 }

@@ -13,16 +13,12 @@
 // License for the specific language governing permissions and limitations under
 // the License.
 
-extern crate rand;
-
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
 
 use aerospike_rt::Mutex;
 
 use async_channel::{Receiver, Sender};
-
-use rand::Rng;
 
 use crate::errors::Result;
 use crate::query::{PartitionFilter, PartitionTracker};
@@ -42,7 +38,7 @@ pub struct Recordset {
     rx: Receiver<Result<Record>>,
     tx: Sender<Result<Record>>,
     active: AtomicBool,
-    task_id: AtomicUsize,
+    task_id: AtomicU64,
     pub(crate) tracker: Arc<Mutex<PartitionTracker>>,
 }
 
@@ -59,8 +55,7 @@ impl Recordset {
         nodes: usize,
         tracker: Arc<Mutex<PartitionTracker>>,
     ) -> Self {
-        let mut rng = rand::thread_rng();
-        let task_id = rng.gen::<usize>();
+        let task_id = rand::random::<u64>();
 
         let (tx, rx) = async_channel::bounded(rec_queue_size);
         Recordset {
@@ -68,7 +63,7 @@ impl Recordset {
             rx,
             tx,
             active: AtomicBool::new(true),
-            task_id: AtomicUsize::new(task_id),
+            task_id: AtomicU64::new(task_id),
             tracker,
         }
     }
@@ -91,8 +86,7 @@ impl Recordset {
     }
 
     pub(crate) fn reset_task_id(&self) {
-        let mut rng = rand::thread_rng();
-        let task_id = rng.gen::<usize>();
+        let task_id = rand::random::<u64>();
         self.task_id.store(task_id, Ordering::Relaxed);
     }
 

@@ -13,6 +13,8 @@
 // limitations under the License.
 
 //! Operation Context for nested Operations
+use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
+
 use crate::commands::buffer::Buffer;
 use crate::errors::Result;
 use crate::expressions::{self, Expression};
@@ -61,7 +63,7 @@ pub fn to_base64(ctx: &[CdtContext]) -> Result<String> {
     let mut buf = Buffer::new(0);
     buf.resize_buffer(size)?;
     let _ = pack_ctx_for_index(&mut Some(&mut buf), ctx);
-    Ok(base64::encode(&buf.data_buffer))
+    Ok(BASE64.encode(&buf.data_buffer))
 }
 
 /// Defines Lookup list by index offset.

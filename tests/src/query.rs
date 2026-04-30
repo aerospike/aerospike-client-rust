@@ -802,6 +802,36 @@ async fn query_operate_scan_all() {
     client.close().await.unwrap();
 }
 
+#[aerospike_macro::test]
+async fn query_operate_empty_ops_returns_parameter_error() {
+    let client = common::client().await;
+    let namespace = common::namespace();
+    let set_name = &common::rand_str(10);
+
+    let wpolicy = WritePolicy::default();
+    let statement = Statement::new(namespace, set_name, Bins::All);
+
+    // Calling query_operate with no operations must be rejected client-side
+    // with a ParameterError before any server fan-out. We verify the message
+    // contains "no operations" so the assertion would not be satisfied by an
+    // accidental server-returned ParameterError (server fills the node addr
+    // in that field instead).
+    let result = client.query_operate(&wpolicy, statement, &[]).await;
+
+    match result {
+        Err(Error::ServerError(ResultCode::ParameterError, _, ref msg))
+            if msg.contains("no operations") => {}
+        Err(other) => panic!(
+            "expected client-side ParameterError ('query_operate called with no \
+             operations'); got {:?}",
+            other
+        ),
+        Ok(_) => panic!("expected ParameterError, got Ok"),
+    }
+
+    client.close().await.unwrap();
+}
+
 // ============================================================================
 // Filter::equal_by_index — equality filter targeting a named secondary index
 // ============================================================================
@@ -1338,4 +1368,118 @@ async fn query_filter_expression_with_policy_filter() {
     assert_eq!(count, 5);
 
     client.close().await.unwrap();
+}
+
+#[aerospike_macro::test]
+async fn test_short_query_not_tracked() {
+    let client = common::client().await;
+    let ns = common::namespace();
+    // Use a unique per-run set name so we can filter `query-show` to only
+    // entries from this test, and avoid clashing with concurrent tests.
+    let set_owned = format!("short_q_bug_{}", common::rand_str(10));
+    let set: &str = &set_owned;
+    let bin_name = "val";
+    let num_records: i64 = 100;
+
+    let wp = WritePolicy::default();
+    let ap = AdminPolicy::default();
+
+    // Load test data
+    // println!(
+    //     "\n[SETUP] Loading {} records into {}.{}",
+    //     num_records, ns, set
+    // );
+    for i in 0..num_records {
+        let key = as_key!(ns, set, i);
+        let bins = vec![as_bin!(bin_name, i)];
+        client.put(&wp, &key, &bins).await.unwrap();
+    }
+
+    // Set query-max-done to 100 so completed queries are tracked
+    // println!("[SETUP] Setting query-max-done=100 on all nodes");
+    let nodes = client.nodes();
+    for node in &nodes {
+        let set_cfg_cmd: &str = "set-config:context=service;query-max-done=100";
+        let _ = node.info(&ap, &vec![set_cfg_cmd]).await;
+    }
+    aerospike_rt::sleep(Duration::from_secs(1)).await;
+
+    // Clear any stale tracked queries: set to 0, wait, set back to 100
+    for node in &nodes {
+        let reset_cmd: &str = "set-config:context=service;query-max-done=0";
+        let _ = node.info(&ap, &vec![reset_cmd]).await;
+    }
+    aerospike_rt::sleep(Duration::from_millis(500)).await;
+    for node in &nodes {
+        let set_cmd: &str = "set-config:context=service;query-max-done=100";
+        let _ = node.info(&ap, &vec![set_cmd]).await;
+    }
+    aerospike_rt::sleep(Duration::from_millis(500)).await;
+
+    // ──────────────────────────────────────────────────────────────
+    // Test: PI query (no filter) with QueryDuration::Short
+    //         Server should NOT track this in query-show
+    // ──────────────────────────────────────────────────────────────
+    // println!("\n[TEST 1] PI query with QueryDuration::Short (Rust partition-based)");
+    {
+        let mut qpolicy = QueryPolicy::default();
+        qpolicy.expected_duration = QueryDuration::Short;
+
+        let stmt = Statement::new(ns, set, Bins::All);
+        let pf = PartitionFilter::all();
+
+        let rs = client.query(&qpolicy, pf, stmt).await.unwrap();
+        let mut rs = rs.into_stream();
+        let mut count = 0;
+        while let Some(res) = rs.next().await {
+            match res {
+                Ok(_) => count += 1,
+                Err(err) => panic!("  Error: {:?}", err),
+            }
+        }
+        // println!("  Returned {} records", count);
+        assert_eq!(
+            count, num_records,
+            "Expected {} records, but got {}",
+            num_records, count
+        );
+    }
+    aerospike_rt::sleep(Duration::from_millis(500)).await;
+
+    // Check query-show for tracked queries belonging to *this* test only.
+    // `query-show` returns server-wide tracked queries; concurrent tests
+    // running long queries (the default duration) would otherwise pollute
+    // this count and make the assertion flaky in parallel runs.
+    let set_marker = format!(":set={}", set);
+    let mut total_tracked = 0;
+    for node in &nodes {
+        let result = node.info(&ap, &vec!["query-show"]).await;
+        match result {
+            Ok(info_map) => {
+                for (_, value) in &info_map {
+                    if !value.is_empty() && value != "ok" {
+                        for entry in value.split(';').filter(|s| !s.is_empty()) {
+                            if entry.contains(&set_marker) {
+                                total_tracked += 1;
+                            }
+                        }
+                    }
+                }
+            }
+            Err(e) => panic!("  Info error: {:?}", e),
+        }
+    }
+
+    // println!(
+    //     "\n[RESULT 1] Total tracked queries after SHORT pi_query: {}",
+    //     total_tracked
+    // );
+
+    client.close().await.unwrap();
+
+    assert_eq!(
+        total_tracked, 0,
+        "QueryDuration::Short should not be tracked by the server's query monitor; \
+         got {total_tracked} tracked entries — set_scan likely failed to set INFO1_SHORT_QUERY"
+    );
 }

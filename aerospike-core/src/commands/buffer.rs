@@ -1130,10 +1130,17 @@ impl Buffer {
             read_attr |= INFO1_NOBINDATA;
         }
 
+        let mut write_attr = 0;
+        match policy.expected_duration {
+            QueryDuration::Short => read_attr |= INFO1_SHORT_QUERY,
+            QueryDuration::LongRelaxAP => write_attr |= INFO2_RELAX_AP_LONG_QUERY,
+            QueryDuration::Long => (),
+        }
+
         self.write_header_read(
             &policy.base_policy,
             read_attr,
-            0,
+            write_attr,
             INFO3_PARTITION_DONE,
             field_count,
             bin_count as u16,

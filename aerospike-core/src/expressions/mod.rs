@@ -20,6 +20,8 @@ pub mod hll;
 pub mod lists;
 pub mod maps;
 pub mod regex_flag;
+use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
+
 use crate::commands::buffer::Buffer;
 use crate::msgpack::encoder::{pack_array_begin, pack_integer, pack_raw_string, pack_value};
 use crate::operations::cdt_context::CdtContext;
@@ -400,7 +402,7 @@ impl Expression {
         let mut buf = Buffer::new(sz);
         buf.resize_buffer(sz)?;
         self.pack(&mut Some(&mut buf))?;
-        Ok(base64::encode(&buf.data_buffer[..buf.data_offset]))
+        Ok(BASE64.encode(&buf.data_buffer[..buf.data_offset]))
     }
 
     /// Packs this expression wrapped in a msgpack binary value (bin8/bin16/bin32 format).
@@ -453,7 +455,8 @@ pub fn key(exp_type: ExpType) -> Expression {
 
 /// Creates an expression from a base64-encoded expression string.
 pub fn from_base64(b64: &str) -> Result<Expression> {
-    let bytes = base64::decode(b64)
+    let bytes = BASE64
+        .decode(b64)
         .map_err(|e| Error::BadResponse(format!("Invalid base64 expression: {e}")))?;
     Ok(Expression {
         cmd: None,
