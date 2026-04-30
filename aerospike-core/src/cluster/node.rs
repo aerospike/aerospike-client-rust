@@ -20,6 +20,8 @@ use std::result::Result as StdResult;
 use std::sync::atomic::{AtomicBool, AtomicIsize, AtomicUsize, Ordering};
 use std::sync::Arc;
 
+use aerospike_rt::Mutex as AsyncMutex;
+
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use hazarc::AtomicArc;
 
@@ -49,6 +51,12 @@ pub struct Node {
     address: String,
 
     connection_pool: ConnectionPool,
+    /// Long-lived dedicated socket used by `tend()` and friends:
+    /// `refresh`, `refresh_peers`, partition map fetch, rack-ids fetch.
+    /// Lazy-opened on first use and reused on subsequent tends so we don't
+    /// pay LOGIN + TCP-handshake every cycle. On any error it's torn down
+    /// so the next tend will reopen. Mirrors Java `Node.tendConnection`.
+    tend_connection: AsyncMutex<Option<Connection>>,
     failures: AtomicUsize,
 
     partition_generation: AtomicIsize,
@@ -76,6 +84,9 @@ impl Drop for Node {
         debug!("Node closed {self}");
         self.close();
         self.connection_pool.close();
+        // The tend socket (if any) is held inside `tend_connection` and
+        // will be torn down by `Connection`'s own `Drop` impl when this
+        // `Node` drops — no manual close needed here.
     }
 }
 
@@ -95,6 +106,7 @@ impl Node {
                 0
             }),
             connection_pool: ConnectionPool::new(nv.aliases[0].clone(), client_policy),
+            tend_connection: AsyncMutex::new(None),
             failures: AtomicUsize::new(0),
             partition_generation: AtomicIsize::new(-1),
             peers_generation: AtomicIsize::new(-1),
@@ -213,7 +225,7 @@ impl Node {
             timeout: self.client_policy.timeout,
         };
 
-        let info_result = self.info(&admin_policy, &commands).await;
+        let info_result = self.tend_info(&admin_policy, &commands).await;
         let info_map = match info_result {
             Ok(map) => map,
             Err(e) => {
@@ -285,10 +297,13 @@ impl Node {
         };
 
         let peers_cmd = self.client_policy.peers_string();
-        let info_map = self.info(&admin_policy, &[peers_cmd]).await.map_err(|e| {
-            self.refresh_failed();
-            e.chain_error("Failed to fetch peers info")
-        })?;
+        let info_map = self
+            .tend_info(&admin_policy, &[peers_cmd])
+            .await
+            .map_err(|e| {
+                self.refresh_failed();
+                e.chain_error("Failed to fetch peers info")
+            })?;
 
         let peer_string = match info_map.get(peers_cmd) {
             None => {
@@ -611,6 +626,55 @@ impl Node {
         }
         self.put_connection(conn);
         res
+    }
+
+    /// Run an info command over this node's long-lived tend socket. Lazily
+    /// opens it on first use; on any error tears the socket down so the
+    /// next call reopens. Mirrors Java's `Node.refresh` reuse of
+    /// `tendConnection`. Use this for tend-time traffic only — operational
+    /// commands should go through the pool via [`info`](Self::info).
+    pub async fn tend_info(
+        &self,
+        policy: &AdminPolicy,
+        commands: &[&str],
+    ) -> Result<HashMap<String, String>> {
+        let mut guard = self.tend_connection.lock().await;
+        if guard.is_none() {
+            // Open lazily. The first call after Node::new pays the
+            // TCP-handshake + LOGIN here; subsequent calls reuse the
+            // already-authenticated socket.
+            let conn = Connection::new(
+                &self.host,
+                &self.client_policy,
+                self.client_policy.hashed_pass().as_ref(),
+            )
+            .await
+            .map_err(|e| e.chain_error("Failed to open tend connection"))?;
+            *guard = Some(conn);
+        }
+
+        // SAFETY: we just ensured `guard` is `Some`.
+        let conn = guard.as_mut().expect("tend connection just opened");
+        match Message::info(policy, conn, commands).await {
+            Ok(map) => Ok(map),
+            Err(e) => {
+                // Drop the socket so the next call reopens — the error
+                // could leave the read buffer mid-frame.
+                if let Some(mut bad) = guard.take() {
+                    bad.close();
+                }
+                Err(e)
+            }
+        }
+    }
+
+    /// Tear down the tend connection if open. Called from `close()` and on
+    /// quick-restart so the next call opens a fresh socket.
+    pub async fn close_tend_connection(&self) {
+        let mut guard = self.tend_connection.lock().await;
+        if let Some(mut c) = guard.take() {
+            c.close();
+        }
     }
 
     // Get the partition generation

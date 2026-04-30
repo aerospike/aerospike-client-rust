@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use std::collections::HashMap;
 use std::str;
 use std::sync::Arc;
 use std::vec::Vec;
@@ -20,12 +21,15 @@ use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 
 use crate::cluster::node;
 use crate::cluster::Node;
-use crate::commands::Message;
 use crate::errors::{Error, Result};
-use crate::net::Connection;
-use crate::AdminPolicy;
 
 use super::PartitionTable;
+
+/// Info commands required to populate a `PartitionTokenizer`. Exposed so
+/// callers can issue them over their own connection (e.g. the long-lived
+/// tend connection on a Node) and pass the resulting map to
+/// [`from_info_map`](PartitionTokenizer::from_info_map).
+pub const PARTITION_INFO_COMMANDS: &[&str] = &["replicas", node::PARTITION_GENERATION];
 
 // Validates a Database server node
 #[derive(Debug, Clone)]
@@ -39,14 +43,11 @@ pub struct PartitionTokenizer {
 }
 
 impl PartitionTokenizer {
-    pub async fn new(
-        policy: &AdminPolicy,
-        conn: &mut Connection,
-        _node: &Arc<Node>,
-    ) -> Result<Self> {
-        let command = "replicas";
-        let info_map = Message::info(policy, conn, &[command, node::PARTITION_GENERATION]).await?;
-
+    /// Build a tokenizer from a previously-fetched info map. The caller
+    /// is expected to have requested [`PARTITION_INFO_COMMANDS`] over a
+    /// connection of its choosing — typically a Node's long-lived tend
+    /// socket — and to hand the response in here.
+    pub fn from_info_map(info_map: &HashMap<String, String>) -> Result<Self> {
         let generation = match info_map.get(node::PARTITION_GENERATION) {
             Some(s) => s.parse::<isize>().map_err(|err| {
                 Error::BadResponse(format!("Invalid partition-generation: {err}"))
@@ -58,13 +59,20 @@ impl PartitionTokenizer {
             }
         };
 
-        match info_map.get(command) {
+        match info_map.get("replicas") {
             Some(buf) => Ok(PartitionTokenizer {
                 buffer: buf.as_bytes().to_owned(),
                 generation,
             }),
             None => Err(Error::BadResponse("Missing replicas info".to_string())),
         }
+    }
+
+    /// Convenience wrapper for callers that just want to fetch + parse on
+    /// the node's tend connection.
+    pub async fn from_node(node: &Arc<Node>, policy: &crate::AdminPolicy) -> Result<Self> {
+        let info_map = node.tend_info(policy, PARTITION_INFO_COMMANDS).await?;
+        Self::from_info_map(&info_map)
     }
 
     pub fn update_partition(&self, nmap: &mut PartitionTable, node: &Arc<Node>) -> Result<()> {

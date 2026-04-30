@@ -37,7 +37,6 @@ use self::partition_tokenizer::PartitionTokenizer;
 use self::peers::{Peer, Peers};
 
 use crate::commands::admin_command::AdminCommand;
-use crate::commands::Message;
 use crate::errors::{Error, Result};
 use crate::net::Host;
 use crate::policy::ClientPolicy;
@@ -581,35 +580,25 @@ impl Cluster {
         partition_map: &mut PartitionTable,
         node: &Arc<Node>,
     ) -> Result<()> {
-        let mut conn = node.get_connection(0).await?;
-
+        // Issue `replicas` + `partition-generation` over the node's
+        // long-lived tend connection (Java's `tendConnection` reuse).
         let admin_policy = AdminPolicy {
             timeout: self.client_policy.load().timeout,
         };
-        let tokens = PartitionTokenizer::new(&admin_policy, &mut conn, node).await;
-        if let Err(e) = tokens {
-            conn.invalidate();
-            return Err(e);
-        }
-
-        let tokens = tokens.unwrap();
+        let tokens = PartitionTokenizer::from_node(node, &admin_policy).await?;
         tokens.update_partition(partition_map, node)?;
-
         Ok(())
     }
 
     pub async fn update_rack_ids(&self, node: &Arc<Node>) -> Result<()> {
         const RACK_IDS: &str = "rack-ids";
-        let mut conn = node.get_connection(0).await?;
         let admin_policy = AdminPolicy {
             timeout: self.client_policy.load().timeout,
         };
-        let info_map = Message::info(
-            &admin_policy,
-            &mut conn,
-            &[RACK_IDS, node::REBALANCE_GENERATION],
-        )
-        .await?;
+        // Same tend-connection reuse as `update_partitions`.
+        let info_map = node
+            .tend_info(&admin_policy, &[RACK_IDS, node::REBALANCE_GENERATION])
+            .await?;
 
         // Reject explicit "rack-ids not supported" replies. The server
         // returns the literal string "ERROR..." (or an empty value) when the
