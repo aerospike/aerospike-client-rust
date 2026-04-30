@@ -72,6 +72,16 @@ pub struct Node {
     responded: AtomicBool,
     active: AtomicBool,
     version: Version,
+    /// Per-`error_rate_window` circuit breaker state. `error_rate_count`
+    /// is bumped on every retriable failure (network error, server
+    /// `TIMEOUT` / `DEVICE_OVERLOAD` / `KEY_BUSY`, connection-close-on-error)
+    /// and reset every `error_rate_window` tend iterations.
+    /// `node_max_error_rate` is the per-node ceiling — it adapts each
+    /// reset, doubling on a clean window (capped at the cluster setting)
+    /// or halving when the previous window tripped. Mirrors Java's
+    /// `Node.errorRateCount` + `Node.maxErrorRate`.
+    error_rate_count: AtomicUsize,
+    node_max_error_rate: AtomicUsize,
     /// Cached hostname that resolves to this node's IP. Populated by
     /// `Cluster::peer_exists` on the first successful DNS-aware match, so
     /// subsequent tends can short-circuit the lookup. Mirrors Java's
@@ -105,9 +115,11 @@ impl Node {
             } else {
                 0
             }),
-            connection_pool: ConnectionPool::new(nv.aliases[0].clone(), client_policy),
+            connection_pool: ConnectionPool::new(nv.aliases[0].clone(), client_policy.clone()),
             tend_connection: AsyncMutex::new(None),
             failures: AtomicUsize::new(0),
+            error_rate_count: AtomicUsize::new(0),
+            node_max_error_rate: AtomicUsize::new(client_policy.max_error_rate),
             partition_generation: AtomicIsize::new(-1),
             peers_generation: AtomicIsize::new(-1),
             peers_count: AtomicUsize::new(0),
@@ -703,6 +715,76 @@ impl Node {
     /// (whether or not it succeeded). Used as a split-cluster guard.
     pub fn refresh_count(&self) -> usize {
         self.refresh_count.load(Ordering::Relaxed)
+    }
+
+    // ---- Per-node circuit breaker ---------------------------------------
+    //
+    // Mirrors Java's `Node.{incrErrorRate, resetErrorRate, errorRateWithinLimit,
+    // validateErrorCount}`. The breaker is a soft fence: it rejects the
+    // *next* command at this node, not in-flight ones, and resets every
+    // `error_rate_window` tend iterations.
+
+    /// Increment the per-node error counter. No-op when the cluster
+    /// breaker is disabled (`max_error_rate == 0`).
+    pub fn incr_error_rate(&self) {
+        if self.client_policy.max_error_rate > 0 {
+            self.error_rate_count.fetch_add(1, Ordering::Relaxed);
+        }
+    }
+
+    /// `true` when the breaker is disabled or the count is still under
+    /// the cluster-level threshold.
+    pub fn error_rate_within_limit(&self) -> bool {
+        let cluster_max = self.client_policy.max_error_rate;
+        cluster_max == 0 || self.error_rate_count.load(Ordering::Relaxed) <= cluster_max
+    }
+
+    /// Returns `Err(MaxErrorRate(addr))` when the breaker has tripped.
+    /// Use before sending a command at this node.
+    pub fn validate_error_count(&self) -> Result<()> {
+        if self.error_rate_within_limit() {
+            Ok(())
+        } else {
+            Err(Error::MaxErrorRate(self.address.clone()))
+        }
+    }
+
+    /// Called once per `error_rate_window` tend iterations to roll the
+    /// counter forward. Adapts the per-node ceiling exactly like Java's
+    /// `Node.resetErrorRate`: the previous-window's `count` is compared
+    /// against the *per-node* ceiling (not the cluster cap). Previous
+    /// window clean → next ceiling doubles (capped at cluster max);
+    /// previous window tripped → next ceiling halves with a floor of 1.
+    pub fn reset_error_rate(&self) {
+        let cluster_max = self.client_policy.max_error_rate;
+        if cluster_max == 0 {
+            return;
+        }
+        let count = self.error_rate_count.swap(0, Ordering::Relaxed);
+        let prev_ceiling = self.node_max_error_rate.load(Ordering::Relaxed);
+        let next_ceiling = if count <= prev_ceiling {
+            prev_ceiling.saturating_mul(2).min(cluster_max)
+        } else if prev_ceiling >= 2 {
+            prev_ceiling / 2
+        } else {
+            1
+        };
+        self.node_max_error_rate
+            .store(next_ceiling, Ordering::Relaxed);
+    }
+
+    /// Current error-rate sample, exposed for diagnostics / metrics.
+    pub fn error_rate_count(&self) -> usize {
+        self.error_rate_count.load(Ordering::Relaxed)
+    }
+
+    /// Current per-node error-rate ceiling. Adapts on every call to
+    /// [`reset_error_rate`](Self::reset_error_rate); converges back to the
+    /// cluster setting when windows stay clean. Mostly useful for
+    /// diagnostics / tests — production code paths consult the cluster
+    /// cap, not this value.
+    pub fn node_max_error_rate(&self) -> usize {
+        self.node_max_error_rate.load(Ordering::Relaxed)
     }
 
     pub(crate) async fn send_user_agent_id(&self) {

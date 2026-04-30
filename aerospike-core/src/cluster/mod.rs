@@ -86,6 +86,12 @@ pub struct Cluster {
     pub(crate) client_policy: AtomicArc<ClientPolicy>,
     hashed_pass: AtomicArc<Option<String>>,
 
+    // Number of completed tend cycles. Drives the per-node circuit-breaker
+    // window: every `error_rate_window` tends we walk the node list and
+    // call `node.reset_error_rate()`, mirroring Java's
+    // `if (tendCount % errorRateWindow == 0) … resetErrorRate()`.
+    tend_count: std::sync::atomic::AtomicUsize,
+
     tend_channel: Mutex<Sender<()>>,
     closed: AtomicBool,
 
@@ -125,6 +131,7 @@ impl Cluster {
             partition_map: AtomicArc::from(HashMap::default()),
             node_index: AtomicIsize::new(0),
             replica_index: AtomicIsize::new(0),
+            tend_count: std::sync::atomic::AtomicUsize::new(0),
 
             tend_channel: Mutex::new(tx),
             closed: AtomicBool::new(false),
@@ -326,6 +333,22 @@ impl Cluster {
 
         if let Some(partition_map) = partition_map.take() {
             self.partition_map.store(Arc::new(partition_map));
+        }
+
+        // Bump the tend counter and, if the configured `error_rate_window`
+        // boundary lands here, roll every node's per-window error counter
+        // forward. Mirrors Java's
+        // `if (tendCount % errorRateWindow == 0) … resetErrorRate()`.
+        let tend_count = self
+            .tend_count
+            .fetch_add(1, Ordering::Relaxed)
+            .wrapping_add(1);
+        let policy = self.client_policy.load();
+        let window = policy.error_rate_window;
+        if window > 0 && tend_count.is_multiple_of(window) {
+            for node in &active_nodes {
+                node.reset_error_rate();
+            }
         }
 
         let aliases: Vec<String> = self

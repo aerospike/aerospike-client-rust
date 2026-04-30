@@ -166,10 +166,19 @@ impl BatchOperateCommand {
         deadline: Option<Instant>,
         node: Arc<Node>,
     ) -> Result<Option<Error>> {
+        // Per-node circuit breaker: don't even open a socket if the node
+        // is currently outside its error-rate window. Mirrors Java's
+        // `node.validateErrorCount()` call site at the top of every
+        // command attempt.
+        if let Err(err) = node.validate_error_count() {
+            return Ok(Some(err));
+        }
+
         let mut conn = match node.get_connection(0).await {
             Ok(conn) => conn,
             Err(err) => {
                 warn!("Node {node}: {err}");
+                node.incr_error_rate();
                 return Ok(Some(err));
             }
         };
@@ -196,6 +205,7 @@ impl BatchOperateCommand {
             // Close socket to flush out possible garbage. Do not put back in pool.
             conn.invalidate();
             warn!("Node {node}: {err}");
+            node.incr_error_rate();
             return Ok(Some(err));
         }
 
@@ -215,6 +225,11 @@ impl BatchOperateCommand {
             // abort the whole batch. Return them as recoverable so the outer
             // loop can loop again.
             if commands::should_retry(&err) {
+                if commands::is_network_error(&err)
+                    || commands::is_retriable_server_error(&err)
+                {
+                    node.incr_error_rate();
+                }
                 Ok(Some(err))
             } else {
                 Err(err)

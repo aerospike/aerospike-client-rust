@@ -201,10 +201,21 @@ impl<'a> SingleCommand<'a> {
             };
             last_node_addr = Some(node.to_string());
 
+            // Per-node circuit breaker: if this node has tripped its
+            // error-rate window, refuse the command outright (no socket
+            // open, no retry on this node) and let the caller back off.
+            // Mirrors Java `SyncCommand.executeCommand` calling
+            // `node.validateErrorCount()` before `getConnection`.
+            if let Err(err) = node.validate_error_count() {
+                last_err = Some(err);
+                continue;
+            }
+
             let mut conn = match node.get_connection(cmd.hint()).await {
                 Ok(conn) => conn,
                 Err(err) => {
                     warn!("Node {node}: {err}");
+                    node.incr_error_rate();
                     last_err = Some(err);
                     continue;
                 }
@@ -234,6 +245,7 @@ impl<'a> SingleCommand<'a> {
                 // Close socket to flush out possible garbage. Do not put back in pool.
                 conn.invalidate();
                 warn!("Node {node}: {err}");
+                node.incr_error_rate();
                 last_err = Some(err);
                 continue;
             }
@@ -250,6 +262,14 @@ impl<'a> SingleCommand<'a> {
                 // server-side retriables (TIMEOUT / DEVICE_OVERLOAD / KEY_BUSY
                 // / PARTITION_UNAVAILABLE) — matching Java's SyncCommand.
                 if commands::should_retry(&err) {
+                    // Bump the per-node breaker for the retriable
+                    // error subset Java counts: TIMEOUT, DEVICE_OVERLOAD,
+                    // KEY_BUSY, plus client-side network failures.
+                    if commands::is_network_error(&err)
+                        || commands::is_retriable_server_error(&err)
+                    {
+                        node.incr_error_rate();
+                    }
                     last_err = Some(err);
                     continue;
                 }

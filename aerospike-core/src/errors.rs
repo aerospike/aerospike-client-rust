@@ -109,6 +109,11 @@ pub enum Error {
     /// Server responded with a response code indicating an error condition.
     #[error("Server error: {0:?}, In Doubt: {1}, Node: {2}")]
     ServerError(ResultCode, bool, String),
+    /// Per-node circuit breaker has tripped: too many recent errors against
+    /// the node within the configured `error_rate_window`. The command was
+    /// *not* sent to the server. Mirrors Java's `AerospikeException.Backoff`.
+    #[error("Max error rate exceeded for node {0}; backing off")]
+    MaxErrorRate(String),
     /// Error returned when executing a User-Defined Function (UDF) resulted in an error.
     #[error("UDF Bad Response: {0}")]
     UdfBadResponse(String),
