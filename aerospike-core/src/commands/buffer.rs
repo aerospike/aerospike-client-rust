@@ -129,8 +129,10 @@ const CL_MSG_VERSION: u8 = 2;
 const AS_MSG_TYPE: u8 = 3;
 pub const AS_MSG_TYPE_COMPRESSED: u8 = 4;
 
-/// Minimum message size to trigger compression.
-pub const COMPRESS_THRESHOLD: usize = 128;
+/// Default minimum message size to trigger compression — used when no
+/// per-policy threshold has been set on a `Buffer`. Java's hardcoded
+/// `COMPRESS_THRESHOLD` matches this value.
+pub const DEFAULT_COMPRESS_THRESHOLD: usize = 128;
 
 // MAX_BUFFER_SIZE protects against allocating massive memory blocks
 // for buffers. Tweak this number if you are returning a lot of
@@ -150,6 +152,11 @@ pub struct Buffer {
     /// uncompressed size (8 bytes). This mirrors the Go client's pre-padding
     /// approach, allowing `compress()` to work in-place without copying.
     compress_offset: usize,
+    /// Minimum command-buffer size before [`compress`](Self::compress)
+    /// actually invokes zlib. Mirrors Java's hard-coded
+    /// `COMPRESS_THRESHOLD = 128` (the default), but is configurable via
+    /// `BasePolicy.compression_threshold`.
+    compress_threshold: usize,
 }
 
 impl Buffer {
@@ -160,14 +167,19 @@ impl Buffer {
             // estimated_data_offset: 0,
             reclaim_threshold,
             compress_offset: 0,
+            compress_threshold: DEFAULT_COMPRESS_THRESHOLD,
         }
     }
 
-    /// Enable or disable compression pre-padding. Must be called before `begin()`.
-    /// When enabled, reserves 16 bytes at the start of the buffer for the
-    /// compressed message header.
-    pub(crate) const fn set_compress(&mut self, enabled: bool) {
+    /// Enable or disable compression pre-padding and configure the size
+    /// gate. Must be called before `begin()`. When enabled, reserves 16
+    /// bytes at the start of the buffer for the compressed message header
+    /// and remembers `threshold` so a later [`compress`](Self::compress)
+    /// call can short-circuit on small payloads exactly like Java's
+    /// `if (policy.compress && dataOffset > COMPRESS_THRESHOLD)`.
+    pub(crate) const fn set_compress(&mut self, enabled: bool, threshold: usize) {
         self.compress_offset = if enabled { 16 } else { 0 };
+        self.compress_threshold = threshold;
     }
 
     const fn begin(&mut self) {
@@ -236,7 +248,7 @@ impl Buffer {
         let cmd_end = self.data_buffer.len();
         let uncompressed_size = cmd_end - cmd_start;
 
-        if uncompressed_size <= COMPRESS_THRESHOLD {
+        if uncompressed_size <= self.compress_threshold {
             // Below threshold: shift data to position 0 and skip compression.
             if cmd_start > 0 {
                 self.data_buffer.copy_within(cmd_start..cmd_end, 0);
@@ -2820,7 +2832,7 @@ mod tests {
     /// the command bytes at [compress_offset .. data_offset] before end() is called.
     fn make_command_buffer(payload_size: usize, use_compress: bool) -> Buffer {
         let mut buf = Buffer::new(0);
-        buf.set_compress(use_compress);
+        buf.set_compress(use_compress, DEFAULT_COMPRESS_THRESHOLD);
         buf.begin();
 
         // Simulate writing a header via write_header (read-only command)
@@ -2851,22 +2863,30 @@ mod tests {
         let mut buf = Buffer::new(0);
         assert_eq!(buf.compress_offset, 0);
 
-        buf.set_compress(true);
+        buf.set_compress(true, DEFAULT_COMPRESS_THRESHOLD);
         assert_eq!(buf.compress_offset, 16);
+        assert_eq!(buf.compress_threshold, DEFAULT_COMPRESS_THRESHOLD);
 
-        buf.set_compress(false);
+        buf.set_compress(false, DEFAULT_COMPRESS_THRESHOLD);
         assert_eq!(buf.compress_offset, 0);
+    }
+
+    #[test]
+    fn set_compress_records_threshold() {
+        let mut buf = Buffer::new(0);
+        buf.set_compress(true, 4096);
+        assert_eq!(buf.compress_threshold, 4096);
     }
 
     #[test]
     fn begin_accounts_for_compress_offset() {
         let mut buf = Buffer::new(0);
 
-        buf.set_compress(false);
+        buf.set_compress(false, DEFAULT_COMPRESS_THRESHOLD);
         buf.begin();
         assert_eq!(buf.data_offset, MSG_TOTAL_HEADER_SIZE as usize);
 
-        buf.set_compress(true);
+        buf.set_compress(true, DEFAULT_COMPRESS_THRESHOLD);
         buf.begin();
         assert_eq!(buf.data_offset, 16 + MSG_TOTAL_HEADER_SIZE as usize);
     }
@@ -2905,6 +2925,32 @@ mod tests {
         let proto = NetworkEndian::read_u64(&buf.data_buffer[0..8]);
         let msg_type = ((proto >> 48) & 0xFF) as u8;
         assert_eq!(msg_type, AS_MSG_TYPE);
+    }
+
+    #[test]
+    fn compress_threshold_is_configurable() {
+        // Payload (=200 bytes total command) sits above the default 128
+        // gate but below a custom 4096-byte gate. With the higher gate
+        // configured, `compress()` must short-circuit and leave the
+        // buffer uncompressed (the proto header should still be the
+        // plain `AS_MSG_TYPE`, not `AS_MSG_TYPE_COMPRESSED`).
+        let payload_size = 200;
+        let mut buf = make_command_buffer(payload_size, true);
+        // Override the default gate baked in by `make_command_buffer`
+        // *after* the command was built — `compress()` only consults
+        // `compress_threshold` at compress-time, so a late override is
+        // sufficient (and matches how a per-policy threshold would be
+        // wired through `set_compress`).
+        buf.compress_threshold = 4096;
+
+        buf.compress().unwrap();
+
+        let proto = NetworkEndian::read_u64(&buf.data_buffer[0..8]);
+        let msg_type = ((proto >> 48) & 0xFF) as u8;
+        assert_eq!(
+            msg_type, AS_MSG_TYPE,
+            "configured gate should suppress compression below threshold"
+        );
     }
 
     #[test]

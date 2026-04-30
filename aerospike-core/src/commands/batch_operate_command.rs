@@ -183,7 +183,8 @@ impl BatchOperateCommand {
             }
         };
 
-        conn.buffer.set_compress(policy.use_compression());
+        conn.buffer
+            .set_compress(policy.use_compression(), policy.compression_threshold());
         conn.buffer
             .set_batch_operate(policy, batch_ops)
             .map_err(|_| Error::ClientError("Failed to prepare send buffer".into()))?;

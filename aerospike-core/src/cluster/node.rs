@@ -966,11 +966,11 @@ mod node_tests {
         let nv = Arc::new(NodeValidator {
             name: "test-node".to_string(),
             aliases: vec![Host::new("127.0.0.1", 3000)],
-            services: vec![],
             address: "127.0.0.1:3000".to_string(),
             client_policy: policy.clone(),
             use_new_info: true,
             version: Version::default(),
+            detect_load_balancer: false,
         });
         Node::new(policy, nv)
     }

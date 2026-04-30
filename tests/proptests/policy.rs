@@ -172,6 +172,7 @@ pub fn base_policy(
                 read_mode_sc,
                 read_touch_ttl,
                 use_compression: false,
+                compression_threshold: 128,
                 filter_expression,
                 txn: None,
             },

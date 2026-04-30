@@ -211,6 +211,21 @@ impl Connection {
         Ok((conn, new_session))
     }
 
+    /// Test-mode shim that mirrors the production
+    /// [`new_with_session`](Self::new_with_session) signature so call sites
+    /// like `ConnectionPool::make_conn` link under `cfg(test)`. Always
+    /// returns a fresh `(connection, None)` pair — the test build never
+    /// goes near a real LOGIN, so the cached-session fast path is moot.
+    #[cfg(test)]
+    pub async fn new_with_session(
+        host: &Host,
+        policy: &ClientPolicy,
+        hashed_pass: Option<&String>,
+        _session: Option<&crate::commands::admin_command::SessionInfo>,
+    ) -> Result<(Self, Option<crate::commands::admin_command::SessionInfo>)> {
+        Self::new(host, policy, hashed_pass).await.map(|c| (c, None))
+    }
+
     #[cfg(test)]
     pub async fn new(
         host: &Host,

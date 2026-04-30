@@ -92,6 +92,11 @@ pub trait Policy {
     /// Whether to use zlib compression on command buffers.
     fn use_compression(&self) -> bool;
 
+    /// Minimum command-buffer size at which compression actually fires.
+    /// Buffers `<=` this value are sent uncompressed even when
+    /// [`use_compression`](Self::use_compression) is true.
+    fn compression_threshold(&self) -> usize;
+
     /// Read policy for AP (availability) namespaces.
     fn read_mode_ap(&self) -> ReadModeAP;
 
@@ -119,6 +124,10 @@ where
 
     fn use_compression(&self) -> bool {
         self.base().use_compression()
+    }
+
+    fn compression_threshold(&self) -> usize {
+        self.base().compression_threshold()
     }
 
     fn deadline(&self) -> Option<Instant> {
@@ -264,7 +273,7 @@ pub struct BasePolicy {
     pub sleep_between_retries: u32,
 
     /// Use zlib compression on command buffers sent to the server and responses received
-    /// from the server when the buffer size is greater than 128 bytes.
+    /// from the server when the buffer size is greater than [`compression_threshold`](Self::compression_threshold).
     ///
     /// This option will increase cpu and memory usage (for extra compressed buffers), but
     /// decrease the size of data sent over the network.
@@ -273,6 +282,21 @@ pub struct BasePolicy {
     ///
     /// Default: false
     pub use_compression: bool,
+
+    /// Minimum command buffer size, in bytes, before compression is applied.
+    /// Buffers smaller than or equal to this value are sent uncompressed
+    /// even when [`use_compression`](Self::use_compression) is enabled —
+    /// the per-command CPU cost of zlib outweighs the savings on small
+    /// payloads.
+    ///
+    /// Defaults to `128`, matching Java's hard-coded `COMPRESS_THRESHOLD`
+    /// and the Go client's behavior. Tune higher when most operations
+    /// touch only a few small bins, lower when most payloads are large.
+    /// Setting it to `0` makes every command go through zlib whenever
+    /// `use_compression` is on.
+    ///
+    /// No effect when [`use_compression`](Self::use_compression) is `false`.
+    pub compression_threshold: usize,
 
     /// Optional expression filter applied to each record **after** the server performs the
     /// primary operation (index lookup, scan, read, write, etc.). If the expression evaluates
@@ -358,5 +382,9 @@ impl Policy for BasePolicy {
 
     fn use_compression(&self) -> bool {
         self.use_compression
+    }
+
+    fn compression_threshold(&self) -> usize {
+        self.compression_threshold
     }
 }

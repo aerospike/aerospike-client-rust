@@ -843,10 +843,14 @@ mod tests {
 
     #[test]
     fn equal_with_expression() {
+        // `expression()` switches the filter from bin-based to
+        // expression-based indexing and intentionally clears `bin_name` —
+        // the server-side secondary index this filter targets is keyed
+        // by the expression, not by a column.
         use crate::expressions;
         let exp = expressions::int_val(1);
         let f = Filter::equal("bin1", 42_i64).expression(exp);
-        assert_eq!(f.bin_name, "bin1");
+        assert_eq!(f.bin_name, "");
         assert!(f.expression.is_some());
     }
 
@@ -867,10 +871,11 @@ mod tests {
 
     #[test]
     fn range_with_expression() {
+        // See `equal_with_expression` for the bin-name-clearing rationale.
         use crate::expressions;
         let exp = expressions::int_val(1);
         let f = Filter::range("bin1", 0_i64, 100_i64).expression(exp);
-        assert_eq!(f.bin_name, "bin1");
+        assert_eq!(f.bin_name, "");
         assert!(f.expression.is_some());
     }
 
@@ -889,10 +894,11 @@ mod tests {
 
     #[test]
     fn contains_with_expression() {
+        // See `equal_with_expression` for the bin-name-clearing rationale.
         use crate::expressions;
         let exp = expressions::int_val(1);
         let f = Filter::contains("bin1", 42_i64, CollectionIndexType::List).expression(exp);
-        assert_eq!(f.bin_name, "bin1");
+        assert_eq!(f.bin_name, "");
         assert!(f.expression.is_some());
     }
 
@@ -911,11 +917,12 @@ mod tests {
 
     #[test]
     fn contains_range_with_expression() {
+        // See `equal_with_expression` for the bin-name-clearing rationale.
         use crate::expressions;
         let exp = expressions::int_val(1);
         let f = Filter::contains_range("bin1", 0_i64, 100_i64, CollectionIndexType::List)
             .expression(exp);
-        assert_eq!(f.bin_name, "bin1");
+        assert_eq!(f.bin_name, "");
         assert!(f.expression.is_some());
     }
 

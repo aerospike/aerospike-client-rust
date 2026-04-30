@@ -48,7 +48,15 @@ env_logger = "0.11"
 hex = "0.4"
 bencher = "0.1"
 serde_json = "1.0"
-aerospike = { path = "../" }
+# Used only by doc-tests inside `aerospike-core` (`use aerospike::…` in
+# rustdoc snippets). Strip default features so testing this crate under
+# `rt-async-std` doesn't transitively re-enable `rt-tokio` via the umbrella's
+# defaults — that conflict makes `aerospike-rt` fail to compile with
+# duplicate `fs` / `io` / `Mutex` / … re-exports. Re-enable just `async`
+# so the umbrella's own `compile_error!` for "select a client version" is
+# satisfied; the runtime flag flows through whatever is set on
+# `aerospike-core` itself.
+aerospike = { path = "../", default-features = false, features = ["async"] }
 aerospike-macro = {path = "../aerospike-macro"}
 lazy_static = "1.5"
 tokio = { version = "1.52.1", features = ["full"] }

@@ -224,7 +224,8 @@ impl<'a> SingleCommand<'a> {
             conn.set_socket_timeout(deadline, policy.socket_timeout());
             conn.set_timeout_delay(cmd.can_recover_connection(), policy.timeout_delay());
 
-            conn.buffer.set_compress(policy.use_compression());
+            conn.buffer
+                .set_compress(policy.use_compression(), policy.compression_threshold());
             cmd.prepare_buffer(&mut conn)
                 .await
                 .map_err(|e| e.chain_error("Failed to prepare send buffer"))?;

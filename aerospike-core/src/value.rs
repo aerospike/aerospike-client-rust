@@ -560,6 +560,17 @@ impl From<i64> for Value {
 
 impl From<u64> for Value {
     fn from(val: u64) -> Value {
+        // Aerospike's wire protocol carries signed 64-bit ints only.
+        // Silently casting `u64::MAX` to `i64` produces `-1`, which is
+        // exactly the kind of confusing truncation we want to catch — so
+        // refuse instead.
+        if val > i64::MAX as u64 {
+            panic!(
+                "Aerospike does not support u64 natively on server-side. \
+                 Value {val} exceeds i64::MAX. Cast explicitly to i64 if \
+                 the truncation is intentional."
+            );
+        }
         Value::Int(val as i64)
     }
 }
@@ -620,7 +631,7 @@ impl<'a> From<&'a i64> for Value {
 
 impl<'a> From<&'a u64> for Value {
     fn from(val: &'a u64) -> Value {
-        Value::Int(*val as i64)
+        Value::from(*val)
     }
 }
 
@@ -1100,9 +1111,12 @@ mod tests {
             false
         );
         let json = serde_json::to_string(&val);
+        // Floats serialize as proper JSON numbers (e.g. `2.1`), not as the
+        // raw `f64::to_bits()` integer pattern an earlier draft of this
+        // test was pinned to.
         assert_eq!(
             json.unwrap(),
-            "[null,\"0\",9,8,7,1,4611911198408756429,-1,[5,6,7,8,\"asd\"],true,false]",
+            "[null,\"0\",9,8,7,1,2.1,-1,[5,6,7,8,\"asd\"],true,false]",
             "List Serialization failed"
         );
 
