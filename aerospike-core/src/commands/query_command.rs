@@ -15,6 +15,7 @@
 use std::sync::Arc;
 
 use crate::cluster::Node;
+use crate::commands::buffer::QueryDirection;
 use crate::commands::{Command, SingleCommand, StreamCommand};
 use crate::errors::Result;
 use crate::net::Connection;
@@ -75,13 +76,14 @@ impl Command for QueryCommand<'_> {
 
     async fn prepare_buffer(&mut self, conn: &mut Connection) -> Result<()> {
         let node_partitions = self.stream_command.node_partitions.lock().await;
+        let node = node_partitions.node.clone();
         conn.buffer
             .set_query(
-                self.policy,
+                QueryDirection::Foreground(self.policy),
                 &self.statement,
-                false,
                 self.stream_command.recordset.task_id(),
-                &node_partitions,
+                &node,
+                Some(&node_partitions),
             )
             .await
     }

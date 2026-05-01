@@ -19,29 +19,25 @@ use flate2::read::ZlibDecoder;
 
 use crate::cluster::Node;
 use crate::commands::buffer;
+use crate::commands::buffer::QueryDirection;
 use crate::commands::{Command, SingleCommand};
 use crate::errors::{Error, Result};
 use crate::net::{BufferedConn, Connection};
-use crate::operations::Operation;
 use crate::policy::{Policy, WritePolicy};
 use crate::{ResultCode, Statement};
 
-/// Payload type for background server commands.
-pub enum ServerCommandPayload<'a> {
-    /// Apply write operations to matching records.
-    Operations(&'a [Operation]),
-    /// Apply a UDF to matching records.
-    Udf,
-}
-
 /// Command that executes a background query/scan on a single node,
-/// applying write operations or a UDF to matching records without returning data.
+/// applying write operations (carried on `statement.operations`) or a
+/// UDF to matching records without returning data.
 pub struct ServerCommand<'a> {
     node: Arc<Node>,
     write_policy: &'a WritePolicy,
     statement: &'a Statement,
     task_id: u64,
-    payload: ServerCommandPayload<'a>,
+    /// `true` for the UDF-execute payload (statement carries an
+    /// aggregation), `false` for the ops payload
+    /// (`statement.operations` is set).
+    is_udf: bool,
 }
 
 impl<'a> ServerCommand<'a> {
@@ -50,14 +46,13 @@ impl<'a> ServerCommand<'a> {
         write_policy: &'a WritePolicy,
         statement: &'a Statement,
         task_id: u64,
-        operations: &'a [Operation],
     ) -> Self {
         ServerCommand {
             node,
             write_policy,
             statement,
             task_id,
-            payload: ServerCommandPayload::Operations(operations),
+            is_udf: false,
         }
     }
 
@@ -72,7 +67,7 @@ impl<'a> ServerCommand<'a> {
             write_policy,
             statement,
             task_id,
-            payload: ServerCommandPayload::Udf,
+            is_udf: true,
         }
     }
 
@@ -94,18 +89,21 @@ impl Command for ServerCommand<'_> {
     }
 
     async fn prepare_buffer(&mut self, conn: &mut Connection) -> Result<()> {
-        match &self.payload {
-            ServerCommandPayload::Operations(operations) => conn.buffer.set_query_operate(
-                self.write_policy,
+        // Both background ops (carried on `statement.operations`) and
+        // background UDF execute (carried on `statement.aggregation`)
+        // share the same write-header wire path through `set_query`.
+        // `is_udf` is informational — the unified path picks the
+        // payload up directly from the statement.
+        let _ = self.is_udf;
+        conn.buffer
+            .set_query(
+                QueryDirection::Background(self.write_policy),
                 self.statement,
                 self.task_id,
-                operations,
-            ),
-            ServerCommandPayload::Udf => {
-                conn.buffer
-                    .set_query_udf_execute(self.write_policy, self.statement, self.task_id)
-            }
-        }
+                &self.node,
+                None,
+            )
+            .await
     }
 
     fn get_node(&mut self) -> Result<Arc<Node>> {

@@ -48,7 +48,7 @@ use hazarc::AtomicArc;
 
 static CLIENT_VERSION: &str = env!("CARGO_PKG_VERSION");
 
-/// Per-namespace partition data, equivalent to Go's `Partitions` struct.
+/// Per-namespace partition data.
 /// Contains replicated node arrays, SC mode flag, and regime tracking.
 #[derive(Debug, Default, Clone)]
 pub struct Partitions {
@@ -472,9 +472,7 @@ impl Cluster {
                     return true;
                 }
 
-                if let Ok(addrs) =
-                    (host.name.as_str(), host.port).to_socket_addrs()
-                {
+                if let Ok(addrs) = (host.name.as_str(), host.port).to_socket_addrs() {
                     for addr in addrs {
                         let ip_str = addr.ip().to_string();
                         if ip_str == node_host.name || addr.ip().is_loopback() {

@@ -22,6 +22,7 @@ use flate2::Compression;
 use std::sync::Arc;
 
 use crate::batch::BatchOperation;
+use crate::cluster::Node;
 use crate::commands::field_type::FieldType;
 use crate::commands::BatchAttr;
 use crate::errors::{Error, Result};
@@ -35,6 +36,49 @@ use crate::policy::{
 use crate::query::NodePartitions;
 use crate::txn::Txn;
 use crate::{Bin, Bins, CollectionIndexType, Key, Statement, Value};
+
+/// Direction of a `set_query` call: foreground reads with a `QueryPolicy`,
+/// or background writes (ops or UDF) with a `WritePolicy`.
+pub(crate) enum QueryDirection<'a> {
+    Foreground(&'a QueryPolicy),
+    Background(&'a WritePolicy),
+}
+
+impl<'a> QueryDirection<'a> {
+    fn is_background(&self) -> bool {
+        matches!(self, QueryDirection::Background(_))
+    }
+
+    fn base_policy(&self) -> &BasePolicy {
+        match self {
+            QueryDirection::Foreground(p) => &p.base_policy,
+            QueryDirection::Background(p) => &p.base_policy,
+        }
+    }
+
+    fn socket_timeout(&self) -> u32 {
+        match self {
+            QueryDirection::Foreground(p) => p.socket_timeout(),
+            QueryDirection::Background(p) => p.socket_timeout(),
+        }
+    }
+
+    fn filter_expression(&self) -> &Option<Expression> {
+        match self {
+            QueryDirection::Foreground(p) => p.filter_expression(),
+            QueryDirection::Background(p) => p.filter_expression(),
+        }
+    }
+
+    /// Foreground-only field today. Background queries don't carry a
+    /// `records_per_second` knob in the current `WritePolicy` shape.
+    fn records_per_second(&self) -> u32 {
+        match self {
+            QueryDirection::Foreground(p) => p.records_per_second,
+            QueryDirection::Background(_) => 0,
+        }
+    }
+}
 
 // Contains a read operation.
 pub const INFO1_READ: u8 = 1;
@@ -1063,194 +1107,58 @@ impl Buffer {
         Ok(())
     }
 
-    pub(crate) async fn set_scan(
-        &mut self,
-        policy: &QueryPolicy,
-        namespace: &str,
-        set_name: &str,
-        bins: &Bins,
-        task_id: u64,
-        node_partitions: &NodePartitions,
-    ) -> Result<()> {
-        self.begin();
-
-        let mut field_count = 0;
-
-        let parts_full_size = node_partitions.parts_full.len() * 2;
-        let parts_partial_size = node_partitions.parts_partial.len() * 20;
-        let max_records = node_partitions.record_max;
-
-        let filter_size = self.estimate_filter_size(policy.filter_expression())?;
-        if filter_size > 0 {
-            field_count += 1;
-        }
-
-        if !namespace.is_empty() {
-            self.data_offset += namespace.len() + FIELD_HEADER_SIZE as usize;
-            field_count += 1;
-        }
-
-        if !set_name.is_empty() {
-            self.data_offset += set_name.len() + FIELD_HEADER_SIZE as usize;
-            field_count += 1;
-        }
-
-        if parts_full_size > 0 {
-            self.data_offset += parts_full_size + FIELD_HEADER_SIZE as usize;
-            field_count += 1;
-        }
-
-        if parts_partial_size > 0 {
-            self.data_offset += parts_partial_size + FIELD_HEADER_SIZE as usize;
-            field_count += 1;
-        }
-
-        if max_records > 0 {
-            self.data_offset += 8 + FIELD_HEADER_SIZE as usize;
-            field_count += 1;
-        }
-
-        if policy.records_per_second > 0 {
-            self.data_offset += 4 + FIELD_HEADER_SIZE as usize;
-            field_count += 1;
-        }
-
-        // Estimate scan timeout size.
-        self.data_offset += 4 + FIELD_HEADER_SIZE as usize;
-        field_count += 1;
-
-        // Allocate space for task_id field.
-        self.data_offset += 8 + FIELD_HEADER_SIZE as usize;
-        field_count += 1;
-
-        let bin_count = match *bins {
-            Bins::All | Bins::None => 0,
-            Bins::Some(ref bin_names) => {
-                for bin_name in bin_names {
-                    self.estimate_operation_size_for_bin_name(bin_name)?;
-                }
-                bin_names.len()
-            }
-        };
-
-        self.size_buffer()?;
-
-        let mut read_attr = INFO1_READ;
-        if bins.is_none() {
-            read_attr |= INFO1_NOBINDATA;
-        }
-
-        let mut write_attr = 0;
-        match policy.expected_duration {
-            QueryDuration::Short => read_attr |= INFO1_SHORT_QUERY,
-            QueryDuration::LongRelaxAP => write_attr |= INFO2_RELAX_AP_LONG_QUERY,
-            QueryDuration::Long => (),
-        }
-
-        self.write_header_read(
-            &policy.base_policy,
-            read_attr,
-            write_attr,
-            INFO3_PARTITION_DONE,
-            field_count,
-            bin_count as u16,
-        );
-
-        if !namespace.is_empty() {
-            self.write_field_string(namespace, FieldType::Namespace);
-        }
-
-        if !set_name.is_empty() {
-            self.write_field_string(set_name, FieldType::Table);
-        }
-
-        if parts_full_size > 0 {
-            self.write_field_header(parts_full_size, FieldType::PIDArray);
-            for part in &node_partitions.parts_full {
-                let part = part.lock().await;
-                self.write_u16_little_endian(part.id);
-            }
-        }
-
-        if parts_partial_size > 0 {
-            self.write_field_header(parts_partial_size, FieldType::DigestArray);
-            for part in &node_partitions.parts_partial {
-                let part = part.lock().await;
-                part.digest.map(|digest| self.write_bytes(&digest));
-            }
-        }
-
-        if let Some(filter) = policy.filter_expression() {
-            self.write_filter_expression(filter, filter_size);
-        }
-
-        if max_records > 0 {
-            self.write_field_u64(max_records, FieldType::MaxRecords);
-        }
-
-        if policy.records_per_second > 0 {
-            self.write_field_u32(policy.records_per_second, FieldType::RecordsPerSecond);
-        }
-
-        // Write scan timeout
-        self.write_field_header(4, FieldType::SocketTimeout);
-        self.write_u32(policy.socket_timeout());
-
-        self.write_field_header(8, FieldType::QueryId);
-        self.write_u64(task_id);
-
-        if let Bins::Some(ref bin_names) = *bins {
-            for bin_name in bin_names {
-                self.write_operation_for_bin_name(bin_name, OperationType::Read);
-            }
-        }
-
-        self.end();
-        // self.dump_buffer();
-
-        Ok(())
-    }
-
+    /// Build a query/scan/background-query command buffer. Single
+    /// entry point for all three forms — direction selects the header
+    /// shape and ops-validation rule.
+    ///
+    /// Requires Aerospike Server >= 6.0.0 (partition queries). Older
+    /// servers, which carried query bin names in a dedicated
+    /// `QUERY_BINLIST` field instead of as trailing READ ops, are
+    /// not supported.
     #[allow(clippy::cognitive_complexity)]
     pub(crate) async fn set_query(
         &mut self,
-        policy: &QueryPolicy,
+        direction: QueryDirection<'_>,
         statement: &Statement,
-        write: bool,
         task_id: u64,
-        node_partitions: &NodePartitions,
+        node: &Node,
+        node_partitions: Option<&NodePartitions>,
     ) -> Result<()> {
         let filter = statement.filters.as_ref().map(|filters| &filters[0]);
+        let is_background = direction.is_background();
+        let supports_ops_ext = node.version().supports_query_ops_projection_ext();
+        let records_per_second = direction.records_per_second();
+        let socket_timeout = direction.socket_timeout();
 
         self.begin();
 
-        let mut field_count = 0;
+        let mut field_count: u16 = 0;
         let mut filter_size = 0;
 
+        // ---------- estimation: namespace, set, RPS, socket timeout, taskId ----------
         if !statement.namespace.is_empty() {
             self.data_offset += statement.namespace.len() + FIELD_HEADER_SIZE as usize;
             field_count += 1;
         }
-
         if !statement.set_name.is_empty() {
             self.data_offset += statement.set_name.len() + FIELD_HEADER_SIZE as usize;
             field_count += 1;
         }
 
-        if policy.records_per_second > 0 {
+        if records_per_second > 0 {
             self.data_offset += 4 + FIELD_HEADER_SIZE as usize;
             field_count += 1;
         }
 
-        // Estimate socket timeout field size. This field is used in new servers and not used
-        // (but harmless to add) in old servers.
+        // Socket timeout — used by new servers, harmless on old ones.
         self.data_offset += 4 + FIELD_HEADER_SIZE as usize;
         field_count += 1;
 
-        // Allocate space for TaskId field.
+        // TaskId.
         self.data_offset += 8 + FIELD_HEADER_SIZE as usize;
         field_count += 1;
 
+        // ---------- estimation: filter block ----------
         if let Some(filter) = filter {
             let idx_type = filter.collection_index_type.clone();
             if idx_type != CollectionIndexType::Default {
@@ -1282,39 +1190,7 @@ impl Buffer {
             }
         }
 
-        let parts_full_size = node_partitions.parts_full.len() * 2;
-        let parts_partial_size = node_partitions.parts_partial.len() * 20;
-        let parts_partial_bval_size = match filter {
-            Some(_) => node_partitions.parts_partial.len() * 8,
-            None => 0,
-        };
-        let max_records = node_partitions.record_max;
-
-        if parts_full_size > 0 {
-            self.data_offset += parts_full_size + FIELD_HEADER_SIZE as usize;
-            field_count += 1;
-        }
-
-        if parts_partial_size > 0 {
-            self.data_offset += parts_partial_size + FIELD_HEADER_SIZE as usize;
-            field_count += 1;
-        }
-
-        if parts_partial_bval_size > 0 {
-            self.data_offset += parts_partial_bval_size + FIELD_HEADER_SIZE as usize;
-            field_count += 1;
-        }
-
-        if max_records > 0 {
-            self.data_offset += 8 + FIELD_HEADER_SIZE as usize;
-            field_count += 1;
-        }
-
-        let filter_exp_size = self.estimate_filter_size(policy.filter_expression())?;
-        if filter_exp_size > 0 {
-            field_count += 1;
-        }
-
+        // ---------- estimation: aggregation / UDF ----------
         if let Some(ref aggregation) = statement.aggregation {
             self.data_offset += 1 + FIELD_HEADER_SIZE as usize; // udf type
             self.data_offset += aggregation.package_name.len() + FIELD_HEADER_SIZE as usize;
@@ -1328,82 +1204,136 @@ impl Buffer {
             field_count += 4;
         }
 
-        // Foreground query ops projection: when set, the server returns
-        // the result of these operations for each matching record
-        // instead of the bin set selected by `bins`. Validate against
-        // the target node's version since servers older than 8.1.2 only
-        // accept basic `Read` ops here.
-        let operation_count = if let Some(ref operations) = statement.operations {
-            let supports_ext = node_partitions
-                .node
-                .version()
-                .supports_query_ops_projection_ext();
+        // ---------- estimation: policy filter expression ----------
+        let filter_exp_size = self.estimate_filter_size(direction.filter_expression())?;
+        if filter_exp_size > 0 {
+            field_count += 1;
+        }
+
+        // ---------- estimation: partition tracking + max records ----------
+        let parts_full_size = node_partitions.map_or(0, |np| np.parts_full.len() * 2);
+        let parts_partial_size = node_partitions.map_or(0, |np| np.parts_partial.len() * 20);
+        let parts_partial_bval_size = match (filter, node_partitions) {
+            (Some(_), Some(np)) => np.parts_partial.len() * 8,
+            _ => 0,
+        };
+        let max_records = node_partitions.map_or(0, |np| np.record_max);
+
+        if parts_full_size > 0 {
+            self.data_offset += parts_full_size + FIELD_HEADER_SIZE as usize;
+            field_count += 1;
+        }
+        if parts_partial_size > 0 {
+            self.data_offset += parts_partial_size + FIELD_HEADER_SIZE as usize;
+            field_count += 1;
+        }
+        if parts_partial_bval_size > 0 {
+            self.data_offset += parts_partial_bval_size + FIELD_HEADER_SIZE as usize;
+            field_count += 1;
+        }
+        if max_records > 0 {
+            self.data_offset += 8 + FIELD_HEADER_SIZE as usize;
+            field_count += 1;
+        }
+
+        // ---------- estimation: operations vs bin-name READ ops ----------
+        // Operations and bin names are mutually exclusive; warn (don't
+        // error) when both are set, mirroring the Java client.
+        let operation_count: u16 = if let Some(ref operations) = statement.operations {
+            if matches!(statement.bins, Bins::Some(_)) {
+                log::warn!("Operations and bin names are mutually exclusive.");
+            }
             for op in operations {
-                if op.is_write() {
-                    return Err(Error::InvalidArgument(
-                        "Query operations must be read-only. Use query_operate for write-only \
-                         operations."
-                            .into(),
-                    ));
-                }
-                if !supports_ext && !op.is_basic_read() {
-                    return Err(Error::InvalidArgument(
-                        "Only basic read operations are supported for query operations \
-                         projection on server versions prior to 8.1.2."
-                            .into(),
-                    ));
+                if is_background {
+                    if !op.is_write() {
+                        return Err(Error::InvalidArgument(
+                            "Background query operations must be write-only. Use query for \
+                             read-only operations."
+                                .into(),
+                        ));
+                    }
+                } else {
+                    if op.is_write() {
+                        return Err(Error::InvalidArgument(
+                            "Query operations must be read-only. Use query_operate for \
+                             write-only operations."
+                                .into(),
+                        ));
+                    }
+                    if !supports_ops_ext && !op.is_basic_read() {
+                        return Err(Error::InvalidArgument(
+                            "Only basic read operations are supported for query operations \
+                             projection on server versions prior to 8.1.2."
+                                .into(),
+                        ));
+                    }
                 }
                 self.data_offset += op.estimate_size()? + OPERATION_HEADER_SIZE as usize;
             }
-            operations.len()
+            operations.len() as u16
         } else if let Bins::Some(ref bin_names) = statement.bins {
             for bin_name in bin_names {
                 self.estimate_operation_size_for_bin_name(bin_name)?;
             }
-            bin_names.len()
+            bin_names.len() as u16
         } else {
             0
         };
 
         self.size_buffer()?;
 
-        let has_ops_projection = statement.operations.is_some();
-        let mut info1 = INFO1_READ;
-        if !policy.include_bin_data || statement.bins.is_none() {
-            info1 |= INFO1_NOBINDATA;
+        // ---------- header ----------
+        match direction {
+            QueryDirection::Background(wpolicy) => {
+                self.write_header_with_policy(
+                    wpolicy,
+                    0,
+                    INFO2_WRITE,
+                    field_count,
+                    operation_count,
+                );
+            }
+            QueryDirection::Foreground(qpolicy) => {
+                let mut info1 = INFO1_READ;
+                let mut info2 = 0u8;
+                if !qpolicy.include_bin_data || statement.bins.is_none() {
+                    info1 |= INFO1_NOBINDATA;
+                }
+                match qpolicy.expected_duration {
+                    QueryDuration::Short => info1 |= INFO1_SHORT_QUERY,
+                    QueryDuration::LongRelaxAP => info2 |= INFO2_RELAX_AP_LONG_QUERY,
+                    QueryDuration::Long => (),
+                }
+                self.write_header_read(
+                    direction.base_policy(),
+                    info1,
+                    info2,
+                    INFO3_PARTITION_DONE,
+                    field_count,
+                    operation_count,
+                );
+            }
         }
 
-        let mut info2 = if write { INFO2_WRITE } else { 0 };
-
-        match policy.expected_duration {
-            QueryDuration::Short => info1 |= INFO1_SHORT_QUERY,
-            QueryDuration::LongRelaxAP => info2 |= INFO2_RELAX_AP_LONG_QUERY,
-            QueryDuration::Long => (),
-        }
-
-        self.write_header_read(
-            &policy.base_policy,
-            info1,
-            info2,
-            INFO3_PARTITION_DONE,
-            field_count,
-            operation_count as u16,
-        );
-
+        // ---------- write phase, in Java's exact order ----------
         if !statement.namespace.is_empty() {
             self.write_field_string(&statement.namespace, FieldType::Namespace);
         }
-
         if !statement.set_name.is_empty() {
             self.write_field_string(&statement.set_name, FieldType::Table);
         }
+        if records_per_second > 0 {
+            self.write_field_u32(records_per_second, FieldType::RecordsPerSecond);
+        }
+
+        self.write_field_header(4, FieldType::SocketTimeout);
+        self.write_u32(socket_timeout);
 
         self.write_field_header(8, FieldType::QueryId);
         self.write_u64(task_id);
 
         if let Some(filter) = filter {
             let idx_type = filter.collection_index_type.clone();
-
             if idx_type != CollectionIndexType::Default {
                 self.write_field_header(1, FieldType::IndexType);
                 self.write_u8(idx_type as u8);
@@ -1411,7 +1341,6 @@ impl Buffer {
 
             self.write_field_header(filter_size, FieldType::IndexRange);
             self.write_u8(1);
-
             filter.write(self)?;
 
             if let Some(ref ctx) = filter.context {
@@ -1433,57 +1362,12 @@ impl Buffer {
             }
         }
 
-        if parts_full_size > 0 {
-            self.write_field_header(parts_full_size, FieldType::PIDArray);
-            for part in &node_partitions.parts_full {
-                let part = part.lock().await;
-                self.write_u16_little_endian(part.id);
-            }
-        }
-
-        if parts_partial_size > 0 {
-            self.write_field_header(parts_partial_size, FieldType::DigestArray);
-            for part in &node_partitions.parts_partial {
-                let part = part.lock().await;
-                part.digest.map(|digest| self.write_bytes(&digest));
-            }
-        }
-
-        if parts_partial_bval_size > 0 {
-            self.write_field_header(parts_partial_bval_size, FieldType::BValArray);
-            for part in &node_partitions.parts_partial {
-                let part = part.lock().await;
-                if let Some(bval) = part.bval {
-                    self.write_u64_little_endian(bval);
-                } else {
-                    self.write_u64_little_endian(0);
-                }
-            }
-        }
-
-        if max_records > 0 {
-            self.write_field_u64(max_records, FieldType::MaxRecords);
-        }
-
-        if policy.records_per_second > 0 {
-            self.write_field_u32(policy.records_per_second, FieldType::RecordsPerSecond);
-        }
-
-        // Write scan timeout
-        self.write_field_header(4, FieldType::SocketTimeout);
-        self.write_u32(policy.socket_timeout());
-
-        if let Some(filter_exp) = policy.filter_expression() {
-            self.write_filter_expression(filter_exp, filter_exp_size);
-        }
-
+        // UDF block (foreground LUA aggregation OR background UDF execute).
         if let Some(ref aggregation) = statement.aggregation {
             self.write_field_header(1, FieldType::UdfOp);
-            if statement.bins.is_none() {
-                self.write_u8(2);
-            } else {
-                self.write_u8(1);
-            }
+            // Java uses the background flag here; foreground LUA
+            // aggregation = 1, background UDF execute = 2.
+            self.write_u8(if is_background { 2 } else { 1 });
 
             self.write_field_string(&aggregation.package_name, FieldType::UdfPackageName);
             self.write_field_string(&aggregation.function_name, FieldType::UdfFunction);
@@ -1494,316 +1378,53 @@ impl Buffer {
             }
         }
 
-        // Ops projection (foreground only): write the explicit ops in
-        // place of bin-name reads. When present, `bins` is ignored so
-        // the server returns only the op results.
+        if let Some(filter_exp) = direction.filter_expression() {
+            self.write_filter_expression(filter_exp, filter_exp_size);
+        }
+
+        // Partition tracking fields — only present for foreground
+        // queries (background broadcasts to all partitions).
+        if let Some(np) = node_partitions {
+            if parts_full_size > 0 {
+                self.write_field_header(parts_full_size, FieldType::PIDArray);
+                for part in &np.parts_full {
+                    let part = part.lock().await;
+                    self.write_u16_little_endian(part.id);
+                }
+            }
+            if parts_partial_size > 0 {
+                self.write_field_header(parts_partial_size, FieldType::DigestArray);
+                for part in &np.parts_partial {
+                    let part = part.lock().await;
+                    part.digest.map(|digest| self.write_bytes(&digest));
+                }
+            }
+            if parts_partial_bval_size > 0 {
+                self.write_field_header(parts_partial_bval_size, FieldType::BValArray);
+                for part in &np.parts_partial {
+                    let part = part.lock().await;
+                    if let Some(bval) = part.bval {
+                        self.write_u64_little_endian(bval);
+                    } else {
+                        self.write_u64_little_endian(0);
+                    }
+                }
+            }
+            if max_records > 0 {
+                self.write_field_u64(max_records, FieldType::MaxRecords);
+            }
+        }
+
+        // Operations vs bin-name READ ops are mutually exclusive.
         if let Some(ref operations) = statement.operations {
             for op in operations {
                 self.write_operation_for_operation(op)?;
             }
         } else if let Bins::Some(ref bin_names) = statement.bins {
-            // Bin names are sent as READ operations (new server / partition query path).
             for bin_name in bin_names {
                 self.write_operation_for_bin_name(bin_name, OperationType::Read);
             }
         }
-
-        self.end();
-        Ok(())
-    }
-
-    /// Builds a background query/scan command buffer that applies write operations
-    /// to matching records on the server without returning data to the client.
-    #[allow(clippy::cognitive_complexity)]
-    pub(crate) fn set_query_operate(
-        &mut self,
-        write_policy: &WritePolicy,
-        statement: &Statement,
-        task_id: u64,
-        operations: &[Operation],
-    ) -> Result<()> {
-        let filter = statement.filters.as_ref().map(|filters| &filters[0]);
-
-        self.begin();
-
-        let mut field_count: u16 = 0;
-        let mut filter_size = 0;
-
-        if !statement.namespace.is_empty() {
-            self.data_offset += statement.namespace.len() + FIELD_HEADER_SIZE as usize;
-            field_count += 1;
-        }
-
-        if !statement.set_name.is_empty() {
-            self.data_offset += statement.set_name.len() + FIELD_HEADER_SIZE as usize;
-            field_count += 1;
-        }
-
-        // Socket timeout field
-        self.data_offset += 4 + FIELD_HEADER_SIZE as usize;
-        field_count += 1;
-
-        // TaskId field
-        self.data_offset += 8 + FIELD_HEADER_SIZE as usize;
-        field_count += 1;
-
-        if let Some(filter) = filter {
-            let idx_type = filter.collection_index_type.clone();
-            if idx_type != CollectionIndexType::Default {
-                self.data_offset += 1 + FIELD_HEADER_SIZE as usize;
-                field_count += 1;
-            }
-
-            filter_size = 1 + filter.estimate_size()?;
-            self.data_offset += filter_size + FIELD_HEADER_SIZE as usize;
-            field_count += 1;
-
-            if let Some(ref ctx) = filter.context {
-                let ctx_size = encoder::pack_ctx_for_index(&mut None, ctx)?;
-                self.data_offset += ctx_size + FIELD_HEADER_SIZE as usize;
-                field_count += 1;
-            }
-
-            if let Some(ref index_name) = filter.index_name {
-                if !index_name.is_empty() {
-                    self.data_offset += index_name.len() + FIELD_HEADER_SIZE as usize;
-                    field_count += 1;
-                }
-            }
-
-            if let Some(ref exp) = filter.expression {
-                let exp_size = exp.pack(&mut None)?;
-                self.data_offset += exp_size + FIELD_HEADER_SIZE as usize;
-                field_count += 1;
-            }
-        }
-
-        let filter_exp_size = self.estimate_filter_size(write_policy.filter_expression())?;
-        if filter_exp_size > 0 {
-            field_count += 1;
-        }
-
-        // Estimate operation sizes
-        for op in operations {
-            if !op.is_write() {
-                return Err(Error::InvalidArgument(
-                    "Read operations not allowed in background query".into(),
-                ));
-            }
-            self.data_offset += op.estimate_size()? + OPERATION_HEADER_SIZE as usize;
-        }
-        let operation_count = operations.len() as u16;
-
-        self.size_buffer()?;
-
-        // Background queries use the write header
-        self.write_header_with_policy(write_policy, 0, INFO2_WRITE, field_count, operation_count);
-
-        if !statement.namespace.is_empty() {
-            self.write_field_string(&statement.namespace, FieldType::Namespace);
-        }
-
-        if !statement.set_name.is_empty() {
-            self.write_field_string(&statement.set_name, FieldType::Table);
-        }
-
-        self.write_field_header(8, FieldType::QueryId);
-        self.write_u64(task_id);
-
-        if let Some(filter) = filter {
-            let idx_type = filter.collection_index_type.clone();
-
-            if idx_type != CollectionIndexType::Default {
-                self.write_field_header(1, FieldType::IndexType);
-                self.write_u8(idx_type as u8);
-            }
-
-            self.write_field_header(filter_size, FieldType::IndexRange);
-            self.write_u8(1);
-
-            filter.write(self)?;
-
-            if let Some(ref ctx) = filter.context {
-                let ctx_size = encoder::pack_ctx_for_index(&mut None, ctx)?;
-                self.write_field_header(ctx_size, FieldType::IndexContext);
-                encoder::pack_ctx_for_index(&mut Some(self), ctx)?;
-            }
-
-            if let Some(ref index_name) = filter.index_name {
-                if !index_name.is_empty() {
-                    self.write_field_string(index_name, FieldType::IndexName);
-                }
-            }
-
-            if let Some(ref exp) = filter.expression {
-                let exp_size = exp.pack(&mut None)?;
-                self.write_field_header(exp_size, FieldType::IndexExpression);
-                exp.pack(&mut Some(self))?;
-            }
-        }
-
-        if let Some(filter_exp) = write_policy.filter_expression() {
-            self.write_filter_expression(filter_exp, filter_exp_size);
-        }
-
-        // Write socket timeout
-        self.write_field_header(4, FieldType::SocketTimeout);
-        self.write_u32(write_policy.socket_timeout());
-
-        // Write operations
-        for op in operations {
-            self.write_operation_for_operation(op)?;
-        }
-
-        self.end();
-        Ok(())
-    }
-
-    /// Builds a background query/scan command buffer that applies a UDF
-    /// to matching records on the server without returning data to the client.
-    #[allow(clippy::cognitive_complexity)]
-    pub(crate) fn set_query_udf_execute(
-        &mut self,
-        write_policy: &WritePolicy,
-        statement: &Statement,
-        task_id: u64,
-    ) -> Result<()> {
-        let filter = statement.filters.as_ref().map(|filters| &filters[0]);
-        let aggregation = statement
-            .aggregation
-            .as_ref()
-            .ok_or_else(|| Error::InvalidArgument("Statement must have aggregation set".into()))?;
-
-        self.begin();
-
-        let mut field_count: u16 = 0;
-        let mut filter_size = 0;
-
-        if !statement.namespace.is_empty() {
-            self.data_offset += statement.namespace.len() + FIELD_HEADER_SIZE as usize;
-            field_count += 1;
-        }
-
-        if !statement.set_name.is_empty() {
-            self.data_offset += statement.set_name.len() + FIELD_HEADER_SIZE as usize;
-            field_count += 1;
-        }
-
-        // Socket timeout field
-        self.data_offset += 4 + FIELD_HEADER_SIZE as usize;
-        field_count += 1;
-
-        // TaskId field
-        self.data_offset += 8 + FIELD_HEADER_SIZE as usize;
-        field_count += 1;
-
-        if let Some(filter) = filter {
-            let idx_type = filter.collection_index_type.clone();
-            if idx_type != CollectionIndexType::Default {
-                self.data_offset += 1 + FIELD_HEADER_SIZE as usize;
-                field_count += 1;
-            }
-
-            filter_size = 1 + filter.estimate_size()?;
-            self.data_offset += filter_size + FIELD_HEADER_SIZE as usize;
-            field_count += 1;
-
-            if let Some(ref ctx) = filter.context {
-                let ctx_size = encoder::pack_ctx_for_index(&mut None, ctx)?;
-                self.data_offset += ctx_size + FIELD_HEADER_SIZE as usize;
-                field_count += 1;
-            }
-
-            if let Some(ref index_name) = filter.index_name {
-                if !index_name.is_empty() {
-                    self.data_offset += index_name.len() + FIELD_HEADER_SIZE as usize;
-                    field_count += 1;
-                }
-            }
-
-            if let Some(ref exp) = filter.expression {
-                let exp_size = exp.pack(&mut None)?;
-                self.data_offset += exp_size + FIELD_HEADER_SIZE as usize;
-                field_count += 1;
-            }
-        }
-
-        let filter_exp_size = self.estimate_filter_size(write_policy.filter_expression())?;
-        if filter_exp_size > 0 {
-            field_count += 1;
-        }
-
-        // UDF fields: UdfOp, UdfPackageName, UdfFunction, UdfArgList
-        self.data_offset += 1 + FIELD_HEADER_SIZE as usize; // UdfOp
-        self.data_offset += aggregation.package_name.len() + FIELD_HEADER_SIZE as usize;
-        self.data_offset += aggregation.function_name.len() + FIELD_HEADER_SIZE as usize;
-        self.estimate_args_size(aggregation.function_args.as_deref())?;
-        field_count += 4;
-
-        self.size_buffer()?;
-
-        // Use query protocol header (write_header_read), not the key-value write header.
-        // UDF background execution does not set INFO2_WRITE.
-        self.write_header_read(&write_policy.base_policy, INFO1_READ, 0, 0, field_count, 0);
-
-        if !statement.namespace.is_empty() {
-            self.write_field_string(&statement.namespace, FieldType::Namespace);
-        }
-
-        if !statement.set_name.is_empty() {
-            self.write_field_string(&statement.set_name, FieldType::Table);
-        }
-
-        self.write_field_header(8, FieldType::QueryId);
-        self.write_u64(task_id);
-
-        if let Some(filter) = filter {
-            let idx_type = filter.collection_index_type.clone();
-
-            if idx_type != CollectionIndexType::Default {
-                self.write_field_header(1, FieldType::IndexType);
-                self.write_u8(idx_type as u8);
-            }
-
-            self.write_field_header(filter_size, FieldType::IndexRange);
-            self.write_u8(1);
-
-            filter.write(self)?;
-
-            if let Some(ref ctx) = filter.context {
-                let ctx_size = encoder::pack_ctx_for_index(&mut None, ctx)?;
-                self.write_field_header(ctx_size, FieldType::IndexContext);
-                encoder::pack_ctx_for_index(&mut Some(self), ctx)?;
-            }
-
-            if let Some(ref index_name) = filter.index_name {
-                if !index_name.is_empty() {
-                    self.write_field_string(index_name, FieldType::IndexName);
-                }
-            }
-
-            if let Some(ref exp) = filter.expression {
-                let exp_size = exp.pack(&mut None)?;
-                self.write_field_header(exp_size, FieldType::IndexExpression);
-                exp.pack(&mut Some(self))?;
-            }
-        }
-
-        if let Some(filter_exp) = write_policy.filter_expression() {
-            self.write_filter_expression(filter_exp, filter_exp_size);
-        }
-
-        // Write socket timeout
-        self.write_field_header(4, FieldType::SocketTimeout);
-        self.write_u32(write_policy.socket_timeout());
-
-        // Write UDF fields
-        self.write_field_header(1, FieldType::UdfOp);
-        self.write_u8(2); // 2 = no return data
-
-        self.write_field_string(&aggregation.package_name, FieldType::UdfPackageName);
-        self.write_field_string(&aggregation.function_name, FieldType::UdfFunction);
-        self.write_args(aggregation.function_args.as_deref(), FieldType::UdfArgList)?;
 
         self.end();
         Ok(())

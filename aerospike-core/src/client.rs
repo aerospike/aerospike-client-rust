@@ -31,7 +31,7 @@ use crate::commands::admin_command::AdminCommand;
 use crate::commands::buffer::Buffer;
 use crate::commands::{
     DeleteCommand, ExecuteUDFCommand, ExistsCommand, OperateCommand, QueryCommand, ReadCommand,
-    ScanCommand, ServerCommand, TouchCommand, WriteCommand,
+    ServerCommand, TouchCommand, WriteCommand,
 };
 use crate::errors::{Error, Result};
 use crate::expressions::Expression;
@@ -1303,7 +1303,7 @@ impl Client {
     pub async fn query_operate(
         &self,
         write_policy: &WritePolicy,
-        statement: Statement,
+        mut statement: Statement,
         operations: &[Operation],
     ) -> Result<ExecuteTask> {
         if operations.is_empty() {
@@ -1313,6 +1313,11 @@ impl Client {
                 "no operations defined".into(),
             ));
         }
+        // Inject the ops into `statement.operations` so the unified
+        // `set_query` background path consumes them via the Statement.
+        // The legacy `&[Operation]` parameter is preserved on the
+        // public API for backwards compatibility.
+        statement.operations = Some(operations.to_vec());
         statement.validate()?;
 
         let nodes = self.cluster.nodes();
@@ -1325,8 +1330,7 @@ impl Client {
 
         let mut last_err: Option<Error> = None;
         for node in &nodes {
-            let mut cmd =
-                ServerCommand::new(node.clone(), write_policy, &statement, task_id, operations);
+            let mut cmd = ServerCommand::new(node.clone(), write_policy, &statement, task_id);
             if let Err(err) = cmd.execute().await {
                 last_err = Some(err);
             }
@@ -1478,37 +1482,18 @@ impl Client {
                         let statement = statement.clone();
                         let handle = aerospike_rt::spawn(async move {
                             let permit = semaphore.acquire().await;
-                            // Filterless + bin-set queries take the lighter
-                            // scan path. With a filter, or when an ops
-                            // projection is attached (Statement::operations),
-                            // route through QueryCommand so the ops are
-                            // assembled and validated against the target
-                            // node's version.
-                            let result = if statement.filters.is_none()
-                                && statement.operations.is_none()
-                            {
-                                ScanCommand::new(
-                                    &policy,
-                                    &statement.namespace,
-                                    &statement.set_name,
-                                    statement.bins.clone(),
-                                    recordset.clone(),
-                                    node_partition,
-                                )
-                                .await
-                                .execute()
-                                .await
-                            } else {
-                                QueryCommand::new(
-                                    &policy,
-                                    statement,
-                                    recordset.clone(),
-                                    node_partition,
-                                )
-                                .await
-                                .execute()
-                                .await
-                            };
+                            // QueryCommand handles both filtered queries
+                            // and filterless scans — set_query writes
+                            // the filter fields conditionally.
+                            let result = QueryCommand::new(
+                                &policy,
+                                statement,
+                                recordset.clone(),
+                                node_partition,
+                            )
+                            .await
+                            .execute()
+                            .await;
 
                             drop(permit);
                             result
