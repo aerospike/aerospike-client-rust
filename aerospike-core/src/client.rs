@@ -1478,7 +1478,15 @@ impl Client {
                         let statement = statement.clone();
                         let handle = aerospike_rt::spawn(async move {
                             let permit = semaphore.acquire().await;
-                            let result = if statement.filters.is_none() {
+                            // Filterless + bin-set queries take the lighter
+                            // scan path. With a filter, or when an ops
+                            // projection is attached (Statement::operations),
+                            // route through QueryCommand so the ops are
+                            // assembled and validated against the target
+                            // node's version.
+                            let result = if statement.filters.is_none()
+                                && statement.operations.is_none()
+                            {
                                 ScanCommand::new(
                                     &policy,
                                     &statement.namespace,

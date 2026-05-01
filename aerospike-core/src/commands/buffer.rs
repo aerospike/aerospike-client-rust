@@ -1328,7 +1328,35 @@ impl Buffer {
             field_count += 4;
         }
 
-        let operation_count = if let Bins::Some(ref bin_names) = statement.bins {
+        // Foreground query ops projection: when set, the server returns
+        // the result of these operations for each matching record
+        // instead of the bin set selected by `bins`. Validate against
+        // the target node's version since servers older than 8.1.2 only
+        // accept basic `Read` ops here.
+        let operation_count = if let Some(ref operations) = statement.operations {
+            let supports_ext = node_partitions
+                .node
+                .version()
+                .supports_query_ops_projection_ext();
+            for op in operations {
+                if op.is_write() {
+                    return Err(Error::InvalidArgument(
+                        "Query operations must be read-only. Use query_operate for write-only \
+                         operations."
+                            .into(),
+                    ));
+                }
+                if !supports_ext && !op.is_basic_read() {
+                    return Err(Error::InvalidArgument(
+                        "Only basic read operations are supported for query operations \
+                         projection on server versions prior to 8.1.2."
+                            .into(),
+                    ));
+                }
+                self.data_offset += op.estimate_size()? + OPERATION_HEADER_SIZE as usize;
+            }
+            operations.len()
+        } else if let Bins::Some(ref bin_names) = statement.bins {
             for bin_name in bin_names {
                 self.estimate_operation_size_for_bin_name(bin_name)?;
             }
@@ -1339,6 +1367,7 @@ impl Buffer {
 
         self.size_buffer()?;
 
+        let has_ops_projection = statement.operations.is_some();
         let mut info1 = INFO1_READ;
         if !policy.include_bin_data || statement.bins.is_none() {
             info1 |= INFO1_NOBINDATA;
@@ -1465,8 +1494,15 @@ impl Buffer {
             }
         }
 
-        // Bin names are sent as READ operations (new server / partition query path).
-        if let Bins::Some(ref bin_names) = statement.bins {
+        // Ops projection (foreground only): write the explicit ops in
+        // place of bin-name reads. When present, `bins` is ignored so
+        // the server returns only the op results.
+        if let Some(ref operations) = statement.operations {
+            for op in operations {
+                self.write_operation_for_operation(op)?;
+            }
+        } else if let Bins::Some(ref bin_names) = statement.bins {
+            // Bin names are sent as READ operations (new server / partition query path).
             for bin_name in bin_names {
                 self.write_operation_for_bin_name(bin_name, OperationType::Read);
             }

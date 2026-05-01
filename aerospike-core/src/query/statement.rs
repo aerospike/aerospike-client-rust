@@ -14,6 +14,7 @@
 // the License.
 
 use crate::errors::{Error, Result};
+use crate::operations::Operation;
 use crate::query::Filter;
 use crate::Bins;
 use crate::Value;
@@ -43,6 +44,17 @@ pub struct Statement {
 
     /// Optional Lua aggregation function parameters.
     pub aggregation: Option<Aggregation>,
+
+    /// Optional ops projection. When set, the server returns the result
+    /// of these operations for each matching record instead of the full
+    /// bin set selected by `bins`. Mutually exclusive with `bins` —
+    /// setting both makes the server use `operations` and ignore `bins`.
+    ///
+    /// On a foreground query (`Client::query`) only read operations are
+    /// allowed. Server versions before 8.1.2 only accept the basic
+    /// `Read` op here; 8.1.2+ accepts CDT, expression, bit, and HLL
+    /// reads as well.
+    pub operations: Option<Vec<Operation>>,
 }
 
 impl Statement {
@@ -66,7 +78,19 @@ impl Statement {
             bins,
             aggregation: None,
             filters: None,
+            operations: None,
         }
+    }
+
+    /// Attach an ops projection to the statement. On a foreground query
+    /// the server returns the result of these operations for each
+    /// matching record instead of the bins selected by `bins`. Mutually
+    /// exclusive with `bins` (server uses `operations` if both are set).
+    ///
+    /// Foreground queries (`Client::query`) accept only read ops; server
+    /// versions before 8.1.2 only accept the basic `Read` op here.
+    pub fn set_operations(&mut self, operations: Vec<Operation>) {
+        self.operations = Some(operations);
     }
 
     /// Add a query filter to the statement. Currently, only one filter is allowed by the server on

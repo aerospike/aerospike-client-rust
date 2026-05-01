@@ -1483,3 +1483,156 @@ async fn test_short_query_not_tracked() {
          got {total_tracked} tracked entries — set_scan likely failed to set INFO1_SHORT_QUERY"
     );
 }
+
+// ===== Foreground ops projection (CLIENT-3998 / Go commit 8cbed7e) =====
+//
+// `Statement::operations` lets a foreground query return only the result
+// of an explicit ops list per matching record, in place of the bin set.
+// The basic `Read` op works on any server; CDT / expression / bit / HLL
+// reads require server >= 8.1.2.
+
+async fn server_supports_query_ops_projection_ext(client: &aerospike::Client) -> bool {
+    match client.cluster.get_random_node() {
+        Ok(node) => node.version().supports_query_ops_projection_ext(),
+        Err(_) => false,
+    }
+}
+
+#[aerospike_macro::test]
+async fn query_ops_projection_basic_read() {
+    // Basic `Read` op projection works on every server version that
+    // supports query ops projection at all (pre- and post-8.1.2).
+    // Uses a secondary-index filter so it routes through the
+    // partition-query path (set_query) regardless of any future
+    // dispatch refactor.
+    let client = common::client().await;
+    let namespace = common::namespace();
+    let set_name = create_test_set(&client, 50).await;
+
+    let mut statement = Statement::new(namespace, &set_name, Bins::All);
+    statement.add_filter(Filter::range("bin", 0, 49));
+    statement.set_operations(vec![operations::get_bin("bin2")]);
+
+    let qpolicy = QueryPolicy::default();
+    let pf = PartitionFilter::all();
+    let rs = client.query(&qpolicy, pf, statement).await.unwrap();
+    let mut rs = rs.into_stream();
+
+    let mut count = 0;
+    while let Some(res) = rs.next().await {
+        let rec = res.expect("query record");
+        // Only the projected bin is returned; `bin` and `extra` should
+        // be absent because the projection narrowed the result.
+        assert!(
+            rec.bins.contains_key("bin2"),
+            "projected bin2 missing from record: {:?}",
+            rec.bins
+        );
+        assert!(
+            !rec.bins.contains_key("bin"),
+            "non-projected bin leaked: {:?}",
+            rec.bins
+        );
+        assert!(
+            !rec.bins.contains_key("extra"),
+            "non-projected extra leaked: {:?}",
+            rec.bins
+        );
+        count += 1;
+    }
+    assert_eq!(count, 50);
+
+    client.close().await.unwrap();
+}
+
+#[aerospike_macro::test]
+async fn query_ops_projection_rejects_write_op() {
+    // Foreground ops projection rejects write ops up front — caller is
+    // pointed at `query_operate` for the background equivalent.
+    let client = common::client().await;
+    let namespace = common::namespace();
+    let set_name = create_test_set(&client, 1).await;
+
+    let mut statement = Statement::new(namespace, &set_name, Bins::All);
+    statement.set_operations(vec![operations::put(&as_bin!("bin", 99))]);
+
+    let qpolicy = QueryPolicy::default();
+    let pf = PartitionFilter::all();
+    let rs = client.query(&qpolicy, pf, statement).await.unwrap();
+    let mut rs = rs.into_stream();
+
+    let mut got_invalid = false;
+    while let Some(res) = rs.next().await {
+        match res {
+            Ok(_) => {}
+            Err(err) => {
+                // The buffer-build error surfaces wrapped in a Chain;
+                // walk the chain looking for our InvalidArgument.
+                let chain_text = format!("{err:?}");
+                assert!(
+                    chain_text.contains("read-only"),
+                    "expected read-only error somewhere in the chain, got: {chain_text}"
+                );
+                got_invalid = true;
+            }
+        }
+    }
+    assert!(got_invalid, "write op in foreground query should fail");
+
+    client.close().await.unwrap();
+}
+
+#[aerospike_macro::test]
+async fn query_ops_projection_extended_cdt_read() {
+    // Extended ops projection (CDT/expression/bit/HLL reads) only
+    // works on 8.1.2+. We use a CDT list size op as the smoke test.
+    let client = common::client().await;
+    if !server_supports_query_ops_projection_ext(&client).await {
+        eprintln!(
+            "Skipping: server does not support extended query ops projection (requires >= 8.1.2)"
+        );
+        return;
+    }
+
+    let namespace = common::namespace();
+    let set_name = common::rand_str(10);
+    let wpolicy = WritePolicy::default();
+
+    // Seed 10 records with a list bin of varying lengths.
+    for i in 0..10_i64 {
+        let key = as_key!(namespace, &set_name, i);
+        let list: Vec<Value> = (0..=i).map(Value::from).collect();
+        client.delete(&wpolicy, &key).await.unwrap();
+        client
+            .put(&wpolicy, &key, &[as_bin!("nums", Value::List(list))])
+            .await
+            .unwrap();
+    }
+
+    let mut statement = Statement::new(namespace, &set_name, Bins::All);
+    statement.set_operations(vec![aerospike::operations::lists::size("nums")]);
+
+    let qpolicy = QueryPolicy::default();
+    let pf = PartitionFilter::all();
+    let rs = client.query(&qpolicy, pf, statement).await.unwrap();
+    let mut rs = rs.into_stream();
+
+    let mut count = 0;
+    while let Some(res) = rs.next().await {
+        let rec = res.expect("query record");
+        // The CDT-size op returns under the same bin name with an int
+        // particle — assert presence; lengths should be in [1, 10].
+        let size = match rec.bins.get("nums") {
+            Some(Value::Int(n)) => *n,
+            other => panic!("expected Int size for 'nums', got {:?}", other),
+        };
+        assert!(
+            (1..=10).contains(&size),
+            "list size out of expected range: {size}"
+        );
+        count += 1;
+    }
+    assert_eq!(count, 10);
+
+    client.close().await.unwrap();
+}

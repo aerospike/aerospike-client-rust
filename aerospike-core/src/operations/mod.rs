@@ -111,6 +111,13 @@ impl Operation {
         )
     }
 
+    /// `true` for the basic plain-bin `Read` op — the only op type the
+    /// server accepts in a foreground query's ops projection on
+    /// versions older than 8.1.2.
+    pub(crate) const fn is_basic_read(&self) -> bool {
+        matches!(self.op, OperationType::Read)
+    }
+
     pub(crate) fn estimate_size(&self) -> Result<usize> {
         let mut size: usize = 0;
         size += match &self.bin {

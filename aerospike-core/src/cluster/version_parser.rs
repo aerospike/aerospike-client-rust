@@ -79,6 +79,14 @@ impl Version {
         self >= &Version::new(8, 1, 2, 0)
     }
 
+    /// Server supports extended read ops (CDT, expression, bit, HLL
+    /// reads) in foreground query ops projection. Earlier servers only
+    /// accept the basic `Read` op (i.e. plain bin reads) when ops are
+    /// attached to a query.
+    pub fn supports_query_ops_projection_ext(&self) -> bool {
+        self >= &Version::new(8, 1, 2, 0)
+    }
+
     /// Server supports Multi-Record Transactions (MRT).
     pub fn supports_mrt(&self) -> bool {
         self >= &Version::new(8, 0, 0, 0)
