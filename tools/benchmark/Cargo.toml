@@ -11,14 +11,14 @@ rust-version = "1.87"
 
 [dependencies]
 chrono = "0.4"
-clap = "2.33"
+clap = "4.6"
 log = "0.4"
-env_logger = "0.9"
-lazy_static = "1.4"
-rand = { version = "0.8", features = ["getrandom", "small_rng"] }
+env_logger = "0.11"
+lazy_static = "1.5"
+rand = { version = "0.10" }
 aerospike = { path = "../.." }
 # Minimal features to reduce Tokio task heap and binary size (no fs, process, signal, etc.)
-tokio = { version = "1.0", features = ["rt-multi-thread", "sync", "time", "macros"] }
+tokio = { version = "1.52", features = ["rt-multi-thread", "sync", "time", "macros"] }
 
 [[bin]]
 path = "src/main.rs"

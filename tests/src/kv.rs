@@ -15,7 +15,7 @@
 use aerospike::{
     as_bin, as_blob, as_geo, as_key, as_list, as_map, as_val, Bins, ReadPolicy, Value, WritePolicy,
 };
-use aerospike::{operations, Expiration, ReadTouchTTL};
+use aerospike::{operations, Error, Expiration, ReadTouchTTL, ResultCode};
 use aerospike_rt::sleep;
 use aerospike_rt::time::Duration;
 
@@ -147,6 +147,38 @@ async fn connect() {
 
     let existed = client.delete(&wpolicy, &key).await.unwrap();
     assert!(!existed);
+
+    client.close().await.unwrap();
+}
+
+#[aerospike_macro::test]
+async fn operate_empty_ops_returns_parameter_error() {
+    let client = common::client().await;
+    let namespace = common::namespace();
+    let set_name = &common::rand_str(10);
+    let key = as_key!(namespace, set_name, 1);
+
+    let wpolicy = WritePolicy::default();
+
+    // Calling operate with an empty operations slice must be rejected
+    // client-side with a ParameterError, instead of being forwarded to the
+    // server (which would either reject it with an opaque error or perform
+    // a meaningless round-trip). The server happens to also reject empty
+    // ops with ParameterError, so we additionally verify that the error
+    // message identifies the client-side guard — a server response would
+    // carry the node address in that field instead.
+    let result = client.operate(&wpolicy, &key, &[]).await;
+
+    match result {
+        Err(Error::ServerError(ResultCode::ParameterError, _, ref msg))
+            if msg.contains("no operations") => {}
+        Err(other) => panic!(
+            "expected client-side ParameterError ('operate called with no \
+             operations'); got {:?}",
+            other
+        ),
+        Ok(_) => panic!("expected ParameterError, got Ok"),
+    }
 
     client.close().await.unwrap();
 }

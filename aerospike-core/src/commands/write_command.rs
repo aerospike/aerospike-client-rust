@@ -38,7 +38,7 @@ impl<'a> WriteCommand<'a> {
         operation: OperationType,
     ) -> Self {
         WriteCommand {
-            single_command: SingleCommand::new(cluster, key, crate::policy::Replica::Master),
+            single_command: SingleCommand::new(cluster, key, crate::policy::Replica::Sequence),
             bins,
             policy,
             operation,

@@ -8,8 +8,8 @@ use aerospike_core::{
     AdminPolicy, BatchDeletePolicy, BatchOperation, BatchReadPolicy, BatchUDFPolicy,
     BatchWritePolicy, Task,
 };
-use rand::distributions::Alphanumeric;
-use rand::Rng;
+use rand::distr::Alphanumeric;
+use rand::RngExt;
 use std::env;
 
 #[tokio::main]
@@ -132,8 +132,8 @@ end
 }
 
 fn generate_random_set_name() -> String {
-    let rng = rand::thread_rng();
-    rng.sample_iter(&Alphanumeric)
+    rand::rng()
+        .sample_iter(&Alphanumeric)
         .take(10)
         .map(char::from)
         .collect()

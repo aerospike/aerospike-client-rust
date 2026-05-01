@@ -94,7 +94,7 @@ impl BatchOperateCommand {
                     let node = cluster.get_node(
                         &partition,
                         self.policy.replica,
-                        Arc::downgrade(&self.node),
+                        Some(self.node.clone()),
                     )?;
 
                     if !Self::request_group(individual_op, &self.policy, deadline, node).await? {

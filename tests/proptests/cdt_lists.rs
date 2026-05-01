@@ -35,7 +35,7 @@ proptest_async::proptest! {
         let rec = client.operate(&wpolicy, &key, ops).await.unwrap();
         assert_eq!(
             *rec.bins.get("bin").unwrap(),
-            as_list!(6, as_list!("0", v1, v2, v3, 1, 2.1f64))
+            Value::MultiResult(vec![as_val!(6), as_list!("0", v1, v2, v3, 1, 2.1f64)])
         );
     }
 }

@@ -43,7 +43,7 @@ impl DropIndexTask {
         let node_version = node.version();
 
         if node_version >= &Version::new(8, 1, 0, 0) {
-            format!("sindex-exists:namespace={namespace};indexname={index_name}",)
+            format!("sindex-exists:namespace={namespace};indexname={index_name}")
         } else {
             format!("sindex-exists:ns={namespace};indexname={index_name}")
         }

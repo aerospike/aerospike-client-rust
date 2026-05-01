@@ -16,6 +16,8 @@ use std::str;
 use std::sync::Arc;
 use std::vec::Vec;
 
+use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
+
 use crate::cluster::node;
 use crate::cluster::Node;
 use crate::commands::Message;
@@ -91,7 +93,7 @@ impl PartitionTokenizer {
                     for (section, replica) in
                         info_section.zip(entry.nodes.chunks_mut(node::PARTITIONS))
                     {
-                        let restore_buffer = base64::decode(section)?;
+                        let restore_buffer = BASE64.decode(section)?;
                         for (idx, (this_reigimes, item)) in replica.iter_mut().enumerate() {
                             if restore_buffer[idx >> 3] & (0x80 >> (idx & 7) as u8) != 0
                                 && reigime >= *this_reigimes

@@ -117,8 +117,11 @@ impl EqFilterValue for Value {
 impl RangeFilterValue for Value {
     fn into_filter_value(self) -> Value {
         assert!(
-            matches!(self.particle_type(), ParticleType::INTEGER),
-            "range filter value must be integer"
+            matches!(
+                self.particle_type(),
+                ParticleType::INTEGER | ParticleType::STRING | ParticleType::BLOB
+            ),
+            "equality/contains filter value must be integer, string, or blob"
         );
         self
     }

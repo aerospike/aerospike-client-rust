@@ -19,7 +19,7 @@ extern crate bencher;
 extern crate lazy_static;
 extern crate rand;
 
-use rand::Rng;
+use rand::RngExt;
 
 use aerospike::operations;
 use aerospike::{as_bin, as_key, as_val};
@@ -38,7 +38,7 @@ lazy_static! {
 }
 
 fn rand_key_from_range(low: i64, high: i64) -> i64 {
-    rand::thread_rng().gen_range(low, high)
+    rand::rng().random_range(low..high)
 }
 
 fn single_key_read(bench: &mut Bencher) {
