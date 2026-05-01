@@ -30,7 +30,7 @@ pub struct DeleteCommand<'a> {
 impl<'a> DeleteCommand<'a> {
     pub fn new(policy: &'a WritePolicy, cluster: Arc<Cluster>, key: &'a Key) -> Self {
         DeleteCommand {
-            single_command: SingleCommand::new(cluster, key, crate::policy::Replica::Master),
+            single_command: SingleCommand::new(cluster, key, crate::policy::Replica::Sequence),
             policy,
             existed: false,
         }

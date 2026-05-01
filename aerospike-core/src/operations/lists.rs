@@ -557,7 +557,7 @@ pub fn remove_by_value_range<TLR: ToListReturnTypeBitmask>(
     ];
 
     if !end.is_nil() {
-        args.push(CdtArgument::Value(end))
+        args.push(CdtArgument::Value(end));
     }
 
     let cdt_op = CdtOperation {
@@ -1060,7 +1060,7 @@ pub fn get_by_value_range<TLR: ToListReturnTypeBitmask>(
     ];
 
     if !end.is_nil() {
-        args.push(CdtArgument::Value(end))
+        args.push(CdtArgument::Value(end));
     }
 
     let cdt_op = CdtOperation {
