@@ -35,9 +35,8 @@ struct SharedQueue {
     hashed_pass: Option<String>,
     /// Latest session token produced by a successful LOGIN against this
     /// host. Subsequent connections in the same pool authenticate via
-    /// AUTHENTICATE with the token instead of paying for a full login,
-    /// matching Java's per-node `sessionToken` cache. Cleared on token
-    /// rejection (server restart / token revocation).
+    /// AUTHENTICATE with the token instead of paying for a full login.
+    /// Cleared on token rejection (server restart / token revocation).
     session: Mutex<Option<SessionInfo>>,
 }
 
@@ -99,8 +98,8 @@ impl Queue {
     /// Creates a new connection based on the queue's `ClientPolicy`.
     /// It does not check for the capacity of the queue.
     ///
-    /// Auth strategy mirrors Java's per-node `sessionToken` cache: if the
-    /// pool already holds a non-expired session, the new connection
+    /// Auth strategy uses the per-pool session-token cache: if the pool
+    /// already holds a non-expired session, the new connection
     /// authenticates via AUTHENTICATE with that token; otherwise it does a
     /// full LOGIN and stores the resulting session for the next caller.
     pub async fn make_conn(&self) -> Result<Connection> {

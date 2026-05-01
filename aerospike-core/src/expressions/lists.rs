@@ -689,7 +689,7 @@ pub(crate) fn add_write(
     let return_type: ExpType;
     if ctx.is_empty() {
         return_type = ExpType::LIST;
-    } else if (ctx[0].id & CtxType::ListIndex as u8) == 0 {
+    } else if (ctx[0].id & CtxType::ListIndex as u16) == 0 {
         return_type = ExpType::MAP;
     } else {
         return_type = ExpType::LIST;

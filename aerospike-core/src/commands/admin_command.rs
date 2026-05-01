@@ -75,17 +75,15 @@ const RESULT_CODE: usize = 9;
 const FIELD_COUNT_OFFSET: usize = 11;
 const QUERY_END: usize = 50;
 
-/// Session credentials returned by a successful `LOGIN`. Mirrors Java's
-/// `LoginCommand.{sessionToken, sessionExpiration}` — subsequent
-/// connections can authenticate via `AUTHENTICATE` with this token instead
-/// of re-running the full login round-trip.
+/// Session credentials returned by a successful `LOGIN`. Subsequent
+/// connections can authenticate via `AUTHENTICATE` with this token
+/// instead of re-running the full login round-trip.
 #[derive(Debug, Clone)]
 pub struct SessionInfo {
     pub token: Vec<u8>,
     /// Wall-clock instant (monotonic) at which the token must be considered
     /// expired. We pre-subtract 60 s from the server-reported TTL so the
-    /// client retires its copy a minute before the server does (matches
-    /// Java's `LoginCommand.login` rule).
+    /// client retires its copy a minute before the server does.
     pub expiration: aerospike_rt::time::Instant,
 }
 
@@ -529,11 +527,10 @@ impl AdminCommand {
     }
 
     /// Run an `AUTHENTICATE` round-trip using a previously-obtained session
-    /// token. Mirrors Java `AdminCommand.authenticate(cluster, conn,
-    /// sessionToken)` — much cheaper than a fresh login because no
-    /// credentials are exchanged. Returns `Ok(true)` on success, `Ok(false)`
-    /// when the server rejects the token (caller should fall back to a
-    /// full login), or `Err` on transport / parse errors.
+    /// token — much cheaper than a fresh login because no credentials are
+    /// exchanged. Returns `Ok(true)` on success, `Ok(false)` when the
+    /// server rejects the token (caller should fall back to a full
+    /// login), or `Err` on transport / parse errors.
     pub(crate) async fn authenticate_session(
         conn: &mut Connection,
         auth_mode: &AuthMode,

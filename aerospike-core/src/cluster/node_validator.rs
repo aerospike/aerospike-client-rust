@@ -38,7 +38,6 @@ pub struct NodeValidator {
     /// `validate_alias` queries `service-{tls,clear}-{std,alt}` and, if the
     /// seed isn't listed in the response, treats the seed as a load
     /// balancer and rewrites `aliases` to the first reachable real backend.
-    /// Mirrors Java `NodeValidator.validateAddress(detectLoadBalancer=true)`.
     pub detect_load_balancer: bool,
 }
 
@@ -307,7 +306,7 @@ impl NodeValidator {
 }
 
 /// `true` when `host.name` resolves to (or already is) a loopback address.
-/// Java skips load-balancer detection for loopback seeds since the LB
+/// Used to skip load-balancer detection for loopback seeds since the LB
 /// would never live on localhost.
 fn host_is_loopback(host: &Host) -> bool {
     if let Ok(ip) = host.name.parse::<std::net::IpAddr>() {

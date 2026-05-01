@@ -701,3 +701,38 @@ async fn list_get_by_value_range_nil_end_returns_empty() {
     client.delete(&wpolicy, &key).await.unwrap();
     client.close().await.unwrap();
 }
+
+#[aerospike_macro::test]
+async fn cdt_list_create_persistent_top_level() {
+    // Java parity: ListOperation.create(name, order, pad, persistIndex, ctx)
+    // exposes both `pad` (nested-only) and `persist_index` (top-level only).
+    // At the top level the persist_index bit takes effect on the order
+    // attribute byte; this test exercises that path.
+    let client = common::client().await;
+    let namespace = common::namespace();
+    let set_name = &common::rand_str(10);
+
+    let wpolicy = WritePolicy::default();
+    let key = as_key!(namespace, set_name, "create_persistent");
+    let lpolicy = ListPolicy::default();
+
+    client.delete(&wpolicy, &key).await.unwrap();
+
+    // Create a top-level ordered list with the persisted index enabled,
+    // append unsorted values, then verify the list is sorted on read
+    // (proving the order attribute was applied server-side).
+    let ops = &vec![
+        lists::create_persistent("bin", ListOrderType::Ordered, false, true),
+        lists::append(&lpolicy, "bin", as_val!(3)),
+        lists::append(&lpolicy, "bin", as_val!(1)),
+        lists::append(&lpolicy, "bin", as_val!(2)),
+        operations::get_bin("bin"),
+    ];
+    let rec = client.operate(&wpolicy, &key, ops).await.unwrap();
+    assert_eq!(
+        *rec.bins.get("bin").unwrap(),
+        Value::MultiResult(vec![as_val!(1), as_val!(2), as_val!(3), as_list!(1, 2, 3)])
+    );
+
+    client.close().await.unwrap();
+}

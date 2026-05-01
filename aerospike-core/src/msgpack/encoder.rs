@@ -95,7 +95,7 @@ pub fn pack_cdt_op(
             if c.id == 0 {
                 size += pack_integer(buf, i64::from(c.id));
             } else {
-                size += pack_integer(buf, i64::from(c.id | c.flags));
+                size += pack_integer(buf, i64::from(c.id | u16::from(c.flags)));
             }
             if let Some(ref exp) = c.expression {
                 size += exp.pack_binary(buf)?;
@@ -164,7 +164,7 @@ pub fn pack_cdt_bit_op(
             if c.id == 0 {
                 size += pack_integer(buf, i64::from(c.id));
             } else {
-                size += pack_integer(buf, i64::from(c.id | c.flags));
+                size += pack_integer(buf, i64::from(c.id | u16::from(c.flags)));
             }
             if let Some(ref exp) = c.expression {
                 size += exp.pack_binary(buf)?;

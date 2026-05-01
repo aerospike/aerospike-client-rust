@@ -25,8 +25,8 @@ use crate::policy::{ReadModeSC, Replica};
 use crate::Key;
 
 /// Partition encapsulates partition information used for node selection.
-/// Equivalent to the Go client's `Partition` struct with `replica`, `sequence`,
-/// and `linearize` fields for managing retry behavior and SC mode.
+/// Carries `replica`, `sequence`, and `linearize` fields for managing
+/// retry behavior and strong-consistency mode.
 #[derive(Debug, Clone)]
 pub struct Partition<'a> {
     pub namespace: &'a str,

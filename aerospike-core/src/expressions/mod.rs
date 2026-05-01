@@ -67,6 +67,7 @@ pub(crate) enum ExpOp {
     LE = 6,
     Regex = 7,
     Geo = 8,
+    InList = 9,
     And = 16,
     Or = 17,
     Not = 18,
@@ -110,6 +111,8 @@ pub(crate) enum ExpOp {
     Bin = 81,
     BinType = 82,
     ResultRemove = 100,
+    MapKeys = 101,
+    MapValues = 102,
     VarBuiltIn = 122,
     Cond = 123,
     Var = 124,
@@ -458,7 +461,16 @@ pub fn from_base64(b64: &str) -> Result<Expression> {
     let bytes = BASE64
         .decode(b64)
         .map_err(|e| Error::BadResponse(format!("Invalid base64 expression: {e}")))?;
-    Ok(Expression {
+    Ok(from_packed_bytes(bytes))
+}
+
+/// Build an expression from already-packed wire bytes. Used when restoring
+/// an expression-form CDT context entry from `ctx_from_bytes` — we don't
+/// re-parse the expression structure, we just keep the raw bytes so a
+/// later pack emits them verbatim. Mirrors what `from_base64` does, minus
+/// the base64 decode.
+pub fn from_packed_bytes(bytes: Vec<u8>) -> Expression {
+    Expression {
         cmd: None,
         val: None,
         bin: None,
@@ -467,7 +479,7 @@ pub fn from_base64(b64: &str) -> Result<Expression> {
         exps: None,
         arguments: None,
         bytes: Some(bytes),
-    })
+    }
 }
 
 /// Creates an expression that returns whether the primary key is stored in the record meta data.
@@ -1820,6 +1832,218 @@ mod tests {
         let re_encoded = decoded.base64().unwrap();
         assert_eq!(b64, re_encoded);
     }
+
+    // ===== Path-expression convenience wrappers =====
+    //
+    // These tests assert byte-for-byte equality between each wrapper and
+    // the explicit `exp_select_by_path` / `exp_modify_by_path` form it
+    // shadows. That way every shorthand stays in lock-step with the raw
+    // API even if SelectFlag / ModifyFlag values shift later.
+
+    use crate::operations::cdt_context::{ctx_map_key, Path};
+    use crate::operations::path::{ModifyFlag, SelectFlag};
+    use crate::value::Value;
+
+    fn sample_path() -> Path {
+        Path::new().map_key("book").all_children()
+    }
+
+    #[test]
+    fn exp_select_by_path_accepts_path_builder() {
+        // `Path` should slot in directly because it implements
+        // AsRef<[CdtContext]>.
+        let path = sample_path();
+        let direct =
+            exp_select_by_path(ExpType::LIST, SelectFlag::VALUE, list_bin("b".into()), &path)
+                .base64()
+                .unwrap();
+        let via_slice = exp_select_by_path(
+            ExpType::LIST,
+            SelectFlag::VALUE,
+            list_bin("b".into()),
+            path.as_slice(),
+        )
+        .base64()
+        .unwrap();
+        assert_eq!(direct, via_slice);
+    }
+
+    #[test]
+    fn exp_select_values_matches_raw_value_flag() {
+        let ctx = vec![ctx_map_key(Value::from("book"))];
+        let wrapper = exp_select_values(ExpType::LIST, list_bin("b".into()), &ctx)
+            .base64()
+            .unwrap();
+        let raw = exp_select_by_path(
+            ExpType::LIST,
+            SelectFlag::VALUE,
+            list_bin("b".into()),
+            ctx.as_slice(),
+        )
+        .base64()
+        .unwrap();
+        assert_eq!(wrapper, raw);
+    }
+
+    #[test]
+    fn exp_select_map_keys_matches_raw_map_key_flag() {
+        let ctx = vec![ctx_map_key(Value::from("book"))];
+        let wrapper = exp_select_map_keys(ExpType::LIST, map_bin("m".into()), &ctx)
+            .base64()
+            .unwrap();
+        let raw = exp_select_by_path(
+            ExpType::LIST,
+            SelectFlag::MAP_KEY,
+            map_bin("m".into()),
+            ctx.as_slice(),
+        )
+        .base64()
+        .unwrap();
+        assert_eq!(wrapper, raw);
+    }
+
+    #[test]
+    fn exp_select_map_entries_matches_raw_map_key_value_flag() {
+        let ctx = vec![ctx_map_key(Value::from("book"))];
+        let wrapper = exp_select_map_entries(ExpType::LIST, map_bin("m".into()), &ctx)
+            .base64()
+            .unwrap();
+        let raw = exp_select_by_path(
+            ExpType::LIST,
+            SelectFlag::MAP_KEY_VALUE,
+            map_bin("m".into()),
+            ctx.as_slice(),
+        )
+        .base64()
+        .unwrap();
+        assert_eq!(wrapper, raw);
+    }
+
+    #[test]
+    fn exp_select_matching_tree_matches_raw_matching_tree_flag() {
+        let ctx = vec![ctx_map_key(Value::from("book"))];
+        let wrapper = exp_select_matching_tree(ExpType::MAP, map_bin("m".into()), &ctx)
+            .base64()
+            .unwrap();
+        let raw = exp_select_by_path(
+            ExpType::MAP,
+            SelectFlag::MATCHING_TREE,
+            map_bin("m".into()),
+            ctx.as_slice(),
+        )
+        .base64()
+        .unwrap();
+        assert_eq!(wrapper, raw);
+    }
+
+    #[test]
+    fn exp_modify_matches_raw_default_flag() {
+        let ctx = vec![ctx_map_key(Value::from("book"))];
+        let modify_exp = int_val(7);
+        let wrapper = exp_modify(
+            ExpType::MAP,
+            map_bin("m".into()),
+            modify_exp.clone(),
+            &ctx,
+        )
+        .base64()
+        .unwrap();
+        let raw = exp_modify_by_path(
+            ExpType::MAP,
+            ModifyFlag::DEFAULT,
+            map_bin("m".into()),
+            modify_exp,
+            ctx.as_slice(),
+        )
+        .base64()
+        .unwrap();
+        assert_eq!(wrapper, raw);
+    }
+
+    #[test]
+    fn exp_modify_no_fail_matches_raw_no_fail_flag() {
+        let ctx = vec![ctx_map_key(Value::from("book"))];
+        let modify_exp = int_val(7);
+        let wrapper = exp_modify_no_fail(
+            ExpType::MAP,
+            map_bin("m".into()),
+            modify_exp.clone(),
+            &ctx,
+        )
+        .base64()
+        .unwrap();
+        let raw = exp_modify_by_path(
+            ExpType::MAP,
+            ModifyFlag::NO_FAIL,
+            map_bin("m".into()),
+            modify_exp,
+            ctx.as_slice(),
+        )
+        .base64()
+        .unwrap();
+        assert_eq!(wrapper, raw);
+    }
+
+    #[test]
+    fn exp_remove_matches_raw_remove_result_modify() {
+        let ctx = vec![ctx_map_key(Value::from("book"))];
+        let wrapper = exp_remove(ExpType::MAP, map_bin("m".into()), &ctx)
+            .base64()
+            .unwrap();
+        let raw = exp_modify_by_path(
+            ExpType::MAP,
+            ModifyFlag::DEFAULT,
+            map_bin("m".into()),
+            exp_remove_result(),
+            ctx.as_slice(),
+        )
+        .base64()
+        .unwrap();
+        assert_eq!(wrapper, raw);
+    }
+
+    // ===== InList / MapKeys / MapValues round-trip =====
+    //
+    // Each new opcode lives next to its sibling via base64 round-trip:
+    // pack to base64, decode, re-pack, and assert the bytes haven't
+    // shifted. This catches any future edit that breaks the new ExpOp
+    // → wire mapping without needing a live server.
+
+    #[test]
+    fn in_list_base64_roundtrips() {
+        let expr = in_list(
+            int_val(2),
+            list_val(vec![Value::from(1_i64), Value::from(2_i64), Value::from(3_i64)]),
+        );
+        let b64 = expr.base64().unwrap();
+        let decoded = from_base64(&b64).unwrap();
+        assert_eq!(b64, decoded.base64().unwrap());
+    }
+
+    #[test]
+    fn map_keys_base64_roundtrips() {
+        let expr = map_keys(map_bin("m".into()));
+        let b64 = expr.base64().unwrap();
+        let decoded = from_base64(&b64).unwrap();
+        assert_eq!(b64, decoded.base64().unwrap());
+    }
+
+    #[test]
+    fn map_values_base64_roundtrips() {
+        let expr = map_values(map_bin("m".into()));
+        let b64 = expr.base64().unwrap();
+        let decoded = from_base64(&b64).unwrap();
+        assert_eq!(b64, decoded.base64().unwrap());
+    }
+
+    #[test]
+    fn in_list_composes_with_map_keys() {
+        // membership test against the keyset of a map bin
+        let expr = in_list(string_val("book".into()), map_keys(map_bin("m".into())));
+        let b64 = expr.base64().unwrap();
+        let decoded = from_base64(&b64).unwrap();
+        assert_eq!(b64, decoded.base64().unwrap());
+    }
 }
 
 // ===== Path Expression helpers =====
@@ -2010,19 +2234,66 @@ pub fn exp_remove_result() -> Expression {
     Expression::new(Some(ExpOp::ResultRemove), None, None, None, None, None)
 }
 
+/// Test whether `value` is contained in `list`. Returns a boolean
+/// expression.
+///
+/// Both arguments are themselves expressions, so this composes with
+/// path expressions and loop variables — e.g. `in_list(loop_var, val(known_set))`.
+/// Requires Aerospike Server version >= 8.1.2.
+pub fn in_list(value: Expression, list: Expression) -> Expression {
+    Expression::new(
+        Some(ExpOp::InList),
+        None,
+        None,
+        None,
+        None,
+        Some(vec![value, list]),
+    )
+}
+
+/// Extract the keys of a map expression as a list.
+///
+/// Distinct from [`crate::operations::cdt_context::ctx_map_keys_in`],
+/// which is a CTX entry that *filters* a map down to a named subset of
+/// keys. This expression *converts* a map into its key list.
+/// Requires Aerospike Server version >= 8.1.2.
+pub fn map_keys(map: Expression) -> Expression {
+    Expression::new(
+        Some(ExpOp::MapKeys),
+        None,
+        None,
+        None,
+        None,
+        Some(vec![map]),
+    )
+}
+
+/// Extract the values of a map expression as a list.
+/// Requires Aerospike Server version >= 8.1.2.
+pub fn map_values(map: Expression) -> Expression {
+    Expression::new(
+        Some(ExpOp::MapValues),
+        None,
+        None,
+        None,
+        None,
+        Some(vec![map]),
+    )
+}
+
 // ===== Path-based Expression Operations =====
 
 /// Create an expression that selects from a CDT bin using a path context.
 /// Requires Aerospike Server version >= 8.1.1.
 ///
-/// # Errors
-///
-/// Returns an error if the path bytes cannot be packed.
+/// Accepts any value convertible to `&[CdtContext]` — pass a slice, a
+/// `Vec<CdtContext>`, or a [`Path`](crate::operations::cdt_context::Path)
+/// directly.
 pub fn exp_select_by_path(
     return_type: ExpType,
     flag: crate::operations::path::SelectFlag,
     bin_exp: Expression,
-    ctx: &[CdtContext],
+    ctx: impl AsRef<[CdtContext]>,
 ) -> Expression {
     Expression {
         cmd: Some(ExpOp::Call),
@@ -2033,7 +2304,7 @@ pub fn exp_select_by_path(
         exps: None,
         arguments: Some(vec![ExpressionArgument::CdtSelectPathArg(
             flag,
-            ctx.to_vec(),
+            ctx.as_ref().to_vec(),
         )]),
         bytes: None,
     }
@@ -2042,15 +2313,14 @@ pub fn exp_select_by_path(
 /// Create an expression that modifies a CDT bin using a path context.
 /// Requires Aerospike Server version >= 8.1.1.
 ///
-/// # Errors
-///
-/// Returns an error if the path bytes cannot be packed.
+/// Like [`exp_select_by_path`] this accepts anything convertible to
+/// `&[CdtContext]`.
 pub fn exp_modify_by_path(
     return_type: ExpType,
     flag: crate::operations::path::ModifyFlag,
     bin_exp: Expression,
     modify_exp: Expression,
-    ctx: &[CdtContext],
+    ctx: impl AsRef<[CdtContext]>,
 ) -> Expression {
     Expression {
         cmd: Some(ExpOp::Call),
@@ -2063,8 +2333,132 @@ pub fn exp_modify_by_path(
             flag,
             bin_exp,
             modify_exp,
-            ctx.to_vec(),
+            ctx.as_ref().to_vec(),
         )]),
         bytes: None,
     }
+}
+
+// ===== Convenience builders on top of `exp_select_by_path` / `exp_modify_by_path`
+//
+// These mirror the operation-side helpers in `operations::path` so callers
+// don't have to memorize the SelectFlag / ModifyFlag bitmask constants for
+// each shape of query when composing path expressions. All wrappers
+// inherit the same server-version requirement as their underlying
+// expression op (Aerospike Server >= 8.1.1).
+
+/// Convenience wrapper: select the *values* at every path-resolved
+/// location (`SelectFlag::VALUE`).
+/// Requires Aerospike Server version >= 8.1.1.
+pub fn exp_select_values(
+    return_type: ExpType,
+    bin_exp: Expression,
+    ctx: impl AsRef<[CdtContext]>,
+) -> Expression {
+    exp_select_by_path(
+        return_type,
+        crate::operations::path::SelectFlag::VALUE,
+        bin_exp,
+        ctx,
+    )
+}
+
+/// Convenience wrapper: select the matching *map keys* (`SelectFlag::MAP_KEY`).
+/// Requires Aerospike Server version >= 8.1.1.
+pub fn exp_select_map_keys(
+    return_type: ExpType,
+    bin_exp: Expression,
+    ctx: impl AsRef<[CdtContext]>,
+) -> Expression {
+    exp_select_by_path(
+        return_type,
+        crate::operations::path::SelectFlag::MAP_KEY,
+        bin_exp,
+        ctx,
+    )
+}
+
+/// Convenience wrapper: select map *key/value pairs*
+/// (`SelectFlag::MAP_KEY_VALUE`).
+/// Requires Aerospike Server version >= 8.1.1.
+pub fn exp_select_map_entries(
+    return_type: ExpType,
+    bin_exp: Expression,
+    ctx: impl AsRef<[CdtContext]>,
+) -> Expression {
+    exp_select_by_path(
+        return_type,
+        crate::operations::path::SelectFlag::MAP_KEY_VALUE,
+        bin_exp,
+        ctx,
+    )
+}
+
+/// Convenience wrapper: select the *original tree shape* preserving only
+/// matching nodes (`SelectFlag::MATCHING_TREE`).
+/// Requires Aerospike Server version >= 8.1.1.
+pub fn exp_select_matching_tree(
+    return_type: ExpType,
+    bin_exp: Expression,
+    ctx: impl AsRef<[CdtContext]>,
+) -> Expression {
+    exp_select_by_path(
+        return_type,
+        crate::operations::path::SelectFlag::MATCHING_TREE,
+        bin_exp,
+        ctx,
+    )
+}
+
+/// Convenience wrapper: modify with default flags, failing on type
+/// mismatches (`ModifyFlag::DEFAULT`).
+/// Requires Aerospike Server version >= 8.1.1.
+pub fn exp_modify(
+    return_type: ExpType,
+    bin_exp: Expression,
+    modify_exp: Expression,
+    ctx: impl AsRef<[CdtContext]>,
+) -> Expression {
+    exp_modify_by_path(
+        return_type,
+        crate::operations::path::ModifyFlag::DEFAULT,
+        bin_exp,
+        modify_exp,
+        ctx,
+    )
+}
+
+/// Convenience wrapper: modify with `NO_FAIL` so type-mismatched leaves
+/// are silently skipped instead of aborting the whole expression.
+/// Requires Aerospike Server version >= 8.1.1.
+pub fn exp_modify_no_fail(
+    return_type: ExpType,
+    bin_exp: Expression,
+    modify_exp: Expression,
+    ctx: impl AsRef<[CdtContext]>,
+) -> Expression {
+    exp_modify_by_path(
+        return_type,
+        crate::operations::path::ModifyFlag::NO_FAIL,
+        bin_exp,
+        modify_exp,
+        ctx,
+    )
+}
+
+/// Convenience wrapper: remove the leaves resolved by a path. Equivalent
+/// to `exp_modify_by_path(return_type, ModifyFlag::DEFAULT, bin_exp, exp_remove_result(), ctx)`.
+/// Requires Aerospike Server version >= 8.1.1.
+pub fn exp_remove(
+    return_type: ExpType,
+    bin_exp: Expression,
+    ctx: impl AsRef<[CdtContext]>,
+) -> Expression {
+    exp_modify_by_path(
+        return_type,
+        crate::operations::path::ModifyFlag::DEFAULT,
+        bin_exp,
+        exp_remove_result(),
+        ctx,
+    )
 }

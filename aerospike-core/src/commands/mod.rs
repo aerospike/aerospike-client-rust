@@ -82,9 +82,9 @@ pub trait Command {
 }
 
 /// Whether the connection may be returned to the pool after this error.
-/// Mirrors Java's `ResultCode.keepConnection(int)`: client-side errors and the
-/// `SCAN_ABORT` / `QUERY_ABORTED` server codes require the socket to be
-/// discarded (it may still have stream bytes pending).
+/// Client-side errors and the `SCAN_ABORT` / `QUERY_ABORTED` server codes
+/// require the socket to be discarded (it may still have stream bytes
+/// pending).
 pub fn keep_connection(err: &Error) -> bool {
     match err {
         Error::ServerError(rc, _, _)
@@ -103,10 +103,10 @@ pub const fn is_network_error(err: &Error) -> bool {
     matches!(err, Error::Connection(_) | Error::Timeout(_))
 }
 
-/// Server-reported result codes that are safe to retry on. Mirrors the explicit
-/// branches in Java's `SyncCommand.executeCommand` (TIMEOUT, DEVICE_OVERLOAD,
-/// KEY_BUSY). We also treat `PartitionUnavailable` as retriable so callers
-/// eventually see the partition recover from a transitional state.
+/// Server-reported result codes that are safe to retry on (TIMEOUT,
+/// DEVICE_OVERLOAD, KEY_BUSY). We also treat `PartitionUnavailable` as
+/// retriable so callers eventually see the partition recover from a
+/// transitional state.
 pub fn is_retriable_server_error(err: &Error) -> bool {
     match err {
         Error::ServerError(rc, _, _)

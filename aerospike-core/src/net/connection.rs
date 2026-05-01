@@ -648,9 +648,8 @@ impl Connection {
     /// Authenticate against the server with an existing session token —
     /// used by the connection pool to skip the full credential exchange
     /// when a previous `LOGIN` round-trip on this pool produced a still-
-    /// valid token. Mirrors Java's `Node.refresh` shortcut where
-    /// `AdminCommand.authenticate(cluster, conn, sessionToken)` is tried
-    /// before falling back to a fresh `login()`.
+    /// valid token. The token-authenticate path is tried before falling
+    /// back to a fresh `login()`.
     async fn authenticate_with_session(
         &mut self,
         auth_mode: &AuthMode,

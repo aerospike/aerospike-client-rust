@@ -20,9 +20,13 @@ use crate::common;
 use aerospike::expressions::maps::get_by_key;
 use aerospike::expressions::*;
 use aerospike::operations::cdt_context::{
-    ctx_all_children, ctx_all_children_with_filter, ctx_map_key,
+    ctx_all_children, ctx_all_children_with_filter, ctx_and_filter, ctx_from_base64, ctx_map_key,
+    ctx_map_keys_in, Path,
 };
-use aerospike::operations::path::{modify_by_path, select_by_path, ModifyFlag, SelectFlag};
+use aerospike::operations::path::{
+    modify_by_path, modify_no_fail, remove as path_remove, select_by_path, select_map_entries,
+    select_map_keys, select_matching_tree, select_values, ModifyFlag, SelectFlag,
+};
 use aerospike::{
     as_bin, as_key, as_list, as_map, as_val, Bins, MapReturnType, ReadPolicy, Value, WritePolicy,
 };
@@ -32,6 +36,15 @@ use aerospike::{
 async fn server_supports_cdt_path_expressions(client: &aerospike::Client) -> bool {
     match client.cluster.get_random_node() {
         Ok(node) => node.version().supports_cdt_path_expressions(),
+        Err(_) => false,
+    }
+}
+
+/// Helper for the enhanced 8.1.2 expression API
+/// (`in_list` / `map_keys` / `map_values` / `ctx_map_keys_in` / `ctx_and_filter`).
+async fn server_supports_enhanced_expression_api(client: &aerospike::Client) -> bool {
+    match client.cluster.get_random_node() {
+        Ok(node) => node.version().supports_enhanced_expression_api(),
         Err(_) => false,
     }
 }
@@ -991,5 +1004,643 @@ async fn remove_nested_items_complex_path() {
         }
     } else {
         panic!("Expected HashMap result for testbin");
+    }
+}
+
+// ===== Path builder + convenience wrapper tests =====
+//
+// These exercise the surface added on top of select_by_path/modify_by_path
+// (the Path fluent builder, the select_*/modify_* shorthands, and the
+// ctx_* additions). Each test sets up a small bin, runs the new helper
+// against a live server, and asserts the round-trip result matches.
+
+#[aerospike_macro::test]
+async fn path_builder_and_select_values_wrapper() {
+    let client = common::client().await;
+    if !server_supports_cdt_path_expressions(&client).await {
+        eprintln!("Skipping: server does not support CDT path expressions (requires >= 8.1.1)");
+        return;
+    }
+
+    let namespace = common::namespace();
+    let set_name = common::rand_str(10);
+    let key = as_key!(namespace, &set_name, "path_builder_select");
+
+    let wpolicy = WritePolicy::default();
+    client.delete(&wpolicy, &key).await.unwrap();
+
+    let data = as_map!("scores" => as_list!(10_i64, 20_i64, 30_i64));
+    let bin = as_bin!("testbin", data);
+    client.put(&wpolicy, &key, &[bin]).await.unwrap();
+
+    // Build the same path two ways and assert both shapes return the
+    // same values via the select_values shorthand.
+    let path = Path::new().map_key("scores").all_children();
+    let op_builder = select_values("testbin", &path);
+    let rec_builder = client.operate(&wpolicy, &key, &[op_builder]).await.unwrap();
+
+    let op_slice = select_values(
+        "testbin",
+        &[ctx_map_key(Value::from("scores")), ctx_all_children()][..],
+    );
+    let rec_slice = client.operate(&wpolicy, &key, &[op_slice]).await.unwrap();
+
+    assert_eq!(rec_builder.bins.get("testbin"), rec_slice.bins.get("testbin"));
+    if let Some(Value::List(items)) = rec_builder.bins.get("testbin") {
+        assert_eq!(items.len(), 3);
+        assert!(items.contains(&Value::from(10_i64)));
+        assert!(items.contains(&Value::from(20_i64)));
+        assert!(items.contains(&Value::from(30_i64)));
+    } else {
+        panic!("Expected list result");
+    }
+}
+
+#[aerospike_macro::test]
+async fn select_map_keys_returns_keys() {
+    let client = common::client().await;
+    if !server_supports_cdt_path_expressions(&client).await {
+        eprintln!("Skipping: server does not support CDT path expressions (requires >= 8.1.1)");
+        return;
+    }
+
+    let namespace = common::namespace();
+    let set_name = common::rand_str(10);
+    let key = as_key!(namespace, &set_name, "select_keys");
+
+    let wpolicy = WritePolicy::default();
+    client.delete(&wpolicy, &key).await.unwrap();
+
+    let inner = as_map!("alpha" => 1_i64, "beta" => 2_i64, "gamma" => 3_i64);
+    let bin = as_bin!("testbin", as_map!("data" => inner));
+    client.put(&wpolicy, &key, &[bin]).await.unwrap();
+
+    let path = Path::new().map_key("data").all_children();
+    let op = select_map_keys("testbin", &path);
+    let rec = client.operate(&wpolicy, &key, &[op]).await.unwrap();
+
+    if let Some(Value::List(keys)) = rec.bins.get("testbin") {
+        assert_eq!(keys.len(), 3);
+        assert!(keys.contains(&Value::from("alpha")));
+        assert!(keys.contains(&Value::from("beta")));
+        assert!(keys.contains(&Value::from("gamma")));
+    } else {
+        panic!("Expected list of keys");
+    }
+}
+
+#[aerospike_macro::test]
+async fn select_map_entries_returns_pairs() {
+    let client = common::client().await;
+    if !server_supports_cdt_path_expressions(&client).await {
+        eprintln!("Skipping: server does not support CDT path expressions (requires >= 8.1.1)");
+        return;
+    }
+
+    let namespace = common::namespace();
+    let set_name = common::rand_str(10);
+    let key = as_key!(namespace, &set_name, "select_entries");
+
+    let wpolicy = WritePolicy::default();
+    client.delete(&wpolicy, &key).await.unwrap();
+
+    let inner = as_map!("a" => 1_i64, "b" => 2_i64);
+    let bin = as_bin!("testbin", as_map!("data" => inner));
+    client.put(&wpolicy, &key, &[bin]).await.unwrap();
+
+    let path = Path::new().map_key("data").all_children();
+    let op = select_map_entries("testbin", &path);
+    let rec = client.operate(&wpolicy, &key, &[op]).await.unwrap();
+
+    // MAP_KEY_VALUE returns key/value pairs interleaved as a flat list.
+    if let Some(Value::List(items)) = rec.bins.get("testbin") {
+        assert_eq!(items.len(), 4, "expected 2 entries flattened to 4 elements");
+    } else {
+        panic!("Expected list of key/value pairs");
+    }
+}
+
+#[aerospike_macro::test]
+async fn select_matching_tree_preserves_shape() {
+    let client = common::client().await;
+    if !server_supports_cdt_path_expressions(&client).await {
+        eprintln!("Skipping: server does not support CDT path expressions (requires >= 8.1.1)");
+        return;
+    }
+
+    let namespace = common::namespace();
+    let set_name = common::rand_str(10);
+    let key = as_key!(namespace, &set_name, "select_tree");
+
+    let wpolicy = WritePolicy::default();
+    client.delete(&wpolicy, &key).await.unwrap();
+
+    let inner = as_map!("a" => 100_i64, "b" => 5_i64, "c" => 200_i64);
+    let bin = as_bin!("testbin", as_map!("data" => inner));
+    client.put(&wpolicy, &key, &[bin]).await.unwrap();
+
+    // Filter children with value > 50, but ask for the matching tree
+    // shape (i.e. the surviving map structure, not bare values).
+    let ctx = vec![
+        ctx_map_key(Value::from("data")),
+        ctx_all_children_with_filter(gt(exp_int_loop_var(LoopVarPart::VALUE), int_val(50))),
+    ];
+    let op = select_matching_tree("testbin", &ctx);
+    let rec = client.operate(&wpolicy, &key, &[op]).await.unwrap();
+
+    // MATCHING_TREE returns the original map shape with only matches.
+    let result = rec.bins.get("testbin").expect("result should be present");
+    let inner_map = match result {
+        Value::HashMap(root) => match root.get(&Value::from("data")) {
+            Some(Value::HashMap(inner)) => inner.clone(),
+            other => panic!("expected nested map under 'data', got {:?}", other),
+        },
+        Value::List(items) => {
+            assert_eq!(items.len(), 2, "expected 2 matching pairs flattened");
+            return;
+        }
+        other => panic!("unexpected matching-tree result: {:?}", other),
+    };
+    assert_eq!(inner_map.len(), 2);
+    assert_eq!(inner_map.get(&Value::from("a")), Some(&Value::from(100_i64)));
+    assert_eq!(inner_map.get(&Value::from("c")), Some(&Value::from(200_i64)));
+}
+
+#[aerospike_macro::test]
+async fn modify_no_fail_skips_type_mismatch() {
+    let client = common::client().await;
+    if !server_supports_cdt_path_expressions(&client).await {
+        eprintln!("Skipping: server does not support CDT path expressions (requires >= 8.1.1)");
+        return;
+    }
+
+    let namespace = common::namespace();
+    let set_name = common::rand_str(10);
+    let key = as_key!(namespace, &set_name, "modify_nofail");
+
+    let wpolicy = WritePolicy::default();
+    let rpolicy = ReadPolicy::default();
+    client.delete(&wpolicy, &key).await.unwrap();
+
+    // Mixed bag: ints we can double, plus a string we cannot.
+    let mixed = as_list!(Value::from(1_i64), Value::from("oops"), Value::from(3_i64));
+    let bin = as_bin!("testbin", as_map!("vals" => mixed));
+    client.put(&wpolicy, &key, &[bin]).await.unwrap();
+
+    // Multiply numeric leaves by 2; NO_FAIL silently skips the string.
+    let path = Path::new().map_key("vals").all_children();
+    let modify_exp = num_mul(vec![exp_int_loop_var(LoopVarPart::VALUE), int_val(2)]);
+    let op = modify_no_fail("testbin", modify_exp, &path);
+    client.operate(&wpolicy, &key, &[op]).await.unwrap();
+
+    let rec = client.get(&rpolicy, &key, Bins::All).await.unwrap();
+    if let Some(Value::HashMap(root)) = rec.bins.get("testbin") {
+        if let Some(Value::List(vals)) = root.get(&Value::from("vals")) {
+            // Numeric leaves doubled, the string left alone.
+            let has_two = vals.iter().any(|v| matches!(v, Value::Int(2)));
+            let has_six = vals.iter().any(|v| matches!(v, Value::Int(6)));
+            let has_str = vals.iter().any(|v| matches!(v, Value::String(s) if s == "oops"));
+            assert!(has_two && has_six, "numeric leaves should be doubled: {:?}", vals);
+            assert!(has_str, "string leaf should be preserved: {:?}", vals);
+        } else {
+            panic!("Expected 'vals' list");
+        }
+    } else {
+        panic!("Expected HashMap testbin");
+    }
+}
+
+#[aerospike_macro::test]
+async fn path_remove_helper_drops_filtered_leaves() {
+    let client = common::client().await;
+    if !server_supports_cdt_path_expressions(&client).await {
+        eprintln!("Skipping: server does not support CDT path expressions (requires >= 8.1.1)");
+        return;
+    }
+
+    let namespace = common::namespace();
+    let set_name = common::rand_str(10);
+    let key = as_key!(namespace, &set_name, "path_remove");
+
+    let wpolicy = WritePolicy::default();
+    let rpolicy = ReadPolicy::default();
+    client.delete(&wpolicy, &key).await.unwrap();
+
+    let bin = as_bin!(
+        "testbin",
+        as_map!("nums" => as_list!(1_i64, 2_i64, 3_i64, 4_i64))
+    );
+    client.put(&wpolicy, &key, &[bin]).await.unwrap();
+
+    // Remove every value > 2 using the convenience wrapper (no need to
+    // import exp_remove_result on the call site).
+    let ctx = vec![
+        ctx_map_key(Value::from("nums")),
+        ctx_all_children_with_filter(gt(exp_int_loop_var(LoopVarPart::VALUE), int_val(2))),
+    ];
+    let op = path_remove("testbin", &ctx);
+    client.operate(&wpolicy, &key, &[op]).await.unwrap();
+
+    let rec = client.get(&rpolicy, &key, Bins::All).await.unwrap();
+    if let Some(Value::HashMap(root)) = rec.bins.get("testbin") {
+        if let Some(Value::List(nums)) = root.get(&Value::from("nums")) {
+            assert_eq!(nums.len(), 2);
+            assert!(nums.contains(&Value::from(1_i64)));
+            assert!(nums.contains(&Value::from(2_i64)));
+        } else {
+            panic!("Expected 'nums' list");
+        }
+    } else {
+        panic!("Expected HashMap testbin");
+    }
+}
+
+// ===== ctx_map_keys_in / ctx_and_filter / ctx round-trip =====
+
+#[aerospike_macro::test]
+async fn ctx_map_keys_in_selects_subset_of_keys() {
+    let client = common::client().await;
+    if !server_supports_enhanced_expression_api(&client).await {
+        eprintln!("Skipping: server does not support enhanced expression API (requires >= 8.1.2)");
+        return;
+    }
+
+    let namespace = common::namespace();
+    let set_name = common::rand_str(10);
+    let key = as_key!(namespace, &set_name, "ctx_keys_in");
+
+    let wpolicy = WritePolicy::default();
+    client.delete(&wpolicy, &key).await.unwrap();
+
+    let inner = as_map!("a" => 1_i64, "b" => 2_i64, "c" => 3_i64, "d" => 4_i64);
+    let bin = as_bin!("testbin", as_map!("data" => inner));
+    client.put(&wpolicy, &key, &[bin]).await.unwrap();
+
+    // ctx_map_keys_in is a multi-key terminal selector: it produces the
+    // values for the named keys, in the order the server resolves them.
+    // We assert presence rather than ordering to stay robust against
+    // implementation choices on the server side.
+    let ctx = vec![
+        ctx_map_key(Value::from("data")),
+        ctx_map_keys_in(["a", "c"]),
+    ];
+    let op = select_values("testbin", &ctx);
+    let rec = client.operate(&wpolicy, &key, &[op]).await.unwrap();
+
+    let result = rec.bins.get("testbin").expect("result missing");
+    let items: Vec<Value> = match result {
+        Value::List(items) => items.clone(),
+        Value::HashMap(m) => m.values().cloned().collect(),
+        other => panic!("unexpected map_keys_in result shape: {:?}", other),
+    };
+    assert!(items.contains(&Value::from(1_i64)), "expected value for 'a' (=1)");
+    assert!(items.contains(&Value::from(3_i64)), "expected value for 'c' (=3)");
+    assert!(!items.contains(&Value::from(2_i64)), "value for 'b' should be excluded");
+    assert!(!items.contains(&Value::from(4_i64)), "value for 'd' should be excluded");
+}
+
+#[aerospike_macro::test]
+async fn ctx_and_filter_refines_map_keys_in() {
+    // Mirrors the Go test in commit 32860eb (cdt_operation_test.go):
+    // `CtxMapStringKeysIn(...)` followed by `CtxAndFilter(...)` to
+    // narrow the keyed subset by an additional predicate. The Java
+    // client doesn't allow `and_filter` directly after iteration-form
+    // CTX (e.g. `ctx_all_children`); the canonical pattern is to apply
+    // it to a non-expression selector like `ctx_map_keys_in`.
+    let client = common::client().await;
+    if !server_supports_enhanced_expression_api(&client).await {
+        eprintln!("Skipping: server does not support enhanced expression API (requires >= 8.1.2)");
+        return;
+    }
+
+    let namespace = common::namespace();
+    let set_name = common::rand_str(10);
+    let key = as_key!(namespace, &set_name, "ctx_andfilter");
+
+    let wpolicy = WritePolicy::default();
+    client.delete(&wpolicy, &key).await.unwrap();
+
+    let inner = as_map!("a" => 5_i64, "b" => 15_i64, "c" => 25_i64, "d" => 50_i64);
+    let bin = as_bin!("testbin", inner);
+    client.put(&wpolicy, &key, &[bin]).await.unwrap();
+
+    // Pick {a, b, c} via ctx_map_keys_in, then keep only the entries
+    // whose value is > 10 — should yield b=15 and c=25 (a=5 filtered
+    // out, d=50 not in the keys-in set).
+    let ctx = vec![
+        ctx_map_keys_in(["a", "b", "c"]),
+        ctx_and_filter(gt(exp_int_loop_var(LoopVarPart::VALUE), int_val(10))),
+    ];
+    let op = select_map_entries("testbin", &ctx);
+    let rec = client.operate(&wpolicy, &key, &[op]).await.unwrap();
+
+    let result = rec.bins.get("testbin").expect("result missing");
+    let pairs: Vec<Value> = match result {
+        Value::List(items) => items.clone(),
+        Value::HashMap(m) => m
+            .iter()
+            .flat_map(|(k, v)| [k.clone(), v.clone()])
+            .collect(),
+        other => panic!("unexpected and_filter result shape: {:?}", other),
+    };
+    // Expect 2 key/value pairs flattened to 4 elements.
+    assert_eq!(pairs.len(), 4, "expected 2 key/value pairs, got {:?}", pairs);
+    assert!(pairs.contains(&Value::from("b")) && pairs.contains(&Value::from(15_i64)));
+    assert!(pairs.contains(&Value::from("c")) && pairs.contains(&Value::from(25_i64)));
+    assert!(!pairs.contains(&Value::from("a")), "a (=5) should be filtered out");
+    assert!(!pairs.contains(&Value::from("d")), "d not in keys-in set");
+}
+
+#[aerospike_macro::test]
+async fn ctx_round_trip_through_base64_then_query() {
+    let client = common::client().await;
+    if !server_supports_cdt_path_expressions(&client).await {
+        eprintln!("Skipping: server does not support CDT path expressions (requires >= 8.1.1)");
+        return;
+    }
+
+    let namespace = common::namespace();
+    let set_name = common::rand_str(10);
+    let key = as_key!(namespace, &set_name, "ctx_b64");
+
+    let wpolicy = WritePolicy::default();
+    client.delete(&wpolicy, &key).await.unwrap();
+
+    let inner = as_map!("a" => 1_i64, "b" => 2_i64, "c" => 3_i64);
+    let bin = as_bin!("testbin", as_map!("data" => inner));
+    client.put(&wpolicy, &key, &[bin]).await.unwrap();
+
+    // Build a path, serialize to base64, decode, then issue a query
+    // using the decoded CTX. Same query as the original must produce
+    // the same answer.
+    let original = Path::new().map_key("data").all_children();
+    let b64 = aerospike::operations::cdt_context::to_base64(original.as_slice()).unwrap();
+    let decoded = ctx_from_base64(&b64).expect("decode ctx");
+
+    let rec_original = client
+        .operate(&wpolicy, &key, &[select_values("testbin", &original)])
+        .await
+        .unwrap();
+    let rec_decoded = client
+        .operate(&wpolicy, &key, &[select_values("testbin", &decoded[..])])
+        .await
+        .unwrap();
+
+    assert_eq!(rec_original.bins.get("testbin"), rec_decoded.bins.get("testbin"));
+}
+
+// ===== Expression-side wrapper tests =====
+
+#[aerospike_macro::test]
+async fn exp_select_values_with_path_builder() {
+    let client = common::client().await;
+    if !server_supports_cdt_path_expressions(&client).await {
+        eprintln!("Skipping: server does not support CDT path expressions (requires >= 8.1.1)");
+        return;
+    }
+
+    let namespace = common::namespace();
+    let set_name = common::rand_str(10);
+    let key = as_key!(namespace, &set_name, "exp_sel_values");
+
+    let wpolicy = WritePolicy::default();
+    client.delete(&wpolicy, &key).await.unwrap();
+
+    let bin = as_bin!(
+        "testbin",
+        as_map!("nums" => as_list!(7_i64, 8_i64, 9_i64))
+    );
+    client.put(&wpolicy, &key, &[bin]).await.unwrap();
+
+    let path = Path::new().map_key("nums").all_children();
+    let bin_exp = aerospike::expressions::map_bin("testbin".to_string());
+    let exp = exp_select_values(ExpType::LIST, bin_exp, &path);
+
+    let ops = &[aerospike::operations::exp::read_exp(
+        "result",
+        exp,
+        aerospike::operations::exp::ExpReadFlags::Default,
+    )];
+    let rec = client.operate(&wpolicy, &key, ops).await.unwrap();
+
+    if let Some(Value::List(items)) = rec.bins.get("result") {
+        assert_eq!(items.len(), 3);
+        assert!(items.contains(&Value::from(7_i64)));
+        assert!(items.contains(&Value::from(8_i64)));
+        assert!(items.contains(&Value::from(9_i64)));
+    } else {
+        panic!("Expected list result from exp_select_values");
+    }
+}
+
+// ===== in_list / map_keys / map_values =====
+//
+// These exercise the path-expression-era ExpOps (InList=9, MapKeys=101,
+// MapValues=102) end-to-end via `read_exp`. The new factories live next
+// to `exp_remove_result` in `expressions/mod.rs`.
+
+#[aerospike_macro::test]
+async fn in_list_returns_true_for_present_value() {
+    let client = common::client().await;
+    if !server_supports_enhanced_expression_api(&client).await {
+        eprintln!("Skipping: server does not support enhanced expression API (requires >= 8.1.2)");
+        return;
+    }
+
+    let namespace = common::namespace();
+    let set_name = common::rand_str(10);
+    let key = as_key!(namespace, &set_name, "in_list");
+
+    let wpolicy = WritePolicy::default();
+    client.delete(&wpolicy, &key).await.unwrap();
+
+    let bin = as_bin!("nums", as_list!(1_i64, 2_i64, 3_i64));
+    client.put(&wpolicy, &key, &[bin]).await.unwrap();
+
+    let present = aerospike::expressions::in_list(int_val(2), list_bin("nums".to_string()));
+    let absent = aerospike::expressions::in_list(int_val(99), list_bin("nums".to_string()));
+
+    let ops = &[
+        aerospike::operations::exp::read_exp(
+            "present",
+            present,
+            aerospike::operations::exp::ExpReadFlags::Default,
+        ),
+        aerospike::operations::exp::read_exp(
+            "absent",
+            absent,
+            aerospike::operations::exp::ExpReadFlags::Default,
+        ),
+    ];
+    let rec = client.operate(&wpolicy, &key, ops).await.unwrap();
+    assert_eq!(rec.bins.get("present"), Some(&Value::from(true)));
+    assert_eq!(rec.bins.get("absent"), Some(&Value::from(false)));
+}
+
+#[aerospike_macro::test]
+async fn map_keys_extracts_all_keys() {
+    let client = common::client().await;
+    if !server_supports_enhanced_expression_api(&client).await {
+        eprintln!("Skipping: server does not support enhanced expression API (requires >= 8.1.2)");
+        return;
+    }
+
+    let namespace = common::namespace();
+    let set_name = common::rand_str(10);
+    let key = as_key!(namespace, &set_name, "map_keys");
+
+    let wpolicy = WritePolicy::default();
+    client.delete(&wpolicy, &key).await.unwrap();
+
+    let bin = as_bin!("m", as_map!("a" => 1_i64, "b" => 2_i64, "c" => 3_i64));
+    client.put(&wpolicy, &key, &[bin]).await.unwrap();
+
+    let exp = aerospike::expressions::map_keys(map_bin("m".to_string()));
+    let ops = &[aerospike::operations::exp::read_exp(
+        "keys",
+        exp,
+        aerospike::operations::exp::ExpReadFlags::Default,
+    )];
+    let rec = client.operate(&wpolicy, &key, ops).await.unwrap();
+
+    if let Some(Value::List(keys)) = rec.bins.get("keys") {
+        assert_eq!(keys.len(), 3);
+        assert!(keys.contains(&Value::from("a")));
+        assert!(keys.contains(&Value::from("b")));
+        assert!(keys.contains(&Value::from("c")));
+    } else {
+        panic!("Expected list of keys, got: {:?}", rec.bins.get("keys"));
+    }
+}
+
+#[aerospike_macro::test]
+async fn map_values_extracts_all_values() {
+    let client = common::client().await;
+    if !server_supports_enhanced_expression_api(&client).await {
+        eprintln!("Skipping: server does not support enhanced expression API (requires >= 8.1.2)");
+        return;
+    }
+
+    let namespace = common::namespace();
+    let set_name = common::rand_str(10);
+    let key = as_key!(namespace, &set_name, "map_values");
+
+    let wpolicy = WritePolicy::default();
+    client.delete(&wpolicy, &key).await.unwrap();
+
+    let bin = as_bin!("m", as_map!("a" => 10_i64, "b" => 20_i64, "c" => 30_i64));
+    client.put(&wpolicy, &key, &[bin]).await.unwrap();
+
+    let exp = aerospike::expressions::map_values(map_bin("m".to_string()));
+    let ops = &[aerospike::operations::exp::read_exp(
+        "values",
+        exp,
+        aerospike::operations::exp::ExpReadFlags::Default,
+    )];
+    let rec = client.operate(&wpolicy, &key, ops).await.unwrap();
+
+    if let Some(Value::List(vals)) = rec.bins.get("values") {
+        assert_eq!(vals.len(), 3);
+        assert!(vals.contains(&Value::from(10_i64)));
+        assert!(vals.contains(&Value::from(20_i64)));
+        assert!(vals.contains(&Value::from(30_i64)));
+    } else {
+        panic!("Expected list of values, got: {:?}", rec.bins.get("values"));
+    }
+}
+
+#[aerospike_macro::test]
+async fn in_list_composes_with_map_keys() {
+    // Real-world idiom: "is the looked-up name a key of this map?"
+    let client = common::client().await;
+    if !server_supports_enhanced_expression_api(&client).await {
+        eprintln!("Skipping: server does not support enhanced expression API (requires >= 8.1.2)");
+        return;
+    }
+
+    let namespace = common::namespace();
+    let set_name = common::rand_str(10);
+    let key = as_key!(namespace, &set_name, "in_list_keys");
+
+    let wpolicy = WritePolicy::default();
+    client.delete(&wpolicy, &key).await.unwrap();
+
+    let bin = as_bin!("m", as_map!("alpha" => 1_i64, "beta" => 2_i64));
+    client.put(&wpolicy, &key, &[bin]).await.unwrap();
+
+    let has_alpha = aerospike::expressions::in_list(
+        string_val("alpha".to_string()),
+        aerospike::expressions::map_keys(map_bin("m".to_string())),
+    );
+    let has_zeta = aerospike::expressions::in_list(
+        string_val("zeta".to_string()),
+        aerospike::expressions::map_keys(map_bin("m".to_string())),
+    );
+
+    let ops = &[
+        aerospike::operations::exp::read_exp(
+            "alpha_in",
+            has_alpha,
+            aerospike::operations::exp::ExpReadFlags::Default,
+        ),
+        aerospike::operations::exp::read_exp(
+            "zeta_in",
+            has_zeta,
+            aerospike::operations::exp::ExpReadFlags::Default,
+        ),
+    ];
+    let rec = client.operate(&wpolicy, &key, ops).await.unwrap();
+    assert_eq!(rec.bins.get("alpha_in"), Some(&Value::from(true)));
+    assert_eq!(rec.bins.get("zeta_in"), Some(&Value::from(false)));
+}
+
+#[aerospike_macro::test]
+async fn exp_remove_through_write_exp_drops_leaves() {
+    let client = common::client().await;
+    if !server_supports_cdt_path_expressions(&client).await {
+        eprintln!("Skipping: server does not support CDT path expressions (requires >= 8.1.1)");
+        return;
+    }
+
+    let namespace = common::namespace();
+    let set_name = common::rand_str(10);
+    let key = as_key!(namespace, &set_name, "exp_remove");
+
+    let wpolicy = WritePolicy::default();
+    let rpolicy = ReadPolicy::default();
+    client.delete(&wpolicy, &key).await.unwrap();
+
+    let bin = as_bin!(
+        "testbin",
+        as_map!("vals" => as_list!(1_i64, 5_i64, 10_i64, 20_i64))
+    );
+    client.put(&wpolicy, &key, &[bin]).await.unwrap();
+
+    // Drop every value >= 10 by going through exp_remove + write_exp.
+    let ctx = vec![
+        ctx_map_key(Value::from("vals")),
+        ctx_all_children_with_filter(ge(exp_int_loop_var(LoopVarPart::VALUE), int_val(10))),
+    ];
+    let bin_exp = aerospike::expressions::map_bin("testbin".to_string());
+    let exp = exp_remove(ExpType::MAP, bin_exp, &ctx);
+
+    let ops = &[aerospike::operations::exp::write_exp(
+        "testbin",
+        exp,
+        aerospike::operations::exp::ExpWriteFlags::Default,
+    )];
+    client.operate(&wpolicy, &key, ops).await.unwrap();
+
+    let rec = client.get(&rpolicy, &key, Bins::All).await.unwrap();
+    if let Some(Value::HashMap(root)) = rec.bins.get("testbin") {
+        if let Some(Value::List(vals)) = root.get(&Value::from("vals")) {
+            assert_eq!(vals.len(), 2);
+            assert!(vals.contains(&Value::from(1_i64)));
+            assert!(vals.contains(&Value::from(5_i64)));
+        } else {
+            panic!("Expected 'vals' list");
+        }
+    } else {
+        panic!("Expected HashMap testbin");
     }
 }

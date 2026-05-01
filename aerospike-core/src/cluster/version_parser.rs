@@ -73,6 +73,12 @@ impl Version {
         self >= &Version::new(8, 1, 1, 0)
     }
 
+    /// Server supports the enhanced expression API: `in_list`,
+    /// `map_keys`, `map_values`, `ctx_map_keys_in`, `ctx_and_filter`.
+    pub fn supports_enhanced_expression_api(&self) -> bool {
+        self >= &Version::new(8, 1, 2, 0)
+    }
+
     /// Server supports Multi-Record Transactions (MRT).
     pub fn supports_mrt(&self) -> bool {
         self >= &Version::new(8, 0, 0, 0)

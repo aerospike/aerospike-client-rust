@@ -192,13 +192,13 @@ pub struct ClientPolicy {
     /// threshold the client trips a per-node circuit breaker and rejects
     /// further commands targeted at that node with `ResultCode::MaxErrorRate`
     /// until the next reset. Set to `0` to disable the breaker entirely.
-    /// Mirrors Java `ClientPolicy.maxErrorRate` (default 100).
+    /// Defaults to 100.
     pub max_error_rate: usize,
 
     /// Number of cluster tend iterations after which each node's error
     /// counter is reset. Smaller values make the breaker more aggressive
-    /// (tighter recovery), larger values make it more lenient. Mirrors
-    /// Java `ClientPolicy.errorRateWindow` (default 1).
+    /// (tighter recovery), larger values make it more lenient. Defaults
+    /// to 1.
     pub error_rate_window: usize,
 }
 

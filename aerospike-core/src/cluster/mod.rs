@@ -104,8 +104,8 @@ pub struct Cluster {
 }
 
 /// `true` when `node.host().name` parses to a loopback address, or is the
-/// `localhost` / `::1` literal. Used by `peer_exists` to mirror Java's
-/// `node.address.isLoopbackAddress()` shortcut.
+/// `localhost` / `::1` literal. Used by `peer_exists` as a shortcut for
+/// loopback-host comparisons.
 fn node_address_is_loopback(node: &Node) -> bool {
     let name = node.host().name;
     if let Ok(ip) = name.parse::<std::net::IpAddr>() {
@@ -364,15 +364,14 @@ impl Cluster {
     }
 
     /// Walks the discovered peer list and validates each peer host until one
-    /// connects, creating a new `Node` for the first successful host. Mirrors
-    /// the inner loop of Java's `Node.refreshPeers` but split out so the
-    /// network-bound validation step can stay async.
+    /// connects, creating a new `Node` for the first successful host. Split
+    /// out from the parser so the network-bound validation step can stay
+    /// async.
     ///
     /// Tracks per-source-node "every peer materialized" so the caller can
-    /// commit each parsing node's `peers-generation` (Java's
-    /// `peersValidated`). If any peer parsed by node X is unreachable, X's
-    /// pending generation is invalidated and the next tend will re-parse
-    /// and retry.
+    /// commit each parsing node's `peers-generation`. If any peer parsed by
+    /// node X is unreachable, X's pending generation is invalidated and the
+    /// next tend will re-parse and retry.
     async fn materialize_peers(&self, peers: &mut Peers) {
         let peers_list = peers.peers_list();
         // Reset the working set for the next parsing-node iteration; we've
@@ -436,7 +435,7 @@ impl Cluster {
     /// - If node has failures, verify host addresses match before reusing.
     /// - If a peer host is a hostname, resolve it via DNS and compare each
     ///   resolved IP against the existing node's address. Cache the
-    ///   hostname on the node on success. Mirrors Java's `findPeerNode`.
+    ///   hostname on the node on success.
     /// - If host mismatch on a failing node, mark as replace_node.
     /// - Also check if already added during this tend cycle.
     async fn peer_exists(&self, peers: &mut Peers, peer: &mut Peer) -> bool {

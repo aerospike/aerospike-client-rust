@@ -111,7 +111,7 @@ pub enum Error {
     ServerError(ResultCode, bool, String),
     /// Per-node circuit breaker has tripped: too many recent errors against
     /// the node within the configured `error_rate_window`. The command was
-    /// *not* sent to the server. Mirrors Java's `AerospikeException.Backoff`.
+    /// *not* sent to the server.
     #[error("Max error rate exceeded for node {0}; backing off")]
     MaxErrorRate(String),
     /// Error returned when executing a User-Defined Function (UDF) resulted in an error.
@@ -191,8 +191,7 @@ impl Error {
         }
     }
 
-    /// Recompute the `in_doubt` flag per Java's rule
-    /// (`AerospikeException.setInDoubt(isWrite, commandSentCounter)`):
+    /// Recompute the `in_doubt` flag:
     /// `in_doubt = true` when this is a write AND we sent more than one command OR
     /// sent exactly one and the failure was a client-side error or server TIMEOUT.
     /// No-op for non-write commands or non-server error variants.

@@ -55,7 +55,7 @@ pub struct Node {
     /// `refresh`, `refresh_peers`, partition map fetch, rack-ids fetch.
     /// Lazy-opened on first use and reused on subsequent tends so we don't
     /// pay LOGIN + TCP-handshake every cycle. On any error it's torn down
-    /// so the next tend will reopen. Mirrors Java `Node.tendConnection`.
+    /// so the next tend will reopen.
     tend_connection: AsyncMutex<Option<Connection>>,
     failures: AtomicUsize,
 
@@ -78,14 +78,12 @@ pub struct Node {
     /// and reset every `error_rate_window` tend iterations.
     /// `node_max_error_rate` is the per-node ceiling — it adapts each
     /// reset, doubling on a clean window (capped at the cluster setting)
-    /// or halving when the previous window tripped. Mirrors Java's
-    /// `Node.errorRateCount` + `Node.maxErrorRate`.
+    /// or halving when the previous window tripped.
     error_rate_count: AtomicUsize,
     node_max_error_rate: AtomicUsize,
     /// Cached hostname that resolves to this node's IP. Populated by
     /// `Cluster::peer_exists` on the first successful DNS-aware match, so
-    /// subsequent tends can short-circuit the lookup. Mirrors Java's
-    /// `node.hostname` field.
+    /// subsequent tends can short-circuit the lookup.
     hostname: std::sync::OnceLock<String>,
 }
 
@@ -165,7 +163,7 @@ impl Node {
     }
 
     /// Cache the hostname that resolved to this node's IP. No-op on the
-    /// second call — first writer wins, matching Java's behavior.
+    /// second call — first writer wins.
     pub fn cache_hostname(&self, name: String) {
         let _ = self.hostname.set(name);
     }
@@ -181,7 +179,7 @@ impl Node {
     }
 
     /// Resets the reference count to 0. Called at the start of each tend
-    /// cycle, before peer refresh (mirrors Java's `referenceCount = 0`).
+    /// cycle, before peer refresh.
     pub fn reset_reference_count(&self) {
         self.reference_count.store(0, Ordering::Relaxed);
     }
@@ -209,11 +207,10 @@ impl Node {
     // Refresh the node
     /// Phase 1 of the tend cycle: Refresh node metadata and check generation numbers.
     ///
-    /// Mirrors Java `Node.refresh(Peers peers)`. Sends lightweight info
-    /// commands to verify node identity and check peers / partition /
-    /// rebalance generations. Does NOT fetch the full peer list — that
-    /// happens in [`refresh_peers`](Self::refresh_peers) only when
-    /// `peers.gen_changed` ends up true.
+    /// Sends lightweight info commands to verify node identity and check
+    /// peers / partition / rebalance generations. Does NOT fetch the full
+    /// peer list — that happens in [`refresh_peers`](Self::refresh_peers)
+    /// only when `peers.gen_changed` ends up true.
     pub async fn refresh(&self, peers: &Peers) -> Result<()> {
         if !self.is_active() {
             return Ok(());
@@ -365,8 +362,7 @@ impl Node {
 
     /// Commit a previously-staged peers-generation. Called by the cluster
     /// after `materialize_peers` confirms that every peer parsed by this
-    /// node was reachable — mirrors Java's `peersGeneration = parser.generation`
-    /// inside `Node.refreshPeers`.
+    /// node was reachable.
     pub fn commit_peers_generation(&self, generation: isize) {
         self.peers_generation.store(generation, Ordering::Relaxed);
     }
@@ -385,8 +381,7 @@ impl Node {
     }
 
     /// Parses `peers-generation` from `info_map` and compares with the
-    /// stored value. Sets `peers.gen_changed = true` if they differ. Mirrors
-    /// Java's `Node.verifyPeersGeneration`.
+    /// stored value. Sets `peers.gen_changed = true` if they differ.
     ///
     /// When the server's reported generation goes *backward* (`stored > gen`)
     /// the node almost certainly quick-restarted: it forgot us and reset
@@ -642,9 +637,9 @@ impl Node {
 
     /// Run an info command over this node's long-lived tend socket. Lazily
     /// opens it on first use; on any error tears the socket down so the
-    /// next call reopens. Mirrors Java's `Node.refresh` reuse of
-    /// `tendConnection`. Use this for tend-time traffic only — operational
-    /// commands should go through the pool via [`info`](Self::info).
+    /// next call reopens. Use this for tend-time traffic only —
+    /// operational commands should go through the pool via
+    /// [`info`](Self::info).
     pub async fn tend_info(
         &self,
         policy: &AdminPolicy,
@@ -750,11 +745,11 @@ impl Node {
     }
 
     /// Called once per `error_rate_window` tend iterations to roll the
-    /// counter forward. Adapts the per-node ceiling exactly like Java's
-    /// `Node.resetErrorRate`: the previous-window's `count` is compared
-    /// against the *per-node* ceiling (not the cluster cap). Previous
-    /// window clean → next ceiling doubles (capped at cluster max);
-    /// previous window tripped → next ceiling halves with a floor of 1.
+    /// counter forward. Adapts the per-node ceiling: the previous
+    /// window's `count` is compared against the *per-node* ceiling (not
+    /// the cluster cap). Previous window clean → next ceiling doubles
+    /// (capped at cluster max); previous window tripped → next ceiling
+    /// halves with a floor of 1.
     pub fn reset_error_rate(&self) {
         let cluster_max = self.client_policy.max_error_rate;
         if cluster_max == 0 {

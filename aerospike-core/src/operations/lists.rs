@@ -242,19 +242,47 @@ pub(crate) const fn list_order_flag(order: ListOrderType, pad: bool) -> u8 {
     0x40
 }
 
-/// Creates list create operation.
+/// Create a list with full control over both the `pad` and
+/// `persist_index` knobs.
 ///
-/// Server creates list at given context level. The context is allowed to be beyond list
-/// boundaries only if pad is set to true. In that case, nil list entries will be inserted to
-/// satisfy the context position.
-pub fn create(bin: &str, list_order: ListOrderType, pad: bool) -> Operation {
+/// - **Top-level (no [`crate::operations::Operation::context`] attached)**:
+///   the `persist_index` bit is honored on the order byte; `pad` is
+///   ignored (padding only makes sense for nested CTX paths).
+/// - **Nested (a CTX is later attached via `.context(...)`)**: the `pad`
+///   flag is honored on the type-flag byte; `persist_index` is ignored
+///   (persisted indexes only apply at the top level).
+///
+/// This is the canonical form. The other `create*` helpers in this
+/// module (`create`, `create_with_index`) delegate to this function
+/// after fixing one of the two flags.
+pub fn create_persistent(
+    bin: &str,
+    list_order: ListOrderType,
+    pad: bool,
+    persist_index: bool,
+) -> Operation {
+    // Java picks the wire shape based on whether the op is applied at
+    // top level or under a CTX. Since CTX is attached after construction
+    // here, the parameters disambiguate the intent:
+    //   * persist_index → top-level form: emit `[order | 0x10]` (1 arg)
+    //   * pad           → nested form:    emit `[order_flag(pad), order]` (2 args)
+    //   * neither       → equivalent to `set_order`: `[order]` (1 arg)
+    // The `persist_index && pad` combination is not meaningful (Java
+    // honors only one or the other), so persist_index wins.
+    let args = if persist_index {
+        vec![CdtArgument::Byte(list_order as u8 | 0x10)]
+    } else if pad {
+        vec![
+            CdtArgument::Byte(list_order_flag(list_order, true)),
+            CdtArgument::Byte(list_order as u8),
+        ]
+    } else {
+        vec![CdtArgument::Byte(list_order as u8)]
+    };
     let cdt_op = CdtOperation {
         op: CdtListOpType::SetType as u8,
         encoder: Arc::new(pack_cdt_op),
-        args: vec![
-            CdtArgument::Byte(list_order_flag(list_order, pad)),
-            CdtArgument::Byte(list_order as u8),
-        ],
+        args,
     };
     Operation {
         op: OperationType::CdtWrite,
@@ -264,13 +292,29 @@ pub fn create(bin: &str, list_order: ListOrderType, pad: bool) -> Operation {
     }
 }
 
+/// Creates list create operation.
+///
+/// Server creates list at given context level. The context is allowed
+/// to be beyond list boundaries only if `pad` is set to true. In that
+/// case, nil list entries will be inserted to satisfy the context
+/// position.
+///
+/// Convenience wrapper for [`create_persistent`] without a persisted
+/// index.
+pub fn create(bin: &str, list_order: ListOrderType, pad: bool) -> Operation {
+    create_persistent(bin, list_order, pad, false)
+}
+
 /// Creates list create operation with a persisted index.
 ///
 /// Server creates list at given context level with a persisted index.
-/// Similar to `create`, but the server will maintain a separate index data structure
-/// for the list, improving lookup performance.
+/// Similar to [`create`], but the server maintains a separate index
+/// data structure for the list, improving lookup performance.
+///
+/// Convenience wrapper for [`create_persistent`] with `pad=false` and
+/// `persist_index=true`.
 pub fn create_with_index(bin: &str, list_order: ListOrderType) -> Operation {
-    set_order_with_index(bin, list_order)
+    create_persistent(bin, list_order, false, true)
 }
 
 /// Creates a set list order operation.

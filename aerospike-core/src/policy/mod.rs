@@ -289,11 +289,10 @@ pub struct BasePolicy {
     /// the per-command CPU cost of zlib outweighs the savings on small
     /// payloads.
     ///
-    /// Defaults to `128`, matching Java's hard-coded `COMPRESS_THRESHOLD`
-    /// and the Go client's behavior. Tune higher when most operations
-    /// touch only a few small bins, lower when most payloads are large.
-    /// Setting it to `0` makes every command go through zlib whenever
-    /// `use_compression` is on.
+    /// Defaults to `128`. Tune higher when most operations touch only a
+    /// few small bins, lower when most payloads are large. Setting it to
+    /// `0` makes every command go through zlib whenever `use_compression`
+    /// is on.
     ///
     /// No effect when [`use_compression`](Self::use_compression) is `false`.
     pub compression_threshold: usize,

@@ -37,8 +37,7 @@ pub struct PartitionTokenizer {
     buffer: Vec<u8>,
     /// `partition-generation` reported alongside `replicas` in the same
     /// info round-trip. Committed onto the node by [`update_partition`]
-    /// after the map has been successfully refreshed (Java's
-    /// `partitionGeneration = parser.getGeneration()`).
+    /// after the map has been successfully refreshed.
     generation: isize,
 }
 

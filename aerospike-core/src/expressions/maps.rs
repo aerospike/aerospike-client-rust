@@ -844,7 +844,7 @@ pub(crate) fn add_write(
     ctx: &[CdtContext],
     arguments: Vec<ExpressionArgument>,
 ) -> Expression {
-    let return_type = if ctx.is_empty() || (ctx[0].id & CtxType::ListIndex as u8) == 0 {
+    let return_type = if ctx.is_empty() || (ctx[0].id & CtxType::ListIndex as u16) == 0 {
         ExpType::MAP
     } else {
         ExpType::LIST

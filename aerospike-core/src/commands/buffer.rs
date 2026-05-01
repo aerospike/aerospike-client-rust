@@ -130,8 +130,7 @@ const AS_MSG_TYPE: u8 = 3;
 pub const AS_MSG_TYPE_COMPRESSED: u8 = 4;
 
 /// Default minimum message size to trigger compression — used when no
-/// per-policy threshold has been set on a `Buffer`. Java's hardcoded
-/// `COMPRESS_THRESHOLD` matches this value.
+/// per-policy threshold has been set on a `Buffer`.
 pub const DEFAULT_COMPRESS_THRESHOLD: usize = 128;
 
 // MAX_BUFFER_SIZE protects against allocating massive memory blocks
@@ -149,12 +148,12 @@ pub struct Buffer {
     pub reclaim_threshold: usize,
     /// When compression is enabled, all command data is written starting at this
     /// offset (16), reserving space for the compressed proto header (8 bytes) and
-    /// uncompressed size (8 bytes). This mirrors the Go client's pre-padding
-    /// approach, allowing `compress()` to work in-place without copying.
+    /// uncompressed size (8 bytes). The pre-padding lets `compress()`
+    /// work in-place without copying.
     compress_offset: usize,
     /// Minimum command-buffer size before [`compress`](Self::compress)
-    /// actually invokes zlib. Mirrors Java's hard-coded
-    /// `COMPRESS_THRESHOLD = 128` (the default), but is configurable via
+    /// actually invokes zlib. Defaults to
+    /// [`DEFAULT_COMPRESS_THRESHOLD`] but is configurable via
     /// `BasePolicy.compression_threshold`.
     compress_threshold: usize,
 }
@@ -175,8 +174,7 @@ impl Buffer {
     /// gate. Must be called before `begin()`. When enabled, reserves 16
     /// bytes at the start of the buffer for the compressed message header
     /// and remembers `threshold` so a later [`compress`](Self::compress)
-    /// call can short-circuit on small payloads exactly like Java's
-    /// `if (policy.compress && dataOffset > COMPRESS_THRESHOLD)`.
+    /// call can short-circuit on small payloads.
     pub(crate) const fn set_compress(&mut self, enabled: bool, threshold: usize) {
         self.compress_offset = if enabled { 16 } else { 0 };
         self.compress_threshold = threshold;
@@ -226,7 +224,7 @@ impl Buffer {
         self.write_u64(size as u64);
     }
 
-    /// Compress the command buffer in-place using zlib, matching the Go client's approach.
+    /// Compress the command buffer in-place using zlib.
     ///
     /// Because `begin()` wrote command data starting at `compress_offset` (16),
     /// the first 16 bytes of `data_buffer` are already reserved for the compressed

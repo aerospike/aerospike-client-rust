@@ -54,36 +54,106 @@ impl ModifyFlag {
 /// Creates a CDT operate read operation using a CDT path expression context.
 /// Requires Aerospike Server version >= 8.1.1.
 ///
-/// # Errors
+/// Accepts any value convertible to `&[CdtContext]` — pass a
+/// `&Vec<CdtContext>`, a slice, or a [`Path`](crate::operations::cdt_context::Path)
+/// directly:
 ///
-/// Returns an error if the path bytes cannot be packed.
-pub fn select_by_path(bin: &str, flag: SelectFlag, ctx: &[CdtContext]) -> Operation {
-    // let bytes = pack_path_select_bytes(ctx, flag.0)?;
+/// ```ignore
+/// use aerospike::operations::cdt_context::Path;
+/// use aerospike::operations::path::{select_by_path, SelectFlag};
+///
+/// let path = Path::new().map_key("book").all_children().map_key("price");
+/// let op = select_by_path("myBin", SelectFlag::VALUE, &path);
+/// ```
+pub fn select_by_path(bin: &str, flag: SelectFlag, ctx: impl AsRef<[CdtContext]>) -> Operation {
     Operation {
         op: OperationType::CdtRead,
         ctx: DEFAULT_CTX,
         bin: OperationBin::Name(bin.into()),
-        data: OperationData::CdtSelectByPath(ctx.to_vec(), flag),
+        data: OperationData::CdtSelectByPath(ctx.as_ref().to_vec(), flag),
     }
 }
 
 /// Creates a CDT operate write operation using a CDT path expression context.
 /// Requires Aerospike Server version >= 8.1.1.
 ///
-/// # Errors
-///
-/// Returns an error if the path bytes cannot be packed.
+/// Like [`select_by_path`] this accepts anything convertible to
+/// `&[CdtContext]`.
 pub fn modify_by_path(
     bin: &str,
     flag: ModifyFlag,
     exp: Expression,
-    ctx: &[CdtContext],
+    ctx: impl AsRef<[CdtContext]>,
 ) -> Operation {
-    // let bytes = pack_path_modify_bytes(ctx, flag.0, &exp)?;
     Operation {
         op: OperationType::CdtWrite,
         ctx: DEFAULT_CTX,
         bin: OperationBin::Name(bin.into()),
-        data: OperationData::CdtModifyByPath(ctx.to_vec(), flag, exp),
+        data: OperationData::CdtModifyByPath(ctx.as_ref().to_vec(), flag, exp),
     }
+}
+
+// ===== Convenience builders on top of `select_by_path` / `modify_by_path`
+//
+// These don't exist in the Java client. They package the most common
+// flag combinations so callers don't have to memorize the bitmask
+// constants for each shape of query. All wrappers inherit the same
+// server-version requirement as their underlying operation
+// (Aerospike Server >= 8.1.1).
+
+/// Convenience wrapper: select the *values* at every path-resolved
+/// location (`SelectFlag::VALUE`). Equivalent to
+/// `select_by_path(bin, SelectFlag::VALUE, ctx)`.
+/// Requires Aerospike Server version >= 8.1.1.
+pub fn select_values(bin: &str, ctx: impl AsRef<[CdtContext]>) -> Operation {
+    select_by_path(bin, SelectFlag::VALUE, ctx)
+}
+
+/// Convenience wrapper: select the matching *map keys* (`SelectFlag::MAP_KEY`).
+/// Requires Aerospike Server version >= 8.1.1.
+pub fn select_map_keys(bin: &str, ctx: impl AsRef<[CdtContext]>) -> Operation {
+    select_by_path(bin, SelectFlag::MAP_KEY, ctx)
+}
+
+/// Convenience wrapper: select map *key/value pairs*
+/// (`SelectFlag::MAP_KEY_VALUE`).
+/// Requires Aerospike Server version >= 8.1.1.
+pub fn select_map_entries(bin: &str, ctx: impl AsRef<[CdtContext]>) -> Operation {
+    select_by_path(bin, SelectFlag::MAP_KEY_VALUE, ctx)
+}
+
+/// Convenience wrapper: select the *original tree shape* preserving only
+/// matching nodes (`SelectFlag::MATCHING_TREE`).
+/// Requires Aerospike Server version >= 8.1.1.
+pub fn select_matching_tree(bin: &str, ctx: impl AsRef<[CdtContext]>) -> Operation {
+    select_by_path(bin, SelectFlag::MATCHING_TREE, ctx)
+}
+
+/// Convenience wrapper: modify with default flags, failing on type
+/// mismatches (`ModifyFlag::DEFAULT`). Equivalent to
+/// `modify_by_path(bin, ModifyFlag::DEFAULT, exp, ctx)`.
+/// Requires Aerospike Server version >= 8.1.1.
+pub fn modify(bin: &str, exp: Expression, ctx: impl AsRef<[CdtContext]>) -> Operation {
+    modify_by_path(bin, ModifyFlag::DEFAULT, exp, ctx)
+}
+
+/// Convenience wrapper: modify with `NO_FAIL` so type-mismatched leaves
+/// are silently skipped instead of aborting the whole operation.
+/// Requires Aerospike Server version >= 8.1.1.
+pub fn modify_no_fail(bin: &str, exp: Expression, ctx: impl AsRef<[CdtContext]>) -> Operation {
+    modify_by_path(bin, ModifyFlag::NO_FAIL, exp, ctx)
+}
+
+/// Convenience wrapper: remove the leaves resolved by a path. Equivalent
+/// to `modify_by_path(bin, ModifyFlag::DEFAULT, exp_remove_result(), ctx)`.
+/// Mirrors a common pattern (delete-by-filter / delete-by-key-set) that
+/// would otherwise require importing `expressions::exp_remove_result`.
+/// Requires Aerospike Server version >= 8.1.1.
+pub fn remove(bin: &str, ctx: impl AsRef<[CdtContext]>) -> Operation {
+    modify_by_path(
+        bin,
+        ModifyFlag::DEFAULT,
+        crate::expressions::exp_remove_result(),
+        ctx,
+    )
 }
