@@ -1045,7 +1045,10 @@ async fn path_builder_and_select_values_wrapper() {
     );
     let rec_slice = client.operate(&wpolicy, &key, &[op_slice]).await.unwrap();
 
-    assert_eq!(rec_builder.bins.get("testbin"), rec_slice.bins.get("testbin"));
+    assert_eq!(
+        rec_builder.bins.get("testbin"),
+        rec_slice.bins.get("testbin")
+    );
     if let Some(Value::List(items)) = rec_builder.bins.get("testbin") {
         assert_eq!(items.len(), 3);
         assert!(items.contains(&Value::from(10_i64)));
@@ -1162,8 +1165,14 @@ async fn select_matching_tree_preserves_shape() {
         other => panic!("unexpected matching-tree result: {:?}", other),
     };
     assert_eq!(inner_map.len(), 2);
-    assert_eq!(inner_map.get(&Value::from("a")), Some(&Value::from(100_i64)));
-    assert_eq!(inner_map.get(&Value::from("c")), Some(&Value::from(200_i64)));
+    assert_eq!(
+        inner_map.get(&Value::from("a")),
+        Some(&Value::from(100_i64))
+    );
+    assert_eq!(
+        inner_map.get(&Value::from("c")),
+        Some(&Value::from(200_i64))
+    );
 }
 
 #[aerospike_macro::test]
@@ -1199,8 +1208,14 @@ async fn modify_no_fail_skips_type_mismatch() {
             // Numeric leaves doubled, the string left alone.
             let has_two = vals.iter().any(|v| matches!(v, Value::Int(2)));
             let has_six = vals.iter().any(|v| matches!(v, Value::Int(6)));
-            let has_str = vals.iter().any(|v| matches!(v, Value::String(s) if s == "oops"));
-            assert!(has_two && has_six, "numeric leaves should be doubled: {:?}", vals);
+            let has_str = vals
+                .iter()
+                .any(|v| matches!(v, Value::String(s) if s == "oops"));
+            assert!(
+                has_two && has_six,
+                "numeric leaves should be doubled: {:?}",
+                vals
+            );
             assert!(has_str, "string leaf should be preserved: {:?}", vals);
         } else {
             panic!("Expected 'vals' list");
@@ -1293,20 +1308,26 @@ async fn ctx_map_keys_in_selects_subset_of_keys() {
         Value::HashMap(m) => m.values().cloned().collect(),
         other => panic!("unexpected map_keys_in result shape: {:?}", other),
     };
-    assert!(items.contains(&Value::from(1_i64)), "expected value for 'a' (=1)");
-    assert!(items.contains(&Value::from(3_i64)), "expected value for 'c' (=3)");
-    assert!(!items.contains(&Value::from(2_i64)), "value for 'b' should be excluded");
-    assert!(!items.contains(&Value::from(4_i64)), "value for 'd' should be excluded");
+    assert!(
+        items.contains(&Value::from(1_i64)),
+        "expected value for 'a' (=1)"
+    );
+    assert!(
+        items.contains(&Value::from(3_i64)),
+        "expected value for 'c' (=3)"
+    );
+    assert!(
+        !items.contains(&Value::from(2_i64)),
+        "value for 'b' should be excluded"
+    );
+    assert!(
+        !items.contains(&Value::from(4_i64)),
+        "value for 'd' should be excluded"
+    );
 }
 
 #[aerospike_macro::test]
 async fn ctx_and_filter_refines_map_keys_in() {
-    // Mirrors the Go test in commit 32860eb (cdt_operation_test.go):
-    // `CtxMapStringKeysIn(...)` followed by `CtxAndFilter(...)` to
-    // narrow the keyed subset by an additional predicate. The Java
-    // client doesn't allow `and_filter` directly after iteration-form
-    // CTX (e.g. `ctx_all_children`); the canonical pattern is to apply
-    // it to a non-expression selector like `ctx_map_keys_in`.
     let client = common::client().await;
     if !server_supports_enhanced_expression_api(&client).await {
         eprintln!("Skipping: server does not support enhanced expression API (requires >= 8.1.2)");
@@ -1337,17 +1358,22 @@ async fn ctx_and_filter_refines_map_keys_in() {
     let result = rec.bins.get("testbin").expect("result missing");
     let pairs: Vec<Value> = match result {
         Value::List(items) => items.clone(),
-        Value::HashMap(m) => m
-            .iter()
-            .flat_map(|(k, v)| [k.clone(), v.clone()])
-            .collect(),
+        Value::HashMap(m) => m.iter().flat_map(|(k, v)| [k.clone(), v.clone()]).collect(),
         other => panic!("unexpected and_filter result shape: {:?}", other),
     };
     // Expect 2 key/value pairs flattened to 4 elements.
-    assert_eq!(pairs.len(), 4, "expected 2 key/value pairs, got {:?}", pairs);
+    assert_eq!(
+        pairs.len(),
+        4,
+        "expected 2 key/value pairs, got {:?}",
+        pairs
+    );
     assert!(pairs.contains(&Value::from("b")) && pairs.contains(&Value::from(15_i64)));
     assert!(pairs.contains(&Value::from("c")) && pairs.contains(&Value::from(25_i64)));
-    assert!(!pairs.contains(&Value::from("a")), "a (=5) should be filtered out");
+    assert!(
+        !pairs.contains(&Value::from("a")),
+        "a (=5) should be filtered out"
+    );
     assert!(!pairs.contains(&Value::from("d")), "d not in keys-in set");
 }
 
@@ -1386,7 +1412,10 @@ async fn ctx_round_trip_through_base64_then_query() {
         .await
         .unwrap();
 
-    assert_eq!(rec_original.bins.get("testbin"), rec_decoded.bins.get("testbin"));
+    assert_eq!(
+        rec_original.bins.get("testbin"),
+        rec_decoded.bins.get("testbin")
+    );
 }
 
 // ===== Expression-side wrapper tests =====
@@ -1406,10 +1435,7 @@ async fn exp_select_values_with_path_builder() {
     let wpolicy = WritePolicy::default();
     client.delete(&wpolicy, &key).await.unwrap();
 
-    let bin = as_bin!(
-        "testbin",
-        as_map!("nums" => as_list!(7_i64, 8_i64, 9_i64))
-    );
+    let bin = as_bin!("testbin", as_map!("nums" => as_list!(7_i64, 8_i64, 9_i64)));
     client.put(&wpolicy, &key, &[bin]).await.unwrap();
 
     let path = Path::new().map_key("nums").all_children();
@@ -1642,5 +1668,116 @@ async fn exp_remove_through_write_exp_drops_leaves() {
         }
     } else {
         panic!("Expected HashMap testbin");
+    }
+}
+
+// ===== Additional loop-var type tests (Go parity) =====
+//
+// Go's `exp_cdt_test.go` exercises the full set of loop-var helpers
+// (bool, list, blob, nil, geo, hll). The Rust integration suite
+// previously covered int / string / map-key loop vars; the cases
+// below add the bool and list flavours, which exercise common
+// real-world filter shapes.
+
+#[aerospike_macro::test]
+async fn loop_var_bool_filters_features() {
+    // Pick the entries whose nested map has `enabled = true`. Mirrors
+    // Go's "should use ExpLoopVarBool to filter boolean values".
+    let client = common::client().await;
+    if !server_supports_cdt_path_expressions(&client).await {
+        eprintln!("Skipping: server does not support CDT path expressions (requires >= 8.1.1)");
+        return;
+    }
+
+    let namespace = common::namespace();
+    let set_name = common::rand_str(10);
+    let key = as_key!(namespace, &set_name, "loop_var_bool");
+
+    let wpolicy = WritePolicy::default();
+    client.delete(&wpolicy, &key).await.unwrap();
+
+    let features = as_list!(
+        as_map!("name" => "feature1", "enabled" => true),
+        as_map!("name" => "feature2", "enabled" => false),
+        as_map!("name" => "feature3", "enabled" => true),
+        as_map!("name" => "feature4", "enabled" => false)
+    );
+    let bin = as_bin!("data", as_map!("features" => features));
+    client.put(&wpolicy, &key, &[bin]).await.unwrap();
+
+    let ctx = vec![
+        ctx_map_key(Value::from("features")),
+        ctx_all_children_with_filter(eq(
+            get_by_key(
+                MapReturnType::Value,
+                ExpType::BOOL,
+                string_val("enabled".to_string()),
+                exp_map_loop_var(LoopVarPart::VALUE),
+                &[],
+            ),
+            bool_val(true),
+        )),
+        ctx_map_key(Value::from("name")),
+    ];
+    let op = select_by_path("data", SelectFlag::VALUE, &ctx);
+    let rec = client.operate(&wpolicy, &key, &[op]).await.unwrap();
+
+    if let Some(Value::List(names)) = rec.bins.get("data") {
+        assert_eq!(names.len(), 2, "expected feature1 and feature3");
+        assert!(names.contains(&Value::from("feature1")));
+        assert!(names.contains(&Value::from("feature3")));
+    } else {
+        panic!("Expected list of names, got: {:?}", rec.bins.get("data"));
+    }
+}
+
+#[aerospike_macro::test]
+async fn loop_var_list_filters_by_size() {
+    // Use `exp_list_loop_var(VALUE)` plus `list_size` to keep only the
+    // matrix rows whose length is 3. Mirrors Go's
+    // "should use ExpLoopVarList to access nested list values".
+    let client = common::client().await;
+    if !server_supports_cdt_path_expressions(&client).await {
+        eprintln!("Skipping: server does not support CDT path expressions (requires >= 8.1.1)");
+        return;
+    }
+
+    let namespace = common::namespace();
+    let set_name = common::rand_str(10);
+    let key = as_key!(namespace, &set_name, "loop_var_list");
+
+    let wpolicy = WritePolicy::default();
+    client.delete(&wpolicy, &key).await.unwrap();
+
+    let matrix = as_list!(
+        as_list!(1_i64, 2_i64, 3_i64),
+        as_list!(4_i64, 5_i64, 6_i64),
+        as_list!(7_i64, 8_i64, 9_i64),
+        as_list!(10_i64, 11_i64) // length 2 — should be filtered out
+    );
+    let bin = as_bin!("data", as_map!("matrix" => matrix));
+    client.put(&wpolicy, &key, &[bin]).await.unwrap();
+
+    let ctx = vec![
+        ctx_map_key(Value::from("matrix")),
+        ctx_all_children_with_filter(eq(
+            aerospike::expressions::lists::size(exp_list_loop_var(LoopVarPart::VALUE), &[]),
+            int_val(3),
+        )),
+    ];
+    let op = select_by_path("data", SelectFlag::VALUE, &ctx);
+    let rec = client.operate(&wpolicy, &key, &[op]).await.unwrap();
+
+    if let Some(Value::List(rows)) = rec.bins.get("data") {
+        assert_eq!(rows.len(), 3, "expected 3 length-3 rows");
+        for row in rows {
+            if let Value::List(items) = row {
+                assert_eq!(items.len(), 3);
+            } else {
+                panic!("expected each row to be a list, got: {:?}", row);
+            }
+        }
+    } else {
+        panic!("Expected list of rows, got: {:?}", rec.bins.get("data"));
     }
 }

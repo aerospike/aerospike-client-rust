@@ -1636,3 +1636,277 @@ async fn query_ops_projection_extended_cdt_read() {
 
     client.close().await.unwrap();
 }
+
+// ===== Additional ops-projection rejection tests (Go parity) =====
+//
+// Mirrors `query_operations_test.go` from the Go client: every shape of
+// "wrong-direction op" must be rejected client-side before the
+// statement is sent. Each test asserts the error surfaces, regardless
+// of whether it's wrapped by the buffer-prepare chain.
+
+fn assert_chain_contains(err: &Error, needle: &str) {
+    let text = format!("{err:?}");
+    assert!(
+        text.contains(needle),
+        "expected '{needle}' somewhere in the error chain, got: {text}"
+    );
+}
+
+#[aerospike_macro::test]
+async fn query_ops_projection_rejects_touch_op() {
+    let client = common::client().await;
+    let namespace = common::namespace();
+    let set_name = create_test_set(&client, 1).await;
+
+    let mut statement = Statement::new(namespace, &set_name, Bins::All);
+    statement.set_operations(vec![operations::touch()]);
+
+    let qpolicy = QueryPolicy::default();
+    let rs = client
+        .query(&qpolicy, PartitionFilter::all(), statement)
+        .await
+        .unwrap();
+    let mut rs = rs.into_stream();
+    let mut got_err = false;
+    while let Some(res) = rs.next().await {
+        if let Err(err) = res {
+            assert_chain_contains(&err, "read-only");
+            got_err = true;
+        }
+    }
+    assert!(got_err, "touch op in foreground query should fail");
+
+    client.close().await.unwrap();
+}
+
+#[aerospike_macro::test]
+async fn query_ops_projection_rejects_delete_op() {
+    let client = common::client().await;
+    let namespace = common::namespace();
+    let set_name = create_test_set(&client, 1).await;
+
+    let mut statement = Statement::new(namespace, &set_name, Bins::All);
+    statement.set_operations(vec![operations::delete()]);
+
+    let qpolicy = QueryPolicy::default();
+    let rs = client
+        .query(&qpolicy, PartitionFilter::all(), statement)
+        .await
+        .unwrap();
+    let mut rs = rs.into_stream();
+    let mut got_err = false;
+    while let Some(res) = rs.next().await {
+        if let Err(err) = res {
+            assert_chain_contains(&err, "read-only");
+            got_err = true;
+        }
+    }
+    assert!(got_err, "delete op in foreground query should fail");
+
+    client.close().await.unwrap();
+}
+
+#[aerospike_macro::test]
+async fn query_ops_projection_rejects_mixed_ops() {
+    // A read op alongside a write op must fail with the same
+    // read-only validation as a single write — the validator scans
+    // the whole list.
+    let client = common::client().await;
+    let namespace = common::namespace();
+    let set_name = create_test_set(&client, 1).await;
+
+    let mut statement = Statement::new(namespace, &set_name, Bins::All);
+    statement.set_operations(vec![
+        operations::get_bin("bin"),
+        operations::put(&as_bin!("foo", "bar")),
+    ]);
+
+    let qpolicy = QueryPolicy::default();
+    let rs = client
+        .query(&qpolicy, PartitionFilter::all(), statement)
+        .await
+        .unwrap();
+    let mut rs = rs.into_stream();
+    let mut got_err = false;
+    while let Some(res) = rs.next().await {
+        if let Err(err) = res {
+            assert_chain_contains(&err, "read-only");
+            got_err = true;
+        }
+    }
+    assert!(got_err, "mixed read+write ops in foreground query should fail");
+
+    client.close().await.unwrap();
+}
+
+#[aerospike_macro::test]
+async fn query_operate_rejects_read_op() {
+    // Background ops projection (`query_operate`) is the inverse: it
+    // accepts only write ops. A pure read op must be rejected.
+    let client = common::client().await;
+    let namespace = common::namespace();
+    let set_name = create_test_set(&client, 1).await;
+
+    let statement = Statement::new(namespace, &set_name, Bins::All);
+    let wpolicy = WritePolicy::default();
+    let result = client
+        .query_operate(&wpolicy, statement, &[operations::get_bin("bin")])
+        .await;
+
+    match result {
+        Err(err) => assert_chain_contains(&err, "write-only"),
+        Ok(_) => panic!("read op in background query should fail before submit"),
+    }
+
+    client.close().await.unwrap();
+}
+
+#[aerospike_macro::test]
+async fn query_operate_rejects_get_op() {
+    let client = common::client().await;
+    let namespace = common::namespace();
+    let set_name = create_test_set(&client, 1).await;
+
+    let statement = Statement::new(namespace, &set_name, Bins::All);
+    let wpolicy = WritePolicy::default();
+    let result = client
+        .query_operate(&wpolicy, statement, &[operations::get()])
+        .await;
+
+    match result {
+        Err(err) => assert_chain_contains(&err, "write-only"),
+        Ok(_) => panic!("get op in background query should fail before submit"),
+    }
+
+    client.close().await.unwrap();
+}
+
+#[aerospike_macro::test]
+async fn query_operate_rejects_mixed_ops() {
+    let client = common::client().await;
+    let namespace = common::namespace();
+    let set_name = create_test_set(&client, 1).await;
+
+    let statement = Statement::new(namespace, &set_name, Bins::All);
+    let wpolicy = WritePolicy::default();
+    let result = client
+        .query_operate(
+            &wpolicy,
+            statement,
+            &[
+                operations::get_bin("bin"),
+                operations::put(&as_bin!("tag", "mixed")),
+            ],
+        )
+        .await;
+
+    match result {
+        Err(err) => assert_chain_contains(&err, "write-only"),
+        Ok(_) => panic!("mixed read+write in background query should fail before submit"),
+    }
+
+    client.close().await.unwrap();
+}
+
+#[aerospike_macro::test]
+async fn query_returns_user_key_when_send_key_set() {
+    // Java TestQueryKey: when records are written with send_key=true,
+    // the server stores the user key alongside each record and a
+    // secondary-index query returns it on the matching records.
+    let client = common::client().await;
+    let namespace = common::namespace();
+    let set_name = common::rand_str(10);
+    let apolicy = AdminPolicy::default();
+
+    let mut wpolicy = WritePolicy::default();
+    wpolicy.send_key = true;
+    let bin_name = "qkbin";
+    for i in 1..=5_i64 {
+        let key = as_key!(namespace, &set_name, i);
+        let bin = as_bin!(bin_name, i);
+        client.delete(&wpolicy, &key).await.unwrap();
+        client.put(&wpolicy, &key, &[bin]).await.unwrap();
+    }
+
+    let task = client
+        .create_index_on_bin(
+            &apolicy,
+            namespace,
+            &set_name,
+            bin_name,
+            &format!("{}_{}_qk", namespace, set_name),
+            IndexType::Numeric,
+            CollectionIndexType::Default,
+            None,
+        )
+        .await
+        .expect("create_index");
+    task.wait_till_complete(None).await.unwrap();
+
+    let mut statement = Statement::new(namespace, &set_name, Bins::from([bin_name]));
+    statement.add_filter(Filter::range(bin_name, 2, 5));
+
+    let qpolicy = QueryPolicy::default();
+    let rs = client
+        .query(&qpolicy, PartitionFilter::all(), statement)
+        .await
+        .unwrap();
+    let mut rs = rs.into_stream();
+
+    let mut count = 0;
+    while let Some(res) = rs.next().await {
+        let rec = res.expect("query record");
+        // Each returned record should carry the user-key set by the
+        // original put (send_key=true).
+        let key = rec.key.as_ref().expect("record key present");
+        assert!(
+            key.user_key.is_some(),
+            "expected user_key on returned record, got: {:?}",
+            key
+        );
+        count += 1;
+    }
+    assert_eq!(count, 4, "expected 4 records in [2,5] range");
+
+    client.close().await.unwrap();
+}
+
+#[aerospike_macro::test]
+async fn query_ops_projection_multiple_bins() {
+    // Project multiple specific bins via several `get_bin` ops on a
+    // foreground query — verifies the trailing READ-op writer handles
+    // > 1 op correctly.
+    let client = common::client().await;
+    let namespace = common::namespace();
+    let set_name = create_test_set(&client, 20).await;
+
+    let mut statement = Statement::new(namespace, &set_name, Bins::All);
+    statement.add_filter(Filter::range("bin", 0, 19));
+    statement.set_operations(vec![
+        operations::get_bin("bin"),
+        operations::get_bin("bin2"),
+    ]);
+
+    let qpolicy = QueryPolicy::default();
+    let rs = client
+        .query(&qpolicy, PartitionFilter::all(), statement)
+        .await
+        .unwrap();
+    let mut rs = rs.into_stream();
+
+    let mut count = 0;
+    while let Some(res) = rs.next().await {
+        let rec = res.expect("query record");
+        assert!(rec.bins.contains_key("bin"));
+        assert!(rec.bins.contains_key("bin2"));
+        assert!(
+            !rec.bins.contains_key("extra"),
+            "non-projected 'extra' leaked: {:?}",
+            rec.bins
+        );
+        count += 1;
+    }
+    assert_eq!(count, 20);
+
+    client.close().await.unwrap();
+}

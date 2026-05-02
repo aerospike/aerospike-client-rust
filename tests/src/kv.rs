@@ -15,7 +15,9 @@
 use aerospike::{
     as_bin, as_blob, as_geo, as_key, as_list, as_map, as_val, Bins, ReadPolicy, Value, WritePolicy,
 };
-use aerospike::{operations, Error, Expiration, ReadTouchTTL, ResultCode};
+use aerospike::{
+    operations, Error, Expiration, GenerationPolicy, ReadTouchTTL, RecordExistsAction, ResultCode,
+};
 use aerospike_rt::sleep;
 use aerospike_rt::time::Duration;
 
@@ -178,6 +180,164 @@ async fn operate_empty_ops_returns_parameter_error() {
             other
         ),
         Ok(_) => panic!("expected ParameterError, got Ok"),
+    }
+
+    client.close().await.unwrap();
+}
+
+// ===== Java-parity write-policy tests =====
+//
+// Mirrors `TestReplace`, `TestGeneration`, and the basic `TestExpire`
+// behaviors from the Java client's `sync/basic` suite. These exercise
+// `RecordExistsAction` and `GenerationPolicy` shapes that weren't
+// covered by the existing kv tests.
+
+#[aerospike_macro::test]
+async fn replace_drops_unreferenced_bins() {
+    // RecordExistsAction::Replace deletes bins not referenced by the
+    // new write — matching Java's TestReplace.replace().
+    let client = common::client().await;
+    let namespace = common::namespace();
+    let set_name = &common::rand_str(10);
+    let key = as_key!(namespace, set_name, "replacekey");
+
+    let wpolicy = WritePolicy::default();
+    let bin1 = as_bin!("bin1", "value1");
+    let bin2 = as_bin!("bin2", "value2");
+    let bin3 = as_bin!("bin3", "value3");
+
+    client.delete(&wpolicy, &key).await.unwrap();
+    client.put(&wpolicy, &key, &[bin1, bin2]).await.unwrap();
+
+    let mut replace_policy = WritePolicy::default();
+    replace_policy.record_exists_action = RecordExistsAction::Replace;
+    client.put(&replace_policy, &key, &[bin3]).await.unwrap();
+
+    let policy = ReadPolicy::default();
+    let record = client.get(&policy, &key, Bins::All).await.unwrap();
+    assert!(
+        !record.bins.contains_key("bin1"),
+        "bin1 should have been dropped, found: {:?}",
+        record.bins
+    );
+    assert!(
+        !record.bins.contains_key("bin2"),
+        "bin2 should have been dropped, found: {:?}",
+        record.bins
+    );
+    assert_eq!(record.bins.get("bin3"), Some(&Value::from("value3")));
+
+    client.close().await.unwrap();
+}
+
+#[aerospike_macro::test]
+async fn replace_only_fails_when_record_missing() {
+    // RecordExistsAction::ReplaceOnly must fail with KeyNotFound on a
+    // non-existent record — matching Java's TestReplace.replaceOnly().
+    let client = common::client().await;
+    let namespace = common::namespace();
+    let set_name = &common::rand_str(10);
+    let key = as_key!(namespace, set_name, "replaceonlykey");
+
+    let wpolicy = WritePolicy::default();
+    client.delete(&wpolicy, &key).await.unwrap();
+
+    let mut replace_only = WritePolicy::default();
+    replace_only.record_exists_action = RecordExistsAction::ReplaceOnly;
+    let bin = as_bin!("bin", "value");
+
+    match client.put(&replace_only, &key, &[bin]).await {
+        Err(Error::ServerError(ResultCode::KeyNotFoundError, _, _)) => {}
+        Err(other) => panic!("expected KeyNotFoundError, got: {:?}", other),
+        Ok(_) => panic!("expected error, got Ok"),
+    }
+
+    client.close().await.unwrap();
+}
+
+#[aerospike_macro::test]
+async fn generation_policy_expect_gen_equal() {
+    // After two puts the record's generation is 2; a third put with
+    // EXPECT_GEN_EQUAL=2 must succeed and a follow-up with the wrong
+    // generation must fail with GenerationError. Matches Java
+    // TestGeneration.generation().
+    let client = common::client().await;
+    let namespace = common::namespace();
+    let set_name = &common::rand_str(10);
+    let key = as_key!(namespace, set_name, "genkey");
+
+    let wpolicy = WritePolicy::default();
+    let policy = ReadPolicy::default();
+    client.delete(&wpolicy, &key).await.unwrap();
+
+    client
+        .put(&wpolicy, &key, &[as_bin!("genbin", "genvalue1")])
+        .await
+        .unwrap();
+    client
+        .put(&wpolicy, &key, &[as_bin!("genbin", "genvalue2")])
+        .await
+        .unwrap();
+
+    let record = client.get(&policy, &key, Bins::All).await.unwrap();
+    assert_eq!(record.bins.get("genbin"), Some(&Value::from("genvalue2")));
+    let actual_gen = record.generation;
+
+    // Same-generation write should succeed.
+    let mut gen_match = WritePolicy::default();
+    gen_match.generation_policy = GenerationPolicy::ExpectGenEqual;
+    gen_match.generation = actual_gen;
+    client
+        .put(&gen_match, &key, &[as_bin!("genbin", "genvalue3")])
+        .await
+        .unwrap();
+
+    // Mismatched-generation write must error.
+    let mut gen_wrong = WritePolicy::default();
+    gen_wrong.generation_policy = GenerationPolicy::ExpectGenEqual;
+    gen_wrong.generation = 9999;
+    match client
+        .put(&gen_wrong, &key, &[as_bin!("genbin", "genvalue4")])
+        .await
+    {
+        Err(Error::ServerError(ResultCode::GenerationError, _, _)) => {}
+        Err(other) => panic!("expected GenerationError, got: {:?}", other),
+        Ok(_) => panic!("expected GenerationError, got Ok"),
+    }
+
+    // The successful put left genvalue3; the failed one didn't apply.
+    let record = client.get(&policy, &key, Bins::All).await.unwrap();
+    assert_eq!(record.bins.get("genbin"), Some(&Value::from("genvalue3")));
+
+    client.close().await.unwrap();
+}
+
+#[aerospike_macro::test]
+async fn create_only_fails_when_record_exists() {
+    // RecordExistsAction::CreateOnly must fail with KeyExistsError when
+    // the record already exists — completes the Java-parity matrix
+    // (Replace / ReplaceOnly / Generation already covered above).
+    let client = common::client().await;
+    let namespace = common::namespace();
+    let set_name = &common::rand_str(10);
+    let key = as_key!(namespace, set_name, "createonlykey");
+
+    let wpolicy = WritePolicy::default();
+    client.delete(&wpolicy, &key).await.unwrap();
+    client
+        .put(&wpolicy, &key, &[as_bin!("bin", "first")])
+        .await
+        .unwrap();
+
+    let mut create_only = WritePolicy::default();
+    create_only.record_exists_action = RecordExistsAction::CreateOnly;
+    match client
+        .put(&create_only, &key, &[as_bin!("bin", "second")])
+        .await
+    {
+        Err(Error::ServerError(ResultCode::KeyExistsError, _, _)) => {}
+        Err(other) => panic!("expected KeyExistsError, got: {:?}", other),
+        Ok(_) => panic!("expected KeyExistsError, got Ok"),
     }
 
     client.close().await.unwrap();
