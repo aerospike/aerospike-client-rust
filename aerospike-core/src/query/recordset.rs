@@ -107,7 +107,7 @@ impl Recordset {
 
     /// Returns the task ID for the scan/query.
     pub(crate) fn task_id(&self) -> u64 {
-        self.task_id.load(Ordering::Relaxed) as u64
+        self.task_id.load(Ordering::Relaxed)
     }
 
     pub(crate) fn signal_end(&self) {

@@ -161,7 +161,7 @@ fn unpack_blob(buf: &mut Buffer, count: usize) -> Result<Value> {
     }
 }
 
-pub(crate) fn unpack_value(buf: &mut Buffer) -> Result<Value> {
+pub fn unpack_value(buf: &mut Buffer) -> Result<Value> {
     let obj_type = buf.read_u8(None);
 
     match obj_type {

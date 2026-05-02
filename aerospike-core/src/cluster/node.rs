@@ -326,9 +326,8 @@ impl Node {
         let result = PeersParser::new(peer_string)
             .with_ip_map(self.client_policy.ip_map.as_ref())
             .parse()
-            .map_err(|e| {
+            .inspect_err(|_e| {
                 self.refresh_failed();
-                e
             })?;
 
         // Tag each peer with the node that parsed it so a later
@@ -403,9 +402,7 @@ impl Node {
             peers.set_gen_changed(true);
 
             if stored > gen && stored != -1 {
-                info!(
-                    "Quick node restart detected: node={self} oldgen={stored} newgen={gen}"
-                );
+                info!("Quick node restart detected: node={self} oldgen={stored} newgen={gen}");
                 // Drop accumulated failure count so the freshly-restarted
                 // node is treated like a healthy peer until proven
                 // otherwise this tend.
@@ -921,7 +918,6 @@ impl Node {
             )))
         }
     }
-
 }
 
 impl Hash for Node {

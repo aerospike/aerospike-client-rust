@@ -41,7 +41,7 @@ impl<'a> PeersParser<'a> {
     /// Apply the `client_policy.ip_map` substitution to every host parsed
     /// out of the response — rewrites hosts at parse time (not later in
     /// the validator).
-    pub fn with_ip_map(mut self, ip_map: Option<&'a HashMap<String, String>>) -> Self {
+    pub const fn with_ip_map(mut self, ip_map: Option<&'a HashMap<String, String>>) -> Self {
         self.ip_map = ip_map;
         self
     }

@@ -203,17 +203,14 @@ impl Error {
         match &mut self {
             Error::ServerError(rc, in_doubt, _)
             | Error::BatchError(_, rc, in_doubt, _)
-            | Error::BatchLastError(_, rc, in_doubt, _) => {
-                if commands_sent > 1
-                    || (commands_sent == 1 && matches!(rc, ResultCode::Timeout))
-                {
+            | Error::BatchLastError(_, rc, in_doubt, _)
+                if (commands_sent > 1 || (commands_sent == 1 && matches!(rc, ResultCode::Timeout))) => {
                     *in_doubt = true;
                 }
-            }
             // Client-side timeouts / connection failures on a write command
             // where we sent at least one command are always in-doubt.
-            Error::Timeout(_) | Error::Connection(_) => {
-                if commands_sent >= 1 {
+            Error::Timeout(_) | Error::Connection(_)
+                if commands_sent >= 1 => {
                     // No in_doubt field on these variants; wrap with context so
                     // callers can observe via the Display chain.
                     self = Error::Chain(
@@ -221,7 +218,6 @@ impl Error {
                         Box::new(self),
                     );
                 }
-            }
             _ => (),
         }
         self

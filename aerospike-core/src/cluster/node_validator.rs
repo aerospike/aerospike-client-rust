@@ -134,12 +134,7 @@ impl NodeValidator {
                 None
             };
 
-        let mut commands: Vec<&str> = vec![
-            "node",
-            "cluster-name",
-            "build",
-            "partition-generation",
-        ];
+        let mut commands: Vec<&str> = vec!["node", "cluster-name", "build", "partition-generation"];
         if let Some(cmd) = address_command {
             commands.push(cmd);
         }
@@ -260,7 +255,10 @@ impl NodeValidator {
         }
 
         // Seed found in the response — not an LB. Nothing to do.
-        if real_hosts.iter().any(|h| h.name == seed.name && h.port == seed.port) {
+        if real_hosts
+            .iter()
+            .any(|h| h.name == seed.name && h.port == seed.port)
+        {
             return;
         }
 
@@ -302,7 +300,6 @@ impl NodeValidator {
              using the original seed address"
         );
     }
-
 }
 
 /// `true` when `host.name` resolves to (or already is) a loopback address.
@@ -314,4 +311,3 @@ fn host_is_loopback(host: &Host) -> bool {
     }
     matches!(host.name.as_str(), "localhost" | "::1")
 }
-

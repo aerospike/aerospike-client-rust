@@ -160,14 +160,13 @@ impl Peers {
     }
 
     /// Returns the number of discovered peers.
-    pub fn peer_count(&self) -> usize {
+    pub const fn peer_count(&self) -> usize {
         self.peers.len()
     }
 
     /// Marks a node for removal.
     pub fn add_node_to_remove(&mut self, node: Arc<Node>) {
-        self.nodes_to_remove
-            .insert(node.to_string(), node);
+        self.nodes_to_remove.insert(node.to_string(), node);
     }
 
     /// Checks if a node is already marked for removal.
@@ -200,7 +199,7 @@ impl Peers {
         self.gen_changed.load(Ordering::Relaxed)
     }
 
-    /// Sets gen_changed to true if `changed` is true (OR semantics).
+    /// Sets `gen_changed` to true if `changed` is true (OR semantics).
     pub fn set_gen_changed(&self, changed: bool) {
         if changed {
             self.gen_changed.store(true, Ordering::Relaxed);

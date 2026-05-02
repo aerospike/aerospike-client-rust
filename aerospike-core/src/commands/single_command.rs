@@ -98,8 +98,13 @@ impl<'a> SingleCommand<'a> {
         // Number of times the command was actually sent on the wire (matches
         // Java's `commandSentCounter`). Used to compute `in_doubt` on failure.
         let mut commands_sent: u32 = 0;
-        let iterations_as_u32 =
-            |n: usize| if n > u32::MAX as usize { u32::MAX } else { n as u32 };
+        let iterations_as_u32 = |n: usize| {
+            if n > u32::MAX as usize {
+                u32::MAX
+            } else {
+                n as u32
+            }
+        };
         let mut last_err: Option<Error> = None;
         let mut sub_errors: Vec<Error> = Vec::new();
         let mut last_node_addr: Option<String> = None;
@@ -118,11 +123,8 @@ impl<'a> SingleCommand<'a> {
                         last_node_addr: Option<String>,
                         sub_errors: Vec<Error>|
          -> Error {
-            err.set_in_doubt(is_write, commands_sent).with_retry_context(
-                iterations,
-                last_node_addr.as_deref(),
-                sub_errors,
-            )
+            err.set_in_doubt(is_write, commands_sent)
+                .with_retry_context(iterations, last_node_addr.as_deref(), sub_errors)
         };
 
         // Execute command until successful, timed out or maximum iterations have been reached.
@@ -266,8 +268,7 @@ impl<'a> SingleCommand<'a> {
                     // Bump the per-node breaker for the retriable
                     // error subset Java counts: TIMEOUT, DEVICE_OVERLOAD,
                     // KEY_BUSY, plus client-side network failures.
-                    if commands::is_network_error(&err)
-                        || commands::is_retriable_server_error(&err)
+                    if commands::is_network_error(&err) || commands::is_retriable_server_error(&err)
                     {
                         node.incr_error_rate();
                     }

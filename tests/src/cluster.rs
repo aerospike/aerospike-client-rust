@@ -44,14 +44,20 @@ async fn tend_info_two_calls_succeed() {
     // `tend_info` calls must both succeed against the same node.
     let client = fresh_client().await;
     let nodes = client.cluster.nodes();
-    let node = nodes.first().expect("cluster should have at least one node");
+    let node = nodes
+        .first()
+        .expect("cluster should have at least one node");
     let policy = AdminPolicy::default();
 
     let m1 = node.tend_info(&policy, &["node"]).await.unwrap();
     let m2 = node.tend_info(&policy, &["node"]).await.unwrap();
 
-    let n1 = m1.get("node").expect("first response must include node name");
-    let n2 = m2.get("node").expect("second response must include node name");
+    let n1 = m1
+        .get("node")
+        .expect("first response must include node name");
+    let n2 = m2
+        .get("node")
+        .expect("second response must include node name");
     // Same socket → same logical node identity on both responses.
     assert_eq!(n1, n2);
 

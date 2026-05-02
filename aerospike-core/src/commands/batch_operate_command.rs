@@ -146,15 +146,19 @@ impl BatchOperateCommand {
             if let Some(deadline) = deadline {
                 if Instant::now() > deadline {
                     let u32_iters = if iterations > u32::MAX as usize {
-                    u32::MAX
-                } else {
-                    iterations as u32
-                };
+                        u32::MAX
+                    } else {
+                        iterations as u32
+                    };
                     return Err(Error::Timeout(format!(
                         "Command timed out after {iterations} tries"
                     ))
                     .chain_cause(last_err)
-                    .with_retry_context(u32_iters, Some(&node_addr), Vec::new()));
+                    .with_retry_context(
+                        u32_iters,
+                        Some(&node_addr),
+                        Vec::new(),
+                    ));
                 }
             }
         }
@@ -226,9 +230,7 @@ impl BatchOperateCommand {
             // abort the whole batch. Return them as recoverable so the outer
             // loop can loop again.
             if commands::should_retry(&err) {
-                if commands::is_network_error(&err)
-                    || commands::is_retriable_server_error(&err)
-                {
+                if commands::is_network_error(&err) || commands::is_retriable_server_error(&err) {
                     node.incr_error_rate();
                 }
                 Ok(Some(err))
@@ -389,7 +391,7 @@ impl BatchOperateCommand {
         }))
     }
 
-    fn keep_connection(err: &Error) -> bool {
+    const fn keep_connection(err: &Error) -> bool {
         commands::keep_connection(err)
     }
 

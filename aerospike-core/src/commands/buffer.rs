@@ -39,17 +39,17 @@ use crate::{Bin, Bins, CollectionIndexType, Key, Statement, Value};
 
 /// Direction of a `set_query` call: foreground reads with a `QueryPolicy`,
 /// or background writes (ops or UDF) with a `WritePolicy`.
-pub(crate) enum QueryDirection<'a> {
+pub enum QueryDirection<'a> {
     Foreground(&'a QueryPolicy),
     Background(&'a WritePolicy),
 }
 
-impl<'a> QueryDirection<'a> {
-    fn is_background(&self) -> bool {
+impl QueryDirection<'_> {
+    const fn is_background(&self) -> bool {
         matches!(self, QueryDirection::Background(_))
     }
 
-    fn base_policy(&self) -> &BasePolicy {
+    const fn base_policy(&self) -> &BasePolicy {
         match self {
             QueryDirection::Foreground(p) => &p.base_policy,
             QueryDirection::Background(p) => &p.base_policy,
@@ -63,7 +63,7 @@ impl<'a> QueryDirection<'a> {
         }
     }
 
-    fn filter_expression(&self) -> &Option<Expression> {
+    const fn filter_expression(&self) -> &Option<Expression> {
         match self {
             QueryDirection::Foreground(p) => p.filter_expression(),
             QueryDirection::Background(p) => p.filter_expression(),
@@ -72,7 +72,7 @@ impl<'a> QueryDirection<'a> {
 
     /// Foreground-only field today. Background queries don't carry a
     /// `records_per_second` knob in the current `WritePolicy` shape.
-    fn records_per_second(&self) -> u32 {
+    const fn records_per_second(&self) -> u32 {
         match self {
             QueryDirection::Foreground(p) => p.records_per_second,
             QueryDirection::Background(_) => 0,

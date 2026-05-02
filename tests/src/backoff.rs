@@ -40,7 +40,9 @@ async fn breaker_client(max_error_rate: usize) -> Client {
 async fn breaker_disabled_passes_through() {
     let client = breaker_client(0).await;
     let nodes = client.cluster.nodes();
-    let node = nodes.first().expect("cluster should have at least one node");
+    let node = nodes
+        .first()
+        .expect("cluster should have at least one node");
 
     // With the breaker disabled (max_error_rate == 0) increments are
     // explicitly no-ops — nothing else in the system can cause the

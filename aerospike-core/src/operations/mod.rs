@@ -171,11 +171,11 @@ impl Operation {
             }
             OperationData::CdtSelectByPath(ctx, flag) => {
                 size += self.write_op_header_to(buffer, ParticleType::BLOB as u8);
-                size += pack_path_select(&mut Some(buffer), ctx, flag.0)?
+                size += pack_path_select(&mut Some(buffer), ctx, flag.0)?;
             }
             OperationData::CdtModifyByPath(ctx, flag, exp) => {
                 size += self.write_op_header_to(buffer, ParticleType::BLOB as u8);
-                size += pack_path_modify_exp(&mut Some(buffer), ctx, flag.0, exp)?
+                size += pack_path_modify_exp(&mut Some(buffer), ctx, flag.0, exp)?;
             }
         }
 

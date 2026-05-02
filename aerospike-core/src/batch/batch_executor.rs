@@ -16,12 +16,12 @@
 use crate::batch::BatchOperation;
 use crate::cluster::partition::Partition;
 use crate::cluster::{Cluster, Node};
-use crate::commands::BatchOperateCommand;
+use crate::commands::{
+    BatchOperateCommand, DeleteCommand, ExecuteUDFCommand, OperateCommand, ReadCommand,
+};
 use crate::errors::Result;
 use crate::policy::{BatchPolicy, Concurrency};
-use crate::Error;
-use crate::Key;
-use crate::{BatchRecord, Policy};
+use crate::{BatchRecord, Error, Key, Policy, ResultCode};
 use aerospike_rt::time::Duration;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -77,19 +77,141 @@ impl BatchExecutor {
             policy.replica,
             policy.base_policy.read_mode_sc,
         )?;
-        let jobs = batch_nodes
-            .into_iter()
-            .map(|(node, ops)| BatchOperateCommand::new(policy.clone(), node, ops))
-            .collect();
-        let ops = self
-            .execute_batch_operate_jobs(jobs, policy.concurrency)
-            .await?;
-        let mut all_results: Vec<_> = ops.into_iter().flat_map(|cmd| cmd.batch_ops).collect();
+
+        // Per-node fast path: when a node has only one key, route it
+        // through a regular single-key command instead of the batch
+        // protocol. The server processes single-key commands on the
+        // generic transaction queue, bypassing the (more contended)
+        // batch queue. Mirrors Go's `executeSingle` and Java's
+        // `BatchSingle*` family. The selection is per-node — a batch
+        // can mix singleton groups (fast path) with multi-key groups
+        // (regular batch) in the same call.
+        let mut single_groups: Vec<(Arc<Node>, BatchOperation, usize)> = Vec::new();
+        let mut multi_jobs: Vec<BatchOperateCommand> = Vec::new();
+        for (node, ops) in batch_nodes {
+            if ops.len() == 1 {
+                let (op, idx) = ops.into_iter().next().expect("one element");
+                single_groups.push((node, op, idx));
+            } else {
+                multi_jobs.push(BatchOperateCommand::new(policy.clone(), node, ops));
+            }
+        }
+
+        let mut all_results: Vec<(BatchOperation, usize)> = Vec::with_capacity(batch_ops.len());
+
+        if !multi_jobs.is_empty() {
+            let ops = self
+                .execute_batch_operate_jobs(multi_jobs, policy.concurrency)
+                .await?;
+            all_results.extend(ops.into_iter().flat_map(|cmd| cmd.batch_ops));
+        }
+
+        for (_node, mut op, idx) in single_groups {
+            // The single-op commands re-resolve the node via partition
+            // lookup; we keep the `node` from the per-node split only
+            // to gate the fast path. Re-resolving lets the command
+            // pick up partition migrations that happened between the
+            // BatchExecutor split and the single-op dispatch.
+            Self::execute_single_op(self.cluster.clone(), policy, &mut op).await?;
+            all_results.push((op, idx));
+        }
+
         all_results.sort_by_key(|(_, i)| *i);
         Ok(all_results
             .into_iter()
             .map(|(b, _)| b.batch_record())
             .collect())
+    }
+
+    /// Single-key fast path. Translates the per-record policy onto a
+    /// `ReadPolicy` / `WritePolicy`, dispatches the matching non-batch
+    /// command, and writes the outcome back into the
+    /// `BatchOperation`'s `BatchRecord`. Per-key errors that are
+    /// expected in batch results (`KeyNotFoundError`, `FilteredOut`)
+    /// are recorded on the `BatchRecord` and don't bubble up; other
+    /// server errors propagate so the caller sees them.
+    async fn execute_single_op(
+        cluster: Arc<Cluster>,
+        parent: &BatchPolicy,
+        batch_op: &mut BatchOperation,
+    ) -> Result<()> {
+        let key = batch_op.key();
+
+        // Build the right command for the variant, run it, and
+        // capture the resulting record (or per-key error).
+        let result: std::result::Result<Option<crate::Record>, Error> = match batch_op {
+            BatchOperation::Read {
+                policy, bins, ops, ..
+            } => {
+                if let Some(op_list) = ops.as_ref() {
+                    // Read-with-ops takes the operate path on a write
+                    // policy because that's how single-record `operate`
+                    // is invoked even for read-only ops.
+                    let bw_policy_proxy = crate::batch::BatchWritePolicy {
+                        filter_expression: policy.filter_expression.clone(),
+                        ..Default::default()
+                    };
+                    let mut wp = bw_policy_proxy.to_write_policy(parent);
+                    wp.base_policy.read_touch_ttl = policy.read_touch_ttl;
+                    let mut cmd =
+                        OperateCommand::new(&wp, cluster.clone(), &key, op_list.as_slice());
+                    cmd.execute().await.map(|()| cmd.read_command.record.take())
+                } else {
+                    let rp = policy.to_read_policy(parent);
+                    let mut cmd = ReadCommand::new(&rp, cluster.clone(), &key, bins.clone());
+                    cmd.execute().await.map(|()| cmd.record.take())
+                }
+            }
+            BatchOperation::Write { policy, ops, .. } => {
+                let wp = policy.to_write_policy(parent);
+                let mut cmd = OperateCommand::new(&wp, cluster.clone(), &key, ops.as_slice());
+                cmd.execute().await.map(|()| cmd.read_command.record.take())
+            }
+            BatchOperation::Delete { policy, .. } => {
+                let wp = policy.to_write_policy(parent);
+                let mut cmd = DeleteCommand::new(&wp, cluster.clone(), &key);
+                cmd.execute().await.map(|()| None)
+            }
+            BatchOperation::UDF {
+                policy,
+                udf_name,
+                function_name,
+                args,
+                ..
+            } => {
+                let wp = policy.to_write_policy(parent);
+                let mut cmd = ExecuteUDFCommand::new(
+                    &wp,
+                    cluster.clone(),
+                    &key,
+                    udf_name,
+                    function_name,
+                    args.as_deref(),
+                );
+                cmd.execute().await.map(|()| cmd.read_command.record.take())
+            }
+        };
+
+        match result {
+            Ok(record) => {
+                batch_op.set_record(record);
+            }
+            Err(Error::ServerError(rc, in_doubt, _)) => {
+                // Per-key errors that are normal in a batch context are
+                // recorded but not propagated. Anything else bubbles.
+                match rc {
+                    ResultCode::KeyNotFoundError | ResultCode::FilteredOut => {
+                        batch_op.set_result_code(rc, in_doubt);
+                    }
+                    other => {
+                        batch_op.set_result_code(other, in_doubt);
+                        return Err(Error::ServerError(other, in_doubt, String::new()));
+                    }
+                }
+            }
+            Err(err) => return Err(err),
+        }
+        Ok(())
     }
 
     async fn execute_batch_operate_jobs(

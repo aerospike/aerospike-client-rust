@@ -436,7 +436,7 @@ impl Cluster {
     /// - If a peer host is a hostname, resolve it via DNS and compare each
     ///   resolved IP against the existing node's address. Cache the
     ///   hostname on the node on success.
-    /// - If host mismatch on a failing node, mark as replace_node.
+    /// - If host mismatch on a failing node, mark as `replace_node`.
     /// - Also check if already added during this tend cycle.
     async fn peer_exists(&self, peers: &mut Peers, peer: &mut Peer) -> bool {
         // Check 1: Find by node name in current cluster nodes.

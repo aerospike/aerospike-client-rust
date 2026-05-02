@@ -469,7 +469,7 @@ pub fn from_base64(b64: &str) -> Result<Expression> {
 /// re-parse the expression structure, we just keep the raw bytes so a
 /// later pack emits them verbatim. Mirrors what `from_base64` does, minus
 /// the base64 decode.
-pub fn from_packed_bytes(bytes: Vec<u8>) -> Expression {
+pub const fn from_packed_bytes(bytes: Vec<u8>) -> Expression {
     Expression {
         cmd: None,
         val: None,
@@ -1853,10 +1853,14 @@ mod tests {
         // `Path` should slot in directly because it implements
         // AsRef<[CdtContext]>.
         let path = sample_path();
-        let direct =
-            exp_select_by_path(ExpType::LIST, SelectFlag::VALUE, list_bin("b".into()), &path)
-                .base64()
-                .unwrap();
+        let direct = exp_select_by_path(
+            ExpType::LIST,
+            SelectFlag::VALUE,
+            list_bin("b".into()),
+            &path,
+        )
+        .base64()
+        .unwrap();
         let via_slice = exp_select_by_path(
             ExpType::LIST,
             SelectFlag::VALUE,
@@ -1940,14 +1944,9 @@ mod tests {
     fn exp_modify_matches_raw_default_flag() {
         let ctx = vec![ctx_map_key(Value::from("book"))];
         let modify_exp = int_val(7);
-        let wrapper = exp_modify(
-            ExpType::MAP,
-            map_bin("m".into()),
-            modify_exp.clone(),
-            &ctx,
-        )
-        .base64()
-        .unwrap();
+        let wrapper = exp_modify(ExpType::MAP, map_bin("m".into()), modify_exp.clone(), &ctx)
+            .base64()
+            .unwrap();
         let raw = exp_modify_by_path(
             ExpType::MAP,
             ModifyFlag::DEFAULT,
@@ -1964,14 +1963,10 @@ mod tests {
     fn exp_modify_no_fail_matches_raw_no_fail_flag() {
         let ctx = vec![ctx_map_key(Value::from("book"))];
         let modify_exp = int_val(7);
-        let wrapper = exp_modify_no_fail(
-            ExpType::MAP,
-            map_bin("m".into()),
-            modify_exp.clone(),
-            &ctx,
-        )
-        .base64()
-        .unwrap();
+        let wrapper =
+            exp_modify_no_fail(ExpType::MAP, map_bin("m".into()), modify_exp.clone(), &ctx)
+                .base64()
+                .unwrap();
         let raw = exp_modify_by_path(
             ExpType::MAP,
             ModifyFlag::NO_FAIL,
@@ -2013,7 +2008,11 @@ mod tests {
     fn in_list_base64_roundtrips() {
         let expr = in_list(
             int_val(2),
-            list_val(vec![Value::from(1_i64), Value::from(2_i64), Value::from(3_i64)]),
+            list_val(vec![
+                Value::from(1_i64),
+                Value::from(2_i64),
+                Value::from(3_i64),
+            ]),
         );
         let b64 = expr.base64().unwrap();
         let decoded = from_base64(&b64).unwrap();
@@ -2064,7 +2063,7 @@ pub(crate) fn pack_flat_ctx(buf: &mut Option<&mut Buffer>, ctx: &[CdtContext]) -
     Ok(size)
 }
 
-/// Pack the CDT path select bytes: array[3]: [0xfe, flat_ctx, flag]
+/// Pack the CDT path select bytes: array[3]: [0xfe, `flat_ctx`, flag]
 pub(crate) fn pack_path_select(
     buf: &mut Option<&mut Buffer>,
     ctx: &[CdtContext],
@@ -2078,8 +2077,8 @@ pub(crate) fn pack_path_select(
     Ok(size)
 }
 
-/// Pack CDT path modify content: array[4]: [0xfe, flat_ctx, flag|0x04, exp]
-/// The 0x04 bit (EXP_PATH_MODIFY_APPLY) is always OR'd into the flag.
+/// Pack CDT path modify content: array[4]: [0xfe, `flat_ctx`, flag|0x04, exp]
+/// The 0x04 bit (`EXP_PATH_MODIFY_APPLY`) is always OR'd into the flag.
 /// The expression is packed directly (no binary wrapper).
 pub(crate) fn pack_path_modify_exp(
     buf: &mut Option<&mut Buffer>,
@@ -2215,7 +2214,7 @@ pub fn exp_nil_loop_var(part: LoopVarPart) -> Expression {
     )
 }
 
-/// Retrieve the GeoJSON part of a loop variable.
+/// Retrieve the `GeoJSON` part of a loop variable.
 /// Requires Aerospike Server version >= 8.1.1.
 pub fn exp_geo_json_loop_var(part: LoopVarPart) -> Expression {
     Expression::new(

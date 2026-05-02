@@ -1734,7 +1734,10 @@ async fn query_ops_projection_rejects_mixed_ops() {
             got_err = true;
         }
     }
-    assert!(got_err, "mixed read+write ops in foreground query should fail");
+    assert!(
+        got_err,
+        "mixed read+write ops in foreground query should fail"
+    );
 
     client.close().await.unwrap();
 }

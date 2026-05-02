@@ -121,7 +121,7 @@ pub fn ctx_from_bytes(bytes: &[u8]) -> Result<Vec<CdtContext>> {
         let id = read_msgpack_uint(&mut buf)?;
         let next = buf.peek();
         // bin8/bin16/bin32 → packed expression bytes. Anything else → value.
-        if matches!(next, 0xc4 | 0xc5 | 0xc6) {
+        if matches!(next, 0xc4..=0xc6) {
             let exp_bytes = read_msgpack_bin(&mut buf)?;
             out.push(CdtContext {
                 id,
@@ -164,21 +164,21 @@ fn read_msgpack_uint(buf: &mut Buffer) -> Result<u16> {
         0xce => buf.read_u32(None),
         // signed forms — only positive values make sense for a CTX id.
         0xd0 => {
-            let v = buf.read_u8(None) as i8 as i64;
+            let v = i64::from(buf.read_u8(None) as i8);
             if v < 0 {
                 return Err(Error::BadResponse(format!("Negative CTX id: {v}")));
             }
             v as u32
         }
         0xd1 => {
-            let v = buf.read_u16(None) as i16 as i64;
+            let v = i64::from(buf.read_u16(None) as i16);
             if v < 0 {
                 return Err(Error::BadResponse(format!("Negative CTX id: {v}")));
             }
             v as u32
         }
         0xd2 => {
-            let v = buf.read_u32(None) as i32 as i64;
+            let v = i64::from(buf.read_u32(None) as i32);
             if v < 0 {
                 return Err(Error::BadResponse(format!("Negative CTX id: {v}")));
             }
@@ -338,7 +338,7 @@ pub const fn ctx_map_value(key: Value) -> CdtContext {
 /// # Errors
 ///
 /// Returns an error if the expression cannot be packed.
-pub fn ctx_all_children_with_filter(exp: Expression) -> CdtContext {
+pub const fn ctx_all_children_with_filter(exp: Expression) -> CdtContext {
     CdtContext {
         id: CtxType::Expression as u16,
         flags: 0,
@@ -388,7 +388,7 @@ where
 /// - The preceding CTX entry must not itself be an expression
 ///   (`ctx_all_children` / `ctx_all_children_with_filter`).
 /// - `and_filter` cannot be the first entry in the chain.
-pub fn ctx_and_filter(exp: Expression) -> CdtContext {
+pub const fn ctx_and_filter(exp: Expression) -> CdtContext {
     CdtContext {
         // CTX_AND | CTX_EXP = 0x200 | 0x04 = 0x204
         id: CTX_AND_BIT | (CtxType::Expression as u16),
@@ -561,12 +561,12 @@ impl Path {
     }
 
     /// Number of path entries chained so far.
-    pub fn len(&self) -> usize {
+    pub const fn len(&self) -> usize {
         self.entries.len()
     }
 
     /// `true` when no entries have been appended.
-    pub fn is_empty(&self) -> bool {
+    pub const fn is_empty(&self) -> bool {
         self.entries.is_empty()
     }
 
@@ -759,10 +759,7 @@ mod tests {
 
     #[test]
     fn path_builder_chains_in_order() {
-        let path = Path::new()
-            .map_key("book")
-            .all_children()
-            .map_key("price");
+        let path = Path::new().map_key("book").all_children().map_key("price");
 
         let entries = path.as_slice();
         assert_eq!(entries.len(), 3);

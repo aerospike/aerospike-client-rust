@@ -197,11 +197,10 @@ impl Connection {
         // Java `Node.refresh`'s `if (! AdminCommand.authenticate(...)) login()`.
         let mut new_session: Option<crate::commands::admin_command::SessionInfo> = None;
         let used_session = match session {
-            Some(s) if !s.is_expired() => {
-                conn.authenticate_with_session(&policy.auth_mode, &s.token)
-                    .await
-                    .unwrap_or(false)
-            }
+            Some(s) if !s.is_expired() => conn
+                .authenticate_with_session(&policy.auth_mode, &s.token)
+                .await
+                .unwrap_or(false),
             _ => false,
         };
         if !used_session {
@@ -223,7 +222,9 @@ impl Connection {
         hashed_pass: Option<&String>,
         _session: Option<&crate::commands::admin_command::SessionInfo>,
     ) -> Result<(Self, Option<crate::commands::admin_command::SessionInfo>)> {
-        Self::new(host, policy, hashed_pass).await.map(|c| (c, None))
+        Self::new(host, policy, hashed_pass)
+            .await
+            .map(|c| (c, None))
     }
 
     #[cfg(test)]

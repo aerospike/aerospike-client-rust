@@ -489,7 +489,7 @@ impl AdminCommand {
                     // 4-byte big-endian unsigned seconds. Subtract 60s so
                     // the client-side TTL expires just before the server
                     // does — same fudge factor as Java.
-                    let seconds_raw = conn.buffer.read_u32(None) as i64;
+                    let seconds_raw = i64::from(conn.buffer.read_u32(None));
                     let seconds = seconds_raw - 60;
                     if seconds > 0 {
                         session_expiration = Some(

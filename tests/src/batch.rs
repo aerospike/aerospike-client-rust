@@ -372,3 +372,129 @@ async fn batch_operate_read_touch_ttl() {
     assert!(Some(ResultCode::KeyNotFoundError) == recs[0].result_code);
     assert!(Some(ResultCode::KeyNotFoundError) == recs[1].result_code);
 }
+
+// ===== Single-key fast path (Go's executeSingle / Java's BatchSingle*) =====
+//
+// When a per-node batch group has exactly one key, the executor
+// dispatches it as a regular non-batch command (Read / Operate /
+// Delete / ExecuteUDF) so the server processes it on the standard
+// transaction queue instead of the (more contended) batch queue.
+// The user-facing result must still surface as a `BatchRecord` —
+// these tests verify each variant's wiring end-to-end.
+
+#[aerospike_macro::test]
+async fn batch_single_key_fast_path_read_returns_record() {
+    let client = common::client().await;
+    let ns = common::namespace();
+    let set = &common::rand_str(10);
+    let key = as_key!(ns, set, "single_read");
+
+    let wpolicy = WritePolicy::default();
+    client.delete(&wpolicy, &key).await.unwrap();
+    client
+        .put(
+            &wpolicy,
+            &key,
+            &[as_bin!("a", 7_i64), as_bin!("b", "hello")],
+        )
+        .await
+        .unwrap();
+
+    let bp = BatchPolicy::default();
+    let bpr = BatchReadPolicy::default();
+    let ops = vec![BatchOperation::read(&bpr, key.clone(), Bins::All)];
+
+    let recs = client.batch(&bp, &ops).await.unwrap();
+    assert_eq!(recs.len(), 1);
+    assert_eq!(recs[0].result_code, Some(ResultCode::Ok));
+    let rec = recs[0].record.as_ref().expect("record returned");
+    assert_eq!(rec.bins.get("a"), Some(&Value::from(7_i64)));
+    assert_eq!(rec.bins.get("b"), Some(&Value::from("hello")));
+}
+
+#[aerospike_macro::test]
+async fn batch_single_key_fast_path_read_missing_key() {
+    // KEY_NOT_FOUND from a single-key fast-path read is captured on
+    // the BatchRecord (just like the multi-key batch path) — it must
+    // not bubble up as a top-level error.
+    let client = common::client().await;
+    let ns = common::namespace();
+    let set = &common::rand_str(10);
+    let key = as_key!(ns, set, "single_missing");
+
+    let wpolicy = WritePolicy::default();
+    client.delete(&wpolicy, &key).await.unwrap();
+
+    let bp = BatchPolicy::default();
+    let bpr = BatchReadPolicy::default();
+    let ops = vec![BatchOperation::read(&bpr, key.clone(), Bins::All)];
+
+    let recs = client.batch(&bp, &ops).await.unwrap();
+    assert_eq!(recs.len(), 1);
+    assert_eq!(recs[0].result_code, Some(ResultCode::KeyNotFoundError));
+    assert!(recs[0].record.is_none());
+}
+
+#[aerospike_macro::test]
+async fn batch_single_key_fast_path_write_then_read() {
+    // Round-trip: a single-key BatchOperation::write followed by a
+    // single-key BatchOperation::read both go through the fast path.
+    let client = common::client().await;
+    let ns = common::namespace();
+    let set = &common::rand_str(10);
+    let key = as_key!(ns, set, "single_write");
+
+    let wpolicy = WritePolicy::default();
+    client.delete(&wpolicy, &key).await.unwrap();
+
+    let bp = BatchPolicy::default();
+    let bpw = BatchWritePolicy::default();
+    let write_ops = vec![operations::put(&as_bin!("counter", 42_i64))];
+    let recs = client
+        .batch(&bp, &[BatchOperation::write(&bpw, key.clone(), write_ops)])
+        .await
+        .unwrap();
+    assert_eq!(recs[0].result_code, Some(ResultCode::Ok));
+
+    // Confirm the record landed by reading it back via the same fast
+    // path (a separate single-key batch).
+    let bpr = BatchReadPolicy::default();
+    let recs = client
+        .batch(&bp, &[BatchOperation::read(&bpr, key.clone(), Bins::All)])
+        .await
+        .unwrap();
+    assert_eq!(recs[0].result_code, Some(ResultCode::Ok));
+    let rec = recs[0].record.as_ref().expect("record returned");
+    assert_eq!(rec.bins.get("counter"), Some(&Value::from(42_i64)));
+}
+
+#[aerospike_macro::test]
+async fn batch_single_key_fast_path_delete() {
+    let client = common::client().await;
+    let ns = common::namespace();
+    let set = &common::rand_str(10);
+    let key = as_key!(ns, set, "single_delete");
+
+    let wpolicy = WritePolicy::default();
+    client.delete(&wpolicy, &key).await.unwrap();
+    client
+        .put(&wpolicy, &key, &[as_bin!("a", 1_i64)])
+        .await
+        .unwrap();
+
+    let bp = BatchPolicy::default();
+    let bpd = BatchDeletePolicy::default();
+    let recs = client
+        .batch(&bp, &[BatchOperation::delete(&bpd, key.clone())])
+        .await
+        .unwrap();
+    assert_eq!(recs[0].result_code, Some(ResultCode::Ok));
+
+    // Confirm gone via a follow-up single-key read.
+    let bpr = BatchReadPolicy::default();
+    let recs = client
+        .batch(&bp, &[BatchOperation::read(&bpr, key.clone(), Bins::All)])
+        .await
+        .unwrap();
+    assert_eq!(recs[0].result_code, Some(ResultCode::KeyNotFoundError));
+}

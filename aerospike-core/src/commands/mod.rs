@@ -83,14 +83,13 @@ pub trait Command {
 /// Client-side errors and the `SCAN_ABORT` / `QUERY_ABORTED` server codes
 /// require the socket to be discarded (it may still have stream bytes
 /// pending).
-pub fn keep_connection(err: &Error) -> bool {
+pub const fn keep_connection(err: &Error) -> bool {
     match err {
         Error::ServerError(rc, _, _)
         | Error::BatchError(_, rc, _, _)
-        | Error::BatchLastError(_, rc, _, _) => !matches!(
-            rc,
-            ResultCode::ScanAbort | ResultCode::QueryAborted
-        ),
+        | Error::BatchLastError(_, rc, _, _) => {
+            !matches!(rc, ResultCode::ScanAbort | ResultCode::QueryAborted)
+        }
         Error::Timeout(_) => true,
         _ => false,
     }
@@ -102,10 +101,10 @@ pub const fn is_network_error(err: &Error) -> bool {
 }
 
 /// Server-reported result codes that are safe to retry on (TIMEOUT,
-/// DEVICE_OVERLOAD, KEY_BUSY). We also treat `PartitionUnavailable` as
+/// `DEVICE_OVERLOAD`, `KEY_BUSY`). We also treat `PartitionUnavailable` as
 /// retriable so callers eventually see the partition recover from a
 /// transitional state.
-pub fn is_retriable_server_error(err: &Error) -> bool {
+pub const fn is_retriable_server_error(err: &Error) -> bool {
     match err {
         Error::ServerError(rc, _, _)
         | Error::BatchError(_, rc, _, _)
@@ -121,6 +120,6 @@ pub fn is_retriable_server_error(err: &Error) -> bool {
 }
 
 /// Overall retry gate: either a network failure or a retriable server error.
-pub fn should_retry(err: &Error) -> bool {
+pub const fn should_retry(err: &Error) -> bool {
     is_network_error(err) || is_retriable_server_error(err)
 }

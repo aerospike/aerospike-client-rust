@@ -76,6 +76,25 @@ impl Default for BatchReadPolicy {
     }
 }
 
+impl BatchReadPolicy {
+    /// Project this per-record policy onto a `ReadPolicy` derived from
+    /// the parent `BatchPolicy`. Per-record fields override; everything
+    /// else (timeouts, retries, replica, txn, etc.) inherits.
+    pub(crate) fn to_read_policy(
+        &self,
+        parent: &crate::policy::BatchPolicy,
+    ) -> crate::policy::ReadPolicy {
+        let mut rp = crate::policy::ReadPolicy::default();
+        rp.base_policy = parent.base_policy.clone();
+        rp.replica = parent.replica;
+        rp.base_policy.read_touch_ttl = self.read_touch_ttl;
+        if self.filter_expression.is_some() {
+            rp.base_policy.filter_expression = self.filter_expression.clone();
+        }
+        rp
+    }
+}
+
 /// Policy for a single batch write operation.
 #[derive(Debug, Clone, PartialEq)]
 pub struct BatchWritePolicy {
@@ -134,6 +153,31 @@ impl Default for BatchWritePolicy {
     }
 }
 
+impl BatchWritePolicy {
+    pub(crate) fn to_write_policy(
+        &self,
+        parent: &crate::policy::BatchPolicy,
+    ) -> crate::policy::WritePolicy {
+        let mut wp = crate::policy::WritePolicy::default();
+        wp.base_policy = parent.base_policy.clone();
+        wp.record_exists_action = self.record_exists_action.clone();
+        wp.generation_policy = self.generation_policy.clone();
+        wp.commit_level = self.commit_level.clone();
+        wp.generation = self.generation;
+        wp.expiration = self.expiration;
+        wp.send_key = self.send_key;
+        wp.durable_delete = self.durable_delete;
+        wp.on_locking_only = self.on_locking_only;
+        if self.filter_expression.is_some() {
+            wp.base_policy.filter_expression = self.filter_expression.clone();
+        }
+        // Match Java's batch->single conversion: single-op writes that
+        // come from a batch with multi-op shape return per-op results.
+        wp.respond_per_each_op = true;
+        wp
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 /// Policy for a single batch delete operation.
 pub struct BatchDeletePolicy {
@@ -178,6 +222,25 @@ impl Default for BatchDeletePolicy {
     }
 }
 
+impl BatchDeletePolicy {
+    pub(crate) fn to_write_policy(
+        &self,
+        parent: &crate::policy::BatchPolicy,
+    ) -> crate::policy::WritePolicy {
+        let mut wp = crate::policy::WritePolicy::default();
+        wp.base_policy = parent.base_policy.clone();
+        wp.generation_policy = self.generation_policy.clone();
+        wp.commit_level = self.commit_level.clone();
+        wp.generation = self.generation;
+        wp.send_key = self.send_key;
+        wp.durable_delete = self.durable_delete;
+        if self.filter_expression.is_some() {
+            wp.base_policy.filter_expression = self.filter_expression.clone();
+        }
+        wp
+    }
+}
+
 /// Policy for a single batch udf operation.
 #[derive(Debug, Clone, PartialEq)]
 pub struct BatchUDFPolicy {
@@ -217,6 +280,26 @@ impl Default for BatchUDFPolicy {
             on_locking_only: false,
             filter_expression: None,
         }
+    }
+}
+
+impl BatchUDFPolicy {
+    pub(crate) fn to_write_policy(
+        &self,
+        parent: &crate::policy::BatchPolicy,
+    ) -> crate::policy::WritePolicy {
+        let mut wp = crate::policy::WritePolicy::default();
+        wp.base_policy = parent.base_policy.clone();
+        wp.commit_level = self.commit_level.clone();
+        wp.expiration = self.expiration;
+        wp.send_key = self.send_key;
+        wp.durable_delete = self.durable_delete;
+        wp.on_locking_only = self.on_locking_only;
+        if self.filter_expression.is_some() {
+            wp.base_policy.filter_expression = self.filter_expression.clone();
+        }
+        wp.respond_per_each_op = true;
+        wp
     }
 }
 
