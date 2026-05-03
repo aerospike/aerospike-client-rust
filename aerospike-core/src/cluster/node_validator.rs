@@ -58,9 +58,12 @@ impl NodeValidator {
     /// Construct a validator that performs load-balancer detection. Use
     /// this when validating user-supplied seed hosts; for peer hosts
     /// discovered through `services`/`peers`, use [`new`](Self::new).
+    /// Under `seed_only_cluster` we treat the seed itself as the
+    /// canonical service endpoint, so LB detection is suppressed.
     pub fn new_for_seed(client_policy: ClientPolicy) -> Self {
+        let seed_only = client_policy.seed_only_cluster;
         let mut nv = Self::new(client_policy);
-        nv.detect_load_balancer = true;
+        nv.detect_load_balancer = !seed_only;
         nv
     }
 

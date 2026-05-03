@@ -354,3 +354,52 @@ async fn cluster_has_at_least_one_node_after_seed() {
 
     client.close().await.unwrap();
 }
+
+// ---- seed-only cluster --------------------------------------------------
+
+#[aerospike_macro::test]
+async fn seed_only_cluster_pins_to_seed_addresses() {
+    // With `seed_only_cluster=true` the cluster view is restricted to
+    // the seeds the client was started with — peer discovery is
+    // disabled, so a one-seed start against a multi-node cluster
+    // ends up with exactly one node, and a tend cycle later still
+    // shows exactly one node.
+    let mut policy = common::client_policy().clone();
+    policy.seed_only_cluster = true;
+
+    // Use only the first seed from the configured list (drop everything
+    // after a comma if present). A single seed is enough to prove that
+    // peer discovery is suppressed.
+    let hosts_string = common::hosts().to_string();
+    let single_seed = hosts_string
+        .split(',')
+        .next()
+        .unwrap_or(&hosts_string)
+        .to_string();
+
+    let client = Client::new(&policy, &single_seed)
+        .await
+        .expect("connect with seed_only_cluster");
+
+    let initial = client.cluster.nodes().len();
+    assert_eq!(
+        initial, 1,
+        "seed_only_cluster init should add exactly the seed, got {}",
+        initial
+    );
+
+    // Give a tend cycle a chance to run; without seed_only_cluster
+    // peers discovery would have enrolled additional nodes by now.
+    aerospike_rt::time::sleep(std::time::Duration::from_millis(2_500)).await;
+
+    let after_tend = client.cluster.nodes();
+    assert_eq!(
+        after_tend.len(),
+        1,
+        "seed_only_cluster post-tend node count drifted to {} ({:?})",
+        after_tend.len(),
+        after_tend.iter().map(|n| format!("{n}")).collect::<Vec<_>>()
+    );
+
+    client.close().await.unwrap();
+}

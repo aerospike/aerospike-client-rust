@@ -195,6 +195,8 @@ impl Cluster {
             return Ok(());
         }
 
+        let seed_only = self.client_policy().seed_only_cluster;
+
         // Per-tend peer state. `gen_changed` is initialized to false (Java's
         // default) and set to true if any node's peers-generation differs.
         let mut peers = Peers::new(16, 16);
@@ -209,10 +211,24 @@ impl Cluster {
             node.set_rebalance_changed(false);
         }
 
-        // If active nodes don't exist, seed cluster.
-        if nodes.is_empty() {
-            debug!("No connections available; seeding...");
+        // Re-seed when we have no nodes, or — under `seed_only_cluster`
+        // — whenever the live node count drops below the seed count.
+        // The latter is what gives `seed_only_cluster` its
+        // "retain seeds despite connection failures" semantics.
+        let seed_count = self.seeds.load().len();
+        let need_seed = nodes.is_empty() || (seed_only && nodes.len() < seed_count);
+
+        if need_seed {
+            debug!(
+                "Seeding cluster (live={} seeds={} seed_only={})",
+                nodes.len(),
+                seed_count,
+                seed_only
+            );
             self.seed_nodes().await;
+        }
+        if nodes.is_empty() {
+            // Fall through to the non-refresh suffix (partition update).
         } else {
             // Phase 1: refresh all known nodes (light info commands only).
             for node in &nodes {
@@ -230,57 +246,63 @@ impl Cluster {
                 }
             }
 
-            // Phase 2: when peers-generation changed on any node, refresh
-            // the full peer list and reconcile add/remove decisions. Each
-            // node's peer list is parsed and materialized in isolation so
-            // a single unreachable peer doesn't prevent the others from
-            // committing their generation (Java's `peersValidated`).
-            if peers.gen_changed() {
-                peers.reset_refresh_count();
+            // Phases 2 + 3 + commit are skipped under `seed_only_cluster`:
+            // peer discovery is the very thing the option disables. We
+            // also skip removal so a transient seed failure doesn't
+            // evict the seed.
+            if !seed_only {
+                // Phase 2: when peers-generation changed on any node, refresh
+                // the full peer list and reconcile add/remove decisions. Each
+                // node's peer list is parsed and materialized in isolation so
+                // a single unreachable peer doesn't prevent the others from
+                // committing their generation (Java's `peersValidated`).
+                if peers.gen_changed() {
+                    peers.reset_refresh_count();
 
-                for node in &nodes {
-                    if let Err(err) = node.refresh_peers(&mut peers).await {
-                        warn!("Node `{node}` peer refresh failed: {err}");
+                    for node in &nodes {
+                        if let Err(err) = node.refresh_peers(&mut peers).await {
+                            warn!("Node `{node}` peer refresh failed: {err}");
+                        }
+                        self.materialize_peers(&mut peers).await;
                     }
-                    self.materialize_peers(&mut peers).await;
-                }
 
-                // Decide which existing nodes can be dropped.
-                self.find_nodes_to_remove(&mut peers).await;
+                    // Decide which existing nodes can be dropped.
+                    self.find_nodes_to_remove(&mut peers).await;
 
-                let nodes_to_remove = peers.get_nodes_to_remove();
-                if !nodes_to_remove.is_empty() {
-                    self.remove_nodes_and_aliases(nodes_to_remove);
-                }
-            }
-
-            // Phase 3: add any newly-discovered peer nodes, then iterate
-            // refresh-peers-of-peers until no further peers turn up. This
-            // mirrors Java's `Cluster.refreshPeers` loop and lets multi-hop
-            // discovery converge in a single tend cycle (seed → A → B → C).
-            loop {
-                let drained = peers.drain_nodes();
-                if drained.is_empty() {
-                    break;
-                }
-                self.add_nodes_and_aliases(&drained);
-
-                for node in &drained {
-                    if let Err(err) = node.refresh_peers(&mut peers).await {
-                        warn!("Node `{node}` peer refresh failed: {err}");
+                    let nodes_to_remove = peers.get_nodes_to_remove();
+                    if !nodes_to_remove.is_empty() {
+                        self.remove_nodes_and_aliases(nodes_to_remove);
                     }
-                    self.materialize_peers(&mut peers).await;
                 }
-            }
 
-            // Commit pending peers-generations: each parsing node's
-            // generation only advances if every peer it reported was
-            // materialized into the cluster. Otherwise we re-parse next
-            // tend and retry the unreachable hosts.
-            let pending = peers.take_pending_generations();
-            for (name, generation) in pending {
-                if let Ok(node) = self.get_node_by_name(&name) {
-                    node.commit_peers_generation(generation);
+                // Phase 3: add any newly-discovered peer nodes, then iterate
+                // refresh-peers-of-peers until no further peers turn up. This
+                // mirrors Java's `Cluster.refreshPeers` loop and lets multi-hop
+                // discovery converge in a single tend cycle (seed → A → B → C).
+                loop {
+                    let drained = peers.drain_nodes();
+                    if drained.is_empty() {
+                        break;
+                    }
+                    self.add_nodes_and_aliases(&drained);
+
+                    for node in &drained {
+                        if let Err(err) = node.refresh_peers(&mut peers).await {
+                            warn!("Node `{node}` peer refresh failed: {err}");
+                        }
+                        self.materialize_peers(&mut peers).await;
+                    }
+                }
+
+                // Commit pending peers-generations: each parsing node's
+                // generation only advances if every peer it reported was
+                // materialized into the cluster. Otherwise we re-parse next
+                // tend and retry the unreachable hosts.
+                let pending = peers.take_pending_generations();
+                for (name, generation) in pending {
+                    if let Ok(node) = self.get_node_by_name(&name) {
+                        node.commit_peers_generation(generation);
+                    }
                 }
             }
 
@@ -699,6 +721,8 @@ impl Cluster {
         // `Cluster.seedNode`'s post-loop `addSeedAndPeers(nv.fallback, …)`.
         let mut fallback: Option<Arc<Node>> = None;
 
+        let seed_only = self.client_policy().seed_only_cluster;
+
         for seed in seed_array.iter() {
             let mut seed_node_validator = NodeValidator::new_for_seed(self.client_policy());
             if let Err(err) = seed_node_validator.validate_node(self, seed).await {
@@ -711,6 +735,20 @@ impl Cluster {
             // `validatePeers → Node.refreshPeers` flow needs a Node so it
             // can issue `peers-…` over its own pool.
             let seed_node = Arc::new(self.create_node(seed_node_validator).await);
+
+            // Under `seed_only_cluster` peer discovery is the very
+            // thing the option disables. Add the seed Node and move on
+            // without ever calling `refresh_peers` on it — the seed is
+            // also not eligible to be used as a "fallback" since the
+            // notion of fallback only matters when peer harvesting was
+            // attempted but came back empty.
+            if seed_only {
+                if !self.find_node_name(&list, seed_node.name()) {
+                    self.add_aliases(seed_node.clone());
+                    list.push(seed_node);
+                }
+                continue;
+            }
 
             // Pull the rich peer list (`peers-{tls,clear}-{std,alt}`):
             // node names + per-peer multi-host fallback. Use a throwaway
@@ -950,7 +988,26 @@ impl Cluster {
         }
 
         let mut nodes = self.nodes();
-        nodes.extend(friend_list.iter().cloned());
+
+        // `seed_only_cluster` cap: once all seeds have been validated
+        // and added, refuse to grow the cluster view further. Mirrors
+        // Go's `addNodes` short-circuit `SeedOnlyCluster && GetSeedCount() == len(nodes)`.
+        if self.client_policy().seed_only_cluster {
+            let seed_count = self.seeds.load().len();
+            if nodes.len() >= seed_count {
+                return;
+            }
+        }
+
+        // Dedup by name — `add_nodes` runs twice in normal flow (init
+        // seed pass and tend's add-nodes-and-aliases) so a same-name
+        // append must be a no-op. Mirrors Go's `findNodeName` guard
+        // inside `Cluster.addNodes`.
+        for node in friend_list {
+            if !nodes.iter().any(|n| n.name() == node.name()) {
+                nodes.push(node.clone());
+            }
+        }
         self.set_nodes(nodes);
     }
 

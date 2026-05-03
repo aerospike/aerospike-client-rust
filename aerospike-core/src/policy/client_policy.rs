@@ -200,6 +200,22 @@ pub struct ClientPolicy {
     /// (tighter recovery), larger values make it more lenient. Defaults
     /// to 1.
     pub error_rate_window: usize,
+
+    /// Restrict the cluster view to the seed addresses. When `true`:
+    ///
+    /// - Peer discovery is disabled — nodes returned by `peers` info
+    ///   commands are ignored, even if other seeds advertise them.
+    /// - Seed nodes are retained across connection failures (the tend
+    ///   loop will not remove unresponsive seeds, and will re-seed
+    ///   whenever the live node count drops below the seed count).
+    /// - Load-balancer detection on seed validation is skipped — the
+    ///   client treats the seed address as the canonical service
+    ///   endpoint instead of resolving it to a backend node.
+    ///
+    /// Useful when the client sits behind a fixed VIP / proxy that
+    /// fronts the cluster, or in tests that pin to a known seed list.
+    /// Defaults to `false`.
+    pub seed_only_cluster: bool,
 }
 
 impl Default for ClientPolicy {
@@ -221,6 +237,7 @@ impl Default for ClientPolicy {
             application_id: None,
             max_error_rate: 100,
             error_rate_window: 1,
+            seed_only_cluster: false,
 
             #[cfg(feature = "tls")]
             tls_config: None,
