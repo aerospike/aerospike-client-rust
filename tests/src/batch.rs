@@ -410,7 +410,7 @@ async fn batch_single_key_fast_path_read_returns_record() {
     let key = as_key!(ns, set, "single_read");
 
     let wpolicy = WritePolicy::default();
-    client.delete(&wpolicy, &key).await.unwrap();
+    common::delete_durably(&client, &wpolicy, &key).await.unwrap();
     client
         .put(
             &wpolicy,
@@ -443,7 +443,7 @@ async fn batch_single_key_fast_path_read_missing_key() {
     let key = as_key!(ns, set, "single_missing");
 
     let wpolicy = WritePolicy::default();
-    client.delete(&wpolicy, &key).await.unwrap();
+    common::delete_durably(&client, &wpolicy, &key).await.unwrap();
 
     let bp = BatchPolicy::default();
     let bpr = BatchReadPolicy::default();
@@ -465,7 +465,7 @@ async fn batch_single_key_fast_path_write_then_read() {
     let key = as_key!(ns, set, "single_write");
 
     let wpolicy = WritePolicy::default();
-    client.delete(&wpolicy, &key).await.unwrap();
+    common::delete_durably(&client, &wpolicy, &key).await.unwrap();
 
     let bp = BatchPolicy::default();
     let bpw = BatchWritePolicy::default();
@@ -496,14 +496,17 @@ async fn batch_single_key_fast_path_delete() {
     let key = as_key!(ns, set, "single_delete");
 
     let wpolicy = WritePolicy::default();
-    client.delete(&wpolicy, &key).await.unwrap();
+    common::delete_durably(&client, &wpolicy, &key).await.unwrap();
     client
         .put(&wpolicy, &key, &[as_bin!("a", 1_i64)])
         .await
         .unwrap();
 
     let bp = BatchPolicy::default();
-    let bpd = BatchDeletePolicy::default();
+    let mut bpd = BatchDeletePolicy::default();
+    if namespace_sc!(&client) {
+        bpd.durable_delete = true;
+    }
     let recs = client
         .batch(&bp, &[BatchOperation::delete(&bpd, key.clone())])
         .await
@@ -511,6 +514,144 @@ async fn batch_single_key_fast_path_delete() {
     assert_eq!(recs[0].result_code, Some(ResultCode::Ok));
 
     // Confirm gone via a follow-up single-key read.
+    let bpr = BatchReadPolicy::default();
+    let recs = client
+        .batch(&bp, &[BatchOperation::read(&bpr, key.clone(), Bins::All)])
+        .await
+        .unwrap();
+    assert_eq!(recs[0].result_code, Some(ResultCode::KeyNotFoundError));
+}
+
+// ----- Strong-consistency (SC) batch delete semantics (single-key fast path) -----
+//
+// The property test `proptests::batches::batch_delete` clamps some policy fields on SC so the
+// fuzzer does not send illegal or inconsistent deletes. These tests document the real server
+// outcomes for fixed policies. On the fast path, `FailForbidden` / `GenerationError` bubble as
+// top-level `Err(Error::ServerError(..))` (see `BatchExecutor::execute_single_op`).
+
+#[aerospike_macro::test]
+async fn batch_sc_delete_non_durable_forbidden_when_record_exists() {
+    let client = common::client().await;
+    if !namespace_sc!(&client) {
+        return;
+    }
+
+    let ns = common::namespace();
+    let set = &common::rand_str(10);
+    let key = as_key!(ns, set, "sc_batch_ndel");
+
+    let wpolicy = WritePolicy::default();
+    common::delete_durably(&client, &wpolicy, &key).await.unwrap();
+    client
+        .put(&wpolicy, &key, &[as_bin!("a", 1_i64)])
+        .await
+        .unwrap();
+
+    let bp = BatchPolicy::default();
+    let mut bpd = BatchDeletePolicy::default();
+    bpd.durable_delete = false;
+
+    let res = client
+        .batch(&bp, &[BatchOperation::delete(&bpd, key.clone())])
+        .await;
+    match res {
+        Err(Error::ServerError(ResultCode::FailForbidden, _, _)) => {}
+        other => panic!(
+            "expected FailForbidden for non-durable delete on SC when record exists, got {:?}",
+            other
+        ),
+    }
+
+    let rec = client
+        .get(&ReadPolicy::default(), &key, Bins::All)
+        .await
+        .expect("record should still exist after forbidden delete");
+    assert_eq!(rec.bins.get("a"), Some(&Value::from(1_i64)));
+
+    common::delete_durably(&client, &wpolicy, &key).await.unwrap();
+}
+
+#[aerospike_macro::test]
+async fn batch_sc_delete_generation_mismatch_errors() {
+    let client = common::client().await;
+    if !namespace_sc!(&client) {
+        return;
+    }
+
+    let ns = common::namespace();
+    let set = &common::rand_str(10);
+    let key = as_key!(ns, set, "sc_batch_gen_bad");
+
+    let wpolicy = WritePolicy::default();
+    common::delete_durably(&client, &wpolicy, &key).await.unwrap();
+    client
+        .put(&wpolicy, &key, &[as_bin!("a", 1_i64)])
+        .await
+        .unwrap();
+
+    let bp = BatchPolicy::default();
+    let mut bpd = BatchDeletePolicy::default();
+    bpd.durable_delete = true;
+    bpd.generation_policy = GenerationPolicy::ExpectGenEqual;
+    bpd.generation = 9_999;
+
+    let res = client
+        .batch(&bp, &[BatchOperation::delete(&bpd, key.clone())])
+        .await;
+    match res {
+        Err(Error::ServerError(ResultCode::GenerationError, _, _)) => {}
+        other => panic!(
+            "expected GenerationError for ExpectGenEqual with wrong generation on SC, got {:?}",
+            other
+        ),
+    }
+
+    let rec = client
+        .get(&ReadPolicy::default(), &key, Bins::All)
+        .await
+        .expect("record should still exist after failed conditional delete");
+    assert_eq!(rec.bins.get("a"), Some(&Value::from(1_i64)));
+
+    common::delete_durably(&client, &wpolicy, &key).await.unwrap();
+}
+
+#[aerospike_macro::test]
+async fn batch_sc_delete_with_matching_generation_succeeds() {
+    let client = common::client().await;
+    if !namespace_sc!(&client) {
+        return;
+    }
+
+    let ns = common::namespace();
+    let set = &common::rand_str(10);
+    let key = as_key!(ns, set, "sc_batch_gen_ok");
+
+    let wpolicy = WritePolicy::default();
+    common::delete_durably(&client, &wpolicy, &key).await.unwrap();
+    client
+        .put(&wpolicy, &key, &[as_bin!("a", 1_i64)])
+        .await
+        .unwrap();
+
+    let gen = client
+        .get(&ReadPolicy::default(), &key, Bins::All)
+        .await
+        .expect("read after put")
+        .generation;
+
+    let bp = BatchPolicy::default();
+    let mut bpd = BatchDeletePolicy::default();
+    bpd.durable_delete = true;
+    bpd.generation_policy = GenerationPolicy::ExpectGenEqual;
+    bpd.generation = gen;
+
+    let recs = client
+        .batch(&bp, &[BatchOperation::delete(&bpd, key.clone())])
+        .await
+        .expect("matching-generation durable delete should succeed on SC");
+    assert_eq!(recs.len(), 1);
+    assert_eq!(recs[0].result_code, Some(ResultCode::Ok));
+
     let bpr = BatchReadPolicy::default();
     let recs = client
         .batch(&bp, &[BatchOperation::read(&bpr, key.clone(), Bins::All)])

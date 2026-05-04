@@ -22,6 +22,15 @@ proptest_async::proptest! {
     {
         let client = common::singleton_client().await;
 
+        // `LongRelaxAP` is rejected with `ParameterError` on strong-consistency namespaces; keep
+        // randomized policies for AP unchanged by only adjusting when `namespace_sc!` is true.
+        let mut query_policy = query_policy;
+        if namespace_sc!(&client)
+            && query_policy.expected_duration == QueryDuration::LongRelaxAP
+        {
+            query_policy.expected_duration = QueryDuration::Long;
+        }
+
         // let now = aerospike_rt::time::Instant::now();
 
         // let mut recs = vec![];

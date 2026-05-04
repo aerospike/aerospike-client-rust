@@ -716,7 +716,7 @@ async fn cdt_list_create_persistent_top_level() {
     let key = as_key!(namespace, set_name, "create_persistent");
     let lpolicy = ListPolicy::default();
 
-    client.delete(&wpolicy, &key).await.unwrap();
+    common::delete_durably(&client, &wpolicy, &key).await.unwrap();
 
     // Create a top-level ordered list with the persisted index enabled,
     // append unsorted values, then verify the list is sorted on read

@@ -10,6 +10,19 @@ use crate::proptests::{batch_operation::*, operation::*, policy::*};
 
 const STRING_DEFAULT: &str = "aerospike default value";
 
+/// When [`common::ServerCapabilities::explicit_record_ttl_allowed`] is false (common on SC or
+/// strict nsup configs), `Expiration::Seconds` on a batch write is replaced with
+/// [`Expiration::NamespaceDefault`] so other policy fields stay randomized.
+fn batch_write_policy_for_cluster_caps(
+    mut policy: BatchWritePolicy,
+    explicit_ttl_allowed: bool,
+) -> BatchWritePolicy {
+    if !explicit_ttl_allowed && matches!(policy.expiration, Expiration::Seconds(_)) {
+        policy.expiration = Expiration::NamespaceDefault;
+    }
+    policy
+}
+
 prop_compose! {
     pub fn bop_read_bins1()(
         _brp in batch_read_policy(),
@@ -99,6 +112,7 @@ proptest_async::proptest! {
         ops in many_batch_write_operations(2),
     ) {
         let client = common::singleton_client().await;
+        let caps = common::server_capabilities_cached(client).await;
         let namespace: &str = common::namespace();
         let set_name = &format!("{}-batch-write", common::prop_setname());
 
@@ -144,7 +158,20 @@ proptest_async::proptest! {
 
             // Finally, build the batch operation list.
 
-            let as_op = op.to_op(key.clone());
+            let as_op = match op {
+                PropBatchOperation::Write(bwp, sub) => {
+                    let bwp = batch_write_policy_for_cluster_caps(
+                        bwp.clone(),
+                        caps.explicit_record_ttl_allowed,
+                    );
+                    BatchOperation::write(
+                        &bwp,
+                        key.clone(),
+                        sub.iter().map(|o| o.to_op()).collect(),
+                    )
+                }
+                _ => op.to_op(key.clone()),
+            };
             as_ops.push(as_op);
         }
 
@@ -252,9 +279,25 @@ proptest_async::proptest! {
             client.put(&write_policy, &key, &bins).await.expect("planting a record to delete expected to work");
         }
 
+        let sc_ns = namespace_sc!(&client);
         let mut as_ops = vec![];
         for op in &ops {
-            let as_op = op.to_op(key.clone());
+            let as_op = match op {
+                PropBatchOperation::Delete(bdp) => {
+                    let mut bdp = bdp.clone();
+                    if sc_ns {
+                        bdp.durable_delete = true;
+                        // Proptest still draws ExpectGen* with `generation: 0` from defaults; that
+                        // routinely mismatches a live record after `put` and surfaces as
+                        // `GenerationError` (here as a top-level batch `Err` on SC). AP runs keep
+                        // the full generation-policy variety unchanged.
+                        bdp.generation_policy = GenerationPolicy::None;
+                        bdp.generation = 0;
+                    }
+                    BatchOperation::delete(&bdp, key.clone())
+                }
+                _ => op.to_op(key.clone()),
+            };
             as_ops.push(as_op);
         }
 

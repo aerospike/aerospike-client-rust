@@ -309,7 +309,11 @@ pub async fn delete_durably(
     policy: &WritePolicy,
     key: &Key,
 ) -> aerospike::Result<bool> {
-    delete_on_cluster(client, policy, key).await
+    let mut p = policy.clone();
+    if namespace_sc!(client) {
+        p.durable_delete = true;
+    }
+    client.delete(&p, key).await
 }
 
 /// Deletes `key` before test setup on AP namespaces. On strong-consistency namespaces a default
@@ -325,20 +329,6 @@ pub async fn delete_for_test_reset(
     } else {
         client.delete(policy, key).await
     }
-}
-
-/// [`Client::delete`] with [`WritePolicy::durable_delete`] set on strong-consistency namespaces,
-/// where a non-durable delete often returns [`aerospike::ResultCode::FailForbidden`].
-pub async fn delete_on_cluster(
-    client: &Client,
-    policy: &WritePolicy,
-    key: &Key,
-) -> aerospike::Result<bool> {
-    let mut p = policy.clone();
-    if namespace_sc!(client) {
-        p.durable_delete = true;
-    }
-    client.delete(&p, key).await
 }
 
 async fn explicit_record_ttl_probe(client: &aerospike::Client) -> bool {

@@ -1602,7 +1602,7 @@ async fn query_ops_projection_extended_cdt_read() {
     for i in 0..10_i64 {
         let key = as_key!(namespace, &set_name, i);
         let list: Vec<Value> = (0..=i).map(Value::from).collect();
-        client.delete(&wpolicy, &key).await.unwrap();
+        common::delete_durably(&client, &wpolicy, &key).await.unwrap();
         client
             .put(&wpolicy, &key, &[as_bin!("nums", Value::List(list))])
             .await
@@ -1827,7 +1827,7 @@ async fn query_returns_user_key_when_send_key_set() {
     for i in 1..=5_i64 {
         let key = as_key!(namespace, &set_name, i);
         let bin = as_bin!(bin_name, i);
-        client.delete(&wpolicy, &key).await.unwrap();
+        common::delete_durably(&client, &wpolicy, &key).await.unwrap();
         client.put(&wpolicy, &key, &[bin]).await.unwrap();
     }
 
