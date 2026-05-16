@@ -450,6 +450,56 @@ impl Client {
         executor.execute(policy, ops).await
     }
 
+    /// Execute multiple batch operations and return results as an async stream.
+    ///
+    /// Unlike [`batch`](Self::batch), results arrive in the order they are received from each
+    /// server node rather than the order of `ops`. Each item is a pair of
+    /// `(original_index, BatchRecord)` so the caller can match results back to their input
+    /// operations. The stream ends automatically once all server nodes have responded.
+    ///
+    /// Ownership of `ops` is taken so it can be shared cheaply across per-node tasks without
+    /// cloning the operations themselves.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,edition2021
+    /// # use aerospike::*;
+    /// use futures::StreamExt;
+    ///
+    /// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap();
+    /// # let client = Client::new(&ClientPolicy::default(), &hosts).await.unwrap();
+    /// let key = as_key!("test", "test", 1);
+    /// let batch = vec![BatchOperation::read(&BatchReadPolicy::default(), key, Bins::All)];
+    ///
+    /// let mut stream = client.batch_stream(&BatchPolicy::default(), batch).await.unwrap();
+    /// while let Some((idx, br)) = stream.next().await {
+    ///     println!("op[{}]: {:?}", idx, br.record);
+    /// }
+    /// ```
+    pub async fn batch_stream(
+        &self,
+        policy: &BatchPolicy,
+        ops: Vec<BatchOperation>,
+    ) -> Result<impl futures::Stream<Item = (usize, BatchRecord)>> {
+        // Mirror `batch`'s TXN preamble — when a transaction is
+        // attached to the policy, each key in the batch needs to be
+        // registered with the MRT monitor before any per-node command
+        // runs. The streaming variant takes ownership of `ops` so we
+        // pass a borrow into the monitor before handing ownership
+        // through to the executor.
+        if let Some(txn) = &policy.base_policy.txn {
+            crate::txn_monitor::add_keys_from_records(
+                self.cluster.clone(),
+                &policy.base_policy,
+                txn,
+                &ops,
+            )
+            .await?;
+        }
+        let executor = BatchExecutor::new(self.cluster.clone());
+        executor.execute_stream(policy, ops).await
+    }
+
     /// Write record bin(s). The policy specifies the transaction timeout, record expiration, and
     /// how the transaction is handled when the record already exists.
     ///

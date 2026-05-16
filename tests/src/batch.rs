@@ -498,3 +498,282 @@ async fn batch_single_key_fast_path_delete() {
         .unwrap();
     assert_eq!(recs[0].result_code, Some(ResultCode::KeyNotFoundError));
 }
+
+// ===== batch_stream =====
+//
+// Streaming variant: per-node results are pushed to a channel and
+// the consumer pulls them as a `Stream<Item = (usize, BatchRecord)>`.
+// Items arrive interleaved by node-completion order; the `usize`
+// carries the original input index so callers can match results back
+// to their `ops` vec.
+
+#[aerospike_macro::test]
+async fn batch_stream_emits_each_record_exactly_once() {
+    use futures::stream::StreamExt;
+
+    let client = common::client().await;
+    let ns = common::namespace();
+    let set = &common::rand_str(10);
+    let wpolicy = WritePolicy::default();
+
+    // 25 keys — large enough to give multi-key per-node groups a
+    // chance, small enough to stay fast.
+    let keys: Vec<_> = (0..25_i64).map(|i| as_key!(ns, set, i)).collect();
+    for (i, key) in keys.iter().enumerate() {
+        client.delete(&wpolicy, key).await.unwrap();
+        client
+            .put(
+                &wpolicy,
+                key,
+                &[as_bin!("a", i as i64), as_bin!("b", "hello")],
+            )
+            .await
+            .unwrap();
+    }
+
+    let bp = BatchPolicy::default();
+    let bpr = BatchReadPolicy::default();
+    let ops: Vec<_> = keys
+        .iter()
+        .map(|k| BatchOperation::read(&bpr, k.clone(), Bins::All))
+        .collect();
+
+    let mut stream = client.batch_stream(&bp, ops).await.unwrap();
+    let mut collected: Vec<(usize, BatchRecord)> = Vec::new();
+    while let Some(item) = stream.next().await {
+        collected.push(item);
+    }
+
+    assert_eq!(
+        collected.len(),
+        keys.len(),
+        "expected one stream item per input key"
+    );
+
+    // Every input index must appear exactly once.
+    let mut indices: Vec<usize> = collected.iter().map(|(idx, _)| *idx).collect();
+    indices.sort_unstable();
+    let expected: Vec<usize> = (0..keys.len()).collect();
+    assert_eq!(indices, expected, "indices must cover [0..N) exactly once");
+
+    // For each (idx, record) the key should match keys[idx] and the
+    // value of bin `a` should equal idx.
+    for (idx, br) in &collected {
+        assert_eq!(br.key, keys[*idx]);
+        assert_eq!(br.result_code, Some(ResultCode::Ok));
+        let bins = &br.record.as_ref().expect("record present").bins;
+        assert_eq!(bins.get("a"), Some(&Value::from(*idx as i64)));
+        assert_eq!(bins.get("b"), Some(&Value::from("hello")));
+    }
+}
+
+#[aerospike_macro::test]
+async fn batch_stream_missing_keys_carry_key_not_found() {
+    use futures::stream::StreamExt;
+
+    let client = common::client().await;
+    let ns = common::namespace();
+    let set = &common::rand_str(10);
+    let wpolicy = WritePolicy::default();
+
+    // One key exists, one doesn't.
+    let key_present = as_key!(ns, set, "stream_present");
+    let key_missing = as_key!(ns, set, "stream_missing");
+    client.delete(&wpolicy, &key_present).await.unwrap();
+    client.delete(&wpolicy, &key_missing).await.unwrap();
+    client
+        .put(&wpolicy, &key_present, &[as_bin!("x", 1_i64)])
+        .await
+        .unwrap();
+
+    let bp = BatchPolicy::default();
+    let bpr = BatchReadPolicy::default();
+    // Index 0 = present, index 1 = missing.
+    let ops = vec![
+        BatchOperation::read(&bpr, key_present.clone(), Bins::All),
+        BatchOperation::read(&bpr, key_missing.clone(), Bins::All),
+    ];
+
+    let mut stream = client.batch_stream(&bp, ops).await.unwrap();
+    let mut got: Vec<(usize, BatchRecord)> = Vec::new();
+    while let Some(item) = stream.next().await {
+        got.push(item);
+    }
+
+    assert_eq!(got.len(), 2);
+
+    let (_, present) = got
+        .iter()
+        .find(|(idx, _)| *idx == 0)
+        .expect("index 0 in stream");
+    assert_eq!(present.key, key_present);
+    assert_eq!(present.result_code, Some(ResultCode::Ok));
+    assert!(present.record.is_some());
+
+    let (_, missing) = got
+        .iter()
+        .find(|(idx, _)| *idx == 1)
+        .expect("index 1 in stream");
+    assert_eq!(missing.key, key_missing);
+    assert_eq!(missing.result_code, Some(ResultCode::KeyNotFoundError));
+    assert!(missing.record.is_none());
+}
+
+#[aerospike_macro::test]
+async fn batch_stream_filter_expression_surfaces_filtered_out() {
+    // A per-record `BatchReadPolicy.filter_expression` that evaluates
+    // to false on the server must surface as `ResultCode::FilteredOut`
+    // on that index's BatchRecord (not as KeyNotFoundError, and not
+    // as a stream-wide error). The non-filtered key in the same call
+    // must still come back Ok.
+    use aerospike::expressions::{eq, int_bin, int_val};
+    use futures::stream::StreamExt;
+
+    let client = common::client().await;
+    let ns = common::namespace();
+    let set = &common::rand_str(10);
+    let wpolicy = WritePolicy::default();
+
+    let key_match = as_key!(ns, set, "filter_match");
+    let key_miss = as_key!(ns, set, "filter_miss");
+    client.delete(&wpolicy, &key_match).await.unwrap();
+    client.delete(&wpolicy, &key_miss).await.unwrap();
+    client
+        .put(&wpolicy, &key_match, &[as_bin!("v", 1_i64)])
+        .await
+        .unwrap();
+    client
+        .put(&wpolicy, &key_miss, &[as_bin!("v", 2_i64)])
+        .await
+        .unwrap();
+
+    let bp = BatchPolicy::default();
+    // Filter `v == 1`. Only key_match satisfies it; key_miss has v=2.
+    let mut bpr = BatchReadPolicy::default();
+    bpr.filter_expression = Some(eq(int_bin("v".to_string()), int_val(1)));
+
+    // Index 0 = the one that satisfies the filter, index 1 = the one
+    // that should come back FilteredOut.
+    let ops = vec![
+        BatchOperation::read(&bpr, key_match.clone(), Bins::All),
+        BatchOperation::read(&bpr, key_miss.clone(), Bins::All),
+    ];
+
+    let mut stream = client.batch_stream(&bp, ops).await.unwrap();
+    let mut got: Vec<(usize, BatchRecord)> = Vec::new();
+    while let Some(item) = stream.next().await {
+        got.push(item);
+    }
+    assert_eq!(got.len(), 2);
+
+    let (_, matched) = got
+        .iter()
+        .find(|(idx, _)| *idx == 0)
+        .expect("index 0 in stream");
+    assert_eq!(matched.key, key_match);
+    assert_eq!(matched.result_code, Some(ResultCode::Ok));
+    assert!(matched.record.is_some());
+
+    let (_, filtered) = got
+        .iter()
+        .find(|(idx, _)| *idx == 1)
+        .expect("index 1 in stream");
+    assert_eq!(filtered.key, key_miss);
+    assert_eq!(
+        filtered.result_code,
+        Some(ResultCode::FilteredOut),
+        "expected FilteredOut, got {:?}",
+        filtered.result_code,
+    );
+    assert!(filtered.record.is_none());
+}
+
+#[aerospike_macro::test]
+async fn batch_stream_mixed_ops_preserve_index_and_kind() {
+    // A batch_stream call that mixes Read / Write / Delete must:
+    //  - emit one stream item per op (covering every input index),
+    //  - keep `(idx, key)` consistent with the input vec,
+    //  - and route each op through the right server command path
+    //    (read returns bins, write returns Ok, delete returns Ok and
+    //    actually deletes the row).
+    use futures::stream::StreamExt;
+
+    let client = common::client().await;
+    let ns = common::namespace();
+    let set = &common::rand_str(10);
+    let wpolicy = WritePolicy::default();
+
+    let key_read = as_key!(ns, set, "mixed_read");
+    let key_write = as_key!(ns, set, "mixed_write");
+    let key_delete = as_key!(ns, set, "mixed_delete");
+
+    // Seed: key_read has data, key_delete has data, key_write will be
+    // populated by the batch.
+    client.delete(&wpolicy, &key_read).await.unwrap();
+    client.delete(&wpolicy, &key_write).await.unwrap();
+    client.delete(&wpolicy, &key_delete).await.unwrap();
+    client
+        .put(&wpolicy, &key_read, &[as_bin!("r", 7_i64)])
+        .await
+        .unwrap();
+    client
+        .put(&wpolicy, &key_delete, &[as_bin!("d", 9_i64)])
+        .await
+        .unwrap();
+
+    let bp = BatchPolicy::default();
+    let bpr = BatchReadPolicy::default();
+    let bpw = BatchWritePolicy::default();
+    let bpd = BatchDeletePolicy::default();
+    let write_ops = vec![operations::put(&as_bin!("w", 42_i64))];
+
+    // Indices: 0 = read, 1 = write, 2 = delete.
+    let ops = vec![
+        BatchOperation::read(&bpr, key_read.clone(), Bins::All),
+        BatchOperation::write(&bpw, key_write.clone(), write_ops),
+        BatchOperation::delete(&bpd, key_delete.clone()),
+    ];
+
+    let mut stream = client.batch_stream(&bp, ops).await.unwrap();
+    let mut got: Vec<(usize, BatchRecord)> = Vec::new();
+    while let Some(item) = stream.next().await {
+        got.push(item);
+    }
+    assert_eq!(got.len(), 3, "expected one item per input op");
+
+    // The three emitted indices must be exactly {0, 1, 2}.
+    let mut indices: Vec<usize> = got.iter().map(|(idx, _)| *idx).collect();
+    indices.sort_unstable();
+    assert_eq!(indices, vec![0, 1, 2]);
+
+    let by_idx = |i: usize| {
+        got.iter()
+            .find(|(idx, _)| *idx == i)
+            .map(|(_, br)| br)
+            .expect("index in stream")
+    };
+
+    let read = by_idx(0);
+    assert_eq!(read.key, key_read);
+    assert_eq!(read.result_code, Some(ResultCode::Ok));
+    let bins = &read.record.as_ref().expect("read returned a record").bins;
+    assert_eq!(bins.get("r"), Some(&Value::from(7_i64)));
+
+    let written = by_idx(1);
+    assert_eq!(written.key, key_write);
+    assert_eq!(written.result_code, Some(ResultCode::Ok));
+
+    let deleted = by_idx(2);
+    assert_eq!(deleted.key, key_delete);
+    assert_eq!(deleted.result_code, Some(ResultCode::Ok));
+
+    // Side-effect sanity: the write landed, the delete removed the row.
+    let rp = ReadPolicy::default();
+    let after_write = client.get(&rp, &key_write, Bins::All).await.unwrap();
+    assert_eq!(after_write.bins.get("w"), Some(&Value::from(42_i64)));
+
+    match client.get(&rp, &key_delete, Bins::All).await {
+        Err(Error::ServerError(ResultCode::KeyNotFoundError, _, _)) => {}
+        other => panic!("delete didn't take effect; got: {:?}", other),
+    }
+}
