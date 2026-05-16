@@ -330,7 +330,7 @@ impl Cluster {
                 // (`peers.refresh_count > 1`). Lets the rest of the cluster's
                 // map win when an isolated node has stale or zero-peer view.
                 // Mirrors Java `Node.refreshPartitions`.
-                if node.peers_count() == 0 && peers_refresh_count > 1 {
+                if !seed_only && node.peers_count() == 0 && peers_refresh_count > 1 {
                     debug!(
                         "Skipping partition update for node {node}: reports 0 peers in {}-node cluster (likely split)",
                         active_nodes.len()

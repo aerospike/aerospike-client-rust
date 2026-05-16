@@ -27,7 +27,9 @@ use aerospike_rt::time::Duration;
 mod common;
 
 #[aerospike_macro::test]
-#[should_panic(expected = "Failed to connect to host(s).")]
+#[should_panic(
+    expected = "Failed to connect to [1] host(s):\\n  localhost:3100 Invalid cluster node: Cluster name mismatch: expected=notTheRealClusterName,\\n                                                         got=mydc\\n\")"
+)]
 async fn cluster_name() {
     let policy = &mut common::client_policy().clone();
     policy.cluster_name = Some(String::from("notTheRealClusterName"));

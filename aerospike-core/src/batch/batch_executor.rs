@@ -23,6 +23,8 @@ use crate::errors::Result;
 use crate::policy::{BatchPolicy, Concurrency};
 use crate::{BatchRecord, Error, Key, Policy, ResultCode};
 use aerospike_rt::time::Duration;
+use futures::channel::mpsc;
+use futures::Stream;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -121,6 +123,90 @@ impl BatchExecutor {
             .into_iter()
             .map(|(b, _)| b.batch_record())
             .collect())
+    }
+
+    /// Streaming variant of `execute_batch_operate`.
+    ///
+    /// Splits per node (same as the buffered path) and applies the
+    /// same single-key fast path, but instead of waiting for every
+    /// per-node command to finish and returning a sorted vector, each
+    /// per-node group is spawned on its own task and pushes
+    /// `(original_index, BatchRecord)` tuples onto an mpsc channel as
+    /// soon as it completes. The returned receiver is an
+    /// `impl Stream<Item = (usize, BatchRecord)>` — items arrive
+    /// interleaved by node-completion timing, **not** sorted by input
+    /// index, and each carries the original input index so callers can
+    /// match results back to their `ops` slice.
+    ///
+    /// Whole-per-node-group failures (e.g. socket error after retries)
+    /// do not abort the stream — they simply omit the affected keys.
+    /// Per-key results (KEY_NOT_FOUND, FILTERED_OUT, etc.) ride on each
+    /// emitted `BatchRecord` just as they do for `batch`.
+    #[allow(clippy::mutable_key_type)]
+    pub async fn execute_stream(
+        &self,
+        policy: &BatchPolicy,
+        batch_ops: Vec<BatchOperation>,
+    ) -> Result<impl Stream<Item = (usize, BatchRecord)>> {
+        let batch_nodes = self.get_batch_operate_nodes(
+            &batch_ops,
+            policy.replica,
+            policy.base_policy.read_mode_sc,
+        )?;
+        // The splitter already cloned each op into the per-node map;
+        // the original `batch_ops` is no longer needed.
+        drop(batch_ops);
+
+        let (tx, rx) = mpsc::unbounded::<(usize, BatchRecord)>();
+
+        for (node, ops) in batch_nodes {
+            let cluster = self.cluster.clone();
+            let policy = policy.clone();
+            let tx = tx.clone();
+
+            if ops.len() == 1 {
+                // Single-key fast path: route through a non-batch
+                // single-record command and emit the resulting record
+                // when it returns.
+                aerospike_rt::spawn(async move {
+                    let (mut op, idx) =
+                        ops.into_iter().next().expect("one element in fast-path group");
+                    // Errors are either captured on the BatchRecord
+                    // (KEY_NOT_FOUND / FILTERED_OUT) or signal a real
+                    // failure for this key; either way we still emit
+                    // the BatchRecord so the consumer sees the
+                    // outcome.
+                    let _ = Self::execute_single_op(cluster, &policy, &mut op).await;
+                    let _ = tx.unbounded_send((idx, op.batch_record()));
+                });
+            } else {
+                // Regular per-node batch path.
+                let cmd = BatchOperateCommand::new(policy, node, ops);
+                aerospike_rt::spawn(async move {
+                    match cmd.execute(cluster).await {
+                        Ok(done) => {
+                            for (op, idx) in done.batch_ops {
+                                let _ = tx.unbounded_send((idx, op.batch_record()));
+                            }
+                        }
+                        // Group-level failure (e.g. socket error after
+                        // retries). The command's parse path may have
+                        // recorded per-key codes on some ops, but
+                        // `execute` consumes `cmd` so we don't have a
+                        // handle to those here. Drop silently — the
+                        // stream just yields fewer items than the
+                        // input had keys, per the documented contract.
+                        Err(_) => {}
+                    }
+                });
+            }
+        }
+
+        // Drop the original sender so the stream ends as soon as the
+        // last spawned task completes (and drops its `Sender` clone).
+        drop(tx);
+
+        Ok(rx)
     }
 
     /// Single-key fast path. Translates the per-record policy onto a

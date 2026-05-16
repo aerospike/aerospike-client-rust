@@ -13,8 +13,10 @@
 // License for the specific language governing permissions and limitations under
 // the License.
 
+use std::pin::Pin;
 use std::str;
 use std::sync::Arc;
+use std::task::{Context, Poll};
 use std::vec::Vec;
 
 use crate::expressions::Expression;
@@ -30,6 +32,43 @@ use aerospike_core::{
     WritePolicy,
 };
 use futures::executor::block_on;
+use futures::task::noop_waker;
+use futures::Stream;
+
+/// Blocking iterator over the items emitted by
+/// [`Client::batch_stream`]. Each [`Iterator::next`] call returns the
+/// next `(original_index, BatchRecord)` as soon as some per-node task
+/// produces one; iteration ends once every per-node task has
+/// finished and the underlying stream is closed.
+///
+/// The iterator follows the same try-then-yield pattern used by
+/// [`Recordset`]: non-blocking poll of the underlying stream, and
+/// `std::thread::yield_now()` while the stream is still pending so
+/// the runtime's worker threads can keep producing.
+pub struct BatchStream {
+    inner: Pin<Box<dyn Stream<Item = (usize, BatchRecord)> + Send>>,
+}
+
+impl Iterator for BatchStream {
+    type Item = (usize, BatchRecord);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        // A no-op waker is fine here: when `poll_next` returns
+        // `Pending`, the stream registers our waker as interested,
+        // but we never act on the wake — we just spin-yield until the
+        // next poll has data. The runtime's worker threads are doing
+        // the real work; we only need to release the OS thread.
+        let waker = noop_waker();
+        let mut cx = Context::from_waker(&waker);
+
+        loop {
+            match self.inner.as_mut().poll_next(&mut cx) {
+                Poll::Ready(item) => return item, // Some(item) or None (stream ended)
+                Poll::Pending => std::thread::yield_now(),
+            }
+        }
+    }
+}
 
 /// Instantiate a Client instance to access an Aerospike database cluster and perform database
 /// operations.
@@ -222,6 +261,48 @@ impl Client {
         batch_records: &[BatchOperation],
     ) -> Result<Vec<BatchRecord>> {
         block_on(self.async_client.batch(policy, batch_records))
+    }
+
+    /// Execute multiple batch operations and return results as a
+    /// blocking [`Iterator`]. Sync equivalent of the async
+    /// `Client::batch_stream`.
+    ///
+    /// Unlike [`batch`](Self::batch), items arrive in the order they
+    /// are received from each server node rather than the order of
+    /// `ops`. Each item is `(original_index, BatchRecord)` so callers
+    /// can match results back to their input vec. Iteration ends once
+    /// every per-node task has completed.
+    ///
+    /// Internally this drives the async streaming variant: the
+    /// per-node tasks are spawned on the underlying tokio runtime,
+    /// each emits its `(idx, BatchRecord)` onto a channel as soon as
+    /// it returns, and the [`BatchStream`] iterator pulls those items
+    /// without ever blocking the runtime — it follows the same
+    /// `try_recv` + `yield` pattern used by [`Recordset`].
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// # use aerospike_sync::*;
+    /// # let rt = tokio::runtime::Runtime::new().unwrap();
+    /// # let _guard = rt.enter();
+    /// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap_or_else(|_| "127.0.0.1:3000".to_string());
+    /// # let client = Client::new(&ClientPolicy::default(), &hosts).unwrap();
+    /// let key = as_key!("test", "test", 1);
+    /// let batch = vec![BatchOperation::read(&BatchReadPolicy::default(), key, Bins::All)];
+    /// for (idx, br) in client.batch_stream(&BatchPolicy::default(), batch).unwrap() {
+    ///     println!("op[{}]: {:?}", idx, br.record);
+    /// }
+    /// ```
+    pub fn batch_stream(
+        &self,
+        policy: &BatchPolicy,
+        ops: Vec<BatchOperation>,
+    ) -> Result<BatchStream> {
+        let stream = block_on(self.async_client.batch_stream(policy, ops))?;
+        Ok(BatchStream {
+            inner: Box::pin(stream),
+        })
     }
 
     /// Write record bin(s). The policy specifies the transaction timeout, record expiration and
