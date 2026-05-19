@@ -47,6 +47,7 @@ mod task;
 mod truncate;
 mod txn;
 mod udf;
+mod dt_query_after_node_kill;
 
 pub(crate) async fn count_results(rs: Arc<Recordset>) -> usize {
     let mut count = 0;

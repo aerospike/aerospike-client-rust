@@ -272,6 +272,7 @@ impl Node {
         }
 
         peers.increment_refresh_count();
+        debug!("Node count refreshed");
 
         // Reload peers, partitions and racks if there were failures on the
         // previous tend (mirror Java's behavior).

@@ -100,8 +100,11 @@ pub struct ClientPolicy {
     #[cfg(feature = "tls")]
     pub tls_config: Option<ClientConfig>,
 
-    /// Initial host connection timeout in milliseconds. The timeout when opening a connection
-    /// to the server host for the first time.
+    /// Milliseconds for opening a TCP connection to a host, cluster tend INFO calls, and
+    /// related socket timeouts on new connections. Aligns with the Java client's
+    /// `ClientPolicy.timeout` (cluster tend + first connect + polling).
+    ///
+    /// Default: **1000** ms.
     pub timeout: u32,
 
     /// Connection idle timeout. Every time a connection is used, its idle
@@ -222,7 +225,8 @@ impl Default for ClientPolicy {
     fn default() -> ClientPolicy {
         ClientPolicy {
             auth_mode: AuthMode::None,
-            timeout: 30_000,
+            // java client parity timeout used for tend connection , validator and cluster status
+            timeout: 1_000,
             idle_timeout: 30_000,
             min_conns_per_node: 0,
             max_conns_per_node: 256,

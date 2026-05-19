@@ -195,6 +195,8 @@ impl Cluster {
             return Ok(());
         }
 
+        let tend_started = Instant::now();
+
         let seed_only = self.client_policy().seed_only_cluster;
 
         // Per-tend peer state. `gen_changed` is initialized to false (Java's
@@ -256,9 +258,10 @@ impl Cluster {
                 // node's peer list is parsed and materialized in isolation so
                 // a single unreachable peer doesn't prevent the others from
                 // committing their generation (Java's `peersValidated`).
+                debug!("check peer gen changed");
                 if peers.gen_changed() {
                     peers.reset_refresh_count();
-
+                    debug!("Refresh  and materilize peer gen changed");
                     for node in &nodes {
                         if let Err(err) = node.refresh_peers(&mut peers).await {
                             warn!("Node `{node}` peer refresh failed: {err}");
@@ -336,6 +339,7 @@ impl Cluster {
                         active_nodes.len()
                     );
                 } else {
+                    debug!("trying to update pmap");
                     partition_map.get_or_init(|| (*self.partition_map.load().clone()).clone());
                     if let Err(err) = self
                         .update_partitions(partition_map.get_mut().unwrap(), node)
@@ -381,6 +385,8 @@ impl Cluster {
             .collect();
 
         debug!("Nodes {aliases:?}");
+
+        debug!("Cluster tend completed in {:?}", tend_started.elapsed());
 
         Ok(())
     }
@@ -907,6 +913,7 @@ impl Cluster {
                 if !peers.contains_node_to_remove(node) {
                     peers.add_node_to_remove(node.clone());
                 }
+                debug!("active node still {}", node.name());
                 continue;
             }
 
@@ -914,8 +921,11 @@ impl Cluster {
             // failures. Remove it. If no nodes are left, seeds will be tried
             // in the next cluster tend iteration. Mirrors Java's
             // `findNodesToRemove`.
+            debug!("current node failures {} - {}", node.name(), node.failures());
+
             if refresh_count == 0 && node.failures() >= 5 {
                 if !peers.contains_node_to_remove(node) {
+                    debug!("added node for removal {}", node.name());
                     peers.add_node_to_remove(node.clone());
                 }
                 continue;
@@ -923,16 +933,19 @@ impl Cluster {
 
             // Multi-node cluster: remove if not referenced by any other node.
             if nodes.len() > 1 && refresh_count >= 1 && node.reference_count() == 0 {
+                debug!("trying to removed effected node");
                 if node.failures() == 0 {
                     // Node is alive but not referenced. Drop only if it's
                     // also not mapped to any partition.
                     if !self.find_node_in_partition_map(node.clone())
                         && !peers.contains_node_to_remove(node)
                     {
+                        debug!("Node alive - but no ref p-map");
                         peers.add_node_to_remove(node.clone());
                     }
                 } else if !peers.contains_node_to_remove(node) {
                     // Node not responding. Remove it.
+                    debug!("Node not responding");
                     peers.add_node_to_remove(node.clone());
                 }
             }
@@ -958,6 +971,17 @@ impl Cluster {
             node.close();
         }
         self.remove_nodes(&nodes_to_remove);
+
+        // // Partition table rows can still reference removed nodes (now inactive)
+        // // until survivors publish fresh `replicas` maps. Phase 1 often ran
+        // // before eviction showed up in `partition-generation`, so no survivor
+        // // had `partition_changed` and Phase 4 would skip — leaving stale master
+        // // slots and KV/query failures (CLIENT-4405). Force a refresh this tend.
+        // for node in self.nodes() {
+        //     if node.is_active() {
+        //         node.set_partition_changed(true);
+        //     }
+        // }
     }
 
     fn remove_alias(&self, host: &Host) {
