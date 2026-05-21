@@ -101,7 +101,8 @@ pub struct ClientPolicy {
     pub tls_config: Option<ClientConfig>,
 
     /// Initial host connection timeout in milliseconds. The timeout when opening a connection
-    /// to the server host for the first time.
+    /// to the server host for the first time and when polling each node for cluster status. 
+    /// Cluster tend info call timeout in milliseconds.
     pub timeout: u32,
 
     /// Connection idle timeout. Every time a connection is used, its idle
@@ -222,7 +223,7 @@ impl Default for ClientPolicy {
     fn default() -> ClientPolicy {
         ClientPolicy {
             auth_mode: AuthMode::None,
-            timeout: 30_000,
+            timeout: 1_000,
             idle_timeout: 30_000,
             min_conns_per_node: 0,
             max_conns_per_node: 256,
