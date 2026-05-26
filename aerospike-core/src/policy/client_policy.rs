@@ -42,6 +42,9 @@ pub enum AuthMode {
     PKI,
 }
 
+/// Minimum allowed value for [`ClientPolicy::tend_interval`], in milliseconds.
+pub const TEND_INTERVAL_MIN_MS: u32 = 250;
+
 /// `ClientPolicy` encapsulates parameters for client policy command.
 #[derive(Debug, Clone)]
 pub struct ClientPolicy {
@@ -146,8 +149,11 @@ pub struct ClientPolicy {
     /// of the connection pool.
     pub buffer_reclaim_threshold: usize,
 
-    /// `TendInterval` determines interval for checking for cluster state changes.
-    /// Minimum possible interval is 10 Milliseconds.
+    /// Interval in milliseconds between cluster tends by the maintenance task.
+    /// Minimum allowed value is [`TEND_INTERVAL_MIN_MS`] (250 ms); smaller values
+    /// will be rejected by [`ClientPolicy::validate`].
+    ///
+    /// Default: 1000
     pub tend_interval: u32,
 
     /// A IP translation table is used in cases where different clients
@@ -249,6 +255,13 @@ impl ClientPolicy {
     pub(crate) fn validate(&self) -> Result<()> {
         if self.max_conns_per_node > 0 && self.min_conns_per_node > self.max_conns_per_node {
             return Err(Error::ClientError("minimum number of connections specified in the ClientPolicy is bigger than total connection pool size".into()));
+        }
+
+        if self.tend_interval < TEND_INTERVAL_MIN_MS {
+            return Err(Error::ClientError(format!(
+                "Invalid tend_interval: {}. min: {}",
+                self.tend_interval, TEND_INTERVAL_MIN_MS
+            )));
         }
 
         Ok(())

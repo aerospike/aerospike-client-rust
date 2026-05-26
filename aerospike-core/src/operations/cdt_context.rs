@@ -680,7 +680,7 @@ mod tests {
     fn ctx_round_trip_with_keys_in() {
         let original = vec![
             ctx_map_key(Value::String("users".into())),
-            ctx_map_keys_in(["alice", "bob"]),
+            ctx_map_keys_in(["alice", "bob", 1, [u8]{1,7,9}, nil]),
         ];
         let b64 = to_base64(&original).expect("encode");
         let restored = ctx_from_base64(&b64).expect("decode");
