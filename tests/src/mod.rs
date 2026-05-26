@@ -35,6 +35,7 @@ mod exp_hll;
 mod exp_list;
 mod exp_map;
 mod exp_op;
+mod exp_string;
 mod hll;
 mod index;
 mod kv;
@@ -43,6 +44,7 @@ mod query;
 mod scan;
 #[cfg(feature = "serialization")]
 mod serialization;
+mod string;
 mod task;
 mod truncate;
 mod txn;

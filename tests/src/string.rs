@@ -1,0 +1,1126 @@
+// Copyright 2015-2026 Aerospike, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+// http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+//! Integration tests for CDT string operations.
+//! Requires Aerospike Server version >= 8.1.3.
+
+use std::collections::HashMap;
+
+use crate::common;
+
+use aerospike::operations::cdt_context::{ctx_list_index, ctx_map_key};
+use aerospike::operations::string as str_op;
+use aerospike::operations::string::{StringPolicy, StringRegexFlags, StringWriteFlags};
+use aerospike::{
+    as_bin, as_key, as_list, as_map, as_val, Bins, ReadPolicy, Value, WritePolicy,
+};
+
+async fn server_supports_string_operations(client: &aerospike::Client) -> bool {
+    match client.cluster.get_random_node() {
+        Ok(node) => node.version().supports_string_operations(),
+        Err(_) => false,
+    }
+}
+
+const BIN: &str = "sbin";
+
+async fn put(client: &aerospike::Client, wpolicy: &WritePolicy, key: &aerospike::Key, s: &str) {
+    let _ = common::delete_durably(client, wpolicy, key).await;
+    client
+        .put(wpolicy, key, &[as_bin!(BIN, s)])
+        .await
+        .expect("put failed");
+}
+
+async fn get_string(client: &aerospike::Client, key: &aerospike::Key) -> String {
+    let rec = client
+        .get(&ReadPolicy::default(), key, Bins::All)
+        .await
+        .expect("get failed");
+    match rec.bins.get(BIN).expect("bin missing") {
+        Value::String(s) => s.clone(),
+        other => panic!("expected string, got {:?}", other),
+    }
+}
+
+// ============================================================
+// Read operations
+// ============================================================
+
+#[aerospike_macro::test]
+async fn strlen_returns_codepoint_count() {
+    let client = common::client().await;
+    if !server_supports_string_operations(&client).await {
+        eprintln!("Skipping: server does not support string operations (requires >= 8.1.3)");
+        return;
+    }
+    let key = as_key!(common::namespace(), &common::rand_str(10), "strlen1");
+    let wpolicy = WritePolicy::default();
+    put(&client, &wpolicy, &key, "hello world").await;
+
+    let rec = client
+        .operate(&wpolicy, &key, &[str_op::strlen(BIN)])
+        .await
+        .unwrap();
+    assert_eq!(rec.bins.get(BIN).unwrap(), &Value::Int(11));
+}
+
+#[aerospike_macro::test]
+async fn strlen_empty_string_is_zero() {
+    let client = common::client().await;
+    if !server_supports_string_operations(&client).await {
+        return;
+    }
+    let key = as_key!(common::namespace(), &common::rand_str(10), "strlen2");
+    let wpolicy = WritePolicy::default();
+    put(&client, &wpolicy, &key, "").await;
+
+    let rec = client
+        .operate(&wpolicy, &key, &[str_op::strlen(BIN)])
+        .await
+        .unwrap();
+    assert_eq!(rec.bins.get(BIN).unwrap(), &Value::Int(0));
+}
+
+#[aerospike_macro::test]
+async fn byte_length_returns_utf8_bytes() {
+    let client = common::client().await;
+    if !server_supports_string_operations(&client).await {
+        return;
+    }
+    let key = as_key!(common::namespace(), &common::rand_str(10), "bytelen");
+    let wpolicy = WritePolicy::default();
+    put(&client, &wpolicy, &key, "hello").await;
+
+    let rec = client
+        .operate(&wpolicy, &key, &[str_op::byte_length(BIN)])
+        .await
+        .unwrap();
+    assert_eq!(rec.bins.get(BIN).unwrap(), &Value::Int(5));
+}
+
+#[aerospike_macro::test]
+async fn substr_from_and_range_and_negative() {
+    let client = common::client().await;
+    if !server_supports_string_operations(&client).await {
+        return;
+    }
+    let key = as_key!(common::namespace(), &common::rand_str(10), "substr");
+    let wpolicy = WritePolicy::default();
+
+    put(&client, &wpolicy, &key, "hello world").await;
+    let rec = client
+        .operate(&wpolicy, &key, &[str_op::substr_from(BIN, 6)])
+        .await
+        .unwrap();
+    assert_eq!(rec.bins.get(BIN).unwrap(), &Value::from("world"));
+
+    let rec = client
+        .operate(&wpolicy, &key, &[str_op::substr(BIN, 0, 5)])
+        .await
+        .unwrap();
+    assert_eq!(rec.bins.get(BIN).unwrap(), &Value::from("hello"));
+
+    let rec = client
+        .operate(&wpolicy, &key, &[str_op::substr_from(BIN, -5)])
+        .await
+        .unwrap();
+    assert_eq!(rec.bins.get(BIN).unwrap(), &Value::from("world"));
+}
+
+#[aerospike_macro::test]
+async fn char_at_returns_single_codepoint() {
+    let client = common::client().await;
+    if !server_supports_string_operations(&client).await {
+        return;
+    }
+    let key = as_key!(common::namespace(), &common::rand_str(10), "charat");
+    let wpolicy = WritePolicy::default();
+    put(&client, &wpolicy, &key, "Hello123World").await;
+
+    let rec = client
+        .operate(&wpolicy, &key, &[str_op::char_at(BIN, 5)])
+        .await
+        .unwrap();
+    assert_eq!(rec.bins.get(BIN).unwrap(), &Value::from("1"));
+}
+
+#[aerospike_macro::test]
+async fn find_first_match_and_miss_and_nth() {
+    let client = common::client().await;
+    if !server_supports_string_operations(&client).await {
+        return;
+    }
+    let key = as_key!(common::namespace(), &common::rand_str(10), "find");
+    let wpolicy = WritePolicy::default();
+
+    put(&client, &wpolicy, &key, "hello world").await;
+    let rec = client
+        .operate(&wpolicy, &key, &[str_op::find(BIN, "world")])
+        .await
+        .unwrap();
+    assert_eq!(rec.bins.get(BIN).unwrap(), &Value::Int(6));
+
+    let rec = client
+        .operate(&wpolicy, &key, &[str_op::find(BIN, "xyz")])
+        .await
+        .unwrap();
+    assert_eq!(rec.bins.get(BIN).unwrap(), &Value::Int(-1));
+
+    put(&client, &wpolicy, &key, "ababab").await;
+    let rec = client
+        .operate(&wpolicy, &key, &[str_op::find_nth(BIN, "ab", 2)])
+        .await
+        .unwrap();
+    assert_eq!(rec.bins.get(BIN).unwrap(), &Value::Int(2));
+}
+
+#[aerospike_macro::test]
+async fn contains_starts_with_ends_with() {
+    let client = common::client().await;
+    if !server_supports_string_operations(&client).await {
+        return;
+    }
+    let key = as_key!(common::namespace(), &common::rand_str(10), "match");
+    let wpolicy = WritePolicy::default();
+    put(&client, &wpolicy, &key, "Hello123World").await;
+
+    let rec = client
+        .operate(&wpolicy, &key, &[str_op::contains(BIN, "Hello")])
+        .await
+        .unwrap();
+    assert_eq!(rec.bins.get(BIN).unwrap(), &Value::Bool(true));
+
+    let rec = client
+        .operate(&wpolicy, &key, &[str_op::contains(BIN, "xyz")])
+        .await
+        .unwrap();
+    assert_eq!(rec.bins.get(BIN).unwrap(), &Value::Bool(false));
+
+    let rec = client
+        .operate(&wpolicy, &key, &[str_op::starts_with(BIN, "Hello")])
+        .await
+        .unwrap();
+    assert_eq!(rec.bins.get(BIN).unwrap(), &Value::Bool(true));
+
+    let rec = client
+        .operate(&wpolicy, &key, &[str_op::ends_with(BIN, "World")])
+        .await
+        .unwrap();
+    assert_eq!(rec.bins.get(BIN).unwrap(), &Value::Bool(true));
+}
+
+#[aerospike_macro::test]
+async fn case_predicates_upper_lower() {
+    let client = common::client().await;
+    if !server_supports_string_operations(&client).await {
+        return;
+    }
+    let key = as_key!(common::namespace(), &common::rand_str(10), "case");
+    let wpolicy = WritePolicy::default();
+
+    put(&client, &wpolicy, &key, "HELLO").await;
+    let rec = client
+        .operate(&wpolicy, &key, &[str_op::is_upper(BIN)])
+        .await
+        .unwrap();
+    assert_eq!(rec.bins.get(BIN).unwrap(), &Value::Bool(true));
+
+    put(&client, &wpolicy, &key, "hello").await;
+    let rec = client
+        .operate(&wpolicy, &key, &[str_op::is_lower(BIN)])
+        .await
+        .unwrap();
+    assert_eq!(rec.bins.get(BIN).unwrap(), &Value::Bool(true));
+
+    put(&client, &wpolicy, &key, "Mixed").await;
+    let rec = client
+        .operate(&wpolicy, &key, &[str_op::is_upper(BIN)])
+        .await
+        .unwrap();
+    assert_eq!(rec.bins.get(BIN).unwrap(), &Value::Bool(false));
+}
+
+#[aerospike_macro::test]
+async fn is_numeric_to_integer_to_double() {
+    let client = common::client().await;
+    if !server_supports_string_operations(&client).await {
+        return;
+    }
+    let key = as_key!(common::namespace(), &common::rand_str(10), "num");
+    let wpolicy = WritePolicy::default();
+
+    put(&client, &wpolicy, &key, "12345").await;
+    let rec = client
+        .operate(&wpolicy, &key, &[str_op::is_numeric(BIN)])
+        .await
+        .unwrap();
+    assert_eq!(rec.bins.get(BIN).unwrap(), &Value::Bool(true));
+
+    let rec = client
+        .operate(&wpolicy, &key, &[str_op::to_integer(BIN)])
+        .await
+        .unwrap();
+    assert_eq!(rec.bins.get(BIN).unwrap(), &Value::Int(12345));
+
+    put(&client, &wpolicy, &key, "3.14").await;
+    let rec = client
+        .operate(&wpolicy, &key, &[str_op::to_double(BIN)])
+        .await
+        .unwrap();
+    match rec.bins.get(BIN).unwrap() {
+        Value::Float(f) => {
+            let n = f64::from(f);
+            assert!((n - 3.14).abs() < 1e-3, "got {n}");
+        }
+        other => panic!("expected float, got {:?}", other),
+    }
+}
+
+#[aerospike_macro::test]
+async fn split_by_separator_and_singleton() {
+    let client = common::client().await;
+    if !server_supports_string_operations(&client).await {
+        return;
+    }
+    let key = as_key!(common::namespace(), &common::rand_str(10), "split");
+    let wpolicy = WritePolicy::default();
+
+    put(&client, &wpolicy, &key, "one,two,three").await;
+    let rec = client
+        .operate(&wpolicy, &key, &[str_op::split_by_separator(BIN, ",")])
+        .await
+        .unwrap();
+    let want = Value::List(vec![
+        Value::from("one"),
+        Value::from("two"),
+        Value::from("three"),
+    ]);
+    assert_eq!(rec.bins.get(BIN).unwrap(), &want);
+
+    put(&client, &wpolicy, &key, "Hello123World").await;
+    let rec = client
+        .operate(&wpolicy, &key, &[str_op::split_by_separator(BIN, "|")])
+        .await
+        .unwrap();
+    assert_eq!(
+        rec.bins.get(BIN).unwrap(),
+        &Value::List(vec![Value::from("Hello123World")])
+    );
+}
+
+#[aerospike_macro::test]
+async fn regex_compare_default_and_case_insensitive() {
+    let client = common::client().await;
+    if !server_supports_string_operations(&client).await {
+        return;
+    }
+    let key = as_key!(common::namespace(), &common::rand_str(10), "rxc");
+    let wpolicy = WritePolicy::default();
+
+    put(&client, &wpolicy, &key, "Hello123World").await;
+    let rec = client
+        .operate(&wpolicy, &key, &[str_op::regex_compare(BIN, "[0-9]+")])
+        .await
+        .unwrap();
+    assert_eq!(rec.bins.get(BIN).unwrap(), &Value::Bool(true));
+
+    put(&client, &wpolicy, &key, "HELLO").await;
+    let rec = client
+        .operate(
+            &wpolicy,
+            &key,
+            &[str_op::regex_compare_with_flags(
+                BIN,
+                "hello",
+                StringRegexFlags::CASE_INSENSITIVE,
+            )],
+        )
+        .await
+        .unwrap();
+    assert_eq!(rec.bins.get(BIN).unwrap(), &Value::Bool(true));
+}
+
+#[aerospike_macro::test]
+async fn to_blob_and_b64_decode() {
+    let client = common::client().await;
+    if !server_supports_string_operations(&client).await {
+        return;
+    }
+    let key = as_key!(common::namespace(), &common::rand_str(10), "blob");
+    let wpolicy = WritePolicy::default();
+
+    put(&client, &wpolicy, &key, "hello").await;
+    let rec = client
+        .operate(&wpolicy, &key, &[str_op::to_blob(BIN)])
+        .await
+        .unwrap();
+    assert_eq!(rec.bins.get(BIN).unwrap(), &Value::Blob(b"hello".to_vec()));
+
+    put(&client, &wpolicy, &key, "aGVsbG8=").await;
+    let rec = client
+        .operate(&wpolicy, &key, &[str_op::b64_decode(BIN)])
+        .await
+        .unwrap();
+    assert_eq!(rec.bins.get(BIN).unwrap(), &Value::Blob(b"hello".to_vec()));
+}
+
+// ============================================================
+// Modify operations
+// ============================================================
+
+#[aerospike_macro::test]
+async fn upper_lower_case_fold() {
+    let client = common::client().await;
+    if !server_supports_string_operations(&client).await {
+        return;
+    }
+    let key = as_key!(common::namespace(), &common::rand_str(10), "upmod");
+    let wpolicy = WritePolicy::default();
+    let policy = StringPolicy::default();
+
+    put(&client, &wpolicy, &key, "hello world").await;
+    client
+        .operate(&wpolicy, &key, &[str_op::upper(&policy, BIN)])
+        .await
+        .unwrap();
+    assert_eq!(get_string(&client, &key).await, "HELLO WORLD");
+
+    put(&client, &wpolicy, &key, "HELLO WORLD").await;
+    client
+        .operate(&wpolicy, &key, &[str_op::lower(&policy, BIN)])
+        .await
+        .unwrap();
+    assert_eq!(get_string(&client, &key).await, "hello world");
+
+    put(&client, &wpolicy, &key, "HELLO World").await;
+    client
+        .operate(&wpolicy, &key, &[str_op::case_fold(&policy, BIN)])
+        .await
+        .unwrap();
+    assert_eq!(get_string(&client, &key).await, "hello world");
+}
+
+#[aerospike_macro::test]
+async fn normalize_nfc_identity() {
+    let client = common::client().await;
+    if !server_supports_string_operations(&client).await {
+        return;
+    }
+    let key = as_key!(common::namespace(), &common::rand_str(10), "nfc");
+    let wpolicy = WritePolicy::default();
+    let policy = StringPolicy::default();
+
+    put(&client, &wpolicy, &key, "hello").await;
+    client
+        .operate(&wpolicy, &key, &[str_op::normalize_nfc(&policy, BIN)])
+        .await
+        .unwrap();
+    assert_eq!(get_string(&client, &key).await, "hello");
+}
+
+#[aerospike_macro::test]
+async fn insert_at_positions() {
+    let client = common::client().await;
+    if !server_supports_string_operations(&client).await {
+        return;
+    }
+    let key = as_key!(common::namespace(), &common::rand_str(10), "insert");
+    let wpolicy = WritePolicy::default();
+    let policy = StringPolicy::default();
+
+    put(&client, &wpolicy, &key, "hello world").await;
+    client
+        .operate(
+            &wpolicy,
+            &key,
+            &[str_op::insert(&policy, BIN, 5, " beautiful")],
+        )
+        .await
+        .unwrap();
+    assert_eq!(get_string(&client, &key).await, "hello beautiful world");
+
+    put(&client, &wpolicy, &key, "world").await;
+    client
+        .operate(&wpolicy, &key, &[str_op::insert(&policy, BIN, 0, "hello ")])
+        .await
+        .unwrap();
+    assert_eq!(get_string(&client, &key).await, "hello world");
+
+    put(&client, &wpolicy, &key, "hello").await;
+    client
+        .operate(&wpolicy, &key, &[str_op::insert(&policy, BIN, 5, " world")])
+        .await
+        .unwrap();
+    assert_eq!(get_string(&client, &key).await, "hello world");
+
+    put(&client, &wpolicy, &key, "hello world").await;
+    client
+        .operate(&wpolicy, &key, &[str_op::insert(&policy, BIN, -5, "big ")])
+        .await
+        .unwrap();
+    assert_eq!(get_string(&client, &key).await, "hello big world");
+}
+
+#[aerospike_macro::test]
+async fn overwrite_at_start_middle_extend() {
+    let client = common::client().await;
+    if !server_supports_string_operations(&client).await {
+        return;
+    }
+    let key = as_key!(common::namespace(), &common::rand_str(10), "overwrite");
+    let wpolicy = WritePolicy::default();
+    let policy = StringPolicy::default();
+
+    put(&client, &wpolicy, &key, "hello world").await;
+    client
+        .operate(
+            &wpolicy,
+            &key,
+            &[str_op::overwrite(&policy, BIN, 6, "earth")],
+        )
+        .await
+        .unwrap();
+    assert_eq!(get_string(&client, &key).await, "hello earth");
+
+    put(&client, &wpolicy, &key, "hello world").await;
+    client
+        .operate(
+            &wpolicy,
+            &key,
+            &[str_op::overwrite(&policy, BIN, 0, "HELLO")],
+        )
+        .await
+        .unwrap();
+    assert_eq!(get_string(&client, &key).await, "HELLO world");
+
+    put(&client, &wpolicy, &key, "hello").await;
+    client
+        .operate(
+            &wpolicy,
+            &key,
+            &[str_op::overwrite(&policy, BIN, 3, "ping!")],
+        )
+        .await
+        .unwrap();
+    assert_eq!(get_string(&client, &key).await, "helping!");
+}
+
+#[aerospike_macro::test]
+async fn snip_range_prefix_suffix() {
+    let client = common::client().await;
+    if !server_supports_string_operations(&client).await {
+        return;
+    }
+    let key = as_key!(common::namespace(), &common::rand_str(10), "snip");
+    let wpolicy = WritePolicy::default();
+    let policy = StringPolicy::default();
+
+    put(&client, &wpolicy, &key, "hello beautiful world").await;
+    client
+        .operate(&wpolicy, &key, &[str_op::snip(&policy, BIN, 5, 15)])
+        .await
+        .unwrap();
+    assert_eq!(get_string(&client, &key).await, "hello world");
+
+    put(&client, &wpolicy, &key, "hello world").await;
+    client
+        .operate(&wpolicy, &key, &[str_op::snip(&policy, BIN, 0, 6)])
+        .await
+        .unwrap();
+    assert_eq!(get_string(&client, &key).await, "world");
+
+    put(&client, &wpolicy, &key, "hello world").await;
+    client
+        .operate(&wpolicy, &key, &[str_op::snip(&policy, BIN, 5, 11)])
+        .await
+        .unwrap();
+    assert_eq!(get_string(&client, &key).await, "hello");
+}
+
+#[aerospike_macro::test]
+async fn replace_first_and_replace_all() {
+    let client = common::client().await;
+    if !server_supports_string_operations(&client).await {
+        return;
+    }
+    let key = as_key!(common::namespace(), &common::rand_str(10), "replace");
+    let wpolicy = WritePolicy::default();
+    let policy = StringPolicy::default();
+
+    put(&client, &wpolicy, &key, "hello world world").await;
+    client
+        .operate(
+            &wpolicy,
+            &key,
+            &[str_op::replace(&policy, BIN, "world", "earth")],
+        )
+        .await
+        .unwrap();
+    assert_eq!(get_string(&client, &key).await, "hello earth world");
+
+    put(&client, &wpolicy, &key, "hello world").await;
+    client
+        .operate(
+            &wpolicy,
+            &key,
+            &[str_op::replace(&policy, BIN, "xyz", "abc")],
+        )
+        .await
+        .unwrap();
+    assert_eq!(get_string(&client, &key).await, "hello world");
+
+    put(&client, &wpolicy, &key, "hi world").await;
+    client
+        .operate(
+            &wpolicy,
+            &key,
+            &[str_op::replace(&policy, BIN, "hi", "hello")],
+        )
+        .await
+        .unwrap();
+    assert_eq!(get_string(&client, &key).await, "hello world");
+
+    put(&client, &wpolicy, &key, "hello world").await;
+    client
+        .operate(
+            &wpolicy,
+            &key,
+            &[str_op::replace(&policy, BIN, " world", "")],
+        )
+        .await
+        .unwrap();
+    assert_eq!(get_string(&client, &key).await, "hello");
+
+    put(&client, &wpolicy, &key, "aabaa").await;
+    client
+        .operate(
+            &wpolicy,
+            &key,
+            &[str_op::replace_all(&policy, BIN, "a", "x")],
+        )
+        .await
+        .unwrap();
+    assert_eq!(get_string(&client, &key).await, "xxbxx");
+
+    put(&client, &wpolicy, &key, "hello").await;
+    client
+        .operate(
+            &wpolicy,
+            &key,
+            &[str_op::replace_all(&policy, BIN, "z", "!")],
+        )
+        .await
+        .unwrap();
+    assert_eq!(get_string(&client, &key).await, "hello");
+}
+
+#[aerospike_macro::test]
+async fn trim_variants() {
+    let client = common::client().await;
+    if !server_supports_string_operations(&client).await {
+        return;
+    }
+    let key = as_key!(common::namespace(), &common::rand_str(10), "trim");
+    let wpolicy = WritePolicy::default();
+    let policy = StringPolicy::default();
+
+    put(&client, &wpolicy, &key, "  hello world  ").await;
+    client
+        .operate(&wpolicy, &key, &[str_op::trim(&policy, BIN)])
+        .await
+        .unwrap();
+    assert_eq!(get_string(&client, &key).await, "hello world");
+
+    put(&client, &wpolicy, &key, "  hello  ").await;
+    client
+        .operate(&wpolicy, &key, &[str_op::trim_start(&policy, BIN)])
+        .await
+        .unwrap();
+    assert_eq!(get_string(&client, &key).await, "hello  ");
+
+    put(&client, &wpolicy, &key, "  hello  ").await;
+    client
+        .operate(&wpolicy, &key, &[str_op::trim_end(&policy, BIN)])
+        .await
+        .unwrap();
+    assert_eq!(get_string(&client, &key).await, "  hello");
+}
+
+#[aerospike_macro::test]
+async fn pad_start_end_and_multi_char() {
+    let client = common::client().await;
+    if !server_supports_string_operations(&client).await {
+        return;
+    }
+    let key = as_key!(common::namespace(), &common::rand_str(10), "pad");
+    let wpolicy = WritePolicy::default();
+    let policy = StringPolicy::default();
+
+    put(&client, &wpolicy, &key, "hello").await;
+    client
+        .operate(&wpolicy, &key, &[str_op::pad_start(&policy, BIN, 10, "*")])
+        .await
+        .unwrap();
+    assert_eq!(get_string(&client, &key).await, "*****hello");
+
+    put(&client, &wpolicy, &key, "hello world").await;
+    client
+        .operate(&wpolicy, &key, &[str_op::pad_start(&policy, BIN, 5, "*")])
+        .await
+        .unwrap();
+    assert_eq!(get_string(&client, &key).await, "hello world");
+
+    put(&client, &wpolicy, &key, "hello").await;
+    client
+        .operate(&wpolicy, &key, &[str_op::pad_end(&policy, BIN, 10, ".")])
+        .await
+        .unwrap();
+    assert_eq!(get_string(&client, &key).await, "hello.....");
+
+    put(&client, &wpolicy, &key, "hi").await;
+    client
+        .operate(&wpolicy, &key, &[str_op::pad_start(&policy, BIN, 8, "ab")])
+        .await
+        .unwrap();
+    assert_eq!(get_string(&client, &key).await, "abababhi");
+}
+
+#[aerospike_macro::test]
+async fn repeat_contents() {
+    let client = common::client().await;
+    if !server_supports_string_operations(&client).await {
+        return;
+    }
+    let key = as_key!(common::namespace(), &common::rand_str(10), "repeat");
+    let wpolicy = WritePolicy::default();
+    let policy = StringPolicy::default();
+
+    put(&client, &wpolicy, &key, "ab").await;
+    client
+        .operate(&wpolicy, &key, &[str_op::repeat(&policy, BIN, 3)])
+        .await
+        .unwrap();
+    assert_eq!(get_string(&client, &key).await, "ababab");
+
+    put(&client, &wpolicy, &key, "hello").await;
+    client
+        .operate(&wpolicy, &key, &[str_op::repeat(&policy, BIN, 1)])
+        .await
+        .unwrap();
+    assert_eq!(get_string(&client, &key).await, "hello");
+}
+
+#[aerospike_macro::test]
+async fn concat_single_and_list() {
+    let client = common::client().await;
+    if !server_supports_string_operations(&client).await {
+        return;
+    }
+    let key = as_key!(common::namespace(), &common::rand_str(10), "concat");
+    let wpolicy = WritePolicy::default();
+    let policy = StringPolicy::default();
+
+    put(&client, &wpolicy, &key, "  hello world  ").await;
+    client
+        .operate(&wpolicy, &key, &[str_op::concat(&policy, BIN, "!")])
+        .await
+        .unwrap();
+    assert_eq!(get_string(&client, &key).await, "  hello world  !");
+
+    put(&client, &wpolicy, &key, "hello").await;
+    client
+        .operate(
+            &wpolicy,
+            &key,
+            &[str_op::concat_list(&policy, BIN, &[" ", "big", " world"])],
+        )
+        .await
+        .unwrap();
+    assert_eq!(get_string(&client, &key).await, "hello big world");
+}
+
+#[aerospike_macro::test]
+async fn regex_replace_default_global_no_match() {
+    let client = common::client().await;
+    if !server_supports_string_operations(&client).await {
+        return;
+    }
+    let key = as_key!(common::namespace(), &common::rand_str(10), "rxrep");
+    let wpolicy = WritePolicy::default();
+    let policy = StringPolicy::default();
+
+    put(&client, &wpolicy, &key, "abc123def456").await;
+    client
+        .operate(
+            &wpolicy,
+            &key,
+            &[str_op::regex_replace(
+                &policy,
+                BIN,
+                "[0-9]+",
+                "NUM",
+                StringRegexFlags::DEFAULT,
+            )],
+        )
+        .await
+        .unwrap();
+    assert_eq!(get_string(&client, &key).await, "abcNUMdef456");
+
+    put(&client, &wpolicy, &key, "abc123def456").await;
+    client
+        .operate(
+            &wpolicy,
+            &key,
+            &[str_op::regex_replace(
+                &policy,
+                BIN,
+                "[0-9]+",
+                "NUM",
+                StringRegexFlags::GLOBAL,
+            )],
+        )
+        .await
+        .unwrap();
+    assert_eq!(get_string(&client, &key).await, "abcNUMdefNUM");
+
+    put(&client, &wpolicy, &key, "hello").await;
+    client
+        .operate(
+            &wpolicy,
+            &key,
+            &[str_op::regex_replace(
+                &policy,
+                BIN,
+                "[0-9]+",
+                "NUM",
+                StringRegexFlags::GLOBAL,
+            )],
+        )
+        .await
+        .unwrap();
+    assert_eq!(get_string(&client, &key).await, "hello");
+}
+
+// ============================================================
+// Multi-op pipelines
+// ============================================================
+
+#[aerospike_macro::test]
+async fn reads_across_multiple_bins_in_one_operate() {
+    let client = common::client().await;
+    if !server_supports_string_operations(&client).await {
+        return;
+    }
+    let key = as_key!(common::namespace(), &common::rand_str(10), "multi");
+    let wpolicy = WritePolicy::default();
+    let _ = common::delete_durably(&client, &wpolicy, &key).await;
+    client
+        .put(
+            &wpolicy,
+            &key,
+            &[
+                as_bin!("text", "  hello world  "),
+                as_bin!("number_str", "12345"),
+                as_bin!("upper_str", "HELLO"),
+            ],
+        )
+        .await
+        .unwrap();
+
+    let rec = client
+        .operate(
+            &wpolicy,
+            &key,
+            &[
+                str_op::strlen("text"),
+                str_op::to_integer("number_str"),
+                str_op::is_upper("upper_str"),
+            ],
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(rec.bins.get("text").unwrap(), &Value::Int(15));
+    assert_eq!(rec.bins.get("number_str").unwrap(), &Value::Int(12345));
+    assert_eq!(rec.bins.get("upper_str").unwrap(), &Value::Bool(true));
+}
+
+#[aerospike_macro::test]
+async fn chained_replace_all_and_pad_compose() {
+    let client = common::client().await;
+    if !server_supports_string_operations(&client).await {
+        return;
+    }
+    let key = as_key!(common::namespace(), &common::rand_str(10), "chain");
+    let wpolicy = WritePolicy::default();
+    let policy = StringPolicy::default();
+    put(&client, &wpolicy, &key, "aabaa").await;
+
+    client
+        .operate(
+            &wpolicy,
+            &key,
+            &[
+                str_op::replace_all(&policy, BIN, "a", "x"),
+                str_op::pad_end(&policy, BIN, 10, "."),
+            ],
+        )
+        .await
+        .unwrap();
+    assert_eq!(get_string(&client, &key).await, "xxbxx.....");
+}
+
+// ============================================================
+// CTX navigation — string nested in list/map bins
+// ============================================================
+
+#[aerospike_macro::test]
+async fn read_on_string_nested_in_list() {
+    let client = common::client().await;
+    if !server_supports_string_operations(&client).await {
+        return;
+    }
+    let key = as_key!(common::namespace(), &common::rand_str(10), "ctx-list");
+    let wpolicy = WritePolicy::default();
+    let _ = common::delete_durably(&client, &wpolicy, &key).await;
+    let list = as_list!("alpha", "beta", "hello world");
+    client.put(&wpolicy, &key, &[as_bin!(BIN, list)]).await.unwrap();
+
+    let op = str_op::strlen(BIN).context(vec![ctx_list_index(2)]);
+    let rec = client.operate(&wpolicy, &key, &[op]).await.unwrap();
+    assert_eq!(rec.bins.get(BIN).unwrap(), &Value::Int(11));
+}
+
+#[aerospike_macro::test]
+async fn read_boolean_op_on_string_nested_in_map() {
+    let client = common::client().await;
+    if !server_supports_string_operations(&client).await {
+        return;
+    }
+    let key = as_key!(common::namespace(), &common::rand_str(10), "ctx-map");
+    let wpolicy = WritePolicy::default();
+    let _ = common::delete_durably(&client, &wpolicy, &key).await;
+    let map = as_map!("a" => "Hello", "b" => "World");
+    client.put(&wpolicy, &key, &[as_bin!(BIN, map)]).await.unwrap();
+
+    let op = str_op::starts_with(BIN, "Wor").context(vec![ctx_map_key(Value::from("b"))]);
+    let rec = client.operate(&wpolicy, &key, &[op]).await.unwrap();
+    assert_eq!(rec.bins.get(BIN).unwrap(), &Value::Bool(true));
+}
+
+#[aerospike_macro::test]
+async fn modify_on_string_nested_in_list() {
+    let client = common::client().await;
+    if !server_supports_string_operations(&client).await {
+        return;
+    }
+    let key = as_key!(common::namespace(), &common::rand_str(10), "ctx-mod-list");
+    let wpolicy = WritePolicy::default();
+    let policy = StringPolicy::default();
+    let _ = common::delete_durably(&client, &wpolicy, &key).await;
+    let list = as_list!("alpha", "beta", "gamma");
+    client.put(&wpolicy, &key, &[as_bin!(BIN, list)]).await.unwrap();
+
+    let op = str_op::upper(&policy, BIN).context(vec![ctx_list_index(1)]);
+    client.operate(&wpolicy, &key, &[op]).await.unwrap();
+
+    let rec = client.get(&ReadPolicy::default(), &key, Bins::All).await.unwrap();
+    assert_eq!(
+        rec.bins.get(BIN).unwrap(),
+        &Value::List(vec![
+            Value::from("alpha"),
+            Value::from("BETA"),
+            Value::from("gamma"),
+        ])
+    );
+}
+
+#[aerospike_macro::test]
+async fn modify_on_string_nested_in_map() {
+    let client = common::client().await;
+    if !server_supports_string_operations(&client).await {
+        return;
+    }
+    let key = as_key!(common::namespace(), &common::rand_str(10), "ctx-mod-map");
+    let wpolicy = WritePolicy::default();
+    let policy = StringPolicy::default();
+    let _ = common::delete_durably(&client, &wpolicy, &key).await;
+    let map = as_map!("a" => "hello world", "b" => "foo");
+    client.put(&wpolicy, &key, &[as_bin!(BIN, map)]).await.unwrap();
+
+    let op = str_op::replace(&policy, BIN, "world", "earth")
+        .context(vec![ctx_map_key(Value::from("a"))]);
+    client.operate(&wpolicy, &key, &[op]).await.unwrap();
+
+    let rec = client.get(&ReadPolicy::default(), &key, Bins::All).await.unwrap();
+    let mut expected = HashMap::new();
+    expected.insert(Value::from("a"), Value::from("hello earth"));
+    expected.insert(Value::from("b"), Value::from("foo"));
+    assert_eq!(rec.bins.get(BIN).unwrap(), &Value::HashMap(expected));
+}
+
+#[aerospike_macro::test]
+async fn modify_on_string_deeply_nested_list_in_map() {
+    let client = common::client().await;
+    if !server_supports_string_operations(&client).await {
+        return;
+    }
+    let key = as_key!(common::namespace(), &common::rand_str(10), "ctx-deep");
+    let wpolicy = WritePolicy::default();
+    let policy = StringPolicy::default();
+    let _ = common::delete_durably(&client, &wpolicy, &key).await;
+    let inner = as_list!("one", "two", "three");
+    let map = as_map!("items" => inner);
+    client.put(&wpolicy, &key, &[as_bin!(BIN, map)]).await.unwrap();
+
+    let op = str_op::upper(&policy, BIN).context(vec![
+        ctx_map_key(Value::from("items")),
+        ctx_list_index(1),
+    ]);
+    client.operate(&wpolicy, &key, &[op]).await.unwrap();
+
+    let rec = client.get(&ReadPolicy::default(), &key, Bins::All).await.unwrap();
+    let mut expected = HashMap::new();
+    expected.insert(
+        Value::from("items"),
+        Value::List(vec![
+            Value::from("one"),
+            Value::from("TWO"),
+            Value::from("three"),
+        ]),
+    );
+    assert_eq!(rec.bins.get(BIN).unwrap(), &Value::HashMap(expected));
+}
+
+// ============================================================
+// toString op — op-type 19, no payload, no sub-op id, no CTX
+// ============================================================
+
+#[aerospike_macro::test]
+async fn to_string_from_integer_double_string_blob_and_bin_type_error() {
+    let client = common::client().await;
+    if !server_supports_string_operations(&client).await {
+        return;
+    }
+    let key = as_key!(common::namespace(), &common::rand_str(10), "tostr");
+    let wpolicy = WritePolicy::default();
+
+    let _ = common::delete_durably(&client, &wpolicy, &key).await;
+    client.put(&wpolicy, &key, &[as_bin!(BIN, 42)]).await.unwrap();
+    let rec = client
+        .operate(&wpolicy, &key, &[str_op::to_string(BIN)])
+        .await
+        .unwrap();
+    assert_eq!(rec.bins.get(BIN).unwrap(), &Value::from("42"));
+
+    let _ = common::delete_durably(&client, &wpolicy, &key).await;
+    client.put(&wpolicy, &key, &[as_bin!(BIN, 3.14_f64)]).await.unwrap();
+    let rec = client
+        .operate(&wpolicy, &key, &[str_op::to_string(BIN)])
+        .await
+        .unwrap();
+    match rec.bins.get(BIN).unwrap() {
+        Value::String(s) => assert!(!s.is_empty()),
+        other => panic!("expected string, got {:?}", other),
+    }
+
+    put(&client, &wpolicy, &key, "hello").await;
+    let rec = client
+        .operate(&wpolicy, &key, &[str_op::to_string(BIN)])
+        .await
+        .unwrap();
+    assert_eq!(rec.bins.get(BIN).unwrap(), &Value::from("hello"));
+
+    let _ = common::delete_durably(&client, &wpolicy, &key).await;
+    client
+        .put(&wpolicy, &key, &[as_bin!(BIN, b"hi".to_vec())])
+        .await
+        .unwrap();
+    let rec = client
+        .operate(&wpolicy, &key, &[str_op::to_string(BIN)])
+        .await
+        .unwrap();
+    assert_eq!(rec.bins.get(BIN).unwrap(), &Value::from("hi"));
+
+    let _ = common::delete_durably(&client, &wpolicy, &key).await;
+    client
+        .put(&wpolicy, &key, &[as_bin!(BIN, as_list!("a", "b"))])
+        .await
+        .unwrap();
+    let err = client
+        .operate(&wpolicy, &key, &[str_op::to_string(BIN)])
+        .await
+        .expect_err("to_string on list bin should fail");
+    let msg = format!("{}", err);
+    assert!(
+        msg.contains("Bin type error") || msg.contains("BIN_TYPE_ERROR"),
+        "unexpected error: {msg}"
+    );
+}
+
+// ============================================================
+// NO_FAIL flag — missing-bin path
+// ============================================================
+
+#[aerospike_macro::test]
+async fn modify_on_missing_bin_with_no_fail_is_noop() {
+    let client = common::client().await;
+    if !server_supports_string_operations(&client).await {
+        return;
+    }
+    let key = as_key!(common::namespace(), &common::rand_str(10), "nofail");
+    let wpolicy = WritePolicy::default();
+    let _ = common::delete_durably(&client, &wpolicy, &key).await;
+    client
+        .put(&wpolicy, &key, &[as_bin!("other", "untouched")])
+        .await
+        .unwrap();
+
+    let no_fail = StringPolicy::new(StringWriteFlags::NO_FAIL);
+    client
+        .operate(&wpolicy, &key, &[str_op::upper(&no_fail, BIN)])
+        .await
+        .unwrap();
+
+    let rec = client.get(&ReadPolicy::default(), &key, Bins::All).await.unwrap();
+    assert!(rec.bins.get(BIN).is_none());
+    assert_eq!(rec.bins.get("other").unwrap(), &Value::from("untouched"));
+}
+
+#[aerospike_macro::test]
+async fn modify_on_missing_bin_without_no_fail_raises_error() {
+    let client = common::client().await;
+    if !server_supports_string_operations(&client).await {
+        return;
+    }
+    let key = as_key!(common::namespace(), &common::rand_str(10), "fail");
+    let wpolicy = WritePolicy::default();
+    let policy = StringPolicy::default();
+    let _ = common::delete_durably(&client, &wpolicy, &key).await;
+    client
+        .put(&wpolicy, &key, &[as_bin!("other", "untouched")])
+        .await
+        .unwrap();
+
+    let err = client
+        .operate(&wpolicy, &key, &[str_op::upper(&policy, BIN)])
+        .await
+        .expect_err("operate on missing bin should fail without NO_FAIL");
+    let msg = format!("{}", err);
+    assert!(
+        msg.contains("Bin not found") || msg.contains("BIN_NOT_FOUND"),
+        "unexpected error: {msg}"
+    );
+}

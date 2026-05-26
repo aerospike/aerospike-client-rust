@@ -91,6 +91,11 @@ impl Version {
     pub fn supports_mrt(&self) -> bool {
         self >= &Version::new(8, 0, 0, 0)
     }
+
+    /// Server supports CDT string operations (`StringOperation` builders).
+    pub fn supports_string_operations(&self) -> bool {
+        self >= &Version::new(8, 1, 3, 0)
+    }
 }
 
 #[derive(Debug)]
