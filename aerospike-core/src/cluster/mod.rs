@@ -1033,6 +1033,22 @@ impl Cluster {
         !nodes.is_empty() && !closed
     }
 
+    /// Returns whether `namespace` is configured for strong consistency on the
+    /// cluster.
+    ///
+    /// Reads from the in-memory partition map, which the tend loop refreshes
+    /// from the `replicas` info command. The map records SC mode per namespace
+    /// as `regime != 0`, so this is a synchronous lookup with no network I/O.
+    ///
+    /// - `Some(true)` — the namespace is an SC namespace.
+    /// - `Some(false)` — the namespace is AP.
+    /// - `None` — the namespace is not present in the partition map (unknown
+    ///   namespace, or partition map not yet populated for this cluster).
+    pub fn is_strong_consistency(&self, namespace: &str) -> Option<bool> {
+        let map = self.partition_map.load();
+        map.get(namespace).map(|p| p.sc_mode)
+    }
+
     pub fn aliases(&self) -> HashMap<Host, Arc<Node>> {
         (*self.aliases.load().clone()).clone()
     }
