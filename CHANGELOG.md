@@ -1,5 +1,23 @@
 # Changelog
 
+## [3.0.0-alpha.1]
+
+* **New Features**
+  * [CLIENT-4857] Allow setting `custom-client-id` in `the user-agent-id`.
+  * [CLIENT-4858] Expose `SCMode`.
+  * [CLIENT-4821] Support `batch_stream` API.
+  * [CLIENT-3609] Support `seed_only` rust client configuration for testing.
+  * [CLIENT-2403] Convert batch calls with just a one key per node in sub-batches to equivalent single requests.
+  * [CLIENT-3999] Ops Projection.
+  * [CLIENT-4437] Implement the enhanced expression API of server 8.1.2.
+  * [CLIENT-3621] Support `compression_threshold`.
+  * [CLIENT-2127][CLIENT-2388] Add a circuit breaker (`max_error_rate`, `error_rate_window`)
+  * [CLIENT-4716] Use a dedicated connection for tend.
+
+* **Improvements**
+  * Ported missing tests from other clients
+  * Consolidate the query command wire protocol with scan in one buffer encoder.
+
 ## [2.1.0]
 
 * **Bug Fixes**
