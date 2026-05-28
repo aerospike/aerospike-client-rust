@@ -22,15 +22,19 @@ use crate::common;
 use aerospike::operations::cdt_context::{ctx_list_index, ctx_map_key};
 use aerospike::operations::string as str_op;
 use aerospike::operations::string::{StringPolicy, StringRegexFlags, StringWriteFlags};
-use aerospike::{
-    as_bin, as_key, as_list, as_map, as_val, Bins, ReadPolicy, Value, WritePolicy,
-};
+use aerospike::{as_bin, as_key, as_list, as_map, as_val, Bins, ReadPolicy, Value, WritePolicy};
 
 async fn server_supports_string_operations(client: &aerospike::Client) -> bool {
-    match client.cluster.get_random_node() {
+    let supported = match client.cluster.get_random_node() {
         Ok(node) => node.version().supports_string_operations(),
         Err(_) => false,
+    };
+
+    if !supported {
+        eprintln!("Skipping: server does not support string operations (requires >= 8.1.3)");
     }
+
+    supported
 }
 
 const BIN: &str = "sbin";
@@ -62,7 +66,6 @@ async fn get_string(client: &aerospike::Client, key: &aerospike::Key) -> String 
 async fn strlen_returns_codepoint_count() {
     let client = common::client().await;
     if !server_supports_string_operations(&client).await {
-        eprintln!("Skipping: server does not support string operations (requires >= 8.1.3)");
         return;
     }
     let key = as_key!(common::namespace(), &common::rand_str(10), "strlen1");
@@ -896,7 +899,10 @@ async fn read_on_string_nested_in_list() {
     let wpolicy = WritePolicy::default();
     let _ = common::delete_durably(&client, &wpolicy, &key).await;
     let list = as_list!("alpha", "beta", "hello world");
-    client.put(&wpolicy, &key, &[as_bin!(BIN, list)]).await.unwrap();
+    client
+        .put(&wpolicy, &key, &[as_bin!(BIN, list)])
+        .await
+        .unwrap();
 
     let op = str_op::strlen(BIN).context(vec![ctx_list_index(2)]);
     let rec = client.operate(&wpolicy, &key, &[op]).await.unwrap();
@@ -913,7 +919,10 @@ async fn read_boolean_op_on_string_nested_in_map() {
     let wpolicy = WritePolicy::default();
     let _ = common::delete_durably(&client, &wpolicy, &key).await;
     let map = as_map!("a" => "Hello", "b" => "World");
-    client.put(&wpolicy, &key, &[as_bin!(BIN, map)]).await.unwrap();
+    client
+        .put(&wpolicy, &key, &[as_bin!(BIN, map)])
+        .await
+        .unwrap();
 
     let op = str_op::starts_with(BIN, "Wor").context(vec![ctx_map_key(Value::from("b"))]);
     let rec = client.operate(&wpolicy, &key, &[op]).await.unwrap();
@@ -931,12 +940,18 @@ async fn modify_on_string_nested_in_list() {
     let policy = StringPolicy::default();
     let _ = common::delete_durably(&client, &wpolicy, &key).await;
     let list = as_list!("alpha", "beta", "gamma");
-    client.put(&wpolicy, &key, &[as_bin!(BIN, list)]).await.unwrap();
+    client
+        .put(&wpolicy, &key, &[as_bin!(BIN, list)])
+        .await
+        .unwrap();
 
     let op = str_op::upper(&policy, BIN).context(vec![ctx_list_index(1)]);
     client.operate(&wpolicy, &key, &[op]).await.unwrap();
 
-    let rec = client.get(&ReadPolicy::default(), &key, Bins::All).await.unwrap();
+    let rec = client
+        .get(&ReadPolicy::default(), &key, Bins::All)
+        .await
+        .unwrap();
     assert_eq!(
         rec.bins.get(BIN).unwrap(),
         &Value::List(vec![
@@ -958,13 +973,19 @@ async fn modify_on_string_nested_in_map() {
     let policy = StringPolicy::default();
     let _ = common::delete_durably(&client, &wpolicy, &key).await;
     let map = as_map!("a" => "hello world", "b" => "foo");
-    client.put(&wpolicy, &key, &[as_bin!(BIN, map)]).await.unwrap();
+    client
+        .put(&wpolicy, &key, &[as_bin!(BIN, map)])
+        .await
+        .unwrap();
 
     let op = str_op::replace(&policy, BIN, "world", "earth")
         .context(vec![ctx_map_key(Value::from("a"))]);
     client.operate(&wpolicy, &key, &[op]).await.unwrap();
 
-    let rec = client.get(&ReadPolicy::default(), &key, Bins::All).await.unwrap();
+    let rec = client
+        .get(&ReadPolicy::default(), &key, Bins::All)
+        .await
+        .unwrap();
     let mut expected = HashMap::new();
     expected.insert(Value::from("a"), Value::from("hello earth"));
     expected.insert(Value::from("b"), Value::from("foo"));
@@ -983,15 +1004,19 @@ async fn modify_on_string_deeply_nested_list_in_map() {
     let _ = common::delete_durably(&client, &wpolicy, &key).await;
     let inner = as_list!("one", "two", "three");
     let map = as_map!("items" => inner);
-    client.put(&wpolicy, &key, &[as_bin!(BIN, map)]).await.unwrap();
+    client
+        .put(&wpolicy, &key, &[as_bin!(BIN, map)])
+        .await
+        .unwrap();
 
-    let op = str_op::upper(&policy, BIN).context(vec![
-        ctx_map_key(Value::from("items")),
-        ctx_list_index(1),
-    ]);
+    let op = str_op::upper(&policy, BIN)
+        .context(vec![ctx_map_key(Value::from("items")), ctx_list_index(1)]);
     client.operate(&wpolicy, &key, &[op]).await.unwrap();
 
-    let rec = client.get(&ReadPolicy::default(), &key, Bins::All).await.unwrap();
+    let rec = client
+        .get(&ReadPolicy::default(), &key, Bins::All)
+        .await
+        .unwrap();
     let mut expected = HashMap::new();
     expected.insert(
         Value::from("items"),
@@ -1018,7 +1043,10 @@ async fn to_string_from_integer_double_string_blob_and_bin_type_error() {
     let wpolicy = WritePolicy::default();
 
     let _ = common::delete_durably(&client, &wpolicy, &key).await;
-    client.put(&wpolicy, &key, &[as_bin!(BIN, 42)]).await.unwrap();
+    client
+        .put(&wpolicy, &key, &[as_bin!(BIN, 42)])
+        .await
+        .unwrap();
     let rec = client
         .operate(&wpolicy, &key, &[str_op::to_string(BIN)])
         .await
@@ -1026,7 +1054,10 @@ async fn to_string_from_integer_double_string_blob_and_bin_type_error() {
     assert_eq!(rec.bins.get(BIN).unwrap(), &Value::from("42"));
 
     let _ = common::delete_durably(&client, &wpolicy, &key).await;
-    client.put(&wpolicy, &key, &[as_bin!(BIN, 3.14_f64)]).await.unwrap();
+    client
+        .put(&wpolicy, &key, &[as_bin!(BIN, 3.14_f64)])
+        .await
+        .unwrap();
     let rec = client
         .operate(&wpolicy, &key, &[str_op::to_string(BIN)])
         .await
@@ -1094,7 +1125,10 @@ async fn modify_on_missing_bin_with_no_fail_is_noop() {
         .await
         .unwrap();
 
-    let rec = client.get(&ReadPolicy::default(), &key, Bins::All).await.unwrap();
+    let rec = client
+        .get(&ReadPolicy::default(), &key, Bins::All)
+        .await
+        .unwrap();
     assert!(rec.bins.get(BIN).is_none());
     assert_eq!(rec.bins.get("other").unwrap(), &Value::from("untouched"));
 }

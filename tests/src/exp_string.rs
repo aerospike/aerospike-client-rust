@@ -35,10 +35,16 @@ const BIN: &str = "sbin";
 const VAR: &str = "out";
 
 async fn server_supports_string_operations(client: &aerospike::Client) -> bool {
-    match client.cluster.get_random_node() {
+    let supported = match client.cluster.get_random_node() {
         Ok(node) => node.version().supports_string_operations(),
         Err(_) => false,
+    };
+
+    if !supported {
+        eprintln!("Skipping: server does not support string expressions (requires >= 8.1.3)");
     }
+
+    supported
 }
 
 async fn put_str(client: &aerospike::Client, wpolicy: &WritePolicy, key: &Key, s: &str) {
@@ -348,10 +354,20 @@ async fn upper_lower_case_fold_via_expression() {
     let policy = StringPolicy::default();
     put_str(&client, &WritePolicy::default(), &key, "Hello World").await;
 
-    let rec = eval(&client, &key, str_exp::upper(&policy, string_bin(BIN.into()))).await;
+    let rec = eval(
+        &client,
+        &key,
+        str_exp::upper(&policy, string_bin(BIN.into())),
+    )
+    .await;
     assert_eq!(rec.bins.get(VAR).unwrap(), &Value::from("HELLO WORLD"));
 
-    let rec = eval(&client, &key, str_exp::lower(&policy, string_bin(BIN.into()))).await;
+    let rec = eval(
+        &client,
+        &key,
+        str_exp::lower(&policy, string_bin(BIN.into())),
+    )
+    .await;
     assert_eq!(rec.bins.get(VAR).unwrap(), &Value::from("hello world"));
 
     let rec = eval(
@@ -549,7 +565,12 @@ async fn trim_pad_repeat_via_expression() {
     let wpolicy = WritePolicy::default();
 
     put_str(&client, &wpolicy, &key, "  hello world  ").await;
-    let rec = eval(&client, &key, str_exp::trim(&policy, string_bin(BIN.into()))).await;
+    let rec = eval(
+        &client,
+        &key,
+        str_exp::trim(&policy, string_bin(BIN.into())),
+    )
+    .await;
     assert_eq!(rec.bins.get(VAR).unwrap(), &Value::from("hello world"));
 
     put_str(&client, &wpolicy, &key, "hello").await;
@@ -707,7 +728,10 @@ async fn strlen_on_string_nested_in_list_via_expression() {
     let wpolicy = WritePolicy::default();
     let _ = common::delete_durably(&client, &wpolicy, &key).await;
     let list = as_list!("alpha", "beta", "hello world");
-    client.put(&wpolicy, &key, &[as_bin!(BIN, list)]).await.unwrap();
+    client
+        .put(&wpolicy, &key, &[as_bin!(BIN, list)])
+        .await
+        .unwrap();
 
     let nested = list_get_by_index(
         ListReturnType::Values,
@@ -731,7 +755,10 @@ async fn upper_on_string_nested_in_map_via_expression() {
     let policy = StringPolicy::default();
     let _ = common::delete_durably(&client, &wpolicy, &key).await;
     let map = as_map!("a" => "hello", "b" => "World");
-    client.put(&wpolicy, &key, &[as_bin!(BIN, map)]).await.unwrap();
+    client
+        .put(&wpolicy, &key, &[as_bin!(BIN, map)])
+        .await
+        .unwrap();
 
     let nested = map_get_by_key(
         MapReturnType::Value,
