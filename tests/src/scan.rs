@@ -39,7 +39,9 @@ async fn create_test_set(client: &Client, no_records: usize) -> String {
         let wbin2 = as_bin!("bin2", "hello");
         let wbin3 = as_bin!("extra", "extra");
         let bins = vec![wbin1, wbin2, wbin3];
-        common::delete_durably(client, &wpolicy, &key).await.unwrap();
+        common::delete_durably(client, &wpolicy, &key)
+            .await
+            .unwrap();
         client.put(&wpolicy, &key, &bins).await.unwrap();
     }
 
@@ -80,7 +82,6 @@ async fn scan_single_consumer() {
         .count()
         .await;
     assert_eq!(count, EXPECTED);
-
 }
 
 #[aerospike_macro::test]
@@ -103,7 +104,6 @@ async fn scan_single_consumer_no_setname() {
 
     // no need to check anything;
     assert!(count > 0);
-
 }
 
 #[aerospike_macro::test]
@@ -141,7 +141,6 @@ async fn scan_single_consumer_with_cancel() {
         }
     }
     assert_eq!(count, EXPECTED);
-
 }
 
 #[aerospike_macro::test]
@@ -172,7 +171,6 @@ async fn scan_single_consumer_with_cursor() {
         }
     }
     assert_eq!(count, EXPECTED);
-
 }
 
 #[aerospike_macro::test]
@@ -206,7 +204,6 @@ async fn scan_single_consumer_rps() {
 
     // Should take at least 3 seconds due to rps
     assert!(duration.as_millis() > 3000);
-
 }
 
 #[aerospike_macro::test]
@@ -240,7 +237,6 @@ async fn scan_multi_consumer() {
     futures::future::join_all(threads).await;
 
     assert_eq!(count.load(Ordering::Relaxed), EXPECTED);
-
 }
 
 #[aerospike_macro::test]
@@ -265,7 +261,6 @@ async fn scan_single_consumer_stream() {
     }
 
     assert_eq!(count.load(Ordering::Relaxed), EXPECTED);
-
 }
 
 #[aerospike_macro::test]
@@ -304,5 +299,4 @@ async fn scan_multi_consumer_stream() {
     }
 
     assert_eq!(count.load(Ordering::Relaxed), EXPECTED);
-
 }

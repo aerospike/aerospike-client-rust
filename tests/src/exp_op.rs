@@ -16,7 +16,9 @@ async fn exp_ops() {
     let wbin = as_bin!("bin", as_val!(25));
     let bins = vec![wbin];
 
-    common::delete_durably(&client, &wpolicy, &key).await.unwrap();
+    common::delete_durably(&client, &wpolicy, &key)
+        .await
+        .unwrap();
 
     client.put(&wpolicy, &key, &bins).await.unwrap();
     let rec = client.get(&policy, &key, Bins::All).await.unwrap();

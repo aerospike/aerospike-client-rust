@@ -102,7 +102,9 @@ async fn put_get_with_compression() {
     assert_eq!(record.bins["int"], Value::from(42));
 
     // Clean up
-    common::delete_durably(&client, &wpolicy, &key).await.unwrap();
+    common::delete_durably(&client, &wpolicy, &key)
+        .await
+        .unwrap();
     client.close().await.unwrap();
 }
 
@@ -131,7 +133,9 @@ async fn operate_with_compression() {
     let record = client.operate(&wpolicy, &key, &ops).await.unwrap();
     assert_eq!(record.bins["counter"], Value::from(15));
 
-    common::delete_durably(&client, &wpolicy, &key).await.unwrap();
+    common::delete_durably(&client, &wpolicy, &key)
+        .await
+        .unwrap();
     client.close().await.unwrap();
 }
 
@@ -157,7 +161,9 @@ async fn exists_with_compression() {
 
     assert!(client.exists(&rpolicy, &key).await.unwrap());
 
-    common::delete_durably(&client, &wpolicy, &key).await.unwrap();
+    common::delete_durably(&client, &wpolicy, &key)
+        .await
+        .unwrap();
     assert!(!client.exists(&rpolicy, &key).await.unwrap());
 
     client.close().await.unwrap();
@@ -180,10 +186,14 @@ async fn delete_with_compression() {
     let bins = vec![as_bin!("x", 1)];
     client.put(&wpolicy, &key, &bins).await.unwrap();
 
-    let existed = common::delete_durably(&client, &wpolicy, &key).await.unwrap();
+    let existed = common::delete_durably(&client, &wpolicy, &key)
+        .await
+        .unwrap();
     assert!(existed);
 
-    let existed = common::delete_durably(&client, &wpolicy, &key).await.unwrap();
+    let existed = common::delete_durably(&client, &wpolicy, &key)
+        .await
+        .unwrap();
     assert!(!existed);
 
     client.close().await.unwrap();
@@ -216,7 +226,9 @@ async fn compressed_write_uncompressed_read() {
     assert_eq!(record.bins["a"], Value::from(99));
     assert_eq!(record.bins["b"], Value::from("cross-compression-test"));
 
-    common::delete_durably(&client, &wpolicy, &key).await.unwrap();
+    common::delete_durably(&client, &wpolicy, &key)
+        .await
+        .unwrap();
     client.close().await.unwrap();
 }
 
@@ -243,7 +255,9 @@ async fn uncompressed_write_compressed_read() {
     assert_eq!(record.bins["a"], Value::from(99));
     assert_eq!(record.bins["b"], Value::from("cross-compression-test"));
 
-    common::delete_durably(&client, &wpolicy, &key).await.unwrap();
+    common::delete_durably(&client, &wpolicy, &key)
+        .await
+        .unwrap();
     client.close().await.unwrap();
 }
 
@@ -509,7 +523,9 @@ async fn large_record_compression() {
         panic!("Expected blob value");
     }
 
-    common::delete_durably(&client, &wpolicy, &key).await.unwrap();
+    common::delete_durably(&client, &wpolicy, &key)
+        .await
+        .unwrap();
     client.close().await.unwrap();
 }
 

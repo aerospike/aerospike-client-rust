@@ -887,6 +887,6 @@ pub(crate) fn get_value_type(return_type: i64) -> ExpType {
 
         t if t == MapReturnType::Exists as i64 => ExpType::BOOL,
 
-        _ => panic!("Invalid MapReturnType: {}", return_type),
+        _ => panic!("Invalid MapReturnType: {return_type}"),
     }
 }

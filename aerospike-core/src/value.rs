@@ -564,8 +564,10 @@ impl From<u64> for Value {
         // Silently casting `u64::MAX` to `i64` produces `-1`, which is
         // exactly the kind of confusing truncation we want to catch — so
         // refuse instead.
-        assert!(val <= i64::MAX as u64, 
-            "{}", "Aerospike does not support u64 natively on server-side. \
+        assert!(
+            val <= i64::MAX as u64,
+            "{}",
+            "Aerospike does not support u64 natively on server-side. \
              Value {val} exceeds i64::MAX. Cast explicitly to i64 if \
              the truncation is intentional."
         );

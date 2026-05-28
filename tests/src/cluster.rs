@@ -398,7 +398,10 @@ async fn seed_only_cluster_pins_to_seed_addresses() {
         1,
         "seed_only_cluster post-tend node count drifted to {} ({:?})",
         after_tend.len(),
-        after_tend.iter().map(|n| format!("{n}")).collect::<Vec<_>>()
+        after_tend
+            .iter()
+            .map(|n| format!("{n}"))
+            .collect::<Vec<_>>()
     );
 
     client.close().await.unwrap();

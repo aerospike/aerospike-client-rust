@@ -64,7 +64,9 @@ async fn select_by_path_price_filter() {
     let key = as_key!(namespace, &set_name, "path_sel1");
 
     let wpolicy = WritePolicy::default();
-    common::delete_durably(&client, &wpolicy, &key).await.unwrap();
+    common::delete_durably(&client, &wpolicy, &key)
+        .await
+        .unwrap();
 
     // Build: { "book": [ {title, price}, ... ] }
     let books = as_list!(
@@ -130,7 +132,9 @@ async fn select_by_path_empty_result() {
     let key = as_key!(namespace, &set_name, "path_sel_empty");
 
     let wpolicy = WritePolicy::default();
-    common::delete_durably(&client, &wpolicy, &key).await.unwrap();
+    common::delete_durably(&client, &wpolicy, &key)
+        .await
+        .unwrap();
 
     let books = as_list!(
         as_map!("title" => "Expensive Book 1", "price" => 25.99_f64),
@@ -174,7 +178,9 @@ async fn select_by_path_ctx_all_children() {
     let key = as_key!(namespace, &set_name, "path_sel_all");
 
     let wpolicy = WritePolicy::default();
-    common::delete_durably(&client, &wpolicy, &key).await.unwrap();
+    common::delete_durably(&client, &wpolicy, &key)
+        .await
+        .unwrap();
 
     let numbers = as_list!(10_i64, 20_i64, 30_i64);
     let root = as_map!("numbers" => numbers);
@@ -208,7 +214,9 @@ async fn select_by_path_index_loop_var() {
     let key = as_key!(namespace, &set_name, "path_sel_idx");
 
     let wpolicy = WritePolicy::default();
-    common::delete_durably(&client, &wpolicy, &key).await.unwrap();
+    common::delete_durably(&client, &wpolicy, &key)
+        .await
+        .unwrap();
 
     let numbers = as_list!(10_i64, 20_i64, 30_i64, 40_i64, 50_i64);
     let root = as_map!("numbers" => numbers);
@@ -246,7 +254,9 @@ async fn select_by_path_complex_nested() {
     let key = as_key!(namespace, &set_name, "path_sel_nested");
 
     let wpolicy = WritePolicy::default();
-    common::delete_durably(&client, &wpolicy, &key).await.unwrap();
+    common::delete_durably(&client, &wpolicy, &key)
+        .await
+        .unwrap();
 
     let books = as_list!(
         as_map!("category" => "reference", "title" => "Sayings of the Century", "price" => 8.95_f64),
@@ -319,7 +329,9 @@ async fn modify_by_path_multiply_prices() {
 
     let wpolicy = WritePolicy::default();
     let rpolicy = ReadPolicy::default();
-    common::delete_durably(&client, &wpolicy, &key).await.unwrap();
+    common::delete_durably(&client, &wpolicy, &key)
+        .await
+        .unwrap();
 
     let books = as_list!(
         as_map!("title" => "Book A", "price" => 8.95_f64),
@@ -390,7 +402,9 @@ async fn exp_select_by_path_filter() {
     let key = as_key!(namespace, &set_name, "exp_sel_filter");
 
     let wpolicy = WritePolicy::default();
-    common::delete_durably(&client, &wpolicy, &key).await.unwrap();
+    common::delete_durably(&client, &wpolicy, &key)
+        .await
+        .unwrap();
 
     let books = as_list!(
         as_map!("title" => "Cheap Book", "price" => 5.99_f64),
@@ -444,7 +458,9 @@ async fn exp_modify_by_path_multiply() {
 
     let wpolicy = WritePolicy::default();
     let rpolicy = ReadPolicy::default();
-    common::delete_durably(&client, &wpolicy, &key).await.unwrap();
+    common::delete_durably(&client, &wpolicy, &key)
+        .await
+        .unwrap();
 
     let items = as_list!(1.0_f64, 2.0_f64, 3.0_f64);
     let root = as_map!("vals" => items);
@@ -509,7 +525,9 @@ async fn loop_var_int_value() {
     let key = as_key!(namespace, &set_name, "loop_int");
 
     let wpolicy = WritePolicy::default();
-    common::delete_durably(&client, &wpolicy, &key).await.unwrap();
+    common::delete_durably(&client, &wpolicy, &key)
+        .await
+        .unwrap();
 
     // Map where values are integers - select entries with value > 75
     let items = as_map!("a" => 100_i64, "b" => 50_i64, "c" => 200_i64);
@@ -547,7 +565,9 @@ async fn loop_var_string_map_key() {
     let key = as_key!(namespace, &set_name, "loop_str_key");
 
     let wpolicy = WritePolicy::default();
-    common::delete_durably(&client, &wpolicy, &key).await.unwrap();
+    common::delete_durably(&client, &wpolicy, &key)
+        .await
+        .unwrap();
 
     let data = as_map!("alpha" => 1_i64, "beta" => 2_i64, "gamma" => 3_i64);
     let root = as_map!("data" => data);
@@ -588,7 +608,9 @@ async fn remove_all_items_from_list() {
 
     let wpolicy = WritePolicy::default();
     let rpolicy = ReadPolicy::default();
-    common::delete_durably(&client, &wpolicy, &key).await.unwrap();
+    common::delete_durably(&client, &wpolicy, &key)
+        .await
+        .unwrap();
 
     let data = as_map!("items" => as_list!(1_i64, 2_i64, 3_i64, 4_i64, 5_i64));
     let bin = as_bin!("testbin", data);
@@ -631,7 +653,9 @@ async fn remove_filtered_items_from_list() {
 
     let wpolicy = WritePolicy::default();
     let rpolicy = ReadPolicy::default();
-    common::delete_durably(&client, &wpolicy, &key).await.unwrap();
+    common::delete_durably(&client, &wpolicy, &key)
+        .await
+        .unwrap();
 
     let data = as_map!("numbers" => as_list!(1_i64, 5_i64, 10_i64, 15_i64, 20_i64, 25_i64, 30_i64));
     let bin = as_bin!("testbin", data);
@@ -678,7 +702,9 @@ async fn remove_all_items_from_map() {
 
     let wpolicy = WritePolicy::default();
     let rpolicy = ReadPolicy::default();
-    common::delete_durably(&client, &wpolicy, &key).await.unwrap();
+    common::delete_durably(&client, &wpolicy, &key)
+        .await
+        .unwrap();
 
     let config = as_map!("option1" => "value1", "option2" => "value2", "option3" => "value3");
     let data = as_map!("config" => config);
@@ -722,7 +748,9 @@ async fn remove_filtered_map_entries() {
 
     let wpolicy = WritePolicy::default();
     let rpolicy = ReadPolicy::default();
-    common::delete_durably(&client, &wpolicy, &key).await.unwrap();
+    common::delete_durably(&client, &wpolicy, &key)
+        .await
+        .unwrap();
 
     let scores = as_map!("alice" => 95_i64, "bob" => 45_i64, "carol" => 75_i64, "dave" => 30_i64);
     let data = as_map!("scores" => scores);
@@ -773,7 +801,9 @@ async fn remove_books_with_low_prices() {
 
     let wpolicy = WritePolicy::default();
     let rpolicy = ReadPolicy::default();
-    common::delete_durably(&client, &wpolicy, &key).await.unwrap();
+    common::delete_durably(&client, &wpolicy, &key)
+        .await
+        .unwrap();
 
     let books = as_list!(
         as_map!("title" => "Cheap Book 1", "price" => 5.99_f64),
@@ -845,7 +875,9 @@ async fn remove_items_by_index_filter() {
 
     let wpolicy = WritePolicy::default();
     let rpolicy = ReadPolicy::default();
-    common::delete_durably(&client, &wpolicy, &key).await.unwrap();
+    common::delete_durably(&client, &wpolicy, &key)
+        .await
+        .unwrap();
 
     let data = as_map!("values" => as_list!(100_i64, 200_i64, 300_i64, 400_i64, 500_i64));
     let bin = as_bin!("testbin", data);
@@ -892,7 +924,9 @@ async fn remove_map_entries_by_key_filter() {
 
     let wpolicy = WritePolicy::default();
     let rpolicy = ReadPolicy::default();
-    common::delete_durably(&client, &wpolicy, &key).await.unwrap();
+    common::delete_durably(&client, &wpolicy, &key)
+        .await
+        .unwrap();
 
     let inventory = as_map!(
         "apple" => 10_i64,
@@ -949,7 +983,9 @@ async fn remove_nested_items_complex_path() {
 
     let wpolicy = WritePolicy::default();
     let rpolicy = ReadPolicy::default();
-    common::delete_durably(&client, &wpolicy, &key).await.unwrap();
+    common::delete_durably(&client, &wpolicy, &key)
+        .await
+        .unwrap();
 
     let sales_dept = as_list!(
         as_map!("name" => "John", "sales" => 1000_i64),
@@ -1027,7 +1063,9 @@ async fn path_builder_and_select_values_wrapper() {
     let key = as_key!(namespace, &set_name, "path_builder_select");
 
     let wpolicy = WritePolicy::default();
-    common::delete_durably(&client, &wpolicy, &key).await.unwrap();
+    common::delete_durably(&client, &wpolicy, &key)
+        .await
+        .unwrap();
 
     let data = as_map!("scores" => as_list!(10_i64, 20_i64, 30_i64));
     let bin = as_bin!("testbin", data);
@@ -1072,7 +1110,9 @@ async fn select_map_keys_returns_keys() {
     let key = as_key!(namespace, &set_name, "select_keys");
 
     let wpolicy = WritePolicy::default();
-    common::delete_durably(&client, &wpolicy, &key).await.unwrap();
+    common::delete_durably(&client, &wpolicy, &key)
+        .await
+        .unwrap();
 
     let inner = as_map!("alpha" => 1_i64, "beta" => 2_i64, "gamma" => 3_i64);
     let bin = as_bin!("testbin", as_map!("data" => inner));
@@ -1105,7 +1145,9 @@ async fn select_map_entries_returns_pairs() {
     let key = as_key!(namespace, &set_name, "select_entries");
 
     let wpolicy = WritePolicy::default();
-    common::delete_durably(&client, &wpolicy, &key).await.unwrap();
+    common::delete_durably(&client, &wpolicy, &key)
+        .await
+        .unwrap();
 
     let inner = as_map!("a" => 1_i64, "b" => 2_i64);
     let bin = as_bin!("testbin", as_map!("data" => inner));
@@ -1136,7 +1178,9 @@ async fn select_matching_tree_preserves_shape() {
     let key = as_key!(namespace, &set_name, "select_tree");
 
     let wpolicy = WritePolicy::default();
-    common::delete_durably(&client, &wpolicy, &key).await.unwrap();
+    common::delete_durably(&client, &wpolicy, &key)
+        .await
+        .unwrap();
 
     let inner = as_map!("a" => 100_i64, "b" => 5_i64, "c" => 200_i64);
     let bin = as_bin!("testbin", as_map!("data" => inner));
@@ -1189,7 +1233,9 @@ async fn modify_no_fail_skips_type_mismatch() {
 
     let wpolicy = WritePolicy::default();
     let rpolicy = ReadPolicy::default();
-    common::delete_durably(&client, &wpolicy, &key).await.unwrap();
+    common::delete_durably(&client, &wpolicy, &key)
+        .await
+        .unwrap();
 
     // Mixed bag: ints we can double, plus a string we cannot.
     let mixed = as_list!(Value::from(1_i64), Value::from("oops"), Value::from(3_i64));
@@ -1239,7 +1285,9 @@ async fn path_remove_helper_drops_filtered_leaves() {
 
     let wpolicy = WritePolicy::default();
     let rpolicy = ReadPolicy::default();
-    common::delete_durably(&client, &wpolicy, &key).await.unwrap();
+    common::delete_durably(&client, &wpolicy, &key)
+        .await
+        .unwrap();
 
     let bin = as_bin!(
         "testbin",
@@ -1285,7 +1333,9 @@ async fn ctx_map_keys_in_selects_subset_of_keys() {
     let key = as_key!(namespace, &set_name, "ctx_keys_in");
 
     let wpolicy = WritePolicy::default();
-    common::delete_durably(&client, &wpolicy, &key).await.unwrap();
+    common::delete_durably(&client, &wpolicy, &key)
+        .await
+        .unwrap();
 
     let inner = as_map!("a" => 1_i64, "b" => 2_i64, "c" => 3_i64, "d" => 4_i64);
     let bin = as_bin!("testbin", as_map!("data" => inner));
@@ -1339,7 +1389,9 @@ async fn ctx_and_filter_refines_map_keys_in() {
     let key = as_key!(namespace, &set_name, "ctx_andfilter");
 
     let wpolicy = WritePolicy::default();
-    common::delete_durably(&client, &wpolicy, &key).await.unwrap();
+    common::delete_durably(&client, &wpolicy, &key)
+        .await
+        .unwrap();
 
     let inner = as_map!("a" => 5_i64, "b" => 15_i64, "c" => 25_i64, "d" => 50_i64);
     let bin = as_bin!("testbin", inner);
@@ -1390,7 +1442,9 @@ async fn ctx_round_trip_through_base64_then_query() {
     let key = as_key!(namespace, &set_name, "ctx_b64");
 
     let wpolicy = WritePolicy::default();
-    common::delete_durably(&client, &wpolicy, &key).await.unwrap();
+    common::delete_durably(&client, &wpolicy, &key)
+        .await
+        .unwrap();
 
     let inner = as_map!("a" => 1_i64, "b" => 2_i64, "c" => 3_i64);
     let bin = as_bin!("testbin", as_map!("data" => inner));
@@ -1433,7 +1487,9 @@ async fn exp_select_values_with_path_builder() {
     let key = as_key!(namespace, &set_name, "exp_sel_values");
 
     let wpolicy = WritePolicy::default();
-    common::delete_durably(&client, &wpolicy, &key).await.unwrap();
+    common::delete_durably(&client, &wpolicy, &key)
+        .await
+        .unwrap();
 
     let bin = as_bin!("testbin", as_map!("nums" => as_list!(7_i64, 8_i64, 9_i64)));
     client.put(&wpolicy, &key, &[bin]).await.unwrap();
@@ -1478,7 +1534,9 @@ async fn in_list_returns_true_for_present_value() {
     let key = as_key!(namespace, &set_name, "in_list");
 
     let wpolicy = WritePolicy::default();
-    common::delete_durably(&client, &wpolicy, &key).await.unwrap();
+    common::delete_durably(&client, &wpolicy, &key)
+        .await
+        .unwrap();
 
     let bin = as_bin!("nums", as_list!(1_i64, 2_i64, 3_i64));
     client.put(&wpolicy, &key, &[bin]).await.unwrap();
@@ -1516,7 +1574,9 @@ async fn map_keys_extracts_all_keys() {
     let key = as_key!(namespace, &set_name, "map_keys");
 
     let wpolicy = WritePolicy::default();
-    common::delete_durably(&client, &wpolicy, &key).await.unwrap();
+    common::delete_durably(&client, &wpolicy, &key)
+        .await
+        .unwrap();
 
     let bin = as_bin!("m", as_map!("a" => 1_i64, "b" => 2_i64, "c" => 3_i64));
     client.put(&wpolicy, &key, &[bin]).await.unwrap();
@@ -1552,7 +1612,9 @@ async fn map_values_extracts_all_values() {
     let key = as_key!(namespace, &set_name, "map_values");
 
     let wpolicy = WritePolicy::default();
-    common::delete_durably(&client, &wpolicy, &key).await.unwrap();
+    common::delete_durably(&client, &wpolicy, &key)
+        .await
+        .unwrap();
 
     let bin = as_bin!("m", as_map!("a" => 10_i64, "b" => 20_i64, "c" => 30_i64));
     client.put(&wpolicy, &key, &[bin]).await.unwrap();
@@ -1589,7 +1651,9 @@ async fn in_list_composes_with_map_keys() {
     let key = as_key!(namespace, &set_name, "in_list_keys");
 
     let wpolicy = WritePolicy::default();
-    common::delete_durably(&client, &wpolicy, &key).await.unwrap();
+    common::delete_durably(&client, &wpolicy, &key)
+        .await
+        .unwrap();
 
     let bin = as_bin!("m", as_map!("alpha" => 1_i64, "beta" => 2_i64));
     client.put(&wpolicy, &key, &[bin]).await.unwrap();
@@ -1634,7 +1698,9 @@ async fn exp_remove_through_write_exp_drops_leaves() {
 
     let wpolicy = WritePolicy::default();
     let rpolicy = ReadPolicy::default();
-    common::delete_durably(&client, &wpolicy, &key).await.unwrap();
+    common::delete_durably(&client, &wpolicy, &key)
+        .await
+        .unwrap();
 
     let bin = as_bin!(
         "testbin",
@@ -1694,7 +1760,9 @@ async fn loop_var_bool_filters_features() {
     let key = as_key!(namespace, &set_name, "loop_var_bool");
 
     let wpolicy = WritePolicy::default();
-    common::delete_durably(&client, &wpolicy, &key).await.unwrap();
+    common::delete_durably(&client, &wpolicy, &key)
+        .await
+        .unwrap();
 
     let features = as_list!(
         as_map!("name" => "feature1", "enabled" => true),
@@ -1747,7 +1815,9 @@ async fn loop_var_list_filters_by_size() {
     let key = as_key!(namespace, &set_name, "loop_var_list");
 
     let wpolicy = WritePolicy::default();
-    common::delete_durably(&client, &wpolicy, &key).await.unwrap();
+    common::delete_durably(&client, &wpolicy, &key)
+        .await
+        .unwrap();
 
     let matrix = as_list!(
         as_list!(1_i64, 2_i64, 3_i64),

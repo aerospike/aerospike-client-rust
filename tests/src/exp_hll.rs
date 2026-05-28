@@ -38,7 +38,9 @@ async fn create_test_set(client: &Client, no_records: usize) -> String {
         let ibin = as_bin!("bin", i);
         let lbin = as_bin!("lbin", as_list!(i, "a"));
         let bins = vec![ibin, lbin];
-        common::delete_durably(client, &wpolicy, &key).await.unwrap();
+        common::delete_durably(client, &wpolicy, &key)
+            .await
+            .unwrap();
         client.put(&wpolicy, &key, &bins).await.unwrap();
         let data = vec![Value::from("asd"), Value::from(i)];
         let data2 = vec![Value::from("asd"), Value::from(i), Value::from(i + 1)];

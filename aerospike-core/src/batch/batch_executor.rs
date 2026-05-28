@@ -140,7 +140,7 @@ impl BatchExecutor {
     ///
     /// Whole-per-node-group failures (e.g. socket error after retries)
     /// do not abort the stream — they simply omit the affected keys.
-    /// Per-key results (KEY_NOT_FOUND, FILTERED_OUT, etc.) ride on each
+    /// Per-key results (`KEY_NOT_FOUND`, `FILTERED_OUT`, etc.) ride on each
     /// emitted `BatchRecord` just as they do for `batch`.
     #[allow(clippy::mutable_key_type)]
     pub async fn execute_stream(
@@ -169,8 +169,10 @@ impl BatchExecutor {
                 // single-record command and emit the resulting record
                 // when it returns.
                 aerospike_rt::spawn(async move {
-                    let (mut op, idx) =
-                        ops.into_iter().next().expect("one element in fast-path group");
+                    let (mut op, idx) = ops
+                        .into_iter()
+                        .next()
+                        .expect("one element in fast-path group");
                     // Errors are either captured on the BatchRecord
                     // (KEY_NOT_FOUND / FILTERED_OUT) or signal a real
                     // failure for this key; either way we still emit

@@ -12,7 +12,10 @@ use aerospike::*;
 /// The incoming `policy` is random (`query_policy(1000, 5000)` and friends in `policy.rs`).
 /// Each field below fixes a different bad draw for a large scan on SC (illegal mode, throttle,
 /// tiny queue, short client deadlines, no retries)—not redundant copies of the same check.
-async fn adjust_query_policy_for_scan_proptest(client: &Client, mut policy: QueryPolicy) -> QueryPolicy {
+async fn adjust_query_policy_for_scan_proptest(
+    client: &Client,
+    mut policy: QueryPolicy,
+) -> QueryPolicy {
     if !namespace_sc!(client) {
         return policy;
     }

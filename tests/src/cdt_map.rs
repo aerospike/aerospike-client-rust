@@ -37,7 +37,9 @@ async fn map_operations() {
     let key = common::rand_str(10);
     let key = as_key!(namespace, set_name, &key);
 
-    common::delete_durably(&client, &wpolicy, &key).await.unwrap();
+    common::delete_durably(&client, &wpolicy, &key)
+        .await
+        .unwrap();
 
     let val = as_map!("a" => 1, "b" => 2);
     let bin_name = "bin";
@@ -106,7 +108,9 @@ async fn map_operations() {
 
     // ---------------------------------------------------------------------------------
 
-    common::delete_durably(&client, &wpolicy, &key).await.unwrap();
+    common::delete_durably(&client, &wpolicy, &key)
+        .await
+        .unwrap();
 
     let val = as_ord_map!("a" => 1, "b" => 2, "c" => 3, "d" => 4, "e" => 5);
     let bin_name = "bin";
@@ -117,7 +121,9 @@ async fn map_operations() {
 
     // ---------------------------------------------------------------------------------
 
-    common::delete_durably(&client, &wpolicy, &key).await.unwrap();
+    common::delete_durably(&client, &wpolicy, &key)
+        .await
+        .unwrap();
 
     let val = as_map!("a" => 1, "b" => 2, "c" => 3, "d" => 4, "e" => 5);
     let bin_name = "bin";
@@ -213,7 +219,9 @@ async fn map_operations() {
     let rec = client.operate(&wpolicy, &key, &[op]).await.unwrap();
     assert_eq!(*rec.bins.get(bin_name).unwrap(), as_val!(1));
 
-    common::delete_durably(&client, &wpolicy, &key).await.unwrap();
+    common::delete_durably(&client, &wpolicy, &key)
+        .await
+        .unwrap();
     client.put(&wpolicy, &key, &bins).await.unwrap();
 
     let mkey = vec![as_val!(4), as_val!(5)];
@@ -227,7 +235,9 @@ async fn map_operations() {
     let rec = client.operate(&wpolicy, &key, &[op]).await.unwrap();
     assert_eq!(*rec.bins.get(bin_name).unwrap(), as_val!(2));
 
-    common::delete_durably(&client, &wpolicy, &key).await.unwrap();
+    common::delete_durably(&client, &wpolicy, &key)
+        .await
+        .unwrap();
     client.put(&wpolicy, &key, &bins).await.unwrap();
 
     let op = maps::remove_by_index(bin_name, 1, MapReturnType::Value);
@@ -242,7 +252,9 @@ async fn map_operations() {
     let rec = client.operate(&wpolicy, &key, &[op]).await.unwrap();
     assert_eq!(*rec.bins.get(bin_name).unwrap(), as_list!(5));
 
-    common::delete_durably(&client, &wpolicy, &key).await.unwrap();
+    common::delete_durably(&client, &wpolicy, &key)
+        .await
+        .unwrap();
     client.put(&wpolicy, &key, &bins).await.unwrap();
 
     let op = maps::remove_by_rank(bin_name, 1, MapReturnType::Value);
@@ -253,14 +265,18 @@ async fn map_operations() {
     let rec = client.operate(&wpolicy, &key, &[op]).await.unwrap();
     assert_eq!(*rec.bins.get(bin_name).unwrap(), as_list!(3, 4));
 
-    common::delete_durably(&client, &wpolicy, &key).await.unwrap();
+    common::delete_durably(&client, &wpolicy, &key)
+        .await
+        .unwrap();
     client.put(&wpolicy, &key, &bins).await.unwrap();
 
     let op = maps::remove_by_rank_range_from(bin_name, 3, MapReturnType::Value);
     let rec = client.operate(&wpolicy, &key, &[op]).await.unwrap();
     assert_eq!(*rec.bins.get(bin_name).unwrap(), as_list!(4, 5));
 
-    common::delete_durably(&client, &wpolicy, &key).await.unwrap();
+    common::delete_durably(&client, &wpolicy, &key)
+        .await
+        .unwrap();
     client.put(&wpolicy, &key, &bins).await.unwrap();
 
     let mkey = as_val!("b");
@@ -274,7 +290,9 @@ async fn map_operations() {
     let rec = client.operate(&wpolicy, &key, &[op]).await.unwrap();
     assert_eq!(*rec.bins.get(bin_name).unwrap(), as_list!(3));
 
-    common::delete_durably(&client, &wpolicy, &key).await.unwrap();
+    common::delete_durably(&client, &wpolicy, &key)
+        .await
+        .unwrap();
     client.put(&wpolicy, &key, &bins).await.unwrap();
 
     let mkey = as_val!(3);
@@ -288,7 +306,9 @@ async fn map_operations() {
     let rec = client.operate(&wpolicy, &key, &[op]).await.unwrap();
     assert_eq!(*rec.bins.get(bin_name).unwrap(), as_list!(3, 4));
 
-    common::delete_durably(&client, &wpolicy, &key).await.unwrap();
+    common::delete_durably(&client, &wpolicy, &key)
+        .await
+        .unwrap();
     client.put(&wpolicy, &key, &bins).await.unwrap();
 
     let mkey = as_val!("a");
@@ -362,7 +382,9 @@ async fn map_operations_wildcard() {
     let key = common::rand_str(10);
     let key = as_key!(namespace, set_name, &key);
 
-    common::delete_durably(&client, &wpolicy, &key).await.unwrap();
+    common::delete_durably(&client, &wpolicy, &key)
+        .await
+        .unwrap();
 
     let mut items = HashMap::new();
     items.insert(as_val!(4), as_list!("John", 55));
@@ -391,7 +413,9 @@ async fn map_create_op() {
 
     let key = as_key!(namespace, set_name, "map_create");
 
-    common::delete_durably(&client, &wpolicy, &key).await.unwrap();
+    common::delete_durably(&client, &wpolicy, &key)
+        .await
+        .unwrap();
 
     // Create a nested map using map create with context
     // First put a top-level key
@@ -411,7 +435,9 @@ async fn map_create_op() {
 
     // Also test maps::create with empty context (should be same as set_order)
     let key2 = as_key!(namespace, set_name, "map_create_empty_ctx");
-    common::delete_durably(&client, &wpolicy, &key2).await.unwrap();
+    common::delete_durably(&client, &wpolicy, &key2)
+        .await
+        .unwrap();
 
     let op = maps::create("bin", MapOrder::KeyOrdered, vec![]);
     client.operate(&wpolicy, &key2, &[op]).await.unwrap();
@@ -440,7 +466,9 @@ async fn map_create_with_index_op() {
 
     let key = as_key!(namespace, set_name, "map_create_idx");
 
-    common::delete_durably(&client, &wpolicy, &key).await.unwrap();
+    common::delete_durably(&client, &wpolicy, &key)
+        .await
+        .unwrap();
 
     // Create key-ordered map with persisted index
     let op = maps::create_with_index("bin", MapOrder::KeyOrdered);
@@ -478,7 +506,9 @@ async fn map_set_policy_op() {
 
     let key = as_key!(namespace, set_name, "map_set_policy");
 
-    common::delete_durably(&client, &wpolicy, &key).await.unwrap();
+    common::delete_durably(&client, &wpolicy, &key)
+        .await
+        .unwrap();
 
     // Create an unordered map with some data
     let mut items = HashMap::new();
@@ -510,7 +540,9 @@ async fn map_put_with_flags_create_only() {
     let wpolicy = WritePolicy::default();
     let key = as_key!(namespace, set_name, "map_flags_create");
 
-    common::delete_durably(&client, &wpolicy, &key).await.unwrap();
+    common::delete_durably(&client, &wpolicy, &key)
+        .await
+        .unwrap();
 
     // Use CREATE_ONLY flag - first put should succeed
     let policy = MapPolicy::new_with_flags(MapOrder::Unordered, MapWriteFlags::CREATE_ONLY);
@@ -539,7 +571,9 @@ async fn map_put_with_flags_no_fail() {
     let wpolicy = WritePolicy::default();
     let key = as_key!(namespace, set_name, "map_flags_nofail");
 
-    common::delete_durably(&client, &wpolicy, &key).await.unwrap();
+    common::delete_durably(&client, &wpolicy, &key)
+        .await
+        .unwrap();
 
     // Create initial map entry
     let policy = MapPolicy::default();
@@ -571,7 +605,9 @@ async fn map_put_with_flags_update_only() {
     let wpolicy = WritePolicy::default();
     let key = as_key!(namespace, set_name, "map_flags_update");
 
-    common::delete_durably(&client, &wpolicy, &key).await.unwrap();
+    common::delete_durably(&client, &wpolicy, &key)
+        .await
+        .unwrap();
 
     // Create initial map entry
     let policy = MapPolicy::default();
@@ -608,7 +644,9 @@ async fn map_new_with_flags_and_persisted_index() {
     let wpolicy = WritePolicy::default();
     let key = as_key!(namespace, set_name, "map_persist_idx");
 
-    common::delete_durably(&client, &wpolicy, &key).await.unwrap();
+    common::delete_durably(&client, &wpolicy, &key)
+        .await
+        .unwrap();
 
     // Create key-ordered map with persisted index via flags constructor
     let policy =

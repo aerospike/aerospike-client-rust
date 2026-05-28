@@ -339,21 +339,11 @@ async fn explicit_record_ttl_probe(client: &aerospike::Client) -> bool {
     let bins = vec![aerospike::as_bin!("bin", 0i64)];
     match client.put(&wpolicy, &key, &bins).await {
         Ok(()) => {
-            let _ = client
-                .delete(&WritePolicy::default(), &key)
-                .await;
+            let _ = client.delete(&WritePolicy::default(), &key).await;
             true
         }
-        Err(aerospike::Error::ServerError(
-            aerospike::ResultCode::FailForbidden,
-            _,
-            _,
-        ))
-        | Err(aerospike::Error::ServerError(
-            aerospike::ResultCode::ParameterError,
-            _,
-            _,
-        )) => false,
+        Err(aerospike::Error::ServerError(aerospike::ResultCode::FailForbidden, _, _))
+        | Err(aerospike::Error::ServerError(aerospike::ResultCode::ParameterError, _, _)) => false,
         Err(e) => panic!("explicit TTL probe put: {}", e),
     }
 }

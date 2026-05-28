@@ -27,7 +27,9 @@ async fn serialize() {
     let wpolicy = WritePolicy::default();
     let key = as_key!(namespace, set_name, -1);
 
-    common::delete_durably(&client, &wpolicy, &key).await.unwrap();
+    common::delete_durably(&client, &wpolicy, &key)
+        .await
+        .unwrap();
 
     let bins = [
         as_bin!("bin999", "test string"),

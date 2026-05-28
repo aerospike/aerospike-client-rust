@@ -725,6 +725,6 @@ pub(crate) fn get_value_type(return_type: i64) -> ExpType {
 
         t if t == ListReturnType::Exists as i64 => ExpType::BOOL,
 
-        _ => panic!("Invalid ListReturnType: {}", return_type),
+        _ => panic!("Invalid ListReturnType: {return_type}"),
     }
 }

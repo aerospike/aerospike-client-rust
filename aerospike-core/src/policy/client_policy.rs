@@ -192,7 +192,7 @@ pub struct ClientPolicy {
     /// with server side metrics.
     pub application_id: Option<String>,
 
-    /// Override the client_id in the user_agent_id payload sent to each node on connection
+    /// Override the `client_id` in the `user_agent_id` payload sent to each node on connection
     /// validation. When `Some(client_id)`, `client_id` is used verbatim as the
     /// `user-agent-set:value=1,{client_id},{app_id}…` argument (still base64-encoded by the
     /// client before transmission). When `None`, the client falls back to

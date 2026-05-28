@@ -34,7 +34,9 @@ async fn create_test_set(client: &Client, no_records: usize) -> String {
         let key = as_key!(namespace, &set_name, i);
         let ibin = as_bin!("bin", as_blob!(vec![0b00000001, 0b01000010]));
         let bins = vec![ibin];
-        common::delete_durably(client, &wpolicy, &key).await.unwrap();
+        common::delete_durably(client, &wpolicy, &key)
+            .await
+            .unwrap();
         client.put(&wpolicy, &key, &bins).await.unwrap();
     }
     set_name

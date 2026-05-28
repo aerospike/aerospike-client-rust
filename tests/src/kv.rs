@@ -86,7 +86,9 @@ async fn connect() {
     let wpolicy = WritePolicy::default();
     let key = as_key!(namespace, set_name, -1);
 
-    common::delete_durably(&client, &wpolicy, &key).await.unwrap();
+    common::delete_durably(&client, &wpolicy, &key)
+        .await
+        .unwrap();
 
     let bins = [
         as_bin!("bin999", "test string"),
@@ -215,7 +217,9 @@ async fn replace_drops_unreferenced_bins() {
     let bin2 = as_bin!("bin2", "value2");
     let bin3 = as_bin!("bin3", "value3");
 
-    common::delete_durably(&client, &wpolicy, &key).await.unwrap();
+    common::delete_durably(&client, &wpolicy, &key)
+        .await
+        .unwrap();
     client.put(&wpolicy, &key, &[bin1, bin2]).await.unwrap();
 
     let mut replace_policy = WritePolicy::default();
@@ -249,7 +253,9 @@ async fn replace_only_fails_when_record_missing() {
     let key = as_key!(namespace, set_name, "replaceonlykey");
 
     let wpolicy = WritePolicy::default();
-    common::delete_durably(&client, &wpolicy, &key).await.unwrap();
+    common::delete_durably(&client, &wpolicy, &key)
+        .await
+        .unwrap();
 
     let mut replace_only = WritePolicy::default();
     replace_only.record_exists_action = RecordExistsAction::ReplaceOnly;
@@ -277,7 +283,9 @@ async fn generation_policy_expect_gen_equal() {
 
     let wpolicy = WritePolicy::default();
     let policy = ReadPolicy::default();
-    common::delete_durably(&client, &wpolicy, &key).await.unwrap();
+    common::delete_durably(&client, &wpolicy, &key)
+        .await
+        .unwrap();
 
     client
         .put(&wpolicy, &key, &[as_bin!("genbin", "genvalue1")])
@@ -332,7 +340,9 @@ async fn create_only_fails_when_record_exists() {
     let key = as_key!(namespace, set_name, "createonlykey");
 
     let wpolicy = WritePolicy::default();
-    common::delete_durably(&client, &wpolicy, &key).await.unwrap();
+    common::delete_durably(&client, &wpolicy, &key)
+        .await
+        .unwrap();
     client
         .put(&wpolicy, &key, &[as_bin!("bin", "first")])
         .await

@@ -39,7 +39,9 @@ async fn create_test_set(client: &Client, no_records: usize) -> String {
         let wbin2 = as_bin!("bin2", "hello");
         let wbin3 = as_bin!("extra", "extra");
         let bins = vec![wbin1, wbin2, wbin3];
-        common::delete_durably(client, &wpolicy, &key).await.unwrap();
+        common::delete_durably(client, &wpolicy, &key)
+            .await
+            .unwrap();
         client.put(&wpolicy, &key, &bins).await.unwrap();
     }
 
@@ -1602,7 +1604,9 @@ async fn query_ops_projection_extended_cdt_read() {
     for i in 0..10_i64 {
         let key = as_key!(namespace, &set_name, i);
         let list: Vec<Value> = (0..=i).map(Value::from).collect();
-        common::delete_durably(&client, &wpolicy, &key).await.unwrap();
+        common::delete_durably(&client, &wpolicy, &key)
+            .await
+            .unwrap();
         client
             .put(&wpolicy, &key, &[as_bin!("nums", Value::List(list))])
             .await
@@ -1827,7 +1831,9 @@ async fn query_returns_user_key_when_send_key_set() {
     for i in 1..=5_i64 {
         let key = as_key!(namespace, &set_name, i);
         let bin = as_bin!(bin_name, i);
-        common::delete_durably(&client, &wpolicy, &key).await.unwrap();
+        common::delete_durably(&client, &wpolicy, &key)
+            .await
+            .unwrap();
         client.put(&wpolicy, &key, &[bin]).await.unwrap();
     }
 

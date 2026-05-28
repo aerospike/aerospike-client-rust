@@ -46,7 +46,9 @@ async fn create_test_set(client: &Client, no_records: usize) -> String {
         let lbin = as_bin!("bin5", as_list!("a", "b", i));
         let mbin = as_bin!("bin6", as_map!("a" => "test", "b" => i));
         let bins = vec![ibin, sbin, fbin, bbin, lbin, mbin];
-        common::delete_durably(client, &wpolicy, &key).await.unwrap();
+        common::delete_durably(client, &wpolicy, &key)
+            .await
+            .unwrap();
         client.put(&wpolicy, &key, &bins).await.unwrap();
     }
     set_name
@@ -664,7 +666,9 @@ async fn expression_commands() {
         let ibin = as_bin!("bin", i);
 
         let bins = vec![ibin];
-        common::delete_durably(&client, &wpolicy, &key).await.unwrap();
+        common::delete_durably(&client, &wpolicy, &key)
+            .await
+            .unwrap();
         client.put(&wpolicy, &key, &bins).await.unwrap();
     }
     let mut wpolicy = WritePolicy::default();
