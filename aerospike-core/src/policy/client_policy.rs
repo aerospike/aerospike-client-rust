@@ -192,6 +192,15 @@ pub struct ClientPolicy {
     /// with server side metrics.
     pub application_id: Option<String>,
 
+    /// Override the client_id in the user_agent_id payload sent to each node on connection
+    /// validation. When `Some(client_id)`, `client_id` is used verbatim as the
+    /// `user-agent-set:value=1,{client_id},{app_id}…` argument (still base64-encoded by the
+    /// client before transmission). When `None`, the client falls back to
+    /// the default `"rust-<version>"` format.
+    /// This is meant to be used in clients that are using the rust client internally,
+    /// and should not be used by third-party users.
+    pub custom_client_id: Option<String>,
+
     /// Maximum number of errors (network errors + server-side `TIMEOUT`,
     /// `DEVICE_OVERLOAD`, `KEY_BUSY`) tolerated against a single node
     /// within one `error_rate_window`. Once the count exceeds this
@@ -244,6 +253,7 @@ impl Default for ClientPolicy {
             max_error_rate: 100,
             error_rate_window: 1,
             seed_only_cluster: false,
+            custom_client_id: None,
 
             #[cfg(feature = "tls")]
             tls_config: None,

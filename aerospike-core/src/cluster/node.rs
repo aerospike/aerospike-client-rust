@@ -784,18 +784,23 @@ impl Node {
             return;
         }
 
-        let app_id = self.client_policy().application_id();
+        let policy = self.client_policy();
 
-        // Source user-agent payload
-        // Format: "1,rust-<version>,<application-id>"
-        let user_agent_id = format!("1,rust-{CLIENT_VERSION},{app_id}");
+        // The client policy may override the
+        // assembled payload via `custom_client_id`; otherwise uses
+        // the default `"1,rust-<version>,<application-id>"` format.
+        let client_id = match &policy.custom_client_id {
+            Some(custom) => custom.to_owned(),
+            None => format!("rust-{CLIENT_VERSION}"),
+        };
+        let user_agent_id = format!("1,{},{}", client_id, policy.application_id());
         let user_agent_id = BASE64.encode(&user_agent_id);
         let user_agent_command = format!("user-agent-set:value={user_agent_id}");
 
-        let policy = AdminPolicy {
-            timeout: self.client_policy().timeout,
+        let admin_policy = AdminPolicy {
+            timeout: policy.timeout,
         };
-        let _ = self.info(&policy, &[&user_agent_command]).await;
+        let _ = self.info(&admin_policy, &[&user_agent_command]).await;
     }
 
     /// Reap idle connections, but for any idle connection that would take
