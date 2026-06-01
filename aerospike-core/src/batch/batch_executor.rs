@@ -258,7 +258,17 @@ impl BatchExecutor {
             BatchOperation::Delete { policy, .. } => {
                 let wp = policy.to_write_policy(parent);
                 let mut cmd = DeleteCommand::new(&wp, cluster.clone(), &key);
-                cmd.execute().await.map(|()| None)
+                // DeleteCommand reports missing-key via `cmd.existed`, not Result::Err —
+                // re-inject KEY_NOT_FOUND so batch sees it per-record.
+                match cmd.execute().await {
+                    Ok(()) if !cmd.existed => Err(Error::ServerError(
+                        ResultCode::KeyNotFoundError,
+                        false,
+                        String::new(),
+                    )),
+                    Ok(()) => Ok(None),
+                    Err(e) => Err(e),
+                }
             }
             BatchOperation::UDF {
                 policy,
@@ -280,22 +290,14 @@ impl BatchExecutor {
             }
         };
 
+        // Every ServerError from a single-key command is per-key; absorb onto the
+        // BatchRecord, only non-ServerError variants propagate.
         match result {
             Ok(record) => {
                 batch_op.set_record(record);
             }
             Err(Error::ServerError(rc, in_doubt, _)) => {
-                // Per-key errors that are normal in a batch context are
-                // recorded but not propagated. Anything else bubbles.
-                match rc {
-                    ResultCode::KeyNotFoundError | ResultCode::FilteredOut => {
-                        batch_op.set_result_code(rc, in_doubt);
-                    }
-                    other => {
-                        batch_op.set_result_code(other, in_doubt);
-                        return Err(Error::ServerError(other, in_doubt, String::new()));
-                    }
-                }
+                batch_op.set_result_code(rc, in_doubt);
             }
             Err(err) => return Err(err),
         }
