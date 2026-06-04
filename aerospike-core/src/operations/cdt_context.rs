@@ -682,7 +682,13 @@ mod tests {
     fn ctx_round_trip_with_keys_in() {
         let original = vec![
             ctx_map_key(Value::String("users".into())),
-            ctx_map_keys_in(["alice", "bob", 1, [u8]{1,7,9}, nil]),
+            ctx_map_keys_in([
+                Value::String("alice".into()),
+                Value::String("bob".into()),
+                Value::Int(1),
+                Value::Blob(vec![1, 7, 9]),
+                Value::Nil,
+            ]),
         ];
         let b64 = to_base64(&original).expect("encode");
         let restored = ctx_from_base64(&b64).expect("decode");
@@ -691,8 +697,12 @@ mod tests {
         assert_eq!(restored[1].id, CtxType::MapKeysIn as u16);
         match &restored[1].value {
             Value::List(items) => {
-                assert_eq!(items.len(), 2);
+                assert_eq!(items.len(), 5);
                 assert_eq!(items[0], Value::String("alice".into()));
+                assert_eq!(items[1], Value::String("bob".into()));
+                assert_eq!(items[2], Value::Int(1));
+                assert_eq!(items[3], Value::Blob(vec![1, 7, 9]));
+                assert_eq!(items[4], Value::Nil);
             }
             other => panic!("expected Value::List, got {:?}", other),
         }
