@@ -41,6 +41,7 @@ async-channel = "2.5.0"
 hazarc = "0.2.0"
 
 [features]
+default = ["rt-tokio"]
 serialization = ["serde"]
 # Dynamic configuration: read policy overrides from a pluggable source (YAML
 # file out of the box) and apply them at runtime. Pulls serde for deserialization,

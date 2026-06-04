@@ -21,6 +21,10 @@ pub mod lists;
 pub mod maps;
 pub mod regex_flag;
 pub mod string;
+pub mod server_compiled;
+
+pub use server_compiled::server_compiled_ael;
+pub use server_compiled::SERVER_COMPILED_AEL_EXPRESSION_OP;
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 
 use crate::commands::buffer::Buffer;
