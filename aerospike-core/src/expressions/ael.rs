@@ -14,9 +14,7 @@
 // the License.
 
 use crate::commands::buffer::Buffer;
-use crate::msgpack::encoder::{
-    pack_array_begin, pack_byte, pack_half_byte, pack_integer, pack_type_u16, pack_type_u32,
-};
+use crate::msgpack::encoder::{pack_array_begin, pack_integer, pack_raw_string};
 use crate::Result;
 
 use super::from_packed_bytes;
@@ -24,50 +22,6 @@ use super::Expression;
 
 /// First element of the root MessagePack array: server compiles the UTF-8 AEL string.
 pub const SERVER_COMPILED_AEL_EXPRESSION_OP: i64 = 128;
-
-const MSGPACK_STR8: u8 = 0xd9;
-
-/// Pack UTF-8 `s` as MessagePack **string** (raw UTF-8 bytes, no Aerospike `ParticleType` prefix).
-///
-/// Encoding matches the Java fluent `Packer` layout used by `Expression.fromServerCompiledFilter`:
-/// fixstr for length `< 32`, **str8** (`0xd9`) for lengths `32..=255` (so length `32` uses str8, not
-/// str16), str16 / str32 beyond that.
-fn pack_utf8_string_java_compatible(buf: &mut Option<&mut Buffer>, s: &str) -> usize {
-    let payload = s.as_bytes();
-    let n = payload.len();
-    let mut size = 0;
-    if n < 32 {
-        size += pack_half_byte(buf, 0xa0 | (n as u8));
-        if let Some(ref mut w) = *buf {
-            size += w.write_bytes(payload);
-        } else {
-            size += n;
-        }
-    } else if n <= usize::from(u8::MAX) {
-        size += pack_byte(buf, MSGPACK_STR8);
-        size += pack_byte(buf, n as u8);
-        if let Some(ref mut w) = *buf {
-            size += w.write_bytes(payload);
-        } else {
-            size += n;
-        }
-    } else if n < (1 << 16) {
-        size += pack_type_u16(buf, 0xda, n as u16);
-        if let Some(ref mut w) = *buf {
-            size += w.write_bytes(payload);
-        } else {
-            size += n;
-        }
-    } else {
-        size += pack_type_u32(buf, 0xdb, n as u32);
-        if let Some(ref mut w) = *buf {
-            size += w.write_bytes(payload);
-        } else {
-            size += n;
-        }
-    }
-    size
-}
 
 /// Build a filter [`Expression`] for the AEL wire form: a two-element
 /// MessagePack array `[`[`SERVER_COMPILED_AEL_EXPRESSION_OP`]`, "<ael>"]`.
@@ -81,14 +35,14 @@ pub fn pack_ael_server_filter(ael: &str) -> Result<Expression> {
     let mut size = 0;
     size += pack_array_begin(&mut None, 2);
     size += pack_integer(&mut None, SERVER_COMPILED_AEL_EXPRESSION_OP);
-    size += pack_utf8_string_java_compatible(&mut None, ael);
+    size += pack_raw_string(&mut None, ael);
 
     let mut buf = Buffer::new(0);
     buf.resize_buffer(size)?;
     let mut opt = Some(&mut buf);
     pack_array_begin(&mut opt, 2);
     pack_integer(&mut opt, SERVER_COMPILED_AEL_EXPRESSION_OP);
-    pack_utf8_string_java_compatible(&mut opt, ael);
+    pack_raw_string(&mut opt, ael);
     drop(opt);
 
     let bytes = buf.data_buffer[..buf.data_offset].to_vec();
