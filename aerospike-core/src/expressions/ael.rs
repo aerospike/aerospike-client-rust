@@ -13,9 +13,6 @@
 // License for the specific language governing permissions and limitations under
 // the License.
 
-//! Aerospike Expression Language (AEL) helpers for filter expressions — currently the
-//! **server-compiled filter** wire form (protocol field 43): MessagePack `[128, "<utf-8 ael>"]`.
-
 use crate::commands::buffer::Buffer;
 use crate::msgpack::encoder::{
     pack_array_begin, pack_byte, pack_half_byte, pack_integer, pack_type_u16, pack_type_u32,
@@ -25,17 +22,7 @@ use crate::Result;
 use super::from_packed_bytes;
 use super::Expression;
 
-#[cfg(test)]
-fn pack_expression_to_vec(expression: &Expression) -> Result<Vec<u8>> {
-    let n = expression.size()?;
-    let mut buf = Buffer::new(0);
-    buf.resize_buffer(n)?;
-    expression.pack(&mut Some(&mut buf))?;
-    Ok(buf.data_buffer[..buf.data_offset].to_vec())
-}
-
 /// First element of the root MessagePack array: server compiles the UTF-8 AEL string.
-/// Matches the Java fluent client's `Expression.SERVER_COMPILED_AEL_EXPRESSION_OP`.
 pub const SERVER_COMPILED_AEL_EXPRESSION_OP: i64 = 128;
 
 const MSGPACK_STR8: u8 = 0xd9;
@@ -82,11 +69,10 @@ fn pack_utf8_string_java_compatible(buf: &mut Option<&mut Buffer>, s: &str) -> u
     size
 }
 
-/// Build a filter [`Expression`] for the **server-compiled filter** wire form: a two-element
+/// Build a filter [`Expression`] for the AEL wire form: a two-element
 /// MessagePack array `[`[`SERVER_COMPILED_AEL_EXPRESSION_OP`]`, "<ael>"]`.
 ///
-/// The Aerospike server (8.1.3+) parses and compiles the AEL text; the client does not expand it
-/// into opcode trees. The packed bytes are stored verbatim via [`super::from_packed_bytes`].
+/// The Aerospike server (8.1.3+) parses and compiles the AEL text.
 ///
 /// # Errors
 ///
@@ -162,5 +148,13 @@ mod tests {
         let b64 = e.base64().unwrap();
         let decoded = super::super::from_base64(&b64).unwrap();
         assert_eq!(b64, decoded.base64().unwrap());
+    }
+
+    fn pack_expression_to_vec(expression: &Expression) -> Result<Vec<u8>> {
+        let n = expression.size()?;
+        let mut buf = Buffer::new(0);
+        buf.resize_buffer(n)?;
+        expression.pack(&mut Some(&mut buf))?;
+        Ok(buf.data_buffer[..buf.data_offset].to_vec())
     }
 }
