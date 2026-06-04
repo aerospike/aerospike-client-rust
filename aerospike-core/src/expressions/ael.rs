@@ -13,8 +13,8 @@
 // License for the specific language governing permissions and limitations under
 // the License.
 
-//! Wire encoding for server-side compilation of textual Aerospike Expression Language (AEL)
-//! when used as a filter expression (protocol field 43).
+//! Aerospike Expression Language (AEL) helpers for filter expressions — currently the
+//! **server-compiled filter** wire form (protocol field 43): MessagePack `[128, "<utf-8 ael>"]`.
 
 use crate::commands::buffer::Buffer;
 use crate::msgpack::encoder::{
@@ -82,8 +82,8 @@ fn pack_utf8_string_java_compatible(buf: &mut Option<&mut Buffer>, s: &str) -> u
     size
 }
 
-/// Build a filter [`Expression`] whose packed form is a two-element MessagePack array:
-/// `[`[`SERVER_COMPILED_AEL_EXPRESSION_OP`]`, "<ael>"]`.
+/// Build a filter [`Expression`] for the **server-compiled filter** wire form: a two-element
+/// MessagePack array `[`[`SERVER_COMPILED_AEL_EXPRESSION_OP`]`, "<ael>"]`.
 ///
 /// The Aerospike server (8.1.3+) parses and compiles the AEL text; the client does not expand it
 /// into opcode trees. The packed bytes are stored verbatim via [`super::from_packed_bytes`].
@@ -91,7 +91,7 @@ fn pack_utf8_string_java_compatible(buf: &mut Option<&mut Buffer>, s: &str) -> u
 /// # Errors
 ///
 /// Returns [`crate::Error::InvalidArgument`] if the buffer size would exceed internal limits.
-pub fn server_compiled_ael(ael: &str) -> Result<Expression> {
+pub fn pack_ael_server_filter(ael: &str) -> Result<Expression> {
     let mut size = 0;
     size += pack_array_begin(&mut None, 2);
     size += pack_integer(&mut None, SERVER_COMPILED_AEL_EXPRESSION_OP);
@@ -114,8 +114,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn server_compiled_ael_encodes_two_element_root_array_with_opcode_128_then_utf8() {
-        let e = server_compiled_ael("$.bin==1").unwrap();
+    fn pack_ael_server_filter_encodes_two_element_root_array_with_opcode_128_then_utf8() {
+        let e = pack_ael_server_filter("$.bin==1").unwrap();
         let b = pack_expression_to_vec(&e).unwrap();
         assert!(b.len() > 4);
         assert_eq!(b[0], 0x92);
@@ -125,8 +125,8 @@ mod tests {
     }
 
     #[test]
-    fn server_compiled_ael_empty_string_still_produces_two_element_root() {
-        let e = server_compiled_ael("").unwrap();
+    fn pack_ael_server_filter_empty_string_still_produces_two_element_root() {
+        let e = pack_ael_server_filter("").unwrap();
         let b = pack_expression_to_vec(&e).unwrap();
         assert_eq!(b[0], 0x92);
         assert_eq!(b[1], 0xcc);
@@ -135,19 +135,19 @@ mod tests {
     }
 
     #[test]
-    fn server_compiled_ael_utf8_payload_verbatim_after_string_header() {
+    fn pack_ael_server_filter_utf8_payload_verbatim_after_string_header() {
         let src = "$.café=='é'";
         let utf8 = src.as_bytes();
-        let e = server_compiled_ael(src).unwrap();
+        let e = pack_ael_server_filter(src).unwrap();
         let payload = pack_expression_to_vec(&e).unwrap();
         assert_eq!(u32::from(payload[3]), 0xa0 + utf8.len() as u32);
         assert_eq!(&payload[4..4 + utf8.len()], utf8);
     }
 
     #[test]
-    fn server_compiled_ael_ascii_length_32_uses_str8_not_fixstr() {
+    fn pack_ael_server_filter_ascii_length_32_uses_str8_not_fixstr() {
         let padded = "a".repeat(32);
-        let b = pack_expression_to_vec(&server_compiled_ael(&padded).unwrap()).unwrap();
+        let b = pack_expression_to_vec(&pack_ael_server_filter(&padded).unwrap()).unwrap();
         assert_eq!(b[0], 0x92);
         assert_eq!(b[1], 0xcc);
         assert_eq!(b[2], 0x80);
@@ -157,8 +157,8 @@ mod tests {
     }
 
     #[test]
-    fn server_compiled_ael_base64_round_trips_like_other_packed_exprs() {
-        let e = server_compiled_ael("$.rank in (1,2,3)").unwrap();
+    fn pack_ael_server_filter_base64_round_trips_like_other_packed_exprs() {
+        let e = pack_ael_server_filter("$.rank in (1,2,3)").unwrap();
         let b64 = e.base64().unwrap();
         let decoded = super::super::from_base64(&b64).unwrap();
         assert_eq!(b64, decoded.base64().unwrap());

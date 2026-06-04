@@ -96,6 +96,13 @@ impl Version {
     pub fn supports_string_operations(&self) -> bool {
         self >= &Version::new(8, 1, 3, 0)
     }
+
+    /// Server accepts server-compiled textual AEL on filter field 43 (`[128, "<utf-8>"]`).
+    ///
+    /// Aligns with Java fluent `Cluster.supportsServerCompiledFilterExpression()` (≥ 8.1.3).
+    pub fn supports_server_compiled_filter_expression(&self) -> bool {
+        self >= &Version::new(8, 1, 3, 0)
+    }
 }
 
 #[derive(Debug)]
@@ -208,5 +215,12 @@ mod tests {
         for iv in invalid {
             assert!(VersionParser::new(iv).parse().is_err());
         }
+    }
+
+    #[test]
+    fn supports_server_compiled_filter_expression_threshold() {
+        assert!(!Version::new(8, 1, 2, 99).supports_server_compiled_filter_expression());
+        assert!(Version::new(8, 1, 3, 0).supports_server_compiled_filter_expression());
+        assert!(Version::new(8, 2, 0, 0).supports_server_compiled_filter_expression());
     }
 }
