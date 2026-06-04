@@ -1,4 +1,4 @@
-// Copyright 2015-2020 Aerospike, Inc.
+// Copyright 2015-2026 Aerospike, Inc.
 //
 // Portions may be licensed to Aerospike, Inc. under one or more contributor
 // license agreements.
@@ -2043,6 +2043,31 @@ mod tests {
         let decoded = from_base64(&b64).unwrap();
         assert_eq!(b64, decoded.base64().unwrap());
     }
+
+    #[test]
+    fn string_pack_roundtrip() {
+        let literal = "b".repeat(31);
+
+        let expr = eq(string_bin("a".to_string()), string_val(literal.clone()));
+        let b64 = expr.base64().unwrap();
+        let decoded = from_base64(&b64).unwrap();
+        let decoded_b64 = decoded.base64().unwrap();
+        let bytes = decoded.bytes.unwrap();
+
+        assert!(
+            bytes.windows(3).any(|w| w == [0xd9, 0x20, 0x03]),
+            "expected str8 prefix 0xd9 0x20 then STRING 0x03; got: {:02x?}",
+            bytes
+        );
+        assert!(
+            !bytes.windows(4).any(|w| w == [0xda, 0x00, 0x20, 0x03]),
+            "must not use str16 0xda 0x00 0x20 for length 32; got: {:02x?}",
+            bytes
+        );
+
+        assert_eq!(b64, decoded_b64);
+    }
+
 }
 
 // ===== Path Expression helpers =====
