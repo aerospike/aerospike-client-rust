@@ -24,6 +24,9 @@ pub mod regex_flag;
 pub mod string;
 pub mod server_compiled;
 
+#[cfg(test)]
+mod pack_string_header_demo;
+
 pub use ael::pack_ael_server_filter;
 pub use ael::SERVER_COMPILED_AEL_EXPRESSION_OP;
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};

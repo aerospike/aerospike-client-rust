@@ -1,4 +1,4 @@
-// Copyright 2015-2018 Aerospike, Inc.
+// Copyright 2015-2026 Aerospike, Inc.
 //
 // Portions may be licensed to Aerospike, Inc. under one or more contributor
 // license agreements.
@@ -219,8 +219,8 @@ mod tests {
 
     #[test]
     fn supports_server_compiled_filter_expression_threshold() {
-        assert!(!Version::new(8, 1, 2, 99).supports_server_compiled_filter_expression());
-        assert!(Version::new(8, 1, 3, 0).supports_server_compiled_filter_expression());
-        assert!(Version::new(8, 2, 0, 0).supports_server_compiled_filter_expression());
+        assert!(!Version::new(8, 1, 2, 99).supports_server_compiled_ael());
+        assert!(Version::new(8, 1, 3, 0).supports_server_compiled_ael());
+        assert!(Version::new(8, 2, 0, 0).supports_server_compiled_ael());
     }
 }
