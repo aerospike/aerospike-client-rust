@@ -39,11 +39,11 @@ pub fn pack_ael_server_filter(ael: &str) -> Result<Expression> {
 
     let mut buf = Buffer::new(0);
     buf.resize_buffer(size)?;
+
     let mut opt = Some(&mut buf);
     pack_array_begin(&mut opt, 2);
     pack_integer(&mut opt, SERVER_COMPILED_AEL_EXPRESSION_OP);
     pack_raw_string(&mut opt, ael);
-    drop(opt);
 
     let bytes = buf.data_buffer[..buf.data_offset].to_vec();
     Ok(from_packed_bytes(bytes))
