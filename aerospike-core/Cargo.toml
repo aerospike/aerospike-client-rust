@@ -60,11 +60,11 @@ serde_json = "1.0"
 # rustdoc snippets). Strip default features so testing this crate under
 # `rt-async-std` doesn't transitively re-enable `rt-tokio` via the umbrella's
 # defaults — that conflict makes `aerospike-rt` fail to compile with
-# duplicate `fs` / `io` / `Mutex` / … re-exports. Enable `async` plus
-# `rt-tokio` so `cargo test -p aerospike-core --features rt-tokio` builds the
-# umbrella dev-dependency; for `rt-async-std`-only local runs, temporarily switch
-# this line to `features = ["async", "rt-async-std"]`.
-aerospike = { path = "../", default-features = false, features = ["async", "rt-tokio"] }
+# duplicate `fs` / `io` / `Mutex` / … re-exports. Re-enable just `async`
+# so the umbrella's own `compile_error!` for "select a client version" is
+# satisfied; the runtime flag flows through whatever is set on
+# `aerospike-core` itself.
+aerospike = { path = "../", default-features = false, features = ["async"] }
 aerospike-macro = {path = "../aerospike-macro"}
 lazy_static = "1.5"
 tokio = { version = "1.52.1", features = ["full"] }
