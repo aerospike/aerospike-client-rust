@@ -218,7 +218,7 @@ mod tests {
     }
 
     #[test]
-    fn supports_server_compiled_filter_expression_threshold() {
+    fn supports_server_compiled_ael_threshold() {
         assert!(!Version::new(8, 1, 2, 99).supports_server_compiled_ael());
         assert!(Version::new(8, 1, 3, 0).supports_server_compiled_ael());
         assert!(Version::new(8, 2, 0, 0).supports_server_compiled_ael());
