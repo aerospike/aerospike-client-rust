@@ -1012,7 +1012,9 @@ impl Buffer {
                         | OperationType::CdtRead
                         | OperationType::BitRead
                         | OperationType::HllRead
-                        | OperationType::ExpRead,
+                        | OperationType::ExpRead
+                        | OperationType::StringRead
+                        | OperationType::ToString,
                     ..
                 } => read_attr |= INFO1_READ,
                 _ => write_attr |= INFO2_WRITE,
@@ -1024,6 +1026,7 @@ impl Buffer {
                     | OperationData::CdtBitOp(_)
                     | OperationData::HLLOp(_)
                     | OperationData::EXPOp(_)
+                    | OperationData::StringOp(_)
             );
 
             if policy.respond_per_each_op || each_op {

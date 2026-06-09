@@ -20,6 +20,7 @@ pub mod hll;
 pub mod lists;
 pub mod maps;
 pub mod regex_flag;
+pub mod string;
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 
 use crate::commands::buffer::Buffer;
@@ -135,6 +136,11 @@ pub(crate) enum ExpressionArgument {
         Expression,
         Vec<CdtContext>,
     ),
+    // Inline `[QUOTED, [exps...]]` literal inside a Call args list. Used by
+    // string-expression replace/replaceAll/regexReplace to mark the
+    // (needle, replacement) pair as a literal so the server's expression
+    // compiler does not recursively interpret it as a sub-expression.
+    QuotedExpressions(Vec<Expression>),
 }
 
 /// Identifies which element of a loop variable to use in path expressions.
@@ -257,7 +263,8 @@ impl Expression {
                         // First match to estimate the Size and write the Context
                         match arg {
                             ExpressionArgument::Value(_)
-                            | ExpressionArgument::FilterExpression(_) => len += 1,
+                            | ExpressionArgument::FilterExpression(_)
+                            | ExpressionArgument::QuotedExpressions(_) => len += 1,
                             // Path args are written as direct elements: [0xfe, flat_ctx, flag, ...]
                             ExpressionArgument::CdtSelectPathArg(_, _) => len += 3,
                             ExpressionArgument::CdtModifyPathArg(_, _, _, _) => len += 4,
@@ -307,6 +314,15 @@ impl Expression {
                                 size += pack_integer(buf, flag.0 | 0x04);
                                 size += modify_exp.pack(buf)?;
                                 bin_from_arg = Some(bin_exp);
+                            }
+                            ExpressionArgument::QuotedExpressions(exps) => {
+                                // Emit [QUOTED, [exps...]] as a single element.
+                                size += pack_array_begin(buf, 2);
+                                size += pack_integer(buf, ExpOp::Quoted as i64);
+                                size += pack_array_begin(buf, exps.len());
+                                for exp in exps {
+                                    size += exp.pack(buf)?;
+                                }
                             }
                             ExpressionArgument::Context(_) => {}
                         }

@@ -24,11 +24,13 @@ pub mod lists;
 pub mod maps;
 pub mod path;
 pub mod scalar;
+pub mod string;
 
 use self::cdt::CdtOperation;
 pub use self::lists::{ListOrderType, ListPolicy, ListReturnType, ListSortFlags, ListWriteFlags};
 pub use self::maps::{MapOrder, MapPolicy, MapReturnType, MapWriteFlags, MapWriteMode};
 pub use self::scalar::*;
+use self::string::StringOp;
 
 use self::path::{ModifyFlag, SelectFlag};
 use crate::commands::buffer::Buffer;
@@ -56,6 +58,9 @@ pub(crate) enum OperationType {
     Delete = 14,
     HllRead = 15,
     HllWrite = 16,
+    StringRead = 17,
+    StringModify = 18,
+    ToString = 19,
 }
 
 #[derive(Clone, Debug)]
@@ -69,6 +74,7 @@ pub(crate) enum OperationData {
     CdtModifyByPath(Vec<CdtContext>, ModifyFlag, Expression),
     HLLOp(CdtOperation),
     EXPOp(ExpOperation),
+    StringOp(StringOp),
 }
 
 #[derive(Clone, Debug)]
@@ -108,6 +114,7 @@ impl Operation {
                 | OperationType::BitWrite
                 | OperationType::Delete
                 | OperationType::HllWrite
+                | OperationType::StringModify
         )
     }
 
@@ -136,6 +143,7 @@ impl Operation {
             | OperationData::CdtMapOp(ref cdt_op)
             | OperationData::CdtBitOp(ref cdt_op)
             | OperationData::HLLOp(ref cdt_op) => cdt_op.estimate_size(&self.ctx)?,
+            OperationData::StringOp(ref s_op) => s_op.estimate_size(&self.ctx)?,
         };
 
         Ok(size)
@@ -176,6 +184,10 @@ impl Operation {
             OperationData::CdtModifyByPath(ctx, flag, exp) => {
                 size += self.write_op_header_to(buffer, ParticleType::BLOB as u8);
                 size += pack_path_modify_exp(&mut Some(buffer), ctx, flag.0, exp)?;
+            }
+            OperationData::StringOp(ref s_op) => {
+                size += self.write_op_header_to(buffer, ParticleType::STRING as u8);
+                size += s_op.write_to(buffer, &self.ctx)?;
             }
         }
 
