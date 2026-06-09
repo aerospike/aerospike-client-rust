@@ -1096,7 +1096,7 @@ async fn to_string_from_integer_double_string_blob_and_bin_type_error() {
         .expect_err("to_string on list bin should fail");
     let msg = format!("{}", err);
     assert!(
-        msg.contains("Bin type error") || msg.contains("BIN_TYPE_ERROR"),
+        msg.contains("BinTypeError") || msg.contains("BIN_TYPE_ERROR"),
         "unexpected error: {msg}"
     );
 }
@@ -1154,7 +1154,7 @@ async fn modify_on_missing_bin_without_no_fail_raises_error() {
         .expect_err("operate on missing bin should fail without NO_FAIL");
     let msg = format!("{}", err);
     assert!(
-        msg.contains("Bin not found") || msg.contains("BIN_NOT_FOUND"),
+        msg.contains("BinNotFound") || msg.contains("BIN_NOT_FOUND"),
         "unexpected error: {msg}"
     );
 }
