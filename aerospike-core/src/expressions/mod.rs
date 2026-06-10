@@ -22,7 +22,6 @@ pub mod lists;
 pub mod maps;
 pub mod regex_flag;
 pub mod string;
-pub mod server_compiled;
 
 pub use ael::pack_ael_server_filter;
 pub use ael::SERVER_COMPILED_AEL_EXPRESSION_OP;
