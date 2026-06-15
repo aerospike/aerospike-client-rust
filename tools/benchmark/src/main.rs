@@ -95,6 +95,11 @@ async fn benchmark(options: Options) {
 
 async fn connect(options: &Options) -> AerospikeResult<Client> {
     let mut policy = ClientPolicy::default();
+    if let Ok(min_conns) = std::env::var("AEROSPIKE_BENCH_MIN_CONNS_PER_NODE") {
+        policy.min_conns_per_node = min_conns
+            .parse()
+            .expect("AEROSPIKE_BENCH_MIN_CONNS_PER_NODE must be a non-negative integer");
+    }
     policy.conn_pools_per_node = options.conn_pools_per_node as u8;
     policy.use_services_alternate = options.use_services_alternate;
     policy.ip_map = options.ip_map.clone();
