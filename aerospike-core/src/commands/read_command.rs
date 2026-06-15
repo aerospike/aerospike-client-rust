@@ -80,6 +80,7 @@ impl<'a> ReadCommand<'a> {
         expiration: u32,
     ) -> Result<(Record, Option<u64>)> {
         let mut bins: HashMap<String, Value> = HashMap::with_capacity(op_count);
+        let mut results: Vec<Value> = Vec::with_capacity(op_count);
 
         // Parse fields, extracting record version if present (used by MRT).
         let version = conn.buffer.parse_fields_for_version(field_count);
@@ -94,6 +95,10 @@ impl<'a> ReadCommand<'a> {
 
             let particle_bytes_size = op_size - (4 + name_size);
             let value = bytes_to_particle(particle_type, &mut conn.buffer, particle_bytes_size)?;
+
+            // Positional slot — every op contributes one entry to `results`,
+            // including nil-result ops, so callers can index by request op order.
+            results.push(value.clone());
 
             if !value.is_nil() {
                 // list/map operations may return multiple values for the same bin.
@@ -111,7 +116,7 @@ impl<'a> ReadCommand<'a> {
             }
         }
 
-        Ok((Record::new(None, bins, generation, expiration), version))
+        Ok((Record::new(None, bins, results, generation, expiration), version))
     }
 }
 
@@ -193,7 +198,7 @@ impl Command for ReadCommand<'_> {
                 let (record, version) = if self.bins.is_none() {
                     let version = conn.buffer.parse_fields_for_version(field_count);
                     (
-                        Record::new(None, HashMap::new(), generation, expiration),
+                        Record::new(None, HashMap::new(), Vec::new(), generation, expiration),
                         version,
                     )
                 } else {
