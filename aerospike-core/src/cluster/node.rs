@@ -905,11 +905,13 @@ impl Node {
 
             let client_policy = self.client_policy();
             if client_policy.min_conns_per_node > 0 {
-                // `saturating_sub` so a burst that puts the pool above the
-                // configured min doesn't underflow (was a panic before).
+                // Compare against total owned connections (idle + in-flight),
+                // not just idle connections sitting in the queue. Using
+                // `num_conns()` here would ignore checked-out connections and
+                // create unnecessary replacements every tend cycle.
                 let to_fill = client_policy
                     .min_conns_per_node
-                    .saturating_sub(self.connection_pool.num_conns());
+                    .saturating_sub(self.connection_pool.total_reserved());
                 for _ in 0..to_fill {
                     self.connection_pool.make_conn(count).await?;
                     count += 1;
@@ -1051,5 +1053,52 @@ mod node_tests {
             0,
             "Node::drop should clear pooled connections"
         );
+    }
+
+    #[aerospike_macro::test]
+    async fn fill_min_conns_does_not_overshoot_when_connections_in_flight() {
+        let policy = ClientPolicy {
+            min_conns_per_node: 5,
+            max_conns_per_node: 10,
+            ..ClientPolicy::default()
+        };
+        let nv = Arc::new(NodeValidator {
+            name: "test-node".to_string(),
+            aliases: vec![Host::new("127.0.0.1", 3000)],
+            address: "127.0.0.1:3000".to_string(),
+            client_policy: policy.clone(),
+            use_new_info: true,
+            version: Version::default(),
+            detect_load_balancer: false,
+        });
+        let node = Node::new(policy, nv);
+
+        let mut in_flight = Vec::new();
+        for i in 0..5 {
+            let pconn = node
+                .connection_pool
+                .make_conn(i)
+                .await
+                .expect("make_conn failed");
+            in_flight.push(pconn);
+        }
+        assert_eq!(node.connection_pool.total_reserved(), 5);
+        assert_eq!(
+            node.connection_pool.num_conns(),
+            0,
+            "all connections should be in-flight"
+        );
+
+        let created = node
+            .fill_min_conns()
+            .await
+            .expect("fill_min_conns failed");
+        assert_eq!(
+            created, 0,
+            "fill_min_conns must not create connections when total_reserved already meets min"
+        );
+        assert_eq!(node.connection_pool.total_reserved(), 5);
+
+        drop(in_flight);
     }
 }
