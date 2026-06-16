@@ -334,6 +334,7 @@ impl ConnectionPool {
                         });
                     }
                     Err(e) => {
+                        queue.reduce_capacity();
                         return Err(e);
                     }
                 }
