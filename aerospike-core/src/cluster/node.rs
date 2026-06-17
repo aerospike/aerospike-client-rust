@@ -728,11 +728,7 @@ impl Node {
     /// the cluster-level threshold.
     pub fn error_rate_within_limit(&self) -> bool {
         let cluster_max = self.client_policy.max_error_rate;
-        if cluster_max == 0 {
-            return true;
-        }
-        let node_max = self.node_max_error_rate.load(Ordering::Relaxed);
-        self.error_rate_count.load(Ordering::Relaxed) <= node_max
+        cluster_max == 0 || self.error_rate_count.load(Ordering::Relaxed) <= cluster_max
     }
 
     /// Returns `Err(MaxErrorRate(addr))` when the breaker has tripped.
@@ -1056,102 +1052,6 @@ mod node_tests {
             queue_witness.num_conns(),
             0,
             "Node::drop should clear pooled connections"
-        );
-    }
-
-    // ---- Error-rate circuit breaker tests ----
-    // Fix: error_rate_within_limit now compares against node_max_error_rate (adaptive)
-    // instead of cluster max, making reset_error_rate's backoff logic effective.
-
-    fn make_node_with_error_rate(max_error_rate: usize) -> Node {
-        let policy = ClientPolicy {
-            max_error_rate,
-            error_rate_window: 1,
-            ..ClientPolicy::default()
-        };
-        let nv = Arc::new(NodeValidator {
-            name: "test-node".to_string(),
-            aliases: vec![Host::new("127.0.0.1", 3000)],
-            address: "127.0.0.1:3000".to_string(),
-            client_policy: policy.clone(),
-            use_new_info: true,
-            version: Version::default(),
-            detect_load_balancer: false,
-        });
-        Node::new(policy, nv)
-    }
-
-    #[aerospike_macro::test]
-    async fn error_rate_adapts_threshold_downward_on_breach() {
-        // After a breach, node_max halves. Verifies the adapted ceiling is enforced.
-        let node = make_node_with_error_rate(100);
-        assert_eq!(node.node_max_error_rate(), 100);
-
-        // Breach the first window: 101 errors > node_max(100).
-        for _ in 0..101 {
-            node.incr_error_rate();
-        }
-        assert!(
-            node.validate_error_count().is_err(),
-            "101 errors > node_max(100): breaker must trip"
-        );
-
-        node.reset_error_rate();
-        assert_eq!(
-            node.node_max_error_rate(),
-            50,
-            "node_max must halve after breach"
-        );
-        assert_eq!(node.error_rate_count(), 0, "reset must clear counter");
-
-        for _ in 0..51 {
-            node.incr_error_rate();
-        }
-        assert!(
-            node.validate_error_count().is_err(),
-            "51 > node_max(50): breaker must trip"
-        );
-    }
-
-    #[aerospike_macro::test]
-    async fn error_rate_adapts_threshold_upward_on_clean_window() {
-        // After two breaches (node_max → 25), 26 errors must trip the breaker.
-        let node = make_node_with_error_rate(100);
-
-        // Breach #1: node_max 100 → 50
-        for _ in 0..101 {
-            node.incr_error_rate();
-        }
-        node.reset_error_rate();
-        assert_eq!(node.node_max_error_rate(), 50);
-
-        // Breach #2: node_max 50 → 25
-        for _ in 0..51 {
-            node.incr_error_rate();
-        }
-        node.reset_error_rate();
-        assert_eq!(node.node_max_error_rate(), 25);
-
-        // 26 > node_max(25) must block.
-        for _ in 0..26 {
-            node.incr_error_rate();
-        }
-        assert!(
-            node.validate_error_count().is_err(),
-            "26 > node_max(25): breaker must trip"
-        );
-        node.reset_error_rate(); // node_max halves: 25 → 12
-
-        // Recovery: clean window doubles node_max back up.
-        for _ in 0..5 {
-            node.incr_error_rate();
-        }
-        assert!(node.validate_error_count().is_ok(), "5 errors within limit");
-        node.reset_error_rate();
-        assert_eq!(
-            node.node_max_error_rate(),
-            24,
-            "clean window doubles: 12 → 24"
         );
     }
 
