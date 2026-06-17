@@ -740,7 +740,11 @@ mod tests {
 
         let result = q.get();
         assert!(result.is_err(), "idle connection should have been skipped");
-        assert_eq!(q.reserved(), 0, "reserved must be decremented when an idle connection is dropped");
+        assert_eq!(
+            q.reserved(),
+            0,
+            "reserved must be decremented when an idle connection is dropped"
+        );
         assert_eq!(q.num_conns(), 0);
     }
 
@@ -765,7 +769,10 @@ mod tests {
         let overflow = Connection::new(&host, &policy, None)
             .await
             .expect("creating dummy connection failed");
-        assert!(!q.reserve_capacity(), "queue is at capacity, reserve should fail");
+        assert!(
+            !q.reserve_capacity(),
+            "queue is at capacity, reserve should fail"
+        );
 
         // Simulate a caller that already holds a reserved slot (e.g. via
         // make_conn which reserves before connecting) but tries to put_back
@@ -777,8 +784,16 @@ mod tests {
         assert_eq!(q.reserved(), 3);
 
         q.put_back(overflow);
-        assert_eq!(q.num_conns(), 2, "queue was full, overflow should have been dropped");
-        assert_eq!(q.reserved(), 2, "reserved must be decremented when overflow connection is dropped");
+        assert_eq!(
+            q.num_conns(),
+            2,
+            "queue was full, overflow should have been dropped"
+        );
+        assert_eq!(
+            q.reserved(),
+            2,
+            "reserved must be decremented when overflow connection is dropped"
+        );
     }
 
     #[aerospike_macro::test]
@@ -799,7 +814,43 @@ mod tests {
 
         // Both are held as in-flight PooledConnections, so the queue is empty
         // but total_reserved counts them.
-        assert_eq!(p.num_conns(), 0, "both connections are in-flight, queue should be empty");
-        assert_eq!(p.total_reserved(), 2, "in-flight connections must count in total_reserved");
+        assert_eq!(
+            p.num_conns(),
+            0,
+            "both connections are in-flight, queue should be empty"
+        );
+        assert_eq!(
+            p.total_reserved(),
+            2,
+            "in-flight connections must count in total_reserved"
+        );
+    }
+
+    // Tests the Drop/Closed path — Netsocket::TestDummy bypasses TCP so the
+    // Err arm of make_conn cannot be triggered here.
+    #[aerospike_macro::test]
+    async fn make_conn_slot_freed_when_connection_closed_on_drop() {
+        let host = Host::new("some-url", 30000);
+        let policy = ClientPolicy {
+            max_conns_per_node: 3,
+            ..ClientPolicy::default()
+        };
+        let p = ConnectionPool::new(host.clone(), policy.clone());
+
+        for round in 0..10 {
+            let mut c = p.make_conn(0).await.expect("make_conn failed");
+            c.invalidate(); // state → Closed
+            drop(c); // Drop: Closed arm → reduce_capacity()
+            assert_eq!(
+                p.total_reserved(),
+                0,
+                "round {round}: Closed connection must free its slot on drop"
+            );
+        }
+        // Pool must still accept new connections — no slots leaked.
+        let _c = p
+            .make_conn(0)
+            .await
+            .expect("pool must have capacity after all connections were closed and dropped");
     }
 }
