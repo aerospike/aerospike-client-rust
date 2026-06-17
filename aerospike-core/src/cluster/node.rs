@@ -558,7 +558,7 @@ impl Node {
             return Ok(conn);
         }
 
-        self.connection_pool.make_conn(0).await
+        self.connection_pool.make_conn(usize::from(hint)).await
     }
 
     // Put a connection to the node back in the connection pool
@@ -1056,6 +1056,42 @@ mod node_tests {
     }
 
     #[aerospike_macro::test]
+    async fn get_connection_miss_uses_hint_to_select_queue() {
+        // Fix 1: get_connection(hint) passed hardcoded 0 to make_conn on pool miss.
+        // Each hint must land on its own queue.
+        let policy = ClientPolicy {
+            conn_pools_per_node: 4,
+            max_conns_per_node: 8, // 2 per queue — room to observe distribution
+            ..ClientPolicy::default()
+        };
+        let nv = Arc::new(NodeValidator {
+            name: "test-node".to_string(),
+            aliases: vec![Host::new("127.0.0.1", 3000)],
+            address: "127.0.0.1:3000".to_string(),
+            client_policy: policy.clone(),
+            use_new_info: true,
+            version: Version::default(),
+            detect_load_balancer: false,
+        });
+        let node = Node::new(policy, nv);
+
+        // Trigger 4 pool misses with distinct hints — each should land on its own queue.
+        let _c0 = node.get_connection(0).await.expect("hint=0");
+        let _c1 = node.get_connection(1).await.expect("hint=1");
+        let _c2 = node.get_connection(2).await.expect("hint=2");
+        let _c3 = node.get_connection(3).await.expect("hint=3");
+
+        let queues = node.connection_pool.queues();
+        for i in 0..4 {
+            assert_eq!(
+                queues[i].reserved_count(),
+                1,
+                "queue[{i}] must have exactly 1 reserved connection"
+            );
+        }
+    }
+
+    #[aerospike_macro::test]
     async fn fill_min_conns_does_not_overshoot_when_connections_in_flight() {
         let policy = ClientPolicy {
             min_conns_per_node: 5,
@@ -1089,10 +1125,7 @@ mod node_tests {
             "all connections should be in-flight"
         );
 
-        let created = node
-            .fill_min_conns()
-            .await
-            .expect("fill_min_conns failed");
+        let created = node.fill_min_conns().await.expect("fill_min_conns failed");
         assert_eq!(
             created, 0,
             "fill_min_conns must not create connections when total_reserved already meets min"
