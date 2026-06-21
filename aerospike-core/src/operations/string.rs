@@ -202,7 +202,11 @@ fn pack_string_op(
     let mut size: usize = 0;
     let has_ctx = !ctx.is_empty();
     let inner_count = 1 + args.len();
-    let outer_count = if has_ctx { 2 + inner_count } else { inner_count };
+    let outer_count = if has_ctx {
+        2 + inner_count
+    } else {
+        inner_count
+    };
 
     size += pack_array_begin(buf, outer_count);
 
@@ -469,12 +473,7 @@ pub fn snip(policy: &StringPolicy, bin: &str, start: i64, end: i64) -> Operation
 
 /// `replace` operation that replaces the first occurrence of `needle` with
 /// `replacement`.
-pub fn replace(
-    policy: &StringPolicy,
-    bin: &str,
-    needle: &str,
-    replacement: &str,
-) -> Operation {
+pub fn replace(policy: &StringPolicy, bin: &str, needle: &str, replacement: &str) -> Operation {
     modify_op(
         STR_OP_REPLACE,
         bin,
@@ -487,12 +486,7 @@ pub fn replace(
 
 /// `replaceAll` operation that replaces every occurrence of `needle` with
 /// `replacement`.
-pub fn replace_all(
-    policy: &StringPolicy,
-    bin: &str,
-    needle: &str,
-    replacement: &str,
-) -> Operation {
+pub fn replace_all(policy: &StringPolicy, bin: &str, needle: &str, replacement: &str) -> Operation {
     modify_op(
         STR_OP_REPLACE_ALL,
         bin,

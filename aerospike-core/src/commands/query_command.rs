@@ -96,6 +96,19 @@ impl Command for QueryCommand<'_> {
         0
     }
 
+    fn command_type(&self) -> crate::metrics::CommandType {
+        // A statement with secondary-index filters is a query; otherwise a scan.
+        if self.statement.filters.is_some() {
+            crate::metrics::CommandType::Query
+        } else {
+            crate::metrics::CommandType::Scan
+        }
+    }
+
+    fn namespace(&self) -> Option<&str> {
+        Some(&self.statement.namespace)
+    }
+
     fn can_retry(&mut self) -> bool {
         false
     }

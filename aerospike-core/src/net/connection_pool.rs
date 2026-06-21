@@ -18,6 +18,7 @@ use std::sync::Arc;
 
 use crate::commands::admin_command::SessionInfo;
 use crate::errors::{Error, Result};
+use crate::metrics::NodeMetrics;
 use crate::net::{Connection, ConnectionState, Host};
 use crate::policy::ClientPolicy;
 use std::collections::VecDeque;
@@ -38,6 +39,9 @@ struct SharedQueue {
     /// AUTHENTICATE with the token instead of paying for a full login.
     /// Cleared on token rejection (server restart / token revocation).
     session: Mutex<Option<SessionInfo>>,
+    /// Per-node metrics sink. Connection-lifecycle counters are recorded here
+    /// (no-op when metrics are disabled). `None` in unit tests.
+    metrics: Option<Arc<NodeMetrics>>,
 }
 
 #[derive(Debug)]
@@ -45,7 +49,12 @@ pub struct Queue(Arc<SharedQueue>);
 
 impl Queue {
     /// Creates a connection pool with a fixed capacity.
-    pub fn with_capacity(capacity: usize, host: Host, policy: ClientPolicy) -> Self {
+    pub fn with_capacity(
+        capacity: usize,
+        host: Host,
+        policy: ClientPolicy,
+        metrics: Option<Arc<NodeMetrics>>,
+    ) -> Self {
         let hashed_pass = policy.hashed_pass();
         let shared = SharedQueue {
             connections: Mutex::new(VecDeque::with_capacity(capacity)),
@@ -55,8 +64,14 @@ impl Queue {
             policy,
             hashed_pass,
             session: Mutex::new(None),
+            metrics,
         };
         Queue(Arc::new(shared))
+    }
+
+    /// Per-node metrics sink for this queue, if any.
+    fn metrics(&self) -> Option<&Arc<NodeMetrics>> {
+        self.0.metrics.as_ref()
     }
 
     /// Checks if the queue has capacity for another connection.
@@ -115,6 +130,10 @@ impl Queue {
             guard.as_ref().filter(|s| !s.is_expired()).cloned()
         };
 
+        if let Some(metrics) = self.metrics() {
+            metrics.incr_connections_attempt();
+        }
+
         let result = aerospike_rt::timeout(
             self.0.policy.timeout(),
             Connection::new_with_session(
@@ -136,11 +155,29 @@ impl Queue {
                         .unwrap_or_else(std::sync::PoisonError::into_inner);
                     *guard = Some(s);
                 }
+                if let Some(metrics) = self.metrics() {
+                    metrics.incr_connections_successful();
+                }
                 Ok(conn)
             }
-            _ => Err(Error::Connection(
-                "Could not open network connection".to_string(),
-            )),
+            // Inner error: the connect/auth itself failed.
+            Ok(Err(_)) => {
+                if let Some(metrics) = self.metrics() {
+                    metrics.incr_connections_failed(false);
+                }
+                Err(Error::Connection(
+                    "Could not open network connection".to_string(),
+                ))
+            }
+            // Outer error: the connect future exceeded the policy timeout.
+            Err(_) => {
+                if let Some(metrics) = self.metrics() {
+                    metrics.incr_connections_failed(true);
+                }
+                Err(Error::Connection(
+                    "Could not open network connection".to_string(),
+                ))
+            }
         }
     }
 
@@ -157,6 +194,10 @@ impl Queue {
                 drop(connections);
                 if conn.is_idle() {
                     // let the connection drop and close
+                    if let Some(metrics) = self.metrics() {
+                        metrics.incr_connections_idle_dropped();
+                        metrics.incr_connections_closed();
+                    }
                     continue;
                 }
                 connection = conn;
@@ -181,6 +222,13 @@ impl Queue {
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         if conn.state == ConnectionState::Ready && connections.len() < self.0.capacity {
             connections.push_back(conn);
+        } else if conn.state == ConnectionState::Ready {
+            // Pool is full: the connection is closed on drop.
+            drop(connections);
+            if let Some(metrics) = self.metrics() {
+                metrics.incr_connections_pool_overflow();
+                metrics.incr_connections_closed();
+            }
         }
         // otherwise let it drop
     }
@@ -257,10 +305,11 @@ pub struct ConnectionPool {
 }
 
 impl ConnectionPool {
-    pub fn new(host: Host, policy: ClientPolicy) -> Self {
+    pub fn new(host: Host, policy: ClientPolicy, metrics: Option<Arc<NodeMetrics>>) -> Self {
         let num_conns = policy.max_conns_per_node;
         let num_queues = policy.conn_pools_per_node;
-        let queues = ConnectionPool::initialize_queues(num_conns, num_queues, host, policy);
+        let queues =
+            ConnectionPool::initialize_queues(num_conns, num_queues, host, policy, metrics);
         ConnectionPool { num_queues, queues }
     }
 
@@ -269,6 +318,7 @@ impl ConnectionPool {
         num_queues: u8,
         host: Host,
         policy: ClientPolicy,
+        metrics: Option<Arc<NodeMetrics>>,
     ) -> Vec<Queue> {
         let num_queues = usize::from(num_queues);
         let max = num_conns / num_queues;
@@ -280,9 +330,20 @@ impl ConnectionPool {
                 capacity += 1;
                 rem -= 1;
             }
-            queues.push(Queue::with_capacity(capacity, host.clone(), policy.clone()));
+            queues.push(Queue::with_capacity(
+                capacity,
+                host.clone(),
+                policy.clone(),
+                metrics.clone(),
+            ));
         }
         queues
+    }
+
+    /// Total number of connections owned across all queues, including those
+    /// currently on loan. Used as the open-connections gauge for metrics.
+    pub fn reserved_conns(&self) -> usize {
+        self.queues.iter().map(Queue::reserved_count).sum()
     }
 
     /// Get a connection from one of the internal pools.
@@ -401,7 +462,12 @@ impl Drop for PooledConnection {
     fn drop(&mut self) {
         if let Some(conn) = self.conn.take() {
             match conn.state {
-                ConnectionState::Closed => self.queue.reduce_capacity(),
+                ConnectionState::Closed => {
+                    self.queue.reduce_capacity();
+                    if let Some(metrics) = self.queue.metrics() {
+                        metrics.incr_connections_closed();
+                    }
+                }
                 ConnectionState::Ready => self.queue.put_back(conn),
                 _ if conn.should_attempt_recovery() => {
                     // need to spawn a new green thread to avoid blocking the current one
@@ -410,7 +476,12 @@ impl Drop for PooledConnection {
                         conn,
                     ));
                 }
-                _ => self.queue.reduce_capacity(),
+                _ => {
+                    self.queue.reduce_capacity();
+                    if let Some(metrics) = self.queue.metrics() {
+                        metrics.incr_connections_closed();
+                    }
+                }
             }
         }
     }
@@ -482,7 +553,7 @@ mod tests {
         let host = Host::new("some-url", 30000);
         let policy = ClientPolicy::default();
 
-        let q = Queue::with_capacity(3, host.clone(), policy.clone());
+        let q = Queue::with_capacity(3, host.clone(), policy.clone(), None);
         assert_eq!(q.num_conns(), 0);
         assert_eq!(q.reserved(), 0);
         assert_eq!(q.get().is_err(), true);
@@ -546,7 +617,7 @@ mod tests {
         let host = Host::new("some-url", 30000);
         let policy = ClientPolicy::default();
 
-        let p = ConnectionPool::new(host.clone(), policy.clone());
+        let p = ConnectionPool::new(host.clone(), policy.clone(), None);
         assert_eq!(p.num_conns(), 0);
         assert_eq!(p.get(0).is_err(), true);
 
@@ -582,7 +653,7 @@ mod tests {
             ..ClientPolicy::default()
         };
 
-        let p = ConnectionPool::new(host.clone(), policy.clone());
+        let p = ConnectionPool::new(host.clone(), policy.clone(), None);
         assert_eq!(p.num_conns(), 0);
         assert_eq!(p.get(0).is_err(), true);
 

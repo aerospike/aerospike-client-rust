@@ -158,6 +158,9 @@ pub use commands::particle_type::ParticleType;
 pub use errors::{Error, Result};
 pub use expressions::regex_flag::RegexFlag;
 pub use key::Key;
+pub use metrics::{
+    ClusterMetrics, CommandType, HistogramType, Labels, MetricsPolicy, NodeMetricsSnapshot,
+};
 pub use net::Host;
 pub use net::ToHosts;
 pub use operations::{ListOrderType, ListPolicy, ListReturnType, ListSortFlags, ListWriteFlags};
@@ -175,10 +178,12 @@ pub use query::{
 pub use record::Record;
 pub use result_code::ResultCode;
 pub use role::Role;
+pub use sampler::Sampler;
 pub use task::{DropIndexTask, ExecuteTask, IndexTask, RegisterTask, Task, UdfRemoveTask};
 pub use txn::{AbortStatus, CommitErrorType, CommitStatus, Txn, TxnState};
 pub use user::User;
 pub use value::{FloatValue, Value};
+pub use xor_shift::XorShift;
 
 #[macro_use]
 pub mod errors;
@@ -194,6 +199,7 @@ mod cluster;
 pub(crate) mod commands;
 mod common;
 pub mod expressions;
+pub mod metrics;
 mod msgpack;
 mod net;
 pub mod operations;
@@ -203,11 +209,13 @@ pub mod query;
 mod record;
 mod result_code;
 mod role;
+pub mod sampler;
 pub mod task;
 pub mod txn;
 pub(crate) mod txn_monitor;
 pub(crate) mod txn_roll;
 mod user;
+pub mod xor_shift;
 
 #[cfg(test)]
 extern crate hex;

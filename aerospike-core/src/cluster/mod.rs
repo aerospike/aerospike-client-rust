@@ -25,7 +25,7 @@ use aerospike_rt::time::{Duration, Instant};
 use std::cell::OnceCell;
 use std::collections::HashMap;
 use std::net::ToSocketAddrs;
-use std::sync::atomic::{AtomicBool, AtomicIsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicIsize, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::vec::Vec;
 
@@ -38,6 +38,7 @@ use self::peers::{Peer, Peers};
 
 use crate::commands::admin_command::AdminCommand;
 use crate::errors::{Error, Result};
+use crate::metrics::{Labels, MetricsPolicy, NodeMetrics, NodeMetricsSnapshot};
 use crate::net::Host;
 use crate::policy::ClientPolicy;
 use crate::AdminPolicy;
@@ -101,6 +102,19 @@ pub struct Cluster {
     // is set and no node validates. Only meaningful during init — cleared
     // at the start of each `seed_nodes` invocation.
     last_seed_errors: std::sync::Mutex<Vec<(Host, String)>>,
+
+    // ---- Metrics ----
+    // Whether periodic metrics collection is enabled.
+    metrics_enabled: AtomicBool,
+    // Active metrics policy (histogram shape + labels).
+    metrics_policy: AtomicArc<MetricsPolicy>,
+    // Per-host accumulated statistics, aggregated once per tend. Retains
+    // entries for removed hosts (reported with zero open connections).
+    metrics: std::sync::Mutex<HashMap<String, NodeMetricsSnapshot>>,
+    // Commands that exhausted their retry budget / total timeout. Surfaced in
+    // the cluster-aggregated metrics.
+    max_retries_exceeded_count: AtomicU64,
+    total_timeout_exceeded_count: AtomicU64,
 }
 
 /// `true` when `node.host().name` parses to a loopback address, or is the
@@ -136,6 +150,12 @@ impl Cluster {
             tend_channel: Mutex::new(tx),
             closed: AtomicBool::new(false),
             last_seed_errors: std::sync::Mutex::new(Vec::new()),
+
+            metrics_enabled: AtomicBool::new(false),
+            metrics_policy: AtomicArc::from(MetricsPolicy::default()),
+            metrics: std::sync::Mutex::new(HashMap::new()),
+            max_retries_exceeded_count: AtomicU64::new(0),
+            total_timeout_exceeded_count: AtomicU64::new(0),
         });
         // try to seed connections for first use
         Cluster::wait_till_stabilized(cluster.clone()).await?;
@@ -241,7 +261,11 @@ impl Cluster {
                     debug!("Reap/refresh processed {processed} idle connections on {node}");
                 }
 
-                if let Err(err) = node.refresh(&peers).await {
+                let refresh_result = node.refresh(&peers).await;
+                if self.metrics_enabled() {
+                    node.metrics().incr_tend(refresh_result.is_ok());
+                }
+                if let Err(err) = refresh_result {
                     warn!("Node `{node}` refresh failed: {err}");
                 }
             }
@@ -337,11 +361,16 @@ impl Cluster {
                     );
                 } else {
                     partition_map.get_or_init(|| (*self.partition_map.load().clone()).clone());
-                    if let Err(err) = self
+                    match self
                         .update_partitions(partition_map.get_mut().unwrap(), node)
                         .await
                     {
-                        warn!("Node `{node}` partition update failed: {err}");
+                        Ok(()) => {
+                            if self.metrics_enabled() {
+                                node.metrics().incr_partition_map_update();
+                            }
+                        }
+                        Err(err) => warn!("Node `{node}` partition update failed: {err}"),
                     }
                 }
             }
@@ -355,6 +384,11 @@ impl Cluster {
 
         if let Some(partition_map) = partition_map.take() {
             self.partition_map.store(Arc::new(partition_map));
+        }
+
+        // Drain per-node metrics into the cluster accumulator once per tend.
+        if self.metrics_enabled() {
+            self.aggregate_node_metrics(&active_nodes);
         }
 
         // Bump the tend counter and, if the configured `error_rate_window`
@@ -884,9 +918,148 @@ impl Cluster {
     }
 
     async fn create_node(&self, nv: NodeValidator) -> Node {
-        let res = Node::new(self.client_policy(), Arc::new(nv));
+        // Shape the node's metrics with the current metrics policy and enable
+        // collection immediately if the cluster already has metrics on (so
+        // nodes discovered after `enable_metrics` still record).
+        let metrics = Arc::new(NodeMetrics::new((*self.metrics_policy()).clone()));
+        if self.metrics_enabled() {
+            metrics.set_enabled(true);
+        }
+        let res = Node::new(self.client_policy(), Arc::new(nv), metrics);
         res.send_user_agent_id().await;
         res
+    }
+
+    // ---- Metrics API ----
+
+    /// Returns the active metrics policy.
+    pub fn metrics_policy(&self) -> Arc<MetricsPolicy> {
+        self.metrics_policy.load().clone()
+    }
+
+    /// Returns whether periodic metrics collection is enabled.
+    pub fn metrics_enabled(&self) -> bool {
+        self.metrics_enabled.load(Ordering::Relaxed)
+    }
+
+    /// Enables metrics collection, (re)shaping every node's histograms to the
+    /// given policy.
+    pub fn enable_metrics(&self, policy: MetricsPolicy) {
+        self.metrics_policy.store(Arc::new(policy.clone()));
+        self.metrics_enabled.store(true, Ordering::Relaxed);
+
+        // Reshape retained per-host snapshots.
+        {
+            let mut metrics = self.metrics.lock().unwrap();
+            for snapshot in metrics.values_mut() {
+                let mut reshaped = NodeMetricsSnapshot::new(policy.clone());
+                reshaped.aggregate(snapshot);
+                *snapshot = reshaped;
+            }
+        }
+
+        for node in self.nodes().iter() {
+            node.metrics().reshape(&policy);
+            node.metrics().set_enabled(true);
+        }
+    }
+
+    /// Disables metrics collection.
+    pub fn disable_metrics(&self) {
+        self.metrics_enabled.store(false, Ordering::Relaxed);
+        for node in self.nodes().iter() {
+            node.metrics().set_enabled(false);
+        }
+    }
+
+    /// Records a command that exhausted its retry budget.
+    pub fn incr_max_retries_exceeded(&self) {
+        if self.metrics_enabled() {
+            self.max_retries_exceeded_count
+                .fetch_add(1, Ordering::Relaxed);
+        }
+    }
+
+    /// Records a command that exceeded its total timeout.
+    pub fn incr_total_timeout_exceeded(&self) {
+        if self.metrics_enabled() {
+            self.total_timeout_exceeded_count
+                .fetch_add(1, Ordering::Relaxed);
+        }
+    }
+
+    /// Drains each node's live metrics and merges them into the per-host
+    /// accumulator.
+    fn aggregate_node_metrics(&self, nodes: &[Arc<Node>]) {
+        let mut metrics = self.metrics.lock().unwrap();
+        for node in nodes {
+            let host = node.host().to_string();
+            let drained = node.metrics().get_and_reset();
+            match metrics.get_mut(&host) {
+                Some(existing) => existing.aggregate(&drained),
+                None => {
+                    metrics.insert(host, drained);
+                }
+            }
+        }
+    }
+
+    /// Aggregates and returns a clone of the per-host statistics, stamping each
+    /// active node's open-connection gauge.
+    pub fn metrics_copy(&self) -> HashMap<String, NodeMetricsSnapshot> {
+        let nodes = self.nodes();
+        self.aggregate_node_metrics(&nodes);
+
+        let mut open_by_host: HashMap<String, u64> = HashMap::new();
+        for node in nodes.iter() {
+            open_by_host.insert(node.host().to_string(), node.open_connections());
+        }
+
+        let metrics = self.metrics.lock().unwrap();
+        let mut res = HashMap::with_capacity(metrics.len());
+        for (host, snapshot) in metrics.iter() {
+            let mut copy = snapshot.clone();
+            // Active nodes report their current open count; removed hosts 0.
+            copy.set_open_connections(open_by_host.get(host).copied().unwrap_or(0));
+            res.insert(host.clone(), copy);
+        }
+        res
+    }
+
+    /// Value of the max-retries-exceeded counter.
+    pub fn max_retries_exceeded_count(&self) -> u64 {
+        self.max_retries_exceeded_count.load(Ordering::Relaxed)
+    }
+
+    /// Value of the total-timeout-exceeded counter.
+    pub fn total_timeout_exceeded_count(&self) -> u64 {
+        self.total_timeout_exceeded_count.load(Ordering::Relaxed)
+    }
+
+    /// Builds the per-node reserved labels (node/host/cluster/app-id) merged
+    /// with the user-provided labels.
+    pub fn node_labels(&self) -> Labels {
+        let policy = self.metrics_policy();
+        let user_labels = &policy.labels;
+        let client_policy = self.client_policy();
+        let cluster_name = client_policy.cluster_name.clone().unwrap_or_default();
+        let app_id = client_policy.application_id.clone().unwrap_or_default();
+
+        let mut labels = Labels::new();
+        for node in self.nodes().iter() {
+            let mut entries: HashMap<String, String> = HashMap::new();
+            for label_map in user_labels.entries() {
+                for (k, v) in label_map {
+                    entries.insert(k.clone(), v.clone());
+                }
+            }
+            entries.insert("node".to_string(), node.name().to_string());
+            entries.insert("host".to_string(), node.host().to_string());
+            entries.insert("cluster".to_string(), cluster_name.clone());
+            entries.insert("app-id".to_string(), app_id.clone());
+            labels.push(entries);
+        }
+        labels
     }
 
     /// Identifies nodes that should be removed from the cluster.
@@ -943,6 +1116,11 @@ impl Cluster {
         for node in friend_list {
             self.add_aliases(node.clone());
         }
+        if self.metrics_enabled() {
+            for node in friend_list {
+                node.metrics().incr_node_added();
+            }
+        }
         self.add_nodes(friend_list);
     }
 
@@ -952,6 +1130,15 @@ impl Cluster {
             for alias in node.aliases() {
                 self.remove_alias(&alias);
             }
+        }
+        // Record the removal and drain the node's final metrics into the
+        // per-host accumulator so they survive the node going away (the map
+        // keeps removed-host entries, reported with zero open connections).
+        if self.metrics_enabled() {
+            for node in &nodes_to_remove {
+                node.metrics().incr_node_removed();
+            }
+            self.aggregate_node_metrics(&nodes_to_remove);
         }
         for node in &mut nodes_to_remove {
             debug!("Closing node {node}");

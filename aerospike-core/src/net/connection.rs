@@ -25,6 +25,7 @@ use crate::commands::buffer::{self, Buffer, MAX_BUFFER_SIZE};
 use crate::errors::{Error, Result};
 use crate::net::Host;
 use crate::policy::{AuthMode, ClientPolicy};
+use crate::XorShift;
 #[cfg(feature = "rt-async-std")]
 use aerospike_rt::async_std::net::Shutdown;
 #[cfg(feature = "rt-tokio")]
@@ -85,6 +86,8 @@ pub struct Connection {
     // duration after which connection is considered idle
     idle_timeout: Option<Duration>,
     idle_deadline: Option<Instant>,
+
+    rnd: XorShift,
 
     // connection object
     pub(crate) conn: Netsocket,
@@ -190,6 +193,7 @@ impl Connection {
             can_recover_connection: false,
             response_decompressed: false,
             compressed_stream_body: false,
+            rnd: XorShift::new(),
         };
 
         // Try the cheap session-token path first. On rejection (token
@@ -235,6 +239,7 @@ impl Connection {
     ) -> Result<Self> {
         let addr = host.address();
         let stream = Netsocket::TestDummy;
+        let rnd = XorShift::new();
 
         let idle_timeout = if policy.idle_timeout > 0 {
             Some(Duration::from_millis(policy.idle_timeout as u64))
@@ -256,9 +261,16 @@ impl Connection {
             can_recover_connection: false,
             response_decompressed: false,
             compressed_stream_body: false,
+            rnd: rnd,
         };
         conn.refresh();
         Ok(conn)
+    }
+
+    /// Returns the connection's per-connection random generator, used by the
+    /// metrics sampler to decide whether to record a command.
+    pub(crate) const fn rng(&mut self) -> &mut XorShift {
+        &mut self.rnd
     }
 
     pub fn close(&mut self) {

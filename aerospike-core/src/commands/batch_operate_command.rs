@@ -78,6 +78,19 @@ impl BatchOperateCommand {
         // set timeout outside the loop
         let deadline = self.policy.deadline();
 
+        // Metrics: a batch containing any write op is a BatchWrite, otherwise
+        // a BatchRead. `trans_start` measures the overall command latency.
+        let cmd_type = if self.batch_ops.iter().any(|op| op.0.has_write()) {
+            crate::metrics::CommandType::BatchWrite
+        } else {
+            crate::metrics::CommandType::BatchRead
+        };
+        let trans_start = Instant::now();
+        // The per-command sample decision (enabled AND sampler-selected). Made
+        // once, the first time a connection is acquired, then reused for the
+        // whole command so all of its metrics are recorded together or not.
+        let mut sampled: Option<bool> = None;
+
         // Execute command until successful, timed out or maximum iterations have been reached.
         loop {
             let retry_err = if iterations & 1 == 0 || matches!(self.policy.replica, Replica::Master)
@@ -88,6 +101,8 @@ impl BatchOperateCommand {
                     &self.policy,
                     deadline,
                     self.node.clone(),
+                    cmd_type,
+                    &mut sampled,
                 )
                 .await?
             } else {
@@ -106,8 +121,15 @@ impl BatchOperateCommand {
                     partition.sequence = 1;
                     let node = partition.get_node(&cluster)?;
 
-                    if let Some(e) =
-                        Self::request_group(individual_op, &self.policy, deadline, node).await?
+                    if let Some(e) = Self::request_group(
+                        individual_op,
+                        &self.policy,
+                        deadline,
+                        node,
+                        cmd_type,
+                        &mut sampled,
+                    )
+                    .await?
                     {
                         group_err = Some(e);
                         break;
@@ -118,8 +140,25 @@ impl BatchOperateCommand {
 
             if let Some(e) = retry_err {
                 last_err = Some(e.chain_cause(last_err));
+                if sampled.unwrap_or(false) {
+                    self.node.metrics().incr_transaction_retry();
+                }
             } else {
-                // command has completed successfully. Exit method.
+                // command has completed successfully. Record per-command-type
+                // latency and the final per-record result codes, then exit.
+                if sampled.unwrap_or(false) {
+                    let micros = trans_start.elapsed().as_micros() as u64;
+                    self.node.metrics().record_command(cmd_type, micros);
+                    for (op, _) in &self.batch_ops {
+                        if let Some(rc) = op.batch_record().result_code {
+                            self.node.metrics().record_result_code(
+                                &op.key().namespace,
+                                cmd_type,
+                                rc,
+                            );
+                        }
+                    }
+                }
                 return Ok(self);
             }
 
@@ -127,6 +166,9 @@ impl BatchOperateCommand {
 
             // too many retries
             if self.policy.max_retries() > 0 && iterations > self.policy.max_retries() + 1 {
+                if sampled.unwrap_or(false) {
+                    self.node.metrics().incr_transaction_error();
+                }
                 let u32_iters = if iterations > u32::MAX as usize {
                     u32::MAX
                 } else {
@@ -145,6 +187,9 @@ impl BatchOperateCommand {
             // check for command timeout
             if let Some(deadline) = deadline {
                 if Instant::now() > deadline {
+                    if sampled.unwrap_or(false) {
+                        self.node.metrics().incr_transaction_error();
+                    }
                     let u32_iters = if iterations > u32::MAX as usize {
                         u32::MAX
                     } else {
@@ -169,6 +214,8 @@ impl BatchOperateCommand {
         policy: &BatchPolicy,
         deadline: Option<Instant>,
         node: Arc<Node>,
+        cmd_type: crate::metrics::CommandType,
+        sampled: &mut Option<bool>,
     ) -> Result<Option<Error>> {
         // Per-node circuit breaker: don't even open a socket if the node
         // is currently outside its error-rate window. Mirrors Java's
@@ -178,6 +225,23 @@ impl BatchOperateCommand {
             return Ok(Some(err));
         }
 
+        // Metrics: detailed per-namespace metrics are attributed to every
+        // distinct namespace in this request group. Build the namespace set
+        // when collection is enabled; the per-command sample decision is made
+        // below once a connection (and its rng) is available.
+        let namespaces: Vec<String> = if node.metrics().is_enabled() {
+            let mut v: Vec<String> = batch_ops
+                .iter()
+                .map(|op| op.0.key().namespace.clone())
+                .collect();
+            v.sort();
+            v.dedup();
+            v
+        } else {
+            Vec::new()
+        };
+
+        let aq_start = Instant::now();
         let mut conn = match node.get_connection(0).await {
             Ok(conn) => conn,
             Err(err) => {
@@ -186,6 +250,19 @@ impl BatchOperateCommand {
                 return Ok(Some(err));
             }
         };
+        // Decide once per command whether to record metrics: collection
+        // enabled AND the policy's sampler selects it (drawing from this
+        // connection's rng). Reused across retries/per-op groups.
+        if sampled.is_none() {
+            *sampled = Some(node.metrics().should_sample(conn.rng()));
+        }
+        let metrics_on = sampled.unwrap_or(false);
+        if metrics_on {
+            let micros = aq_start.elapsed().as_micros() as u64;
+            for ns in &namespaces {
+                node.metrics().record_connection_aq(ns, cmd_type, micros);
+            }
+        }
 
         conn.buffer
             .set_compress(policy.use_compression(), policy.compression_threshold());
@@ -205,6 +282,8 @@ impl BatchOperateCommand {
         conn.set_timeout_delay(true, policy.timeout_delay());
 
         // Send command.
+        let bytes_sent = conn.buffer.data_buffer.len() as u64;
+        let write_start = Instant::now();
         if let Err(err) = conn.flush().await {
             // IO errors are considered temporary anomalies. Retry.
             // Close socket to flush out possible garbage. Do not put back in pool.
@@ -213,11 +292,26 @@ impl BatchOperateCommand {
             node.incr_error_rate();
             return Ok(Some(err));
         }
+        if metrics_on {
+            let micros = write_start.elapsed().as_micros() as u64;
+            for ns in &namespaces {
+                node.metrics()
+                    .record_write(ns, cmd_type, bytes_sent, micros);
+            }
+        }
 
         // Parse results.
-        if let Err(err) =
-            Self::parse_result(batch_ops, &mut conn, policy.base_policy.txn.as_ref()).await
-        {
+        let parse_start = Instant::now();
+        let parse_outcome =
+            Self::parse_result(batch_ops, &mut conn, policy.base_policy.txn.as_ref()).await;
+        if metrics_on && parse_outcome.is_ok() {
+            let micros = parse_start.elapsed().as_micros() as u64;
+            let received = conn.bytes_read() as u64;
+            for ns in &namespaces {
+                node.metrics().record_parse(ns, cmd_type, micros, received);
+            }
+        }
+        if let Err(err) = parse_outcome {
             // close the connection
             // cancelling/closing the batch/multi commands will return an error, which will
             // close the connection to throw away its data and signal the server about the

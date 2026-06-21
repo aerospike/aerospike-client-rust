@@ -70,6 +70,14 @@ impl Command for ExistsCommand<'_> {
         self.single_command.hint()
     }
 
+    fn command_type(&self) -> crate::metrics::CommandType {
+        crate::metrics::CommandType::Exists
+    }
+
+    fn namespace(&self) -> Option<&str> {
+        Some(&self.single_command.key.namespace)
+    }
+
     fn can_retry(&mut self) -> bool {
         true
     }

@@ -57,6 +57,7 @@ pub use self::write_command::WriteCommand;
 
 use crate::cluster::Node;
 use crate::errors::{Error, Result};
+use crate::metrics::CommandType;
 use crate::net::Connection;
 use crate::ResultCode;
 
@@ -77,6 +78,16 @@ pub trait Command {
     }
     /// Prepare the partition for a retry by advancing the sequence number.
     fn prepare_retry(&mut self, _is_client_timeout: bool) {}
+    /// Logical command type, used to attribute metrics. Defaults to
+    /// [`CommandType::None`] (not recorded).
+    fn command_type(&self) -> CommandType {
+        CommandType::None
+    }
+    /// Namespace this command targets, used for detailed per-namespace
+    /// metrics. `None` for multi-namespace or namespace-less commands.
+    fn namespace(&self) -> Option<&str> {
+        None
+    }
 }
 
 /// Whether the connection may be returned to the pool after this error.

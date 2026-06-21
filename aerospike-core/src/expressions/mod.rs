@@ -2083,7 +2083,6 @@ mod tests {
 
         assert_eq!(b64, decoded_b64);
     }
-
 }
 
 // ===== Path Expression helpers =====

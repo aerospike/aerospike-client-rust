@@ -99,6 +99,14 @@ impl Command for OperateCommand<'_> {
         self.read_command.single_command.hint()
     }
 
+    fn command_type(&self) -> crate::metrics::CommandType {
+        crate::metrics::CommandType::Operate
+    }
+
+    fn namespace(&self) -> Option<&str> {
+        Some(&self.read_command.single_command.key.namespace)
+    }
+
     fn prepare_retry(&mut self, is_client_timeout: bool) {
         self.read_command
             .single_command

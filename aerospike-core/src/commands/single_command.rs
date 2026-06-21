@@ -20,7 +20,7 @@ use crate::commands::{self};
 use crate::errors::{Error, Result};
 use crate::net::Connection;
 use crate::policy::Policy;
-use crate::Key;
+use crate::{Key, ResultCode};
 use aerospike_rt::sleep;
 use aerospike_rt::time::{Duration, Instant};
 
@@ -110,6 +110,16 @@ impl<'a> SingleCommand<'a> {
         let mut last_node_addr: Option<String> = None;
         let is_write = cmd.is_write();
 
+        // Metrics: captured once before the retry loop. `cmd_type`/`cmd_namespace`
+        // attribute per-command-type and detailed per-namespace metrics;
+        // `trans_start` measures total command latency; `last_node` lets the
+        // terminal error paths attribute the failure to the node that served it.
+        let cmd_type = cmd.command_type();
+        let cmd_namespace: Option<String> = cmd.namespace().map(str::to_owned);
+        let trans_start = Instant::now();
+        let mut last_node: Option<Arc<Node>> = None;
+        let micros_since = |start: Instant| start.elapsed().as_micros() as u64;
+
         // set timeout outside the loop
         let deadline = policy.deadline();
         let effective_attempt = policy.max_retries() + 1;
@@ -134,6 +144,9 @@ impl<'a> SingleCommand<'a> {
             // check for max retries
             if iterations > effective_attempt {
                 // first attempt isn't a retry
+                if let Some(n) = &last_node {
+                    n.metrics().incr_transaction_error();
+                }
                 let err = Error::Timeout(format!("Timeout after {iterations} tries"));
                 let tail = match last_err.take() {
                     Some(e) => e.wrap(err),
@@ -153,6 +166,9 @@ impl<'a> SingleCommand<'a> {
                 // DO NOT retry for streaming commands here. They retry in their own execution logic.
                 // DO NOT retry for any error other than network errors.
                 if !cmd.can_retry() {
+                    if let Some(n) = &last_node {
+                        n.metrics().incr_transaction_error();
+                    }
                     let err = Error::Timeout("Timeout".to_string());
                     let tail = match last_err.take() {
                         Some(e) => e.wrap(err),
@@ -202,6 +218,7 @@ impl<'a> SingleCommand<'a> {
                 } // Node is currently inactive. Retry.
             };
             last_node_addr = Some(node.to_string());
+            last_node = Some(node.clone());
 
             // Per-node circuit breaker: if this node has tripped its
             // error-rate window, refuse the command outright (no socket
@@ -213,6 +230,7 @@ impl<'a> SingleCommand<'a> {
                 continue;
             }
 
+            let aq_start = Instant::now();
             let mut conn = match node.get_connection(cmd.hint()).await {
                 Ok(conn) => conn,
                 Err(err) => {
@@ -222,6 +240,15 @@ impl<'a> SingleCommand<'a> {
                     continue;
                 }
             };
+            // Decide once per attempt whether to record metrics for this
+            // command: collection enabled AND the policy's sampler selects it.
+            let metrics_on = node.metrics().should_sample(conn.rng());
+            if metrics_on {
+                if let Some(ns) = cmd_namespace.as_deref() {
+                    node.metrics()
+                        .record_connection_aq(ns, cmd_type, micros_since(aq_start));
+                }
+            }
 
             conn.set_socket_timeout(deadline, policy.socket_timeout());
             conn.set_timeout_delay(cmd.can_recover_connection(), policy.timeout_delay());
@@ -243,22 +270,47 @@ impl<'a> SingleCommand<'a> {
             }
 
             // Send command.
+            let bytes_sent = conn.buffer.data_buffer.len() as u64;
+            let write_start = Instant::now();
             if let Err(err) = cmd.write_buffer(&mut conn).await {
                 // IO errors are considered temporary anomalies. Retry.
                 // Close socket to flush out possible garbage. Do not put back in pool.
                 conn.invalidate();
                 warn!("Node {node}: {err}");
                 node.incr_error_rate();
+                if metrics_on {
+                    node.metrics().incr_transaction_retry();
+                }
                 last_err = Some(err);
                 continue;
             }
             commands_sent += 1;
+            if metrics_on {
+                if let Some(ns) = cmd_namespace.as_deref() {
+                    node.metrics().record_write(
+                        ns,
+                        cmd_type,
+                        bytes_sent,
+                        micros_since(write_start),
+                    );
+                }
+            }
 
             // Parse results.
+            let parse_start = Instant::now();
             if let Err(err) = cmd.parse_result(&mut conn).await {
                 // close the connection if the error is not safe to pool
                 if !commands::keep_connection(&err) {
                     conn.invalidate();
+                }
+
+                // Record the server result code (if any) for this attempt.
+                if metrics_on {
+                    if let (Some(ns), Some(rc)) =
+                        (cmd_namespace.as_deref(), err.server_result_code())
+                    {
+                        node.metrics().record_result_code(ns, cmd_type, rc);
+                    }
                 }
 
                 // Retry on network errors (client side) and on explicit
@@ -272,10 +324,16 @@ impl<'a> SingleCommand<'a> {
                     {
                         node.incr_error_rate();
                     }
+                    if metrics_on {
+                        node.metrics().incr_transaction_retry();
+                    }
                     last_err = Some(err);
                     continue;
                 }
 
+                if metrics_on {
+                    node.metrics().incr_transaction_error();
+                }
                 return Err(finalize(
                     err,
                     iterations_as_u32(iterations),
@@ -285,6 +343,23 @@ impl<'a> SingleCommand<'a> {
                 ));
             }
 
+            // Command completed successfully. Record the OK result code, the
+            // parse cost / bytes received, and the overall command latency.
+            if metrics_on {
+                if let Some(ns) = cmd_namespace.as_deref() {
+                    node.metrics()
+                        .record_result_code(ns, cmd_type, ResultCode::Ok);
+                    node.metrics().record_parse(
+                        ns,
+                        cmd_type,
+                        micros_since(parse_start),
+                        conn.bytes_read() as u64,
+                    );
+                }
+                node.metrics()
+                    .record_command(cmd_type, micros_since(trans_start));
+            }
+
             // allow the connection to be put back in the connection pool
             conn.reset_state();
 
@@ -292,6 +367,9 @@ impl<'a> SingleCommand<'a> {
             return Ok(());
         }
 
+        if let Some(n) = &last_node {
+            n.metrics().incr_transaction_error();
+        }
         let err = Error::Timeout(format!("Command timed out after {iterations} tries"));
         let tail = match last_err.take() {
             Some(e) => e.wrap(err),

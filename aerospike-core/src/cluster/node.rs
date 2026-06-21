@@ -31,6 +31,7 @@ use crate::cluster::peers_parser::PeersParser;
 use crate::cluster::CLIENT_VERSION;
 use crate::commands::Message;
 use crate::errors::{Error, Result};
+use crate::metrics::NodeMetrics;
 use crate::net::{Connection, ConnectionPool, Host, PooledConnection};
 use crate::policy::{AdminPolicy, ClientPolicy};
 use crate::Version;
@@ -85,6 +86,9 @@ pub struct Node {
     /// `Cluster::peer_exists` on the first successful DNS-aware match, so
     /// subsequent tends can short-circuit the lookup.
     hostname: std::sync::OnceLock<String>,
+    /// Per-node metrics. Shared with the connection pool so connection
+    /// lifecycle events are recorded against the same sink.
+    metrics: Arc<NodeMetrics>,
 }
 
 impl Drop for Node {
@@ -100,7 +104,11 @@ impl Drop for Node {
 
 impl Node {
     #![allow(missing_docs)]
-    pub fn new(client_policy: ClientPolicy, nv: Arc<NodeValidator>) -> Self {
+    pub fn new(
+        client_policy: ClientPolicy,
+        nv: Arc<NodeValidator>,
+        metrics: Arc<NodeMetrics>,
+    ) -> Self {
         Node {
             client_policy: client_policy.clone(),
             name: nv.name.clone(),
@@ -113,7 +121,12 @@ impl Node {
             } else {
                 0
             }),
-            connection_pool: ConnectionPool::new(nv.aliases[0].clone(), client_policy.clone()),
+            connection_pool: ConnectionPool::new(
+                nv.aliases[0].clone(),
+                client_policy.clone(),
+                Some(metrics.clone()),
+            ),
+            metrics,
             tend_connection: AsyncMutex::new(None),
             failures: AtomicUsize::new(0),
             error_rate_count: AtomicUsize::new(0),
@@ -558,7 +571,20 @@ impl Node {
             return Ok(conn);
         }
 
+        // Pool had no ready connection; we must open a new one.
+        self.metrics.incr_connections_pool_empty();
         self.connection_pool.make_conn(0).await
+    }
+
+    /// Returns the per-node metrics sink.
+    pub fn metrics(&self) -> &Arc<NodeMetrics> {
+        &self.metrics
+    }
+
+    /// Number of connections currently owned by this node (open-connections
+    /// gauge for metrics).
+    pub fn open_connections(&self) -> u64 {
+        self.connection_pool.reserved_conns() as u64
     }
 
     // Put a connection to the node back in the connection pool
@@ -857,6 +883,8 @@ impl Node {
             for conn in idle_iter {
                 drop(conn);
                 queue.reduce_capacity();
+                self.metrics.incr_connections_idle_dropped();
+                self.metrics.incr_connections_closed();
                 total_processed += 1;
             }
 
@@ -889,6 +917,7 @@ impl Node {
                     total_processed += 1;
                 } else {
                     queue.reduce_capacity();
+                    self.metrics.incr_connections_closed();
                     total_processed += 1;
                 }
             }
@@ -968,7 +997,10 @@ mod node_tests {
             version: Version::default(),
             detect_load_balancer: false,
         });
-        Node::new(policy, nv)
+        let metrics = Arc::new(crate::metrics::NodeMetrics::new(
+            crate::metrics::MetricsPolicy::default(),
+        ));
+        Node::new(policy, nv, metrics)
     }
 
     /// One idle connection in the pool, using the test [`crate::net::Connection`] (no real socket).

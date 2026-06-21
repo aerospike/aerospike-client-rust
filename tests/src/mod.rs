@@ -39,6 +39,7 @@ mod exp_string;
 mod hll;
 mod index;
 mod kv;
+mod metrics;
 mod path_expressions;
 mod query;
 mod scan;

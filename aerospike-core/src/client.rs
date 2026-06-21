@@ -256,6 +256,51 @@ impl Client {
         self.cluster.nodes()
     }
 
+    /// Enables periodic client metrics collection, (re)shaping per-node
+    /// histograms to `policy`. While enabled the client records connection,
+    /// tend, latency and result-code statistics that can be read with
+    /// [`Client::metrics`]. Collection is off by default.
+    pub fn enable_metrics(&self, policy: crate::metrics::MetricsPolicy) {
+        self.cluster.enable_metrics(policy);
+    }
+
+    /// Disables periodic client metrics collection.
+    pub fn disable_metrics(&self) {
+        self.cluster.disable_metrics();
+    }
+
+    /// Returns `true` if metrics collection is currently enabled.
+    pub fn metrics_enabled(&self) -> bool {
+        self.cluster.metrics_enabled()
+    }
+
+    /// Returns a snapshot of the cluster's collected statistics: per-node
+    /// metrics keyed by host, a cluster-aggregated view (carrying the node
+    /// labels), and the total node / open-connection counts.
+    ///
+    /// Returns empty/zeroed statistics if metrics have never been enabled.
+    pub fn metrics(&self) -> crate::metrics::ClusterMetrics {
+        let nodes = self.cluster.metrics_copy();
+        let policy = self.cluster.metrics_policy();
+        let mut aggregated = crate::metrics::NodeMetricsSnapshot::new((*policy).clone());
+        let mut open_connections = 0u64;
+        for snapshot in nodes.values() {
+            aggregated.aggregate(snapshot);
+            open_connections += snapshot.open_connections();
+        }
+        aggregated.set_labels(self.cluster.node_labels());
+        aggregated.set_open_connections(open_connections);
+
+        crate::metrics::ClusterMetrics {
+            nodes,
+            cluster_aggregated: aggregated,
+            total_nodes: self.cluster.nodes().len(),
+            open_connections,
+            exceeded_max_retries: self.cluster.max_retries_exceeded_count(),
+            exceeded_total_timeout: self.cluster.total_timeout_exceeded_count(),
+        }
+    }
+
     /// Read the record for the specified key. Depending on the bins value provided, all record bins,
     /// only selected record bins, or only the record headers will be returned. The policy can be
     /// used to specify timeouts.
