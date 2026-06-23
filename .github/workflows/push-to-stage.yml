@@ -8,8 +8,6 @@ permissions:
 
 on:
   push:
-    branches:
-      - CLIENT-4979-CICD
     tags:
       - 'v*'
       - '[0-9]+.[0-9]+.[0-9]+'

@@ -1,0 +1,79 @@
+name: Aerospike Rust Client CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+  AEROSPIKE_HOSTS: 127.0.0.1:3000
+  AEROSPIKE_NAMESPACE: test
+  PROPTEST_CASES: 25
+
+jobs:
+  test:
+    name: test (${{ matrix.runtime }})
+    runs-on: ubuntu-22.04
+
+    strategy:
+      fail-fast: false
+      matrix:
+        runtime: [rt-tokio, rt-async-std]
+
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@20cf305ff2072d973412fa9b1e3a4f227bda3c76 # v2.14.0
+        with:
+          egress-policy: audit
+
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+
+      - name: Install Rust 1.87 (MSRV)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.87
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: ${{ matrix.runtime }}
+
+      - name: Start Aerospike Server
+        run: |
+          docker run -d --name aerospike -p 3000:3000 aerospike/aerospike-server
+          for i in $(seq 1 30); do
+            if docker exec aerospike asinfo -v 'status' 2>/dev/null | grep -q wow; then
+              echo "Aerospike is ready"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "::error::Aerospike failed to start"
+          docker logs aerospike
+          exit 1
+
+      - name: Build workspace
+        run: |
+          cargo build --verbose --workspace --exclude aerospike-client-rust-benchmark \
+            --no-default-features \
+            --features serialization,async,${{ matrix.runtime }}
+
+      - name: Run integration tests
+        run: |
+          cargo test --verbose -p aerospike \
+            --no-default-features \
+            --features serialization,async,${{ matrix.runtime }}
+
+      - name: Run aerospike-sync doctests
+        if: matrix.runtime == 'rt-tokio'
+        run: cargo test --doc -p aerospike-sync --features rt-tokio
+
+      - name: Run aerospike-core doctests
+        if: matrix.runtime == 'rt-tokio'
+        run: |
+          # aerospike-core doc examples use `use aerospike::…`; enable rt-tokio on the path dev-dep.
+          sed -i 's/features = \["async"\]/features = ["async", "rt-tokio"]/' aerospike-core/Cargo.toml
+          cargo test --doc -p aerospike-core --features rt-tokio,serialization
