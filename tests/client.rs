@@ -30,7 +30,9 @@ mod common;
 async fn cluster_name() {
     let policy = &mut common::client_policy().clone();
     policy.cluster_name = Some(String::from("notTheRealClusterName"));
-    let err = Client::new(policy, &common::hosts()).await.unwrap_err();
+    let Err(err) = Client::new(policy, &common::hosts()).await else {
+        panic!("expected cluster name mismatch");
+    };
     let msg = err.to_string();
     assert!(
         msg.contains("Cluster name mismatch"),
