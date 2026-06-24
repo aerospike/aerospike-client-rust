@@ -27,13 +27,19 @@ use aerospike_rt::time::Duration;
 mod common;
 
 #[aerospike_macro::test]
-#[should_panic(
-    expected = "Failed to connect to [1] host(s):\\n  127.0.0.1:3000 Invalid cluster node: Cluster name mismatch: expected=notTheRealClusterName,\\n                                                         got=single-node\\n\")"
-)]
 async fn cluster_name() {
     let policy = &mut common::client_policy().clone();
     policy.cluster_name = Some(String::from("notTheRealClusterName"));
-    Client::new(policy, &common::hosts()).await.unwrap();
+    let err = Client::new(policy, &common::hosts()).await.unwrap_err();
+    let msg = err.to_string();
+    assert!(
+        msg.contains("Cluster name mismatch"),
+        "expected cluster name mismatch error, got: {msg}"
+    );
+    assert!(
+        msg.contains("expected=notTheRealClusterName"),
+        "expected wrong cluster name in error, got: {msg}"
+    );
 }
 
 #[aerospike_macro::test]
