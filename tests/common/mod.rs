@@ -15,6 +15,7 @@
 
 #![allow(dead_code)]
 
+use std::collections::HashMap;
 use std::env;
 
 use aerospike::CollectionIndexType;
@@ -24,7 +25,7 @@ use rand;
 use rand::distr::Alphanumeric;
 use rand::RngExt;
 
-use tokio::sync::OnceCell;
+use tokio::sync::{Mutex, OnceCell};
 
 use aerospike::{AdminPolicy, AuthMode, Client, ClientPolicy, Error, Key, ResultCode, WritePolicy};
 
@@ -52,9 +53,9 @@ lazy_static! {
 lazy_static! {
     pub static ref RUNTIME: tokio::runtime::Runtime = {
         use tokio::runtime;
-        runtime::Builder::new_current_thread()
-        // runtime::Builder::new_multi_thread()
-        //     .worker_threads(10)
+        // Integration tests run in parallel (`#[test]` threads). A current-thread runtime
+        // must not receive concurrent `block_on` calls from multiple threads.
+        runtime::Builder::new_multi_thread()
             .enable_all()
             .build()
             .unwrap()
@@ -172,8 +173,74 @@ pub fn client_policy() -> &'static ClientPolicy {
     &*GLOBAL_CLIENT_POLICY
 }
 
+static SUITE_INDEX_CLEANUP: OnceCell<()> = OnceCell::const_new();
+static INDEX_OPS: OnceCell<Mutex<()>> = OnceCell::const_new();
+
+async fn index_ops() -> &'static Mutex<()> {
+    INDEX_OPS
+        .get_or_init(|| async { Mutex::new(()) })
+        .await
+}
+
+/// Serialize secondary-index admin work. Parallel tests each create unique indexes; without
+/// serialization a reused local server can hit [`ResultCode::IndexMaxCount`].
+pub async fn lock_index_ops() -> tokio::sync::MutexGuard<'static, ()> {
+    index_ops().await.lock().await
+}
+
+async fn list_indexes(client: &Client, namespace: &str) -> Vec<HashMap<String, String>> {
+    let node = client
+        .cluster
+        .get_random_node()
+        .expect("no nodes available");
+
+    let cmd = format!("sindex-list:namespace={namespace}");
+    let res = node
+        .info(&AdminPolicy::default(), &[&cmd])
+        .await
+        .expect("sindex info request failed");
+
+    let sindex_str = res.get(&cmd).map(String::as_str).unwrap_or("");
+
+    sindex_str
+        .split(';')
+        .map(|entry| {
+            entry
+                .split(':')
+                .filter(|kv| !kv.trim().is_empty())
+                .filter_map(|kv| kv.split_once('='))
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect()
+        })
+        .collect()
+}
+
+/// Drop every secondary index in `namespace` (best-effort).
+pub async fn drop_all_indexes(client: &Client, namespace: &str) {
+    let policy = AdminPolicy::default();
+    for index in list_indexes(client, namespace).await {
+        if index.get("ns").map(String::as_str) != Some(namespace) {
+            continue;
+        }
+        let set = index.get("set").map(String::as_str).unwrap_or("");
+        let Some(name) = index.get("indexname") else {
+            continue;
+        };
+
+        let _ = client.drop_index(&policy, namespace, set, name).await;
+    }
+}
+
+async fn ensure_suite_index_cleanup(client: &Client) {
+    SUITE_INDEX_CLEANUP
+        .get_or_init(|| async {
+            drop_all_indexes(client, namespace()).await;
+        })
+        .await;
+}
+
 pub async fn client() -> Client {
-    Client::new(&GLOBAL_CLIENT_POLICY, &*AEROSPIKE_HOSTS)
+    let client = Client::new(&GLOBAL_CLIENT_POLICY, &*AEROSPIKE_HOSTS)
         .await
         .unwrap_or_else(|e| {
             panic!(
@@ -183,7 +250,9 @@ pub async fn client() -> Client {
                 hosts(),
                 e
             );
-        })
+        });
+    ensure_suite_index_cleanup(&client).await;
+    client
 }
 
 pub async fn singleton_client() -> &'static Client {
@@ -447,6 +516,7 @@ end
     }
 
     let apolicy = AdminPolicy::default();
+    let _index_guard = lock_index_ops().await;
     let task = client
         .create_index_on_bin(
             &apolicy,
@@ -476,6 +546,7 @@ end
         .await
         .expect("Failed to create index for bin_s");
     task.wait_till_complete(None).await.unwrap();
+    drop(_index_guard);
 
     Ok(())
 }

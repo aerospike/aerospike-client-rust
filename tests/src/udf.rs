@@ -123,6 +123,7 @@ async fn query_execute_udf_with_filter() {
     }
 
     // Create index for filter query
+    let _index_guard = common::lock_index_ops().await;
     let task = client
         .create_index_on_bin(
             &apolicy,

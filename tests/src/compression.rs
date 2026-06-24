@@ -385,6 +385,7 @@ async fn query_with_compression() {
     // Create an index for the query filter
     let apolicy = AdminPolicy::default();
     let idx_name = format!("{namespace}_{set_name}_int");
+    let _index_guard = common::lock_index_ops().await;
     let task = client
         .create_index_on_bin(
             &apolicy,

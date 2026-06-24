@@ -54,7 +54,8 @@ jobs:
         run: |
           cargo test --verbose -p aerospike \
             --no-default-features \
-            --features serialization,async,${{ matrix.runtime }}
+            --features serialization,async,${{ matrix.runtime }} \
+            -- --test-threads=1
 
       - name: Run aerospike-sync doctests
         if: matrix.runtime == 'rt-tokio'

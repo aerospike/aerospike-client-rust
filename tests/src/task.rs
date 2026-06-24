@@ -80,6 +80,7 @@ async fn index_task_test() {
         client.put(&wpolicy, &key, &bins).await.unwrap();
     }
 
+    let _index_guard = common::lock_index_ops().await;
     let index_task = client
         .create_index_on_bin(
             &apolicy,
