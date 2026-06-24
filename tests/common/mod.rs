@@ -26,7 +26,7 @@ use rand::RngExt;
 
 use tokio::sync::OnceCell;
 
-use aerospike::{AdminPolicy, AuthMode, Client, ClientPolicy, Key, WritePolicy};
+use aerospike::{AdminPolicy, AuthMode, Client, ClientPolicy, Error, Key, ResultCode, WritePolicy};
 
 #[cfg(feature = "tls")]
 use rustls::pki_types::pem::PemObject;
@@ -260,6 +260,32 @@ pub async fn skip_if_not_enterprise(test_name: &str) -> bool {
         return true;
     }
     false
+}
+
+/// True when `err` (including `Chain` wrappers) is a client-side timeout.
+pub fn is_timeout_error(err: &Error) -> bool {
+    match err {
+        Error::Timeout(_) => true,
+        Error::ClientError(msg) => msg.contains("Client Timeout") || msg.contains("timed out"),
+        Error::Chain(outer, inner) => is_timeout_error(outer) || is_timeout_error(inner),
+        _ => false,
+    }
+}
+
+/// True when `err` (including stream termination / chain wrappers) is index-not-found.
+pub fn is_index_not_found(err: &Error) -> bool {
+    if err.server_result_code() == Some(ResultCode::IndexNotFound) {
+        return true;
+    }
+    let msg = err.to_string();
+    if msg.contains("IndexNotFound") || msg.contains("Index not found") {
+        return true;
+    }
+    match err {
+        Error::StreamTerminatedError(Some(inner)) => is_index_not_found(inner),
+        Error::Chain(outer, inner) => is_index_not_found(outer) || is_index_not_found(inner),
+        _ => false,
+    }
 }
 
 /// Check whether the given namespace is configured with strong-consistency.

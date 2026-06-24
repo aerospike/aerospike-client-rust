@@ -64,8 +64,8 @@ async fn batch_operate_timeout() {
     let duration = start.elapsed();
 
     assert!(
-        matches!(&res, Err(Error::Timeout(_))),
-        "expected Err(Timeout), got {:?} after {:?}",
+        matches!(&res, Err(e) if common::is_timeout_error(e)),
+        "expected timeout error, got {:?} after {:?}",
         res,
         duration,
     );

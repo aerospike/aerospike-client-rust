@@ -16,7 +16,7 @@
 use std::time::Duration;
 
 use futures::stream::StreamExt;
-use tokio::time::sleep;
+use aerospike_rt::sleep;
 
 use crate::common;
 
