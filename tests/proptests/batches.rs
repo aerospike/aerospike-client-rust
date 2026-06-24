@@ -264,6 +264,10 @@ proptest_async::proptest! {
         i in 0..10,
         ops in many_batch_delete_operations(2),
     ) {
+        if common::skip_if_not_enterprise("proptests::batches::batch_delete").await {
+            return;
+        }
+
         let client = common::singleton_client().await;
         let namespace: &str = common::namespace();
         let set_name = &format!("{}-batch-delete", common::prop_setname());

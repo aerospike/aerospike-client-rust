@@ -244,6 +244,24 @@ pub async fn enterprise_edition() -> bool {
     false
 }
 
+static CACHED_ENTERPRISE_EDITION: OnceCell<bool> = OnceCell::const_new();
+
+/// Cached [`enterprise_edition`] for hot loops (e.g. proptests).
+pub async fn enterprise_edition_cached() -> bool {
+    *CACHED_ENTERPRISE_EDITION
+        .get_or_init(|| async { enterprise_edition().await })
+        .await
+}
+
+/// Returns `true` when the test should be skipped (non-Enterprise server).
+pub async fn skip_if_not_enterprise(test_name: &str) -> bool {
+    if !enterprise_edition_cached().await {
+        eprintln!("Skipping {test_name}: requires Aerospike Enterprise Edition");
+        return true;
+    }
+    false
+}
+
 /// Check whether the given namespace is configured with strong-consistency.
 /// Returns `false` on any communication error so tests that key off this
 /// default to the AP-compatible path.
