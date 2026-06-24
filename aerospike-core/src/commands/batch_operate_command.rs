@@ -460,7 +460,6 @@ impl BatchOperateCommand {
                 let value =
                     value::bytes_to_particle(particle_type, conn.buffer(), particle_bytes_size)?;
 
-                // Positional slot — every op gets a results entry (Value::Nil included).
                 results.push(value.clone());
 
                 // list/map operations may return multiple values for the same bin.
@@ -477,7 +476,7 @@ impl BatchOperateCommand {
                 }
             }
 
-            Some(Record::new(Some(key), bins, results, generation, expiration))
+            Some(Record::new(Some(key), bins, Some(results), generation, expiration))
         } else {
             None
         };

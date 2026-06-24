@@ -32,6 +32,8 @@ pub struct ReadCommand<'a> {
     bins: Bins,
     /// When true, txn notifications use `on_write` instead of `on_read`.
     pub(crate) is_write: bool,
+    /// Skip the per-record `results` Vec alloc on non-operate paths.
+    pub(crate) wants_results: bool,
 }
 
 impl<'a> ReadCommand<'a> {
@@ -48,6 +50,7 @@ impl<'a> ReadCommand<'a> {
             policy: &policy.base_policy,
             record: None,
             is_write: false,
+            wants_results: false,
         }
     }
 
@@ -64,6 +67,7 @@ impl<'a> ReadCommand<'a> {
             policy,
             record: None,
             is_write: false,
+            wants_results: false,
         }
     }
 
@@ -80,7 +84,11 @@ impl<'a> ReadCommand<'a> {
         expiration: u32,
     ) -> Result<(Record, Option<u64>)> {
         let mut bins: HashMap<String, Value> = HashMap::with_capacity(op_count);
-        let mut results: Vec<Value> = Vec::with_capacity(op_count);
+        let mut results: Option<Vec<Value>> = if self.wants_results {
+            Some(Vec::with_capacity(op_count))
+        } else {
+            None
+        };
 
         // Parse fields, extracting record version if present (used by MRT).
         let version = conn.buffer.parse_fields_for_version(field_count);
@@ -96,9 +104,9 @@ impl<'a> ReadCommand<'a> {
             let particle_bytes_size = op_size - (4 + name_size);
             let value = bytes_to_particle(particle_type, &mut conn.buffer, particle_bytes_size)?;
 
-            // Positional slot — every op contributes one entry to `results`,
-            // including nil-result ops, so callers can index by request op order.
-            results.push(value.clone());
+            if let Some(r) = results.as_mut() {
+                r.push(value.clone());
+            }
 
             if !value.is_nil() {
                 // list/map operations may return multiple values for the same bin.
@@ -198,7 +206,7 @@ impl Command for ReadCommand<'_> {
                 let (record, version) = if self.bins.is_none() {
                     let version = conn.buffer.parse_fields_for_version(field_count);
                     (
-                        Record::new(None, HashMap::new(), Vec::new(), generation, expiration),
+                        Record::new(None, HashMap::new(), None, generation, expiration),
                         version,
                     )
                 } else {
