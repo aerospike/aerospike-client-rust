@@ -1,8 +1,10 @@
 name: Aerospike Rust Client CI
 
 on:
-  push:
   pull_request:
+    branches:
+      - main
+      - v3
   workflow_dispatch:
 
 env:
