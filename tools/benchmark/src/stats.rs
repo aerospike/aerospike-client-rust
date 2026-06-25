@@ -91,7 +91,6 @@ impl Collector {
             }
         }
         self.drain_and_merge();
-        self.report();
         self.read_histogram.reset();
         self.write_histogram.reset();
         self.summary();
