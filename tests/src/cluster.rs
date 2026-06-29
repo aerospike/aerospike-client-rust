@@ -390,7 +390,7 @@ async fn seed_only_cluster_pins_to_seed_addresses() {
 
     // Give a tend cycle a chance to run; without seed_only_cluster
     // peers discovery would have enrolled additional nodes by now.
-    aerospike_rt::time::sleep(std::time::Duration::from_millis(2_500)).await;
+    aerospike_rt::sleep(std::time::Duration::from_millis(2_500)).await;
 
     let after_tend = client.cluster.nodes();
     assert_eq!(
