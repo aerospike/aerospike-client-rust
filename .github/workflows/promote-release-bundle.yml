@@ -1,0 +1,68 @@
+# Manual JFrog release-bundle lifecycle promotion (shared-workflows promote-release-bundle).
+name: Promote release bundle
+
+permissions:
+  id-token: write
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Release bundle version in JFrog (e.g. 3.0.0-alpha.1)
+        required: true
+        type: string
+      targets:
+        description: Which environments to promote to (order is always DEV → TEST → STAGE when multiple)
+        required: true
+        type: choice
+        default: TEST_AND_STAGE
+        options:
+          - DEV
+          - TEST_AND_STAGE
+          - DEV_THEN_TEST_AND_STAGE
+
+jobs:
+  promote:
+    name: Promote bundle in JFrog
+    runs-on: ${{ vars.BUILD_CONTAINER_DISTRO_VERSION || 'ubuntu-22.04' }}
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@20cf305ff2072d973412fa9b1e3a4f227bda3c76 # v2.14.0
+        with:
+          egress-policy: audit
+
+      - name: Setup JFrog CLI
+        uses: step-security/setup-jfrog-cli@893a92f96c7727242adf0e603c77b1f2a22390e1 # v4.9.1
+        env:
+          JF_URL: ${{ vars.JFROG_PLATFORM_URL }}
+          JF_PROJECT: ${{ vars.JFROG_PROJECT }}
+        with:
+          oidc-provider-name: ${{ vars.OIDC_PROVIDER_NAME }}
+          oidc-audience: ${{ vars.OIDC_AUDIENCE }}
+
+      - name: Promoting release bundle to DEV
+        if: inputs.targets == 'DEV' || inputs.targets == 'DEV_THEN_TEST_AND_STAGE'
+        uses: aerospike/shared-workflows/.github/actions/promote-release-bundle@v3.5.0
+        with:
+          bundle-name: aerospike-client-rust
+          version: ${{ inputs.version }}
+          environment: DEV
+          jf-project: ${{ vars.JFROG_PROJECT }}
+
+      - name: Promoting release bundle to TEST
+        if: inputs.targets == 'TEST_AND_STAGE' || inputs.targets == 'DEV_THEN_TEST_AND_STAGE'
+        uses: aerospike/shared-workflows/.github/actions/promote-release-bundle@v3.5.0
+        with:
+          bundle-name: aerospike-client-rust
+          version: ${{ inputs.version }}
+          environment: TEST
+          jf-project: ${{ vars.JFROG_PROJECT }}
+
+      - name: Promoting release bundle to STAGE
+        if: inputs.targets == 'TEST_AND_STAGE' || inputs.targets == 'DEV_THEN_TEST_AND_STAGE'
+        uses: aerospike/shared-workflows/.github/actions/promote-release-bundle@v3.5.0
+        with:
+          bundle-name: aerospike-client-rust
+          version: ${{ inputs.version }}
+          environment: STAGE
+          jf-project: ${{ vars.JFROG_PROJECT }}

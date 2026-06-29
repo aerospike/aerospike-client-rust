@@ -15,6 +15,7 @@
 
 #![allow(dead_code)]
 
+use std::collections::HashMap;
 use std::env;
 
 use aerospike::CollectionIndexType;
@@ -24,9 +25,9 @@ use rand;
 use rand::distr::Alphanumeric;
 use rand::RngExt;
 
-use tokio::sync::OnceCell;
+use tokio::sync::{Mutex, OnceCell};
 
-use aerospike::{AdminPolicy, AuthMode, Client, ClientPolicy, Key, WritePolicy};
+use aerospike::{AdminPolicy, AuthMode, Client, ClientPolicy, Error, Key, ResultCode, WritePolicy};
 
 #[cfg(feature = "tls")]
 use rustls::pki_types::pem::PemObject;
@@ -52,9 +53,9 @@ lazy_static! {
 lazy_static! {
     pub static ref RUNTIME: tokio::runtime::Runtime = {
         use tokio::runtime;
-        runtime::Builder::new_current_thread()
-        // runtime::Builder::new_multi_thread()
-        //     .worker_threads(10)
+        // Integration tests run in parallel (`#[test]` threads). A current-thread runtime
+        // must not receive concurrent `block_on` calls from multiple threads.
+        runtime::Builder::new_multi_thread()
             .enable_all()
             .build()
             .unwrap()
@@ -172,8 +173,74 @@ pub fn client_policy() -> &'static ClientPolicy {
     &*GLOBAL_CLIENT_POLICY
 }
 
+static SUITE_INDEX_CLEANUP: OnceCell<()> = OnceCell::const_new();
+static INDEX_OPS: OnceCell<Mutex<()>> = OnceCell::const_new();
+
+async fn index_ops() -> &'static Mutex<()> {
+    INDEX_OPS
+        .get_or_init(|| async { Mutex::new(()) })
+        .await
+}
+
+/// Serialize secondary-index admin work. Parallel tests each create unique indexes; without
+/// serialization a reused local server can hit [`ResultCode::IndexMaxCount`].
+pub async fn lock_index_ops() -> tokio::sync::MutexGuard<'static, ()> {
+    index_ops().await.lock().await
+}
+
+async fn list_indexes(client: &Client, namespace: &str) -> Vec<HashMap<String, String>> {
+    let node = client
+        .cluster
+        .get_random_node()
+        .expect("no nodes available");
+
+    let cmd = format!("sindex-list:namespace={namespace}");
+    let res = node
+        .info(&AdminPolicy::default(), &[&cmd])
+        .await
+        .expect("sindex info request failed");
+
+    let sindex_str = res.get(&cmd).map(String::as_str).unwrap_or("");
+
+    sindex_str
+        .split(';')
+        .map(|entry| {
+            entry
+                .split(':')
+                .filter(|kv| !kv.trim().is_empty())
+                .filter_map(|kv| kv.split_once('='))
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect()
+        })
+        .collect()
+}
+
+/// Drop every secondary index in `namespace` (best-effort).
+pub async fn drop_all_indexes(client: &Client, namespace: &str) {
+    let policy = AdminPolicy::default();
+    for index in list_indexes(client, namespace).await {
+        if index.get("ns").map(String::as_str) != Some(namespace) {
+            continue;
+        }
+        let set = index.get("set").map(String::as_str).unwrap_or("");
+        let Some(name) = index.get("indexname") else {
+            continue;
+        };
+
+        let _ = client.drop_index(&policy, namespace, set, name).await;
+    }
+}
+
+async fn ensure_suite_index_cleanup(client: &Client) {
+    SUITE_INDEX_CLEANUP
+        .get_or_init(|| async {
+            drop_all_indexes(client, namespace()).await;
+        })
+        .await;
+}
+
 pub async fn client() -> Client {
-    Client::new(&GLOBAL_CLIENT_POLICY, &*AEROSPIKE_HOSTS)
+    let client = Client::new(&GLOBAL_CLIENT_POLICY, &*AEROSPIKE_HOSTS)
         .await
         .unwrap_or_else(|e| {
             panic!(
@@ -183,7 +250,9 @@ pub async fn client() -> Client {
                 hosts(),
                 e
             );
-        })
+        });
+    ensure_suite_index_cleanup(&client).await;
+    client
 }
 
 pub async fn singleton_client() -> &'static Client {
@@ -242,6 +311,50 @@ pub async fn enterprise_edition() -> bool {
     }
 
     false
+}
+
+static CACHED_ENTERPRISE_EDITION: OnceCell<bool> = OnceCell::const_new();
+
+/// Cached [`enterprise_edition`] for hot loops (e.g. proptests).
+pub async fn enterprise_edition_cached() -> bool {
+    *CACHED_ENTERPRISE_EDITION
+        .get_or_init(|| async { enterprise_edition().await })
+        .await
+}
+
+/// Returns `true` when the test should be skipped (non-Enterprise server).
+pub async fn skip_if_not_enterprise(test_name: &str) -> bool {
+    if !enterprise_edition_cached().await {
+        eprintln!("Skipping {test_name}: requires Aerospike Enterprise Edition");
+        return true;
+    }
+    false
+}
+
+/// True when `err` (including `Chain` wrappers) is a client-side timeout.
+pub fn is_timeout_error(err: &Error) -> bool {
+    match err {
+        Error::Timeout(_) => true,
+        Error::ClientError(msg) => msg.contains("Client Timeout") || msg.contains("timed out"),
+        Error::Chain(outer, inner) => is_timeout_error(outer) || is_timeout_error(inner),
+        _ => false,
+    }
+}
+
+/// True when `err` (including stream termination / chain wrappers) is index-not-found.
+pub fn is_index_not_found(err: &Error) -> bool {
+    if err.server_result_code() == Some(ResultCode::IndexNotFound) {
+        return true;
+    }
+    let msg = err.to_string();
+    if msg.contains("IndexNotFound") || msg.contains("Index not found") {
+        return true;
+    }
+    match err {
+        Error::StreamTerminatedError(Some(inner)) => is_index_not_found(inner),
+        Error::Chain(outer, inner) => is_index_not_found(outer) || is_index_not_found(inner),
+        _ => false,
+    }
 }
 
 /// Check whether the given namespace is configured with strong-consistency.
@@ -403,6 +516,7 @@ end
     }
 
     let apolicy = AdminPolicy::default();
+    let _index_guard = lock_index_ops().await;
     let task = client
         .create_index_on_bin(
             &apolicy,
@@ -432,6 +546,7 @@ end
         .await
         .expect("Failed to create index for bin_s");
     task.wait_till_complete(None).await.unwrap();
+    drop(_index_guard);
 
     Ok(())
 }

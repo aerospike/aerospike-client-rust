@@ -511,6 +511,8 @@ impl Client {
     /// # use aerospike::*;
     /// use futures::StreamExt;
     ///
+    /// # #[tokio::main]
+    /// # async fn main() {
     /// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap();
     /// # let client = Client::new(&ClientPolicy::default(), &hosts).await.unwrap();
     /// let key = as_key!("test", "test", 1);
@@ -520,6 +522,7 @@ impl Client {
     /// while let Some((idx, br)) = stream.next().await {
     ///     println!("op[{}]: {:?}", idx, br.record);
     /// }
+    /// # }
     /// ```
     pub async fn batch_stream(
         &self,
@@ -1389,7 +1392,7 @@ impl Client {
     /// # async fn example(client: &Client) -> Result<()> {
     /// let wpolicy = WritePolicy::default();
     /// let statement = Statement::new("ns", "set", Bins::All);
-    /// let ops = vec![operations::put(&Bin::new("bin", 42))];
+    /// let ops = vec![operations::put(&Bin::new("bin".into(), Value::Int(42)))];
     /// let task = client.query_operate(&wpolicy, statement, &ops).await?;
     /// task.wait_till_complete(None).await?;
     /// # Ok(())

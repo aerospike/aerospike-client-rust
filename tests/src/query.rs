@@ -45,13 +45,15 @@ async fn create_test_set(client: &Client, no_records: usize) -> String {
         client.put(&wpolicy, &key, &bins).await.unwrap();
     }
 
+    let index_name = format!("{}_{}_{}", namespace, set_name, "bin");
+    let _index_guard = common::lock_index_ops().await;
     let task = client
         .create_index_on_bin(
             &apolicy,
             namespace,
             &set_name,
             "bin",
-            &format!("{}_{}_{}", namespace, set_name, "bin"),
+            &index_name,
             IndexType::Numeric,
             CollectionIndexType::Default,
             None,
@@ -446,6 +448,7 @@ async fn test_query_geo_within_geojson_region() {
     let client = Arc::new(common::client().await);
     let apolicy = AdminPolicy::default();
 
+    let _index_guard = common::lock_index_ops().await;
     let task = client
         .create_index_on_bin(
             &apolicy,
@@ -895,6 +898,7 @@ async fn create_list_test_set(client: &Client) -> String {
 
     // Create a secondary index on list elements
     let idx_name = format!("{}_{}_list_bin", namespace, set_name);
+    let _index_guard = common::lock_index_ops().await;
     let task = client
         .create_index_on_bin(
             &apolicy,
@@ -993,6 +997,7 @@ async fn create_geo_test_set(client: &Client) -> String {
     let apolicy = AdminPolicy::default();
     let wp = WritePolicy::default();
 
+    let _index_guard = common::lock_index_ops().await;
     let task = client
         .create_index_on_bin(
             &apolicy,
@@ -1095,6 +1100,7 @@ async fn query_filter_geo_contains() {
     let apolicy = AdminPolicy::default();
     let wp = WritePolicy::default();
 
+    let _index_guard = common::lock_index_ops().await;
     let task = client
         .create_index_on_bin(
             &apolicy,
@@ -1195,6 +1201,7 @@ async fn query_filter_with_expression_builder() {
     // Create an expression-based secondary index: int_bin("a")
     let exp = aerospike::expressions::int_bin("a".to_string());
     let idx_name = format!("{}_{}_exp_a", namespace, set_name);
+    let _index_guard = common::lock_index_ops().await;
     let task = client
         .create_index_using_expression(
             &apolicy,
@@ -1259,6 +1266,7 @@ async fn query_filter_with_context_builder() {
     use aerospike::operations::cdt_context::ctx_list_index;
     let ctx = vec![ctx_list_index(0)];
     let idx_name = format!("{}_{}_nested_ctx", namespace, set_name);
+    let _index_guard = common::lock_index_ops().await;
     let task = client
         .create_index_on_bin(
             &apolicy,
@@ -1322,6 +1330,7 @@ async fn query_filter_expression_with_policy_filter() {
     // Create an expression-based secondary index on int_bin("a")
     let idx_exp = aerospike::expressions::int_bin("a".to_string());
     let idx_name = format!("{}_{}_exp_ab", namespace, set_name);
+    let _index_guard = common::lock_index_ops().await;
     let task = client
         .create_index_using_expression(
             &apolicy,
@@ -1837,6 +1846,7 @@ async fn query_returns_user_key_when_send_key_set() {
         client.put(&wpolicy, &key, &[bin]).await.unwrap();
     }
 
+    let _index_guard = common::lock_index_ops().await;
     let task = client
         .create_index_on_bin(
             &apolicy,

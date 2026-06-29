@@ -167,7 +167,7 @@ fn geo_circle_json(lng: f64, lat: f64, radius: f64) -> Value {
 ///
 /// ```rust,no_run
 /// # use aerospike_core::query::Filter;
-/// # use aerospike_core::operations::cdt_context::{CdtContext, ctx_list_index};
+/// # use aerospike_core::operations::cdt_context::ctx_list_index;
 /// // Filter on a secondary index within a nested list element
 /// let f = Filter::equal("bin_name", 42_i64)
 ///     .context(vec![ctx_list_index(0)]);

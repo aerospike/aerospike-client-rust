@@ -1,0 +1,99 @@
+name: Get version
+description: Detects if build is a snapshot and gets the release or snapshot version from the Cargo workspace
+
+runs:
+  using: composite
+  steps:
+    - name: Detect if snapshot
+      id: get-is-snapshot
+      shell: bash
+      run: |
+        TAG=$(git describe --exact-match --tags HEAD 2>/dev/null || echo "")
+        echo "Detected Git tag: '$TAG'"
+
+        RE_PROD='^v?[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z][a-zA-Z0-9.-]*)?$'
+        RE_RC='^v?[0-9]+\.[0-9]+\.[0-9]+-rc[0-9]+$'
+
+        if [[ "$TAG" =~ $RE_PROD ]] && [[ ! "$TAG" =~ $RE_RC ]]; then
+          echo "Release tag detected: $TAG"
+          echo "is-snapshot=false" >> "$GITHUB_OUTPUT"
+          exit 0
+        elif [[ "$TAG" =~ $RE_RC ]]; then
+          echo "Release candidate tag detected: $TAG"
+          echo "is-snapshot=false" >> "$GITHUB_OUTPUT"
+          exit 0
+        fi
+
+        COMMIT_REF="HEAD~1"
+        if ! git show "${COMMIT_REF}:Cargo.toml" &>/dev/null; then
+          echo "No parent Cargo.toml; treating as snapshot"
+          echo "is-snapshot=true" >> "$GITHUB_OUTPUT"
+          exit 0
+        fi
+
+        get_workspace_version() {
+          awk '
+            /^\[workspace\.package\]/ { in_ws=1; next }
+            in_ws && /^version = / {
+              gsub(/^version = "|"$/, "", $0)
+              print $0
+              exit
+            }
+            in_ws && /^\[/ { exit }
+          ' "$1"
+        }
+
+        OLD_VERSION=$(git show "${COMMIT_REF}:Cargo.toml" | awk '
+          /^\[workspace\.package\]/ { in_ws=1; next }
+          in_ws && /^version = / {
+            gsub(/^version = "|"$/, "", $0)
+            print $0
+            exit
+          }
+          in_ws && /^\[/ { exit }
+        ')
+        NEW_VERSION=$(get_workspace_version Cargo.toml)
+
+        echo "old version: ${OLD_VERSION}, new version: ${NEW_VERSION}"
+        if [[ "${OLD_VERSION}" != "${NEW_VERSION}" ]]; then
+          echo "is-snapshot=false" >> "$GITHUB_OUTPUT"
+        else
+          echo "is-snapshot=true" >> "$GITHUB_OUTPUT"
+        fi
+
+    - name: Get release or snapshot version
+      id: get-release-version
+      shell: bash
+      run: |
+        get_workspace_version() {
+          awk '
+            /^\[workspace\.package\]/ { in_ws=1; next }
+            in_ws && /^version = / {
+              gsub(/^version = "|"$/, "", $0)
+              print $0
+              exit
+            }
+            in_ws && /^\[/ { exit }
+          ' Cargo.toml
+        }
+
+        BASE_VERSION=$(get_workspace_version)
+        if [[ -z "$BASE_VERSION" ]]; then
+          echo "::error::Could not extract version from [workspace.package] in Cargo.toml"
+          exit 1
+        fi
+
+        IS_SNAPSHOT="${{ steps.get-is-snapshot.outputs.is-snapshot }}"
+        if [[ "$IS_SNAPSHOT" == "true" ]]; then
+          echo "release-version=${BASE_VERSION}-SNAPSHOT_${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
+        else
+          echo "release-version=${BASE_VERSION}" >> "$GITHUB_OUTPUT"
+        fi
+
+outputs:
+  is-snapshot:
+    description: Whether this is a snapshot build
+    value: ${{ steps.get-is-snapshot.outputs.is-snapshot }}
+  release-version:
+    description: The release or snapshot version
+    value: ${{ steps.get-release-version.outputs.release-version }}

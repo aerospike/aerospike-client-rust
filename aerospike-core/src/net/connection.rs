@@ -19,6 +19,8 @@ use std::convert::TryFrom;
 use std::sync::Arc;
 
 use std::io::Read;
+#[cfg(feature = "rt-tokio")]
+use std::pin::Pin;
 
 use crate::commands::admin_command::AdminCommand;
 use crate::commands::buffer::{self, Buffer, MAX_BUFFER_SIZE};
@@ -34,7 +36,7 @@ use aerospike_rt::net::TcpStream;
 use aerospike_rt::time::{Duration, Instant};
 use flate2::read::ZlibDecoder;
 #[cfg(feature = "rt-async-std")]
-use futures::{AsyncReadExt, AsyncWriteExt, TryFutureExt};
+use futures::{AsyncReadExt, AsyncWriteExt};
 use std::cmp::min;
 use std::ops::Add;
 
@@ -106,6 +108,37 @@ pub struct Connection {
     /// a compressed message is detected. Used by `ConnectionRecovery` to know
     /// that info3 inspection is invalid for the current body.
     pub(crate) compressed_stream_body: bool,
+    /// Reusable per-IO timeout. Reset before each read/write and selected against the
+    /// IO future; avoids the per-op `tokio::time::timeout` alloc + wheel register/remove.
+    #[cfg(feature = "rt-tokio")]
+    pub(crate) sleep: Pin<Box<aerospike_rt::tokio::time::Sleep>>,
+}
+
+/// Races an IO future against the connection's timeout, picking a runtime
+/// appropriate mechanism.
+///
+/// `$holder` is the value owning the `sleep` field (`self` for [`Connection`],
+/// `self.conn` for `BufferedConn`).
+macro_rules! io_with_timeout {
+    ($holder:expr, $timeout:expr, $io:expr) => {{
+        #[cfg(feature = "rt-tokio")]
+        {
+            $holder
+                .sleep
+                .as_mut()
+                .reset(aerospike_rt::tokio::time::Instant::now() + $timeout);
+            let sleep = $holder.sleep.as_mut();
+            aerospike_rt::tokio::select! {
+                biased;
+                r = $io => Ok::<_, ()>(r),
+                _ = sleep => Err(()),
+            }
+        }
+        #[cfg(feature = "rt-async-std")]
+        {
+            aerospike_rt::timeout($timeout, $io).await
+        }
+    }};
 }
 
 impl Connection {
@@ -194,6 +227,11 @@ impl Connection {
             response_decompressed: false,
             compressed_stream_body: false,
             rnd: XorShift::new(),
+            // Far-future deadline; reset before each IO so this never fires first.
+            #[cfg(feature = "rt-tokio")]
+            sleep: Box::pin(aerospike_rt::tokio::time::sleep(
+                aerospike_rt::time::Duration::from_secs(3600),
+            )),
         };
 
         // Try the cheap session-token path first. On rejection (token
@@ -262,6 +300,11 @@ impl Connection {
             response_decompressed: false,
             compressed_stream_body: false,
             rnd: rnd,
+            // Far-future deadline; reset before each IO so this never fires first.
+            #[cfg(feature = "rt-tokio")]
+            sleep: Box::pin(aerospike_rt::tokio::time::sleep(
+                aerospike_rt::time::Duration::from_secs(3600),
+            )),
         };
         conn.refresh();
         Ok(conn)
@@ -300,11 +343,11 @@ impl Connection {
         let timeout = self.deadline();
         let res = match self.conn {
             Netsocket::Tcp(ref mut conn) => {
-                aerospike_rt::timeout(timeout, conn.write_all(&self.buffer.data_buffer)).await
+                io_with_timeout!(self, timeout, conn.write_all(&self.buffer.data_buffer))
             }
             #[cfg(feature = "tls")]
             Netsocket::Tls(ref mut conn) => {
-                aerospike_rt::timeout(timeout, conn.write_all(&self.buffer.data_buffer)).await
+                io_with_timeout!(self, timeout, conn.write_all(&self.buffer.data_buffer))
             }
             #[cfg(test)]
             _ => unreachable!(),
@@ -356,7 +399,9 @@ impl Connection {
         }
     }
 
-    /// Reads the socket deadline for the connection.
+    /// Per-IO deadline. Returns `Duration::ZERO` when the command deadline has
+    /// already elapsed; the per-IO `Sleep::reset` then fires immediately and the
+    /// IO returns `Err(Timeout)` (avoids `Instant::sub` panic in that case).
     pub fn deadline(&self) -> Duration {
         let now = Instant::now();
         let socket_deadline = now + self.socket_timeout();
@@ -365,7 +410,9 @@ impl Connection {
             .deadline
             .map_or(socket_deadline, |deadline| min(deadline, socket_deadline));
 
-        deadline - now
+        deadline
+            .checked_duration_since(now)
+            .unwrap_or(Duration::ZERO)
     }
 
     /// Reads the socket timeout for the connection.
@@ -520,31 +567,19 @@ impl Connection {
         let timeout = self.deadline();
         let read_result = match self.conn {
             Netsocket::Tcp(ref mut conn) => {
-                #[cfg(feature = "rt-tokio")]
-                {
-                    aerospike_rt::timeout(
-                        timeout,
-                        conn.read_exact(&mut self.buffer.data_buffer[pos..]),
-                    )
-                    .await
-                }
-                #[cfg(feature = "rt-async-std")]
-                {
-                    aerospike_rt::timeout(
-                        timeout,
-                        conn.read_exact(&mut self.buffer.data_buffer[pos..]),
-                    )
-                    .await
-                }
+                io_with_timeout!(
+                    self,
+                    timeout,
+                    conn.read_exact(&mut self.buffer.data_buffer[pos..])
+                )
             }
-
             #[cfg(feature = "tls")]
             Netsocket::Tls(ref mut conn) => {
-                aerospike_rt::timeout(
+                io_with_timeout!(
+                    self,
                     timeout,
-                    conn.read_exact(&mut self.buffer.data_buffer[pos..]),
+                    conn.read_exact(&mut self.buffer.data_buffer[pos..])
                 )
-                .await
             }
             #[cfg(test)]
             _ => unreachable!(),
@@ -572,11 +607,11 @@ impl Connection {
         let timeout = self.deadline();
         let res = match self.conn {
             Netsocket::Tcp(ref mut conn) => {
-                aerospike_rt::timeout(timeout, conn.write_all(buf)).await
+                io_with_timeout!(self, timeout, conn.write_all(buf))
             }
             #[cfg(feature = "tls")]
             Netsocket::Tls(ref mut conn) => {
-                aerospike_rt::timeout(timeout, conn.write_all(buf)).await
+                io_with_timeout!(self, timeout, conn.write_all(buf))
             }
             #[cfg(test)]
             _ => unreachable!(),
@@ -587,10 +622,10 @@ impl Connection {
             Ok(Err(e)) => {
                 return Err(e.into());
             }
-            Err(e) => {
-                return Err(Error::Timeout(format!(
-                    "Timeout writing to the network connection: {e}"
-                )));
+            Err(_) => {
+                return Err(Error::Timeout(
+                    "Timeout writing to the network connection".to_string(),
+                ));
             }
         }
 
@@ -605,11 +640,11 @@ impl Connection {
         let timeout = self.deadline();
         let res = match self.conn {
             Netsocket::Tcp(ref mut conn) => {
-                aerospike_rt::timeout(timeout, conn.read_exact(buf)).await
+                io_with_timeout!(self, timeout, conn.read_exact(buf))
             }
             #[cfg(feature = "tls")]
             Netsocket::Tls(ref mut conn) => {
-                aerospike_rt::timeout(timeout, conn.read_exact(buf)).await
+                io_with_timeout!(self, timeout, conn.read_exact(buf))
             }
             #[cfg(test)]
             _ => unreachable!(),
@@ -695,29 +730,43 @@ impl Connection {
     async fn drain(&mut self, mut limit: usize, timeout: Duration) -> Result<()> {
         while limit > 0 {
             let count = match self.conn {
-                Netsocket::Tcp(ref mut conn) => aerospike_rt::timeout(
-                    timeout,
-                    aerospike_rt::io::copy(
-                        &mut conn.take(limit as u64),
-                        &mut aerospike_rt::io::sink(),
-                    ),
-                )
-                .await
-                .map_err(|e| Error::Timeout(format!("Timeout draining the connection {e}")))?,
+                Netsocket::Tcp(ref mut conn) => {
+                    let mut reader = conn.take(limit as u64);
+                    let mut sink = aerospike_rt::io::sink();
+                    io_with_timeout!(
+                        self,
+                        timeout,
+                        aerospike_rt::io::copy(&mut reader, &mut sink)
+                    )
+                    .unwrap_or_else(|_| {
+                        Err(std::io::Error::new(
+                            std::io::ErrorKind::TimedOut,
+                            "Timeout draining the connection",
+                        ))
+                    })
+                    .map_err(|e| Error::Timeout(format!("Timeout draining the connection {e}")))?
+                }
 
                 #[cfg(feature = "tls")]
-                Netsocket::Tls(ref mut conn) => aerospike_rt::timeout(
-                    timeout,
-                    aerospike_rt::io::copy(
-                        &mut conn.take(limit as u64),
-                        &mut aerospike_rt::io::sink(),
-                    ),
-                )
-                .await
-                .map_err(|e| Error::Timeout(format!("Timeout draining the connection {e}")))?,
+                Netsocket::Tls(ref mut conn) => {
+                    let mut reader = conn.take(limit as u64);
+                    let mut sink = aerospike_rt::io::sink();
+                    io_with_timeout!(
+                        self,
+                        timeout,
+                        aerospike_rt::io::copy(&mut reader, &mut sink)
+                    )
+                    .unwrap_or_else(|_| {
+                        Err(std::io::Error::new(
+                            std::io::ErrorKind::TimedOut,
+                            "Timeout draining the connection",
+                        ))
+                    })
+                    .map_err(|e| Error::Timeout(format!("Timeout draining the connection {e}")))?
+                }
                 #[cfg(test)]
                 _ => unreachable!(),
-            }?;
+            };
 
             limit -= count as usize;
             self.bytes_read += count as usize;
@@ -865,12 +914,12 @@ impl<'a> BufferedConn<'a> {
         let deadline = self.conn.deadline();
         let read_result = match self.conn.conn {
             Netsocket::Tcp(ref mut conn) => {
-                aerospike_rt::timeout(deadline, conn.read_exact(&mut self.cache)).await
+                io_with_timeout!(self.conn, deadline, conn.read_exact(&mut self.cache))
             }
 
             #[cfg(feature = "tls")]
             Netsocket::Tls(ref mut conn) => {
-                aerospike_rt::timeout(deadline, conn.read_exact(&mut self.cache)).await
+                io_with_timeout!(self.conn, deadline, conn.read_exact(&mut self.cache))
             }
             #[cfg(test)]
             _ => unreachable!(),
@@ -914,28 +963,42 @@ impl<'a> BufferedConn<'a> {
 
         while self.limit > 0 {
             let count = match self.conn.conn {
-                Netsocket::Tcp(ref mut conn) => aerospike_rt::timeout(
-                    timeout,
-                    aerospike_rt::io::copy(
-                        &mut conn.take(self.limit as u64),
-                        &mut aerospike_rt::io::sink(),
-                    ),
-                )
-                .await
-                .map_err(|e| Error::Timeout(format!("Timeout draining the connection {e}")))?,
+                Netsocket::Tcp(ref mut conn) => {
+                    let mut reader = conn.take(self.limit as u64);
+                    let mut sink = aerospike_rt::io::sink();
+                    io_with_timeout!(
+                        self.conn,
+                        timeout,
+                        aerospike_rt::io::copy(&mut reader, &mut sink)
+                    )
+                    .unwrap_or_else(|_| {
+                        Err(std::io::Error::new(
+                            std::io::ErrorKind::TimedOut,
+                            "Timeout draining the connection",
+                        ))
+                    })
+                    .map_err(|e| Error::Timeout(format!("Timeout draining the connection {e}")))?
+                }
                 #[cfg(feature = "tls")]
-                Netsocket::Tls(ref mut conn) => aerospike_rt::timeout(
-                    timeout,
-                    aerospike_rt::io::copy(
-                        &mut conn.take(self.limit as u64),
-                        &mut aerospike_rt::io::sink(),
-                    ),
-                )
-                .await
-                .map_err(|e| Error::Timeout(format!("Timeout draining the connection {e}")))?,
+                Netsocket::Tls(ref mut conn) => {
+                    let mut reader = conn.take(self.limit as u64);
+                    let mut sink = aerospike_rt::io::sink();
+                    io_with_timeout!(
+                        self.conn,
+                        timeout,
+                        aerospike_rt::io::copy(&mut reader, &mut sink)
+                    )
+                    .unwrap_or_else(|_| {
+                        Err(std::io::Error::new(
+                            std::io::ErrorKind::TimedOut,
+                            "Timeout draining the connection",
+                        ))
+                    })
+                    .map_err(|e| Error::Timeout(format!("Timeout draining the connection {e}")))?
+                }
                 #[cfg(test)]
                 _ => unreachable!(),
-            }?;
+            };
 
             self.limit -= count as usize;
             self.bytes_read += count as usize;

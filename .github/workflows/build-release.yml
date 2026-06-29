@@ -1,0 +1,96 @@
+# Build and release using the shared-workflows Artifacts CI/CD orchestrator.
+# Standard flow: extract-version → reusable_artifacts-cicd (build → sign → deploy) → create-release-bundle.
+name: Build and release
+
+permissions:
+  id-token: write
+  packages: write
+  contents: read
+  attestations: write
+
+on:
+  workflow_call:
+    outputs:
+      jf-build-id:
+        description: JFrog build id
+        value: ${{ jobs.artifacts-cicd.outputs.jf-build-id }}
+    secrets:
+      GPG_SECRET_KEY:
+        required: true
+      GPG_PUBLIC_KEY:
+        required: true
+      GPG_PASS:
+        required: true
+
+jobs:
+  extract-version:
+    runs-on: ${{ vars.BUILD_CONTAINER_DISTRO_VERSION || 'ubuntu-22.04' }}
+
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@20cf305ff2072d973412fa9b1e3a4f227bda3c76 # v2.14.0
+        with:
+          egress-policy: audit
+
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          fetch-depth: 2
+
+      - name: Extract version
+        id: extract
+        uses: ./.github/actions/get-version
+
+    outputs:
+      version: ${{ steps.extract.outputs.release-version }}
+      is-snapshot: ${{ steps.extract.outputs.is-snapshot }}
+
+  artifacts-cicd:
+    needs: extract-version
+    uses: aerospike/shared-workflows/.github/workflows/reusable_artifacts-cicd.yaml@v3.5.0
+    with:
+      gh-workflows-ref: v3.5.0
+      jf-project: ${{ vars.JFROG_PROJECT }}
+      jf-build-name: aerospike-client-rust
+      version: ${{ needs.extract-version.outputs.version }}
+      gh-artifact-directory: build
+      matrix-json: |
+        {"include":[{"runs-on":"ubuntu-22.04","distro":"jammy","arch":"x86_64","build-env":"emulated=false;VERSION=${{ needs.extract-version.outputs.version }};IS_SNAPSHOT=${{ needs.extract-version.outputs.is-snapshot }}"}]}
+      build-script: |
+        set -euo pipefail
+        echo "VERSION=${VERSION:-<unset>} IS_SNAPSHOT=${IS_SNAPSHOT:-<unset>}"
+
+        rustup toolchain install 1.87 --profile minimal
+        rustup default 1.87
+        rustc --version
+        cargo --version
+
+        mkdir -p build
+
+        for pkg in aerospike aerospike-core aerospike-rt aerospike-sync aerospike-macro; do
+          echo "Packaging ${pkg}..."
+          cargo package -p "${pkg}" --no-verify --allow-dirty
+          cp "target/package/${pkg}-"*.crate build/
+        done
+
+        ls -la build/
+      oidc-provider-name: ${{ vars.OIDC_PROVIDER_NAME }}
+      oidc-audience: ${{ vars.OIDC_AUDIENCE }}
+      dry-run: false
+    secrets:
+      gpg-private-key: ${{ secrets.GPG_SECRET_KEY }}
+      gpg-public-key: ${{ secrets.GPG_PUBLIC_KEY }}
+      gpg-key-pass: ${{ secrets.GPG_PASS }}
+
+  create-release-bundle:
+    needs: [extract-version, artifacts-cicd]
+    uses: aerospike/shared-workflows/.github/workflows/reusable_create-release-bundle.yaml@v3.5.0
+    with:
+      jf-project: ${{ vars.JFROG_PROJECT }}
+      jf-build-names: aerospike-client-rust:${{ needs.artifacts-cicd.outputs.jf-build-id }}
+      jf-bundle-name: aerospike-client-rust
+      gh-workflows-ref: v3.5.0
+      version: ${{ needs.extract-version.outputs.version }}
+      oidc-provider-name: ${{ vars.OIDC_PROVIDER_NAME }}
+      oidc-audience: ${{ vars.OIDC_AUDIENCE }}
+      dry-run: false

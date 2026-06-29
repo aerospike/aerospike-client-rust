@@ -22,7 +22,7 @@ use crate::net::Connection;
 use crate::policy::Policy;
 use crate::{Key, ResultCode};
 use aerospike_rt::sleep;
-use aerospike_rt::time::{Duration, Instant};
+use aerospike_rt::time::Instant;
 
 pub struct SingleCommand<'a> {
     cluster: Arc<Cluster>,
@@ -75,19 +75,10 @@ impl<'a> SingleCommand<'a> {
         policy: &(dyn Policy + Send + Sync),
         cmd: &'a mut (dyn commands::Command + Send),
     ) -> Result<()> {
-        if policy.total_timeout() > 0 {
-            match aerospike_rt::timeout(
-                Duration::from_millis(u64::from(policy.total_timeout())),
-                Self::execute_command(policy, cmd),
-            )
-            .await
-            {
-                Ok(res) => res,
-                Err(_) => Err(Error::Timeout("Timeout".to_string())),
-            }
-        } else {
-            Self::execute_command(policy, cmd).await
-        }
+        // `total_timeout` is enforced per-IO via `Connection::deadline()` —
+        // an outer wrapper here would just duplicate it under the global
+        // Tokio time-driver mutex.
+        Self::execute_command(policy, cmd).await
     }
 
     pub async fn execute_command(
@@ -190,6 +181,12 @@ impl<'a> SingleCommand<'a> {
                 cmd.prepare_retry(is_client_timeout);
 
                 if let Some(sleep_between_retries) = policy.sleep_between_retries() {
+                    if let Some(deadline) = deadline {
+                        if Instant::now() + sleep_between_retries > deadline {
+                            // We will timeout anyway after sleep. break immediately.
+                            break;
+                        }
+                    }
                     sleep(sleep_between_retries).await;
                 }
             }

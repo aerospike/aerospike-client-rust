@@ -18,7 +18,7 @@ proptest_async::proptest! {
             .prop_filter("ShortQuery and rps together are invalid",
                 |qp| !(qp.expected_duration == QueryDuration::Short && qp.records_per_second > 0)),
             mut pf in partition_filter(common::namespace().into(), common::prop_setname_multi().into()),
-            stmt in statement(common::namespace().into(), common::prop_setname_multi().into()))
+            stmt in statement_scan(common::namespace().into(), common::prop_setname_multi().into()))
     {
         let client = common::singleton_client().await;
 
@@ -39,14 +39,18 @@ proptest_async::proptest! {
         while !pf.done() {
             iter+= 1;
 
-            let rs = client.query(&query_policy, pf, stmt.clone()).await.unwrap();
+            let rs = match client.query(&query_policy, pf, stmt.clone()).await {
+                Err(e) if common::is_index_not_found(&e) => return,
+                Err(e) => panic!("{}", e),
+                Ok(rs) => rs,
+            };
             let rs = rs.into_stream();
             tokio::pin!(rs);
 
             while let Some(res) = rs.next().await {
                 match res {
                     Ok(_) => count+=1,
-                    Err(Error::ServerError(ResultCode::IndexNotFound, _, _)) => (), // it's fine
+                    Err(e) if common::is_index_not_found(&e) => return,
                     Err(e) => panic!("{}", e),
                 }
             }

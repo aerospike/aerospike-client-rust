@@ -53,6 +53,7 @@ async fn create_index_on_bin() {
     let task = client.drop_index(&apolicy, ns, &set, &index).await.unwrap();
     task.wait_till_complete(None).await.unwrap();
 
+    let _index_guard = common::lock_index_ops().await;
     let task = client
         .create_index_on_bin(
             &apolicy,
@@ -111,6 +112,7 @@ async fn create_index_using_expression() {
 
     let fe: Expression = num_add(vec![int_bin(common::rand_str(10)), int_val(0)]);
 
+    let _index_guard = common::lock_index_ops().await;
     let task = client
         .create_index_using_expression(
             &apolicy,
