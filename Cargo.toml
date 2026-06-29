@@ -56,7 +56,7 @@ name = "client_server"
 harness = false
 
 [workspace]
-members = ["tools/benchmark", "tools/min-bench", "aerospike-core", "aerospike-rt", "aerospike-sync", "aerospike-macro"]
+members = ["tools/benchmark", "aerospike-core", "aerospike-rt", "aerospike-sync", "aerospike-macro"]
 
 [dev-dependencies]
 log = "0.4.29"
