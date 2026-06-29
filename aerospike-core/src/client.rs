@@ -1498,7 +1498,7 @@ impl Client {
     ) {
         let namespace = statement.namespace.clone();
         loop {
-            let mut timed_out = false;
+            let timed_out = false;
             {
                 let mut tracker_locked = tracker.lock().await;
                 match tracker_locked
