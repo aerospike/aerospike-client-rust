@@ -69,13 +69,17 @@ impl BatchOperateCommand {
 
     pub async fn execute_command(mut self, cluster: Arc<Cluster>) -> Result<Self> {
         let mut iterations = 0;
+        // Remember the most recent per-attempt error so retry exhaustion
+        // surfaces a meaningful cause (e.g. the circuit breaker's
+        // MaxErrorRate) instead of a bare timeout.
+        let mut last_err: Option<Error> = None;
 
         // set timeout outside the loop
         let deadline = self.policy.deadline();
 
         // Execute command until successful, timed out or maximum iterations have been reached.
         loop {
-            let success = if iterations & 1 == 0 || matches!(self.policy.replica, Replica::Master) {
+            let error = if iterations & 1 == 0 || matches!(self.policy.replica, Replica::Master) {
                 // For even iterations, we request all keys from the same node for efficiency.
                 Self::request_group(
                     &mut self.batch_ops,
@@ -86,7 +90,7 @@ impl BatchOperateCommand {
                 .await?
             } else {
                 // However, for odd iterations try the second choice for each. Instead of re-sharding the batch (as the second choice may not correspond to the first), just try each by itself.
-                let mut all_successful = true;
+                let mut group_err = None;
                 for individual_op in self.batch_ops.chunks_mut(1) {
                     let key = individual_op[0].0.key();
                     // Find somewhere else to try.
@@ -96,16 +100,20 @@ impl BatchOperateCommand {
                         self.policy.replica,
                         Some(self.node.clone()),
                     )?;
-
-                    if !Self::request_group(individual_op, &self.policy, deadline, node).await? {
-                        all_successful = false;
+                    if let Some(e) =
+                        Self::request_group(individual_op, &self.policy, deadline, node).await?
+                    {
+                        group_err = Some(e);
                         break;
                     }
                 }
-                all_successful
+                group_err
             };
 
-            if success {
+            if let Some(err) = error {
+                warn!("Node {}: {err}", self.node);
+                last_err = Some(err);
+            } else {
                 // command has completed successfully. Exit method.
                 return Ok(self);
             }
@@ -114,7 +122,9 @@ impl BatchOperateCommand {
 
             // too many retries
             if self.policy.max_retries() > 0 && iterations > self.policy.max_retries() + 1 {
-                return Err(Error::Timeout(format!("Timeout after {iterations} tries")));
+                return Err(last_err.unwrap_or_else(|| {
+                    Error::Timeout(format!("Timeout after {iterations} tries"))
+                }));
             }
 
             // Sleep before trying again, after the first iteration
@@ -125,9 +135,9 @@ impl BatchOperateCommand {
             // check for command timeout
             if let Some(deadline) = deadline {
                 if Instant::now() > deadline {
-                    return Err(Error::Timeout(format!(
-                        "Command timed out after {iterations} tries"
-                    )));
+                    return Err(last_err.unwrap_or_else(|| {
+                        Error::Timeout(format!("Command timed out after {iterations} tries"))
+                    }));
                 }
             }
         }
@@ -138,12 +148,21 @@ impl BatchOperateCommand {
         policy: &BatchPolicy,
         deadline: Option<Instant>,
         node: Arc<Node>,
-    ) -> Result<bool> {
+    ) -> Result<Option<Error>> {
+        // Per-node circuit breaker: don't even open a socket if the node
+        // is currently outside its error-rate window. Mirrors Java's
+        // `node.validateErrorCount()` call site at the top of every
+        // command attempt.
+        if let Err(err) = node.validate_error_count() {
+            return Ok(Some(err));
+        }
+
         let mut conn = match node.get_connection(0).await {
             Ok(conn) => conn,
             Err(err) => {
                 warn!("Node {node}: {err}");
-                return Ok(false);
+                node.incr_error_rate();
+                return Ok(Some(err));
             }
         };
 
@@ -162,7 +181,8 @@ impl BatchOperateCommand {
             // Close socket to flush out possible garbage. Do not put back in pool.
             conn.invalidate();
             warn!("Node {node}: {err}");
-            return Ok(false);
+            node.incr_error_rate();
+            return Ok(Some(err));
         }
 
         // Parse results.
@@ -174,9 +194,20 @@ impl BatchOperateCommand {
             if !Self::keep_connection(&err) {
                 conn.invalidate();
             }
-            Err(err)
+            // Retriable server errors (TIMEOUT / DEVICE_OVERLOAD / KEY_BUSY /
+            // PARTITION_UNAVAILABLE) should drive another retry iteration, not
+            // abort the whole batch. Return them as recoverable so the outer
+            // loop can loop again.
+            if commands::should_retry(&err) {
+                if commands::is_network_error(&err) || commands::is_retriable_server_error(&err) {
+                    node.incr_error_rate();
+                }
+                Ok(Some(err))
+            } else {
+                Err(err)
+            }
         } else {
-            Ok(true)
+            Ok(None)
         }
     }
 
