@@ -134,3 +134,77 @@ pub const fn is_retriable_server_error(err: &Error) -> bool {
 pub const fn should_retry(err: &Error) -> bool {
     is_network_error(err) || is_retriable_server_error(err)
 }
+
+/// Contract tests for the three predicates that gate retry + socket reuse.
+/// `Error::Connection` must be retriable 
+/// `Error::Io` must NOT be (regression guard — if someone re-introduces
+/// `Err(e.into())` at a socket site, the loopback tests catch the producer
+/// regression while these pin the predicate semantics).
+#[cfg(test)]
+mod tests_retry_predicates {
+    use super::*;
+    use crate::ResultCode;
+
+    fn conn_err() -> Error {
+        Error::Connection("read: early eof".into())
+    }
+    fn io_err() -> Error {
+        Error::Io(std::io::Error::new(
+            std::io::ErrorKind::UnexpectedEof,
+            "early eof",
+        ))
+    }
+    fn timeout_err() -> Error {
+        Error::Timeout("Timeout reading from the network connection".into())
+    }
+    fn server_err(rc: ResultCode) -> Error {
+        Error::ServerError(rc, false, String::new())
+    }
+
+    #[test]
+    fn is_network_error_contract() {
+        // (err, expected, label)
+        let cases: &[(Error, bool, &str)] = &[
+            (conn_err(),                              true,  "Error::Connection"),
+            (timeout_err(),                           true,  "Error::Timeout"),
+            (io_err(),                                false, "Error::Io — regression guard"),
+            (server_err(ResultCode::DeviceOverload),  false, "server error is not a network error"),
+        ];
+        for (err, expected, label) in cases {
+            assert_eq!(is_network_error(err), *expected, "{label}: err={err:?}");
+        }
+    }
+
+    #[test]
+    fn should_retry_contract() {
+        let cases: &[(Error, bool, &str)] = &[
+            (conn_err(),                                true,  "Connection retries"),
+            (timeout_err(),                             true,  "Timeout retries"),
+            (io_err(),                                  false, "Io does NOT retry"),
+            (server_err(ResultCode::Timeout),           true,  "server TIMEOUT retries"),
+            (server_err(ResultCode::DeviceOverload),    true,  "DEVICE_OVERLOAD retries"),
+            (server_err(ResultCode::KeyBusy),           true,  "KEY_BUSY retries"),
+            (server_err(ResultCode::PartitionUnavailable), true, "PARTITION_UNAVAILABLE retries"),
+            (server_err(ResultCode::KeyNotFoundError),  false, "KEY_NOT_FOUND does NOT retry"),
+            (server_err(ResultCode::ParameterError),    false, "PARAMETER_ERROR does NOT retry"),
+        ];
+        for (err, expected, label) in cases {
+            assert_eq!(should_retry(err), *expected, "{label}: err={err:?}");
+        }
+    }
+
+    #[test]
+    fn keep_connection_contract() {
+        // true = keep, false = drop (caller calls invalidate)
+        let cases: &[(Error, bool, &str)] = &[
+            (conn_err(),                               false, "Connection: socket broken — drop"),
+            (timeout_err(),                            true,  "Timeout: deadline elapsed, socket may recover — keep"),
+            (io_err(),                                 false, "Io: conservative drop"),
+            (server_err(ResultCode::KeyNotFoundError), true,  "ordinary server error: response complete — keep"),
+            (server_err(ResultCode::ScanAbort),        false, "ScanAbort: stream mid-frame — drop"),
+        ];
+        for (err, expected, label) in cases {
+            assert_eq!(keep_connection(err), *expected, "{label}: err={err:?}");
+        }
+    }
+}
