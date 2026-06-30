@@ -84,11 +84,15 @@ impl<'a> ReadCommand<'a> {
         expiration: u32,
     ) -> Result<(Record, Option<u64>)> {
         let mut bins: HashMap<String, Value> = HashMap::with_capacity(op_count);
-        let mut results: Option<Vec<Value>> = if self.wants_results {
-            Some(Vec::with_capacity(op_count))
-        } else {
-            None
-        };
+        // Populate `Record.results` when either the calling command forces
+        // it (operate paths) OR the policy opts in (`populate_positional_results`).
+        // Rust-core users default to off; PAC/PSDK opt in via policy.
+        let mut results: Option<Vec<Value>> =
+            if self.wants_results || self.policy.populate_positional_results {
+                Some(Vec::with_capacity(op_count))
+            } else {
+                None
+            };
 
         // Parse fields, extracting record version if present (used by MRT).
         let version = conn.buffer.parse_fields_for_version(field_count);

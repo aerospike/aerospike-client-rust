@@ -325,6 +325,19 @@ pub struct BasePolicy {
     /// Optional Multi-Record Transaction (MRT). All commands in the transaction
     /// must use the same namespace.
     pub txn: Option<Arc<Txn>>,
+
+    /// Populate `Record.results` (positional per-op value list) on parsed
+    /// records. When `false`, the parser leaves `results` as `None`, skipping
+    /// the per-record `Vec::with_capacity` + per-bin `value.clone()` cost.
+    ///
+    /// Operate-style commands (`operate`, `batch_operate`) populate
+    /// `results` regardless of this flag — calling them without positional
+    /// results would be semantically broken.
+    ///
+    /// Default: `false`. Downstream clients (PAC, PSDK) opt in to `true`
+    /// in their default policy constructors so end-users get positional
+    /// results by default; rust-core users pay nothing unless they ask.
+    pub populate_positional_results: bool,
 }
 
 impl Policy for BasePolicy {
