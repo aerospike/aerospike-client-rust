@@ -14,19 +14,22 @@
 
 //! Transaction roll: orchestrates verify, commit, and abort for MRT.
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use futures::future::join_all;
 
-use crate::batch::BatchRecord;
-use crate::cluster::Cluster;
+use crate::batch::{BatchOperation, BatchRecord};
+use crate::cluster::partition::Partition;
+use crate::cluster::{Cluster, Node};
+use crate::commands::batch_operate_command::BatchOperateCommand;
 use crate::commands::buffer::{INFO4_MRT_ROLL_BACK, INFO4_MRT_ROLL_FORWARD};
 use crate::commands::txn_close_command::TxnCloseCommand;
 use crate::commands::txn_mark_roll_forward_command::TxnMarkRollForwardCommand;
 use crate::commands::txn_roll_command::TxnRollCommand;
 use crate::commands::txn_verify_command::TxnVerifyCommand;
 use crate::errors::{Error, Result};
-use crate::policy::{BasePolicy, WritePolicy};
+use crate::policy::{BatchPolicy, TxnRollPolicy, TxnVerifyPolicy, WritePolicy};
 use crate::txn::{get_txn_monitor_key, AbortStatus, CommitErrorType, CommitStatus, Txn, TxnState};
 use crate::{Key, ResultCode};
 
@@ -51,9 +54,12 @@ impl TxnRoll {
     /// If verification fails, abort the transaction before returning an error.
     pub async fn verify(
         &mut self,
-        verify_policy: &BasePolicy,
-        roll_policy: &BasePolicy,
+        verify_policy: &TxnVerifyPolicy,
+        roll_policy: &TxnRollPolicy,
     ) -> Result<()> {
+        // Verify/roll run as batch commands (one per node) using the batch policy.
+        let verify_policy = &verify_policy.batch_policy;
+        let roll_policy = &roll_policy.batch_policy;
         if let Err(err) = self.verify_record_versions(verify_policy).await {
             // Verification failed — roll back the transaction.
             self.txn.set_state(TxnState::Aborted);
@@ -91,7 +97,8 @@ impl TxnRoll {
     }
 
     /// Commit the transaction: mark roll forward, roll all writes, close monitor.
-    pub async fn commit(&mut self, roll_policy: &BasePolicy) -> Result<CommitStatus> {
+    pub async fn commit(&mut self, roll_policy: &TxnRollPolicy) -> Result<CommitStatus> {
+        let roll_policy = &roll_policy.batch_policy;
         let wp = write_policy_from_base(roll_policy);
 
         if self.txn.monitor_exists() {
@@ -157,7 +164,8 @@ impl TxnRoll {
     }
 
     /// Abort the transaction: roll back all writes, close monitor.
-    pub async fn abort(&mut self, roll_policy: &BasePolicy) -> Result<AbortStatus> {
+    pub async fn abort(&mut self, roll_policy: &TxnRollPolicy) -> Result<AbortStatus> {
+        let roll_policy = &roll_policy.batch_policy;
         self.txn.set_state(TxnState::Aborted);
 
         if self.roll(roll_policy, INFO4_MRT_ROLL_BACK).await.is_err() {
@@ -176,9 +184,10 @@ impl TxnRoll {
         Ok(AbortStatus::Ok)
     }
 
-    /// Verify all record versions concurrently. Populates `self.verify_records`
-    /// with per-key outcomes even on failure so callers can inspect.
-    async fn verify_record_versions(&mut self, policy: &BasePolicy) -> Result<()> {
+    /// Verify all record versions using one batch command per node (a single
+    /// per-record command for one-key nodes), mirroring the Go client.
+    /// Populates `self.verify_records` with per-key outcomes.
+    async fn verify_record_versions(&mut self, policy: &BatchPolicy) -> Result<()> {
         let reads = self.txn.get_reads();
         if reads.is_empty() {
             return Ok(());
@@ -194,46 +203,107 @@ impl TxnRoll {
             return Ok(());
         }
 
-        let mut records: Vec<BatchRecord> = to_verify
+        let keys: Vec<Key> = to_verify.iter().map(|(k, _)| k.clone()).collect();
+        let mut records: Vec<BatchRecord> = keys
             .iter()
-            .map(|(k, _)| BatchRecord::new(k.clone(), false))
+            .map(|k| BatchRecord::new(k.clone(), false))
             .collect();
 
-        let futures = to_verify.iter().map(|(key, version)| {
+        let groups = self.group_by_node(&keys)?;
+        let futures = groups.into_iter().map(|(node, idxs)| {
             let cluster = self.cluster.clone();
-            async move {
-                let mut cmd = TxnVerifyCommand::new(policy, cluster, key, *version);
-                let res = cmd.execute().await;
-                (cmd.result_code, res)
-            }
+            let policy = policy.clone();
+            let group: Vec<(usize, Key, u64)> = idxs
+                .iter()
+                .map(|&i| (i, to_verify[i].0.clone(), to_verify[i].1))
+                .collect();
+            async move { Self::run_verify_group(cluster, policy, node, group).await }
         });
-        let outcomes: Vec<(Option<ResultCode>, Result<()>)> = join_all(futures).await;
 
-        let mut last_err: Option<Error> = None;
-        for (i, (rc, res)) in outcomes.into_iter().enumerate() {
-            match res {
-                Ok(()) => {
-                    records[i].result_code = rc.or(Some(ResultCode::Ok));
-                }
-                Err(e) => {
-                    records[i].result_code = rc;
-                    last_err = Some(e);
-                }
+        for group_result in join_all(futures).await {
+            for (i, rc) in group_result {
+                records[i].result_code = rc;
             }
         }
-
-        let any_failed = records
-            .iter()
-            .any(|r| r.result_code != Some(ResultCode::Ok));
         self.verify_records = records;
 
-        if any_failed {
-            return Err(last_err.unwrap_or_else(|| {
-                Error::ClientError("Failed to verify one or more record versions".to_string())
-            }));
+        // Verification passes when every record's version matched (`Ok`) or was
+        // simply not verifiable (`KeyNotFound` / `FilteredOut`) — matching Go's
+        // batch verify tolerance. Any other code (e.g. version mismatch) or a
+        // missing response fails verification.
+        let failure = self
+            .verify_records
+            .iter()
+            .find(|r| {
+                !matches!(
+                    r.result_code,
+                    Some(ResultCode::Ok | ResultCode::KeyNotFoundError | ResultCode::FilteredOut)
+                )
+            })
+            .map(|r| r.result_code);
+        if let Some(code) = failure {
+            return Err(match code {
+                Some(rc) => Error::ServerError(rc, false, String::new()),
+                None => {
+                    Error::Timeout("Verify: no response for one or more records".to_string())
+                }
+            });
+        }
+        Ok(())
+    }
+
+    /// Groups keys by the node owning their (master) partition, returning
+    /// node -> indices into `keys`.
+    #[allow(clippy::mutable_key_type)]
+    fn group_by_node(&self, keys: &[Key]) -> Result<HashMap<Arc<Node>, Vec<usize>>> {
+        let mut groups: HashMap<Arc<Node>, Vec<usize>> = HashMap::new();
+        for (i, key) in keys.iter().enumerate() {
+            let mut partition = Partition::for_write(key);
+            let node = partition.get_node(&self.cluster)?;
+            groups.entry(node).or_default().push(i);
+        }
+        Ok(groups)
+    }
+
+    /// Runs verify for one node's key group: a single-record command for a
+    /// one-key group, otherwise a batch verify. Returns per-index result codes.
+    async fn run_verify_group(
+        cluster: Arc<Cluster>,
+        policy: BatchPolicy,
+        node: Arc<Node>,
+        group: Vec<(usize, Key, u64)>,
+    ) -> Vec<(usize, Option<ResultCode>)> {
+        if group.len() == 1 {
+            let (i, key, ver) = &group[0];
+            let mut cmd = TxnVerifyCommand::new(&policy.base_policy, cluster, key, *ver);
+            let rc = match cmd.execute().await {
+                Ok(()) => cmd.result_code.or(Some(ResultCode::Ok)),
+                Err(_) => cmd.result_code,
+            };
+            return vec![(*i, rc)];
         }
 
-        Ok(())
+        let ops: Vec<(BatchOperation, usize)> = group
+            .iter()
+            .map(|(i, key, ver)| {
+                (
+                    BatchOperation::TxnVerify {
+                        br: BatchRecord::new(key.clone(), false),
+                        version: Some(*ver),
+                    },
+                    *i,
+                )
+            })
+            .collect();
+        let cmd = BatchOperateCommand::new(policy, node, ops);
+        match cmd.execute(cluster).await {
+            Ok(done) => done
+                .batch_ops
+                .into_iter()
+                .map(|(op, i)| (i, op.batch_record().result_code))
+                .collect(),
+            Err(_) => group.iter().map(|(i, _, _)| (*i, None)).collect(),
+        }
     }
 
     /// Mark the transaction monitor record as roll-forward.
@@ -244,65 +314,107 @@ impl TxnRoll {
 
     /// Roll forward or back all written keys concurrently. Populates
     /// `self.roll_records` with per-key outcomes and `in_doubt` flags.
-    async fn roll(&mut self, policy: &BasePolicy, txn_attr: u8) -> Result<()> {
-        let writes = self.txn.get_writes();
-        if writes.is_empty() {
+    async fn roll(&mut self, policy: &BatchPolicy, txn_attr: u8) -> Result<()> {
+        let keys = self.txn.get_writes();
+        if keys.is_empty() {
             return Ok(());
         }
 
-        let mut records: Vec<BatchRecord> = writes
+        let mut records: Vec<BatchRecord> = keys
             .iter()
             .map(|k| BatchRecord::new(k.clone(), true))
             .collect();
 
-        let futures = writes.iter().map(|key| {
+        let groups = self.group_by_node(&keys)?;
+        let futures = groups.into_iter().map(|(node, idxs)| {
             let cluster = self.cluster.clone();
+            let policy = policy.clone();
             let txn = self.txn.clone();
-            async move {
-                let mut cmd = TxnRollCommand::new(policy, cluster, key, txn, txn_attr);
-                let res = cmd.execute().await;
-                (cmd.result_code, res)
-            }
+            let group: Vec<(usize, Key)> = idxs.iter().map(|&i| (i, keys[i].clone())).collect();
+            async move { Self::run_roll_group(cluster, policy, node, txn, txn_attr, group).await }
         });
-        let outcomes: Vec<(Option<ResultCode>, Result<()>)> = join_all(futures).await;
 
-        let mut last_err: Option<Error> = None;
-        for (i, (rc, res)) in outcomes.into_iter().enumerate() {
-            match res {
-                Ok(()) => {
-                    records[i].result_code = rc.or(Some(ResultCode::Ok));
-                }
-                Err(e) => {
-                    records[i].result_code = rc;
-                    // Timeouts mean the write may or may not have been applied
-                    // by the server — mark this record as in_doubt so the
-                    // caller can request recovery.
-                    if matches!(&e, Error::Timeout(_)) {
-                        records[i].in_doubt = true;
-                        self.txn.on_write_in_doubt(&records[i].key);
-                    }
-                    last_err = Some(e);
+        for group_result in join_all(futures).await {
+            for (i, rc, in_doubt) in group_result {
+                records[i].result_code = rc;
+                records[i].in_doubt = in_doubt;
+                if in_doubt {
+                    self.txn.on_write_in_doubt(&records[i].key);
                 }
             }
         }
-
-        let any_failed = records
-            .iter()
-            .any(|r| r.result_code != Some(ResultCode::Ok));
         self.roll_records = records;
 
-        if any_failed {
+        let failure = self
+            .roll_records
+            .iter()
+            .find(|r| r.result_code != Some(ResultCode::Ok))
+            .map(|r| r.result_code);
+        if let Some(code) = failure {
             let action = if txn_attr == INFO4_MRT_ROLL_FORWARD {
                 "commit"
             } else {
                 "abort"
             };
-            return Err(last_err.unwrap_or_else(|| {
-                Error::ClientError(format!("Failed to {action} one or more records"))
-            }));
+            return Err(match code {
+                Some(rc) => {
+                    Error::ServerError(rc, false, format!("Failed to {action} one or more records"))
+                }
+                None => Error::Timeout(format!(
+                    "Failed to {action}: no response for one or more records"
+                )),
+            });
+        }
+        Ok(())
+    }
+
+    /// Runs roll for one node's key group: single-record command for a one-key
+    /// group, otherwise a batch roll. Returns per-index (result code, in_doubt).
+    async fn run_roll_group(
+        cluster: Arc<Cluster>,
+        policy: BatchPolicy,
+        node: Arc<Node>,
+        txn: Arc<Txn>,
+        roll_attr: u8,
+        group: Vec<(usize, Key)>,
+    ) -> Vec<(usize, Option<ResultCode>, bool)> {
+        if group.len() == 1 {
+            let (i, key) = &group[0];
+            let mut cmd = TxnRollCommand::new(&policy.base_policy, cluster, key, txn, roll_attr);
+            return match cmd.execute().await {
+                Ok(()) => vec![(*i, cmd.result_code.or(Some(ResultCode::Ok)), false)],
+                Err(Error::Timeout(_)) => vec![(*i, cmd.result_code, true)],
+                Err(_) => vec![(*i, cmd.result_code, false)],
+            };
         }
 
-        Ok(())
+        let ops: Vec<(BatchOperation, usize)> = group
+            .iter()
+            .map(|(i, key)| {
+                (
+                    BatchOperation::TxnRoll {
+                        br: BatchRecord::new(key.clone(), true),
+                        txn: txn.clone(),
+                        roll_attr,
+                    },
+                    *i,
+                )
+            })
+            .collect();
+        let cmd = BatchOperateCommand::new(policy, node, ops);
+        match cmd.execute(cluster).await {
+            Ok(done) => done
+                .batch_ops
+                .into_iter()
+                .map(|(op, i)| {
+                    let br = op.batch_record();
+                    (i, br.result_code, br.in_doubt)
+                })
+                .collect(),
+            // Whole node-group failed (e.g. timeout after retries): treat every
+            // write in the group as in-doubt, matching Go's no-response rule.
+            Err(_) => group.iter().map(|(i, _)| (*i, None, true)).collect(),
+        }
     }
 
     /// Close (delete) the transaction monitor record on the server and clear
@@ -333,13 +445,15 @@ impl TxnRoll {
     }
 }
 
-fn write_policy_from_base(base: &BasePolicy) -> WritePolicy {
+fn write_policy_from_base(policy: &BatchPolicy) -> WritePolicy {
+    let base = &policy.base_policy;
     let mut wp = WritePolicy::default();
     wp.base_policy.socket_timeout = base.socket_timeout;
     wp.base_policy.total_timeout = base.total_timeout;
     wp.base_policy.timeout_delay = base.timeout_delay;
     wp.base_policy.max_retries = base.max_retries;
     wp.base_policy.sleep_between_retries = base.sleep_between_retries;
+    wp.base_policy.sleep_multiplier = base.sleep_multiplier;
     wp.base_policy.use_compression = base.use_compression;
     wp
 }

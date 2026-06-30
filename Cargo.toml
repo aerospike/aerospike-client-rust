@@ -43,8 +43,9 @@ aerospike-sync = {path = "aerospike-sync", optional = true, version = "3.0.0-alp
 aerospike-macro = {path = "aerospike-macro", optional = true, version = "3.0.0-alpha.1"}
 
 [features]
-default = ["async", "serialization", "rt-tokio", "tls"]
+default = ["async", "serialization", "rt-tokio", "tls", "dynamic-config"]
 serialization = ["aerospike-core/serialization"]
+dynamic-config = ["aerospike-core/dynamic-config", "async"]
 async = ["aerospike-core"]
 sync = ["aerospike-sync"]
 rt-tokio = ["aerospike-core/rt-tokio", "aerospike-macro/rt-tokio"]

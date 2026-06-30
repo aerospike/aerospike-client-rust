@@ -796,6 +796,19 @@ impl Buffer {
         policy: &BatchPolicy,
         batch_ops: &[(BatchOperation, usize)],
     ) -> Result<()> {
+        // Multi-record-transaction verify/roll batches are homogeneous and use
+        // a per-record layout that differs from read/write, so they get their
+        // own encoders. The send/parse machinery is shared with this path.
+        match batch_ops.first().map(|(op, _)| op) {
+            Some(BatchOperation::TxnVerify { .. }) => {
+                return self.set_batch_txn_verify(policy, batch_ops)
+            }
+            Some(BatchOperation::TxnRoll { .. }) => {
+                return self.set_batch_txn_roll(policy, batch_ops)
+            }
+            _ => {}
+        }
+
         self.begin();
         let mut field_count = 1;
         self.data_offset += FIELD_HEADER_SIZE as usize + 5;
@@ -965,6 +978,10 @@ impl Buffer {
                         self.write_field_string(function_name, FieldType::UdfFunction);
                         self.write_args(args.as_deref(), FieldType::UdfArgList)?;
                     }
+                    // Dispatched to dedicated encoders above; never reached here.
+                    BatchOperation::TxnVerify { .. } | BatchOperation::TxnRoll { .. } => {
+                        unreachable!("txn verify/roll use their own batch encoders")
+                    }
                 }
             }
             prev = Some(batch_op);
@@ -978,6 +995,137 @@ impl Buffer {
             field_size as u32,
         );
 
+        self.end();
+        Ok(())
+    }
+
+    /// Encode a batch multi-record-transaction VERIFY command: one record per
+    /// key, checking its version. Per-record layout mirrors the Go client's
+    /// `setBatchTxnVerifyForOffsets` (`BATCH_MSG_INFO | BATCH_MSG_INFO4`, read +
+    /// no-bindata, `INFO3_SC_READ_TYPE`, `INFO4_MRT_VERIFY_READ`, then the
+    /// namespace/set fields and the record-version field). All `batch_ops` must
+    /// be [`BatchOperation::TxnVerify`].
+    pub(crate) fn set_batch_txn_verify(
+        &mut self,
+        policy: &BatchPolicy,
+        batch_ops: &[(BatchOperation, usize)],
+    ) -> Result<()> {
+        self.begin();
+        // BATCH_INDEX field header + num_keys(4) + flags(1)
+        self.data_offset += FIELD_HEADER_SIZE as usize + 5;
+
+        for (op, _) in batch_ops {
+            if let BatchOperation::TxnVerify { br, version } = op {
+                self.data_offset += br.key.digest.len() + 4; // offset(4) + digest
+                self.data_offset += 5; // flags + read + write + info3 + info4
+                self.data_offset += 4; // field_count(2) + op_count(2)
+                self.data_offset += br.key.namespace.len() + FIELD_HEADER_SIZE as usize;
+                self.data_offset += br.key.set_name.len() + FIELD_HEADER_SIZE as usize;
+                if version.is_some() {
+                    self.data_offset += 7 + FIELD_HEADER_SIZE as usize;
+                }
+            }
+        }
+
+        self.size_buffer()?;
+        self.write_header(&policy.base_policy, INFO1_BATCH, 0, 1, 0);
+
+        let field_size_offset = self.data_offset;
+        self.write_field_header(0, FieldType::BatchIndex);
+        self.write_u32(batch_ops.len() as u32);
+        self.write_u8(Buffer::get_batch_flags(policy));
+
+        for (idx, (op, _)) in batch_ops.iter().enumerate() {
+            if let BatchOperation::TxnVerify { br, version } = op {
+                let key = &br.key;
+                self.write_u32(idx as u32);
+                self.write_bytes(&key.digest);
+                self.write_u8(BATCH_MSG_INFO | BATCH_MSG_INFO4);
+                self.write_u8(INFO1_READ | INFO1_NOBINDATA);
+                self.write_u8(0);
+                self.write_u8(INFO3_SC_READ_TYPE);
+                self.write_u8(INFO4_MRT_VERIFY_READ);
+                let field_count = usize::from(version.is_some());
+                self.write_batch_fields(key, field_count, 0);
+                if let Some(ver) = version {
+                    self.write_field_version(*ver);
+                }
+            }
+        }
+
+        let field_size =
+            self.data_offset - self.compress_offset - MSG_TOTAL_HEADER_SIZE as usize - 4;
+        NetworkEndian::write_u32(
+            &mut self.data_buffer[field_size_offset..field_size_offset + 4],
+            field_size as u32,
+        );
+        self.end();
+        Ok(())
+    }
+
+    /// Encode a batch multi-record-transaction ROLL command (forward on commit /
+    /// back on abort): one record per written key. Reuses [`write_batch_write`],
+    /// whose txn path already emits the `BATCH_MSG_INFO|INFO4|GEN|TTL` header,
+    /// durable-delete write attrs, `txn_attr`, and the MRT id/version/deadline
+    /// fields — matching the Go client's `setBatchTxnRollForOffsets`. All
+    /// `batch_ops` must be [`BatchOperation::TxnRoll`].
+    pub(crate) fn set_batch_txn_roll(
+        &mut self,
+        policy: &BatchPolicy,
+        batch_ops: &[(BatchOperation, usize)],
+    ) -> Result<()> {
+        self.begin();
+        self.data_offset += FIELD_HEADER_SIZE as usize + 5;
+
+        for (op, _) in batch_ops {
+            if let BatchOperation::TxnRoll { br, txn, .. } = op {
+                let key = &br.key;
+                let ver = txn.get_read_version(key);
+                self.data_offset += key.digest.len() + 4;
+                self.data_offset += 12; // flags+read+write+info + expiration(4) + fc(2)+oc(2)
+                self.data_offset += key.namespace.len() + FIELD_HEADER_SIZE as usize;
+                self.data_offset += key.set_name.len() + FIELD_HEADER_SIZE as usize;
+                self.data_offset += 2; // generation (u16)
+                self.size_txn_batch(Some(txn), ver, true);
+            }
+        }
+
+        self.size_buffer()?;
+        self.write_header(&policy.base_policy, INFO1_BATCH, 0, 1, 0);
+
+        let field_size_offset = self.data_offset;
+        self.write_field_header(0, FieldType::BatchIndex);
+        self.write_u32(batch_ops.len() as u32);
+        self.write_u8(Buffer::get_batch_flags(policy));
+
+        let no_filter: Option<Expression> = None;
+        for (idx, (op, _)) in batch_ops.iter().enumerate() {
+            if let BatchOperation::TxnRoll {
+                br,
+                txn,
+                roll_attr,
+            } = op
+            {
+                let key = &br.key;
+                let ver = txn.get_read_version(key);
+                self.write_u32(idx as u32);
+                self.write_bytes(&key.digest);
+                let attr = BatchAttr {
+                    write_attr: INFO2_WRITE | INFO2_RESPOND_ALL_OPS | INFO2_DURABLE_DELETE,
+                    txn_attr: *roll_attr,
+                    has_write: true,
+                    ..BatchAttr::default()
+                };
+                self.write_batch_write(key, &attr, &no_filter, 0, 0, Some(txn), ver)?;
+            }
+        }
+
+        let field_size =
+            self.data_offset - self.compress_offset - MSG_TOTAL_HEADER_SIZE as usize - 4;
+        NetworkEndian::write_u32(
+            &mut self.data_buffer[field_size_offset..field_size_offset + 4],
+            field_size as u32,
+        );
         self.end();
         Ok(())
     }

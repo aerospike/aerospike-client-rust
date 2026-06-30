@@ -15,34 +15,43 @@
 
 use crate::expressions::Expression;
 use crate::policy::{BasePolicy, PolicyLike};
+#[cfg(feature = "dynamic-config")]
+use crate::policy::BasePolicyConfig;
 use crate::{CommitLevel, Expiration, GenerationPolicy, RecordExistsAction};
 
 /// `WritePolicy` encapsulates parameters for all write operations.
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "dynamic-config", derive(aerospike_macro::Config))]
 pub struct WritePolicy {
     /// Base policy instance
+    #[cfg_attr(feature = "dynamic-config", config(flatten))]
     pub base_policy: BasePolicy,
 
     /// `RecordExistsAction` qualifies how to handle writes where the record already exists.
+    #[cfg_attr(feature = "dynamic-config", config(skip))]
     pub record_exists_action: RecordExistsAction,
 
     /// `GenerationPolicy` qualifies how to handle record writes based on record generation.
     /// The default (NONE) indicates that the generation is not used to restrict writes.
+    #[cfg_attr(feature = "dynamic-config", config(skip))]
     pub generation_policy: GenerationPolicy,
 
     /// Desired consistency guarantee when committing a transaction on the server. The default
     /// (`COMMIT_ALL`) indicates that the server should wait for master and all replica commits to
     /// be successful before returning success to the client.
+    #[cfg_attr(feature = "dynamic-config", config(skip))]
     pub commit_level: CommitLevel,
 
     /// Generation determines expected generation.
     /// Generation is the number of times a record has been
     /// modified (including creation) on the server.
     /// If a write operation is creating a record, the expected generation would be 0.
+    #[cfg_attr(feature = "dynamic-config", config(skip))]
     pub generation: u32,
 
     /// Expiration determines record expiration in seconds. Also known as TTL (Time-To-Live).
     /// Seconds record will live before being removed by the server.
+    #[cfg_attr(feature = "dynamic-config", config(skip))]
     pub expiration: Expiration,
 
     /// Send user defined key in addition to hash digest on a record put.
@@ -58,6 +67,7 @@ pub struct WritePolicy {
     /// (result offset equals bin's operate sequence). This only makes sense when multiple list
     /// operations are used in one operate call and some of those operations do not return results
     /// by default.
+    #[cfg_attr(feature = "dynamic-config", config(skip))]
     pub respond_per_each_op: bool,
 
     /// If the transaction results in a record deletion, leave a tombstone for the record. This
@@ -68,6 +78,7 @@ pub struct WritePolicy {
     /// If true, the MRT monitor record will only be written if the record is locked.
     /// This is used internally by the transaction system.
     /// Default: false
+    #[cfg_attr(feature = "dynamic-config", config(skip))]
     pub on_locking_only: bool,
 }
 

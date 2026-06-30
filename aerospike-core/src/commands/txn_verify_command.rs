@@ -48,6 +48,10 @@ impl<'a> TxnVerifyCommand<'a> {
 
 #[async_trait::async_trait]
 impl Command for TxnVerifyCommand<'_> {
+    fn cluster(&self) -> Option<&Cluster> {
+        Some(self.single_command.cluster())
+    }
+
     async fn write_timeout(&mut self, conn: &mut Connection) -> Result<()> {
         conn.buffer.write_timeout(self.policy.server_timeout());
         Ok(())
@@ -92,9 +96,15 @@ impl Command for TxnVerifyCommand<'_> {
         let result_code = ResultCode::from(conn.buffer.read_u8(Some(13)));
         self.result_code = Some(result_code);
 
-        // Only Ok means the record version matched. Any other code — including
-        // KeyNotFoundError or MrtVersionMismatch — is a verify failure.
-        if result_code != ResultCode::Ok {
+        // `Ok` means the version matched. `KeyNotFoundError` / `FilteredOut`
+        // are tolerated at the transaction level (the record is simply not
+        // verifiable) and are not a hard verify failure — mirroring the Go
+        // batch verify path. Any other code (e.g. a version mismatch) is a real
+        // verify failure. The caller inspects `result_code` for the outcome.
+        if !matches!(
+            result_code,
+            ResultCode::Ok | ResultCode::KeyNotFoundError | ResultCode::FilteredOut
+        ) {
             return Err(Error::ServerError(result_code, false, conn.addr.clone()));
         }
 

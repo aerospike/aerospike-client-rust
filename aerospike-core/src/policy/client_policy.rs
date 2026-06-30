@@ -47,8 +47,10 @@ pub const TEND_INTERVAL_MIN_MS: u32 = 250;
 
 /// `ClientPolicy` encapsulates parameters for client policy command.
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "dynamic-config", derive(aerospike_macro::Config))]
 pub struct ClientPolicy {
     /// User authentication to cluster.
+    #[cfg_attr(feature = "dynamic-config", config(skip))]
     pub auth_mode: AuthMode,
 
     /// TLS secure connection policy for TLS enabled servers.
@@ -101,6 +103,7 @@ pub struct ClientPolicy {
     ///     .with_no_client_auth();
     /// ```
     #[cfg(feature = "tls")]
+    #[cfg_attr(feature = "dynamic-config", config(skip))]
     pub tls_config: Option<ClientConfig>,
 
     /// Initial host connection timeout in milliseconds. The timeout when opening a connection
@@ -113,6 +116,10 @@ pub struct ClientPolicy {
     ///
     /// Servers 8.1+ have deprecated proto-fd-idle-ms. When proto-fd-idle-ms is ultimately removed,
     /// the server will stop automatically reaping based on socket idle timeouts.
+    #[cfg_attr(
+        feature = "dynamic-config",
+        config(rename = "max_socket_idle", with = crate::config::secs_to_ms)
+    )]
     pub idle_timeout: u32,
 
     /// Minimum number of connections allowed per server node.
@@ -128,18 +135,28 @@ pub struct ClientPolicy {
     ///
     ///  Servers 8.1+ have deprecated proto-fd-idle-ms. When proto-fd-idle-ms is ultimately removed,
     ///  the server will stop automatically reaping based on socket idle timeouts.
+    #[cfg_attr(
+        feature = "dynamic-config",
+        config(rename = "min_connections_per_node", startup)
+    )]
     pub min_conns_per_node: usize,
 
     /// Maximum number of synchronous connections allowed per server node.
+    #[cfg_attr(
+        feature = "dynamic-config",
+        config(rename = "max_connections_per_node", startup)
+    )]
     pub max_conns_per_node: usize,
 
     /// Number of connection pools used for each node. Machines with 8 CPU cores or less usually
     /// need only one connection pool per node. Machines with larger number of CPU cores may have
     /// their performance limited by contention for pooled connections. Contention for pooled
     /// connections can be reduced by creating multiple mini connection pools per node.
+    #[cfg_attr(feature = "dynamic-config", config(skip))]
     pub conn_pools_per_node: u8,
 
     /// Throw exception if host connection fails during `addHost()`.
+    #[cfg_attr(feature = "dynamic-config", config(skip))]
     pub fail_if_not_connected: bool,
 
     /// Threshold at which the buffer attached to the connection will be shrunk by deallocating
@@ -147,6 +164,7 @@ pub struct ClientPolicy {
     /// Should be set to a value that covers as large a percentile of payload sizes as possible,
     /// while also being small enough not to occupy a significant amount of memory for the life
     /// of the connection pool.
+    #[cfg_attr(feature = "dynamic-config", config(skip))]
     pub buffer_reclaim_threshold: usize,
 
     /// Interval in milliseconds between cluster tends by the maintenance task.
@@ -156,12 +174,26 @@ pub struct ClientPolicy {
     /// Default: 1000
     pub tend_interval: u32,
 
+    /// Interval in milliseconds between dynamic-configuration reloads by the
+    /// config watcher (see the `dynamic-config` feature). Sourced from the
+    /// `static.client.config_interval` key (expressed in **seconds** in the
+    /// config file). Effective minimum is 1000 ms. Has no effect unless a
+    /// dynamic-config provider is active.
+    ///
+    /// Default: 1000
+    #[cfg_attr(
+        feature = "dynamic-config",
+        config(rename = "config_interval", with = crate::config::secs_to_ms, startup)
+    )]
+    pub config_interval: u32,
+
     /// A IP translation table is used in cases where different clients
     /// use different server IP addresses. This may be necessary when
     /// using clients from both inside and outside a local area
     /// network. Default is no translation.
     /// The key is the IP address returned from friend info requests to other servers.
     /// The value is the real IP address used to connect to the server.
+    #[cfg_attr(feature = "dynamic-config", config(skip))]
     pub ip_map: Option<HashMap<String, String>>,
 
     /// `UseServicesAlternate` determines if the client should use "services-alternate"
@@ -172,11 +204,16 @@ pub struct ClientPolicy {
     /// This feature is recommended instead of using the client-side `IpMap` above.
     ///
     /// "services-alternate" is available with Aerospike Server versions >= 3.7.1.
+    #[cfg_attr(
+        feature = "dynamic-config",
+        config(rename = "use_service_alternate")
+    )]
     pub use_services_alternate: bool,
 
     /// Expected cluster name. If not `None`, server nodes must return this cluster name in order
     /// to join the client's view of the cluster. Should only be set when connecting to servers
     /// that support the "cluster-name" info command.
+    #[cfg_attr(feature = "dynamic-config", config(skip))]
     pub cluster_name: Option<String>,
 
     /// Mark this client as belonging to a rack, and track server rack data. This field is useful when directing read commands to
@@ -190,6 +227,7 @@ pub struct ClientPolicy {
 
     /// Application id is used to identify an application so that client operations can be correlated
     /// with server side metrics.
+    #[cfg_attr(feature = "dynamic-config", config(rename = "app_id"))]
     pub application_id: Option<String>,
 
     /// Override the `client_id` in the `user_agent_id` payload sent to each node on connection
@@ -199,6 +237,7 @@ pub struct ClientPolicy {
     /// the default `"rust-<version>"` format.
     /// This is meant to be used in clients that are using the rust client internally,
     /// and should not be used by third-party users.
+    #[cfg_attr(feature = "dynamic-config", config(skip))]
     pub custom_client_id: Option<String>,
 
     /// Maximum number of errors (network errors + server-side `TIMEOUT`,
@@ -230,6 +269,7 @@ pub struct ClientPolicy {
     /// Useful when the client sits behind a fixed VIP / proxy that
     /// fronts the cluster, or in tests that pin to a known seed list.
     /// Defaults to `false`.
+    #[cfg_attr(feature = "dynamic-config", config(skip))]
     pub seed_only_cluster: bool,
 }
 
@@ -244,6 +284,7 @@ impl Default for ClientPolicy {
             conn_pools_per_node: 1,
             fail_if_not_connected: true,
             tend_interval: 1000,
+            config_interval: 1000,
             ip_map: None,
             use_services_alternate: false,
             cluster_name: None,

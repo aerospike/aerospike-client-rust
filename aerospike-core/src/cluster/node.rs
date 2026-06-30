@@ -1105,7 +1105,10 @@ mod node_tests {
             version: Version::default(),
             detect_load_balancer: false,
         });
-        let node = Node::new(policy, nv);
+        let metrics = Arc::new(crate::metrics::NodeMetrics::new(
+            crate::metrics::MetricsPolicy::default(),
+        ));
+        let node = Node::new(policy, nv, metrics);
 
         // Trigger 4 pool misses with distinct hints — each should land on its own queue.
         let _c0 = node.get_connection(0).await.expect("hint=0");
@@ -1139,7 +1142,10 @@ mod node_tests {
             version: Version::default(),
             detect_load_balancer: false,
         });
-        let node = Node::new(policy, nv);
+        let metrics = Arc::new(crate::metrics::NodeMetrics::new(
+            crate::metrics::MetricsPolicy::default(),
+        ));
+        let node = Node::new(policy, nv, metrics);
 
         let mut in_flight = Vec::new();
         for i in 0..5 {

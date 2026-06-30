@@ -34,3 +34,20 @@ pub enum ReadModeSC {
     /// partitions. Increasing sequence of record versions is not guaranteed.
     AllowUnavailable = 3,
 }
+
+// Case-insensitive YAML/config parsing (mirrors the Go client's `ToUpper`).
+#[cfg(feature = "dynamic-config")]
+impl<'de> serde::Deserialize<'de> for ReadModeSC {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let value = String::deserialize(deserializer)?;
+        match value.to_ascii_uppercase().as_str() {
+            "SESSION" => Ok(ReadModeSC::Session),
+            "LINEARIZE" => Ok(ReadModeSC::Linearize),
+            "ALLOW_REPLICA" => Ok(ReadModeSC::AllowReplica),
+            "ALLOW_UNAVAILABLE" => Ok(ReadModeSC::AllowUnavailable),
+            other => Err(serde::de::Error::custom(format!(
+                "invalid ReadModeSc value: {other}"
+            ))),
+        }
+    }
+}

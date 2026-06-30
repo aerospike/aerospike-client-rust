@@ -17,7 +17,7 @@ use std::sync::Arc;
 
 use flate2::read::ZlibDecoder;
 
-use crate::cluster::Node;
+use crate::cluster::{Cluster, Node};
 use crate::commands::buffer;
 use crate::commands::buffer::QueryDirection;
 use crate::commands::{Command, SingleCommand};
@@ -31,6 +31,9 @@ use crate::{ResultCode, Statement};
 /// UDF to matching records without returning data.
 pub struct ServerCommand<'a> {
     node: Arc<Node>,
+    /// The owning cluster, surfaced via [`Command::cluster`] so the retry loop
+    /// can record cluster-wide `exceeded-*` counters for background ops/UDF.
+    cluster: Arc<Cluster>,
     write_policy: &'a WritePolicy,
     statement: &'a Statement,
     task_id: u64,
@@ -46,9 +49,11 @@ impl<'a> ServerCommand<'a> {
         write_policy: &'a WritePolicy,
         statement: &'a Statement,
         task_id: u64,
+        cluster: Arc<Cluster>,
     ) -> Self {
         ServerCommand {
             node,
+            cluster,
             write_policy,
             statement,
             task_id,
@@ -61,9 +66,11 @@ impl<'a> ServerCommand<'a> {
         write_policy: &'a WritePolicy,
         statement: &'a Statement,
         task_id: u64,
+        cluster: Arc<Cluster>,
     ) -> Self {
         ServerCommand {
             node,
+            cluster,
             write_policy,
             statement,
             task_id,
@@ -78,6 +85,10 @@ impl<'a> ServerCommand<'a> {
 
 #[async_trait::async_trait]
 impl Command for ServerCommand<'_> {
+    fn cluster(&self) -> Option<&Cluster> {
+        Some(&self.cluster)
+    }
+
     async fn write_timeout(&mut self, conn: &mut Connection) -> Result<()> {
         conn.buffer
             .write_timeout(self.write_policy.socket_timeout());

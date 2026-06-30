@@ -44,3 +44,19 @@ pub enum QueryDuration {
     /// This value is treated exactly like Long for server versions < 7.1.
     LongRelaxAP = 2,
 }
+
+// Case-insensitive YAML/config parsing (mirrors the Go client's `ToUpper`).
+#[cfg(feature = "dynamic-config")]
+impl<'de> serde::Deserialize<'de> for QueryDuration {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let value = String::deserialize(deserializer)?;
+        match value.to_ascii_uppercase().as_str() {
+            "LONG" => Ok(QueryDuration::Long),
+            "SHORT" => Ok(QueryDuration::Short),
+            "LONG_RELAX_AP" => Ok(QueryDuration::LongRelaxAP),
+            other => Err(serde::de::Error::custom(format!(
+                "invalid QueryDuration value: {other}"
+            ))),
+        }
+    }
+}

@@ -64,8 +64,10 @@ pub const DEFAULT_LATENCY_BASE: usize = 2;
 
 /// Specifies client periodic metrics configuration.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "dynamic-config", derive(aerospike_macro::Config))]
 pub struct MetricsPolicy {
     /// Histogram bucket layout. Default: [`HistogramType::Logarithmic`].
+    #[cfg_attr(feature = "dynamic-config", config(skip))]
     pub histogram_type: HistogramType,
 
     /// Number of elapsed-time range buckets in latency histograms.
@@ -79,10 +81,12 @@ pub struct MetricsPolicy {
     /// `<base^1 <base^2 ... >=base^(columns-1)`; for linear histograms they are
     /// `<base <base*2 ... >=base*(columns-1)`.
     ///
-    /// Default: 2.
+    /// Default: 2. In dynamic-config files this is the `latency_base` key (a
+    /// direct multiplier), matching the Aerospike Go client.
     pub latency_base: usize,
 
     /// User-provided labels appended to metrics on export.
+    #[cfg_attr(feature = "dynamic-config", config(skip))]
     pub labels: Labels,
 
     /// Decides, per command, whether it is sampled while metrics are enabled.
@@ -91,6 +95,7 @@ pub struct MetricsPolicy {
     /// `range == threshold` records every command; otherwise it records a
     /// `threshold / range` fraction. Defaults to `Some(Sampler::all())`, so
     /// enabling metrics records every command unless a sampler is set.
+    #[cfg_attr(feature = "dynamic-config", config(skip))]
     pub sampler: Option<Sampler>,
 }
 

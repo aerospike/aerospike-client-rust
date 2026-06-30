@@ -168,7 +168,7 @@ pub use operations::{MapPolicy, MapReturnType, MapWriteFlags, MapWriteMode};
 pub use policy::{
     AdminPolicy, AuthMode, BasePolicy, BatchPolicy, ClientPolicy, CommitLevel, Concurrency,
     Expiration, GenerationPolicy, Policy, QueryDuration, QueryPolicy, ReadModeAP, ReadModeSC,
-    ReadPolicy, ReadTouchTTL, RecordExistsAction, WritePolicy,
+    ReadPolicy, ReadTouchTTL, RecordExistsAction, TxnRollPolicy, TxnVerifyPolicy, WritePolicy,
 };
 pub use privilege::{Privilege, PrivilegeCode};
 pub use query::{
@@ -197,6 +197,8 @@ mod batch;
 mod client;
 mod cluster;
 pub(crate) mod commands;
+#[cfg(feature = "dynamic-config")]
+pub mod config;
 mod common;
 pub mod expressions;
 pub mod metrics;

@@ -14,7 +14,7 @@
 
 use std::sync::Arc;
 
-use crate::cluster::Node;
+use crate::cluster::{Cluster, Node};
 use crate::commands::buffer::QueryDirection;
 use crate::commands::{Command, SingleCommand, StreamCommand};
 use crate::errors::Result;
@@ -37,6 +37,7 @@ impl<'a> QueryCommand<'a> {
         statement: Arc<Statement>,
         recordset: Arc<Recordset>,
         node_partitions: Arc<Mutex<NodePartitions>>,
+        cluster: Arc<Cluster>,
     ) -> Self {
         let node = {
             let node_partitions = node_partitions.lock().await;
@@ -44,7 +45,7 @@ impl<'a> QueryCommand<'a> {
         };
 
         QueryCommand {
-            stream_command: StreamCommand::new(node, recordset, node_partitions, false),
+            stream_command: StreamCommand::new(node, recordset, node_partitions, false, cluster),
             policy,
             statement,
         }
@@ -57,6 +58,10 @@ impl<'a> QueryCommand<'a> {
 
 #[async_trait::async_trait]
 impl Command for QueryCommand<'_> {
+    fn cluster(&self) -> Option<&Cluster> {
+        self.stream_command.cluster()
+    }
+
     async fn write_timeout(&mut self, conn: &mut Connection) -> Result<()> {
         let server_timeout = self
             .stream_command

@@ -58,12 +58,18 @@ impl BatchOperateCommand {
         if self.policy.total_timeout() > 0 {
             let res = aerospike_rt::timeout(
                 Duration::from_millis(u64::from(self.policy.total_timeout())),
-                self.execute_command(cluster),
+                self.execute_command(cluster.clone()),
             )
             .await;
             match res {
                 Ok(res) => res,
-                Err(_) => Err(Error::Timeout("Timeout".to_string())),
+                Err(_) => {
+                    // The whole-command deadline elapsed before the inner loop
+                    // returned. The in-loop deadline check is mutually
+                    // exclusive with this path, so there's no double count.
+                    cluster.incr_total_timeout_exceeded();
+                    Err(Error::Timeout("Timeout".to_string()))
+                }
             }
         } else {
             self.execute_command(cluster).await
@@ -77,6 +83,10 @@ impl BatchOperateCommand {
 
         // set timeout outside the loop
         let deadline = self.policy.deadline();
+        // Retry backoff: sleep interval grows by `sleep_multiplier` after each
+        // retry sleep (matching Go). A multiplier <= 1.0 keeps it constant.
+        let sleep_multiplier = self.policy.sleep_multiplier();
+        let mut sleep_interval = self.policy.sleep_between_retries();
 
         // Metrics: a batch containing any write op is a BatchWrite, otherwise
         // a BatchRead. `trans_start` measures the overall command latency.
@@ -169,6 +179,7 @@ impl BatchOperateCommand {
                 if sampled.unwrap_or(false) {
                     self.node.metrics().incr_transaction_error();
                 }
+                cluster.incr_max_retries_exceeded();
                 let u32_iters = if iterations > u32::MAX as usize {
                     u32::MAX
                 } else {
@@ -180,8 +191,11 @@ impl BatchOperateCommand {
             }
 
             // Sleep before trying again, after the first iteration
-            if let Some(sleep_between_retries) = self.policy.sleep_between_retries() {
-                sleep(sleep_between_retries).await;
+            if let Some(interval) = sleep_interval {
+                sleep(interval).await;
+                if sleep_multiplier > 1.0 {
+                    sleep_interval = Some(interval.mul_f64(sleep_multiplier));
+                }
             }
 
             // check for command timeout
@@ -190,6 +204,7 @@ impl BatchOperateCommand {
                     if sampled.unwrap_or(false) {
                         self.node.metrics().incr_transaction_error();
                     }
+                    cluster.incr_total_timeout_exceeded();
                     let u32_iters = if iterations > u32::MAX as usize {
                         u32::MAX
                     } else {
@@ -222,6 +237,7 @@ impl BatchOperateCommand {
         // `node.validateErrorCount()` call site at the top of every
         // command attempt.
         if let Err(err) = node.validate_error_count() {
+            node.metrics().incr_circuit_breaker_hits();
             return Ok(Some(err));
         }
 

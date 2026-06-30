@@ -799,7 +799,7 @@ mod tests {
             ..ClientPolicy::default()
         };
 
-        let q = Queue::with_capacity(3, host.clone(), policy.clone());
+        let q = Queue::with_capacity(3, host.clone(), policy.clone(), None);
         let c = Connection::new(&host, &policy, None)
             .await
             .expect("creating dummy connection failed");
@@ -824,7 +824,7 @@ mod tests {
         let host = Host::new("some-url", 30000);
         let policy = ClientPolicy::default();
 
-        let q = Queue::with_capacity(2, host.clone(), policy.clone());
+        let q = Queue::with_capacity(2, host.clone(), policy.clone(), None);
 
         let c1 = Connection::new(&host, &policy, None)
             .await
@@ -872,7 +872,7 @@ mod tests {
         let host = Host::new("some-url", 30000);
         let policy = ClientPolicy::default();
 
-        let p = ConnectionPool::new(host.clone(), policy.clone());
+        let p = ConnectionPool::new(host.clone(), policy.clone(), None);
         assert_eq!(p.total_reserved(), 0);
 
         // make_conn returns a PooledConnection; dropping it returns the
@@ -906,7 +906,7 @@ mod tests {
             max_conns_per_node: 3,
             ..ClientPolicy::default()
         };
-        let p = ConnectionPool::new(host.clone(), policy.clone());
+        let p = ConnectionPool::new(host.clone(), policy.clone(), None);
 
         for round in 0..10 {
             let mut c = p.make_conn(0).await.expect("make_conn failed");

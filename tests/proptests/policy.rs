@@ -168,6 +168,7 @@ pub fn base_policy(
                 timeout_delay,
                 max_retries,
                 sleep_between_retries,
+                sleep_multiplier: 1.0,
                 read_mode_ap,
                 read_mode_sc,
                 read_touch_ttl,

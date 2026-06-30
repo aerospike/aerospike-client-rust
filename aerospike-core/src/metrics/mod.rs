@@ -38,3 +38,5 @@ pub use node_metrics::{
     CommandMetric, CommandType, NodeMetrics, NodeMetricsSnapshot, COMMAND_TYPE_COUNT,
 };
 pub use policy::{Labels, MetricsPolicy};
+#[cfg(feature = "dynamic-config")]
+pub(crate) use policy::MetricsPolicyConfig;

@@ -37,11 +37,16 @@ use self::partition_tokenizer::PartitionTokenizer;
 use self::peers::{Peer, Peers};
 
 use crate::commands::admin_command::AdminCommand;
+#[cfg(feature = "dynamic-config")]
+use crate::config::{ConfigDocument, ConfigProvider, DynConfig, DynamicConfig};
 use crate::errors::{Error, Result};
 use crate::metrics::{Labels, MetricsPolicy, NodeMetrics, NodeMetricsSnapshot};
 use crate::net::Host;
-use crate::policy::ClientPolicy;
+use crate::policy::{
+    BatchPolicy, ClientPolicy, QueryPolicy, ReadPolicy, TxnRollPolicy, TxnVerifyPolicy, WritePolicy,
+};
 use crate::AdminPolicy;
+use std::borrow::Cow;
 use aerospike_rt::Mutex;
 use futures::channel::mpsc;
 use futures::channel::mpsc::{Receiver, Sender, TryRecvError};
@@ -115,6 +120,13 @@ pub struct Cluster {
     // the cluster-aggregated metrics.
     max_retries_exceeded_count: AtomicU64,
     total_timeout_exceeded_count: AtomicU64,
+
+    // ---- Dynamic configuration ----
+    // Present only when a config provider is attached (env var or explicit
+    // injection). Holds the live dynamic config; the watcher task refreshes it.
+    // Set once during client construction, before the client is handed out.
+    #[cfg(feature = "dynamic-config")]
+    dyn_config: std::sync::OnceLock<Arc<DynConfig>>,
 }
 
 /// `true` when `node.host().name` parses to a loopback address, or is the
@@ -156,6 +168,9 @@ impl Cluster {
             metrics: std::sync::Mutex::new(HashMap::new()),
             max_retries_exceeded_count: AtomicU64::new(0),
             total_timeout_exceeded_count: AtomicU64::new(0),
+
+            #[cfg(feature = "dynamic-config")]
+            dyn_config: std::sync::OnceLock::new(),
         });
         // try to seed connections for first use
         Cluster::wait_till_stabilized(cluster.clone()).await?;
@@ -970,6 +985,335 @@ impl Cluster {
         for node in self.nodes().iter() {
             node.metrics().set_enabled(false);
         }
+    }
+
+    // ---- Dynamic configuration ----
+
+    /// Overlays the cluster's current dynamic `read`-section config (if any) onto a
+    /// user-supplied policy. Returns the original borrowed when dynamic config is
+    /// off or absent (zero cost); an owned, merged copy otherwise.
+    pub(crate) fn resolve_read<'a>(&self, policy: &'a ReadPolicy) -> Cow<'a, ReadPolicy> {
+        #[cfg(feature = "dynamic-config")]
+        if let Some(dc) = self.dyn_config.get() {
+            if let Some(cfg) = dc.dynamic().read.clone() {
+                let mut owned = policy.clone();
+                cfg.merge_into(&mut owned);
+                return Cow::Owned(owned);
+            }
+        }
+        Cow::Borrowed(policy)
+    }
+
+    /// As [`resolve_read`](Self::resolve_read) for the `write` section.
+    pub(crate) fn resolve_write<'a>(&self, policy: &'a WritePolicy) -> Cow<'a, WritePolicy> {
+        #[cfg(feature = "dynamic-config")]
+        if let Some(dc) = self.dyn_config.get() {
+            if let Some(cfg) = dc.dynamic().write.clone() {
+                let mut owned = policy.clone();
+                cfg.merge_into(&mut owned);
+                return Cow::Owned(owned);
+            }
+        }
+        Cow::Borrowed(policy)
+    }
+
+    /// As [`resolve_read`](Self::resolve_read) for the `query` section.
+    pub(crate) fn resolve_query<'a>(&self, policy: &'a QueryPolicy) -> Cow<'a, QueryPolicy> {
+        #[cfg(feature = "dynamic-config")]
+        if let Some(dc) = self.dyn_config.get() {
+            if let Some(cfg) = dc.dynamic().query.clone() {
+                let mut owned = policy.clone();
+                cfg.merge_into(&mut owned);
+                return Cow::Owned(owned);
+            }
+        }
+        Cow::Borrowed(policy)
+    }
+
+    /// As [`resolve_read`](Self::resolve_read) for the `batch` section.
+    pub(crate) fn resolve_batch<'a>(&self, policy: &'a BatchPolicy) -> Cow<'a, BatchPolicy> {
+        #[cfg(feature = "dynamic-config")]
+        if let Some(dc) = self.dyn_config.get() {
+            if let Some(cfg) = dc.dynamic().batch.clone() {
+                let mut owned = policy.clone();
+                cfg.merge_into(&mut owned);
+                return Cow::Owned(owned);
+            }
+        }
+        Cow::Borrowed(policy)
+    }
+
+    /// As [`resolve_read`](Self::resolve_read) for the `txn_verify` section.
+    pub(crate) fn resolve_txn_verify<'a>(
+        &self,
+        policy: &'a TxnVerifyPolicy,
+    ) -> Cow<'a, TxnVerifyPolicy> {
+        #[cfg(feature = "dynamic-config")]
+        if let Some(dc) = self.dyn_config.get() {
+            if let Some(cfg) = dc.dynamic().txn_verify.clone() {
+                let mut owned = policy.clone();
+                cfg.merge_into(&mut owned);
+                return Cow::Owned(owned);
+            }
+        }
+        Cow::Borrowed(policy)
+    }
+
+    /// As [`resolve_read`](Self::resolve_read) for the `txn_roll` section.
+    pub(crate) fn resolve_txn_roll<'a>(&self, policy: &'a TxnRollPolicy) -> Cow<'a, TxnRollPolicy> {
+        #[cfg(feature = "dynamic-config")]
+        if let Some(dc) = self.dyn_config.get() {
+            if let Some(cfg) = dc.dynamic().txn_roll.clone() {
+                let mut owned = policy.clone();
+                cfg.merge_into(&mut owned);
+                return Cow::Owned(owned);
+            }
+        }
+        Cow::Borrowed(policy)
+    }
+
+    // ---- Per-record batch sub-policy overlays (mirrors Go's batch_read /
+    // batch_write / batch_delete / batch_udf sections) ----
+    //
+    // These overlay the matching dynamic section onto the *effective* per-record
+    // policy used by the single-key batch path; the wire (multi-key) path is
+    // handled by `patch_batch_wire`. No-ops when the feature/config is absent.
+
+    /// Overlays the `batch_read` section onto a batch read's effective read policy.
+    #[cfg_attr(not(feature = "dynamic-config"), allow(unused_variables))]
+    pub(crate) fn apply_batch_read(&self, policy: &mut ReadPolicy) {
+        #[cfg(feature = "dynamic-config")]
+        if let Some(dc) = self.dyn_config.get() {
+            if let Some(cfg) = dc.dynamic().batch_read.clone() {
+                // Only the per-record read fields apply to a single read; the
+                // batch wire flags (allow_inline/…) are parent-batch concerns.
+                cfg.read.merge_into(policy);
+            }
+        }
+    }
+
+    /// Overlays the `batch_write` section onto a batch write's effective write policy.
+    #[cfg_attr(not(feature = "dynamic-config"), allow(unused_variables))]
+    pub(crate) fn apply_batch_write(&self, policy: &mut WritePolicy) {
+        #[cfg(feature = "dynamic-config")]
+        if let Some(dc) = self.dyn_config.get() {
+            if let Some(cfg) = dc.dynamic().batch_write.clone() {
+                cfg.merge_into(policy);
+            }
+        }
+    }
+
+    /// Overlays the `batch_delete` section's `send_key`/`durable_delete` onto a
+    /// batch delete's effective write policy.
+    #[cfg_attr(not(feature = "dynamic-config"), allow(unused_variables))]
+    pub(crate) fn apply_batch_delete(&self, policy: &mut WritePolicy) {
+        #[cfg(feature = "dynamic-config")]
+        if let Some(dc) = self.dyn_config.get() {
+            if let Some(cfg) = &dc.dynamic().batch_delete {
+                if let Some(send_key) = cfg.send_key {
+                    policy.send_key = send_key;
+                }
+                if let Some(durable) = cfg.durable_delete {
+                    policy.durable_delete = durable;
+                }
+            }
+        }
+    }
+
+    /// Overlays the `batch_udf` section's `send_key`/`durable_delete` onto a
+    /// batch UDF's effective write policy.
+    #[cfg_attr(not(feature = "dynamic-config"), allow(unused_variables))]
+    pub(crate) fn apply_batch_udf(&self, policy: &mut WritePolicy) {
+        #[cfg(feature = "dynamic-config")]
+        if let Some(dc) = self.dyn_config.get() {
+            if let Some(cfg) = &dc.dynamic().batch_udf {
+                if let Some(send_key) = cfg.send_key {
+                    policy.send_key = send_key;
+                }
+                if let Some(durable) = cfg.durable_delete {
+                    policy.durable_delete = durable;
+                }
+            }
+        }
+    }
+
+    /// Patches the multi-key (wire) batch path in place: per-record `send_key`/
+    /// `durable_delete` flags onto each write/delete/UDF op's sub-policy, and the
+    /// `batch_read` read modes onto the shared parent base policy (writes ignore
+    /// read modes, so this only affects reads). Per-section timeouts are
+    /// command-level here and come from the already-resolved parent `batch`
+    /// section. No-op when the feature/config is absent.
+    #[cfg_attr(not(feature = "dynamic-config"), allow(unused_variables))]
+    pub(crate) fn patch_batch_wire(
+        &self,
+        parent: &mut BatchPolicy,
+        ops: &mut [(crate::batch::BatchOperation, usize)],
+    ) {
+        #[cfg(feature = "dynamic-config")]
+        {
+            use crate::batch::BatchOperation;
+            let Some(dc) = self.dyn_config.get() else {
+                return;
+            };
+            let dynamic = dc.dynamic();
+
+            if let Some(read_cfg) = &dynamic.batch_read {
+                if let Some(base) = &read_cfg.read.base_policy {
+                    if let Some(mode) = base.read_mode_ap {
+                        parent.base_policy.read_mode_ap = mode;
+                    }
+                    if let Some(mode) = base.read_mode_sc {
+                        parent.base_policy.read_mode_sc = mode;
+                    }
+                }
+                // Batch-command wire flags live on the parent policy; the Go
+                // client applies these from the `batch_read` section.
+                if let Some(v) = read_cfg.allow_inline {
+                    parent.allow_inline = v;
+                }
+                if let Some(v) = read_cfg.allow_inline_ssd {
+                    parent.allow_inline_ssd = v;
+                }
+                if let Some(v) = read_cfg.respond_all_keys {
+                    parent.respond_all_keys = v;
+                }
+            }
+
+            for (op, _) in ops.iter_mut() {
+                match op {
+                    BatchOperation::Write { policy, .. } => {
+                        if let Some(cfg) = &dynamic.batch_write {
+                            if let Some(send_key) = cfg.send_key {
+                                policy.send_key = send_key;
+                            }
+                            if let Some(durable) = cfg.durable_delete {
+                                policy.durable_delete = durable;
+                            }
+                        }
+                    }
+                    BatchOperation::Delete { policy, .. } => {
+                        if let Some(cfg) = dynamic.batch_delete.clone() {
+                            cfg.merge_into(policy);
+                        }
+                    }
+                    BatchOperation::UDF { policy, .. } => {
+                        if let Some(cfg) = dynamic.batch_udf.clone() {
+                            cfg.merge_into(policy);
+                        }
+                    }
+                    // Reads carry no wire-patchable sub-policy here; txn
+                    // verify/roll never flow through the public batch wire path.
+                    BatchOperation::Read { .. }
+                    | BatchOperation::TxnVerify { .. }
+                    | BatchOperation::TxnRoll { .. } => {}
+                }
+            }
+        }
+    }
+
+    /// Creates a [`DynConfig`] from `provider`, performs the initial load + apply
+    /// (static section once, dynamic section), stores it, and spawns the watcher
+    /// task. Called during client construction, before the client is returned.
+    #[cfg(feature = "dynamic-config")]
+    pub(crate) async fn attach_dyn_config(self: &Arc<Self>, provider: Arc<dyn ConfigProvider>) {
+        let dyn_config = Arc::new(DynConfig::new(provider));
+        match dyn_config.provider().load().await {
+            Ok(Some(doc)) => self.apply_config_doc(&dyn_config, doc),
+            Ok(None) => {}
+            Err(err) => {
+                log_error_chain!(err, "Error loading initial dynamic configuration");
+            }
+        }
+        // OnceLock: set once at construction; ignore the (impossible) re-set.
+        let _ = self.dyn_config.set(dyn_config);
+        let cluster = self.clone();
+        let _res = aerospike_rt::spawn(Cluster::config_watch_thread(cluster));
+    }
+
+    /// Applies a freshly-loaded config document: the `static` section once (on the
+    /// first apply), the dynamic `client`/`metrics` sections every time, and stores
+    /// the whole dynamic section for per-command [`resolve_read`](Self::resolve_read)
+    /// & friends.
+    #[cfg(feature = "dynamic-config")]
+    fn apply_config_doc(&self, dyn_config: &DynConfig, doc: ConfigDocument) {
+        let first_apply = !dyn_config.mark_initialized();
+
+        if first_apply {
+            if let Some(client_cfg) = doc.static_config.as_ref().and_then(|s| s.client.clone()) {
+                let mut cp = (*self.client_policy.load().clone()).clone();
+                client_cfg.merge_static_into(&mut cp);
+                self.client_policy.store(Arc::new(cp));
+            }
+        }
+
+        match doc.dynamic {
+            Some(dynamic) => {
+                if let Some(client_cfg) = dynamic.client.clone() {
+                    let mut cp = (*self.client_policy.load().clone()).clone();
+                    client_cfg.merge_into(&mut cp);
+                    self.client_policy.store(Arc::new(cp));
+                }
+                if let Some(metrics) = dynamic.metrics.clone() {
+                    self.apply_metrics_config(&metrics);
+                }
+                dyn_config.store_dynamic(dynamic);
+            }
+            None => dyn_config.store_dynamic(DynamicConfig::default()),
+        }
+    }
+
+    /// Applies the `dynamic.metrics` section: toggles collection via the existing
+    /// metrics API and folds any latency-histogram overrides into the policy.
+    #[cfg(feature = "dynamic-config")]
+    fn apply_metrics_config(&self, metrics: &crate::config::MetricsConfig) {
+        // Builds the next metrics policy from the current one, folding in the
+        // latency-histogram overrides and any custom labels.
+        let next_policy = || {
+            let mut policy = (*self.metrics_policy()).clone();
+            metrics.policy.clone().merge_into(&mut policy);
+            if let Some(labels) = &metrics.labels {
+                // The cross-client schema models labels as a single flat map;
+                // `Labels` holds a list of entries (empty maps are dropped).
+                policy.labels = crate::metrics::Labels::with_pairs(vec![labels.clone()]);
+            }
+            policy
+        };
+        match metrics.enable {
+            Some(false) => self.disable_metrics(),
+            Some(true) => self.enable_metrics(next_policy()),
+            // No explicit toggle: refine the policy only if already enabled.
+            None if self.metrics_enabled() => self.enable_metrics(next_policy()),
+            None => {}
+        }
+    }
+
+    /// Background task: periodically reloads config from the provider and applies
+    /// changes until the cluster is closed. Interval comes from
+    /// `static.client.config_interval` (minimum 1s).
+    #[cfg(feature = "dynamic-config")]
+    async fn config_watch_thread(cluster: Arc<Cluster>) {
+        let Some(dyn_config) = cluster.dyn_config.get().cloned() else {
+            return;
+        };
+        debug!("Starting dynamic-config watch task...");
+        loop {
+            if cluster.closed.load(Ordering::Relaxed) {
+                break;
+            }
+            let interval_ms = u64::from(cluster.client_policy.load().config_interval.max(1000));
+            aerospike_rt::sleep(Duration::from_millis(interval_ms)).await;
+            if cluster.closed.load(Ordering::Relaxed) {
+                break;
+            }
+            match dyn_config.provider().load().await {
+                Ok(Some(doc)) => cluster.apply_config_doc(&dyn_config, doc),
+                Ok(None) => {}
+                Err(err) => {
+                    log_error_chain!(err, "Error reloading dynamic configuration");
+                }
+            }
+        }
+        debug!("Stopping dynamic-config watch task.");
     }
 
     /// Records a command that exhausted its retry budget.

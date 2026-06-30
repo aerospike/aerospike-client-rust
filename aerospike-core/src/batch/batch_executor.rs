@@ -95,7 +95,11 @@ impl BatchExecutor {
                 let (op, idx) = ops.into_iter().next().expect("one element");
                 single_groups.push((node, op, idx));
             } else {
-                multi_jobs.push(BatchOperateCommand::new(policy.clone(), node, ops));
+                // Apply per-record batch sub-policy config to the wire path.
+                let mut parent = policy.clone();
+                let mut ops = ops;
+                self.cluster.patch_batch_wire(&mut parent, &mut ops);
+                multi_jobs.push(BatchOperateCommand::new(parent, node, ops));
             }
         }
 
@@ -183,6 +187,9 @@ impl BatchExecutor {
                 });
             } else {
                 // Regular per-node batch path.
+                let mut policy = policy;
+                let mut ops = ops;
+                cluster.patch_batch_wire(&mut policy, &mut ops);
                 let cmd = BatchOperateCommand::new(policy, node, ops);
                 aerospike_rt::spawn(async move {
                     match cmd.execute(cluster).await {
@@ -245,18 +252,21 @@ impl BatchExecutor {
                         OperateCommand::new(&wp, cluster.clone(), &key, op_list.as_slice());
                     cmd.execute().await.map(|()| cmd.read_command.record.take())
                 } else {
-                    let rp = policy.to_read_policy(parent);
+                    let mut rp = policy.to_read_policy(parent);
+                    cluster.apply_batch_read(&mut rp);
                     let mut cmd = ReadCommand::new(&rp, cluster.clone(), &key, bins.clone());
                     cmd.execute().await.map(|()| cmd.record.take())
                 }
             }
             BatchOperation::Write { policy, ops, .. } => {
-                let wp = policy.to_write_policy(parent);
+                let mut wp = policy.to_write_policy(parent);
+                cluster.apply_batch_write(&mut wp);
                 let mut cmd = OperateCommand::new(&wp, cluster.clone(), &key, ops.as_slice());
                 cmd.execute().await.map(|()| cmd.read_command.record.take())
             }
             BatchOperation::Delete { policy, .. } => {
-                let wp = policy.to_write_policy(parent);
+                let mut wp = policy.to_write_policy(parent);
+                cluster.apply_batch_delete(&mut wp);
                 let mut cmd = DeleteCommand::new(&wp, cluster.clone(), &key);
                 // DeleteCommand reports missing-key via `cmd.existed`, not Result::Err —
                 // re-inject KEY_NOT_FOUND so batch sees it per-record.
@@ -277,7 +287,8 @@ impl BatchExecutor {
                 args,
                 ..
             } => {
-                let wp = policy.to_write_policy(parent);
+                let mut wp = policy.to_write_policy(parent);
+                cluster.apply_batch_udf(&mut wp);
                 let mut cmd = ExecuteUDFCommand::new(
                     &wp,
                     cluster.clone(),
@@ -287,6 +298,11 @@ impl BatchExecutor {
                     args.as_deref(),
                 );
                 cmd.execute().await.map(|()| cmd.read_command.record.take())
+            }
+            // Txn verify/roll never flow through the public batch executor; the
+            // transaction roll path groups and dispatches them itself.
+            BatchOperation::TxnVerify { .. } | BatchOperation::TxnRoll { .. } => {
+                unreachable!("txn verify/roll are dispatched by the transaction roll path")
             }
         };
 

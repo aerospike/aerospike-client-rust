@@ -43,6 +43,13 @@ impl<'a> SingleCommand<'a> {
         self.key.digest[0]
     }
 
+    /// The cluster this command runs against. Exposed so concrete commands can
+    /// surface it through [`Command::cluster`](crate::commands::Command::cluster)
+    /// for cluster-wide metrics recording.
+    pub fn cluster(&self) -> &Cluster {
+        &self.cluster
+    }
+
     pub fn get_node(&mut self) -> Result<Arc<Node>> {
         self.partition.get_node(&self.cluster)
     }
@@ -114,6 +121,11 @@ impl<'a> SingleCommand<'a> {
         // set timeout outside the loop
         let deadline = policy.deadline();
         let effective_attempt = policy.max_retries() + 1;
+        // Retry backoff: the sleep interval starts at `sleep_between_retries`
+        // and is multiplied by `sleep_multiplier` after each retry sleep
+        // (matching the Go client). A multiplier <= 1.0 keeps it constant.
+        let sleep_multiplier = policy.sleep_multiplier();
+        let mut sleep_interval = policy.sleep_between_retries();
 
         // Finalizes an error before returning to the caller: applies `in_doubt`
         // per Java's rule and attaches retry context (iteration count, last
@@ -137,6 +149,9 @@ impl<'a> SingleCommand<'a> {
                 // first attempt isn't a retry
                 if let Some(n) = &last_node {
                     n.metrics().incr_transaction_error();
+                }
+                if let Some(cluster) = cmd.cluster() {
+                    cluster.incr_max_retries_exceeded();
                 }
                 let err = Error::Timeout(format!("Timeout after {iterations} tries"));
                 let tail = match last_err.take() {
@@ -180,14 +195,17 @@ impl<'a> SingleCommand<'a> {
                 let is_client_timeout = matches!(&last_err, Some(Error::Timeout(_)));
                 cmd.prepare_retry(is_client_timeout);
 
-                if let Some(sleep_between_retries) = policy.sleep_between_retries() {
+                if let Some(interval) = sleep_interval {
                     if let Some(deadline) = deadline {
-                        if Instant::now() + sleep_between_retries > deadline {
+                        if Instant::now() + interval > deadline {
                             // We will timeout anyway after sleep. break immediately.
                             break;
                         }
                     }
-                    sleep(sleep_between_retries).await;
+                    sleep(interval).await;
+                    if sleep_multiplier > 1.0 {
+                        sleep_interval = Some(interval.mul_f64(sleep_multiplier));
+                    }
                 }
             }
 
@@ -223,6 +241,7 @@ impl<'a> SingleCommand<'a> {
             // Mirrors Java `SyncCommand.executeCommand` calling
             // `node.validateErrorCount()` before `getConnection`.
             if let Err(err) = node.validate_error_count() {
+                node.metrics().incr_circuit_breaker_hits();
                 last_err = Some(err);
                 continue;
             }
@@ -366,6 +385,9 @@ impl<'a> SingleCommand<'a> {
 
         if let Some(n) = &last_node {
             n.metrics().incr_transaction_error();
+        }
+        if let Some(cluster) = cmd.cluster() {
+            cluster.incr_total_timeout_exceeded();
         }
         let err = Error::Timeout(format!("Command timed out after {iterations} tries"));
         let tail = match last_err.take() {

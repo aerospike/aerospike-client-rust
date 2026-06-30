@@ -405,6 +405,16 @@ impl NodeMetrics {
         }
     }
 
+    /// Records a command rejected by the per-node circuit breaker because the
+    /// node's error-rate window was exceeded.
+    pub fn incr_circuit_breaker_hits(&self) {
+        if self.is_enabled() {
+            self.counters
+                .circuit_breaker_hits
+                .fetch_add(1, Ordering::Relaxed);
+        }
+    }
+
     /// Records a command retry.
     pub fn incr_transaction_retry(&self) {
         if self.is_enabled() {

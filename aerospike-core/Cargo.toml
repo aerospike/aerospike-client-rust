@@ -25,6 +25,8 @@ lazy_static = "1.5"
 thiserror = "2.0.18"
 pwhash = "1.0"
 serde = { version = "1.0", features = ["derive"], optional = true }
+serde_yml = { version = "0.0.12", optional = true }
+aerospike-macro = { path = "../aerospike-macro", version = "3.0.0-alpha.1", optional = true }
 aerospike-rt = { path = "../aerospike-rt", version = "3.0.0-alpha.1" }
 # `tokio::select!` macro needs a direct dep; runtime features come via aerospike-rt.
 tokio = { version = "1", default-features = false, features = ["macros"] }
@@ -40,8 +42,12 @@ hazarc = "0.2.0"
 
 [features]
 serialization = ["serde"]
-rt-tokio = ["aerospike-rt/rt-tokio"]
-rt-async-std = ["aerospike-rt/rt-async-std"]
+# Dynamic configuration: read policy overrides from a pluggable source (YAML
+# file out of the box) and apply them at runtime. Pulls serde for deserialization,
+# serde_yml for the file provider, and the Config derive macro.
+dynamic-config = ["serde", "serde_yml", "aerospike-macro"]
+rt-tokio = ["aerospike-rt/rt-tokio", "aerospike-macro?/rt-tokio"]
+rt-async-std = ["aerospike-rt/rt-async-std", "aerospike-macro?/rt-async-std"]
 tls = ["rustls", "tokio-rustls"]
 sync = []
 

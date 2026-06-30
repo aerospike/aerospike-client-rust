@@ -30,6 +30,7 @@ use crate::Record;
 use crate::RecordExistsAction;
 use crate::ResultCode;
 use crate::Value;
+use std::sync::Arc;
 
 pub use self::batch_executor::BatchExecutor;
 pub use self::batch_record::BatchRecord;
@@ -179,21 +180,25 @@ impl BatchWritePolicy {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "dynamic-config", derive(aerospike_macro::Config))]
 /// Policy for a single batch delete operation.
 pub struct BatchDeletePolicy {
     /// `GenerationPolicy` qualifies how to handle record writes based on record generation.
     /// The default (NONE) indicates that the generation is not used to restrict writes.
+    #[cfg_attr(feature = "dynamic-config", config(skip))]
     pub generation_policy: GenerationPolicy,
 
     /// Desired consistency guarantee when committing a transaction on the server. The default
     /// (`COMMIT_ALL`) indicates that the server should wait for master and all replica commits to
     /// be successful before returning success to the client.
+    #[cfg_attr(feature = "dynamic-config", config(skip))]
     pub commit_level: CommitLevel,
 
     /// Generation determines expected generation.
     /// Generation is the number of times a record has been
     /// modified (including creation) on the server.
     /// If a write operation is creating a record, the expected generation would be 0.
+    #[cfg_attr(feature = "dynamic-config", config(skip))]
     pub generation: u32,
 
     /// Send user defined key in addition to hash digest on a record put.
@@ -206,6 +211,7 @@ pub struct BatchDeletePolicy {
     pub durable_delete: bool,
 
     /// Optional Filter Expression
+    #[cfg_attr(feature = "dynamic-config", config(skip))]
     pub filter_expression: Option<Expression>,
 }
 
@@ -243,14 +249,17 @@ impl BatchDeletePolicy {
 
 /// Policy for a single batch udf operation.
 #[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "dynamic-config", derive(aerospike_macro::Config))]
 pub struct BatchUDFPolicy {
     /// Desired consistency guarantee when committing a transaction on the server. The default
     /// (`CommitAll`) indicates that the server should wait for master and all replica commits to
     /// be successful before returning success to the client.
+    #[cfg_attr(feature = "dynamic-config", config(skip))]
     pub commit_level: CommitLevel,
 
     /// Expiration determines record expiration in seconds. Also known as TTL (Time-To-Live).
     /// Seconds record will live before being removed by the server.
+    #[cfg_attr(feature = "dynamic-config", config(skip))]
     pub expiration: Expiration,
 
     /// Send user defined key in addition to hash digest on a record put.
@@ -264,9 +273,11 @@ pub struct BatchUDFPolicy {
 
     /// If true, the MRT monitor record will only be written if the record is locked.
     /// Default: false
+    #[cfg_attr(feature = "dynamic-config", config(skip))]
     pub on_locking_only: bool,
 
     /// Optional Filter Expression
+    #[cfg_attr(feature = "dynamic-config", config(skip))]
     pub filter_expression: Option<Expression>,
 }
 
@@ -333,6 +344,21 @@ pub enum BatchOperation {
         function_name: String,
         args: Option<Vec<Value>>,
     },
+    /// Multi-record-transaction *verify*: check a record's version. Internal —
+    /// built by the transaction roll/verify path, never by users.
+    #[doc(hidden)]
+    TxnVerify {
+        br: BatchRecord,
+        version: Option<u64>,
+    },
+    /// Multi-record-transaction *roll* forward/back. `roll_attr` is one of
+    /// `INFO4_MRT_ROLL_FORWARD` / `INFO4_MRT_ROLL_BACK`. Internal.
+    #[doc(hidden)]
+    TxnRoll {
+        br: BatchRecord,
+        txn: Arc<crate::txn::Txn>,
+        roll_attr: u8,
+    },
 }
 
 impl BatchOperation {
@@ -393,8 +419,11 @@ impl BatchOperation {
     /// Returns true if this batch operation contains a write.
     pub(crate) const fn has_write(&self) -> bool {
         match self {
-            Self::Read { .. } => false,
-            Self::Write { .. } | Self::Delete { .. } | Self::UDF { .. } => true,
+            Self::Read { .. } | Self::TxnVerify { .. } => false,
+            Self::Write { .. }
+            | Self::Delete { .. }
+            | Self::UDF { .. }
+            | Self::TxnRoll { .. } => true,
         }
     }
 
@@ -530,6 +559,10 @@ impl BatchOperation {
 
                 Ok(size)
             }
+            // Txn verify/roll are encoded by dedicated homogeneous encoders
+            // (`set_batch_txn_verify` / `set_batch_txn_roll`), not the generic
+            // per-op sizing loop, so this is never consulted for them.
+            Self::TxnVerify { .. } | Self::TxnRoll { .. } => Ok(0),
         }
     }
 
@@ -557,13 +590,17 @@ impl BatchOperation {
             Self::Read { br, .. }
             | Self::Write { br, .. }
             | Self::Delete { br, .. }
-            | Self::UDF { br, .. } => &br.key,
+            | Self::UDF { br, .. }
+            | Self::TxnVerify { br, .. }
+            | Self::TxnRoll { br, .. } => &br.key,
         };
         let key_prev = match prev {
             Self::Read { br, .. }
             | Self::Write { br, .. }
             | Self::Delete { br, .. }
-            | Self::UDF { br, .. } => &br.key,
+            | Self::UDF { br, .. }
+            | Self::TxnVerify { br, .. }
+            | Self::TxnRoll { br, .. } => &br.key,
         };
         if key.namespace != key_prev.namespace || key.set_name != key_prev.set_name {
             return false;
@@ -604,7 +641,9 @@ impl BatchOperation {
             Self::Read { br, .. }
             | Self::Write { br, .. }
             | Self::Delete { br, .. }
-            | Self::UDF { br, .. } => br.key.clone(),
+            | Self::UDF { br, .. }
+            | Self::TxnVerify { br, .. }
+            | Self::TxnRoll { br, .. } => br.key.clone(),
         }
     }
 
@@ -614,7 +653,9 @@ impl BatchOperation {
             Self::Read { br, .. }
             | Self::Write { br, .. }
             | Self::Delete { br, .. }
-            | Self::UDF { br, .. } => br.clone(),
+            | Self::UDF { br, .. }
+            | Self::TxnVerify { br, .. }
+            | Self::TxnRoll { br, .. } => br.clone(),
         }
     }
 
@@ -623,7 +664,9 @@ impl BatchOperation {
             Self::Read { br, .. }
             | Self::Write { br, .. }
             | Self::Delete { br, .. }
-            | Self::UDF { br, .. } => {
+            | Self::UDF { br, .. }
+            | Self::TxnVerify { br, .. }
+            | Self::TxnRoll { br, .. } => {
                 br.record = record;
                 br.result_code = Some(ResultCode::Ok);
             }
@@ -632,11 +675,15 @@ impl BatchOperation {
 
     pub(crate) const fn set_result_code(&mut self, rc: ResultCode, in_doubt: bool) {
         match self {
-            Self::Read { br, .. } => {
+            // Reads (incl. txn verify) can never be in-doubt.
+            Self::Read { br, .. } | Self::TxnVerify { br, .. } => {
                 br.result_code = Some(rc);
                 br.in_doubt = false;
             }
-            Self::Write { br, .. } | Self::Delete { br, .. } | Self::UDF { br, .. } => {
+            Self::Write { br, .. }
+            | Self::Delete { br, .. }
+            | Self::UDF { br, .. }
+            | Self::TxnRoll { br, .. } => {
                 br.result_code = Some(rc);
                 br.in_doubt = in_doubt;
             }

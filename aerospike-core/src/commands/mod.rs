@@ -55,7 +55,7 @@ pub use self::stream_command::StreamCommand;
 pub use self::touch_command::TouchCommand;
 pub use self::write_command::WriteCommand;
 
-use crate::cluster::Node;
+use crate::cluster::{Cluster, Node};
 use crate::errors::{Error, Result};
 use crate::metrics::CommandType;
 use crate::net::Connection;
@@ -86,6 +86,13 @@ pub trait Command {
     /// Namespace this command targets, used for detailed per-namespace
     /// metrics. `None` for multi-namespace or namespace-less commands.
     fn namespace(&self) -> Option<&str> {
+        None
+    }
+    /// The cluster this command runs against, used by the retry loop to record
+    /// cluster-wide counters (`exceeded-max-retries` / `exceeded-total-timeout`).
+    /// Defaulted to `None` for commands that carry only a node handle
+    /// (streaming / server-background commands).
+    fn cluster(&self) -> Option<&Cluster> {
         None
     }
 }

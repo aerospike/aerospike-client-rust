@@ -36,13 +36,13 @@ pub(crate) enum CtxType {
     MapKey = 0x22,
     MapValue = 0x23,
     /// Map keys-in context: select map entries whose keys are contained
-    /// in the provided list. Java: `CTX.mapKeysIn(...)`.
+    /// in the provided list.
     MapKeysIn = 0x2a,
 }
 
 /// AND filter bit added on top of [`CtxType::Expression`] for
-/// [`ctx_and_filter`]. Mirrors Java's `Exp.CTX_AND = 0x200` OR'd with
-/// `Exp.CTX_EXP = 0x04` to produce the `0x204` context-tag value.
+/// [`ctx_and_filter`]. The `CTX_AND = 0x200` bit is OR'd with
+/// `CTX_EXP = 0x04` to produce the `0x204` context-tag value.
 const CTX_AND_BIT: u16 = 0x200;
 
 /// `CdtContext` defines Nested CDT context. Identifies the location of nested list/map to apply the operation.
@@ -151,7 +151,7 @@ pub fn ctx_from_base64(b64: &str) -> Result<Vec<CdtContext>> {
     ctx_from_bytes(&bytes)
 }
 
-/// Read an unsigned msgpack integer wide enough to fit Java's CTX `int`
+/// Read an unsigned msgpack integer wide enough to fit a CTX `int`
 /// type (full 32-bit range, including the high `CTX_AND` bit). We narrow
 /// to `u16` because that's what the Rust `CdtContext::id` field carries.
 fn read_msgpack_uint(buf: &mut Buffer) -> Result<u16> {

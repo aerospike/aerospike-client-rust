@@ -15,18 +15,23 @@
 
 use crate::expressions::Expression;
 use crate::policy::{BasePolicy, Policy, PolicyLike, QueryDuration, Replica, StreamPolicy};
+#[cfg(feature = "dynamic-config")]
+use crate::policy::BasePolicyConfig;
 use aerospike_rt::time::{Duration, Instant};
 
 /// `QueryPolicy` encapsulates parameters for query operations.
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "dynamic-config", derive(aerospike_macro::Config))]
 pub struct QueryPolicy {
     /// Base policy instance
+    #[cfg_attr(feature = "dynamic-config", config(flatten))]
     pub base_policy: BasePolicy,
 
     /// Maximum number of concurrent requests to server nodes at any point in time. If there are 16
     /// nodes in the cluster and `max_concurrent_nodes` is 8, then queries will be made to 8 nodes
     /// in parallel. When a query completes, a new query will be issued until all 16 nodes have
     /// been queried. Default (0) is to issue requests to all server nodes in parallel.
+    #[cfg_attr(feature = "dynamic-config", config(skip))]
     pub max_concurrent_nodes: usize,
 
     /// Number of records to return to the client. This number is divided by the
@@ -37,6 +42,7 @@ pub struct QueryPolicy {
     /// This field is supported on server versions >= 4.9.
     ///
     /// Default: 0 (do not limit record count)
+    #[cfg_attr(feature = "dynamic-config", config(skip))]
     pub max_records: u64,
 
     /// Number of records to place in queue before blocking. Records received from multiple server
@@ -50,6 +56,7 @@ pub struct QueryPolicy {
     /// `records_per_second` is supported in all primary and secondary index
     /// queries in server versions 6.0+. For background queries, `records_per_second`
     /// is bounded by the server config `background-query-max-rps`.
+    #[cfg_attr(feature = "dynamic-config", config(skip))]
     pub records_per_second: u32,
 
     /// Expected query duration. The server treats the query in different ways depending on the expected duration.

@@ -39,7 +39,8 @@ use crate::net::ToHosts;
 use crate::operations::cdt_context::{to_base64, CdtContext};
 use crate::operations::{Operation, OperationType};
 use crate::policy::{
-    AdminPolicy, BasePolicy, BatchPolicy, ClientPolicy, QueryPolicy, ReadPolicy, WritePolicy,
+    AdminPolicy, BatchPolicy, ClientPolicy, QueryPolicy, ReadPolicy, TxnRollPolicy,
+    TxnVerifyPolicy, WritePolicy,
 };
 use crate::query::{PartitionFilter, PartitionTracker};
 use crate::task::{DropIndexTask, ExecuteTask, IndexTask, RegisterTask, UdfRemoveTask};
@@ -149,6 +150,44 @@ impl Client {
     /// # }
     /// ```
     pub async fn new(policy: &ClientPolicy, hosts: &(dyn ToHosts + Send + Sync)) -> Result<Self> {
+        let client = Self::connect(policy, hosts).await?;
+
+        // Auto-enable dynamic configuration when AEROSPIKE_CLIENT_CONFIG_URL is set.
+        #[cfg(feature = "dynamic-config")]
+        if let Some(provider) = crate::config::provider_from_env() {
+            client.cluster.attach_dyn_config(provider).await;
+        }
+
+        Ok(client)
+    }
+
+    /// Like [`new`](Self::new) but with dynamic configuration enabled from an
+    /// explicit [`ConfigProvider`](crate::config::ConfigProvider). Policy
+    /// overrides from the provider are loaded immediately and then refreshed in
+    /// the background; they layer on top of the policy passed to each operation.
+    ///
+    /// Use [`config::YamlFileProvider`](crate::config::YamlFileProvider) for a
+    /// local YAML file, or implement `ConfigProvider` for another source.
+    ///
+    /// # Errors
+    ///
+    /// Same as [`new`](Self::new): policy validation, connectivity, or cluster
+    /// discovery failures. A provider that fails its initial load does not fail
+    /// construction — it is logged and retried on the next watch tick.
+    #[cfg(feature = "dynamic-config")]
+    pub async fn new_with_config(
+        policy: &ClientPolicy,
+        hosts: &(dyn ToHosts + Send + Sync),
+        provider: std::sync::Arc<dyn crate::config::ConfigProvider>,
+    ) -> Result<Self> {
+        let client = Self::connect(policy, hosts).await?;
+        client.cluster.attach_dyn_config(provider).await;
+        Ok(client)
+    }
+
+    /// Validates the policy, resolves seed hosts, and brings up the cluster.
+    /// Shared by [`new`](Self::new) and [`new_with_config`](Self::new_with_config).
+    async fn connect(policy: &ClientPolicy, hosts: &(dyn ToHosts + Send + Sync)) -> Result<Self> {
         policy.validate()?;
         let hosts = hosts.to_hosts()?;
         let cluster = Cluster::new(policy.clone(), &hosts).await?;
@@ -378,6 +417,8 @@ impl Client {
     where
         T: Into<Bins> + Send + Sync + 'static,
     {
+        let policy = self.cluster.resolve_read(policy);
+        let policy = policy.as_ref();
         if let Some(txn) = &policy.base_policy.txn {
             txn.prepare_read(&key.namespace)?;
         }
@@ -482,6 +523,8 @@ impl Client {
         policy: &BatchPolicy,
         ops: &[BatchOperation],
     ) -> Result<Vec<BatchRecord>> {
+        let policy = self.cluster.resolve_batch(policy);
+        let policy = policy.as_ref();
         if let Some(txn) = &policy.base_policy.txn {
             crate::txn_monitor::add_keys_from_records(
                 self.cluster.clone(),
@@ -529,6 +572,8 @@ impl Client {
         policy: &BatchPolicy,
         ops: Vec<BatchOperation>,
     ) -> Result<impl futures::Stream<Item = (usize, BatchRecord)>> {
+        let policy = self.cluster.resolve_batch(policy);
+        let policy = policy.as_ref();
         // Mirror `batch`'s TXN preamble — when a transaction is
         // attached to the policy, each key in the batch needs to be
         // registered with the MRT monitor before any per-node command
@@ -609,6 +654,8 @@ impl Client {
     /// # }
     /// ```
     pub async fn put(&self, policy: &WritePolicy, key: &Key, bins: &[Bin]) -> Result<()> {
+        let policy = self.cluster.resolve_write(policy);
+        let policy = policy.as_ref();
         if let Some(txn) = &policy.base_policy.txn {
             crate::txn_monitor::add_key(self.cluster.clone(), &policy.base_policy, txn, key)
                 .await?;
@@ -667,6 +714,8 @@ impl Client {
     /// # }
     /// ```
     pub async fn add(&self, policy: &WritePolicy, key: &Key, bins: &[Bin]) -> Result<()> {
+        let policy = self.cluster.resolve_write(policy);
+        let policy = policy.as_ref();
         if let Some(txn) = &policy.base_policy.txn {
             crate::txn_monitor::add_key(self.cluster.clone(), &policy.base_policy, txn, key)
                 .await?;
@@ -715,6 +764,8 @@ impl Client {
     /// # }
     /// ```
     pub async fn append(&self, policy: &WritePolicy, key: &Key, bins: &[Bin]) -> Result<()> {
+        let policy = self.cluster.resolve_write(policy);
+        let policy = policy.as_ref();
         if let Some(txn) = &policy.base_policy.txn {
             crate::txn_monitor::add_key(self.cluster.clone(), &policy.base_policy, txn, key)
                 .await?;
@@ -764,6 +815,8 @@ impl Client {
     /// # }
     /// ```
     pub async fn prepend(&self, policy: &WritePolicy, key: &Key, bins: &[Bin]) -> Result<()> {
+        let policy = self.cluster.resolve_write(policy);
+        let policy = policy.as_ref();
         if let Some(txn) = &policy.base_policy.txn {
             crate::txn_monitor::add_key(self.cluster.clone(), &policy.base_policy, txn, key)
                 .await?;
@@ -818,6 +871,8 @@ impl Client {
     /// # }
     /// ```
     pub async fn delete(&self, policy: &WritePolicy, key: &Key) -> Result<bool> {
+        let policy = self.cluster.resolve_write(policy);
+        let policy = policy.as_ref();
         if let Some(txn) = &policy.base_policy.txn {
             crate::txn_monitor::add_key(self.cluster.clone(), &policy.base_policy, txn, key)
                 .await?;
@@ -864,6 +919,8 @@ impl Client {
     /// # }
     /// ```
     pub async fn touch(&self, policy: &WritePolicy, key: &Key) -> Result<()> {
+        let policy = self.cluster.resolve_write(policy);
+        let policy = policy.as_ref();
         if let Some(txn) = &policy.base_policy.txn {
             crate::txn_monitor::add_key(self.cluster.clone(), &policy.base_policy, txn, key)
                 .await?;
@@ -908,6 +965,8 @@ impl Client {
     /// # }
     /// ```
     pub async fn exists(&self, policy: &ReadPolicy, key: &Key) -> Result<bool> {
+        let policy = self.cluster.resolve_read(policy);
+        let policy = policy.as_ref();
         if let Some(txn) = &policy.base_policy.txn {
             txn.prepare_read(&key.namespace)?;
         }
@@ -980,6 +1039,8 @@ impl Client {
                 "no operations defined".into(),
             ));
         }
+        let policy = self.cluster.resolve_write(policy);
+        let policy = policy.as_ref();
         if let Some(txn) = &policy.base_policy.txn {
             crate::txn_monitor::add_key(self.cluster.clone(), &policy.base_policy, txn, key)
                 .await?;
@@ -1346,6 +1407,8 @@ impl Client {
         statement.validate()?;
         let statement = Arc::new(statement);
 
+        let policy = self.cluster.resolve_query(policy);
+        let policy = policy.as_ref();
         let nodes: Vec<Arc<Node>> = self.cluster.nodes();
         let t_policy = policy.clone();
         let tracker = Arc::new(Mutex::new(
@@ -1428,7 +1491,8 @@ impl Client {
 
         let mut last_err: Option<Error> = None;
         for node in &nodes {
-            let mut cmd = ServerCommand::new(node.clone(), write_policy, &statement, task_id);
+            let mut cmd =
+                ServerCommand::new(node.clone(), write_policy, &statement, task_id, self.cluster.clone());
             if let Err(err) = cmd.execute().await {
                 last_err = Some(err);
             }
@@ -1496,7 +1560,13 @@ impl Client {
 
         let mut last_err: Option<Error> = None;
         for node in &nodes {
-            let mut cmd = ServerCommand::new_udf(node.clone(), write_policy, &statement, task_id);
+            let mut cmd = ServerCommand::new_udf(
+                node.clone(),
+                write_policy,
+                &statement,
+                task_id,
+                self.cluster.clone(),
+            );
             if let Err(err) = cmd.execute().await {
                 last_err = Some(err);
             }
@@ -1578,6 +1648,7 @@ impl Client {
                         let policy = policy.clone();
                         let node_partition = node_partition.clone();
                         let statement = statement.clone();
+                        let cluster = cluster.clone();
                         let handle = aerospike_rt::spawn(async move {
                             let permit = semaphore.acquire().await;
                             // QueryCommand handles both filtered queries
@@ -1588,6 +1659,7 @@ impl Client {
                                 statement,
                                 recordset.clone(),
                                 node_partition,
+                                cluster,
                             )
                             .await
                             .execute()
@@ -2765,17 +2837,27 @@ impl Client {
     /// or `Error::CommitFailed` with per-key records and an `in_doubt` flag on
     /// failure.
     pub async fn commit(&self, txn: &Arc<Txn>) -> Result<CommitStatus> {
-        let policy = BasePolicy::default();
-        self.commit_with_policies(&policy, &policy, txn).await
+        self.commit_with_policies(
+            &TxnVerifyPolicy::default(),
+            &TxnRollPolicy::default(),
+            txn,
+        )
+        .await
     }
 
     /// Commit a multi-record transaction with explicit verify and roll policies.
     pub async fn commit_with_policies(
         &self,
-        verify_policy: &BasePolicy,
-        roll_policy: &BasePolicy,
+        verify_policy: &TxnVerifyPolicy,
+        roll_policy: &TxnRollPolicy,
         txn: &Arc<Txn>,
     ) -> Result<CommitStatus> {
+        // Apply any dynamic-config overrides for the txn_verify/txn_roll sections.
+        let verify_policy = self.cluster.resolve_txn_verify(verify_policy);
+        let verify_policy = verify_policy.as_ref();
+        let roll_policy = self.cluster.resolve_txn_roll(roll_policy);
+        let roll_policy = roll_policy.as_ref();
+
         let mut tr = TxnRoll::new(self.cluster.clone(), txn.clone());
 
         match txn.state() {
@@ -2803,16 +2885,19 @@ impl Client {
     /// # Arguments
     /// * `txn` - The transaction to abort (wrapped in `Arc`).
     pub async fn abort(&self, txn: &Arc<Txn>) -> Result<AbortStatus> {
-        let policy = BasePolicy::default();
-        self.abort_with_policy(&policy, txn).await
+        self.abort_with_policy(&TxnRollPolicy::default(), txn).await
     }
 
     /// Abort a multi-record transaction with an explicit roll policy.
     pub async fn abort_with_policy(
         &self,
-        roll_policy: &BasePolicy,
+        roll_policy: &TxnRollPolicy,
         txn: &Arc<Txn>,
     ) -> Result<AbortStatus> {
+        // Apply any dynamic-config override for the txn_roll section.
+        let roll_policy = self.cluster.resolve_txn_roll(roll_policy);
+        let roll_policy = roll_policy.as_ref();
+
         let mut tr = TxnRoll::new(self.cluster.clone(), txn.clone());
 
         match txn.state() {

@@ -20,7 +20,7 @@ use std::sync::Arc;
 use aerospike_rt::Mutex;
 use flate2::read::ZlibDecoder;
 
-use crate::cluster::Node;
+use crate::cluster::{Cluster, Node};
 use crate::commands::buffer::{self, Buffer};
 use crate::commands::field_type::FieldType;
 use crate::commands::Command;
@@ -33,6 +33,9 @@ use crate::{Key, Record, ResultCode, Value};
 pub struct StreamCommand {
     is_scan: bool,
     node: Arc<Node>,
+    /// The owning cluster, surfaced via [`Command::cluster`] so the retry loop
+    /// can record cluster-wide `exceeded-*` counters for scans/queries.
+    cluster: Arc<Cluster>,
     pub(crate) recordset: Arc<Recordset>,
     pub(crate) node_partitions: Arc<Mutex<NodePartitions>>,
 }
@@ -50,10 +53,12 @@ impl StreamCommand {
         recordset: Arc<Recordset>,
         node_partitions: Arc<Mutex<NodePartitions>>,
         is_scan: bool,
+        cluster: Arc<Cluster>,
     ) -> Self {
         StreamCommand {
             is_scan,
             node,
+            cluster,
             recordset,
             node_partitions,
         }
@@ -269,6 +274,10 @@ impl StreamCommand {
 
 #[async_trait::async_trait]
 impl Command for StreamCommand {
+    fn cluster(&self) -> Option<&Cluster> {
+        Some(&self.cluster)
+    }
+
     async fn write_timeout(&mut self, _conn: &mut Connection) -> Result<()> {
         // should be implemented downstream
         unreachable!()

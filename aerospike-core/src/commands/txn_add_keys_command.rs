@@ -54,6 +54,10 @@ impl<'a> TxnAddKeysCommand<'a> {
 
 #[async_trait::async_trait]
 impl Command for TxnAddKeysCommand<'_> {
+    fn cluster(&self) -> Option<&Cluster> {
+        Some(self.single_command.cluster())
+    }
+
     async fn write_timeout(&mut self, conn: &mut Connection) -> Result<()> {
         conn.buffer.write_timeout(self.policy.server_timeout());
         Ok(())

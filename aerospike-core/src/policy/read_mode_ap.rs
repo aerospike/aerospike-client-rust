@@ -26,3 +26,19 @@ pub enum ReadModeAP {
     /// All duplicates should be consulted in the read operation.
     All = 1,
 }
+
+// Case-insensitive YAML/config parsing (mirrors the Go client's `ToUpper`
+// handling): accepts `ONE`/`ALL` in any case; anything else is an error.
+#[cfg(feature = "dynamic-config")]
+impl<'de> serde::Deserialize<'de> for ReadModeAP {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let value = String::deserialize(deserializer)?;
+        match value.to_ascii_uppercase().as_str() {
+            "ONE" => Ok(ReadModeAP::One),
+            "ALL" => Ok(ReadModeAP::All),
+            other => Err(serde::de::Error::custom(format!(
+                "invalid ReadModeAp value: {other}"
+            ))),
+        }
+    }
+}

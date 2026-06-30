@@ -15,17 +15,22 @@
 
 use crate::expressions::Expression;
 use crate::policy::{BasePolicy, Concurrency, PolicyLike};
+#[cfg(feature = "dynamic-config")]
+use crate::policy::BasePolicyConfig;
 
 use super::Replica;
 
 /// `BatchPolicy` encapsulates parameters for all batch operations.
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "dynamic-config", derive(aerospike_macro::Config))]
 pub struct BatchPolicy {
     /// Base policy instance
+    #[cfg_attr(feature = "dynamic-config", config(flatten))]
     pub base_policy: BasePolicy,
 
     /// Concurrency mode for batch requests: Sequential or Parallel (with optional max. no of
     /// parallel threads).
+    #[cfg_attr(feature = "dynamic-config", config(skip))]
     pub concurrency: Concurrency,
 
     /// Allow batch to be processed immediately in the server's receiving thread when the server
@@ -73,6 +78,7 @@ pub struct BatchPolicy {
     pub respond_all_keys: bool, //= true;
 
     /// Optional Filter Expression
+    #[cfg_attr(feature = "dynamic-config", config(skip))]
     pub filter_expression: Option<Expression>,
 
     /// Defines algorithm used to determine the target node for a command. The replica algorithm only affects single record and batch commands.
