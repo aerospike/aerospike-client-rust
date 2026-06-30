@@ -175,6 +175,7 @@ pub fn base_policy(
                 compression_threshold: 128,
                 filter_expression,
                 txn: None,
+                populate_positional_results: false,
             },
         )
 }
