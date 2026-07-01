@@ -677,6 +677,79 @@ Many cloud providers experience performance issues when clients close sockets wh
 **Recommended value:** If enabling `timeout_delay`, 3000ms (3 seconds) is a reasonable starting point.
 
 For a complete working example demonstrating timeout scenarios, see [`examples/timeout_configuration.rs`](./examples/timeout_configuration.rs).
+
+### Dynamic configuration
+
+The client can load policy overrides from a YAML file and apply them at runtime,
+so timeouts, retries, read modes, metrics, and more can be tuned without
+restarting your application. This is gated behind the `dynamic-config` cargo
+feature and uses the same cross-client config file format as the other Aerospike
+clients, so one file can be shared across languages.
+
+```toml
+[dependencies]
+aerospike = { version = "<version>", features = ["rt-tokio", "dynamic-config"] }
+```
+
+There are two ways to point the client at a config file.
+
+**1. Environment variable** — set `AEROSPIKE_CLIENT_CONFIG_URL` and construct the
+client normally; it is picked up automatically:
+
+```bash
+export AEROSPIKE_CLIENT_CONFIG_URL="file:///etc/aerospike/config.yaml"
+# a bare path (no scheme) is treated as file:// too:
+export AEROSPIKE_CLIENT_CONFIG_URL="/etc/aerospike/config.yaml"
+```
+
+```rust
+let client = Client::new(&ClientPolicy::default(), &"127.0.0.1:3000").await?;
+```
+
+**2. Explicit provider** — inject a `YamlFileProvider` (no environment variable
+needed):
+
+```rust
+use std::sync::Arc;
+use aerospike::config::YamlFileProvider;
+
+let provider = Arc::new(YamlFileProvider::new("/etc/aerospike/config.yaml"));
+let client = Client::new_with_config(
+    &ClientPolicy::default(),
+    &"127.0.0.1:3000",
+    provider,
+).await?;
+```
+
+Example config file:
+
+```yaml
+version: "1.0.0"          # required, or the file is ignored
+static:
+  client:
+    config_interval: 5     # seconds between reloads (min 1s)
+dynamic:
+  read:
+    total_timeout: 1000
+    max_retries: 3
+  write:
+    send_key: true
+    durable_delete: true
+  metrics:
+    enable: true
+    labels:
+      app_id: billing
+```
+
+Notes:
+
+- The file **must** contain a top-level `version` key or it is ignored (no error).
+- It is re-read on a background watcher only when its modification time changes.
+- Unsupported sections or keys are ignored rather than causing errors, so a
+  config file written for another client still works.
+- Only the `file://` scheme is built in; register others with
+  `aerospike::config::register_provider`.
+
 ## Feedback wanted
 
 We need your help with:

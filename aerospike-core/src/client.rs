@@ -128,6 +128,17 @@ impl Client {
     ///
     /// * Returns an error if policy validation fails, no host can be reached, or cluster discovery fails.
     ///
+    /// # Dynamic configuration
+    ///
+    /// When the `dynamic-config` feature is enabled and the
+    /// `AEROSPIKE_CLIENT_CONFIG_URL` environment variable is set, `new`
+    /// automatically loads that config file and refreshes it in the background.
+    /// The value is a `scheme://path` DSN — e.g.
+    /// `file:///etc/aerospike/config.yaml`; a bare path with no scheme is treated
+    /// as `file://`. If the variable is unset or empty, dynamic configuration is
+    /// off. Use [`new_with_config`](Self::new_with_config) to inject a provider
+    /// explicitly instead of relying on the environment variable.
+    ///
     /// # See also
     ///
     /// * [`close`](Self::close) to shut down the client
@@ -168,6 +179,23 @@ impl Client {
     ///
     /// Use [`config::YamlFileProvider`](crate::config::YamlFileProvider) for a
     /// local YAML file, or implement `ConfigProvider` for another source.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,ignore
+    /// // Requires the `dynamic-config` feature.
+    /// use std::sync::Arc;
+    /// use aerospike::{Client, ClientPolicy};
+    /// use aerospike::config::YamlFileProvider;
+    ///
+    /// let provider = Arc::new(YamlFileProvider::new("/etc/aerospike/config.yaml"));
+    /// let client = Client::new_with_config(
+    ///     &ClientPolicy::default(),
+    ///     &"127.0.0.1:3000",
+    ///     provider,
+    /// ).await?;
+    /// # Ok::<(), aerospike::Error>(())
+    /// ```
     ///
     /// # Errors
     ///

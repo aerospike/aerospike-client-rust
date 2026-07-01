@@ -29,6 +29,18 @@ use crate::errors::Result;
 /// (returning `Ok(None)` otherwise). A document missing the top-level `version`
 /// key is rejected (logged and treated as "no update"), matching the other
 /// Aerospike clients.
+///
+/// Pass one to [`Client::new_with_config`](crate::Client::new_with_config) to
+/// drive dynamic configuration from a chosen path (instead of the
+/// `AEROSPIKE_CLIENT_CONFIG_URL` environment variable):
+///
+/// ```rust,ignore
+/// use std::sync::Arc;
+/// use aerospike::config::YamlFileProvider;
+///
+/// let provider = Arc::new(YamlFileProvider::new("/etc/aerospike/config.yaml"));
+/// // let client = Client::new_with_config(&policy, &hosts, provider).await?;
+/// ```
 #[derive(Debug)]
 pub struct YamlFileProvider {
     path: PathBuf,
