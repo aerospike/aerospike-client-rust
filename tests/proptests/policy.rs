@@ -164,6 +164,7 @@ pub fn base_policy(
                 filter_expression,
             )| BasePolicy {
                 socket_timeout,
+                connect_timeout: 0,
                 total_timeout,
                 timeout_delay,
                 max_retries,

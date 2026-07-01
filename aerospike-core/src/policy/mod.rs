@@ -73,6 +73,10 @@ pub trait Policy {
     /// Socket timeout for client.
     fn socket_timeout(&self) -> u32;
 
+    /// Socket connect timeout in milliseconds for command connections.
+    /// When zero, [`socket_timeout`](Self::socket_timeout) is used.
+    fn connect_timeout(&self) -> u32;
+
     /// Total transaction timeout for both client and server. The timeout is tracked on the client
     /// and also sent to the server along with the transaction in the wire protocol. The client
     /// will most likely timeout first, but the server has the capability to timeout the
@@ -141,6 +145,10 @@ where
 
     fn socket_timeout(&self) -> u32 {
         self.base().socket_timeout()
+    }
+
+    fn connect_timeout(&self) -> u32 {
+        self.base().connect_timeout()
     }
 
     fn total_timeout(&self) -> u32 {
@@ -214,6 +222,13 @@ pub struct BasePolicy {
     /// both `max_retries` and `total_timeout` are checked. If `max_retries` and `total_timeout` are not
     /// exceeded, the command is retried.
     pub socket_timeout: u32,
+
+    /// Socket connect timeout in milliseconds. If greater than zero, it is applied when
+    /// creating a connection plus optional user authentication. Otherwise,
+    /// [`socket_timeout`](Self::socket_timeout) is used.
+    ///
+    /// Default: 0
+    pub connect_timeout: u32,
 
     /// Total command timeout.
     /// This timeout is used to set the socket timeout and is also sent to the
@@ -352,6 +367,10 @@ impl Policy for BasePolicy {
         }
     }
 
+    fn connect_timeout(&self) -> u32 {
+        self.connect_timeout
+    }
+
     fn total_timeout(&self) -> u32 {
         self.total_timeout
     }
@@ -386,5 +405,47 @@ impl Policy for BasePolicy {
 
     fn compression_threshold(&self) -> usize {
         self.compression_threshold
+    }
+}
+
+#[cfg(test)]
+mod timeout_policy_tests {
+    use super::{BasePolicy, Policy, ReadPolicy};
+
+    #[test]
+    fn base_policy_default_connect_timeout_is_zero() {
+        let p = BasePolicy::default();
+        assert_eq!(p.connect_timeout, 0);
+        assert_eq!(p.connect_timeout(), 0);
+    }
+
+    #[test]
+    fn effective_socket_timeout_is_min_of_socket_and_total() {
+        let mut base = BasePolicy::default();
+        base.socket_timeout = 30_000;
+        base.total_timeout = 1_000;
+        let policy = ReadPolicy {
+            base_policy: base,
+            ..ReadPolicy::default()
+        };
+        assert_eq!(policy.socket_timeout(), 1_000);
+    }
+
+    #[test]
+    fn connect_timeout_is_independent_of_socket_total_cap() {
+        let mut base = BasePolicy::default();
+        base.connect_timeout = 5_000;
+        base.socket_timeout = 30_000;
+        base.total_timeout = 1_000;
+        assert_eq!(base.connect_timeout(), 5_000);
+        assert_eq!(base.socket_timeout(), 1_000);
+    }
+
+    #[test]
+    fn both_zero_socket_and_total_yields_zero_effective_socket() {
+        let mut base = BasePolicy::default();
+        base.socket_timeout = 0;
+        base.total_timeout = 0;
+        assert_eq!(base.socket_timeout(), 0);
     }
 }

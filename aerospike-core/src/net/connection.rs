@@ -142,9 +142,16 @@ impl Connection {
         policy: &ClientPolicy,
         hashed_pass: Option<&String>,
     ) -> Result<Self> {
-        Self::new_with_session(host, policy, hashed_pass, None)
-            .await
-            .map(|(conn, _session)| conn)
+        Self::new_with_session(
+            host,
+            policy,
+            hashed_pass,
+            None,
+            policy.timeout,
+            policy.timeout,
+        )
+        .await
+        .map(|(conn, _session)| conn)
     }
 
     /// Like [`new`](Self::new) but optionally reuses a previously-issued
@@ -157,10 +164,15 @@ impl Connection {
         policy: &ClientPolicy,
         hashed_pass: Option<&String>,
         session: Option<&crate::commands::admin_command::SessionInfo>,
+        connect_timeout_ms: u32,
+        socket_timeout_ms: u32,
     ) -> Result<(Self, Option<crate::commands::admin_command::SessionInfo>)> {
         let addr = host.address();
+        let effective_connect =
+            ClientPolicy::effective_connect_timeout_ms(connect_timeout_ms, socket_timeout_ms);
+        let connect_duration = Duration::from_millis(u64::from(effective_connect));
         let stream =
-            aerospike_rt::timeout(policy.timeout(), TcpStream::connect(addr.clone())).await;
+            aerospike_rt::timeout(connect_duration, TcpStream::connect(addr.clone())).await;
         if stream.is_err() {
             return Err(Error::Connection(
                 "Could not open network connection".to_string(),
@@ -176,12 +188,18 @@ impl Connection {
             None
         };
 
+        let post_connect_socket = if socket_timeout_ms > 0 {
+            socket_timeout_ms
+        } else {
+            effective_connect
+        };
+
         let mut conn = Connection {
             addr,
             buffer: Buffer::new(policy.buffer_reclaim_threshold),
             bytes_read: 0,
             conn: stream,
-            socket_timeout: policy.timeout().as_millis() as u32,
+            socket_timeout: effective_connect,
             timeout_delay: 0,
             deadline: None,
             idle_timeout,
@@ -204,7 +222,12 @@ impl Connection {
             _ => false,
         };
         if !used_session {
+            let login_ms = policy.login_timeout().as_millis() as u32;
+            conn.set_socket_timeout(None, login_ms);
             new_session = conn.authenticate(&policy.auth_mode, hashed_pass).await?;
+            conn.set_socket_timeout(None, post_connect_socket);
+        } else {
+            conn.set_socket_timeout(None, post_connect_socket);
         }
         conn.refresh();
         Ok((conn, new_session))
@@ -221,8 +244,10 @@ impl Connection {
         policy: &ClientPolicy,
         hashed_pass: Option<&String>,
         _session: Option<&crate::commands::admin_command::SessionInfo>,
+        connect_timeout_ms: u32,
+        socket_timeout_ms: u32,
     ) -> Result<(Self, Option<crate::commands::admin_command::SessionInfo>)> {
-        Self::new(host, policy, hashed_pass)
+        Self::new(host, policy, hashed_pass, connect_timeout_ms, socket_timeout_ms)
             .await
             .map(|c| (c, None))
     }
@@ -232,6 +257,8 @@ impl Connection {
         host: &Host,
         policy: &ClientPolicy,
         _hashed_pass: Option<&String>,
+        connect_timeout_ms: u32,
+        socket_timeout_ms: u32,
     ) -> Result<Self> {
         let addr = host.address();
         let stream = Netsocket::TestDummy;
@@ -247,7 +274,10 @@ impl Connection {
             buffer: Buffer::new(policy.buffer_reclaim_threshold),
             bytes_read: 0,
             conn: stream,
-            socket_timeout: policy.timeout().as_millis() as u32,
+            socket_timeout: ClientPolicy::effective_connect_timeout_ms(
+                connect_timeout_ms,
+                socket_timeout_ms,
+            ),
             timeout_delay: 0,
             deadline: None,
             idle_timeout: idle_timeout,

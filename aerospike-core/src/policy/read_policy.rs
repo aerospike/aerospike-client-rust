@@ -32,6 +32,7 @@ impl Default for BasePolicy {
     fn default() -> BasePolicy {
         BasePolicy {
             socket_timeout: 30000,
+            connect_timeout: 0,
             total_timeout: 1000,
             timeout_delay: 0,
             max_retries: 2,

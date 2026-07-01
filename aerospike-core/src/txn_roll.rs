@@ -336,6 +336,7 @@ impl TxnRoll {
 fn write_policy_from_base(base: &BasePolicy) -> WritePolicy {
     let mut wp = WritePolicy::default();
     wp.base_policy.socket_timeout = base.socket_timeout;
+    wp.base_policy.connect_timeout = base.connect_timeout;
     wp.base_policy.total_timeout = base.total_timeout;
     wp.base_policy.timeout_delay = base.timeout_delay;
     wp.base_policy.max_retries = base.max_retries;

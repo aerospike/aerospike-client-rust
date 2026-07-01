@@ -1,4 +1,4 @@
-// Copyright 2015-2024 Aerospike, Inc.
+// Copyright 2015-2026 Aerospike, Inc.
 //
 // Portions may be licensed to Aerospike, Inc. under one or more contributor
 // license agreements.
@@ -47,6 +47,8 @@ use futures::channel::mpsc::{Receiver, Sender, TryRecvError};
 use hazarc::AtomicArc;
 
 static CLIENT_VERSION: &str = env!("CARGO_PKG_VERSION");
+
+const INIT_STABILIZE_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Per-namespace partition data.
 /// Contains replicated node arrays, SC mode flag, and regime tracking.
@@ -523,15 +525,7 @@ impl Cluster {
     }
 
     async fn wait_till_stabilized(cluster: Arc<Cluster>) -> Result<()> {
-        let timeout = {
-            let timeout = cluster.client_policy.load().timeout;
-            if timeout > 0 {
-                Duration::from_millis(u64::from(timeout))
-            } else {
-                Duration::from_secs(3)
-            }
-        };
-        let deadline = Instant::now() + timeout;
+        let deadline = Instant::now() + INIT_STABILIZE_TIMEOUT;
         let sleep_between_tend = Duration::from_millis(1);
 
         let handle = aerospike_rt::spawn(async move {

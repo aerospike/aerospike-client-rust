@@ -103,9 +103,17 @@ pub struct ClientPolicy {
     #[cfg(feature = "tls")]
     pub tls_config: Option<ClientConfig>,
 
-    /// Initial host connection timeout in milliseconds. The timeout when opening a connection
-    /// to the server host for the first time.
+    /// Cluster tend info call timeout in milliseconds. The timeout when opening a connection
+    /// to the server node for the first time and when polling each node for cluster status.
+    ///
+    /// Default: 1000
     pub timeout: u32,
+
+    /// Login timeout in milliseconds. Used when user authentication is enabled and a node
+    /// login is being performed.
+    ///
+    /// Default: 5000
+    pub login_timeout: u32,
 
     /// Connection idle timeout. Every time a connection is used, its idle
     /// deadline will be extended by this duration. When this deadline is reached,
@@ -237,7 +245,8 @@ impl Default for ClientPolicy {
     fn default() -> ClientPolicy {
         ClientPolicy {
             auth_mode: AuthMode::None,
-            timeout: 30_000,
+            timeout: 1_000,
+            login_timeout: 5_000,
             idle_timeout: 30_000,
             min_conns_per_node: 0,
             max_conns_per_node: 256,
@@ -294,11 +303,27 @@ impl ClientPolicy {
         "not-set"
     }
 
-    pub(crate) fn timeout(&self) -> Duration {
-        if self.timeout > 0 {
-            Duration::from_millis(u64::from(self.timeout))
+    /// Login timeout as a [`Duration`].
+    pub(crate) fn login_timeout(&self) -> Duration {
+        if self.login_timeout > 0 {
+            Duration::from_millis(u64::from(self.login_timeout))
         } else {
-            Duration::from_secs(30)
+            Duration::from_millis(5_000)
+        }
+    }
+
+    /// Effective connect timeout when opening a socket. Mirrors Java
+    /// `Node.getConnection`: use `connect_timeout` when &gt; 0, else `socket_timeout`.
+    pub(crate) fn effective_connect_timeout_ms(
+        connect_timeout_ms: u32,
+        socket_timeout_ms: u32,
+    ) -> u32 {
+        if connect_timeout_ms > 0 {
+            connect_timeout_ms
+        } else if socket_timeout_ms > 0 {
+            socket_timeout_ms
+        } else {
+            2_000
         }
     }
 
@@ -354,5 +379,38 @@ impl ClientPolicy {
             true => "service-clear-alt",
             false => "service-clear-std",
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ClientPolicy;
+
+    #[test]
+    fn default_client_policy_timeout_defaults() {
+        let p = ClientPolicy::default();
+        assert_eq!(p.timeout, 1_000, "tend/connect default");
+        assert_eq!(p.login_timeout, 5_000, "login default");
+    }
+
+    #[test]
+    fn effective_connect_timeout_uses_explicit_connect() {
+        assert_eq!(ClientPolicy::effective_connect_timeout_ms(5_000, 1_000), 5_000);
+    }
+
+    #[test]
+    fn effective_connect_timeout_falls_back_to_socket() {
+        assert_eq!(ClientPolicy::effective_connect_timeout_ms(0, 1_000), 1_000);
+    }
+
+    #[test]
+    fn effective_connect_timeout_java_hardcoded_when_both_zero() {
+        assert_eq!(ClientPolicy::effective_connect_timeout_ms(0, 0), 2_000);
+    }
+
+    #[test]
+    fn login_timeout_duration_default() {
+        let p = ClientPolicy::default();
+        assert_eq!(p.login_timeout().as_millis(), 5_000);
     }
 }

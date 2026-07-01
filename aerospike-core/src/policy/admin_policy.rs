@@ -28,3 +28,19 @@ impl AdminPolicy {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::AdminPolicy;
+
+    #[test]
+    fn zero_admin_timeout_uses_legacy_three_second_fallback() {
+        assert_eq!(AdminPolicy::default().timeout(), 3_000);
+    }
+
+    #[test]
+    fn explicit_admin_timeout_is_preserved() {
+        let p = AdminPolicy { timeout: 1_000 };
+        assert_eq!(p.timeout(), 1_000);
+    }
+}

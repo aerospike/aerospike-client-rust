@@ -178,7 +178,10 @@ impl BatchOperateCommand {
             return Ok(Some(err));
         }
 
-        let mut conn = match node.get_connection(0).await {
+        let mut conn = match node
+            .get_connection(0, policy.connect_timeout(), policy.socket_timeout())
+            .await
+        {
             Ok(conn) => conn,
             Err(err) => {
                 warn!("Node {node}: {err}");

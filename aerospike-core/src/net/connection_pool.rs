@@ -1,4 +1,4 @@
-// Copyright 2015-2018 Aerospike, Inc.
+// Copyright 2015-2026 Aerospike, Inc.
 //
 // Portions may be licensed to Aerospike, Inc. under one or more contributor
 // license agreements.
@@ -102,7 +102,11 @@ impl Queue {
     /// already holds a non-expired session, the new connection
     /// authenticates via AUTHENTICATE with that token; otherwise it does a
     /// full LOGIN and stores the resulting session for the next caller.
-    pub async fn make_conn(&self) -> Result<Connection> {
+    pub async fn make_conn(
+        &self,
+        connect_timeout_ms: u32,
+        socket_timeout_ms: u32,
+    ) -> Result<Connection> {
         // Snapshot the current session under the lock, then drop the guard
         // before any await so the mutex doesn't get held across .await
         // points (it's a std::sync::Mutex, not async-aware).
@@ -115,19 +119,18 @@ impl Queue {
             guard.as_ref().filter(|s| !s.is_expired()).cloned()
         };
 
-        let result = aerospike_rt::timeout(
-            self.0.policy.timeout(),
-            Connection::new_with_session(
-                &self.0.host,
-                &self.0.policy,
-                self.0.hashed_pass.as_ref(),
-                cached_session.as_ref(),
-            ),
+        let result = Connection::new_with_session(
+            &self.0.host,
+            &self.0.policy,
+            self.0.hashed_pass.as_ref(),
+            cached_session.as_ref(),
+            connect_timeout_ms,
+            socket_timeout_ms,
         )
         .await;
 
         match result {
-            Ok(Ok((conn, fresh_session))) => {
+            Ok((conn, fresh_session)) => {
                 if let Some(s) = fresh_session {
                     let mut guard = self
                         .0
@@ -315,7 +318,12 @@ impl ConnectionPool {
 
     /// If there is a pool with capacity to hold more connections, create a connection
     /// for that queue and return it to the user.
-    pub async fn make_conn(&self, hint: usize) -> Result<PooledConnection> {
+    pub async fn make_conn(
+        &self,
+        hint: usize,
+        connect_timeout_ms: u32,
+        socket_timeout_ms: u32,
+    ) -> Result<PooledConnection> {
         let num_queues = usize::from(self.num_queues);
         let mut attempts = self.num_queues;
         let mut i = hint % num_queues;
@@ -326,7 +334,7 @@ impl ConnectionPool {
                 i = 0;
             }
             if queue.reserve_capacity() {
-                match queue.make_conn().await {
+                match queue.make_conn(connect_timeout_ms, socket_timeout_ms).await {
                     Ok(conn) => {
                         return Ok(PooledConnection {
                             queue: queue.clone(),
@@ -484,9 +492,15 @@ mod tests {
         ($pool:ident, $hint:tt) => {{
             match $pool.get($hint) {
                 Ok(c) => Ok(c),
-                Err(_) => $pool.make_conn($hint).await,
+                Err(_) => $pool.make_conn($hint, 0, 30_000).await,
             }
         }};
+    }
+
+    async fn test_connection(host: &Host, policy: &ClientPolicy) -> Connection {
+        Connection::new(host, policy, None, 1000, 30_000)
+            .await
+            .expect("creating dummy connection failed")
     }
 
     #[aerospike_macro::test]
@@ -499,30 +513,22 @@ mod tests {
         assert_eq!(q.reserved(), 0);
         assert_eq!(q.get().is_err(), true);
 
-        let c = Connection::new(&host, &policy, None)
-            .await
-            .expect("creating dummy connection failed");
+        let c = test_connection(&host, &policy).await;
         put_back_with_reserve!(q, c);
         assert_eq!(q.reserved(), 1);
         assert_eq!(q.num_conns(), 1);
 
-        let c = Connection::new(&host, &policy, None)
-            .await
-            .expect("creating dummy connection failed");
+        let c = test_connection(&host, &policy).await;
         put_back_with_reserve!(q, c);
         assert_eq!(q.reserved(), 2);
         assert_eq!(q.num_conns(), 2);
 
-        let c = Connection::new(&host, &policy, None)
-            .await
-            .expect("creating dummy connection failed");
+        let c = test_connection(&host, &policy).await;
         put_back_with_reserve!(q, c);
         assert_eq!(q.reserved(), 3);
         assert_eq!(q.num_conns(), 3);
 
-        let c = Connection::new(&host, &policy, None)
-            .await
-            .expect("creating dummy connection failed");
+        let c = test_connection(&host, &policy).await;
         put_back_with_reserve!(q, c);
         assert_eq!(q.num_conns(), 3);
         assert_eq!(q.reserved(), 3);
@@ -570,7 +576,7 @@ mod tests {
         assert_eq!(get_or_make!(p, 0).is_err(), false);
         assert_eq!(p.num_conns(), 1);
 
-        assert_eq!(p.make_conn(0).await.is_err(), false);
+        assert_eq!(p.make_conn(0, 1000, 30_000).await.is_err(), false);
         assert_eq!(p.num_conns(), 2);
 
         assert_eq!(p.get(0).is_err(), false);
@@ -614,7 +620,7 @@ mod tests {
         assert_eq!(p.queues[1].reserved(), 0);
         assert_eq!(p.queues[1].num_conns(), 0);
 
-        assert_eq!(p.make_conn(1).await.is_err(), false);
+        assert_eq!(p.make_conn(1, 1000, 30_000).await.is_err(), false);
         assert_eq!(p.num_conns(), 2);
         assert_eq!(p.queues[0].reserved(), 1);
         assert_eq!(p.queues[0].num_conns(), 1);
@@ -651,21 +657,21 @@ mod tests {
 
         // test for capacity planning
 
-        assert_eq!(p.make_conn(1).await.is_err(), false);
+        assert_eq!(p.make_conn(1, 1000, 30_000).await.is_err(), false);
         assert_eq!(p.num_conns(), 1);
         assert_eq!(p.queues[0].reserved(), 0);
         assert_eq!(p.queues[0].num_conns(), 0);
         assert_eq!(p.queues[1].reserved(), 1);
         assert_eq!(p.queues[1].num_conns(), 1);
 
-        assert_eq!(p.make_conn(1).await.is_err(), false);
+        assert_eq!(p.make_conn(1, 1000, 30_000).await.is_err(), false);
         assert_eq!(p.num_conns(), 2);
         assert_eq!(p.queues[0].reserved(), 1);
         assert_eq!(p.queues[0].num_conns(), 1);
         assert_eq!(p.queues[1].reserved(), 1);
         assert_eq!(p.queues[1].num_conns(), 1);
 
-        assert_eq!(p.make_conn(1).await.is_err(), false);
+        assert_eq!(p.make_conn(1, 1000, 30_000).await.is_err(), false);
         assert_eq!(p.num_conns(), 3);
         assert_eq!(p.queues[0].reserved(), 2);
         assert_eq!(p.queues[0].num_conns(), 2);
@@ -673,7 +679,7 @@ mod tests {
         assert_eq!(p.queues[1].num_conns(), 1);
 
         // can't make more, all queues are full
-        assert_eq!(p.make_conn(1).await.is_err(), true);
+        assert_eq!(p.make_conn(1, 1000, 30_000).await.is_err(), true);
         assert_eq!(p.num_conns(), 3);
         assert_eq!(p.queues[0].reserved(), 2);
         assert_eq!(p.queues[0].num_conns(), 2);
@@ -683,7 +689,7 @@ mod tests {
         // can't make more, all queues are full
         let mut c = p.get(0).unwrap();
         // we are at capacity, no more connections can be created
-        assert_eq!(p.make_conn(1).await.is_err(), true);
+        assert_eq!(p.make_conn(1, 1000, 30_000).await.is_err(), true);
         // but there is one connection in flight
         assert_eq!(p.num_conns(), 2);
         assert_eq!(p.queues[0].reserved(), 2);
@@ -703,7 +709,7 @@ mod tests {
         // can't make more, all queues are full
         let mut c = p.get(1).unwrap();
         // we are at capacity, no more connections can be created
-        assert_eq!(p.make_conn(1).await.is_err(), true);
+        assert_eq!(p.make_conn(1, 1000, 30_000).await.is_err(), true);
         // but there is one connection in flight
         assert_eq!(p.num_conns(), 2);
         assert_eq!(p.queues[0].reserved(), 2);
@@ -729,9 +735,7 @@ mod tests {
         };
 
         let q = Queue::with_capacity(3, host.clone(), policy.clone());
-        let c = Connection::new(&host, &policy, None)
-            .await
-            .expect("creating dummy connection failed");
+        let c = test_connection(&host, &policy).await;
         put_back_with_reserve!(q, c);
         assert_eq!(q.reserved(), 1);
         assert_eq!(q.num_conns(), 1);
@@ -755,20 +759,14 @@ mod tests {
 
         let q = Queue::with_capacity(2, host.clone(), policy.clone());
 
-        let c1 = Connection::new(&host, &policy, None)
-            .await
-            .expect("creating dummy connection failed");
+        let c1 = test_connection(&host, &policy).await;
         put_back_with_reserve!(q, c1);
-        let c2 = Connection::new(&host, &policy, None)
-            .await
-            .expect("creating dummy connection failed");
+        let c2 = test_connection(&host, &policy).await;
         put_back_with_reserve!(q, c2);
         assert_eq!(q.reserved(), 2);
         assert_eq!(q.num_conns(), 2);
 
-        let overflow = Connection::new(&host, &policy, None)
-            .await
-            .expect("creating dummy connection failed");
+        let overflow = test_connection(&host, &policy).await;
         assert!(
             !q.reserve_capacity(),
             "queue is at capacity, reserve should fail"
@@ -806,10 +804,10 @@ mod tests {
 
         // make_conn returns a PooledConnection; dropping it returns the
         // connection to the pool. We need to hold them to keep them "in-flight".
-        let _c1 = p.make_conn(0).await.expect("make_conn failed");
+        let _c1 = p.make_conn(0, 1000, 30_000).await.expect("make_conn failed");
         assert_eq!(p.total_reserved(), 1);
 
-        let _c2 = p.make_conn(0).await.expect("make_conn failed");
+        let _c2 = p.make_conn(0, 1000, 30_000).await.expect("make_conn failed");
         assert_eq!(p.total_reserved(), 2);
 
         // Both are held as in-flight PooledConnections, so the queue is empty
@@ -838,7 +836,7 @@ mod tests {
         let p = ConnectionPool::new(host.clone(), policy.clone());
 
         for round in 0..10 {
-            let mut c = p.make_conn(0).await.expect("make_conn failed");
+            let mut c = p.make_conn(0, 1000, 30_000).await.expect("make_conn failed");
             c.invalidate(); // state → Closed
             drop(c); // Drop: Closed arm → reduce_capacity()
             assert_eq!(
@@ -849,7 +847,7 @@ mod tests {
         }
         // Pool must still accept new connections — no slots leaked.
         let _c = p
-            .make_conn(0)
+            .make_conn(0, 1000, 30_000)
             .await
             .expect("pool must have capacity after all connections were closed and dropped");
     }

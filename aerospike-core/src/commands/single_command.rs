@@ -213,7 +213,14 @@ impl<'a> SingleCommand<'a> {
                 continue;
             }
 
-            let mut conn = match node.get_connection(cmd.hint()).await {
+            let mut conn = match node
+                .get_connection(
+                    cmd.hint(),
+                    policy.connect_timeout(),
+                    policy.socket_timeout(),
+                )
+                .await
+            {
                 Ok(conn) => conn,
                 Err(err) => {
                     warn!("Node {node}: {err}");

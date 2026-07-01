@@ -116,8 +116,16 @@ impl NodeValidator {
     }
 
     async fn validate_alias(&mut self, cluster: &Cluster, alias: &Host) -> Result<()> {
-        let mut conn =
-            Connection::new(alias, &self.client_policy, cluster.hashed_pass().as_ref()).await?;
+        let mut conn = Connection::new_with_session(
+            alias,
+            &self.client_policy,
+            cluster.hashed_pass().as_ref(),
+            None,
+            self.client_policy.timeout,
+            self.client_policy.timeout,
+        )
+        .await?
+        .0;
         let admin_policy = AdminPolicy {
             timeout: self.client_policy.timeout,
         };
@@ -281,10 +289,13 @@ impl NodeValidator {
                     &candidate.tls_name.clone().unwrap_or_default(),
                     candidate.port,
                 );
-                if let Ok(mut probe) = Connection::new(
+                if let Ok((mut probe, _)) = Connection::new_with_session(
                     &real_alias,
                     &self.client_policy,
                     cluster.hashed_pass().as_ref(),
+                    None,
+                    self.client_policy.timeout,
+                    self.client_policy.timeout,
                 )
                 .await
                 {

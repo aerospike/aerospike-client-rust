@@ -1,4 +1,4 @@
-// Copyright 2015-2024 Aerospike, Inc.
+// Copyright 2015-2026 Aerospike, Inc.
 //
 // Portions may be licensed to Aerospike, Inc. under one or more contributor
 // license agreements.
@@ -547,18 +547,28 @@ impl Node {
     }
 
     // Get a connection to the node from the connection pool
-    pub async fn get_connection(&self, hint: u8) -> Result<PooledConnection> {
+    pub async fn get_connection(
+        &self,
+        hint: u8,
+        connect_timeout_ms: u32,
+        socket_timeout_ms: u32,
+    ) -> Result<PooledConnection> {
         if !self.is_active() {
             return Err(Error::InvalidNode(format!(
                 "Cannot get a connection for node. The node `{self}` is inactive"
             )));
         }
 
-        if let Ok(conn) = self.connection_pool.get(hint) {
+        if let Ok(mut conn) = self.connection_pool.get(hint) {
+            if let Some(c) = conn.conn.as_mut() {
+                c.set_socket_timeout(None, socket_timeout_ms);
+            }
             return Ok(conn);
         }
 
-        self.connection_pool.make_conn(usize::from(hint)).await
+        self.connection_pool
+            .make_conn(usize::from(hint), connect_timeout_ms, socket_timeout_ms)
+            .await
     }
 
     // Put a connection to the node back in the connection pool
@@ -621,7 +631,7 @@ impl Node {
         policy: &AdminPolicy,
         commands: &[&str],
     ) -> Result<HashMap<String, String>> {
-        let mut conn = self.get_connection(0).await?;
+        let mut conn = self.get_connection(0, 0, policy.timeout()).await?;
         let res = Message::info(policy, &mut conn, commands).await;
 
         if let Err(e) = res {
@@ -647,10 +657,13 @@ impl Node {
             // Open lazily. The first call after Node::new pays the
             // TCP-handshake + LOGIN here; subsequent calls reuse the
             // already-authenticated socket.
-            let conn = Connection::new(
+            let (conn, _) = Connection::new_with_session(
                 &self.host,
                 &self.client_policy,
                 self.client_policy.hashed_pass().as_ref(),
+                None,
+                self.client_policy.timeout,
+                self.client_policy.timeout,
             )
             .await
             .map_err(|e| e.chain_error("Failed to open tend connection"))?;
@@ -913,7 +926,10 @@ impl Node {
                     .min_conns_per_node
                     .saturating_sub(self.connection_pool.total_reserved());
                 for _ in 0..to_fill {
-                    self.connection_pool.make_conn(count).await?;
+                    let connect = client_policy.timeout;
+                    self.connection_pool
+                        .make_conn(count, connect, connect)
+                        .await?;
                     count += 1;
                 }
             }
@@ -978,7 +994,7 @@ mod node_tests {
         let node = test_node();
         let pconn = node
             .connection_pool
-            .make_conn(0)
+            .make_conn(0, 1000, 1000)
             .await
             .expect("make_conn uses test Connection");
         node.put_connection(pconn);
@@ -993,7 +1009,7 @@ mod node_tests {
         node.close();
         assert!(!node.is_active());
 
-        let err = node.get_connection(0).await.unwrap_err();
+        let err = node.get_connection(0, 0, 30_000).await.unwrap_err();
         match err {
             Error::InvalidNode(msg) => assert!(msg.contains("inactive"), "unexpected: {}", msg),
             other => panic!("expected InvalidNode, got {:?}", other),
@@ -1009,7 +1025,7 @@ mod node_tests {
     async fn put_connection_does_not_return_conn_to_pool_when_inactive() {
         let node = create_node_with_connection().await;
         let pconn = node
-            .get_connection(0)
+            .get_connection(0, 0, 30_000)
             .await
             .expect("active node with one mock conn in pool");
         assert_eq!(node.connection_pool.num_conns(), 0);
@@ -1030,7 +1046,7 @@ mod node_tests {
         let arc = Arc::new(create_node_with_connection().await);
         let queue_witness = {
             let pconn = arc
-                .get_connection(0)
+                .get_connection(0, 0, 30_000)
                 .await
                 .expect("pool should have one connection");
             let q = pconn.queue.clone();
@@ -1076,10 +1092,10 @@ mod node_tests {
         let node = Node::new(policy, nv);
 
         // Trigger 4 pool misses with distinct hints — each should land on its own queue.
-        let _c0 = node.get_connection(0).await.expect("hint=0");
-        let _c1 = node.get_connection(1).await.expect("hint=1");
-        let _c2 = node.get_connection(2).await.expect("hint=2");
-        let _c3 = node.get_connection(3).await.expect("hint=3");
+        let _c0 = node.get_connection(0, 0, 30_000).await.expect("hint=0");
+        let _c1 = node.get_connection(1, 0, 30_000).await.expect("hint=1");
+        let _c2 = node.get_connection(2, 0, 30_000).await.expect("hint=2");
+        let _c3 = node.get_connection(3, 0, 30_000).await.expect("hint=3");
 
         let queues = node.connection_pool.queues();
         for i in 0..4 {
@@ -1113,7 +1129,7 @@ mod node_tests {
         for i in 0..5 {
             let pconn = node
                 .connection_pool
-                .make_conn(i)
+                .make_conn(i, 1000, 1000)
                 .await
                 .expect("make_conn failed");
             in_flight.push(pconn);

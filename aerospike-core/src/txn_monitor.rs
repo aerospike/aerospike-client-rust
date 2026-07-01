@@ -147,6 +147,7 @@ async fn add_write_keys(
 fn copy_timeout_policy(policy: &BasePolicy, txn: &Arc<Txn>) -> WritePolicy {
     let mut wp = WritePolicy::default();
     wp.base_policy.socket_timeout = policy.socket_timeout;
+    wp.base_policy.connect_timeout = policy.connect_timeout;
     wp.base_policy.total_timeout = policy.total_timeout;
     wp.base_policy.timeout_delay = policy.timeout_delay;
     wp.base_policy.max_retries = policy.max_retries;
