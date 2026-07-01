@@ -38,6 +38,10 @@ pub struct Record {
     /// Map of named record bins.
     pub bins: HashMap<String, Value>,
 
+    /// Positional op results in request order; `None` on non-operate paths.
+    /// Nil-result ops carry `Value::Nil` so indices line up with the op list.
+    pub results: Option<Vec<Value>>,
+
     /// Record modification count.
     pub generation: u32,
 
@@ -50,15 +54,24 @@ impl Record {
     pub(crate) const fn new(
         key: Option<Key>,
         bins: HashMap<String, Value>,
+        results: Option<Vec<Value>>,
         generation: u32,
         expiration: u32,
     ) -> Self {
         Record {
             key,
             bins,
+            results,
             generation,
             expiration,
         }
+    }
+
+    /// `None` is returned both for not-populated and out-of-range — callers
+    /// can't distinguish.
+    #[must_use]
+    pub fn operation_result(&self, i: usize) -> Option<&Value> {
+        self.results.as_ref()?.get(i)
     }
 
     /// Returns the remaining time-to-live (TTL, a.k.a. expiration time) for the record or `None`
@@ -112,7 +125,7 @@ mod tests {
             .duration_since(*CITRUSLEAF_EPOCH)
             .unwrap()
             .as_secs();
-        let record = Record::new(None, HashMap::new(), 0, secs_since_epoch as u32);
+        let record = Record::new(None, HashMap::new(), None, 0, secs_since_epoch as u32);
         let ttl = record.time_to_live();
         assert!(ttl.is_some());
         assert!(1000 - ttl.unwrap().as_secs() <= 1);
@@ -120,13 +133,36 @@ mod tests {
 
     #[test]
     fn ttl_expiration_past() {
-        let record = Record::new(None, HashMap::new(), 0, 0x0d00_d21c);
+        let record = Record::new(None, HashMap::new(), None, 0, 0x0d00_d21c);
         assert_eq!(record.time_to_live(), Some(Duration::new(1u64, 0)));
     }
 
     #[test]
     fn ttl_never_expires() {
-        let record = Record::new(None, HashMap::new(), 0, 0);
+        let record = Record::new(None, HashMap::new(), None, 0, 0);
         assert_eq!(record.time_to_live(), None);
+    }
+
+    #[test]
+    fn operation_result_returns_positional_value() {
+        use crate::Value;
+        let results = vec![
+            Value::Int(5),
+            Value::String("ell".to_string()),
+            Value::Nil,
+            Value::Int(2),
+        ];
+        let record = Record::new(None, HashMap::new(), Some(results), 0, 0);
+        assert_eq!(record.operation_result(0), Some(&Value::Int(5)));
+        assert_eq!(record.operation_result(1), Some(&Value::String("ell".to_string())));
+        assert_eq!(record.operation_result(2), Some(&Value::Nil));
+        assert_eq!(record.operation_result(3), Some(&Value::Int(2)));
+        assert_eq!(record.operation_result(4), None);
+    }
+
+    #[test]
+    fn operation_result_returns_none_when_not_populated() {
+        let record = Record::new(None, HashMap::new(), None, 0, 0);
+        assert_eq!(record.operation_result(0), None);
     }
 }

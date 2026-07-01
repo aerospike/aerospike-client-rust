@@ -32,6 +32,8 @@ pub struct ReadCommand<'a> {
     bins: Bins,
     /// When true, txn notifications use `on_write` instead of `on_read`.
     pub(crate) is_write: bool,
+    /// Skip the per-record `results` Vec alloc on non-operate paths.
+    pub(crate) wants_results: bool,
 }
 
 impl<'a> ReadCommand<'a> {
@@ -48,6 +50,7 @@ impl<'a> ReadCommand<'a> {
             policy: &policy.base_policy,
             record: None,
             is_write: false,
+            wants_results: false,
         }
     }
 
@@ -64,6 +67,7 @@ impl<'a> ReadCommand<'a> {
             policy,
             record: None,
             is_write: false,
+            wants_results: false,
         }
     }
 
@@ -80,6 +84,15 @@ impl<'a> ReadCommand<'a> {
         expiration: u32,
     ) -> Result<(Record, Option<u64>)> {
         let mut bins: HashMap<String, Value> = HashMap::with_capacity(op_count);
+        // Populate `Record.results` when either the calling command forces
+        // it (operate paths) OR the policy opts in (`populate_positional_results`).
+        // Rust-core users default to off; PAC/PSDK opt in via policy.
+        let mut results: Option<Vec<Value>> =
+            if self.wants_results || self.policy.populate_positional_results {
+                Some(Vec::with_capacity(op_count))
+            } else {
+                None
+            };
 
         // Parse fields, extracting record version if present (used by MRT).
         let version = conn.buffer.parse_fields_for_version(field_count);
@@ -94,6 +107,10 @@ impl<'a> ReadCommand<'a> {
 
             let particle_bytes_size = op_size - (4 + name_size);
             let value = bytes_to_particle(particle_type, &mut conn.buffer, particle_bytes_size)?;
+
+            if let Some(r) = results.as_mut() {
+                r.push(value.clone());
+            }
 
             if !value.is_nil() {
                 // list/map operations may return multiple values for the same bin.
@@ -111,7 +128,7 @@ impl<'a> ReadCommand<'a> {
             }
         }
 
-        Ok((Record::new(None, bins, generation, expiration), version))
+        Ok((Record::new(None, bins, results, generation, expiration), version))
     }
 }
 
@@ -197,7 +214,7 @@ impl Command for ReadCommand<'_> {
                 let (record, version) = if self.bins.is_none() {
                     let version = conn.buffer.parse_fields_for_version(field_count);
                     (
-                        Record::new(None, HashMap::new(), generation, expiration),
+                        Record::new(None, HashMap::new(), None, generation, expiration),
                         version,
                     )
                 } else {

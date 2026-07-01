@@ -148,7 +148,7 @@ impl StreamCommand {
             }
         }
 
-        let record = Record::new(Some(key), bins, generation, expiration);
+        let record = Record::new(Some(key), bins, None, generation, expiration);
         Ok((Some(record), bval, true))
     }
 

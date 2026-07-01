@@ -460,6 +460,7 @@ impl BatchOperateCommand {
 
         let record = if found_key {
             let mut bins: HashMap<String, Value> = HashMap::with_capacity(op_count);
+            let mut results: Vec<Value> = Vec::with_capacity(op_count);
 
             for _ in 0..op_count {
                 conn.read_buffer(8).await?;
@@ -475,6 +476,8 @@ impl BatchOperateCommand {
                 let value =
                     value::bytes_to_particle(particle_type, conn.buffer(), particle_bytes_size)?;
 
+                results.push(value.clone());
+
                 // list/map operations may return multiple values for the same bin.
                 match bins.entry(name) {
                     Vacant(entry) => {
@@ -489,7 +492,7 @@ impl BatchOperateCommand {
                 }
             }
 
-            Some(Record::new(Some(key), bins, generation, expiration))
+            Some(Record::new(Some(key), bins, Some(results), generation, expiration))
         } else {
             None
         };

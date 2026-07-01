@@ -44,6 +44,7 @@ impl<'a> OperateCommand<'a> {
             partition,
         );
         read_command.is_write = true;
+        read_command.wants_results = true;
         OperateCommand {
             read_command,
             policy,

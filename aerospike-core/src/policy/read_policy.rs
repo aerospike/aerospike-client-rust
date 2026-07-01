@@ -48,6 +48,7 @@ impl Default for BasePolicy {
             compression_threshold: 128,
             filter_expression: None,
             txn: None,
+            populate_positional_results: false,
         }
     }
 }
