@@ -755,6 +755,32 @@ async fn concat_single_and_list() {
 }
 
 #[aerospike_macro::test]
+async fn append_and_prepend() {
+    let client = common::client().await;
+    if !server_supports_string_operations(&client).await {
+        return;
+    }
+    let key = as_key!(common::namespace(), &common::rand_str(10), "appre");
+    let wpolicy = WritePolicy::default();
+    let policy = StringPolicy::default();
+
+    put(&client, &wpolicy, &key, "hello").await;
+    // append: single value onto the end (dedicated APPEND sub-op, not concat).
+    client
+        .operate(&wpolicy, &key, &[str_op::append(&policy, BIN, " world")])
+        .await
+        .unwrap();
+    assert_eq!(get_string(&client, &key).await, "hello world");
+
+    // prepend: single value onto the start (dedicated PREPEND sub-op, not insert-at-0).
+    client
+        .operate(&wpolicy, &key, &[str_op::prepend(&policy, BIN, "oh ")])
+        .await
+        .unwrap();
+    assert_eq!(get_string(&client, &key).await, "oh hello world");
+}
+
+#[aerospike_macro::test]
 async fn regex_replace_default_global_no_match() {
     let client = common::client().await;
     if !server_supports_string_operations(&client).await {

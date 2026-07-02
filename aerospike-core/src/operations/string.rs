@@ -68,6 +68,8 @@ const STR_OP_PAD_START: u8 = 63;
 const STR_OP_PAD_END: u8 = 64;
 const STR_OP_REPEAT: u8 = 65;
 const STR_OP_REGEX_REPLACE: u8 = 66;
+const STR_OP_APPEND: u8 = 67;
+const STR_OP_PREPEND: u8 = 68;
 
 /// Numeric type filter used by [`is_numeric_typed`]. Combine with the
 /// `is_numeric` sub-op to restrict validation to integers or floats.
@@ -448,6 +450,27 @@ pub fn concat_list(policy: &StringPolicy, bin: &str, values: &[&str]) -> Operati
         STR_OP_CONCAT,
         bin,
         vec![Value::List(list), Value::Int(policy.flags)],
+    )
+}
+
+/// `append` operation that appends `value` to the end of the bin. This is the
+/// single-value form backed by the server's dedicated `APPEND` sub-op; unlike
+/// [`concat`], it takes a lone string rather than a list.
+pub fn append(policy: &StringPolicy, bin: &str, value: &str) -> Operation {
+    modify_op(
+        STR_OP_APPEND,
+        bin,
+        vec![Value::from(value), Value::Int(policy.flags)],
+    )
+}
+
+/// `prepend` operation that prepends `value` to the start of the bin. Distinct
+/// from `insert(0, value)` — this is the server's dedicated `PREPEND` sub-op.
+pub fn prepend(policy: &StringPolicy, bin: &str, value: &str) -> Operation {
+    modify_op(
+        STR_OP_PREPEND,
+        bin,
+        vec![Value::from(value), Value::Int(policy.flags)],
     )
 }
 
