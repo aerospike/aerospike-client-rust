@@ -12,7 +12,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::collections::hash_map::Entry::{Occupied, Vacant};
 use std::collections::HashMap;
 use std::io::Read;
 use std::sync::Arc;
@@ -133,18 +132,8 @@ impl StreamCommand {
             let value = bytes_to_particle(particle_type, conn.buffer(), particle_bytes_size)?;
 
             if !value.is_nil() {
-                // list/map operations may return multiple values for the same bin.
-                match bins.entry(name) {
-                    Vacant(entry) => {
-                        entry.insert(value);
-                    }
-                    Occupied(entry) => match *entry.into_mut() {
-                        Value::MultiResult(ref mut list) => list.push(value),
-                        ref mut prev => {
-                            *prev = Value::MultiResult(vec![prev.clone(), value]);
-                        }
-                    },
-                }
+                // For query/scan read with duplicate bin projections will overwrite.
+                bins.insert(name, value);
             }
         }
 
