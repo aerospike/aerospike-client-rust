@@ -373,3 +373,47 @@ async fn metrics_never_sampler_records_no_commands() {
     assert!(agg.detailed_metric(namespace, CommandType::Put).is_none());
     client.close().await.unwrap();
 }
+
+/// Regression test for connection churn when `min_conns_per_node` is not a
+/// multiple of `conn_pools_per_node`.
+///
+/// The idle-connection reaper used to keep a per-queue floor of
+/// `min / conn_pools_per_node` (here `2 / 4 == 0`), so every tend it reaped the
+/// minimum connections as "idle" and `fill_min_conns` recreated them — an
+/// open/close cycle forever. With the global-budget reaper the pool stays at the
+/// minimum and no idle connections are dropped while the node sits idle.
+///
+/// Requires a running server. Runs for a few tend cycles with no traffic so the
+/// min connections cross their idle deadline and the reaper processes them.
+#[aerospike_macro::test]
+async fn min_conns_no_churn_across_tends() {
+    let mut policy = common::client_policy().clone();
+    policy.min_conns_per_node = 2;
+    policy.max_conns_per_node = 8;
+    policy.conn_pools_per_node = 4; // 2 / 4 = 0 per-queue floor — the churny case
+    policy.idle_timeout = 2_000; // ms — min conns become reap-eligible after 2s idle
+    policy.tend_interval = 1_000; // ms — reap/fill run ~every second
+
+    let hosts = common::hosts().to_string();
+    let client = Client::new(&policy, &hosts)
+        .await
+        .expect("connect with min/max conns configured");
+    client.enable_metrics(MetricsPolicy::default());
+
+    // No traffic: let the minimum connections go idle and several tend cycles
+    // run. A churning pool accumulates idle-drops here; a healthy pool does not.
+    sleep(Duration::from_secs(6)).await;
+
+    let metrics = client.metrics();
+    let idle_dropped = metrics
+        .cluster_aggregated
+        .counters
+        .connections_idle_dropped;
+    assert_eq!(
+        idle_dropped, 0,
+        "min connections were reaped and recreated across tends (churn); \
+         connections-idle-dropped={idle_dropped}"
+    );
+
+    client.close().await.unwrap();
+}

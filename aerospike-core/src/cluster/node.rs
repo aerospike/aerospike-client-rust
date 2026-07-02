@@ -848,10 +848,15 @@ impl Node {
         if num_queues == 0 {
             return 0;
         }
-        // Distribute `min_conns_per_node` evenly across internal queues.
-        // When it doesn't divide evenly, each queue's share is floor(); the
-        // one-off connection is tolerated (Java does the same).
-        let per_queue_min = policy.min_conns_per_node / num_queues.max(1);
+
+        // How many idle connections we may reap this pass without taking the
+        // node below `min_conns_per_node`. This is a GLOBAL budget shared across
+        // the internal queues, matching `fill_min_conns` (which also compares
+        // the whole pool against `min`).
+        let mut droppable = self
+            .connection_pool
+            .total_reserved()
+            .saturating_sub(policy.min_conns_per_node);
 
         let probe_policy = AdminPolicy {
             // Tight timeout — this is a keep-alive probe, not a command.
@@ -868,25 +873,20 @@ impl Node {
                 continue;
             }
 
-            // After extraction, `reserved` still counts the idle conns we
-            // pulled out. `effective_live` is what the pool would have if
-            // every extracted conn were dropped right now (non-idle queued
-            // + in-flight). The shortfall vs `per_queue_min` tells us how
-            // many idle conns to keep alive via probe.
-            let reserved = queue.reserved_count();
-            let effective_live = reserved.saturating_sub(idle.len());
-            let to_keep = per_queue_min.saturating_sub(effective_live).min(idle.len());
+            // Reap only the surplus (up to the remaining global budget); keep
+            // the rest alive via a probe so the pool stays at/above `min`.
+            let to_drop = droppable.min(idle.len());
+            droppable -= to_drop;
 
             let mut idle_iter = idle.into_iter();
-            let keepers: Vec<Connection> = idle_iter.by_ref().take(to_keep).collect();
-            // Remaining iterator entries are surplus idles → drop + free slot.
-            for conn in idle_iter {
+            for conn in idle_iter.by_ref().take(to_drop) {
                 drop(conn);
                 queue.reduce_capacity();
                 self.metrics.incr_connections_idle_dropped();
                 self.metrics.incr_connections_closed();
                 total_processed += 1;
             }
+            let keepers: Vec<Connection> = idle_iter.collect();
 
             if keepers.is_empty() {
                 continue;
