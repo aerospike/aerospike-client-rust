@@ -16,6 +16,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use crate::cluster::{Cluster, Node};
+use crate::commands::buffer;
 use crate::commands::msg_field_parser::ParsedMsgFields;
 use crate::commands::{Command, SingleCommand};
 use crate::errors::{Error, Result};
@@ -149,23 +150,30 @@ impl Command for QueryExplainCommand<'_> {
 
         conn.buffer.reset_offset();
         let sz = conn.buffer.read_u64(Some(0));
-        let header_length = conn.buffer.read_u8(Some(8));
+        let header_length = usize::from(conn.buffer.read_u8(Some(8)));
         let result_code = ResultCode::from(conn.buffer.read_u8(Some(13)));
         let field_count = conn.buffer.read_u16(Some(26)) as usize;
-        let receive_size = ((sz & 0xFFFF_FFFF_FFFF) - u64::from(header_length)) as usize;
-
-        if receive_size > 0 {
-            conn.buffer.resize_buffer(receive_size)?;
-            conn.read_body(receive_size).await?;
-            conn.buffer.reset_offset();
-        }
 
         if result_code != ResultCode::Ok && result_code != ResultCode::FilteredOut {
             return Err(Error::ServerError(result_code, false, conn.addr.clone()));
         }
 
+        let header_size = buffer::MSG_TOTAL_HEADER_SIZE as usize;
+        let body_size = ((sz & 0xFFFF_FFFF_FFFF) as usize).saturating_sub(header_length);
+        let message_end = header_size + body_size;
+
+        let have = conn.buffer.data_buffer.len();
+        if have < message_end {
+            conn.buffer.resize_buffer(message_end)?;
+            conn.read_buffer_at(have, message_end - have).await?;
+        }
+
         let fields = if field_count > 0 {
-            ParsedMsgFields::from_buffer(&conn.buffer.data_buffer, 0, field_count)?
+            ParsedMsgFields::from_buffer(
+                &conn.buffer.data_buffer,
+                header_size,
+                field_count,
+            )?
         } else {
             ParsedMsgFields::from_buffer(&[], 0, 0)?
         };
@@ -179,7 +187,11 @@ impl Command for QueryExplainCommand<'_> {
             &fields,
         )?);
 
-        SingleCommand::empty_socket(conn).await
+        // Single-message response fully consumed; do not call empty_socket (it
+        // re-reads the buffer as a proto header and mis-parses field TLV bytes).
+        conn.buffer.data_buffer.clear();
+        conn.buffer.reset_offset();
+        Ok(())
     }
 
     fn prepare_retry(&mut self, _is_client_timeout: bool) {
