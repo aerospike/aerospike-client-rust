@@ -113,6 +113,7 @@ impl Command for ServerCommand<'_> {
                 self.task_id,
                 &self.node,
                 None,
+                None,
             )
             .await
     }

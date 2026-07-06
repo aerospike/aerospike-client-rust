@@ -33,6 +33,7 @@ use crate::policy::{
     BasePolicy, BatchPolicy, CommitLevel, GenerationPolicy, Policy, QueryDuration, QueryPolicy,
     ReadModeAP, ReadModeSC, ReadPolicy, RecordExistsAction, WritePolicy,
 };
+use crate::query::plan::QueryWhereWire;
 use crate::query::NodePartitions;
 use crate::txn::Txn;
 use crate::{Bin, Bins, CollectionIndexType, Key, Statement, Value};
@@ -1274,6 +1275,7 @@ impl Buffer {
         task_id: u64,
         node: &Node,
         node_partitions: Option<&NodePartitions>,
+        execute_where: Option<&[u8]>,
     ) -> Result<()> {
         let filter = statement.filters.as_ref().map(|filters| &filters[0]);
         let is_background = direction.is_background();
@@ -1317,7 +1319,7 @@ impl Buffer {
                 field_count += 1;
             }
 
-            filter_size = 1 + filter.estimate_size()?;
+            filter_size = Self::index_range_body_size(filter)?;
             self.data_offset += filter_size + FIELD_HEADER_SIZE as usize;
             field_count += 1;
 
@@ -1355,9 +1357,17 @@ impl Buffer {
             field_count += 4;
         }
 
-        // ---------- estimation: policy filter expression ----------
-        let filter_exp_size = self.estimate_filter_size(direction.filter_expression())?;
+        // ---------- estimation: policy filter expression or plan-driven WHERE ----------
+        let filter_exp_size = if execute_where.is_some() {
+            0
+        } else {
+            self.estimate_filter_size(direction.filter_expression())?
+        };
         if filter_exp_size > 0 {
+            field_count += 1;
+        }
+        if let Some(where_bytes) = execute_where {
+            self.data_offset += where_bytes.len() + FIELD_HEADER_SIZE as usize;
             field_count += 1;
         }
 
@@ -1491,8 +1501,12 @@ impl Buffer {
             }
 
             self.write_field_header(filter_size, FieldType::IndexRange);
-            self.write_u8(1);
-            filter.write(self)?;
+            if filter.has_wire_range() {
+                filter.write(self)?;
+            } else {
+                self.write_u8(1);
+                filter.write(self)?;
+            }
 
             if let Some(ref ctx) = filter.context {
                 let ctx_size = encoder::pack_ctx_for_index(&mut None, ctx)?;
@@ -1529,7 +1543,9 @@ impl Buffer {
             }
         }
 
-        if let Some(filter_exp) = direction.filter_expression() {
+        if let Some(where_bytes) = execute_where {
+            self.write_field_bytes(where_bytes, FieldType::Where);
+        } else if let Some(filter_exp) = direction.filter_expression() {
             self.write_filter_expression(filter_exp, filter_exp_size);
         }
 
@@ -1579,6 +1595,92 @@ impl Buffer {
 
         self.end();
         Ok(())
+    }
+
+    /// Encode a query explain request: field `44` WHERE with EXPLAIN flag.
+    pub(crate) fn set_query_explain(
+        &mut self,
+        namespace: &str,
+        set_name: Option<&str>,
+        ael: &str,
+        index_name_hint: Option<&str>,
+        task_id: u64,
+        socket_timeout: u32,
+    ) -> Result<()> {
+        let where_bytes = QueryWhereWire::for_explain(ael)?;
+        let has_hint = index_name_hint.is_some_and(|name| !name.is_empty());
+
+        self.begin();
+
+        let mut field_count: u16 = 0;
+
+        self.data_offset += namespace.len() + FIELD_HEADER_SIZE as usize;
+        field_count += 1;
+
+        if let Some(set) = set_name {
+            if !set.is_empty() {
+                self.data_offset += set.len() + FIELD_HEADER_SIZE as usize;
+                field_count += 1;
+            }
+        }
+
+        self.data_offset += 4 + FIELD_HEADER_SIZE as usize;
+        field_count += 1;
+
+        self.data_offset += 8 + FIELD_HEADER_SIZE as usize;
+        field_count += 1;
+
+        if has_hint {
+            self.data_offset += index_name_hint.unwrap().len() + FIELD_HEADER_SIZE as usize;
+            field_count += 1;
+        }
+
+        self.data_offset += where_bytes.len() + FIELD_HEADER_SIZE as usize;
+        field_count += 1;
+
+        self.size_buffer()?;
+
+        self.write_header_read(
+            &BasePolicy::default(),
+            INFO1_READ,
+            0,
+            0,
+            field_count,
+            0,
+        );
+
+        self.write_field_string(namespace, FieldType::Namespace);
+
+        if let Some(set) = set_name {
+            if !set.is_empty() {
+                self.write_field_string(set, FieldType::Table);
+            }
+        }
+
+        self.write_field_header(4, FieldType::SocketTimeout);
+        self.write_u32(socket_timeout);
+
+        self.write_field_header(8, FieldType::QueryId);
+        self.write_u64(task_id);
+
+        if let Some(hint) = index_name_hint {
+            if !hint.is_empty() {
+                self.write_field_string(hint, FieldType::IndexName);
+            }
+        }
+
+        self.write_field_bytes(&where_bytes, FieldType::Where);
+
+        self.end();
+        Ok(())
+    }
+
+    fn index_range_body_size(filter: &crate::query::Filter) -> Result<usize> {
+        if filter.has_wire_range() {
+            filter.estimate_size()
+        } else {
+            filter.estimate_size().map(|size| size + 1)
+        }
     }
 
     #[allow(clippy::ref_option)]

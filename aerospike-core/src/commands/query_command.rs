@@ -20,6 +20,7 @@ use crate::commands::{Command, SingleCommand, StreamCommand};
 use crate::errors::Result;
 use crate::net::Connection;
 use crate::policy::QueryPolicy;
+use crate::query::plan::QueryPlan;
 use crate::query::NodePartitions;
 use crate::{Recordset, Statement};
 
@@ -29,6 +30,7 @@ pub struct QueryCommand<'a> {
     stream_command: StreamCommand,
     policy: &'a QueryPolicy,
     statement: Arc<Statement>,
+    execute_where: Option<Vec<u8>>,
 }
 
 impl<'a> QueryCommand<'a> {
@@ -38,17 +40,24 @@ impl<'a> QueryCommand<'a> {
         recordset: Arc<Recordset>,
         node_partitions: Arc<Mutex<NodePartitions>>,
         cluster: Arc<Cluster>,
-    ) -> Self {
+        query_plan: Option<Arc<QueryPlan>>,
+    ) -> Result<Self> {
         let node = {
             let node_partitions = node_partitions.lock().await;
             node_partitions.node.clone()
         };
 
-        QueryCommand {
+        let execute_where = match query_plan {
+            Some(plan) => Some(plan.execute_where_bytes()?),
+            None => None,
+        };
+
+        Ok(QueryCommand {
             stream_command: StreamCommand::new(node, recordset, node_partitions, false, cluster),
             policy,
             statement,
-        }
+            execute_where,
+        })
     }
 
     pub async fn execute(&mut self) -> Result<()> {
@@ -82,6 +91,9 @@ impl Command for QueryCommand<'_> {
     async fn prepare_buffer(&mut self, conn: &mut Connection) -> Result<()> {
         let node_partitions = self.stream_command.node_partitions.lock().await;
         let node = node_partitions.node.clone();
+        let execute_where = self
+            .execute_where
+            .as_deref();
         conn.buffer
             .set_query(
                 QueryDirection::Foreground(self.policy),
@@ -89,6 +101,7 @@ impl Command for QueryCommand<'_> {
                 self.stream_command.recordset.task_id(),
                 &node,
                 Some(&node_partitions),
+                execute_where,
             )
             .await
     }

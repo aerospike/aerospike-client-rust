@@ -1588,6 +1588,16 @@ impl Cluster {
         (*self.nodes.load().clone()).clone()
     }
 
+    /// Whether this cluster's minimum server version supports two-phase server
+    /// query selection (field `44` WHERE explain → execute).
+    pub fn supports_query_selection(&self) -> bool {
+        let nodes = self.nodes();
+        !nodes.is_empty()
+            && nodes
+                .iter()
+                .all(|node| node.version().supports_query_selection())
+    }
+
     fn set_nodes(&self, new_nodes: Vec<Arc<Node>>) {
         self.nodes.store(Arc::new(new_nodes));
     }

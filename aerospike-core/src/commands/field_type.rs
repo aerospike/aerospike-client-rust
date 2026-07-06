@@ -14,6 +14,7 @@
 // the License.
 
 /// Wire-protocol field type identifiers. Values align with the server-side proto definitions.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FieldType {
     /// Namespace.
     Namespace = 0,
@@ -67,4 +68,6 @@ pub enum FieldType {
     // BatchIndexWithSet = 42,
     /// Filter expression.
     FilterExp = 43,
+    /// String AEL WHERE clause for query explain/execute (field 44).
+    Where = 44,
 }
