@@ -42,7 +42,7 @@ use crate::policy::{
     AdminPolicy, BatchPolicy, ClientPolicy, QueryPolicy, ReadPolicy, TxnRollPolicy,
     TxnVerifyPolicy, WritePolicy,
 };
-use crate::query::plan::QueryPlan;
+use crate::query::plan::{QueryPlan, QueryWhereWire};
 use crate::query::{PartitionFilter, PartitionTracker};
 use crate::task::{DropIndexTask, ExecuteTask, IndexTask, RegisterTask, UdfRemoveTask};
 use crate::txn::{AbortStatus, CommitStatus, Txn, TxnState};
@@ -1471,14 +1471,22 @@ impl Client {
 
     /// Returns whether the connected cluster supports server-led query selection
     /// (field `44` WHERE explain → execute on server 8.1.3+).
+    ///
+    /// Bindings must call this before [`Self::query_explain`] and route dataset
+    /// queries through the legacy path when it returns `false`.
     pub fn supports_query_selection(&self) -> bool {
         self.cluster.supports_query_selection()
     }
 
-    /// Run phase 1 (explain) of server-led query selection.
+    /// Phase 1 of internal server-led query selection (field `44` WHERE explain).
     ///
-    /// Sends field `44` WHERE with the EXPLAIN flag and returns the server query
-    /// plan. No partitions are sent and no records are returned.
+    /// Not part of the end-user query API; bindings use this to implement
+    /// two-phase explain → execute inside a single query operation.
+    ///
+    /// **Caller responsibility:** the binding layer must gate on
+    /// [`Self::supports_query_selection`] before calling this method. This
+    /// function does not re-check cluster capability.
+    #[doc(hidden)]
     pub async fn query_explain(
         &self,
         policy: &QueryPolicy,
@@ -1487,25 +1495,36 @@ impl Client {
         ael: &str,
         index_name_hint: Option<&str>,
     ) -> Result<QueryPlan> {
-        if !self.supports_query_selection() {
-            return Err(Error::InvalidArgument(format!(
-                "Server query selection requires cluster minimum version 8.1.3.0"
-            )));
+        if namespace.is_empty() {
+            return Err(Error::InvalidArgument("Empty namespace".into()));
         }
+        if self.cluster.nodes().is_empty() {
+            return Err(Error::Connection("No connections available".into()));
+        }
+
+        let explain_where_bytes = QueryWhereWire::for_explain(ael)?;
         let policy = self.cluster.resolve_query(policy);
         QueryExplainCommand::new(
             self.cluster.clone(),
             policy.as_ref(),
-            namespace,
-            set_name,
-            ael,
-            index_name_hint,
-        )?
+            namespace.to_owned(),
+            set_name.map(str::to_owned),
+            explain_where_bytes,
+            index_name_hint.map(str::to_owned),
+        )
         .execute()
         .await
     }
 
-    /// Execute a partitioned query using a server query plan from [`Self::query_explain`].
+    /// Phase 2 of internal server-led query selection (execute using a server plan).
+    ///
+    /// Not part of the end-user query API; bindings call this after phase 1
+    /// ([`Self::query_explain`]) with a plan that is not filtered out.
+    ///
+    /// **Caller responsibility:** capability gating via
+    /// [`Self::supports_query_selection`]; do not call with a filtered-out plan
+    /// (orchestration belongs in the binding layer).
+    #[doc(hidden)]
     pub async fn query_with_plan(
         &self,
         policy: &QueryPolicy,
@@ -1513,19 +1532,11 @@ impl Client {
         mut statement: Statement,
         plan: QueryPlan,
     ) -> Result<Arc<Recordset>> {
-        if plan.is_filtered_out() {
-            return Err(Error::ServerError(
-                crate::ResultCode::FilteredOut,
-                false,
-                String::new(),
-            ));
-        }
-
         if let Some(filter) = plan.filter_for_execute()? {
             statement.filters = Some(vec![filter]);
         }
 
-        let plan = Arc::new(plan);
+        let execute_where = Some(plan.into_execute_where_bytes());
         statement.validate()?;
         let statement = Arc::new(statement);
 
@@ -1553,7 +1564,7 @@ impl Client {
                 tracker.clone(),
                 statement.clone(),
                 t_recordset,
-                Some(plan),
+                execute_where,
             )
             .await;
             defer_recordset.close();
@@ -1708,7 +1719,7 @@ impl Client {
         tracker: Arc<Mutex<PartitionTracker>>,
         statement: Arc<Statement>,
         recordset: Arc<Recordset>,
-        query_plan: Option<Arc<QueryPlan>>,
+        execute_where: Option<Vec<u8>>,
     ) {
         if policy.total_timeout() > 0 {
             let rs_closer = recordset.clone();
@@ -1720,7 +1731,7 @@ impl Client {
                     tracker,
                     statement,
                     recordset,
-                    query_plan,
+                    execute_where,
                 ),
             )
             .await
@@ -1737,7 +1748,7 @@ impl Client {
                 tracker,
                 statement,
                 recordset,
-                query_plan,
+                execute_where,
             )
             .await;
         }
@@ -1749,7 +1760,7 @@ impl Client {
         tracker: Arc<Mutex<PartitionTracker>>,
         statement: Arc<Statement>,
         recordset: Arc<Recordset>,
-        query_plan: Option<Arc<QueryPlan>>,
+        execute_where: Option<Vec<u8>>,
     ) {
         let namespace = statement.namespace.clone();
         loop {
@@ -1789,7 +1800,7 @@ impl Client {
                         let node_partition = node_partition.clone();
                         let statement = statement.clone();
                         let cluster = cluster.clone();
-                        let query_plan = query_plan.clone();
+                        let execute_where = execute_where.clone();
                         let handle = aerospike_rt::spawn(async move {
                             let permit = semaphore.acquire().await;
                             // QueryCommand handles both filtered queries
@@ -1801,9 +1812,9 @@ impl Client {
                                 recordset.clone(),
                                 node_partition,
                                 cluster,
-                                query_plan.clone(),
+                                execute_where,
                             )
-                            .await?;
+                            .await;
                             let result = cmd.execute().await;
 
                             drop(permit);

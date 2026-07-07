@@ -33,7 +33,6 @@ use crate::policy::{
     BasePolicy, BatchPolicy, CommitLevel, GenerationPolicy, Policy, QueryDuration, QueryPolicy,
     ReadModeAP, ReadModeSC, ReadPolicy, RecordExistsAction, WritePolicy,
 };
-use crate::query::plan::QueryWhereWire;
 use crate::query::NodePartitions;
 use crate::txn::Txn;
 use crate::{Bin, Bins, CollectionIndexType, Key, Statement, Value};
@@ -1319,7 +1318,7 @@ impl Buffer {
                 field_count += 1;
             }
 
-            filter_size = Self::index_range_body_size(filter)?;
+            filter_size = filter.index_range_field_body_size()?;
             self.data_offset += filter_size + FIELD_HEADER_SIZE as usize;
             field_count += 1;
 
@@ -1501,12 +1500,7 @@ impl Buffer {
             }
 
             self.write_field_header(filter_size, FieldType::IndexRange);
-            if filter.has_wire_range() {
-                filter.write(self)?;
-            } else {
-                self.write_u8(1);
-                filter.write(self)?;
-            }
+            filter.write_index_range_field(self)?;
 
             if let Some(ref ctx) = filter.context {
                 let ctx_size = encoder::pack_ctx_for_index(&mut None, ctx)?;
@@ -1597,20 +1591,21 @@ impl Buffer {
         Ok(())
     }
 
-    /// Encode a query explain request: field `44` WHERE with EXPLAIN flag.
+    /// Build a query explain request buffer.
     pub(crate) fn set_query_explain(
         &mut self,
+        base_policy: &BasePolicy,
         namespace: &str,
         set_name: Option<&str>,
-        ael: &str,
+        where_bytes: &[u8],
         index_name_hint: Option<&str>,
         task_id: u64,
         socket_timeout: u32,
     ) -> Result<()> {
-        let where_bytes = QueryWhereWire::for_explain(ael)?;
-        let has_hint = index_name_hint.is_some_and(|name| !name.is_empty());
-
         self.begin();
+        
+        let set_name = set_name.filter(|s| !s.is_empty());
+        let index_name_hint = index_name_hint.filter(|s| !s.is_empty());
 
         let mut field_count: u16 = 0;
 
@@ -1618,10 +1613,8 @@ impl Buffer {
         field_count += 1;
 
         if let Some(set) = set_name {
-            if !set.is_empty() {
-                self.data_offset += set.len() + FIELD_HEADER_SIZE as usize;
-                field_count += 1;
-            }
+            self.data_offset += set.len() + FIELD_HEADER_SIZE as usize;
+            field_count += 1;
         }
 
         self.data_offset += 4 + FIELD_HEADER_SIZE as usize;
@@ -1630,8 +1623,8 @@ impl Buffer {
         self.data_offset += 8 + FIELD_HEADER_SIZE as usize;
         field_count += 1;
 
-        if has_hint {
-            self.data_offset += index_name_hint.unwrap().len() + FIELD_HEADER_SIZE as usize;
+        if let Some(hint) = index_name_hint {
+            self.data_offset += hint.len() + FIELD_HEADER_SIZE as usize;
             field_count += 1;
         }
 
@@ -1640,21 +1633,12 @@ impl Buffer {
 
         self.size_buffer()?;
 
-        self.write_header_read(
-            &BasePolicy::default(),
-            INFO1_READ,
-            0,
-            0,
-            field_count,
-            0,
-        );
+        self.write_header_read(base_policy, INFO1_READ, 0, 0, field_count, 0);
 
         self.write_field_string(namespace, FieldType::Namespace);
 
         if let Some(set) = set_name {
-            if !set.is_empty() {
-                self.write_field_string(set, FieldType::Table);
-            }
+            self.write_field_string(set, FieldType::Table);
         }
 
         self.write_field_header(4, FieldType::SocketTimeout);
@@ -1664,23 +1648,13 @@ impl Buffer {
         self.write_u64(task_id);
 
         if let Some(hint) = index_name_hint {
-            if !hint.is_empty() {
-                self.write_field_string(hint, FieldType::IndexName);
-            }
+            self.write_field_string(hint, FieldType::IndexName);
         }
 
-        self.write_field_bytes(&where_bytes, FieldType::Where);
+        self.write_field_bytes(where_bytes, FieldType::Where);
 
         self.end();
         Ok(())
-    }
-
-    fn index_range_body_size(filter: &crate::query::Filter) -> Result<usize> {
-        if filter.has_wire_range() {
-            filter.estimate_size()
-        } else {
-            filter.estimate_size().map(|size| size + 1)
-        }
     }
 
     #[allow(clippy::ref_option)]

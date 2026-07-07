@@ -172,7 +172,7 @@ pub use policy::{
 };
 pub use privilege::{Privilege, PrivilegeCode};
 pub use query::{
-    CollectionIndexType, EqFilterValue, IndexRangeWire, IndexType, PartitionFilter,
+    CollectionIndexType, EqFilterValue, IndexType, PartitionFilter,
     QueryPlan, QuerySelection, QueryWhereWire, RangeFilterValue, Recordset, Statement, UDFLang,
 };
 pub use record::Record;

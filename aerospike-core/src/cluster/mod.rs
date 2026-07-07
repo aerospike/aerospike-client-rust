@@ -1589,7 +1589,7 @@ impl Cluster {
     }
 
     /// Whether this cluster's minimum server version supports two-phase server
-    /// query selection (field `44` WHERE explain → execute).
+    /// query selection
     pub fn supports_query_selection(&self) -> bool {
         let nodes = self.nodes();
         !nodes.is_empty()

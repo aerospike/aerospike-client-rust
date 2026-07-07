@@ -19,7 +19,7 @@ mod query_plan;
 mod query_selection;
 mod query_where_wire;
 
-pub use index_range_wire::IndexRangeWire;
+pub(crate) use index_range_wire::IndexRangeWire;
 pub use query_plan::QueryPlan;
 pub use query_selection::QuerySelection;
 pub use query_where_wire::{

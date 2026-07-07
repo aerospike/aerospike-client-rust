@@ -12,7 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::commands::msg_field_parser::ParsedMsgFields;
+use crate::commands::as_msg_fields::AsMsgFields;
+use crate::commands::field_type::FieldType;
 use crate::errors::{Error, Result};
 use crate::query::plan::index_range_wire::IndexRangeWire;
 use crate::query::plan::query_selection::QuerySelection;
@@ -39,7 +40,7 @@ impl QueryPlan {
         namespace: &str,
         set_name: Option<&str>,
         explain_where_bytes: Vec<u8>,
-        fields: &ParsedMsgFields,
+        fields: &AsMsgFields,
     ) -> Result<Self> {
         if result_code == ResultCode::FilteredOut {
             return Ok(Self {
@@ -61,11 +62,9 @@ impl QueryPlan {
             ));
         }
 
-        let index_name = fields.utf8_field(crate::commands::field_type::FieldType::IndexName);
-        let index_range_bytes = fields
-            .field(crate::commands::field_type::FieldType::IndexRange)
-            .map(<[u8]>::to_vec);
-        let index_type = fields.index_collection_type()?;
+        let index_name = fields.utf8_field(FieldType::IndexName);
+        let index_range_bytes = fields.field(FieldType::IndexRange).map(<[u8]>::to_vec);
+        let index_type = Self::index_collection_type_from_fields(fields)?;
 
         if index_name.is_some() && index_range_bytes.is_some() {
             Ok(Self {
@@ -88,8 +87,8 @@ impl QueryPlan {
                 index_type: CollectionIndexType::Default,
             })
         } else {
-            Err(Error::InvalidArgument(
-                "Inconsistent query plan response: INDEX_NAME and INDEX_RANGE must both be present or both absent".into(),
+            Err(Error::BadResponse(
+                "INDEX_NAME and INDEX_RANGE must both be present or both absent".into(),
             ))
         }
     }
@@ -117,8 +116,11 @@ impl QueryPlan {
     }
 
     /// Field `44` body for execute (`EXPLAIN` flag cleared).
-    pub fn execute_where_bytes(&self) -> Result<Vec<u8>> {
-        QueryWhereWire::clear_explain(&self.explain_where_bytes)
+    ///
+    /// Clears the explain flag in place and returns the payload buffer.
+    pub fn into_execute_where_bytes(mut self) -> Vec<u8> {
+        QueryWhereWire::clear_explain_in_place(&mut self.explain_where_bytes);
+        self.explain_where_bytes
     }
 
     /// Secondary-index registry name from explain field `21`, or `None` on PI / filtered-out.
@@ -149,21 +151,39 @@ impl QueryPlan {
 
     /// Builds the execute `Filter` for an SI plan (transforms field `22` to execute shape).
     pub fn filter_for_execute(&self) -> Result<Option<Filter>> {
-        if !self.is_secondary_index() {
-            return Ok(None);
+        match self.selection {
+            QuerySelection::PrimaryIndex | QuerySelection::FilteredOut => Ok(None),
+            QuerySelection::SecondaryIndex => {
+                // Both fields are `Some` whenever phase 1 selects SecondaryIndex.
+                let index_name = self.index_name.as_deref().unwrap();
+                let probe_range = self.index_range_bytes.as_deref().unwrap();
+                let execute_range = IndexRangeWire::for_execute_with_index_name(probe_range)?;
+                Ok(Some(Filter::from_wire_range(
+                    index_name,
+                    execute_range,
+                    self.index_type.clone(),
+                )))
+            }
         }
-        let index_name = self
-            .index_name()
-            .ok_or_else(|| Error::InvalidArgument("SI plan missing index name".into()))?;
-        let probe_range = self
-            .index_range_bytes()
-            .ok_or_else(|| Error::InvalidArgument("SI plan missing index range".into()))?;
-        let execute_range = IndexRangeWire::for_execute_with_index_name(probe_range)?;
-        Ok(Some(Filter::from_wire_range(
-            index_name,
-            execute_range,
-            self.index_type.clone(),
-        )))
+    }
+
+    fn index_collection_type_from_fields(fields: &AsMsgFields) -> Result<CollectionIndexType> {
+        let data = fields.field(FieldType::IndexType);
+        let Some(data) = data else {
+            return Ok(CollectionIndexType::Default);
+        };
+        if data.is_empty() {
+            return Ok(CollectionIndexType::Default);
+        }
+        match data[0] {
+            0 => Ok(CollectionIndexType::Default),
+            1 => Ok(CollectionIndexType::List),
+            2 => Ok(CollectionIndexType::MapKeys),
+            3 => Ok(CollectionIndexType::MapValues),
+            ordinal => Err(Error::BadResponse(format!(
+                "Invalid INDEX_TYPE ordinal {ordinal}"
+            ))),
+        }
     }
 }
 
@@ -175,7 +195,7 @@ mod tests {
     const AEL: &str = "$.age > 30";
     const RANGE: &[u8] = &[1, 3, b'a', b'g', b'e'];
 
-    fn fields_of(entries: &[(FieldType, &[u8])]) -> ParsedMsgFields {
+    fn fields_of(entries: &[(FieldType, &[u8])]) -> AsMsgFields {
         let mut body = Vec::new();
         for (ftype, value) in entries {
             let len = 1 + value.len();
@@ -183,7 +203,7 @@ mod tests {
             body.push(*ftype as u8);
             body.extend_from_slice(value);
         }
-        ParsedMsgFields::from_buffer(&body, 0, entries.len()).unwrap()
+        AsMsgFields::from_buffer(&body, 0, entries.len()).unwrap()
     }
 
     #[test]
@@ -204,13 +224,13 @@ mod tests {
         assert_eq!(plan.set_name(), Some("users"));
         assert_eq!(plan.ael().unwrap(), AEL);
         assert_eq!(plan.explain_where_bytes(), &explain_where);
-        assert_eq!(
-            plan.execute_where_bytes().unwrap(),
-            QueryWhereWire::for_execute(AEL).unwrap()
-        );
         assert!(plan.index_name().is_none());
         assert!(plan.index_range_bytes().is_none());
         assert_eq!(plan.index_type(), &CollectionIndexType::Default);
+        assert_eq!(
+            plan.into_execute_where_bytes(),
+            QueryWhereWire::for_execute(AEL).unwrap()
+        );
     }
 
     #[test]

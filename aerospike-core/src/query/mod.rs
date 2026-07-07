@@ -21,7 +21,7 @@ pub use self::index_types::{CollectionIndexType, IndexType};
 pub(crate) use self::node_partitions::NodePartitions;
 pub use self::partition_filter::PartitionFilter;
 pub use self::partition_status::PartitionStatus;
-pub use self::plan::{IndexRangeWire, QueryPlan, QuerySelection, QueryWhereWire};
+pub use self::plan::{QueryPlan, QuerySelection, QueryWhereWire};
 pub(crate) use self::partition_tracker::PartitionTracker;
 pub use self::recordset::RecordStream;
 pub use self::recordset::Recordset;

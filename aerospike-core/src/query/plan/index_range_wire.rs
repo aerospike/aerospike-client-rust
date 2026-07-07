@@ -14,16 +14,15 @@
 
 use crate::errors::{Error, Result};
 
-/// Transforms explain `INDEX_RANGE` (field `22`) bytes for execute when field
-/// `21` (`INDEX_NAME`) is also sent.
-pub struct IndexRangeWire;
+/// Internal transform of explain field `22` (`INDEX_RANGE`) for phase-2 execute.
+pub(crate) struct IndexRangeWire;
 
 impl IndexRangeWire {
-    /// Converts explain field-`22` bytes to the execute shape used with field `21`.
-    pub fn for_execute_with_index_name(probe_range_bytes: &[u8]) -> Result<Vec<u8>> {
+    /// Converts explain INDEX_RANGE bytes to the execute shape used with field `21`.
+    pub(crate) fn for_execute_with_index_name(probe_range_bytes: &[u8]) -> Result<Vec<u8>> {
         if probe_range_bytes.is_empty() {
-            return Err(Error::InvalidArgument(
-                "probeRangeBytes must not be null or empty".into(),
+            return Err(Error::BadResponse(
+                "empty INDEX_RANGE field body".into(),
             ));
         }
 
@@ -31,13 +30,13 @@ impl IndexRangeWire {
         let n_ranges = probe_range_bytes[offset];
         offset += 1;
         if n_ranges != 1 {
-            return Err(Error::InvalidArgument(format!(
-                "INDEX_RANGE probe body must have n_ranges=1, found {n_ranges}"
+            return Err(Error::BadResponse(format!(
+                "INDEX_RANGE field must contain a single range, found {n_ranges}"
             )));
         }
         if offset >= probe_range_bytes.len() {
-            return Err(Error::InvalidArgument(
-                "INDEX_RANGE probe body truncated after n_ranges".into(),
+            return Err(Error::BadResponse(
+                "truncated INDEX_RANGE field body".into(),
             ));
         }
 
@@ -47,16 +46,16 @@ impl IndexRangeWire {
             return Ok(probe_range_bytes.to_vec());
         }
         if offset + bin_name_len > probe_range_bytes.len() {
-            return Err(Error::InvalidArgument(
-                "INDEX_RANGE probe body truncated in bin name".into(),
+            return Err(Error::BadResponse(
+                "truncated INDEX_RANGE field body".into(),
             ));
         }
 
         offset += bin_name_len;
         let tail_len = probe_range_bytes.len() - offset;
         if tail_len == 0 {
-            return Err(Error::InvalidArgument(
-                "INDEX_RANGE probe body missing ktype/range tail".into(),
+            return Err(Error::BadResponse(
+                "truncated INDEX_RANGE field body".into(),
             ));
         }
 
@@ -88,18 +87,21 @@ mod tests {
 
     #[test]
     fn rejects_empty_payload() {
-        assert!(IndexRangeWire::for_execute_with_index_name(&[]).is_err());
+        let err = IndexRangeWire::for_execute_with_index_name(&[]).unwrap_err();
+        assert!(matches!(err, Error::BadResponse(_)));
     }
 
     #[test]
     fn rejects_multiple_ranges() {
         let probe = vec![2, 3, b'a', b'g', b'e'];
-        assert!(IndexRangeWire::for_execute_with_index_name(&probe).is_err());
+        let err = IndexRangeWire::for_execute_with_index_name(&probe).unwrap_err();
+        assert!(matches!(err, Error::BadResponse(_)));
     }
 
     #[test]
     fn rejects_truncated_bin_name() {
         let probe = vec![1, 3, b'a', b'g'];
-        assert!(IndexRangeWire::for_execute_with_index_name(&probe).is_err());
+        let err = IndexRangeWire::for_execute_with_index_name(&probe).unwrap_err();
+        assert!(matches!(err, Error::BadResponse(_)));
     }
 }

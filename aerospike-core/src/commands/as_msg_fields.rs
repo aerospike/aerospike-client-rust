@@ -14,16 +14,16 @@
 
 use std::collections::HashMap;
 
+use crate::commands::buffer::FIELD_HEADER_SIZE;
 use crate::commands::field_type::FieldType;
 use crate::errors::{Error, Result};
-use crate::query::CollectionIndexType;
 
-/// Parsed AS_MSG field TLVs from a single-message response.
-pub struct ParsedMsgFields {
+/// Parsed AS_MSG field TLVs from a message body slice.
+pub struct AsMsgFields {
     fields: HashMap<u8, Vec<u8>>,
 }
 
-impl ParsedMsgFields {
+impl AsMsgFields {
     pub fn from_buffer(buffer: &[u8], offset: usize, field_count: usize) -> Result<Self> {
         Ok(Self {
             fields: parse_msg_fields(buffer, offset, field_count)?,
@@ -40,17 +40,6 @@ impl ParsedMsgFields {
             .map(str::to_owned)
             .ok()
     }
-
-    pub fn index_collection_type(&self) -> Result<CollectionIndexType> {
-        let data = self.field(FieldType::IndexType);
-        let Some(data) = data else {
-            return Ok(CollectionIndexType::Default);
-        };
-        if data.is_empty() {
-            return Ok(CollectionIndexType::Default);
-        }
-        collection_index_type_from_ordinal(data[0])
-    }
 }
 
 fn parse_msg_fields(
@@ -62,8 +51,9 @@ fn parse_msg_fields(
     let mut pos = offset;
 
     for _ in 0..field_count {
-        if pos + 5 > buffer.len() {
-            return Err(Error::InvalidArgument(
+        let field_header_size = FIELD_HEADER_SIZE as usize;
+        if pos + field_header_size > buffer.len() {
+            return Err(Error::BadResponse(
                 "truncated message field header".into(),
             ));
         }
@@ -78,7 +68,7 @@ fn parse_msg_fields(
         pos += 1;
         let size = len.saturating_sub(1);
         if pos + size > buffer.len() {
-            return Err(Error::InvalidArgument(
+            return Err(Error::BadResponse(
                 "truncated message field body".into(),
             ));
         }
@@ -92,18 +82,6 @@ fn parse_msg_fields(
     }
 
     Ok(fields)
-}
-
-fn collection_index_type_from_ordinal(ordinal: u8) -> Result<CollectionIndexType> {
-    match ordinal {
-        0 => Ok(CollectionIndexType::Default),
-        1 => Ok(CollectionIndexType::List),
-        2 => Ok(CollectionIndexType::MapKeys),
-        3 => Ok(CollectionIndexType::MapValues),
-        _ => Err(Error::InvalidArgument(format!(
-            "Invalid INDEX_TYPE ordinal {ordinal}"
-        ))),
-    }
 }
 
 #[cfg(test)]
@@ -120,21 +98,16 @@ mod tests {
     }
 
     #[test]
-    fn parses_index_fields() {
+    fn parses_field_tlvs_by_type() {
         let mut body = Vec::new();
         body.extend(encode_field(FieldType::IndexName, b"age_idx"));
-        body.extend(encode_field(
-            FieldType::IndexType,
-            &[CollectionIndexType::List as u8],
-        ));
         body.extend(encode_field(FieldType::IndexRange, &[1, 3, b'a']));
 
-        let parsed = ParsedMsgFields::from_buffer(&body, 0, 3).unwrap();
+        let parsed = AsMsgFields::from_buffer(&body, 0, 2).unwrap();
         assert_eq!(
             parsed.utf8_field(FieldType::IndexName).as_deref(),
             Some("age_idx")
         );
-        assert_eq!(parsed.index_collection_type().unwrap(), CollectionIndexType::List);
         assert_eq!(
             parsed.field(FieldType::IndexRange),
             Some([1u8, 3, b'a'].as_slice())

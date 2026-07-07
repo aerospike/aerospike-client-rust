@@ -97,7 +97,7 @@ impl Version {
         self >= &Version::new(8, 1, 3, 0)
     }
 
-    /// Server supports two-phase server query selection (field `44` WHERE explain → execute).
+    /// Server supports two-phase server query selection
     pub fn supports_query_selection(&self) -> bool {
         self >= &Version::new(8, 1, 3, 0)
     }

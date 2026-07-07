@@ -13,80 +13,54 @@
 // limitations under the License.
 
 use std::sync::Arc;
-use std::sync::atomic::{AtomicUsize, Ordering};
 
 use crate::cluster::{Cluster, Node};
 use crate::commands::buffer;
-use crate::commands::msg_field_parser::ParsedMsgFields;
+use crate::commands::as_msg_fields::AsMsgFields;
 use crate::commands::{Command, SingleCommand};
 use crate::errors::{Error, Result};
 use crate::net::Connection;
 use crate::policy::{Policy, QueryPolicy};
-use crate::query::plan::{QueryPlan, QueryWhereWire};
+use crate::query::plan::QueryPlan;
 use crate::{ResultCode, XorShift};
 
-/// Server query explain (phase 1): field `44` WHERE with `EXPLAIN` flag.
-pub struct QueryExplainCommand<'a> {
+/// Internal phase-1 of server-led query selection (field `44` WHERE + EXPLAIN).
+pub(crate) struct QueryExplainCommand<'a> {
     cluster: Arc<Cluster>,
     policy: &'a QueryPolicy,
     namespace: String,
     set_name: Option<String>,
-    ael: String,
+    explain_where_bytes: Vec<u8>,
     index_name_hint: Option<String>,
     task_id: u64,
-    nodes: Vec<Arc<Node>>,
-    node_index: AtomicUsize,
     plan: Option<QueryPlan>,
 }
 
 impl<'a> QueryExplainCommand<'a> {
-    pub fn new(
+    pub(crate) fn new(
         cluster: Arc<Cluster>,
         policy: &'a QueryPolicy,
-        namespace: &str,
-        set_name: Option<&str>,
-        ael: &str,
-        index_name_hint: Option<&str>,
-    ) -> Result<Self> {
-        if namespace.is_empty() {
-            return Err(Error::InvalidArgument(
-                "Query explain requires namespace".into(),
-            ));
-        }
-        if ael.is_empty() {
-            return Err(Error::InvalidArgument(
-                "Query explain requires AEL WHERE clause".into(),
-            ));
-        }
-
-        let nodes = cluster.nodes();
-        if nodes.is_empty() {
-            return Err(Error::InvalidArgument(
-                "Query explain requires at least one cluster node".into(),
-            ));
-        }
-
-        let mut rng = XorShift::new();
-        let node_index = (rng.next_u64() as usize) % nodes.len();
-
-        Ok(Self {
+        namespace: String,
+        set_name: Option<String>,
+        explain_where_bytes: Vec<u8>,
+        index_name_hint: Option<String>,
+    ) -> Self {
+        Self {
             cluster,
             policy,
-            namespace: namespace.to_owned(),
-            set_name: set_name.map(str::to_owned),
-            ael: ael.to_owned(),
-            index_name_hint: index_name_hint.map(str::to_owned),
-            task_id: rng.next_u64(),
-            nodes,
-            node_index: AtomicUsize::new(node_index),
+            namespace,
+            set_name,
+            explain_where_bytes,
+            index_name_hint,
+            task_id: XorShift::new().next_u64(),
             plan: None,
-        })
+        }
     }
 
-    pub async fn execute(mut self) -> Result<QueryPlan> {
+    pub(crate) async fn execute(mut self) -> Result<QueryPlan> {
         SingleCommand::execute(self.policy, &mut self).await?;
         self.plan
-            .ok_or_else(|| Error::ClientError("query explain returned no plan".into()))
+            .ok_or_else(|| Error::ClientError("missing server query plan in response".into()))
     }
 }
 
@@ -108,9 +82,10 @@ impl Command for QueryExplainCommand<'_> {
 
     async fn prepare_buffer(&mut self, conn: &mut Connection) -> Result<()> {
         conn.buffer.set_query_explain(
+            &self.policy.base_policy,
             &self.namespace,
             self.set_name.as_deref(),
-            &self.ael,
+            &self.explain_where_bytes,
             self.index_name_hint.as_deref(),
             self.task_id,
             self.policy.socket_timeout(),
@@ -118,8 +93,7 @@ impl Command for QueryExplainCommand<'_> {
     }
 
     fn get_node(&mut self) -> Result<Arc<Node>> {
-        let idx = self.node_index.load(Ordering::Relaxed);
-        Ok(self.nodes[idx].clone())
+        self.cluster.get_random_node()
     }
 
     fn hint(&self) -> u8 {
@@ -135,7 +109,7 @@ impl Command for QueryExplainCommand<'_> {
     }
 
     fn can_retry(&mut self) -> bool {
-        self.nodes.len() > 1
+        self.cluster.nodes().len() > 1
     }
 
     fn can_recover_connection(&mut self) -> bool {
@@ -169,21 +143,20 @@ impl Command for QueryExplainCommand<'_> {
         }
 
         let fields = if field_count > 0 {
-            ParsedMsgFields::from_buffer(
+            AsMsgFields::from_buffer(
                 &conn.buffer.data_buffer,
                 header_size,
                 field_count,
             )?
         } else {
-            ParsedMsgFields::from_buffer(&[], 0, 0)?
+            AsMsgFields::from_buffer(&[], 0, 0)?
         };
 
-        let explain_where = QueryWhereWire::for_explain(&self.ael)?;
         self.plan = Some(QueryPlan::from_explain_response(
             result_code,
             &self.namespace,
             self.set_name.as_deref(),
-            explain_where,
+            self.explain_where_bytes.clone(),
             &fields,
         )?);
 
@@ -194,10 +167,5 @@ impl Command for QueryExplainCommand<'_> {
         Ok(())
     }
 
-    fn prepare_retry(&mut self, _is_client_timeout: bool) {
-        if self.nodes.len() > 1 {
-            let next = (self.node_index.load(Ordering::Relaxed) + 1) % self.nodes.len();
-            self.node_index.store(next, Ordering::Relaxed);
-        }
-    }
+    fn prepare_retry(&mut self, _is_client_timeout: bool) {}
 }
