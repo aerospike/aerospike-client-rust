@@ -287,6 +287,45 @@ end
     client.close().await.unwrap();
 }
 
+/// Multiple batch operate results for the same scalar bin merge into MultiResult
+/// (batch_operate_command path).
+#[aerospike_macro::test]
+async fn batch_operate_scalar_multi_op_same_bin_returns_multi_result() {
+    let client = common::client().await;
+    let namespace: &str = common::namespace();
+    let set_name = &common::rand_str(10);
+    let bpolicy = BatchPolicy::default();
+
+    let key = as_key!(namespace, set_name, 1);
+    let wp = WritePolicy::default();
+    client
+        .put(&wp, &key, &[as_bin!("count", 10i64)])
+        .await
+        .expect("put failed.");
+
+    let brp = BatchReadPolicy::default();
+    let br = BatchOperation::read_ops(
+        &brp,
+        key.clone(),
+        vec![
+            operations::get_bin("count"),
+            operations::get_bin("count"),
+        ],
+    );
+    let mut results = client.batch(&bpolicy, &[br]).await.unwrap();
+
+    let result = results.remove(0);
+    assert_eq!(Some(ResultCode::Ok), result.result_code);
+    assert_eq!(
+        result.record.unwrap().bins.get("count"),
+        Some(&Value::MultiResult(vec![Value::from(10i64), Value::from(10i64)]))
+    );
+
+    client.close().await.unwrap();
+}
+
+/// Multiple batch operate results for the same list bin merge into MultiResult
+/// (batch_operate_command path).
 #[aerospike_macro::test]
 async fn batch_operate_read_multi_op_single_bin() {
     let client = common::client().await;

@@ -586,6 +586,64 @@ async fn query_filter_with_specific_bins() {
     client.close().await.unwrap();
 }
 
+/// CLIENT-4865: duplicate bin projection in a query should return a scalar, not MultiResult.
+#[aerospike_macro::test]
+async fn query_duplicate_bin_projection_returns_scalar() {
+    let client = common::client().await;
+    let namespace = common::namespace();
+    let set_name = "dup_qsel";
+    let idx = "idx_dup_qsel_a_fr";
+    let wpolicy = WritePolicy::default();
+    let apolicy = AdminPolicy::default();
+
+    for i in 0..5i64 {
+        let key = as_key!(namespace, set_name, i);
+        client
+            .put(&wpolicy, &key, &[as_bin!("a_fr", i), as_bin!("ts", i)])
+            .await
+            .unwrap();
+    }
+
+    let task = client
+        .create_index_on_bin(
+            &apolicy,
+            namespace,
+            set_name,
+            "a_fr",
+            idx,
+            IndexType::Numeric,
+            CollectionIndexType::Default,
+            None,
+        )
+        .await
+        .unwrap();
+    task.wait_till_complete(None).await.unwrap();
+
+    let mut statement = Statement::new(
+        namespace,
+        set_name,
+        Bins::Some(vec!["a_fr".into(), "a_fr".into()]),
+    );
+    statement.add_filter(Filter::range("a_fr", 0, 4));
+
+    let qpolicy = QueryPolicy::default();
+    let rs = client
+        .query(&qpolicy, PartitionFilter::all(), statement)
+        .await
+        .unwrap();
+
+    let rec = rs.into_stream().next().await.unwrap().unwrap();
+    let val = rec.bins.get("a_fr").unwrap();
+    assert!(
+        matches!(val, Value::Int(_)),
+        "expected scalar Int, got {:?}",
+        val
+    );
+
+    let _ = client.truncate(&apolicy, namespace, set_name, 0).await;
+    client.close().await.unwrap();
+}
+
 /// Query using `Filter::new_by_index` to target a specific secondary index by name.
 /// The server should use the named index instead of performing an index lookup by bin name.
 #[aerospike_macro::test]
