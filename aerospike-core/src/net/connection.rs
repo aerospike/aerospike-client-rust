@@ -685,7 +685,12 @@ impl Connection {
     ) -> Result<Option<crate::commands::admin_command::SessionInfo>> {
         self.state = ConnectionState::Writing;
         match AdminCommand::authenticate(self, auth_mode, hashed_pass).await {
-            Ok(session) => Ok(session),
+            Ok(session) => {
+                // Restore Ready so PooledConnection::Drop puts the conn back
+                // in the pool instead of taking the non-recoverable close arm.
+                self.set_state(ConnectionState::Ready);
+                Ok(session)
+            }
             Err(err) => {
                 self.close();
                 Err(err)
@@ -705,7 +710,12 @@ impl Connection {
     ) -> Result<bool> {
         self.state = ConnectionState::Writing;
         match AdminCommand::authenticate_session(self, auth_mode, token).await {
-            Ok(ok) => Ok(ok),
+            Ok(ok) => {
+                // Restore Ready so PooledConnection::Drop puts the conn back
+                // in the pool instead of taking the non-recoverable close arm.
+                self.set_state(ConnectionState::Ready);
+                Ok(ok)
+            }
             Err(err) => {
                 self.close();
                 Err(err)
