@@ -342,7 +342,7 @@ impl BatchOperateCommand {
     }
 
     const fn keep_connection(err: &Error) -> bool {
-        matches!(err, Error::ServerError(_, _, _) | Error::Timeout(_))
+        commands::keep_connection(err)
     }
 
     async fn parse_result(
