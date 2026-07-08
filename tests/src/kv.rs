@@ -151,6 +151,33 @@ async fn connect() {
     client.close().await.unwrap();
 }
 
+/// Multiple operate results for the same scalar bin merge into MultiResult (read_command path).
+#[aerospike_macro::test]
+async fn operate_multi_op_same_bin_returns_multi_result() {
+    let client = common::client().await;
+    let namespace = common::namespace();
+    let set_name = &common::rand_str(10);
+    let key = as_key!(namespace, set_name, 1);
+    let wpolicy = WritePolicy::default();
+
+    client
+        .put(&wpolicy, &key, &[as_bin!("count", 10i64)])
+        .await
+        .unwrap();
+
+    let ops = &[
+        operations::get_bin("count"),
+        operations::get_bin("count"),
+    ];
+    let rec = client.operate(&wpolicy, &key, ops).await.unwrap();
+    assert_eq!(
+        rec.bins.get("count"),
+        Some(&Value::MultiResult(vec![Value::from(10i64), Value::from(10i64)]))
+    );
+
+    client.close().await.unwrap();
+}
+
 #[aerospike_macro::test]
 async fn operate_empty_ops_returns_parameter_error() {
     let client = common::client().await;
