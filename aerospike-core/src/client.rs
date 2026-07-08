@@ -1710,7 +1710,8 @@ impl Client {
                         Ok(errs) => {
                             for err in errs {
                                 match err {
-                                    Err(Error::Timeout(_) | Error::Io(_)) => timed_out = true,
+                                    // Socket I/O errors now surface as Error::Connection (was Error::Io).
+                                    Err(Error::Timeout(_) | Error::Io(_) | Error::Connection(_)) => timed_out = true,
                                     Err(e) => {
                                         tracker.lock().await.partition_error().await;
                                         err_recordset.err(e).await;
