@@ -26,6 +26,9 @@ pub enum IndexType {
 
     /// 2-dimensional spherical geospatial index.
     Geo2DSphere,
+
+    /// Blob index. Requires server version 7.0+.
+    Blob,
 }
 
 /// Secondary index collection type.
@@ -50,6 +53,7 @@ impl fmt::Display for IndexType {
             IndexType::Numeric => "NUMERIC".fmt(f),
             IndexType::String => "STRING".fmt(f),
             IndexType::Geo2DSphere => "GEO2DSPHERE".fmt(f),
+            IndexType::Blob => "BLOB".fmt(f),
         }
     }
 }
