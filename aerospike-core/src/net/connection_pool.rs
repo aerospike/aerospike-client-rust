@@ -361,7 +361,7 @@ impl DerefMut for PooledConnection {
 
 #[cfg(test)]
 mod tests {
-    use crate::net::Connection;
+    use crate::net::{Connection, ConnectionState};
 
     use super::{ClientPolicy, ConnectionPool, Host, Queue};
 
@@ -635,5 +635,82 @@ mod tests {
         assert_eq!(p.queues[0].num_conns(), 2);
         assert_eq!(p.queues[1].reserved(), 1);
         assert_eq!(p.queues[1].num_conns(), 1);
+    }
+
+    // Pool's Drop contract: retain Ready conns, close non-Ready ones;
+    // asserted independently of the auth code path.
+
+    /// Non-Ready conn at drop must be closed and its slot released.
+    #[aerospike_macro::test]
+    async fn writing_state_at_drop_evicts_from_pool() {
+        let host = Host::new("some-url", 30000);
+        let policy = ClientPolicy {
+            max_conns_per_node: 8,
+            ..ClientPolicy::default()
+        };
+        let p = ConnectionPool::new(host.clone(), policy.clone());
+
+        {
+            let mut pconn = p.make_conn(0).await.expect("make_conn failed");
+            assert_eq!(p.queues[0].reserved(), 1);
+            pconn.set_state(ConnectionState::Writing);
+        }
+
+        assert_eq!(p.queues[0].reserved(), 0, "non-Ready drop must free the slot");
+        assert_eq!(p.num_conns(), 0, "non-Ready conn must not reach the queue");
+    }
+
+    /// Ready conn at drop must be put back into the pool.
+    #[aerospike_macro::test]
+    async fn ready_state_at_drop_returns_connection_to_pool() {
+        let host = Host::new("some-url", 30000);
+        let policy = ClientPolicy {
+            max_conns_per_node: 8,
+            ..ClientPolicy::default()
+        };
+        let p = ConnectionPool::new(host.clone(), policy.clone());
+
+        {
+            let pconn = p.make_conn(0).await.expect("make_conn failed");
+            assert_eq!(p.queues[0].reserved(), 1);
+            drop(pconn);
+        }
+
+        assert_eq!(p.queues[0].reserved(), 1, "Ready drop must keep the slot");
+        assert_eq!(p.num_conns(), 1, "Ready conn must be in the queue");
+    }
+
+    /// fill_min_conns fixpoint: non-Ready path leaves reserved at 0 (churn);
+    /// Ready path reaches `min` in one pass so next tend does nothing.
+    #[aerospike_macro::test]
+    async fn fill_min_conns_fixpoint_bug_vs_fixed() {
+        let host = Host::new("some-url", 30000);
+        let min = 32usize;
+        let policy = ClientPolicy {
+            min_conns_per_node: min,
+            max_conns_per_node: 128,
+            conn_pools_per_node: 4,
+            ..ClientPolicy::default()
+        };
+
+        // Non-Ready path: nothing accumulates.
+        let buggy = ConnectionPool::new(host.clone(), policy.clone());
+        for i in 0..min {
+            let mut pconn = buggy.make_conn(i).await.expect("make_conn failed");
+            pconn.set_state(ConnectionState::Writing);
+        }
+        let buggy_total = buggy.queues.iter().map(|q| q.reserved()).sum::<usize>();
+        assert_eq!(buggy_total, 0, "non-Ready loop never grows the pool");
+        assert_eq!(buggy.num_conns(), 0);
+
+        // Ready path: pool reaches min in one pass.
+        let fixed = ConnectionPool::new(host.clone(), policy.clone());
+        for i in 0..min {
+            let pconn = fixed.make_conn(i).await.expect("make_conn failed");
+            drop(pconn);
+        }
+        let fixed_total = fixed.queues.iter().map(|q| q.reserved()).sum::<usize>();
+        assert_eq!(fixed_total, min, "Ready loop reaches min");
+        assert_eq!(fixed.num_conns(), min);
     }
 }

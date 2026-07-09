@@ -512,7 +512,12 @@ impl Connection {
     ) -> Result<()> {
         self.state = ConnectionState::Writing;
         return match AdminCommand::authenticate(self, auth_mode, hashed_pass).await {
-            Ok(()) => Ok(()),
+            Ok(()) => {
+                // Restore Ready so PooledConnection::Drop puts the conn back
+                // in the pool instead of taking the non-recoverable close arm.
+                self.set_state(ConnectionState::Ready);
+                Ok(())
+            }
             Err(err) => {
                 self.close();
                 Err(err)
