@@ -42,7 +42,7 @@ use crate::policy::{
     AdminPolicy, BatchPolicy, ClientPolicy, QueryPolicy, ReadPolicy, TxnRollPolicy,
     TxnVerifyPolicy, WritePolicy,
 };
-use crate::query::plan::{QueryPlan, QueryWhereWire};
+use crate::query::plan::{QueryPlan, QueryWhereWire, FLAG_EXPLAIN, FLAG_HARD_HINT};
 use crate::query::{PartitionFilter, PartitionTracker};
 use crate::task::{DropIndexTask, ExecuteTask, IndexTask, RegisterTask, UdfRemoveTask};
 use crate::txn::{AbortStatus, CommitStatus, Txn, TxnState};
@@ -1486,6 +1486,10 @@ impl Client {
     /// **Caller responsibility:** the binding layer must gate on
     /// [`Self::supports_query_selection`] before calling this method. This
     /// function does not re-check cluster capability.
+    ///
+    /// `explain_where_flags` selects Tier-D hint bits on field `44` for explain
+    /// ([`FLAG_EXPLAIN`], optional [`FLAG_REQUIRE_INDEX`] / [`FLAG_HARD_HINT`]).
+    /// Pass `None` for default explain (`FLAG_EXPLAIN` only).
     #[doc(hidden)]
     pub async fn query_explain(
         &self,
@@ -1494,6 +1498,7 @@ impl Client {
         set_name: Option<&str>,
         ael: &str,
         index_name_hint: Option<&str>,
+        explain_where_flags: Option<u8>,
     ) -> Result<QueryPlan> {
         if namespace.is_empty() {
             return Err(Error::InvalidArgument("Empty namespace".into()));
@@ -1502,7 +1507,16 @@ impl Client {
             return Err(Error::Connection("No connections available".into()));
         }
 
-        let explain_where_bytes = QueryWhereWire::for_explain(ael)?;
+        let flags = explain_where_flags.unwrap_or(FLAG_EXPLAIN);
+        if flags & FLAG_HARD_HINT != 0
+            && index_name_hint.map(str::is_empty).unwrap_or(true)
+        {
+            return Err(Error::InvalidArgument(
+                "HARD_HINT requires a non-empty index name hint".into(),
+            ));
+        }
+
+        let explain_where_bytes = QueryWhereWire::for_explain_with_flags(flags, ael)?;
         let policy = self.cluster.resolve_query(policy);
         QueryExplainCommand::new(
             self.cluster.clone(),

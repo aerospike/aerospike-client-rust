@@ -23,5 +23,5 @@ pub(crate) use index_range_wire::IndexRangeWire;
 pub use query_plan::QueryPlan;
 pub use query_selection::QuerySelection;
 pub use query_where_wire::{
-    QueryWhereWire, FLAG_EXPLAIN, FLAG_HARD_HINT, FLAG_REQUIRE_INDEX,
+    QueryWhereWire, FLAG_ENC_VARINT, FLAG_EXPLAIN, FLAG_HARD_HINT, FLAG_KNOWN, FLAG_REQUIRE_INDEX,
 };

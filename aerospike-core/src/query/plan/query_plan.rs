@@ -191,6 +191,7 @@ impl QueryPlan {
 mod tests {
     use super::*;
     use crate::commands::field_type::FieldType;
+    use crate::query::plan::{FLAG_EXPLAIN, FLAG_HARD_HINT, FLAG_REQUIRE_INDEX};
 
     const AEL: &str = "$.age > 30";
     const RANGE: &[u8] = &[1, 3, b'a', b'g', b'e'];
@@ -258,6 +259,28 @@ mod tests {
         assert_eq!(plan.index_name(), Some("age_idx"));
         assert_eq!(plan.index_range_bytes(), Some(RANGE));
         assert_eq!(plan.index_type(), &CollectionIndexType::List);
+    }
+
+    #[test]
+    fn execute_where_clears_tier_d_explain_flags() {
+        let explain_where = QueryWhereWire::for_explain_with_flags(
+            FLAG_EXPLAIN | FLAG_REQUIRE_INDEX | FLAG_HARD_HINT,
+            AEL,
+        )
+        .unwrap();
+        let plan = QueryPlan::from_explain_response(
+            ResultCode::Ok,
+            "test",
+            Some("users"),
+            explain_where,
+            &fields_of(&[]),
+        )
+        .unwrap();
+
+        assert_eq!(
+            plan.into_execute_where_bytes(),
+            QueryWhereWire::for_execute(AEL).unwrap()
+        );
     }
 
     #[test]
