@@ -1,4 +1,4 @@
-// Copyright 2015-2018 Aerospike, Inc.
+// Copyright 2015-2026 Aerospike, Inc.
 //
 // Portions may be licensed to Aerospike, Inc. under one or more contributor
 // license agreements.
@@ -97,7 +97,16 @@ impl Version {
         self >= &Version::new(8, 1, 3, 0)
     }
 
-    /// Server supports two-phase server query selection
+    /// Server accepts server-compiled textual AEL on filter field 43 (`[128, "<utf-8>"]`).
+    ///
+    /// Used on legacy field **43** paths (keyed query, batch filter, dataset query when
+    /// [`Self::supports_query_selection`] is off or routing selects legacy). Aligns with Java
+    /// fluent `Cluster.supportsAel()` (≥ 8.1.3).
+    pub fn supports_server_compiled_ael(&self) -> bool {
+        self >= &Version::new(8, 1, 3, 0)
+    }
+
+    /// Server supports two-phase server query selection (field **44** WHERE explain → execute).
     pub fn supports_query_selection(&self) -> bool {
         self >= &Version::new(8, 1, 3, 0)
     }
@@ -213,5 +222,19 @@ mod tests {
         for iv in invalid {
             assert!(VersionParser::new(iv).parse().is_err());
         }
+    }
+
+    #[test]
+    fn supports_server_compiled_ael_threshold() {
+        assert!(!Version::new(8, 1, 2, 99).supports_server_compiled_ael());
+        assert!(Version::new(8, 1, 3, 0).supports_server_compiled_ael());
+        assert!(Version::new(8, 2, 0, 0).supports_server_compiled_ael());
+    }
+
+    #[test]
+    fn supports_query_selection_threshold() {
+        assert!(!Version::new(8, 1, 2, 99).supports_query_selection());
+        assert!(Version::new(8, 1, 3, 0).supports_query_selection());
+        assert!(Version::new(8, 2, 0, 0).supports_query_selection());
     }
 }

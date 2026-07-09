@@ -1478,6 +1478,15 @@ impl Client {
         self.cluster.supports_query_selection()
     }
 
+    /// Returns whether all cluster nodes accept server-compiled textual AEL on
+    /// filter field **43** (`[128, "<utf-8>"]`).
+    ///
+    /// Bindings use this on legacy field **43** paths (e.g. when
+    /// [`Self::supports_query_selection`] is false, or `forBin` / `where(Exp)` routing).
+    pub fn supports_server_compiled_ael(&self) -> bool {
+        self.cluster.supports_server_compiled_ael()
+    }
+
     /// Phase 1 of internal server-led query selection (field `44` WHERE explain).
     ///
     /// Not part of the end-user query API; bindings use this to implement

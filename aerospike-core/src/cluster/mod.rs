@@ -1589,13 +1589,23 @@ impl Cluster {
     }
 
     /// Whether this cluster's minimum server version supports two-phase server
-    /// query selection
+    /// query selection (field **44** WHERE explain → execute).
     pub fn supports_query_selection(&self) -> bool {
         let nodes = self.nodes();
         !nodes.is_empty()
             && nodes
                 .iter()
                 .all(|node| node.version().supports_query_selection())
+    }
+
+    /// Whether all nodes accept server-compiled textual AEL on filter field **43**
+    /// (`[128, "<utf-8>"]`). Used on legacy paths when field **44** selection is not used.
+    pub fn supports_server_compiled_ael(&self) -> bool {
+        let nodes = self.nodes();
+        !nodes.is_empty()
+            && nodes
+                .iter()
+                .all(|node| node.version().supports_server_compiled_ael())
     }
 
     fn set_nodes(&self, new_nodes: Vec<Arc<Node>>) {

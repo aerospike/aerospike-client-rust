@@ -15,12 +15,16 @@
 
 //! Functions used for Filter Expressions. This module requires Aerospike Server version >= 5.2
 
+pub mod ael;
 pub mod bitwise;
 pub mod hll;
 pub mod lists;
 pub mod maps;
 pub mod regex_flag;
 pub mod string;
+
+pub use ael::pack_ael_server_filter;
+pub use ael::SERVER_COMPILED_AEL_EXPRESSION_OP;
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 
 use crate::commands::buffer::Buffer;
