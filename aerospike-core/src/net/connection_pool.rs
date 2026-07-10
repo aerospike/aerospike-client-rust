@@ -119,11 +119,13 @@ impl Queue {
                 drop(connections);
                 if conn.is_idle() {
                     // let the connection drop and close
+                    drop(conn);
+                    self.reduce_capacity();
                     continue;
                 }
-               
-                // A server restart leaves the pool full of dead sockets 
-                // that get handed out and fail on the first read
+
+                // A server restart leaves the pool full of dead sockets
+                // that get handed out and fail on the first read.
                 if !conn.is_alive() {
                     drop(conn);
                     self.reduce_capacity();
