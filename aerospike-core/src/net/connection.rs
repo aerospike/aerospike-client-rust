@@ -60,6 +60,7 @@ pub enum ConnectionState {
 
 /// Underlying socket type for a connection (TCP or TLS).
 #[derive(Debug)]
+#[cfg_attr(test, allow(dead_code))]
 #[allow(clippy::large_enum_variant)]
 pub enum Netsocket {
     /// Plain TCP stream.
@@ -95,6 +96,7 @@ pub struct Connection {
 }
 
 impl Connection {
+    #[cfg_attr(test, allow(dead_code))]
     #[cfg(feature = "tls")]
     async fn get_netsocket(
         stream: TcpStream,
@@ -505,6 +507,7 @@ impl Connection {
         }
     }
 
+    #[cfg_attr(test, allow(dead_code))]
     async fn authenticate(
         &mut self,
         auth_mode: &AuthMode,
@@ -1233,4 +1236,3 @@ mod tests_eof_loopback {
         );
     }
 }
-
