@@ -112,6 +112,8 @@ pub struct ClientPolicy {
     /// the node count to settle). Also used for the client's own info/admin
     /// commands (tend refreshes, index/UDF management, …), and as the fallback
     /// for [`connect_timeout`](field@Self::connect_timeout) when that is `0`.
+    ///
+    /// Default: 1000
     pub timeout: u32,
 
     /// Timeout in milliseconds for establishing a connection to a server node:
@@ -127,9 +129,10 @@ pub struct ClientPolicy {
     /// (`LOGIN` or session-token `AUTHENTICATE`) performed on every freshly
     /// opened connection when the cluster has security enabled.
     ///
-    /// `0` (the default) falls back to
-    /// [`connect_timeout`](field@Self::connect_timeout) (and transitively to
-    /// [`timeout`](field@Self::timeout)).
+    /// `0` falls back to [`connect_timeout`](field@Self::connect_timeout)
+    /// (and transitively to [`timeout`](field@Self::timeout)).
+    ///
+    /// Default: 5000
     pub login_timeout: u32,
 
     /// Connection idle timeout. Every time a connection is used, its idle
@@ -138,6 +141,12 @@ pub struct ClientPolicy {
     ///
     /// Servers 8.1+ have deprecated proto-fd-idle-ms. When proto-fd-idle-ms is ultimately removed,
     /// the server will stop automatically reaping based on socket idle timeouts.
+    ///
+    /// `0` disables the idle check entirely: pooled connections are never
+    /// considered idle, so they are neither discarded nor kept alive by the
+    /// tend-time reaper.
+    ///
+    /// Default: 0 (disabled).
     #[cfg_attr(
         feature = "dynamic-config",
         config(rename = "max_socket_idle", with = crate::config::secs_to_ms)
@@ -164,6 +173,8 @@ pub struct ClientPolicy {
     pub min_conns_per_node: usize,
 
     /// Maximum number of synchronous connections allowed per server node.
+    ///
+    /// Default: 100
     #[cfg_attr(
         feature = "dynamic-config",
         config(rename = "max_connections_per_node", startup)
@@ -226,10 +237,7 @@ pub struct ClientPolicy {
     /// This feature is recommended instead of using the client-side `IpMap` above.
     ///
     /// "services-alternate" is available with Aerospike Server versions >= 3.7.1.
-    #[cfg_attr(
-        feature = "dynamic-config",
-        config(rename = "use_service_alternate")
-    )]
+    #[cfg_attr(feature = "dynamic-config", config(rename = "use_service_alternate"))]
     pub use_services_alternate: bool,
 
     /// Expected cluster name. If not `None`, server nodes must return this cluster name in order
@@ -299,12 +307,12 @@ impl Default for ClientPolicy {
     fn default() -> ClientPolicy {
         ClientPolicy {
             auth_mode: AuthMode::None,
-            timeout: 30_000,
+            timeout: 1_000,
             connect_timeout: 0,
-            login_timeout: 0,
-            idle_timeout: 30_000,
+            login_timeout: 5_000,
+            idle_timeout: 0,
             min_conns_per_node: 0,
-            max_conns_per_node: 256,
+            max_conns_per_node: 100,
             conn_pools_per_node: 1,
             fail_if_not_connected: true,
             tend_interval: 1000,
@@ -469,13 +477,16 @@ mod tests {
 
     #[test]
     fn login_timeout_fallback_chain() {
-        // Unset → falls back to connect_timeout → falls back to timeout.
-        let policy = ClientPolicy::default();
-        assert_eq!(policy.login_timeout, 0);
+        // Explicit 0 → falls back to connect_timeout → falls back to timeout.
+        let policy = ClientPolicy {
+            login_timeout: 0,
+            ..ClientPolicy::default()
+        };
         assert_eq!(policy.login_timeout(), policy.timeout());
 
-        // connect_timeout set, login_timeout unset → connect_timeout wins.
+        // connect_timeout set, login_timeout 0 → connect_timeout wins.
         let policy = ClientPolicy {
+            login_timeout: 0,
             connect_timeout: 1_500,
             ..ClientPolicy::default()
         };
