@@ -60,6 +60,7 @@ pub enum ConnectionState {
 
 /// Underlying socket type for a connection (TCP or TLS).
 #[derive(Debug)]
+#[cfg_attr(test, allow(dead_code))]
 #[allow(clippy::large_enum_variant)]
 pub enum Netsocket {
     /// Plain TCP stream.
@@ -95,6 +96,7 @@ pub struct Connection {
 }
 
 impl Connection {
+    #[cfg_attr(test, allow(dead_code))]
     #[cfg(feature = "tls")]
     async fn get_netsocket(
         stream: TcpStream,
@@ -505,6 +507,7 @@ impl Connection {
         }
     }
 
+    #[cfg_attr(test, allow(dead_code))]
     async fn authenticate(
         &mut self,
         auth_mode: &AuthMode,
@@ -512,7 +515,12 @@ impl Connection {
     ) -> Result<()> {
         self.state = ConnectionState::Writing;
         return match AdminCommand::authenticate(self, auth_mode, hashed_pass).await {
-            Ok(()) => Ok(()),
+            Ok(()) => {
+                // Restore Ready so PooledConnection::Drop puts the conn back
+                // in the pool instead of taking the non-recoverable close arm.
+                self.set_state(ConnectionState::Ready);
+                Ok(())
+            }
             Err(err) => {
                 self.close();
                 Err(err)
@@ -1228,4 +1236,3 @@ mod tests_eof_loopback {
         );
     }
 }
-
