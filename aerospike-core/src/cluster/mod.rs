@@ -22,7 +22,6 @@ pub mod peers_parser;
 pub mod version_parser;
 
 use aerospike_rt::time::{Duration, Instant};
-use std::cell::OnceCell;
 use std::collections::HashMap;
 use std::net::ToSocketAddrs;
 use std::sync::atomic::{AtomicBool, AtomicIsize, AtomicU64, Ordering};
@@ -231,10 +230,11 @@ impl Cluster {
         }
 
         let seed_only = self.client_policy().seed_only_cluster;
+        let metrics_enabled = self.metrics_enabled();
 
         // Per-tend peer state. `gen_changed` is initialized to false (Java's
         // default) and set to true if any node's peers-generation differs.
-        let mut peers = Peers::new(16, 16);
+        let peers = Peers::new(16, 16);
         peers.set_gen_changed(false);
 
         let nodes = self.nodes();
@@ -265,25 +265,34 @@ impl Cluster {
         if nodes.is_empty() {
             // Fall through to the non-refresh suffix (partition update).
         } else {
-            // Phase 1: refresh all known nodes (light info commands only).
-            for node in &nodes {
-                // Reap idle connections, but keep enough of them alive via a
-                // cheap info probe to stay at or above `min_conns_per_node` —
-                // avoids the full TCP-connect round-trip that `fill_min_conns`
-                // would otherwise pay to replace them.
-                let processed = node.reap_and_refresh_idle_connections().await;
-                if processed > 0 {
-                    debug!("Reap/refresh processed {processed} idle connections on {node}");
-                }
+            // Phase 1: refresh all known nodes concurrently (light info
+            // commands only) — mirrors the Go client's `ParDo` so tend
+            // latency is bounded by the slowest node, not the sum of all
+            // nodes. Safe to share `&peers` across the tasks: the phase-1
+            // `Peers` methods (`set_gen_changed`, `increment_refresh_count`)
+            // are atomic, and each task touches only its own node.
+            let refresh_tasks = nodes.iter().map(|node| {
+                let peers = &peers;
+                async move {
+                    // Reap idle connections, but keep enough of them alive via a
+                    // cheap info probe to stay at or above `min_conns_per_node` —
+                    // avoids the full TCP-connect round-trip that `fill_min_conns`
+                    // would otherwise pay to replace them.
+                    let processed = node.reap_and_refresh_idle_connections().await;
+                    if processed > 0 {
+                        debug!("Reap/refresh processed {processed} idle connections on {node}");
+                    }
 
-                let refresh_result = node.refresh(&peers).await;
-                if self.metrics_enabled() {
-                    node.metrics().incr_tend(refresh_result.is_ok());
+                    let refresh_result = node.refresh(peers).await;
+                    if metrics_enabled {
+                        node.metrics().incr_tend(refresh_result.is_ok());
+                    }
+                    if let Err(err) = refresh_result {
+                        warn!("Node `{node}` refresh failed: {err}");
+                    }
                 }
-                if let Err(err) = refresh_result {
-                    warn!("Node `{node}` refresh failed: {err}");
-                }
-            }
+            });
+            futures::future::join_all(refresh_tasks).await;
 
             // Phases 2 + 3 + commit are skipped under `seed_only_cluster`:
             // peer discovery is the very thing the option disables. We
@@ -291,22 +300,28 @@ impl Cluster {
             // evict the seed.
             if !seed_only {
                 // Phase 2: when peers-generation changed on any node, refresh
-                // the full peer list and reconcile add/remove decisions. Each
-                // node's peer list is parsed and materialized in isolation so
-                // a single unreachable peer doesn't prevent the others from
-                // committing their generation (Java's `peersValidated`).
+                // the full peer list and reconcile add/remove decisions. The
+                // per-node peer fetches run concurrently (Go's `ParDo`); each
+                // parsed peer is tagged with its parsing node's name, so a
+                // materialization failure still invalidates only that node's
+                // pending generation (Java's `peersValidated`).
                 if peers.gen_changed() {
                     peers.reset_refresh_count();
 
-                    for node in &nodes {
-                        if let Err(err) = node.refresh_peers(&mut peers).await {
-                            warn!("Node `{node}` peer refresh failed: {err}");
+                    let peer_fetches = nodes.iter().map(|node| {
+                        let peers = &peers;
+                        async move {
+                            if let Err(err) = node.refresh_peers(peers).await {
+                                warn!("Node `{node}` peer refresh failed: {err}");
+                            }
                         }
-                        self.materialize_peers(&mut peers).await;
-                    }
+                    });
+                    futures::future::join_all(peer_fetches).await;
+                    // Validate/connect the accumulated peers and create nodes.
+                    self.materialize_peers(&peers).await;
 
                     // Decide which existing nodes can be dropped.
-                    self.find_nodes_to_remove(&mut peers).await;
+                    self.find_nodes_to_remove(&peers).await;
 
                     let nodes_to_remove = peers.get_nodes_to_remove();
                     if !nodes_to_remove.is_empty() {
@@ -325,12 +340,16 @@ impl Cluster {
                     }
                     self.add_nodes_and_aliases(&drained);
 
-                    for node in &drained {
-                        if let Err(err) = node.refresh_peers(&mut peers).await {
-                            warn!("Node `{node}` peer refresh failed: {err}");
+                    let peer_fetches = drained.iter().map(|node| {
+                        let peers = &peers;
+                        async move {
+                            if let Err(err) = node.refresh_peers(peers).await {
+                                warn!("Node `{node}` peer refresh failed: {err}");
+                            }
                         }
-                        self.materialize_peers(&mut peers).await;
-                    }
+                    });
+                    futures::future::join_all(peer_fetches).await;
+                    self.materialize_peers(&peers).await;
                 }
 
                 // Commit pending peers-generations: each parsing node's
@@ -357,47 +376,91 @@ impl Cluster {
         }
 
         // Phase 4: refresh partition map / rack info for any node whose
-        // generation flag flipped during phase 1.
+        // generation flag flipped during phase 1. The per-node fetches run
+        // concurrently (each node uses its own tend connection); the results
+        // are merged into ONE shared partition map guarded by a synchronous
+        // mutex. The lock is only held for the in-memory merge — never across
+        // an await — so contention is negligible. (The Go client does the
+        // equivalent with per-goroutine work behind an `iatomic.Guard`;
+        // sharing a single synced map avoids its extra clones.)
         let active_nodes = self.nodes();
         let peers_refresh_count = peers.refresh_count();
-        let mut partition_map = OnceCell::new();
+
+        // (node, refresh_partitions, refresh_racks) work list.
+        let mut refresh_work: Vec<(&Arc<Node>, bool, bool)> = Vec::new();
         for node in &active_nodes {
-            if node.partition_changed() {
-                // Split-cluster guard: skip a node that thinks it's the only
-                // one in the cluster (peers_count == 0) when we've already
-                // refreshed peers from at least two nodes this tend
-                // (`peers.refresh_count > 1`). Lets the rest of the cluster's
-                // map win when an isolated node has stale or zero-peer view.
-                // Mirrors Java `Node.refreshPartitions`.
-                if !seed_only && node.peers_count() == 0 && peers_refresh_count > 1 {
-                    debug!(
-                        "Skipping partition update for node {node}: reports 0 peers in {}-node cluster (likely split)",
-                        active_nodes.len()
-                    );
-                } else {
-                    partition_map.get_or_init(|| (*self.partition_map.load().clone()).clone());
-                    match self
-                        .update_partitions(partition_map.get_mut().unwrap(), node)
-                        .await
-                    {
-                        Ok(()) => {
-                            if self.metrics_enabled() {
-                                node.metrics().incr_partition_map_update();
+            let mut partitions = node.partition_changed();
+            // Split-cluster guard: skip a node that thinks it's the only
+            // one in the cluster (peers_count == 0) when we've already
+            // refreshed peers from at least two nodes this tend
+            // (`peers.refresh_count > 1`). Lets the rest of the cluster's
+            // map win when an isolated node has stale or zero-peer view.
+            // Mirrors Java `Node.refreshPartitions`.
+            if partitions && !seed_only && node.peers_count() == 0 && peers_refresh_count > 1 {
+                debug!(
+                    "Skipping partition update for node {node}: reports 0 peers in {}-node cluster (likely split)",
+                    active_nodes.len()
+                );
+                partitions = false;
+            }
+            let racks = node.rebalance_changed();
+            if partitions || racks {
+                refresh_work.push((node, partitions, racks));
+            }
+        }
+
+        // Clone the current map once, only when some node needs a partition
+        // refresh. All merges land in this single shared copy.
+        let shared_map: Option<std::sync::Mutex<PartitionTable>> = refresh_work
+            .iter()
+            .any(|(_, partitions, _)| *partitions)
+            .then(|| std::sync::Mutex::new((*self.partition_map.load().clone()).clone()));
+
+        let admin_policy = AdminPolicy {
+            timeout: self.client_policy.load().timeout,
+        };
+        let refresh_tasks = refresh_work.iter().map(|(node, partitions, racks)| {
+            let shared_map = shared_map.as_ref();
+            let admin_policy = &admin_policy;
+            async move {
+                // Partition fetch + rack fetch stay sequential *within* a node
+                // (they share the node's tend connection); nodes run in parallel.
+                if *partitions {
+                    match PartitionTokenizer::from_node(node, admin_policy).await {
+                        Ok(tokens) => {
+                            let mut map = shared_map
+                                .expect("shared map initialized when any node refreshes partitions")
+                                .lock()
+                                .unwrap_or_else(std::sync::PoisonError::into_inner);
+                            match tokens.update_partition(&mut map, node) {
+                                Ok(()) => {
+                                    drop(map);
+                                    if metrics_enabled {
+                                        node.metrics().incr_partition_map_update();
+                                    }
+                                }
+                                Err(err) => {
+                                    warn!("Node `{node}` partition update failed: {err}");
+                                }
                             }
                         }
                         Err(err) => warn!("Node `{node}` partition update failed: {err}"),
                     }
                 }
-            }
 
-            if node.rebalance_changed() {
-                if let Err(err) = self.update_rack_ids(node).await {
-                    warn!("Node `{node}` rack update failed: {err}");
+                if *racks {
+                    if let Err(err) = self.update_rack_ids(node).await {
+                        warn!("Node `{node}` rack update failed: {err}");
+                    }
                 }
             }
-        }
+        });
+        futures::future::join_all(refresh_tasks).await;
 
-        if let Some(partition_map) = partition_map.take() {
+        if let Some(shared_map) = shared_map {
+            let partition_map = shared_map
+                .into_inner()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
             self.partition_map.store(Arc::new(partition_map));
         }
 
@@ -443,15 +506,47 @@ impl Cluster {
     /// commit each parsing node's `peers-generation`. If any peer parsed by
     /// node X is unreachable, X's pending generation is invalidated and the
     /// next tend will re-parse and retry.
-    async fn materialize_peers(&self, peers: &mut Peers) {
+    async fn materialize_peers(&self, peers: &Peers) {
         let peers_list = peers.peers_list();
-        // Reset the working set for the next parsing-node iteration; we've
-        // taken a copy of what was in there.
+        // Reset the working set; we've taken a copy of what was in there.
         peers.clear_peers();
 
-        for mut peer in peers_list {
+        // Group duplicate mentions of the same peer node — every existing
+        // node typically advertises a newly added one — so each distinct
+        // peer is validated exactly once (the sequential loop achieved this
+        // via the "already added this tend" check). Host lists are unioned
+        // across mentions, and every mention's parsing-node name is kept: if
+        // the peer turns out unreachable, each of those nodes' pending
+        // peers-generations must be invalidated.
+        let mut groups: Vec<(Peer, Vec<String>)> = Vec::new();
+        let mut index_by_name: HashMap<String, usize> = HashMap::new();
+        for peer in peers_list {
+            if let Some(&i) = index_by_name.get(&peer.node_name) {
+                let (rep, sources) = &mut groups[i];
+                if let Some(src) = peer.from_node_name {
+                    if !sources.contains(&src) {
+                        sources.push(src);
+                    }
+                }
+                for host in peer.hosts {
+                    if !rep.hosts.contains(&host) {
+                        rep.hosts.push(host);
+                    }
+                }
+            } else {
+                index_by_name.insert(peer.node_name.clone(), groups.len());
+                let sources = peer.from_node_name.clone().into_iter().collect();
+                groups.push((peer, sources));
+            }
+        }
+
+        // Validate/connect the distinct peers concurrently (Go's `ParDo`
+        // over `peers.peers()`). Tasks only append to the internally-synced
+        // `peers` accumulator; actual cluster membership is still committed
+        // afterwards by the tend task (add/remove stays single-flow).
+        let materialize_tasks = groups.into_iter().map(|(mut peer, sources)| async move {
             if self.peer_exists(peers, &mut peer).await {
-                continue;
+                return;
             }
 
             let mut materialized = false;
@@ -487,16 +582,16 @@ impl Cluster {
                 break;
             }
 
-            // If none of the peer's hosts validated, invalidate the parsing
-            // node's pending generation so it won't be committed at the end
-            // of the tend. The peer (and any siblings from the same node)
-            // will be re-parsed next tend.
+            // If none of the peer's hosts validated, invalidate every
+            // parsing node's pending generation so none of them commit at
+            // the end of the tend. The peer will be re-parsed next tend.
             if !materialized {
-                if let Some(ref source) = peer.from_node_name {
+                for source in &sources {
                     peers.invalidate_pending_generation(source);
                 }
             }
-        }
+        });
+        futures::future::join_all(materialize_tasks).await;
     }
 
     /// Checks if a peer represents an already-known node.
@@ -509,7 +604,7 @@ impl Cluster {
     ///   hostname on the node on success.
     /// - If host mismatch on a failing node, mark as `replace_node`.
     /// - Also check if already added during this tend cycle.
-    async fn peer_exists(&self, peers: &mut Peers, peer: &mut Peer) -> bool {
+    async fn peer_exists(&self, peers: &Peers, peer: &mut Peer) -> bool {
         // Check 1: Find by node name in current cluster nodes.
         if let Ok(node) = self.get_node_by_name(&peer.node_name) {
             // Mirrors Java's `findPeerNode`:
@@ -1414,7 +1509,7 @@ impl Cluster {
     ///   refreshes also failed (refreshCount == 0).
     /// - Multi-node clusters: remove if referenceCount == 0 (not referenced by
     ///   any peer) AND either failing or not in partition map.
-    async fn find_nodes_to_remove(&self, peers: &mut Peers) {
+    async fn find_nodes_to_remove(&self, peers: &Peers) {
         let refresh_count = peers.refresh_count();
         let nodes = self.nodes();
 

@@ -308,7 +308,7 @@ impl Node {
     ///
     /// Only called when `peers.gen_changed` is true (i.e., when any node's
     /// peers generation changed during phase 1).
-    pub async fn refresh_peers(&self, peers: &mut Peers) -> Result<()> {
+    pub async fn refresh_peers(&self, peers: &Peers) -> Result<()> {
         // Don't refresh peers when node connection has already failed during this tend.
         if self.failures() > 0 || !self.is_active() {
             return Ok(());
