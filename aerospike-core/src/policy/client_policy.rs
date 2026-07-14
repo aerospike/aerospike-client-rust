@@ -123,6 +123,15 @@ pub struct ClientPolicy {
     #[cfg_attr(feature = "dynamic-config", config(skip))]
     pub connect_timeout: u32,
 
+    /// Timeout in milliseconds for the login/authentication exchange
+    /// (`LOGIN` or session-token `AUTHENTICATE`) performed on every freshly
+    /// opened connection when the cluster has security enabled.
+    ///
+    /// `0` (the default) falls back to
+    /// [`connect_timeout`](field@Self::connect_timeout) (and transitively to
+    /// [`timeout`](field@Self::timeout)).
+    pub login_timeout: u32,
+
     /// Connection idle timeout. Every time a connection is used, its idle
     /// deadline will be extended by this duration. When this deadline is reached,
     /// the connection will be closed and discarded from the connection pool.
@@ -292,6 +301,7 @@ impl Default for ClientPolicy {
             auth_mode: AuthMode::None,
             timeout: 30_000,
             connect_timeout: 0,
+            login_timeout: 0,
             idle_timeout: 30_000,
             min_conns_per_node: 0,
             max_conns_per_node: 256,
@@ -364,6 +374,17 @@ impl ClientPolicy {
             Duration::from_millis(u64::from(self.connect_timeout))
         } else {
             self.timeout()
+        }
+    }
+
+    /// Timeout for the login/authentication exchange on a fresh connection.
+    /// Falls back to [`connect_timeout`](Self::connect_timeout) when
+    /// `login_timeout` is `0`.
+    pub(crate) fn login_timeout(&self) -> Duration {
+        if self.login_timeout > 0 {
+            Duration::from_millis(u64::from(self.login_timeout))
+        } else {
+            self.connect_timeout()
         }
     }
 
@@ -444,5 +465,29 @@ mod tests {
         assert_eq!(policy.connect_timeout(), Duration::from_millis(1_500));
         // The general timeout is unaffected.
         assert_eq!(policy.timeout(), Duration::from_millis(30_000));
+    }
+
+    #[test]
+    fn login_timeout_fallback_chain() {
+        // Unset → falls back to connect_timeout → falls back to timeout.
+        let policy = ClientPolicy::default();
+        assert_eq!(policy.login_timeout, 0);
+        assert_eq!(policy.login_timeout(), policy.timeout());
+
+        // connect_timeout set, login_timeout unset → connect_timeout wins.
+        let policy = ClientPolicy {
+            connect_timeout: 1_500,
+            ..ClientPolicy::default()
+        };
+        assert_eq!(policy.login_timeout(), Duration::from_millis(1_500));
+
+        // login_timeout set → it wins over both.
+        let policy = ClientPolicy {
+            login_timeout: 700,
+            connect_timeout: 1_500,
+            ..ClientPolicy::default()
+        };
+        assert_eq!(policy.login_timeout(), Duration::from_millis(700));
+        assert_eq!(policy.connect_timeout(), Duration::from_millis(1_500));
     }
 }

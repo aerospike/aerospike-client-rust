@@ -218,9 +218,10 @@ impl Connection {
             buffer: Buffer::new(policy.buffer_reclaim_threshold),
             bytes_read: 0,
             conn: stream,
-            // Governs the auth-handshake I/O below; commands overwrite it via
-            // `set_socket_timeout` before use.
-            socket_timeout: policy.connect_timeout().as_millis() as u32,
+            // Governs the login/authenticate I/O below (the only I/O before a
+            // command runs); commands overwrite it via `set_socket_timeout`
+            // before use.
+            socket_timeout: policy.login_timeout().as_millis() as u32,
             timeout_delay: 0,
             deadline: None,
             idle_timeout,
@@ -293,7 +294,7 @@ impl Connection {
             buffer: Buffer::new(policy.buffer_reclaim_threshold),
             bytes_read: 0,
             conn: stream,
-            socket_timeout: policy.connect_timeout().as_millis() as u32,
+            socket_timeout: policy.login_timeout().as_millis() as u32,
             timeout_delay: 0,
             deadline: None,
             idle_timeout: idle_timeout,

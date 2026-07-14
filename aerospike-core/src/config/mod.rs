@@ -526,13 +526,15 @@ labels:
     #[test]
     fn client_dynamic_merge_covers_all_fields() {
         let cfg: ClientPolicyConfig = parse(
-            "timeout: 2500\nmax_socket_idle: 55\nmax_error_rate: 42\nerror_rate_window: 3\n\
-             tend_interval: 250\nuse_service_alternate: true\napp_id: \"svc\"\nrack_ids: [1, 2, 3]\n",
+            "timeout: 2500\nlogin_timeout: 900\nmax_socket_idle: 55\nmax_error_rate: 42\n\
+             error_rate_window: 3\ntend_interval: 250\nuse_service_alternate: true\n\
+             app_id: \"svc\"\nrack_ids: [1, 2, 3]\n",
         )
         .unwrap();
         let mut cp = ClientPolicy::default();
         cfg.merge_into(&mut cp);
         assert_eq!(cp.timeout, 2500);
+        assert_eq!(cp.login_timeout, 900); // ms, matching the Go client's key
         assert_eq!(cp.idle_timeout, 55_000); // seconds -> ms
         assert_eq!(cp.max_error_rate, 42);
         assert_eq!(cp.error_rate_window, 3);
