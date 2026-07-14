@@ -69,10 +69,9 @@ impl BatchOperateCommand {
 
     pub async fn execute_command(mut self, cluster: Arc<Cluster>) -> Result<Self> {
         let mut iterations = 0;
-        // Remember the most recent per-attempt error so retry exhaustion
-        // surfaces a meaningful cause (e.g. the circuit breaker's
-        // MaxErrorRate) instead of a bare timeout.
-        let mut last_err: Option<Error> = None;
+        // Remember the most recent per-attempt error so retry exhaustion can
+        // return a timeout that still displays the last failure.
+        let mut last_err: Option<Error>;
 
         // set timeout outside the loop
         let deadline = self.policy.deadline();
@@ -122,9 +121,10 @@ impl BatchOperateCommand {
 
             // too many retries
             if self.policy.max_retries() > 0 && iterations > self.policy.max_retries() + 1 {
-                return Err(last_err.unwrap_or_else(|| {
-                    Error::Timeout(format!("Timeout after {iterations} tries"))
-                }));
+                return Err(Self::wrap_last_error(
+                    last_err,
+                    Error::Timeout(format!("Timeout after {iterations} tries")),
+                ));
             }
 
             // Sleep before trying again, after the first iteration
@@ -135,11 +135,19 @@ impl BatchOperateCommand {
             // check for command timeout
             if let Some(deadline) = deadline {
                 if Instant::now() > deadline {
-                    return Err(last_err.unwrap_or_else(|| {
-                        Error::Timeout(format!("Command timed out after {iterations} tries"))
-                    }));
+                    return Err(Self::wrap_last_error(
+                        last_err,
+                        Error::Timeout(format!("Command timed out after {iterations} tries")),
+                    ));
                 }
             }
+        }
+    }
+
+    fn wrap_last_error(last_err: Option<Error>, timeout_err: Error) -> Error {
+        match last_err {
+            Some(err) => err.wrap(timeout_err),
+            None => timeout_err,
         }
     }
 
@@ -378,5 +386,42 @@ impl BatchOperateCommand {
 
         conn.reset_state();
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::BatchOperateCommand;
+    use crate::errors::Error;
+
+    #[test]
+    fn retry_exhaustion_wraps_last_error_under_timeout() {
+        let err = BatchOperateCommand::wrap_last_error(
+            Some(Error::MaxErrorRate("127.0.0.1:3000".into())),
+            Error::Timeout("Timeout after 3 tries".into()),
+        );
+
+        match &err {
+            Error::Chain(head, tail) => {
+                assert!(matches!(**head, Error::Timeout(_)));
+                assert!(matches!(**tail, Error::MaxErrorRate(_)));
+            }
+            other => panic!("expected chained timeout with last error, got: {:?}", other),
+        }
+
+        let display = err.to_string();
+        assert!(display.contains("Client Timeout: Timeout after 3 tries"));
+        assert!(display.contains("Max error rate exceeded for node 127.0.0.1:3000"));
+    }
+
+    #[test]
+    fn retry_exhaustion_without_last_error_returns_timeout() {
+        let err = BatchOperateCommand::wrap_last_error(
+            None,
+            Error::Timeout("Timeout after 3 tries".into()),
+        );
+
+        assert!(matches!(err, Error::Timeout(_)));
+        assert_eq!(err.to_string(), "Client Timeout: Timeout after 3 tries");
     }
 }
