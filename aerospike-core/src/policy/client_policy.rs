@@ -106,9 +106,22 @@ pub struct ClientPolicy {
     #[cfg_attr(feature = "dynamic-config", config(skip))]
     pub tls_config: Option<ClientConfig>,
 
-    /// Initial host connection timeout in milliseconds. The timeout when opening a connection
-    /// to the server host for the first time.
+    /// General timeout in milliseconds for connecting to the whole cluster:
+    /// it bounds the initial cluster tend/stabilization performed by
+    /// [`Client::new`](crate::Client::new) (seeding the nodes and waiting for
+    /// the node count to settle). Also used for the client's own info/admin
+    /// commands (tend refreshes, index/UDF management, …), and as the fallback
+    /// for [`connect_timeout`](field@Self::connect_timeout) when that is `0`.
     pub timeout: u32,
+
+    /// Timeout in milliseconds for establishing a connection to a server node:
+    /// the TCP connect, TLS handshake, and login/authentication exchange.
+    /// Applies everywhere the client opens a connection (seeding, tend,
+    /// connection-pool growth, `min_conns_per_node` fill).
+    ///
+    /// `0` (the default) falls back to [`timeout`](field@Self::timeout).
+    #[cfg_attr(feature = "dynamic-config", config(skip))]
+    pub connect_timeout: u32,
 
     /// Connection idle timeout. Every time a connection is used, its idle
     /// deadline will be extended by this duration. When this deadline is reached,
@@ -278,6 +291,7 @@ impl Default for ClientPolicy {
         ClientPolicy {
             auth_mode: AuthMode::None,
             timeout: 30_000,
+            connect_timeout: 0,
             idle_timeout: 30_000,
             min_conns_per_node: 0,
             max_conns_per_node: 256,
@@ -343,6 +357,16 @@ impl ClientPolicy {
         }
     }
 
+    /// Timeout for establishing a connection (TCP connect + TLS + auth).
+    /// Falls back to [`timeout`](Self::timeout) when `connect_timeout` is `0`.
+    pub(crate) fn connect_timeout(&self) -> Duration {
+        if self.connect_timeout > 0 {
+            Duration::from_millis(u64::from(self.connect_timeout))
+        } else {
+            self.timeout()
+        }
+    }
+
     /// Set username and password to use when authenticating to the cluster.
     pub fn set_auth_mode(&mut self, auth_mode: AuthMode) -> Result<()> {
         self.auth_mode = auth_mode;
@@ -395,5 +419,30 @@ impl ClientPolicy {
             true => "service-clear-alt",
             false => "service-clear-std",
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ClientPolicy;
+    use aerospike_rt::time::Duration;
+
+    #[test]
+    fn connect_timeout_falls_back_to_timeout_when_zero() {
+        let policy = ClientPolicy::default();
+        assert_eq!(policy.connect_timeout, 0);
+        assert_eq!(policy.connect_timeout(), policy.timeout());
+    }
+
+    #[test]
+    fn connect_timeout_used_when_set() {
+        let policy = ClientPolicy {
+            connect_timeout: 1_500,
+            timeout: 30_000,
+            ..ClientPolicy::default()
+        };
+        assert_eq!(policy.connect_timeout(), Duration::from_millis(1_500));
+        // The general timeout is unaffected.
+        assert_eq!(policy.timeout(), Duration::from_millis(30_000));
     }
 }
