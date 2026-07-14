@@ -1407,6 +1407,11 @@ mod tests_eof_loopback {
             can_recover_connection: false,
             response_decompressed: false,
             compressed_stream_body: false,
+            rnd: XorShift::new(),
+            // Far-future deadline; reset before each IO so this never fires first.
+            sleep: Box::pin(aerospike_rt::tokio::time::sleep(
+                aerospike_rt::time::Duration::from_secs(3600),
+            )),
         };
         conn.refresh();
         conn
@@ -1562,7 +1567,7 @@ mod tests_eof_loopback {
 
         let host = Host::new("127.0.0.1", 0);
         let policy = ClientPolicy::default();
-        let q = Queue::with_capacity(1, host, policy);
+        let q = Queue::with_capacity(1, host, policy, None);
 
         let addr = spawn_fin_peer().await;
         let stream = TcpStream::connect(addr).await.unwrap();
@@ -1587,7 +1592,7 @@ mod tests_eof_loopback {
 
         let host = Host::new("127.0.0.1", 0);
         let policy = ClientPolicy::default();
-        let q = Queue::with_capacity(1, host, policy);
+        let q = Queue::with_capacity(1, host, policy, None);
 
         let addr = spawn_idle_peer().await;
         let stream = TcpStream::connect(addr).await.unwrap();
