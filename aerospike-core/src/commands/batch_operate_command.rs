@@ -69,10 +69,9 @@ impl BatchOperateCommand {
 
     pub async fn execute_command(mut self, cluster: Arc<Cluster>) -> Result<Self> {
         let mut iterations = 0;
-        // Remember the most recent per-attempt error so retry exhaustion
-        // surfaces a meaningful cause (e.g. the circuit breaker's
-        // MaxErrorRate) instead of a bare timeout.
-        let mut last_err: Option<Error> = None;
+        // Remember the most recent per-attempt error so retry exhaustion can
+        // return a timeout that still displays the last failure.
+        let mut last_err: Option<Error>;
 
         // set timeout outside the loop
         let deadline = self.policy.deadline();
@@ -122,9 +121,10 @@ impl BatchOperateCommand {
 
             // too many retries
             if self.policy.max_retries() > 0 && iterations > self.policy.max_retries() + 1 {
-                return Err(last_err.unwrap_or_else(|| {
-                    Error::Timeout(format!("Timeout after {iterations} tries"))
-                }));
+                return Err(Self::wrap_last_error(
+                    last_err,
+                    Error::Timeout(format!("Timeout after {iterations} tries")),
+                ));
             }
 
             // Sleep before trying again, after the first iteration
@@ -135,11 +135,19 @@ impl BatchOperateCommand {
             // check for command timeout
             if let Some(deadline) = deadline {
                 if Instant::now() > deadline {
-                    return Err(last_err.unwrap_or_else(|| {
-                        Error::Timeout(format!("Command timed out after {iterations} tries"))
-                    }));
+                    return Err(Self::wrap_last_error(
+                        last_err,
+                        Error::Timeout(format!("Command timed out after {iterations} tries")),
+                    ));
                 }
             }
+        }
+    }
+
+    fn wrap_last_error(last_err: Option<Error>, timeout_err: Error) -> Error {
+        match last_err {
+            Some(err) => err.wrap(timeout_err),
+            None => timeout_err,
         }
     }
 
