@@ -28,7 +28,7 @@ use crate::commands::StreamCommand;
 use crate::commands::{self, buffer};
 use crate::errors::{Error, Result};
 use crate::net::{BufferedConn, Connection};
-use crate::policy::{BatchPolicy, Policy, Replica};
+use crate::policy::{next_retry_interval, BatchPolicy, Policy, Replica};
 use crate::{value, Record, ResultCode, Value};
 use aerospike_rt::sleep;
 use aerospike_rt::time::Duration;
@@ -193,9 +193,7 @@ impl BatchOperateCommand {
             // Sleep before trying again, after the first iteration
             if let Some(interval) = sleep_interval {
                 sleep(interval).await;
-                if sleep_multiplier > 1.0 {
-                    sleep_interval = Some(interval.mul_f64(sleep_multiplier));
-                }
+                sleep_interval = Some(next_retry_interval(interval, sleep_multiplier));
             }
 
             // check for command timeout

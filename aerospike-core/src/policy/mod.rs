@@ -123,6 +123,21 @@ pub trait Policy {
     fn read_mode_sc(&self) -> ReadModeSC;
 }
 
+/// Next sleep interval for an exponential retry backoff: multiplies `current`
+/// by `multiplier` when it is `> 1.0`, otherwise leaves it unchanged. Mirrors
+/// the Go client's `SleepMultiplier` handling — the interval starts at the
+/// policy's `sleep_between_retries` and grows geometrically after each sleep.
+/// Growth is uncapped, matching Go; command retry loops are bounded by their
+/// deadline, executor loops by tracker completion.
+#[must_use]
+pub(crate) fn next_retry_interval(current: Duration, multiplier: f64) -> Duration {
+    if multiplier > 1.0 {
+        current.mul_f64(multiplier)
+    } else {
+        current
+    }
+}
+
 /// Policy-like object that encapsulates a base policy instance.
 pub(crate) trait PolicyLike {
     /// Retrieve a reference to the base policy.
@@ -458,5 +473,31 @@ impl Policy for BasePolicy {
 
     fn compression_threshold(&self) -> usize {
         self.compression_threshold
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::next_retry_interval;
+    use aerospike_rt::time::Duration;
+
+    #[test]
+    fn retry_interval_grows_geometrically() {
+        // 500ms → 1s → 2s for multiplier 2.0 (Go's SleepMultiplier semantics).
+        let mut interval = Duration::from_millis(500);
+        interval = next_retry_interval(interval, 2.0);
+        assert_eq!(interval, Duration::from_millis(1_000));
+        interval = next_retry_interval(interval, 2.0);
+        assert_eq!(interval, Duration::from_millis(2_000));
+    }
+
+    #[test]
+    fn retry_interval_constant_for_multiplier_at_or_below_one() {
+        let interval = Duration::from_millis(500);
+        // 1.0 (the default) keeps the interval constant …
+        assert_eq!(next_retry_interval(interval, 1.0), interval);
+        // … and a sub-1.0 multiplier must never shrink it.
+        assert_eq!(next_retry_interval(interval, 0.5), interval);
+        assert_eq!(next_retry_interval(interval, 0.0), interval);
     }
 }

@@ -19,7 +19,7 @@ use crate::cluster::{Cluster, Node};
 use crate::commands::{self};
 use crate::errors::{Error, Result};
 use crate::net::Connection;
-use crate::policy::Policy;
+use crate::policy::{next_retry_interval, Policy};
 use crate::{Key, ResultCode};
 use aerospike_rt::sleep;
 use aerospike_rt::time::Instant;
@@ -203,9 +203,7 @@ impl<'a> SingleCommand<'a> {
                         }
                     }
                     sleep(interval).await;
-                    if sleep_multiplier > 1.0 {
-                        sleep_interval = Some(interval.mul_f64(sleep_multiplier));
-                    }
+                    sleep_interval = Some(next_retry_interval(interval, sleep_multiplier));
                 }
             }
 

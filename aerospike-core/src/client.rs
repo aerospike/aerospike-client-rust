@@ -1640,6 +1640,12 @@ impl Client {
         recordset: Arc<Recordset>,
     ) {
         let namespace = statement.namespace.clone();
+        // Exponential backoff between whole-cluster retry rounds: the sleep
+        // interval starts at `sleep_between_retries` and grows by
+        // `sleep_multiplier` after each round, mirroring the Go client's
+        // scan/query executors.
+        let sleep_multiplier = policy.base_policy.sleep_multiplier();
+        let mut sleep_interval = policy.base_policy.sleep_between_retries();
         loop {
             let mut timed_out = false;
             {
@@ -1737,8 +1743,12 @@ impl Client {
                 _ => (),
             }
 
-            if let Some(sleep_between_retries) = policy.base_policy.sleep_between_retries() {
-                sleep(sleep_between_retries).await;
+            if let Some(interval) = sleep_interval {
+                sleep(interval).await;
+                sleep_interval = Some(crate::policy::next_retry_interval(
+                    interval,
+                    sleep_multiplier,
+                ));
             }
 
             recordset.reset_task_id();
