@@ -83,6 +83,8 @@ const PAD_START: i64 = 63;
 const PAD_END: i64 = 64;
 const REPEAT: i64 = 65;
 const REGEX_REPLACE: i64 = 66;
+const APPEND: i64 = 67;
+const PREPEND: i64 = 68;
 
 use crate::operations::string::StringNumericType;
 
@@ -106,16 +108,16 @@ pub fn substr(start: Expression, src: Expression) -> Expression {
     )
 }
 
-/// Expression that returns `length` codepoints of `src` starting at codepoint
-/// `start`. Negative indexes count from the end.
-pub fn substr_range(start: Expression, length: Expression, src: Expression) -> Expression {
+/// Expression that returns the substring of `src` in the half-open codepoint
+/// range `[start, end)`. Negative indexes count from the end.
+pub fn substr_range(start: Expression, end: Expression, src: Expression) -> Expression {
     add_read(
         src,
         ExpType::STRING,
         vec![
             sub(SUBSTR),
             ExpressionArgument::FilterExpression(start),
-            ExpressionArgument::FilterExpression(length),
+            ExpressionArgument::FilterExpression(end),
         ],
     )
 }
@@ -338,6 +340,34 @@ pub fn concat(policy: &StringPolicy, values: Expression, src: Expression) -> Exp
         vec![
             sub(CONCAT),
             ExpressionArgument::FilterExpression(values),
+            ExpressionArgument::Value(Value::Int(policy_flags(policy))),
+        ],
+    )
+}
+
+/// Expression that appends `value` to the end of `src` and returns the
+/// resulting string. Unicode/DBCS-aware counterpart to the legacy byte-level
+/// append; does not modify the underlying bin.
+pub fn append(policy: &StringPolicy, value: Expression, src: Expression) -> Expression {
+    add_modify(
+        src,
+        vec![
+            sub(APPEND),
+            ExpressionArgument::FilterExpression(value),
+            ExpressionArgument::Value(Value::Int(policy_flags(policy))),
+        ],
+    )
+}
+
+/// Expression that prepends `value` to the start of `src` and returns the
+/// resulting string. Unicode/DBCS-aware counterpart to the legacy byte-level
+/// prepend; does not modify the underlying bin.
+pub fn prepend(policy: &StringPolicy, value: Expression, src: Expression) -> Expression {
+    add_modify(
+        src,
+        vec![
+            sub(PREPEND),
+            ExpressionArgument::FilterExpression(value),
             ExpressionArgument::Value(Value::Int(policy_flags(policy))),
         ],
     )

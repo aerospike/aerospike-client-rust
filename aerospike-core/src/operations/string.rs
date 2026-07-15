@@ -68,6 +68,8 @@ const STR_OP_PAD_START: u8 = 63;
 const STR_OP_PAD_END: u8 = 64;
 const STR_OP_REPEAT: u8 = 65;
 const STR_OP_REGEX_REPLACE: u8 = 66;
+const STR_OP_APPEND: u8 = 67;
+const STR_OP_PREPEND: u8 = 68;
 
 /// Numeric type filter used by [`is_numeric_typed`]. Combine with the
 /// `is_numeric` sub-op to restrict validation to integers or floats.
@@ -253,15 +255,11 @@ pub fn substr_from(bin: &str, start: i64) -> Operation {
     read_op(STR_OP_SUBSTR, bin, vec![Value::Int(start)])
 }
 
-/// `substr` operation that reads `length` codepoints starting at codepoint
-/// `start`. Negative indexes count from the end. `length` is clamped to the
-/// remaining string length.
-pub fn substr(bin: &str, start: i64, length: i64) -> Operation {
-    read_op(
-        STR_OP_SUBSTR,
-        bin,
-        vec![Value::Int(start), Value::Int(length)],
-    )
+/// `substr` operation that reads codepoints in the half-open range
+/// `[start, end)`. Negative indexes count from the end. `end` is clamped to
+/// the string length.
+pub fn substr(bin: &str, start: i64, end: i64) -> Operation {
+    read_op(STR_OP_SUBSTR, bin, vec![Value::Int(start), Value::Int(end)])
 }
 
 /// `charAt` operation. Returns the codepoint at `index` as a one-codepoint
@@ -448,6 +446,30 @@ pub fn concat_list(policy: &StringPolicy, bin: &str, values: &[&str]) -> Operati
         STR_OP_CONCAT,
         bin,
         vec![Value::List(list), Value::Int(policy.flags)],
+    )
+}
+
+/// `append` operation that appends `value` to the end of the bin. Unlike the
+/// legacy byte-level [`crate::operations::append`], this operation is
+/// Unicode/DBCS-aware and shares the consistent [`StringPolicy`] / CTX
+/// interface of the rest of the string module.
+pub fn append(policy: &StringPolicy, bin: &str, value: &str) -> Operation {
+    modify_op(
+        STR_OP_APPEND,
+        bin,
+        vec![Value::from(value), Value::Int(policy.flags)],
+    )
+}
+
+/// `prepend` operation that prepends `value` to the start of the bin. Unlike
+/// the legacy byte-level [`crate::operations::prepend`], this operation is
+/// Unicode/DBCS-aware and shares the consistent [`StringPolicy`] / CTX
+/// interface of the rest of the string module.
+pub fn prepend(policy: &StringPolicy, bin: &str, value: &str) -> Operation {
+    modify_op(
+        STR_OP_PREPEND,
+        bin,
+        vec![Value::from(value), Value::Int(policy.flags)],
     )
 }
 

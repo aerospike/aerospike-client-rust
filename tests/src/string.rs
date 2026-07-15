@@ -135,6 +135,14 @@ async fn substr_from_and_range_and_negative() {
         .unwrap();
     assert_eq!(rec.bins.get(BIN).unwrap(), &Value::from("hello"));
 
+    // The second argument is the exclusive END index (half-open range), not a
+    // length: [2, 5) of "hello world" is "llo".
+    let rec = client
+        .operate(&wpolicy, &key, &[str_op::substr(BIN, 2, 5)])
+        .await
+        .unwrap();
+    assert_eq!(rec.bins.get(BIN).unwrap(), &Value::from("llo"));
+
     let rec = client
         .operate(&wpolicy, &key, &[str_op::substr_from(BIN, -5)])
         .await
@@ -752,6 +760,30 @@ async fn concat_single_and_list() {
         .await
         .unwrap();
     assert_eq!(get_string(&client, &key).await, "hello big world");
+}
+
+#[aerospike_macro::test]
+async fn append_and_prepend() {
+    let client = common::client().await;
+    if !server_supports_string_operations(&client).await {
+        return;
+    }
+    let key = as_key!(common::namespace(), &common::rand_str(10), "appendprep");
+    let wpolicy = WritePolicy::default();
+    let policy = StringPolicy::default();
+
+    put(&client, &wpolicy, &key, "world").await;
+    client
+        .operate(&wpolicy, &key, &[str_op::append(&policy, BIN, "!")])
+        .await
+        .unwrap();
+    assert_eq!(get_string(&client, &key).await, "world!");
+
+    client
+        .operate(&wpolicy, &key, &[str_op::prepend(&policy, BIN, "hello ")])
+        .await
+        .unwrap();
+    assert_eq!(get_string(&client, &key).await, "hello world!");
 }
 
 #[aerospike_macro::test]

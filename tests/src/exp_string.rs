@@ -100,6 +100,16 @@ async fn substr_variants_via_expression() {
     )
     .await;
     assert_eq!(rec.bins.get(VAR).unwrap(), &Value::from("hello"));
+
+    // The second argument is the exclusive END index (half-open range), not a
+    // length: [2, 5) of "hello world" is "llo".
+    let rec = eval(
+        &client,
+        &key,
+        str_exp::substr_range(int_val(2), int_val(5), string_bin(BIN.into())),
+    )
+    .await;
+    assert_eq!(rec.bins.get(VAR).unwrap(), &Value::from("llo"));
 }
 
 #[aerospike_macro::test]
@@ -448,6 +458,33 @@ async fn concat_list_via_expression() {
     )
     .await;
     assert_eq!(rec.bins.get(VAR).unwrap(), &Value::from("hello big world"));
+}
+
+#[aerospike_macro::test]
+async fn append_and_prepend_via_expression() {
+    let client = common::client().await;
+    if !server_supports_string_operations(&client).await {
+        return;
+    }
+    let key = as_key!(common::namespace(), &common::rand_str(10), "exp_appre");
+    let policy = StringPolicy::default();
+    put_str(&client, &WritePolicy::default(), &key, "world").await;
+
+    let rec = eval(
+        &client,
+        &key,
+        str_exp::append(&policy, string_val("!".into()), string_bin(BIN.into())),
+    )
+    .await;
+    assert_eq!(rec.bins.get(VAR).unwrap(), &Value::from("world!"));
+
+    let rec = eval(
+        &client,
+        &key,
+        str_exp::prepend(&policy, string_val("hello ".into()), string_bin(BIN.into())),
+    )
+    .await;
+    assert_eq!(rec.bins.get(VAR).unwrap(), &Value::from("hello world"));
 }
 
 #[aerospike_macro::test]
