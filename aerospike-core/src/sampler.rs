@@ -20,10 +20,11 @@
 //! `range`:
 //!
 //! - `range == threshold` → **always** sample.
-//! - `threshold < range`  → sample with probability `threshold / range`.
+//! - `threshold == 0`     → **never** sample (nothing is recorded).
+//! - otherwise            → sample with probability `threshold / range`.
 //!
-//! In [`MetricsPolicy`](crate::metrics::MetricsPolicy) the sampler is an
-//! `Option<Sampler>`; `None` means **no sampling** (nothing is recorded).
+//! The default sampler in [`MetricsPolicy`](crate::metrics::MetricsPolicy) is
+//! [`Sampler::all`], so enabling metrics records every command.
 
 use crate::xor_shift::XorShift;
 
@@ -60,6 +61,17 @@ impl Sampler {
         Sampler {
             range: 1,
             threshold: 1,
+        }
+    }
+
+    /// A sampler that never samples (`threshold == 0`). With this sampler the
+    /// per-command metrics record nothing; connection/tend lifecycle counters
+    /// (gated only on metrics being enabled) still record.
+    #[must_use]
+    pub const fn never() -> Self {
+        Sampler {
+            range: 1,
+            threshold: 0,
         }
     }
 

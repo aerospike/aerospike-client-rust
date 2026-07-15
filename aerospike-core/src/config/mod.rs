@@ -196,7 +196,7 @@ dynamic:
     socket_timeout: 4321
   metrics:
     enable: true
-    latency_columns: 7
+    latency_columns: 9
     latency_base: 3
 "#;
 
@@ -276,7 +276,7 @@ dynamic:
         assert_eq!(metrics.enable, Some(true));
         let mut mp = crate::metrics::MetricsPolicy::default();
         metrics.policy.merge_into(&mut mp);
-        assert_eq!(mp.latency_columns, 7);
+        assert_eq!(mp.latency_columns, 9);
         assert_eq!(mp.latency_base, 3);
         // The SAMPLE has no labels key, so labels stays absent.
         assert!(metrics.enable.is_some());

@@ -58,7 +58,7 @@ impl Labels {
 }
 
 /// Default number of latency histogram columns (elapsed-time range buckets).
-pub const DEFAULT_LATENCY_COLUMNS: usize = 24;
+pub const DEFAULT_LATENCY_COLUMNS: usize = 7;
 /// Default histogram base.
 pub const DEFAULT_LATENCY_BASE: usize = 2;
 
@@ -70,9 +70,12 @@ pub struct MetricsPolicy {
     #[cfg_attr(feature = "dynamic-config", config(skip))]
     pub histogram_type: HistogramType,
 
-    /// Number of elapsed-time range buckets in latency histograms.
+    /// Number of elapsed-time range buckets in latency histograms. Bucket
+    /// units are **milliseconds** (matching the Java client): with the default
+    /// 7 columns and base 2, the logarithmic buckets are
+    /// `<1ms <2ms <4ms <8ms <16ms <32ms >=32ms`.
     ///
-    /// Default: 24.
+    /// Default: 7 (matching the Java client's `latencyColumns`).
     pub latency_columns: usize,
 
     /// Histogram base.
@@ -81,8 +84,9 @@ pub struct MetricsPolicy {
     /// `<base^1 <base^2 ... >=base^(columns-1)`; for linear histograms they are
     /// `<base <base*2 ... >=base*(columns-1)`.
     ///
-    /// Default: 2. In dynamic-config files this is the `latency_base` key (a
-    /// direct multiplier), matching the Aerospike Go client.
+    /// Default: 2 — equivalent to the Java client's `latencyShift = 1`
+    /// (`base = 2^shift`). In dynamic-config files this is the `latency_base`
+    /// key (a direct multiplier), matching the Aerospike Go client.
     pub latency_base: usize,
 
     /// User-provided labels appended to metrics on export.
@@ -91,12 +95,12 @@ pub struct MetricsPolicy {
 
     /// Decides, per command, whether it is sampled while metrics are enabled.
     ///
-    /// `None` means **no sampling** — nothing is recorded. A [`Sampler`] whose
-    /// `range == threshold` records every command; otherwise it records a
-    /// `threshold / range` fraction. Defaults to `Some(Sampler::all())`, so
-    /// enabling metrics records every command unless a sampler is set.
+    /// A [`Sampler`] whose `range == threshold` records every command; a
+    /// `threshold` of `0` ([`Sampler::never`]) records nothing; otherwise it
+    /// records a `threshold / range` fraction. Defaults to [`Sampler::all`],
+    /// so enabling metrics records every command unless a sampler is set.
     #[cfg_attr(feature = "dynamic-config", config(skip))]
-    pub sampler: Option<Sampler>,
+    pub sampler: Sampler,
 }
 
 impl Default for MetricsPolicy {
@@ -106,7 +110,7 @@ impl Default for MetricsPolicy {
             latency_columns: DEFAULT_LATENCY_COLUMNS,
             latency_base: DEFAULT_LATENCY_BASE,
             labels: Labels::new(),
-            sampler: Some(Sampler::all()),
+            sampler: Sampler::all(),
         }
     }
 }
@@ -133,10 +137,13 @@ mod tests {
     use super::*;
 
     #[test]
-    fn default_policy_matches_go_defaults() {
+    fn default_policy_matches_java_defaults() {
+        // Pinned to _temp/aerospike-client-java MetricsPolicy: latencyColumns=7,
+        // latencyShift=1 (== base 2). Note this deliberately diverges from the
+        // Go client's 24-column default.
         let p = MetricsPolicy::default();
         assert_eq!(p.histogram_type, HistogramType::Logarithmic);
-        assert_eq!(p.latency_columns, 24);
+        assert_eq!(p.latency_columns, 7);
         assert_eq!(p.latency_base, 2);
         assert!(p.labels.entries().is_empty());
     }
@@ -148,7 +155,7 @@ mod tests {
         let empty = HashMap::new();
         let p = MetricsPolicy::default_with_labels(vec![a, empty]);
         // Defaults preserved, the empty map dropped.
-        assert_eq!(p.latency_columns, 24);
+        assert_eq!(p.latency_columns, DEFAULT_LATENCY_COLUMNS);
         assert_eq!(p.labels.entries().len(), 1);
         assert_eq!(p.labels.entries()[0].get("dc").unwrap(), "us-east");
     }

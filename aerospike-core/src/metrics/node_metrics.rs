@@ -29,16 +29,6 @@ use crate::sampler::Sampler;
 use crate::xor_shift::XorShift;
 use crate::ResultCode;
 
-/// Encodes the policy's optional sampler into the `(range, threshold)` pair
-/// stored in two atomics. `range == 0` is the sentinel for "no sampling"
-/// (`None`, or a degenerate zero-range sampler).
-const fn encode_sampler(sampler: Option<Sampler>) -> (u64, u64) {
-    match sampler {
-        Some(s) => (s.range, s.threshold),
-        None => (0, 0),
-    }
-}
-
 #[cfg(feature = "serialization")]
 use serde::Serialize;
 #[cfg(feature = "serialization")]
@@ -293,7 +283,7 @@ impl NodeMetrics {
                 policy.latency_columns,
             ));
         }
-        let (range, threshold) = encode_sampler(policy.sampler);
+        let Sampler { range, threshold } = policy.sampler;
         NodeMetrics {
             policy,
             sampler_range: AtomicU64::new(range),
@@ -319,14 +309,16 @@ impl NodeMetrics {
 
     /// Returns whether the next command should be recorded: collection must be
     /// enabled **and** the configured sampler must select it (drawing from
-    /// `rand`, typically the serving connection's generator). A `range` of 0
-    /// (no sampler / `None`) records nothing.
+    /// `rand`, typically the serving connection's generator). A `threshold` of
+    /// 0 ([`Sampler::never`]) records nothing.
     pub fn should_sample(&self, rand: &mut XorShift) -> bool {
         if !self.is_enabled() {
             return false;
         }
         let range = self.sampler_range.load(Ordering::Relaxed);
         if range == 0 {
+            // Unreachable via the constructors (range >= 1), but `Sampler`'s
+            // fields are public — guard the modulo against a hand-built 0.
             return false;
         }
         let threshold = self.sampler_threshold.load(Ordering::Relaxed);
@@ -470,20 +462,23 @@ impl NodeMetrics {
         }
     }
 
-    /// Records the elapsed time (microseconds) of a completed command against
-    /// its per-command-type histogram.
-    pub fn record_command(&self, ct: CommandType, micros: u64) {
+    /// Records the elapsed time (milliseconds, matching the Java client's
+    /// histogram units) of a completed command against its per-command-type
+    /// histogram.
+    pub fn record_command(&self, ct: CommandType, millis: u64) {
         if let Some(h) = &self.command_metrics[ct.index()] {
-            h.add(micros);
+            h.add(millis);
         }
     }
 
-    /// Records connection-acquire time for the detailed per-namespace metrics.
-    pub fn record_connection_aq(&self, namespace: &str, ct: CommandType, micros: u64) {
-        self.with_command_metric(namespace, ct, |cm| cm.connection_aq.add(micros));
+    /// Records connection-acquire time (milliseconds) for the detailed
+    /// per-namespace metrics.
+    pub fn record_connection_aq(&self, namespace: &str, ct: CommandType, millis: u64) {
+        self.with_command_metric(namespace, ct, |cm| cm.connection_aq.add(millis));
     }
 
-    /// Records write latency and bytes-sent for the detailed metrics.
+    /// Records write latency (milliseconds) and bytes-sent for the detailed
+    /// metrics.
     pub fn record_write(&self, namespace: &str, ct: CommandType, bytes_sent: u64, latency: u64) {
         self.with_command_metric(namespace, ct, |cm| {
             cm.bytes_sent.add(bytes_sent);
@@ -491,7 +486,8 @@ impl NodeMetrics {
         });
     }
 
-    /// Records parse time and bytes-received for the detailed metrics.
+    /// Records parse time (milliseconds) and bytes-received for the detailed
+    /// metrics.
     pub fn record_parse(
         &self,
         namespace: &str,
@@ -569,7 +565,7 @@ impl NodeMetrics {
     /// changed.
     pub fn reshape(&self, policy: &MetricsPolicy) {
         // Pick up the (possibly new) sampler from the applied policy.
-        let (range, threshold) = encode_sampler(policy.sampler);
+        let Sampler { range, threshold } = policy.sampler;
         self.sampler_threshold.store(threshold, Ordering::Relaxed);
         self.sampler_range.store(range, Ordering::Relaxed);
         for h in self.command_metrics.iter().flatten() {
@@ -992,18 +988,18 @@ mod tests {
         m.set_enabled(true);
         assert!(m.should_sample(&mut rng), "enabled + Always must sample");
 
-        // `None` (no sampling) records nothing even while enabled.
+        // `Sampler::never()` records nothing even while enabled.
         let policy = MetricsPolicy {
-            sampler: None,
+            sampler: Sampler::never(),
             ..MetricsPolicy::default()
         };
         let m2 = NodeMetrics::new(policy);
         m2.set_enabled(true);
-        assert!(!m2.should_sample(&mut rng), "None must not sample");
+        assert!(!m2.should_sample(&mut rng), "never() must not sample");
 
         // A reshape to a sampling policy is picked up live (lock-free).
         m2.reshape(&MetricsPolicy {
-            sampler: Some(Sampler::all()),
+            sampler: Sampler::all(),
             ..MetricsPolicy::default()
         });
         assert!(

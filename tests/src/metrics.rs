@@ -18,9 +18,10 @@
 
 use std::collections::HashMap;
 
+use aerospike::query::PartitionFilter;
 use aerospike::{
     as_bin, as_key, operations, BatchOperation, BatchPolicy, BatchReadPolicy, BatchWritePolicy,
-    Bins, Client, CommandType, MetricsPolicy, ReadPolicy, WritePolicy,
+    Bins, Client, CommandType, MetricsPolicy, QueryPolicy, ReadPolicy, Statement, WritePolicy,
 };
 use aerospike_rt::sleep;
 use aerospike_rt::time::Duration;
@@ -337,13 +338,55 @@ async fn metrics_json_serialization_layout() {
 }
 
 #[aerospike_macro::test]
+async fn metrics_scan_histogram_records_filterless_query() {
+    let client = common::client().await;
+    client.enable_metrics(MetricsPolicy::default());
+
+    let namespace = common::namespace();
+    let set_name = common::rand_str(10);
+    let wpolicy = WritePolicy::default();
+    for i in 0..5i64 {
+        let key = as_key!(namespace, &set_name, i);
+        client
+            .put(&wpolicy, &key, &[as_bin!("bin", i)])
+            .await
+            .unwrap();
+    }
+
+    // A filter-less statement is a scan; it must land in the scan histogram.
+    // (A statement with a secondary-index filter takes the identical code path
+    // and is attributed to CommandType::Query instead.)
+    let stmt = Statement::new(namespace, &set_name, Bins::All);
+    let rs = client
+        .query(&QueryPolicy::default(), PartitionFilter::all(), stmt)
+        .await
+        .unwrap();
+    use futures::StreamExt;
+    let count = rs.into_stream().count().await;
+    assert!(count >= 5, "scan should return the seeded records");
+
+    let metrics = client.metrics();
+    let agg = &metrics.cluster_aggregated;
+    assert!(
+        agg.command_histogram(CommandType::Scan).unwrap().count() > 0,
+        "scan executions must be recorded in the scan-metrics histogram"
+    );
+    // Detailed per-namespace metrics are attributed too.
+    assert!(
+        agg.detailed_metric(namespace, CommandType::Scan).is_some(),
+        "scan must appear in detailed per-namespace metrics"
+    );
+    client.close().await.unwrap();
+}
+
+#[aerospike_macro::test]
 async fn metrics_never_sampler_records_no_commands() {
     let client = common::client().await;
 
-    // Metrics enabled, but a `None` sampler means no command is ever
+    // Metrics enabled, but `Sampler::never()` means no command is ever
     // recorded even though collection is "on".
     let policy = MetricsPolicy {
-        sampler: None,
+        sampler: aerospike::Sampler::never(),
         ..MetricsPolicy::default()
     };
     client.enable_metrics(policy);
@@ -366,7 +409,7 @@ async fn metrics_never_sampler_records_no_commands() {
         assert_eq!(
             agg.command_histogram(ct).unwrap().count(),
             0,
-            "None sampler must record no samples for {ct:?}"
+            "never() sampler must record no samples for {ct:?}"
         );
     }
     // No detailed per-namespace metrics either.

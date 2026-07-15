@@ -116,7 +116,10 @@ impl<'a> SingleCommand<'a> {
         let cmd_namespace: Option<String> = cmd.namespace().map(str::to_owned);
         let trans_start = Instant::now();
         let mut last_node: Option<Arc<Node>> = None;
-        let micros_since = |start: Instant| start.elapsed().as_micros() as u64;
+        // Latency metrics are recorded in milliseconds (matching the Java
+        // client's histogram units); sub-millisecond phases record 0 and land
+        // in the first bucket.
+        let millis_since = |start: Instant| start.elapsed().as_millis() as u64;
 
         // set timeout outside the loop
         let deadline = policy.deadline();
@@ -260,7 +263,7 @@ impl<'a> SingleCommand<'a> {
             if metrics_on {
                 if let Some(ns) = cmd_namespace.as_deref() {
                     node.metrics()
-                        .record_connection_aq(ns, cmd_type, micros_since(aq_start));
+                        .record_connection_aq(ns, cmd_type, millis_since(aq_start));
                 }
             }
 
@@ -305,7 +308,7 @@ impl<'a> SingleCommand<'a> {
                         ns,
                         cmd_type,
                         bytes_sent,
-                        micros_since(write_start),
+                        millis_since(write_start),
                     );
                 }
             }
@@ -366,12 +369,12 @@ impl<'a> SingleCommand<'a> {
                     node.metrics().record_parse(
                         ns,
                         cmd_type,
-                        micros_since(parse_start),
+                        millis_since(parse_start),
                         conn.bytes_read() as u64,
                     );
                 }
                 node.metrics()
-                    .record_command(cmd_type, micros_since(trans_start));
+                    .record_command(cmd_type, millis_since(trans_start));
             }
 
             // allow the connection to be put back in the connection pool
