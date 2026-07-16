@@ -500,18 +500,14 @@ impl Connection {
         // Need to read more data from the network
         let remaining = total_message_size - already_read;
 
-        // Save what we already have after the 16-byte compressed header
-        let existing_compressed = self.buffer.data_buffer[16..already_read].to_vec();
-
-        // Read remaining compressed bytes
-        self.buffer.resize_buffer(remaining)?;
+        // Read remaining compressed bytes at offset already_read (30), appending to existing data
+        self.buffer.resize_buffer(already_read + remaining)?;
         self.set_state(ConnectionState::ReadingBody(remaining));
-        self.read_buffer(remaining).await?;
+        self.read_buffer_at(already_read, remaining).await?;
         self.set_state(ConnectionState::Ready);
 
-        // Assemble full compressed payload
-        let mut compressed_data = existing_compressed;
-        compressed_data.extend_from_slice(&self.buffer.data_buffer[..remaining]);
+        // Extract full compressed payload from buffer: bytes 16 through end
+        let compressed_data = self.buffer.data_buffer[16..already_read + remaining].to_vec();
 
         self.inflate(&compressed_data, uncompressed_size)
     }
@@ -1609,5 +1605,6 @@ mod tests_eof_loopback {
             result.err()
         );
     }
+
 }
 
