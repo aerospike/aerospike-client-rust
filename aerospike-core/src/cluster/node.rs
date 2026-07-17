@@ -89,6 +89,11 @@ pub struct Node {
     /// Per-node metrics. Shared with the connection pool so connection
     /// lifecycle events are recorded against the same sink.
     metrics: Arc<NodeMetrics>,
+    /// Cluster-wide count of connections currently being opened by background
+    /// fill tasks. Shared across every node of the cluster and checked against
+    /// `ClientPolicy::opening_connection_threshold` before spawning a fill —
+    /// mirrors the Go client's `Cluster.connectionThreshold`.
+    opening_connections: Arc<AtomicUsize>,
 }
 
 impl Drop for Node {
@@ -108,8 +113,10 @@ impl Node {
         client_policy: ClientPolicy,
         nv: Arc<NodeValidator>,
         metrics: Arc<NodeMetrics>,
+        opening_connections: Arc<AtomicUsize>,
     ) -> Self {
         Node {
+            opening_connections,
             client_policy: client_policy.clone(),
             name: nv.name.clone(),
             aliases: AtomicArc::from(nv.aliases.clone()),
@@ -571,9 +578,48 @@ impl Node {
             return Ok(conn);
         }
 
-        // Pool had no ready connection; we must open a new one.
+        // Pool had no ready connection. Hand the expensive open (TCP connect +
+        // TLS + login) to a detached background task and report
+        // `ConnectionPoolEmpty` so the caller's retry loop paces itself while
+        // the connection is prepared — the handshake never runs inside a
+        // command's latency. Mirrors the Go client's `makeConnectionForPool`.
         self.metrics.incr_connections_pool_empty();
-        self.connection_pool.make_conn(usize::from(hint)).await
+        self.spawn_background_conn_fill(hint);
+        Err(Error::ConnectionPoolEmpty)
+    }
+
+    /// Spawns a detached task that opens one connection and parks it in the
+    /// pool. No-op when the cluster-wide
+    /// [`ClientPolicy::opening_connection_threshold`] is reached (another
+    /// in-flight open will refill the pool) or when every queue is already at
+    /// capacity (all slots hold live or in-flight connections — the retrying
+    /// caller will pick one up as it is returned).
+    fn spawn_background_conn_fill(&self, hint: u8) {
+        let threshold = self.client_policy.opening_connection_threshold;
+        let opening = self.opening_connections.clone();
+        if threshold > 0 && opening.fetch_add(1, Ordering::Relaxed) + 1 > threshold {
+            opening.fetch_sub(1, Ordering::Relaxed);
+            return;
+        }
+
+        let Some(queue) = self.connection_pool.reserve_queue(usize::from(hint)) else {
+            if threshold > 0 {
+                opening.fetch_sub(1, Ordering::Relaxed);
+            }
+            return;
+        };
+
+        aerospike_rt::spawn(async move {
+            // The slot was reserved above; settle it either way. `make_conn`
+            // records the attempt/success/failure connection metrics itself.
+            match queue.make_conn().await {
+                Ok(conn) => queue.put_back(conn),
+                Err(_) => queue.reduce_capacity(),
+            }
+            if threshold > 0 {
+                opening.fetch_sub(1, Ordering::Relaxed);
+            }
+        });
     }
 
     /// Returns the per-node metrics sink.
@@ -647,7 +693,23 @@ impl Node {
         policy: &AdminPolicy,
         commands: &[&str],
     ) -> Result<HashMap<String, String>> {
-        let mut conn = self.get_connection(0).await?;
+        // `get_connection` reports `ConnectionPoolEmpty` while a background
+        // task opens the connection; this method has no retry loop of its
+        // own, so poll briefly until the connection lands or the admin
+        // timeout elapses (mirrors the Go client's public `GetConnection`).
+        let deadline = aerospike_rt::time::Instant::now()
+            + std::time::Duration::from_millis(u64::from(policy.timeout()).max(1000));
+        let mut conn = loop {
+            match self.get_connection(0).await {
+                Ok(conn) => break conn,
+                Err(Error::ConnectionPoolEmpty)
+                    if aerospike_rt::time::Instant::now() < deadline =>
+                {
+                    aerospike_rt::sleep(std::time::Duration::from_millis(5)).await;
+                }
+                Err(e) => return Err(e),
+            }
+        };
         let res = Message::info(policy, &mut conn, commands).await;
 
         if let Err(e) = res {
@@ -1002,7 +1064,7 @@ mod node_tests {
         let metrics = Arc::new(crate::metrics::NodeMetrics::new(
             crate::metrics::MetricsPolicy::default(),
         ));
-        Node::new(policy, nv, metrics)
+        Node::new(policy, nv, metrics, Arc::new(std::sync::atomic::AtomicUsize::new(0)))
     }
 
     /// One idle connection in the pool, using the test [`crate::net::Connection`] (no real socket).
@@ -1089,8 +1151,8 @@ mod node_tests {
 
     #[aerospike_macro::test]
     async fn get_connection_miss_uses_hint_to_select_queue() {
-        // Fix 1: get_connection(hint) passed hardcoded 0 to make_conn on pool miss.
-        // Each hint must land on its own queue.
+        // A pool miss must report `ConnectionPoolEmpty` and hand the open to a
+        // background task, honoring the hint for queue selection.
         let policy = ClientPolicy {
             conn_pools_per_node: 4,
             max_conns_per_node: 8, // 2 per queue — room to observe distribution
@@ -1108,13 +1170,26 @@ mod node_tests {
         let metrics = Arc::new(crate::metrics::NodeMetrics::new(
             crate::metrics::MetricsPolicy::default(),
         ));
-        let node = Node::new(policy, nv, metrics);
+        let node = Node::new(policy, nv, metrics, Arc::new(std::sync::atomic::AtomicUsize::new(0)));
 
-        // Trigger 4 pool misses with distinct hints — each should land on its own queue.
-        let _c0 = node.get_connection(0).await.expect("hint=0");
-        let _c1 = node.get_connection(1).await.expect("hint=1");
-        let _c2 = node.get_connection(2).await.expect("hint=2");
-        let _c3 = node.get_connection(3).await.expect("hint=3");
+        // Trigger 4 pool misses with distinct hints — each reports pool-empty
+        // and spawns a background fill on its own queue.
+        for hint in 0..4u8 {
+            let err = node.get_connection(hint).await.unwrap_err();
+            assert!(
+                matches!(err, Error::ConnectionPoolEmpty),
+                "pool miss must report ConnectionPoolEmpty, got {err:?}"
+            );
+        }
+
+        // Let the spawned fill tasks run (test connections are dummies, so
+        // they complete on the next scheduler passes).
+        for _ in 0..20 {
+            aerospike_rt::sleep(aerospike_rt::time::Duration::from_millis(1)).await;
+            if node.connection_pool.total_reserved() == 4 {
+                break;
+            }
+        }
 
         let queues = node.connection_pool.queues();
         for i in 0..4 {
@@ -1124,6 +1199,76 @@ mod node_tests {
                 "queue[{i}] must have exactly 1 reserved connection"
             );
         }
+    }
+
+    /// A pool miss spawns a background fill; a subsequent `get_connection`
+    /// (after the fill lands) succeeds from the pool — the retry pattern the
+    /// command loops rely on.
+    #[cfg(feature = "rt-tokio")]
+    #[tokio::test(flavor = "current_thread")]
+    async fn get_connection_retry_picks_up_background_fill() {
+        let node = test_node();
+
+        let err = node.get_connection(0).await.unwrap_err();
+        assert!(matches!(err, Error::ConnectionPoolEmpty));
+
+        // Let the spawned fill task run (dummy connection, completes fast).
+        for _ in 0..20 {
+            aerospike_rt::sleep(aerospike_rt::time::Duration::from_millis(1)).await;
+            if node.connection_pool.num_conns() == 1 {
+                break;
+            }
+        }
+
+        let conn = node
+            .get_connection(0)
+            .await
+            .expect("retry must pick up the background-filled connection");
+        drop(conn);
+    }
+
+    /// `opening_connection_threshold` caps concurrent background opens
+    /// cluster-wide: with a threshold of 1, a second miss while the first
+    /// open is still pending must not spawn another fill.
+    #[cfg(feature = "rt-tokio")]
+    #[tokio::test(flavor = "current_thread")]
+    async fn opening_connection_threshold_caps_background_fills() {
+        let policy = ClientPolicy {
+            opening_connection_threshold: 1,
+            ..ClientPolicy::default()
+        };
+        let nv = Arc::new(NodeValidator {
+            name: "test-node".to_string(),
+            aliases: vec![Host::new("127.0.0.1", 3000)],
+            address: "127.0.0.1:3000".to_string(),
+            client_policy: policy.clone(),
+            use_new_info: true,
+            version: Version::default(),
+            detect_load_balancer: false,
+        });
+        let metrics = Arc::new(crate::metrics::NodeMetrics::new(
+            crate::metrics::MetricsPolicy::default(),
+        ));
+        let node = Node::new(
+            policy,
+            nv,
+            metrics,
+            Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+        );
+
+        // On a current-thread runtime no spawned task runs until we await, so
+        // both calls observe the first fill still "in flight".
+        let _ = node.get_connection(0).await.unwrap_err(); // spawns (1 <= threshold)
+        let _ = node.get_connection(0).await.unwrap_err(); // capped (2 > threshold)
+
+        for _ in 0..20 {
+            aerospike_rt::sleep(aerospike_rt::time::Duration::from_millis(1)).await;
+        }
+        assert_eq!(
+            node.connection_pool.total_reserved(),
+            1,
+            "only one background fill may run under threshold 1"
+        );
     }
 
     #[aerospike_macro::test]
@@ -1145,7 +1290,7 @@ mod node_tests {
         let metrics = Arc::new(crate::metrics::NodeMetrics::new(
             crate::metrics::MetricsPolicy::default(),
         ));
-        let node = Node::new(policy, nv, metrics);
+        let node = Node::new(policy, nv, metrics, Arc::new(std::sync::atomic::AtomicUsize::new(0)));
 
         let mut in_flight = Vec::new();
         for i in 0..5 {

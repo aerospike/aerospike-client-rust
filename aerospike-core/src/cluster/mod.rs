@@ -120,6 +120,11 @@ pub struct Cluster {
     max_retries_exceeded_count: AtomicU64,
     total_timeout_exceeded_count: AtomicU64,
 
+    // Cluster-wide count of connections currently being opened by background
+    // fill tasks; shared into every node and checked against
+    // `ClientPolicy::opening_connection_threshold`.
+    opening_connections: Arc<std::sync::atomic::AtomicUsize>,
+
     // ---- Dynamic configuration ----
     // Present only when a config provider is attached (env var or explicit
     // injection). Holds the live dynamic config; the watcher task refreshes it.
@@ -167,6 +172,7 @@ impl Cluster {
             metrics: std::sync::Mutex::new(HashMap::new()),
             max_retries_exceeded_count: AtomicU64::new(0),
             total_timeout_exceeded_count: AtomicU64::new(0),
+            opening_connections: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
 
             #[cfg(feature = "dynamic-config")]
             dyn_config: std::sync::OnceLock::new(),
@@ -1035,7 +1041,12 @@ impl Cluster {
         if self.metrics_enabled() {
             metrics.set_enabled(true);
         }
-        let res = Node::new(self.client_policy(), Arc::new(nv), metrics);
+        let res = Node::new(
+            self.client_policy(),
+            Arc::new(nv),
+            metrics,
+            self.opening_connections.clone(),
+        );
         res.send_user_agent_id().await;
         res
     }

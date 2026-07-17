@@ -155,6 +155,18 @@ pub struct ClientPolicy {
     #[cfg_attr(feature = "dynamic-config", config(skip))]
     pub conn_pools_per_node: u8,
 
+    /// Cluster-wide cap on the number of connections that may be in the middle
+    /// of being opened (TCP connect + TLS + login) at the same time. When a
+    /// command finds its node's pool empty, the connection is opened by a
+    /// background task while the command retries; this threshold bounds how
+    /// many such opens can run concurrently across all nodes, protecting the
+    /// cluster from a thundering herd after a cold start or mass disconnect.
+    ///
+    /// `0` (the default) means unlimited. Mirrors the Go client's
+    /// `OpeningConnectionThreshold`.
+    #[cfg_attr(feature = "dynamic-config", config(skip))]
+    pub opening_connection_threshold: usize,
+
     /// Throw exception if host connection fails during `addHost()`.
     #[cfg_attr(feature = "dynamic-config", config(skip))]
     pub fail_if_not_connected: bool,
@@ -282,6 +294,7 @@ impl Default for ClientPolicy {
             min_conns_per_node: 0,
             max_conns_per_node: 256,
             conn_pools_per_node: 1,
+            opening_connection_threshold: 0,
             fail_if_not_connected: true,
             tend_interval: 1000,
             config_interval: 1000,

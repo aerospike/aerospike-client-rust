@@ -129,6 +129,9 @@ impl<'a> SingleCommand<'a> {
         // (matching the Go client). A multiplier <= 1.0 keeps it constant.
         let sleep_multiplier = policy.sleep_multiplier();
         let mut sleep_interval = policy.sleep_between_retries();
+        // Consecutive waits spent on an empty connection pool while a
+        // background task opens a connection (not part of the retry budget).
+        let mut pool_empty_waits: usize = 0;
 
         // Finalizes an error before returning to the caller: applies `in_doubt`
         // per Java's rule and attaches retry context (iteration count, last
@@ -250,6 +253,25 @@ impl<'a> SingleCommand<'a> {
             let aq_start = Instant::now();
             let mut conn = match node.get_connection(cmd.hint()).await {
                 Ok(conn) => conn,
+                Err(Error::ConnectionPoolEmpty)
+                    if pool_empty_waits < commands::POOL_EMPTY_MAX_WAITS =>
+                {
+                    // A background task is opening a connection. This is a
+                    // pacing wait, not a failure: it consumes neither the
+                    // retry budget (`iterations` is rolled back, so writes
+                    // with `max_retries == 0` still succeed on a cold pool)
+                    // nor the node's error-rate breaker. Bounded by the
+                    // command deadline (checked at the loop top) and by
+                    // `POOL_EMPTY_MAX_WAITS` for deadline-less commands.
+                    // (Deliberately not recorded into `last_err`: the loop
+                    // top drains `last_err` into `sub_errors` every pass, and
+                    // thousands of waits must not produce thousands of
+                    // sub-error entries.)
+                    iterations -= 1;
+                    pool_empty_waits += 1;
+                    sleep(commands::POOL_EMPTY_WAIT).await;
+                    continue;
+                }
                 Err(err) => {
                     warn!("Node {node}: {err}");
                     node.incr_error_rate();

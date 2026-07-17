@@ -100,6 +100,12 @@ pub enum Error {
     /// Exceeded max. number of connections per node.
     #[error("Too many connections")]
     NoMoreConnections,
+    /// The connection pool had no ready connection. A background task may have
+    /// been spawned to open one; the operation should retry shortly. Command
+    /// retry loops treat this as a pacing wait that does not consume the
+    /// retry budget.
+    #[error("Connection pool empty; a connection is being opened in the background")]
+    ConnectionPoolEmpty,
     /// Server responded with a response code indicating an error condition for batch.
     #[error("Batch error: Index: {0:?}, Result Code: {1:?}, In Doubt: {2}, Node: {3}")]
     BatchError(u32, ResultCode, bool, String),

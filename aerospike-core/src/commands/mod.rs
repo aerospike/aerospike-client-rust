@@ -97,6 +97,19 @@ pub trait Command {
     }
 }
 
+/// Pacing sleep between retries while the connection pool is empty and a
+/// background task is opening a connection. Pool-empty waits do not consume
+/// the command's retry budget (see the retry loops), so this bounds how hot
+/// the wait loop spins; the wait itself is bounded by the command deadline
+/// plus [`POOL_EMPTY_MAX_WAITS`].
+pub(crate) const POOL_EMPTY_WAIT: std::time::Duration = std::time::Duration::from_millis(1);
+
+/// Upper bound on consecutive pool-empty waits for commands without a total
+/// timeout (`total_timeout == 0` means no deadline): ~5s at
+/// [`POOL_EMPTY_WAIT`] pacing. Beyond this the pool-empty error is handled
+/// like any other connection failure.
+pub(crate) const POOL_EMPTY_MAX_WAITS: usize = 5_000;
+
 /// Whether the connection may be returned to the pool after this error.
 /// Client-side errors and the `SCAN_ABORT` / `QUERY_ABORTED` server codes
 /// require the socket to be discarded (it may still have stream bytes

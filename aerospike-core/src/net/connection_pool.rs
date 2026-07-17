@@ -203,7 +203,7 @@ impl Queue {
                     continue;
                 }
                
-                // A server restart leaves the pool full of dead sockets 
+                // A server restart leaves the pool full of dead sockets
                 // that get handed out and fail on the first read
                 if !conn.is_alive() {
                     drop(conn);
@@ -417,6 +417,27 @@ impl ConnectionPool {
         Err(Error::ClientError(
             "Could not make a connection for the connection pool".into(),
         ))
+    }
+
+    /// Reserves a connection slot on the first queue (starting from `hint`)
+    /// that has capacity, returning a clone of that queue. The caller owns the
+    /// reserved slot: it must eventually `put_back` a connection or call
+    /// `reduce_capacity`. Returns `None` when every queue is at capacity
+    /// (pool exhausted — all slots hold live or in-flight connections).
+    pub fn reserve_queue(&self, hint: usize) -> Option<Queue> {
+        let num_queues = usize::from(self.num_queues);
+        let mut i = hint % num_queues;
+        for _ in 0..num_queues {
+            let queue = &self.queues[i % num_queues];
+            i += 1;
+            if i >= self.queues.len() {
+                i = 0;
+            }
+            if queue.reserve_capacity() {
+                return Some(queue.clone());
+            }
+        }
+        None
     }
 
     /// Closes the connection pool and clears all the internal queues from connection,
@@ -978,6 +999,37 @@ mod tests {
         }
         assert_eq!(fixed.total_reserved(), min, "Ready loop reaches min");
         assert_eq!(fixed.num_conns(), min);
+    }
+
+    #[aerospike_macro::test]
+    async fn reserve_queue_wraps_and_reports_exhausted() {
+        let host = Host::new("some-url", 30000);
+        let policy = ClientPolicy {
+            conn_pools_per_node: 2,
+            max_conns_per_node: 2, // 1 slot per queue
+            ..ClientPolicy::default()
+        };
+        let p = ConnectionPool::new(host, policy, None);
+
+        // Starting from hint 1: takes queue 1's only slot.
+        let q1 = p.reserve_queue(1).expect("queue 1 has capacity");
+        assert_eq!(p.total_reserved(), 1);
+
+        // Queue 1 is now full — the next reserve from the same hint must
+        // wrap around to queue 0.
+        let q0 = p.reserve_queue(1).expect("must wrap to queue 0");
+        assert_eq!(p.total_reserved(), 2);
+
+        // Every slot is reserved: the pool is exhausted.
+        assert!(
+            p.reserve_queue(0).is_none(),
+            "exhausted pool must not hand out reservations"
+        );
+
+        // Releasing a slot makes it reservable again.
+        q0.reduce_capacity();
+        assert!(p.reserve_queue(0).is_some());
+        q1.reduce_capacity();
     }
 
     // Tests the Drop/Closed path — Netsocket::TestDummy bypasses TCP so the

@@ -87,6 +87,9 @@ impl BatchOperateCommand {
         // retry sleep (matching Go). A multiplier <= 1.0 keeps it constant.
         let sleep_multiplier = self.policy.sleep_multiplier();
         let mut sleep_interval = self.policy.sleep_between_retries();
+        // Consecutive waits spent on an empty connection pool while a
+        // background task opens a connection (not part of the retry budget).
+        let mut pool_empty_waits: usize = 0;
 
         // Metrics: a batch containing any write op is a BatchWrite, otherwise
         // a BatchRead. `trans_start` measures the overall command latency.
@@ -149,6 +152,18 @@ impl BatchOperateCommand {
             };
 
             if let Some(e) = retry_err {
+                // Pool-empty is a pacing wait while a background task opens a
+                // connection: it consumes neither the retry budget nor the
+                // retry metrics, and is not chained into the error history
+                // (thousands of waits must not build a thousand-deep chain).
+                // Bounded by the outer total-timeout wrapper and the wait cap.
+                if matches!(e, Error::ConnectionPoolEmpty)
+                    && pool_empty_waits < commands::POOL_EMPTY_MAX_WAITS
+                {
+                    pool_empty_waits += 1;
+                    sleep(commands::POOL_EMPTY_WAIT).await;
+                    continue;
+                }
                 last_err = Some(e.chain_cause(last_err));
                 if sampled.unwrap_or(false) {
                     self.node.metrics().incr_transaction_retry();
@@ -258,6 +273,9 @@ impl BatchOperateCommand {
         let aq_start = Instant::now();
         let mut conn = match node.get_connection(0).await {
             Ok(conn) => conn,
+            // Pool-empty is a pacing signal (a background task is opening a
+            // connection), not node ill-health — don't trip the breaker.
+            Err(err @ Error::ConnectionPoolEmpty) => return Ok(Some(err)),
             Err(err) => {
                 warn!("Node {node}: {err}");
                 node.incr_error_rate();
