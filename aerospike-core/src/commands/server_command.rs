@@ -185,7 +185,7 @@ impl Command for ServerCommand<'_> {
 
                     match self.parse_record_results(&mut inner_conn).await {
                         Ok(stat) => status = stat,
-                        Err(e @ Error::ServerError(_, _, _)) => {
+                        Err(e @ Error::ServerError(_, _, _, _)) => {
                             inner_conn.drain(inner_conn.conn.deadline()).await?;
                             return Err(e);
                         }
@@ -201,7 +201,7 @@ impl Command for ServerCommand<'_> {
                     conn.set_limit_body(size)?;
                     match self.parse_record_results(&mut conn).await {
                         Ok(stat) => status = stat,
-                        Err(e @ Error::ServerError(_, _, _)) => {
+                        Err(e @ Error::ServerError(_, _, _, _)) => {
                             conn.drain(conn.conn.deadline()).await?;
                             return Err(e);
                         }
@@ -231,6 +231,7 @@ impl ServerCommand<'_> {
                         result_code,
                         false,
                         conn.conn.addr.clone(),
+                        None,
                     ));
                 }
                 return Ok(false);
@@ -241,6 +242,7 @@ impl ServerCommand<'_> {
                     result_code,
                     false,
                     conn.conn.addr.clone(),
+                    None,
                 ));
             }
 

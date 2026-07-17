@@ -882,7 +882,7 @@ async fn query_operate_empty_ops_returns_parameter_error() {
     let result = client.query_operate(&wpolicy, statement, &[]).await;
 
     match result {
-        Err(Error::ServerError(ResultCode::ParameterError, _, ref msg))
+        Err(Error::ServerError(ResultCode::ParameterError, _, ref msg, _))
             if msg.contains("no operations") => {}
         Err(other) => panic!(
             "expected client-side ParameterError ('query_operate called with no \

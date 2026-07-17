@@ -80,6 +80,7 @@ impl StreamCommand {
                         result_code,
                         false,
                         conn.conn.addr.clone(),
+                        None,
                     ));
                 }
             }
@@ -352,7 +353,7 @@ impl Command for StreamCommand {
 
                     match self.parse_stream(&mut inner_conn, inner_size).await {
                         Ok(stat) => status = stat,
-                        Err(e @ Error::ServerError(_, _, _)) => {
+                        Err(e @ Error::ServerError(_, _, _, _)) => {
                             inner_conn.drain(inner_conn.conn.deadline()).await?;
                             return Err(e);
                         }
@@ -368,7 +369,7 @@ impl Command for StreamCommand {
                     conn.set_limit_body(size)?;
                     match self.parse_stream(&mut conn, size).await {
                         Ok(stat) => status = stat,
-                        Err(e @ Error::ServerError(_, _, _)) => {
+                        Err(e @ Error::ServerError(_, _, _, _)) => {
                             conn.drain(conn.conn.deadline()).await?;
                             return Err(e);
                         }

@@ -121,6 +121,12 @@ pub trait Policy {
 
     /// Read policy for SC (strong consistency) namespaces.
     fn read_mode_sc(&self) -> ReadModeSC;
+
+    /// Requested level of server error detail (0-3). See
+    /// [`BasePolicy::error_detail_verbosity`]. Default: 0 (disabled).
+    fn error_detail_verbosity(&self) -> u8 {
+        0
+    }
 }
 
 /// Next sleep interval for an exponential retry backoff: multiplies `current`
@@ -194,6 +200,10 @@ where
 
     fn sleep_multiplier(&self) -> f64 {
         self.base().sleep_multiplier()
+    }
+
+    fn error_detail_verbosity(&self) -> u8 {
+        self.base().error_detail_verbosity()
     }
 }
 
@@ -408,6 +418,27 @@ pub struct BasePolicy {
     /// in their default policy constructors so end-users get positional
     /// results by default; rust-core users pay nothing unless they ask.
     pub populate_positional_results: bool,
+
+    /// Requests extended server-supplied error detail on failure responses.
+    ///
+    /// - `0` — disabled (no error details).
+    /// - `1` — subcode only.
+    /// - `2` — subcode and message.
+    /// - `3` — subcode, message, and (on expression build-failure paths) a
+    ///   structured expression trace.
+    ///
+    /// When greater than zero and the server attaches a detail, it is surfaced
+    /// on [`Error::ServerError`](crate::errors::Error::ServerError) and via the
+    /// [`Error::server_error_detail`](crate::errors::Error::server_error_detail),
+    /// [`Error::sub_code`](crate::errors::Error::sub_code) and
+    /// [`Error::server_message`](crate::errors::Error::server_message)
+    /// accessors. See [`crate::ServerErrorDetail`].
+    ///
+    /// Requires Aerospike server version 8.1.3 or later; older servers ignore
+    /// the flag.
+    ///
+    /// Default: 0
+    pub error_detail_verbosity: u8,
 }
 
 impl Policy for BasePolicy {
@@ -473,6 +504,10 @@ impl Policy for BasePolicy {
 
     fn compression_threshold(&self) -> usize {
         self.compression_threshold
+    }
+
+    fn error_detail_verbosity(&self) -> u8 {
+        self.error_detail_verbosity
     }
 }
 

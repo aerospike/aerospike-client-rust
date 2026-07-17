@@ -49,6 +49,7 @@ impl Default for BasePolicy {
             filter_expression: None,
             txn: None,
             populate_positional_results: false,
+            error_detail_verbosity: 0,
         }
     }
 }

@@ -275,6 +275,7 @@ impl BatchExecutor {
                         ResultCode::KeyNotFoundError,
                         false,
                         String::new(),
+                        None,
                     )),
                     Ok(()) => Ok(None),
                     Err(e) => Err(e),
@@ -312,7 +313,7 @@ impl BatchExecutor {
             Ok(record) => {
                 batch_op.set_record(record);
             }
-            Err(Error::ServerError(rc, in_doubt, _)) => {
+            Err(Error::ServerError(rc, in_doubt, _, _)) => {
                 batch_op.set_result_code(rc, in_doubt);
             }
             Err(err) => return Err(err),

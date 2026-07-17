@@ -113,8 +113,20 @@ pub enum Error {
     #[error("Batch error: Index: {0:?}, Result Code: {1:?}, In Doubt: {2}, Node: {3}")]
     BatchLastError(u32, ResultCode, bool, String),
     /// Server responded with a response code indicating an error condition.
-    #[error("Server error: {0:?}, In Doubt: {1}, Node: {2}")]
-    ServerError(ResultCode, bool, String),
+    /// The last element carries the extended server-supplied error detail
+    /// (subcode, message, expression trace) when it was requested via
+    /// [`BasePolicy::error_detail_verbosity`](crate::policy::BasePolicy::error_detail_verbosity)
+    /// and the server attached one; see [`crate::ServerErrorDetail`] and the
+    /// [`Error::sub_code`] / [`Error::server_message`] accessors.
+    #[error("Server error: {0:?}, In Doubt: {1}, Node: {2}{detail}",
+        detail = .3.as_ref().map(|d| format!(", Detail: {d}")).unwrap_or_default()
+    )]
+    ServerError(
+        ResultCode,
+        bool,
+        String,
+        Option<Box<crate::ServerErrorDetail>>,
+    ),
     /// Per-node circuit breaker has tripped: too many recent errors against
     /// the node within the configured `error_rate_window`. The command was
     /// *not* sent to the server.
@@ -189,12 +201,46 @@ impl Error {
     #[must_use]
     pub fn server_result_code(&self) -> Option<ResultCode> {
         match self {
-            Error::ServerError(rc, _, _)
+            Error::ServerError(rc, _, _, _)
             | Error::BatchError(_, rc, _, _)
             | Error::BatchLastError(_, rc, _, _) => Some(*rc),
             Error::Chain(a, b) => a.server_result_code().or_else(|| b.server_result_code()),
             _ => None,
         }
+    }
+
+    /// Returns the extended server-supplied error detail (subcode, message,
+    /// expression trace), if the server attached one. Requires
+    /// [`BasePolicy::error_detail_verbosity`](crate::policy::BasePolicy::error_detail_verbosity)
+    /// > 0 and server version 8.1.3+. Drills through `Chain` wrappers so
+    /// checks still work after retry decoration.
+    #[must_use]
+    pub fn server_error_detail(&self) -> Option<&crate::ServerErrorDetail> {
+        match self {
+            Error::ServerError(_, _, _, detail) => detail.as_deref(),
+            Error::Chain(a, b) => a.server_error_detail().or_else(|| b.server_error_detail()),
+            _ => None,
+        }
+    }
+
+    /// Returns the server-supplied error subcode, or
+    /// [`sub_code::NONE`](crate::server_error::sub_code::NONE) (0) when the
+    /// server did not send one. A subcode is only meaningful when interpreted
+    /// together with the result code: subcode values are scoped to their
+    /// parent result code and are NOT globally unique. Dispatch on the
+    /// ([`server_result_code`](Self::server_result_code), `sub_code`) pair.
+    #[must_use]
+    pub fn sub_code(&self) -> u32 {
+        self.server_error_detail()
+            .map_or(crate::server_error::sub_code::NONE, |d| d.sub_code)
+    }
+
+    /// Returns the formatted server-supplied error detail message, if any.
+    #[must_use]
+    pub fn server_message(&self) -> Option<&str> {
+        self.server_error_detail()
+            .map(|d| d.message.as_str())
+            .filter(|m| !m.is_empty())
     }
 
     /// Recompute the `in_doubt` flag:
@@ -207,7 +253,7 @@ impl Error {
             return self;
         }
         match &mut self {
-            Error::ServerError(rc, in_doubt, _)
+            Error::ServerError(rc, in_doubt, _, _)
             | Error::BatchError(_, rc, in_doubt, _)
             | Error::BatchLastError(_, rc, in_doubt, _)
                 if (commands_sent > 1
@@ -262,6 +308,136 @@ impl Error {
 }
 
 pub type Result<T> = ::std::result::Result<T, Error>;
+
+#[cfg(test)]
+mod server_detail_tests {
+    use super::*;
+    use crate::server_error::{sub_code, ServerErrorDetail};
+
+    fn detailed() -> Error {
+        Error::ServerError(
+            ResultCode::ParameterError,
+            false,
+            "node".into(),
+            Some(Box::new(ServerErrorDetail {
+                sub_code: sub_code::PARAM_TTL_INVALID,
+                message: "ttl too long (subcode=1)".into(),
+                exp_trace: None,
+            })),
+        )
+    }
+
+    #[test]
+    fn accessors_surface_detail() {
+        let err = detailed();
+        assert_eq!(err.server_result_code(), Some(ResultCode::ParameterError));
+        assert_eq!(err.sub_code(), sub_code::PARAM_TTL_INVALID);
+        assert_eq!(err.server_message(), Some("ttl too long (subcode=1)"));
+        assert!(err.server_error_detail().is_some());
+    }
+
+    #[test]
+    fn accessors_drill_through_chain() {
+        let wrapped = detailed().chain_error("retry context");
+        assert_eq!(wrapped.sub_code(), sub_code::PARAM_TTL_INVALID);
+        assert_eq!(wrapped.server_result_code(), Some(ResultCode::ParameterError));
+        assert!(wrapped.server_error_detail().is_some());
+    }
+
+    #[test]
+    fn no_detail_reports_none_and_zero() {
+        let err = Error::ServerError(ResultCode::KeyNotFoundError, false, "node".into(), None);
+        assert_eq!(err.sub_code(), sub_code::NONE);
+        assert_eq!(err.server_message(), None);
+        assert!(err.server_error_detail().is_none());
+    }
+
+    #[test]
+    fn display_includes_detail() {
+        let s = detailed().to_string();
+        assert!(s.contains("Detail: ttl too long (subcode=1)"), "{s}");
+    }
+
+    // ---- const-sentinel contract (ported from Go error_test.go) ----
+    //
+    // Go's newServerError routes special-case result codes (KEY_NOT_FOUND,
+    // FILTERED_OUT) through the same builder so the extended detail is never
+    // dropped, while `errors.Is` still matches the sentinel. Rust has no
+    // sentinel singletons; the equivalent contract is that the (result code,
+    // detail) pair survives construction and remains matchable.
+
+    fn server_error(rc: ResultCode, message: &str, sub_code: u32) -> Error {
+        let detail = if message.is_empty() && sub_code == 0 {
+            None
+        } else {
+            Some(Box::new(ServerErrorDetail {
+                sub_code,
+                message: message.into(),
+                exp_trace: None,
+            }))
+        };
+        Error::ServerError(rc, false, "node".into(), detail)
+    }
+
+    #[test]
+    fn plain_key_not_found_matches_and_has_no_detail() {
+        let err = server_error(ResultCode::KeyNotFoundError, "", 0);
+        assert!(matches!(
+            err,
+            Error::ServerError(ResultCode::KeyNotFoundError, _, _, _)
+        ));
+        assert_eq!(err.server_result_code(), Some(ResultCode::KeyNotFoundError));
+        assert_eq!(err.sub_code(), sub_code::NONE);
+    }
+
+    #[test]
+    fn key_not_found_with_detail_still_matches_and_surfaces_detail() {
+        let err = server_error(ResultCode::KeyNotFoundError, "record missing (subcode=7)", 7);
+        assert_eq!(err.server_result_code(), Some(ResultCode::KeyNotFoundError));
+        assert_eq!(err.server_message(), Some("record missing (subcode=7)"));
+        assert_eq!(err.sub_code(), 7);
+    }
+
+    #[test]
+    fn plain_filtered_out_matches() {
+        let err = server_error(ResultCode::FilteredOut, "", 0);
+        assert!(matches!(
+            err,
+            Error::ServerError(ResultCode::FilteredOut, _, _, _)
+        ));
+        assert_eq!(err.server_result_code(), Some(ResultCode::FilteredOut));
+    }
+
+    #[test]
+    fn filtered_out_with_detail_carries_message_and_no_subcode() {
+        // FILTERED_OUT carries no subcode (NONE) — only a contextual message.
+        let err = server_error(
+            ResultCode::FilteredOut,
+            "filtered out by filter expression",
+            sub_code::NONE,
+        );
+        assert_eq!(err.server_result_code(), Some(ResultCode::FilteredOut));
+        assert_eq!(err.server_message(), Some("filtered out by filter expression"));
+        assert_eq!(err.sub_code(), sub_code::NONE);
+    }
+
+    #[test]
+    fn does_not_cross_match_unrelated_result_codes() {
+        let err = server_error(ResultCode::KeyNotFoundError, "", 0);
+        assert!(!matches!(
+            err,
+            Error::ServerError(ResultCode::FilteredOut, _, _, _)
+        ));
+    }
+
+    #[test]
+    fn set_in_doubt_preserves_detail() {
+        // A write that failed in-doubt keeps its extended detail intact.
+        let err = server_error(ResultCode::Timeout, "timed out (subcode=3)", 3).set_in_doubt(true, 2);
+        assert_eq!(err.sub_code(), 3);
+        assert_eq!(err.server_message(), Some("timed out (subcode=3)"));
+    }
+}
 
 macro_rules! log_error_chain {
     ($err:expr, $($arg:tt)*) => {

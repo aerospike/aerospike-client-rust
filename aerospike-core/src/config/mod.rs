@@ -415,7 +415,8 @@ labels:
     fn read_full_merge_covers_all_base_fields() {
         let cfg: ReadPolicyConfig = parse(
             "read_mode_ap: ALL\nread_mode_sc: LINEARIZE\nsocket_timeout: 3\ntotal_timeout: 5\n\
-             max_retries: 3\nsleep_between_retries: 2\ntimeout_delay: 7\nreplica: PREFER_RACK\n",
+             max_retries: 3\nsleep_between_retries: 2\ntimeout_delay: 7\n\
+             error_detail_verbosity: 2\nreplica: PREFER_RACK\n",
         )
         .unwrap();
         let mut p = ReadPolicy::default();
@@ -427,6 +428,7 @@ labels:
         assert_eq!(p.base_policy.max_retries, 3);
         assert_eq!(p.base_policy.sleep_between_retries, 2);
         assert_eq!(p.base_policy.timeout_delay, 7);
+        assert_eq!(p.base_policy.error_detail_verbosity, 2);
         assert_eq!(p.replica, Replica::PreferRack);
     }
 

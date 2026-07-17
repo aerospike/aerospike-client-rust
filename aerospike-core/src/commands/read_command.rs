@@ -242,7 +242,18 @@ impl Command for ReadCommand<'_> {
                     .map_or_else(|| String::from("UDF Error"), ToString::to_string);
                 Err(Error::UdfBadResponse(reason))
             }
-            rc => Err(Error::ServerError(rc, false, conn.addr.clone())),
+            rc => {
+                // Walk the response fields on the error path too, so any
+                // extended server error detail is surfaced (the server may
+                // attach it to KEY_NOT_FOUND / FILTERED_OUT responses).
+                let error_detail = conn.buffer.parse_response_fields(field_count).error_detail;
+                Err(Error::ServerError(
+                    rc,
+                    false,
+                    conn.addr.clone(),
+                    error_detail,
+                ))
+            }
         }
     }
 }

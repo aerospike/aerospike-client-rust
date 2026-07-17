@@ -109,7 +109,7 @@ impl TxnRoll {
                     // clear the in-doubt flag so callers don't treat the
                     // failure as ambiguous.
                     let is_aborted =
-                        matches!(&err, Error::ServerError(ResultCode::MrtAborted, _, _));
+                        matches!(&err, Error::ServerError(ResultCode::MrtAborted, _, _, _));
 
                     if is_aborted {
                         self.txn.set_in_doubt(false);
@@ -243,7 +243,7 @@ impl TxnRoll {
             .map(|r| r.result_code);
         if let Some(code) = failure {
             return Err(match code {
-                Some(rc) => Error::ServerError(rc, false, String::new()),
+                Some(rc) => Error::ServerError(rc, false, String::new(), None),
                 None => {
                     Error::Timeout("Verify: no response for one or more records".to_string())
                 }
@@ -358,7 +358,7 @@ impl TxnRoll {
             };
             return Err(match code {
                 Some(rc) => {
-                    Error::ServerError(rc, false, format!("Failed to {action} one or more records"))
+                    Error::ServerError(rc, false, format!("Failed to {action} one or more records"), None)
                 }
                 None => Error::Timeout(format!(
                     "Failed to {action}: no response for one or more records"

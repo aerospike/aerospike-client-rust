@@ -103,14 +103,36 @@ impl Command for ExistsCommand<'_> {
 
         conn.buffer.reset_offset();
 
+        let sz = conn.buffer.read_u64(Some(0));
+        let header_length = conn.buffer.read_u8(Some(8));
         let result_code = ResultCode::from(conn.buffer.read_u8(Some(13)));
+        let field_count = conn.buffer.read_u16(Some(26)) as usize;
+        let receive_size = ((sz & 0xFFFF_FFFF_FFFF) - u64::from(header_length)) as usize;
+
+        // Drain the response body. With error-detail verbosity enabled the
+        // server attaches an ERROR_MESSAGE field to the body (this command is
+        // NOBINDATA, so on success there is nothing else to read).
+        let mut error_detail = None;
+        if receive_size > 0 {
+            conn.buffer.resize_buffer(receive_size)?;
+            conn.read_body(receive_size).await?;
+            conn.buffer.reset_offset();
+            if field_count > 0 {
+                error_detail = conn.buffer.parse_response_fields(field_count).error_detail;
+            }
+        }
 
         if result_code != ResultCode::Ok && result_code != ResultCode::KeyNotFoundError {
-            return Err(Error::ServerError(result_code, false, conn.addr.clone()));
+            return Err(Error::ServerError(
+                result_code,
+                false,
+                conn.addr.clone(),
+                error_detail,
+            ));
         }
 
         self.exists = result_code == ResultCode::Ok;
 
-        SingleCommand::empty_socket(conn).await
+        Ok(())
     }
 }

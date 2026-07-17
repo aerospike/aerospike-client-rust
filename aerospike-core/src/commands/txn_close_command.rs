@@ -96,6 +96,7 @@ impl Command for TxnCloseCommand<'_> {
                     result_code,
                     false,
                     conn.addr.clone(),
+                    None,
                 ))
             }
         }

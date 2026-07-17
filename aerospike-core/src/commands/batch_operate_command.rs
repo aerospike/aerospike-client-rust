@@ -580,7 +580,7 @@ impl BatchOperateCommand {
 
                     match Self::parse_group(batch_ops, &mut inner_conn, inner_size, txn).await {
                         Ok(stat) => status = stat,
-                        Err(e @ Error::ServerError(_, _, _)) => {
+                        Err(e @ Error::ServerError(_, _, _, _)) => {
                             inner_conn.drain(inner_conn.conn.deadline()).await?;
                             return Err(e);
                         }
@@ -596,7 +596,7 @@ impl BatchOperateCommand {
                     conn.set_limit_body(size)?;
                     match Self::parse_group(batch_ops, &mut conn, size, txn).await {
                         Ok(stat) => status = stat,
-                        Err(e @ Error::ServerError(_, _, _)) => {
+                        Err(e @ Error::ServerError(_, _, _, _)) => {
                             conn.drain(conn.conn.deadline()).await?;
                             return Err(e);
                         }

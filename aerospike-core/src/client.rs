@@ -1065,6 +1065,7 @@ impl Client {
                 ResultCode::ParameterError,
                 false,
                 "no operations defined".into(),
+                None,
             ));
         }
         let policy = self.cluster.resolve_write(policy);
@@ -1500,6 +1501,7 @@ impl Client {
                 ResultCode::ParameterError,
                 false,
                 "no operations defined".into(),
+                None,
             ));
         }
         // Inject the ops into `statement.operations` so the unified
@@ -2840,7 +2842,7 @@ impl Client {
         });
 
         if !RE.is_match(response) {
-            return Error::ServerError(ResultCode::ServerError, false, response.into());
+            return Error::ServerError(ResultCode::ServerError, false, response.into(), None);
         }
 
         // 'm' is a 'Match', and 'as_str()' returns the matching part of the haystack.
@@ -2857,7 +2859,7 @@ impl Client {
             })
             .unwrap();
 
-        Error::ServerError(parts.0, false, parts.1.into())
+        Error::ServerError(parts.0, false, parts.1.into(), None)
     }
 
     /// Commit a multi-record transaction (MRT). This will verify record versions,
@@ -2910,6 +2912,7 @@ impl Client {
                 ResultCode::MrtAborted,
                 false,
                 "Transaction already aborted".to_string(),
+                None,
             )),
         }
     }
@@ -2945,6 +2948,7 @@ impl Client {
                 ResultCode::MrtCommitted,
                 false,
                 "Transaction already committed".to_string(),
+                None,
             )),
             TxnState::Aborted => Ok(AbortStatus::AlreadyAborted),
         }

@@ -164,6 +164,16 @@ pub const INFO4_MRT_ROLL_BACK: u8 = 1 << 2;
 /// Apply operation on locking only (no data modification).
 pub const INFO4_MRT_ON_LOCKING_ONLY: u8 = 1 << 4;
 
+/// INFO4 bit shift for the error-detail verbosity level (bits 5-6).
+pub const INFO4_ERROR_VERBOSITY_SHIFT: u8 = 5;
+/// INFO4 mask for the error-detail verbosity level (bits 5-6).
+pub const INFO4_ERROR_VERBOSITY_MASK: u8 = 0x60;
+
+/// Pack the error-detail verbosity level into its INFO4 bits (5-6).
+pub(crate) const fn error_verbosity_bits(verbosity: u8) -> u8 {
+    (verbosity << INFO4_ERROR_VERBOSITY_SHIFT) & INFO4_ERROR_VERBOSITY_MASK
+}
+
 pub const MSG_TOTAL_HEADER_SIZE: u8 = 30;
 pub const FIELD_HEADER_SIZE: u8 = 5;
 pub const OPERATION_HEADER_SIZE: u8 = 8;
@@ -181,6 +191,14 @@ pub const DEFAULT_COMPRESS_THRESHOLD: usize = 128;
 // for buffers. Tweak this number if you are returning a lot of
 // LDT elements in your queries.
 pub const MAX_BUFFER_SIZE: usize = 120 * 1024 * 1024 + 8; // 120 MB + header
+
+/// Result of walking a response's field section: the record version (for MRT
+/// bookkeeping) and any extended server-supplied error detail.
+#[derive(Default)]
+pub(crate) struct ParsedFields {
+    pub version: Option<u64>,
+    pub error_detail: Option<Box<crate::ServerErrorDetail>>,
+}
 
 // Holds data buffer for the command
 #[derive(Debug, Default)]
@@ -1708,6 +1726,10 @@ impl Buffer {
             self.data_buffer[b + i] = 0;
         }
 
+        // INFO4 byte (b + 12): error-detail verbosity bits (no MRT attrs on
+        // the read path). Written after the zeroing loop above.
+        self.data_buffer[b + 12] = error_verbosity_bits(policy.error_detail_verbosity);
+
         self.data_offset = b + 18;
         self.write_u32(policy.read_touch_ttl.into());
 
@@ -1757,6 +1779,10 @@ impl Buffer {
         for i in 12..26 {
             self.data_buffer[b + i] = 0;
         }
+
+        // INFO4 byte (b + 12): error-detail verbosity bits. Written after the
+        // zeroing loop above.
+        self.data_buffer[b + 12] = error_verbosity_bits(policy.error_detail_verbosity);
 
         self.data_offset = b + 18;
         self.write_u32(policy.read_touch_ttl.into());
@@ -1819,6 +1845,7 @@ impl Buffer {
         if policy.on_locking_only {
             txn_attr |= INFO4_MRT_ON_LOCKING_ONLY;
         }
+        txn_attr |= error_verbosity_bits(policy.base_policy.error_detail_verbosity);
 
         match policy.base_policy.read_mode_sc {
             ReadModeSC::Session => {}
@@ -2345,24 +2372,36 @@ impl Buffer {
             | (u64::from(buf[offset + 6]) << 48)
     }
 
-    /// Parse response fields and extract the record version (if present).
-    /// Advances `data_offset` past all fields.
-    pub(crate) fn parse_fields_for_version(&mut self, field_count: usize) -> Option<u64> {
-        let mut version = None;
+    /// Parse response fields, extracting the record version and any extended
+    /// server-supplied error detail. Advances `data_offset` past all fields.
+    pub(crate) fn parse_response_fields(&mut self, field_count: usize) -> ParsedFields {
+        let mut parsed = ParsedFields::default();
         for _ in 0..field_count {
             let field_len = self.read_u32(None) as usize;
             let field_type = self.read_u8(None);
             let data_size = field_len - 1;
 
             if field_type == FieldType::RecordVersion as u8 && data_size == 7 {
-                version = Some(Self::version_bytes_to_u64(
+                parsed.version = Some(Self::version_bytes_to_u64(
                     &self.data_buffer,
                     self.data_offset,
                 ));
+            } else if field_type == FieldType::ErrorMessage as u8 && data_size > 0 {
+                let start = self.data_offset;
+                if let Some(slice) = self.data_buffer.get(start..start + data_size) {
+                    parsed.error_detail =
+                        crate::server_error::parse_error_detail(slice).map(Box::new);
+                }
             }
             self.data_offset += data_size;
         }
-        version
+        parsed
+    }
+
+    /// Version-only convenience wrapper for callers that don't consume error
+    /// detail (record-version bookkeeping on the success path).
+    pub(crate) fn parse_fields_for_version(&mut self, field_count: usize) -> Option<u64> {
+        self.parse_response_fields(field_count).version
     }
 
     /// Estimate the size of transaction fields and return the number of extra fields added.
@@ -2875,5 +2914,133 @@ mod tests {
 
         // And the body should match
         assert_eq!(decompressed, uncompressed);
+    }
+
+    // Verbosity bit math — ported from Go's error_detail_parser_test.go
+    // "verbosity bit math" Context.
+    #[test]
+    fn verbosity_shift_and_mask_constants_are_consistent() {
+        assert_eq!(INFO4_ERROR_VERBOSITY_SHIFT, 5);
+        assert_eq!(INFO4_ERROR_VERBOSITY_MASK, 0x60);
+        // Mask must cover exactly two bits at the shift position.
+        assert_eq!(0x03u8 << INFO4_ERROR_VERBOSITY_SHIFT, INFO4_ERROR_VERBOSITY_MASK);
+    }
+
+    #[test]
+    fn error_verbosity_bits_pack_into_bits_5_6() {
+        assert_eq!(error_verbosity_bits(0), 0x00);
+        assert_eq!(error_verbosity_bits(1), 0x20);
+        assert_eq!(error_verbosity_bits(2), 0x40);
+        assert_eq!(error_verbosity_bits(3), 0x60);
+    }
+
+    #[test]
+    fn in_range_verbosity_preserved_after_masking() {
+        for v in 0u8..=3 {
+            let actual = (v << INFO4_ERROR_VERBOSITY_SHIFT) & INFO4_ERROR_VERBOSITY_MASK;
+            assert_eq!(actual, v << INFO4_ERROR_VERBOSITY_SHIFT);
+        }
+    }
+
+    #[test]
+    fn out_of_range_verbosity_cannot_corrupt_other_info4_bits() {
+        let other_bits = !INFO4_ERROR_VERBOSITY_MASK;
+        for v in [0u8, 1, 2, 3, 4, 8, 16, 255] {
+            let written = error_verbosity_bits(v);
+            assert_eq!(written & other_bits, 0);
+            assert_eq!(written, written & INFO4_ERROR_VERBOSITY_MASK);
+        }
+        // Pre-mask these set bits OUTSIDE 5-6; result is 0.
+        assert_eq!(error_verbosity_bits(4), 0);
+        assert_eq!(error_verbosity_bits(8), 0);
+        assert_eq!(error_verbosity_bits(16), 0);
+    }
+
+    fn test_key() -> Key {
+        Key::new("ns", "set", Value::from("k")).unwrap()
+    }
+
+    #[test]
+    fn read_header_carries_error_verbosity() {
+        for (level, want) in [(0u8, 0x00u8), (1, 0x20), (2, 0x40), (3, 0x60)] {
+            let policy = BasePolicy {
+                error_detail_verbosity: level,
+                ..BasePolicy::default()
+            };
+            let key = test_key();
+            let mut buf = Buffer::new(0);
+            buf.set_read(&policy, &key, &Bins::All).unwrap();
+            // Byte 12 is INFO4; the proto header at [0..8] leaves it untouched.
+            assert_eq!(
+                buf.data_buffer[12] & INFO4_ERROR_VERBOSITY_MASK,
+                want,
+                "read header level {level}"
+            );
+        }
+    }
+
+    #[test]
+    fn write_header_carries_error_verbosity() {
+        let mut policy = WritePolicy::default();
+        policy.base_policy.error_detail_verbosity = 3;
+        let key = test_key();
+        let bins = [crate::Bin::new("b".to_string(), Value::from(1))];
+        let mut buf = Buffer::new(0);
+        buf.set_write(&policy, OperationType::Write, &key, &bins)
+            .unwrap();
+        assert_eq!(buf.data_buffer[12] & INFO4_ERROR_VERBOSITY_MASK, 0x60);
+    }
+
+    // Encode one response field: [len:u32 BE][type:u8][data...], len = data+1.
+    fn encode_field(field_type: u8, data: &[u8]) -> Vec<u8> {
+        let mut out = ((data.len() + 1) as u32).to_be_bytes().to_vec();
+        out.push(field_type);
+        out.extend_from_slice(data);
+        out
+    }
+
+    fn parse_fields(fields: &[Vec<u8>]) -> ParsedFields {
+        let mut buf = Buffer::new(0);
+        buf.data_buffer = fields.iter().flatten().copied().collect();
+        buf.data_offset = 0;
+        buf.parse_response_fields(fields.len())
+    }
+
+    #[test]
+    fn error_detail_field_is_parsed_from_response_fields() {
+        // One field: len (u32 BE), type (ERROR_MESSAGE=45), then a {1:7} map.
+        let detail = [0x81u8, 0x01, 0x07];
+        let parsed = parse_fields(&[encode_field(FieldType::ErrorMessage as u8, &detail)]);
+        let d = parsed.error_detail.expect("detail parsed");
+        assert_eq!(d.sub_code, 7);
+        assert!(parsed.version.is_none());
+    }
+
+    #[test]
+    fn parse_response_fields_skips_non_error_message_field() {
+        // fieldCount = 2 with an unknown field type followed by ERROR_MESSAGE.
+        // {1: 1, 2: "ok"}
+        let detail = [0x82u8, 0x01, 0x01, 0x02, 0xA2, b'o', b'k'];
+        let parsed = parse_fields(&[
+            encode_field(99, &[0x01, 0x02, 0x03]),
+            encode_field(FieldType::ErrorMessage as u8, &detail),
+        ]);
+        let d = parsed.error_detail.expect("detail parsed");
+        assert_eq!(d.message, "ok (subcode=1)");
+    }
+
+    #[test]
+    fn parse_response_fields_absent_error_message_yields_none() {
+        // Only a record-version field present, no ERROR_MESSAGE.
+        let parsed = parse_fields(&[encode_field(FieldType::RecordVersion as u8, &[0u8; 7])]);
+        assert!(parsed.error_detail.is_none());
+        assert!(parsed.version.is_some());
+    }
+
+    #[test]
+    fn parse_response_fields_no_fields_yields_none() {
+        let parsed = parse_fields(&[]);
+        assert!(parsed.error_detail.is_none());
+        assert!(parsed.version.is_none());
     }
 }

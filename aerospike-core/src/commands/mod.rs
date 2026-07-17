@@ -116,7 +116,7 @@ pub(crate) const POOL_EMPTY_MAX_WAITS: usize = 5_000;
 /// pending).
 pub const fn keep_connection(err: &Error) -> bool {
     match err {
-        Error::ServerError(rc, _, _)
+        Error::ServerError(rc, _, _, _)
         | Error::BatchError(_, rc, _, _)
         | Error::BatchLastError(_, rc, _, _) => {
             !matches!(rc, ResultCode::ScanAbort | ResultCode::QueryAborted)
@@ -137,7 +137,7 @@ pub const fn is_network_error(err: &Error) -> bool {
 /// transitional state.
 pub const fn is_retriable_server_error(err: &Error) -> bool {
     match err {
-        Error::ServerError(rc, _, _)
+        Error::ServerError(rc, _, _, _)
         | Error::BatchError(_, rc, _, _)
         | Error::BatchLastError(_, rc, _, _) => matches!(
             rc,
@@ -178,7 +178,7 @@ mod tests_retry_predicates {
         Error::Timeout("Timeout reading from the network connection".into())
     }
     fn server_err(rc: ResultCode) -> Error {
-        Error::ServerError(rc, false, String::new())
+        Error::ServerError(rc, false, String::new(), None)
     }
 
     #[test]

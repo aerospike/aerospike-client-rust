@@ -604,7 +604,7 @@ async fn batch_sc_delete_non_durable_forbidden_when_record_exists() {
         .batch(&bp, &[BatchOperation::delete(&bpd, key.clone())])
         .await;
     match res {
-        Err(Error::ServerError(ResultCode::FailForbidden, _, _)) => {}
+        Err(Error::ServerError(ResultCode::FailForbidden, _, _, _)) => {}
         other => panic!(
             "expected FailForbidden for non-durable delete on SC when record exists, got {:?}",
             other
@@ -652,7 +652,7 @@ async fn batch_sc_delete_generation_mismatch_errors() {
         .batch(&bp, &[BatchOperation::delete(&bpd, key.clone())])
         .await;
     match res {
-        Err(Error::ServerError(ResultCode::GenerationError, _, _)) => {}
+        Err(Error::ServerError(ResultCode::GenerationError, _, _, _)) => {}
         other => panic!(
             "expected GenerationError for ExpectGenEqual with wrong generation on SC, got {:?}",
             other
@@ -990,7 +990,7 @@ async fn batch_stream_mixed_ops_preserve_index_and_kind() {
     assert_eq!(after_write.bins.get("w"), Some(&Value::from(42_i64)));
 
     match client.get(&rp, &key_delete, Bins::All).await {
-        Err(Error::ServerError(ResultCode::KeyNotFoundError, _, _)) => {}
+        Err(Error::ServerError(ResultCode::KeyNotFoundError, _, _, _)) => {}
         other => panic!("delete didn't take effect; got: {:?}", other),
     }
 }

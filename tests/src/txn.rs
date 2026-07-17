@@ -182,7 +182,7 @@ async fn txn_write_conflict() {
         .unwrap_err();
 
     match err {
-        Error::ServerError(ResultCode::MrtBlocked, _, _) => {}
+        Error::ServerError(ResultCode::MrtBlocked, _, _, _) => {}
         other => panic!("Expected MrtBlocked, got: {:?}", other),
     }
 
@@ -238,7 +238,7 @@ async fn txn_blocked_before_commit() {
         .unwrap_err();
 
     match err {
-        Error::ServerError(ResultCode::MrtBlocked, _, _) => {}
+        Error::ServerError(ResultCode::MrtBlocked, _, _, _) => {}
         other => panic!("Expected MrtBlocked, got: {:?}", other),
     }
 
@@ -364,7 +364,7 @@ async fn txn_delete_and_commit() {
     // Key should be gone
     let result = client.get(&ReadPolicy::default(), &key, Bins::All).await;
     match result {
-        Err(Error::ServerError(ResultCode::KeyNotFoundError, _, _)) => {}
+        Err(Error::ServerError(ResultCode::KeyNotFoundError, _, _, _)) => {}
         other => panic!("Expected KeyNotFoundError, got: {:?}", other),
     }
 }
@@ -443,7 +443,7 @@ async fn txn_delete_twice() {
     // Key should be gone
     let result = client.get(&ReadPolicy::default(), &key, Bins::All).await;
     match result {
-        Err(Error::ServerError(ResultCode::KeyNotFoundError, _, _)) => {}
+        Err(Error::ServerError(ResultCode::KeyNotFoundError, _, _, _)) => {}
         other => panic!("Expected KeyNotFoundError, got: {:?}", other),
     }
 }

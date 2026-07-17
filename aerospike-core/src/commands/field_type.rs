@@ -67,4 +67,8 @@ pub enum FieldType {
     // BatchIndexWithSet = 42,
     /// Filter expression.
     FilterExp = 43,
+    /// Extended server-supplied error detail (msgpack map: subcode, message,
+    /// expression trace). Present on failure responses only when
+    /// error-detail verbosity was requested. Requires server 8.1.3+.
+    ErrorMessage = 45,
 }

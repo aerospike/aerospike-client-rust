@@ -96,6 +96,14 @@ impl Version {
     pub fn supports_string_operations(&self) -> bool {
         self >= &Version::new(8, 1, 3, 0)
     }
+
+    /// Server supports extended error detail (subcode, message, expression
+    /// trace) requested via
+    /// [`BasePolicy::error_detail_verbosity`](crate::policy::BasePolicy::error_detail_verbosity).
+    /// Older servers ignore the request flags.
+    pub fn supports_extended_error_detail(&self) -> bool {
+        self >= &Version::new(8, 1, 3, 0)
+    }
 }
 
 #[derive(Debug)]

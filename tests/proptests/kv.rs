@@ -19,19 +19,19 @@ proptest_async::proptest! {
         let err = client.put(&write_policy, &key, bins).await;
 
         match err {
-            Err(Error::ServerError(ResultCode::FilteredOut, _, _)) => (), // it's fine
-            Err(e @ Error::ServerError(ResultCode::KeyNotFoundError, _, _)) => {
+            Err(Error::ServerError(ResultCode::FilteredOut, _, _, _)) => (), // it's fine
+            Err(e @ Error::ServerError(ResultCode::KeyNotFoundError, _, _, _)) => {
                 if (write_policy.record_exists_action != RecordExistsAction::UpdateOnly) &&
                  (write_policy.record_exists_action != RecordExistsAction::ReplaceOnly) {
                     panic!("{}",e);
                  }
             },
-            Err(e @ Error::ServerError(ResultCode::KeyExistsError, _, _)) => {
+            Err(e @ Error::ServerError(ResultCode::KeyExistsError, _, _, _)) => {
                 if write_policy.record_exists_action != RecordExistsAction::CreateOnly {
                     panic!("{}",e);
                  }
             },
-            Err(e @ Error::ServerError(ResultCode::GenerationError, _, _)) => {
+            Err(e @ Error::ServerError(ResultCode::GenerationError, _, _, _)) => {
                 if write_policy.generation_policy != GenerationPolicy::None {
                     return; // it's fine
                 }
@@ -75,19 +75,19 @@ proptest_async::proptest! {
         let err = client.add(&write_policy, &key, &bins).await;
 
         match err {
-            Err(Error::ServerError(ResultCode::FilteredOut, _, _)) => (), // it's fine
-            Err(e @ Error::ServerError(ResultCode::KeyNotFoundError, _, _)) => {
+            Err(Error::ServerError(ResultCode::FilteredOut, _, _, _)) => (), // it's fine
+            Err(e @ Error::ServerError(ResultCode::KeyNotFoundError, _, _, _)) => {
                 if (write_policy.record_exists_action != RecordExistsAction::UpdateOnly) &&
                  (write_policy.record_exists_action != RecordExistsAction::ReplaceOnly) {
                     panic!("{}",e);
                  }
             },
-            Err(e @ Error::ServerError(ResultCode::KeyExistsError, _, _)) => {
+            Err(e @ Error::ServerError(ResultCode::KeyExistsError, _, _, _)) => {
                 if write_policy.record_exists_action != RecordExistsAction::CreateOnly {
                     panic!("{}",e);
                  }
             },
-            Err(e @ Error::ServerError(ResultCode::GenerationError, _, _)) => {
+            Err(e @ Error::ServerError(ResultCode::GenerationError, _, _, _)) => {
                 if write_policy.generation_policy != GenerationPolicy::None {
                     return; // it's fine
                 }
@@ -112,19 +112,19 @@ proptest_async::proptest! {
         let err = client.append(&write_policy, &key, &bins).await;
 
         match err {
-            Err(Error::ServerError(ResultCode::FilteredOut, _, _)) => (), // it's fine
-            Err(e @ Error::ServerError(ResultCode::KeyNotFoundError, _, _)) => {
+            Err(Error::ServerError(ResultCode::FilteredOut, _, _, _)) => (), // it's fine
+            Err(e @ Error::ServerError(ResultCode::KeyNotFoundError, _, _, _)) => {
                 if (write_policy.record_exists_action != RecordExistsAction::UpdateOnly) &&
                  (write_policy.record_exists_action != RecordExistsAction::ReplaceOnly) {
                     panic!("{}",e);
                  }
             },
-            Err(e @ Error::ServerError(ResultCode::KeyExistsError, _, _)) => {
+            Err(e @ Error::ServerError(ResultCode::KeyExistsError, _, _, _)) => {
                 if write_policy.record_exists_action != RecordExistsAction::CreateOnly {
                     panic!("{}",e);
                  }
             },
-            Err(e @ Error::ServerError(ResultCode::GenerationError, _, _)) => {
+            Err(e @ Error::ServerError(ResultCode::GenerationError, _, _, _)) => {
                 if write_policy.generation_policy != GenerationPolicy::None {
                     return; // it's fine
                 }
@@ -149,19 +149,19 @@ proptest_async::proptest! {
         let err = client.prepend(&write_policy, &key, &bins).await;
 
         match err {
-            Err(Error::ServerError(ResultCode::FilteredOut, _, _)) => (), // it's fine
-            Err(e @ Error::ServerError(ResultCode::KeyNotFoundError, _, _)) => {
+            Err(Error::ServerError(ResultCode::FilteredOut, _, _, _)) => (), // it's fine
+            Err(e @ Error::ServerError(ResultCode::KeyNotFoundError, _, _, _)) => {
                 if (write_policy.record_exists_action != RecordExistsAction::UpdateOnly) &&
                  (write_policy.record_exists_action != RecordExistsAction::ReplaceOnly) {
                     panic!("{}",e);
                  }
             },
-            Err(e @ Error::ServerError(ResultCode::KeyExistsError, _, _)) => {
+            Err(e @ Error::ServerError(ResultCode::KeyExistsError, _, _, _)) => {
                 if write_policy.record_exists_action != RecordExistsAction::CreateOnly {
                     panic!("{}",e);
                  }
             },
-            Err(e @ Error::ServerError(ResultCode::GenerationError, _, _)) => {
+            Err(e @ Error::ServerError(ResultCode::GenerationError, _, _, _)) => {
                 if write_policy.generation_policy != GenerationPolicy::None {
                     return; // it's fine
                 }
@@ -182,14 +182,14 @@ proptest_async::proptest! {
         let err = client.touch(&write_policy, &key).await;
 
         match err {
-            Err(Error::ServerError(ResultCode::FilteredOut, _, _)) => (), // it's fine
-            Err(Error::ServerError(ResultCode::KeyNotFoundError, _, _)) => (),
-            Err(e @ Error::ServerError(ResultCode::KeyExistsError, _, _)) => {
+            Err(Error::ServerError(ResultCode::FilteredOut, _, _, _)) => (), // it's fine
+            Err(Error::ServerError(ResultCode::KeyNotFoundError, _, _, _)) => (),
+            Err(e @ Error::ServerError(ResultCode::KeyExistsError, _, _, _)) => {
                 if write_policy.record_exists_action != RecordExistsAction::CreateOnly {
                     panic!("{}",e);
                  }
             },
-            Err(e @ Error::ServerError(ResultCode::GenerationError, _, _)) => {
+            Err(e @ Error::ServerError(ResultCode::GenerationError, _, _, _)) => {
                 if write_policy.generation_policy != GenerationPolicy::None {
                     return; // it's fine
                 }
@@ -210,14 +210,14 @@ proptest_async::proptest! {
         let err = client.touch(&write_policy, &key).await;
 
         match err {
-            Err(Error::ServerError(ResultCode::FilteredOut, _, _)) => (), // it's fine
-            Err(Error::ServerError(ResultCode::KeyNotFoundError, _, _)) => (),
-            Err(e @ Error::ServerError(ResultCode::KeyExistsError, _, _)) => {
+            Err(Error::ServerError(ResultCode::FilteredOut, _, _, _)) => (), // it's fine
+            Err(Error::ServerError(ResultCode::KeyNotFoundError, _, _, _)) => (),
+            Err(e @ Error::ServerError(ResultCode::KeyExistsError, _, _, _)) => {
                 if write_policy.record_exists_action != RecordExistsAction::CreateOnly {
                     panic!("{}",e);
                  }
             },
-            Err(e @ Error::ServerError(ResultCode::GenerationError, _, _)) => {
+            Err(e @ Error::ServerError(ResultCode::GenerationError, _, _, _)) => {
                 if write_policy.generation_policy != GenerationPolicy::None {
                     return; // it's fine
                 }
@@ -239,8 +239,8 @@ proptest_async::proptest! {
         let res = client.get(&read_policy, &key, bins).await;
 
         match res {
-            Err(Error::ServerError(ResultCode::FilteredOut, _, _)) => (), // it's fine
-            Err(Error::ServerError(ResultCode::KeyNotFoundError, _, _)) => (), // it's fine
+            Err(Error::ServerError(ResultCode::FilteredOut, _, _, _)) => (), // it's fine
+            Err(Error::ServerError(ResultCode::KeyNotFoundError, _, _, _)) => (), // it's fine
             Err(e @ Error::InvalidArgument(_)) => {
                 if read_policy.replica != Replica::PreferRack {
                     panic!("{}", e);
@@ -261,8 +261,8 @@ proptest_async::proptest! {
         let res = client.exists(&read_policy, &key).await;
 
         match res {
-            Err(Error::ServerError(ResultCode::FilteredOut, _, _)) => (), // it's fine
-            Err(Error::ServerError(ResultCode::KeyNotFoundError, _, _)) => (), // it's fine
+            Err(Error::ServerError(ResultCode::FilteredOut, _, _, _)) => (), // it's fine
+            Err(Error::ServerError(ResultCode::KeyNotFoundError, _, _, _)) => (), // it's fine
             Err(e @ Error::InvalidArgument(_)) => {
                 if read_policy.replica != Replica::PreferRack {
                     panic!("{}", e);

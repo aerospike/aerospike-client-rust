@@ -47,6 +47,7 @@ mod query;
 mod scan;
 #[cfg(feature = "serialization")]
 mod serialization;
+mod server_error;
 mod string;
 mod task;
 mod truncate;

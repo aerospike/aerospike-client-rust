@@ -124,7 +124,7 @@ impl AdminCommand {
         let result_code = conn.buffer.read_u8(Some(RESULT_CODE));
         let result_code = ResultCode::from(result_code);
         if result_code != ResultCode::Ok {
-            return Err(Error::ServerError(result_code, false, conn.addr.clone()));
+            return Err(Error::ServerError(result_code, false, conn.addr.clone(), None));
         }
 
         conn.reset_state();
@@ -193,6 +193,7 @@ impl AdminCommand {
                     ResultCode::from(result_code),
                     false,
                     conn.addr.clone(),
+                    None,
                 ));
             }
 
@@ -297,6 +298,7 @@ impl AdminCommand {
                     ResultCode::from(result_code),
                     false,
                     conn.addr.clone(),
+                    None,
                 ));
             }
 
@@ -452,7 +454,7 @@ impl AdminCommand {
             return Ok(None);
         }
         if result_code != ResultCode::Ok {
-            return Err(Error::ServerError(result_code, false, conn.addr.clone()));
+            return Err(Error::ServerError(result_code, false, conn.addr.clone(), None));
         }
 
         // Parse the body: each field is `len(u32) | id(u8) | bytes(len-1)`.
@@ -463,6 +465,7 @@ impl AdminCommand {
                 result_code,
                 false,
                 "Failed to retrieve session token".to_string(),
+                None,
             ));
         }
         conn.read_buffer(receive_size as usize).await?;
@@ -522,6 +525,7 @@ impl AdminCommand {
                 result_code,
                 false,
                 "Failed to retrieve session token".to_string(),
+                None,
             )),
         }
     }
