@@ -90,10 +90,10 @@ trait Task: Send {
 
     fn status<T>(&self, result: asResult<T>) -> Status {
         match result {
-            Err(Error::ServerError(ResultCode::Timeout, _, _) | Error::Timeout(_)) => {
+            Err(Error::ServerError(ResultCode::Timeout, _, _, _) | Error::Timeout(_)) => {
                 Status::Timeout
             }
-            Err(Error::ServerError(ResultCode::KeyNotFoundError, _, _)) => Status::Success,
+            Err(Error::ServerError(ResultCode::KeyNotFoundError, _, _, _)) => Status::Success,
             Err(_) => Status::Error,
             _ => Status::Success,
         }
