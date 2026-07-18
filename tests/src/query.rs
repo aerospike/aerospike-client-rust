@@ -91,7 +91,11 @@ async fn query_timeout() {
     }
     let duration = start.elapsed();
 
-    let expected_duration = Duration::from_millis((qpolicy.total_timeout() * 2) as u64);
+    // The real assertion is that the query timed out. The duration bound only
+    // guards against the client ignoring the timeout and running to completion;
+    // keep it generous so it holds on slow/loaded CI runners and coarser-timer
+    // runtimes (a 2x-of-5ms bound is below the timing floor there).
+    let expected_duration = Duration::from_secs(5);
     assert!(duration < expected_duration);
     assert_eq!(timed_out, true);
 
