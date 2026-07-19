@@ -318,11 +318,11 @@ impl Default for ClientPolicy {
 impl ClientPolicy {
     pub(crate) fn validate(&self) -> Result<()> {
         if self.max_conns_per_node > 0 && self.min_conns_per_node > self.max_conns_per_node {
-            return Err(Error::ClientError("minimum number of connections specified in the ClientPolicy is bigger than total connection pool size".into()));
+            return Err(Error::client_error("minimum number of connections specified in the ClientPolicy is bigger than total connection pool size"));
         }
 
         if self.tend_interval < TEND_INTERVAL_MIN_MS {
-            return Err(Error::ClientError(format!(
+            return Err(Error::client_error(format!(
                 "Invalid tend_interval: {}. min: {}",
                 self.tend_interval, TEND_INTERVAL_MIN_MS
             )));

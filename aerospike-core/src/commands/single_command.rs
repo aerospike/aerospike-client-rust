@@ -198,7 +198,9 @@ impl<'a> SingleCommand<'a> {
                 // Advance the partition sequence for the retry. Only treat a
                 // client-side timeout as a timeout for partition sequencing —
                 // a server-reported TIMEOUT should still advance the sequence.
-                let is_client_timeout = matches!(&last_err, Some(Error::Timeout { .. }));
+                let is_client_timeout = last_err
+                    .as_ref()
+                    .is_some_and(|e| matches!(e.kind(), crate::ErrorKind::Timeout));
                 cmd.prepare_retry(is_client_timeout);
 
                 if let Some(interval) = sleep_interval {
@@ -229,7 +231,9 @@ impl<'a> SingleCommand<'a> {
             // set command node, so when you return a record it has the node
             let node = match cmd.get_node() {
                 Ok(node) => node,
-                e @ Err(Error::InvalidArgument(_)) => e?,
+                Err(e) if matches!(e.kind(), crate::ErrorKind::InvalidArgument) => {
+                    return Err(e);
+                }
                 Err(e) => {
                     warn!("Error selecting node from the partition table: {e}");
                     last_err = Some(e);
@@ -253,8 +257,9 @@ impl<'a> SingleCommand<'a> {
             let aq_start = Instant::now();
             let mut conn = match node.get_connection(cmd.hint()).await {
                 Ok(conn) => conn,
-                Err(Error::ConnectionPoolEmpty)
-                    if pool_empty_waits < commands::POOL_EMPTY_MAX_WAITS =>
+                Err(err)
+                    if err.is_pool_empty()
+                        && pool_empty_waits < commands::POOL_EMPTY_MAX_WAITS =>
                 {
                     // A background task is opening a connection. This is a
                     // pacing wait, not a failure: it consumes neither the

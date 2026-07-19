@@ -49,10 +49,10 @@ impl PartitionTokenizer {
     pub fn from_info_map(info_map: &HashMap<String, String>) -> Result<Self> {
         let generation = match info_map.get(node::PARTITION_GENERATION) {
             Some(s) => s.parse::<isize>().map_err(|err| {
-                Error::BadResponse(format!("Invalid partition-generation: {err}"))
+                Error::bad_response(format!("Invalid partition-generation: {err}"))
             })?,
             None => {
-                return Err(Error::BadResponse(
+                return Err(Error::bad_response(
                     "Missing partition-generation".to_string(),
                 ))
             }
@@ -63,7 +63,7 @@ impl PartitionTokenizer {
                 buffer: buf.as_bytes().to_owned(),
                 generation,
             }),
-            None => Err(Error::BadResponse("Missing replicas info".to_string())),
+            None => Err(Error::bad_response("Missing replicas info".to_string())),
         }
     }
 
@@ -87,16 +87,16 @@ impl PartitionTokenizer {
                     let mut info_section = info.split(',');
                     let reigime = info_section
                         .next()
-                        .ok_or_else(|| Error::BadResponse("Missing regime".to_string()))?
+                        .ok_or_else(|| Error::bad_response("Missing regime".to_string()))?
                         .parse()
-                        .map_err(|err| Error::BadResponse(format!("Invalid regime: {err}")))?;
+                        .map_err(|err| Error::bad_response(format!("Invalid regime: {err}")))?;
 
                     let n_replicas = info_section
                         .next()
-                        .ok_or_else(|| Error::BadResponse("Missing replicas count".to_string()))?
+                        .ok_or_else(|| Error::bad_response("Missing replicas count".to_string()))?
                         .parse()
                         .map_err(|err| {
-                            Error::BadResponse(format!("Invalid replicas count: {err}"))
+                            Error::bad_response(format!("Invalid replicas count: {err}"))
                         })?;
 
                     let entry = nmap.entry(ns.to_string()).or_default();
@@ -151,7 +151,7 @@ impl PartitionTokenizer {
                     }
                 }
                 _ => {
-                    return Err(Error::BadResponse(
+                    return Err(Error::bad_response(
                         "Error parsing partition info".to_string(),
                     ))
                 }

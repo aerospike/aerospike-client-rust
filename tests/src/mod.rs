@@ -31,6 +31,7 @@ mod compression;
 mod connection_seed;
 #[cfg(feature = "dynamic-config")]
 mod dynamic_config;
+mod examples;
 mod exp;
 mod exp_bitwise;
 mod exp_hll;

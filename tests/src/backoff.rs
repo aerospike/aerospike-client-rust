@@ -18,7 +18,7 @@
 //! methods directly. The final test exercises the integration with the
 //! single-command pipeline.
 
-use aerospike::{as_bin, as_key, Client, Error, WritePolicy};
+use aerospike::{as_bin, as_key, Client, WritePolicy};
 
 use crate::common;
 
@@ -89,8 +89,8 @@ async fn breaker_trips_when_exceeded() {
 
     let err = node.validate_error_count().unwrap_err();
     assert!(
-        matches!(err, Error::MaxErrorRate(_)),
-        "expected Error::MaxErrorRate, got: {err:?}"
+        matches!(err.kind(), aerospike::ErrorKind::MaxErrorRate),
+        "expected ErrorKind::MaxErrorRate, got: {err:?}"
     );
 
     client.close().await.unwrap();
@@ -182,7 +182,7 @@ async fn reset_clears_count() {
 #[aerospike_macro::test]
 async fn pipeline_returns_max_error_rate_when_breaker_open() {
     // End-to-end: trip the breaker on every node, then issue a real
-    // command and confirm the error chain surfaces `Error::MaxErrorRate`.
+    // command and confirm the error chain surfaces `ErrorKind::MaxErrorRate`.
     let client = breaker_client(1).await;
 
     for node in client.cluster.nodes() {

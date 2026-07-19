@@ -103,7 +103,7 @@ impl Command for TxnMarkRollForwardCommand<'_> {
         // flip the client-side state to Aborted.
         match result_code {
             ResultCode::Ok | ResultCode::MrtCommitted => Ok(()),
-            _ => Err(Error::ServerError(result_code, false, conn.addr.clone(), None)),
+            _ => Err(Error::server_error(result_code, conn.addr.clone(), None)),
         }?;
 
         SingleCommand::empty_socket(conn).await

@@ -123,9 +123,8 @@ impl Command for ExistsCommand<'_> {
         }
 
         if result_code != ResultCode::Ok && result_code != ResultCode::KeyNotFoundError {
-            return Err(Error::ServerError(
+            return Err(Error::server_error(
                 result_code,
-                false,
                 conn.addr.clone(),
                 error_detail,
             ));

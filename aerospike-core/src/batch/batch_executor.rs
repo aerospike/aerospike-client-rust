@@ -104,12 +104,22 @@ impl BatchExecutor {
         }
 
         let mut all_results: Vec<(BatchOperation, usize)> = Vec::with_capacity(batch_ops.len());
+        // First failure across all per-node groups. The batch keeps running so
+        // every per-key outcome is collected; on failure the full record set is
+        // surfaced via `ErrorKind::BatchFailed` (Java `BatchRecordArray`
+        // parity) instead of being dropped.
+        let mut first_err: Option<Error> = None;
 
         if !multi_jobs.is_empty() {
-            let ops = self
+            let cmds = self
                 .execute_batch_operate_jobs(multi_jobs, policy.concurrency)
                 .await?;
-            all_results.extend(ops.into_iter().flat_map(|cmd| cmd.batch_ops));
+            for mut cmd in cmds {
+                if let Some(e) = cmd.terminal_error.take() {
+                    first_err.get_or_insert(e);
+                }
+                all_results.extend(cmd.batch_ops);
+            }
         }
 
         for (_node, mut op, idx) in single_groups {
@@ -118,15 +128,21 @@ impl BatchExecutor {
             // to gate the fast path. Re-resolving lets the command
             // pick up partition migrations that happened between the
             // BatchExecutor split and the single-op dispatch.
-            Self::execute_single_op(self.cluster.clone(), policy, &mut op).await?;
+            if let Err(e) = Self::execute_single_op(self.cluster.clone(), policy, &mut op).await {
+                first_err.get_or_insert(e);
+            }
             all_results.push((op, idx));
         }
 
         all_results.sort_by_key(|(_, i)| *i);
-        Ok(all_results
+        let records: Vec<BatchRecord> = all_results
             .into_iter()
             .map(|(b, _)| b.batch_record())
-            .collect())
+            .collect();
+        match first_err {
+            None => Ok(records),
+            Some(e) => Err(Error::batch_failed(records, e)),
+        }
     }
 
     /// Streaming variant of `execute_batch_operate`.
@@ -143,9 +159,12 @@ impl BatchExecutor {
     /// match results back to their `ops` slice.
     ///
     /// Whole-per-node-group failures (e.g. socket error after retries)
-    /// do not abort the stream — they simply omit the affected keys.
-    /// Per-key results (`KEY_NOT_FOUND`, `FILTERED_OUT`, etc.) ride on each
-    /// emitted `BatchRecord` just as they do for `batch`.
+    /// do not abort the stream — the group's records are still emitted,
+    /// carrying their per-key result codes and in-doubt marks (unanswered
+    /// keys have no result code). Only a client-side total-timeout
+    /// cancellation omits keys. Per-key results (`KEY_NOT_FOUND`,
+    /// `FILTERED_OUT`, etc.) ride on each emitted `BatchRecord` just as
+    /// they do for `batch`.
     #[allow(clippy::mutable_key_type)]
     pub async fn execute_stream(
         &self,
@@ -193,18 +212,18 @@ impl BatchExecutor {
                 let cmd = BatchOperateCommand::new(policy, node, ops);
                 aerospike_rt::spawn(async move {
                     match cmd.execute(cluster).await {
+                        // Group-level failures come back as `Ok` with
+                        // `terminal_error` set, so per-key outcomes (and
+                        // in-doubt marks) are emitted either way.
                         Ok(done) => {
                             for (op, idx) in done.batch_ops {
                                 let _ = tx.unbounded_send((idx, op.batch_record()));
                             }
                         }
-                        // Group-level failure (e.g. socket error after
-                        // retries). The command's parse path may have
-                        // recorded per-key codes on some ops, but
-                        // `execute` consumes `cmd` so we don't have a
-                        // handle to those here. Drop silently — the
-                        // stream just yields fewer items than the
-                        // input had keys, per the documented contract.
+                        // Only a client-side total-timeout cancellation lands
+                        // here — the command future was dropped mid-flight, so
+                        // there are no records to emit. The stream just yields
+                        // fewer items than the input had keys.
                         Err(_) => {}
                     }
                 });
@@ -271,9 +290,8 @@ impl BatchExecutor {
                 // DeleteCommand reports missing-key via `cmd.existed`, not Result::Err —
                 // re-inject KEY_NOT_FOUND so batch sees it per-record.
                 match cmd.execute().await {
-                    Ok(()) if !cmd.existed => Err(Error::ServerError(
+                    Ok(()) if !cmd.existed => Err(Error::server_error(
                         ResultCode::KeyNotFoundError,
-                        false,
                         String::new(),
                         None,
                     )),
@@ -307,14 +325,15 @@ impl BatchExecutor {
             }
         };
 
-        // Every ServerError from a single-key command is per-key; absorb onto the
-        // BatchRecord, only non-ServerError variants propagate.
+        // Every server error from a single-key command is per-key; absorb onto
+        // the BatchRecord, only other kinds propagate.
         match result {
             Ok(record) => {
                 batch_op.set_record(record);
             }
-            Err(Error::ServerError(rc, in_doubt, _, _)) => {
-                batch_op.set_result_code(rc, in_doubt);
+            Err(err) if matches!(err.kind(), crate::ErrorKind::Server { .. }) => {
+                let rc = err.server_result_code().expect("server error has rc");
+                batch_op.set_result_code(rc, err.in_doubt());
             }
             Err(err) => {
                 // Mirrors Java's `BatchSingle.setInDoubt()` gated on
@@ -348,13 +367,13 @@ impl BatchExecutor {
             Concurrency::Parallel => futures::future::join_all(handles)
                 .await
                 .into_iter()
-                .map(|value| value.map_err(|e| Error::ClientError(e.to_string())))
+                .map(|value| value.map_err(|e| Error::client_error(e.to_string())))
                 .collect(),
             #[cfg(feature = "rt-tokio")]
             Concurrency::Parallel => futures::future::join_all(handles.map(aerospike_rt::spawn))
                 .await
                 .into_iter()
-                .map(|value| value.map_err(|e| Error::ClientError(e.to_string()))?)
+                .map(|value| value.map_err(|e| Error::client_error(e.to_string()))?)
                 .collect(),
         }
     }

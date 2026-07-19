@@ -26,18 +26,24 @@ use crate::cluster::partition::Partition;
 use crate::cluster::{Cluster, Node};
 use crate::commands::StreamCommand;
 use crate::commands::{self, buffer};
-use crate::errors::{Error, Result};
+use crate::errors::{Error, ErrorKind, Result};
 use crate::net::{BufferedConn, Connection};
 use crate::policy::{next_retry_interval, BatchPolicy, Policy, Replica};
 use crate::{value, Record, ResultCode, Value};
 use aerospike_rt::sleep;
 use aerospike_rt::time::Duration;
 
-#[derive(Clone)]
 pub struct BatchOperateCommand {
     policy: BatchPolicy,
     pub node: Arc<Node>,
     pub batch_ops: Vec<(BatchOperation, usize)>,
+    /// Set when the command failed after per-key processing began (retries
+    /// exhausted, deadline elapsed, unrecoverable request error). The command
+    /// still returns `Ok(self)` so `batch_ops` — carrying every per-key
+    /// outcome and in-doubt mark — survives for the executor to surface via
+    /// [`ErrorKind::BatchFailed`](crate::ErrorKind::BatchFailed) (Java
+    /// `AerospikeException.BatchRecordArray` parity).
+    pub(crate) terminal_error: Option<Error>,
 }
 
 impl BatchOperateCommand {
@@ -50,6 +56,7 @@ impl BatchOperateCommand {
             policy,
             node,
             batch_ops,
+            terminal_error: None,
         }
     }
 
@@ -127,7 +134,8 @@ impl BatchOperateCommand {
                     Ok(res) => res,
                     Err(err) => {
                         self.set_in_doubt(commands_sent);
-                        return Err(err);
+                        self.terminal_error = Some(err);
+                        return Ok(self);
                     }
                 }
             } else {
@@ -177,7 +185,8 @@ impl BatchOperateCommand {
                 }
                 if let Some(err) = hard_err {
                     self.set_in_doubt(commands_sent);
-                    return Err(err);
+                    self.terminal_error = Some(err);
+                    return Ok(self);
                 }
                 group_err
             };
@@ -188,7 +197,7 @@ impl BatchOperateCommand {
                 // retry metrics, and is not chained into the error history
                 // (thousands of waits must not build a thousand-deep chain).
                 // Bounded by the outer total-timeout wrapper and the wait cap.
-                if matches!(e, Error::ConnectionPoolEmpty)
+                if e.is_pool_empty()
                     && pool_empty_waits < commands::POOL_EMPTY_MAX_WAITS
                 {
                     pool_empty_waits += 1;
@@ -232,9 +241,12 @@ impl BatchOperateCommand {
                 } else {
                     iterations as u32
                 };
-                return Err(Error::timeout(format!("Timeout after {iterations} tries"))
-                    .chain_cause(last_err)
-                    .with_retry_context(u32_iters, Some(&node_addr), Vec::new()));
+                self.terminal_error = Some(
+                    Error::max_retries_exceeded(format!("Timeout after {iterations} tries"))
+                        .chain_cause(last_err)
+                        .with_retry_context(u32_iters, Some(&node_addr), Vec::new()),
+                );
+                return Ok(self);
             }
 
             // Sleep before trying again, after the first iteration
@@ -256,15 +268,12 @@ impl BatchOperateCommand {
                     } else {
                         iterations as u32
                     };
-                    return Err(Error::timeout(format!(
-                        "Command timed out after {iterations} tries"
-                    ))
-                    .chain_cause(last_err)
-                    .with_retry_context(
-                        u32_iters,
-                        Some(&node_addr),
-                        Vec::new(),
-                    ));
+                    self.terminal_error = Some(
+                        Error::timeout(format!("Command timed out after {iterations} tries"))
+                            .chain_cause(last_err)
+                            .with_retry_context(u32_iters, Some(&node_addr), Vec::new()),
+                    );
+                    return Ok(self);
                 }
             }
         }
@@ -324,7 +333,7 @@ impl BatchOperateCommand {
             Ok(conn) => conn,
             // Pool-empty is a pacing signal (a background task is opening a
             // connection), not node ill-health — don't trip the breaker.
-            Err(err @ Error::ConnectionPoolEmpty) => return Ok(Some(err)),
+            Err(err) if err.is_pool_empty() => return Ok(Some(err)),
             Err(err) => {
                 warn!("Node {node}: {err}");
                 node.incr_error_rate();
@@ -349,14 +358,14 @@ impl BatchOperateCommand {
             .set_compress(policy.use_compression(), policy.compression_threshold());
         conn.buffer
             .set_batch_operate(policy, batch_ops)
-            .map_err(|_| Error::ClientError("Failed to prepare send buffer".into()))?;
+            .map_err(|_| Error::client_error("Failed to prepare send buffer"))?;
 
         conn.buffer.write_timeout(policy.server_timeout());
 
         if policy.use_compression() {
             conn.buffer
                 .compress()
-                .map_err(|_| Error::ClientError("Failed to compress send buffer".into()))?;
+                .map_err(|_| Error::client_error("Failed to compress send buffer"))?;
         }
 
         conn.set_socket_timeout(deadline, policy.socket_timeout());
@@ -453,29 +462,26 @@ impl BatchOperateCommand {
                     batch_op.0.set_record(batch_record.record);
                     batch_op.0.set_result_code(batch_record.result_code, false);
                 }
-                Err(Error::BatchLastError(batch_index, rc, ..)) => {
-                    // Per-key error on the final record of the response. Record the
-                    // error on the individual BatchRecord and treat the stream as
-                    // ended — do not propagate as a batch-level failure, matching
-                    // Java's behavior (BatchStatus.setRowError keeps other records).
-                    // In-doubt mirrors Java's `Command.batchInDoubt`: a row error
-                    // in this response is definitive for this attempt, so a write
-                    // is only in doubt when an earlier attempt was also sent.
-                    let batch_op = batch_ops
-                        .get_mut(batch_index as usize)
-                        .expect("Invalid batch index");
-                    batch_op.0.set_result_code(rc, commands_sent > 1);
-                    return Ok(false);
-                }
-                Err(Error::BatchError(batch_index, rc, ..)) => {
-                    // Per-key error mid-stream. Record on the individual BatchRecord
-                    // and continue parsing remaining records in the response.
-                    let batch_op = batch_ops
-                        .get_mut(batch_index as usize)
-                        .expect("Invalid batch index");
-                    batch_op.0.set_result_code(rc, commands_sent > 1);
-                }
-                Err(err) => return Err(err),
+                Err(err) => match *err.kind() {
+                    // Per-key row error. Record it on the individual
+                    // BatchRecord — do not propagate as a batch-level
+                    // failure, matching Java's behavior
+                    // (BatchStatus.setRowError keeps other records).
+                    // In-doubt mirrors Java's `Command.batchInDoubt`: a row
+                    // error in this response is definitive for this attempt,
+                    // so a write is only in doubt when an earlier attempt was
+                    // also sent. A `last` row additionally ends the stream.
+                    ErrorKind::BatchRow { index, rc, last } => {
+                        let batch_op = batch_ops
+                            .get_mut(index as usize)
+                            .expect("Invalid batch index");
+                        batch_op.0.set_result_code(rc, commands_sent > 1);
+                        if last {
+                            return Ok(false);
+                        }
+                    }
+                    _ => return Err(err),
+                },
             }
         }
         Ok(true)
@@ -495,19 +501,10 @@ impl BatchOperateCommand {
             | ResultCode::KeyNotFoundError
             | ResultCode::FilteredOut => (),
             rc => {
-                if last_record {
-                    return Err(Error::BatchLastError(
-                        batch_index,
-                        rc,
-                        false,
-                        conn.conn.addr.clone(),
-                    ));
-                }
-
-                return Err(Error::BatchError(
+                return Err(Error::batch_row(
                     batch_index,
                     rc,
-                    false,
+                    last_record,
                     conn.conn.addr.clone(),
                 ));
             }
@@ -579,7 +576,7 @@ impl BatchOperateCommand {
         }))
     }
 
-    const fn keep_connection(err: &Error) -> bool {
+    fn keep_connection(err: &Error) -> bool {
         commands::keep_connection(err)
     }
 
@@ -627,7 +624,7 @@ impl BatchOperateCommand {
                 let mut proto_buf = [0u8; 8];
                 decoder
                     .read_exact(&mut proto_buf)
-                    .map_err(|e| Error::ClientError(format!("Batch decompression error: {e}")))?;
+                    .map_err(|e| Error::client_error(format!("Batch decompression error: {e}")))?;
                 let inner_proto = u64::from_be_bytes(proto_buf);
                 let inner_size = (inner_proto & 0x0000_FFFF_FFFF_FFFF) as usize;
 
@@ -642,7 +639,7 @@ impl BatchOperateCommand {
                         .await
                     {
                         Ok(stat) => status = stat,
-                        Err(e @ Error::ServerError(_, _, _, _)) => {
+                        Err(e) if matches!(e.kind(), ErrorKind::Server { .. }) => {
                             inner_conn.drain(inner_conn.conn.deadline()).await?;
                             return Err(e);
                         }
@@ -658,7 +655,7 @@ impl BatchOperateCommand {
                     conn.set_limit_body(size)?;
                     match Self::parse_group(batch_ops, &mut conn, size, txn, commands_sent).await {
                         Ok(stat) => status = stat,
-                        Err(e @ Error::ServerError(_, _, _, _)) => {
+                        Err(e) if matches!(e.kind(), ErrorKind::Server { .. }) => {
                             conn.drain(conn.conn.deadline()).await?;
                             return Err(e);
                         }

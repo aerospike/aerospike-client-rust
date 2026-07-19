@@ -121,9 +121,8 @@ impl Command for DeleteCommand<'_> {
         let version = parsed.version;
 
         if result_code != ResultCode::Ok && result_code != ResultCode::KeyNotFoundError {
-            return Err(Error::ServerError(
+            return Err(Error::server_error(
                 result_code,
-                false,
                 conn.addr.clone(),
                 parsed.error_detail,
             ));

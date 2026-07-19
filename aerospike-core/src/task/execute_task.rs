@@ -70,7 +70,7 @@ impl ExecuteTask {
         }
 
         if response.starts_with("ERROR") {
-            return Err(Error::BadResponse(format!(
+            return Err(Error::bad_response(format!(
                 "Query execute failed: {response}"
             )));
         }

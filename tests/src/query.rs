@@ -85,7 +85,7 @@ async fn query_timeout() {
     while let Some(res) = rs.next().await {
         match res {
             Ok(_) => (),
-            Err(Error::Timeout { .. }) => timed_out = true,
+            Err(e) if matches!(e.kind(), aerospike::ErrorKind::Timeout) => timed_out = true,
             Err(err) => panic!("{:?}", err),
         }
     }
@@ -886,8 +886,9 @@ async fn query_operate_empty_ops_returns_parameter_error() {
     let result = client.query_operate(&wpolicy, statement, &[]).await;
 
     match result {
-        Err(Error::ServerError(ResultCode::ParameterError, _, ref msg, _))
-            if msg.contains("no operations") => {}
+        Err(ref e)
+            if e.server_result_code() == Some(ResultCode::ParameterError)
+                && e.to_string().contains("no operations") => {}
         Err(other) => panic!(
             "expected client-side ParameterError ('query_operate called with no \
              operations'); got {:?}",

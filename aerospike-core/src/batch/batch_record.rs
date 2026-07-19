@@ -57,7 +57,7 @@ impl BatchRecord {
     /// True when this record's batch operation contains a write. Only write
     /// records can ever be [`in_doubt`](Self::in_doubt); useful to
     /// distinguish verify (read) from roll (write) records on
-    /// [`Error::CommitFailed`](crate::errors::Error::CommitFailed).
+    /// [`ErrorKind::Commit`](crate::ErrorKind::Commit).
     #[must_use]
     pub const fn has_write(&self) -> bool {
         self.has_write

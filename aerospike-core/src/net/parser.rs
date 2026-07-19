@@ -51,7 +51,7 @@ impl<'a> Parser<'a> {
         let sne = self.s.split(',');
         for s in sne {
             if !RE.is_match(s) {
-                return Err(Error::ClientError(format!("Could not parse `{s}`")));
+                return Err(Error::client_error(format!("Could not parse `{s}`")));
             }
 
             // 'm' is a 'Match', and 'as_str()' returns the matching part of the haystack.

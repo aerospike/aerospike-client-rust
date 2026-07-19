@@ -574,7 +574,7 @@ async fn batch_single_key_fast_path_delete() {
 // The property test `proptests::batches::batch_delete` clamps some policy fields on SC so the
 // fuzzer does not send illegal or inconsistent deletes. These tests document the real server
 // outcomes for fixed policies. On the fast path, `FailForbidden` / `GenerationError` bubble as
-// top-level `Err(Error::ServerError(..))` (see `BatchExecutor::execute_single_op`).
+// a per-key server error (see `BatchExecutor::execute_single_op`).
 
 #[aerospike_macro::test]
 async fn batch_sc_delete_non_durable_forbidden_when_record_exists() {
@@ -604,7 +604,7 @@ async fn batch_sc_delete_non_durable_forbidden_when_record_exists() {
         .batch(&bp, &[BatchOperation::delete(&bpd, key.clone())])
         .await;
     match res {
-        Err(Error::ServerError(ResultCode::FailForbidden, _, _, _)) => {}
+        Err(e) if e.server_result_code() == Some(ResultCode::FailForbidden) => {}
         other => panic!(
             "expected FailForbidden for non-durable delete on SC when record exists, got {:?}",
             other
@@ -652,7 +652,7 @@ async fn batch_sc_delete_generation_mismatch_errors() {
         .batch(&bp, &[BatchOperation::delete(&bpd, key.clone())])
         .await;
     match res {
-        Err(Error::ServerError(ResultCode::GenerationError, _, _, _)) => {}
+        Err(e) if e.server_result_code() == Some(ResultCode::GenerationError) => {}
         other => panic!(
             "expected GenerationError for ExpectGenEqual with wrong generation on SC, got {:?}",
             other
@@ -990,7 +990,7 @@ async fn batch_stream_mixed_ops_preserve_index_and_kind() {
     assert_eq!(after_write.bins.get("w"), Some(&Value::from(42_i64)));
 
     match client.get(&rp, &key_delete, Bins::All).await {
-        Err(Error::ServerError(ResultCode::KeyNotFoundError, _, _, _)) => {}
+        Err(e) if e.server_result_code() == Some(ResultCode::KeyNotFoundError) => {}
         other => panic!("delete didn't take effect; got: {:?}", other),
     }
 }

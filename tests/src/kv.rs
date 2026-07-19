@@ -16,7 +16,7 @@ use aerospike::{
     as_bin, as_blob, as_geo, as_key, as_list, as_map, as_val, Bins, ReadPolicy, Value, WritePolicy,
 };
 use aerospike::{
-    operations, Error, Expiration, GenerationPolicy, ReadTouchTTL, RecordExistsAction, ResultCode,
+    operations, Expiration, GenerationPolicy, ReadTouchTTL, RecordExistsAction, ResultCode,
 };
 use aerospike_rt::sleep;
 use aerospike_rt::time::Duration;
@@ -210,8 +210,9 @@ async fn operate_empty_ops_returns_parameter_error() {
     let result = client.operate(&wpolicy, &key, &[]).await;
 
     match result {
-        Err(Error::ServerError(ResultCode::ParameterError, _, ref msg, _))
-            if msg.contains("no operations") => {}
+        Err(ref e)
+            if e.server_result_code() == Some(ResultCode::ParameterError)
+                && e.to_string().contains("no operations") => {}
         Err(other) => panic!(
             "expected client-side ParameterError ('operate called with no \
              operations'); got {:?}",
@@ -289,7 +290,7 @@ async fn replace_only_fails_when_record_missing() {
     let bin = as_bin!("bin", "value");
 
     match client.put(&replace_only, &key, &[bin]).await {
-        Err(Error::ServerError(ResultCode::KeyNotFoundError, _, _, _)) => {}
+        Err(e) if e.server_result_code() == Some(ResultCode::KeyNotFoundError) => {}
         Err(other) => panic!("expected KeyNotFoundError, got: {:?}", other),
         Ok(_) => panic!("expected error, got Ok"),
     }
@@ -344,7 +345,7 @@ async fn generation_policy_expect_gen_equal() {
         .put(&gen_wrong, &key, &[as_bin!("genbin", "genvalue4")])
         .await
     {
-        Err(Error::ServerError(ResultCode::GenerationError, _, _, _)) => {}
+        Err(e) if e.server_result_code() == Some(ResultCode::GenerationError) => {}
         Err(other) => panic!("expected GenerationError, got: {:?}", other),
         Ok(_) => panic!("expected GenerationError, got Ok"),
     }
@@ -381,7 +382,7 @@ async fn create_only_fails_when_record_exists() {
         .put(&create_only, &key, &[as_bin!("bin", "second")])
         .await
     {
-        Err(Error::ServerError(ResultCode::KeyExistsError, _, _, _)) => {}
+        Err(e) if e.server_result_code() == Some(ResultCode::KeyExistsError) => {}
         Err(other) => panic!("expected KeyExistsError, got: {:?}", other),
         Ok(_) => panic!("expected KeyExistsError, got Ok"),
     }

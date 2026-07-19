@@ -2,6 +2,14 @@
 
 This directory includes several Rust examples that demonstrate how to use the Aerospike Rust Client to interact with the Aerospike Database Server. Each example is a standalone binary with its own `main` function.
 
+Each async example exposes its body as `pub async fn run()` (with `main` delegating to it). The integration test suite includes the example sources directly and executes `run()` against a live server (`tests/src/examples.rs`, test names `example_*`), so the examples are exercised on every test run:
+
+```bash
+AEROSPIKE_HOSTS=localhost:3000 cargo test --features rt-tokio --test lib examples::
+```
+
+The `crud_sync` example is the exception — it requires the `sync` feature, which is mutually exclusive with the `async` feature the test suite is built with, so it runs standalone only.
+
 ## Available Examples
 
 * `batch_operations`

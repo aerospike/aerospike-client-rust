@@ -23,7 +23,7 @@ use crate::cluster::{Cluster, Node};
 use crate::commands::buffer::{self, Buffer};
 use crate::commands::field_type::FieldType;
 use crate::commands::Command;
-use crate::errors::{Error, Result};
+use crate::errors::{Error, ErrorKind, Result};
 use crate::net::{BufferedConn, Connection};
 use crate::query::{NodePartitions, Recordset};
 use crate::value::bytes_to_particle;
@@ -76,9 +76,8 @@ impl StreamCommand {
                 }
                 ResultCode::PartitionUnavailable => (),
                 _ => {
-                    return Err(Error::ServerError(
+                    return Err(Error::server_error(
                         result_code,
-                        false,
                         conn.conn.addr.clone(),
                         None,
                     ));
@@ -339,7 +338,7 @@ impl Command for StreamCommand {
                 let mut proto_buf = [0u8; 8];
                 decoder
                     .read_exact(&mut proto_buf)
-                    .map_err(|e| Error::ClientError(format!("Stream decompression error: {e}")))?;
+                    .map_err(|e| Error::client_error(format!("Stream decompression error: {e}")))?;
                 let inner_proto = u64::from_be_bytes(proto_buf);
                 let inner_size = (inner_proto & 0x0000_FFFF_FFFF_FFFF) as usize;
 
@@ -353,7 +352,7 @@ impl Command for StreamCommand {
 
                     match self.parse_stream(&mut inner_conn, inner_size).await {
                         Ok(stat) => status = stat,
-                        Err(e @ Error::ServerError(_, _, _, _)) => {
+                        Err(e) if matches!(e.kind(), ErrorKind::Server { .. }) => {
                             inner_conn.drain(inner_conn.conn.deadline()).await?;
                             return Err(e);
                         }
@@ -369,7 +368,7 @@ impl Command for StreamCommand {
                     conn.set_limit_body(size)?;
                     match self.parse_stream(&mut conn, size).await {
                         Ok(stat) => status = stat,
-                        Err(e @ Error::ServerError(_, _, _, _)) => {
+                        Err(e) if matches!(e.kind(), ErrorKind::Server { .. }) => {
                             conn.drain(conn.conn.deadline()).await?;
                             return Err(e);
                         }

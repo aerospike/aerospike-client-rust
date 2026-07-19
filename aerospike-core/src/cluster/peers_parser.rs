@@ -131,21 +131,21 @@ impl<'a> PeersParser<'a> {
     pub fn read_generation(&mut self) -> Result<u64> {
         let gen = self.read_until(",");
         if gen.is_empty() {
-            return Err(Error::ParsePeersError("generation not specified".into()));
+            return Err(Error::parse_peers("generation not specified"));
         }
 
         gen.parse::<u64>()
-            .map_err(|_| Error::ParsePeersError(format!("expected generation but found {gen}")))
+            .map_err(|_| Error::parse_peers(format!("expected generation but found {gen}")))
     }
 
     pub fn read_port(&mut self) -> Result<u16> {
         let port = self.read_until("],");
         if port.is_empty() {
-            return Err(Error::ParsePeersError("port not specified".into()));
+            return Err(Error::parse_peers("port not specified"));
         }
 
         port.parse::<u16>()
-            .map_err(|_| Error::ParsePeersError(format!("expected port but found {port}")))
+            .map_err(|_| Error::parse_peers(format!("expected port but found {port}")))
     }
 
     pub fn read_hosts(&mut self, tls_name: &str, default_port: u16) -> Result<Vec<Host>> {
@@ -189,8 +189,8 @@ impl<'a> PeersParser<'a> {
         };
 
         if addr.is_empty() {
-            return Err(Error::ParsePeersError(
-                "Empty address string for peer".into(),
+            return Err(Error::parse_peers(
+                "Empty address string for peer",
             ));
         }
 
@@ -236,14 +236,14 @@ impl<'a> PeersParser<'a> {
     fn expect(&mut self, sc: &str) -> Result<()> {
         if let Some(c) = self.s.next() {
             if !sc.contains(c) {
-                return Err(Error::InvalidArgument(format!(
+                return Err(Error::invalid_argument(format!(
                     "Expected one of `{sc}` but found {c:?}"
                 )));
             }
             return Ok(());
         }
 
-        Err(Error::InvalidArgument(format!(
+        Err(Error::invalid_argument(format!(
             "Expected one of `{sc}` but EOF"
         )))
     }

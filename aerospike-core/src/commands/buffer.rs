@@ -256,7 +256,7 @@ impl Buffer {
         // Corrupted data streams can result in a huge length.
         // Do a sanity check here.
         if size > MAX_BUFFER_SIZE {
-            return Err(Error::InvalidArgument(format!(
+            return Err(Error::invalid_argument(format!(
                 "Invalid size for buffer: {size}"
             )));
         }
@@ -340,18 +340,18 @@ impl Buffer {
             while pos + STEP < uncompressed_size {
                 encoder
                     .write_all(&src[pos..pos + STEP])
-                    .map_err(|e| Error::ClientError(format!("Compression error: {e}")))?;
+                    .map_err(|e| Error::client_error(format!("Compression error: {e}")))?;
                 pos += STEP;
             }
             if pos < uncompressed_size {
                 encoder
                     .write_all(&src[pos..uncompressed_size])
-                    .map_err(|e| Error::ClientError(format!("Compression error: {e}")))?;
+                    .map_err(|e| Error::client_error(format!("Compression error: {e}")))?;
             }
 
             let cursor = encoder
                 .finish()
-                .map_err(|e| Error::ClientError(format!("Compression error: {e}")))?;
+                .map_err(|e| Error::client_error(format!("Compression error: {e}")))?;
             compressed_size = cursor.position() as usize;
         }
 
@@ -906,8 +906,8 @@ impl Buffer {
                             (Bins::Some(bin_names), Some(ops))
                                 if !bin_names.is_empty() && !ops.is_empty() =>
                             {
-                                return Err(Error::ClientError(
-                                    "Can't pass both bin names and operations to BatchReads".into(),
+                                return Err(Error::client_error(
+                                    "Can't pass both bin names and operations to BatchReads",
                                 ))
                             }
                             (Bins::Some(bin_names), _) if !bin_names.is_empty() => {
@@ -1424,25 +1424,22 @@ impl Buffer {
             for op in operations {
                 if is_background {
                     if !op.is_write() {
-                        return Err(Error::InvalidArgument(
+                        return Err(Error::invalid_argument(
                             "Background query operations must be write-only. Use query for \
-                             read-only operations."
-                                .into(),
+                             read-only operations.",
                         ));
                     }
                 } else {
                     if op.is_write() {
-                        return Err(Error::InvalidArgument(
+                        return Err(Error::invalid_argument(
                             "Query operations must be read-only. Use query_operate for \
-                             write-only operations."
-                                .into(),
+                             write-only operations.",
                         ));
                     }
                     if !supports_ops_ext && !op.is_basic_read() {
-                        return Err(Error::InvalidArgument(
+                        return Err(Error::invalid_argument(
                             "Only basic read operations are supported for query operations \
-                             projection on server versions prior to 8.1.2."
-                                .into(),
+                             projection on server versions prior to 8.1.2.",
                         ));
                     }
                 }
@@ -1675,8 +1672,8 @@ impl Buffer {
 
     fn estimate_operation_size_for_bin_name(&mut self, bin_name: &str) -> Result<()> {
         if bin_name.len() > 15 {
-            return Err(Error::InvalidArgument(
-                "Bin name is longer than 15 bytes".into(),
+            return Err(Error::invalid_argument(
+                "Bin name is longer than 15 bytes",
             ));
         }
         self.data_offset += bin_name.len() + OPERATION_HEADER_SIZE as usize;

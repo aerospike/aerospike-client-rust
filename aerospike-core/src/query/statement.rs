@@ -135,7 +135,7 @@ impl Statement {
     pub(crate) fn validate(&self) -> Result<()> {
         if let Some(ref filters) = self.filters {
             if filters.len() > 1 {
-                return Err(Error::InvalidArgument(
+                return Err(Error::invalid_argument(
                     "Too many filter expressions".to_string(),
                 ));
             }
@@ -143,11 +143,11 @@ impl Statement {
 
         if let Some(ref agg) = self.aggregation {
             if agg.package_name.is_empty() {
-                return Err(Error::InvalidArgument("Empty UDF package name".to_string()));
+                return Err(Error::invalid_argument("Empty UDF package name".to_string()));
             }
 
             if agg.function_name.is_empty() {
-                return Err(Error::InvalidArgument(
+                return Err(Error::invalid_argument(
                     "Empty UDF function name".to_string(),
                 ));
             }

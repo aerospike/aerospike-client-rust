@@ -460,6 +460,95 @@ impl ResultCode {
     }
 }
 
+impl From<ResultCode> for u8 {
+    /// Wire value of the result code (inverse of [`ResultCode::from_u8`]).
+    fn from(rc: ResultCode) -> u8 {
+        match rc {
+            ResultCode::Ok => 0,
+            ResultCode::ServerError => 1,
+            ResultCode::KeyNotFoundError => 2,
+            ResultCode::GenerationError => 3,
+            ResultCode::ParameterError => 4,
+            ResultCode::KeyExistsError => 5,
+            ResultCode::BinExistsError => 6,
+            ResultCode::ClusterKeyMismatch => 7,
+            ResultCode::ServerMemError => 8,
+            ResultCode::Timeout => 9,
+            ResultCode::AlwaysForbidden => 10,
+            ResultCode::PartitionUnavailable => 11,
+            ResultCode::BinTypeError => 12,
+            ResultCode::RecordTooBig => 13,
+            ResultCode::KeyBusy => 14,
+            ResultCode::ScanAbort => 15,
+            ResultCode::UnsupportedFeature => 16,
+            ResultCode::BinNotFound => 17,
+            ResultCode::DeviceOverload => 18,
+            ResultCode::KeyMismatch => 19,
+            ResultCode::InvalidNamespace => 20,
+            ResultCode::BinNameTooLong => 21,
+            ResultCode::FailForbidden => 22,
+            ResultCode::ElementNotFound => 23,
+            ResultCode::ElementExists => 24,
+            ResultCode::OpNotApplicable => 26,
+            ResultCode::FilteredOut => 27,
+            ResultCode::LostConflict => 28,
+            ResultCode::XDRKeyBusy => 32,
+            ResultCode::MrtBlocked => 120,
+            ResultCode::MrtVersionMismatch => 121,
+            ResultCode::MrtExpired => 122,
+            ResultCode::MrtTooManyWrites => 123,
+            ResultCode::MrtCommitted => 124,
+            ResultCode::MrtAborted => 125,
+            ResultCode::MrtAlreadyLocked => 126,
+            ResultCode::MrtMonitorExists => 127,
+            ResultCode::EnterpriseOnly => 25,
+            ResultCode::QueryEnd => 50,
+            ResultCode::SecurityNotSupported => 51,
+            ResultCode::SecurityNotEnabled => 52,
+            ResultCode::SecuritySchemeNotSupported => 53,
+            ResultCode::InvalidCommand => 54,
+            ResultCode::InvalidField => 55,
+            ResultCode::IllegalState => 56,
+            ResultCode::InvalidUser => 60,
+            ResultCode::UserAlreadyExists => 61,
+            ResultCode::InvalidPassword => 62,
+            ResultCode::ExpiredPassword => 63,
+            ResultCode::ForbiddenPassword => 64,
+            ResultCode::InvalidCredential => 65,
+            ResultCode::ExpiredSession => 66,
+            ResultCode::InvalidRole => 70,
+            ResultCode::RoleAlreadyExists => 71,
+            ResultCode::InvalidPrivilege => 72,
+            ResultCode::InvalidAllowlist => 73,
+            ResultCode::QuotasNotEnabled => 74,
+            ResultCode::InvalidQuota => 75,
+            ResultCode::NotAuthenticated => 80,
+            ResultCode::RoleViolation => 81,
+            ResultCode::NotAllowlisted => 82,
+            ResultCode::QuotaExceeded => 83,
+            ResultCode::UdfBadResponse => 100,
+            ResultCode::BatchDisabled => 150,
+            ResultCode::BatchMaxRequestsExceeded => 151,
+            ResultCode::BatchQueuesFull => 152,
+            ResultCode::InvalidGeojson => 160,
+            ResultCode::IndexFound => 200,
+            ResultCode::IndexNotFound => 201,
+            ResultCode::IndexOom => 202,
+            ResultCode::IndexNotReadable => 203,
+            ResultCode::IndexGeneric => 204,
+            ResultCode::IndexNameMaxLen => 205,
+            ResultCode::IndexMaxCount => 206,
+            ResultCode::QueryAborted => 210,
+            ResultCode::QueryQueueFull => 211,
+            ResultCode::QueryTimeout => 212,
+            ResultCode::QueryGeneric => 213,
+            ResultCode::QueryNetioErr => 214,
+            ResultCode::QueryDuplicate => 215,
+            ResultCode::Unknown(code) => code,
+        }
+    }
+}
+
 impl From<u8> for ResultCode {
     fn from(val: u8) -> ResultCode {
         ResultCode::from_u8(val)
@@ -481,6 +570,15 @@ impl fmt::Display for ResultCode {
 #[cfg(test)]
 mod tests {
     use super::ResultCode;
+
+    #[test]
+    fn u8_round_trip() {
+        // Every wire value maps back to itself through the inverse impl.
+        for n in 0u8..=255 {
+            let rc = ResultCode::from(n);
+            assert_eq!(u8::from(rc), n, "round trip failed for {n}");
+        }
+    }
 
     #[test]
     fn from_result_code() {

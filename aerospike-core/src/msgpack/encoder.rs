@@ -40,13 +40,13 @@ pub fn pack_value(buf: &mut Option<&mut Buffer>, val: &Value) -> Result<usize> {
         Value::HashMap(ref val) => pack_map(buf, val)?,
         Value::OrderedMap(ref val) => pack_ordered_map(buf, val)?,
         Value::MultiResult(_) => {
-            return Err(Error::InvalidArgument(
-                "Multi results are not supported in this encoder.".into(),
+            return Err(Error::invalid_argument(
+                "Multi results are not supported in this encoder.",
             ))
         }
         Value::KeyValueList(_) => {
-            return Err(Error::InvalidArgument(
-                "KeyValue lists are not supported in this encoder.".into(),
+            return Err(Error::invalid_argument(
+                "KeyValue lists are not supported in this encoder.",
             ))
         }
         Value::GeoJSON(ref val) => pack_geo_json(buf, val),

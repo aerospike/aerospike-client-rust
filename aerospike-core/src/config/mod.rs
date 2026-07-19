@@ -167,7 +167,9 @@ mod tests {
     };
 
     /// Parses a single YAML scalar into a config type `T`.
-    fn parse<T: for<'de> serde::Deserialize<'de>>(yaml: &str) -> Result<T, serde_yml::Error> {
+    fn parse<T: for<'de> serde::Deserialize<'de> + 'static>(
+        yaml: &str,
+    ) -> Result<T, serde_yml::Error> {
         serde_yml::from_str(yaml)
     }
 

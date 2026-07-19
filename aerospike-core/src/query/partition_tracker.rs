@@ -66,7 +66,7 @@ impl PartitionTracker {
             // cluster partitions may change on the server and PartitionFilter will never have access
             // to Cluster instance. Use fixed number of partitions for now.
             if partition_filter.begin >= node::PARTITIONS {
-                return Err(Error::InvalidArgument(format!(
+                return Err(Error::invalid_argument(format!(
                     "Invalid partition begin {} . Valid range: 0-{}",
                     partition_filter.begin,
                     node::PARTITIONS - 1
@@ -74,14 +74,14 @@ impl PartitionTracker {
             }
 
             if partition_filter.count == 0 {
-                return Err(Error::InvalidArgument(format!(
+                return Err(Error::invalid_argument(format!(
                     "Invalid partition count {}",
                     partition_filter.count
                 )));
             }
 
             if (partition_filter.begin + partition_filter.count) > node::PARTITIONS {
-                return Err(Error::InvalidArgument(format!(
+                return Err(Error::invalid_argument(format!(
                     "Invalid partition range ({},{})",
                     partition_filter.begin,
                     partition_filter.begin + partition_filter.count
@@ -196,7 +196,7 @@ impl PartitionTracker {
 
         let node_size = list.len();
         if node_size == 0 {
-            return Err(Error::ClientError("No nodes were assigned".into()));
+            return Err(Error::client_error("No nodes were assigned"));
         }
 
         // Set global retry to true because scan/query may terminate early and all partitions
@@ -299,7 +299,7 @@ impl PartitionTracker {
                 let mut ps = ps.lock().await;
                 ps.digest = Some(key.digest);
             } else {
-                return Err(Error::ClientError(format!(
+                return Err(Error::client_error(format!(
                     "Partition mismatch: key.partition_id: {}, partition_begin: {}",
                     partition_id, self.partition_begin
                 )));
@@ -319,7 +319,7 @@ impl PartitionTracker {
     ) -> Result<()> {
         let partition_id = key.partition_id();
         if (partition_id as i64) - (self.partition_begin as i64) < 0 {
-            return Err(Error::ClientError(format!(
+            return Err(Error::client_error(format!(
                 "Partition mismatch: key.partition_id: {}, partition_begin: {}",
                 partition_id, self.partition_begin
             )));
@@ -419,7 +419,7 @@ impl PartitionTracker {
 
         // Check if limits have been reached.
         if policy.max_retries() > 0 && self.iteration() > policy.max_retries() {
-            return Err(Error::ClientError(format!(
+            return Err(Error::client_error(format!(
                 "Max retries exceeded: {}",
                 policy.max_retries()
             )));

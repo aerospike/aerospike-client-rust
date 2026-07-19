@@ -22,21 +22,20 @@ ripemd = "0.2"
 base64 = "0.22"
 rand = "0.10"
 lazy_static = "1.5"
-thiserror = "2.0.18"
 pwhash = "1.0"
 serde = { version = "1.0", features = ["derive"], optional = true }
-serde_yml = { version = "0.0.12", optional = true }
+serde_yml = { version = "0.0.13", optional = true }
 aerospike-macro = { path = "../aerospike-macro", version = "3.0.0-alpha.1", optional = true }
 aerospike-rt = { path = "../aerospike-rt", version = "3.0.0-alpha.1" }
 # `tokio::select!` macro needs a direct dep; runtime features come via aerospike-rt.
 tokio = { version = "1", default-features = false, features = ["macros"] }
-futures = { version = "0.3.32" }
-async-trait = "0.1.89"
+futures = { version = "0.3.33" }
+async-trait = "0.1.91"
 rhexdump = "0.2.0"
 flate2 = "1"
 regex = "1"
 tokio-rustls = { version = "0.26.4", optional = true }
-rustls = { version = "0.23.40", optional = true }
+rustls = { version = "0.23.42", optional = true }
 async-channel = "2.5.0"
 hazarc = "0.2.0"
 
@@ -67,5 +66,5 @@ serde_json = "1.0"
 aerospike = { path = "../", default-features = false, features = ["async"] }
 aerospike-macro = {path = "../aerospike-macro"}
 lazy_static = "1.5"
-tokio = { version = "1.52.1", features = ["full"] }
+tokio = { version = "1.53.0", features = ["full"] }
 webpki-roots = "1"

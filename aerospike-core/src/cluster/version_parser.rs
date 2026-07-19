@@ -123,7 +123,7 @@ impl<'a> VersionParser<'a> {
         });
 
         if !RE.is_match(self.s) {
-            return Err(Error::ClientError(format!(
+            return Err(Error::client_error(format!(
                 "Could not parse node version string `{}`",
                 self.s
             )));

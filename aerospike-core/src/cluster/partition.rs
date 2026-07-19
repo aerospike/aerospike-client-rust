@@ -213,7 +213,7 @@ impl<'a> Partition<'a> {
 
         let rack_ids = cluster.client_policy.load().rack_ids.clone();
         let rack_ids = rack_ids.as_ref().ok_or_else(|| {
-            Error::InvalidArgument(
+            Error::invalid_argument(
                 "Attempted to use Replica::PreferRack without configuring racks in client policy"
                     .to_string(),
             )
@@ -316,14 +316,14 @@ impl fmt::Display for Partition<'_> {
 
 fn invalid_namespace_error(namespace: &str, map_size: usize) -> Error {
     if map_size == 0 {
-        Error::InvalidNamespace("Partition map empty".to_string())
+        Error::invalid_namespace("Partition map empty".to_string())
     } else {
-        Error::InvalidNamespace(format!("Namespace not found in partition map: {namespace}"))
+        Error::invalid_namespace(format!("Namespace not found in partition map: {namespace}"))
     }
 }
 
 fn invalid_node_error(partition: &Partition) -> Error {
-    Error::InvalidNode(format!(
+    Error::invalid_node(format!(
         "Cannot get appropriate node for namespace: {} partition: {}",
         partition.namespace, partition.partition_id
     ))

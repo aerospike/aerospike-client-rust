@@ -331,14 +331,18 @@ pub async fn skip_if_not_enterprise(test_name: &str) -> bool {
     false
 }
 
-/// True when `err` (including `Chain` wrappers) is a client-side timeout.
+/// True when `err` (including cause-chain wrappers) is a client-side timeout.
 pub fn is_timeout_error(err: &Error) -> bool {
-    match err {
-        Error::Timeout { .. } => true,
-        Error::ClientError(msg) => msg.contains("Client Timeout") || msg.contains("timed out"),
-        Error::Chain(outer, inner) => is_timeout_error(outer) || is_timeout_error(inner),
-        _ => false,
+    if matches!(err.kind(), aerospike::ErrorKind::Timeout) {
+        return true;
     }
+    let msg = err.to_string();
+    if msg.contains("Client Timeout") || msg.contains("timed out") {
+        return true;
+    }
+    std::error::Error::source(err)
+        .and_then(|s| s.downcast_ref::<Error>())
+        .is_some_and(is_timeout_error)
 }
 
 /// True when `err` (including stream termination / chain wrappers) is index-not-found.
@@ -350,11 +354,9 @@ pub fn is_index_not_found(err: &Error) -> bool {
     if msg.contains("IndexNotFound") || msg.contains("Index not found") {
         return true;
     }
-    match err {
-        Error::StreamTerminatedError(Some(inner)) => is_index_not_found(inner),
-        Error::Chain(outer, inner) => is_index_not_found(outer) || is_index_not_found(inner),
-        _ => false,
-    }
+    std::error::Error::source(err)
+        .and_then(|s| s.downcast_ref::<Error>())
+        .is_some_and(is_index_not_found)
 }
 
 /// Check whether the given namespace is configured with strong-consistency.
@@ -455,8 +457,14 @@ async fn explicit_record_ttl_probe(client: &aerospike::Client) -> bool {
             let _ = client.delete(&WritePolicy::default(), &key).await;
             true
         }
-        Err(aerospike::Error::ServerError(aerospike::ResultCode::FailForbidden, _, _, _))
-        | Err(aerospike::Error::ServerError(aerospike::ResultCode::ParameterError, _, _, _)) => false,
+        Err(e)
+            if matches!(
+                e.server_result_code(),
+                Some(aerospike::ResultCode::FailForbidden | aerospike::ResultCode::ParameterError)
+            ) =>
+        {
+            false
+        }
         Err(e) => panic!("explicit TTL probe put: {}", e),
     }
 }

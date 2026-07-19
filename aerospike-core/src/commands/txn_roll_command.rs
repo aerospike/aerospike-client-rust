@@ -110,7 +110,7 @@ impl Command for TxnRollCommand<'_> {
         match result_code {
             ResultCode::Ok | ResultCode::KeyNotFoundError => {}
             _ => {
-                return Err(Error::ServerError(result_code, false, conn.addr.clone(), None));
+                return Err(Error::server_error(result_code, conn.addr.clone(), None));
             }
         }
 

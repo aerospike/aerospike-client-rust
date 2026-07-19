@@ -1,6 +1,4 @@
-#[macro_use]
-extern crate aerospike;
-extern crate tokio;
+use aerospike::{as_bin, as_key};
 
 use aerospike::query::{Filter, PartitionFilter};
 use aerospike::{Bins, Client, ClientPolicy, QueryPolicy, Statement};
@@ -19,6 +17,13 @@ const BIN_NAME: &str = "bin";
 
 #[tokio::main]
 async fn main() {
+    run().await;
+}
+
+/// Example body. Standalone via `cargo run --example`, and also driven by
+/// the integration test suite (`tests/src/examples.rs`) so the examples
+/// stay working and compiling as the API evolves.
+pub async fn run() {
     let client = connect_to_aerospike().await;
     println!("Connected to Aerospike!");
 

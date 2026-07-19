@@ -476,7 +476,7 @@ pub fn key(exp_type: ExpType) -> Expression {
 pub fn from_base64(b64: &str) -> Result<Expression> {
     let bytes = BASE64
         .decode(b64)
-        .map_err(|e| Error::BadResponse(format!("Invalid base64 expression: {e}")))?;
+        .map_err(|e| Error::bad_response(format!("Invalid base64 expression: {e}")))?;
     Ok(from_packed_bytes(bytes))
 }
 

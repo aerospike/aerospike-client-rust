@@ -213,7 +213,7 @@ impl Queue {
                 connection = conn;
                 break;
             }
-            return Err(Error::NoMoreConnections);
+            return Err(Error::no_more_connections());
         }
         Ok(PooledConnection {
             queue: self.clone(),
@@ -371,7 +371,8 @@ impl ConnectionPool {
                 if i >= self.queues.len() {
                     i = 0;
                 }
-                if matches!(connection, Err(Error::NoMoreConnections)) {
+                if matches!(&connection, Err(e) if matches!(e.kind(), crate::ErrorKind::NoMoreConnections))
+                {
                     attempts -= 1;
                     if attempts > 0 {
                         continue;
@@ -414,8 +415,8 @@ impl ConnectionPool {
             }
         }
 
-        Err(Error::ClientError(
-            "Could not make a connection for the connection pool".into(),
+        Err(Error::client_error(
+            "Could not make a connection for the connection pool",
         ))
     }
 

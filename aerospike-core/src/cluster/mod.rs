@@ -707,7 +707,7 @@ impl Cluster {
 
         #[cfg(all(feature = "rt-tokio", not(feature = "rt-async-std")))]
         return handle.await.map_err(|err| {
-            Error::InvalidArgument(format!("Error during initial cluster tend: {err:?}"))
+            Error::invalid_argument(format!("Error during initial cluster tend: {err:?}"))
         });
         #[cfg(all(feature = "rt-async-std", not(feature = "rt-tokio")))]
         return {
@@ -801,7 +801,7 @@ impl Cluster {
                 node.parse_rack(buf.as_str())?;
             }
             _ => {
-                return Err(Error::BadResponse(
+                return Err(Error::bad_response(
                     "ClientPolicy.rack_ids is set, but the server does not support this feature."
                         .to_string(),
                 ));
@@ -1732,7 +1732,7 @@ impl Cluster {
             }
         }
 
-        Err(Error::InvalidNode(format!(
+        Err(Error::invalid_node(format!(
             "Requested node `{node_name}` not found."
         )))
     }

@@ -97,7 +97,7 @@ impl ToHosts for String {
     fn to_hosts(&self) -> Result<Vec<Host>> {
         let parser = Parser::new(self, 3000);
         parser.read_hosts().map_err(|e| {
-            e.wrap(Error::InvalidArgument(format!(
+            e.wrap(Error::invalid_argument(format!(
                 "Invalid hosts list: '{self}'"
             )))
         })

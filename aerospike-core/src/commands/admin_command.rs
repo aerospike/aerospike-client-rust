@@ -126,7 +126,7 @@ impl AdminCommand {
         let result_code = conn.buffer.read_u8(Some(RESULT_CODE));
         let result_code = ResultCode::from(result_code);
         if result_code != ResultCode::Ok {
-            return Err(Error::ServerError(result_code, false, conn.addr.clone(), None));
+            return Err(Error::server_error(result_code, conn.addr.clone(), None));
         }
 
         conn.reset_state();
@@ -191,9 +191,8 @@ impl AdminCommand {
                 if result_code == QUERY_END as u8 {
                     return Ok((-1, users));
                 }
-                return Err(Error::ServerError(
+                return Err(Error::server_error(
                     ResultCode::from(result_code),
-                    false,
                     conn.addr.clone(),
                     None,
                 ));
@@ -296,9 +295,8 @@ impl AdminCommand {
                 if result_code == QUERY_END as u8 {
                     return Ok((-1, roles));
                 }
-                return Err(Error::ServerError(
+                return Err(Error::server_error(
                     ResultCode::from(result_code),
-                    false,
                     conn.addr.clone(),
                     None,
                 ));
@@ -456,16 +454,15 @@ impl AdminCommand {
             return Ok(None);
         }
         if result_code != ResultCode::Ok {
-            return Err(Error::ServerError(result_code, false, conn.addr.clone(), None));
+            return Err(Error::server_error(result_code, conn.addr.clone(), None));
         }
 
         // Parse the body: each field is `len(u32) | id(u8) | bytes(len-1)`.
         let sz = conn.buffer.read_u64(Some(0));
         let receive_size = (sz & 0xFFFF_FFFF_FFFF) as i64 - HEADER_REMAINING as i64;
         if receive_size <= 0 || field_count == 0 {
-            return Err(Error::ServerError(
+            return Err(Error::server_error(
                 result_code,
-                false,
                 "Failed to retrieve session token".to_string(),
                 None,
             ));
@@ -523,9 +520,8 @@ impl AdminCommand {
                 expiration: aerospike_rt::time::Instant::now()
                     + std::time::Duration::from_secs(60 * 60), // 1h default
             })),
-            _ => Err(Error::ServerError(
+            _ => Err(Error::server_error(
                 result_code,
-                false,
                 "Failed to retrieve session token".to_string(),
                 None,
             )),
@@ -577,8 +573,8 @@ impl AdminCommand {
         let mut pool_empty_waits = 0;
         loop {
             match node.get_connection(0).await {
-                Err(Error::ConnectionPoolEmpty)
-                    if pool_empty_waits < commands::POOL_EMPTY_MAX_WAITS =>
+                Err(err)
+                    if err.is_pool_empty() && pool_empty_waits < commands::POOL_EMPTY_MAX_WAITS =>
                 {
                     pool_empty_waits += 1;
                     sleep(commands::POOL_EMPTY_WAIT).await;
@@ -665,8 +661,8 @@ impl AdminCommand {
             }
 
             AuthMode::PKI => {
-                return Err(Error::ClientError(
-                    "Can't change PKI user's password".into(),
+                return Err(Error::client_error(
+                    "Can't change PKI user's password",
                 ))
             }
             AuthMode::None => AdminCommand::write_field_str(&mut conn, OLD_PASSWORD, ""),
@@ -963,7 +959,7 @@ impl AdminCommand {
                 if prev.set_name.as_ref().map_or(0, |s| s.trim().len()) > 0
                     && prev.namespace.as_ref().map_or(0, |s| s.trim().len()) == 0
                 {
-                    return Err(Error::ClientError(format!(
+                    return Err(Error::client_error(format!(
                         "admin privilege '{code}' has a set scope with an empty namespace."
                     )));
                 }
@@ -982,7 +978,7 @@ impl AdminCommand {
                 + prev.set_name.as_ref().map_or(0, std::string::String::len)
                 > 0
             {
-                return Err(Error::ClientError(format!(
+                return Err(Error::client_error(format!(
                     "admin global privilege '{code}' can't have a namespace or set"
                 )));
             }

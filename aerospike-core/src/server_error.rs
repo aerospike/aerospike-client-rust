@@ -20,7 +20,7 @@
 //! the server may attach a numeric subcode, a human-readable message, and (at
 //! verbosity 3, on expression build failures) a structured expression trace to a
 //! failure response. The detail is surfaced on
-//! [`Error::ServerError`](crate::errors::Error::ServerError) as a
+//! [`ErrorKind::Server`](crate::ErrorKind::Server) as a
 //! [`ServerErrorDetail`] and via the [`Error::server_error_detail`],
 //! [`Error::sub_code`] and [`Error::server_message`] accessors.
 //!

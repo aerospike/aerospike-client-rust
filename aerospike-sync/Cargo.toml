@@ -18,11 +18,12 @@ publish = true
 
 [dependencies]
 aerospike-core = {path = "../aerospike-core", version = "3.0.0-alpha.1", features = ["sync"]}
-futures = { version = "0.3.32" }
+futures = { version = "0.3.33" }
 
 [features]
 rt-tokio = ["aerospike-core/rt-tokio"]
 rt-async-std = ["aerospike-core/rt-async-std"]
+dynamic-config = ["aerospike-core/dynamic-config"]
 
 [dev-dependencies]
 aerospike = {path = "../"}

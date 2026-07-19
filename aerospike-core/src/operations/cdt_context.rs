@@ -104,13 +104,13 @@ pub fn ctx_from_bytes(bytes: &[u8]) -> Result<Vec<CdtContext>> {
         0xdc => buf.read_u16(None) as usize,
         0xdd => buf.read_u32(None) as usize,
         _ => {
-            return Err(Error::BadResponse(format!(
+            return Err(Error::bad_response(format!(
                 "Invalid CTX array header: 0x{header:02x}"
             )))
         }
     };
     if !total.is_multiple_of(2) {
-        return Err(Error::BadResponse(format!(
+        return Err(Error::bad_response(format!(
             "CTX byte stream must contain (id, value) pairs; got {total} elements"
         )));
     }
@@ -147,7 +147,7 @@ pub fn ctx_from_bytes(bytes: &[u8]) -> Result<Vec<CdtContext>> {
 pub fn ctx_from_base64(b64: &str) -> Result<Vec<CdtContext>> {
     let bytes = BASE64
         .decode(b64)
-        .map_err(|e| Error::BadResponse(format!("Invalid base64 CTX: {e}")))?;
+        .map_err(|e| Error::bad_response(format!("Invalid base64 CTX: {e}")))?;
     ctx_from_bytes(&bytes)
 }
 
@@ -166,32 +166,32 @@ fn read_msgpack_uint(buf: &mut Buffer) -> Result<u16> {
         0xd0 => {
             let v = i64::from(buf.read_u8(None) as i8);
             if v < 0 {
-                return Err(Error::BadResponse(format!("Negative CTX id: {v}")));
+                return Err(Error::bad_response(format!("Negative CTX id: {v}")));
             }
             v as u32
         }
         0xd1 => {
             let v = i64::from(buf.read_u16(None) as i16);
             if v < 0 {
-                return Err(Error::BadResponse(format!("Negative CTX id: {v}")));
+                return Err(Error::bad_response(format!("Negative CTX id: {v}")));
             }
             v as u32
         }
         0xd2 => {
             let v = i64::from(buf.read_u32(None) as i32);
             if v < 0 {
-                return Err(Error::BadResponse(format!("Negative CTX id: {v}")));
+                return Err(Error::bad_response(format!("Negative CTX id: {v}")));
             }
             v as u32
         }
         _ => {
-            return Err(Error::BadResponse(format!(
+            return Err(Error::bad_response(format!(
                 "Unexpected msgpack header in CTX id: 0x{header:02x}"
             )))
         }
     };
     if v > u32::from(u16::MAX) {
-        return Err(Error::BadResponse(format!(
+        return Err(Error::bad_response(format!(
             "CTX id {v} exceeds 16-bit range"
         )));
     }
@@ -209,7 +209,7 @@ fn read_msgpack_bin(buf: &mut Buffer) -> Result<Vec<u8>> {
         _ => unreachable!("caller already peeked a bin prefix"),
     };
     if buf.data_offset + len > buf.data_buffer.len() {
-        return Err(Error::BadResponse(format!(
+        return Err(Error::bad_response(format!(
             "CTX expression bin overflow: need {len} bytes at offset {}",
             buf.data_offset
         )));
@@ -354,7 +354,9 @@ pub const fn ctx_all_children_with_filter(exp: Expression) -> CdtContext {
 /// Requires Aerospike Server version >= 8.1.2.
 ///
 /// # Examples
-/// ```ignore
+/// ```rust
+/// use aerospike::operations::cdt_context::ctx_map_keys_in;
+///
 /// // Given map: {alpha: 10, beta: 20, gamma: 30}
 /// // Select only the entries whose keys are "alpha" or "gamma".
 /// let ctx = ctx_map_keys_in(["alpha", "gamma"]);
@@ -421,7 +423,7 @@ pub fn ctx_all_children() -> CdtContext {
 ///
 /// # Examples
 ///
-/// ```ignore
+/// ```rust
 /// use aerospike::operations::cdt_context::Path;
 /// use aerospike::operations::path::{select_by_path, SelectFlag};
 ///
@@ -754,7 +756,7 @@ mod tests {
     #[test]
     fn ctx_from_bytes_rejects_bad_header() {
         let err = ctx_from_bytes(&[0xff]).unwrap_err();
-        assert!(matches!(err, Error::BadResponse(_)));
+        assert!(matches!(err.kind(), crate::ErrorKind::BadResponse));
     }
 
     #[test]
@@ -762,7 +764,7 @@ mod tests {
         // fixarray of 3 elements (odd) — must be rejected because every
         // CTX entry needs a (id, value) pair.
         let err = ctx_from_bytes(&[0x93, 0x01, 0xc0, 0x02]).unwrap_err();
-        assert!(matches!(err, Error::BadResponse(_)));
+        assert!(matches!(err.kind(), crate::ErrorKind::BadResponse));
     }
 
     // ---- Path builder ---------------------------------------------------

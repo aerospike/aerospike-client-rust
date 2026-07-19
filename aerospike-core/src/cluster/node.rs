@@ -337,7 +337,7 @@ impl Node {
         let peer_string = match info_map.get(peers_cmd) {
             None => {
                 self.refresh_failed();
-                return Err(Error::BadResponse("Missing peers list".to_string()));
+                return Err(Error::bad_response("Missing peers list".to_string()));
             }
             Some(s) if s.is_empty() => return Ok(()),
             Some(s) => s,
@@ -414,7 +414,7 @@ impl Node {
     ) -> Result<()> {
         let gen_str = info_map
             .get(PEERS_GENERATION)
-            .ok_or_else(|| Error::BadResponse("Missing peers-generation".to_string()))?;
+            .ok_or_else(|| Error::bad_response("Missing peers-generation".to_string()))?;
         let gen = gen_str.parse::<isize>()?;
 
         let stored = self.peers_generation.load(Ordering::Relaxed);
@@ -440,11 +440,11 @@ impl Node {
 
     fn verify_node_name(&self, info_map: &HashMap<String, String>) -> Result<()> {
         match info_map.get("node") {
-            None => Err(Error::InvalidNode("Missing node name".to_string())),
+            None => Err(Error::invalid_node("Missing node name".to_string())),
             Some(info_name) if info_name == &self.name => Ok(()),
             Some(info_name) => {
                 self.inactivate();
-                Err(Error::InvalidNode(format!(
+                Err(Error::invalid_node(format!(
                     "Node name has changed: '{}' => '{}'",
                     self.name, info_name
                 )))
@@ -457,11 +457,11 @@ impl Node {
         match self.client_policy.cluster_name {
             None => Ok(()),
             Some(ref expected) => match info_map.get("cluster-name") {
-                None => Err(Error::InvalidNode("Missing cluster name".to_string())),
+                None => Err(Error::invalid_node("Missing cluster name".to_string())),
                 Some(info_name) if info_name == expected => Ok(()),
                 Some(info_name) => {
                     self.inactivate();
-                    Err(Error::InvalidNode(format!(
+                    Err(Error::invalid_node(format!(
                         "Cluster name mismatch: expected={expected},
                                                            got={info_name}"
                     )))
@@ -474,7 +474,7 @@ impl Node {
     /// Sets `partition_changed` flag if they differ.
     fn verify_partition_generation(&self, info_map: &HashMap<String, String>) -> Result<()> {
         match info_map.get(PARTITION_GENERATION) {
-            None => Err(Error::BadResponse(
+            None => Err(Error::bad_response(
                 "Missing partition generation".to_string(),
             )),
             Some(gen_string) => {
@@ -492,7 +492,7 @@ impl Node {
     /// the cluster is rack-aware.
     fn verify_rebalance_generation(&self, info_map: &HashMap<String, String>) -> Result<()> {
         match info_map.get(REBALANCE_GENERATION) {
-            None => Err(Error::BadResponse(
+            None => Err(Error::bad_response(
                 "Missing rebalance-generation".to_string(),
             )),
             Some(gen_string) => {
@@ -508,7 +508,7 @@ impl Node {
     pub fn update_partitions(&self, info_map: &HashMap<String, String>) -> Result<()> {
         match info_map.get(PARTITION_GENERATION) {
             None => {
-                return Err(Error::BadResponse(
+                return Err(Error::bad_response(
                     "Missing partition generation".to_string(),
                 ))
             }
@@ -548,13 +548,13 @@ impl Node {
             .map(|entry| {
                 let (key, val) = entry
                     .split_once(':')
-                    .ok_or(Error::BadResponse("Invalid rack entry".into()))?;
+                    .ok_or(Error::bad_response("Invalid rack entry"))?;
                 let ns = key.trim();
                 // Aerospike server enforces 1..=31 for namespace names.
                 // Reject anything outside that to avoid populating the rack
                 // table with poisoned entries (mirrors Java's RackParser).
                 if ns.is_empty() || ns.len() >= 32 {
-                    return Err(Error::BadResponse(format!(
+                    return Err(Error::bad_response(format!(
                         "Invalid racks namespace `{ns}`"
                     )));
                 }
@@ -569,7 +569,7 @@ impl Node {
     // Get a connection to the node from the connection pool
     pub async fn get_connection(&self, hint: u8) -> Result<PooledConnection> {
         if !self.is_active() {
-            return Err(Error::InvalidNode(format!(
+            return Err(Error::invalid_node(format!(
                 "Cannot get a connection for node. The node `{self}` is inactive"
             )));
         }
@@ -585,7 +585,7 @@ impl Node {
         // command's latency. Mirrors the Go client's `makeConnectionForPool`.
         self.metrics.incr_connections_pool_empty();
         self.spawn_background_conn_fill(hint);
-        Err(Error::ConnectionPoolEmpty)
+        Err(Error::pool_empty())
     }
 
     /// Spawns a detached task that opens one connection and parks it in the
@@ -702,8 +702,8 @@ impl Node {
         let mut conn = loop {
             match self.get_connection(0).await {
                 Ok(conn) => break conn,
-                Err(Error::ConnectionPoolEmpty)
-                    if aerospike_rt::time::Instant::now() < deadline =>
+                Err(err)
+                    if err.is_pool_empty() && aerospike_rt::time::Instant::now() < deadline =>
                 {
                     aerospike_rt::sleep(std::time::Duration::from_millis(5)).await;
                 }
@@ -825,7 +825,7 @@ impl Node {
         if self.error_rate_within_limit() {
             Ok(())
         } else {
-            Err(Error::MaxErrorRate(self.address.clone()))
+            Err(Error::max_error_rate(self.address.clone()))
         }
     }
 
@@ -1011,7 +1011,7 @@ impl Node {
 
             Ok(count)
         } else {
-            Err(Error::InvalidNode(format!(
+            Err(Error::invalid_node(format!(
                 "Cannot fill the connection pool to 'policy.min_conns_per_node'. The node `{self}` is inactive"
             )))
         }
@@ -1043,7 +1043,6 @@ mod node_tests {
     use std::sync::Arc;
 
     use crate::cluster::node_validator::NodeValidator;
-    use crate::errors::Error;
     use crate::net::Host;
     use crate::policy::ClientPolicy;
     use crate::Version;
@@ -1088,10 +1087,14 @@ mod node_tests {
         assert!(!node.is_active());
 
         let err = node.get_connection(0).await.unwrap_err();
-        match err {
-            Error::InvalidNode(msg) => assert!(msg.contains("inactive"), "unexpected: {}", msg),
-            other => panic!("expected InvalidNode, got {:?}", other),
-        }
+        assert!(
+            matches!(err.kind(), crate::ErrorKind::InvalidNode),
+            "expected InvalidNode, got {err:?}"
+        );
+        assert!(
+            err.to_string().contains("inactive"),
+            "unexpected: {err}"
+        );
         assert_eq!(
             node.connection_pool.num_conns(),
             before,
@@ -1177,7 +1180,7 @@ mod node_tests {
         for hint in 0..4u8 {
             let err = node.get_connection(hint).await.unwrap_err();
             assert!(
-                matches!(err, Error::ConnectionPoolEmpty),
+                err.is_pool_empty(),
                 "pool miss must report ConnectionPoolEmpty, got {err:?}"
             );
         }
@@ -1210,7 +1213,7 @@ mod node_tests {
         let node = test_node();
 
         let err = node.get_connection(0).await.unwrap_err();
-        assert!(matches!(err, Error::ConnectionPoolEmpty));
+        assert!(err.is_pool_empty());
 
         // Let the spawned fill task run (dummy connection, completes fast).
         for _ in 0..20 {

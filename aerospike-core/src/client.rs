@@ -33,7 +33,7 @@ use crate::commands::{
     DeleteCommand, ExecuteUDFCommand, ExistsCommand, OperateCommand, QueryCommand, ReadCommand,
     ServerCommand, TouchCommand, WriteCommand,
 };
-use crate::errors::{Error, Result};
+use crate::errors::{Error, ErrorKind, Result};
 use crate::expressions::Expression;
 use crate::net::ToHosts;
 use crate::operations::cdt_context::{to_base64, CdtContext};
@@ -384,7 +384,8 @@ impl Client {
     ///
     /// # Errors
     ///
-    /// * [`Error::ServerError`](crate::errors::Error::ServerError) with [`ResultCode::KeyNotFoundError`] if the record does not exist.
+    /// * A server error with [`ResultCode::KeyNotFoundError`] (see
+    ///   [`Error::server_result_code`](crate::Error::server_result_code)) if the record does not exist.
     /// * Other errors for network, timeout, or server failures.
     ///
     /// # Panics
@@ -403,13 +404,13 @@ impl Client {
     ///
     /// # #[tokio::main]
     /// # async fn main() {
-    /// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap();
+    /// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap_or_else(|_| "127.0.0.1:3000".to_string());
     /// # let client = Client::new(&ClientPolicy::default(), &hosts).await.unwrap();
     /// let key = as_key!("test", "test", "mykey");
     /// match client.get(&ReadPolicy::default(), &key, ["a", "b"]).await {
     ///     Ok(record)
     ///         => println!("a={:?}", record.bins.get("a")),
-    ///     Err(Error::ServerError(ResultCode::KeyNotFoundError,..))
+    ///     Err(ref err) if err.server_result_code() == Some(ResultCode::KeyNotFoundError)
     ///         => println!("No such record: {}", key),
     ///     Err(err)
     ///         => println!("Error fetching record: {}", err),
@@ -424,7 +425,7 @@ impl Client {
     ///
     /// # #[tokio::main]
     /// # async fn main() {
-    /// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap();
+    /// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap_or_else(|_| "127.0.0.1:3000".to_string());
     /// # let client = Client::new(&ClientPolicy::default(), &hosts).await.unwrap();
     /// let key = as_key!("test", "test", "mykey");
     /// match client.get(&ReadPolicy::default(), &key, Bins::None).await {
@@ -434,7 +435,7 @@ impl Client {
     ///             Some(duration) => println!("ttl: {} secs", duration.as_secs()),
     ///         }
     ///     },
-    ///     Err(Error::ServerError(ResultCode::KeyNotFoundError,..))
+    ///     Err(ref err) if err.server_result_code() == Some(ResultCode::KeyNotFoundError)
     ///         => println!("No such record: {}", key),
     ///     Err(err)
     ///         => println!("Error fetching record: {}", err),
@@ -584,7 +585,7 @@ impl Client {
     ///
     /// # #[tokio::main]
     /// # async fn main() {
-    /// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap();
+    /// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap_or_else(|_| "127.0.0.1:3000".to_string());
     /// # let client = Client::new(&ClientPolicy::default(), &hosts).await.unwrap();
     /// let key = as_key!("test", "test", 1);
     /// let batch = vec![BatchOperation::read(&BatchReadPolicy::default(), key, Bins::All)];
@@ -651,7 +652,7 @@ impl Client {
     ///
     /// # #[tokio::main]
     /// # async fn main() {
-    /// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap();
+    /// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap_or_else(|_| "127.0.0.1:3000".to_string());
     /// # let client = Client::new(&ClientPolicy::default(), &hosts).await.unwrap();
     /// let key = as_key!("test", "test", "mykey");
     /// let bin = as_bin!("i", 42);
@@ -669,7 +670,7 @@ impl Client {
     ///
     /// # #[tokio::main]
     /// # async fn main() {
-    /// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap();
+    /// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap_or_else(|_| "127.0.0.1:3000".to_string());
     /// # let client = Client::new(&ClientPolicy::default(), &hosts).await.unwrap();
     /// let key = as_key!("test", "test", "mykey");
     /// let bin = as_bin!("i", 42);
@@ -729,7 +730,7 @@ impl Client {
     ///
     /// # #[tokio::main]
     /// # async fn main() {
-    /// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap();
+    /// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap_or_else(|_| "127.0.0.1:3000".to_string());
     /// # let client = Client::new(&ClientPolicy::default(), &hosts).await.unwrap();
     /// let key = as_key!("test", "test", "mykey");
     /// let bina = as_bin!("a", 1);
@@ -888,7 +889,7 @@ impl Client {
     ///
     /// # #[tokio::main]
     /// # async fn main() {
-    /// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap();
+    /// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap_or_else(|_| "127.0.0.1:3000".to_string());
     /// # let client = Client::new(&ClientPolicy::default(), &hosts).await.unwrap();
     /// let key = as_key!("test", "test", "mykey");
     /// match client.delete(&WritePolicy::default(), &key).await {
@@ -935,7 +936,7 @@ impl Client {
     ///
     /// # #[tokio::main]
     /// # async fn main() {
-    /// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap();
+    /// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap_or_else(|_| "127.0.0.1:3000".to_string());
     /// # let client = Client::new(&ClientPolicy::default(), &hosts).await.unwrap();
     /// let key = as_key!("test", "test", "mykey");
     /// let mut policy = WritePolicy::default();
@@ -1040,7 +1041,7 @@ impl Client {
     ///
     /// # #[tokio::main]
     /// # async fn main() {
-    /// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap();
+    /// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap_or_else(|_| "127.0.0.1:3000".to_string());
     /// # let client = Client::new(&ClientPolicy::default(), &hosts).await.unwrap();
     /// let key = as_key!("test", "test", "mykey");
     /// let bin = as_bin!("a", 42);
@@ -1061,10 +1062,9 @@ impl Client {
         ops: &[Operation],
     ) -> Result<Record> {
         if ops.is_empty() {
-            return Err(Error::ServerError(
+            return Err(Error::server_error(
                 ResultCode::ParameterError,
-                false,
-                "no operations defined".into(),
+                "no operations defined",
                 None,
             ));
         }
@@ -1113,7 +1113,7 @@ impl Client {
     ///
     /// # #[tokio::main]
     /// # async fn main() {
-    /// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap();
+    /// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap_or_else(|_| "127.0.0.1:3000".to_string());
     /// # let client = Client::new(&ClientPolicy::default(), &hosts).await.unwrap();
     /// let code = r#"
     /// -- Validate value before writing.
@@ -1302,7 +1302,7 @@ impl Client {
     ///
     /// # Errors
     ///
-    /// * Returns an error if the UDF fails, the record/key is invalid, or on cluster/network failure. [`Error::UdfBadResponse`](crate::errors::Error::UdfBadResponse) if the UDF returns a failure or invalid response.
+    /// * Returns an error if the UDF fails, the record/key is invalid, or on cluster/network failure. [`ErrorKind::UdfBadResponse`](crate::ErrorKind::UdfBadResponse) if the UDF returns a failure or invalid response.
     ///
     /// # Panics
     /// Panics if the return is invalid
@@ -1363,11 +1363,11 @@ impl Client {
             if key.contains("SUCCESS") {
                 return Ok(Some(value.clone()));
             } else if key.contains("FAILURE") {
-                return Err(Error::UdfBadResponse(value.to_string()));
+                return Err(Error::udf_bad_response(value.to_string()));
             }
         }
 
-        Err(Error::UdfBadResponse("Invalid UDF return value".into()))
+        Err(Error::udf_bad_response("Invalid UDF return value"))
     }
 
     /// Execute a query on all server nodes and return a record iterator. The query executor puts
@@ -1497,10 +1497,9 @@ impl Client {
         operations: &[Operation],
     ) -> Result<ExecuteTask> {
         if operations.is_empty() {
-            return Err(Error::ServerError(
+            return Err(Error::server_error(
                 ResultCode::ParameterError,
-                false,
-                "no operations defined".into(),
+                "no operations defined",
                 None,
             ));
         }
@@ -1711,7 +1710,7 @@ impl Client {
                     drop(tracker_locked);
 
                     match futures::future::try_join_all(handles).await {
-                        Err(e) => err_recordset.err(Error::ClientError(e.to_string())).await,
+                        Err(e) => err_recordset.err(Error::client_error(e.to_string())).await,
                         #[cfg(feature = "rt-async-std")]
                         Ok(_) => (),
                         #[cfg(feature = "rt-tokio")]
@@ -1719,7 +1718,16 @@ impl Client {
                             for err in errs {
                                 match err {
                                     // Socket I/O errors now surface as Error::Connection (was Error::Io).
-                                    Err(Error::Timeout { .. } | Error::Io(_) | Error::Connection { .. }) => timed_out = true,
+                                    Err(e)
+                                        if matches!(
+                                            e.kind(),
+                                            ErrorKind::Timeout
+                                                | ErrorKind::Io(_)
+                                                | ErrorKind::Connection
+                                        ) =>
+                                    {
+                                        timed_out = true;
+                                    }
                                     Err(e) => {
                                         tracker.lock().await.partition_error().await;
                                         err_recordset.err(e).await;
@@ -2379,8 +2387,8 @@ impl Client {
             crate::AuthMode::Internal(u, _) | crate::AuthMode::External(u, _) if u == user => {
                 AdminCommand::change_password(policy, &cluster, user, password).await
             }
-            crate::AuthMode::PKI => Err(Error::ClientError(
-                "Can't change PKI user's password".into(),
+            crate::AuthMode::PKI => Err(Error::client_error(
+                "Can't change PKI user's password",
             )),
             _ => AdminCommand::set_password(policy, &cluster, user, password).await,
         }
@@ -2842,7 +2850,7 @@ impl Client {
         });
 
         if !RE.is_match(response) {
-            return Error::ServerError(ResultCode::ServerError, false, response.into(), None);
+            return Error::server_error(ResultCode::ServerError, response, None);
         }
 
         // 'm' is a 'Match', and 'as_str()' returns the matching part of the haystack.
@@ -2859,7 +2867,7 @@ impl Client {
             })
             .unwrap();
 
-        Error::ServerError(parts.0, false, parts.1.into(), None)
+        Error::server_error(parts.0, parts.1, None)
     }
 
     /// Commit a multi-record transaction (MRT). This will verify record versions,
@@ -2875,7 +2883,7 @@ impl Client {
     ///
     /// # Returns
     /// `CommitStatus` indicating the outcome of the commit operation on success,
-    /// or `Error::CommitFailed` with per-key records and an `in_doubt` flag on
+    /// or `ErrorKind::Commit` with per-key records and an `in_doubt` flag on
     /// failure.
     pub async fn commit(&self, txn: &Arc<Txn>) -> Result<CommitStatus> {
         self.commit_with_policies(
@@ -2908,9 +2916,8 @@ impl Client {
             }
             TxnState::Verified => tr.commit(roll_policy).await,
             TxnState::Committed => Ok(CommitStatus::AlreadyCommitted),
-            TxnState::Aborted => Err(Error::ServerError(
+            TxnState::Aborted => Err(Error::server_error(
                 ResultCode::MrtAborted,
-                false,
                 "Transaction already aborted".to_string(),
                 None,
             )),
@@ -2944,9 +2951,8 @@ impl Client {
 
         match txn.state() {
             TxnState::Open | TxnState::Verified => tr.abort(roll_policy).await,
-            TxnState::Committed => Err(Error::ServerError(
+            TxnState::Committed => Err(Error::server_error(
                 ResultCode::MrtCommitted,
-                false,
                 "Transaction already committed".to_string(),
                 None,
             )),

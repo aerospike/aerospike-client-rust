@@ -282,14 +282,14 @@ impl Value {
             Value::Blob(ref b) => b.len(),
             Value::Bool(_) => 1,
             Value::MultiResult(_) => {
-                return Err(Error::InvalidArgument("MultiValues are only returned as results from the server and never from the client.".into()));
+                return Err(Error::invalid_argument("MultiValues are only returned as results from the server and never from the client."));
             }
             Value::List(_) | Value::HashMap(_) | Value::OrderedMap(_) => {
                 encoder::pack_value(&mut None, self)?
             }
             Value::KeyValueList(_) => {
-                return Err(Error::InvalidArgument(
-                    "The library never passes ordered maps to the server.".into(),
+                return Err(Error::invalid_argument(
+                    "The library never passes ordered maps to the server.",
                 ));
             }
             Value::GeoJSON(ref s) => 1 + 2 + s.len(), // flags + ncells + jsonstr
@@ -311,14 +311,14 @@ impl Value {
             Value::String(ref val) => buf.write_str(val),
             Value::Blob(ref val) | Value::HLL(ref val) => buf.write_bytes(val),
             Value::MultiResult(_) => {
-                return Err(Error::InvalidArgument("MultiValues are only returned as results from the server and never from the client.".into()));
+                return Err(Error::invalid_argument("MultiValues are only returned as results from the server and never from the client."));
             }
             Value::List(_) | Value::HashMap(_) | Value::OrderedMap(_) => {
                 encoder::pack_value(&mut Some(buf), self)?
             }
             Value::KeyValueList(_) => {
-                return Err(Error::InvalidArgument(
-                    "The library never passes ordered maps to the server.".into(),
+                return Err(Error::invalid_argument(
+                    "The library never passes ordered maps to the server.",
                 ));
             }
             Value::GeoJSON(ref val) => buf.write_geo(val),
@@ -347,8 +347,8 @@ impl Value {
                 h.update(val);
                 Ok(())
             }
-            _ => Err(Error::InvalidArgument(
-                "Data type is not supported as Key value.".into(),
+            _ => Err(Error::invalid_argument(
+                "Data type is not supported as Key value.",
             )),
         }
     }

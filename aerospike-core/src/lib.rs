@@ -135,8 +135,6 @@ extern crate byteorder;
 #[macro_use]
 extern crate rhexdump;
 #[macro_use]
-extern crate thiserror;
-#[macro_use]
 extern crate log;
 extern crate pwhash;
 extern crate rand;
@@ -155,7 +153,7 @@ pub use client::Client;
 pub use cluster::version_parser::Version;
 pub use cluster::Node;
 pub use commands::particle_type::ParticleType;
-pub use errors::{Error, Result};
+pub use errors::{client_rc, Error, ErrorKind, Result};
 pub use expressions::regex_flag::RegexFlag;
 pub use key::Key;
 pub use metrics::{

@@ -114,32 +114,25 @@ pub(crate) const POOL_EMPTY_MAX_WAITS: usize = 5_000;
 /// Client-side errors and the `SCAN_ABORT` / `QUERY_ABORTED` server codes
 /// require the socket to be discarded (it may still have stream bytes
 /// pending).
-pub const fn keep_connection(err: &Error) -> bool {
-    match err {
-        Error::ServerError(rc, _, _, _)
-        | Error::BatchError(_, rc, _, _)
-        | Error::BatchLastError(_, rc, _, _) => {
-            !matches!(rc, ResultCode::ScanAbort | ResultCode::QueryAborted)
-        }
-        Error::Timeout { .. } => true,
-        _ => false,
-    }
+pub fn keep_connection(err: &Error) -> bool {
+    err.keep_connection()
 }
 
 /// Client-initiated network error (broken connection or socket timeout).
-pub const fn is_network_error(err: &Error) -> bool {
-    matches!(err, Error::Connection { .. } | Error::Timeout { .. })
+pub fn is_network_error(err: &Error) -> bool {
+    matches!(
+        err.kind(),
+        crate::ErrorKind::Connection | crate::ErrorKind::Timeout
+    )
 }
 
 /// Server-reported result codes that are safe to retry on (TIMEOUT,
 /// `DEVICE_OVERLOAD`, `KEY_BUSY`). We also treat `PartitionUnavailable` as
 /// retriable so callers eventually see the partition recover from a
 /// transitional state.
-pub const fn is_retriable_server_error(err: &Error) -> bool {
-    match err {
-        Error::ServerError(rc, _, _, _)
-        | Error::BatchError(_, rc, _, _)
-        | Error::BatchLastError(_, rc, _, _) => matches!(
+pub fn is_retriable_server_error(err: &Error) -> bool {
+    match err.kind() {
+        crate::ErrorKind::Server { rc, .. } | crate::ErrorKind::BatchRow { rc, .. } => matches!(
             rc,
             ResultCode::Timeout
                 | ResultCode::DeviceOverload
@@ -151,7 +144,7 @@ pub const fn is_retriable_server_error(err: &Error) -> bool {
 }
 
 /// Overall retry gate: either a network failure or a retriable server error.
-pub const fn should_retry(err: &Error) -> bool {
+pub fn should_retry(err: &Error) -> bool {
     is_network_error(err) || is_retriable_server_error(err)
 }
 
@@ -169,7 +162,7 @@ mod tests_retry_predicates {
         Error::connection("read: early eof")
     }
     fn io_err() -> Error {
-        Error::Io(std::io::Error::new(
+        Error::from(std::io::Error::new(
             std::io::ErrorKind::UnexpectedEof,
             "early eof",
         ))
@@ -178,7 +171,7 @@ mod tests_retry_predicates {
         Error::timeout("Timeout reading from the network connection")
     }
     fn server_err(rc: ResultCode) -> Error {
-        Error::ServerError(rc, false, String::new(), None)
+        Error::server_error(rc, String::new(), None)
     }
 
     #[test]

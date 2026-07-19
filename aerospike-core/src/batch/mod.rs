@@ -453,8 +453,8 @@ impl BatchOperation {
                 if let Some(ops) = ops {
                     for op in ops {
                         if op.is_write() {
-                            return Err(Error::ClientError(
-                                "Write operations not allowed in batch read".into(),
+                            return Err(Error::client_error(
+                                "Write operations not allowed in batch read",
                             ));
                         }
                         size += op.estimate_size()? + 8;
@@ -495,8 +495,8 @@ impl BatchOperation {
                 }
 
                 if !has_write {
-                    return Err(Error::ClientError(
-                        "Batch write operations do not contain a write".into(),
+                    return Err(Error::client_error(
+                        "Batch write operations do not contain a write",
                     ));
                 }
                 Ok(size)

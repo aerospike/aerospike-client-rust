@@ -155,7 +155,7 @@ impl Connection {
                 .clone()
                 .unwrap_or_else(|| policy.cluster_name.clone().unwrap_or_default());
             let domain = ServerName::try_from(server_name.as_str())
-                .map_err(|e| Error::ClientError(e.to_string()))?
+                .map_err(|e| Error::client_error(e.to_string()))?
                 .to_owned();
             Ok(Netsocket::Tls(connector.connect(domain, stream).await?))
         } else {
@@ -430,14 +430,14 @@ impl Connection {
     pub(crate) fn validate_header(&self, header: u64) -> Result<()> {
         let msg_version = (header & 0xFF00_0000_0000_0000) >> 56;
         if msg_version != 2 {
-            return Err(Error::ClientError(format!(
+            return Err(Error::client_error(format!(
                 "Invalid Message Header: Expected version to be 2, but got {msg_version}"
             )));
         }
 
         let msg_type = (header & 0x00FF_0000_0000_0000) >> 48;
         if !(msg_type == 1 || msg_type == 3 || msg_type == 4) {
-            return Err(Error::ClientError(format!(
+            return Err(Error::client_error(format!(
                 "Invalid Message Header: Expected type to be 1, 3 or 4, but got {msg_type}"
             )));
         }
@@ -472,7 +472,7 @@ impl Connection {
         let compressed_size = (proto & 0x0000_FFFF_FFFF_FFFF) as usize;
         // compressed_size includes the 8-byte uncompressed size field
         if compressed_size < 8 {
-            return Err(Error::ClientError(
+            return Err(Error::client_error(
                 "Invalid compressed response: size too small".to_string(),
             ));
         }
@@ -522,7 +522,7 @@ impl Connection {
         let mut decompressed = vec![0u8; uncompressed_size];
         decoder
             .read_exact(&mut decompressed)
-            .map_err(|e| Error::ClientError(format!("Decompression error: {e}")))?;
+            .map_err(|e| Error::client_error(format!("Decompression error: {e}")))?;
 
         // Replace buffer with decompressed data (which includes the inner proto header)
         self.buffer.data_buffer = decompressed;
@@ -910,7 +910,7 @@ impl<'a> BufferedConn<'a> {
         // Corrupted data streams can result in a huge length.
         // Do a sanity check here.
         if size > MAX_BUFFER_SIZE {
-            return Err(Error::InvalidArgument(format!(
+            return Err(Error::invalid_argument(format!(
                 "Invalid size for buffer: {size}"
             )));
         }
@@ -938,7 +938,7 @@ impl<'a> BufferedConn<'a> {
                 .as_mut()
                 .unwrap()
                 .read_exact(&mut self.cache)
-                .map_err(|e| Error::ClientError(format!("Decompression error: {e}")))?;
+                .map_err(|e| Error::client_error(format!("Decompression error: {e}")))?;
             self.decoder_remaining -= size;
             self.pos = 0;
             return Ok(size);
@@ -990,7 +990,7 @@ impl<'a> BufferedConn<'a> {
                 let mut sink = vec![0u8; chunk];
                 decoder
                     .read_exact(&mut sink)
-                    .map_err(|e| Error::ClientError(format!("Decompression error: {e}")))?;
+                    .map_err(|e| Error::client_error(format!("Decompression error: {e}")))?;
                 self.decoder_remaining -= chunk;
             }
 
@@ -1102,7 +1102,7 @@ impl<'a> BufferedConn<'a> {
                 let decoder = self.decoder.as_mut().unwrap();
                 decoder
                     .read_exact(&mut self.conn.buffer.data_buffer[cached..cached + remaining])
-                    .map_err(|e| Error::ClientError(format!("Decompression error: {e}")))?;
+                    .map_err(|e| Error::client_error(format!("Decompression error: {e}")))?;
                 self.decoder_remaining -= remaining;
             } else if remaining > self.cache.capacity() / 2 {
                 // read directly from network
@@ -1231,7 +1231,7 @@ impl<'a> ConnectionRecovery<'a> {
                 .await
             {
                 // return early and don't update the connection state
-                return Err(Error::StreamTerminatedError(Some(Box::new(cause))));
+                return Err(Error::stream_terminated(Some(cause)));
             };
         }
 
@@ -1266,7 +1266,7 @@ impl<'a> ConnectionRecovery<'a> {
                 .await
             {
                 // return early and don't update the connection state
-                return Err(Error::StreamTerminatedError(Some(Box::new(cause))));
+                return Err(Error::stream_terminated(Some(cause)));
             }
         }
 
@@ -1284,7 +1284,7 @@ impl<'a> ConnectionRecovery<'a> {
                 .await
             {
                 // return early and don't update the connection state
-                return Err(Error::StreamTerminatedError(Some(Box::new(cause))));
+                return Err(Error::stream_terminated(Some(cause)));
             };
         }
 
@@ -1310,7 +1310,7 @@ impl<'a> ConnectionRecovery<'a> {
                     )
                     .await
                 {
-                    return Err(Error::StreamTerminatedError(Some(Box::new(cause))));
+                    return Err(Error::stream_terminated(Some(cause)));
                 }
             }
 
@@ -1333,7 +1333,7 @@ impl<'a> ConnectionRecovery<'a> {
                     .await
                 {
                     // return early and don't update the connection state
-                    return Err(Error::StreamTerminatedError(Some(Box::new(cause))));
+                    return Err(Error::stream_terminated(Some(cause)));
                 }
             }
 
@@ -1354,7 +1354,7 @@ impl<'a> ConnectionRecovery<'a> {
                 .await
             {
                 // return early and don't update the connection state
-                return Err(Error::StreamTerminatedError(Some(Box::new(cause))));
+                return Err(Error::stream_terminated(Some(cause)));
             }
         }
 
@@ -1373,7 +1373,7 @@ impl<'a> ConnectionRecovery<'a> {
                 .await
             {
                 // return early and don't update the connection state
-                return Err(Error::StreamTerminatedError(Some(Box::new(cause))));
+                return Err(Error::stream_terminated(Some(cause)));
             }
         }
 
@@ -1508,8 +1508,8 @@ mod tests_eof_loopback {
             .expect_err("read on FIN'd socket must fail");
 
         assert!(
-            matches!(err, Error::Connection { .. }),
-            "expected Error::Connection on peer FIN, got: {:?}",
+            matches!(err.kind(), crate::ErrorKind::Connection),
+            "expected connection error on peer FIN, got: {:?}",
             err
         );
         assert!(
@@ -1542,8 +1542,8 @@ mod tests_eof_loopback {
         let err = last_err.expect("a write must eventually fail after peer FIN");
 
         assert!(
-            matches!(err, Error::Connection { .. }),
-            "expected Error::Connection on peer-closed write, got: {:?}",
+            matches!(err.kind(), crate::ErrorKind::Connection),
+            "expected connection error on peer-closed write, got: {:?}",
             err
         );
         assert!(

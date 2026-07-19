@@ -74,7 +74,7 @@ impl Message {
         // Corrupted data streams can result in a huge length.
         // Do a sanity check here.
         if data_len > MAX_BUFFER_SIZE {
-            return Err(Error::InvalidArgument(format!(
+            return Err(Error::invalid_argument(format!(
                 "Invalid size for info command buffer: {data_len}"
             )));
         }
@@ -102,7 +102,7 @@ impl Message {
             match (key, val) {
                 (Some(key), Some(val)) => result.insert(key.to_string(), val.to_string()),
                 (Some(key), None) => result.insert(key.to_string(), String::new()),
-                _ => return Err(Error::InvalidArgument("Parsing Info command failed".into())),
+                _ => return Err(Error::invalid_argument("Parsing Info command failed")),
             };
         }
 

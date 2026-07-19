@@ -135,7 +135,7 @@ async fn add_write_keys(
     ops: &[Operation],
 ) -> Result<()> {
     let txn_key = get_txn_monitor_key(txn).ok_or_else(|| {
-        crate::errors::Error::ClientError("Transaction namespace not set".to_string())
+        crate::errors::Error::client_error("Transaction namespace not set".to_string())
     })?;
 
     let wp = copy_timeout_policy(policy, txn);

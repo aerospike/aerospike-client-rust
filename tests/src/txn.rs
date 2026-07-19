@@ -19,7 +19,7 @@ use std::sync::Arc;
 
 use crate::common;
 use aerospike::{
-    as_bin, as_key, operations, AbortStatus, Bins, CommitErrorType, CommitStatus, Error,
+    as_bin, as_key, operations, AbortStatus, Bins, CommitErrorType, CommitStatus,
     ReadPolicy, ResultCode, Txn, Value, WritePolicy,
 };
 
@@ -182,7 +182,7 @@ async fn txn_write_conflict() {
         .unwrap_err();
 
     match err {
-        Error::ServerError(ResultCode::MrtBlocked, _, _, _) => {}
+        e if e.server_result_code() == Some(ResultCode::MrtBlocked) => {}
         other => panic!("Expected MrtBlocked, got: {:?}", other),
     }
 
@@ -238,7 +238,7 @@ async fn txn_blocked_before_commit() {
         .unwrap_err();
 
     match err {
-        Error::ServerError(ResultCode::MrtBlocked, _, _, _) => {}
+        e if e.server_result_code() == Some(ResultCode::MrtBlocked) => {}
         other => panic!("Expected MrtBlocked, got: {:?}", other),
     }
 
@@ -364,7 +364,7 @@ async fn txn_delete_and_commit() {
     // Key should be gone
     let result = client.get(&ReadPolicy::default(), &key, Bins::All).await;
     match result {
-        Err(Error::ServerError(ResultCode::KeyNotFoundError, _, _, _)) => {}
+        Err(e) if e.server_result_code() == Some(ResultCode::KeyNotFoundError) => {}
         other => panic!("Expected KeyNotFoundError, got: {:?}", other),
     }
 }
@@ -443,7 +443,7 @@ async fn txn_delete_twice() {
     // Key should be gone
     let result = client.get(&ReadPolicy::default(), &key, Bins::All).await;
     match result {
-        Err(Error::ServerError(ResultCode::KeyNotFoundError, _, _, _)) => {}
+        Err(e) if e.server_result_code() == Some(ResultCode::KeyNotFoundError) => {}
         other => panic!("Expected KeyNotFoundError, got: {:?}", other),
     }
 }
@@ -658,16 +658,14 @@ async fn txn_version_mismatch_on_commit() {
         // Commit should fail with a structured CommitFailed error carrying
         // per-key verify records.
         let err = client.commit(&txn).await.unwrap_err();
-        match err {
-            Error::CommitFailed {
+        assert!(!err.in_doubt(), "verify-fail commits are never in_doubt");
+        match err.kind() {
+            aerospike::ErrorKind::Commit {
                 error_type,
                 verify_records,
                 roll_records,
-                in_doubt,
-                ..
             } => {
-                assert_eq!(error_type, CommitErrorType::VerifyFail);
-                assert!(!in_doubt, "verify-fail commits are never in_doubt");
+                assert_eq!(*error_type, CommitErrorType::VerifyFail);
                 assert_eq!(
                     verify_records.len(),
                     count,
@@ -690,7 +688,7 @@ async fn txn_version_mismatch_on_commit() {
                 // empty too — just ensure it's accessible, not null.
                 let _ = roll_records.len();
             }
-            other => panic!("Expected Error::CommitFailed, got: {:?}", other),
+            other => panic!("Expected ErrorKind::Commit, got: {:?}", other),
         }
     }
 }
@@ -730,19 +728,18 @@ async fn txn_verify_deleted_key_fails() {
     assert!(existed);
 
     let err = client.commit(&txn).await.unwrap_err();
-    match err {
-        Error::CommitFailed {
+    assert!(!err.in_doubt());
+    match err.kind() {
+        aerospike::ErrorKind::Commit {
             error_type,
             verify_records,
-            in_doubt,
             ..
         } => {
-            assert_eq!(error_type, CommitErrorType::VerifyFail);
-            assert!(!in_doubt);
+            assert_eq!(*error_type, CommitErrorType::VerifyFail);
             assert_eq!(verify_records.len(), 1);
             assert_ne!(verify_records[0].result_code, Some(ResultCode::Ok));
         }
-        other => panic!("Expected Error::CommitFailed, got: {:?}", other),
+        other => panic!("Expected ErrorKind::Commit, got: {:?}", other),
     }
 }
 

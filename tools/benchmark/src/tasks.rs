@@ -90,10 +90,15 @@ trait Task: Send {
 
     fn status<T>(&self, result: asResult<T>) -> Status {
         match result {
-            Err(Error::ServerError(ResultCode::Timeout, _, _, _) | Error::Timeout(_)) => {
+            Err(e)
+                if e.server_result_code() == Some(ResultCode::Timeout)
+                    || matches!(e.kind(), aerospike::ErrorKind::Timeout) =>
+            {
                 Status::Timeout
             }
-            Err(Error::ServerError(ResultCode::KeyNotFoundError, _, _, _)) => Status::Success,
+            Err(e) if e.server_result_code() == Some(ResultCode::KeyNotFoundError) => {
+                Status::Success
+            }
             Err(_) => Status::Error,
             _ => Status::Success,
         }

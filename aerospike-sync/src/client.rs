@@ -25,11 +25,12 @@ use aerospike_core::operations::{CdtContext, Operation};
 use aerospike_core::query::PartitionFilter;
 use aerospike_core::DropIndexTask;
 use aerospike_core::UdfRemoveTask;
+use aerospike_core::txn::{AbortStatus, CommitStatus, Txn};
 use aerospike_core::{
     AdminPolicy, BatchOperation, BatchPolicy, BatchRecord, Bin, Bins, ClientPolicy,
     CollectionIndexType, ExecuteTask, IndexTask, IndexType, Key, Node, Privilege, QueryPolicy,
-    ReadPolicy, Record, Recordset, RegisterTask, Role, Statement, ToHosts, UDFLang, User, Value,
-    WritePolicy,
+    ReadPolicy, Record, Recordset, RegisterTask, Role, Statement, ToHosts, TxnRollPolicy,
+    TxnVerifyPolicy, UDFLang, User, Value, WritePolicy,
 };
 use futures::executor::block_on;
 use futures::task::noop_waker;
@@ -133,6 +134,24 @@ impl Client {
         })
     }
 
+    /// Initializes the client like [`new`](Self::new) and attaches a dynamic
+    /// configuration provider (e.g.
+    /// [`YamlFileProvider`](aerospike_core::config::YamlFileProvider)) whose
+    /// policy overrides are applied at runtime.
+    #[cfg(feature = "dynamic-config")]
+    pub fn new_with_config(
+        policy: &ClientPolicy,
+        hosts: &(dyn ToHosts + Send + Sync),
+        provider: Arc<dyn aerospike_core::config::ConfigProvider>,
+    ) -> Result<Self> {
+        let client = block_on(aerospike_core::Client::new_with_config(
+            policy, hosts, provider,
+        ))?;
+        Ok(Client {
+            async_client: client,
+        })
+    }
+
     /// Closes the connection to the Aerospike cluster.
     pub fn close(&self) -> Result<()> {
         block_on(self.async_client.close())?;
@@ -178,7 +197,7 @@ impl Client {
     /// match client.get(&ReadPolicy::default(), &key, ["a", "b"]) {
     ///     Ok(record)
     ///         => println!("a={:?}", record.bins.get("a")),
-    ///     Err(Error::ServerError(ResultCode::KeyNotFoundError, _, _, _))
+    ///     Err(e) if e.server_result_code() == Some(ResultCode::KeyNotFoundError)
     ///         => println!("No such record: {}", key),
     ///     Err(err)
     ///         => println!("Error fetching record: {}", err),
@@ -202,7 +221,7 @@ impl Client {
     ///             Some(duration) => println!("ttl: {} secs", duration.as_secs()),
     ///         }
     ///     },
-    ///     Err(Error::ServerError(ResultCode::KeyNotFoundError, _, _, _))
+    ///     Err(e) if e.server_result_code() == Some(ResultCode::KeyNotFoundError)
     ///         => println!("No such record: {}", key),
     ///     Err(err)
     ///         => println!("Error fetching record: {}", err),
@@ -662,7 +681,7 @@ impl Client {
     /// Sets XDR filter for given datacenter name and namespace. The expression filter indicates
     /// which records XDR should ship to the datacenter.
     /// Pass nil as filter to remove the current filter on the server.
-    pub async fn set_xdr_filter(
+    pub fn set_xdr_filter(
         &self,
         policy: &AdminPolicy,
         datacenter: &str,
@@ -719,7 +738,7 @@ impl Client {
     /// let _ = client.create_index_on_bin(&AdminPolicy::default(), "foo", "bar", "baz",
     ///     "idx_foo_bar_baz", IndexType::Numeric, CollectionIndexType::Default, None);
     /// ```
-    pub async fn create_index_on_bin(
+    pub fn create_index_on_bin(
         &self,
         policy: &AdminPolicy,
         namespace: &str,
@@ -763,7 +782,7 @@ impl Client {
     /// let _ = client.create_index_using_expression(&AdminPolicy::default(), "foo", "bar",
     ///     "idx_foo_bar_baz", IndexType::Numeric, CollectionIndexType::Default, &fe);
     /// ```
-    pub async fn create_index_using_expression(
+    pub fn create_index_using_expression(
         &self,
         policy: &AdminPolicy,
         namespace: &str,
@@ -800,7 +819,7 @@ impl Client {
 
     /// Creates a new user with password and roles. Clear-text password will be hashed using bcrypt
     /// before sending to server.
-    pub async fn create_user(
+    pub fn create_user(
         &self,
         policy: &AdminPolicy,
         user: &str,
@@ -811,12 +830,12 @@ impl Client {
     }
 
     /// Removes a user from the cluster.
-    pub async fn drop_user(&self, policy: &AdminPolicy, user: &str) -> Result<()> {
+    pub fn drop_user(&self, policy: &AdminPolicy, user: &str) -> Result<()> {
         block_on(self.async_client.drop_user(policy, user))
     }
 
     /// Changes a user's password. Clear-text password will be hashed using bcrypt before sending to server.
-    pub async fn change_password(
+    pub fn change_password(
         &self,
         policy: &AdminPolicy,
         user: &str,
@@ -826,7 +845,7 @@ impl Client {
     }
 
     /// Adds roles to user's list of roles.
-    pub async fn grant_roles(
+    pub fn grant_roles(
         &self,
         policy: &AdminPolicy,
         user: &str,
@@ -836,7 +855,7 @@ impl Client {
     }
 
     /// Removes roles from user's list of roles.
-    pub async fn revoke_roles(
+    pub fn revoke_roles(
         &self,
         policy: &AdminPolicy,
         user: &str,
@@ -847,14 +866,14 @@ impl Client {
 
     // Retrieves users and their roles.
     // If None is passed for the user argument, all users will be returned.
-    pub async fn query_users(&self, policy: &AdminPolicy, user: Option<&str>) -> Result<Vec<User>> {
+    pub fn query_users(&self, policy: &AdminPolicy, user: Option<&str>) -> Result<Vec<User>> {
         block_on(self.async_client.query_users(policy, user))
     }
 
     /// Creates a user-defined role.
     /// Quotas require server security configuration "enable-quotas" to be set to true.
     /// Pass 0 for quota values for no limit.
-    pub async fn create_role(
+    pub fn create_role(
         &self,
         policy: &AdminPolicy,
         role_name: &str,
@@ -875,17 +894,17 @@ impl Client {
 
     /// Retrieves roles and their privileges.
     /// If None is passed for the role argument, all roles will be returned.
-    pub async fn query_roles(&self, policy: &AdminPolicy, role: Option<&str>) -> Result<Vec<Role>> {
+    pub fn query_roles(&self, policy: &AdminPolicy, role: Option<&str>) -> Result<Vec<Role>> {
         block_on(self.async_client.query_roles(policy, role))
     }
 
     /// Removes a user-defined role.
-    pub async fn drop_role(&self, policy: &AdminPolicy, role_name: &str) -> Result<()> {
+    pub fn drop_role(&self, policy: &AdminPolicy, role_name: &str) -> Result<()> {
         block_on(self.async_client.drop_role(policy, role_name))
     }
 
     /// Grants privileges to a user-defined role.
-    pub async fn grant_privileges(
+    pub fn grant_privileges(
         &self,
         policy: &AdminPolicy,
         role_name: &str,
@@ -898,7 +917,7 @@ impl Client {
     }
 
     /// Revokes privileges from a user-defined role.
-    pub async fn revoke_privileges(
+    pub fn revoke_privileges(
         &self,
         policy: &AdminPolicy,
         role_name: &str,
@@ -912,7 +931,7 @@ impl Client {
 
     /// Sets IP address allowlist for a role.
     /// If allowlist is nil or empty, it removes existing allowlist from role.
-    pub async fn set_allowlist(
+    pub fn set_allowlist(
         &self,
         policy: &AdminPolicy,
         role_name: &str,
@@ -928,7 +947,7 @@ impl Client {
     /// If a quota is zero, the limit is removed.
     /// Quotas require server security configuration "enable-quotas" to be set to true.
     /// Pass 0 for quota values for no limit.
-    pub async fn set_quotas(
+    pub fn set_quotas(
         &self,
         policy: &AdminPolicy,
         role_name: &str,
@@ -939,5 +958,71 @@ impl Client {
             self.async_client
                 .set_quotas(policy, role_name, read_quota, write_quota),
         )
+    }
+
+    /// Creates a PKI user on the cluster: authentication is via client
+    /// certificate, so no password is stored for the user.
+    pub fn create_pki_user(
+        &self,
+        policy: &AdminPolicy,
+        user: &str,
+        roles: &[&str],
+    ) -> Result<()> {
+        block_on(self.async_client.create_pki_user(policy, user, roles))
+    }
+
+    /// Commit a multi-record transaction (MRT) with default verify/roll
+    /// policies. See [`aerospike_core::Client::commit`].
+    pub fn commit(&self, txn: &Arc<Txn>) -> Result<CommitStatus> {
+        block_on(self.async_client.commit(txn))
+    }
+
+    /// Commit a multi-record transaction with explicit verify and roll policies.
+    pub fn commit_with_policies(
+        &self,
+        verify_policy: &TxnVerifyPolicy,
+        roll_policy: &TxnRollPolicy,
+        txn: &Arc<Txn>,
+    ) -> Result<CommitStatus> {
+        block_on(
+            self.async_client
+                .commit_with_policies(verify_policy, roll_policy, txn),
+        )
+    }
+
+    /// Abort a multi-record transaction (MRT) with the default roll policy.
+    /// See [`aerospike_core::Client::abort`].
+    pub fn abort(&self, txn: &Arc<Txn>) -> Result<AbortStatus> {
+        block_on(self.async_client.abort(txn))
+    }
+
+    /// Abort a multi-record transaction with an explicit roll policy.
+    pub fn abort_with_policy(
+        &self,
+        roll_policy: &TxnRollPolicy,
+        txn: &Arc<Txn>,
+    ) -> Result<AbortStatus> {
+        block_on(self.async_client.abort_with_policy(roll_policy, txn))
+    }
+
+    /// Enable metrics collection with the given policy.
+    /// See [`aerospike_core::Client::enable_metrics`].
+    pub fn enable_metrics(&self, policy: aerospike_core::MetricsPolicy) {
+        self.async_client.enable_metrics(policy);
+    }
+
+    /// Disable metrics collection.
+    pub fn disable_metrics(&self) {
+        self.async_client.disable_metrics();
+    }
+
+    /// Whether metrics collection is currently enabled.
+    pub fn metrics_enabled(&self) -> bool {
+        self.async_client.metrics_enabled()
+    }
+
+    /// Snapshot of the cluster-wide metrics.
+    pub fn metrics(&self) -> aerospike_core::ClusterMetrics {
+        self.async_client.metrics()
     }
 }

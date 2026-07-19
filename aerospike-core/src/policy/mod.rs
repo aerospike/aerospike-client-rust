@@ -428,7 +428,7 @@ pub struct BasePolicy {
     ///   structured expression trace.
     ///
     /// When greater than zero and the server attaches a detail, it is surfaced
-    /// on [`Error::ServerError`](crate::errors::Error::ServerError) and via the
+    /// on the error (see [`ErrorKind::Server`](crate::ErrorKind::Server)) and via the
     /// [`Error::server_error_detail`](crate::errors::Error::server_error_detail),
     /// [`Error::sub_code`](crate::errors::Error::sub_code) and
     /// [`Error::server_message`](crate::errors::Error::server_message)

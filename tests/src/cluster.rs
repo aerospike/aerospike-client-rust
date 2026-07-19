@@ -23,7 +23,7 @@
 use std::collections::HashSet;
 
 use aerospike::policy::AdminPolicy;
-use aerospike::{Client, Error};
+use aerospike::Client;
 
 use crate::common;
 
@@ -257,7 +257,7 @@ async fn rack_parse_empty_namespace_rejected() {
 
     let err = node.parse_rack(":3").unwrap_err();
     assert!(
-        matches!(err, Error::BadResponse(_)),
+        matches!(err.kind(), aerospike::ErrorKind::BadResponse),
         "expected BadResponse, got: {err:?}"
     );
 
@@ -278,12 +278,12 @@ async fn rack_parse_namespace_length_boundary() {
     // 32 chars → rejected.
     let ns_32 = "a".repeat(32);
     let err = node.parse_rack(&format!("{ns_32}:1")).unwrap_err();
-    assert!(matches!(err, Error::BadResponse(_)));
+    assert!(matches!(err.kind(), aerospike::ErrorKind::BadResponse));
 
     // 64 chars → rejected.
     let ns_64 = "a".repeat(64);
     let err = node.parse_rack(&format!("{ns_64}:1")).unwrap_err();
-    assert!(matches!(err, Error::BadResponse(_)));
+    assert!(matches!(err.kind(), aerospike::ErrorKind::BadResponse));
 
     client.close().await.unwrap();
 }
@@ -296,7 +296,7 @@ async fn rack_parse_invalid_entry_rejected() {
     let node = nodes.first().unwrap();
 
     let err = node.parse_rack("ns_no_colon").unwrap_err();
-    assert!(matches!(err, Error::BadResponse(_)));
+    assert!(matches!(err.kind(), aerospike::ErrorKind::BadResponse));
 
     client.close().await.unwrap();
 }

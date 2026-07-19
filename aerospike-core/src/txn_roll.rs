@@ -109,7 +109,7 @@ impl TxnRoll {
                     // clear the in-doubt flag so callers don't treat the
                     // failure as ambiguous.
                     let is_aborted =
-                        matches!(&err, Error::ServerError(ResultCode::MrtAborted, _, _, _));
+                        err.server_result_code() == Some(ResultCode::MrtAborted);
 
                     if is_aborted {
                         self.txn.set_in_doubt(false);
@@ -125,7 +125,7 @@ impl TxnRoll {
                     // already in doubt, keep that flag on the commit failure.
                     let in_doubt = if self.txn.in_doubt() {
                         true
-                    } else if matches!(&err, Error::Timeout { .. }) {
+                    } else if matches!(err.kind(), crate::ErrorKind::Timeout) {
                         self.txn.set_in_doubt(true);
                         true
                     } else {
@@ -243,7 +243,7 @@ impl TxnRoll {
             .map(|r| r.result_code);
         if let Some(code) = failure {
             return Err(match code {
-                Some(rc) => Error::ServerError(rc, false, String::new(), None),
+                Some(rc) => Error::server_error(rc, String::new(), None),
                 None => {
                     Error::timeout("Verify: no response for one or more records".to_string())
                 }
@@ -358,7 +358,7 @@ impl TxnRoll {
             };
             return Err(match code {
                 Some(rc) => {
-                    Error::ServerError(rc, false, format!("Failed to {action} one or more records"), None)
+                    Error::server_error(rc, format!("Failed to {action} one or more records"), None)
                 }
                 None => Error::timeout(format!(
                     "Failed to {action}: no response for one or more records"
@@ -383,7 +383,9 @@ impl TxnRoll {
             let mut cmd = TxnRollCommand::new(&policy.base_policy, cluster, key, txn, roll_attr);
             return match cmd.execute().await {
                 Ok(()) => vec![(*i, cmd.result_code.or(Some(ResultCode::Ok)), false)],
-                Err(Error::Timeout { .. }) => vec![(*i, cmd.result_code, true)],
+                Err(e) if matches!(e.kind(), crate::ErrorKind::Timeout) => {
+                    vec![(*i, cmd.result_code, true)]
+                }
                 Err(_) => vec![(*i, cmd.result_code, false)],
             };
         }
@@ -435,13 +437,13 @@ impl TxnRoll {
         in_doubt: bool,
         source: Option<Error>,
     ) -> Error {
-        Error::CommitFailed {
+        Error::commit_failed(
             error_type,
-            verify_records: self.verify_records.clone(),
-            roll_records: self.roll_records.clone(),
+            self.verify_records.clone(),
+            self.roll_records.clone(),
             in_doubt,
-            source: source.map(Box::new),
-        }
+            source,
+        )
     }
 }
 
