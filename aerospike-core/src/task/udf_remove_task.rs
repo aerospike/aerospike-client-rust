@@ -56,7 +56,7 @@ impl Task for UdfRemoveTask {
         let nodes = self.cluster.nodes();
 
         if nodes.is_empty() {
-            return Err(Error::Connection("No connected node".to_string()));
+            return Err(Error::connection("No connected node".to_string()));
         }
 
         let admin_policy = AdminPolicy { timeout: 3_000 };

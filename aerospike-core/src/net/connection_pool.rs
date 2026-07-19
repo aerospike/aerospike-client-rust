@@ -165,7 +165,7 @@ impl Queue {
                 if let Some(metrics) = self.metrics() {
                     metrics.incr_connections_failed(false);
                 }
-                Err(Error::Connection(
+                Err(Error::connection(
                     "Could not open network connection".to_string(),
                 ))
             }
@@ -174,7 +174,7 @@ impl Queue {
                 if let Some(metrics) = self.metrics() {
                     metrics.incr_connections_failed(true);
                 }
-                Err(Error::Connection(
+                Err(Error::connection(
                     "Could not open network connection".to_string(),
                 ))
             }

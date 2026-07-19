@@ -334,7 +334,7 @@ pub async fn skip_if_not_enterprise(test_name: &str) -> bool {
 /// True when `err` (including `Chain` wrappers) is a client-side timeout.
 pub fn is_timeout_error(err: &Error) -> bool {
     match err {
-        Error::Timeout(_) => true,
+        Error::Timeout { .. } => true,
         Error::ClientError(msg) => msg.contains("Client Timeout") || msg.contains("timed out"),
         Error::Chain(outer, inner) => is_timeout_error(outer) || is_timeout_error(inner),
         _ => false,

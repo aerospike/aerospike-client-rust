@@ -39,7 +39,7 @@ pub struct BatchRecord {
     /// after the command was sent to the server.
     pub in_doubt: bool,
 
-    /// Does this command contain a write operation. For internal use only.
+    /// Does this command contain a write operation.
     has_write: bool,
 }
 
@@ -52,5 +52,21 @@ impl BatchRecord {
             in_doubt: false,
             has_write,
         }
+    }
+
+    /// True when this record's batch operation contains a write. Only write
+    /// records can ever be [`in_doubt`](Self::in_doubt); useful to
+    /// distinguish verify (read) from roll (write) records on
+    /// [`Error::CommitFailed`](crate::errors::Error::CommitFailed).
+    #[must_use]
+    pub const fn has_write(&self) -> bool {
+        self.has_write
+    }
+
+    /// Record a per-key failure. `in_doubt` is honored only for write
+    /// records — reads can never be in-doubt.
+    pub(crate) const fn set_error(&mut self, rc: crate::ResultCode, in_doubt: bool) {
+        self.result_code = Some(rc);
+        self.in_doubt = self.has_write && in_doubt;
     }
 }

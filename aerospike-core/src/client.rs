@@ -1513,7 +1513,7 @@ impl Client {
 
         let nodes = self.cluster.nodes();
         if nodes.is_empty() {
-            return Err(Error::Connection("No connections available".to_string()));
+            return Err(Error::connection("No connections available".to_string()));
         }
 
         let task_id: u64 = rand::random();
@@ -1582,7 +1582,7 @@ impl Client {
 
         let nodes = self.cluster.nodes();
         if nodes.is_empty() {
-            return Err(Error::Connection("No connections available".to_string()));
+            return Err(Error::connection("No connections available".to_string()));
         }
 
         let task_id: u64 = rand::random();
@@ -1626,7 +1626,7 @@ impl Client {
             .is_err()
             {
                 let _ = rs_closer
-                    .push(Err(Error::Timeout("Timeout".to_string())))
+                    .push(Err(Error::timeout("Timeout".to_string())))
                     .await;
             }
         } else {
@@ -1719,7 +1719,7 @@ impl Client {
                             for err in errs {
                                 match err {
                                     // Socket I/O errors now surface as Error::Connection (was Error::Io).
-                                    Err(Error::Timeout(_) | Error::Io(_) | Error::Connection(_)) => timed_out = true,
+                                    Err(Error::Timeout { .. } | Error::Io(_) | Error::Connection { .. }) => timed_out = true,
                                     Err(e) => {
                                         tracker.lock().await.partition_error().await;
                                         err_recordset.err(e).await;

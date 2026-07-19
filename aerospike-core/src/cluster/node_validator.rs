@@ -107,7 +107,7 @@ impl NodeValidator {
 
         debug!("Resolved aliases for host {}: {:?}", host, self.aliases);
         if self.aliases.is_empty() {
-            Err(Error::Connection(format!(
+            Err(Error::connection(format!(
                 "Failed to find addresses for {host}"
             )))
         } else {

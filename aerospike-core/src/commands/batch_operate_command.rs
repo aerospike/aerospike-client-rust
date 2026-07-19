@@ -68,7 +68,7 @@ impl BatchOperateCommand {
                     // returned. The in-loop deadline check is mutually
                     // exclusive with this path, so there's no double count.
                     cluster.incr_total_timeout_exceeded();
-                    Err(Error::Timeout("Timeout".to_string()))
+                    Err(Error::timeout("Timeout".to_string()))
                 }
             }
         } else {
@@ -80,6 +80,10 @@ impl BatchOperateCommand {
         let mut iterations: usize = 0;
         let mut last_err: Option<Error> = None;
         let node_addr = self.node.to_string();
+        // Number of times a request buffer actually reached the wire. Drives
+        // per-row in-doubt (a row error after a retry may mask an applied
+        // earlier attempt) and the terminal no-response in-doubt walk.
+        let mut commands_sent: u32 = 0;
 
         // set timeout outside the loop
         let deadline = self.policy.deadline();
@@ -109,18 +113,27 @@ impl BatchOperateCommand {
             let retry_err = if iterations & 1 == 0 || matches!(self.policy.replica, Replica::Master)
             {
                 // For even iterations, we request all keys from the same node for efficiency.
-                Self::request_group(
+                match Self::request_group(
                     &mut self.batch_ops,
                     &self.policy,
                     deadline,
                     self.node.clone(),
                     cmd_type,
                     &mut sampled,
+                    &mut commands_sent,
                 )
-                .await?
+                .await
+                {
+                    Ok(res) => res,
+                    Err(err) => {
+                        self.set_in_doubt(commands_sent);
+                        return Err(err);
+                    }
+                }
             } else {
                 // However, for odd iterations try the second choice for each. Instead of re-sharding the batch (as the second choice may not correspond to the first), just try each by itself.
                 let mut group_err = None;
+                let mut hard_err = None;
                 for individual_op in self.batch_ops.chunks_mut(1) {
                     let key = individual_op[0].0.key();
                     // Find somewhere else to try.
@@ -132,21 +145,39 @@ impl BatchOperateCommand {
                     );
                     // Advance sequence to try a different node than the primary
                     partition.sequence = 1;
-                    let node = partition.get_node(&cluster)?;
+                    let node = match partition.get_node(&cluster) {
+                        Ok(node) => node,
+                        Err(err) => {
+                            hard_err = Some(err);
+                            break;
+                        }
+                    };
 
-                    if let Some(e) = Self::request_group(
+                    match Self::request_group(
                         individual_op,
                         &self.policy,
                         deadline,
                         node,
                         cmd_type,
                         &mut sampled,
+                        &mut commands_sent,
                     )
-                    .await?
+                    .await
                     {
-                        group_err = Some(e);
-                        break;
+                        Ok(Some(e)) => {
+                            group_err = Some(e);
+                            break;
+                        }
+                        Ok(None) => (),
+                        Err(err) => {
+                            hard_err = Some(err);
+                            break;
+                        }
                     }
+                }
+                if let Some(err) = hard_err {
+                    self.set_in_doubt(commands_sent);
+                    return Err(err);
                 }
                 group_err
             };
@@ -195,12 +226,13 @@ impl BatchOperateCommand {
                     self.node.metrics().incr_transaction_error();
                 }
                 cluster.incr_max_retries_exceeded();
+                self.set_in_doubt(commands_sent);
                 let u32_iters = if iterations > u32::MAX as usize {
                     u32::MAX
                 } else {
                     iterations as u32
                 };
-                return Err(Error::Timeout(format!("Timeout after {iterations} tries"))
+                return Err(Error::timeout(format!("Timeout after {iterations} tries"))
                     .chain_cause(last_err)
                     .with_retry_context(u32_iters, Some(&node_addr), Vec::new()));
             }
@@ -218,12 +250,13 @@ impl BatchOperateCommand {
                         self.node.metrics().incr_transaction_error();
                     }
                     cluster.incr_total_timeout_exceeded();
+                    self.set_in_doubt(commands_sent);
                     let u32_iters = if iterations > u32::MAX as usize {
                         u32::MAX
                     } else {
                         iterations as u32
                     };
-                    return Err(Error::Timeout(format!(
+                    return Err(Error::timeout(format!(
                         "Command timed out after {iterations} tries"
                     ))
                     .chain_cause(last_err)
@@ -237,6 +270,21 @@ impl BatchOperateCommand {
         }
     }
 
+    /// After a command-level failure with at least one attempt on the wire,
+    /// mark every record that never received a response: an unanswered write
+    /// may have been applied by the server, so it becomes in-doubt and an
+    /// attached transaction is notified. Reads are unaffected. Mirrors
+    /// Java's `Batch.inDoubt()` walk over `BatchRecord.hasWrite`.
+    fn set_in_doubt(&mut self, commands_sent: u32) {
+        if commands_sent == 0 {
+            return;
+        }
+        let txn = self.policy.base_policy.txn.clone();
+        for (op, _) in &mut self.batch_ops {
+            op.set_in_doubt_on_no_response(txn.as_ref());
+        }
+    }
+
     async fn request_group(
         batch_ops: &mut [(BatchOperation, usize)],
         policy: &BatchPolicy,
@@ -244,6 +292,7 @@ impl BatchOperateCommand {
         node: Arc<Node>,
         cmd_type: crate::metrics::CommandType,
         sampled: &mut Option<bool>,
+        commands_sent: &mut u32,
     ) -> Result<Option<Error>> {
         // Per-node circuit breaker: don't even open a socket if the node
         // is currently outside its error-rate window. Mirrors Java's
@@ -324,6 +373,7 @@ impl BatchOperateCommand {
             node.incr_error_rate();
             return Ok(Some(err));
         }
+        *commands_sent += 1;
         if metrics_on {
             let millis = write_start.elapsed().as_millis() as u64;
             for ns in &namespaces {
@@ -334,8 +384,13 @@ impl BatchOperateCommand {
 
         // Parse results.
         let parse_start = Instant::now();
-        let parse_outcome =
-            Self::parse_result(batch_ops, &mut conn, policy.base_policy.txn.as_ref()).await;
+        let parse_outcome = Self::parse_result(
+            batch_ops,
+            &mut conn,
+            policy.base_policy.txn.as_ref(),
+            *commands_sent,
+        )
+        .await;
         if metrics_on && parse_outcome.is_ok() {
             let millis = parse_start.elapsed().as_millis() as u64;
             let received = conn.bytes_read() as u64;
@@ -373,6 +428,7 @@ impl BatchOperateCommand {
         conn: &mut BufferedConn<'_>,
         size: usize,
         txn: Option<&Arc<crate::txn::Txn>>,
+        commands_sent: u32,
     ) -> Result<bool> {
         while conn.bytes_read() < size {
             conn.read_buffer(commands::buffer::MSG_REMAINING_HEADER_SIZE as usize)
@@ -397,24 +453,27 @@ impl BatchOperateCommand {
                     batch_op.0.set_record(batch_record.record);
                     batch_op.0.set_result_code(batch_record.result_code, false);
                 }
-                Err(Error::BatchLastError(batch_index, rc, in_doubt, ..)) => {
+                Err(Error::BatchLastError(batch_index, rc, ..)) => {
                     // Per-key error on the final record of the response. Record the
                     // error on the individual BatchRecord and treat the stream as
                     // ended — do not propagate as a batch-level failure, matching
                     // Java's behavior (BatchStatus.setRowError keeps other records).
+                    // In-doubt mirrors Java's `Command.batchInDoubt`: a row error
+                    // in this response is definitive for this attempt, so a write
+                    // is only in doubt when an earlier attempt was also sent.
                     let batch_op = batch_ops
                         .get_mut(batch_index as usize)
                         .expect("Invalid batch index");
-                    batch_op.0.set_result_code(rc, in_doubt);
+                    batch_op.0.set_result_code(rc, commands_sent > 1);
                     return Ok(false);
                 }
-                Err(Error::BatchError(batch_index, rc, in_doubt, ..)) => {
+                Err(Error::BatchError(batch_index, rc, ..)) => {
                     // Per-key error mid-stream. Record on the individual BatchRecord
                     // and continue parsing remaining records in the response.
                     let batch_op = batch_ops
                         .get_mut(batch_index as usize)
                         .expect("Invalid batch index");
-                    batch_op.0.set_result_code(rc, in_doubt);
+                    batch_op.0.set_result_code(rc, commands_sent > 1);
                 }
                 Err(err) => return Err(err),
             }
@@ -528,6 +587,7 @@ impl BatchOperateCommand {
         batch_ops: &mut [(BatchOperation, usize)],
         conn: &mut Connection,
         txn: Option<&Arc<crate::txn::Txn>>,
+        commands_sent: u32,
     ) -> Result<()> {
         let mut status = true;
 
@@ -578,7 +638,9 @@ impl BatchOperateCommand {
                     let mut inner_conn =
                         BufferedConn::new_with_decoder(conn.conn, decoder, body_decompressed_size);
 
-                    match Self::parse_group(batch_ops, &mut inner_conn, inner_size, txn).await {
+                    match Self::parse_group(batch_ops, &mut inner_conn, inner_size, txn, commands_sent)
+                        .await
+                    {
                         Ok(stat) => status = stat,
                         Err(e @ Error::ServerError(_, _, _, _)) => {
                             inner_conn.drain(inner_conn.conn.deadline()).await?;
@@ -594,7 +656,7 @@ impl BatchOperateCommand {
                 status = false;
                 if size > 0 {
                     conn.set_limit_body(size)?;
-                    match Self::parse_group(batch_ops, &mut conn, size, txn).await {
+                    match Self::parse_group(batch_ops, &mut conn, size, txn, commands_sent).await {
                         Ok(stat) => status = stat,
                         Err(e @ Error::ServerError(_, _, _, _)) => {
                             conn.drain(conn.conn.deadline()).await?;

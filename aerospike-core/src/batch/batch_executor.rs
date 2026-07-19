@@ -61,7 +61,7 @@ impl BatchExecutor {
             .await
             {
                 Ok(res) => res,
-                Err(_) => Err(Error::Timeout("Timeout".to_string())),
+                Err(_) => Err(Error::timeout("Timeout".to_string())),
             }
         } else {
             self.execute_batch_operate(policy, batch_ops).await
@@ -316,7 +316,17 @@ impl BatchExecutor {
             Err(Error::ServerError(rc, in_doubt, _, _)) => {
                 batch_op.set_result_code(rc, in_doubt);
             }
-            Err(err) => return Err(err),
+            Err(err) => {
+                // Mirrors Java's `BatchSingle.setInDoubt()` gated on
+                // `ae.getInDoubt()`: the single-command retry loop marked the
+                // error in-doubt iff this was a write that reached the wire.
+                // Propagate that onto the record and notify any transaction
+                // before the error bubbles up.
+                if err.in_doubt() {
+                    batch_op.set_in_doubt_on_no_response(parent.base_policy.txn.as_ref());
+                }
+                return Err(err);
+            }
         }
         Ok(())
     }

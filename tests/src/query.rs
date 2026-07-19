@@ -85,7 +85,7 @@ async fn query_timeout() {
     while let Some(res) = rs.next().await {
         match res {
             Ok(_) => (),
-            Err(Error::Timeout(_)) => timed_out = true,
+            Err(Error::Timeout { .. }) => timed_out = true,
             Err(err) => panic!("{:?}", err),
         }
     }

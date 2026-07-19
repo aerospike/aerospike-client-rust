@@ -673,20 +673,105 @@ impl BatchOperation {
         }
     }
 
-    pub(crate) const fn set_result_code(&mut self, rc: ResultCode, in_doubt: bool) {
+    pub(crate) const fn record_mut(&mut self) -> &mut BatchRecord {
         match self {
-            // Reads (incl. txn verify) can never be in-doubt.
-            Self::Read { br, .. } | Self::TxnVerify { br, .. } => {
-                br.result_code = Some(rc);
-                br.in_doubt = false;
-            }
-            Self::Write { br, .. }
+            Self::Read { br, .. }
+            | Self::Write { br, .. }
             | Self::Delete { br, .. }
             | Self::UDF { br, .. }
-            | Self::TxnRoll { br, .. } => {
-                br.result_code = Some(rc);
-                br.in_doubt = in_doubt;
+            | Self::TxnVerify { br, .. }
+            | Self::TxnRoll { br, .. } => br,
+        }
+    }
+
+    pub(crate) const fn set_result_code(&mut self, rc: ResultCode, in_doubt: bool) {
+        // `BatchRecord::set_error` honors in_doubt only for write records —
+        // reads (incl. txn verify) can never be in-doubt.
+        self.record_mut().set_error(rc, in_doubt);
+    }
+
+    /// Mark this record in-doubt after a command-level failure when no
+    /// response was received for it: an unanswered write may have been
+    /// applied by the server. An attached transaction is notified so a later
+    /// commit degrades to abort correctly.
+    pub(crate) fn set_in_doubt_on_no_response(&mut self, txn: Option<&Arc<crate::txn::Txn>>) {
+        let br = self.record_mut();
+        if br.result_code.is_none() && br.has_write() {
+            br.in_doubt = true;
+            if let Some(txn) = txn {
+                txn.on_write_in_doubt(&br.key);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod in_doubt_tests {
+    use super::*;
+    use crate::txn::Txn;
+
+    fn key(n: &str) -> Key {
+        Key::new("ns", "set", crate::Value::from(n)).unwrap()
+    }
+
+    fn write_op(k: &str) -> BatchOperation {
+        BatchOperation::write(&crate::BatchWritePolicy::default(), key(k), vec![])
+    }
+
+    fn read_op(k: &str) -> BatchOperation {
+        BatchOperation::read(&crate::BatchReadPolicy::default(), key(k), Bins::All)
+    }
+
+    #[test]
+    fn batch_record_exposes_has_write() {
+        assert!(write_op("w").batch_record().has_write());
+        assert!(!read_op("r").batch_record().has_write());
+    }
+
+    #[test]
+    fn set_result_code_honors_in_doubt_only_for_writes() {
+        let mut w = write_op("w");
+        w.set_result_code(ResultCode::Timeout, true);
+        assert!(w.batch_record().in_doubt);
+
+        let mut r = read_op("r");
+        r.set_result_code(ResultCode::Timeout, true);
+        assert!(!r.batch_record().in_doubt);
+    }
+
+    #[test]
+    fn no_response_write_becomes_in_doubt_and_notifies_txn() {
+        let txn = Arc::new(Txn::new());
+        let mut w = write_op("w");
+        w.set_in_doubt_on_no_response(Some(&txn));
+
+        let br = w.batch_record();
+        assert!(br.in_doubt);
+        assert!(br.result_code.is_none());
+        assert!(txn.write_in_doubt());
+    }
+
+    #[test]
+    fn no_response_read_is_never_in_doubt() {
+        let txn = Arc::new(Txn::new());
+        let mut r = read_op("r");
+        r.set_in_doubt_on_no_response(Some(&txn));
+
+        assert!(!r.batch_record().in_doubt);
+        assert!(!txn.write_in_doubt());
+    }
+
+    #[test]
+    fn responded_write_is_not_marked_by_the_no_response_walk() {
+        // A record that already carries a result code got a definitive answer
+        // for the final attempt; the terminal walk must not touch it.
+        let txn = Arc::new(Txn::new());
+        let mut w = write_op("w");
+        w.set_result_code(ResultCode::KeyNotFoundError, false);
+        w.set_in_doubt_on_no_response(Some(&txn));
+
+        let br = w.batch_record();
+        assert!(!br.in_doubt);
+        assert!(!txn.write_in_doubt());
     }
 }

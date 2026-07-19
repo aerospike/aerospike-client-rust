@@ -198,7 +198,7 @@ impl Connection {
         let stream =
             aerospike_rt::timeout(policy.timeout(), TcpStream::connect(addr.clone())).await;
         if stream.is_err() {
-            return Err(Error::Connection(
+            return Err(Error::connection(
                 "Could not open network connection".to_string(),
             ));
         }
@@ -356,9 +356,9 @@ impl Connection {
         match res {
             Ok(Ok(())) => (),
             // classify socket I/O errors as Connection err and hence command retries.
-            Ok(Err(e)) => return Err(Error::Connection(format!("flush: {e}"))),
+            Ok(Err(e)) => return Err(Error::connection(format!("flush: {e}"))),
             Err(_) => {
-                return Err(Error::Timeout(
+                return Err(Error::timeout(
                     "Timeout writing to network connection".to_string(),
                 ));
             }
@@ -588,10 +588,10 @@ impl Connection {
 
         match read_result {
             Ok(Ok(_)) => self.bytes_read += size,
-            Ok(Err(e)) => return Err(Error::Connection(format!("read: {e}"))),
+            Ok(Err(e)) => return Err(Error::connection(format!("read: {e}"))),
             Err(_) => {
-                return Err(Error::Timeout(
-                    "Timeout reading from the network connection".into(),
+                return Err(Error::timeout(
+                    "Timeout reading from the network connection",
                 ))
             }
         }
@@ -621,10 +621,10 @@ impl Connection {
         match res {
             Ok(Ok(())) => (),
             Ok(Err(e)) => {
-                return Err(Error::Connection(format!("write: {e}")));
+                return Err(Error::connection(format!("write: {e}")));
             }
             Err(_) => {
-                return Err(Error::Timeout(
+                return Err(Error::timeout(
                     "Timeout writing to the network connection".to_string(),
                 ));
             }
@@ -653,9 +653,9 @@ impl Connection {
 
         match res {
             Ok(Ok(_)) => (),
-            Ok(Err(e)) => return Err(Error::Connection(format!("read_all: {e}"))),
+            Ok(Err(e)) => return Err(Error::connection(format!("read_all: {e}"))),
             Err(_) => {
-                return Err(Error::Timeout(
+                return Err(Error::timeout(
                     "Timeout reading from the network connection".to_string(),
                 ))
             }
@@ -784,7 +784,7 @@ impl Connection {
                             "Timeout draining the connection",
                         ))
                     })
-                    .map_err(|e| Error::Timeout(format!("Timeout draining the connection {e}")))?
+                    .map_err(|e| Error::timeout(format!("Timeout draining the connection {e}")))?
                 }
 
                 #[cfg(feature = "tls")]
@@ -802,7 +802,7 @@ impl Connection {
                             "Timeout draining the connection",
                         ))
                     })
-                    .map_err(|e| Error::Timeout(format!("Timeout draining the connection {e}")))?
+                    .map_err(|e| Error::timeout(format!("Timeout draining the connection {e}")))?
                 }
                 #[cfg(test)]
                 _ => unreachable!(),
@@ -970,10 +970,10 @@ impl<'a> BufferedConn<'a> {
                 self.limit -= self.cache.len();
                 self.conn.bytes_read += self.cache.len();
             }
-            Ok(Err(e)) => return Err(Error::Connection(format!("buffered_read: {e}"))),
+            Ok(Err(e)) => return Err(Error::connection(format!("buffered_read: {e}"))),
             Err(_) => {
-                return Err(Error::Timeout(
-                    "Timeout reading from the network connection".into(),
+                return Err(Error::timeout(
+                    "Timeout reading from the network connection",
                 ))
             }
         }
@@ -1017,7 +1017,7 @@ impl<'a> BufferedConn<'a> {
                             "Timeout draining the connection",
                         ))
                     })
-                    .map_err(|e| Error::Timeout(format!("Timeout draining the connection {e}")))?
+                    .map_err(|e| Error::timeout(format!("Timeout draining the connection {e}")))?
                 }
                 #[cfg(feature = "tls")]
                 Netsocket::Tls(ref mut conn) => {
@@ -1034,7 +1034,7 @@ impl<'a> BufferedConn<'a> {
                             "Timeout draining the connection",
                         ))
                     })
-                    .map_err(|e| Error::Timeout(format!("Timeout draining the connection {e}")))?
+                    .map_err(|e| Error::timeout(format!("Timeout draining the connection {e}")))?
                 }
                 #[cfg(test)]
                 _ => unreachable!(),
@@ -1508,7 +1508,7 @@ mod tests_eof_loopback {
             .expect_err("read on FIN'd socket must fail");
 
         assert!(
-            matches!(err, Error::Connection(_)),
+            matches!(err, Error::Connection { .. }),
             "expected Error::Connection on peer FIN, got: {:?}",
             err
         );
@@ -1542,7 +1542,7 @@ mod tests_eof_loopback {
         let err = last_err.expect("a write must eventually fail after peer FIN");
 
         assert!(
-            matches!(err, Error::Connection(_)),
+            matches!(err, Error::Connection { .. }),
             "expected Error::Connection on peer-closed write, got: {:?}",
             err
         );

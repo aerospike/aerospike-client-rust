@@ -159,7 +159,7 @@ impl<'a> SingleCommand<'a> {
                 if let Some(cluster) = cmd.cluster() {
                     cluster.incr_max_retries_exceeded();
                 }
-                let err = Error::Timeout(format!("Timeout after {iterations} tries"));
+                let err = Error::timeout(format!("Timeout after {iterations} tries"));
                 let tail = match last_err.take() {
                     Some(e) => e.wrap(err),
                     None => err,
@@ -181,7 +181,7 @@ impl<'a> SingleCommand<'a> {
                     if let Some(n) = &last_node {
                         n.metrics().incr_transaction_error();
                     }
-                    let err = Error::Timeout("Timeout".to_string());
+                    let err = Error::timeout("Timeout".to_string());
                     let tail = match last_err.take() {
                         Some(e) => e.wrap(err),
                         None => err,
@@ -198,7 +198,7 @@ impl<'a> SingleCommand<'a> {
                 // Advance the partition sequence for the retry. Only treat a
                 // client-side timeout as a timeout for partition sequencing —
                 // a server-reported TIMEOUT should still advance the sequence.
-                let is_client_timeout = matches!(&last_err, Some(Error::Timeout(_)));
+                let is_client_timeout = matches!(&last_err, Some(Error::Timeout { .. }));
                 cmd.prepare_retry(is_client_timeout);
 
                 if let Some(interval) = sleep_interval {
@@ -412,7 +412,7 @@ impl<'a> SingleCommand<'a> {
         if let Some(cluster) = cmd.cluster() {
             cluster.incr_total_timeout_exceeded();
         }
-        let err = Error::Timeout(format!("Command timed out after {iterations} tries"));
+        let err = Error::timeout(format!("Command timed out after {iterations} tries"));
         let tail = match last_err.take() {
             Some(e) => e.wrap(err),
             None => err,

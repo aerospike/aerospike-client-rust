@@ -433,7 +433,7 @@ impl PartitionTracker {
                     .unwrap_or(Duration::from_millis(0))
                 > deadline
             {
-                return Err(Error::Timeout("Scan/Query timed out".into()));
+                return Err(Error::timeout("Scan/Query timed out"));
             }
 
             let total_timeout = u64::from(policy.total_timeout());

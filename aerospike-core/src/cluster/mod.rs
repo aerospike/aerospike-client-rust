@@ -185,7 +185,7 @@ impl Cluster {
             // Mirrors Java's `Peers.clusterInitError`: surface every per-seed
             // error from the most recent seed pass so callers know *why*
             // each host failed, not just that "host(s) failed".
-            return Err(Error::Connection(cluster.format_init_error()));
+            return Err(Error::connection(cluster.format_init_error()));
         }
 
         // Expand the seed list with every discovered node's primary host so
@@ -1720,7 +1720,7 @@ impl Cluster {
             }
         }
 
-        Err(Error::Connection("No active node".into()))
+        Err(Error::connection("No active node"))
     }
 
     pub fn get_node_by_name(&self, node_name: &str) -> Result<Arc<Node>> {

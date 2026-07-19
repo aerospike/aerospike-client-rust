@@ -125,7 +125,7 @@ impl TxnRoll {
                     // already in doubt, keep that flag on the commit failure.
                     let in_doubt = if self.txn.in_doubt() {
                         true
-                    } else if matches!(&err, Error::Timeout(_)) {
+                    } else if matches!(&err, Error::Timeout { .. }) {
                         self.txn.set_in_doubt(true);
                         true
                     } else {
@@ -245,7 +245,7 @@ impl TxnRoll {
             return Err(match code {
                 Some(rc) => Error::ServerError(rc, false, String::new(), None),
                 None => {
-                    Error::Timeout("Verify: no response for one or more records".to_string())
+                    Error::timeout("Verify: no response for one or more records".to_string())
                 }
             });
         }
@@ -360,7 +360,7 @@ impl TxnRoll {
                 Some(rc) => {
                     Error::ServerError(rc, false, format!("Failed to {action} one or more records"), None)
                 }
-                None => Error::Timeout(format!(
+                None => Error::timeout(format!(
                     "Failed to {action}: no response for one or more records"
                 )),
             });
@@ -383,7 +383,7 @@ impl TxnRoll {
             let mut cmd = TxnRollCommand::new(&policy.base_policy, cluster, key, txn, roll_attr);
             return match cmd.execute().await {
                 Ok(()) => vec![(*i, cmd.result_code.or(Some(ResultCode::Ok)), false)],
-                Err(Error::Timeout(_)) => vec![(*i, cmd.result_code, true)],
+                Err(Error::Timeout { .. }) => vec![(*i, cmd.result_code, true)],
                 Err(_) => vec![(*i, cmd.result_code, false)],
             };
         }

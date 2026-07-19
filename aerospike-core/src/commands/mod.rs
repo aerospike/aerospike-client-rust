@@ -121,14 +121,14 @@ pub const fn keep_connection(err: &Error) -> bool {
         | Error::BatchLastError(_, rc, _, _) => {
             !matches!(rc, ResultCode::ScanAbort | ResultCode::QueryAborted)
         }
-        Error::Timeout(_) => true,
+        Error::Timeout { .. } => true,
         _ => false,
     }
 }
 
 /// Client-initiated network error (broken connection or socket timeout).
 pub const fn is_network_error(err: &Error) -> bool {
-    matches!(err, Error::Connection(_) | Error::Timeout(_))
+    matches!(err, Error::Connection { .. } | Error::Timeout { .. })
 }
 
 /// Server-reported result codes that are safe to retry on (TIMEOUT,
@@ -166,7 +166,7 @@ mod tests_retry_predicates {
     use crate::ResultCode;
 
     fn conn_err() -> Error {
-        Error::Connection("read: early eof".into())
+        Error::connection("read: early eof")
     }
     fn io_err() -> Error {
         Error::Io(std::io::Error::new(
@@ -175,7 +175,7 @@ mod tests_retry_predicates {
         ))
     }
     fn timeout_err() -> Error {
-        Error::Timeout("Timeout reading from the network connection".into())
+        Error::timeout("Timeout reading from the network connection")
     }
     fn server_err(rc: ResultCode) -> Error {
         Error::ServerError(rc, false, String::new(), None)

@@ -86,8 +86,18 @@ pub enum Error {
     BadResponse(String),
     /// The client was not able to communicate with the cluster due to some issue with the
     /// network connection.
-    #[error("Unable to communicate with server cluster: {0}")]
-    Connection(String),
+    #[error("Unable to communicate with server cluster: {msg}{in_doubt_tag}",
+        in_doubt_tag = if *.in_doubt { ", In Doubt: true" } else { "" }
+    )]
+    Connection {
+        /// Description of the connection failure.
+        msg: String,
+        /// True when a write command may have been applied by the server even
+        /// though this client-side failure was returned: the request reached
+        /// the wire, but no response arrived. Set by the retry loops via
+        /// [`Error::set_in_doubt`]; read via [`Error::in_doubt`].
+        in_doubt: bool,
+    },
     /// One or more of the arguments passed to the client are invalid.
     #[error("Invalid argument: {0}")]
     InvalidArgument(String),
@@ -136,8 +146,18 @@ pub enum Error {
     #[error("UDF Bad Response: {0}")]
     UdfBadResponse(String),
     /// Error returned when a task times out before it could be completed.
-    #[error("Client Timeout: {0}")]
-    Timeout(String), // TODO: Should have Node
+    #[error("Client Timeout: {msg}{in_doubt_tag}",
+        in_doubt_tag = if *.in_doubt { ", In Doubt: true" } else { "" }
+    )]
+    Timeout {
+        /// Description of the timeout.
+        msg: String, // TODO: Should have Node
+        /// True when a write command may have been applied by the server even
+        /// though this client-side timeout was returned: the request reached
+        /// the wire, but no response arrived in time. Set by the retry loops
+        /// via [`Error::set_in_doubt`]; read via [`Error::in_doubt`].
+        in_doubt: bool,
+    },
 
     /// `ClientError` is an untyped Error happening on client-side
     #[error("{0}")]
@@ -178,6 +198,28 @@ pub enum Error {
 }
 
 impl Error {
+    /// Client-side timeout, not (yet) in-doubt. Write retry loops mark the
+    /// error in-doubt via [`set_in_doubt`](Self::set_in_doubt) when at least
+    /// one attempt reached the wire.
+    #[must_use]
+    pub fn timeout(msg: impl Into<String>) -> Error {
+        Error::Timeout {
+            msg: msg.into(),
+            in_doubt: false,
+        }
+    }
+
+    /// Network/connection failure, not (yet) in-doubt. Write retry loops mark
+    /// the error in-doubt via [`set_in_doubt`](Self::set_in_doubt) when at
+    /// least one attempt reached the wire.
+    #[must_use]
+    pub fn connection(msg: impl Into<String>) -> Error {
+        Error::Connection {
+            msg: msg.into(),
+            in_doubt: false,
+        }
+    }
+
     #[must_use]
     pub fn chain_error(self, e: &str) -> Error {
         Error::Chain(Box::new(Error::ClientError(e.into())), Box::new(self))
@@ -212,8 +254,8 @@ impl Error {
     /// Returns the extended server-supplied error detail (subcode, message,
     /// expression trace), if the server attached one. Requires
     /// [`BasePolicy::error_detail_verbosity`](crate::policy::BasePolicy::error_detail_verbosity)
-    /// > 0 and server version 8.1.3+. Drills through `Chain` wrappers so
-    /// checks still work after retry decoration.
+    /// greater than zero and server version 8.1.3+. Drills through `Chain`
+    /// wrappers so checks still work after retry decoration.
     #[must_use]
     pub fn server_error_detail(&self) -> Option<&crate::ServerErrorDetail> {
         match self {
@@ -246,13 +288,23 @@ impl Error {
     /// Recompute the `in_doubt` flag:
     /// `in_doubt = true` when this is a write AND we sent more than one command OR
     /// sent exactly one and the failure was a client-side error or server TIMEOUT.
-    /// No-op for non-write commands or non-server error variants.
+    /// No-op for non-write commands or variants that cannot be in-doubt.
+    ///
+    /// Drills through `Chain` wrappers, so it works whether it is applied to
+    /// the naked terminal error or after retry context / exit-timeout chaining
+    /// has been attached.
     #[must_use]
     pub fn set_in_doubt(mut self, is_write: bool, commands_sent: u32) -> Self {
+        self.mark_in_doubt(is_write, commands_sent);
+        self
+    }
+
+    /// In-place recursive body of [`set_in_doubt`](Self::set_in_doubt).
+    fn mark_in_doubt(&mut self, is_write: bool, commands_sent: u32) {
         if !is_write {
-            return self;
+            return;
         }
-        match &mut self {
+        match self {
             Error::ServerError(rc, in_doubt, _, _)
             | Error::BatchError(_, rc, in_doubt, _)
             | Error::BatchLastError(_, rc, in_doubt, _)
@@ -262,18 +314,37 @@ impl Error {
                 *in_doubt = true;
             }
             // Client-side timeouts / connection failures on a write command
-            // where we sent at least one command are always in-doubt.
-            Error::Timeout(_) | Error::Connection(_) if commands_sent >= 1 => {
-                // No in_doubt field on these variants; wrap with context so
-                // callers can observe via the Display chain.
-                self = Error::Chain(
-                    Box::new(Error::ClientError("in_doubt=true".into())),
-                    Box::new(self),
-                );
+            // where at least one command reached the wire are always
+            // in-doubt: the request may have been applied without a response.
+            Error::Timeout { in_doubt, .. } | Error::Connection { in_doubt, .. }
+                if commands_sent >= 1 =>
+            {
+                *in_doubt = true;
+            }
+            Error::Chain(a, b) => {
+                a.mark_in_doubt(is_write, commands_sent);
+                b.mark_in_doubt(is_write, commands_sent);
             }
             _ => (),
         }
-        self
+    }
+
+    /// True when the outcome of a write is uncertain: the command may have
+    /// been applied by the server even though an error was returned. Drills
+    /// through `Chain` wrappers so checks work after retry decoration.
+    #[must_use]
+    pub fn in_doubt(&self) -> bool {
+        match self {
+            Error::ServerError(_, in_doubt, _, _)
+            | Error::BatchError(_, _, in_doubt, _)
+            | Error::BatchLastError(_, _, in_doubt, _)
+            | Error::Timeout { in_doubt, .. }
+            | Error::Connection { in_doubt, .. }
+            | Error::CommitFailed { in_doubt, .. } => *in_doubt,
+            Error::Chain(a, b) => a.in_doubt() || b.in_doubt(),
+            Error::StreamTerminatedError(Some(e)) => e.in_doubt(),
+            _ => false,
+        }
     }
 
     /// Attach retry context (iteration count, last node attempted, prior errors)
@@ -428,6 +499,86 @@ mod server_detail_tests {
             err,
             Error::ServerError(ResultCode::FilteredOut, _, _, _)
         ));
+    }
+
+    // ---- typed in-doubt for client-side Timeout / Connection errors ----
+    //
+    // Regression tests for the QE-reported SC-migration issue: writes that
+    // fail client-side on the retry-exhaustion path must carry a typed
+    // in-doubt signal (Java parity: AerospikeException.inDoubt).
+
+    #[test]
+    fn naked_client_timeout_write_is_in_doubt() {
+        let err = Error::timeout("Timeout reading from the network connection")
+            .set_in_doubt(true, 1);
+        assert!(err.in_doubt());
+        assert!(err.to_string().contains("In Doubt: true"), "{err}");
+    }
+
+    #[test]
+    fn naked_connection_error_write_is_in_doubt() {
+        let err = Error::connection("read: early eof").set_in_doubt(true, 1);
+        assert!(err.in_doubt());
+        assert!(err.to_string().contains("In Doubt: true"), "{err}");
+    }
+
+    #[test]
+    fn retry_exhaustion_chain_is_in_doubt() {
+        // The exact shape single_command builds on retry exit with
+        // max_retries=0: last_err.wrap(exit_timeout) puts a Chain on top,
+        // THEN set_in_doubt runs. Previously the naked-variant match fell
+        // through on the Chain and the write was silently not in-doubt.
+        let last_err = Error::timeout("Timeout reading from the network connection");
+        let exit_err = Error::timeout("Timeout after 2 tries");
+        let tail = last_err.wrap(exit_err);
+
+        let out = tail
+            .set_in_doubt(true, 1)
+            .with_retry_context(2, Some("BB9051616AC4202: 172.22.22.5:3000"), vec![]);
+
+        assert!(out.in_doubt(), "retry-exhaustion write must be in-doubt");
+        assert!(out.to_string().contains("In Doubt: true"), "{out}");
+    }
+
+    #[test]
+    fn marking_after_retry_context_still_works() {
+        // Order independence: even if retry context is attached first,
+        // set_in_doubt drills through the Chain wrappers.
+        let err = Error::timeout("Timeout reading from the network connection")
+            .with_retry_context(2, Some("node"), vec![])
+            .set_in_doubt(true, 1);
+        assert!(err.in_doubt());
+    }
+
+    #[test]
+    fn reads_are_never_in_doubt() {
+        let err = Error::timeout("Timeout reading from the network connection")
+            .set_in_doubt(false, 1);
+        assert!(!err.in_doubt());
+        assert!(!err.to_string().contains("In Doubt"), "{err}");
+    }
+
+    #[test]
+    fn unsent_writes_are_not_in_doubt() {
+        // Nothing reached the wire: the outcome is certain (not applied).
+        let err = Error::timeout("Timeout").set_in_doubt(true, 0);
+        assert!(!err.in_doubt());
+    }
+
+    #[test]
+    fn server_error_in_doubt_semantics_preserved() {
+        // One send + server TIMEOUT => in doubt.
+        let e = Error::ServerError(ResultCode::Timeout, false, "n".into(), None)
+            .set_in_doubt(true, 1);
+        assert!(e.in_doubt());
+        // One send + a definitive server error => not in doubt.
+        let e = Error::ServerError(ResultCode::KeyExistsError, false, "n".into(), None)
+            .set_in_doubt(true, 1);
+        assert!(!e.in_doubt());
+        // Multiple sends + any server error => in doubt.
+        let e = Error::ServerError(ResultCode::KeyExistsError, false, "n".into(), None)
+            .set_in_doubt(true, 2);
+        assert!(e.in_doubt());
     }
 
     #[test]

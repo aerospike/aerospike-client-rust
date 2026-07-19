@@ -649,7 +649,7 @@ async fn recovery_scan_compressed() {
     while let Some(res) = rs_stream.next().await {
         match res {
             Ok(_) => (),
-            Err(Error::Timeout(_)) => timed_out = true,
+            Err(Error::Timeout { .. }) => timed_out = true,
             Err(err) => panic!("Unexpected error: {:?}", err),
         }
     }
