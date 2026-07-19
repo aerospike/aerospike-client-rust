@@ -47,6 +47,11 @@ lazy_static! {
     static ref AEROSPIKE_CLUSTER: Option<String> = env::var("AEROSPIKE_CLUSTER").ok();
     static ref AEROSPIKE_USE_SERVICES_ALTERNATE: bool =
         env::var("AEROSPIKE_USE_SERVICES_ALTERNATE").map(|v| v.trim().eq_ignore_ascii_case("true") || v.trim().eq_ignore_ascii_case("1")).unwrap_or(false);
+    /// When set (`AEROSPIKE_CLEANUP=true|1`), the test namespace is fully
+    /// cleaned (all secondary indexes dropped + namespace truncated) once,
+    /// before the first test touches the server.
+    static ref AEROSPIKE_CLEANUP: bool =
+        env::var("AEROSPIKE_CLEANUP").map(|v| v.trim().eq_ignore_ascii_case("true") || v.trim().eq_ignore_ascii_case("1")).unwrap_or(false);
 }
 
 #[cfg(all(any(feature = "rt-tokio"), not(feature = "rt-async-std")))]
@@ -177,9 +182,7 @@ static SUITE_INDEX_CLEANUP: OnceCell<()> = OnceCell::const_new();
 static INDEX_OPS: OnceCell<Mutex<()>> = OnceCell::const_new();
 
 async fn index_ops() -> &'static Mutex<()> {
-    INDEX_OPS
-        .get_or_init(|| async { Mutex::new(()) })
-        .await
+    INDEX_OPS.get_or_init(|| async { Mutex::new(()) }).await
 }
 
 /// Serialize secondary-index admin work. Parallel tests each create unique indexes; without
@@ -231,10 +234,27 @@ pub async fn drop_all_indexes(client: &Client, namespace: &str) {
     }
 }
 
+/// Full namespace cleanup: drop every secondary index and truncate the
+/// namespace. Runs automatically before the first test when
+/// `AEROSPIKE_CLEANUP=true` (see [`AEROSPIKE_CLEANUP`]); callable directly
+/// from tests or tools as well.
+pub async fn cleanup(client: &Client, namespace: &str) {
+    drop_all_indexes(client, namespace).await;
+    match client
+        .truncate(&AdminPolicy::default(), namespace, "", 0)
+        .await
+    {
+        Ok(_) => println!("cleanup: truncated namespace {namespace}"),
+        Err(e) => println!("cleanup: failed to truncate namespace {namespace}: {e}"),
+    }
+}
+
 async fn ensure_suite_index_cleanup(client: &Client) {
     SUITE_INDEX_CLEANUP
         .get_or_init(|| async {
-            drop_all_indexes(client, namespace()).await;
+            if *AEROSPIKE_CLEANUP {
+                cleanup(client, namespace()).await;
+            }
         })
         .await;
 }
