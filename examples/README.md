@@ -12,11 +12,25 @@ The `crud_sync` example is the exception — it requires the `sync` feature, whi
 
 ## Available Examples
 
-* `batch_operations`
-* `crud` — async client
+* `batch_operations` — batch reads, writes, deletes and UDFs
+* `bit_operations` — bitwise operations on blob bins
+* `cdt_operations` — list/map (CDT) operations, including nested documents
+* `crud` — async client basics
 * `crud_sync` — sync (blocking) client; see [How to run sync example](#sync-example-crud_sync) below
-* `query`
-* `timeout_configuration`
+* `geo_query` — geospatial queries (geo2dsphere index, region/radius/contains)
+* `path_expression` — JSONPath-style CDT path expressions (server 8.1.1+)
+* `query` — secondary-index queries, pagination, expression filters
+* `record_operations` — single-record ops and write policies (add/append/TTL/generation/replace/send-key)
+* `scan` — full-set scans, paging, resume and parallel consumption
+* `server_info` — the info protocol (build, namespaces, statistics)
+* `timeout_configuration` — socket/total timeouts and recovery
+* `transaction` — multi-record transactions: commit and abort (server 8.0+, strong-consistency namespace)
+* `udf` — register a Lua UDF, execute per-record, and run background UDFs
+
+These cover the feature areas of the Java client's examples. Not ported:
+stream-UDF aggregations (`QueryAverage`/`QuerySum` — not supported by the
+Rust client) and the Java GUI/console scaffolding. The Java `Async*`
+variants need no counterpart: the Rust client is async-native.
 
 ## Configuration
 

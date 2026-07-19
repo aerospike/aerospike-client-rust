@@ -43,6 +43,42 @@ mod query_example;
 #[allow(dead_code)]
 mod timeout_configuration_example;
 
+#[path = "../../examples/record_operations.rs"]
+#[allow(dead_code)]
+mod record_operations_example;
+
+#[path = "../../examples/cdt_operations.rs"]
+#[allow(dead_code)]
+mod cdt_operations_example;
+
+#[path = "../../examples/bit_operations.rs"]
+#[allow(dead_code)]
+mod bit_operations_example;
+
+#[path = "../../examples/transaction.rs"]
+#[allow(dead_code)]
+mod transaction_example;
+
+#[path = "../../examples/udf.rs"]
+#[allow(dead_code)]
+mod udf_example;
+
+#[path = "../../examples/scan.rs"]
+#[allow(dead_code)]
+mod scan_example;
+
+#[path = "../../examples/geo_query.rs"]
+#[allow(dead_code)]
+mod geo_query_example;
+
+#[path = "../../examples/path_expression.rs"]
+#[allow(dead_code)]
+mod path_expression_example;
+
+#[path = "../../examples/server_info.rs"]
+#[allow(dead_code)]
+mod server_info_example;
+
 #[aerospike_macro::test]
 async fn example_crud() {
     crud_example::run().await;
@@ -61,4 +97,49 @@ async fn example_query() {
 #[aerospike_macro::test]
 async fn example_timeout_configuration() {
     timeout_configuration_example::run().await;
+}
+
+#[aerospike_macro::test]
+async fn example_record_operations() {
+    record_operations_example::run().await;
+}
+
+#[aerospike_macro::test]
+async fn example_cdt_operations() {
+    cdt_operations_example::run().await;
+}
+
+#[aerospike_macro::test]
+async fn example_bit_operations() {
+    bit_operations_example::run().await;
+}
+
+#[aerospike_macro::test]
+async fn example_transaction() {
+    transaction_example::run().await;
+}
+
+#[aerospike_macro::test]
+async fn example_udf() {
+    udf_example::run().await;
+}
+
+#[aerospike_macro::test]
+async fn example_scan() {
+    scan_example::run().await;
+}
+
+#[aerospike_macro::test]
+async fn example_geo_query() {
+    geo_query_example::run().await;
+}
+
+#[aerospike_macro::test]
+async fn example_path_expression() {
+    path_expression_example::run().await;
+}
+
+#[aerospike_macro::test]
+async fn example_server_info() {
+    server_info_example::run().await;
 }
