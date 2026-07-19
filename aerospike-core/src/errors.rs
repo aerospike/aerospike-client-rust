@@ -34,7 +34,7 @@
 //!             Some(duration) => println!("ttl: {} secs", duration.as_secs()),
 //!         }
 //!     },
-//!     Err(Error::ServerError(ResultCode::KeyNotFoundError, _, _)) => {
+//!     Err(Error::ServerError(ResultCode::KeyNotFoundError, _, _, _)) => {
 //!         println!("No such record: {}", key);
 //!     },
 //!     Err(err) => {
