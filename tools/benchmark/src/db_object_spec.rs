@@ -14,8 +14,8 @@
 // the License.
 
 use aerospike::Value;
-use rand::distributions::Alphanumeric;
-use rand::Rng;
+use rand::distr::Alphanumeric;
+use rand::{Rng, RngExt};
 use std::str::FromStr;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -68,8 +68,7 @@ impl FromStr for DBObjectSpec {
         }
 
         let args: Vec<&str> = bin_spec_trimmed.split(':').collect();
-        let type_str = args
-            .get(0)
+        let type_str = args.first()
             .ok_or_else(|| "Empty object spec".to_string())?
             .trim();
 
@@ -119,7 +118,7 @@ impl FromStr for DBObjectSpec {
                 let chunks = total_bytes / 8;
                 Ok(DBObjectSpec {
                     bin_type,
-                    size: chunks as usize,
+                    size: chunks,
                     rand_pct: rand_pct as u32,
                 })
             }
@@ -132,7 +131,7 @@ impl DBObjectSpec {
         match self.bin_type {
             DBObjectType::Integer => match key_seed {
                 Some(seed) => Value::from(seed),
-                None => Value::Int(rng.gen_range(0..i64::MAX)),
+                None => Value::Int(rng.random_range(0..i64::MAX)),
             },
             DBObjectType::Bytes => {
                 let mut buf = vec![0u8; self.size];
@@ -168,13 +167,13 @@ impl DBObjectSpec {
                         offset = write_bytes(0, &mut bytes, offset);
                     }
                     for _ in 0..n_rands {
-                        let l = rng.gen::<i64>() as u64;
+                        let l = rng.random::<i64>() as u64;
                         offset = write_bytes(l, &mut bytes, offset);
                     }
                 } else {
                     let mut offset = 0usize;
                     while offset < bytes.len() {
-                        let l = rng.gen::<i64>() as u64;
+                        let l = rng.random::<i64>() as u64;
                         offset = write_bytes(l, &mut bytes, offset);
                     }
                 }
