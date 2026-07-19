@@ -146,27 +146,27 @@ pub mod sub_code {
     // -------------------------------------------------------
 
     /// List index is outside the current element range.
-    pub const OP_NOT_CDT_INDEX_OUT_OF_BOUNDS: u32 = 1;
+    pub const OPNOT_CDT_INDEX_OUT_OF_BOUNDS: u32 = 1;
     /// Requested rank is past the current population.
-    pub const OP_NOT_CDT_RANK_OUT_OF_BOUNDS: u32 = 2;
+    pub const OPNOT_CDT_RANK_OUT_OF_BOUNDS: u32 = 2;
     /// Insert would exceed an ordered+bounded list's cap.
-    pub const OP_NOT_CDT_BOUNDED_LIST_OVERFLOW: u32 = 3;
+    pub const OPNOT_CDT_BOUNDED_LIST_OVERFLOW: u32 = 3;
     /// HLL op needs `index_bits` but the sketch has none set.
-    pub const OP_NOT_HLL_INDEX_BITS_UNSET: u32 = 4;
+    pub const OPNOT_HLL_INDEX_BITS_UNSET: u32 = 4;
     /// Union needs to reduce `index_bits` but folding isn't allowed.
-    pub const OP_NOT_HLL_CANNOT_REDUCE_INDEX_BITS: u32 = 5;
+    pub const OPNOT_HLL_CANNOT_REDUCE_INDEX_BITS: u32 = 5;
     /// As above, for the minhash dimension.
-    pub const OP_NOT_HLL_CANNOT_REDUCE_MINHASH_BITS: u32 = 6;
+    pub const OPNOT_HLL_CANNOT_REDUCE_MINHASH_BITS: u32 = 6;
     /// Fold blocked because the sketch carries minhash bits.
-    pub const OP_NOT_HLL_CANNOT_FOLD_MINHASH: u32 = 7;
+    pub const OPNOT_HLL_CANNOT_FOLD_MINHASH: u32 = 7;
     /// Fold target `index_bits` >= current (fold can only reduce).
-    pub const OP_NOT_HLL_FOLD_INDEX_BITS_TOO_LARGE: u32 = 8;
+    pub const OPNOT_HLL_FOLD_INDEX_BITS_TOO_LARGE: u32 = 8;
     /// Intersect inputs have mismatched minhash parameters.
-    pub const OP_NOT_HLL_INTERSECT_MINHASH_MISMATCH: u32 = 9;
+    pub const OPNOT_HLL_INTERSECT_MINHASH_MISMATCH: u32 = 9;
     /// String to numeric conversion failed.
-    pub const OP_NOT_STRING_CONVERSION_FAILED: u32 = 10;
-    /// Source blob/string is not valid UTF-8 for an `OP_NOT_APPLICABLE` path.
-    pub const OP_NOT_STRING_UTF8_INVALID: u32 = 11;
+    pub const OPNOT_STRING_CONVERSION_FAILED: u32 = 10;
+    /// Source blob/string is not valid UTF-8 for an `OPNOT_APPLICABLE` path.
+    pub const OPNOT_STRING_UTF8_INVALID: u32 = 11;
 
     // -------------------------------------------------------
     // Pairs with ResultCode::FilteredOut (27)
@@ -484,11 +484,11 @@ impl<'a> Cursor<'a> {
         }
 
         let skipped = match b {
-            0xC0 | 0xC2 | 0xC3 => Some(0), // nil, false, true
-            0xCC | 0xD0 => Some(1),        // uint8, int8
-            0xCD | 0xD1 => Some(2),        // uint16, int16
-            0xCE | 0xD2 | 0xCA => Some(4), // uint32, int32, float32
-            0xCF | 0xD3 | 0xCB => Some(8), // uint64, int64, float64
+            0xC0 | 0xC2 | 0xC3 => Some(0),                      // nil, false, true
+            0xCC | 0xD0 => Some(1),                             // uint8, int8
+            0xCD | 0xD1 => Some(2),                             // uint16, int16
+            0xCE | 0xD2 | 0xCA => Some(4),                      // uint32, int32, float32
+            0xCF | 0xD3 | 0xCB => Some(8),                      // uint64, int64, float64
             0xD9 | 0xC4 => self.be_uint(1).map(|n| n as usize), // str8, bin8
             0xDA | 0xC5 => self.be_uint(2).map(|n| n as usize), // str16, bin16
             0xDB | 0xC6 => self.be_uint(4).map(|n| n as usize), // str32, bin32
@@ -878,10 +878,7 @@ mod tests {
     #[test]
     fn parses_message_as_str8() {
         let msg = "string8";
-        let detail = fixmap(&[
-            pair(&int_key(1), &fixint(3)),
-            pair(&int_key(2), &str8(msg)),
-        ]);
+        let detail = fixmap(&[pair(&int_key(1), &fixint(3)), pair(&int_key(2), &str8(msg))]);
         let d = parse_error_detail(&detail).unwrap();
         assert_eq!(d.message, format!("{msg} (subcode=3)"));
     }
