@@ -1159,6 +1159,7 @@ impl Buffer {
 
         let mut read_attr = 0;
         let mut write_attr = 0;
+        let mut respond_all_ops = policy.respond_per_each_op;
 
         for operation in operations {
             match *operation {
@@ -1186,23 +1187,31 @@ impl Buffer {
                 _ => write_attr |= INFO2_WRITE,
             }
 
-            let each_op = matches!(
+            // Map/bit/HLL/expression/string ops require RESPOND_ALL_OPS so
+            // that every op (including any mixed-in modify ops) contributes
+            // exactly one result slot, preserving the positional index<->op
+            // mapping. `to_string` carries no op data, hence the extra
+            // op-type check.
+            respond_all_ops |= matches!(
                 operation.data,
                 OperationData::CdtMapOp(_)
                     | OperationData::CdtBitOp(_)
                     | OperationData::HLLOp(_)
                     | OperationData::EXPOp(_)
                     | OperationData::StringOp(_)
-            );
-
-            if policy.respond_per_each_op || each_op {
-                write_attr |= INFO2_RESPOND_ALL_OPS;
-            }
+            ) || matches!(operation.op, OperationType::ToString);
 
             self.data_offset += operation.estimate_size()? + OPERATION_HEADER_SIZE as usize;
         }
 
-        let has_write = write_attr != 0;
+        // RESPOND_ALL_OPS never makes the command a write on its own; only
+        // actual write operations do.
+        let has_write = write_attr & INFO2_WRITE != 0;
+
+        // When GET_ALL is specified, RESPOND_ALL_OPS must be disabled.
+        if respond_all_ops && read_attr & INFO1_GET_ALL == 0 {
+            write_attr |= INFO2_RESPOND_ALL_OPS;
+        }
         let mut field_count = self.estimate_key_size(key, policy.send_key && has_write)?;
         let (txn_field_count, version) =
             self.size_txn(key, policy.base_policy.txn.as_ref(), has_write);
@@ -3042,5 +3051,63 @@ mod tests {
         let parsed = parse_fields(&[]);
         assert!(parsed.error_detail.is_none());
         assert!(parsed.version.is_none());
+    }
+
+    // ---- set_operate attribute bits (CLIENT-5102: RESPOND_ALL_OPS for
+    // string ops; grouping mirrors Go/Java OperateArgs) ----
+
+    /// Build an operate command and return (read_attr, write_attr).
+    fn operate_attrs(ops: &[crate::operations::Operation]) -> (u8, u8) {
+        let key = test_key();
+        let mut buf = Buffer::new(0);
+        buf.set_operate(&WritePolicy::default(), &key, ops).unwrap();
+        (buf.data_buffer[9], buf.data_buffer[10])
+    }
+
+    #[test]
+    fn to_string_op_auto_sets_respond_all_ops() {
+        use crate::operations::string as str_op;
+        let (read_attr, write_attr) = operate_attrs(&[str_op::to_string("b")]);
+        assert_ne!(read_attr & INFO1_READ, 0);
+        assert_ne!(write_attr & INFO2_RESPOND_ALL_OPS, 0);
+        // A read-only pipeline must not turn into a write.
+        assert_eq!(write_attr & INFO2_WRITE, 0);
+    }
+
+    #[test]
+    fn string_read_op_auto_sets_respond_all_ops_without_write() {
+        use crate::operations::string as str_op;
+        let (read_attr, write_attr) = operate_attrs(&[str_op::strlen("b")]);
+        assert_ne!(read_attr & INFO1_READ, 0);
+        assert_ne!(write_attr & INFO2_RESPOND_ALL_OPS, 0);
+        assert_eq!(write_attr & INFO2_WRITE, 0);
+    }
+
+    #[test]
+    fn string_modify_op_auto_sets_respond_all_ops_and_write() {
+        use crate::operations::string as str_op;
+        let policy = crate::operations::string::StringPolicy::default();
+        let (_, write_attr) = operate_attrs(&[str_op::append(&policy, "b", "x")]);
+        assert_ne!(write_attr & INFO2_RESPOND_ALL_OPS, 0);
+        assert_ne!(write_attr & INFO2_WRITE, 0);
+    }
+
+    #[test]
+    fn plain_scalar_read_does_not_set_respond_all_ops() {
+        use crate::operations::scalar;
+        let (read_attr, write_attr) = operate_attrs(&[scalar::get_bin("b")]);
+        assert_ne!(read_attr & INFO1_READ, 0);
+        assert_eq!(write_attr & INFO2_RESPOND_ALL_OPS, 0);
+        assert_eq!(write_attr & INFO2_WRITE, 0);
+    }
+
+    #[test]
+    fn get_all_suppresses_respond_all_ops() {
+        use crate::operations::{scalar, string as str_op};
+        // get() reads all bins (GET_ALL); RESPOND_ALL_OPS must be disabled
+        // even though the string op would normally request it.
+        let (read_attr, write_attr) = operate_attrs(&[scalar::get(), str_op::strlen("b")]);
+        assert_ne!(read_attr & INFO1_GET_ALL, 0);
+        assert_eq!(write_attr & INFO2_RESPOND_ALL_OPS, 0);
     }
 }
