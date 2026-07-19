@@ -173,6 +173,8 @@ pub use query::{
     CollectionIndexType, EqFilterValue, IndexType, PartitionFilter, RangeFilterValue, Recordset,
     Statement, UDFLang,
 };
+#[cfg(feature = "lua")]
+pub use query::{ResultSet, ResultStream};
 pub use record::Record;
 pub use result_code::{ClientResultCode, ResultCode};
 pub use role::Role;
@@ -200,6 +202,8 @@ pub(crate) mod commands;
 pub mod config;
 mod common;
 pub mod expressions;
+#[cfg(feature = "lua")]
+pub mod lua;
 pub mod metrics;
 mod msgpack;
 mod net;

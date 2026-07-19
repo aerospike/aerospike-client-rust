@@ -43,6 +43,8 @@ use crate::policy::{
     TxnVerifyPolicy, WritePolicy,
 };
 use crate::query::{PartitionFilter, PartitionTracker};
+#[cfg(feature = "lua")]
+use crate::query::ResultSet;
 use crate::task::{DropIndexTask, ExecuteTask, IndexTask, RegisterTask, UdfRemoveTask};
 use crate::txn::{AbortStatus, CommitStatus, Txn, TxnState};
 use crate::txn_roll::TxnRoll;
@@ -1466,6 +1468,185 @@ impl Client {
         });
 
         Ok(recordset)
+    }
+
+    /// Execute a stream UDF aggregation query and return a [`ResultSet`]
+    /// with the aggregated values (requires the `lua` feature).
+    ///
+    /// The named UDF must be registered on the server (see
+    /// [`Client::register_udf`]) **and** its source must be available to
+    /// the client: aggregations split the UDF's stream operations between
+    /// server and client — each node runs the server-side portion
+    /// (`map`/`filter`/`aggregate`) and streams one partial result per
+    /// node back, and the client runs the remaining operations (from the
+    /// first `reduce` onward) in an embedded Lua 5.4 interpreter to
+    /// combine the partials into the final result.
+    ///
+    /// The client looks for `<package_name>.lua` in the directory set via
+    /// [`crate::lua::set_lua_path`] (default `"udf"`), unless the source
+    /// was registered in memory with [`crate::lua::register_package`].
+    ///
+    /// Retries are disabled for aggregation queries: a retried partition
+    /// could feed duplicate partial results into the aggregation.
+    ///
+    /// # Arguments
+    ///
+    /// * `policy` — Query policy ([`QueryPolicy::record_queue_size`] also sizes the result queue).
+    /// * `statement` — Namespace, set, bins, and filters ([`Statement`]).
+    /// * `package_name` — UDF package (module) name.
+    /// * `function_name` — Stream UDF function to invoke.
+    /// * `function_args` — Optional arguments passed to the UDF function.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// # use aerospike::*;
+    /// # use futures::StreamExt;
+    /// # async fn example(client: &Client) -> Result<()> {
+    /// aerospike::lua::set_lua_path("tests/udf");
+    ///
+    /// let stmt = Statement::new("test", "test", Bins::All);
+    /// let rs = client
+    ///     .query_aggregate(
+    ///         &QueryPolicy::default(),
+    ///         stmt,
+    ///         "sum_example",
+    ///         "sum_single_bin",
+    ///         Some(&[as_val!("score")]),
+    ///     )
+    ///     .await?;
+    /// let mut stream = rs.into_stream();
+    /// while let Some(value) = stream.next().await {
+    ///     println!("aggregation result: {:?}", value?);
+    /// }
+    /// # Ok(())
+    /// # }
+    /// ```
+    #[cfg(feature = "lua")]
+    pub async fn query_aggregate(
+        &self,
+        policy: &QueryPolicy,
+        mut statement: Statement,
+        package_name: &str,
+        function_name: &str,
+        function_args: Option<&[Value]>,
+    ) -> Result<Arc<ResultSet>> {
+        use futures::StreamExt;
+
+        statement.set_aggregate_function(package_name, function_name, function_args);
+        statement.validate()?;
+
+        // Disable retries: a retried partition would re-send partial
+        // results that were already fed into the aggregation.
+        let mut policy = self.cluster.resolve_query(policy).into_owned();
+        policy.base_policy.max_retries = 0;
+
+        let result_set = Arc::new(ResultSet::new(policy.record_queue_size));
+        let recordset = self
+            .query(&policy, PartitionFilter::all(), statement)
+            .await?;
+
+        // Server partials -> Lua input stream. Sized like the Java
+        // client's input queue.
+        let (input_tx, input_rx) = async_channel::bounded::<Value>(500);
+        // Lua output stream -> ResultSet pump.
+        let (output_tx, output_rx) = async_channel::bounded::<Value>(policy.record_queue_size.max(1));
+        // Completion/error signal from the Lua pipeline task.
+        let (done_tx, done_rx) = async_channel::bounded::<Result<()>>(1);
+
+        // The pipeline runs as an ordinary executor task: mlua's async API
+        // makes `stream.read`/`stream.write` await points, so no OS thread
+        // is tied up per aggregation.
+        let package = package_name.to_owned();
+        let function = function_name.to_owned();
+        let args: Vec<Value> = function_args.map(<[Value]>::to_vec).unwrap_or_default();
+        aerospike_rt::spawn(async move {
+            use futures::FutureExt;
+            // `output_tx` moves into the pipeline and is dropped when it
+            // completes, which ends the output pump below.
+            let result = std::panic::AssertUnwindSafe(crate::lua::run_aggregate_pipeline(
+                &package, &function, args, input_rx, output_tx,
+            ))
+            .catch_unwind()
+            .await
+            .unwrap_or_else(|_| {
+                Err(Error::client_error(
+                    "Lua aggregation task panicked".to_string(),
+                ))
+            });
+            let _ = done_tx.send(result).await;
+        });
+
+        // Pump 1: feed the per-record partial results from the server
+        // nodes into the Lua input stream. Dropping `input_tx` closes the
+        // input stream, which `stream_iterator` reads as end-of-stream.
+        let feed_rs = result_set.clone();
+        aerospike_rt::spawn(async move {
+            let mut records = recordset.into_stream();
+            while let Some(item) = records.next().await {
+                let partial = item.and_then(Self::extract_aggregate_value);
+                match partial {
+                    Ok(value) => {
+                        if input_tx.send(value).await.is_err() {
+                            // Lua side went away (error/panic); done_rx reports it.
+                            break;
+                        }
+                    }
+                    Err(err) => {
+                        let _ = feed_rs.push(Err(err)).await;
+                        break;
+                    }
+                }
+            }
+        });
+
+        // Pump 2: forward the Lua output values to the ResultSet, then
+        // surface any pipeline error and close the set.
+        let out_rs = result_set.clone();
+        aerospike_rt::spawn(async move {
+            while let Ok(value) = output_rx.recv().await {
+                if out_rs.push(Ok(value)).await.is_err() {
+                    break;
+                }
+            }
+            match done_rx.recv().await {
+                Ok(Err(err)) => {
+                    let _ = out_rs.push(Err(err)).await;
+                }
+                Ok(Ok(())) => {}
+                Err(_) => {
+                    let _ = out_rs
+                        .push(Err(Error::client_error(
+                            "Lua aggregation task terminated unexpectedly".to_string(),
+                        )))
+                        .await;
+                }
+            }
+            out_rs.close();
+        });
+
+        Ok(result_set)
+    }
+
+    /// Extract the aggregation partial result from a server record: a
+    /// single bin named `SUCCESS` carries the value; `FAILURE` carries a
+    /// server-side UDF error message.
+    #[cfg(feature = "lua")]
+    fn extract_aggregate_value(mut record: Record) -> Result<Value> {
+        if let Some(value) = record.bins.remove("SUCCESS") {
+            return Ok(value);
+        }
+        if let Some(reason) = record.bins.remove("FAILURE") {
+            return Err(Error::server_error(
+                ResultCode::QueryGeneric,
+                format!("aggregation UDF failed on the server: {reason}"),
+                None,
+            ));
+        }
+        Err(Error::bad_response(format!(
+            "aggregation record is missing the SUCCESS bin (bins: {:?})",
+            record.bins.keys().collect::<Vec<_>>()
+        )))
     }
 
     /// Execute a query and apply operations to matching records on the server.

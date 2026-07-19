@@ -20,6 +20,7 @@ The `crud_sync` example is the exception — it requires the `sync` feature, whi
 * `geo_query` — geospatial queries (geo2dsphere index, region/radius/contains)
 * `path_expression` — JSONPath-style CDT path expressions (server 8.1.1+)
 * `query` — secondary-index queries, pagination, expression filters
+* `query_aggregate` — stream UDF aggregation (map/reduce in Lua); requires the `lua` feature, see below
 * `record_operations` — single-record ops and write policies (add/append/TTL/generation/replace/send-key)
 * `scan` — full-set scans, paging, resume and parallel consumption
 * `server_info` — the info protocol (build, namespaces, statistics)
@@ -27,10 +28,10 @@ The `crud_sync` example is the exception — it requires the `sync` feature, whi
 * `transaction` — multi-record transactions: commit and abort (server 8.0+, strong-consistency namespace)
 * `udf` — register a Lua UDF, execute per-record, and run background UDFs
 
-These cover the feature areas of the Java client's examples. Not ported:
-stream-UDF aggregations (`QueryAverage`/`QuerySum` — not supported by the
-Rust client) and the Java GUI/console scaffolding. The Java `Async*`
-variants need no counterpart: the Rust client is async-native.
+These cover the feature areas of the Java client's examples (including the
+stream-UDF aggregations `QueryAverage`/`QuerySum` via `query_aggregate`).
+Not ported: the Java GUI/console scaffolding. The Java `Async*` variants
+need no counterpart: the Rust client is async-native.
 
 ## Configuration
 
@@ -64,6 +65,18 @@ cargo run --example crud
 cargo run --example query
 cargo run --example timeout_configuration
 ```
+
+### Aggregation example (`query_aggregate`)
+
+Client-side stream UDF aggregation embeds a Lua interpreter, which is
+compiled in only when the `lua` feature is enabled:
+
+```bash
+cargo run --example query_aggregate --features lua
+```
+
+(The example test `example_query_aggregate` likewise only exists when the
+test suite is built with `--features lua`.)
 
 ### Sync example (`crud_sync`)
 

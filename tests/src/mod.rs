@@ -45,6 +45,8 @@ mod kv;
 mod metrics;
 mod path_expressions;
 mod query;
+#[cfg(feature = "lua")]
+mod query_aggregate;
 mod scan;
 #[cfg(feature = "serialization")]
 mod serialization;

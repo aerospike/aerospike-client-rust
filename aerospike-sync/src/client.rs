@@ -643,6 +643,33 @@ impl Client {
         block_on(self.async_client.query(policy, partition_filter, statement))
     }
 
+    /// Execute a stream UDF aggregation query and return a
+    /// [`aerospike_core::query::ResultSet`] with the aggregated values
+    /// (requires the `lua` feature).
+    ///
+    /// The client-side portion of the UDF runs in an embedded Lua
+    /// interpreter; the UDF source must be available locally — see
+    /// [`aerospike_core::lua::set_lua_path`] and
+    /// [`aerospike_core::lua::register_package`]. Iterate the returned set
+    /// with its blocking `Iterator` impl (`for value in rs.as_ref() { … }`).
+    #[cfg(feature = "lua")]
+    pub fn query_aggregate(
+        &self,
+        policy: &QueryPolicy,
+        statement: Statement,
+        package_name: &str,
+        function_name: &str,
+        function_args: Option<&[Value]>,
+    ) -> Result<Arc<aerospike_core::query::ResultSet>> {
+        block_on(self.async_client.query_aggregate(
+            policy,
+            statement,
+            package_name,
+            function_name,
+            function_args,
+        ))
+    }
+
     /// Execute a query and apply operations to matching records on the server.
     /// Returns an `ExecuteTask` that can be used to monitor the progress of the
     /// background job.

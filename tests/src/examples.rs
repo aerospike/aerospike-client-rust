@@ -143,3 +143,14 @@ async fn example_path_expression() {
 async fn example_server_info() {
     server_info_example::run().await;
 }
+
+#[cfg(feature = "lua")]
+#[path = "../../examples/query_aggregate.rs"]
+#[allow(dead_code)]
+mod query_aggregate_example;
+
+#[cfg(feature = "lua")]
+#[aerospike_macro::test]
+async fn example_query_aggregate() {
+    query_aggregate_example::run().await;
+}

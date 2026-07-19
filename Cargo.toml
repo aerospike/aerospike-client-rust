@@ -47,6 +47,9 @@ default = ["async", "serialization", "rt-tokio", "tls", "dynamic-config"]
 serialization = ["aerospike-core/serialization"]
 # Weak refs: applies to whichever client (async core / sync wrapper) is enabled.
 dynamic-config = ["aerospike-core?/dynamic-config", "aerospike-sync?/dynamic-config"]
+# Client-side Lua (query_aggregate / stream UDF). Compiles a vendored Lua 5.4
+# interpreter; opt-in only. Weak refs like dynamic-config.
+lua = ["aerospike-core?/lua", "aerospike-sync?/lua"]
 async = ["aerospike-core"]
 sync = ["aerospike-sync"]
 rt-tokio = ["aerospike-core/rt-tokio", "aerospike-macro/rt-tokio"]
@@ -82,3 +85,7 @@ webpki-roots = "1"
 [[example]]
 name = "crud_sync"
 required-features = ["sync", "rt-tokio"]
+
+[[example]]
+name = "query_aggregate"
+required-features = ["lua"]

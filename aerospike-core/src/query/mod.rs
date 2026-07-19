@@ -24,6 +24,8 @@ pub use self::partition_status::PartitionStatus;
 pub(crate) use self::partition_tracker::PartitionTracker;
 pub use self::recordset::RecordStream;
 pub use self::recordset::Recordset;
+#[cfg(feature = "lua")]
+pub use self::result_set::{ResultSet, ResultStream};
 pub use self::statement::Statement;
 pub use self::udf::UDFLang;
 
@@ -35,5 +37,7 @@ mod partition_filter;
 mod partition_status;
 mod partition_tracker;
 mod recordset;
+#[cfg(feature = "lua")]
+mod result_set;
 mod statement;
 mod udf;

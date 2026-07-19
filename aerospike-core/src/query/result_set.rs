@@ -1,0 +1,134 @@
+// Copyright 2015-2026 Aerospike, Inc.
+//
+// Portions may be licensed to Aerospike, Inc. under one or more contributor
+// license agreements.
+//
+// Licensed under the Apache License version 2.0 (the "License"); you may not
+// use this file except in compliance with the License. You may obtain a copy of
+// the License at http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
+// WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
+// License for the specific language governing permissions and limitations under
+// the License.
+
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
+
+use async_channel::{Receiver, Sender};
+
+use crate::errors::Result;
+use crate::Value;
+
+/// A stream over the values of a [`ResultSet`] that can be iterated over
+/// asynchronously.
+pub struct ResultStream(Arc<ResultSet>);
+
+/// Virtual collection of the values produced by an aggregation query
+/// ([`Client::query_aggregate`](crate::Client::query_aggregate)).
+///
+/// The counterpart of [`Recordset`](crate::Recordset) for queries that
+/// return computed values instead of records: the client-side Lua stream
+/// pipeline pushes its output values onto an internal queue, and the user
+/// consumes them through [`ResultSet::into_stream`]. Most aggregations
+/// produce a single final value; a UDF whose last operation is a `map` or
+/// `filter` can produce many.
+#[derive(Debug)]
+pub struct ResultSet {
+    rx: Receiver<Result<Value>>,
+    tx: Sender<Result<Value>>,
+    active: AtomicBool,
+}
+
+impl ResultSet {
+    pub(crate) fn new(queue_size: usize) -> Self {
+        let (tx, rx) = async_channel::bounded(queue_size.max(1));
+        ResultSet {
+            rx,
+            tx,
+            active: AtomicBool::new(true),
+        }
+    }
+
+    /// Close the result set. Further values are discarded.
+    pub fn close(&self) {
+        self.active.store(false, Ordering::Relaxed);
+    }
+
+    /// Check whether the aggregation is still producing values.
+    pub fn is_active(&self) -> bool {
+        self.active.load(Ordering::Relaxed)
+    }
+
+    pub(crate) async fn push(&self, value: Result<Value>) -> Result<()> {
+        match self.tx.send(value).await {
+            Ok(()) => Ok(()),
+            Err(_) => Err(crate::Error::stream_terminated(None)),
+        }
+    }
+
+    #[cfg(feature = "sync")]
+    /// Returns a result from the queue if one is available. Otherwise,
+    /// returns None.
+    pub fn next_value(&self) -> Option<Result<Value>> {
+        self.rx.try_recv().ok()
+    }
+
+    /// Converts a reference to a [`ResultSet`] into a [`ResultStream`] that
+    /// can be used to iterate over the aggregation values.
+    pub const fn into_stream(self: Arc<Self>) -> ResultStream {
+        ResultStream(self)
+    }
+}
+
+#[cfg(feature = "sync")]
+impl Iterator for &ResultSet {
+    type Item = Result<Value>;
+
+    /// Implements a blocking iterator.
+    fn next(&mut self) -> Option<Result<Value>> {
+        use futures::executor::block_on;
+
+        loop {
+            let result = self.next_value();
+            if result.is_some() {
+                return result;
+            }
+
+            if self.is_active() {
+                block_on(aerospike_rt::task::yield_now());
+                continue;
+            }
+
+            return None;
+        }
+    }
+}
+
+impl futures::Stream for ResultStream {
+    type Item = Result<Value>;
+
+    fn poll_next(
+        self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Option<Self::Item>> {
+        match self.0.rx.try_recv() {
+            Ok(r) => std::task::Poll::Ready(Some(r)),
+            Err(e) => {
+                if !self.0.is_active() && e.is_empty() {
+                    std::task::Poll::Ready(None)
+                } else {
+                    cx.waker().wake_by_ref();
+                    std::task::Poll::Pending
+                }
+            }
+        }
+    }
+}
+
+impl AsRef<ResultSet> for ResultStream {
+    fn as_ref(&self) -> &ResultSet {
+        &self.0
+    }
+}

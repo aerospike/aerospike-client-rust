@@ -24,6 +24,7 @@ futures = { version = "0.3.33" }
 rt-tokio = ["aerospike-core/rt-tokio"]
 rt-async-std = ["aerospike-core/rt-async-std"]
 dynamic-config = ["aerospike-core/dynamic-config"]
+lua = ["aerospike-core/lua"]
 
 [dev-dependencies]
 aerospike = {path = "../"}
