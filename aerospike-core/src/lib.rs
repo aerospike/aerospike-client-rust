@@ -153,7 +153,7 @@ pub use client::Client;
 pub use cluster::version_parser::Version;
 pub use cluster::Node;
 pub use commands::particle_type::ParticleType;
-pub use errors::{client_rc, Error, ErrorKind, Result};
+pub use errors::{Error, ErrorKind, Result};
 pub use expressions::regex_flag::RegexFlag;
 pub use key::Key;
 pub use metrics::{
@@ -174,7 +174,7 @@ pub use query::{
     Statement, UDFLang,
 };
 pub use record::Record;
-pub use result_code::ResultCode;
+pub use result_code::{ClientResultCode, ResultCode};
 pub use role::Role;
 pub use sampler::Sampler;
 pub use server_error::{ExpressionTrace, ServerErrorDetail};

@@ -567,9 +567,206 @@ impl fmt::Display for ResultCode {
     }
 }
 
+
+/// Client-side error codes, mirroring the Java client's negative `ResultCode`
+/// constants.
+///
+/// Server failures carry a [`ResultCode`] (non-negative wire
+/// value); failures generated on the client carry one of these, so downstream
+/// bindings can map every [`Error`](crate::errors::Error) to a number via
+/// [`Error::result_code`](crate::errors::Error::result_code) and to a typed
+/// code via
+/// [`Error::client_result_code`](crate::errors::Error::client_result_code).
+///
+/// Note: client-side *timeouts* use the server `TIMEOUT` (9) code, matching
+/// the Java client, and therefore do not appear here.
+#[cfg_attr(feature = "serialization", derive(Serialize))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ClientResultCode {
+    /// Transaction has already been aborted.
+    TxnAlreadyAborted,
+
+    /// Transaction has already been committed.
+    TxnAlreadyCommitted,
+
+    /// Transaction failed.
+    TxnFailed,
+
+    /// One or more keys failed in a batch.
+    BatchFailed,
+
+    /// No response received from server.
+    NoResponse,
+
+    /// Max errors limit reached (per-node circuit breaker).
+    MaxErrorRate,
+
+    /// Max retries limit reached.
+    MaxRetriesExceeded,
+
+    /// Client serialization error.
+    SerializeError,
+
+    /// Asynchronous delay queue is full. Reserved for Java compatibility;
+    /// not produced by this client.
+    AsyncQueueFull,
+
+    /// Server is not accepting requests (connection failure).
+    ServerNotAvailable,
+
+    /// Max. number of connections per node would be exceeded.
+    NoMoreConnections,
+
+    /// Query was terminated prematurely.
+    QueryTerminated,
+
+    /// Scan was terminated prematurely.
+    ScanTerminated,
+
+    /// Chosen node is not currently active.
+    InvalidNodeError,
+
+    /// Client parse error.
+    ParseError,
+
+    /// Generic client error.
+    ClientError,
+
+    /// Unknown client error code.
+    Unknown(i32),
+}
+
+impl ClientResultCode {
+    /// Convert a Java-compatible numeric client code into the enum.
+    pub(crate) const fn from_i32(n: i32) -> ClientResultCode {
+        match n {
+            -19 => ClientResultCode::TxnAlreadyAborted,
+            -18 => ClientResultCode::TxnAlreadyCommitted,
+            -17 => ClientResultCode::TxnFailed,
+            -16 => ClientResultCode::BatchFailed,
+            -15 => ClientResultCode::NoResponse,
+            -12 => ClientResultCode::MaxErrorRate,
+            -11 => ClientResultCode::MaxRetriesExceeded,
+            -10 => ClientResultCode::SerializeError,
+            -9 => ClientResultCode::AsyncQueueFull,
+            -8 => ClientResultCode::ServerNotAvailable,
+            -7 => ClientResultCode::NoMoreConnections,
+            -5 => ClientResultCode::QueryTerminated,
+            -4 => ClientResultCode::ScanTerminated,
+            -3 => ClientResultCode::InvalidNodeError,
+            -2 => ClientResultCode::ParseError,
+            -1 => ClientResultCode::ClientError,
+            code => ClientResultCode::Unknown(code),
+        }
+    }
+
+    /// Convert a client result code into a string.
+    pub fn into_string(self) -> String {
+        match self {
+            ClientResultCode::TxnAlreadyAborted => {
+                String::from("Transaction already aborted")
+            }
+            ClientResultCode::TxnAlreadyCommitted => {
+                String::from("Transaction already committed")
+            }
+            ClientResultCode::TxnFailed => String::from("Transaction failed"),
+            ClientResultCode::BatchFailed => {
+                String::from("One or more keys failed in a batch")
+            }
+            ClientResultCode::NoResponse => {
+                String::from("No response received from server")
+            }
+            ClientResultCode::MaxErrorRate => String::from("Max errors limit reached"),
+            ClientResultCode::MaxRetriesExceeded => String::from("Max retries exceeded"),
+            ClientResultCode::SerializeError => String::from("Serialize error"),
+            ClientResultCode::AsyncQueueFull => {
+                String::from("Async delay queue is full")
+            }
+            ClientResultCode::ServerNotAvailable => {
+                String::from("Server is not accepting requests")
+            }
+            ClientResultCode::NoMoreConnections => {
+                String::from("No more available connections")
+            }
+            ClientResultCode::QueryTerminated => String::from("Query was terminated"),
+            ClientResultCode::ScanTerminated => String::from("Scan was terminated"),
+            ClientResultCode::InvalidNodeError => String::from("Invalid node"),
+            ClientResultCode::ParseError => String::from("Parse error"),
+            ClientResultCode::ClientError => String::from("Client error"),
+            ClientResultCode::Unknown(code) => {
+                format!("Unknown client error code: {code}")
+            }
+        }
+    }
+}
+
+impl From<i32> for ClientResultCode {
+    fn from(val: i32) -> ClientResultCode {
+        ClientResultCode::from_i32(val)
+    }
+}
+
+impl From<ClientResultCode> for i32 {
+    /// Java-compatible numeric value (inverse of [`ClientResultCode::from_i32`]).
+    fn from(rc: ClientResultCode) -> i32 {
+        match rc {
+            ClientResultCode::TxnAlreadyAborted => -19,
+            ClientResultCode::TxnAlreadyCommitted => -18,
+            ClientResultCode::TxnFailed => -17,
+            ClientResultCode::BatchFailed => -16,
+            ClientResultCode::NoResponse => -15,
+            ClientResultCode::MaxErrorRate => -12,
+            ClientResultCode::MaxRetriesExceeded => -11,
+            ClientResultCode::SerializeError => -10,
+            ClientResultCode::AsyncQueueFull => -9,
+            ClientResultCode::ServerNotAvailable => -8,
+            ClientResultCode::NoMoreConnections => -7,
+            ClientResultCode::QueryTerminated => -5,
+            ClientResultCode::ScanTerminated => -4,
+            ClientResultCode::InvalidNodeError => -3,
+            ClientResultCode::ParseError => -2,
+            ClientResultCode::ClientError => -1,
+            ClientResultCode::Unknown(code) => code,
+        }
+    }
+}
+
+impl From<ClientResultCode> for String {
+    fn from(code: ClientResultCode) -> String {
+        code.into_string()
+    }
+}
+
+impl fmt::Display for ClientResultCode {
+    fn fmt(&self, f: &mut fmt::Formatter) -> StdResult<(), fmt::Error> {
+        write!(f, "{}", self.into_string())
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::ResultCode;
+    use super::{ClientResultCode, ResultCode};
+
+    #[test]
+    fn client_code_i32_round_trip() {
+        // Every known negative code maps back to itself; gaps and positives
+        // fall through to Unknown but still round-trip numerically.
+        for n in -25i32..=0 {
+            let rc = ClientResultCode::from(n);
+            assert_eq!(i32::from(rc), n, "round trip failed for {n}");
+        }
+    }
+
+    #[test]
+    fn client_code_into_string() {
+        let result: String = ClientResultCode::MaxRetriesExceeded.into();
+        assert_eq!("Max retries exceeded", result);
+        assert_eq!(
+            "Unknown client error code: -42",
+            ClientResultCode::Unknown(-42).to_string()
+        );
+        assert_eq!("Client error", format!("{}", ClientResultCode::ClientError));
+    }
 
     #[test]
     fn u8_round_trip() {

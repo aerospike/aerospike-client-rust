@@ -62,48 +62,10 @@
 
 use std::fmt;
 
-use crate::ResultCode;
+use crate::{ClientResultCode, ResultCode};
 #[cfg(feature = "rt-tokio")]
 use aerospike_rt::task;
 
-/// Java-compatible client-side result codes.
-///
-/// Server failures use the (non-negative) wire value of their [`ResultCode`];
-/// failures generated on the client use these negative codes, matching the
-/// Java client's `ResultCode` constants so downstream bindings can map errors
-/// uniformly.
-pub mod client_rc {
-    /// Transaction has already been aborted.
-    pub const TXN_ALREADY_ABORTED: i32 = -19;
-    /// Transaction has already been committed.
-    pub const TXN_ALREADY_COMMITTED: i32 = -18;
-    /// Transaction failed.
-    pub const TXN_FAILED: i32 = -17;
-    /// One or more keys failed in a batch.
-    pub const BATCH_FAILED: i32 = -16;
-    /// No response received from server.
-    pub const NO_RESPONSE: i32 = -15;
-    /// Max errors limit reached (circuit breaker).
-    pub const MAX_ERROR_RATE: i32 = -12;
-    /// Max retries limit reached.
-    pub const MAX_RETRIES_EXCEEDED: i32 = -11;
-    /// Client serialization error.
-    pub const SERIALIZE_ERROR: i32 = -10;
-    /// Server is not accepting requests (connection failure).
-    pub const SERVER_NOT_AVAILABLE: i32 = -8;
-    /// Max connections would be exceeded.
-    pub const NO_MORE_CONNECTIONS: i32 = -7;
-    /// Query was terminated prematurely.
-    pub const QUERY_TERMINATED: i32 = -5;
-    /// Scan was terminated prematurely.
-    pub const SCAN_TERMINATED: i32 = -4;
-    /// Chosen node is not currently active.
-    pub const INVALID_NODE_ERROR: i32 = -3;
-    /// Client parse error.
-    pub const PARSE_ERROR: i32 = -2;
-    /// Generic client error.
-    pub const CLIENT_ERROR: i32 = -1;
-}
 
 /// The specific failure carried by an [`Error`].
 ///
@@ -214,7 +176,7 @@ pub enum ErrorKind {
 struct ErrorInner {
     kind: ErrorKind,
     /// Java-compatible numeric code: server codes non-negative, client-side
-    /// codes negative (see [`client_rc`]).
+    /// codes negative (see [`ClientResultCode`]).
     result_code: i32,
     /// Human-readable message. `None` falls back to a kind-derived default.
     message: Option<String>,
@@ -304,7 +266,7 @@ impl Error {
     pub fn batch_failed(records: Vec<crate::BatchRecord>, source: Error) -> Error {
         let mut e = Error::new(
             ErrorKind::BatchFailed { records },
-            client_rc::BATCH_FAILED,
+            ClientResultCode::BatchFailed.into(),
             None,
         );
         e.0.in_doubt = source.in_doubt();
@@ -332,7 +294,7 @@ impl Error {
     pub fn max_retries_exceeded(msg: impl Into<String>) -> Error {
         Error::new(
             ErrorKind::Timeout,
-            client_rc::MAX_RETRIES_EXCEEDED,
+            ClientResultCode::MaxRetriesExceeded.into(),
             Some(msg.into()),
         )
     }
@@ -344,7 +306,7 @@ impl Error {
     pub fn connection(msg: impl Into<String>) -> Error {
         Error::new(
             ErrorKind::Connection,
-            client_rc::SERVER_NOT_AVAILABLE,
+            ClientResultCode::ServerNotAvailable.into(),
             Some(msg.into()),
         )
     }
@@ -354,7 +316,7 @@ impl Error {
     pub fn pool_empty() -> Error {
         Error::new(
             ErrorKind::ConnectionPoolEmpty,
-            client_rc::NO_MORE_CONNECTIONS,
+            ClientResultCode::NoMoreConnections.into(),
             None,
         )
     }
@@ -364,7 +326,7 @@ impl Error {
     pub fn no_more_connections() -> Error {
         Error::new(
             ErrorKind::NoMoreConnections,
-            client_rc::NO_MORE_CONNECTIONS,
+            ClientResultCode::NoMoreConnections.into(),
             None,
         )
     }
@@ -372,7 +334,7 @@ impl Error {
     /// Per-node circuit breaker tripped for `node`.
     #[must_use]
     pub fn max_error_rate(node: impl Into<String>) -> Error {
-        let mut e = Error::new(ErrorKind::MaxErrorRate, client_rc::MAX_ERROR_RATE, None);
+        let mut e = Error::new(ErrorKind::MaxErrorRate, ClientResultCode::MaxErrorRate.into(), None);
         e.0.node = Some(node.into());
         e
     }
@@ -382,7 +344,7 @@ impl Error {
     pub fn invalid_node(msg: impl Into<String>) -> Error {
         Error::new(
             ErrorKind::InvalidNode,
-            client_rc::INVALID_NODE_ERROR,
+            ClientResultCode::InvalidNodeError.into(),
             Some(msg.into()),
         )
     }
@@ -413,7 +375,7 @@ impl Error {
     pub fn bad_response(msg: impl Into<String>) -> Error {
         Error::new(
             ErrorKind::BadResponse,
-            client_rc::PARSE_ERROR,
+            ClientResultCode::ParseError.into(),
             Some(msg.into()),
         )
     }
@@ -423,7 +385,7 @@ impl Error {
     pub fn parse_peers(msg: impl Into<String>) -> Error {
         Error::new(
             ErrorKind::ParsePeers,
-            client_rc::PARSE_ERROR,
+            ClientResultCode::ParseError.into(),
             Some(msg.into()),
         )
     }
@@ -444,7 +406,7 @@ impl Error {
     pub fn stream_terminated(cause: Option<Error>) -> Error {
         let mut e = Error::new(
             ErrorKind::StreamTerminated,
-            client_rc::SCAN_TERMINATED,
+            ClientResultCode::ScanTerminated.into(),
             None,
         );
         e.0.source = cause.map(Box::new);
@@ -466,7 +428,7 @@ impl Error {
                 verify_records,
                 roll_records,
             },
-            client_rc::TXN_FAILED,
+            ClientResultCode::TxnFailed.into(),
             None,
         );
         e.0.in_doubt = in_doubt;
@@ -477,7 +439,7 @@ impl Error {
     /// Untyped client-side error.
     #[must_use]
     pub fn client_error(msg: impl Into<String>) -> Error {
-        Error::new(ErrorKind::Client, client_rc::CLIENT_ERROR, Some(msg.into()))
+        Error::new(ErrorKind::Client, ClientResultCode::ClientError.into(), Some(msg.into()))
     }
 }
 
@@ -491,14 +453,14 @@ macro_rules! impl_from {
     };
 }
 
-impl_from!(::base64::DecodeError, Base64, client_rc::PARSE_ERROR);
-impl_from!(::std::str::Utf8Error, InvalidUtf8, client_rc::PARSE_ERROR);
-impl_from!(::std::io::Error, Io, client_rc::CLIENT_ERROR);
-impl_from!(::std::net::AddrParseError, ParseAddr, client_rc::PARSE_ERROR);
-impl_from!(::std::num::ParseIntError, ParseInt, client_rc::PARSE_ERROR);
-impl_from!(::pwhash::error::Error, PwHash, client_rc::SERIALIZE_ERROR);
+impl_from!(::base64::DecodeError, Base64, ClientResultCode::ParseError.into());
+impl_from!(::std::str::Utf8Error, InvalidUtf8, ClientResultCode::ParseError.into());
+impl_from!(::std::io::Error, Io, ClientResultCode::ClientError.into());
+impl_from!(::std::net::AddrParseError, ParseAddr, ClientResultCode::ParseError.into());
+impl_from!(::std::num::ParseIntError, ParseInt, ClientResultCode::ParseError.into());
+impl_from!(::pwhash::error::Error, PwHash, ClientResultCode::SerializeError.into());
 #[cfg(feature = "rt-tokio")]
-impl_from!(task::JoinError, Async, client_rc::CLIENT_ERROR);
+impl_from!(task::JoinError, Async, ClientResultCode::ClientError.into());
 
 // ---------------------------------------------------------------------------
 // Accessors (the Java "base class" getters)
@@ -512,11 +474,30 @@ impl Error {
     }
 
     /// Java-compatible numeric result code: the server [`ResultCode`] wire
-    /// value for server failures, a negative [`client_rc`] code for
+    /// value for server failures, a negative [`ClientResultCode`] value for
     /// client-side failures. Uniform across every error.
     #[must_use]
     pub fn result_code(&self) -> i32 {
         self.0.result_code
+    }
+
+    /// Returns the typed client-side result code carried by this error, if
+    /// any — the counterpart of [`server_result_code`](Self::server_result_code)
+    /// for failures generated on the client. Drills into the cause chain.
+    ///
+    /// `None` for server failures and for client-side timeouts (which use
+    /// the server `TIMEOUT` code, matching the Java client — check for those
+    /// via [`kind`](Self::kind) / [`ErrorKind::Timeout`]).
+    #[must_use]
+    pub fn client_result_code(&self) -> Option<ClientResultCode> {
+        if self.0.result_code < 0 {
+            Some(ClientResultCode::from(self.0.result_code))
+        } else {
+            self.0
+                .source
+                .as_ref()
+                .and_then(|s| s.client_result_code())
+        }
     }
 
     /// Last node the command was attempted on, when known. Drills into the
@@ -614,7 +595,15 @@ impl Error {
             ),
             #[cfg(feature = "rt-tokio")]
             ErrorKind::Async(e) => format!("Async runtime error: {e}"),
-            _ => i.message.clone().unwrap_or_else(|| "Client error".into()),
+            // Java `getBaseMessage` contract: the explicit message, else the
+            // result code's descriptive string.
+            _ => i.message.clone().unwrap_or_else(|| {
+                if i.result_code < 0 {
+                    ClientResultCode::from(i.result_code).into_string()
+                } else {
+                    ResultCode::from(i.result_code as u8).into_string()
+                }
+            }),
         }
     }
 
@@ -895,25 +884,59 @@ mod tests {
     fn result_codes_are_java_compatible() {
         assert_eq!(detailed().result_code(), 4); // PARAMETER_ERROR
         assert_eq!(Error::timeout("t").result_code(), 9); // TIMEOUT
+        assert_eq!(Error::max_retries_exceeded("t").result_code(), i32::from(ClientResultCode::MaxRetriesExceeded));
+        assert_eq!(Error::connection("c").result_code(), i32::from(ClientResultCode::ServerNotAvailable));
+        assert_eq!(Error::invalid_node("n").result_code(), i32::from(ClientResultCode::InvalidNodeError));
+        assert_eq!(Error::client_error("x").result_code(), i32::from(ClientResultCode::ClientError));
+        assert_eq!(Error::batch_failed(vec![], Error::timeout("t")).result_code(), i32::from(ClientResultCode::BatchFailed));
+    }
+
+    #[test]
+    fn client_result_code_accessor() {
+        // Typed accessor, symmetric with server_result_code.
         assert_eq!(
-            Error::max_retries_exceeded("t").result_code(),
-            client_rc::MAX_RETRIES_EXCEEDED
+            Error::max_retries_exceeded("t").client_result_code(),
+            Some(ClientResultCode::MaxRetriesExceeded)
         );
         assert_eq!(
-            Error::connection("c").result_code(),
-            client_rc::SERVER_NOT_AVAILABLE
+            Error::connection("c").client_result_code(),
+            Some(ClientResultCode::ServerNotAvailable)
         );
         assert_eq!(
-            Error::invalid_node("n").result_code(),
-            client_rc::INVALID_NODE_ERROR
+            Error::batch_failed(vec![], Error::timeout("t")).client_result_code(),
+            Some(ClientResultCode::BatchFailed)
         );
+        // Server failures and client timeouts (Java TIMEOUT=9) report None.
+        assert_eq!(detailed().client_result_code(), None);
+        assert_eq!(Error::timeout("t").client_result_code(), None);
+        // Drills through the cause chain: a server error wrapping a client
+        // parse failure still surfaces the client code.
+        let wrapped = Error::bad_response("junk").wrap(Error::server_error(
+            ResultCode::Ok,
+            "n",
+            None,
+        ));
         assert_eq!(
-            Error::client_error("x").result_code(),
-            client_rc::CLIENT_ERROR
+            wrapped.client_result_code(),
+            Some(ClientResultCode::ParseError)
         );
+    }
+
+    #[test]
+    fn client_codes_format_like_server_codes() {
+        // Display and String conversions mirror ResultCode's API.
         assert_eq!(
-            Error::batch_failed(vec![], Error::timeout("t")).result_code(),
-            client_rc::BATCH_FAILED
+            ClientResultCode::MaxRetriesExceeded.to_string(),
+            "Max retries exceeded"
+        );
+        let s: String = ClientResultCode::NoMoreConnections.into();
+        assert_eq!(s, "No more available connections");
+        // base_message falls back to the code's string when no explicit
+        // message was attached (Java getBaseMessage contract).
+        assert_eq!(Error::no_more_connections().base_message(), "Too many connections");
+        assert_eq!(
+            Error::max_error_rate("n").base_message(),
+            "Max error rate exceeded for node n; backing off"
         );
     }
 
@@ -1029,7 +1052,7 @@ mod tests {
 
         assert!(out.in_doubt(), "retry-exhaustion write must be in-doubt");
         assert!(out.to_string().contains("In Doubt: true"), "{out}");
-        assert_eq!(out.result_code(), client_rc::MAX_RETRIES_EXCEEDED);
+        assert_eq!(out.result_code(), i32::from(ClientResultCode::MaxRetriesExceeded));
         assert_eq!(out.iteration(), Some(2));
     }
 
@@ -1104,7 +1127,7 @@ mod tests {
         let cause = Error::timeout("Timeout after 2 tries").set_in_doubt(true, 1);
 
         let err = Error::batch_failed(vec![rec], cause);
-        assert_eq!(err.result_code(), client_rc::BATCH_FAILED);
+        assert_eq!(err.result_code(), i32::from(ClientResultCode::BatchFailed));
         assert!(err.in_doubt(), "batch failure inherits cause in-doubt");
         match err.kind() {
             ErrorKind::BatchFailed { records } => {
