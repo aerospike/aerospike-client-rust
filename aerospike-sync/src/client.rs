@@ -178,7 +178,7 @@ impl Client {
     /// match client.get(&ReadPolicy::default(), &key, ["a", "b"]) {
     ///     Ok(record)
     ///         => println!("a={:?}", record.bins.get("a")),
-    ///     Err(Error::ServerError(ResultCode::KeyNotFoundError, _, _))
+    ///     Err(Error::ServerError(ResultCode::KeyNotFoundError, _, _, _))
     ///         => println!("No such record: {}", key),
     ///     Err(err)
     ///         => println!("Error fetching record: {}", err),
@@ -202,7 +202,7 @@ impl Client {
     ///             Some(duration) => println!("ttl: {} secs", duration.as_secs()),
     ///         }
     ///     },
-    ///     Err(Error::ServerError(ResultCode::KeyNotFoundError, _, _))
+    ///     Err(Error::ServerError(ResultCode::KeyNotFoundError, _, _, _))
     ///         => println!("No such record: {}", key),
     ///     Err(err)
     ///         => println!("Error fetching record: {}", err),

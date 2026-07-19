@@ -17,9 +17,11 @@
 use std::convert::TryInto;
 use std::str;
 
+use aerospike_rt::sleep;
 use pwhash::bcrypt::{self, BcryptSetup, BcryptVariant};
 
-use crate::cluster::Cluster;
+use crate::cluster::{Cluster, Node};
+use crate::commands;
 use crate::errors::{Error, Result};
 use crate::net::Connection;
 use crate::net::PooledConnection;
@@ -567,6 +569,25 @@ impl AdminCommand {
         Ok(result_code == ResultCode::Ok || result_code == ResultCode::SecurityNotEnabled)
     }
 
+    /// Acquire a connection, pacing on `ConnectionPoolEmpty` like the data
+    /// commands: a background task is opening the connection, so wait briefly
+    /// and retry rather than surface the internal signal. Bounded by
+    /// `POOL_EMPTY_MAX_WAITS`.
+    async fn get_paced_connection(node: &Node) -> Result<PooledConnection> {
+        let mut pool_empty_waits = 0;
+        loop {
+            match node.get_connection(0).await {
+                Err(Error::ConnectionPoolEmpty)
+                    if pool_empty_waits < commands::POOL_EMPTY_MAX_WAITS =>
+                {
+                    pool_empty_waits += 1;
+                    sleep(commands::POOL_EMPTY_WAIT).await;
+                }
+                other => return other,
+            }
+        }
+    }
+
     pub(crate) async fn create_user(
         policy: &AdminPolicy,
         cluster: &Cluster,
@@ -575,7 +596,7 @@ impl AdminCommand {
         roles: &[&str],
     ) -> Result<()> {
         let node = cluster.get_random_node()?;
-        let mut conn = node.get_connection(0).await?;
+        let mut conn = AdminCommand::get_paced_connection(&node).await?;
 
         conn.buffer.resize_buffer(1024)?;
         conn.buffer.reset_offset();
@@ -593,7 +614,7 @@ impl AdminCommand {
         user: &str,
     ) -> Result<()> {
         let node = cluster.get_random_node()?;
-        let mut conn = node.get_connection(0).await?;
+        let mut conn = AdminCommand::get_paced_connection(&node).await?;
 
         conn.buffer.resize_buffer(1024)?;
         conn.buffer.reset_offset();
@@ -610,7 +631,7 @@ impl AdminCommand {
         password: &str,
     ) -> Result<()> {
         let node = cluster.get_random_node()?;
-        let mut conn = node.get_connection(0).await?;
+        let mut conn = AdminCommand::get_paced_connection(&node).await?;
 
         conn.buffer.resize_buffer(1024)?;
         conn.buffer.reset_offset();
@@ -628,7 +649,7 @@ impl AdminCommand {
         password: &str,
     ) -> Result<()> {
         let node = cluster.get_random_node()?;
-        let mut conn = node.get_connection(0).await?;
+        let mut conn = AdminCommand::get_paced_connection(&node).await?;
 
         conn.buffer.resize_buffer(1024)?;
         conn.buffer.reset_offset();
@@ -667,7 +688,7 @@ impl AdminCommand {
         write_quota: u32,
     ) -> Result<()> {
         let node = cluster.get_random_node()?;
-        let mut conn = node.get_connection(0).await?;
+        let mut conn = AdminCommand::get_paced_connection(&node).await?;
 
         let mut field_count = 1;
         if !privileges.is_empty() {
@@ -716,7 +737,7 @@ impl AdminCommand {
         role_name: &str,
     ) -> Result<()> {
         let node = cluster.get_random_node()?;
-        let mut conn = node.get_connection(0).await?;
+        let mut conn = AdminCommand::get_paced_connection(&node).await?;
 
         conn.buffer.resize_buffer(1024)?;
         conn.buffer.reset_offset();
@@ -733,7 +754,7 @@ impl AdminCommand {
         privileges: &[Privilege],
     ) -> Result<()> {
         let node = cluster.get_random_node()?;
-        let mut conn = node.get_connection(0).await?;
+        let mut conn = AdminCommand::get_paced_connection(&node).await?;
 
         conn.buffer.resize_buffer(1024)?;
         conn.buffer.reset_offset();
@@ -751,7 +772,7 @@ impl AdminCommand {
         privileges: &[Privilege],
     ) -> Result<()> {
         let node = cluster.get_random_node()?;
-        let mut conn = node.get_connection(0).await?;
+        let mut conn = AdminCommand::get_paced_connection(&node).await?;
 
         conn.buffer.resize_buffer(1024)?;
         conn.buffer.reset_offset();
@@ -769,7 +790,7 @@ impl AdminCommand {
         allowlist: &[&str],
     ) -> Result<()> {
         let node = cluster.get_random_node()?;
-        let mut conn = node.get_connection(0).await?;
+        let mut conn = AdminCommand::get_paced_connection(&node).await?;
 
         conn.buffer.resize_buffer(1024)?;
         conn.buffer.reset_offset();
@@ -788,7 +809,7 @@ impl AdminCommand {
         write_quota: u32,
     ) -> Result<()> {
         let node = cluster.get_random_node()?;
-        let mut conn = node.get_connection(0).await?;
+        let mut conn = AdminCommand::get_paced_connection(&node).await?;
 
         conn.buffer.resize_buffer(1024)?;
         conn.buffer.reset_offset();
@@ -807,7 +828,7 @@ impl AdminCommand {
         roles: &[&str],
     ) -> Result<()> {
         let node = cluster.get_random_node()?;
-        let mut conn = node.get_connection(0).await?;
+        let mut conn = AdminCommand::get_paced_connection(&node).await?;
 
         conn.buffer.resize_buffer(1024)?;
         conn.buffer.reset_offset();
@@ -825,7 +846,7 @@ impl AdminCommand {
         roles: &[&str],
     ) -> Result<()> {
         let node = cluster.get_random_node()?;
-        let mut conn = node.get_connection(0).await?;
+        let mut conn = AdminCommand::get_paced_connection(&node).await?;
 
         conn.buffer.resize_buffer(1024)?;
         conn.buffer.reset_offset();
@@ -842,7 +863,7 @@ impl AdminCommand {
         user: Option<&str>,
     ) -> Result<Vec<User>> {
         let node = cluster.get_random_node()?;
-        let mut conn = node.get_connection(0).await?;
+        let mut conn = AdminCommand::get_paced_connection(&node).await?;
 
         conn.buffer.resize_buffer(1024)?;
         conn.buffer.reset_offset();
@@ -863,7 +884,7 @@ impl AdminCommand {
         role: Option<&str>,
     ) -> Result<Vec<Role>> {
         let node = cluster.get_random_node()?;
-        let mut conn = node.get_connection(0).await?;
+        let mut conn = AdminCommand::get_paced_connection(&node).await?;
 
         conn.buffer.resize_buffer(1024)?;
         conn.buffer.reset_offset();
