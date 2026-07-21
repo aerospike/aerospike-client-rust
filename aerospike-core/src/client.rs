@@ -1633,10 +1633,10 @@ impl Client {
     /// server-side UDF error message.
     #[cfg(feature = "lua")]
     fn extract_aggregate_value(mut record: Record) -> Result<Value> {
-        if let Some(value) = record.bins.remove("SUCCESS") {
+        if let Some(value) = record.bins.swap_remove("SUCCESS") {
             return Ok(value);
         }
-        if let Some(reason) = record.bins.remove("FAILURE") {
+        if let Some(reason) = record.bins.swap_remove("FAILURE") {
             return Err(Error::server_error(
                 ResultCode::QueryGeneric,
                 format!("aggregation UDF failed on the server: {reason}"),

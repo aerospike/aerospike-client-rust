@@ -184,3 +184,42 @@ async fn map_order_policy_selects_variant_not_order() {
         );
     }
 }
+
+// Record.bins is an IndexMap so the server's bin return order is
+// preserved and visible to the caller (instead of being scrambled by a
+// HashMap). Whatever order the server chooses, two reads of the same
+// record must present it identically.
+#[aerospike_macro::test]
+async fn record_bins_preserve_server_order() {
+    let client = common::client().await;
+    let namespace = common::namespace();
+    let set_name = &common::rand_str(10);
+    let wpolicy = WritePolicy::default();
+    let rpolicy = ReadPolicy::default();
+
+    let key = as_key!(namespace, set_name, "bin_order");
+    common::delete_durably(&client, &wpolicy, &key)
+        .await
+        .unwrap();
+
+    let bins = [
+        as_bin!("zeta", 1),
+        as_bin!("mu", 2),
+        as_bin!("alpha", 3),
+        as_bin!("quux", 4),
+    ];
+    client.put(&wpolicy, &key, &bins).await.unwrap();
+
+    let rec = client.get(&rpolicy, &key, Bins::All).await.unwrap();
+    let first: Vec<String> = rec.bins.keys().cloned().collect();
+    assert_eq!(first.len(), 4);
+
+    let rec = client.get(&rpolicy, &key, Bins::All).await.unwrap();
+    let second: Vec<String> = rec.bins.keys().cloned().collect();
+    assert_eq!(
+        first, second,
+        "server bin order must be preserved deterministically across reads"
+    );
+
+    client.close().await.unwrap();
+}

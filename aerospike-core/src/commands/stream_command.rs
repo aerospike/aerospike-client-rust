@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::collections::HashMap;
+use crate::IndexMap;
 use std::io::Read;
 use std::sync::Arc;
 
@@ -115,7 +115,7 @@ impl StreamCommand {
             return Ok((None, None, true));
         }
 
-        let mut bins: HashMap<String, Value> = HashMap::with_capacity(op_count);
+        let mut bins: IndexMap<String, Value> = IndexMap::with_capacity(op_count);
 
         for _ in 0..op_count {
             conn.read_buffer(8).await?;

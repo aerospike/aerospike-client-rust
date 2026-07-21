@@ -196,7 +196,7 @@ impl RecordStream {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::HashMap;
+    use crate::IndexMap;
     use std::time::Duration;
 
     use futures::executor::block_on;
@@ -217,7 +217,7 @@ mod tests {
     }
 
     fn record() -> Record {
-        Record::new(None, HashMap::new(), None, 0, 0)
+        Record::new(None, IndexMap::new(), None, 0, 0)
     }
 
     #[cfg(feature = "sync")]

@@ -12,8 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::collections::hash_map::Entry::{Occupied, Vacant};
-use std::collections::HashMap;
+use indexmap::map::Entry::{Occupied, Vacant};
+use crate::IndexMap;
 use std::sync::Arc;
 
 use crate::cluster::partition::Partition;
@@ -83,7 +83,7 @@ impl<'a> ReadCommand<'a> {
         generation: u32,
         expiration: u32,
     ) -> Result<(Record, Option<u64>)> {
-        let mut bins: HashMap<String, Value> = HashMap::with_capacity(op_count);
+        let mut bins: IndexMap<String, Value> = IndexMap::with_capacity(op_count);
         // Populate `Record.results` when either the calling command forces
         // it (operate paths) OR the policy opts in (`populate_positional_results`).
         // Rust-core users default to off; PAC/PSDK opt in via policy.
@@ -214,7 +214,7 @@ impl Command for ReadCommand<'_> {
                 let (record, version) = if self.bins.is_none() {
                     let version = conn.buffer.parse_fields_for_version(field_count);
                     (
-                        Record::new(None, HashMap::new(), None, generation, expiration),
+                        Record::new(None, IndexMap::new(), None, generation, expiration),
                         version,
                     )
                 } else {
