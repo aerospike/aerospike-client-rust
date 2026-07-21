@@ -87,7 +87,7 @@ end
     let res = client
         .execute_udf(&wpolicy, &key, "test_udf1", "func_div", Some(&[as_val!(2)]))
         .await;
-    if let Ok(Some(Value::HashMap(values))) = res {
+    if let Ok(Some(Value::OrderedMap(values))) = res {
         assert_eq!(values.get(&as_val!("status")), Some(&as_val!("OK")));
         assert_eq!(values.get(&as_val!("res")), Some(&as_val!(5)));
     } else {

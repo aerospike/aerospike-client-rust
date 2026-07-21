@@ -20,7 +20,8 @@ use crate::common;
 use aerospike::operations::cdt_context::{ctx_map_key, ctx_map_key_create};
 use aerospike::operations::{maps, MapOrder};
 use aerospike::{
-    as_bin, as_key, as_list, as_map, as_ord_map, as_val, as_values, Bins, MapPolicy, MapReturnType,
+    as_bin, as_key, as_list, as_map, as_ord_map, as_sorted_map, as_val, as_values, Bins, MapPolicy,
+    MapReturnType,
     MapWriteFlags, MapWriteMode, ReadPolicy, Value, WritePolicy,
 };
 
@@ -138,7 +139,8 @@ async fn map_operations() {
 
     let op = maps::get_by_index(bin_name, 0, MapReturnType::OrderedMap);
     let rec = client.operate(&wpolicy, &key, &[op]).await.unwrap();
-    assert_eq!(*rec.bins.get(bin_name).unwrap(), as_ord_map!("a" => 1));
+    // The server's K-ordered map return decodes as Value::SortedMap.
+    assert_eq!(*rec.bins.get(bin_name).unwrap(), as_sorted_map!("a" => 1));
 
     let op = maps::get_by_index(bin_name, 0, MapReturnType::KeyValue);
     let rec = client.operate(&wpolicy, &key, &[op]).await.unwrap();
@@ -452,6 +454,46 @@ async fn map_create_op() {
     let rec = client.operate(&wpolicy, &key2, &[op]).await.unwrap();
     assert_eq!(*rec.bins.get("bin").unwrap(), as_list!("a", "b"));
 
+    // maps::create with a NON-empty context: the order flag must be OR'd
+    // into the last ctx element (Java CDT.init / Go packCDTCreate wire
+    // format), which lets the final element address a not-yet-existing key.
+    let key3 = as_key!(namespace, set_name, "map_create_nested_ctx");
+    common::delete_durably(&client, &wpolicy, &key3)
+        .await
+        .unwrap();
+
+    let op = maps::put(&mpolicy, "bin", as_val!("key1"), as_val!(1));
+    client.operate(&wpolicy, &key3, &[op]).await.unwrap();
+
+    let op = maps::create(
+        "bin",
+        MapOrder::KeyOrdered,
+        vec![ctx_map_key(as_val!("sub"))],
+    );
+    client.operate(&wpolicy, &key3, &[op]).await.unwrap();
+
+    // Fill the nested map out of key order; a K-ordered map returns keys sorted.
+    let ctx = vec![ctx_map_key(as_val!("sub"))];
+    let op = maps::put(&mpolicy, "bin", as_val!("z"), as_val!(26)).context(ctx.clone());
+    client.operate(&wpolicy, &key3, &[op]).await.unwrap();
+    let op = maps::put(&mpolicy, "bin", as_val!("a"), as_val!(1)).context(ctx.clone());
+    client.operate(&wpolicy, &key3, &[op]).await.unwrap();
+
+    let op = maps::get_by_index_range_from("bin", 0, MapReturnType::Key).context(ctx);
+    let rec = client.operate(&wpolicy, &key3, &[op]).await.unwrap();
+    assert_eq!(*rec.bins.get("bin").unwrap(), as_list!("a", "z"));
+
+    // The nested map was created K-ordered, so a full read decodes it as SortedMap.
+    let rec = client.get(&ReadPolicy::default(), &key3, ["bin"]).await.unwrap();
+    let Some(Value::OrderedMap(outer)) = rec.bins.get("bin") else {
+        panic!("expected top-level unordered map, got {:?}", rec.bins.get("bin"));
+    };
+    assert!(
+        matches!(outer.get(&as_val!("sub")), Some(Value::SortedMap(_))),
+        "nested map should be key-ordered (SortedMap), got {:?}",
+        outer.get(&as_val!("sub"))
+    );
+
     client.close().await.unwrap();
 }
 
@@ -666,4 +708,149 @@ async fn map_new_with_flags_and_persisted_index() {
     assert_eq!(*rec.bins.get("bin").unwrap(), as_list!("a", "b", "c"));
 
     client.close().await.unwrap();
+}
+
+#[aerospike_macro::test]
+async fn map_apis_accept_all_three_map_collections() {
+    use aerospike::expressions::{eq, map_bin, map_val};
+    use aerospike::operations;
+    use aerospike::IndexMap;
+    use std::collections::{BTreeMap, HashMap};
+
+    let client = common::client().await;
+    let namespace = common::namespace();
+    let set_name = &common::rand_str(10);
+    let wpolicy = WritePolicy::default();
+    let mpolicy = MapPolicy::default();
+    let rpolicy = ReadPolicy::default();
+
+    let pair = |k: &str, v: i64| (as_val!(k), as_val!(v));
+
+    // ---- maps::put_items with HashMap, IndexMap and BTreeMap ----
+    let hash: HashMap<Value, Value> = [pair("h", 1)].into();
+    let ordered: IndexMap<Value, Value> = [pair("o", 2)].into_iter().collect();
+    let sorted: BTreeMap<Value, Value> = [pair("s", 3)].into();
+
+    let key = as_key!(namespace, set_name, "maplike");
+    let ops = [
+        maps::put_items(&mpolicy, "bh", hash),
+        maps::put_items(&mpolicy, "bo", ordered),
+        maps::put_items(&mpolicy, "bs", sorted),
+    ];
+    client.operate(&wpolicy, &key, &ops).await.unwrap();
+
+    let rec = client.get(&rpolicy, &key, Bins::All).await.unwrap();
+    for (bin, k, v) in [("bh", "h", 1), ("bo", "o", 2), ("bs", "s", 3)] {
+        let op = maps::get_by_key(bin, as_val!(k), MapReturnType::Value);
+        let rec = client.operate(&wpolicy, &key, &[op]).await.unwrap();
+        assert_eq!(
+            *rec.bins.get(bin).unwrap(),
+            as_val!(v),
+            "wrong value in bin {bin}"
+        );
+    }
+    assert_eq!(rec.bins.len(), 3);
+
+    // ---- put_items under an ORDERED policy: HashMap/IndexMap items are
+    // sorted client-side and sent with the K-ordered wire header ----
+    let opolicy = MapPolicy::new(MapOrder::KeyOrdered, MapWriteMode::Update);
+    let okey = as_key!(namespace, set_name, "ordered_put_items");
+    let hash: HashMap<Value, Value> = [pair("z", 26), pair("a", 1), pair("m", 13)].into();
+    let ordered: IndexMap<Value, Value> =
+        [pair("z", 6), pair("q", 7)].into_iter().collect();
+    let ops = [
+        maps::put_items(&opolicy, "obh", hash),
+        maps::put_items(&opolicy, "obo", ordered),
+    ];
+    client.operate(&wpolicy, &okey, &ops).await.unwrap();
+
+    let rec = client.get(&rpolicy, &okey, Bins::All).await.unwrap();
+    // K-ordered bins decode as SortedMap with the merged content.
+    assert_eq!(
+        *rec.bins.get("obh").unwrap(),
+        as_sorted_map!("a" => 1, "m" => 13, "z" => 26)
+    );
+    assert!(matches!(rec.bins.get("obh"), Some(Value::SortedMap(_))));
+    assert_eq!(
+        *rec.bins.get("obo").unwrap(),
+        as_sorted_map!("q" => 7, "z" => 6)
+    );
+    assert!(matches!(rec.bins.get("obo"), Some(Value::SortedMap(_))));
+
+    // ---- bin values: Value::from each collection type ----
+    let key = as_key!(namespace, set_name, "mapbins");
+    let hash: HashMap<Value, Value> = [pair("x", 10)].into();
+    let ordered: IndexMap<Value, Value> = [pair("x", 20)].into_iter().collect();
+    let sorted: BTreeMap<Value, Value> = [pair("x", 30)].into();
+    client
+        .put(
+            &wpolicy,
+            &key,
+            &[
+                as_bin!("vh", Value::from(hash.clone())),
+                as_bin!("vo", Value::from(ordered.clone())),
+                as_bin!("vs", Value::from(sorted.clone())),
+            ],
+        )
+        .await
+        .unwrap();
+    let rec = client.get(&rpolicy, &key, Bins::All).await.unwrap();
+    // Unordered wire maps decode as OrderedMap (server pair order
+    // preserved); equality with as_map! still holds because map variants
+    // compare by content.
+    assert!(matches!(rec.bins.get("vh"), Some(Value::OrderedMap(_))));
+    assert_eq!(*rec.bins.get("vh").unwrap(), as_map!("x" => 10));
+    assert_eq!(*rec.bins.get("vo").unwrap(), as_map!("x" => 20));
+
+    // Order preservation: the decoder keeps the exact pair order the
+    // server sent. For plain map bins the server (8.1.x) stores maps
+    // K-ordered internally and returns pairs in key order — so a map
+    // written as z,m,a,q comes back as a,m,q,z, and that order is now
+    // visible to the caller instead of being scrambled by a HashMap.
+    let okey = as_key!(namespace, set_name, "maporder");
+    let written = as_ord_map!("z" => 1, "m" => 2, "a" => 3, "q" => 4);
+    client
+        .put(&wpolicy, &okey, &[as_bin!("om", written.clone())])
+        .await
+        .unwrap();
+    let rec = client.get(&rpolicy, &okey, Bins::All).await.unwrap();
+    let Some(Value::OrderedMap(back)) = rec.bins.get("om") else {
+        panic!("expected an OrderedMap back, got {:?}", rec.bins.get("om"));
+    };
+    let keys: Vec<String> = back.keys().map(ToString::to_string).collect();
+    assert_eq!(
+        keys,
+        vec!["a", "m", "q", "z"],
+        "server returns plain map bins in canonical (key) order"
+    );
+    // Content equality with the written map holds regardless of order.
+    assert_eq!(*rec.bins.get("om").unwrap(), written);
+
+    // ---- expressions::map_val with all three collection types ----
+    // All three collections are accepted by map_val (the point of this
+    // test). Map literals are packed in canonical (key-sorted) form as
+    // required by servers with AER-6930 (8.1.2.3+). NOTE: on older
+    // servers (verified on 8.1.2.0) whole-map EQ evaluates to
+    // FilteredOut even for identical canonical operands, so a match is
+    // not asserted here — an Ok result (newer server) and FilteredOut
+    // (older server) are both accepted; an invalid encoding would fail
+    // with ParameterError instead.
+    for (name, map_exp) in [
+        ("hash", map_val(hash)),
+        ("ordered", map_val(ordered)),
+        ("sorted", map_val(sorted)),
+    ] {
+        let mut fpolicy = WritePolicy::default();
+        fpolicy.base_policy.filter_expression = Some(eq(map_bin("vh".to_string()), map_exp));
+        let result = client
+            .operate(&fpolicy, &key, &[operations::get_bin("vh")])
+            .await;
+        if let Err(err) = result {
+            assert_eq!(
+                err.server_result_code(),
+                Some(aerospike::ResultCode::FilteredOut),
+                "map_val({name}) must produce a server-parseable expression, got: {err}"
+            );
+        }
+    }
 }

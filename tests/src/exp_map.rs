@@ -710,3 +710,99 @@ async fn test_filter(client: &Client, filter: Expression, set_name: &str) -> Arc
     let pf = PartitionFilter::all();
     client.query(&qpolicy, pf, statement).await.unwrap()
 }
+
+// Server 6.3+ supports comparing ORDERED map values in expressions:
+// with a K-ordered stored bin and a `BTreeMap` literal (map_val packs
+// it with the K-ordered wire flag), eq/ne/gt/ge/le/lt all evaluate by
+// the canonical map order (length first, then entry-wise). Unordered
+// operands on either side are not comparable on servers before
+// AER-6930 (verified FilteredOut on 8.1.2.0), so those cases are only
+// checked leniently.
+#[aerospike_macro::test]
+async fn ordered_map_expression_comparisons() {
+    use std::collections::BTreeMap;
+
+    let client = common::client().await;
+    let namespace = common::namespace();
+    let set_name = &common::rand_str(10);
+    let wpolicy = WritePolicy::default();
+
+    let pair = |k: &str, v: i64| (as_val!(k), as_val!(v));
+    let key = as_key!(namespace, set_name, "ordered_map_cmp");
+
+    // Bin stored as a K-ordered map (SortedMap carries the ordered wire flag).
+    client
+        .put(
+            &wpolicy,
+            &key,
+            &[Bin::new(
+                "m".into(),
+                as_sorted_map!("a" => 1, "b" => 2, "c" => 3),
+            )],
+        )
+        .await
+        .unwrap();
+
+    let same: BTreeMap<Value, Value> = [pair("a", 1), pair("b", 2), pair("c", 3)].into();
+    let smaller: BTreeMap<Value, Value> = [pair("a", 1), pair("b", 2)].into();
+
+    // (label, filter, expect_match)
+    let cases: Vec<(&str, Expression, bool)> = vec![
+        (
+            "eq same",
+            eq(map_bin("m".into()), map_val(same.clone())),
+            true,
+        ),
+        (
+            "ne same",
+            ne(map_bin("m".into()), map_val(same.clone())),
+            false,
+        ),
+        (
+            "ne smaller",
+            ne(map_bin("m".into()), map_val(smaller.clone())),
+            true,
+        ),
+        // Canonical map order is length-first: a 3-entry map sorts after
+        // a 2-entry map.
+        (
+            "gt smaller",
+            gt(map_bin("m".into()), map_val(smaller.clone())),
+            true,
+        ),
+        (
+            "lt smaller",
+            lt(map_bin("m".into()), map_val(smaller)),
+            false,
+        ),
+        (
+            "ge same",
+            ge(map_bin("m".into()), map_val(same.clone())),
+            true,
+        ),
+        ("le same", le(map_bin("m".into()), map_val(same)), true),
+    ];
+
+    for (label, filter, expect_match) in cases {
+        let mut fpolicy = WritePolicy::default();
+        fpolicy.base_policy.filter_expression = Some(filter);
+        let result = client
+            .operate(&fpolicy, &key, &[operations::get_bin("m")])
+            .await;
+        if expect_match {
+            assert!(
+                result.is_ok(),
+                "{label}: expected the filter to match, got {result:?}"
+            );
+        } else {
+            let err = result.expect_err(&format!("{label}: expected FilteredOut"));
+            assert_eq!(
+                err.server_result_code(),
+                Some(ResultCode::FilteredOut),
+                "{label}: expected a clean FilteredOut evaluation"
+            );
+        }
+    }
+
+    client.close().await.unwrap();
+}

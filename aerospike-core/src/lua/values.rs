@@ -76,6 +76,9 @@ pub fn value_to_lua(lua: &Lua, value: Value) -> mlua::Result<LuaValue> {
         Value::OrderedMap(m) => {
             LuaValue::UserData(lua.create_userdata(LuaMap(m.into_iter().collect()))?)
         }
+        Value::SortedMap(m) => {
+            LuaValue::UserData(lua.create_userdata(LuaMap(m.into_iter().collect()))?)
+        }
         Value::KeyValueList(pairs) => {
             LuaValue::UserData(lua.create_userdata(LuaMap(pairs.into_iter().collect()))?)
         }
@@ -408,9 +411,7 @@ fn register_map(lua: &Lua) -> mlua::Result<()> {
     let mt = lua.create_table()?;
     mt.set(
         "__call",
-        lua.create_function(|_, (_this, init): (Table, Option<Table>)| {
-            map_from_initializer(init)
-        })?,
+        lua.create_function(|_, (_this, init): (Table, Option<Table>)| map_from_initializer(init))?,
     )?;
     map.set_metatable(Some(mt))?;
 
@@ -439,7 +440,9 @@ fn register_map(lua: &Lua) -> mlua::Result<()> {
     )?;
     map.set(
         "clone",
-        lua.create_function(|_, ud: mlua::AnyUserData| Ok(LuaMap(ud.borrow::<LuaMap>()?.0.clone())))?,
+        lua.create_function(|_, ud: mlua::AnyUserData| {
+            Ok(LuaMap(ud.borrow::<LuaMap>()?.0.clone()))
+        })?,
     )?;
     // `for k, v in map.pairs(m) do ... end`
     map.set(
@@ -483,12 +486,7 @@ fn register_map(lua: &Lua) -> mlua::Result<()> {
     map.set(
         "merge",
         lua.create_function(
-            |lua,
-             (ud1, ud2, f): (
-                mlua::AnyUserData,
-                mlua::AnyUserData,
-                Option<mlua::Function>,
-            )| {
+            |lua, (ud1, ud2, f): (mlua::AnyUserData, mlua::AnyUserData, Option<mlua::Function>)| {
                 let mut merged = ud1.borrow::<LuaMap>()?.0.clone();
                 let other = ud2.borrow::<LuaMap>()?.0.clone();
                 for (k, v2) in other {

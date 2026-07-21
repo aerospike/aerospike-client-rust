@@ -365,10 +365,10 @@ async fn modify_by_path_multiply_prices() {
     let rec = client.get(&rpolicy, &key, Bins::All).await.unwrap();
     let root_val = rec.bins.get("testbin").unwrap();
 
-    if let Value::HashMap(root_map) = root_val {
+    if let Value::OrderedMap(root_map) = root_val {
         if let Some(Value::List(book_list)) = root_map.get(&Value::from("book")) {
             // Check first book's price was multiplied
-            if let Value::HashMap(book0) = &book_list[0] {
+            if let Value::OrderedMap(book0) = &book_list[0] {
                 let price = book0.get(&Value::from("price")).unwrap();
                 let price_f = match price {
                     Value::Float(f) => f64::from(f),
@@ -489,7 +489,7 @@ async fn exp_modify_by_path_multiply() {
     client.operate(&wpolicy, &key, ops).await.unwrap();
 
     let rec = client.get(&rpolicy, &key, Bins::All).await.unwrap();
-    if let Some(Value::HashMap(root_map)) = rec.bins.get("testbin") {
+    if let Some(Value::OrderedMap(root_map)) = rec.bins.get("testbin") {
         if let Some(Value::List(vals)) = root_map.get(&Value::from("vals")) {
             for (i, val) in vals.iter().enumerate() {
                 let expected = (i as f64 + 1.0) * 2.0;
@@ -628,14 +628,14 @@ async fn remove_all_items_from_list() {
     client.operate(&wpolicy, &key, &[op]).await.unwrap();
 
     let rec = client.get(&rpolicy, &key, Bins::All).await.unwrap();
-    if let Some(Value::HashMap(root_map)) = rec.bins.get("testbin") {
+    if let Some(Value::OrderedMap(root_map)) = rec.bins.get("testbin") {
         if let Some(Value::List(items)) = root_map.get(&Value::from("items")) {
             assert_eq!(items.len(), 0, "All items should be removed");
         } else {
             panic!("Expected 'items' key to exist as a list");
         }
     } else {
-        panic!("Expected HashMap result for testbin");
+        panic!("Expected OrderedMap result for testbin");
     }
 }
 
@@ -674,7 +674,7 @@ async fn remove_filtered_items_from_list() {
     client.operate(&wpolicy, &key, &[op]).await.unwrap();
 
     let rec = client.get(&rpolicy, &key, Bins::All).await.unwrap();
-    if let Some(Value::HashMap(root_map)) = rec.bins.get("testbin") {
+    if let Some(Value::OrderedMap(root_map)) = rec.bins.get("testbin") {
         if let Some(Value::List(numbers)) = root_map.get(&Value::from("numbers")) {
             assert_eq!(numbers.len(), 3, "Should keep items <= 10");
             assert!(numbers.contains(&Value::from(1_i64)));
@@ -684,7 +684,7 @@ async fn remove_filtered_items_from_list() {
             panic!("Expected 'numbers' key to exist as a list");
         }
     } else {
-        panic!("Expected HashMap result for testbin");
+        panic!("Expected OrderedMap result for testbin");
     }
 }
 
@@ -723,14 +723,14 @@ async fn remove_all_items_from_map() {
     client.operate(&wpolicy, &key, &[op]).await.unwrap();
 
     let rec = client.get(&rpolicy, &key, Bins::All).await.unwrap();
-    if let Some(Value::HashMap(root_map)) = rec.bins.get("testbin") {
-        if let Some(Value::HashMap(config_map)) = root_map.get(&Value::from("config")) {
+    if let Some(Value::OrderedMap(root_map)) = rec.bins.get("testbin") {
+        if let Some(Value::OrderedMap(config_map)) = root_map.get(&Value::from("config")) {
             assert_eq!(config_map.len(), 0, "All map entries should be removed");
         } else {
             panic!("Expected 'config' key to exist as a map");
         }
     } else {
-        panic!("Expected HashMap result for testbin");
+        panic!("Expected OrderedMap result for testbin");
     }
 }
 
@@ -770,8 +770,8 @@ async fn remove_filtered_map_entries() {
     client.operate(&wpolicy, &key, &[op]).await.unwrap();
 
     let rec = client.get(&rpolicy, &key, Bins::All).await.unwrap();
-    if let Some(Value::HashMap(root_map)) = rec.bins.get("testbin") {
-        if let Some(Value::HashMap(scores_map)) = root_map.get(&Value::from("scores")) {
+    if let Some(Value::OrderedMap(root_map)) = rec.bins.get("testbin") {
+        if let Some(Value::OrderedMap(scores_map)) = root_map.get(&Value::from("scores")) {
             assert_eq!(scores_map.len(), 2, "Should keep scores >= 50");
             assert!(!scores_map.contains_key(&Value::from("bob")));
             assert!(!scores_map.contains_key(&Value::from("dave")));
@@ -783,7 +783,7 @@ async fn remove_filtered_map_entries() {
             panic!("Expected 'scores' key to exist as a map");
         }
     } else {
-        panic!("Expected HashMap result for testbin");
+        panic!("Expected OrderedMap result for testbin");
     }
 }
 
@@ -837,11 +837,11 @@ async fn remove_books_with_low_prices() {
     client.operate(&wpolicy, &key, &[op]).await.unwrap();
 
     let rec = client.get(&rpolicy, &key, Bins::All).await.unwrap();
-    if let Some(Value::HashMap(root_map)) = rec.bins.get("testbin") {
+    if let Some(Value::OrderedMap(root_map)) = rec.bins.get("testbin") {
         if let Some(Value::List(book_list)) = root_map.get(&Value::from("books")) {
             assert_eq!(book_list.len(), 2, "Should keep 2 expensive books");
             for book_val in book_list {
-                if let Value::HashMap(book) = book_val {
+                if let Value::OrderedMap(book) = book_val {
                     let price = book.get(&Value::from("price")).unwrap();
                     let price_f = match price {
                         Value::Float(f) => f64::from(f),
@@ -857,7 +857,7 @@ async fn remove_books_with_low_prices() {
             panic!("Expected 'books' key to exist as a list");
         }
     } else {
-        panic!("Expected HashMap result for testbin");
+        panic!("Expected OrderedMap result for testbin");
     }
 }
 
@@ -896,7 +896,7 @@ async fn remove_items_by_index_filter() {
     client.operate(&wpolicy, &key, &[op]).await.unwrap();
 
     let rec = client.get(&rpolicy, &key, Bins::All).await.unwrap();
-    if let Some(Value::HashMap(root_map)) = rec.bins.get("testbin") {
+    if let Some(Value::OrderedMap(root_map)) = rec.bins.get("testbin") {
         if let Some(Value::List(values)) = root_map.get(&Value::from("values")) {
             assert_eq!(values.len(), 3, "Should keep first 3 items");
             assert_eq!(values[0], Value::from(100_i64));
@@ -906,7 +906,7 @@ async fn remove_items_by_index_filter() {
             panic!("Expected 'values' key to exist as a list");
         }
     } else {
-        panic!("Expected HashMap result for testbin");
+        panic!("Expected OrderedMap result for testbin");
     }
 }
 
@@ -954,8 +954,8 @@ async fn remove_map_entries_by_key_filter() {
     client.operate(&wpolicy, &key, &[op]).await.unwrap();
 
     let rec = client.get(&rpolicy, &key, Bins::All).await.unwrap();
-    if let Some(Value::HashMap(root_map)) = rec.bins.get("testbin") {
-        if let Some(Value::HashMap(inv_map)) = root_map.get(&Value::from("inventory")) {
+    if let Some(Value::OrderedMap(root_map)) = rec.bins.get("testbin") {
+        if let Some(Value::OrderedMap(inv_map)) = root_map.get(&Value::from("inventory")) {
             assert_eq!(inv_map.len(), 2, "Should keep apple and banana");
             assert!(inv_map.contains_key(&Value::from("apple")));
             assert!(inv_map.contains_key(&Value::from("banana")));
@@ -965,7 +965,7 @@ async fn remove_map_entries_by_key_filter() {
             panic!("Expected 'inventory' key to exist as a map");
         }
     } else {
-        panic!("Expected HashMap result for testbin");
+        panic!("Expected OrderedMap result for testbin");
     }
 }
 
@@ -1023,8 +1023,8 @@ async fn remove_nested_items_complex_path() {
     client.operate(&wpolicy, &key, &[op]).await.unwrap();
 
     let rec = client.get(&rpolicy, &key, Bins::All).await.unwrap();
-    if let Some(Value::HashMap(root_map)) = rec.bins.get("testbin") {
-        if let Some(Value::HashMap(depts)) = root_map.get(&Value::from("departments")) {
+    if let Some(Value::OrderedMap(root_map)) = rec.bins.get("testbin") {
+        if let Some(Value::OrderedMap(depts)) = root_map.get(&Value::from("departments")) {
             if let Some(Value::List(sales_list)) = depts.get(&Value::from("sales")) {
                 assert_eq!(sales_list.len(), 1, "Should keep Jane only (sales=5000)");
             } else {
@@ -1039,7 +1039,7 @@ async fn remove_nested_items_complex_path() {
             panic!("Expected 'departments' key to exist as a map");
         }
     } else {
-        panic!("Expected HashMap result for testbin");
+        panic!("Expected OrderedMap result for testbin");
     }
 }
 
@@ -1198,8 +1198,8 @@ async fn select_matching_tree_preserves_shape() {
     // MATCHING_TREE returns the original map shape with only matches.
     let result = rec.bins.get("testbin").expect("result should be present");
     let inner_map = match result {
-        Value::HashMap(root) => match root.get(&Value::from("data")) {
-            Some(Value::HashMap(inner)) => inner.clone(),
+        Value::OrderedMap(root) => match root.get(&Value::from("data")) {
+            Some(Value::OrderedMap(inner)) => inner.clone(),
             other => panic!("expected nested map under 'data', got {:?}", other),
         },
         Value::List(items) => {
@@ -1249,7 +1249,7 @@ async fn modify_no_fail_skips_type_mismatch() {
     client.operate(&wpolicy, &key, &[op]).await.unwrap();
 
     let rec = client.get(&rpolicy, &key, Bins::All).await.unwrap();
-    if let Some(Value::HashMap(root)) = rec.bins.get("testbin") {
+    if let Some(Value::OrderedMap(root)) = rec.bins.get("testbin") {
         if let Some(Value::List(vals)) = root.get(&Value::from("vals")) {
             // Numeric leaves doubled, the string left alone.
             let has_two = vals.iter().any(|v| matches!(v, Value::Int(2)));
@@ -1267,7 +1267,7 @@ async fn modify_no_fail_skips_type_mismatch() {
             panic!("Expected 'vals' list");
         }
     } else {
-        panic!("Expected HashMap testbin");
+        panic!("Expected OrderedMap testbin");
     }
 }
 
@@ -1305,7 +1305,7 @@ async fn path_remove_helper_drops_filtered_leaves() {
     client.operate(&wpolicy, &key, &[op]).await.unwrap();
 
     let rec = client.get(&rpolicy, &key, Bins::All).await.unwrap();
-    if let Some(Value::HashMap(root)) = rec.bins.get("testbin") {
+    if let Some(Value::OrderedMap(root)) = rec.bins.get("testbin") {
         if let Some(Value::List(nums)) = root.get(&Value::from("nums")) {
             assert_eq!(nums.len(), 2);
             assert!(nums.contains(&Value::from(1_i64)));
@@ -1314,7 +1314,7 @@ async fn path_remove_helper_drops_filtered_leaves() {
             panic!("Expected 'nums' list");
         }
     } else {
-        panic!("Expected HashMap testbin");
+        panic!("Expected OrderedMap testbin");
     }
 }
 
@@ -1355,7 +1355,7 @@ async fn ctx_map_keys_in_selects_subset_of_keys() {
     let result = rec.bins.get("testbin").expect("result missing");
     let items: Vec<Value> = match result {
         Value::List(items) => items.clone(),
-        Value::HashMap(m) => m.values().cloned().collect(),
+        Value::OrderedMap(m) => m.values().cloned().collect(),
         other => panic!("unexpected map_keys_in result shape: {:?}", other),
     };
     assert!(
@@ -1410,7 +1410,7 @@ async fn ctx_and_filter_refines_map_keys_in() {
     let result = rec.bins.get("testbin").expect("result missing");
     let pairs: Vec<Value> = match result {
         Value::List(items) => items.clone(),
-        Value::HashMap(m) => m.iter().flat_map(|(k, v)| [k.clone(), v.clone()]).collect(),
+        Value::OrderedMap(m) => m.iter().flat_map(|(k, v)| [k.clone(), v.clone()]).collect(),
         other => panic!("unexpected and_filter result shape: {:?}", other),
     };
     // Expect 2 key/value pairs flattened to 4 elements.
@@ -1724,7 +1724,7 @@ async fn exp_remove_through_write_exp_drops_leaves() {
     client.operate(&wpolicy, &key, ops).await.unwrap();
 
     let rec = client.get(&rpolicy, &key, Bins::All).await.unwrap();
-    if let Some(Value::HashMap(root)) = rec.bins.get("testbin") {
+    if let Some(Value::OrderedMap(root)) = rec.bins.get("testbin") {
         if let Some(Value::List(vals)) = root.get(&Value::from("vals")) {
             assert_eq!(vals.len(), 2);
             assert!(vals.contains(&Value::from(1_i64)));
@@ -1733,7 +1733,7 @@ async fn exp_remove_through_write_exp_drops_leaves() {
             panic!("Expected 'vals' list");
         }
     } else {
-        panic!("Expected HashMap testbin");
+        panic!("Expected OrderedMap testbin");
     }
 }
 

@@ -183,7 +183,8 @@ pub use server_error::{ExpressionTrace, ServerErrorDetail};
 pub use task::{DropIndexTask, ExecuteTask, IndexTask, RegisterTask, Task, UdfRemoveTask};
 pub use txn::{AbortStatus, CommitErrorType, CommitStatus, Txn, TxnState};
 pub use user::User;
-pub use value::{FloatValue, Value};
+pub use indexmap::IndexMap;
+pub use value::{FloatValue, MapCollection, MapLike, Value};
 pub use xor_shift::XorShift;
 
 #[macro_use]

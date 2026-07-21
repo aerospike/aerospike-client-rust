@@ -38,8 +38,10 @@ pub enum CdtArgument {
     List(Vec<Value>),
     /// Unordered map (key-value pairs).
     Map(HashMap<Value, Value>),
-    /// Ordered map (key-value pairs with key ordering).
-    OrderedMap(BTreeMap<Value, Value>),
+    /// Insertion-ordered map (key-value pairs in insertion order).
+    OrderedMap(indexmap::IndexMap<Value, Value>),
+    /// Sorted map (key-value pairs with key ordering).
+    SortedMap(BTreeMap<Value, Value>),
 }
 
 pub type OperationEncoder = Arc<

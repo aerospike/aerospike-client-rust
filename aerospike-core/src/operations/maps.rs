@@ -21,6 +21,40 @@
 //!
 //! The default unique key map is unordered.
 //!
+//! Every operation that takes a map accepts any of the three map
+//! collection types — `HashMap` (unordered), `IndexMap`
+//! (insertion-ordered) or `BTreeMap` (key-sorted) — via the
+//! [`MapLike`](crate::MapLike) trait. Maps returned by map operations
+//! decode as [`Value::OrderedMap`](crate::Value::OrderedMap) (or
+//! [`Value::SortedMap`](crate::Value::SortedMap) for K-ordered
+//! returns), preserving the pair order the server sent; the map
+//! `Value` variants compare equal by content, so results can be
+//! asserted against any representation.
+//!
+//! The [`MapOrder`] in a [`MapPolicy`] selects the storage/wire
+//! representation, not the returned pair order: verified against
+//! server 8.1, maps come back in canonical key order regardless of
+//! order setting or creation path (plain bin write, CDT put with an
+//! unordered policy, or explicit [`create`] with
+//! [`MapOrder::Unordered`]) — insertion order is never preserved. The
+//! observable difference is the decode variant (`OrderedMap` for
+//! unordered maps, `SortedMap` for K-ordered) plus server-side
+//! operation efficiency for ordered maps.
+//!
+//! K-ordered maps additionally support whole-map comparison in filter
+//! expressions (server 6.3+): compare a K-ordered bin against a
+//! `BTreeMap` literal via
+//! [`expressions::map_val`](crate::expressions::map_val) with
+//! `eq`/`lt`/etc.; ordering is canonical (length first, then
+//! entry-wise). Unordered operands are only comparable on servers with
+//! AER-6930 (8.1.2.3+).
+//!
+//! Key and value ordering (index positions in K-ordered maps, ranks,
+//! range operations) follows the server's canonical value order —
+//! keys sort `Int < String < Blob`, each type by its natural
+//! (numeric / lexicographic / byte-wise) order; see
+//! [`Value`](crate::Value)'s `Ord` implementation, which matches it.
+//!
 //! Index/Count examples:
 //!
 //! * Index 0: First item in map.
@@ -42,7 +76,7 @@
 
 use std::sync::Arc;
 
-use crate::msgpack::encoder::pack_cdt_op;
+use crate::msgpack::encoder::{pack_cdt_create_op, pack_cdt_op};
 use crate::operations::cdt::{CdtArgument, CdtOperation};
 use crate::operations::cdt_context::{CdtContext, DEFAULT_CTX};
 use crate::operations::{Operation, OperationBin, OperationData, OperationType};
@@ -91,9 +125,18 @@ pub(crate) enum CdtMapOpType {
 #[derive(Debug, Clone, Copy)]
 pub enum MapOrder {
     /// Map is not ordered. This is the default.
+    ///
+    /// Note (verified against server 8.1): the order setting controls
+    /// the map's storage/wire representation, NOT the returned pair
+    /// order — the server returns the entries of an unordered map in
+    /// canonical key order too, just without the K-ordered wire flag
+    /// (so it decodes as [`Value::OrderedMap`](crate::Value::OrderedMap)
+    /// rather than [`Value::SortedMap`](crate::Value::SortedMap)).
+    /// Insertion order is never preserved server-side.
     Unordered = 0,
 
-    /// Order map by key.
+    /// Order map by key. Returns carry the K-ordered wire flag and
+    /// decode as [`Value::SortedMap`](crate::Value::SortedMap).
     KeyOrdered = 1,
 
     /// Order map by key, then value.
@@ -339,8 +382,9 @@ const fn map_order_arg(policy: &MapPolicy) -> Option<CdtArgument> {
 
 /// Creates map create operation.
 ///
-/// Server creates map at given context level. The context is allowed to be beyond map
-/// boundaries only if a parent context element uses a create-type context (e.g.,
+/// Server creates map at given context level. The map-order create flag is OR'd into the
+/// last context element, so the final context element itself may address a not-yet-existing
+/// map key; earlier elements must exist or use a create-type context (e.g.,
 /// [`ctx_map_key_create`](crate::operations::cdt_context::ctx_map_key_create)).
 ///
 /// If ctx is empty, this is equivalent to [`set_order`].
@@ -350,7 +394,7 @@ pub fn create(bin: &str, map_order: MapOrder, ctx: Vec<CdtContext>) -> Operation
     }
     let cdt_op = CdtOperation {
         op: CdtMapOpType::SetType as u8,
-        encoder: Arc::new(pack_cdt_op),
+        encoder: Arc::new(pack_cdt_create_op),
         args: vec![
             CdtArgument::Byte(map_order.flag()),
             CdtArgument::Byte(map_order as u8),
@@ -476,12 +520,26 @@ pub fn put(policy: &MapPolicy, bin: &str, key: Value, val: Value) -> Operation {
 ///
 /// The required map policy dictates the type of map to create when it does not exist. The map
 /// policy also specifies the mode used when writing items to the map.
+///
+/// With an ordered map policy ([`MapOrder::KeyOrdered`] or [`MapOrder::KeyValueOrdered`]),
+/// `HashMap` and `IndexMap` items are sorted client-side and sent with the key-ordered wire
+/// header, so the server can merge them without re-sorting.
 #[allow(clippy::implicit_hasher)]
 pub fn put_items<M: MapLike<Value, Value>>(policy: &MapPolicy, bin: &str, items: M) -> Operation {
-    let items = match items.value() {
-        (Some(hm), None) => CdtArgument::Map(hm),
-        (None, Some(btm)) => CdtArgument::OrderedMap(btm),
-        _ => unreachable!(),
+    // With an ordered map policy the items are sent pre-sorted with the
+    // K-ordered wire header (like Java packing a `TreeMap`), so the server
+    // can merge them into the ordered map without re-sorting.
+    let sort = !matches!(policy.order, MapOrder::Unordered);
+    let items = match items.into_map() {
+        crate::value::MapCollection::Hash(m) if sort => {
+            CdtArgument::SortedMap(m.into_iter().collect())
+        }
+        crate::value::MapCollection::Ordered(m) if sort => {
+            CdtArgument::SortedMap(m.into_iter().collect())
+        }
+        crate::value::MapCollection::Hash(m) => CdtArgument::Map(m),
+        crate::value::MapCollection::Ordered(m) => CdtArgument::OrderedMap(m),
+        crate::value::MapCollection::Sorted(m) => CdtArgument::SortedMap(m),
     };
 
     if policy.flags != 0 {

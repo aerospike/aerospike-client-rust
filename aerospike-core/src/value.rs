@@ -15,6 +15,8 @@
 
 use std::cmp::{Ordering, PartialOrd};
 use std::collections::{BTreeMap, HashMap};
+
+use indexmap::IndexMap;
 use std::convert::TryFrom;
 use std::fmt;
 use std::hash::{Hash, Hasher};
@@ -144,7 +146,29 @@ impl fmt::Display for FloatValue {
 }
 
 /// Container for bin values stored in the Aerospike database.
-#[derive(Debug, Clone, PartialEq, Eq)]
+///
+/// # Ordering
+///
+/// [`Value`] implements a total order that matches the server's
+/// canonical value ordering (verified empirically against server 8.1
+/// via the list [`sort`](crate::operations::lists::sort) operation and
+/// K-ordered map key placement). Types rank
+/// `Nil < Bool < Int < String < List < Map < Bytes < Float < GeoJSON`;
+/// see the [`Ord`] impl for the within-type rules. Sorting a
+/// `Vec<Value>` client-side therefore produces the same order the
+/// server uses for list sort, ranks, and K-ordered map keys.
+///
+/// # Map variants
+///
+/// Three variants represent maps, differing only in the client-side
+/// collection (and the wire order flag for [`Value::SortedMap`]):
+/// [`Value::HashMap`] (unordered), [`Value::OrderedMap`]
+/// (insertion-ordered), and [`Value::SortedMap`] (key-sorted,
+/// K-ordered on the server). The variants compare equal by *content*
+/// ([`PartialEq`]), every map-taking API accepts all three (see
+/// [`MapLike`](crate::MapLike)), and maps returned by the server decode
+/// as `OrderedMap` preserving the exact pair order the server sent.
+#[derive(Debug, Clone)]
 pub enum Value {
     /// Empty value.
     Nil,
@@ -157,6 +181,10 @@ pub enum Value {
 
     /// Floating point value. All floating point values are stored in 64-bit IEEE-754 format in
     /// Aerospike. Aerospike server v3.6.0 and later support double data type.
+    ///
+    /// In the server's canonical value ordering, floats are a separate
+    /// type ranked AFTER byte blobs: `Int(2)` and `Float(2.0)` never
+    /// interleave when sorted.
     Float(FloatValue),
 
     /// String value.
@@ -167,6 +195,11 @@ pub enum Value {
 
     /// List data type is an ordered collection of values. Lists can contain values of any
     /// supported data type. List data order is maintained on writes and reads.
+    ///
+    /// In the server's canonical value ordering (list sort, ranks),
+    /// lists compare element-wise with a shorter prefix ordering first
+    /// (`[] < [0,9] < [1] < [1,2]`) — the same order `Vec<Value>`'s
+    /// `Ord` produces.
     List(Vec<Value>),
 
     /// Returned in cases where the server executes multiple operations for the same bin.
@@ -174,17 +207,53 @@ pub enum Value {
     /// client to the server.
     MultiResult(Vec<Value>),
 
-    /// Map data type is a collection of key-value pairs. Each key can only appear once in a
-    /// collection and is associated with a value. Map values can be any supported data
-    /// type.
-    /// Map keys can only be of type String, Bytes, Integer, and that this will be enforced by the client and server.
+    /// Unordered map: a collection of key-value pairs with no defined
+    /// entry order. Each key can only appear once; values can be any
+    /// supported data type. Map keys can only be of type String, Bytes
+    /// or Integer (keys sort `Int < String < Blob` on the server), and
+    /// this is enforced by the client and server.
+    ///
+    /// Written to the wire as an unordered map in arbitrary pair order.
+    /// The server never returns this variant — maps decode as
+    /// [`Value::OrderedMap`] (or [`Value::SortedMap`] for K-ordered
+    /// returns) — but it compares content-equal with both.
     HashMap(HashMap<Value, Value>),
 
-    /// `OrderedMap` data type where the map entries are sorted based key ordering (K-ordered maps).
-    /// Each key can only appear once in a collection and is associated with a value.
-    /// Map values can be any supported data type.
-    /// Map keys can only be of type String, Bytes, Integer, and that this will be enforced by the client and server.
-    OrderedMap(BTreeMap<Value, Value>),
+    /// Insertion-ordered map: entries keep the order in which they were
+    /// inserted. Each key can only appear once; values can be any
+    /// supported data type. Map keys can only be of type String, Bytes
+    /// or Integer, and this is enforced by the client and server.
+    ///
+    /// The server has no insertion-ordered map type: on the wire this is
+    /// an *unordered* map whose pairs are written in insertion order
+    /// (deterministic encoding). This is also the variant every
+    /// server-returned non-K-ordered map decodes into, preserving the
+    /// exact pair order the server sent. Note that the server (verified
+    /// on 8.1) returns map entries in canonical key order regardless of
+    /// creation path — plain bin writes AND CDT maps created with an
+    /// explicitly unordered [`MapOrder`](crate::operations::MapOrder)
+    /// alike — so a written insertion order never survives a
+    /// round-trip; an unordered map merely comes back without the
+    /// K-ordered wire flag (this variant instead of
+    /// [`Value::SortedMap`]).
+    OrderedMap(IndexMap<Value, Value>),
+
+    /// Key-sorted map (K-ordered on the server): entries are sorted by
+    /// key in the server's canonical key order. Each key can only appear
+    /// once; values can be any supported data type. Map keys can only be
+    /// of type String, Bytes or Integer, and this is enforced by the
+    /// client and server.
+    ///
+    /// Written to the wire with the K-ordered flag; K-ordered map
+    /// returns from the server decode as this variant.
+    ///
+    /// K-ordered maps are the comparable form for whole-map filter
+    /// expressions (server 6.3+): a K-ordered bin can be compared
+    /// against a `SortedMap` literal with `eq`/`lt`/etc., following the
+    /// canonical map order (length first, then entry-wise). Unordered
+    /// operands on either side are not comparable before server
+    /// AER-6930 (8.1.2.3).
+    SortedMap(BTreeMap<Value, Value>),
 
     /// Result of any map operation in which the server returns a
     /// map requested with [`MapReturnType::KeyValue`].
@@ -202,6 +271,63 @@ pub enum Value {
     /// Infinity Value
     Wildcard,
 }
+
+/// The three map variants ([`Value::HashMap`], [`Value::OrderedMap`],
+/// [`Value::SortedMap`]) compare equal by *content*, regardless of which
+/// collection carries them — the server may return any representation
+/// (unordered wire maps decode as `OrderedMap` to preserve return
+/// order), and two maps with the same entries are the same map. All
+/// other variants compare structurally, like the previous derived impl.
+impl PartialEq for Value {
+    fn eq(&self, other: &Self) -> bool {
+        fn entries_eq<'a, A>(len: usize, entries: A, other: &Value) -> bool
+        where
+            A: Iterator<Item = (&'a Value, &'a Value)>,
+        {
+            let other_len = match other {
+                Value::HashMap(m) => m.len(),
+                Value::OrderedMap(m) => m.len(),
+                Value::SortedMap(m) => m.len(),
+                _ => return false,
+            };
+            if len != other_len {
+                return false;
+            }
+            let get = |k: &Value| -> Option<&Value> {
+                match other {
+                    Value::HashMap(m) => m.get(k),
+                    Value::OrderedMap(m) => m.get(k),
+                    Value::SortedMap(m) => m.get(k),
+                    _ => None,
+                }
+            };
+            entries.into_iter().all(|(k, v)| get(k) == Some(v))
+        }
+
+        match (self, other) {
+            (Value::Nil, Value::Nil)
+            | (Value::Infinity, Value::Infinity)
+            | (Value::Wildcard, Value::Wildcard) => true,
+            (Value::Bool(a), Value::Bool(b)) => a == b,
+            (Value::Int(a), Value::Int(b)) => a == b,
+            (Value::Float(a), Value::Float(b)) => a == b,
+            (Value::String(a), Value::String(b)) | (Value::GeoJSON(a), Value::GeoJSON(b)) => {
+                a == b
+            }
+            (Value::Blob(a), Value::Blob(b)) | (Value::HLL(a), Value::HLL(b)) => a == b,
+            (Value::List(a), Value::List(b)) | (Value::MultiResult(a), Value::MultiResult(b)) => {
+                a == b
+            }
+            (Value::KeyValueList(a), Value::KeyValueList(b)) => a == b,
+            (Value::HashMap(a), b) => entries_eq(a.len(), a.iter(), b),
+            (Value::OrderedMap(a), b) => entries_eq(a.len(), a.iter(), b),
+            (Value::SortedMap(a), b) => entries_eq(a.len(), a.iter(), b),
+            _ => false,
+        }
+    }
+}
+
+impl Eq for Value {}
 
 #[allow(clippy::derived_hash_with_manual_eq)]
 impl Hash for Value {
@@ -222,8 +348,9 @@ impl Hash for Value {
             Value::MultiResult(_) => panic!("MultiValues cannot be used as map keys."),
             Value::List(_) => panic!("Lists cannot be used as map keys."),
             Value::HashMap(_) => panic!("HashMaps cannot be used as map keys."),
-            Value::OrderedMap(_) | Value::KeyValueList(_) => {
-                panic!("OrderedMaps cannot be used as map keys.")
+            Value::OrderedMap(_) => panic!("OrderedMaps cannot be used as map keys."),
+            Value::SortedMap(_) | Value::KeyValueList(_) => {
+                panic!("SortedMaps cannot be used as map keys.")
             }
             Value::Infinity => panic!("Infinity cannot be used as map keys."),
             Value::Wildcard => panic!("Wildcard cannot be used as map keys."),
@@ -248,7 +375,9 @@ impl Value {
             Value::Blob(_) => ParticleType::BLOB,
             Value::Bool(_) => ParticleType::BOOL,
             Value::MultiResult(_) | Value::List(_) => ParticleType::LIST,
-            Value::HashMap(_) | Value::OrderedMap(_) | Value::KeyValueList(_) => ParticleType::MAP,
+            Value::HashMap(_) | Value::OrderedMap(_) | Value::SortedMap(_) | Value::KeyValueList(_) => {
+                ParticleType::MAP
+            }
             Value::GeoJSON(_) => ParticleType::GEOJSON,
             Value::HLL(_) => ParticleType::HLL,
             Value::Infinity | Value::Wildcard => unreachable!(),
@@ -267,6 +396,7 @@ impl Value {
             Value::MultiResult(ref val) | Value::List(ref val) => format!("{val:?}"),
             Value::HashMap(ref val) => format!("{val:?}"),
             Value::OrderedMap(ref val) => format!("{val:?}"),
+            Value::SortedMap(ref val) => format!("{val:?}"),
             Value::KeyValueList(ref val) => format!("{val:?}"),
             Value::Infinity => "INF".into(),
             Value::Wildcard => "*".into(),
@@ -284,7 +414,7 @@ impl Value {
             Value::MultiResult(_) => {
                 return Err(Error::invalid_argument("MultiValues are only returned as results from the server and never from the client."));
             }
-            Value::List(_) | Value::HashMap(_) | Value::OrderedMap(_) => {
+            Value::List(_) | Value::HashMap(_) | Value::OrderedMap(_) | Value::SortedMap(_) => {
                 encoder::pack_value(&mut None, self)?
             }
             Value::KeyValueList(_) => {
@@ -313,7 +443,7 @@ impl Value {
             Value::MultiResult(_) => {
                 return Err(Error::invalid_argument("MultiValues are only returned as results from the server and never from the client."));
             }
-            Value::List(_) | Value::HashMap(_) | Value::OrderedMap(_) => {
+            Value::List(_) | Value::HashMap(_) | Value::OrderedMap(_) | Value::SortedMap(_) => {
                 encoder::pack_value(&mut Some(buf), self)?
             }
             Value::KeyValueList(_) => {
@@ -353,7 +483,15 @@ impl Value {
         }
     }
 
-    /// Order for Value types.
+    /// Order rank for Value types, matching the server's canonical
+    /// (msgpack) type ordering as determined empirically against server
+    /// 8.1 (list `sort` operation and K-ordered map key order):
+    /// `Nil < Bool < Int < String < List < Map < Bytes < Float < GeoJSON`.
+    /// All three map variants share one rank — the server has a single
+    /// MAP type (this also keeps `Ord` consistent with the content-based
+    /// map equality in `PartialEq`). Variants the server never orders
+    /// (HLL, Infinity, Wildcard, `MultiResult`, `KeyValueList`) rank
+    /// after the probed types.
     pub(crate) const fn value_type_order(&self) -> u8 {
         match self {
             Value::Nil => 0,
@@ -361,26 +499,57 @@ impl Value {
             Value::Int(_) => 2,
             Value::String(_) => 3,
             Value::List(_) => 4,
-            Value::HashMap(_) => 5,
-            Value::OrderedMap(_) => 6,
-            Value::Blob(_) => 7,
-            Value::HLL(_) => 8,
-            Value::Float(_) => 9,
-            Value::GeoJSON(_) => 10,
-            // Just here for completion's sake
-            Value::Infinity => 11,
-            Value::Wildcard => 12,
-            Value::MultiResult(_) => 13,
-            Value::KeyValueList(_) => 14,
+            Value::HashMap(_) | Value::OrderedMap(_) | Value::SortedMap(_) => 5,
+            Value::Blob(_) => 6,
+            Value::HLL(_) => 7,
+            Value::Float(_) => 8,
+            Value::GeoJSON(_) => 9,
+            Value::Infinity => 10,
+            Value::Wildcard => 11,
+            Value::MultiResult(_) => 12,
+            Value::KeyValueList(_) => 13,
         }
     }
 }
 
+/// Total ordering matching the server's canonical value ordering,
+/// verified empirically against server 8.1 via the list `sort`
+/// operation and K-ordered map key placement:
+///
+/// - types rank `Nil < Bool < Int < String < List < Map < Bytes <
+///   Float < GeoJSON` (floats are a separate type AFTER bytes — the
+///   server does not interleave `2` and `2.0`);
+/// - bools order `false < true`; ints and floats numerically; strings,
+///   blobs and `GeoJSON` bytewise;
+/// - lists compare element-wise, a shorter prefix ordering first
+///   (`[] < [0,9] < [1] < [1,2]`);
+/// - maps compare by LENGTH first, then entry-wise over key-ordered
+///   pairs (`{} < {a:1} < {b:0} < {a:1,b:2}`), identically for all
+///   three map variants.
 impl Ord for Value {
     fn cmp(&self, other: &Self) -> Ordering {
+        /// Map entries in key order, for any map variant.
+        fn sorted_entries(v: &Value) -> Vec<(&Value, &Value)> {
+            let mut entries: Vec<(&Value, &Value)> = match v {
+                Value::HashMap(m) => m.iter().collect(),
+                Value::OrderedMap(m) => m.iter().collect(),
+                Value::SortedMap(m) => m.iter().collect(),
+                _ => Vec::new(),
+            };
+            entries.sort_by(|a, b| a.0.cmp(b.0));
+            entries
+        }
+
+        const fn is_map(v: &Value) -> bool {
+            matches!(
+                v,
+                Value::HashMap(_) | Value::OrderedMap(_) | Value::SortedMap(_)
+            )
+        }
+
         match self.value_type_order().cmp(&other.value_type_order()) {
             Ordering::Equal => {
-                // Same type, compare by value
+                // Same server type: compare by value.
                 match (self, other) {
                     (Value::Int(a_val), Value::Int(b_val)) => a_val.cmp(b_val),
                     (Value::String(a_val), Value::String(b_val))
@@ -388,30 +557,38 @@ impl Ord for Value {
                     (Value::HLL(a_val), Value::HLL(b_val))
                     | (Value::Blob(a_val), Value::Blob(b_val)) => a_val.cmp(b_val),
                     (Value::Bool(a_val), Value::Bool(b_val)) => a_val.cmp(b_val),
-                    (Value::HashMap(ref a_val), Value::HashMap(ref b_val)) => {
-                        a_val.len().cmp(&b_val.len())
-                    }
-                    (Value::OrderedMap(ref a_val), Value::OrderedMap(ref b_val)) => {
-                        a_val.len().cmp(&b_val.len())
-                    }
-                    (Value::KeyValueList(ref a_val), Value::KeyValueList(ref b_val)) => {
-                        a_val.len().cmp(&b_val.len())
-                    }
+                    // Element-wise, like the server (Vec's lexicographic
+                    // Ord: shorter prefix first).
+                    (Value::List(a_val), Value::List(b_val))
+                    | (Value::MultiResult(a_val), Value::MultiResult(b_val)) => a_val.cmp(b_val),
+                    (Value::KeyValueList(a_val), Value::KeyValueList(b_val)) => a_val.cmp(b_val),
+                    // Numeric float ordering (total order over f64), like
+                    // the server — NOT raw bit order, which would sort
+                    // every negative float above the positives.
                     (Value::Float(a_val), Value::Float(b_val)) => {
-                        // Compare float bits for deterministic ordering
-                        let a_bits = match a_val {
-                            FloatValue::F32(bits) => u64::from(*bits),
-                            FloatValue::F64(bits) => *bits,
+                        let a_num = match a_val {
+                            FloatValue::F32(bits) => f64::from(f32::from_bits(*bits)),
+                            FloatValue::F64(bits) => f64::from_bits(*bits),
                         };
-
-                        let b_bits = match b_val {
-                            FloatValue::F32(bits) => u64::from(*bits),
-                            FloatValue::F64(bits) => *bits,
+                        let b_num = match b_val {
+                            FloatValue::F32(bits) => f64::from(f32::from_bits(*bits)),
+                            FloatValue::F64(bits) => f64::from_bits(*bits),
                         };
-
-                        a_bits.cmp(&b_bits)
+                        a_num.total_cmp(&b_num)
                     }
-                    _ => Ordering::Greater,
+                    // Any combination of the three map variants: length
+                    // first, then entry-wise in key order.
+                    (a, b) if is_map(a) && is_map(b) => {
+                        let entries_a = sorted_entries(a);
+                        let entries_b = sorted_entries(b);
+                        entries_a
+                            .len()
+                            .cmp(&entries_b.len())
+                            .then_with(|| entries_a.cmp(&entries_b))
+                    }
+                    // Equal ranks with no value comparison left
+                    // (Nil/Infinity/Wildcard).
+                    _ => Ordering::Equal,
                 }
             }
 
@@ -458,6 +635,12 @@ impl From<HashMap<Value, Value>> for Value {
 
 impl From<BTreeMap<Value, Value>> for Value {
     fn from(val: BTreeMap<Value, Value>) -> Value {
+        Value::SortedMap(val)
+    }
+}
+
+impl From<IndexMap<Value, Value>> for Value {
+    fn from(val: IndexMap<Value, Value>) -> Value {
         Value::OrderedMap(val)
     }
 }
@@ -719,6 +902,8 @@ impl TryFrom<Value> for HashMap<Value, Value> {
     fn try_from(val: Value) -> std::result::Result<Self, Self::Error> {
         match val {
             Value::HashMap(v) => Ok(v),
+            Value::OrderedMap(v) => Ok(v.into_iter().collect()),
+            Value::SortedMap(v) => Ok(v.into_iter().collect()),
             _ => Err(format!(
                 "Invalid type conversion from Value::{} to {}",
                 val.particle_type(),
@@ -732,7 +917,25 @@ impl TryFrom<Value> for BTreeMap<Value, Value> {
     type Error = String;
     fn try_from(val: Value) -> std::result::Result<Self, Self::Error> {
         match val {
+            Value::SortedMap(v) => Ok(v),
+            Value::HashMap(v) => Ok(v.into_iter().collect()),
+            Value::OrderedMap(v) => Ok(v.into_iter().collect()),
+            _ => Err(format!(
+                "Invalid type conversion from Value::{} to {}",
+                val.particle_type(),
+                std::any::type_name::<Self>()
+            )),
+        }
+    }
+}
+
+impl TryFrom<Value> for IndexMap<Value, Value> {
+    type Error = String;
+    fn try_from(val: Value) -> std::result::Result<Self, Self::Error> {
+        match val {
             Value::OrderedMap(v) => Ok(v),
+            Value::HashMap(v) => Ok(v.into_iter().collect()),
+            Value::SortedMap(v) => Ok(v.into_iter().collect()),
             _ => Err(format!(
                 "Invalid type conversion from Value::{} to {}",
                 val.particle_type(),
@@ -941,7 +1144,8 @@ macro_rules! as_map {
     };
 }
 
-/// Constructs an Ordered Map Value from a list of key/value pairs.
+/// Constructs an `OrderedMap` Value (entries keep their insertion order)
+/// from a list of key/value pairs.
 ///
 /// # Examples
 ///
@@ -963,11 +1167,43 @@ macro_rules! as_map {
 macro_rules! as_ord_map {
     ( $( $k:expr => $v:expr),* ) => {
         {
-            let mut temp_map = std::collections::BTreeMap::new();
+            let mut temp_map = $crate::IndexMap::new();
             $(
                 temp_map.insert(as_val!($k), as_val!($v));
             )*
             $crate::Value::OrderedMap(temp_map)
+        }
+    };
+}
+
+/// Constructs a `SortedMap` Value (entries sorted by key, K-ordered on the
+/// server) from a list of key/value pairs.
+///
+/// # Examples
+///
+/// Write a map value to a record bin.
+///
+/// ```rust,edition2018
+/// # use aerospike::*;
+/// # #[tokio::main]
+/// # async fn main() {
+/// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap_or_else(|_| "127.0.0.1:3000".to_string());
+/// # let client = Client::new(&ClientPolicy::default(), &hosts).await.unwrap();
+/// # let key = as_key!("test", "test", "mykey");
+/// let map = as_sorted_map!("a" => 1, "b" => 2);
+/// let bin = as_bin!("map", map);
+/// client.put(&WritePolicy::default(), &key, &vec![bin]).await.unwrap();
+/// # }
+/// ```
+#[macro_export]
+macro_rules! as_sorted_map {
+    ( $( $k:expr => $v:expr),* ) => {
+        {
+            let mut temp_map = std::collections::BTreeMap::new();
+            $(
+                temp_map.insert(as_val!($k), as_val!($v));
+            )*
+            $crate::Value::SortedMap(temp_map)
         }
     };
 }
@@ -1012,6 +1248,13 @@ impl Serialize for Value {
                 }
                 map.end()
             }
+            Value::SortedMap(m) => {
+                let mut map = serializer.serialize_map(Some(m.len()))?;
+                for (key, value) in m {
+                    map.serialize_entry(&key, &value)?;
+                }
+                map.end()
+            }
             Value::KeyValueList(m) => {
                 let mut map = serializer.serialize_map(Some(m.len()))?;
                 for (key, value) in m {
@@ -1026,38 +1269,206 @@ impl Serialize for Value {
     }
 }
 
-/// Allows either a `HashMap` or `BTreeMap` to be passed as arguments to certain methods.
-#[allow(clippy::type_complexity)]
+/// One of the three map collection types accepted by every map-taking API:
+/// unordered [`HashMap`], insertion-ordered [`IndexMap`], or key-sorted
+/// [`BTreeMap`].
+pub enum MapCollection<K: Eq, V> {
+    /// Unordered map ([`Value::HashMap`]).
+    Hash(HashMap<K, V>),
+    /// Insertion-ordered map ([`Value::OrderedMap`]).
+    Ordered(IndexMap<K, V>),
+    /// Key-sorted map ([`Value::SortedMap`], K-ordered on the server).
+    Sorted(BTreeMap<K, V>),
+}
+
+/// Allows a `HashMap`, `IndexMap` or `BTreeMap` to be passed as the map
+/// argument to any map-taking method.
 pub trait MapLike<K: Eq, V> {
-    fn value(self) -> (Option<HashMap<K, V>>, Option<BTreeMap<K, V>>);
-    fn value_as_ref(&self) -> (Option<&HashMap<K, V>>, Option<&BTreeMap<K, V>>);
+    /// Convert into the map-collection sum type.
+    fn into_map(self) -> MapCollection<K, V>;
+}
+
+#[allow(clippy::implicit_hasher)]
+impl<K: Eq + Hash, V> MapLike<K, V> for HashMap<K, V> {
+    fn into_map(self) -> MapCollection<K, V> {
+        MapCollection::Hash(self)
+    }
+}
+
+impl<K: Eq + Hash, V> MapLike<K, V> for IndexMap<K, V> {
+    fn into_map(self) -> MapCollection<K, V> {
+        MapCollection::Ordered(self)
+    }
 }
 
 impl<K: Eq + Ord, V> MapLike<K, V> for BTreeMap<K, V> {
-    fn value(self) -> (Option<HashMap<K, V>>, Option<BTreeMap<K, V>>) {
-        (None, Some(self))
-    }
-
-    fn value_as_ref(&self) -> (Option<&HashMap<K, V>>, Option<&BTreeMap<K, V>>) {
-        (None, Some(self))
+    fn into_map(self) -> MapCollection<K, V> {
+        MapCollection::Sorted(self)
     }
 }
 
-impl<K: Eq + Hash, V> MapLike<K, V> for HashMap<K, V> {
-    fn value(self) -> (Option<HashMap<K, V>>, Option<BTreeMap<K, V>>) {
-        (Some(self), None)
-    }
-
-    fn value_as_ref(&self) -> (Option<&HashMap<K, V>>, Option<&BTreeMap<K, V>>) {
-        (Some(self), None)
+impl From<MapCollection<Value, Value>> for Value {
+    fn from(map: MapCollection<Value, Value>) -> Value {
+        match map {
+            MapCollection::Hash(m) => Value::HashMap(m),
+            MapCollection::Ordered(m) => Value::OrderedMap(m),
+            MapCollection::Sorted(m) => Value::SortedMap(m),
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::Value;
+    use super::{MapCollection, MapLike, Value};
+    use indexmap::IndexMap;
     use std::collections::{BTreeMap, HashMap};
     use std::convert::TryInto;
+
+    #[test]
+    fn ordered_map_round_trips_through_value() {
+        let mut m = IndexMap::new();
+        m.insert(Value::from("z"), Value::from(1));
+        m.insert(Value::from("a"), Value::from(2));
+
+        let val = Value::from(m.clone());
+        assert!(matches!(val, Value::OrderedMap(_)));
+        assert!(matches!(
+            val.particle_type(),
+            crate::commands::ParticleType::MAP
+        ));
+
+        // Insertion order is preserved by the container.
+        let back: IndexMap<Value, Value> = val.try_into().unwrap();
+        let keys: Vec<&Value> = back.keys().collect();
+        assert_eq!(keys, vec![&Value::from("z"), &Value::from("a")]);
+    }
+
+    #[test]
+    fn ord_matches_server_semantics() {
+        use std::cmp::Ordering;
+
+        // Type ranks (server-verified): Nil < Bool < Int < String < List
+        // < Map < Bytes < Float < GeoJSON.
+        let ranked = [
+            Value::Nil,
+            Value::Bool(false),
+            Value::Int(9),
+            Value::from("zzz"),
+            Value::List(vec![Value::Int(1)]),
+            as_map!("k" => 1),
+            Value::Blob(vec![0]),
+            Value::from(-1.5),
+            Value::GeoJSON("{}".into()),
+        ];
+        for pair in ranked.windows(2) {
+            assert_eq!(
+                pair[0].cmp(&pair[1]),
+                Ordering::Less,
+                "{:?} must order before {:?}",
+                pair[0],
+                pair[1]
+            );
+        }
+
+        // Floats order numerically (bit order would put -0.5 last).
+        assert!(Value::from(-0.5) < Value::from(2.0));
+        assert!(Value::from(2.0) < Value::from(2.5));
+        // Ints and floats do not interleave: every int < every float.
+        assert!(Value::from(1000) < Value::from(-99.0));
+
+        // Lists: element-wise, shorter prefix first.
+        let list = |v: &[i64]| Value::List(v.iter().map(|i| Value::from(*i)).collect());
+        assert!(list(&[]) < list(&[0, 9]));
+        assert!(list(&[0, 9]) < list(&[1]));
+        assert!(list(&[1]) < list(&[1, 2]));
+
+        // Maps: length first, then entry-wise in key order — identically
+        // across variants.
+        assert!(as_map!() < as_map!("a" => 1));
+        assert!(as_map!("a" => 1) < as_map!("b" => 0));
+        assert!(as_map!("b" => 0) < as_map!("a" => 1, "b" => 2));
+        assert!(as_ord_map!("b" => 0) < as_sorted_map!("a" => 1, "b" => 2));
+        // Content-equal maps compare Equal across variants (consistent
+        // with PartialEq).
+        assert_eq!(
+            as_map!("a" => 1).cmp(&as_ord_map!("a" => 1)),
+            Ordering::Equal
+        );
+
+        // Blobs: byte-wise.
+        assert!(Value::Blob(vec![1, 2]) < Value::Blob(vec![9]));
+    }
+
+    #[test]
+    fn map_variants_compare_by_content() {
+        let hash = as_map!("a" => 1, "b" => 2);
+        let ordered = as_ord_map!("b" => 2, "a" => 1); // different order
+        let sorted = as_sorted_map!("a" => 1, "b" => 2);
+
+        // Same entries: equal across all three representations.
+        assert_eq!(hash, ordered);
+        assert_eq!(hash, sorted);
+        assert_eq!(ordered, sorted);
+        assert_eq!(ordered, hash); // symmetry
+
+        // Different content is not equal.
+        assert_ne!(hash, as_ord_map!("a" => 1));
+        assert_ne!(hash, as_ord_map!("a" => 1, "b" => 3));
+        // Maps never equal non-maps.
+        assert_ne!(hash, Value::List(vec![Value::from("a")]));
+        assert_ne!(hash, Value::Nil);
+    }
+
+    #[test]
+    fn map_try_from_accepts_any_variant() {
+        let ordered = as_ord_map!("k" => 1);
+        let as_hash: HashMap<Value, Value> = ordered.clone().try_into().unwrap();
+        assert_eq!(as_hash.len(), 1);
+        let as_sorted: BTreeMap<Value, Value> = ordered.clone().try_into().unwrap();
+        assert_eq!(as_sorted.len(), 1);
+        let as_index: IndexMap<Value, Value> = as_map!("k" => 1).try_into().unwrap();
+        assert_eq!(as_index.len(), 1);
+    }
+
+    #[test]
+    fn map_macros_produce_their_variants() {
+        assert!(matches!(as_map!("a" => 1), Value::HashMap(_)));
+        assert!(matches!(as_ord_map!("a" => 1), Value::OrderedMap(_)));
+        assert!(matches!(as_sorted_map!("a" => 1), Value::SortedMap(_)));
+    }
+
+    #[test]
+    fn map_like_covers_all_three_collections() {
+        let hash: HashMap<Value, Value> = HashMap::new();
+        let ordered: IndexMap<Value, Value> = IndexMap::new();
+        let sorted: BTreeMap<Value, Value> = BTreeMap::new();
+        assert!(matches!(
+            Value::from(hash.into_map()),
+            Value::HashMap(_)
+        ));
+        assert!(matches!(
+            Value::from(ordered.into_map()),
+            Value::OrderedMap(_)
+        ));
+        assert!(matches!(
+            Value::from(sorted.into_map()),
+            Value::SortedMap(_)
+        ));
+        // MapCollection maps 1:1 onto the Value variants.
+        assert!(matches!(
+            MapCollection::Ordered(IndexMap::<Value, Value>::new()),
+            MapCollection::Ordered(_)
+        ));
+    }
+
+    #[test]
+    fn ordered_map_estimates_and_packs() {
+        let mut m = IndexMap::new();
+        m.insert(Value::from("k"), Value::from(7));
+        let val = Value::OrderedMap(m);
+        // Packs like an (unordered) wire map; must not error.
+        assert!(val.estimate_size().unwrap() > 0);
+    }
 
     #[test]
     fn try_into() {
@@ -1071,7 +1482,7 @@ mod tests {
         let _: Vec<u8> = Value::HLL("hello!".into()).try_into().unwrap();
         let _: bool = Value::Bool(false).try_into().unwrap();
         let _: HashMap<Value, Value> = Value::HashMap(HashMap::new()).try_into().unwrap();
-        let _: BTreeMap<Value, Value> = Value::OrderedMap(BTreeMap::new()).try_into().unwrap();
+        let _: BTreeMap<Value, Value> = Value::SortedMap(BTreeMap::new()).try_into().unwrap();
         let _: Vec<(Value, Value)> = Value::KeyValueList(Vec::new()).try_into().unwrap();
     }
 

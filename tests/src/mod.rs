@@ -46,6 +46,7 @@ mod path_expressions;
 mod query;
 #[cfg(feature = "lua")]
 mod query_aggregate;
+mod value_order;
 mod scan;
 #[cfg(feature = "serialization")]
 mod serialization;

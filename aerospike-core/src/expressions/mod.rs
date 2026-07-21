@@ -24,7 +24,9 @@ pub mod string;
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 
 use crate::commands::buffer::Buffer;
-use crate::msgpack::encoder::{pack_array_begin, pack_integer, pack_raw_string, pack_value};
+use crate::msgpack::encoder::{
+    pack_array_begin, pack_integer, pack_raw_string, pack_value, pack_value_canonical,
+};
 use crate::operations::cdt_context::CdtContext;
 use crate::value::MapLike;
 use crate::{Error, Result};
@@ -385,8 +387,10 @@ impl Expression {
     }
 
     fn pack_value(&self, buf: &mut Option<&mut Buffer>) -> Result<usize> {
-        // Packing logic for Value based Ops
-        pack_value(buf, &self.val.clone().unwrap())
+        // Packing logic for Value based Ops. Map literals must be packed in
+        // canonical (key-sorted) form: servers with AER-6930 (8.1.2.3+)
+        // require it, and whole-map comparisons silently fail otherwise.
+        pack_value_canonical(buf, &self.val.clone().unwrap())
     }
 
     /// Returns the packed size of the expression.
@@ -915,15 +919,27 @@ pub fn list_val(val: Vec<Value>) -> Expression {
     )
 }
 
-/// Creates a map bin value.
+/// Creates a map bin value. Accepts any of the three map collection
+/// types — `HashMap`, `IndexMap` or `BTreeMap` — via
+/// [`MapLike`](crate::MapLike).
+///
+/// To compare whole maps in an expression (`eq`, `lt`, … — supported for
+/// ordered maps since server 6.3), pass a `BTreeMap`: it is packed with
+/// the K-ordered wire flag, and comparisons against a K-ordered bin then
+/// follow the canonical map order (length first, then entry-wise).
+/// `HashMap`/`IndexMap` literals are packed in canonical (key-sorted)
+/// form without the flag; comparisons involving an unordered operand on
+/// either side require server AER-6930 (8.1.2.3+).
 #[allow(clippy::implicit_hasher)]
 pub fn map_val<M: MapLike<Value, Value>>(val: M) -> Expression {
-    let val = match val.value() {
-        (Some(m), None) => Value::HashMap(m),
-        (None, Some(m)) => Value::OrderedMap(m),
-        _ => unreachable!(),
-    };
-    Expression::new(None, Some(val), None, None, None, None)
+    Expression::new(
+        None,
+        Some(Value::from(val.into_map())),
+        None,
+        None,
+        None,
+        None,
+    )
 }
 
 /// Creates a geospatial JSON string value.

@@ -38,6 +38,7 @@ tokio-rustls = { version = "0.26.4", optional = true }
 rustls = { version = "0.23.42", optional = true }
 async-channel = "2.5.0"
 hazarc = "0.2.0"
+indexmap = "2"
 # `async` so stream reads/writes are await points on the client executor
 # (no dedicated OS thread per aggregation); `send` because the pipeline
 # future must be Send to run on the multi-threaded runtimes.
