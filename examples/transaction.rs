@@ -32,7 +32,10 @@ async fn namespace_is_sc(client: &Client, ns: &str) -> bool {
 /// Example body. Standalone via `cargo run --example`, and also driven by
 /// the integration test suite (`tests/src/examples.rs`).
 pub async fn run() {
-    let cpolicy = ClientPolicy::default();
+    let mut cpolicy = ClientPolicy::default();
+    cpolicy.use_services_alternate = std::env::var("AEROSPIKE_USE_SERVICES_ALTERNATE")
+        .map(|v| v.eq_ignore_ascii_case("true") || v == "1")
+        .unwrap_or(false);
     let hosts = env::var("AEROSPIKE_HOSTS").unwrap_or_else(|_| String::from("127.0.0.1:3000"));
     let client = Client::new(&cpolicy, &hosts)
         .await

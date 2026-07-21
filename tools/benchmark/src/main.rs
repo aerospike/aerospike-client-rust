@@ -150,6 +150,10 @@ async fn connect(options: &Options) -> AerospikeResult<Client> {
             .parse()
             .expect("AEROSPIKE_BENCH_MIN_CONNS_PER_NODE must be a non-negative integer");
     }
+    // A/B escape hatch for the shared tiered buffer pool (default on).
+    if let Ok(v) = std::env::var("AEROSPIKE_BENCH_BUFFER_POOL") {
+        policy.use_buffer_pool = !matches!(v.trim(), "0" | "false" | "off");
+    }
     if let Some(user) = &options.user {
         policy
             .set_auth_mode(AuthMode::Internal(

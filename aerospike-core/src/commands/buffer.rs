@@ -200,6 +200,9 @@ pub(crate) struct ParsedFields {
     pub error_detail: Option<Box<crate::ServerErrorDetail>>,
 }
 
+/// Initial capacity of a (non-pooled) command buffer.
+const INITIAL_BUFFER_SIZE: usize = 1024;
+
 // Holds data buffer for the command
 #[derive(Debug, Default)]
 #[allow(clippy::struct_field_names)]
@@ -208,6 +211,11 @@ pub struct Buffer {
     pub data_offset: usize,
     // pub estimated_data_offset: usize,
     pub reclaim_threshold: usize,
+    /// When set, allocations larger than `reclaim_threshold` are leased
+    /// from the owning cluster's [`crate::net::buffer_pool`] and returned
+    /// to it when the buffer shrinks back (or is dropped), instead of
+    /// being freed with `shrink_to_fit`.
+    pool: Option<std::sync::Arc<crate::net::buffer_pool::TieredBufferPool>>,
     /// When compression is enabled, all command data is written starting at this
     /// offset (16), reserving space for the compressed proto header (8 bytes) and
     /// uncompressed size (8 bytes). The pre-padding lets `compress()`
@@ -220,15 +228,43 @@ pub struct Buffer {
     compress_threshold: usize,
 }
 
+impl Drop for Buffer {
+    fn drop(&mut self) {
+        // A dying connection donates its leased buffer back to the pool.
+        self.release_to_pool();
+    }
+}
+
 impl Buffer {
     pub(crate) fn new(reclaim_threshold: usize) -> Self {
         Buffer {
-            data_buffer: Vec::with_capacity(1024),
+            data_buffer: Vec::with_capacity(INITIAL_BUFFER_SIZE),
             data_offset: 0,
             // estimated_data_offset: 0,
             reclaim_threshold,
+            pool: None,
             compress_offset: 0,
             compress_threshold: DEFAULT_COMPRESS_THRESHOLD,
+        }
+    }
+
+    /// A buffer that leases its large allocations from the owning
+    /// cluster's tiered buffer pool (used by connection buffers when
+    /// `ClientPolicy::use_buffer_pool` is enabled).
+    pub(crate) fn with_pool(
+        reclaim_threshold: usize,
+        pool: std::sync::Arc<crate::net::buffer_pool::TieredBufferPool>,
+    ) -> Self {
+        let mut buffer = Buffer::new(reclaim_threshold);
+        buffer.pool = Some(pool);
+        buffer
+    }
+
+    /// Donate a pooled buffer back when the connection goes away (the
+    /// pool ignores buffers that aren't pool-eligible).
+    pub(crate) fn release_to_pool(&mut self) {
+        if let Some(pool) = &self.pool {
+            pool.put(std::mem::take(&mut self.data_buffer));
         }
     }
 
@@ -261,6 +297,11 @@ impl Buffer {
             )));
         }
 
+        if self.pool.is_some() {
+            self.resize_pooled(size);
+            return Ok(());
+        }
+
         let mem_size = self.data_buffer.capacity();
         self.data_buffer.resize(size, 0);
         if mem_size > self.reclaim_threshold && size < mem_size {
@@ -268,6 +309,40 @@ impl Buffer {
         }
 
         Ok(())
+    }
+
+    /// Pool-backed resize: allocations above `reclaim_threshold` are
+    /// checked out of the shared tiered pool and handed back once the
+    /// buffer shrinks below the threshold again. Between those two points
+    /// the capacity is intentionally kept (no `shrink_to_fit` churn while
+    /// consecutive large commands run on this connection).
+    fn resize_pooled(&mut self, size: usize) {
+        let pool = self.pool.as_ref().expect("resize_pooled requires a pool");
+        let capacity = self.data_buffer.capacity();
+
+        if size > capacity && size > self.reclaim_threshold {
+            // Grow into a pooled buffer, preserving current contents.
+            let mut fresh = pool.get(size);
+            fresh.extend_from_slice(&self.data_buffer);
+            fresh.resize(size, 0);
+            let old = std::mem::replace(&mut self.data_buffer, fresh);
+            pool.put(old);
+            return;
+        }
+
+        if capacity > self.reclaim_threshold && size <= self.reclaim_threshold {
+            // Shrunk back below the boundary: return the lease, keep a
+            // small connection-owned buffer.
+            let keep = size.min(self.data_buffer.len());
+            let mut small = Vec::with_capacity(size.max(INITIAL_BUFFER_SIZE));
+            small.extend_from_slice(&self.data_buffer[..keep]);
+            small.resize(size, 0);
+            let old = std::mem::replace(&mut self.data_buffer, small);
+            pool.put(old);
+            return;
+        }
+
+        self.data_buffer.resize(size, 0);
     }
 
     pub(crate) const fn reset_offset(&mut self) {
@@ -320,10 +395,12 @@ impl Buffer {
 
         // Extend the buffer so there's room for the compressed output after the
         // source data. zlib worst-case expansion is ~0.1% + 13 bytes.
+        // Goes through resize_buffer so the growth can come from the
+        // buffer pool (keeping the capacity an exact power of two).
         let extra = uncompressed_size / 100 + 64;
         let output_start = cmd_end; // right after the source data
         let output_len = uncompressed_size + extra;
-        self.data_buffer.resize(output_start + output_len, 0);
+        self.resize_buffer(output_start + output_len)?;
 
         // Split into non-overlapping source and output regions.
         let compressed_size;
@@ -2677,6 +2754,55 @@ mod tests {
     use super::*;
     use flate2::read::ZlibDecoder;
     use std::io::Read;
+
+    fn test_pool() -> std::sync::Arc<crate::net::buffer_pool::TieredBufferPool> {
+        crate::net::buffer_pool::TieredBufferPool::from_policy(
+            &crate::policy::ClientPolicy::default(),
+        )
+        .expect("pool enabled by default")
+    }
+
+    #[test]
+    fn pooled_resize_grows_shrinks_and_preserves_contents() {
+        let mut buf = Buffer::with_pool(64 * 1024, test_pool());
+
+        // Small sizes stay on the connection-owned allocation.
+        buf.resize_buffer(512).unwrap();
+        buf.data_buffer[..4].copy_from_slice(&[1, 2, 3, 4]);
+        assert!(buf.data_buffer.capacity() <= 64 * 1024);
+
+        // Growth beyond the threshold leases a power-of-two pooled buffer
+        // and preserves existing contents.
+        buf.resize_buffer(100_000).unwrap();
+        assert_eq!(buf.data_buffer.len(), 100_000);
+        assert_eq!(buf.data_buffer.capacity(), 128 * 1024);
+        assert_eq!(&buf.data_buffer[..4], &[1, 2, 3, 4]);
+
+        // Large-to-large shrink keeps the lease (no realloc churn).
+        let leased_ptr = buf.data_buffer.as_ptr();
+        buf.resize_buffer(90_000).unwrap();
+        assert_eq!(buf.data_buffer.as_ptr(), leased_ptr);
+        assert_eq!(buf.data_buffer.capacity(), 128 * 1024);
+
+        // Shrinking back below the threshold returns the lease to the
+        // pool and keeps a small buffer, contents preserved.
+        buf.resize_buffer(256).unwrap();
+        assert_eq!(&buf.data_buffer[..4], &[1, 2, 3, 4]);
+        assert!(buf.data_buffer.capacity() < 128 * 1024);
+
+        // The returned lease is reused by the next big growth.
+        buf.resize_buffer(100_000).unwrap();
+        assert_eq!(buf.data_buffer.as_ptr(), leased_ptr);
+    }
+
+    #[test]
+    fn unpooled_resize_behaves_like_before() {
+        let mut buf = Buffer::new(64 * 1024);
+        buf.resize_buffer(100_000).unwrap();
+        buf.resize_buffer(256).unwrap();
+        // Legacy behavior: shrink_to_fit deallocates down to the size.
+        assert!(buf.data_buffer.capacity() < 1024);
+    }
 
     /// Helper: build a Buffer that looks like a real command was written.
     /// Returns (buffer, uncompressed_payload) where uncompressed_payload is

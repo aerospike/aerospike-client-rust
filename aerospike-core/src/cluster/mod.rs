@@ -91,6 +91,11 @@ pub struct Cluster {
     pub(crate) client_policy: AtomicArc<ClientPolicy>,
     hashed_pass: AtomicArc<Option<String>>,
 
+    /// This cluster's tiered buffer pool, shared by all of its
+    /// connections; `None` when `ClientPolicy::use_buffer_pool` is off.
+    /// Aged by the tend loop and freed when the cluster drops.
+    buffer_pool: Option<Arc<crate::net::buffer_pool::TieredBufferPool>>,
+
     // Number of completed tend cycles. Drives the per-node circuit-breaker
     // window: every `error_rate_window` tends we walk the node list and
     // call `node.reset_error_rate()`, mirroring Java's
@@ -150,9 +155,11 @@ impl Cluster {
         let _ = policy.set_auth_mode(policy.auth_mode.clone());
 
         let (tx, rx) = mpsc::channel(100);
+        let buffer_pool = crate::net::buffer_pool::TieredBufferPool::from_policy(&policy);
         let cluster = Arc::new(Cluster {
             hashed_pass: AtomicArc::from(policy.hashed_pass()),
             client_policy: AtomicArc::from(policy),
+            buffer_pool,
 
             seeds: AtomicArc::from(hosts.to_vec()),
             aliases: AtomicArc::from(HashMap::new()),
@@ -233,6 +240,14 @@ impl Cluster {
         // in-flight cycle would repopulate nodes after close() cleared them.
         if self.closed.load(Ordering::Relaxed) {
             return Ok(());
+        }
+
+        // Age this cluster's buffer pool. This plays the role the garbage
+        // collector plays for Go's sync.Pool: idle oversized buffers are
+        // dropped after two aging intervals (the call self-throttles, so
+        // the cadence is independent of the tend frequency).
+        if let Some(pool) = &self.buffer_pool {
+            pool.age_if_due();
         }
 
         let seed_only = self.client_policy().seed_only_cluster;
@@ -1046,6 +1061,7 @@ impl Cluster {
             Arc::new(nv),
             metrics,
             self.opening_connections.clone(),
+            self.buffer_pool.clone(),
         );
         res.send_user_agent_id().await;
         res

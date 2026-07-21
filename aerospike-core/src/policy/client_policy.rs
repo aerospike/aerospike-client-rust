@@ -48,6 +48,7 @@ pub const TEND_INTERVAL_MIN_MS: u32 = 250;
 /// `ClientPolicy` encapsulates parameters for client policy command.
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "dynamic-config", derive(aerospike_macro::Config))]
+#[allow(clippy::struct_excessive_bools)] // a policy is a bag of flags
 pub struct ClientPolicy {
     /// User authentication to cluster.
     #[cfg_attr(feature = "dynamic-config", config(skip))]
@@ -179,6 +180,48 @@ pub struct ClientPolicy {
     #[cfg_attr(feature = "dynamic-config", config(skip))]
     pub buffer_reclaim_threshold: usize,
 
+    /// Use a tiered buffer pool for connection buffers that grow beyond
+    /// `buffer_reclaim_threshold`. Instead of freeing an oversized buffer
+    /// (and re-allocating on the next large command), the connection
+    /// returns it to a bounded pool of power-of-two size classes shared
+    /// by all of this client's connections, and checks buffers out of
+    /// that pool when a command needs one. Each client (cluster) owns its
+    /// own dedicated pool, sized by the `buffer_pool_*` fields below and
+    /// freed when the client is dropped. Pooled buffers that go unused
+    /// are aged out within about a minute (a victim-cache scheme driven
+    /// by the cluster tend loop, mirroring the Go client's GC-backed
+    /// `sync.Pool`). Set to `false` to restore the previous
+    /// allocate/`shrink_to_fit` behavior.
+    ///
+    /// Default: true
+    #[cfg_attr(feature = "dynamic-config", config(skip))]
+    pub use_buffer_pool: bool,
+
+    /// Smallest buffer kept by this client's tiered buffer pool. Must be
+    /// a power of two, at least 1024.
+    ///
+    /// Default: 8192 (8 KiB, matching the Go client's `MinBufferSize`)
+    #[cfg_attr(feature = "dynamic-config", config(skip))]
+    pub buffer_pool_min_size: usize,
+
+    /// Largest buffer kept by this client's tiered buffer pool; larger
+    /// buffers are allocated fresh and never retained. Must be a power of
+    /// two, >= `buffer_pool_min_size`.
+    ///
+    /// Default: 1048576 (1 MiB, matching the Go client's
+    /// `PoolCutOffBufferSize`)
+    #[cfg_attr(feature = "dynamic-config", config(skip))]
+    pub buffer_pool_max_size: usize,
+
+    /// Retention budget per pool tier, in bytes: each power-of-two size
+    /// class keeps at most `buffer_pool_tier_bytes / tier_size` buffers
+    /// (clamped to between 2 and 64). Bounds the pool's worst-case
+    /// footprint deterministically.
+    ///
+    /// Default: 4194304 (4 MiB per tier)
+    #[cfg_attr(feature = "dynamic-config", config(skip))]
+    pub buffer_pool_tier_bytes: usize,
+
     /// Interval in milliseconds between cluster tends by the maintenance task.
     /// Minimum allowed value is [`TEND_INTERVAL_MIN_MS`] (250 ms); smaller values
     /// will be rejected by [`ClientPolicy::validate`].
@@ -302,6 +345,10 @@ impl Default for ClientPolicy {
             use_services_alternate: false,
             cluster_name: None,
             buffer_reclaim_threshold: 65536,
+            use_buffer_pool: true,
+            buffer_pool_min_size: crate::net::buffer_pool::DEFAULT_MIN_POOLED_SIZE,
+            buffer_pool_max_size: crate::net::buffer_pool::DEFAULT_MAX_POOLED_SIZE,
+            buffer_pool_tier_bytes: crate::net::buffer_pool::DEFAULT_PER_TIER_BYTES,
             rack_ids: None,
             application_id: None,
             max_error_rate: 100,
@@ -326,6 +373,30 @@ impl ClientPolicy {
                 "Invalid tend_interval: {}. min: {}",
                 self.tend_interval, TEND_INTERVAL_MIN_MS
             )));
+        }
+
+        if self.use_buffer_pool {
+            if !self.buffer_pool_min_size.is_power_of_two()
+                || !self.buffer_pool_max_size.is_power_of_two()
+            {
+                return Err(Error::client_error(format!(
+                    "buffer_pool_min_size ({}) and buffer_pool_max_size ({}) must be powers of two",
+                    self.buffer_pool_min_size, self.buffer_pool_max_size
+                )));
+            }
+            if self.buffer_pool_min_size < 1024
+                || self.buffer_pool_min_size > self.buffer_pool_max_size
+            {
+                return Err(Error::client_error(format!(
+                    "invalid buffer pool sizing: min {} must be >= 1024 and <= max {}",
+                    self.buffer_pool_min_size, self.buffer_pool_max_size
+                )));
+            }
+            if self.buffer_pool_tier_bytes == 0 {
+                return Err(Error::client_error(
+                    "buffer_pool_tier_bytes must be greater than 0",
+                ));
+            }
         }
 
         Ok(())
@@ -408,5 +479,33 @@ impl ClientPolicy {
             true => "service-clear-alt",
             false => "service-clear-std",
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn buffer_pool_sizing_is_validated() {
+        let mut p = ClientPolicy::default();
+        assert!(p.validate().is_ok());
+
+        p.buffer_pool_min_size = 10_000; // not a power of two
+        assert!(p.validate().is_err());
+
+        p.buffer_pool_min_size = 2 * 1024 * 1024; // > max
+        assert!(p.validate().is_err());
+
+        p.buffer_pool_min_size = 512; // < 1024
+        assert!(p.validate().is_err());
+
+        p.buffer_pool_min_size = 8192;
+        p.buffer_pool_tier_bytes = 0;
+        assert!(p.validate().is_err());
+
+        // Disabled pool skips the sizing checks entirely.
+        p.use_buffer_pool = false;
+        assert!(p.validate().is_ok());
     }
 }

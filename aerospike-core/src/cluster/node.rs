@@ -114,6 +114,7 @@ impl Node {
         nv: Arc<NodeValidator>,
         metrics: Arc<NodeMetrics>,
         opening_connections: Arc<AtomicUsize>,
+        buffer_pool: Option<Arc<crate::net::buffer_pool::TieredBufferPool>>,
     ) -> Self {
         Node {
             opening_connections,
@@ -132,6 +133,7 @@ impl Node {
                 nv.aliases[0].clone(),
                 client_policy.clone(),
                 Some(metrics.clone()),
+                buffer_pool,
             ),
             metrics,
             tend_connection: AsyncMutex::new(None),
@@ -1063,7 +1065,7 @@ mod node_tests {
         let metrics = Arc::new(crate::metrics::NodeMetrics::new(
             crate::metrics::MetricsPolicy::default(),
         ));
-        Node::new(policy, nv, metrics, Arc::new(std::sync::atomic::AtomicUsize::new(0)))
+        Node::new(policy, nv, metrics, Arc::new(std::sync::atomic::AtomicUsize::new(0)), None)
     }
 
     /// One idle connection in the pool, using the test [`crate::net::Connection`] (no real socket).
@@ -1173,7 +1175,7 @@ mod node_tests {
         let metrics = Arc::new(crate::metrics::NodeMetrics::new(
             crate::metrics::MetricsPolicy::default(),
         ));
-        let node = Node::new(policy, nv, metrics, Arc::new(std::sync::atomic::AtomicUsize::new(0)));
+        let node = Node::new(policy, nv, metrics, Arc::new(std::sync::atomic::AtomicUsize::new(0)), None);
 
         // Trigger 4 pool misses with distinct hints — each reports pool-empty
         // and spawns a background fill on its own queue.
@@ -1257,6 +1259,7 @@ mod node_tests {
             nv,
             metrics,
             Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+            None,
         );
 
         // On a current-thread runtime no spawned task runs until we await, so
@@ -1293,7 +1296,7 @@ mod node_tests {
         let metrics = Arc::new(crate::metrics::NodeMetrics::new(
             crate::metrics::MetricsPolicy::default(),
         ));
-        let node = Node::new(policy, nv, metrics, Arc::new(std::sync::atomic::AtomicUsize::new(0)));
+        let node = Node::new(policy, nv, metrics, Arc::new(std::sync::atomic::AtomicUsize::new(0)), None);
 
         let mut in_flight = Vec::new();
         for i in 0..5 {

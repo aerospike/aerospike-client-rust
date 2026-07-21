@@ -70,7 +70,7 @@ impl Sampler {
     #[must_use]
     pub const fn never() -> Self {
         Sampler {
-            range: 1,
+            range: 0,
             threshold: 0,
         }
     }
@@ -126,6 +126,15 @@ mod tests {
     fn zero_threshold_never_samples() {
         let mut rng = XorShift::with_seed(3, 4);
         let s = Sampler::new(100, 0);
+        for _ in 0..1000 {
+            assert!(!s.should_sample(&mut rng));
+        }
+    }
+
+    #[test]
+    fn never_ctor_never_samples() {
+        let mut rng = XorShift::with_seed(3, 4);
+        let s = Sampler::never();
         for _ in 0..1000 {
             assert!(!s.should_sample(&mut rng));
         }

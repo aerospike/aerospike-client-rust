@@ -142,6 +142,20 @@ macro_rules! io_with_timeout {
 }
 
 impl Connection {
+    /// Switch this connection's command buffer to lease large allocations
+    /// from the owning cluster's tiered buffer pool. Called by the
+    /// connection pool right after the connection is created; short-lived
+    /// connections (seed probes, node validation) never attach a pool.
+    pub(crate) fn attach_buffer_pool(
+        &mut self,
+        pool: std::sync::Arc<crate::net::buffer_pool::TieredBufferPool>,
+    ) {
+        self.buffer = crate::commands::buffer::Buffer::with_pool(
+            self.buffer.reclaim_threshold,
+            pool,
+        );
+    }
+
     #[cfg(feature = "tls")]
     async fn get_netsocket(
         stream: TcpStream,
@@ -1567,7 +1581,7 @@ mod tests_eof_loopback {
 
         let host = Host::new("127.0.0.1", 0);
         let policy = ClientPolicy::default();
-        let q = Queue::with_capacity(1, host, policy, None);
+        let q = Queue::with_capacity(1, host, policy, None, None);
 
         let addr = spawn_fin_peer().await;
         let stream = TcpStream::connect(addr).await.unwrap();
@@ -1592,7 +1606,7 @@ mod tests_eof_loopback {
 
         let host = Host::new("127.0.0.1", 0);
         let policy = ClientPolicy::default();
-        let q = Queue::with_capacity(1, host, policy, None);
+        let q = Queue::with_capacity(1, host, policy, None, None);
 
         let addr = spawn_idle_peer().await;
         let stream = TcpStream::connect(addr).await.unwrap();
