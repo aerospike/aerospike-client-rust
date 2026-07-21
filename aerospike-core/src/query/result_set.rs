@@ -54,6 +54,9 @@ impl ResultSet {
     /// Close the result set. Further values are discarded.
     pub fn close(&self) {
         self.active.store(false, Ordering::Relaxed);
+        // Close the channel so consumers observe the end of the stream;
+        // buffered values can still be drained.
+        self.rx.close();
     }
 
     /// Check whether the aggregation is still producing values.
@@ -86,23 +89,10 @@ impl ResultSet {
 impl Iterator for &ResultSet {
     type Item = Result<Value>;
 
-    /// Implements a blocking iterator.
+    /// Blocking iterator: parks the calling thread until the next value
+    /// arrives; ends once the result set is closed and drained.
     fn next(&mut self) -> Option<Result<Value>> {
-        use futures::executor::block_on;
-
-        loop {
-            let result = self.next_value();
-            if result.is_some() {
-                return result;
-            }
-
-            if self.is_active() {
-                block_on(aerospike_rt::task::yield_now());
-                continue;
-            }
-
-            return None;
-        }
+        self.rx.recv_blocking().ok()
     }
 }
 
@@ -115,6 +105,8 @@ impl futures::Stream for ResultStream {
     ) -> std::task::Poll<Option<Self::Item>> {
         match self.0.rx.try_recv() {
             Ok(r) => std::task::Poll::Ready(Some(r)),
+            // Channel closed and drained: the stream has ended.
+            Err(e) if e.is_closed() => std::task::Poll::Ready(None),
             Err(e) => {
                 if !self.0.is_active() && e.is_empty() {
                     std::task::Poll::Ready(None)
@@ -130,5 +122,68 @@ impl futures::Stream for ResultStream {
 impl AsRef<ResultSet> for ResultStream {
     fn as_ref(&self) -> &ResultSet {
         &self.0
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Duration;
+
+    use futures::executor::block_on;
+    use futures::StreamExt;
+
+    #[cfg(feature = "sync")]
+    #[test]
+    fn blocking_iterator_drains_then_ends_after_close() {
+        let rs = Arc::new(ResultSet::new(8));
+        block_on(rs.push(Ok(Value::Int(1)))).unwrap();
+        block_on(rs.push(Ok(Value::Int(2)))).unwrap();
+        rs.close();
+
+        let mut iter = &*rs;
+        assert_eq!(iter.next().map(|r| r.unwrap()), Some(Value::Int(1)));
+        assert_eq!(iter.next().map(|r| r.unwrap()), Some(Value::Int(2)));
+        assert!(iter.next().is_none());
+        assert!(iter.next().is_none());
+    }
+
+    #[cfg(feature = "sync")]
+    #[test]
+    fn parked_iterator_wakes_on_close() {
+        let rs = Arc::new(ResultSet::new(8));
+        let (done_tx, done_rx) = std::sync::mpsc::channel();
+        let consumer_rs = rs.clone();
+        std::thread::spawn(move || {
+            let item = (&*consumer_rs).next(); // parks
+            let _ = done_tx.send(item.is_none());
+        });
+
+        std::thread::sleep(Duration::from_millis(100));
+        rs.close();
+        assert!(done_rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("parked iterator was not woken by close()"));
+    }
+
+    #[test]
+    fn push_fails_fast_after_close() {
+        let rs = ResultSet::new(8);
+        rs.close();
+        assert!(block_on(rs.push(Ok(Value::Int(1)))).is_err());
+    }
+
+    #[test]
+    fn async_stream_ends_after_close_and_drain() {
+        let rs = Arc::new(ResultSet::new(8));
+        block_on(rs.push(Ok(Value::Int(7)))).unwrap();
+        rs.close();
+
+        let mut stream = rs.into_stream();
+        assert_eq!(
+            block_on(stream.next()).map(|r| r.unwrap()),
+            Some(Value::Int(7))
+        );
+        assert!(block_on(stream.next()).is_none());
     }
 }

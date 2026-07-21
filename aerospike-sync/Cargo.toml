@@ -17,15 +17,33 @@ publish = true
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+# The core `sync` feature enables the blocking iterators (`Iterator for
+# &Recordset` / `&ResultSet`) this facade's API is built around.
 aerospike-core = {path = "../aerospike-core", version = "3.0.0-alpha.1", features = ["sync"]}
 futures = { version = "0.3.33" }
+# The blocking wrappers drive client futures on the runtime selected by
+# the rt-* feature: a dedicated tokio runtime (`SYNC_RT`) or async-std's
+# global executor. Never a third-party executor — a foreign `block_on`
+# cannot drive the selected runtime's IO/timers and would deadlock or
+# busy-spin.
+tokio = { version = "1", default-features = false, features = ["rt-multi-thread"], optional = true }
+async-std = { version = "1.13", optional = true }
 
 [features]
-rt-tokio = ["aerospike-core/rt-tokio"]
-rt-async-std = ["aerospike-core/rt-async-std"]
+default = ["rt-tokio", "serialization", "tls", "dynamic-config"]
+rt-tokio = ["aerospike-core/rt-tokio", "dep:tokio"]
+rt-async-std = ["aerospike-core/rt-async-std", "dep:async-std"]
 dynamic-config = ["aerospike-core/dynamic-config"]
+serialization = ["aerospike-core/serialization"]
+tls = ["aerospike-core/tls"]
 lua = ["aerospike-core/lua"]
 
 [dev-dependencies]
-aerospike = {path = "../"}
-tokio = { version = "1", features = ["rt-multi-thread"] } # for doc tests
+# Used only by the rt-tokio-gated "call from inside a caller-owned tokio
+# runtime" regression test. NOTE: do not dev-depend on the `aerospike`
+# facade here — its default features pull in rt-tokio and would conflict
+# with rt-async-std test builds via feature unification.
+tokio = { version = "1", features = ["rt-multi-thread"] }
+# Channel-backed synthetic streams for the BatchStream unit tests (the
+# same channel family the real batch executor uses).
+async-channel = "2.5"
