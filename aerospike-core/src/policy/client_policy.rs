@@ -107,9 +107,34 @@ pub struct ClientPolicy {
     #[cfg_attr(feature = "dynamic-config", config(skip))]
     pub tls_config: Option<ClientConfig>,
 
-    /// Initial host connection timeout in milliseconds. The timeout when opening a connection
-    /// to the server host for the first time.
+    /// General timeout in milliseconds for connecting to the whole cluster:
+    /// it bounds the initial cluster tend/stabilization performed by
+    /// [`Client::new`](crate::Client::new) (seeding the nodes and waiting for
+    /// the node count to settle). Also used for the client's own info/admin
+    /// commands (tend refreshes, index/UDF management, …), and as the fallback
+    /// for [`connect_timeout`](field@Self::connect_timeout) when that is `0`.
+    ///
+    /// Default: 1000
     pub timeout: u32,
+
+    /// Timeout in milliseconds for establishing a connection to a server node:
+    /// the TCP connect, TLS handshake, and login/authentication exchange.
+    /// Applies everywhere the client opens a connection (seeding, tend,
+    /// connection-pool growth, `min_conns_per_node` fill).
+    ///
+    /// `0` (the default) falls back to [`timeout`](field@Self::timeout).
+    #[cfg_attr(feature = "dynamic-config", config(skip))]
+    pub connect_timeout: u32,
+
+    /// Timeout in milliseconds for the login/authentication exchange
+    /// (`LOGIN` or session-token `AUTHENTICATE`) performed on every freshly
+    /// opened connection when the cluster has security enabled.
+    ///
+    /// `0` falls back to [`connect_timeout`](field@Self::connect_timeout)
+    /// (and transitively to [`timeout`](field@Self::timeout)).
+    ///
+    /// Default: 5000
+    pub login_timeout: u32,
 
     /// Connection idle timeout. Every time a connection is used, its idle
     /// deadline will be extended by this duration. When this deadline is reached,
@@ -117,6 +142,12 @@ pub struct ClientPolicy {
     ///
     /// Servers 8.1+ have deprecated proto-fd-idle-ms. When proto-fd-idle-ms is ultimately removed,
     /// the server will stop automatically reaping based on socket idle timeouts.
+    ///
+    /// `0` disables the idle check entirely: pooled connections are never
+    /// considered idle, so they are neither discarded nor kept alive by the
+    /// tend-time reaper.
+    ///
+    /// Default: 0 (disabled).
     #[cfg_attr(
         feature = "dynamic-config",
         config(rename = "max_socket_idle", with = crate::config::secs_to_ms)
@@ -143,6 +174,8 @@ pub struct ClientPolicy {
     pub min_conns_per_node: usize,
 
     /// Maximum number of synchronous connections allowed per server node.
+    ///
+    /// Default: 100
     #[cfg_attr(
         feature = "dynamic-config",
         config(rename = "max_connections_per_node", startup)
@@ -259,10 +292,7 @@ pub struct ClientPolicy {
     /// This feature is recommended instead of using the client-side `IpMap` above.
     ///
     /// "services-alternate" is available with Aerospike Server versions >= 3.7.1.
-    #[cfg_attr(
-        feature = "dynamic-config",
-        config(rename = "use_service_alternate")
-    )]
+    #[cfg_attr(feature = "dynamic-config", config(rename = "use_service_alternate"))]
     pub use_services_alternate: bool,
 
     /// Expected cluster name. If not `None`, server nodes must return this cluster name in order
@@ -332,10 +362,12 @@ impl Default for ClientPolicy {
     fn default() -> ClientPolicy {
         ClientPolicy {
             auth_mode: AuthMode::None,
-            timeout: 30_000,
-            idle_timeout: 30_000,
+            timeout: 1_000,
+            connect_timeout: 0,
+            login_timeout: 5_000,
+            idle_timeout: 0,
             min_conns_per_node: 0,
-            max_conns_per_node: 256,
+            max_conns_per_node: 100,
             conn_pools_per_node: 1,
             opening_connection_threshold: 0,
             fail_if_not_connected: true,
@@ -427,6 +459,27 @@ impl ClientPolicy {
         }
     }
 
+    /// Timeout for establishing a connection (TCP connect + TLS + auth).
+    /// Falls back to [`timeout`](Self::timeout) when `connect_timeout` is `0`.
+    pub(crate) fn connect_timeout(&self) -> Duration {
+        if self.connect_timeout > 0 {
+            Duration::from_millis(u64::from(self.connect_timeout))
+        } else {
+            self.timeout()
+        }
+    }
+
+    /// Timeout for the login/authentication exchange on a fresh connection.
+    /// Falls back to [`connect_timeout`](Self::connect_timeout) when
+    /// `login_timeout` is `0`.
+    pub(crate) fn login_timeout(&self) -> Duration {
+        if self.login_timeout > 0 {
+            Duration::from_millis(u64::from(self.login_timeout))
+        } else {
+            self.connect_timeout()
+        }
+    }
+
     /// Set username and password to use when authenticating to the cluster.
     pub fn set_auth_mode(&mut self, auth_mode: AuthMode) -> Result<()> {
         self.auth_mode = auth_mode;
@@ -485,6 +538,7 @@ impl ClientPolicy {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use aerospike_rt::time::Duration;
 
     #[test]
     fn buffer_pool_sizing_is_validated() {
@@ -507,5 +561,51 @@ mod tests {
         // Disabled pool skips the sizing checks entirely.
         p.use_buffer_pool = false;
         assert!(p.validate().is_ok());
+    }
+
+    #[test]
+    fn connect_timeout_falls_back_to_timeout_when_zero() {
+        let policy = ClientPolicy::default();
+        assert_eq!(policy.connect_timeout, 0);
+        assert_eq!(policy.connect_timeout(), policy.timeout());
+    }
+
+    #[test]
+    fn connect_timeout_used_when_set() {
+        let policy = ClientPolicy {
+            connect_timeout: 1_500,
+            timeout: 30_000,
+            ..ClientPolicy::default()
+        };
+        assert_eq!(policy.connect_timeout(), Duration::from_millis(1_500));
+        // The general timeout is unaffected.
+        assert_eq!(policy.timeout(), Duration::from_millis(30_000));
+    }
+
+    #[test]
+    fn login_timeout_fallback_chain() {
+        // Explicit 0 → falls back to connect_timeout → falls back to timeout.
+        let policy = ClientPolicy {
+            login_timeout: 0,
+            ..ClientPolicy::default()
+        };
+        assert_eq!(policy.login_timeout(), policy.timeout());
+
+        // connect_timeout set, login_timeout 0 → connect_timeout wins.
+        let policy = ClientPolicy {
+            login_timeout: 0,
+            connect_timeout: 1_500,
+            ..ClientPolicy::default()
+        };
+        assert_eq!(policy.login_timeout(), Duration::from_millis(1_500));
+
+        // login_timeout set → it wins over both.
+        let policy = ClientPolicy {
+            login_timeout: 700,
+            connect_timeout: 1_500,
+            ..ClientPolicy::default()
+        };
+        assert_eq!(policy.login_timeout(), Duration::from_millis(700));
+        assert_eq!(policy.connect_timeout(), Duration::from_millis(1_500));
     }
 }

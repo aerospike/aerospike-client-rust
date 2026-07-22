@@ -139,8 +139,9 @@ impl Queue {
             metrics.incr_connections_attempt();
         }
 
+        // Bounds the whole establishment (TCP connect + TLS + auth).
         let result = aerospike_rt::timeout(
-            self.0.policy.timeout(),
+            self.0.policy.connect_timeout(),
             Connection::new_with_session(
                 &self.0.host,
                 &self.0.policy,
