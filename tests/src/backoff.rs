@@ -214,3 +214,64 @@ async fn pipeline_returns_max_error_rate_when_breaker_open() {
 
     client.close().await.unwrap();
 }
+
+#[aerospike_macro::test]
+async fn batch_sequence_retry_resplits_when_breaker_open() {
+    // End-to-end coverage of the batch retry re-split path (Java
+    // BatchCommand.retryBatch): with the breaker open on every node and the
+    // default Sequence replica, the first attempt fails, and each retry
+    // re-maps the keys with an advanced replica sequence before failing
+    // again. The command must exhaust its retry budget (proving the loop
+    // ran through the re-split branch) and surface the breaker error with
+    // per-record results via BatchFailed.
+    use aerospike::{BatchOperation, BatchPolicy, BatchReadPolicy, Bins, ErrorKind};
+
+    let client = breaker_client(1).await;
+    let namespace = common::namespace();
+
+    for node in client.cluster.nodes() {
+        for _ in 0..16 {
+            node.incr_error_rate();
+        }
+    }
+
+    let mut bpolicy = BatchPolicy::default();
+    bpolicy.base_policy.max_retries = 2;
+    bpolicy.base_policy.socket_timeout = 500;
+
+    let brp = BatchReadPolicy::default();
+    let ops: Vec<BatchOperation> = (0..4_i64)
+        .map(|i| BatchOperation::read(&brp, as_key!(namespace, "breaker_batch", i), Bins::All))
+        .collect();
+
+    let err = client
+        .batch(&bpolicy, &ops)
+        .await
+        .expect_err("batch should fail with the breaker open");
+
+    let display = format!("{err}");
+    assert!(
+        display.contains("Max error rate exceeded"),
+        "expected MaxErrorRate in the error chain, got: {display}"
+    );
+    // The retry budget must have been exhausted (max_retries=2 → exactly 3
+    // attempts), proving the loop went through the sequence re-split branch
+    // on each retry instead of failing terminally on the first attempt.
+    assert!(
+        display.contains("after 3 tries"),
+        "expected the exhausted-retries terminal error, got: {display}"
+    );
+    assert_eq!(
+        display.matches("Max error rate exceeded").count(),
+        3,
+        "one breaker rejection per attempt: {display}"
+    );
+    // Multi-key batches surface per-record results on failure.
+    if let ErrorKind::BatchFailed { records } = err.kind() {
+        assert_eq!(records.len(), 4);
+    } else {
+        panic!("expected BatchFailed, got: {err:?}");
+    }
+
+    client.close().await.unwrap();
+}

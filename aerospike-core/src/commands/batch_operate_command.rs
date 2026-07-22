@@ -115,11 +115,23 @@ impl BatchOperateCommand {
         // whole command so all of its metrics are recorded together or not.
         let mut sampled: Option<bool> = None;
 
+        // Replica sequence offsets, advanced on every scheduled retry (Java
+        // BatchCommand.prepareRetry). AP and SC namespaces track separate
+        // counters because SC does not advance on client timeout under
+        // Linearize.
+        let mut sequence_ap: usize = 0;
+        let mut sequence_sc: usize = 0;
+        // Retries return to the originally selected node unless the replica
+        // policy walks a sequence (Java prepareRetry returns true for
+        // Master/MasterProles/Random).
+        let same_node_retry =
+            !matches!(self.policy.replica, Replica::Sequence | Replica::PreferRack);
+
         // Execute command until successful, timed out or maximum iterations have been reached.
         loop {
-            let retry_err = if iterations & 1 == 0 || matches!(self.policy.replica, Replica::Master)
-            {
-                // For even iterations, we request all keys from the same node for efficiency.
+            let retry_err = if iterations == 0 || same_node_retry {
+                // First attempt, and every retry for non-sequence replicas:
+                // the whole group goes to the originally selected node.
                 match Self::request_group(
                     &mut self.batch_ops,
                     &self.policy,
@@ -139,44 +151,39 @@ impl BatchOperateCommand {
                     }
                 }
             } else {
-                // However, for odd iterations try the second choice for each. Instead of re-sharding the batch (as the second choice may not correspond to the first), just try each by itself.
-                let mut group_err = None;
-                let mut hard_err = None;
-                for individual_op in self.batch_ops.chunks_mut(1) {
-                    let key = individual_op[0].0.key();
-                    // Find somewhere else to try.
-                    let mut partition = Partition::for_read(
-                        &cluster,
-                        &key,
-                        self.policy.replica,
-                        self.policy.base_policy.read_mode_sc,
-                    );
-                    // Advance sequence to try a different node than the primary
-                    partition.sequence = 1;
-                    let node = match partition.get_node(&cluster) {
-                        Ok(node) => node,
-                        Err(err) => {
-                            hard_err = Some(err);
-                            break;
-                        }
+                // Sequence/PreferRack retry (Java BatchCommand.retryBatch):
+                // the advanced replica sequence re-maps every key, and the
+                // keys are re-split into per-node batch groups. Java runs
+                // the sub-batches in parallel, each retrying recursively;
+                // here the groups run sequentially inside the shared retry
+                // loop — identical routing and retry budget, simpler
+                // control flow.
+                let mut nodes: Vec<Arc<Node>> = Vec::with_capacity(self.batch_ops.len());
+                let mut hard_err: Option<Error> = None;
+                for (op, _) in &self.batch_ops {
+                    let key = op.key();
+                    let mut partition = if op.has_write() {
+                        let mut partition = Partition::for_write(&key);
+                        partition.replica = self.policy.replica;
+                        partition
+                    } else {
+                        Partition::for_read(
+                            &cluster,
+                            &key,
+                            self.policy.replica,
+                            self.policy.base_policy.read_mode_sc,
+                        )
                     };
-
-                    match Self::request_group(
-                        individual_op,
-                        &self.policy,
-                        deadline,
-                        node,
-                        cmd_type,
-                        &mut sampled,
-                        &mut commands_sent,
-                    )
-                    .await
+                    partition.sequence = if cluster
+                        .is_strong_consistency(&key.namespace)
+                        .unwrap_or(false)
                     {
-                        Ok(Some(e)) => {
-                            group_err = Some(e);
-                            break;
-                        }
-                        Ok(None) => (),
+                        sequence_sc
+                    } else {
+                        sequence_ap
+                    };
+                    match partition.get_node(&cluster) {
+                        Ok(node) => nodes.push(node),
                         Err(err) => {
                             hard_err = Some(err);
                             break;
@@ -187,6 +194,51 @@ impl BatchOperateCommand {
                     self.set_in_doubt(commands_sent);
                     self.terminal_error = Some(err);
                     return Ok(self);
+                }
+
+                // Regroup the ops contiguously per node so each group can be
+                // requested as one batch command.
+                let pairs: Vec<(BatchOperation, usize)> = self.batch_ops.drain(..).collect();
+                let mut routed: Vec<(Arc<Node>, (BatchOperation, usize))> =
+                    nodes.into_iter().zip(pairs).collect();
+                routed.sort_by(|a, b| a.0.name().cmp(b.0.name()));
+
+                let mut ranges: Vec<(Arc<Node>, std::ops::Range<usize>)> = Vec::new();
+                for (node, pair) in routed {
+                    let pos = self.batch_ops.len();
+                    match ranges.last_mut() {
+                        Some((last, range)) if Arc::ptr_eq(last, &node) => range.end = pos + 1,
+                        _ => ranges.push((node, pos..pos + 1)),
+                    }
+                    self.batch_ops.push(pair);
+                }
+
+                // Run every group this round even if one fails (Java's
+                // sub-batches are independent); keep the first retriable
+                // error to drive the next iteration.
+                let mut group_err: Option<Error> = None;
+                for (node, range) in ranges {
+                    match Self::request_group(
+                        &mut self.batch_ops[range],
+                        &self.policy,
+                        deadline,
+                        node,
+                        cmd_type,
+                        &mut sampled,
+                        &mut commands_sent,
+                    )
+                    .await
+                    {
+                        Ok(Some(e)) => {
+                            group_err.get_or_insert(e);
+                        }
+                        Ok(None) => (),
+                        Err(err) => {
+                            self.set_in_doubt(commands_sent);
+                            self.terminal_error = Some(err);
+                            return Ok(self);
+                        }
+                    }
                 }
                 group_err
             };
@@ -203,6 +255,20 @@ impl BatchOperateCommand {
                     pool_empty_waits += 1;
                     sleep(commands::POOL_EMPTY_WAIT).await;
                     continue;
+                }
+                // Java BatchCommand.prepareRetry: the AP sequence advances on
+                // every scheduled retry; SC advances too unless the policy is
+                // Linearize and the failure was NOT a connection-level error
+                // (a client timeout under Linearize must re-read the same
+                // replica).
+                sequence_ap += 1;
+                if !matches!(
+                    self.policy.base_policy.read_mode_sc,
+                    crate::policy::ReadModeSC::Linearize
+                ) || e.client_result_code()
+                    == Some(crate::ClientResultCode::ServerNotAvailable)
+                {
+                    sequence_sc += 1;
                 }
                 last_err = Some(e.chain_cause(last_err));
                 if sampled.unwrap_or(false) {
@@ -229,8 +295,10 @@ impl BatchOperateCommand {
 
             iterations += 1;
 
-            // too many retries
-            if self.policy.max_retries() > 0 && iterations > self.policy.max_retries() + 1 {
+            // Retry budget exhausted: max_retries + 1 total attempts, like
+            // Java and the single-command path (max_retries == 0 means a
+            // single attempt, not unbounded retries).
+            if iterations > self.policy.max_retries() {
                 if sampled.unwrap_or(false) {
                     self.node.metrics().incr_transaction_error();
                 }
