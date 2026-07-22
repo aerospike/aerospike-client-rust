@@ -409,7 +409,9 @@ impl Buffer {
             let src = &src_region[cmd_start..cmd_end]; // the uncompressed command data
 
             let cursor = std::io::Cursor::new(&mut output_region[..output_len]);
-            let mut encoder = ZlibEncoder::new(cursor, Compression::default());
+            // BEST_SPEED, matching the Java client: request compression is
+            // about shrinking large payloads cheaply, not maximum ratio.
+            let mut encoder = ZlibEncoder::new(cursor, Compression::fast());
 
             // Write in 64KB chunks to work around zlib issues (matching Go client behavior).
             let mut pos = 0;
@@ -430,6 +432,16 @@ impl Buffer {
                 .finish()
                 .map_err(|e| Error::client_error(format!("Compression error: {e}")))?;
             compressed_size = cursor.position() as usize;
+        }
+
+        // If compression didn't shrink the message (16-byte compressed
+        // header included), send it uncompressed — Java parity: the server
+        // shouldn't pay inflation cost for zero gain.
+        if 16 + compressed_size >= uncompressed_size {
+            self.data_buffer.copy_within(cmd_start..cmd_end, 0);
+            self.data_offset = uncompressed_size;
+            self.data_buffer.truncate(self.data_offset);
+            return Ok(());
         }
 
         // Copy compressed data from the tail into the pre-reserved space at [16..].
@@ -3063,6 +3075,173 @@ mod tests {
             msg_type, AS_MSG_TYPE,
             "configured gate should suppress compression below threshold"
         );
+    }
+
+    // Compress `buf` and verify the full send+receive cycle: the wire
+    // message must either be a valid compressed proto that inflates back
+    // to the original bytes, or the untouched original (fallback). Returns
+    // true if the message went out compressed.
+    fn assert_compression_cycle(mut buf: Buffer) -> bool {
+        let uncompressed = buf.data_buffer[buf.compress_offset..].to_vec();
+        buf.compress().unwrap();
+
+        let proto = NetworkEndian::read_u64(&buf.data_buffer[0..8]);
+        let msg_type = ((proto >> 48) & 0xFF) as u8;
+
+        if msg_type == AS_MSG_TYPE_COMPRESSED {
+            let compressed_payload_size = (proto & 0x0000_FFFF_FFFF_FFFF) as usize;
+            let stored_size = NetworkEndian::read_u64(&buf.data_buffer[8..16]) as usize;
+            assert_eq!(stored_size, uncompressed.len(), "stored uncompressed size");
+            assert_eq!(
+                buf.data_buffer.len(),
+                16 + compressed_payload_size - 8,
+                "buffer truncated to exact compressed message size"
+            );
+            // A compressed message must actually be smaller than the original.
+            assert!(buf.data_buffer.len() < uncompressed.len());
+
+            // Receive side: inflate like Connection does and compare.
+            let compressed_data = &buf.data_buffer[16..];
+            let mut decoder = ZlibDecoder::new(compressed_data);
+            let mut decompressed = vec![0u8; stored_size];
+            decoder.read_exact(&mut decompressed).unwrap();
+            assert_eq!(decompressed, uncompressed, "inflate round-trip");
+            true
+        } else {
+            assert_eq!(msg_type, AS_MSG_TYPE);
+            assert_eq!(&buf.data_buffer[..], &uncompressed[..], "fallback intact");
+            false
+        }
+    }
+
+    fn fill_random(buf: &mut Buffer) {
+        let start = buf.compress_offset + MSG_TOTAL_HEADER_SIZE as usize;
+        let end = buf.data_buffer.len();
+        let mut state: u32 = 0x9E37_79B9;
+        for byte in &mut buf.data_buffer[start..end] {
+            state ^= state << 13;
+            state ^= state >> 17;
+            state ^= state << 5;
+            *byte = (state >> 24) as u8;
+        }
+    }
+
+    // Send/receive compression across many message sizes, including the
+    // edge cases: the 128-byte threshold boundary, the 64KB encoder chunk
+    // boundaries, multi-chunk payloads, and a >1MiB message.
+    #[test]
+    fn compress_size_sweep_round_trips() {
+        const STEP: usize = 64 * 1024; // encoder chunking stride
+        let header = MSG_TOTAL_HEADER_SIZE as usize;
+        // Target UNCOMPRESSED message sizes (header + payload).
+        let targets = [
+            header,                          // minimal message, far below threshold
+            DEFAULT_COMPRESS_THRESHOLD,      // exactly at threshold: stays plain
+            DEFAULT_COMPRESS_THRESHOLD + 1,  // first compressible size
+            512,
+            STEP - 1,                        // just under one encoder chunk
+            STEP,                            // exactly one chunk
+            STEP + 1,                        // chunk + 1 trailing byte
+            2 * STEP,
+            3 * STEP + 7,                    // several chunks + remainder
+            1024 * 1024 + 13,                // > 1MiB
+        ];
+
+        for target in targets {
+            let payload = target - header;
+            let compressed = assert_compression_cycle(make_command_buffer(payload, true));
+            if target <= DEFAULT_COMPRESS_THRESHOLD {
+                assert!(!compressed, "size {target}: at/below threshold stays plain");
+            } else if target >= 512 {
+                // Comfortably-sized compressible payloads must actually
+                // compress. (Just-over-threshold messages may legally take
+                // the no-shrink fallback: zlib framing + the 16-byte
+                // compressed header can exceed a ~130-byte message.)
+                assert!(compressed, "size {target}: compressible payload must shrink");
+            }
+        }
+    }
+
+    // High-entropy payloads across the same size spectrum: every size must
+    // either compress-and-round-trip or fall back to the intact plain
+    // message — never corrupt, never panic.
+    #[test]
+    fn compress_size_sweep_incompressible_never_corrupts() {
+        const STEP: usize = 64 * 1024;
+        let header = MSG_TOTAL_HEADER_SIZE as usize;
+        for target in [
+            DEFAULT_COMPRESS_THRESHOLD + 1,
+            300,
+            STEP,
+            STEP + 1,
+            2 * STEP + 3,
+        ] {
+            let mut buf = make_command_buffer(target - header, true);
+            fill_random(&mut buf);
+            // Small high-entropy payloads must take the fallback; for the
+            // larger ones zlib's framing overhead amortizes, so either
+            // outcome is legal — the cycle assertions are what matter.
+            let compressed = assert_compression_cycle(buf);
+            if target <= 300 {
+                assert!(!compressed, "size {target}: random bytes must not shrink");
+            }
+        }
+    }
+
+    // Compression on a pool-leased buffer: the in-place compression grows
+    // the buffer through the pool (power-of-two lease) and must round-trip
+    // exactly like an unpooled one.
+    #[test]
+    fn compress_with_pooled_buffer_round_trips() {
+        let payload = 300 * 1024; // forces a pooled lease and several chunks
+        let mut buf = Buffer::with_pool(64 * 1024, test_pool());
+        buf.set_compress(true, DEFAULT_COMPRESS_THRESHOLD);
+        buf.begin();
+        let b = buf.compress_offset;
+        buf.size_buffer().unwrap();
+        buf.data_buffer[b + 8] = MSG_REMAINING_HEADER_SIZE;
+        buf.data_buffer[b + 9] = INFO1_READ;
+        for i in 10..26 {
+            buf.data_buffer[b + i] = 0;
+        }
+        let total = b + MSG_TOTAL_HEADER_SIZE as usize + payload;
+        buf.resize_buffer(total).unwrap();
+        for i in (b + MSG_TOTAL_HEADER_SIZE as usize)..total {
+            buf.data_buffer[i] = (i % 251) as u8;
+        }
+        buf.data_offset = total;
+        buf.end();
+
+        assert!(assert_compression_cycle(buf));
+    }
+
+    // Incompressible (high-entropy) payloads over the threshold fall back
+    // to the plain uncompressed message — Java parity: compression is only
+    // used when it actually shrinks the request.
+    #[test]
+    fn compress_incompressible_payload_falls_back_uncompressed() {
+        let payload_size = 300;
+        let mut buf = make_command_buffer(payload_size, true);
+
+        // Overwrite the compressible pattern with pseudo-random bytes.
+        let start = buf.compress_offset + MSG_TOTAL_HEADER_SIZE as usize;
+        let end = buf.data_buffer.len();
+        let mut state: u32 = 0x9E37_79B9;
+        for byte in &mut buf.data_buffer[start..end] {
+            state ^= state << 13;
+            state ^= state >> 17;
+            state ^= state << 5;
+            *byte = (state >> 24) as u8;
+        }
+        let uncompressed = buf.data_buffer[16..].to_vec();
+
+        buf.compress().unwrap();
+
+        // Fallback: plain (non-compressed) proto message shifted to offset 0.
+        let proto = NetworkEndian::read_u64(&buf.data_buffer[0..8]);
+        let msg_type = ((proto >> 48) & 0xFF) as u8;
+        assert_eq!(msg_type, AS_MSG_TYPE, "expected uncompressed fallback");
+        assert_eq!(&buf.data_buffer[..], &uncompressed[..]);
     }
 
     #[test]

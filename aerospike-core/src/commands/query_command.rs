@@ -63,16 +63,7 @@ impl Command for QueryCommand<'_> {
     }
 
     async fn write_timeout(&mut self, conn: &mut Connection) -> Result<()> {
-        let server_timeout = self
-            .stream_command
-            .recordset
-            .tracker
-            .lock()
-            .await
-            .server_timeout();
-
-        conn.buffer.write_timeout(server_timeout);
-        Ok(())
+        self.stream_command.write_timeout(conn).await
     }
 
     async fn write_buffer(&mut self, conn: &mut Connection) -> Result<()> {

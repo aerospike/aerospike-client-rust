@@ -267,9 +267,15 @@ impl Command for StreamCommand {
         Some(&self.cluster)
     }
 
-    async fn write_timeout(&mut self, _conn: &mut Connection) -> Result<()> {
-        // should be implemented downstream
-        unreachable!()
+    async fn write_timeout(&mut self, conn: &mut Connection) -> Result<()> {
+        // Fill the header timeout bytes (22..26) from the partition
+        // tracker, exactly like the query wrapper — previously this was
+        // `unreachable!()` on the assumption that only `QueryCommand`
+        // drives a `StreamCommand`; implementing it here keeps any direct
+        // driver from panicking and from sending a zero timeout.
+        let server_timeout = self.recordset.tracker.lock().await.server_timeout();
+        conn.buffer.write_timeout(server_timeout);
+        Ok(())
     }
 
     async fn write_buffer(&mut self, conn: &mut Connection) -> Result<()> {

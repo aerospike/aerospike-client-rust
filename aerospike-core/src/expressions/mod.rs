@@ -520,6 +520,21 @@ pub fn key_exists() -> Expression {
 /// use aerospike::expressions::{int_bin, int_val, eq};
 /// eq(int_bin("a".to_string()), int_val(500));
 /// ```
+/// Creates a bin expression with an explicitly supplied value type.
+/// Prefer the typed accessors (`int_bin`, `string_bin`, …) when the bin
+/// type is known at compile time; this generic form mirrors Java's
+/// `Exp.bin(name, type)` for dynamically-typed callers.
+pub fn bin(name: String, exp_type: ExpType) -> Expression {
+    Expression::new(
+        Some(ExpOp::Bin),
+        Some(Value::from(name)),
+        None,
+        None,
+        Some(exp_type),
+        None,
+    )
+}
+
 pub fn int_bin(name: String) -> Expression {
     Expression::new(
         Some(ExpOp::Bin),
@@ -1804,6 +1819,24 @@ pub const fn unknown() -> Expression {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // The generic `bin(name, type)` accessor packs identically to the
+    // corresponding typed accessor (Java Exp.bin parity).
+    #[test]
+    fn generic_bin_matches_typed_accessors() {
+        assert_eq!(
+            bin("a".to_string(), ExpType::INT).base64().unwrap(),
+            int_bin("a".to_string()).base64().unwrap()
+        );
+        assert_eq!(
+            bin("a".to_string(), ExpType::STRING).base64().unwrap(),
+            string_bin("a".to_string()).base64().unwrap()
+        );
+        assert_ne!(
+            bin("a".to_string(), ExpType::FLOAT).base64().unwrap(),
+            int_bin("a".to_string()).base64().unwrap()
+        );
+    }
 
     #[test]
     fn base64_roundtrip_int_eq() {

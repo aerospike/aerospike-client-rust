@@ -751,3 +751,108 @@ async fn recovery_batch_compressed() {
 
     client.close().await.unwrap();
 }
+
+// ---------------------------------------------------------------------------
+// Size sweep: send/receive compression across many payload sizes
+// ---------------------------------------------------------------------------
+
+/// Deterministic high-entropy bytes (~incompressible), to exercise the
+/// no-shrink request fallback and near-original-size compressed responses.
+fn random_bytes(len: usize, seed: u32) -> Vec<u8> {
+    let mut state = seed | 1;
+    (0..len)
+        .map(|_| {
+            state ^= state << 13;
+            state ^= state >> 17;
+            state ^= state << 5;
+            (state >> 24) as u8
+        })
+        .collect()
+}
+
+// Round-trip records of many sizes with compression enabled on both the
+// request and the response path. Covers: below the 128-byte compression
+// threshold, just above it, the 64KB encoder chunk boundaries, multi-chunk
+// payloads, and a 512KB record; each size in a compressible and a
+// high-entropy variant. Content equality proves neither direction corrupts.
+#[aerospike_macro::test]
+async fn put_get_compression_size_sweep() {
+    if skip_if_not_enterprise().await {
+        return;
+    }
+
+    let client = common::client().await;
+    let namespace = common::namespace();
+    let set_name = common::rand_str(10);
+
+    let mut wpolicy = WritePolicy::default();
+    wpolicy.base_policy.use_compression = true;
+    wpolicy.base_policy.socket_timeout = 10000;
+    wpolicy.base_policy.total_timeout = 30000;
+
+    let mut rpolicy = ReadPolicy::default();
+    rpolicy.base_policy.use_compression = true;
+    rpolicy.base_policy.socket_timeout = 10000;
+    rpolicy.base_policy.total_timeout = 30000;
+
+    let sizes: &[usize] = &[
+        1,
+        64,          // whole message still below the 128-byte threshold
+        200,         // just above the threshold
+        4 * 1024,
+        64 * 1024 - 1, // encoder chunk boundary
+        64 * 1024,
+        64 * 1024 + 1,
+        256 * 1024,  // multi-chunk
+        512 * 1024,  // large record
+    ];
+
+    let mut keys = Vec::new();
+    for (i, &size) in sizes.iter().enumerate() {
+        for (variant, payload) in [
+            ("zeros", vec![7u8; size]),
+            ("random", random_bytes(size, (i as u32 + 1).wrapping_mul(2_654_435_761))),
+        ] {
+            let key = as_key!(namespace, &set_name, format!("sweep-{size}-{variant}"));
+            client
+                .put(&wpolicy, &key, &[as_bin!("payload", payload.clone())])
+                .await
+                .unwrap_or_else(|e| panic!("put size {size} ({variant}): {e}"));
+
+            let rec = client
+                .get(&rpolicy, &key, Bins::All)
+                .await
+                .unwrap_or_else(|e| panic!("get size {size} ({variant}): {e}"));
+            assert_eq!(
+                rec.bins.get("payload"),
+                Some(&Value::Blob(payload.clone())),
+                "size {size} ({variant}): payload must round-trip intact"
+            );
+            keys.push((key, payload));
+        }
+    }
+
+    // Batch-read the whole sweep in one compressed request/response.
+    let mut bpolicy = BatchPolicy::default();
+    bpolicy.base_policy.use_compression = true;
+    bpolicy.base_policy.socket_timeout = 10000;
+    bpolicy.base_policy.total_timeout = 30000;
+    let brp = BatchReadPolicy::default();
+
+    let ops: Vec<BatchOperation> = keys
+        .iter()
+        .map(|(key, _)| BatchOperation::read(&brp, key.clone(), Bins::All))
+        .collect();
+    let results = client.batch(&bpolicy, &ops).await.unwrap();
+    assert_eq!(results.len(), keys.len());
+    for (result, (_, payload)) in results.iter().zip(&keys) {
+        let record = result.record.as_ref().expect("batch record present");
+        assert_eq!(
+            record.bins.get("payload"),
+            Some(&Value::Blob(payload.clone())),
+            "batch read must round-trip intact"
+        );
+    }
+
+    client.close().await.unwrap();
+}
