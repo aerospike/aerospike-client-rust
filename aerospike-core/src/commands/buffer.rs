@@ -474,7 +474,7 @@ impl Buffer {
         }
 
         self.size_buffer()?;
-        self.write_header_with_policy(policy, 0, INFO2_WRITE, field_count, bins.len() as u16);
+        self.write_header_write(policy, 0, INFO2_WRITE, field_count, bins.len() as u16);
         self.write_key(key, policy.send_key)?;
         self.write_txn(policy.base_policy.txn.as_ref(), version, true);
 
@@ -501,7 +501,7 @@ impl Buffer {
         }
 
         self.size_buffer()?;
-        self.write_header_with_policy(policy, 0, INFO2_WRITE | INFO2_DELETE, field_count, 0);
+        self.write_header_write(policy, 0, INFO2_WRITE | INFO2_DELETE, field_count, 0);
         self.write_key(key, false)?;
         self.write_txn(policy.base_policy.txn.as_ref(), version, true);
 
@@ -525,7 +525,7 @@ impl Buffer {
         }
         self.estimate_operation_size();
         self.size_buffer()?;
-        self.write_header_with_policy(policy, 0, INFO2_WRITE, field_count, 1);
+        self.write_header_write(policy, 0, INFO2_WRITE, field_count, 1);
         self.write_key(key, policy.send_key)?;
         self.write_txn(policy.base_policy.txn.as_ref(), version, true);
 
@@ -872,7 +872,14 @@ impl Buffer {
     }
 
     pub(crate) const fn get_batch_flags(policy: &BatchPolicy) -> u8 {
-        let mut flags: u8 = if policy.allow_inline { 1 } else { 0 };
+        // 0x8 instructs the server to return the key-specific error code
+        // when an error stops the batch response (Java CLIENT-1720); set
+        // unconditionally like the Java client.
+        let mut flags: u8 = 0x8;
+
+        if policy.allow_inline {
+            flags |= 0x1;
+        }
 
         if policy.allow_inline_ssd {
             flags |= 0x2;
@@ -1300,7 +1307,7 @@ impl Buffer {
         self.size_buffer()?;
 
         if has_write {
-            self.write_header_with_policy(
+            self.write_header_read_write(
                 policy,
                 read_attr,
                 write_attr,
@@ -1348,7 +1355,7 @@ impl Buffer {
         }
         self.size_buffer()?;
 
-        self.write_header(&policy.base_policy, 0, INFO2_WRITE, field_count, 0);
+        self.write_header_write(policy, 0, INFO2_WRITE, field_count, 0);
         self.write_key(key, policy.send_key)?;
 
         if let Some(filter) = policy.filter_expression() {
@@ -1537,13 +1544,7 @@ impl Buffer {
         // ---------- header ----------
         match direction {
             QueryDirection::Background(wpolicy) => {
-                self.write_header_with_policy(
-                    wpolicy,
-                    0,
-                    INFO2_WRITE,
-                    field_count,
-                    operation_count,
-                );
+                self.write_header_write(wpolicy, 0, INFO2_WRITE, field_count, operation_count);
             }
             QueryDirection::Foreground(qpolicy) => {
                 let mut info1 = INFO1_READ;
@@ -1877,7 +1878,49 @@ impl Buffer {
         self.data_offset = b + MSG_TOTAL_HEADER_SIZE as usize;
     }
 
-    // Header write for write operations.
+    // Header write for pure write commands (put/delete/touch/UDF execute/
+    // background execute). Matches Java `writeHeaderWrite`: these commands
+    // carry no read part, so SC/AP read-mode and response-compression flags
+    // are not applicable and must stay clear.
+    fn write_header_write(
+        &mut self,
+        policy: &WritePolicy,
+        read_attr: u8,
+        write_attr: u8,
+        field_count: u16,
+        operation_count: u16,
+    ) {
+        self.write_header_with_policy(
+            policy,
+            read_attr,
+            write_attr,
+            field_count,
+            operation_count,
+            false,
+        );
+    }
+
+    // Header write for operate commands containing a write. Matches Java
+    // `writeHeaderReadWrite`: the command may also read, so SC/AP read modes
+    // and response compression apply.
+    fn write_header_read_write(
+        &mut self,
+        policy: &WritePolicy,
+        read_attr: u8,
+        write_attr: u8,
+        field_count: u16,
+        operation_count: u16,
+    ) {
+        self.write_header_with_policy(
+            policy,
+            read_attr,
+            write_attr,
+            field_count,
+            operation_count,
+            true,
+        );
+    }
+
     fn write_header_with_policy(
         &mut self,
         policy: &WritePolicy,
@@ -1885,6 +1928,7 @@ impl Buffer {
         write_attr: u8,
         field_count: u16,
         operation_count: u16,
+        with_read_flags: bool,
     ) {
         // Set flags.
         let mut generation: u32 = 0;
@@ -1920,27 +1964,33 @@ impl Buffer {
             write_attr |= INFO2_DURABLE_DELETE;
         }
 
-        if policy.base_policy.use_compression {
-            read_attr |= INFO1_COMPRESS_RESPONSE;
-        }
-
         let mut txn_attr: u8 = 0;
         if policy.on_locking_only {
             txn_attr |= INFO4_MRT_ON_LOCKING_ONLY;
         }
         txn_attr |= error_verbosity_bits(policy.base_policy.error_detail_verbosity);
 
-        match policy.base_policy.read_mode_sc {
-            ReadModeSC::Session => {}
-            ReadModeSC::Linearize => info_attr |= INFO3_SC_READ_TYPE,
-            ReadModeSC::AllowReplica => info_attr |= INFO3_SC_READ_RELAX,
-            ReadModeSC::AllowUnavailable => {
-                info_attr |= INFO3_SC_READ_TYPE | INFO3_SC_READ_RELAX;
+        // Read-mode and response-compression flags only apply to commands
+        // with a read part (operate containing a write). Pure writes leave
+        // them clear, matching Java writeHeaderWrite vs writeHeaderReadWrite
+        // and Go writeHeaderWrite vs writeHeaderReadWrite.
+        if with_read_flags {
+            if policy.base_policy.use_compression {
+                read_attr |= INFO1_COMPRESS_RESPONSE;
             }
-        }
 
-        if policy.base_policy.read_mode_ap == ReadModeAP::All {
-            read_attr |= INFO1_READ_MODE_AP_ALL;
+            match policy.base_policy.read_mode_sc {
+                ReadModeSC::Session => {}
+                ReadModeSC::Linearize => info_attr |= INFO3_SC_READ_TYPE,
+                ReadModeSC::AllowReplica => info_attr |= INFO3_SC_READ_RELAX,
+                ReadModeSC::AllowUnavailable => {
+                    info_attr |= INFO3_SC_READ_TYPE | INFO3_SC_READ_RELAX;
+                }
+            }
+
+            if policy.base_policy.read_mode_ap == ReadModeAP::All {
+                read_attr |= INFO1_READ_MODE_AP_ALL;
+            }
         }
 
         // Write all header data except total size which must be written last.
@@ -2802,6 +2852,91 @@ mod tests {
         buf.resize_buffer(256).unwrap();
         // Legacy behavior: shrink_to_fit deallocates down to the size.
         assert!(buf.data_buffer.capacity() < 1024);
+    }
+
+    fn read_heavy_write_policy() -> WritePolicy {
+        let mut policy = WritePolicy::default();
+        policy.base_policy.read_mode_sc = ReadModeSC::Linearize;
+        policy.base_policy.read_mode_ap = ReadModeAP::All;
+        policy.base_policy.use_compression = true;
+        policy
+    }
+
+    fn header_buffer() -> Buffer {
+        let mut buf = Buffer::new(0);
+        buf.begin();
+        buf.size_buffer().unwrap();
+        buf
+    }
+
+    // Pure writes (put/delete/touch/UDF/background execute) must not carry
+    // read-mode or response-compression flags — Java writeHeaderWrite and
+    // Go writeHeaderWrite leave them clear.
+    #[test]
+    fn pure_write_header_leaves_read_flags_clear() {
+        let policy = read_heavy_write_policy();
+        let mut buf = header_buffer();
+        buf.write_header_write(&policy, 0, INFO2_WRITE, 1, 1);
+
+        assert_eq!(
+            buf.data_buffer[9] & (INFO1_READ_MODE_AP_ALL | INFO1_COMPRESS_RESPONSE),
+            0,
+            "info1 read flags must stay clear on pure writes"
+        );
+        assert_eq!(
+            buf.data_buffer[11] & (INFO3_SC_READ_TYPE | INFO3_SC_READ_RELAX),
+            0,
+            "info3 SC read bits must stay clear on pure writes"
+        );
+    }
+
+    // Operate commands containing a write may also read, so SC/AP read
+    // modes and response compression apply — Java/Go writeHeaderReadWrite.
+    #[test]
+    fn operate_write_header_sets_read_flags() {
+        let policy = read_heavy_write_policy();
+        let mut buf = header_buffer();
+        buf.write_header_read_write(&policy, INFO1_READ, INFO2_WRITE, 1, 2);
+
+        assert_eq!(
+            buf.data_buffer[9] & (INFO1_READ_MODE_AP_ALL | INFO1_COMPRESS_RESPONSE),
+            INFO1_READ_MODE_AP_ALL | INFO1_COMPRESS_RESPONSE
+        );
+        assert_eq!(
+            buf.data_buffer[11] & (INFO3_SC_READ_TYPE | INFO3_SC_READ_RELAX),
+            INFO3_SC_READ_TYPE,
+            "Linearize maps to SC_READ_TYPE only"
+        );
+    }
+
+    // 0x8 = return key-specific error code when an error stops the batch
+    // response (Java CLIENT-1720); always set, like the Java client.
+    #[test]
+    fn batch_flags_always_include_key_error_bit() {
+        let mut policy = BatchPolicy::default();
+        policy.allow_inline = false;
+        policy.allow_inline_ssd = false;
+        policy.respond_all_keys = false;
+        assert_eq!(Buffer::get_batch_flags(&policy), 0x8);
+
+        policy.allow_inline = true;
+        policy.allow_inline_ssd = true;
+        policy.respond_all_keys = true;
+        assert_eq!(Buffer::get_batch_flags(&policy), 0x8 | 0x1 | 0x2 | 0x4);
+    }
+
+    // f32 bins widen losslessly to the 8-byte double particle instead of
+    // panicking (Java parity: Float and Double both store as doubles).
+    #[test]
+    fn f32_bin_value_writes_as_double_particle() {
+        let value = crate::Value::from(1.5f32);
+        let mut buf = Buffer::new(0);
+        buf.begin();
+        buf.size_buffer().unwrap();
+        buf.data_offset = 0;
+        let written = value.write_to(&mut buf).unwrap();
+        assert_eq!(written, 8);
+        assert_eq!(buf.data_buffer[..8], 1.5f64.to_be_bytes());
     }
 
     /// Helper: build a Buffer that looks like a real command was written.

@@ -92,6 +92,18 @@ impl From<&f64> for FloatValue {
     }
 }
 
+impl FloatValue {
+    /// Widen to `f64` for the wire, where every float is an 8-byte double
+    /// particle. `f32 -> f64` is lossless (matches the Java client, which
+    /// stores both Float and Double bins as doubles).
+    pub(crate) fn as_f64(&self) -> f64 {
+        match *self {
+            FloatValue::F32(bits) => f64::from(f32::from_bits(bits)),
+            FloatValue::F64(bits) => f64::from_bits(bits),
+        }
+    }
+}
+
 impl From<FloatValue> for f32 {
     fn from(val: FloatValue) -> f32 {
         match val {
@@ -437,7 +449,7 @@ impl Value {
             Value::Nil => 0,
             Value::Int(ref val) => buf.write_i64(*val),
             Value::Bool(ref val) => buf.write_bool(*val),
-            Value::Float(ref val) => buf.write_f64(f64::from(val)),
+            Value::Float(ref val) => buf.write_f64(val.as_f64()),
             Value::String(ref val) => buf.write_str(val),
             Value::Blob(ref val) | Value::HLL(ref val) => buf.write_bytes(val),
             Value::MultiResult(_) => {
@@ -963,7 +975,7 @@ impl TryFrom<Value> for f64 {
     type Error = String;
     fn try_from(val: Value) -> std::result::Result<Self, Self::Error> {
         match val {
-            Value::Float(v) => Ok(f64::from(v)),
+            Value::Float(v) => Ok(v.as_f64()),
             _ => Err(format!(
                 "Invalid type conversion from Value::{} to {}",
                 val.particle_type(),
