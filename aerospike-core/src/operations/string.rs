@@ -155,7 +155,7 @@ impl Default for StringPolicy {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub(crate) struct StringOp {
     sub_op: u8,
     args: Vec<Value>,

@@ -608,6 +608,10 @@ impl BatchOperation {
 
         // Variant-specific payload match. send_key=true forces non-repeat because
         // the user_key field in the per-record header differs across records.
+        // Operation lists compare by content, with opaque encoder closures
+        // compared by Arc identity — so cloned op lists (the natural
+        // "build once, apply to N keys" pattern) repeat, and anything not
+        // provably identical conservatively writes a full header.
         match (self, prev) {
             (
                 Self::Read {
@@ -622,16 +626,36 @@ impl BatchOperation {
                     ops: op,
                     ..
                 },
-            ) => {
-                // Read ops can contain arbitrary Operations which we can't cheaply compare.
-                // Only dedup bins-only reads.
-                o.is_none() && op.is_none() && p == pp && b == bp
-            }
+            ) => p == pp && b == bp && o == op,
             (Self::Delete { policy: p, .. }, Self::Delete { policy: pp, .. }) => {
                 !p.send_key && !pp.send_key && p == pp
             }
-            // Write / UDF / mixed variants: ops and udf args are not cheaply comparable.
-            // Fall back to writing full headers (correct, just not optimally compressed).
+            (
+                Self::Write {
+                    policy: p, ops: o, ..
+                },
+                Self::Write {
+                    policy: pp,
+                    ops: op,
+                    ..
+                },
+            ) => !p.send_key && !pp.send_key && p == pp && o == op,
+            (
+                Self::UDF {
+                    policy: p,
+                    udf_name: n,
+                    function_name: f,
+                    args: a,
+                    ..
+                },
+                Self::UDF {
+                    policy: pp,
+                    udf_name: np,
+                    function_name: fp,
+                    args: ap,
+                    ..
+                },
+            ) => !p.send_key && !pp.send_key && p == pp && n == np && f == fp && a == ap,
             _ => false,
         }
     }
@@ -702,6 +726,126 @@ impl BatchOperation {
                 txn.on_write_in_doubt(&br.key);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod repeat_tests {
+    use super::*;
+    use crate::operations::{self, lists};
+    use crate::{as_bin, Bins};
+
+    fn key(n: i64) -> Key {
+        Key::new("ns", "set", crate::Value::from(n)).unwrap()
+    }
+
+    // Identical writes over the same op list (built once, cloned per key)
+    // repeat — the Java `record.equals(prev)` batch compression.
+    #[test]
+    fn write_repeats_for_shared_op_list() {
+        let policy = BatchWritePolicy::default();
+        let ops = vec![
+            operations::put(&as_bin!("a", 1)),
+            lists::append(
+                &lists::ListPolicy::default(),
+                "l",
+                crate::Value::from(1),
+            ),
+        ];
+        let w1 = BatchOperation::write(&policy, key(1), ops.clone());
+        let w2 = BatchOperation::write(&policy, key(2), ops.clone());
+        assert!(w2.match_header(Some(&w1), None, None));
+    }
+
+    // Scalar-only op lists compare fully by content, so even separately
+    // constructed identical lists repeat.
+    #[test]
+    fn write_repeats_for_equal_scalar_ops() {
+        let policy = BatchWritePolicy::default();
+        let w1 = BatchOperation::write(&policy, key(1), vec![operations::put(&as_bin!("a", 1))]);
+        let w2 = BatchOperation::write(&policy, key(2), vec![operations::put(&as_bin!("a", 1))]);
+        assert!(w2.match_header(Some(&w1), None, None));
+    }
+
+    // Independently constructed CDT ops carry distinct encoder Arcs, so
+    // equality cannot be proven — conservatively no repeat.
+    #[test]
+    fn write_does_not_repeat_for_separately_built_cdt_ops() {
+        let policy = BatchWritePolicy::default();
+        let cdt = |v: i64| {
+            vec![lists::append(
+                &lists::ListPolicy::default(),
+                "l",
+                crate::Value::from(v),
+            )]
+        };
+        let w1 = BatchOperation::write(&policy, key(1), cdt(1));
+        let w2 = BatchOperation::write(&policy, key(2), cdt(1));
+        assert!(!w2.match_header(Some(&w1), None, None));
+    }
+
+    // send_key forces a full header (the user_key field differs per record).
+    #[test]
+    fn write_does_not_repeat_with_send_key() {
+        let mut policy = BatchWritePolicy::default();
+        policy.send_key = true;
+        let ops = vec![operations::put(&as_bin!("a", 1))];
+        let w1 = BatchOperation::write(&policy, key(1), ops.clone());
+        let w2 = BatchOperation::write(&policy, key(2), ops.clone());
+        assert!(!w2.match_header(Some(&w1), None, None));
+    }
+
+    // Different write payloads and different namespaces never repeat.
+    #[test]
+    fn write_does_not_repeat_across_payload_or_namespace() {
+        let policy = BatchWritePolicy::default();
+        let w1 = BatchOperation::write(&policy, key(1), vec![operations::put(&as_bin!("a", 1))]);
+        let w2 = BatchOperation::write(&policy, key(2), vec![operations::put(&as_bin!("a", 2))]);
+        assert!(!w2.match_header(Some(&w1), None, None));
+
+        let other_ns = Key::new("other", "set", crate::Value::from(3)).unwrap();
+        let ops = vec![operations::put(&as_bin!("a", 1))];
+        let w3 = BatchOperation::write(&policy, other_ns, ops.clone());
+        let w4 = BatchOperation::write(&policy, key(4), ops);
+        assert!(!w4.match_header(Some(&w3), None, None));
+    }
+
+    // Identical UDF invocations repeat; different args do not.
+    #[test]
+    fn udf_repeats_for_equal_invocations() {
+        let policy = BatchUDFPolicy::default();
+        let args = Some(vec![crate::Value::from(1)]);
+        let u1 = BatchOperation::udf(&policy, key(1), "pkg", "fun", args.clone());
+        let u2 = BatchOperation::udf(&policy, key(2), "pkg", "fun", args);
+        assert!(u2.match_header(Some(&u1), None, None));
+
+        let u3 = BatchOperation::udf(&policy, key(3), "pkg", "fun", Some(vec![crate::Value::from(2)]));
+        assert!(!u3.match_header(Some(&u2), None, None));
+    }
+
+    // Reads with op lists (not just bins) now repeat too.
+    #[test]
+    fn read_ops_repeat_for_shared_op_list() {
+        let policy = BatchReadPolicy::default();
+        let ops = vec![operations::get_bin("a")];
+        let r1 = BatchOperation::read_ops(&policy, key(1), ops.clone());
+        let r2 = BatchOperation::read_ops(&policy, key(2), ops);
+        assert!(r2.match_header(Some(&r1), None, None));
+
+        // Mixed shapes never repeat.
+        let r3 = BatchOperation::read(&policy, key(3), Bins::All);
+        assert!(!r3.match_header(Some(&r2), None, None));
+    }
+
+    // Differing txn read versions force full headers.
+    #[test]
+    fn txn_version_mismatch_prevents_repeat() {
+        let policy = BatchWritePolicy::default();
+        let ops = vec![operations::put(&as_bin!("a", 1))];
+        let w1 = BatchOperation::write(&policy, key(1), ops.clone());
+        let w2 = BatchOperation::write(&policy, key(2), ops);
+        assert!(!w2.match_header(Some(&w1), Some(7), None));
+        assert!(w2.match_header(Some(&w1), Some(7), Some(7)));
     }
 }
 

@@ -41,7 +41,7 @@ use crate::operations::exp::ExpOperation;
 use crate::Result;
 use crate::Value;
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum OperationType {
     Read = 1,
     Write = 2,
@@ -63,7 +63,7 @@ pub(crate) enum OperationType {
     ToString = 19,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub(crate) enum OperationData {
     None,
     Value(Value),
@@ -77,7 +77,7 @@ pub(crate) enum OperationData {
     StringOp(StringOp),
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub(crate) enum OperationBin {
     None,
     All,
@@ -85,7 +85,12 @@ pub(crate) enum OperationBin {
 }
 
 /// Database operation definition. This data type is used in the client's `operate()` method.
-#[derive(Clone, Debug)]
+///
+/// Equality is used to detect batch wire-protocol repeats: cloned operations
+/// always compare equal; independently constructed CDT/HLL/bit/expression
+/// operations compare equal only when they share the same encoder instance
+/// (clone the operation list per record to benefit from batch compression).
+#[derive(Clone, Debug, PartialEq)]
 pub struct Operation {
     // OpType determines type of operation.
     pub(crate) op: OperationType,

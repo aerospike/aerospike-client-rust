@@ -994,3 +994,49 @@ async fn batch_stream_mixed_ops_preserve_index_and_kind() {
         other => panic!("delete didn't take effect; got: {:?}", other),
     }
 }
+
+// Identical writes/UDF records over a shared (cloned) op list encode with
+// the wire REPEAT flag after the first record. This proves the server
+// accepts the compressed encoding and applies the repeated header to every
+// digest: all records must succeed and all keys must hold the data.
+#[aerospike_macro::test]
+async fn batch_write_repeat_compression() {
+    let client = common::client().await;
+    let namespace = common::namespace();
+    let set_name = common::rand_str(10);
+    let bpolicy = BatchPolicy::default();
+    let wpolicy = BatchWritePolicy::default();
+
+    let ops = vec![
+        operations::put(&as_bin!("a", 7)),
+        lists::append(&lists::ListPolicy::default(), "l", as_val!(1)),
+    ];
+
+    let mut batch = Vec::new();
+    let mut keys = Vec::new();
+    for i in 0..8_i64 {
+        let key = as_key!(namespace, &set_name, i);
+        keys.push(key.clone());
+        // Cloned op list => every record after the first repeats.
+        batch.push(BatchOperation::write(&wpolicy, key, ops.clone()));
+    }
+
+    let results = client.batch(&bpolicy, &batch).await.unwrap();
+    assert_eq!(results.len(), 8);
+    for record in &results {
+        assert_eq!(
+            record.result_code,
+            Some(ResultCode::Ok),
+            "repeated batch write failed: {record:?}"
+        );
+    }
+
+    let rp = ReadPolicy::default();
+    for key in &keys {
+        let rec = client.get(&rp, key, Bins::All).await.unwrap();
+        assert_eq!(rec.bins.get("a"), Some(&Value::from(7_i64)));
+        assert_eq!(rec.bins.get("l"), Some(&as_list!(1)));
+    }
+
+    client.close().await.unwrap();
+}

@@ -24,7 +24,7 @@ use crate::Result;
 use crate::Value;
 
 /// Argument value for CDT (list/map) operations in the wire protocol.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum CdtArgument {
     /// Single byte.
     Byte(u8),
@@ -56,6 +56,18 @@ pub struct CdtOperation {
     pub op: u8,
     pub encoder: OperationEncoder,
     pub args: Vec<CdtArgument>,
+}
+
+/// Equality supports batch-repeat detection. The encoder closure cannot be
+/// compared by content, so two operations are equal only when they share
+/// the same encoder `Arc` (i.e. one is a clone of the other) — a
+/// conservative check that can never produce a false positive.
+impl PartialEq for CdtOperation {
+    fn eq(&self, other: &Self) -> bool {
+        self.op == other.op
+            && Arc::ptr_eq(&self.encoder, &other.encoder)
+            && self.args == other.args
+    }
 }
 
 impl CdtOperation {
