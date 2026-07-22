@@ -20,8 +20,6 @@
 //! - peers / partition generation commit accessors
 //! - rack-ids parser (Java parity: `<= 0 || >= 32` chars rejected)
 
-use std::collections::HashSet;
-
 use aerospike::policy::AdminPolicy;
 use aerospike::Client;
 
@@ -215,17 +213,12 @@ async fn rack_parse_valid_format() {
 
     node.parse_rack("ns_a:1;ns_b:2").unwrap();
 
-    let mut want_rack_1 = HashSet::new();
-    want_rack_1.insert(1usize);
-    let mut want_rack_2 = HashSet::new();
-    want_rack_2.insert(2usize);
-
-    assert!(node.is_in_rack("ns_a", &want_rack_1));
-    assert!(!node.is_in_rack("ns_a", &want_rack_2));
-    assert!(node.is_in_rack("ns_b", &want_rack_2));
-    assert!(!node.is_in_rack("ns_b", &want_rack_1));
+    assert!(node.has_rack("ns_a", 1));
+    assert!(!node.has_rack("ns_a", 2));
+    assert!(node.has_rack("ns_b", 2));
+    assert!(!node.has_rack("ns_b", 1));
     // Unknown namespace → false.
-    assert!(!node.is_in_rack("unknown", &want_rack_1));
+    assert!(!node.has_rack("unknown", 1));
 
     client.close().await.unwrap();
 }
@@ -241,9 +234,7 @@ async fn rack_parse_trailing_semicolon_is_ignored() {
 
     node.parse_rack("ns_a:1;").unwrap();
 
-    let mut want = HashSet::new();
-    want.insert(1usize);
-    assert!(node.is_in_rack("ns_a", &want));
+    assert!(node.has_rack("ns_a", 1));
 
     client.close().await.unwrap();
 }
@@ -310,17 +301,13 @@ async fn rack_parse_replace_table() {
     let node = nodes.first().unwrap();
 
     node.parse_rack("ns_a:1;ns_b:2").unwrap();
-    let mut want_1 = HashSet::new();
-    want_1.insert(1usize);
-    assert!(node.is_in_rack("ns_a", &want_1));
+    assert!(node.has_rack("ns_a", 1));
 
     // Second parse: only `ns_c` survives.
     node.parse_rack("ns_c:9").unwrap();
-    let mut want_9 = HashSet::new();
-    want_9.insert(9usize);
-    assert!(node.is_in_rack("ns_c", &want_9));
-    assert!(!node.is_in_rack("ns_a", &want_1));
-    assert!(!node.is_in_rack("ns_b", &want_1));
+    assert!(node.has_rack("ns_c", 9));
+    assert!(!node.has_rack("ns_a", 1));
+    assert!(!node.has_rack("ns_b", 1));
 
     client.close().await.unwrap();
 }
@@ -405,4 +392,70 @@ async fn seed_only_cluster_pins_to_seed_addresses() {
     );
 
     client.close().await.unwrap();
+}
+
+// ---- rack-aware read routing ----------------------------------------------
+
+#[aerospike_macro::test]
+async fn prefer_rack_read_routing() {
+    use aerospike::policy::Replica;
+    use aerospike::{as_bin, as_key, as_val, Bins, ReadPolicy, WritePolicy};
+
+    // Ordered rack preference list: rack 7 (nowhere) is preferred over the
+    // server's actual rack. Whatever racks the server reports, a
+    // PreferRack read must route successfully — preferred-rack match or
+    // the different-rack/fallback tiers.
+    let mut policy = common::client_policy().clone();
+    policy.rack_ids = Some(vec![7, 0]);
+    let client = Client::new(&policy, &common::hosts().to_string())
+        .await
+        .expect("connect with rack_ids");
+
+    let namespace = common::namespace();
+    let set_name = common::rand_str(10);
+    let key = as_key!(namespace, &set_name, "rack_read");
+
+    client
+        .put(&WritePolicy::default(), &key, &[as_bin!("a", 1)])
+        .await
+        .unwrap();
+
+    let mut rpolicy = ReadPolicy::default();
+    rpolicy.replica = Replica::PreferRack;
+    let rec = client.get(&rpolicy, &key, Bins::All).await.unwrap();
+    assert_eq!(rec.bins.get("a"), Some(&as_val!(1)));
+
+    // Batch under PreferRack: reads route rack-preferred, writes must
+    // route via the write-side logic (never to a rack replica). Mixed
+    // batch with >1 key per node exercises the grouped (non-fast-path)
+    // node split.
+    use aerospike::{BatchOperation, BatchPolicy, BatchReadPolicy, BatchWritePolicy, Bins as B};
+    let mut bpolicy = BatchPolicy::default();
+    bpolicy.replica = Replica::PreferRack;
+    let wkey = as_key!(namespace, &set_name, "rack_batch_write");
+    let batch = vec![
+        BatchOperation::write(
+            &BatchWritePolicy::default(),
+            wkey.clone(),
+            vec![aerospike::operations::put(&as_bin!("b", 2))],
+        ),
+        BatchOperation::read(&BatchReadPolicy::default(), key.clone(), B::All),
+        BatchOperation::read(&BatchReadPolicy::default(), wkey.clone(), B::All),
+    ];
+    let results = client.batch(&bpolicy, &batch).await.unwrap();
+    assert_eq!(results.len(), 3);
+    let rec = client.get(&rpolicy, &wkey, Bins::All).await.unwrap();
+    assert_eq!(rec.bins.get("b"), Some(&as_val!(2)));
+
+    client.close().await.unwrap();
+}
+
+// ---- client version --------------------------------------------------------
+
+#[aerospike_macro::test]
+async fn client_version_reports_crate_version() {
+    let version = Client::client_version();
+    assert!(!version.is_empty());
+    // Semver-ish: starts with a digit and contains a dot.
+    assert!(version.as_bytes()[0].is_ascii_digit() && version.contains('.'));
 }

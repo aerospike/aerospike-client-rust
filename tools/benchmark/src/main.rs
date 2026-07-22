@@ -33,7 +33,6 @@ mod tasks;
 mod throttle;
 mod workers;
 
-use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -180,7 +179,7 @@ async fn connect(options: &Options) -> AerospikeResult<Client> {
         policy.tend_interval = interval.max(aerospike::policy::TEND_INTERVAL_MIN_MS);
     }
     if let Some(rack) = options.rack_id {
-        policy.rack_ids = Some(HashSet::from([rack]));
+        policy.rack_ids = Some(vec![rack]);
     }
     policy.use_services_alternate = options.use_services_alternate;
     policy.ip_map = options.ip_map.clone();

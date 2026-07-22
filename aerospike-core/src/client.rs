@@ -265,6 +265,12 @@ impl Client {
         self.cluster.is_connected()
     }
 
+    /// Returns this client library's version string (e.g. `"3.0.0-alpha.1"`).
+    #[must_use]
+    pub const fn client_version() -> &'static str {
+        env!("CARGO_PKG_VERSION")
+    }
+
     /// Returns a list of the names of the active server nodes in the cluster.
     ///
     /// # Examples

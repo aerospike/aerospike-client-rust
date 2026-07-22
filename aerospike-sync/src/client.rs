@@ -214,6 +214,12 @@ impl Client {
         self.async_client.is_connected()
     }
 
+    /// Returns this client library's version string (e.g. `"3.0.0-alpha.1"`).
+    #[must_use]
+    pub const fn client_version() -> &'static str {
+        aerospike_core::Client::client_version()
+    }
+
     /// Returns a list of the names of the active server nodes in the cluster.
     pub fn node_names(&self) -> Vec<String> {
         self.async_client.node_names()

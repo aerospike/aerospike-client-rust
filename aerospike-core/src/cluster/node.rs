@@ -13,7 +13,7 @@
 // License for the specific language governing permissions and limitations under
 // the License.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::fmt;
 use std::hash::{Hash, Hasher};
 use std::result::Result as StdResult;
@@ -536,11 +536,14 @@ impl Node {
         Ok(())
     }
 
-    pub fn is_in_rack(&self, namespace: &str, rack_ids: &HashSet<usize>) -> bool {
+    /// Returns true if this node hosts the given namespace on exactly the
+    /// given rack (Java `Node.hasRack`). Rack preference ordering is the
+    /// caller's concern — see `Partition::get_rack_node`.
+    pub fn has_rack(&self, namespace: &str, rack_id: usize) -> bool {
         self.rack_ids
             .load()
             .get(namespace)
-            .is_some_and(|r| rack_ids.contains(r))
+            .is_some_and(|r| *r == rack_id)
     }
 
     pub fn parse_rack(&self, buf: &str) -> Result<()> {

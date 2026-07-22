@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::time::Duration;
 
 use crate::commands::admin_command::AdminCommand;
@@ -306,9 +306,13 @@ pub struct ClientPolicy {
     /// This serves to lower cloud provider costs when nodes are distributed across different
     /// racks/data centers.
     ///
+    /// Racks are tried in **preference order**: node selection scans the
+    /// replicas for a node on the first rack in the list, then the second,
+    /// and so on, before falling back to any other active node.
+    ///
     /// Replica.PreferRack and server rack configuration must
     /// also be set to enable this functionality.
-    pub rack_ids: Option<HashSet<usize>>,
+    pub rack_ids: Option<Vec<usize>>,
 
     /// Application id is used to identify an application so that client operations can be correlated
     /// with server side metrics.

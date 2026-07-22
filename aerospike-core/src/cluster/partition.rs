@@ -35,6 +35,10 @@ pub struct Partition<'a> {
     pub sequence: usize,
     pub linearize: bool,
     pub is_write: bool,
+    /// Node the previous attempt of this command selected. `PreferRack`
+    /// routing deprioritizes it on retry — a same-rack node that just
+    /// failed is worse than a different-rack node (Java `Partition.prevNode`).
+    pub prev_node: Option<Arc<Node>>,
 }
 
 impl<'a> Partition<'a> {
@@ -46,6 +50,7 @@ impl<'a> Partition<'a> {
             sequence: 0,
             linearize: false,
             is_write: false,
+            prev_node: None,
         }
     }
 
@@ -61,6 +66,7 @@ impl<'a> Partition<'a> {
             sequence: 0,
             linearize: false,
             is_write: false,
+            prev_node: None,
         }
     }
 
@@ -219,30 +225,57 @@ impl<'a> Partition<'a> {
             )
         })?;
 
-        let mut fallback = None;
+        // Java Partition.getRackNode: racks are tried in preference order,
+        // and the node the previous attempt failed on is deprioritized —
+        // preferred-rack match first, then any other active node
+        // (fallback1), and the previous node only as a last resort
+        // (fallback2).
+        let mut fallback1: Option<(Arc<Node>, usize)> = None;
+        let mut fallback2: Option<(Arc<Node>, usize)> = None;
 
-        for _ in 0..replica_count {
-            let index = self.sequence % replica_count;
-            let node = partitions
-                .nodes
-                .get(index * node::PARTITIONS + self.partition_id)
-                .and_then(|(_, n)| n.clone());
+        for rack_id in rack_ids {
+            let mut seq = self.sequence;
 
-            if let Some(ref node) = node {
-                if node.is_active() {
-                    if node.is_in_rack(self.namespace, rack_ids) {
-                        return Ok(node.clone());
-                    }
-                    if fallback.is_none() {
-                        fallback = Some(node.clone());
+            for _ in 0..replica_count {
+                let index = seq % replica_count;
+                let node = partitions
+                    .nodes
+                    .get(index * node::PARTITIONS + self.partition_id)
+                    .and_then(|(_, n)| n.clone());
+
+                if let Some(node) = node {
+                    // Avoid retrying on the node where the command failed,
+                    // even if it is the only one on the preferred rack.
+                    let is_prev = self
+                        .prev_node
+                        .as_ref()
+                        .is_some_and(|prev| Arc::ptr_eq(prev, &node));
+
+                    if !is_prev {
+                        if node.has_rack(self.namespace, *rack_id) {
+                            if node.is_active() {
+                                self.prev_node = Some(node.clone());
+                                self.sequence = seq;
+                                return Ok(node);
+                            }
+                        } else if fallback1.is_none() && node.is_active() {
+                            // Meets all criteria except not on the same rack.
+                            fallback1 = Some((node, seq));
+                        }
+                    } else if fallback2.is_none() && node.is_active() {
+                        // The previous node is the least desirable fallback.
+                        fallback2 = Some((node, seq));
                     }
                 }
+                seq += 1;
             }
-            self.sequence += 1;
         }
 
-        if let Some(fallback) = fallback {
-            return Ok(fallback);
+        // Prefer a node on a different rack over the previously failed node.
+        if let Some((node, seq)) = fallback1.or(fallback2) {
+            self.prev_node = Some(node.clone());
+            self.sequence = seq;
+            return Ok(node);
         }
 
         Err(invalid_node_error(self))

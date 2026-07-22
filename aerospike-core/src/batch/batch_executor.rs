@@ -40,10 +40,22 @@ impl BatchExecutor {
     fn node_for_key(
         &self,
         key: &Key,
+        has_write: bool,
         replica: crate::policy::Replica,
         read_mode_sc: crate::policy::ReadModeSC,
     ) -> Result<Arc<Node>> {
-        let mut partition = Partition::for_read(&self.cluster, key, replica, read_mode_sc);
+        // Java BatchNodeList parity: write records route via the
+        // write-side replica logic (master, or the sequence walk for
+        // Sequence/PreferRack — never rack-preferred, which could pick a
+        // replica), read records via the read-side logic including
+        // PreferRack and the SC read-mode overrides.
+        let mut partition = if has_write {
+            let mut partition = Partition::for_write(key);
+            partition.replica = replica;
+            partition
+        } else {
+            Partition::for_read(&self.cluster, key, replica, read_mode_sc)
+        };
         partition.get_node(&self.cluster)
     }
 
@@ -387,7 +399,8 @@ impl BatchExecutor {
         #![allow(clippy::type_complexity)]
         let mut map = HashMap::new();
         for (index, batch_op) in batch_ops.iter().enumerate() {
-            let node = self.node_for_key(&batch_op.key(), replica, read_mode_sc)?;
+            let node =
+                self.node_for_key(&batch_op.key(), batch_op.has_write(), replica, read_mode_sc)?;
             map.entry(node)
                 .or_insert_with(Vec::new)
                 .push((batch_op.clone(), index));
