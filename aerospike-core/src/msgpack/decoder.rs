@@ -146,23 +146,24 @@ fn unpack_blob(buf: &mut Buffer, count: usize) -> Result<Value> {
     let vtype = buf.read_u8(None);
     let count = count - 1;
 
-    match ParticleType::from(vtype) {
-        ParticleType::STRING => {
+    match ParticleType::try_from_u8(vtype) {
+        Some(ParticleType::STRING) => {
             let val = buf.read_str(count)?;
             Ok(Value::String(val))
         }
 
-        ParticleType::BLOB => Ok(Value::Blob(buf.read_blob(count))),
-        ParticleType::HLL => Ok(Value::HLL(buf.read_blob(count))),
+        Some(ParticleType::BLOB) => Ok(Value::Blob(buf.read_blob(count))),
+        Some(ParticleType::HLL) => Ok(Value::HLL(buf.read_blob(count))),
 
-        ParticleType::GEOJSON => {
+        Some(ParticleType::GEOJSON) => {
             let val = buf.read_str(count)?;
             Ok(Value::GeoJSON(val))
         }
 
-        _ => Err(Error::bad_response(format!(
-            "Error while unpacking BLOB. Type-header with code `{vtype}` not recognized."
-        ))),
+        // A type header the client cannot interpret (e.g. a legacy
+        // language-specific serialization nested in a list or map):
+        // surface the raw bytes tagged with their wire code — read-only.
+        _ => Ok(Value::Unknown(vtype, buf.read_blob(count))),
     }
 }
 

@@ -87,6 +87,11 @@ pub fn value_to_lua(lua: &Lua, value: Value) -> mlua::Result<LuaValue> {
                 "Infinity/Wildcard values cannot be passed to Lua",
             ))
         }
+        // Opaque foreign payload: Lua has no notion of unknown particle
+        // types, so surface it as plain bytes (like blobs).
+        Value::Unknown(_, b) => {
+            LuaValue::UserData(lua.create_userdata(LuaBytes::new(b, ParticleType::BLOB))?)
+        }
     })
 }
 

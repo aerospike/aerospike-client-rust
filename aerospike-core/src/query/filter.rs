@@ -105,8 +105,8 @@ impl EqFilterValue for Value {
     fn into_filter_value(self) -> Value {
         assert!(
             matches!(
-                self.particle_type(),
-                ParticleType::INTEGER | ParticleType::STRING | ParticleType::BLOB
+                self,
+                Value::Int(_) | Value::String(_) | Value::Blob(_)
             ),
             "equality/contains filter value must be integer, string, or blob"
         );
@@ -118,8 +118,8 @@ impl RangeFilterValue for Value {
     fn into_filter_value(self) -> Value {
         assert!(
             matches!(
-                self.particle_type(),
-                ParticleType::INTEGER | ParticleType::STRING | ParticleType::BLOB
+                self,
+                Value::Int(_) | Value::String(_) | Value::Blob(_)
             ),
             "equality/contains filter value must be integer, string, or blob"
         );
@@ -188,7 +188,7 @@ fn geo_circle_json(lng: f64, lat: f64, radius: f64) -> Value {
 pub struct Filter {
     pub(crate) bin_name: String,
     pub(crate) collection_index_type: CollectionIndexType,
-    pub(crate) value_particle_type: ParticleType,
+    pub(crate) value_particle_type: u8,
 
     pub(crate) begin: Value,
 
@@ -211,7 +211,7 @@ impl Filter {
     pub(crate) fn new(
         bin_name: &str,
         collection_index_type: CollectionIndexType,
-        value_particle_type: ParticleType,
+        value_particle_type: u8,
         begin: Value,
         end: Value,
     ) -> Self {
@@ -231,7 +231,7 @@ impl Filter {
     pub(crate) fn new_by_index(
         index_name: &str,
         collection_index_type: CollectionIndexType,
-        value_particle_type: ParticleType,
+        value_particle_type: u8,
         begin: Value,
         end: Value,
     ) -> Self {
@@ -405,7 +405,7 @@ impl Filter {
         Filter::new(
             bin_name,
             CollectionIndexType::Default,
-            ParticleType::GEOJSON,
+            ParticleType::GEOJSON as u8,
             region.clone(),
             region,
         )
@@ -414,7 +414,7 @@ impl Filter {
     /// Creates a geo-spatial "points within region" filter for queries on a collection index.
     pub fn geo_within_region_cit(bin_name: &str, region: &str, cit: CollectionIndexType) -> Self {
         let region = Value::String(region.to_owned());
-        Filter::new(bin_name, cit, ParticleType::GEOJSON, region.clone(), region)
+        Filter::new(bin_name, cit, ParticleType::GEOJSON as u8, region.clone(), region)
     }
 
     /// Creates a geo-spatial "points within region" filter targeting a specific secondary index
@@ -424,7 +424,7 @@ impl Filter {
         Filter::new_by_index(
             index_name,
             CollectionIndexType::Default,
-            ParticleType::GEOJSON,
+            ParticleType::GEOJSON as u8,
             region.clone(),
             region,
         )
@@ -441,7 +441,7 @@ impl Filter {
         Filter::new_by_index(
             index_name,
             cit,
-            ParticleType::GEOJSON,
+            ParticleType::GEOJSON as u8,
             region.clone(),
             region,
         )
@@ -459,7 +459,7 @@ impl Filter {
         Filter::new(
             bin_name,
             CollectionIndexType::Default,
-            ParticleType::GEOJSON,
+            ParticleType::GEOJSON as u8,
             geo_json.clone(),
             geo_json,
         )
@@ -477,7 +477,7 @@ impl Filter {
         Filter::new(
             bin_name,
             cit,
-            ParticleType::GEOJSON,
+            ParticleType::GEOJSON as u8,
             geo_json.clone(),
             geo_json,
         )
@@ -490,7 +490,7 @@ impl Filter {
         Filter::new_by_index(
             index_name,
             CollectionIndexType::Default,
-            ParticleType::GEOJSON,
+            ParticleType::GEOJSON as u8,
             geo_json.clone(),
             geo_json,
         )
@@ -509,7 +509,7 @@ impl Filter {
         Filter::new_by_index(
             index_name,
             cit,
-            ParticleType::GEOJSON,
+            ParticleType::GEOJSON as u8,
             geo_json.clone(),
             geo_json,
         )
@@ -527,7 +527,7 @@ impl Filter {
         Filter::new(
             bin_name,
             CollectionIndexType::Default,
-            ParticleType::GEOJSON,
+            ParticleType::GEOJSON as u8,
             point.clone(),
             point,
         )
@@ -536,7 +536,7 @@ impl Filter {
     /// Creates a geo-spatial "regions containing point" filter for queries on a collection index.
     pub fn geo_contains_cit(bin_name: &str, point: &str, cit: CollectionIndexType) -> Self {
         let point = Value::String(point.to_owned());
-        Filter::new(bin_name, cit, ParticleType::GEOJSON, point.clone(), point)
+        Filter::new(bin_name, cit, ParticleType::GEOJSON as u8, point.clone(), point)
     }
 
     /// Creates a geo-spatial "regions containing point" filter targeting a specific secondary
@@ -546,7 +546,7 @@ impl Filter {
         Filter::new_by_index(
             index_name,
             CollectionIndexType::Default,
-            ParticleType::GEOJSON,
+            ParticleType::GEOJSON as u8,
             point.clone(),
             point,
         )
@@ -560,7 +560,7 @@ impl Filter {
         cit: CollectionIndexType,
     ) -> Self {
         let point = Value::String(point.to_owned());
-        Filter::new_by_index(index_name, cit, ParticleType::GEOJSON, point.clone(), point)
+        Filter::new_by_index(index_name, cit, ParticleType::GEOJSON as u8, point.clone(), point)
     }
 
     // ========================================================================
@@ -623,7 +623,7 @@ impl Filter {
     pub(crate) fn write(&self, buffer: &mut Buffer) -> Result<()> {
         buffer.write_u8(self.bin_name.len() as u8);
         buffer.write_str(&self.bin_name);
-        buffer.write_u8(self.value_particle_type.clone() as u8);
+        buffer.write_u8(self.value_particle_type);
 
         buffer.write_u32(self.begin.estimate_size()? as u32);
         self.begin.write_to(buffer)?;
@@ -722,7 +722,7 @@ macro_rules! as_within_region {
         $crate::query::Filter::new(
             $bin_name,
             $crate::CollectionIndexType::Default,
-            $crate::ParticleType::GEOJSON,
+            $crate::ParticleType::GEOJSON as u8,
             region.clone(),
             region.clone(),
         )
@@ -732,7 +732,7 @@ macro_rules! as_within_region {
         $crate::query::Filter::new(
             $bin_name,
             $cit,
-            $crate::ParticleType::GEOJSON,
+            $crate::ParticleType::GEOJSON as u8,
             region.clone(),
             region.clone(),
         )
@@ -758,7 +758,7 @@ macro_rules! as_within_radius {
         $crate::query::Filter::new(
             $bin_name,
             $crate::CollectionIndexType::Default,
-            $crate::ParticleType::GEOJSON,
+            $crate::ParticleType::GEOJSON as u8,
             geo_json.clone(),
             geo_json.clone(),
         )
@@ -775,7 +775,7 @@ macro_rules! as_within_radius {
         $crate::query::Filter::new(
             $bin_name,
             $cit,
-            $crate::ParticleType::GEOJSON,
+            $crate::ParticleType::GEOJSON as u8,
             geo_json.clone(),
             geo_json.clone(),
         )
@@ -793,7 +793,7 @@ macro_rules! as_regions_containing_point {
         $crate::query::Filter::new(
             $bin_name,
             $crate::CollectionIndexType::Default,
-            $crate::ParticleType::GEOJSON,
+            $crate::ParticleType::GEOJSON as u8,
             point.clone(),
             point.clone(),
         )
@@ -803,7 +803,7 @@ macro_rules! as_regions_containing_point {
         $crate::query::Filter::new(
             $bin_name,
             $cit,
-            $crate::ParticleType::GEOJSON,
+            $crate::ParticleType::GEOJSON as u8,
             point.clone(),
             point.clone(),
         )

@@ -282,6 +282,19 @@ pub enum Value {
 
     /// Infinity Value
     Wildcard,
+
+    /// Unknown Value signifies values whose wire particle type this client
+    /// does not interpret (e.g. legacy language-specific serializations
+    /// like Java/C#/Python blobs). Carries the raw particle-type code and
+    /// the raw payload bytes, uninterpreted.
+    ///
+    /// Strictly read-only: it is rejected on every path that would send it
+    /// to the server — as a bin value, inside lists/maps/CDT arguments, as
+    /// a record key ([`Key::new`](crate::Key::new) fails), in query
+    /// [`Filter`](crate::query::Filter)s (the filter-value conversion
+    /// panics, like other non-indexable types), and in expression literals
+    /// (packing the expression fails).
+    Unknown(u8, Vec<u8>),
 }
 
 /// The three map variants ([`Value::HashMap`], [`Value::OrderedMap`],
@@ -323,14 +336,13 @@ impl PartialEq for Value {
             (Value::Bool(a), Value::Bool(b)) => a == b,
             (Value::Int(a), Value::Int(b)) => a == b,
             (Value::Float(a), Value::Float(b)) => a == b,
-            (Value::String(a), Value::String(b)) | (Value::GeoJSON(a), Value::GeoJSON(b)) => {
-                a == b
-            }
+            (Value::String(a), Value::String(b)) | (Value::GeoJSON(a), Value::GeoJSON(b)) => a == b,
             (Value::Blob(a), Value::Blob(b)) | (Value::HLL(a), Value::HLL(b)) => a == b,
             (Value::List(a), Value::List(b)) | (Value::MultiResult(a), Value::MultiResult(b)) => {
                 a == b
             }
             (Value::KeyValueList(a), Value::KeyValueList(b)) => a == b,
+            (Value::Unknown(t1, b1), Value::Unknown(t2, b2)) => t1 == t2 && b1 == b2,
             (Value::HashMap(a), b) => entries_eq(a.len(), a.iter(), b),
             (Value::OrderedMap(a), b) => entries_eq(a.len(), a.iter(), b),
             (Value::SortedMap(a), b) => entries_eq(a.len(), a.iter(), b),
@@ -366,6 +378,7 @@ impl Hash for Value {
             }
             Value::Infinity => panic!("Infinity cannot be used as map keys."),
             Value::Wildcard => panic!("Wildcard cannot be used as map keys."),
+            Value::Unknown(..) => panic!("Unknown values cannot be used as map keys."),
         }
     }
 }
@@ -376,22 +389,25 @@ impl Value {
         matches!(*self, Value::Nil)
     }
 
-    /// Return the particle type for the value used in the wire protocol.
-    /// For internal use only.
-    pub fn particle_type(&self) -> ParticleType {
+    /// Return the wire particle-type code for the value. Returns the raw
+    /// `u8` so that [`Value::Unknown`] can carry codes the client does not
+    /// interpret. For internal use only.
+    pub fn particle_type(&self) -> u8 {
         match *self {
-            Value::Nil => ParticleType::NULL,
-            Value::Int(_) => ParticleType::INTEGER,
-            Value::Float(_) => ParticleType::FLOAT,
-            Value::String(_) => ParticleType::STRING,
-            Value::Blob(_) => ParticleType::BLOB,
-            Value::Bool(_) => ParticleType::BOOL,
-            Value::MultiResult(_) | Value::List(_) => ParticleType::LIST,
-            Value::HashMap(_) | Value::OrderedMap(_) | Value::SortedMap(_) | Value::KeyValueList(_) => {
-                ParticleType::MAP
-            }
-            Value::GeoJSON(_) => ParticleType::GEOJSON,
-            Value::HLL(_) => ParticleType::HLL,
+            Value::Nil => ParticleType::NULL as u8,
+            Value::Int(_) => ParticleType::INTEGER as u8,
+            Value::Float(_) => ParticleType::FLOAT as u8,
+            Value::String(_) => ParticleType::STRING as u8,
+            Value::Blob(_) => ParticleType::BLOB as u8,
+            Value::Bool(_) => ParticleType::BOOL as u8,
+            Value::MultiResult(_) | Value::List(_) => ParticleType::LIST as u8,
+            Value::HashMap(_)
+            | Value::OrderedMap(_)
+            | Value::SortedMap(_)
+            | Value::KeyValueList(_) => ParticleType::MAP as u8,
+            Value::GeoJSON(_) => ParticleType::GEOJSON as u8,
+            Value::HLL(_) => ParticleType::HLL as u8,
+            Value::Unknown(code, _) => code,
             Value::Infinity | Value::Wildcard => unreachable!(),
         }
     }
@@ -412,6 +428,13 @@ impl Value {
             Value::KeyValueList(ref val) => format!("{val:?}"),
             Value::Infinity => "INF".into(),
             Value::Wildcard => "*".into(),
+            Value::Unknown(code, ref bytes) => {
+                format!(
+                    "<unknown particle {}({code}), {} bytes>",
+                    ParticleType::name_of(code),
+                    bytes.len()
+                )
+            }
         }
     }
 
@@ -437,6 +460,13 @@ impl Value {
             Value::GeoJSON(ref s) => 1 + 2 + s.len(), // flags + ncells + jsonstr
             Value::HLL(ref h) => h.len(),
             Value::Nil | Value::Infinity | Value::Wildcard => 0,
+            Value::Unknown(code, _) => {
+                return Err(Error::invalid_argument(format!(
+                    "Unknown values (particle type {}({code})) hold data this client \
+                     cannot interpret and cannot be written back to the server.",
+                    ParticleType::name_of(code)
+                )));
+            }
         };
 
         Ok(res)
@@ -466,6 +496,13 @@ impl Value {
             Value::GeoJSON(ref val) => buf.write_geo(val),
             Value::Infinity => encoder::pack_infinity(&mut Some(buf)),
             Value::Wildcard => encoder::pack_wildcard(&mut Some(buf)),
+            Value::Unknown(code, _) => {
+                return Err(Error::invalid_argument(format!(
+                    "Unknown values (particle type {}({code})) hold data this client \
+                     cannot interpret and cannot be written back to the server.",
+                    ParticleType::name_of(code)
+                )));
+            }
         };
 
         Ok(res)
@@ -520,6 +557,7 @@ impl Value {
             Value::Wildcard => 11,
             Value::MultiResult(_) => 12,
             Value::KeyValueList(_) => 13,
+            Value::Unknown(..) => 14,
         }
     }
 }
@@ -597,6 +635,9 @@ impl Ord for Value {
                             .len()
                             .cmp(&entries_b.len())
                             .then_with(|| entries_a.cmp(&entries_b))
+                    }
+                    (Value::Unknown(a_type, a_bytes), Value::Unknown(b_type, b_bytes)) => {
+                        a_type.cmp(b_type).then_with(|| a_bytes.cmp(b_bytes))
                     }
                     // Equal ranks with no value comparison left
                     // (Nil/Infinity/Wildcard).
@@ -996,7 +1037,15 @@ impl TryFrom<Value> for bool {
 }
 
 pub fn bytes_to_particle(ptype: u8, buf: &mut Buffer, len: usize) -> Result<Value> {
-    match ParticleType::from(ptype) {
+    let Some(particle_type) = ParticleType::try_from_u8(ptype) else {
+        // A particle type this client does not interpret (legacy
+        // language-specific serializations, unknown future types): return
+        // the raw bytes tagged with their wire code instead of failing the
+        // whole record. These values are read-only — they are rejected on
+        // every write path.
+        return Ok(Value::Unknown(ptype, buf.read_blob(len)));
+    };
+    match particle_type {
         ParticleType::NULL => Ok(Value::Nil),
         ParticleType::INTEGER => {
             let val = buf.read_i64(None);
@@ -1028,10 +1077,11 @@ pub fn bytes_to_particle(ptype: u8, buf: &mut Buffer, len: usize) -> Result<Valu
             let val = decoder::unpack_value_map(buf)?;
             Ok(val)
         }
-        ParticleType::DIGEST => Ok(Value::from("A DIGEST, NOT IMPLEMENTED YET!")),
-        ParticleType::LDT => Ok(Value::from("A LDT, NOT IMPLEMENTED YET!")),
         ParticleType::HLL => Ok(Value::HLL(buf.read_blob(len))),
         ParticleType::BOOL => Ok(Value::Bool(buf.read_bool(len))),
+        // Retired server types the client does not interpret: same
+        // treatment as unrecognized codes above.
+        ParticleType::DIGEST | ParticleType::LDT => Ok(Value::Unknown(ptype, buf.read_blob(len))),
     }
 }
 
@@ -1277,6 +1327,9 @@ impl Serialize for Value {
             Value::Infinity => panic!("Infinity cannot be serialized"),
             Value::Wildcard => panic!("Wildcard cannot be serialized"),
             Value::MultiResult(_) => panic!("MultiValue cannot be serialized"),
+            // Serialize the raw payload; the particle type is not
+            // representable in most formats and the bytes are opaque anyway.
+            Value::Unknown(_, b) => serializer.serialize_bytes(&b[..]),
         }
     }
 }
@@ -1331,8 +1384,12 @@ impl From<MapCollection<Value, Value>> for Value {
 
 #[cfg(test)]
 mod tests {
-    use super::{MapCollection, MapLike, Value};
+    use super::{bytes_to_particle, MapCollection, MapLike, Value};
+    use crate::commands::buffer::Buffer;
+    use crate::commands::ParticleType;
     use indexmap::IndexMap;
+    use ripemd::digest::Digest;
+    use ripemd::Ripemd160;
     use std::collections::{BTreeMap, HashMap};
     use std::convert::TryInto;
 
@@ -1344,10 +1401,7 @@ mod tests {
 
         let val = Value::from(m.clone());
         assert!(matches!(val, Value::OrderedMap(_)));
-        assert!(matches!(
-            val.particle_type(),
-            crate::commands::ParticleType::MAP
-        ));
+        assert_eq!(val.particle_type(), ParticleType::MAP as u8);
 
         // Insertion order is preserved by the container.
         let back: IndexMap<Value, Value> = val.try_into().unwrap();
@@ -1454,10 +1508,7 @@ mod tests {
         let hash: HashMap<Value, Value> = HashMap::new();
         let ordered: IndexMap<Value, Value> = IndexMap::new();
         let sorted: BTreeMap<Value, Value> = BTreeMap::new();
-        assert!(matches!(
-            Value::from(hash.into_map()),
-            Value::HashMap(_)
-        ));
+        assert!(matches!(Value::from(hash.into_map()), Value::HashMap(_)));
         assert!(matches!(
             Value::from(ordered.into_map()),
             Value::OrderedMap(_)
@@ -1548,5 +1599,75 @@ mod tests {
         let json = serde_json::to_string(&val);
         // We only check for the len of the String because HashMap serialization does not keep the key order. Comparing like the list above is not possible.
         assert_eq!(json.unwrap().len(), 48, "Map Serialization failed");
+    }
+
+    // Any particle type the client does not interpret decodes as
+    // Value::Unknown carrying the raw code and payload — never a panic,
+    // never a lost record.
+    #[test]
+    fn foreign_particle_types_decode_as_unknown() {
+        let payload = [0xDEu8, 0xAD, 0xBE, 0xEF];
+
+        // JBLOB(7) and the language blobs (8-12), retired DIGEST(6) and
+        // LDT(21), and codes the client knows nothing about (99) all
+        // surface as Unknown with the raw payload.
+        for code in [6u8, 7, 8, 9, 10, 11, 12, 21, 99] {
+            let mut buf = Buffer::new(0);
+            buf.resize_buffer(payload.len()).unwrap();
+            buf.data_buffer[..payload.len()].copy_from_slice(&payload);
+            buf.data_offset = 0;
+
+            let value = bytes_to_particle(code, &mut buf, payload.len()).unwrap();
+            let Value::Unknown(particle_code, bytes) = value else {
+                panic!("code {code}: expected Value::Unknown, got {value:?}");
+            };
+            assert_eq!(particle_code, code);
+            assert_eq!(bytes, payload);
+        }
+    }
+
+    // Unknown values are read-only: every send path rejects them.
+    #[test]
+    fn unknown_values_cannot_be_sent() {
+        let value = Value::Unknown(9, vec![1, 2, 3]); // 9 = PYTHON_BLOB
+
+        assert!(value.estimate_size().is_err());
+
+        let mut buf = Buffer::new(0);
+        buf.resize_buffer(64).unwrap();
+        buf.data_offset = 0;
+        assert!(value.write_to(&mut buf).is_err());
+
+        // Rejected inside CDT/list/map payloads too.
+        assert!(crate::msgpack::encoder::pack_value(&mut None, &value).is_err());
+
+        // And as a key: digest computation fails, so Key::new errors.
+        let mut hasher = Ripemd160::new();
+        assert!(value.write_key_bytes(&mut hasher).is_err());
+        assert!(crate::Key::new("ns", "set", value).is_err());
+    }
+
+    // Unknown values cannot appear in expression literals: packing the
+    // expression fails, whether nested in a list or as a map value.
+    #[test]
+    fn unknown_values_rejected_in_expressions() {
+        let unknown = Value::Unknown(9, vec![1, 2, 3]);
+
+        let exp = crate::expressions::list_val(vec![unknown.clone()]);
+        assert!(exp.base64().is_err());
+
+        let mut map = HashMap::new();
+        map.insert(Value::from("k"), unknown);
+        let exp = crate::expressions::map_val(map);
+        assert!(exp.base64().is_err());
+    }
+
+    // Unknown values are not indexable: the filter-value conversion
+    // rejects them like every other non-Int/String/Blob type.
+    #[test]
+    #[should_panic(expected = "must be integer, string, or blob")]
+    fn unknown_values_rejected_in_filters() {
+        use crate::query::filter::EqFilterValue;
+        let _ = Value::Unknown(9, vec![1, 2, 3]).into_filter_value();
     }
 }

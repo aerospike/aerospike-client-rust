@@ -94,7 +94,7 @@ impl Key {
         let mut hash = Ripemd160::new();
         hash.update(self.set_name.as_bytes());
         if let Some(ref user_key) = self.user_key {
-            hash.update([user_key.particle_type() as u8]);
+            hash.update([user_key.particle_type()]);
             user_key.write_key_bytes(&mut hash)?;
         } else {
             unreachable!();
