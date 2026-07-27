@@ -394,6 +394,36 @@ async fn seed_only_cluster_pins_to_seed_addresses() {
     client.close().await.unwrap();
 }
 
+// ---- client info facade ----------------------------------------------------
+
+#[aerospike_macro::test]
+async fn info_returns_entries_in_request_order() {
+    let client = fresh_client().await;
+    let policy = AdminPolicy::default();
+
+    // The IndexMap return preserves the server's response order: one
+    // entry per command, in request order.
+    let commands = ["edition", "build", "node", "version"];
+    let info = client.info(&policy, &commands).await.unwrap();
+    let keys: Vec<&str> = info.keys().map(String::as_str).collect();
+    assert_eq!(keys, commands, "info entries must follow request order");
+    assert!(info.values().all(|v| !v.is_empty()));
+
+    // Reversed request → reversed response order.
+    let reversed = ["version", "node", "build", "edition"];
+    let info = client.info(&policy, &reversed).await.unwrap();
+    let keys: Vec<&str> = info.keys().map(String::as_str).collect();
+    assert_eq!(keys, reversed);
+
+    // Node-targeted requests go through Node::info directly.
+    let nodes = client.cluster.nodes();
+    let node = nodes.first().expect("at least one node");
+    let info = node.info(&policy, &["node"]).await.unwrap();
+    assert_eq!(info.get("node").map(String::as_str), Some(node.name()));
+
+    client.close().await.unwrap();
+}
+
 // ---- init stabilization ----------------------------------------------------
 
 #[aerospike_macro::test]

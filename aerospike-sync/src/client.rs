@@ -230,6 +230,18 @@ impl Client {
         self.async_client.get_node(name)
     }
 
+    /// Send info commands to a randomly selected cluster node and return
+    /// the parsed key/value response. The map preserves the server's
+    /// response order — one entry per command, in request order.
+    pub fn info(
+        &self,
+        policy: &AdminPolicy,
+        commands: &[&str],
+    ) -> Result<aerospike_core::IndexMap<String, String>> {
+        block_on(self.async_client.info(policy, commands))
+    }
+
+
     /// Returns a list of active server nodes in the cluster.
     pub fn nodes(&self) -> Vec<Arc<Node>> {
         self.async_client.nodes()

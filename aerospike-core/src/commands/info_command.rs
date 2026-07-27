@@ -14,7 +14,7 @@
 // the License.
 
 use byteorder::{NetworkEndian, ReadBytesExt, WriteBytesExt};
-use std::collections::HashMap;
+use indexmap::IndexMap;
 use std::io::{Cursor, Write};
 use std::str;
 
@@ -33,7 +33,7 @@ impl Message {
         policy: &AdminPolicy,
         conn: &mut Connection,
         commands: &[&str],
-    ) -> Result<HashMap<String, String>> {
+    ) -> Result<IndexMap<String, String>> {
         let cmd = commands.join("\n") + "\n";
         let mut msg = Message::new(&cmd.into_bytes())?;
 
@@ -87,12 +87,14 @@ impl Message {
         Ok(())
     }
 
-    fn parse_response(&self) -> Result<HashMap<String, String>> {
+    fn parse_response(&self) -> Result<IndexMap<String, String>> {
         let response = str::from_utf8(&self.buf)?;
         let response = response.trim_matches('\n');
 
         trace!("response from server for info command: {response:?}");
-        let mut result: HashMap<String, String> = HashMap::new();
+        // IndexMap preserves the server's response order (one entry per
+        // requested command, in request order).
+        let mut result: IndexMap<String, String> = IndexMap::new();
 
         for tuple in response.split('\n') {
             let mut kv = tuple.split('\t');

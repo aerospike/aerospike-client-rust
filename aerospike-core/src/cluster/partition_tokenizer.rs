@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::collections::HashMap;
+use indexmap::IndexMap;
 use std::str;
 use std::sync::Arc;
 use std::vec::Vec;
@@ -46,7 +46,7 @@ impl PartitionTokenizer {
     /// is expected to have requested [`PARTITION_INFO_COMMANDS`] over a
     /// connection of its choosing — typically a Node's long-lived tend
     /// socket — and to hand the response in here.
-    pub fn from_info_map(info_map: &HashMap<String, String>) -> Result<Self> {
+    pub fn from_info_map(info_map: &IndexMap<String, String>) -> Result<Self> {
         let generation = match info_map.get(node::PARTITION_GENERATION) {
             Some(s) => s.parse::<isize>().map_err(|err| {
                 Error::bad_response(format!("Invalid partition-generation: {err}"))

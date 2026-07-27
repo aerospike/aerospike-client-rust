@@ -14,6 +14,7 @@
 // the License.
 
 use std::collections::HashMap;
+use indexmap::IndexMap;
 use std::fmt;
 use std::hash::{Hash, Hasher};
 use std::result::Result as StdResult;
@@ -411,7 +412,7 @@ impl Node {
     /// pre-restart failure history.
     fn verify_peers_generation(
         &self,
-        info_map: &HashMap<String, String>,
+        info_map: &IndexMap<String, String>,
         peers: &Peers,
     ) -> Result<()> {
         let gen_str = info_map
@@ -434,13 +435,13 @@ impl Node {
         Ok(())
     }
 
-    fn validate_node(&self, info_map: &HashMap<String, String>) -> Result<()> {
+    fn validate_node(&self, info_map: &IndexMap<String, String>) -> Result<()> {
         self.verify_node_name(info_map)?;
         self.verify_cluster_name(info_map)?;
         Ok(())
     }
 
-    fn verify_node_name(&self, info_map: &HashMap<String, String>) -> Result<()> {
+    fn verify_node_name(&self, info_map: &IndexMap<String, String>) -> Result<()> {
         match info_map.get("node") {
             None => Err(Error::invalid_node("Missing node name".to_string())),
             Some(info_name) if info_name == &self.name => Ok(()),
@@ -455,7 +456,7 @@ impl Node {
     }
 
     #[allow(clippy::option_if_let_else)]
-    fn verify_cluster_name(&self, info_map: &HashMap<String, String>) -> Result<()> {
+    fn verify_cluster_name(&self, info_map: &IndexMap<String, String>) -> Result<()> {
         match self.client_policy.cluster_name {
             None => Ok(()),
             Some(ref expected) => match info_map.get("cluster-name") {
@@ -474,7 +475,7 @@ impl Node {
 
     /// Compares the server's partition-generation with the node's last known value.
     /// Sets `partition_changed` flag if they differ.
-    fn verify_partition_generation(&self, info_map: &HashMap<String, String>) -> Result<()> {
+    fn verify_partition_generation(&self, info_map: &IndexMap<String, String>) -> Result<()> {
         match info_map.get(PARTITION_GENERATION) {
             None => Err(Error::bad_response(
                 "Missing partition generation".to_string(),
@@ -492,7 +493,7 @@ impl Node {
     /// Compares the server's rebalance-generation with the node's last known
     /// value. Sets `rebalance_changed` flag if they differ. Only called when
     /// the cluster is rack-aware.
-    fn verify_rebalance_generation(&self, info_map: &HashMap<String, String>) -> Result<()> {
+    fn verify_rebalance_generation(&self, info_map: &IndexMap<String, String>) -> Result<()> {
         match info_map.get(REBALANCE_GENERATION) {
             None => Err(Error::bad_response(
                 "Missing rebalance-generation".to_string(),
@@ -507,7 +508,7 @@ impl Node {
         }
     }
 
-    pub fn update_partitions(&self, info_map: &HashMap<String, String>) -> Result<()> {
+    pub fn update_partitions(&self, info_map: &IndexMap<String, String>) -> Result<()> {
         match info_map.get(PARTITION_GENERATION) {
             None => {
                 return Err(Error::bad_response(
@@ -527,7 +528,7 @@ impl Node {
         self.partition_generation.store(gen, Ordering::Relaxed);
     }
 
-    pub fn update_rebalance_generation(&self, info_map: &HashMap<String, String>) -> Result<()> {
+    pub fn update_rebalance_generation(&self, info_map: &IndexMap<String, String>) -> Result<()> {
         if let Some(gen_string) = info_map.get(REBALANCE_GENERATION) {
             let gen = gen_string.parse::<isize>()?;
             self.rebalance_generation.store(gen, Ordering::Relaxed);
@@ -692,12 +693,15 @@ impl Node {
         self.inactivate();
     }
 
-    // Send info commands to this node
+    /// Send info commands to this node and return the parsed key/value
+    /// response. The map preserves the server's response order — one entry
+    /// per command, in request order. For an arbitrary-node request use
+    /// [`Client::info`](crate::Client::info).
     pub async fn info(
         &self,
         policy: &AdminPolicy,
         commands: &[&str],
-    ) -> Result<HashMap<String, String>> {
+    ) -> Result<IndexMap<String, String>> {
         // `get_connection` reports `ConnectionPoolEmpty` while a background
         // task opens the connection; this method has no retry loop of its
         // own, so poll briefly until the connection lands or the admin
@@ -734,7 +738,7 @@ impl Node {
         &self,
         policy: &AdminPolicy,
         commands: &[&str],
-    ) -> Result<HashMap<String, String>> {
+    ) -> Result<IndexMap<String, String>> {
         let mut guard = self.tend_connection.lock().await;
         if guard.is_none() {
             // Open lazily. The first call after Node::new pays the

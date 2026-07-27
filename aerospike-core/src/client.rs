@@ -313,6 +313,37 @@ impl Client {
         self.cluster.get_node_by_name(name)
     }
 
+    /// Send info commands to a randomly selected cluster node and return
+    /// the parsed key/value response. The map preserves the server's
+    /// response order — one entry per command, in request order. The Rust
+    /// counterpart of Java's `Info.request(policy, node, commands...)`.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,edition2021
+    /// # use aerospike::*;
+    /// # #[tokio::main]
+    /// # async fn main() {
+    /// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap_or_else(|_| "127.0.0.1:3000".to_string());
+    /// # let policy = ClientPolicy::default();
+    /// # let client = Client::new(&policy, &hosts).await.unwrap();
+    /// let info = client
+    ///     .info(&policy::AdminPolicy::default(), &["build", "edition"])
+    ///     .await
+    ///     .unwrap();
+    /// println!("server build: {:?}", info.get("build"));
+    /// # }
+    /// ```
+    pub async fn info(
+        &self,
+        policy: &AdminPolicy,
+        commands: &[&str],
+    ) -> Result<crate::IndexMap<String, String>> {
+        let node = self.cluster.get_random_node()?;
+        node.info(policy, commands).await
+    }
+
+
     /// Returns a list of active server nodes in the cluster.
     ///
     /// # Examples
