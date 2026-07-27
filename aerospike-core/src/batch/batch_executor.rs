@@ -134,13 +134,34 @@ impl BatchExecutor {
             }
         }
 
-        for (_node, mut op, idx) in single_groups {
-            // The single-op commands re-resolve the node via partition
-            // lookup; we keep the `node` from the per-node split only
-            // to gate the fast path. Re-resolving lets the command
-            // pick up partition migrations that happened between the
-            // BatchExecutor split and the single-op dispatch.
-            if let Err(e) = Self::execute_single_op(self.cluster.clone(), policy, &mut op).await {
+        // The single-op commands re-resolve the node via partition
+        // lookup; we keep the `node` from the per-node split only
+        // to gate the fast path. Re-resolving lets the command
+        // pick up partition migrations that happened between the
+        // BatchExecutor split and the single-op dispatch.
+        //
+        // Singles honor the batch concurrency policy just like the
+        // multi-key groups: running N per-node singles sequentially would
+        // stack their latencies against the shared total_timeout budget.
+        let single_futures = single_groups.into_iter().map(|(_node, mut op, idx)| {
+            let cluster = self.cluster.clone();
+            async move {
+                let res = Self::execute_single_op(cluster, policy, &mut op).await;
+                (res, op, idx)
+            }
+        });
+        let single_results = match policy.concurrency {
+            Concurrency::Sequential => {
+                let mut results = Vec::new();
+                for fut in single_futures {
+                    results.push(fut.await);
+                }
+                results
+            }
+            Concurrency::Parallel => futures::future::join_all(single_futures).await,
+        };
+        for (res, op, idx) in single_results {
+            if let Err(e) = res {
                 first_err.get_or_insert(e);
             }
             all_results.push((op, idx));
@@ -346,6 +367,19 @@ impl BatchExecutor {
             Err(err) if matches!(err.kind(), crate::ErrorKind::Server { .. }) => {
                 let rc = err.server_result_code().expect("server error has rc");
                 batch_op.set_result_code(rc, err.in_doubt());
+            }
+            Err(err) if matches!(err.kind(), crate::ErrorKind::UdfBadResponse) => {
+                // A UDF execution failure is a per-key batch outcome. The
+                // single-key command surfaces it as ErrorKind::UdfBadResponse
+                // carrying the FAILURE reason; rebuild the row shape the
+                // multi-record wire path produces — result code
+                // UDF_BAD_RESPONSE plus a record with the FAILURE bin.
+                let reason = err.message().unwrap_or("UDF Error").to_string();
+                let mut bins = crate::IndexMap::new();
+                bins.insert("FAILURE".to_string(), crate::Value::from(reason));
+                let in_doubt = err.in_doubt();
+                batch_op.set_record(Some(crate::Record::new(None, bins, None, 0, 0)));
+                batch_op.set_result_code(ResultCode::UdfBadResponse, in_doubt);
             }
             Err(err) => {
                 // Mirrors Java's `BatchSingle.setInDoubt()` gated on

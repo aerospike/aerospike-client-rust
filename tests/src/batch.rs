@@ -92,7 +92,7 @@ end
 "#;
 
     let task = client
-        .register_udf(&apolicy, udf_body.as_bytes(), "test_udf.lua", UDFLang::Lua)
+        .register_udf(&apolicy, udf_body.as_bytes(), "batch_read_echo.lua", UDFLang::Lua)
         .await
         .unwrap();
     task.wait_till_complete(None).await.unwrap();
@@ -247,13 +247,13 @@ end
     let args3 = vec![as_val!(3)];
     let args4 = vec![as_val!(4)];
     let batch = vec![
-        BatchOperation::udf(&bpu, key1.clone(), "test_udf", "echo", Some(args1)),
-        BatchOperation::udf(&bpu, key2.clone(), "test_udf", "echo", Some(args2)),
-        BatchOperation::udf(&bpu, key3.clone(), "test_udf", "echo", Some(args3)),
+        BatchOperation::udf(&bpu, key1.clone(), "batch_read_echo", "echo", Some(args1)),
+        BatchOperation::udf(&bpu, key2.clone(), "batch_read_echo", "echo", Some(args2)),
+        BatchOperation::udf(&bpu, key3.clone(), "batch_read_echo", "echo", Some(args3)),
         BatchOperation::udf(
             &bpu,
             key4.clone(),
-            "test_udf",
+            "batch_read_echo",
             "echo_not_exists",
             Some(args4),
         ),
