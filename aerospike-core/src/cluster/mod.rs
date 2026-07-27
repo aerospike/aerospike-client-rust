@@ -112,6 +112,15 @@ pub struct Cluster {
     // at the start of each `seed_nodes` invocation.
     last_seed_errors: std::sync::Mutex<Vec<(Host, String)>>,
 
+    // Last seed-validation error logged per seed, keyed by seed address.
+    // Unlike `last_seed_errors` (cleared each `seed_nodes` pass for the init
+    // summary), this persists across tend passes so a seed that fails on every
+    // pass — up to ~2000 times during connect stabilization's 1ms retry loop —
+    // logs once per distinct failure instead of flooding the log. Reset for a
+    // seed by `forget_seed_error` once it is reachable again, so a later failure
+    // logs afresh.
+    seed_error_log_last: std::sync::Mutex<HashMap<String, String>>,
+
     // ---- Metrics ----
     // Whether periodic metrics collection is enabled.
     metrics_enabled: AtomicBool,
@@ -181,6 +190,7 @@ impl Cluster {
             tend_channel: Mutex::new(tx),
             closed: AtomicBool::new(false),
             last_seed_errors: std::sync::Mutex::new(Vec::new()),
+            seed_error_log_last: std::sync::Mutex::new(HashMap::new()),
 
             metrics_enabled: AtomicBool::new(false),
             metrics_policy: AtomicArc::from(MetricsPolicy::default()),
@@ -844,6 +854,35 @@ impl Cluster {
         }
     }
 
+    // Dedup gate for per-seed error logging. Returns true only when this seed's
+    // error differs from the one last logged for it, collapsing the repeated
+    // per-tend re-logging of an unchanged failure (a single bad seed can be
+    // re-validated ~2000 times during connect stabilization's 1ms retry loop).
+    // A poisoned lock errs toward logging.
+    fn seed_error_is_new(&self, seed: &Host, err: &Error) -> bool {
+        let sig = err.to_string();
+        match self.seed_error_log_last.lock() {
+            Ok(mut last) => {
+                if last.get(&seed.to_string()).is_some_and(|prev| *prev == sig) {
+                    false
+                } else {
+                    last.insert(seed.to_string(), sig);
+                    true
+                }
+            }
+            Err(_) => true,
+        }
+    }
+
+    // Drop a seed's dedup state once it is reachable again, so a subsequent
+    // failure logs afresh rather than being silenced as a repeat (visibility
+    // for a seed that flaps between healthy and failing).
+    fn forget_seed_error(&self, seed: &Host) {
+        if let Ok(mut last) = self.seed_error_log_last.lock() {
+            last.remove(&seed.to_string());
+        }
+    }
+
     /// Format the per-seed errors recorded during the most recent
     /// `seed_nodes` call into a single connection-error message. Falls back
     /// to a generic message when nothing was recorded (e.g. seed list was
@@ -901,7 +940,9 @@ impl Cluster {
             let mut seed_node_validator = NodeValidator::new_for_seed(self.client_policy());
             if let Err(err) = seed_node_validator.validate_node(self, seed).await {
                 self.record_seed_error(seed.clone(), &err);
-                log_error_chain!(err, "Failed to validate seed host: {}", seed);
+                if self.seed_error_is_new(seed, &err) {
+                    log_error_chain!(err, "Failed to validate seed host: {}", seed);
+                }
                 continue;
             }
 
@@ -921,6 +962,8 @@ impl Cluster {
                     self.add_aliases(seed_node.clone());
                     list.push(seed_node);
                 }
+                // Reachable seed — clear any stale logged error (see below).
+                self.forget_seed_error(seed);
                 continue;
             }
 
@@ -933,10 +976,15 @@ impl Cluster {
             harvest.reset_refresh_count();
             if let Err(err) = seed_node.refresh_peers(&mut harvest).await {
                 self.record_seed_error(seed.clone(), &err);
-                log_error_chain!(err, "Seed peer fetch failed: {}", seed);
+                if self.seed_error_is_new(seed, &err) {
+                    log_error_chain!(err, "Seed peer fetch failed: {}", seed);
+                }
                 seed_node.close();
                 continue;
             }
+            // Seed validated and returned peers — it is reachable, so any earlier
+            // failure logged for it is stale; allow a future failure to log again.
+            self.forget_seed_error(seed);
 
             // Empty peer list → single-node cluster or recovering node;
             // hold the seed aside as a fallback.
