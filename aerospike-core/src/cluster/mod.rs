@@ -45,11 +45,11 @@ use crate::policy::{
     BatchPolicy, ClientPolicy, QueryPolicy, ReadPolicy, TxnRollPolicy, TxnVerifyPolicy, WritePolicy,
 };
 use crate::AdminPolicy;
-use std::borrow::Cow;
 use aerospike_rt::Mutex;
 use futures::channel::mpsc;
 use futures::channel::mpsc::{Receiver, Sender, TryRecvError};
 use hazarc::AtomicArc;
+use std::borrow::Cow;
 
 static CLIENT_VERSION: &str = env!("CARGO_PKG_VERSION");
 
