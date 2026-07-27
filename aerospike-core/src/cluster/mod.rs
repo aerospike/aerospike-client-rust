@@ -138,6 +138,14 @@ pub struct Cluster {
     dyn_config: std::sync::OnceLock<Arc<DynConfig>>,
 }
 
+/// `true` once the initial tend loop can stop: the node count has settled
+/// across two consecutive tends *and* the partition map is routable. A node's
+/// partitions arrive a tend cycle after it joins, so a settled node count
+/// alone can still mean an empty map.
+fn is_stabilized(count: isize, old_count: isize, partitions: &PartitionTable) -> bool {
+    count == old_count && !partitions.is_empty()
+}
+
 /// `true` when `node.host().name` parses to a loopback address, or is the
 /// `localhost` / `::1` literal. Used by `peer_exists` as a shortcut for
 /// loopback-host comparisons.
@@ -712,7 +720,8 @@ impl Cluster {
 
                 let old_count = count;
                 count = cluster.nodes().len() as isize;
-                if count == old_count {
+                // The deadline above stays the upper bound if the map never populates.
+                if is_stabilized(count, old_count, &cluster.partition_map.load()) {
                     break;
                 }
 
@@ -1788,5 +1797,33 @@ impl Cluster {
         // invariant on those fields.
         self.tend_channel.lock().await.close_channel();
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod cluster_tests {
+    use super::{is_stabilized, PartitionTable, Partitions};
+
+    fn routable_map() -> PartitionTable {
+        let mut map = PartitionTable::new();
+        map.insert("test".to_string(), Partitions::default());
+        map
+    }
+
+    #[test]
+    fn not_stabilized_while_node_count_still_moving() {
+        assert!(!is_stabilized(3, 2, &routable_map()));
+    }
+
+    #[test]
+    fn not_stabilized_while_partition_map_empty() {
+        // The join-then-fetch gap: the count has settled but the map that the
+        // first operation routes against is not there yet.
+        assert!(!is_stabilized(2, 2, &PartitionTable::new()));
+    }
+
+    #[test]
+    fn stabilized_once_count_settles_with_routable_map() {
+        assert!(is_stabilized(2, 2, &routable_map()));
     }
 }
