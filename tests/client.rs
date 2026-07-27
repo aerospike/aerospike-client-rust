@@ -139,15 +139,22 @@ async fn test_close_does_not_stop_tend_thread() {
         "Expected is_connected()=false after close"
     );
 
-    let tend_interval = common::client_policy().tend_interval;
-    let wait_ms = u64::from(tend_interval) * 2;
-    aerospike_rt::sleep(Duration::from_millis(wait_ms)).await;
-
-    let nodes_after = client.node_names();
-
-    // After close(), tend_thread should stop and nodes should be cleared.
-    // This assert passes if nodes are NOT cleared — tend_thread is still running.
-    assert!(nodes_after.is_empty(), "Nodes were NOT cleared after close");
+    // After close(), the tend thread performs the node/alias cleanup as its
+    // last act. With the close-signal select it normally lands within
+    // milliseconds, but an in-flight tend cycle (slow under parallel suite
+    // load on a large cluster) may delay it — so poll for the eventual
+    // cleanup instead of assuming a fixed window.
+    let deadline = aerospike_rt::time::Instant::now() + Duration::from_secs(15);
+    loop {
+        if client.node_names().is_empty() {
+            break;
+        }
+        assert!(
+            aerospike_rt::time::Instant::now() < deadline,
+            "Nodes were NOT cleared within 15s of close()"
+        );
+        aerospike_rt::sleep(Duration::from_millis(50)).await;
+    }
 
     let get_result = client
         .get(&aerospike::ReadPolicy::default(), &key, Bins::All)

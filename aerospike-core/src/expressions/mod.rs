@@ -535,6 +535,12 @@ pub fn bin(name: String, exp_type: ExpType) -> Expression {
     )
 }
 
+/// Creates integer bin expression.
+/// ```
+/// // Integer bin "a" == 500
+/// use aerospike::expressions::{eq, int_bin, int_val};
+/// eq(int_bin("a".to_string()), int_val(500));
+/// ```
 pub fn int_bin(name: String) -> Expression {
     Expression::new(
         Some(ExpOp::Bin),

@@ -394,6 +394,50 @@ async fn seed_only_cluster_pins_to_seed_addresses() {
     client.close().await.unwrap();
 }
 
+// ---- init stabilization ----------------------------------------------------
+
+#[aerospike_macro::test]
+async fn partition_map_ready_when_new_returns() {
+    use aerospike::{as_bin, as_key, WritePolicy};
+
+    // `Client::new` must not return before the initial partition map is
+    // populated: node-count stability alone races the first partition
+    // fetch on multi-node clusters, and a write issued immediately after
+    // construction would die on "partition map empty" before the tend
+    // thread fills the map in.
+    let client = fresh_client().await;
+
+    // The map must already cover the test namespace...
+    assert_eq!(
+        client
+            .cluster
+            .is_strong_consistency(common::namespace())
+            .is_some(),
+        true,
+        "partition map must be populated before Client::new returns"
+    );
+    // ...and every node must have parsed a partition map at least once.
+    for node in client.cluster.nodes() {
+        assert_ne!(
+            node.partition_generation(),
+            -1,
+            "node {node} returned from Client::new without partition data"
+        );
+    }
+
+    // An immediate write with NO retry budget must succeed — no transient
+    // "partition map empty" window is allowed to exist after new().
+    let mut wpolicy = WritePolicy::default();
+    wpolicy.base_policy.max_retries = 0;
+    let key = as_key!(common::namespace(), "stabilize", "first_write");
+    client
+        .put(&wpolicy, &key, &[as_bin!("a", 1)])
+        .await
+        .expect("first write immediately after Client::new must not race the partition map");
+
+    client.close().await.unwrap();
+}
+
 // ---- rack-aware read routing ----------------------------------------------
 
 #[aerospike_macro::test]

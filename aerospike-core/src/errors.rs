@@ -652,6 +652,12 @@ impl Error {
             .map_or(crate::server_error::sub_code::NONE, |d| d.sub_code)
     }
 
+    /// The client-side message attached to this error, if any. For internal
+    /// use (e.g. rebuilding per-row batch outcomes from command errors).
+    pub(crate) fn message(&self) -> Option<&str> {
+        self.0.message.as_deref()
+    }
+
     /// Returns the formatted server-supplied error detail message, if any.
     #[must_use]
     pub fn server_message(&self) -> Option<&str> {

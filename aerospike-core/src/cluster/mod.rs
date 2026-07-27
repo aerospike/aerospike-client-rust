@@ -209,6 +209,8 @@ impl Cluster {
     }
 
     async fn tend_thread(cluster: Arc<Cluster>, mut rx: Receiver<()>) {
+        use futures::{FutureExt, StreamExt};
+
         let tend_interval = cluster.client_policy.load().tend_interval;
 
         loop {
@@ -219,7 +221,16 @@ impl Cluster {
                     if let Err(err) = cluster.tend().await {
                         log_error_chain!(err, "Error tending cluster");
                     }
-                    aerospike_rt::sleep(Duration::from_millis(u64::from(tend_interval))).await;
+                    // Sleep until the next cycle, but wake immediately when
+                    // `close()` closes the channel — otherwise shutdown
+                    // cleanup (clearing nodes/aliases below) would lag up to
+                    // a full tend interval behind close().
+                    let sleep =
+                        aerospike_rt::sleep(Duration::from_millis(u64::from(tend_interval)));
+                    futures::select! {
+                        _ = rx.next().fuse() => break,
+                        () = sleep.fuse() => {}
+                    }
                 }
             }
         }
@@ -713,7 +724,26 @@ impl Cluster {
                 let old_count = count;
                 count = cluster.nodes().len() as isize;
                 if count == old_count {
-                    break;
+                    if count == 0 {
+                        // No reachable nodes: nothing further to wait for —
+                        // `fail_if_not_connected` decides what happens next.
+                        break;
+                    }
+                    // Node-count stability alone is not enough: on a
+                    // multi-node cluster the nodes materialize in the seed
+                    // pass but their partition maps land one tend later, so
+                    // breaking here would let commands race the first
+                    // partition fetch and die on "partition map empty"
+                    // before the tend thread fills it in. Java's tend parses
+                    // partitions synchronously for fresh nodes, so its
+                    // count-only check is safe; ours must wait until every
+                    // node has parsed a partition map at least once.
+                    let nodes = cluster.nodes();
+                    let partitions_ready = !cluster.partition_map.load().is_empty()
+                        && nodes.iter().all(|n| n.partition_generation() != -1);
+                    if partitions_ready {
+                        break;
+                    }
                 }
 
                 aerospike_rt::sleep(sleep_between_tend).await;
