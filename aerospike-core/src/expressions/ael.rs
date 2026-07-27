@@ -46,7 +46,7 @@ pub fn pack_ael_server_filter(ael: &str) -> Result<Expression> {
     pack_raw_string(&mut opt, ael);
 
     buf.data_buffer.truncate(buf.data_offset);
-    Ok(from_packed_bytes(buf.data_buffer))
+    Ok(from_packed_bytes(std::mem::take(&mut buf.data_buffer)))
 }
 
 #[cfg(test)]
