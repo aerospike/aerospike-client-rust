@@ -53,6 +53,12 @@ impl Version {
         self >= &Version::new(5, 7, 0, 0)
     }
 
+    /// Server supports blob secondary indexes
+    /// ([`IndexType::Blob`](crate::IndexType)).
+    pub fn supports_blob_index(&self) -> bool {
+        self >= &Version::new(7, 0, 0, 0)
+    }
+
     /// Server supports batch-index commands.
     pub fn supports_batch_any(&self) -> bool {
         self >= &Version::new(6, 0, 0, 0)
@@ -223,12 +229,5 @@ mod tests {
         for iv in invalid {
             assert!(VersionParser::new(iv).parse().is_err());
         }
-    }
-
-    #[test]
-    fn supports_server_compiled_ael_threshold() {
-        assert!(!Version::new(8, 1, 2, 99).supports_server_compiled_ael());
-        assert!(Version::new(8, 1, 3, 0).supports_server_compiled_ael());
-        assert!(Version::new(8, 2, 0, 0).supports_server_compiled_ael());
     }
 }

@@ -26,6 +26,15 @@ pub enum IndexType {
 
     /// 2-dimensional spherical geospatial index.
     Geo2DSphere,
+
+    /// Blob (byte-array) index. Requires server 7.0+, which a node reports
+    /// through `Version::supports_blob_index`.
+    ///
+    /// Indexes bins holding [`Value::Blob`](crate::Value::Blob), which
+    /// [`Filter::equal`](crate::query::Filter::equal) already accepts as
+    /// `Vec<u8>` or `&[u8]`; without this variant such a filter had no index
+    /// that could serve it.
+    Blob,
 }
 
 /// Secondary index collection type.
@@ -50,6 +59,7 @@ impl fmt::Display for IndexType {
             IndexType::Numeric => "NUMERIC".fmt(f),
             IndexType::String => "STRING".fmt(f),
             IndexType::Geo2DSphere => "GEO2DSPHERE".fmt(f),
+            IndexType::Blob => "BLOB".fmt(f),
         }
     }
 }
@@ -62,5 +72,28 @@ impl fmt::Display for CollectionIndexType {
             CollectionIndexType::MapKeys => "MAPKEYS".fmt(f),
             CollectionIndexType::MapValues => "MAPVALUES".fmt(f),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{CollectionIndexType, IndexType};
+
+    #[test]
+    fn index_type_wire_names() {
+        // These strings go into the `sindex-create` info command verbatim, so
+        // they are protocol, not cosmetics.
+        assert_eq!(IndexType::Numeric.to_string(), "NUMERIC");
+        assert_eq!(IndexType::String.to_string(), "STRING");
+        assert_eq!(IndexType::Geo2DSphere.to_string(), "GEO2DSPHERE");
+        assert_eq!(IndexType::Blob.to_string(), "BLOB");
+    }
+
+    #[test]
+    fn collection_index_type_wire_names() {
+        assert_eq!(CollectionIndexType::Default.to_string(), "DEFAULT");
+        assert_eq!(CollectionIndexType::List.to_string(), "LIST");
+        assert_eq!(CollectionIndexType::MapKeys.to_string(), "MAPKEYS");
+        assert_eq!(CollectionIndexType::MapValues.to_string(), "MAPVALUES");
     }
 }
