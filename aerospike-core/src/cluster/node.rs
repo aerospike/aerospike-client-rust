@@ -144,7 +144,16 @@ impl Node {
             partition_generation: AtomicIsize::new(-1),
             peers_generation: AtomicIsize::new(-1),
             peers_count: AtomicUsize::new(0),
-            partition_changed: AtomicBool::new(false),
+            // `partition_changed` means "this node's parsed partition
+            // generation differs from the server's", which for a brand-new
+            // node is true by definition: `partition_generation` starts at
+            // -1, and every real generation is >= 0. Starting it `true` lets
+            // the tend cycle that *creates* the node also fetch its partition
+            // map, instead of leaving the work to the next cycle: the seeding
+            // cycle takes its node snapshot before seeding, so phase 1 — the
+            // only other place this flag is raised — never sees freshly
+            // seeded nodes, and phase 4 would otherwise find nothing to do.
+            partition_changed: AtomicBool::new(true),
             rebalance_changed: AtomicBool::new(false),
             refresh_count: AtomicUsize::new(0),
             reference_count: AtomicUsize::new(0),

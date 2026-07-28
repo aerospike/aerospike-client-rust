@@ -124,11 +124,34 @@ impl Client {
     ///
     /// # Returns
     ///
-    /// `Ok(Client)` once at least one seed host connects and the cluster map is initialized.
+    /// `Ok(Client)` once the cluster is **routable**: a seed has connected,
+    /// peer discovery has settled, and every known node has contributed to
+    /// the partition table. The returned client can route its very first
+    /// command — there is no window in which a command fails with "partition
+    /// map empty".
+    ///
+    /// A healthy cluster reaches that state in a single tend cycle. Each tend
+    /// costs real network round-trips, plus a `LOGIN` handshake per node on a
+    /// security-enabled cluster, so construction takes as long as the cluster
+    /// takes to converge — a degraded one may need several tends. It is not
+    /// bounded by
+    /// [`timeout`](field@ClientPolicy::timeout), which bounds individual info
+    /// commands; see
+    /// [`fail_if_not_connected`](field@ClientPolicy::fail_if_not_connected)
+    /// to control failure instead.
     ///
     /// # Errors
     ///
-    /// * Returns an error if policy validation fails, no host can be reached, or cluster discovery fails.
+    /// * Policy validation fails.
+    /// * No seed host can be reached — the error names each seed and why it
+    ///   failed.
+    /// * Nodes are reachable but never produce a partition table, leaving the
+    ///   cluster connected yet unroutable.
+    ///
+    /// The last two are suppressed by setting
+    /// [`fail_if_not_connected`](field@ClientPolicy::fail_if_not_connected)
+    /// to `false`, which returns a client whose commands fail until the tend
+    /// loop converges.
     ///
     /// # Dynamic configuration
     ///

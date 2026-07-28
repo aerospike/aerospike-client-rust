@@ -149,6 +149,25 @@ fn node_address_is_loopback(node: &Node) -> bool {
     matches!(name.as_str(), "localhost" | "::1")
 }
 
+/// The parts of the cluster view that must stop changing for initial
+/// convergence to be considered finished.
+///
+/// Deliberately excludes each node's partition *generation*: that advances
+/// on every rebalance, so including it would make a migrating cluster look
+/// permanently unstable and stall
+/// [`Cluster::new`](Cluster::new). What has to settle is the node set and
+/// the fact that each node has produced a map at all — not the map's
+/// contents, which keep moving for as long as the cluster is busy.
+#[derive(PartialEq, Eq)]
+struct ConvergenceState {
+    /// Sorted node names, so the comparison is order-insensitive.
+    node_names: Vec<String>,
+    /// How many of those nodes have parsed a partition map at least once.
+    nodes_with_map: usize,
+    /// Namespaces present in the merged partition map.
+    namespaces: usize,
+}
+
 impl Cluster {
     pub async fn new(mut policy: ClientPolicy, hosts: &[Host]) -> Result<Arc<Self>> {
         // updated the hashed password
@@ -184,15 +203,45 @@ impl Cluster {
             #[cfg(feature = "dynamic-config")]
             dyn_config: std::sync::OnceLock::new(),
         });
-        // try to seed connections for first use
+        // Seed the cluster and tend until the partition table is fully
+        // formed and stable, so the returned client can route its very
+        // first command.
         Cluster::wait_till_stabilized(cluster.clone()).await?;
 
         // apply policy rules
-        if cluster.client_policy.load().fail_if_not_connected && !cluster.is_connected() {
-            // Mirrors Java's `Peers.clusterInitError`: surface every per-seed
-            // error from the most recent seed pass so callers know *why*
-            // each host failed, not just that "host(s) failed".
-            return Err(Error::connection(cluster.format_init_error()));
+        if cluster.client_policy.load().fail_if_not_connected {
+            if !cluster.is_connected() {
+                // Mirrors Java's `Peers.clusterInitError`: surface every
+                // per-seed error from the most recent seed pass so callers
+                // know *why* each host failed, not just that "host(s)
+                // failed".
+                return Err(Error::connection(cluster.format_init_error()));
+            }
+            if !cluster.partition_map_ready() {
+                // Nodes are reachable but the cluster never produced a
+                // routable partition map. Returning here would hand back a
+                // client that looks healthy (`is_connected` is true) yet
+                // fails every command with "partition map empty", so report
+                // it as the connection failure it is.
+                let state = cluster.convergence_state();
+                return Err(Error::connection(format!(
+                    "Connected to {} node(s) but the partition table never formed \
+                     ({} node(s) reported partition data, {} namespace(s) mapped). \
+                     The cluster is reachable but not routable — check that the \
+                     nodes have finished starting up and that the configured user \
+                     is allowed to read cluster metadata.",
+                    state.node_names.len(),
+                    state.nodes_with_map,
+                    state.namespaces,
+                )));
+            }
+        } else if !cluster.partition_map_ready() {
+            warn!(
+                "Cluster is not routable after initial stabilization; \
+                 `fail_if_not_connected` is disabled, so returning a client \
+                 whose commands will fail until the tend thread fills the \
+                 partition map in"
+            );
         }
 
         // Expand the seed list with every discovered node's primary host so
@@ -698,52 +747,150 @@ impl Cluster {
         false
     }
 
+    /// Tends until the cluster has converged on a fully formed, stable
+    /// partition table — or until it demonstrably stops converging.
+    ///
+    /// Convergence is driven by *progress*, never by a wall clock. How long
+    /// initial stabilization takes is a property of the cluster, not of any
+    /// policy value: every tend is gated by real network round-trips, and on a
+    /// security-enabled cluster every node additionally costs a `LOGIN`
+    /// handshake whose server-side password hashing is deliberately slow. A
+    /// fixed deadline large enough for a big secured cluster is meaningless
+    /// for a small one, and one small enough to fail fast truncates the big
+    /// one mid-convergence and hands back an unroutable client.
+    ///
+    /// So convergence is *proved* where it can be and *inferred* otherwise:
+    ///
+    /// - A healthy cluster finishes in a single tend. The tend that seeds the
+    ///   nodes also fetches their partition maps, and
+    ///   [`partition_map_complete`](Self::partition_map_complete) then shows
+    ///   directly that every partition has an owner — which also proves no
+    ///   data-bearing node is missing, since a node's partitions are only ever
+    ///   claimed by that node itself.
+    /// - Otherwise there is nothing left to prove, so we watch
+    ///   [`ConvergenceState`] instead: while it keeps changing the cluster is
+    ///   still converging and we keep tending. Two identical views in a row
+    ///   mean it has settled as far as it is going to. This is the path a
+    ///   degraded cluster takes — a strong-consistency namespace with
+    ///   unavailable partitions can never complete its table, and must not
+    ///   block construction forever on that account.
+    ///
+    /// Termination without a deadline still holds, because every tend performs
+    /// a bounded amount of I/O (each info call is bounded by
+    /// [`timeout`](field@crate::ClientPolicy::timeout) and each connect by
+    /// [`connect_timeout`](field@crate::ClientPolicy::connect_timeout)), so
+    /// bounding the number of tends bounds the wait. Two counters do that:
+    /// `STABILIZATION_NO_PROGRESS_LIMIT` for a cluster that is reachable but
+    /// settles without ever producing a partition table, and
+    /// `STABILIZATION_MAX_TENDS` for one whose view never settles at all.
+    ///
+    /// Returning here does not by itself mean success — it means "converged
+    /// or stopped converging". [`Cluster::new`] inspects
+    /// [`partition_map_ready`](Self::partition_map_ready) afterwards and
+    /// decides according to
+    /// [`fail_if_not_connected`](field@crate::ClientPolicy::fail_if_not_connected).
     async fn wait_till_stabilized(cluster: Arc<Cluster>) -> Result<()> {
-        let timeout = {
-            let timeout = cluster.client_policy.load().timeout;
-            if timeout > 0 {
-                Duration::from_millis(u64::from(timeout))
-            } else {
-                Duration::from_secs(3)
-            }
-        };
-        let deadline = Instant::now() + timeout;
+        /// Consecutive tends that may pass without the cluster view changing
+        /// while the partition table is still incomplete, before we conclude
+        /// it is never going to complete.
+        const STABILIZATION_NO_PROGRESS_LIMIT: u32 = 3;
+
+        /// Absolute ceiling on tends, so a cluster whose view *oscillates*
+        /// forever (a node that is repeatedly discovered and then dropped
+        /// keeps changing the view, so the no-progress counter never
+        /// accumulates) cannot hang construction. This is a tend count, not a
+        /// duration: convergence needs a small number of tends regardless of
+        /// cluster size — node count changes how long each tend takes, not how
+        /// many are needed — so this is orders of magnitude above any healthy
+        /// cluster while still guaranteeing termination.
+        const STABILIZATION_MAX_TENDS: u32 = 60;
+
         let sleep_between_tend = Duration::from_millis(1);
 
         let handle = aerospike_rt::spawn(async move {
-            let mut count: isize = -1;
-            loop {
-                if Instant::now() > deadline {
-                    break;
-                }
+            let started = Instant::now();
+            let mut previous: Option<ConvergenceState> = None;
+            let mut tends: u32 = 0;
+            let mut no_progress: u32 = 0;
 
+            loop {
                 if let Err(err) = cluster.tend().await {
                     log_error_chain!(err, "Error during initial cluster tend");
                 }
+                tends += 1;
 
-                let old_count = count;
-                count = cluster.nodes().len() as isize;
-                if count == old_count {
-                    if count == 0 {
-                        // No reachable nodes: nothing further to wait for —
-                        // `fail_if_not_connected` decides what happens next.
-                        break;
+                // Fast path: the cluster view is self-consistent, every known
+                // node has reported a partition map, and that map covers every
+                // partition. There is nothing left to converge toward, so we
+                // do not need a second tend to *infer* stability from an
+                // unchanged view — completeness demonstrates it directly. A
+                // healthy cluster takes this exit on the very first tend,
+                // because the tend that seeds the nodes also fetches their
+                // partition maps.
+                if cluster.node_set_agrees()
+                    && cluster.partition_map_ready()
+                    && cluster.partition_map_complete()
+                {
+                    let nodes = cluster.nodes().len();
+                    debug!(
+                        "Cluster converged after {tends} tend(s) in {:?}: {nodes} node(s), {} namespace(s) fully mapped",
+                        started.elapsed(),
+                        cluster.partition_map.load().len(),
+                    );
+                    return;
+                }
+
+                let state = cluster.convergence_state();
+                // Two identical views in a row: the node set has settled, so
+                // nothing more is going to arrive on its own.
+                if previous.as_ref() == Some(&state) {
+                    if state.node_names.is_empty() {
+                        // Nothing reachable — there is no cluster view to
+                        // converge toward, and retrying only delays the
+                        // per-seed error report. `fail_if_not_connected`
+                        // decides what happens next.
+                        debug!("Initial stabilization: no reachable nodes after {tends} tend(s)");
+                        return;
                     }
-                    // Node-count stability alone is not enough: on a
-                    // multi-node cluster the nodes materialize in the seed
-                    // pass but their partition maps land one tend later, so
-                    // breaking here would let commands race the first
-                    // partition fetch and die on "partition map empty"
-                    // before the tend thread fills it in. Java's tend parses
-                    // partitions synchronously for fresh nodes, so its
-                    // count-only check is safe; ours must wait until every
-                    // node has parsed a partition map at least once.
-                    let nodes = cluster.nodes();
-                    let partitions_ready = !cluster.partition_map.load().is_empty()
-                        && nodes.iter().all(|n| n.partition_generation() != -1);
-                    if partitions_ready {
-                        break;
+                    if cluster.partition_map_ready() {
+                        // The fast path above would already have returned if
+                        // the table were complete and the view self-consistent,
+                        // so getting here means one of those still does not
+                        // hold — yet the view has stopped changing, so waiting
+                        // longer will not change it. Routable, but worth
+                        // saying out loud: some keys may have no owner.
+                        let unowned = cluster.unowned_partitions();
+                        debug!(
+                            "Cluster stabilized after {tends} tend(s) in {:?}: {} node(s), {} namespace(s) mapped, {unowned} partition(s) without a master",
+                            started.elapsed(),
+                            state.node_names.len(),
+                            state.namespaces,
+                        );
+                        return;
                     }
+                    no_progress += 1;
+                    if no_progress >= STABILIZATION_NO_PROGRESS_LIMIT {
+                        warn!(
+                            "Cluster stopped converging after {tends} tend(s) in {:?}: {} of {} node(s) reported partition data, {} namespace(s) mapped (stalled)",
+                            started.elapsed(),
+                            state.nodes_with_map,
+                            state.node_names.len(),
+                            state.namespaces,
+                        );
+                        return;
+                    }
+                } else {
+                    // The view changed — still converging.
+                    no_progress = 0;
+                }
+                previous = Some(state);
+
+                if tends >= STABILIZATION_MAX_TENDS {
+                    warn!(
+                        "Giving up on initial cluster stabilization after {tends} tend(s) in {:?}: the cluster view keeps changing without ever producing a complete partition table",
+                        started.elapsed(),
+                    );
+                    return;
                 }
 
                 aerospike_rt::sleep(sleep_between_tend).await;
@@ -1714,6 +1861,112 @@ impl Cluster {
         let nodes = self.nodes();
         let closed = self.closed.load(Ordering::Relaxed);
         !nodes.is_empty() && !closed
+    }
+
+    /// Returns whether the cluster is *routable*: the partition table is
+    /// fully formed, so a key can be mapped to a node.
+    ///
+    /// This is strictly stronger than [`is_connected`](Self::is_connected),
+    /// which only reports that nodes are known. A client can have live nodes
+    /// and still be unable to route a single command, because routing reads
+    /// the partition map, and a node exists in the cluster view from the
+    /// moment it is validated — before its map has been fetched.
+    /// [`Cluster::new`] does not return until this holds (see
+    /// [`wait_till_stabilized`](Self::wait_till_stabilized)).
+    ///
+    /// Requires that at least one node is known, that the partition map has
+    /// at least one namespace, and that every known node has parsed a
+    /// partition map at least once.
+    pub fn partition_map_ready(&self) -> bool {
+        let nodes = self.nodes();
+        !nodes.is_empty()
+            && !self.partition_map.load().is_empty()
+            && nodes.iter().all(|n| n.partition_generation() != -1)
+    }
+
+    /// Number of partitions, across every mapped namespace, that have no
+    /// known master — that is, partitions no command can be routed to.
+    ///
+    /// Only the master row counts. Replica rows may legitimately be
+    /// short-handed (a namespace with replication factor 2 on a single-node
+    /// cluster has no prole anywhere), and every routing mode falls back to
+    /// the master, so an unowned *master* slot is the only kind that makes a
+    /// key unroutable.
+    fn unowned_partitions(&self) -> usize {
+        self.partition_map
+            .load()
+            .values()
+            .map(|partitions| {
+                partitions.nodes.get(..node::PARTITIONS).map_or(
+                    // Row shorter than a full partition set: nothing in the
+                    // missing tail can be routed either.
+                    node::PARTITIONS,
+                    |masters| masters.iter().filter(|(_, n)| n.is_none()).count(),
+                )
+            })
+            .sum()
+    }
+
+    /// Returns whether the partition table is *complete*: every partition of
+    /// every mapped namespace has a known master.
+    ///
+    /// Stronger than [`partition_map_ready`](Self::partition_map_ready), and
+    /// notably stronger than any argument from stability, because a complete
+    /// table also proves the client is not missing a node that matters. Each
+    /// node claims only the partitions it owns itself, so a partition owned by
+    /// an undiscovered node is claimed by nobody and stays unowned here.
+    /// Completeness therefore implies we have heard from every node holding
+    /// data — no separate "did we find everyone" check is needed to trust
+    /// routing.
+    ///
+    /// The converse does not hold: an incomplete table is not necessarily a
+    /// transient state to be waited out. A strong-consistency namespace with
+    /// unavailable partitions never reaches completeness, which is why this is
+    /// used to *finish* stabilization early rather than to gate it.
+    pub fn partition_map_complete(&self) -> bool {
+        !self.nodes().is_empty()
+            && !self.partition_map.load().is_empty()
+            && self.unowned_partitions() == 0
+    }
+
+    /// Returns whether the cluster view is self-consistent: every node that
+    /// has told us how many peers it has agrees with us about how many nodes
+    /// the cluster has.
+    ///
+    /// Nodes that have not yet refreshed their peers list are skipped — their
+    /// peer count is not "zero peers", it is "not asked yet", distinguished by
+    /// a peers generation still at its initial `-1`. At least one node must
+    /// have reported, otherwise there is nothing to agree with.
+    fn node_set_agrees(&self) -> bool {
+        let nodes = self.nodes();
+        let mut informed = 0;
+        for node in &nodes {
+            if node.peers_generation() == -1 {
+                continue;
+            }
+            informed += 1;
+            if node.peers_count() + 1 != nodes.len() {
+                return false;
+            }
+        }
+        informed > 0
+    }
+
+    /// Snapshot of the parts of the cluster view whose *stability* means
+    /// initial convergence has finished. Compared between tends by
+    /// [`wait_till_stabilized`](Self::wait_till_stabilized).
+    fn convergence_state(&self) -> ConvergenceState {
+        let nodes = self.nodes();
+        let mut node_names: Vec<String> = nodes.iter().map(|n| n.name().to_string()).collect();
+        node_names.sort_unstable();
+        ConvergenceState {
+            nodes_with_map: nodes
+                .iter()
+                .filter(|n| n.partition_generation() != -1)
+                .count(),
+            node_names,
+            namespaces: self.partition_map.load().len(),
+        }
     }
 
     /// Returns whether `namespace` is configured for strong consistency on the

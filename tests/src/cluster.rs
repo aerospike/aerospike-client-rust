@@ -329,13 +329,30 @@ async fn cluster_has_at_least_one_node_after_seed() {
     );
     for node in &nodes {
         assert!(node.is_active(), "node {node} should be active after seed");
-        // Per #12: the seed flow now commits each parsed peer-generation,
-        // so a freshly-seeded node should have a non-`-1` generation
-        // (the server's reported value).
-        assert_ne!(
-            node.peers_generation(),
-            -1,
-            "seed node {node} should have a committed peers_generation"
+    }
+
+    // Per #12: the seed flow commits each peer-generation it parses. Only the
+    // nodes actually asked for a peers list have one — stabilization now
+    // finishes in the tend that seeds the cluster, and that tend asks the seed,
+    // not the peers it discovers through it. The peers get their own generation
+    // on the next tend; what has to hold here is that somebody reported, and
+    // that everybody who reported agrees with us about the cluster's size.
+    let reporters: Vec<_> = nodes
+        .iter()
+        .filter(|n| n.peers_generation() != -1)
+        .collect();
+    assert!(
+        !reporters.is_empty(),
+        "no node committed a peers_generation, so peer discovery never ran"
+    );
+    for node in reporters {
+        assert_eq!(
+            node.peers_count() + 1,
+            nodes.len(),
+            "node {node} reported {} peer(s), which disagrees with the {} node(s) \
+             in the cluster view",
+            node.peers_count(),
+            nodes.len()
         );
     }
 
@@ -437,6 +454,10 @@ async fn partition_map_ready_when_new_returns() {
     // thread fills the map in.
     let client = fresh_client().await;
 
+    assert!(
+        client.cluster.partition_map_ready(),
+        "Client::new returned a cluster that cannot route commands"
+    );
     // The map must already cover the test namespace...
     assert_eq!(
         client
@@ -464,6 +485,66 @@ async fn partition_map_ready_when_new_returns() {
         .put(&wpolicy, &key, &[as_bin!("a", 1)])
         .await
         .expect("first write immediately after Client::new must not race the partition map");
+
+    client.close().await.unwrap();
+}
+
+#[aerospike_macro::test]
+async fn partition_map_complete_when_new_returns() {
+    // Stronger than routability: on a healthy cluster every partition of every
+    // mapped namespace must already have a master when `Client::new` returns.
+    //
+    // This is the condition that lets stabilization finish in a single tend.
+    // It is also what proves the client is not missing a node, since a node's
+    // partitions are only ever claimed by that node itself — so if any node
+    // were still undiscovered, its partitions would show up here as unowned.
+    let client = fresh_client().await;
+
+    assert!(
+        client.cluster.partition_map_complete(),
+        "Client::new returned with an incomplete partition table: some \
+         partitions have no master, so some keys cannot be routed"
+    );
+
+    client.close().await.unwrap();
+}
+
+#[aerospike_macro::test]
+async fn stabilization_is_not_bounded_by_policy_timeout() {
+    // `ClientPolicy::timeout` bounds individual info commands, NOT initial
+    // stabilization. It used to bound both, so a cluster that took longer to
+    // converge than the (1 s default) timeout — a secured multi-node cluster
+    // needs a LOGIN handshake per node plus several tends — had its
+    // convergence truncated, and `Client::new` returned a client with an
+    // empty partition map that failed every command with "partition map
+    // empty".
+    //
+    // Pin the invariant with a timeout far below the time stabilization
+    // needs: whenever nodes are found at all, the cluster must be routable.
+    let mut policy = common::client_policy().clone();
+    policy.timeout = 10;
+    // Distinguish "info calls too tight to reach anything on a slow test
+    // cluster" (skip) from "reached the cluster but came back unroutable"
+    // (the regression) — the latter must fail rather than error out here.
+    policy.fail_if_not_connected = false;
+
+    let client = Client::new(&policy, &common::hosts().to_string())
+        .await
+        .expect("new() must not fail when fail_if_not_connected is disabled");
+
+    if client.nodes().is_empty() {
+        // A 10 ms info timeout was too tight for this cluster; the invariant
+        // under test needs a reachable cluster, so there is nothing to check.
+        client.close().await.unwrap();
+        return;
+    }
+
+    assert!(
+        client.cluster.partition_map_ready(),
+        "Client::new returned an unroutable cluster with policy.timeout=10ms — \
+         stabilization must be driven by cluster convergence, not by the \
+         per-info-call timeout"
+    );
 
     client.close().await.unwrap();
 }

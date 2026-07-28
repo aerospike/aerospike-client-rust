@@ -107,12 +107,37 @@ pub struct ClientPolicy {
     #[cfg_attr(feature = "dynamic-config", config(skip))]
     pub tls_config: Option<ClientConfig>,
 
-    /// General timeout in milliseconds for connecting to the whole cluster:
-    /// it bounds the initial cluster tend/stabilization performed by
-    /// [`Client::new`](crate::Client::new) (seeding the nodes and waiting for
-    /// the node count to settle). Also used for the client's own info/admin
-    /// commands (tend refreshes, index/UDF management, …), and as the fallback
-    /// for [`connect_timeout`](field@Self::connect_timeout) when that is `0`.
+    /// Socket timeout in milliseconds for a single **info/admin command**:
+    /// the `info` requests the tend loop issues every cycle (node refresh,
+    /// peer discovery, `replicas` partition fetch, rack info, keep-alive
+    /// probes) and the client's own info/admin calls
+    /// ([`Client::info`](crate::Client::info), index and UDF management,
+    /// `truncate`, security commands, …).
+    ///
+    /// The timeout applies per socket operation within such a command, not to
+    /// a whole command or a whole tend cycle: a command that writes a request
+    /// and reads a header plus a body allows this long for each of those
+    /// steps. Lower it to detect an unresponsive node sooner; raise it for
+    /// links with high latency or for `replicas` responses on clusters with
+    /// very many namespaces.
+    ///
+    /// This value also serves as the fallback for
+    /// [`connect_timeout`](field@Self::connect_timeout) when that field is
+    /// `0`, so it transitively bounds establishing a connection too.
+    ///
+    /// # This does *not* bound cluster startup
+    ///
+    /// [`Client::new`](crate::Client::new) does not return until the
+    /// partition table is fully formed and stable, and that wait is driven by
+    /// the cluster's own convergence — not by this field. A healthy cluster
+    /// stabilizes in one tend cycle, but each tend costs network round-trips
+    /// and, on a security-enabled cluster, a `LOGIN` handshake per node, so
+    /// how long it takes is a property of the cluster's size and
+    /// configuration. Bounding
+    /// it with a per-command timeout used to truncate convergence on larger
+    /// or secured clusters and hand back a client that could not route
+    /// anything; see [`ClientPolicy::fail_if_not_connected`](field@Self::fail_if_not_connected)
+    /// for the knob that controls startup failure instead.
     ///
     /// Default: 1000
     pub timeout: u32,
@@ -201,7 +226,26 @@ pub struct ClientPolicy {
     #[cfg_attr(feature = "dynamic-config", config(skip))]
     pub opening_connection_threshold: usize,
 
-    /// Throw exception if host connection fails during `addHost()`.
+    /// Whether [`Client::new`](crate::Client::new) fails when the cluster
+    /// does not come up usable.
+    ///
+    /// With `true` (the default) construction returns an error unless the
+    /// cluster is both reachable *and* routable: at least one seed connected,
+    /// and every known node has contributed to the partition table. The error
+    /// names every seed that failed, or reports that nodes were reachable but
+    /// never produced a partition map.
+    ///
+    /// With `false`, construction succeeds regardless and the tend loop keeps
+    /// trying in the background. Commands issued before the cluster becomes
+    /// routable fail with `InvalidNamespace` ("partition map empty"), so this
+    /// suits long-lived processes that must start before their database is
+    /// up and can tolerate early failures.
+    ///
+    /// Note that this flag decides *whether* to fail, not *how long* to wait:
+    /// the wait itself is bounded by the cluster's convergence, not by a
+    /// timeout (see [`timeout`](field@Self::timeout)).
+    ///
+    /// Default: `true`
     #[cfg_attr(feature = "dynamic-config", config(skip))]
     pub fail_if_not_connected: bool,
 
