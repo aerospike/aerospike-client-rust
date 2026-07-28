@@ -22,6 +22,7 @@ use crate::policy::StreamPolicy;
 use crate::query::NodePartitions;
 use crate::query::PartitionFilter;
 use crate::query::PartitionStatus;
+use parking_lot::Mutex as PartMutex;
 use crate::Key;
 use crate::Node;
 
@@ -121,7 +122,7 @@ impl PartitionTracker {
                     partition_filter.retry.store(true, Ordering::Relaxed);
                 }
 
-                partition_filter.reset_partition_status().await;
+                partition_filter.reset_partition_status();
             }
             pt
         };
@@ -160,9 +161,9 @@ impl PartitionTracker {
 
         let partition_filter = self.partition_filter.as_mut().unwrap().lock().await;
         let partitions = partition_filter.partitions.as_ref().unwrap();
-        for part in partitions {
+        for (offset, part) in partitions.iter().enumerate() {
             let (part_retry, part_id) = {
-                let part = part.lock().await;
+                let part = part.lock();
                 (part.retry, part.id)
             };
             if retry || part_retry {
@@ -179,16 +180,21 @@ impl PartitionTracker {
                     }
                 }
 
+                let index = offset as u16;
                 let np = Self::find_node(&list, node.clone()).await;
                 if let Some(np) = np {
                     let mut np = np.lock().await;
-                    np.add_partition(part.clone()).await;
+                    np.add_partition(index);
                 } else {
                     // If the partition map is in a transitional state, multiple
                     // nodePartitions instances (each with different partitions)
                     // may be created for a single node.
-                    let mut np = NodePartitions::new(node.clone(), self.partitions_capacity);
-                    np.add_partition(part.clone()).await;
+                    let mut np = NodePartitions::new(
+                        node.clone(),
+                        self.partitions_capacity,
+                        Arc::clone(partitions),
+                    );
+                    np.add_partition(index);
                     list.push(Arc::new(Mutex::new(np)));
                 }
             }
@@ -274,7 +280,7 @@ impl PartitionTracker {
 
         // let mut partitions = partitions.write();
         if let Some(ps) = partitions.get(partition_id as usize - self.partition_begin) {
-            let mut ps = ps.lock().await;
+            let mut ps = ps.lock();
             ps.retry = true;
             if let Some(ref mut seq) = ps.sequence {
                 *seq += 1;
@@ -296,7 +302,7 @@ impl PartitionTracker {
         if let Some(partitions) = partitions {
             // let mut partitions = partitions.write();
             if let Some(ps) = partitions.get(partition_id - self.partition_begin) {
-                let mut ps = ps.lock().await;
+                let mut ps = ps.lock();
                 ps.digest = Some(key.digest);
             } else {
                 return Err(Error::client_error(format!(
@@ -330,7 +336,7 @@ impl PartitionTracker {
 
         if let Some(partitions) = partitions {
             if let Some(ps) = partitions.get(partition_id - self.partition_begin) {
-                let mut ps = ps.lock().await;
+                let mut ps = ps.lock();
                 ps.digest = Some(key.digest);
                 if bval.is_some() {
                     ps.bval = bval;
@@ -399,7 +405,7 @@ impl PartitionTracker {
                 for np in &self.node_partitions_list {
                     let np = np.lock().await;
                     if np.record_count + np.disallowed_count >= np.record_max {
-                        self.mark_retry(&np).await;
+                        self.mark_retry(&np);
                         done = false;
                     }
                 }
@@ -455,16 +461,14 @@ impl PartitionTracker {
         Ok(false)
     }
 
-    pub(crate) async fn mark_retry(&self, node_partitions: &NodePartitions) {
+    pub(crate) fn mark_retry(&self, node_partitions: &NodePartitions) {
         // Mark retry for same replica.
-        for ps in &node_partitions.parts_full {
-            let mut ps = ps.lock().await;
-            ps.retry = true;
+        for &index in &node_partitions.parts_full {
+            node_partitions.status(index).retry = true;
         }
 
-        for ps in &node_partitions.parts_partial {
-            let mut ps = ps.lock().await;
-            ps.retry = true;
+        for &index in &node_partitions.parts_partial {
+            node_partitions.status(index).retry = true;
         }
     }
 
@@ -476,22 +480,24 @@ impl PartitionTracker {
         }
     }
 
+    /// Builds the partition status array: one allocation for the whole range,
+    /// shared by `Arc` and indexed by offset from `partition_begin`.
     pub(crate) fn init_partitions(
         partition_begin: usize,
         partition_count: usize,
         digest: Option<[u8; 20]>,
-    ) -> Vec<Arc<Mutex<PartitionStatus>>> {
-        let mut parts_all = Vec::<Arc<Mutex<PartitionStatus>>>::with_capacity(partition_count);
+    ) -> Arc<Vec<PartMutex<PartitionStatus>>> {
+        let mut parts_all = Vec::with_capacity(partition_count);
 
         for i in 0..partition_count {
             let mut part = PartitionStatus::new(partition_begin + i);
             if i == 0 && digest.is_some() {
                 part.set_digest(digest);
             }
-            parts_all.push(Arc::new(Mutex::new(part)));
+            parts_all.push(PartMutex::new(part));
         }
 
-        parts_all
+        Arc::new(parts_all)
     }
 
     pub(crate) fn extract_partition_filter(&mut self) -> Option<PartitionFilter> {

@@ -50,14 +50,26 @@ impl Drop for Recordset {
 }
 
 impl Recordset {
+    /// `rec_queue_size` bounds the buffer between the per-node reader tasks and
+    /// the consumer. `max_records`, when the caller specified one, caps it: the
+    /// channel preallocates its whole slot array at
+    /// `size_of::<Result<Record>>()` (248 bytes) plus a stamp per slot, so a
+    /// query that can return at most 10 records has no use for a 1024-slot,
+    /// 262 KB array. Zero means "no limit" and leaves the queue at full size.
     pub(crate) fn new(
         rec_queue_size: usize,
+        max_records: u64,
         nodes: usize,
         tracker: Arc<Mutex<PartitionTracker>>,
     ) -> Self {
         let task_id = rand::random::<u64>();
 
-        let (tx, rx) = async_channel::bounded(rec_queue_size);
+        let capacity = if max_records > 0 {
+            rec_queue_size.min(max_records as usize)
+        } else {
+            rec_queue_size
+        };
+        let (tx, rx) = async_channel::bounded(capacity.max(1));
         Recordset {
             instances: AtomicUsize::new(nodes),
             rx,
@@ -213,7 +225,7 @@ mod tests {
             Vec::new(),
         ))
         .expect("tracker");
-        Arc::new(Recordset::new(queue_size, 1, Arc::new(Mutex::new(tracker))))
+        Arc::new(Recordset::new(queue_size, 0, 1, Arc::new(Mutex::new(tracker))))
     }
 
     fn record() -> Record {

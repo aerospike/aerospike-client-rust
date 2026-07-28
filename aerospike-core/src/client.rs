@@ -1508,6 +1508,7 @@ impl Client {
 
         let recordset = Arc::new(Recordset::new(
             policy.record_queue_size,
+            policy.max_records,
             usize::MAX, // will be reset later
             tracker.clone(),
         ));

@@ -81,7 +81,6 @@ impl Command for QueryCommand<'_> {
                 &node,
                 Some(&node_partitions),
             )
-            .await
     }
 
     fn get_node(&mut self) -> Result<Arc<Node>> {

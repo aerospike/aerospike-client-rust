@@ -114,7 +114,6 @@ impl Command for ServerCommand<'_> {
                 &self.node,
                 None,
             )
-            .await
     }
 
     fn get_node(&mut self) -> Result<Arc<Node>> {

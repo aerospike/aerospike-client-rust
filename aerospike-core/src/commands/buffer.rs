@@ -1390,7 +1390,7 @@ impl Buffer {
     /// `QUERY_BINLIST` field instead of as trailing READ ops, are
     /// not supported.
     #[allow(clippy::cognitive_complexity)]
-    pub(crate) async fn set_query(
+    pub(crate) fn set_query(
         &mut self,
         direction: QueryDirection<'_>,
         statement: &Statement,
@@ -1652,27 +1652,25 @@ impl Buffer {
         if let Some(np) = node_partitions {
             if parts_full_size > 0 {
                 self.write_field_header(parts_full_size, FieldType::PIDArray);
-                for part in &np.parts_full {
-                    let part = part.lock().await;
-                    self.write_u16_little_endian(part.id);
+                for &index in &np.parts_full {
+                    let id = np.status(index).id;
+                    self.write_u16_little_endian(id);
                 }
             }
             if parts_partial_size > 0 {
                 self.write_field_header(parts_partial_size, FieldType::DigestArray);
-                for part in &np.parts_partial {
-                    let part = part.lock().await;
-                    part.digest.map(|digest| self.write_bytes(&digest));
+                for &index in &np.parts_partial {
+                    let digest = np.status(index).digest;
+                    if let Some(digest) = digest {
+                        self.write_bytes(&digest);
+                    }
                 }
             }
             if parts_partial_bval_size > 0 {
                 self.write_field_header(parts_partial_bval_size, FieldType::BValArray);
-                for part in &np.parts_partial {
-                    let part = part.lock().await;
-                    if let Some(bval) = part.bval {
-                        self.write_u64_little_endian(bval);
-                    } else {
-                        self.write_u64_little_endian(0);
-                    }
+                for &index in &np.parts_partial {
+                    let bval = np.status(index).bval;
+                    self.write_u64_little_endian(bval.unwrap_or(0));
                 }
             }
             if max_records > 0 {

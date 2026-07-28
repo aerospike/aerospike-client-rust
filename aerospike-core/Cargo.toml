@@ -16,6 +16,10 @@ rust-version.workspace = true
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+# Partition status locks: one byte each and no allocation on first lock. The
+# std mutex lazily boxes a pthread_mutex_t per instance on macOS, which for a
+# 4096-entry partition array meant 4096 allocations per query.
+parking_lot = "0.12"
 log = "0.4"
 byteorder = "1.5"
 ripemd = "0.2"
