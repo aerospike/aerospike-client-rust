@@ -15,6 +15,8 @@
 
 //! Functions used for Filter Expressions. This module requires Aerospike Server version >= 5.2
 
+/// Server-compiled AEL (Aerospike Expression Language) filters: the client
+/// packs the text and the server parses it (8.1.3+).
 pub mod ael;
 pub mod bitwise;
 pub mod hll;

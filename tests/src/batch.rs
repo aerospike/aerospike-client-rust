@@ -1040,3 +1040,189 @@ async fn batch_write_repeat_compression() {
 
     client.close().await.unwrap();
 }
+
+// ---- unroutable keys ------------------------------------------------------
+
+#[aerospike_macro::test]
+async fn batch_records_unroutable_key_without_failing_the_batch() {
+    // One key naming a namespace this cluster does not have used to abort the
+    // whole call: the splitter propagated the routing error with `?`, so
+    // ninety-nine good keys were discarded because of one bad one. Java's
+    // `BatchNodeList.generate` writes the error onto that key's record and
+    // keeps going, which is what this pins.
+    let client = common::client().await;
+    let namespace: &str = common::namespace();
+    let set_name = &common::rand_str(10);
+    let bpolicy = BatchPolicy::default();
+    let wpolicy = WritePolicy::default();
+    let bpr = BatchReadPolicy::default();
+
+    let good1 = as_key!(namespace, set_name, 1);
+    let good2 = as_key!(namespace, set_name, 2);
+    let bad = as_key!("no_such_namespace_here", set_name, 3);
+
+    let bin = as_bin!("a", 42);
+    client.put(&wpolicy, &good1, &[bin.clone()]).await.unwrap();
+    client.put(&wpolicy, &good2, &[bin.clone()]).await.unwrap();
+
+    // Bad key in the middle, so a fix that merely reorders would not pass.
+    let batch = vec![
+        BatchOperation::read(&bpr, good1.clone(), Bins::All),
+        BatchOperation::read(&bpr, bad.clone(), Bins::All),
+        BatchOperation::read(&bpr, good2.clone(), Bins::All),
+    ];
+
+    let records = client
+        .batch(&bpolicy, &batch)
+        .await
+        .expect("one unroutable key must not fail the whole batch");
+
+    // Input order is preserved, including the row that never left the client.
+    assert_eq!(records.len(), 3);
+    assert_eq!(records[0].key, good1);
+    assert_eq!(records[1].key, bad);
+    assert_eq!(records[2].key, good2);
+
+    // The reachable keys were read.
+    for i in [0, 2] {
+        assert_eq!(
+            records[i].result_code,
+            Some(ResultCode::Ok),
+            "good key at {i} should have succeeded: {:?}",
+            records[i]
+        );
+        assert_eq!(
+            records[i].record.as_ref().unwrap().bins.get("a"),
+            Some(&as_val!(42))
+        );
+    }
+
+    // The unroutable key carries its own error and no record.
+    assert_eq!(records[1].result_code, Some(ResultCode::InvalidNamespace));
+    assert!(records[1].record.is_none());
+    assert!(!records[1].in_doubt, "nothing was sent, so nothing is in doubt");
+
+    client.close().await.unwrap();
+}
+
+#[aerospike_macro::test]
+async fn batch_fails_when_no_key_can_be_routed() {
+    // The other half of the Java rule: with nothing routable there is no batch
+    // to send, so the call fails outright rather than returning rows that were
+    // never attempted.
+    let client = common::client().await;
+    let set_name = &common::rand_str(10);
+    let bpolicy = BatchPolicy::default();
+    let bpr = BatchReadPolicy::default();
+
+    let batch = vec![
+        BatchOperation::read(&bpr, as_key!("no_such_namespace_here", set_name, 1), Bins::All),
+        BatchOperation::read(&bpr, as_key!("also_missing", set_name, 2), Bins::All),
+    ];
+
+    let err = client
+        .batch(&bpolicy, &batch)
+        .await
+        .expect_err("a batch with no routable key must fail");
+    assert!(
+        matches!(err.kind(), ErrorKind::InvalidNamespace),
+        "expected the routing failure itself, got {err:?}"
+    );
+
+    client.close().await.unwrap();
+}
+
+#[aerospike_macro::test]
+async fn batch_write_to_unroutable_key_is_not_in_doubt() {
+    // A write that was never sent cannot have been applied, so it must not be
+    // marked in-doubt — that mark is what makes a later MRT commit degrade to
+    // an abort.
+    let client = common::client().await;
+    let namespace: &str = common::namespace();
+    let set_name = &common::rand_str(10);
+    let bpolicy = BatchPolicy::default();
+    let bpw = BatchWritePolicy::default();
+
+    let good = as_key!(namespace, set_name, 1);
+    let bad = as_key!("no_such_namespace_here", set_name, 2);
+    let bin = as_bin!("a", 7);
+    let wops = vec![operations::put(&bin)];
+
+    let batch = vec![
+        BatchOperation::write(&bpw, bad.clone(), wops.clone()),
+        BatchOperation::write(&bpw, good.clone(), wops.clone()),
+    ];
+
+    let records = client.batch(&bpolicy, &batch).await.expect("partial batch");
+    assert_eq!(records.len(), 2);
+
+    assert_eq!(records[0].result_code, Some(ResultCode::InvalidNamespace));
+    assert!(records[0].has_write());
+    assert!(!records[0].in_doubt);
+
+    assert_eq!(records[1].result_code, Some(ResultCode::Ok));
+    // The reachable write really landed.
+    let stored = client
+        .get(&ReadPolicy::default(), &good, Bins::All)
+        .await
+        .unwrap();
+    assert_eq!(stored.bins.get("a"), Some(&as_val!(7)));
+
+    client.close().await.unwrap();
+}
+
+#[aerospike_macro::test]
+async fn batch_stream_emits_unroutable_key_with_its_error() {
+    // The streaming splitter shares `get_batch_operate_nodes` with the
+    // buffered path, so it has to emit the unroutable row too — otherwise the
+    // stream silently yields fewer items than the caller had keys, and the
+    // index-to-key mapping the caller relies on has a hole in it.
+    use futures::stream::StreamExt;
+
+    let client = common::client().await;
+    let ns = common::namespace();
+    let set = &common::rand_str(10);
+    let wpolicy = WritePolicy::default();
+
+    let good = as_key!(ns, set, "stream_good");
+    let bad = as_key!("no_such_namespace_here", set, "stream_bad");
+    client
+        .put(&wpolicy, &good, &[as_bin!("x", 1_i64)])
+        .await
+        .unwrap();
+
+    let bp = BatchPolicy::default();
+    let bpr = BatchReadPolicy::default();
+    // Index 0 = unroutable, index 1 = reachable.
+    let ops = vec![
+        BatchOperation::read(&bpr, bad.clone(), Bins::All),
+        BatchOperation::read(&bpr, good.clone(), Bins::All),
+    ];
+
+    let mut stream = client.batch_stream(&bp, ops).await.unwrap();
+    let mut got: Vec<(usize, BatchRecord)> = Vec::new();
+    while let Some(item) = stream.next().await {
+        got.push(item);
+    }
+
+    // Every input key is accounted for, in whatever order they completed.
+    assert_eq!(got.len(), 2, "stream dropped a key: {got:?}");
+
+    let (_, unroutable) = got
+        .iter()
+        .find(|(idx, _)| *idx == 0)
+        .expect("index 0 in stream");
+    assert_eq!(unroutable.key, bad);
+    assert_eq!(unroutable.result_code, Some(ResultCode::InvalidNamespace));
+    assert!(unroutable.record.is_none());
+
+    let (_, reachable) = got
+        .iter()
+        .find(|(idx, _)| *idx == 1)
+        .expect("index 1 in stream");
+    assert_eq!(reachable.key, good);
+    assert_eq!(reachable.result_code, Some(ResultCode::Ok));
+    assert!(reachable.record.is_some());
+
+    client.close().await.unwrap();
+}

@@ -86,7 +86,10 @@ impl BatchExecutor {
         policy: &BatchPolicy,
         batch_ops: &[BatchOperation],
     ) -> Result<Vec<BatchRecord>> {
-        let batch_nodes = self.get_batch_operate_nodes(
+        let BatchSplit {
+            map: batch_nodes,
+            unroutable,
+        } = self.get_batch_operate_nodes(
             batch_ops,
             policy.replica,
             policy.base_policy.read_mode_sc,
@@ -116,6 +119,12 @@ impl BatchExecutor {
         }
 
         let mut all_results: Vec<(BatchOperation, usize)> = Vec::with_capacity(batch_ops.len());
+        // Rows that never left the client are results too, and they are
+        // already marked. They do not feed `first_err`: a key the cluster
+        // could not route is a per-key outcome, exactly like a server
+        // answering INVALID_NAMESPACE for it, and per-key outcomes do not
+        // fail the call.
+        all_results.extend(unroutable);
         // First failure across all per-node groups. The batch keeps running so
         // every per-key outcome is collected; on failure the full record set is
         // surfaced via `ErrorKind::BatchFailed` (Java `BatchRecordArray`
@@ -204,7 +213,10 @@ impl BatchExecutor {
         policy: &BatchPolicy,
         batch_ops: Vec<BatchOperation>,
     ) -> Result<impl Stream<Item = (usize, BatchRecord)>> {
-        let batch_nodes = self.get_batch_operate_nodes(
+        let BatchSplit {
+            map: batch_nodes,
+            unroutable,
+        } = self.get_batch_operate_nodes(
             &batch_ops,
             policy.replica,
             policy.base_policy.read_mode_sc,
@@ -214,6 +226,12 @@ impl BatchExecutor {
         drop(batch_ops);
 
         let (tx, rx) = mpsc::unbounded::<(usize, BatchRecord)>();
+
+        // Unroutable keys are already decided, so emit them immediately
+        // rather than making the consumer wait on the nodes that can answer.
+        for (op, idx) in unroutable {
+            let _ = tx.unbounded_send((idx, op.batch_record()));
+        }
 
         for (node, ops) in batch_nodes {
             let cluster = self.cluster.clone();
@@ -424,21 +442,83 @@ impl BatchExecutor {
         }
     }
 
+    /// Split the batch by owning node.
+    ///
+    /// Returns the per-node groups plus the rows whose key could not be routed
+    /// at all, each already carrying its own result code.
+    ///
+    /// Java `BatchNodeList.generate` parity: a key that cannot be assigned to a
+    /// node has the error written onto *its* record (`record.setError(...)`,
+    /// then `continue`) and the rest of the batch still runs. One key naming a
+    /// namespace this cluster does not have is that key's problem, not the
+    /// other ninety-nine's. The call fails outright only when no key could be
+    /// routed, because then there is no batch left to send — and the error
+    /// returned is the first routing failure, which is more specific than
+    /// "empty batch".
     fn get_batch_operate_nodes(
         &self,
         batch_ops: &[BatchOperation],
         replica: crate::policy::Replica,
         read_mode_sc: crate::policy::ReadModeSC,
-    ) -> Result<HashMap<Arc<Node>, Vec<(BatchOperation, usize)>>> {
+    ) -> Result<BatchSplit> {
         #![allow(clippy::type_complexity)]
-        let mut map = HashMap::new();
+        let mut map: HashMap<Arc<Node>, Vec<(BatchOperation, usize)>> = HashMap::new();
+        let mut unroutable: Vec<(BatchOperation, usize)> = Vec::new();
+        let mut first_err: Option<Error> = None;
+
         for (index, batch_op) in batch_ops.iter().enumerate() {
-            let node =
-                self.node_for_key(&batch_op.key(), batch_op.has_write(), replica, read_mode_sc)?;
-            map.entry(node)
-                .or_insert_with(Vec::new)
-                .push((batch_op.clone(), index));
+            match self.node_for_key(&batch_op.key(), batch_op.has_write(), replica, read_mode_sc) {
+                Ok(node) => {
+                    map.entry(node)
+                        .or_insert_with(Vec::new)
+                        .push((batch_op.clone(), index));
+                }
+                Err(err) => {
+                    let mut op = batch_op.clone();
+                    // Never in-doubt: nothing was sent for this key.
+                    op.set_result_code(routing_result_code(&err), false);
+                    unroutable.push((op, index));
+                    first_err.get_or_insert(err);
+                }
+            }
         }
-        Ok(map)
+
+        if map.is_empty() {
+            if let Some(err) = first_err {
+                return Err(err);
+            }
+        }
+
+        Ok(BatchSplit { map, unroutable })
     }
+}
+
+/// The outcome of splitting a batch across nodes.
+struct BatchSplit {
+    /// Keys that resolved to a node, grouped by that node.
+    map: HashMap<Arc<Node>, Vec<(BatchOperation, usize)>>,
+    /// Keys that resolved to nothing, each already marked with its result code
+    /// and carrying its original input index.
+    unroutable: Vec<(BatchOperation, usize)>,
+}
+
+/// The per-key result code for a key the client could not route.
+///
+/// Java stores the raw exception code here, including its negative client-side
+/// codes; [`BatchRecord::result_code`](crate::BatchRecord) holds a
+/// server-space [`ResultCode`], so the client-side codes are mapped onto the
+/// server code that describes the same condition:
+///
+/// - an unknown namespace is `INVALID_NAMESPACE` on both sides, so it carries
+///   through unchanged;
+/// - anything else means the partition has no node the client can reach, which
+///   is what `PARTITION_UNAVAILABLE` says.
+fn routing_result_code(err: &Error) -> ResultCode {
+    err.server_result_code().unwrap_or_else(|| {
+        if matches!(err.kind(), crate::ErrorKind::InvalidNamespace) {
+            ResultCode::InvalidNamespace
+        } else {
+            ResultCode::PartitionUnavailable
+        }
+    })
 }
