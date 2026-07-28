@@ -16,7 +16,7 @@ use aerospike::{
     as_bin, as_blob, as_geo, as_key, as_list, as_map, as_val, Bins, ReadPolicy, Value, WritePolicy,
 };
 use aerospike::{
-    operations, Expiration, GenerationPolicy, ReadTouchTTL, RecordExistsAction, ResultCode,
+    operations, Expiration, GenerationPolicy, Key, ReadTouchTTL, RecordExistsAction, ResultCode,
 };
 use aerospike_rt::sleep;
 use aerospike_rt::time::Duration;
@@ -386,6 +386,55 @@ async fn create_only_fails_when_record_exists() {
         Err(other) => panic!("expected KeyExistsError, got: {:?}", other),
         Ok(_) => panic!("expected KeyExistsError, got Ok"),
     }
+
+    client.close().await.unwrap();
+}
+
+#[aerospike_macro::test]
+async fn infinity_and_wildcard_are_rejected_not_fatal() {
+    // INF and wildcard exist only as bounds inside msgpack payloads (CDT
+    // arguments, expressions). Handing one to the client as an ordinary bin
+    // value used to abort the whole process from `Value::particle_type`;
+    // Java answers PARAMETER_ERROR. A client-side mistake in one command must
+    // not take down the caller.
+    let client = common::client().await;
+    let namespace: &str = common::namespace();
+    let set_name = &common::rand_str(10);
+    let wpolicy = WritePolicy::default();
+    let key = as_key!(namespace, set_name, "inf_wildcard");
+
+    for value in [Value::Infinity, Value::Wildcard] {
+        let bin = as_bin!("b", value.clone());
+        let err = client
+            .put(&wpolicy, &key, &[bin])
+            .await
+            .expect_err("storing INF/wildcard as a bin value must be an error");
+        assert_eq!(
+            err.result_code(),
+            i32::from(u8::from(ResultCode::ParameterError)),
+            "expected PARAMETER_ERROR for {value:?}, got {err:?}"
+        );
+    }
+
+    // Same for a record key built from one.
+    for value in [Value::Infinity, Value::Wildcard] {
+        let bad_key = Key::new(namespace, set_name.as_str(), value.clone());
+        assert!(
+            bad_key.is_err(),
+            "a key made from {value:?} must be rejected"
+        );
+    }
+
+    // The connection is still usable: the failures above were per-command.
+    client
+        .put(&wpolicy, &key, &[as_bin!("b", 1)])
+        .await
+        .expect("client still works after a rejected value");
+    let record = client
+        .get(&ReadPolicy::default(), &key, Bins::All)
+        .await
+        .unwrap();
+    assert_eq!(record.bins.get("b"), Some(&as_val!(1)));
 
     client.close().await.unwrap();
 }

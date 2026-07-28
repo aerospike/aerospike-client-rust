@@ -426,7 +426,19 @@ impl BatchOperateCommand {
             .set_compress(policy.use_compression(), policy.compression_threshold());
         conn.buffer
             .set_batch_operate(policy, batch_ops)
-            .map_err(|_| Error::client_error("Failed to prepare send buffer"))?;
+            .map_err(|e| {
+                // Same as the single-key path: keep a caller's argument error
+                // (and its PARAMETER_ERROR code) instead of replacing it with a
+                // generic client error. This previously discarded the cause
+                // entirely, so a value the client cannot encode surfaced as a
+                // bare "Failed to prepare send buffer" with nothing to explain
+                // it.
+                if matches!(e.kind(), crate::ErrorKind::InvalidArgument) {
+                    e
+                } else {
+                    e.chain_error("Failed to prepare send buffer")
+                }
+            })?;
 
         conn.buffer.write_timeout(policy.server_timeout());
 

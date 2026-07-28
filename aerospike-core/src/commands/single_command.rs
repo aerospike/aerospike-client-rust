@@ -299,9 +299,18 @@ impl<'a> SingleCommand<'a> {
 
             conn.buffer
                 .set_compress(policy.use_compression(), policy.compression_threshold());
-            cmd.prepare_buffer(&mut conn)
-                .await
-                .map_err(|e| e.chain_error("Failed to prepare send buffer"))?;
+            cmd.prepare_buffer(&mut conn).await.map_err(|e| {
+                // An argument the client refuses to encode is the caller's
+                // mistake, not a buffer problem: surface it as-is so the
+                // result code stays PARAMETER_ERROR, the way Java throws it
+                // straight out of the command. Anything else (I/O, sizing)
+                // gets the buffer context, which is where it is useful.
+                if matches!(e.kind(), crate::ErrorKind::InvalidArgument) {
+                    e
+                } else {
+                    e.chain_error("Failed to prepare send buffer")
+                }
+            })?;
             cmd.write_timeout(&mut conn)
                 .await
                 .map_err(|e| e.chain_error("Failed to set timeout for send buffer"))?;

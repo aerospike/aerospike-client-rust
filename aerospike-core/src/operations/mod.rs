@@ -168,7 +168,7 @@ impl Operation {
                 size += self.write_op_header_to(buffer, ParticleType::NULL as u8);
             }
             OperationData::Value(value) => {
-                size += self.write_op_header_to(buffer, value.particle_type());
+                size += self.write_op_header_to(buffer, value.particle_type()?);
                 size += value.write_to(buffer)?;
             }
             OperationData::CdtListOp(ref cdt_op)

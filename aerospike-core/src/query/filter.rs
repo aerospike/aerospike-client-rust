@@ -206,6 +206,19 @@ pub struct Filter {
     pub(crate) expression: Option<Expression>,
 }
 
+/// Particle type of a filter bound.
+///
+/// Filter values arrive through [`EqFilterValue`] / [`RangeFilterValue`], which
+/// only yield integers, strings, and blobs, so the INF/wildcard failure
+/// [`Value::particle_type`] reports cannot happen here. `NULL` is a defensive
+/// placeholder for the impossible case: it makes the server reject the filter
+/// instead of the client panicking on a value the type system already excludes.
+fn bound_particle_type(value: &Value) -> u8 {
+    value
+        .particle_type()
+        .unwrap_or(crate::commands::particle_type::ParticleType::NULL as u8)
+}
+
 impl Filter {
     /// Creates a new filter instance. For internal use only.
     pub(crate) fn new(
@@ -267,7 +280,7 @@ impl Filter {
         Filter::new(
             bin_name,
             CollectionIndexType::Default,
-            val.particle_type(),
+            bound_particle_type(&val),
             val.clone(),
             val,
         )
@@ -279,7 +292,7 @@ impl Filter {
         Filter::new_by_index(
             index_name,
             CollectionIndexType::Default,
-            val.particle_type(),
+            bound_particle_type(&val),
             val.clone(),
             val,
         )
@@ -303,7 +316,7 @@ impl Filter {
         Filter::new(
             bin_name,
             CollectionIndexType::Default,
-            begin.particle_type(),
+            bound_particle_type(&begin),
             begin,
             end,
         )
@@ -320,7 +333,7 @@ impl Filter {
         Filter::new_by_index(
             index_name,
             CollectionIndexType::Default,
-            begin.particle_type(),
+            bound_particle_type(&begin),
             begin,
             end,
         )
@@ -342,7 +355,7 @@ impl Filter {
     /// ```
     pub fn contains(bin_name: &str, value: impl EqFilterValue, cit: CollectionIndexType) -> Self {
         let val = value.into_filter_value();
-        Filter::new(bin_name, cit, val.particle_type(), val.clone(), val)
+        Filter::new(bin_name, cit, bound_particle_type(&val), val.clone(), val)
     }
 
     /// Creates a contains filter for query on a collection index targeting a specific secondary
@@ -353,7 +366,7 @@ impl Filter {
         cit: CollectionIndexType,
     ) -> Self {
         let val = value.into_filter_value();
-        Filter::new_by_index(index_name, cit, val.particle_type(), val.clone(), val)
+        Filter::new_by_index(index_name, cit, bound_particle_type(&val), val.clone(), val)
     }
 
     // ========================================================================
@@ -377,7 +390,7 @@ impl Filter {
     ) -> Self {
         let begin = begin.into_filter_value();
         let end = end.into_filter_value();
-        Filter::new(bin_name, cit, begin.particle_type(), begin, end)
+        Filter::new(bin_name, cit, bound_particle_type(&begin), begin, end)
     }
 
     /// Creates a contains range filter for query on a collection index targeting a specific
@@ -390,7 +403,7 @@ impl Filter {
     ) -> Self {
         let begin = begin.into_filter_value();
         let end = end.into_filter_value();
-        Filter::new_by_index(index_name, cit, begin.particle_type(), begin, end)
+        Filter::new_by_index(index_name, cit, bound_particle_type(&begin), begin, end)
     }
 
     // ========================================================================
@@ -650,7 +663,7 @@ macro_rules! as_eq {
         $crate::query::Filter::new(
             $bin_name,
             $crate::CollectionIndexType::Default,
-            val.particle_type(),
+            bound_particle_type(&val),
             val.clone(),
             val.clone(),
         )
@@ -670,7 +683,7 @@ macro_rules! as_range {
         $crate::query::Filter::new(
             $bin_name,
             $crate::CollectionIndexType::Default,
-            begin.particle_type(),
+            bound_particle_type(&begin),
             begin,
             end,
         )
@@ -689,7 +702,7 @@ macro_rules! as_contains {
         $crate::query::Filter::new(
             $bin_name,
             $cit,
-            val.particle_type(),
+            bound_particle_type(&val),
             val.clone(),
             val.clone(),
         )
@@ -706,7 +719,7 @@ macro_rules! as_contains_range {
         use $crate::query::filter::RangeFilterValue;
         let begin = RangeFilterValue::into_filter_value($begin);
         let end = RangeFilterValue::into_filter_value($end);
-        $crate::query::Filter::new($bin_name, $cit, begin.particle_type(), begin, end)
+        $crate::query::Filter::new($bin_name, $cit, bound_particle_type(&begin), begin, end)
     }};
 }
 
