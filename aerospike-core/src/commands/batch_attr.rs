@@ -61,7 +61,11 @@ impl BatchAttr {
                 self.info_attr = buffer::INFO3_SC_READ_TYPE | buffer::INFO3_SC_READ_RELAX;
             }
         }
-        self.txn_attr = 0;
+        // Ask the server for extended error detail on this row, from the
+        // parent batch policy. Without these bits the server sends a bare
+        // result code, so a failing row could say what went wrong but never
+        // why. The single-key commands have always set them.
+        self.txn_attr = buffer::error_verbosity_bits(parent.base_policy.error_detail_verbosity);
         self.expiration = rp.read_touch_ttl.into();
         self.generation = 0;
         self.has_write = false;
@@ -100,7 +104,11 @@ impl BatchAttr {
         self.read_attr = 0;
         self.write_attr = buffer::INFO2_WRITE | buffer::INFO2_RESPOND_ALL_OPS;
         self.info_attr = 0;
-        self.txn_attr = 0;
+        // Ask the server for extended error detail on this row, from the
+        // parent batch policy. Without these bits the server sends a bare
+        // result code, so a failing row could say what went wrong but never
+        // why. The single-key commands have always set them.
+        self.txn_attr = buffer::error_verbosity_bits(parent.base_policy.error_detail_verbosity);
         self.expiration = wp.expiration.into();
         self.has_write = true;
         self.send_key = wp.send_key;
@@ -189,7 +197,11 @@ impl BatchAttr {
         self.read_attr = 0;
         self.write_attr = buffer::INFO2_WRITE;
         self.info_attr = 0;
-        self.txn_attr = 0;
+        // Ask the server for extended error detail on this row, from the
+        // parent batch policy. Without these bits the server sends a bare
+        // result code, so a failing row could say what went wrong but never
+        // why. The single-key commands have always set them.
+        self.txn_attr = buffer::error_verbosity_bits(parent.base_policy.error_detail_verbosity);
         self.expiration = up.expiration.into();
         self.generation = 0;
         self.has_write = true;
@@ -217,7 +229,11 @@ impl BatchAttr {
         self.write_attr =
             buffer::INFO2_WRITE | buffer::INFO2_RESPOND_ALL_OPS | buffer::INFO2_DELETE;
         self.info_attr = 0;
-        self.txn_attr = 0;
+        // Ask the server for extended error detail on this row, from the
+        // parent batch policy. Without these bits the server sends a bare
+        // result code, so a failing row could say what went wrong but never
+        // why. The single-key commands have always set them.
+        self.txn_attr = buffer::error_verbosity_bits(parent.base_policy.error_detail_verbosity);
         self.expiration = 0;
         self.has_write = true;
         self.send_key = dp.send_key;

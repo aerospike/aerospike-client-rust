@@ -97,6 +97,8 @@ pub enum ErrorKind {
         rc: ResultCode,
         /// True when this row was the final record of the response stream.
         last: bool,
+        /// Extended server-supplied detail for this row, when attached.
+        detail: Option<Box<crate::ServerErrorDetail>>,
     },
     /// A batch command failed after per-key processing began. Carries every
     /// [`BatchRecord`](crate::BatchRecord) outcome known to the client
@@ -250,9 +252,15 @@ impl Error {
         rc: ResultCode,
         last: bool,
         node: impl Into<String>,
+        detail: Option<Box<crate::ServerErrorDetail>>,
     ) -> Error {
         let mut e = Error::new(
-            ErrorKind::BatchRow { index, rc, last },
+            ErrorKind::BatchRow {
+                index,
+                rc,
+                last,
+                detail,
+            },
             i32::from(u8::from(rc)),
             None,
         );
@@ -630,6 +638,9 @@ impl Error {
     pub fn server_error_detail(&self) -> Option<&crate::ServerErrorDetail> {
         match &self.0.kind {
             ErrorKind::Server {
+                detail: Some(d), ..
+            }
+            | ErrorKind::BatchRow {
                 detail: Some(d), ..
             } => Some(d),
             _ => self

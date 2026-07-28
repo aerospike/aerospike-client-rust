@@ -189,20 +189,29 @@ impl StreamCommand {
     ) -> Result<(Key, Option<u64>)> {
         Self::parse_key_and_version(conn, field_count)
             .await
-            .map(|(key, bval, _version)| (key, bval))
+            .map(|(key, bval, _version, _detail)| (key, bval))
     }
 
     /// Parse key fields from batch/stream response, also extracting record version if present.
+    #[allow(clippy::type_complexity)]
     pub async fn parse_key_and_version(
         conn: &mut BufferedConn<'_>,
         field_count: usize,
-    ) -> Result<(Key, Option<u64>, Option<u64>)> {
+    ) -> Result<(
+        Key,
+        Option<u64>,
+        Option<u64>,
+        Option<Box<crate::ServerErrorDetail>>,
+    )> {
         let mut digest: [u8; 20] = [0; 20];
         let mut namespace: String = String::new();
         let mut set_name: String = String::new();
         let mut orig_key: Option<Value> = None;
         let mut bval = None;
         let mut version = None;
+        // A failing row carries the server's explanation as a field; without
+        // capturing it here the unknown-field arm below would skip it.
+        let mut error_detail: Option<Box<crate::ServerErrorDetail>> = None;
 
         for _ in 0..field_count {
             conn.read_buffer(4).await?;
@@ -241,6 +250,15 @@ impl StreamCommand {
                     ));
                     buf.skip(data_size);
                 }
+                x if x == FieldType::ErrorMessage as u8 && data_size > 0 => {
+                    let buf = conn.buffer();
+                    let start = buf.data_offset();
+                    if let Some(slice) = buf.data_buffer.get(start..start + data_size) {
+                        error_detail =
+                            crate::server_error::parse_error_detail(slice).map(Box::new);
+                    }
+                    conn.buffer().skip(data_size);
+                }
                 _ => {
                     // Skip unknown field types
                     conn.buffer().skip(data_size);
@@ -257,6 +275,7 @@ impl StreamCommand {
             },
             bval,
             version,
+            error_detail,
         ))
     }
 }

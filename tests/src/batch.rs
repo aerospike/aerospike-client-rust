@@ -1226,3 +1226,128 @@ async fn batch_stream_emits_unroutable_key_with_its_error() {
 
     client.close().await.unwrap();
 }
+
+// ---- per-row error detail -------------------------------------------------
+
+#[aerospike_macro::test]
+async fn batch_row_error_carries_server_subcode_and_message() {
+    // A failing row used to report only its result code: the parse path
+    // returned before reading the row body, which is where the server puts its
+    // explanation, and BatchRecord had nowhere to keep it. Single-key commands
+    // have always surfaced both.
+    use aerospike::operations::hll;
+
+    let client = common::client().await;
+    let namespace: &str = common::namespace();
+    let set_name = &common::rand_str(10);
+
+    let supported = match client.cluster.nodes().first() {
+        Some(node) => node.version().supports_extended_error_detail(),
+        None => false,
+    };
+    if !supported {
+        eprintln!("skipping: cluster predates extended error detail (8.1.3)");
+        client.close().await.unwrap();
+        return;
+    }
+
+    let mut bpolicy = BatchPolicy::default();
+    bpolicy.base_policy.error_detail_verbosity = 2;
+    let bpw = BatchWritePolicy::default();
+    let wpolicy = WritePolicy::default();
+
+    let good = as_key!(namespace, set_name, 1);
+    let bad = as_key!(namespace, set_name, 2);
+    client
+        .put(&wpolicy, &good, &[as_bin!("a", 1)])
+        .await
+        .unwrap();
+    // The failing row: an HLL op against a bin that holds no HLL.
+    client
+        .put(&wpolicy, &bad, &[as_bin!("other-bin", 1)])
+        .await
+        .unwrap();
+
+    let good_ops = vec![operations::put(&as_bin!("a", 2))];
+    let batch = vec![
+        BatchOperation::write(&bpw, good.clone(), good_ops),
+        BatchOperation::write(
+            &bpw,
+            bad.clone(),
+            vec![hll::refresh_count("no-hll-bin")],
+        ),
+    ];
+
+    let records = match client.batch(&bpolicy, &batch).await {
+        Ok(records) => records,
+        // A row error may surface as a batch-level failure carrying the rows.
+        Err(err) => match err.kind() {
+            ErrorKind::BatchFailed { records } => records.clone(),
+            other => panic!("unexpected batch failure {other:?}: {err}"),
+        },
+    };
+    assert_eq!(records.len(), 2);
+
+    // The healthy row is untouched and carries no detail.
+    assert_eq!(records[0].result_code, Some(ResultCode::Ok));
+    assert_eq!(records[0].sub_code(), 0);
+    assert!(records[0].server_message().is_none());
+
+    // The failing row now explains itself.
+    assert_eq!(records[1].result_code, Some(ResultCode::BinNotFound));
+    assert!(
+        records[1].sub_code() >= 1,
+        "expected a server subcode on the failing row, got {:?}",
+        records[1]
+    );
+    let message = records[1]
+        .server_message()
+        .expect("expected a server message on the failing row");
+    assert!(
+        message.to_lowercase().contains("count op"),
+        "unexpected server message: {message:?}"
+    );
+
+    client.close().await.unwrap();
+}
+
+#[aerospike_macro::test]
+async fn batch_row_error_detail_absent_at_verbosity_zero() {
+    // The default asks for nothing, so nothing should arrive — the result code
+    // still identifies the failure.
+    use aerospike::operations::hll;
+
+    let client = common::client().await;
+    let namespace: &str = common::namespace();
+    let set_name = &common::rand_str(10);
+
+    let bpolicy = BatchPolicy::default();
+    assert_eq!(bpolicy.base_policy.error_detail_verbosity, 0);
+    let bpw = BatchWritePolicy::default();
+    let key = as_key!(namespace, set_name, 1);
+    client
+        .put(&WritePolicy::default(), &key, &[as_bin!("other-bin", 1)])
+        .await
+        .unwrap();
+
+    let batch = vec![BatchOperation::write(
+        &bpw,
+        key.clone(),
+        vec![hll::refresh_count("no-hll-bin")],
+    )];
+
+    let records = match client.batch(&bpolicy, &batch).await {
+        Ok(records) => records,
+        Err(err) => match err.kind() {
+            ErrorKind::BatchFailed { records } => records.clone(),
+            other => panic!("unexpected batch failure {other:?}: {err}"),
+        },
+    };
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0].result_code, Some(ResultCode::BinNotFound));
+    assert_eq!(records[0].sub_code(), 0, "verbosity 0 must not carry detail");
+    assert!(records[0].server_message().is_none());
+    assert!(records[0].error_detail().is_none());
+
+    client.close().await.unwrap();
+}

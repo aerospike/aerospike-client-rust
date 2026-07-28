@@ -242,6 +242,7 @@ const TRACE_KEY_AEL_SPAN: u32 = 10;
 /// `ael_span` pair are offsets into AEL source text — a different coordinate
 /// space, reserved for a future server branch and absent on today's msgpack
 /// build traces.
+#[cfg_attr(feature = "serialization", derive(serde::Serialize))]
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct ExpressionTrace {
     /// Phase that failed: [`EXP_TRACE_PHASE_BUILD`] or [`EXP_TRACE_PHASE_EVAL`];
@@ -326,6 +327,7 @@ impl fmt::Display for ExpressionTrace {
 /// [`BasePolicy::error_detail_verbosity`](crate::policy::BasePolicy::error_detail_verbosity)
 /// is greater than zero and the failing branch dispatched a detail. Requires
 /// server version 8.1.3+.
+#[cfg_attr(feature = "serialization", derive(serde::Serialize))]
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct ServerErrorDetail {
     /// The server-supplied error subcode (see the [`sub_code`] constants).

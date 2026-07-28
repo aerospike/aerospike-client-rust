@@ -774,14 +774,22 @@ impl Buffer {
         txn: Option<&Arc<Txn>>,
         ver: Option<u64>,
     ) -> Result<()> {
-        if txn.is_some() {
+        // The INFO4 byte carries `txn_attr`: MRT attributes and the
+        // error-detail verbosity bits. Emit it whenever either has something to
+        // say — gating it on the transaction alone silently dropped the
+        // verbosity request, so batch rows never got error detail back.
+        if txn.is_some() || attr.txn_attr != 0 {
             self.write_u8(BATCH_MSG_INFO | BATCH_MSG_INFO4 | BATCH_MSG_TTL);
             self.write_u8(attr.read_attr);
             self.write_u8(attr.write_attr);
             self.write_u8(attr.info_attr);
             self.write_u8(attr.txn_attr);
             self.write_u32(attr.expiration);
-            self.write_batch_fields_txn(key, txn, ver, attr, filter, 0, op_count)
+            if txn.is_some() {
+                self.write_batch_fields_txn(key, txn, ver, attr, filter, 0, op_count)
+            } else {
+                self.write_batch_fields_with_filter(key, filter, 0, op_count)
+            }
         } else {
             self.write_u8(BATCH_MSG_INFO | BATCH_MSG_TTL);
             self.write_u8(attr.read_attr);
@@ -803,7 +811,8 @@ impl Buffer {
         txn: Option<&Arc<Txn>>,
         ver: Option<u64>,
     ) -> Result<()> {
-        if txn.is_some() {
+        // See `write_batch_read`: INFO4 also carries the error-detail verbosity.
+        if txn.is_some() || attr.txn_attr != 0 {
             self.write_u8(BATCH_MSG_INFO | BATCH_MSG_INFO4 | BATCH_MSG_GEN | BATCH_MSG_TTL);
             self.write_u8(attr.read_attr);
             self.write_u8(attr.write_attr);
@@ -811,7 +820,11 @@ impl Buffer {
             self.write_u8(attr.txn_attr);
             self.write_u16(attr.generation as u16);
             self.write_u32(attr.expiration);
-            self.write_batch_fields_txn(key, txn, ver, attr, filter, field_count, op_count)
+            if txn.is_some() {
+                self.write_batch_fields_txn(key, txn, ver, attr, filter, field_count, op_count)
+            } else {
+                self.write_batch_fields_reg(key, attr, filter, field_count, op_count)
+            }
         } else {
             self.write_u8(BATCH_MSG_INFO | BATCH_MSG_GEN | BATCH_MSG_TTL);
             self.write_u8(attr.read_attr);
@@ -961,6 +974,13 @@ impl Buffer {
 
                 // Add txn field sizes
                 self.size_txn_batch(txn, ver, batch_op.has_write());
+                // ...and the INFO4 byte when verbosity alone requires it
+                // (`size_txn_batch` already counts it for transactional rows).
+                if txn.is_none()
+                    && error_verbosity_bits(policy.base_policy.error_detail_verbosity) != 0
+                {
+                    self.data_offset += 1;
+                }
             }
             prev = Some(batch_op);
             ver_prev = ver;

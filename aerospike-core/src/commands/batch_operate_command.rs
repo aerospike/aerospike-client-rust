@@ -551,11 +551,17 @@ impl BatchOperateCommand {
                     // error in this response is definitive for this attempt,
                     // so a write is only in doubt when an earlier attempt was
                     // also sent. A `last` row additionally ends the stream.
-                    ErrorKind::BatchRow { index, rc, last } => {
+                    ErrorKind::BatchRow {
+                        index,
+                        rc,
+                        last,
+                        ref detail,
+                    } => {
                         let batch_op = batch_ops
                             .get_mut(index as usize)
                             .expect("Invalid batch index");
                         batch_op.0.set_result_code(rc, commands_sent > 1);
+                        batch_op.0.set_error_detail(detail.clone());
                         if last {
                             return Ok(false);
                         }
@@ -572,34 +578,34 @@ impl BatchOperateCommand {
         let info3 = conn.buffer().read_u8(Some(3));
         let last_record = info3 & commands::buffer::INFO3_LAST == commands::buffer::INFO3_LAST;
 
-        let batch_index = conn.buffer().read_u32(Some(14));
+        // Read at offset 14 (the batch response reuses the transaction-ttl
+        // slot for the row index). The success path re-reads an index from the
+        // sequential header below; keep them separate so the row-error path
+        // reports exactly the index it always has.
+        let row_index = conn.buffer().read_u32(Some(14));
         let result_code = ResultCode::from(conn.buffer().read_u8(Some(5)));
 
-        match result_code {
+        // A row error still has a body, and that body is where the server puts
+        // its explanation (subcode/message, as a field). Parsing it is what
+        // lets the detail reach the BatchRecord — returning here, as this used
+        // to, discarded it and left those bytes for the next header read.
+        let row_error = match result_code {
             ResultCode::Ok
             | ResultCode::UdfBadResponse // UDF errors will have a body that needs to be parsed
             | ResultCode::KeyNotFoundError
-            | ResultCode::FilteredOut => (),
-            rc => {
-                return Err(Error::batch_row(
-                    batch_index,
-                    rc,
-                    last_record,
-                    conn.conn.addr.clone(),
-                ));
-            }
-        }
+            | ResultCode::FilteredOut => None,
+            rc => Some(rc),
+        };
 
-        // if cmd is the end marker of the response, do not proceed further
-        if last_record {
+        // The end marker carries no body, so nothing to parse past the header.
+        if last_record && row_error.is_none() {
             return Ok(None);
         }
 
-        let found_key = match result_code {
-            ResultCode::Ok | ResultCode::UdfBadResponse => true,
-            ResultCode::KeyNotFoundError | ResultCode::FilteredOut => false,
-            _ => unreachable!(),
-        };
+        let found_key = matches!(
+            result_code,
+            ResultCode::Ok | ResultCode::UdfBadResponse
+        );
 
         conn.buffer().skip(6);
         let generation = conn.buffer().read_u32(None);
@@ -608,7 +614,28 @@ impl BatchOperateCommand {
         let field_count = conn.buffer().read_u16(None) as usize; // almost certainly 0
         let op_count = conn.buffer().read_u16(None) as usize;
 
-        let (key, _, version) = StreamCommand::parse_key_and_version(conn, field_count).await?;
+        let (key, _, version, error_detail) =
+            StreamCommand::parse_key_and_version(conn, field_count).await?;
+
+        if let Some(rc) = row_error {
+            // Consume this row's op payloads so the next header starts where
+            // the stream expects it to.
+            for _ in 0..op_count {
+                conn.read_buffer(8).await?;
+                let op_size = conn.buffer().read_u32(None) as usize;
+                conn.buffer().skip(4);
+                let remaining = op_size.saturating_sub(4);
+                conn.read_buffer(remaining).await?;
+                conn.buffer().skip(remaining);
+            }
+            return Err(Error::batch_row(
+                row_index,
+                rc,
+                last_record,
+                conn.conn.addr.clone(),
+                error_detail,
+            ));
+        }
 
         let record = if found_key {
             let mut bins: IndexMap<String, Value> = IndexMap::with_capacity(op_count);

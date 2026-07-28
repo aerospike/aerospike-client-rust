@@ -708,6 +708,11 @@ impl BatchOperation {
         }
     }
 
+    /// Attach the server's extended error detail for this row.
+    pub(crate) fn set_error_detail(&mut self, detail: Option<Box<crate::ServerErrorDetail>>) {
+        self.record_mut().set_error_detail(detail);
+    }
+
     pub(crate) const fn set_result_code(&mut self, rc: ResultCode, in_doubt: bool) {
         // `BatchRecord::set_error` honors in_doubt only for write records —
         // reads (incl. txn verify) can never be in-doubt.
@@ -870,6 +875,43 @@ mod in_doubt_tests {
     fn batch_record_exposes_has_write() {
         assert!(write_op("w").batch_record().has_write());
         assert!(!read_op("r").batch_record().has_write());
+    }
+
+    #[test]
+    fn error_detail_defaults_to_absent_and_is_readable_once_set() {
+        let mut w = write_op("w");
+        let br = w.batch_record();
+        assert_eq!(br.sub_code(), crate::server_error::sub_code::NONE);
+        assert!(br.server_message().is_none());
+        assert!(br.error_detail().is_none());
+
+        w.set_result_code(ResultCode::BinNotFound, false);
+        w.set_error_detail(Some(Box::new(crate::ServerErrorDetail {
+            sub_code: 7,
+            message: "count op on non-hll bin".to_string(),
+            exp_trace: None,
+        })));
+
+        let br = w.batch_record();
+        assert_eq!(br.result_code, Some(ResultCode::BinNotFound));
+        assert_eq!(br.sub_code(), 7);
+        assert_eq!(br.server_message(), Some("count op on non-hll bin"));
+    }
+
+    #[test]
+    fn empty_server_message_reads_as_absent() {
+        // Verbosity 1 can carry a subcode with no text; `server_message` must
+        // not hand back an empty string, matching `Error::server_message`.
+        let mut w = write_op("w");
+        w.set_error_detail(Some(Box::new(crate::ServerErrorDetail {
+            sub_code: 3,
+            message: String::new(),
+            exp_trace: None,
+        })));
+
+        let br = w.batch_record();
+        assert_eq!(br.sub_code(), 3);
+        assert!(br.server_message().is_none());
     }
 
     #[test]
