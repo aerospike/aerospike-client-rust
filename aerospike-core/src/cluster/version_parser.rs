@@ -1,4 +1,4 @@
-// Copyright 2015-2018 Aerospike, Inc.
+// Copyright 2015-2026 Aerospike, Inc.
 //
 // Portions may be licensed to Aerospike, Inc. under one or more contributor
 // license agreements.
@@ -102,6 +102,13 @@ impl Version {
     /// [`BasePolicy::error_detail_verbosity`](crate::policy::BasePolicy::error_detail_verbosity).
     /// Older servers ignore the request flags.
     pub fn supports_extended_error_detail(&self) -> bool {
+        self >= &Version::new(8, 1, 3, 0)
+    }
+
+    /// Server accepts server-compiled textual AEL on filter field 43 (`[128, "<utf-8>"]`).
+    ///
+    /// Aligns with Java fluent `Cluster.supportsServerCompiledFilterExpression()` (≥ 8.1.3).
+    pub fn supports_server_compiled_ael(&self) -> bool {
         self >= &Version::new(8, 1, 3, 0)
     }
 }
@@ -216,5 +223,12 @@ mod tests {
         for iv in invalid {
             assert!(VersionParser::new(iv).parse().is_err());
         }
+    }
+
+    #[test]
+    fn supports_server_compiled_ael_threshold() {
+        assert!(!Version::new(8, 1, 2, 99).supports_server_compiled_ael());
+        assert!(Version::new(8, 1, 3, 0).supports_server_compiled_ael());
+        assert!(Version::new(8, 2, 0, 0).supports_server_compiled_ael());
     }
 }
