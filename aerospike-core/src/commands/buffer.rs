@@ -1278,6 +1278,7 @@ impl Buffer {
         let mut respond_all_ops = policy.respond_per_each_op;
 
         for operation in operations {
+            let mut is_write = false;
             match *operation {
                 Operation {
                     op: OperationType::Read,
@@ -1300,22 +1301,35 @@ impl Buffer {
                         | OperationType::ToString,
                     ..
                 } => read_attr |= INFO1_READ,
-                _ => write_attr |= INFO2_WRITE,
+                _ => {
+                    write_attr |= INFO2_WRITE;
+                    is_write = true;
+                }
             }
 
-            // Map/bit/HLL/expression/string ops require RESPOND_ALL_OPS so
-            // that every op (including any mixed-in modify ops) contributes
-            // exactly one result slot, preserving the positional index<->op
-            // mapping. `to_string` carries no op data, hence the extra
-            // op-type check.
-            respond_all_ops |= matches!(
-                operation.data,
-                OperationData::CdtMapOp(_)
-                    | OperationData::CdtBitOp(_)
-                    | OperationData::HLLOp(_)
-                    | OperationData::EXPOp(_)
-                    | OperationData::StringOp(_)
-            ) || matches!(operation.op, OperationType::ToString);
+            // Every op must contribute exactly one result slot, or the
+            // positional index<->op mapping that `Record::ops` documents comes
+            // apart. Two kinds of op need RESPOND_ALL_OPS to hold that up:
+            //
+            // - Any write. A simple write (put, add, append, prepend, touch,
+            //   delete) returns nothing of its own, so `get`/`add`/`get` on one
+            //   bin answered with two results for three ops and every result
+            //   after the write landed in the wrong slot. The batch path has
+            //   always asked for this on writes (`BatchAttr::set_batch_write`),
+            //   which is why the same op list works there.
+            // - Map/bit/HLL/expression/string *reads*, which the server does
+            //   not slot individually otherwise. `to_string` carries no op
+            //   data, hence the extra op-type check.
+            respond_all_ops |= is_write
+                || matches!(
+                    operation.data,
+                    OperationData::CdtMapOp(_)
+                        | OperationData::CdtBitOp(_)
+                        | OperationData::HLLOp(_)
+                        | OperationData::EXPOp(_)
+                        | OperationData::StringOp(_)
+                )
+                || matches!(operation.op, OperationType::ToString);
 
             self.data_offset += operation.estimate_size()? + OPERATION_HEADER_SIZE as usize;
         }
@@ -3554,6 +3568,32 @@ mod tests {
         assert_ne!(read_attr & INFO1_READ, 0);
         assert_eq!(write_attr & INFO2_RESPOND_ALL_OPS, 0);
         assert_eq!(write_attr & INFO2_WRITE, 0);
+    }
+
+    #[test]
+    fn simple_write_auto_sets_respond_all_ops() {
+        // A silent write needs a slot of its own, or a later read's result
+        // lands in the write's position.
+        use crate::operations::scalar;
+        let bin = crate::Bin::new("b".to_string(), crate::Value::from(1));
+        let (read_attr, write_attr) = operate_attrs(&[
+            scalar::get_bin("b"),
+            scalar::add(&bin),
+            scalar::get_bin("b"),
+        ]);
+        assert_ne!(read_attr & INFO1_READ, 0);
+        assert_ne!(write_attr & INFO2_WRITE, 0);
+        assert_ne!(write_attr & INFO2_RESPOND_ALL_OPS, 0);
+    }
+
+    #[test]
+    fn lone_simple_write_also_sets_respond_all_ops() {
+        // Uniform for one op too: the positional contract should not depend on
+        // how many ops the caller happened to send.
+        use crate::operations::scalar;
+        let bin = crate::Bin::new("b".to_string(), crate::Value::from(1));
+        let (_, write_attr) = operate_attrs(&[scalar::put(&bin)]);
+        assert_ne!(write_attr & INFO2_RESPOND_ALL_OPS, 0);
     }
 
     #[test]

@@ -191,6 +191,94 @@ async fn operate_multi_op_same_bin_returns_multi_result() {
     client.close().await.unwrap();
 }
 
+/// A silent write between two reads must still occupy its own result slot.
+#[aerospike_macro::test]
+async fn operate_mixed_read_write_keeps_results_aligned() {
+    // get/add/get on one bin came back with two results for three ops, so
+    // everything after the write was shifted a slot. Simple writes return
+    // nothing of their own; the command has to ask for a slot per op.
+    let client = common::client().await;
+    let namespace = common::namespace();
+    let set_name = &common::rand_str(10);
+    let key = as_key!(namespace, set_name, 1);
+    let wpolicy = WritePolicy::default();
+
+    client
+        .put(&wpolicy, &key, &[as_bin!("count", 10i64)])
+        .await
+        .unwrap();
+
+    let ops = &[
+        operations::get_bin("count"),
+        operations::add(&as_bin!("count", 5i64)),
+        operations::get_bin("count"),
+    ];
+    let rec = client.operate(&wpolicy, &key, ops).await.unwrap();
+
+    // One slot per op, in op order: read 10, the write (no value), read 15.
+    let results = rec.results.as_ref().expect("positional op results");
+    assert_eq!(
+        results.len(),
+        ops.len(),
+        "expected one result per op, got {results:?}"
+    );
+    assert_eq!(results[0], Value::from(10i64), "first read");
+    assert!(
+        results[1].is_nil(),
+        "the write occupies a slot with no value, got {:?}",
+        results[1]
+    );
+    assert_eq!(results[2], Value::from(15i64), "read after the add");
+
+    // The bin view still merges the two reads and skips the write's nil.
+    assert_eq!(
+        rec.bins.get("count"),
+        Some(&Value::MultiResult(vec![
+            Value::from(10i64),
+            Value::from(15i64)
+        ]))
+    );
+
+    client.close().await.unwrap();
+}
+
+/// The same shape through a mix of simple and CDT ops.
+#[aerospike_macro::test]
+async fn operate_simple_write_between_cdt_ops_keeps_results_aligned() {
+    use aerospike::operations::lists;
+
+    let client = common::client().await;
+    let namespace = common::namespace();
+    let set_name = &common::rand_str(10);
+    let key = as_key!(namespace, set_name, 1);
+    let wpolicy = WritePolicy::default();
+
+    client
+        .put(
+            &wpolicy,
+            &key,
+            &[as_bin!("count", 1i64), as_bin!("l", as_list!(1i64, 2i64))],
+        )
+        .await
+        .unwrap();
+
+    let lpolicy = lists::ListPolicy::default();
+    let ops = &[
+        lists::append(&lpolicy, "l", Value::from(3i64)),
+        operations::add(&as_bin!("count", 1i64)),
+        lists::size("l"),
+    ];
+    let rec = client.operate(&wpolicy, &key, ops).await.unwrap();
+
+    let results = rec.results.as_ref().expect("positional op results");
+    assert_eq!(results.len(), ops.len(), "one result per op: {results:?}");
+    assert_eq!(results[0], Value::from(3i64), "list size after append");
+    assert!(results[1].is_nil(), "the add occupies its own slot");
+    assert_eq!(results[2], Value::from(3i64), "list size read");
+
+    client.close().await.unwrap();
+}
+
 #[aerospike_macro::test]
 async fn operate_empty_ops_returns_parameter_error() {
     let client = common::client().await;
