@@ -29,7 +29,7 @@ pub struct QueryCommand<'a> {
     stream_command: StreamCommand,
     policy: &'a QueryPolicy,
     statement: Arc<Statement>,
-    execute_where: Option<Vec<u8>>,
+    execute_where: Option<Arc<[u8]>>,
 }
 
 impl<'a> QueryCommand<'a> {
@@ -39,7 +39,7 @@ impl<'a> QueryCommand<'a> {
         recordset: Arc<Recordset>,
         node_partitions: Arc<Mutex<NodePartitions>>,
         cluster: Arc<Cluster>,
-        execute_where: Option<Vec<u8>>,
+        execute_where: Option<Arc<[u8]>>,
     ) -> Self {
         let node = {
             let node_partitions = node_partitions.lock().await;

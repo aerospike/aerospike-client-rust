@@ -18,7 +18,7 @@ use crate::Node;
 use std::sync::Arc;
 
 /// Representation of the status of a scan/query  for a specific partition.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct PartitionStatus {
     /// Record's bval.
     pub bval: Option<u64>,

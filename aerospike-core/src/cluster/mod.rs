@@ -1994,7 +1994,7 @@ impl Cluster {
     }
 
     /// Whether this cluster's minimum server version supports two-phase server
-    /// query selection (field **44** WHERE explain → execute).
+    /// query selection (field **44** WHERE explain → execute). Requires server ≥ 8.1.3.
     pub fn supports_query_selection(&self) -> bool {
         let nodes = self.nodes();
         !nodes.is_empty()

@@ -1633,7 +1633,7 @@ impl Client {
             None => None,
         };
 
-        let execute_where = Some(plan.into_execute_where_bytes());
+        let execute_where = Some(Arc::from(plan.into_execute_where_bytes()));
         statement.validate()?;
         let statement = Arc::new(statement);
 
@@ -1996,7 +1996,7 @@ impl Client {
         tracker: Arc<Mutex<PartitionTracker>>,
         statement: Arc<Statement>,
         recordset: Arc<Recordset>,
-        execute_where: Option<Vec<u8>>,
+        execute_where: Option<Arc<[u8]>>,
     ) {
         if policy.total_timeout() > 0 {
             let rs_closer = recordset.clone();
@@ -2008,7 +2008,7 @@ impl Client {
                     tracker,
                     statement,
                     recordset,
-                    execute_where,
+                    execute_where.clone(),
                 ),
             )
             .await
@@ -2037,7 +2037,7 @@ impl Client {
         tracker: Arc<Mutex<PartitionTracker>>,
         statement: Arc<Statement>,
         recordset: Arc<Recordset>,
-        execute_where: Option<Vec<u8>>,
+        execute_where: Option<Arc<[u8]>>,
     ) {
         let namespace = statement.namespace.clone();
         // Exponential backoff between whole-cluster retry rounds: the sleep
