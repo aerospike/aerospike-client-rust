@@ -107,7 +107,7 @@ impl NodeValidator {
 
         debug!("Resolved aliases for host {}: {:?}", host, self.aliases);
         if self.aliases.is_empty() {
-            Err(Error::Connection(format!(
+            Err(Error::connection(format!(
                 "Failed to find addresses for {host}"
             )))
         } else {
@@ -152,7 +152,7 @@ impl NodeValidator {
         drop(conn);
 
         match info_map.get("node") {
-            None => return Err(Error::InvalidNode(String::from("Missing node name"))),
+            None => return Err(Error::invalid_node(String::from("Missing node name"))),
             Some(node_name) => self.name.clone_from(node_name),
         }
 
@@ -162,19 +162,19 @@ impl NodeValidator {
         // node would otherwise get admitted and serve a partial map.
         match info_map.get("partition-generation") {
             None => {
-                return Err(Error::InvalidNode(String::from(
+                return Err(Error::invalid_node(String::from(
                     "Missing partition-generation",
                 )))
             }
             Some(gen_str) => {
                 let gen = gen_str.parse::<i64>().map_err(|_| {
-                    Error::InvalidNode(format!(
+                    Error::invalid_node(format!(
                         "Node {} {} returned invalid partition-generation: {gen_str}",
                         self.name, alias
                     ))
                 })?;
                 if gen == -1 {
-                    return Err(Error::InvalidNode(format!(
+                    return Err(Error::invalid_node(format!(
                         "Node {} {} is not yet fully initialized",
                         self.name, alias
                     )));
@@ -184,10 +184,10 @@ impl NodeValidator {
 
         if let Some(ref cluster_name) = cluster.cluster_name() {
             match info_map.get("cluster-name") {
-                None => return Err(Error::InvalidNode(String::from("Missing cluster name"))),
+                None => return Err(Error::invalid_node(String::from("Missing cluster name"))),
                 Some(info_name) if info_name == cluster_name => {}
                 Some(info_name) => {
-                    return Err(Error::InvalidNode(format!(
+                    return Err(Error::invalid_node(format!(
                         "Cluster name mismatch: expected={cluster_name},
                                                          got={info_name}"
                     )))
@@ -206,7 +206,7 @@ impl NodeValidator {
             // `Version::supports_*()` at call time, so no separate feature
             // bitset is maintained.
             if !version.supports_partition_scan() {
-                return Err(Error::InvalidNode(format!(
+                return Err(Error::invalid_node(format!(
                     "Node {} {} version {build} < 4.9.0.3. \
                      This client requires server version >= 4.9.0.3",
                     self.name, alias

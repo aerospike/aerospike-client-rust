@@ -48,14 +48,14 @@ pub trait Task {
 
             match self.query_status().await {
                 Ok(Status::NotFound) => {
-                    return Err(Error::BadResponse("task status not found".to_string()))
+                    return Err(Error::bad_response("task status not found".to_string()))
                 }
                 Ok(Status::InProgress) => {} // do nothing and wait
                 error_or_complete => return error_or_complete,
             }
 
             if timeout.is_some_and(timeout_elapsed) {
-                return Err(Error::Timeout("Task timeout reached".to_string()));
+                return Err(Error::timeout("Task timeout reached".to_string()));
             }
         }
     }

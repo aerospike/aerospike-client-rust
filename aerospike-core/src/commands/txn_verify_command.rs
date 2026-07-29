@@ -105,7 +105,7 @@ impl Command for TxnVerifyCommand<'_> {
             result_code,
             ResultCode::Ok | ResultCode::KeyNotFoundError | ResultCode::FilteredOut
         ) {
-            return Err(Error::ServerError(result_code, false, conn.addr.clone()));
+            return Err(Error::server_error(result_code, conn.addr.clone(), None));
         }
 
         SingleCommand::empty_socket(conn).await

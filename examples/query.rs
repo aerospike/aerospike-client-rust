@@ -1,6 +1,5 @@
-#[macro_use]
-extern crate aerospike;
-extern crate tokio;
+#[allow(unused_imports)]
+use aerospike::{as_bin, as_key, as_list, as_val};
 
 use aerospike::query::{Filter, PartitionFilter};
 use aerospike::{Bins, Client, ClientPolicy, QueryPolicy, Statement};
@@ -19,6 +18,13 @@ const BIN_NAME: &str = "bin";
 
 #[tokio::main]
 async fn main() {
+    run().await;
+}
+
+/// Example body. Standalone via `cargo run --example`, and also driven by
+/// the integration test suite (`tests/src/examples.rs`) so the examples
+/// stay working and compiling as the API evolves.
+pub async fn run() {
     let client = connect_to_aerospike().await;
     println!("Connected to Aerospike!");
 
@@ -31,6 +37,7 @@ async fn main() {
     parallel_query(&client, DEFAULT_NAMESPACE, &set_name).await;
     expression_filter(&client, DEFAULT_NAMESPACE, &set_name).await;
     rate_limited_query(&client, DEFAULT_NAMESPACE, &set_name).await;
+    collection_index_query(&client, DEFAULT_NAMESPACE).await;
 
     client.close().await.unwrap();
 }
@@ -38,7 +45,10 @@ async fn main() {
 async fn connect_to_aerospike() -> Client {
     let hosts = env::var("AEROSPIKE_HOSTS").unwrap_or_else(|_| String::from("127.0.0.1:3100"));
 
-    let policy = ClientPolicy::default();
+    let mut policy = ClientPolicy::default();
+    policy.use_services_alternate = std::env::var("AEROSPIKE_USE_SERVICES_ALTERNATE")
+        .map(|v| v.eq_ignore_ascii_case("true") || v == "1")
+        .unwrap_or(false);
 
     Client::new(&policy, &hosts)
         .await
@@ -241,6 +251,75 @@ async fn rate_limited_query(client: &Client, namespace: &str, _set_name: &str) {
     println!("\nResults:");
     println!("  Records returned: {}", count);
     println!("  Duration: {:?} ({}ms)", duration, duration.as_millis());
+}
+
+/// Query a collection index: index the ELEMENTS of a list bin, then find
+/// records whose list contains a value (Java `QueryCollection` port).
+async fn collection_index_query(client: &Client, namespace: &str) {
+    println!("\n=== Collection Index Query (list contains) ===");
+
+    let set_name = generate_random_set_name();
+    let apolicy = AdminPolicy::default();
+    let wpolicy = WritePolicy::default();
+    let bin = "tags";
+
+    // Each record carries a list of numeric tags; tag 7 appears in
+    // every third record.
+    for i in 0..30i64 {
+        let key = as_key!(namespace, &set_name, i);
+        // Offset the filler tag so only every third record contains 7.
+        let tags = if i % 3 == 0 {
+            as_list!(i + 100, 7)
+        } else {
+            as_list!(i + 100)
+        };
+        client
+            .put(&wpolicy, &key, &[as_bin!(bin, tags)])
+            .await
+            .expect("Failed to write record");
+    }
+
+    // The index is built over list ELEMENTS (CollectionIndexType::List),
+    // not over the bin value itself.
+    let index_name = format!("{}_{}_list_idx", set_name, bin);
+    let task = client
+        .create_index_on_bin(
+            &apolicy,
+            namespace,
+            &set_name,
+            bin,
+            &index_name,
+            IndexType::Numeric,
+            CollectionIndexType::List,
+            None,
+        )
+        .await
+        .expect("Failed to create collection index");
+    task.wait_till_complete(None).await.unwrap();
+
+    // Filter::contains matches records whose indexed collection contains
+    // the value; the CollectionIndexType must match the index.
+    let mut stmt = Statement::new(namespace, &set_name, Bins::All);
+    stmt.add_filter(Filter::contains(bin, 7_i64, CollectionIndexType::List));
+
+    let rs = client
+        .query(&QueryPolicy::default(), PartitionFilter::all(), stmt)
+        .await
+        .unwrap();
+    let count = rs
+        .into_stream()
+        .filter(|r| futures::future::ready(r.is_ok()))
+        .count()
+        .await;
+    println!("records whose tag list contains 7: {count}");
+    assert_eq!(count, 10);
+
+    let _ = client
+        .drop_index(&apolicy, namespace, &set_name, &index_name)
+        .await;
+    for i in 0..30i64 {
+        let _ = client.delete(&wpolicy, &as_key!(namespace, &set_name, i)).await;
+    }
 }
 
 async fn create_test_set(client: &Client, namespace: &str, num_records: usize) -> String {

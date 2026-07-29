@@ -58,7 +58,7 @@ impl ModifyFlag {
 /// `&Vec<CdtContext>`, a slice, or a [`Path`](crate::operations::cdt_context::Path)
 /// directly:
 ///
-/// ```ignore
+/// ```rust
 /// use aerospike::operations::cdt_context::Path;
 /// use aerospike::operations::path::{select_by_path, SelectFlag};
 ///

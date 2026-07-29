@@ -15,6 +15,8 @@
 
 //! Functions used for Filter Expressions. This module requires Aerospike Server version >= 5.2
 
+/// Server-compiled AEL (Aerospike Expression Language) filters: the client
+/// packs the text and the server parses it (8.1.3+).
 pub mod ael;
 pub mod bitwise;
 pub mod hll;
@@ -28,7 +30,9 @@ pub use ael::SERVER_COMPILED_AEL_EXPRESSION_OP;
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 
 use crate::commands::buffer::Buffer;
-use crate::msgpack::encoder::{pack_array_begin, pack_integer, pack_raw_string, pack_value};
+use crate::msgpack::encoder::{
+    pack_array_begin, pack_integer, pack_raw_string, pack_value, pack_value_canonical,
+};
 use crate::operations::cdt_context::CdtContext;
 use crate::value::MapLike;
 use crate::{Error, Result};
@@ -389,8 +393,10 @@ impl Expression {
     }
 
     fn pack_value(&self, buf: &mut Option<&mut Buffer>) -> Result<usize> {
-        // Packing logic for Value based Ops
-        pack_value(buf, &self.val.clone().unwrap())
+        // Packing logic for Value based Ops. Map literals must be packed in
+        // canonical (key-sorted) form: servers with AER-6930 (8.1.2.3+)
+        // require it, and whole-map comparisons silently fail otherwise.
+        pack_value_canonical(buf, &self.val.clone().unwrap())
     }
 
     /// Returns the packed size of the expression.
@@ -480,7 +486,7 @@ pub fn key(exp_type: ExpType) -> Expression {
 pub fn from_base64(b64: &str) -> Result<Expression> {
     let bytes = BASE64
         .decode(b64)
-        .map_err(|e| Error::BadResponse(format!("Invalid base64 expression: {e}")))?;
+        .map_err(|e| Error::bad_response(format!("Invalid base64 expression: {e}")))?;
     Ok(from_packed_bytes(bytes))
 }
 
@@ -518,6 +524,27 @@ pub fn key_exists() -> Expression {
 /// ```
 /// // Integer bin "a" == 500
 /// use aerospike::expressions::{int_bin, int_val, eq};
+/// eq(int_bin("a".to_string()), int_val(500));
+/// ```
+/// Creates a bin expression with an explicitly supplied value type.
+/// Prefer the typed accessors (`int_bin`, `string_bin`, …) when the bin
+/// type is known at compile time; this generic form mirrors Java's
+/// `Exp.bin(name, type)` for dynamically-typed callers.
+pub fn bin(name: String, exp_type: ExpType) -> Expression {
+    Expression::new(
+        Some(ExpOp::Bin),
+        Some(Value::from(name)),
+        None,
+        None,
+        Some(exp_type),
+        None,
+    )
+}
+
+/// Creates integer bin expression.
+/// ```
+/// // Integer bin "a" == 500
+/// use aerospike::expressions::{eq, int_bin, int_val};
 /// eq(int_bin("a".to_string()), int_val(500));
 /// ```
 pub fn int_bin(name: String) -> Expression {
@@ -919,15 +946,27 @@ pub fn list_val(val: Vec<Value>) -> Expression {
     )
 }
 
-/// Creates a map bin value.
+/// Creates a map bin value. Accepts any of the three map collection
+/// types — `HashMap`, `IndexMap` or `BTreeMap` — via
+/// [`MapLike`](crate::MapLike).
+///
+/// To compare whole maps in an expression (`eq`, `lt`, … — supported for
+/// ordered maps since server 6.3), pass a `BTreeMap`: it is packed with
+/// the K-ordered wire flag, and comparisons against a K-ordered bin then
+/// follow the canonical map order (length first, then entry-wise).
+/// `HashMap`/`IndexMap` literals are packed in canonical (key-sorted)
+/// form without the flag; comparisons involving an unordered operand on
+/// either side require server AER-6930 (8.1.2.3+).
 #[allow(clippy::implicit_hasher)]
 pub fn map_val<M: MapLike<Value, Value>>(val: M) -> Expression {
-    let val = match val.value() {
-        (Some(m), None) => Value::HashMap(m),
-        (None, Some(m)) => Value::OrderedMap(m),
-        _ => unreachable!(),
-    };
-    Expression::new(None, Some(val), None, None, None, None)
+    Expression::new(
+        None,
+        Some(Value::from(val.into_map())),
+        None,
+        None,
+        None,
+        None,
+    )
 }
 
 /// Creates a geospatial JSON string value.
@@ -1792,6 +1831,24 @@ pub const fn unknown() -> Expression {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // The generic `bin(name, type)` accessor packs identically to the
+    // corresponding typed accessor (Java Exp.bin parity).
+    #[test]
+    fn generic_bin_matches_typed_accessors() {
+        assert_eq!(
+            bin("a".to_string(), ExpType::INT).base64().unwrap(),
+            int_bin("a".to_string()).base64().unwrap()
+        );
+        assert_eq!(
+            bin("a".to_string(), ExpType::STRING).base64().unwrap(),
+            string_bin("a".to_string()).base64().unwrap()
+        );
+        assert_ne!(
+            bin("a".to_string(), ExpType::FLOAT).base64().unwrap(),
+            int_bin("a".to_string()).base64().unwrap()
+        );
+    }
 
     #[test]
     fn base64_roundtrip_int_eq() {

@@ -70,7 +70,7 @@ impl ExecuteTask {
         }
 
         if response.starts_with("ERROR") {
-            return Err(Error::BadResponse(format!(
+            return Err(Error::bad_response(format!(
                 "Query execute failed: {response}"
             )));
         }
@@ -100,7 +100,7 @@ impl Task for ExecuteTask {
         let nodes = self.cluster.nodes();
 
         if nodes.is_empty() {
-            return Err(Error::Connection("No connected node".to_string()));
+            return Err(Error::connection("No connected node".to_string()));
         }
 
         let admin_policy = AdminPolicy { timeout: 3_000 };

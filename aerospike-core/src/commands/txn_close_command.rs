@@ -92,10 +92,10 @@ impl Command for TxnCloseCommand<'_> {
         match result_code {
             ResultCode::Ok | ResultCode::KeyNotFoundError => {}
             _ => {
-                return Err(crate::errors::Error::ServerError(
+                return Err(crate::errors::Error::server_error(
                     result_code,
-                    false,
                     conn.addr.clone(),
+                    None,
                 ))
             }
         }

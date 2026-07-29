@@ -167,7 +167,9 @@ mod tests {
     };
 
     /// Parses a single YAML scalar into a config type `T`.
-    fn parse<T: for<'de> serde::Deserialize<'de>>(yaml: &str) -> Result<T, serde_yml::Error> {
+    fn parse<T: for<'de> serde::Deserialize<'de> + 'static>(
+        yaml: &str,
+    ) -> Result<T, serde_yml::Error> {
         serde_yml::from_str(yaml)
     }
 
@@ -196,7 +198,7 @@ dynamic:
     socket_timeout: 4321
   metrics:
     enable: true
-    latency_columns: 7
+    latency_columns: 9
     latency_base: 3
 "#;
 
@@ -276,7 +278,7 @@ dynamic:
         assert_eq!(metrics.enable, Some(true));
         let mut mp = crate::metrics::MetricsPolicy::default();
         metrics.policy.merge_into(&mut mp);
-        assert_eq!(mp.latency_columns, 7);
+        assert_eq!(mp.latency_columns, 9);
         assert_eq!(mp.latency_base, 3);
         // The SAMPLE has no labels key, so labels stays absent.
         assert!(metrics.enable.is_some());
@@ -415,7 +417,8 @@ labels:
     fn read_full_merge_covers_all_base_fields() {
         let cfg: ReadPolicyConfig = parse(
             "read_mode_ap: ALL\nread_mode_sc: LINEARIZE\nsocket_timeout: 3\ntotal_timeout: 5\n\
-             max_retries: 3\nsleep_between_retries: 2\ntimeout_delay: 7\nreplica: PREFER_RACK\n",
+             max_retries: 3\nsleep_between_retries: 2\ntimeout_delay: 7\n\
+             error_detail_verbosity: 2\nreplica: PREFER_RACK\n",
         )
         .unwrap();
         let mut p = ReadPolicy::default();
@@ -427,6 +430,7 @@ labels:
         assert_eq!(p.base_policy.max_retries, 3);
         assert_eq!(p.base_policy.sleep_between_retries, 2);
         assert_eq!(p.base_policy.timeout_delay, 7);
+        assert_eq!(p.base_policy.error_detail_verbosity, 2);
         assert_eq!(p.replica, Replica::PreferRack);
     }
 
@@ -526,13 +530,15 @@ labels:
     #[test]
     fn client_dynamic_merge_covers_all_fields() {
         let cfg: ClientPolicyConfig = parse(
-            "timeout: 2500\nmax_socket_idle: 55\nmax_error_rate: 42\nerror_rate_window: 3\n\
-             tend_interval: 250\nuse_service_alternate: true\napp_id: \"svc\"\nrack_ids: [1, 2, 3]\n",
+            "timeout: 2500\nlogin_timeout: 900\nmax_socket_idle: 55\nmax_error_rate: 42\n\
+             error_rate_window: 3\ntend_interval: 250\nuse_service_alternate: true\n\
+             app_id: \"svc\"\nrack_ids: [1, 2, 3]\n",
         )
         .unwrap();
         let mut cp = ClientPolicy::default();
         cfg.merge_into(&mut cp);
         assert_eq!(cp.timeout, 2500);
+        assert_eq!(cp.login_timeout, 900); // ms, matching the Go client's key
         assert_eq!(cp.idle_timeout, 55_000); // seconds -> ms
         assert_eq!(cp.max_error_rate, 42);
         assert_eq!(cp.error_rate_window, 3);

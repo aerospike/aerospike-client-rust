@@ -177,6 +177,7 @@ pub fn base_policy(
                 filter_expression,
                 txn: None,
                 populate_positional_results: false,
+                error_detail_verbosity: 0,
             },
         )
 }

@@ -50,14 +50,26 @@ impl Drop for Recordset {
 }
 
 impl Recordset {
+    /// `rec_queue_size` bounds the buffer between the per-node reader tasks and
+    /// the consumer. `max_records`, when the caller specified one, caps it: the
+    /// channel preallocates its whole slot array at
+    /// `size_of::<Result<Record>>()` (248 bytes) plus a stamp per slot, so a
+    /// query that can return at most 10 records has no use for a 1024-slot,
+    /// 262 KB array. Zero means "no limit" and leaves the queue at full size.
     pub(crate) fn new(
         rec_queue_size: usize,
+        max_records: u64,
         nodes: usize,
         tracker: Arc<Mutex<PartitionTracker>>,
     ) -> Self {
         let task_id = rand::random::<u64>();
 
-        let (tx, rx) = async_channel::bounded(rec_queue_size);
+        let capacity = if max_records > 0 {
+            rec_queue_size.min(max_records as usize)
+        } else {
+            rec_queue_size
+        };
+        let (tx, rx) = async_channel::bounded(capacity.max(1));
         Recordset {
             instances: AtomicUsize::new(nodes),
             rx,
@@ -71,9 +83,11 @@ impl Recordset {
     /// Close the query.
     pub fn close(&self) {
         self.active.store(false, Ordering::Relaxed);
-        // TODO: Close the tx
-        // self.tx.close();
-        // self.rx.close();
+        // Close the channel so consumers observe the end of the stream:
+        // buffered records can still be drained, then receives report
+        // `Closed`. This is what lets the blocking iterator park in
+        // `recv_blocking` instead of spinning on `try_recv`.
+        self.rx.close();
     }
 
     /// Check whether the query is still active.
@@ -97,10 +111,10 @@ impl Recordset {
     pub(crate) async fn push(&self, record: Result<Record>) -> Result<()> {
         match record {
             // Do not emit stream termination errors; they are used as signals only.
-            Err(crate::Error::StreamTerminatedError(_)) => Ok(()),
+            Err(e) if matches!(e.kind(), crate::ErrorKind::StreamTerminated) => Ok(()),
             _ => match self.tx.send(record).await {
                 Ok(()) => Ok(()),
-                Err(_) => Err(crate::Error::StreamTerminatedError(None)),
+                Err(_) => Err(crate::Error::stream_terminated(None)),
             },
         }
     }
@@ -142,24 +156,12 @@ impl Recordset {
 impl Iterator for &Recordset {
     type Item = Result<Record>;
 
-    /// Implements a blocking iterator.
+    /// Blocking iterator: parks the calling thread until the next record
+    /// arrives; ends once the recordset is closed and drained. No
+    /// spinning — the channel wakes the thread exactly when there is
+    /// something to do.
     fn next(&mut self) -> Option<Result<Record>> {
-        use futures::executor::block_on;
-
-        loop {
-            let result = self.next_record();
-            if result.is_some() {
-                return result;
-            }
-
-            if self.is_active() {
-                block_on(aerospike_rt::task::yield_now());
-                continue;
-            }
-
-            // ends the iterator
-            return None;
-        }
+        self.rx.recv_blocking().ok()
     }
 }
 
@@ -172,6 +174,10 @@ impl futures::Stream for RecordStream {
     ) -> std::task::Poll<Option<Self::Item>> {
         match self.0.rx.try_recv() {
             Ok(r) => std::task::Poll::Ready(Some(r)),
+            // Channel closed and drained: the stream has ended. (`close()`
+            // closes the channel; `is_empty()` alone would spin forever on
+            // the `Closed` error.)
+            Err(e) if e.is_closed() => std::task::Poll::Ready(None),
             Err(e) => {
                 if !self.0.is_active() && e.is_empty() {
                     std::task::Poll::Ready(None)
@@ -196,5 +202,134 @@ impl RecordStream {
     /// Returns the partition filter from the recordset.
     pub async fn partition_filter(&self) -> Option<PartitionFilter> {
         self.0.partition_filter().await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::IndexMap;
+    use std::time::Duration;
+
+    use futures::executor::block_on;
+    use futures::StreamExt;
+
+    use crate::policy::QueryPolicy;
+
+    /// A recordset with an empty tracker (no cluster needed): pure
+    /// channel-lifecycle testing.
+    fn recordset(queue_size: usize) -> Arc<Recordset> {
+        let tracker = block_on(PartitionTracker::new(
+            &QueryPolicy::default(),
+            Arc::new(Mutex::new(PartitionFilter::all())),
+            Vec::new(),
+        ))
+        .expect("tracker");
+        Arc::new(Recordset::new(queue_size, 0, 1, Arc::new(Mutex::new(tracker))))
+    }
+
+    fn record() -> Record {
+        Record::new(None, IndexMap::new(), None, 0, 0)
+    }
+
+    #[cfg(feature = "sync")]
+    #[test]
+    fn blocking_iterator_drains_buffered_records_after_close() {
+        let rs = recordset(8);
+        for _ in 0..3 {
+            block_on(rs.push(Ok(record()))).unwrap();
+        }
+        rs.close();
+
+        // Buffered records survive the close; then the iterator ends —
+        // and stays ended.
+        let mut iter = &*rs;
+        assert!(iter.next().is_some());
+        assert!(iter.next().is_some());
+        assert!(iter.next().is_some());
+        assert!(iter.next().is_none());
+        assert!(iter.next().is_none());
+    }
+
+    #[cfg(feature = "sync")]
+    #[test]
+    fn blocking_iterator_ends_immediately_on_closed_empty_set() {
+        let rs = recordset(8);
+        rs.close();
+        assert!((&*rs).next().is_none());
+    }
+
+    #[cfg(feature = "sync")]
+    #[test]
+    fn parked_iterator_wakes_on_close() {
+        // A consumer parked in `recv_blocking` must be woken by `close()`
+        // — the old spin loop version got this via polling; the parked
+        // version must get an actual wakeup.
+        let rs = recordset(8);
+        let (done_tx, done_rx) = std::sync::mpsc::channel();
+        let consumer_rs = rs.clone();
+        std::thread::spawn(move || {
+            let item = (&*consumer_rs).next(); // parks: queue empty, not closed
+            let _ = done_tx.send(item.is_none());
+        });
+
+        std::thread::sleep(Duration::from_millis(100));
+        rs.close();
+        let ended_clean = done_rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("parked iterator was not woken by close()");
+        assert!(ended_clean, "expected None after close on empty set");
+    }
+
+    #[test]
+    fn push_fails_fast_after_close() {
+        let rs = recordset(8);
+        rs.close();
+        let err = block_on(rs.push(Ok(record()))).unwrap_err();
+        assert!(
+            matches!(err.kind(), crate::ErrorKind::StreamTerminated),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn producer_blocked_on_full_queue_unblocks_on_close() {
+        // Regression for the latent leak: a worker awaiting `push` into a
+        // full queue whose consumer went away used to wait forever. With
+        // the channel closed, the pending send must fail promptly.
+        let rs = recordset(1);
+        block_on(rs.push(Ok(record()))).unwrap(); // fill the queue
+
+        let (done_tx, done_rx) = std::sync::mpsc::channel();
+        let producer_rs = rs.clone();
+        std::thread::spawn(move || {
+            // Blocks: queue is full and nobody is consuming.
+            let result = block_on(producer_rs.push(Ok(record())));
+            let _ = done_tx.send(result.is_err());
+        });
+
+        std::thread::sleep(Duration::from_millis(100));
+        rs.close();
+        let send_failed = done_rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("blocked producer was not unblocked by close()");
+        assert!(send_failed, "push into a closed recordset must fail");
+    }
+
+    #[test]
+    fn async_stream_ends_after_close_and_drain() {
+        // The poll_next `Closed` arm: after close, the stream yields the
+        // buffered records and then terminates instead of staying
+        // Pending forever.
+        let rs = recordset(8);
+        for _ in 0..2 {
+            block_on(rs.push(Ok(record()))).unwrap();
+        }
+        rs.close();
+
+        let mut stream = rs.into_stream();
+        assert!(block_on(stream.next()).is_some());
+        assert!(block_on(stream.next()).is_some());
+        assert!(block_on(stream.next()).is_none());
     }
 }

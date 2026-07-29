@@ -21,7 +21,7 @@ use crate::cluster::{Cluster, Node};
 use crate::commands::buffer;
 use crate::commands::buffer::QueryDirection;
 use crate::commands::{Command, SingleCommand};
-use crate::errors::{Error, Result};
+use crate::errors::{Error, ErrorKind, Result};
 use crate::net::{BufferedConn, Connection};
 use crate::policy::{Policy, WritePolicy};
 use crate::{ResultCode, Statement};
@@ -115,7 +115,6 @@ impl Command for ServerCommand<'_> {
                 None,
                 None,
             )
-            .await
     }
 
     fn get_node(&mut self) -> Result<Arc<Node>> {
@@ -171,7 +170,7 @@ impl Command for ServerCommand<'_> {
                 let mut decoder = ZlibDecoder::new(std::io::Cursor::new(compressed_data));
                 let mut proto_buf = [0u8; 8];
                 decoder.read_exact(&mut proto_buf).map_err(|e| {
-                    Error::ClientError(format!("Server command decompression error: {e}"))
+                    Error::client_error(format!("Server command decompression error: {e}"))
                 })?;
                 let inner_proto = u64::from_be_bytes(proto_buf);
                 let inner_size = (inner_proto & 0x0000_FFFF_FFFF_FFFF) as usize;
@@ -186,7 +185,7 @@ impl Command for ServerCommand<'_> {
 
                     match self.parse_record_results(&mut inner_conn).await {
                         Ok(stat) => status = stat,
-                        Err(e @ Error::ServerError(_, _, _)) => {
+                        Err(e) if matches!(e.kind(), ErrorKind::Server { .. }) => {
                             inner_conn.drain(inner_conn.conn.deadline()).await?;
                             return Err(e);
                         }
@@ -202,7 +201,7 @@ impl Command for ServerCommand<'_> {
                     conn.set_limit_body(size)?;
                     match self.parse_record_results(&mut conn).await {
                         Ok(stat) => status = stat,
-                        Err(e @ Error::ServerError(_, _, _)) => {
+                        Err(e) if matches!(e.kind(), ErrorKind::Server { .. }) => {
                             conn.drain(conn.conn.deadline()).await?;
                             return Err(e);
                         }
@@ -228,20 +227,20 @@ impl ServerCommand<'_> {
             let info3 = conn.buffer().read_u8(Some(3));
             if info3 & buffer::INFO3_LAST == buffer::INFO3_LAST {
                 if result_code != ResultCode::Ok {
-                    return Err(Error::ServerError(
+                    return Err(Error::server_error(
                         result_code,
-                        false,
                         conn.conn.addr.clone(),
+                        None,
                     ));
                 }
                 return Ok(false);
             }
 
             if result_code != ResultCode::Ok {
-                return Err(Error::ServerError(
+                return Err(Error::server_error(
                     result_code,
-                    false,
                     conn.conn.addr.clone(),
+                    None,
                 ));
             }
 

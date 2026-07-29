@@ -19,7 +19,7 @@ use crate::cluster::{Cluster, Node};
 use crate::commands::{self};
 use crate::errors::{Error, Result};
 use crate::net::Connection;
-use crate::policy::Policy;
+use crate::policy::{next_retry_interval, Policy};
 use crate::{Key, ResultCode};
 use aerospike_rt::sleep;
 use aerospike_rt::time::Instant;
@@ -116,7 +116,10 @@ impl<'a> SingleCommand<'a> {
         let cmd_namespace: Option<String> = cmd.namespace().map(str::to_owned);
         let trans_start = Instant::now();
         let mut last_node: Option<Arc<Node>> = None;
-        let micros_since = |start: Instant| start.elapsed().as_micros() as u64;
+        // Latency metrics are recorded in milliseconds (matching the Java
+        // client's histogram units); sub-millisecond phases record 0 and land
+        // in the first bucket.
+        let millis_since = |start: Instant| start.elapsed().as_millis() as u64;
 
         // set timeout outside the loop
         let deadline = policy.deadline();
@@ -126,6 +129,9 @@ impl<'a> SingleCommand<'a> {
         // (matching the Go client). A multiplier <= 1.0 keeps it constant.
         let sleep_multiplier = policy.sleep_multiplier();
         let mut sleep_interval = policy.sleep_between_retries();
+        // Consecutive waits spent on an empty connection pool while a
+        // background task opens a connection (not part of the retry budget).
+        let mut pool_empty_waits: usize = 0;
 
         // Finalizes an error before returning to the caller: applies `in_doubt`
         // per Java's rule and attaches retry context (iteration count, last
@@ -153,7 +159,7 @@ impl<'a> SingleCommand<'a> {
                 if let Some(cluster) = cmd.cluster() {
                     cluster.incr_max_retries_exceeded();
                 }
-                let err = Error::Timeout(format!("Timeout after {iterations} tries"));
+                let err = Error::timeout(format!("Timeout after {iterations} tries"));
                 let tail = match last_err.take() {
                     Some(e) => e.wrap(err),
                     None => err,
@@ -175,7 +181,7 @@ impl<'a> SingleCommand<'a> {
                     if let Some(n) = &last_node {
                         n.metrics().incr_transaction_error();
                     }
-                    let err = Error::Timeout("Timeout".to_string());
+                    let err = Error::timeout("Timeout".to_string());
                     let tail = match last_err.take() {
                         Some(e) => e.wrap(err),
                         None => err,
@@ -192,7 +198,9 @@ impl<'a> SingleCommand<'a> {
                 // Advance the partition sequence for the retry. Only treat a
                 // client-side timeout as a timeout for partition sequencing —
                 // a server-reported TIMEOUT should still advance the sequence.
-                let is_client_timeout = matches!(&last_err, Some(Error::Timeout(_)));
+                let is_client_timeout = last_err
+                    .as_ref()
+                    .is_some_and(|e| matches!(e.kind(), crate::ErrorKind::Timeout));
                 cmd.prepare_retry(is_client_timeout);
 
                 if let Some(interval) = sleep_interval {
@@ -203,9 +211,7 @@ impl<'a> SingleCommand<'a> {
                         }
                     }
                     sleep(interval).await;
-                    if sleep_multiplier > 1.0 {
-                        sleep_interval = Some(interval.mul_f64(sleep_multiplier));
-                    }
+                    sleep_interval = Some(next_retry_interval(interval, sleep_multiplier));
                 }
             }
 
@@ -225,7 +231,9 @@ impl<'a> SingleCommand<'a> {
             // set command node, so when you return a record it has the node
             let node = match cmd.get_node() {
                 Ok(node) => node,
-                e @ Err(Error::InvalidArgument(_)) => e?,
+                Err(e) if matches!(e.kind(), crate::ErrorKind::InvalidArgument) => {
+                    return Err(e);
+                }
                 Err(e) => {
                     warn!("Error selecting node from the partition table: {e}");
                     last_err = Some(e);
@@ -249,6 +257,26 @@ impl<'a> SingleCommand<'a> {
             let aq_start = Instant::now();
             let mut conn = match node.get_connection(cmd.hint()).await {
                 Ok(conn) => conn,
+                Err(err)
+                    if err.is_pool_empty()
+                        && pool_empty_waits < commands::POOL_EMPTY_MAX_WAITS =>
+                {
+                    // A background task is opening a connection. This is a
+                    // pacing wait, not a failure: it consumes neither the
+                    // retry budget (`iterations` is rolled back, so writes
+                    // with `max_retries == 0` still succeed on a cold pool)
+                    // nor the node's error-rate breaker. Bounded by the
+                    // command deadline (checked at the loop top) and by
+                    // `POOL_EMPTY_MAX_WAITS` for deadline-less commands.
+                    // (Deliberately not recorded into `last_err`: the loop
+                    // top drains `last_err` into `sub_errors` every pass, and
+                    // thousands of waits must not produce thousands of
+                    // sub-error entries.)
+                    iterations -= 1;
+                    pool_empty_waits += 1;
+                    sleep(commands::POOL_EMPTY_WAIT).await;
+                    continue;
+                }
                 Err(err) => {
                     warn!("Node {node}: {err}");
                     node.incr_error_rate();
@@ -262,7 +290,7 @@ impl<'a> SingleCommand<'a> {
             if metrics_on {
                 if let Some(ns) = cmd_namespace.as_deref() {
                     node.metrics()
-                        .record_connection_aq(ns, cmd_type, micros_since(aq_start));
+                        .record_connection_aq(ns, cmd_type, millis_since(aq_start));
                 }
             }
 
@@ -271,9 +299,18 @@ impl<'a> SingleCommand<'a> {
 
             conn.buffer
                 .set_compress(policy.use_compression(), policy.compression_threshold());
-            cmd.prepare_buffer(&mut conn)
-                .await
-                .map_err(|e| e.chain_error("Failed to prepare send buffer"))?;
+            cmd.prepare_buffer(&mut conn).await.map_err(|e| {
+                // An argument the client refuses to encode is the caller's
+                // mistake, not a buffer problem: surface it as-is so the
+                // result code stays PARAMETER_ERROR, the way Java throws it
+                // straight out of the command. Anything else (I/O, sizing)
+                // gets the buffer context, which is where it is useful.
+                if matches!(e.kind(), crate::ErrorKind::InvalidArgument) {
+                    e
+                } else {
+                    e.chain_error("Failed to prepare send buffer")
+                }
+            })?;
             cmd.write_timeout(&mut conn)
                 .await
                 .map_err(|e| e.chain_error("Failed to set timeout for send buffer"))?;
@@ -307,7 +344,7 @@ impl<'a> SingleCommand<'a> {
                         ns,
                         cmd_type,
                         bytes_sent,
-                        micros_since(write_start),
+                        millis_since(write_start),
                     );
                 }
             }
@@ -368,12 +405,12 @@ impl<'a> SingleCommand<'a> {
                     node.metrics().record_parse(
                         ns,
                         cmd_type,
-                        micros_since(parse_start),
+                        millis_since(parse_start),
                         conn.bytes_read() as u64,
                     );
                 }
                 node.metrics()
-                    .record_command(cmd_type, micros_since(trans_start));
+                    .record_command(cmd_type, millis_since(trans_start));
             }
 
             // allow the connection to be put back in the connection pool
@@ -389,7 +426,7 @@ impl<'a> SingleCommand<'a> {
         if let Some(cluster) = cmd.cluster() {
             cluster.incr_total_timeout_exceeded();
         }
-        let err = Error::Timeout(format!("Command timed out after {iterations} tries"));
+        let err = Error::timeout(format!("Command timed out after {iterations} tries"));
         let tail = match last_err.take() {
             Some(e) => e.wrap(err),
             None => err,

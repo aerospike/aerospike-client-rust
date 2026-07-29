@@ -164,6 +164,16 @@ pub const INFO4_MRT_ROLL_BACK: u8 = 1 << 2;
 /// Apply operation on locking only (no data modification).
 pub const INFO4_MRT_ON_LOCKING_ONLY: u8 = 1 << 4;
 
+/// INFO4 bit shift for the error-detail verbosity level (bits 5-6).
+pub const INFO4_ERROR_VERBOSITY_SHIFT: u8 = 5;
+/// INFO4 mask for the error-detail verbosity level (bits 5-6).
+pub const INFO4_ERROR_VERBOSITY_MASK: u8 = 0x60;
+
+/// Pack the error-detail verbosity level into its INFO4 bits (5-6).
+pub(crate) const fn error_verbosity_bits(verbosity: u8) -> u8 {
+    (verbosity << INFO4_ERROR_VERBOSITY_SHIFT) & INFO4_ERROR_VERBOSITY_MASK
+}
+
 pub const MSG_TOTAL_HEADER_SIZE: u8 = 30;
 pub const FIELD_HEADER_SIZE: u8 = 5;
 pub const OPERATION_HEADER_SIZE: u8 = 8;
@@ -182,6 +192,17 @@ pub const DEFAULT_COMPRESS_THRESHOLD: usize = 128;
 // LDT elements in your queries.
 pub const MAX_BUFFER_SIZE: usize = 120 * 1024 * 1024 + 8; // 120 MB + header
 
+/// Result of walking a response's field section: the record version (for MRT
+/// bookkeeping) and any extended server-supplied error detail.
+#[derive(Default)]
+pub(crate) struct ParsedFields {
+    pub version: Option<u64>,
+    pub error_detail: Option<Box<crate::ServerErrorDetail>>,
+}
+
+/// Initial capacity of a (non-pooled) command buffer.
+const INITIAL_BUFFER_SIZE: usize = 1024;
+
 // Holds data buffer for the command
 #[derive(Debug, Default)]
 #[allow(clippy::struct_field_names)]
@@ -190,6 +211,11 @@ pub struct Buffer {
     pub data_offset: usize,
     // pub estimated_data_offset: usize,
     pub reclaim_threshold: usize,
+    /// When set, allocations larger than `reclaim_threshold` are leased
+    /// from the owning cluster's [`crate::net::buffer_pool`] and returned
+    /// to it when the buffer shrinks back (or is dropped), instead of
+    /// being freed with `shrink_to_fit`.
+    pool: Option<std::sync::Arc<crate::net::buffer_pool::TieredBufferPool>>,
     /// When compression is enabled, all command data is written starting at this
     /// offset (16), reserving space for the compressed proto header (8 bytes) and
     /// uncompressed size (8 bytes). The pre-padding lets `compress()`
@@ -202,15 +228,43 @@ pub struct Buffer {
     compress_threshold: usize,
 }
 
+impl Drop for Buffer {
+    fn drop(&mut self) {
+        // A dying connection donates its leased buffer back to the pool.
+        self.release_to_pool();
+    }
+}
+
 impl Buffer {
     pub(crate) fn new(reclaim_threshold: usize) -> Self {
         Buffer {
-            data_buffer: Vec::with_capacity(1024),
+            data_buffer: Vec::with_capacity(INITIAL_BUFFER_SIZE),
             data_offset: 0,
             // estimated_data_offset: 0,
             reclaim_threshold,
+            pool: None,
             compress_offset: 0,
             compress_threshold: DEFAULT_COMPRESS_THRESHOLD,
+        }
+    }
+
+    /// A buffer that leases its large allocations from the owning
+    /// cluster's tiered buffer pool (used by connection buffers when
+    /// `ClientPolicy::use_buffer_pool` is enabled).
+    pub(crate) fn with_pool(
+        reclaim_threshold: usize,
+        pool: std::sync::Arc<crate::net::buffer_pool::TieredBufferPool>,
+    ) -> Self {
+        let mut buffer = Buffer::new(reclaim_threshold);
+        buffer.pool = Some(pool);
+        buffer
+    }
+
+    /// Donate a pooled buffer back when the connection goes away (the
+    /// pool ignores buffers that aren't pool-eligible).
+    pub(crate) fn release_to_pool(&mut self) {
+        if let Some(pool) = &self.pool {
+            pool.put(std::mem::take(&mut self.data_buffer));
         }
     }
 
@@ -238,9 +292,14 @@ impl Buffer {
         // Corrupted data streams can result in a huge length.
         // Do a sanity check here.
         if size > MAX_BUFFER_SIZE {
-            return Err(Error::InvalidArgument(format!(
+            return Err(Error::invalid_argument(format!(
                 "Invalid size for buffer: {size}"
             )));
+        }
+
+        if self.pool.is_some() {
+            self.resize_pooled(size);
+            return Ok(());
         }
 
         let mem_size = self.data_buffer.capacity();
@@ -250,6 +309,40 @@ impl Buffer {
         }
 
         Ok(())
+    }
+
+    /// Pool-backed resize: allocations above `reclaim_threshold` are
+    /// checked out of the shared tiered pool and handed back once the
+    /// buffer shrinks below the threshold again. Between those two points
+    /// the capacity is intentionally kept (no `shrink_to_fit` churn while
+    /// consecutive large commands run on this connection).
+    fn resize_pooled(&mut self, size: usize) {
+        let pool = self.pool.as_ref().expect("resize_pooled requires a pool");
+        let capacity = self.data_buffer.capacity();
+
+        if size > capacity && size > self.reclaim_threshold {
+            // Grow into a pooled buffer, preserving current contents.
+            let mut fresh = pool.get(size);
+            fresh.extend_from_slice(&self.data_buffer);
+            fresh.resize(size, 0);
+            let old = std::mem::replace(&mut self.data_buffer, fresh);
+            pool.put(old);
+            return;
+        }
+
+        if capacity > self.reclaim_threshold && size <= self.reclaim_threshold {
+            // Shrunk back below the boundary: return the lease, keep a
+            // small connection-owned buffer.
+            let keep = size.min(self.data_buffer.len());
+            let mut small = Vec::with_capacity(size.max(INITIAL_BUFFER_SIZE));
+            small.extend_from_slice(&self.data_buffer[..keep]);
+            small.resize(size, 0);
+            let old = std::mem::replace(&mut self.data_buffer, small);
+            pool.put(old);
+            return;
+        }
+
+        self.data_buffer.resize(size, 0);
     }
 
     pub(crate) const fn reset_offset(&mut self) {
@@ -302,10 +395,12 @@ impl Buffer {
 
         // Extend the buffer so there's room for the compressed output after the
         // source data. zlib worst-case expansion is ~0.1% + 13 bytes.
+        // Goes through resize_buffer so the growth can come from the
+        // buffer pool (keeping the capacity an exact power of two).
         let extra = uncompressed_size / 100 + 64;
         let output_start = cmd_end; // right after the source data
         let output_len = uncompressed_size + extra;
-        self.data_buffer.resize(output_start + output_len, 0);
+        self.resize_buffer(output_start + output_len)?;
 
         // Split into non-overlapping source and output regions.
         let compressed_size;
@@ -314,7 +409,9 @@ impl Buffer {
             let src = &src_region[cmd_start..cmd_end]; // the uncompressed command data
 
             let cursor = std::io::Cursor::new(&mut output_region[..output_len]);
-            let mut encoder = ZlibEncoder::new(cursor, Compression::default());
+            // BEST_SPEED, matching the Java client: request compression is
+            // about shrinking large payloads cheaply, not maximum ratio.
+            let mut encoder = ZlibEncoder::new(cursor, Compression::fast());
 
             // Write in 64KB chunks to work around zlib issues (matching Go client behavior).
             let mut pos = 0;
@@ -322,19 +419,29 @@ impl Buffer {
             while pos + STEP < uncompressed_size {
                 encoder
                     .write_all(&src[pos..pos + STEP])
-                    .map_err(|e| Error::ClientError(format!("Compression error: {e}")))?;
+                    .map_err(|e| Error::client_error(format!("Compression error: {e}")))?;
                 pos += STEP;
             }
             if pos < uncompressed_size {
                 encoder
                     .write_all(&src[pos..uncompressed_size])
-                    .map_err(|e| Error::ClientError(format!("Compression error: {e}")))?;
+                    .map_err(|e| Error::client_error(format!("Compression error: {e}")))?;
             }
 
             let cursor = encoder
                 .finish()
-                .map_err(|e| Error::ClientError(format!("Compression error: {e}")))?;
+                .map_err(|e| Error::client_error(format!("Compression error: {e}")))?;
             compressed_size = cursor.position() as usize;
+        }
+
+        // If compression didn't shrink the message (16-byte compressed
+        // header included), send it uncompressed — Java parity: the server
+        // shouldn't pay inflation cost for zero gain.
+        if 16 + compressed_size >= uncompressed_size {
+            self.data_buffer.copy_within(cmd_start..cmd_end, 0);
+            self.data_offset = uncompressed_size;
+            self.data_buffer.truncate(self.data_offset);
+            return Ok(());
         }
 
         // Copy compressed data from the tail into the pre-reserved space at [16..].
@@ -379,7 +486,7 @@ impl Buffer {
         }
 
         self.size_buffer()?;
-        self.write_header_with_policy(policy, 0, INFO2_WRITE, field_count, bins.len() as u16);
+        self.write_header_write(policy, 0, INFO2_WRITE, field_count, bins.len() as u16);
         self.write_key(key, policy.send_key)?;
         self.write_txn(policy.base_policy.txn.as_ref(), version, true);
 
@@ -406,7 +513,7 @@ impl Buffer {
         }
 
         self.size_buffer()?;
-        self.write_header_with_policy(policy, 0, INFO2_WRITE | INFO2_DELETE, field_count, 0);
+        self.write_header_write(policy, 0, INFO2_WRITE | INFO2_DELETE, field_count, 0);
         self.write_key(key, false)?;
         self.write_txn(policy.base_policy.txn.as_ref(), version, true);
 
@@ -430,7 +537,7 @@ impl Buffer {
         }
         self.estimate_operation_size();
         self.size_buffer()?;
-        self.write_header_with_policy(policy, 0, INFO2_WRITE, field_count, 1);
+        self.write_header_write(policy, 0, INFO2_WRITE, field_count, 1);
         self.write_key(key, policy.send_key)?;
         self.write_txn(policy.base_policy.txn.as_ref(), version, true);
 
@@ -667,14 +774,22 @@ impl Buffer {
         txn: Option<&Arc<Txn>>,
         ver: Option<u64>,
     ) -> Result<()> {
-        if txn.is_some() {
+        // The INFO4 byte carries `txn_attr`: MRT attributes and the
+        // error-detail verbosity bits. Emit it whenever either has something to
+        // say — gating it on the transaction alone silently dropped the
+        // verbosity request, so batch rows never got error detail back.
+        if txn.is_some() || attr.txn_attr != 0 {
             self.write_u8(BATCH_MSG_INFO | BATCH_MSG_INFO4 | BATCH_MSG_TTL);
             self.write_u8(attr.read_attr);
             self.write_u8(attr.write_attr);
             self.write_u8(attr.info_attr);
             self.write_u8(attr.txn_attr);
             self.write_u32(attr.expiration);
-            self.write_batch_fields_txn(key, txn, ver, attr, filter, 0, op_count)
+            if txn.is_some() {
+                self.write_batch_fields_txn(key, txn, ver, attr, filter, 0, op_count)
+            } else {
+                self.write_batch_fields_with_filter(key, filter, 0, op_count)
+            }
         } else {
             self.write_u8(BATCH_MSG_INFO | BATCH_MSG_TTL);
             self.write_u8(attr.read_attr);
@@ -696,7 +811,8 @@ impl Buffer {
         txn: Option<&Arc<Txn>>,
         ver: Option<u64>,
     ) -> Result<()> {
-        if txn.is_some() {
+        // See `write_batch_read`: INFO4 also carries the error-detail verbosity.
+        if txn.is_some() || attr.txn_attr != 0 {
             self.write_u8(BATCH_MSG_INFO | BATCH_MSG_INFO4 | BATCH_MSG_GEN | BATCH_MSG_TTL);
             self.write_u8(attr.read_attr);
             self.write_u8(attr.write_attr);
@@ -704,7 +820,11 @@ impl Buffer {
             self.write_u8(attr.txn_attr);
             self.write_u16(attr.generation as u16);
             self.write_u32(attr.expiration);
-            self.write_batch_fields_txn(key, txn, ver, attr, filter, field_count, op_count)
+            if txn.is_some() {
+                self.write_batch_fields_txn(key, txn, ver, attr, filter, field_count, op_count)
+            } else {
+                self.write_batch_fields_reg(key, attr, filter, field_count, op_count)
+            }
         } else {
             self.write_u8(BATCH_MSG_INFO | BATCH_MSG_GEN | BATCH_MSG_TTL);
             self.write_u8(attr.read_attr);
@@ -777,7 +897,14 @@ impl Buffer {
     }
 
     pub(crate) const fn get_batch_flags(policy: &BatchPolicy) -> u8 {
-        let mut flags: u8 = if policy.allow_inline { 1 } else { 0 };
+        // 0x8 instructs the server to return the key-specific error code
+        // when an error stops the batch response (Java CLIENT-1720); set
+        // unconditionally like the Java client.
+        let mut flags: u8 = 0x8;
+
+        if policy.allow_inline {
+            flags |= 0x1;
+        }
 
         if policy.allow_inline_ssd {
             flags |= 0x2;
@@ -847,6 +974,13 @@ impl Buffer {
 
                 // Add txn field sizes
                 self.size_txn_batch(txn, ver, batch_op.has_write());
+                // ...and the INFO4 byte when verbosity alone requires it
+                // (`size_txn_batch` already counts it for transactional rows).
+                if txn.is_none()
+                    && error_verbosity_bits(policy.base_policy.error_detail_verbosity) != 0
+                {
+                    self.data_offset += 1;
+                }
             }
             prev = Some(batch_op);
             ver_prev = ver;
@@ -888,8 +1022,8 @@ impl Buffer {
                             (Bins::Some(bin_names), Some(ops))
                                 if !bin_names.is_empty() && !ops.is_empty() =>
                             {
-                                return Err(Error::ClientError(
-                                    "Can't pass both bin names and operations to BatchReads".into(),
+                                return Err(Error::client_error(
+                                    "Can't pass both bin names and operations to BatchReads",
                                 ))
                             }
                             (Bins::Some(bin_names), _) if !bin_names.is_empty() => {
@@ -1141,8 +1275,10 @@ impl Buffer {
 
         let mut read_attr = 0;
         let mut write_attr = 0;
+        let mut respond_all_ops = policy.respond_per_each_op;
 
         for operation in operations {
+            let mut is_write = false;
             match *operation {
                 Operation {
                     op: OperationType::Read,
@@ -1165,26 +1301,47 @@ impl Buffer {
                         | OperationType::ToString,
                     ..
                 } => read_attr |= INFO1_READ,
-                _ => write_attr |= INFO2_WRITE,
+                _ => {
+                    write_attr |= INFO2_WRITE;
+                    is_write = true;
+                }
             }
 
-            let each_op = matches!(
-                operation.data,
-                OperationData::CdtMapOp(_)
-                    | OperationData::CdtBitOp(_)
-                    | OperationData::HLLOp(_)
-                    | OperationData::EXPOp(_)
-                    | OperationData::StringOp(_)
-            );
-
-            if policy.respond_per_each_op || each_op {
-                write_attr |= INFO2_RESPOND_ALL_OPS;
-            }
+            // Every op must contribute exactly one result slot, or the
+            // positional index<->op mapping that `Record::ops` documents comes
+            // apart. Two kinds of op need RESPOND_ALL_OPS to hold that up:
+            //
+            // - Any write. A simple write (put, add, append, prepend, touch,
+            //   delete) returns nothing of its own, so `get`/`add`/`get` on one
+            //   bin answered with two results for three ops and every result
+            //   after the write landed in the wrong slot. The batch path has
+            //   always asked for this on writes (`BatchAttr::set_batch_write`),
+            //   which is why the same op list works there.
+            // - Map/bit/HLL/expression/string *reads*, which the server does
+            //   not slot individually otherwise. `to_string` carries no op
+            //   data, hence the extra op-type check.
+            respond_all_ops |= is_write
+                || matches!(
+                    operation.data,
+                    OperationData::CdtMapOp(_)
+                        | OperationData::CdtBitOp(_)
+                        | OperationData::HLLOp(_)
+                        | OperationData::EXPOp(_)
+                        | OperationData::StringOp(_)
+                )
+                || matches!(operation.op, OperationType::ToString);
 
             self.data_offset += operation.estimate_size()? + OPERATION_HEADER_SIZE as usize;
         }
 
-        let has_write = write_attr != 0;
+        // RESPOND_ALL_OPS never makes the command a write on its own; only
+        // actual write operations do.
+        let has_write = write_attr & INFO2_WRITE != 0;
+
+        // When GET_ALL is specified, RESPOND_ALL_OPS must be disabled.
+        if respond_all_ops && read_attr & INFO1_GET_ALL == 0 {
+            write_attr |= INFO2_RESPOND_ALL_OPS;
+        }
         let mut field_count = self.estimate_key_size(key, policy.send_key && has_write)?;
         let (txn_field_count, version) =
             self.size_txn(key, policy.base_policy.txn.as_ref(), has_write);
@@ -1196,7 +1353,7 @@ impl Buffer {
         self.size_buffer()?;
 
         if has_write {
-            self.write_header_with_policy(
+            self.write_header_read_write(
                 policy,
                 read_attr,
                 write_attr,
@@ -1244,7 +1401,7 @@ impl Buffer {
         }
         self.size_buffer()?;
 
-        self.write_header(&policy.base_policy, 0, INFO2_WRITE, field_count, 0);
+        self.write_header_write(policy, 0, INFO2_WRITE, field_count, 0);
         self.write_key(key, policy.send_key)?;
 
         if let Some(filter) = policy.filter_expression() {
@@ -1267,7 +1424,7 @@ impl Buffer {
     /// `QUERY_BINLIST` field instead of as trailing READ ops, are
     /// not supported.
     #[allow(clippy::cognitive_complexity)]
-    pub(crate) async fn set_query(
+    pub(crate) fn set_query(
         &mut self,
         direction: QueryDirection<'_>,
         statement: &Statement,
@@ -1406,25 +1563,22 @@ impl Buffer {
             for op in operations {
                 if is_background {
                     if !op.is_write() {
-                        return Err(Error::InvalidArgument(
+                        return Err(Error::invalid_argument(
                             "Background query operations must be write-only. Use query for \
-                             read-only operations."
-                                .into(),
+                             read-only operations.",
                         ));
                     }
                 } else {
                     if op.is_write() {
-                        return Err(Error::InvalidArgument(
+                        return Err(Error::invalid_argument(
                             "Query operations must be read-only. Use query_operate for \
-                             write-only operations."
-                                .into(),
+                             write-only operations.",
                         ));
                     }
                     if !supports_ops_ext && !op.is_basic_read() {
-                        return Err(Error::InvalidArgument(
+                        return Err(Error::invalid_argument(
                             "Only basic read operations are supported for query operations \
-                             projection on server versions prior to 8.1.2."
-                                .into(),
+                             projection on server versions prior to 8.1.2.",
                         ));
                     }
                 }
@@ -1445,13 +1599,7 @@ impl Buffer {
         // ---------- header ----------
         match direction {
             QueryDirection::Background(wpolicy) => {
-                self.write_header_with_policy(
-                    wpolicy,
-                    0,
-                    INFO2_WRITE,
-                    field_count,
-                    operation_count,
-                );
+                self.write_header_write(wpolicy, 0, INFO2_WRITE, field_count, operation_count);
             }
             QueryDirection::Foreground(qpolicy) => {
                 let mut info1 = INFO1_READ;
@@ -1548,27 +1696,25 @@ impl Buffer {
         if let Some(np) = node_partitions {
             if parts_full_size > 0 {
                 self.write_field_header(parts_full_size, FieldType::PIDArray);
-                for part in &np.parts_full {
-                    let part = part.lock().await;
-                    self.write_u16_little_endian(part.id);
+                for &index in &np.parts_full {
+                    let id = np.status(index).id;
+                    self.write_u16_little_endian(id);
                 }
             }
             if parts_partial_size > 0 {
                 self.write_field_header(parts_partial_size, FieldType::DigestArray);
-                for part in &np.parts_partial {
-                    let part = part.lock().await;
-                    part.digest.map(|digest| self.write_bytes(&digest));
+                for &index in &np.parts_partial {
+                    let digest = np.status(index).digest;
+                    if let Some(digest) = digest {
+                        self.write_bytes(&digest);
+                    }
                 }
             }
             if parts_partial_bval_size > 0 {
                 self.write_field_header(parts_partial_bval_size, FieldType::BValArray);
-                for part in &np.parts_partial {
-                    let part = part.lock().await;
-                    if let Some(bval) = part.bval {
-                        self.write_u64_little_endian(bval);
-                    } else {
-                        self.write_u64_little_endian(0);
-                    }
+                for &index in &np.parts_partial {
+                    let bval = np.status(index).bval;
+                    self.write_u64_little_endian(bval.unwrap_or(0));
                 }
             }
             if max_records > 0 {
@@ -1724,8 +1870,8 @@ impl Buffer {
 
     fn estimate_operation_size_for_bin_name(&mut self, bin_name: &str) -> Result<()> {
         if bin_name.len() > 15 {
-            return Err(Error::InvalidArgument(
-                "Bin name is longer than 15 bytes".into(),
+            return Err(Error::invalid_argument(
+                "Bin name is longer than 15 bytes",
             ));
         }
         self.data_offset += bin_name.len() + OPERATION_HEADER_SIZE as usize;
@@ -1784,6 +1930,10 @@ impl Buffer {
             self.data_buffer[b + i] = 0;
         }
 
+        // INFO4 byte (b + 12): error-detail verbosity bits (no MRT attrs on
+        // the read path). Written after the zeroing loop above.
+        self.data_buffer[b + 12] = error_verbosity_bits(policy.error_detail_verbosity);
+
         self.data_offset = b + 18;
         self.write_u32(policy.read_touch_ttl.into());
 
@@ -1834,6 +1984,10 @@ impl Buffer {
             self.data_buffer[b + i] = 0;
         }
 
+        // INFO4 byte (b + 12): error-detail verbosity bits. Written after the
+        // zeroing loop above.
+        self.data_buffer[b + 12] = error_verbosity_bits(policy.error_detail_verbosity);
+
         self.data_offset = b + 18;
         self.write_u32(policy.read_touch_ttl.into());
 
@@ -1844,7 +1998,49 @@ impl Buffer {
         self.data_offset = b + MSG_TOTAL_HEADER_SIZE as usize;
     }
 
-    // Header write for write operations.
+    // Header write for pure write commands (put/delete/touch/UDF execute/
+    // background execute). Matches Java `writeHeaderWrite`: these commands
+    // carry no read part, so SC/AP read-mode and response-compression flags
+    // are not applicable and must stay clear.
+    fn write_header_write(
+        &mut self,
+        policy: &WritePolicy,
+        read_attr: u8,
+        write_attr: u8,
+        field_count: u16,
+        operation_count: u16,
+    ) {
+        self.write_header_with_policy(
+            policy,
+            read_attr,
+            write_attr,
+            field_count,
+            operation_count,
+            false,
+        );
+    }
+
+    // Header write for operate commands containing a write. Matches Java
+    // `writeHeaderReadWrite`: the command may also read, so SC/AP read modes
+    // and response compression apply.
+    fn write_header_read_write(
+        &mut self,
+        policy: &WritePolicy,
+        read_attr: u8,
+        write_attr: u8,
+        field_count: u16,
+        operation_count: u16,
+    ) {
+        self.write_header_with_policy(
+            policy,
+            read_attr,
+            write_attr,
+            field_count,
+            operation_count,
+            true,
+        );
+    }
+
     fn write_header_with_policy(
         &mut self,
         policy: &WritePolicy,
@@ -1852,6 +2048,7 @@ impl Buffer {
         write_attr: u8,
         field_count: u16,
         operation_count: u16,
+        with_read_flags: bool,
     ) {
         // Set flags.
         let mut generation: u32 = 0;
@@ -1887,26 +2084,33 @@ impl Buffer {
             write_attr |= INFO2_DURABLE_DELETE;
         }
 
-        if policy.base_policy.use_compression {
-            read_attr |= INFO1_COMPRESS_RESPONSE;
-        }
-
         let mut txn_attr: u8 = 0;
         if policy.on_locking_only {
             txn_attr |= INFO4_MRT_ON_LOCKING_ONLY;
         }
+        txn_attr |= error_verbosity_bits(policy.base_policy.error_detail_verbosity);
 
-        match policy.base_policy.read_mode_sc {
-            ReadModeSC::Session => {}
-            ReadModeSC::Linearize => info_attr |= INFO3_SC_READ_TYPE,
-            ReadModeSC::AllowReplica => info_attr |= INFO3_SC_READ_RELAX,
-            ReadModeSC::AllowUnavailable => {
-                info_attr |= INFO3_SC_READ_TYPE | INFO3_SC_READ_RELAX;
+        // Read-mode and response-compression flags only apply to commands
+        // with a read part (operate containing a write). Pure writes leave
+        // them clear, matching Java writeHeaderWrite vs writeHeaderReadWrite
+        // and Go writeHeaderWrite vs writeHeaderReadWrite.
+        if with_read_flags {
+            if policy.base_policy.use_compression {
+                read_attr |= INFO1_COMPRESS_RESPONSE;
             }
-        }
 
-        if policy.base_policy.read_mode_ap == ReadModeAP::All {
-            read_attr |= INFO1_READ_MODE_AP_ALL;
+            match policy.base_policy.read_mode_sc {
+                ReadModeSC::Session => {}
+                ReadModeSC::Linearize => info_attr |= INFO3_SC_READ_TYPE,
+                ReadModeSC::AllowReplica => info_attr |= INFO3_SC_READ_RELAX,
+                ReadModeSC::AllowUnavailable => {
+                    info_attr |= INFO3_SC_READ_TYPE | INFO3_SC_READ_RELAX;
+                }
+            }
+
+            if policy.base_policy.read_mode_ap == ReadModeAP::All {
+                read_attr |= INFO1_READ_MODE_AP_ALL;
+            }
         }
 
         // Write all header data except total size which must be written last.
@@ -1986,7 +2190,7 @@ impl Buffer {
 
     fn write_field_value(&mut self, value: &Value, ftype: FieldType) -> Result<()> {
         self.write_field_header(value.estimate_size()? + 1, ftype);
-        self.write_u8(value.particle_type() as u8);
+        self.write_u8(value.particle_type()?);
         value.write_to(self)?;
         Ok(())
     }
@@ -2008,7 +2212,7 @@ impl Buffer {
 
         self.write_i32((name_length + value_length + 4) as i32);
         self.write_u8(op_type as u8);
-        self.write_u8(bin.value.particle_type() as u8);
+        self.write_u8(bin.value.particle_type()?);
         self.write_u8(0);
         self.write_u8(name_length as u8);
         self.write_str(&bin.name);
@@ -2421,24 +2625,36 @@ impl Buffer {
             | (u64::from(buf[offset + 6]) << 48)
     }
 
-    /// Parse response fields and extract the record version (if present).
-    /// Advances `data_offset` past all fields.
-    pub(crate) fn parse_fields_for_version(&mut self, field_count: usize) -> Option<u64> {
-        let mut version = None;
+    /// Parse response fields, extracting the record version and any extended
+    /// server-supplied error detail. Advances `data_offset` past all fields.
+    pub(crate) fn parse_response_fields(&mut self, field_count: usize) -> ParsedFields {
+        let mut parsed = ParsedFields::default();
         for _ in 0..field_count {
             let field_len = self.read_u32(None) as usize;
             let field_type = self.read_u8(None);
             let data_size = field_len - 1;
 
             if field_type == FieldType::RecordVersion as u8 && data_size == 7 {
-                version = Some(Self::version_bytes_to_u64(
+                parsed.version = Some(Self::version_bytes_to_u64(
                     &self.data_buffer,
                     self.data_offset,
                 ));
+            } else if field_type == FieldType::ErrorMessage as u8 && data_size > 0 {
+                let start = self.data_offset;
+                if let Some(slice) = self.data_buffer.get(start..start + data_size) {
+                    parsed.error_detail =
+                        crate::server_error::parse_error_detail(slice).map(Box::new);
+                }
             }
             self.data_offset += data_size;
         }
-        version
+        parsed
+    }
+
+    /// Version-only convenience wrapper for callers that don't consume error
+    /// detail (record-version bookkeeping on the success path).
+    pub(crate) fn parse_fields_for_version(&mut self, field_count: usize) -> Option<u64> {
+        self.parse_response_fields(field_count).version
     }
 
     /// Estimate the size of transaction fields and return the number of extra fields added.
@@ -2709,6 +2925,140 @@ mod tests {
     use flate2::read::ZlibDecoder;
     use std::io::Read;
 
+    fn test_pool() -> std::sync::Arc<crate::net::buffer_pool::TieredBufferPool> {
+        crate::net::buffer_pool::TieredBufferPool::from_policy(
+            &crate::policy::ClientPolicy::default(),
+        )
+        .expect("pool enabled by default")
+    }
+
+    #[test]
+    fn pooled_resize_grows_shrinks_and_preserves_contents() {
+        let mut buf = Buffer::with_pool(64 * 1024, test_pool());
+
+        // Small sizes stay on the connection-owned allocation.
+        buf.resize_buffer(512).unwrap();
+        buf.data_buffer[..4].copy_from_slice(&[1, 2, 3, 4]);
+        assert!(buf.data_buffer.capacity() <= 64 * 1024);
+
+        // Growth beyond the threshold leases a power-of-two pooled buffer
+        // and preserves existing contents.
+        buf.resize_buffer(100_000).unwrap();
+        assert_eq!(buf.data_buffer.len(), 100_000);
+        assert_eq!(buf.data_buffer.capacity(), 128 * 1024);
+        assert_eq!(&buf.data_buffer[..4], &[1, 2, 3, 4]);
+
+        // Large-to-large shrink keeps the lease (no realloc churn).
+        let leased_ptr = buf.data_buffer.as_ptr();
+        buf.resize_buffer(90_000).unwrap();
+        assert_eq!(buf.data_buffer.as_ptr(), leased_ptr);
+        assert_eq!(buf.data_buffer.capacity(), 128 * 1024);
+
+        // Shrinking back below the threshold returns the lease to the
+        // pool and keeps a small buffer, contents preserved.
+        buf.resize_buffer(256).unwrap();
+        assert_eq!(&buf.data_buffer[..4], &[1, 2, 3, 4]);
+        assert!(buf.data_buffer.capacity() < 128 * 1024);
+
+        // The returned lease is reused by the next big growth.
+        buf.resize_buffer(100_000).unwrap();
+        assert_eq!(buf.data_buffer.as_ptr(), leased_ptr);
+    }
+
+    #[test]
+    fn unpooled_resize_behaves_like_before() {
+        let mut buf = Buffer::new(64 * 1024);
+        buf.resize_buffer(100_000).unwrap();
+        buf.resize_buffer(256).unwrap();
+        // Legacy behavior: shrink_to_fit deallocates down to the size.
+        assert!(buf.data_buffer.capacity() < 1024);
+    }
+
+    fn read_heavy_write_policy() -> WritePolicy {
+        let mut policy = WritePolicy::default();
+        policy.base_policy.read_mode_sc = ReadModeSC::Linearize;
+        policy.base_policy.read_mode_ap = ReadModeAP::All;
+        policy.base_policy.use_compression = true;
+        policy
+    }
+
+    fn header_buffer() -> Buffer {
+        let mut buf = Buffer::new(0);
+        buf.begin();
+        buf.size_buffer().unwrap();
+        buf
+    }
+
+    // Pure writes (put/delete/touch/UDF/background execute) must not carry
+    // read-mode or response-compression flags — Java writeHeaderWrite and
+    // Go writeHeaderWrite leave them clear.
+    #[test]
+    fn pure_write_header_leaves_read_flags_clear() {
+        let policy = read_heavy_write_policy();
+        let mut buf = header_buffer();
+        buf.write_header_write(&policy, 0, INFO2_WRITE, 1, 1);
+
+        assert_eq!(
+            buf.data_buffer[9] & (INFO1_READ_MODE_AP_ALL | INFO1_COMPRESS_RESPONSE),
+            0,
+            "info1 read flags must stay clear on pure writes"
+        );
+        assert_eq!(
+            buf.data_buffer[11] & (INFO3_SC_READ_TYPE | INFO3_SC_READ_RELAX),
+            0,
+            "info3 SC read bits must stay clear on pure writes"
+        );
+    }
+
+    // Operate commands containing a write may also read, so SC/AP read
+    // modes and response compression apply — Java/Go writeHeaderReadWrite.
+    #[test]
+    fn operate_write_header_sets_read_flags() {
+        let policy = read_heavy_write_policy();
+        let mut buf = header_buffer();
+        buf.write_header_read_write(&policy, INFO1_READ, INFO2_WRITE, 1, 2);
+
+        assert_eq!(
+            buf.data_buffer[9] & (INFO1_READ_MODE_AP_ALL | INFO1_COMPRESS_RESPONSE),
+            INFO1_READ_MODE_AP_ALL | INFO1_COMPRESS_RESPONSE
+        );
+        assert_eq!(
+            buf.data_buffer[11] & (INFO3_SC_READ_TYPE | INFO3_SC_READ_RELAX),
+            INFO3_SC_READ_TYPE,
+            "Linearize maps to SC_READ_TYPE only"
+        );
+    }
+
+    // 0x8 = return key-specific error code when an error stops the batch
+    // response (Java CLIENT-1720); always set, like the Java client.
+    #[test]
+    fn batch_flags_always_include_key_error_bit() {
+        let mut policy = BatchPolicy::default();
+        policy.allow_inline = false;
+        policy.allow_inline_ssd = false;
+        policy.respond_all_keys = false;
+        assert_eq!(Buffer::get_batch_flags(&policy), 0x8);
+
+        policy.allow_inline = true;
+        policy.allow_inline_ssd = true;
+        policy.respond_all_keys = true;
+        assert_eq!(Buffer::get_batch_flags(&policy), 0x8 | 0x1 | 0x2 | 0x4);
+    }
+
+    // f32 bins widen losslessly to the 8-byte double particle instead of
+    // panicking (Java parity: Float and Double both store as doubles).
+    #[test]
+    fn f32_bin_value_writes_as_double_particle() {
+        let value = crate::Value::from(1.5f32);
+        let mut buf = Buffer::new(0);
+        buf.begin();
+        buf.size_buffer().unwrap();
+        buf.data_offset = 0;
+        let written = value.write_to(&mut buf).unwrap();
+        assert_eq!(written, 8);
+        assert_eq!(buf.data_buffer[..8], 1.5f64.to_be_bytes());
+    }
+
     /// Helper: build a Buffer that looks like a real command was written.
     /// Returns (buffer, uncompressed_payload) where uncompressed_payload is
     /// the command bytes at [compress_offset .. data_offset] before end() is called.
@@ -2835,6 +3185,173 @@ mod tests {
         );
     }
 
+    // Compress `buf` and verify the full send+receive cycle: the wire
+    // message must either be a valid compressed proto that inflates back
+    // to the original bytes, or the untouched original (fallback). Returns
+    // true if the message went out compressed.
+    fn assert_compression_cycle(mut buf: Buffer) -> bool {
+        let uncompressed = buf.data_buffer[buf.compress_offset..].to_vec();
+        buf.compress().unwrap();
+
+        let proto = NetworkEndian::read_u64(&buf.data_buffer[0..8]);
+        let msg_type = ((proto >> 48) & 0xFF) as u8;
+
+        if msg_type == AS_MSG_TYPE_COMPRESSED {
+            let compressed_payload_size = (proto & 0x0000_FFFF_FFFF_FFFF) as usize;
+            let stored_size = NetworkEndian::read_u64(&buf.data_buffer[8..16]) as usize;
+            assert_eq!(stored_size, uncompressed.len(), "stored uncompressed size");
+            assert_eq!(
+                buf.data_buffer.len(),
+                16 + compressed_payload_size - 8,
+                "buffer truncated to exact compressed message size"
+            );
+            // A compressed message must actually be smaller than the original.
+            assert!(buf.data_buffer.len() < uncompressed.len());
+
+            // Receive side: inflate like Connection does and compare.
+            let compressed_data = &buf.data_buffer[16..];
+            let mut decoder = ZlibDecoder::new(compressed_data);
+            let mut decompressed = vec![0u8; stored_size];
+            decoder.read_exact(&mut decompressed).unwrap();
+            assert_eq!(decompressed, uncompressed, "inflate round-trip");
+            true
+        } else {
+            assert_eq!(msg_type, AS_MSG_TYPE);
+            assert_eq!(&buf.data_buffer[..], &uncompressed[..], "fallback intact");
+            false
+        }
+    }
+
+    fn fill_random(buf: &mut Buffer) {
+        let start = buf.compress_offset + MSG_TOTAL_HEADER_SIZE as usize;
+        let end = buf.data_buffer.len();
+        let mut state: u32 = 0x9E37_79B9;
+        for byte in &mut buf.data_buffer[start..end] {
+            state ^= state << 13;
+            state ^= state >> 17;
+            state ^= state << 5;
+            *byte = (state >> 24) as u8;
+        }
+    }
+
+    // Send/receive compression across many message sizes, including the
+    // edge cases: the 128-byte threshold boundary, the 64KB encoder chunk
+    // boundaries, multi-chunk payloads, and a >1MiB message.
+    #[test]
+    fn compress_size_sweep_round_trips() {
+        const STEP: usize = 64 * 1024; // encoder chunking stride
+        let header = MSG_TOTAL_HEADER_SIZE as usize;
+        // Target UNCOMPRESSED message sizes (header + payload).
+        let targets = [
+            header,                          // minimal message, far below threshold
+            DEFAULT_COMPRESS_THRESHOLD,      // exactly at threshold: stays plain
+            DEFAULT_COMPRESS_THRESHOLD + 1,  // first compressible size
+            512,
+            STEP - 1,                        // just under one encoder chunk
+            STEP,                            // exactly one chunk
+            STEP + 1,                        // chunk + 1 trailing byte
+            2 * STEP,
+            3 * STEP + 7,                    // several chunks + remainder
+            1024 * 1024 + 13,                // > 1MiB
+        ];
+
+        for target in targets {
+            let payload = target - header;
+            let compressed = assert_compression_cycle(make_command_buffer(payload, true));
+            if target <= DEFAULT_COMPRESS_THRESHOLD {
+                assert!(!compressed, "size {target}: at/below threshold stays plain");
+            } else if target >= 512 {
+                // Comfortably-sized compressible payloads must actually
+                // compress. (Just-over-threshold messages may legally take
+                // the no-shrink fallback: zlib framing + the 16-byte
+                // compressed header can exceed a ~130-byte message.)
+                assert!(compressed, "size {target}: compressible payload must shrink");
+            }
+        }
+    }
+
+    // High-entropy payloads across the same size spectrum: every size must
+    // either compress-and-round-trip or fall back to the intact plain
+    // message — never corrupt, never panic.
+    #[test]
+    fn compress_size_sweep_incompressible_never_corrupts() {
+        const STEP: usize = 64 * 1024;
+        let header = MSG_TOTAL_HEADER_SIZE as usize;
+        for target in [
+            DEFAULT_COMPRESS_THRESHOLD + 1,
+            300,
+            STEP,
+            STEP + 1,
+            2 * STEP + 3,
+        ] {
+            let mut buf = make_command_buffer(target - header, true);
+            fill_random(&mut buf);
+            // Small high-entropy payloads must take the fallback; for the
+            // larger ones zlib's framing overhead amortizes, so either
+            // outcome is legal — the cycle assertions are what matter.
+            let compressed = assert_compression_cycle(buf);
+            if target <= 300 {
+                assert!(!compressed, "size {target}: random bytes must not shrink");
+            }
+        }
+    }
+
+    // Compression on a pool-leased buffer: the in-place compression grows
+    // the buffer through the pool (power-of-two lease) and must round-trip
+    // exactly like an unpooled one.
+    #[test]
+    fn compress_with_pooled_buffer_round_trips() {
+        let payload = 300 * 1024; // forces a pooled lease and several chunks
+        let mut buf = Buffer::with_pool(64 * 1024, test_pool());
+        buf.set_compress(true, DEFAULT_COMPRESS_THRESHOLD);
+        buf.begin();
+        let b = buf.compress_offset;
+        buf.size_buffer().unwrap();
+        buf.data_buffer[b + 8] = MSG_REMAINING_HEADER_SIZE;
+        buf.data_buffer[b + 9] = INFO1_READ;
+        for i in 10..26 {
+            buf.data_buffer[b + i] = 0;
+        }
+        let total = b + MSG_TOTAL_HEADER_SIZE as usize + payload;
+        buf.resize_buffer(total).unwrap();
+        for i in (b + MSG_TOTAL_HEADER_SIZE as usize)..total {
+            buf.data_buffer[i] = (i % 251) as u8;
+        }
+        buf.data_offset = total;
+        buf.end();
+
+        assert!(assert_compression_cycle(buf));
+    }
+
+    // Incompressible (high-entropy) payloads over the threshold fall back
+    // to the plain uncompressed message — Java parity: compression is only
+    // used when it actually shrinks the request.
+    #[test]
+    fn compress_incompressible_payload_falls_back_uncompressed() {
+        let payload_size = 300;
+        let mut buf = make_command_buffer(payload_size, true);
+
+        // Overwrite the compressible pattern with pseudo-random bytes.
+        let start = buf.compress_offset + MSG_TOTAL_HEADER_SIZE as usize;
+        let end = buf.data_buffer.len();
+        let mut state: u32 = 0x9E37_79B9;
+        for byte in &mut buf.data_buffer[start..end] {
+            state ^= state << 13;
+            state ^= state >> 17;
+            state ^= state << 5;
+            *byte = (state >> 24) as u8;
+        }
+        let uncompressed = buf.data_buffer[16..].to_vec();
+
+        buf.compress().unwrap();
+
+        // Fallback: plain (non-compressed) proto message shifted to offset 0.
+        let proto = NetworkEndian::read_u64(&buf.data_buffer[0..8]);
+        let msg_type = ((proto >> 48) & 0xFF) as u8;
+        assert_eq!(msg_type, AS_MSG_TYPE, "expected uncompressed fallback");
+        assert_eq!(&buf.data_buffer[..], &uncompressed[..]);
+    }
+
     #[test]
     fn compress_round_trip() {
         // Build a command large enough to trigger compression (> 128 bytes payload)
@@ -2951,5 +3468,217 @@ mod tests {
 
         // And the body should match
         assert_eq!(decompressed, uncompressed);
+    }
+
+    // Verbosity bit math — ported from Go's error_detail_parser_test.go
+    // "verbosity bit math" Context.
+    #[test]
+    fn verbosity_shift_and_mask_constants_are_consistent() {
+        assert_eq!(INFO4_ERROR_VERBOSITY_SHIFT, 5);
+        assert_eq!(INFO4_ERROR_VERBOSITY_MASK, 0x60);
+        // Mask must cover exactly two bits at the shift position.
+        assert_eq!(0x03u8 << INFO4_ERROR_VERBOSITY_SHIFT, INFO4_ERROR_VERBOSITY_MASK);
+    }
+
+    #[test]
+    fn error_verbosity_bits_pack_into_bits_5_6() {
+        assert_eq!(error_verbosity_bits(0), 0x00);
+        assert_eq!(error_verbosity_bits(1), 0x20);
+        assert_eq!(error_verbosity_bits(2), 0x40);
+        assert_eq!(error_verbosity_bits(3), 0x60);
+    }
+
+    #[test]
+    fn in_range_verbosity_preserved_after_masking() {
+        for v in 0u8..=3 {
+            let actual = (v << INFO4_ERROR_VERBOSITY_SHIFT) & INFO4_ERROR_VERBOSITY_MASK;
+            assert_eq!(actual, v << INFO4_ERROR_VERBOSITY_SHIFT);
+        }
+    }
+
+    #[test]
+    fn out_of_range_verbosity_cannot_corrupt_other_info4_bits() {
+        let other_bits = !INFO4_ERROR_VERBOSITY_MASK;
+        for v in [0u8, 1, 2, 3, 4, 8, 16, 255] {
+            let written = error_verbosity_bits(v);
+            assert_eq!(written & other_bits, 0);
+            assert_eq!(written, written & INFO4_ERROR_VERBOSITY_MASK);
+        }
+        // Pre-mask these set bits OUTSIDE 5-6; result is 0.
+        assert_eq!(error_verbosity_bits(4), 0);
+        assert_eq!(error_verbosity_bits(8), 0);
+        assert_eq!(error_verbosity_bits(16), 0);
+    }
+
+    fn test_key() -> Key {
+        Key::new("ns", "set", Value::from("k")).unwrap()
+    }
+
+    #[test]
+    fn read_header_carries_error_verbosity() {
+        for (level, want) in [(0u8, 0x00u8), (1, 0x20), (2, 0x40), (3, 0x60)] {
+            let policy = BasePolicy {
+                error_detail_verbosity: level,
+                ..BasePolicy::default()
+            };
+            let key = test_key();
+            let mut buf = Buffer::new(0);
+            buf.set_read(&policy, &key, &Bins::All).unwrap();
+            // Byte 12 is INFO4; the proto header at [0..8] leaves it untouched.
+            assert_eq!(
+                buf.data_buffer[12] & INFO4_ERROR_VERBOSITY_MASK,
+                want,
+                "read header level {level}"
+            );
+        }
+    }
+
+    #[test]
+    fn write_header_carries_error_verbosity() {
+        let mut policy = WritePolicy::default();
+        policy.base_policy.error_detail_verbosity = 3;
+        let key = test_key();
+        let bins = [crate::Bin::new("b".to_string(), Value::from(1))];
+        let mut buf = Buffer::new(0);
+        buf.set_write(&policy, OperationType::Write, &key, &bins)
+            .unwrap();
+        assert_eq!(buf.data_buffer[12] & INFO4_ERROR_VERBOSITY_MASK, 0x60);
+    }
+
+    // Encode one response field: [len:u32 BE][type:u8][data...], len = data+1.
+    fn encode_field(field_type: u8, data: &[u8]) -> Vec<u8> {
+        let mut out = ((data.len() + 1) as u32).to_be_bytes().to_vec();
+        out.push(field_type);
+        out.extend_from_slice(data);
+        out
+    }
+
+    fn parse_fields(fields: &[Vec<u8>]) -> ParsedFields {
+        let mut buf = Buffer::new(0);
+        buf.data_buffer = fields.iter().flatten().copied().collect();
+        buf.data_offset = 0;
+        buf.parse_response_fields(fields.len())
+    }
+
+    #[test]
+    fn error_detail_field_is_parsed_from_response_fields() {
+        // One field: len (u32 BE), type (ERROR_MESSAGE=45), then a {1:7} map.
+        let detail = [0x81u8, 0x01, 0x07];
+        let parsed = parse_fields(&[encode_field(FieldType::ErrorMessage as u8, &detail)]);
+        let d = parsed.error_detail.expect("detail parsed");
+        assert_eq!(d.sub_code, 7);
+        assert!(parsed.version.is_none());
+    }
+
+    #[test]
+    fn parse_response_fields_skips_non_error_message_field() {
+        // fieldCount = 2 with an unknown field type followed by ERROR_MESSAGE.
+        // {1: 1, 2: "ok"}
+        let detail = [0x82u8, 0x01, 0x01, 0x02, 0xA2, b'o', b'k'];
+        let parsed = parse_fields(&[
+            encode_field(99, &[0x01, 0x02, 0x03]),
+            encode_field(FieldType::ErrorMessage as u8, &detail),
+        ]);
+        let d = parsed.error_detail.expect("detail parsed");
+        assert_eq!(d.message, "ok (subcode=1)");
+    }
+
+    #[test]
+    fn parse_response_fields_absent_error_message_yields_none() {
+        // Only a record-version field present, no ERROR_MESSAGE.
+        let parsed = parse_fields(&[encode_field(FieldType::RecordVersion as u8, &[0u8; 7])]);
+        assert!(parsed.error_detail.is_none());
+        assert!(parsed.version.is_some());
+    }
+
+    #[test]
+    fn parse_response_fields_no_fields_yields_none() {
+        let parsed = parse_fields(&[]);
+        assert!(parsed.error_detail.is_none());
+        assert!(parsed.version.is_none());
+    }
+
+    // ---- set_operate attribute bits (CLIENT-5102: RESPOND_ALL_OPS for
+    // string ops; grouping mirrors Go/Java OperateArgs) ----
+
+    /// Build an operate command and return (read_attr, write_attr).
+    fn operate_attrs(ops: &[crate::operations::Operation]) -> (u8, u8) {
+        let key = test_key();
+        let mut buf = Buffer::new(0);
+        buf.set_operate(&WritePolicy::default(), &key, ops).unwrap();
+        (buf.data_buffer[9], buf.data_buffer[10])
+    }
+
+    #[test]
+    fn to_string_op_auto_sets_respond_all_ops() {
+        use crate::operations::string as str_op;
+        let (read_attr, write_attr) = operate_attrs(&[str_op::to_string("b")]);
+        assert_ne!(read_attr & INFO1_READ, 0);
+        assert_ne!(write_attr & INFO2_RESPOND_ALL_OPS, 0);
+        // A read-only pipeline must not turn into a write.
+        assert_eq!(write_attr & INFO2_WRITE, 0);
+    }
+
+    #[test]
+    fn string_read_op_auto_sets_respond_all_ops_without_write() {
+        use crate::operations::string as str_op;
+        let (read_attr, write_attr) = operate_attrs(&[str_op::strlen("b")]);
+        assert_ne!(read_attr & INFO1_READ, 0);
+        assert_ne!(write_attr & INFO2_RESPOND_ALL_OPS, 0);
+        assert_eq!(write_attr & INFO2_WRITE, 0);
+    }
+
+    #[test]
+    fn string_modify_op_auto_sets_respond_all_ops_and_write() {
+        use crate::operations::string as str_op;
+        let policy = crate::operations::string::StringPolicy::default();
+        let (_, write_attr) = operate_attrs(&[str_op::append(&policy, "b", "x")]);
+        assert_ne!(write_attr & INFO2_RESPOND_ALL_OPS, 0);
+        assert_ne!(write_attr & INFO2_WRITE, 0);
+    }
+
+    #[test]
+    fn plain_scalar_read_does_not_set_respond_all_ops() {
+        use crate::operations::scalar;
+        let (read_attr, write_attr) = operate_attrs(&[scalar::get_bin("b")]);
+        assert_ne!(read_attr & INFO1_READ, 0);
+        assert_eq!(write_attr & INFO2_RESPOND_ALL_OPS, 0);
+        assert_eq!(write_attr & INFO2_WRITE, 0);
+    }
+
+    #[test]
+    fn simple_write_auto_sets_respond_all_ops() {
+        // A silent write needs a slot of its own, or a later read's result
+        // lands in the write's position.
+        use crate::operations::scalar;
+        let bin = crate::Bin::new("b".to_string(), crate::Value::from(1));
+        let (read_attr, write_attr) = operate_attrs(&[
+            scalar::get_bin("b"),
+            scalar::add(&bin),
+            scalar::get_bin("b"),
+        ]);
+        assert_ne!(read_attr & INFO1_READ, 0);
+        assert_ne!(write_attr & INFO2_WRITE, 0);
+        assert_ne!(write_attr & INFO2_RESPOND_ALL_OPS, 0);
+    }
+
+    #[test]
+    fn lone_simple_write_also_sets_respond_all_ops() {
+        // Uniform for one op too: the positional contract should not depend on
+        // how many ops the caller happened to send.
+        use crate::operations::scalar;
+        let bin = crate::Bin::new("b".to_string(), crate::Value::from(1));
+        let (_, write_attr) = operate_attrs(&[scalar::put(&bin)]);
+        assert_ne!(write_attr & INFO2_RESPOND_ALL_OPS, 0);
+    }
+
+    #[test]
+    fn get_all_suppresses_respond_all_ops() {
+        use crate::operations::{scalar, string as str_op};
+        // get() reads all bins (GET_ALL); RESPOND_ALL_OPS must be disabled
+        // even though the string op would normally request it.
+        let (read_attr, write_attr) = operate_attrs(&[scalar::get(), str_op::strlen("b")]);
+        assert_ne!(read_attr & INFO1_GET_ALL, 0);
+        assert_eq!(write_attr & INFO2_RESPOND_ALL_OPS, 0);
     }
 }

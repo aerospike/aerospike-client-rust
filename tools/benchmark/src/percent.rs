@@ -16,8 +16,8 @@
 use std::cmp::Ordering;
 use std::str::FromStr;
 
-use rand::distributions::{Distribution, Standard};
-use rand::Rng;
+use rand::distr::{Distribution, StandardUniform};
+use rand::{Rng, RngExt};
 
 #[derive(Clone, Copy, Eq, PartialEq, PartialOrd, Debug)]
 pub struct Percent(u8);
@@ -51,9 +51,9 @@ impl Ord for Percent {
     }
 }
 
-impl Distribution<Percent> for Standard {
+impl Distribution<Percent> for StandardUniform {
     fn sample<R: Rng + ?Sized>(&self, rng: &mut R) -> Percent {
-        let r: u32 = rng.gen();
+        let r: u32 = rng.random();
         let pct = r % 101;
         Percent(pct as u8)
     }

@@ -30,10 +30,19 @@
 //!
 //! If an index is out of bounds, a parameter error will be returned. If a range is partially out of
 //! bounds, the valid part of the range will be returned.
+//!
+//! Ordering (used by [`sort`], ordered lists, rank- and value-range
+//! operations) follows the server's canonical value order: types rank
+//! `Nil < Bool < Int < String < List < Map < Bytes < Float < GeoJSON`,
+//! with each type ordered naturally (numbers numerically, strings and
+//! blobs byte-wise, lists element-wise, maps by length then entries).
+//! [`Value`](crate::Value)'s `Ord` implementation matches this order
+//! exactly, so a client-side `Vec<Value>::sort()` reproduces the
+//! server's sort.
 
 use std::sync::Arc;
 
-use crate::msgpack::encoder::pack_cdt_op;
+use crate::msgpack::encoder::{pack_cdt_create_op, pack_cdt_op};
 use crate::operations::cdt::{CdtArgument, CdtOperation};
 use crate::operations::cdt_context::DEFAULT_CTX;
 use crate::operations::{Operation, OperationBin, OperationData, OperationType};
@@ -261,28 +270,25 @@ pub fn create_persistent(
     pad: bool,
     persist_index: bool,
 ) -> Operation {
-    // Java picks the wire shape based on whether the op is applied at
-    // top level or under a CTX. Since CTX is attached after construction
-    // here, the parameters disambiguate the intent:
-    //   * persist_index → top-level form: emit `[order | 0x10]` (1 arg)
-    //   * pad           → nested form:    emit `[order_flag(pad), order]` (2 args)
-    //   * neither       → equivalent to `set_order`: `[order]` (1 arg)
-    // The `persist_index && pad` combination is not meaningful (Java
-    // honors only one or the other), so persist_index wins.
-    let args = if persist_index {
-        vec![CdtArgument::Byte(list_order as u8 | 0x10)]
-    } else if pad {
-        vec![
-            CdtArgument::Byte(list_order_flag(list_order, true)),
-            CdtArgument::Byte(list_order as u8),
-        ]
+    // Since the CTX is attached after construction, `pack_cdt_create_op`
+    // picks the wire shape at pack time, matching Java:
+    //   * empty ctx → `[SET_TYPE, attributes]` (top-level set-order form;
+    //     `persist_index` is honored via bit 0x10, `pad` is irrelevant)
+    //   * non-empty ctx → order flag OR'd into the last ctx element, with
+    //     `[SET_TYPE, attributes]` as the op (the persist bit is stripped;
+    //     persisted indexes only apply to top-level lists)
+    let attributes = if persist_index {
+        list_order as u8 | 0x10
     } else {
-        vec![CdtArgument::Byte(list_order as u8)]
+        list_order as u8
     };
     let cdt_op = CdtOperation {
         op: CdtListOpType::SetType as u8,
-        encoder: Arc::new(pack_cdt_op),
-        args,
+        encoder: Arc::new(pack_cdt_create_op),
+        args: vec![
+            CdtArgument::Byte(list_order_flag(list_order, pad)),
+            CdtArgument::Byte(attributes),
+        ],
     };
     Operation {
         op: OperationType::CdtWrite,

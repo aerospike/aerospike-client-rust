@@ -17,9 +17,11 @@
 use std::convert::TryInto;
 use std::str;
 
+use aerospike_rt::sleep;
 use pwhash::bcrypt::{self, BcryptSetup, BcryptVariant};
 
-use crate::cluster::Cluster;
+use crate::cluster::{Cluster, Node};
+use crate::commands;
 use crate::errors::{Error, Result};
 use crate::net::Connection;
 use crate::net::PooledConnection;
@@ -124,7 +126,7 @@ impl AdminCommand {
         let result_code = conn.buffer.read_u8(Some(RESULT_CODE));
         let result_code = ResultCode::from(result_code);
         if result_code != ResultCode::Ok {
-            return Err(Error::ServerError(result_code, false, conn.addr.clone()));
+            return Err(Error::server_error(result_code, conn.addr.clone(), None));
         }
 
         conn.reset_state();
@@ -189,10 +191,10 @@ impl AdminCommand {
                 if result_code == QUERY_END as u8 {
                     return Ok((-1, users));
                 }
-                return Err(Error::ServerError(
+                return Err(Error::server_error(
                     ResultCode::from(result_code),
-                    false,
                     conn.addr.clone(),
+                    None,
                 ));
             }
 
@@ -293,10 +295,10 @@ impl AdminCommand {
                 if result_code == QUERY_END as u8 {
                     return Ok((-1, roles));
                 }
-                return Err(Error::ServerError(
+                return Err(Error::server_error(
                     ResultCode::from(result_code),
-                    false,
                     conn.addr.clone(),
+                    None,
                 ));
             }
 
@@ -452,17 +454,17 @@ impl AdminCommand {
             return Ok(None);
         }
         if result_code != ResultCode::Ok {
-            return Err(Error::ServerError(result_code, false, conn.addr.clone()));
+            return Err(Error::server_error(result_code, conn.addr.clone(), None));
         }
 
         // Parse the body: each field is `len(u32) | id(u8) | bytes(len-1)`.
         let sz = conn.buffer.read_u64(Some(0));
         let receive_size = (sz & 0xFFFF_FFFF_FFFF) as i64 - HEADER_REMAINING as i64;
         if receive_size <= 0 || field_count == 0 {
-            return Err(Error::ServerError(
+            return Err(Error::server_error(
                 result_code,
-                false,
                 "Failed to retrieve session token".to_string(),
+                None,
             ));
         }
         conn.read_buffer(receive_size as usize).await?;
@@ -518,10 +520,10 @@ impl AdminCommand {
                 expiration: aerospike_rt::time::Instant::now()
                     + std::time::Duration::from_secs(60 * 60), // 1h default
             })),
-            _ => Err(Error::ServerError(
+            _ => Err(Error::server_error(
                 result_code,
-                false,
                 "Failed to retrieve session token".to_string(),
+                None,
             )),
         }
     }
@@ -563,6 +565,25 @@ impl AdminCommand {
         Ok(result_code == ResultCode::Ok || result_code == ResultCode::SecurityNotEnabled)
     }
 
+    /// Acquire a connection, pacing on `ConnectionPoolEmpty` like the data
+    /// commands: a background task is opening the connection, so wait briefly
+    /// and retry rather than surface the internal signal. Bounded by
+    /// `POOL_EMPTY_MAX_WAITS`.
+    async fn get_paced_connection(node: &Node) -> Result<PooledConnection> {
+        let mut pool_empty_waits = 0;
+        loop {
+            match node.get_connection(0).await {
+                Err(err)
+                    if err.is_pool_empty() && pool_empty_waits < commands::POOL_EMPTY_MAX_WAITS =>
+                {
+                    pool_empty_waits += 1;
+                    sleep(commands::POOL_EMPTY_WAIT).await;
+                }
+                other => return other,
+            }
+        }
+    }
+
     pub(crate) async fn create_user(
         policy: &AdminPolicy,
         cluster: &Cluster,
@@ -571,7 +592,7 @@ impl AdminCommand {
         roles: &[&str],
     ) -> Result<()> {
         let node = cluster.get_random_node()?;
-        let mut conn = node.get_connection(0).await?;
+        let mut conn = AdminCommand::get_paced_connection(&node).await?;
 
         conn.buffer.resize_buffer(1024)?;
         conn.buffer.reset_offset();
@@ -589,7 +610,7 @@ impl AdminCommand {
         user: &str,
     ) -> Result<()> {
         let node = cluster.get_random_node()?;
-        let mut conn = node.get_connection(0).await?;
+        let mut conn = AdminCommand::get_paced_connection(&node).await?;
 
         conn.buffer.resize_buffer(1024)?;
         conn.buffer.reset_offset();
@@ -606,7 +627,7 @@ impl AdminCommand {
         password: &str,
     ) -> Result<()> {
         let node = cluster.get_random_node()?;
-        let mut conn = node.get_connection(0).await?;
+        let mut conn = AdminCommand::get_paced_connection(&node).await?;
 
         conn.buffer.resize_buffer(1024)?;
         conn.buffer.reset_offset();
@@ -624,7 +645,7 @@ impl AdminCommand {
         password: &str,
     ) -> Result<()> {
         let node = cluster.get_random_node()?;
-        let mut conn = node.get_connection(0).await?;
+        let mut conn = AdminCommand::get_paced_connection(&node).await?;
 
         conn.buffer.resize_buffer(1024)?;
         conn.buffer.reset_offset();
@@ -640,8 +661,8 @@ impl AdminCommand {
             }
 
             AuthMode::PKI => {
-                return Err(Error::ClientError(
-                    "Can't change PKI user's password".into(),
+                return Err(Error::client_error(
+                    "Can't change PKI user's password",
                 ))
             }
             AuthMode::None => AdminCommand::write_field_str(&mut conn, OLD_PASSWORD, ""),
@@ -663,7 +684,7 @@ impl AdminCommand {
         write_quota: u32,
     ) -> Result<()> {
         let node = cluster.get_random_node()?;
-        let mut conn = node.get_connection(0).await?;
+        let mut conn = AdminCommand::get_paced_connection(&node).await?;
 
         let mut field_count = 1;
         if !privileges.is_empty() {
@@ -712,7 +733,7 @@ impl AdminCommand {
         role_name: &str,
     ) -> Result<()> {
         let node = cluster.get_random_node()?;
-        let mut conn = node.get_connection(0).await?;
+        let mut conn = AdminCommand::get_paced_connection(&node).await?;
 
         conn.buffer.resize_buffer(1024)?;
         conn.buffer.reset_offset();
@@ -729,7 +750,7 @@ impl AdminCommand {
         privileges: &[Privilege],
     ) -> Result<()> {
         let node = cluster.get_random_node()?;
-        let mut conn = node.get_connection(0).await?;
+        let mut conn = AdminCommand::get_paced_connection(&node).await?;
 
         conn.buffer.resize_buffer(1024)?;
         conn.buffer.reset_offset();
@@ -747,7 +768,7 @@ impl AdminCommand {
         privileges: &[Privilege],
     ) -> Result<()> {
         let node = cluster.get_random_node()?;
-        let mut conn = node.get_connection(0).await?;
+        let mut conn = AdminCommand::get_paced_connection(&node).await?;
 
         conn.buffer.resize_buffer(1024)?;
         conn.buffer.reset_offset();
@@ -765,7 +786,7 @@ impl AdminCommand {
         allowlist: &[&str],
     ) -> Result<()> {
         let node = cluster.get_random_node()?;
-        let mut conn = node.get_connection(0).await?;
+        let mut conn = AdminCommand::get_paced_connection(&node).await?;
 
         conn.buffer.resize_buffer(1024)?;
         conn.buffer.reset_offset();
@@ -784,7 +805,7 @@ impl AdminCommand {
         write_quota: u32,
     ) -> Result<()> {
         let node = cluster.get_random_node()?;
-        let mut conn = node.get_connection(0).await?;
+        let mut conn = AdminCommand::get_paced_connection(&node).await?;
 
         conn.buffer.resize_buffer(1024)?;
         conn.buffer.reset_offset();
@@ -803,7 +824,7 @@ impl AdminCommand {
         roles: &[&str],
     ) -> Result<()> {
         let node = cluster.get_random_node()?;
-        let mut conn = node.get_connection(0).await?;
+        let mut conn = AdminCommand::get_paced_connection(&node).await?;
 
         conn.buffer.resize_buffer(1024)?;
         conn.buffer.reset_offset();
@@ -821,7 +842,7 @@ impl AdminCommand {
         roles: &[&str],
     ) -> Result<()> {
         let node = cluster.get_random_node()?;
-        let mut conn = node.get_connection(0).await?;
+        let mut conn = AdminCommand::get_paced_connection(&node).await?;
 
         conn.buffer.resize_buffer(1024)?;
         conn.buffer.reset_offset();
@@ -838,7 +859,7 @@ impl AdminCommand {
         user: Option<&str>,
     ) -> Result<Vec<User>> {
         let node = cluster.get_random_node()?;
-        let mut conn = node.get_connection(0).await?;
+        let mut conn = AdminCommand::get_paced_connection(&node).await?;
 
         conn.buffer.resize_buffer(1024)?;
         conn.buffer.reset_offset();
@@ -859,7 +880,7 @@ impl AdminCommand {
         role: Option<&str>,
     ) -> Result<Vec<Role>> {
         let node = cluster.get_random_node()?;
-        let mut conn = node.get_connection(0).await?;
+        let mut conn = AdminCommand::get_paced_connection(&node).await?;
 
         conn.buffer.resize_buffer(1024)?;
         conn.buffer.reset_offset();
@@ -938,7 +959,7 @@ impl AdminCommand {
                 if prev.set_name.as_ref().map_or(0, |s| s.trim().len()) > 0
                     && prev.namespace.as_ref().map_or(0, |s| s.trim().len()) == 0
                 {
-                    return Err(Error::ClientError(format!(
+                    return Err(Error::client_error(format!(
                         "admin privilege '{code}' has a set scope with an empty namespace."
                     )));
                 }
@@ -957,7 +978,7 @@ impl AdminCommand {
                 + prev.set_name.as_ref().map_or(0, std::string::String::len)
                 > 0
             {
-                return Err(Error::ClientError(format!(
+                return Err(Error::client_error(format!(
                     "admin global privilege '{code}' can't have a namespace or set"
                 )));
             }

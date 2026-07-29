@@ -460,6 +460,95 @@ impl ResultCode {
     }
 }
 
+impl From<ResultCode> for u8 {
+    /// Wire value of the result code (inverse of [`ResultCode::from_u8`]).
+    fn from(rc: ResultCode) -> u8 {
+        match rc {
+            ResultCode::Ok => 0,
+            ResultCode::ServerError => 1,
+            ResultCode::KeyNotFoundError => 2,
+            ResultCode::GenerationError => 3,
+            ResultCode::ParameterError => 4,
+            ResultCode::KeyExistsError => 5,
+            ResultCode::BinExistsError => 6,
+            ResultCode::ClusterKeyMismatch => 7,
+            ResultCode::ServerMemError => 8,
+            ResultCode::Timeout => 9,
+            ResultCode::AlwaysForbidden => 10,
+            ResultCode::PartitionUnavailable => 11,
+            ResultCode::BinTypeError => 12,
+            ResultCode::RecordTooBig => 13,
+            ResultCode::KeyBusy => 14,
+            ResultCode::ScanAbort => 15,
+            ResultCode::UnsupportedFeature => 16,
+            ResultCode::BinNotFound => 17,
+            ResultCode::DeviceOverload => 18,
+            ResultCode::KeyMismatch => 19,
+            ResultCode::InvalidNamespace => 20,
+            ResultCode::BinNameTooLong => 21,
+            ResultCode::FailForbidden => 22,
+            ResultCode::ElementNotFound => 23,
+            ResultCode::ElementExists => 24,
+            ResultCode::OpNotApplicable => 26,
+            ResultCode::FilteredOut => 27,
+            ResultCode::LostConflict => 28,
+            ResultCode::XDRKeyBusy => 32,
+            ResultCode::MrtBlocked => 120,
+            ResultCode::MrtVersionMismatch => 121,
+            ResultCode::MrtExpired => 122,
+            ResultCode::MrtTooManyWrites => 123,
+            ResultCode::MrtCommitted => 124,
+            ResultCode::MrtAborted => 125,
+            ResultCode::MrtAlreadyLocked => 126,
+            ResultCode::MrtMonitorExists => 127,
+            ResultCode::EnterpriseOnly => 25,
+            ResultCode::QueryEnd => 50,
+            ResultCode::SecurityNotSupported => 51,
+            ResultCode::SecurityNotEnabled => 52,
+            ResultCode::SecuritySchemeNotSupported => 53,
+            ResultCode::InvalidCommand => 54,
+            ResultCode::InvalidField => 55,
+            ResultCode::IllegalState => 56,
+            ResultCode::InvalidUser => 60,
+            ResultCode::UserAlreadyExists => 61,
+            ResultCode::InvalidPassword => 62,
+            ResultCode::ExpiredPassword => 63,
+            ResultCode::ForbiddenPassword => 64,
+            ResultCode::InvalidCredential => 65,
+            ResultCode::ExpiredSession => 66,
+            ResultCode::InvalidRole => 70,
+            ResultCode::RoleAlreadyExists => 71,
+            ResultCode::InvalidPrivilege => 72,
+            ResultCode::InvalidAllowlist => 73,
+            ResultCode::QuotasNotEnabled => 74,
+            ResultCode::InvalidQuota => 75,
+            ResultCode::NotAuthenticated => 80,
+            ResultCode::RoleViolation => 81,
+            ResultCode::NotAllowlisted => 82,
+            ResultCode::QuotaExceeded => 83,
+            ResultCode::UdfBadResponse => 100,
+            ResultCode::BatchDisabled => 150,
+            ResultCode::BatchMaxRequestsExceeded => 151,
+            ResultCode::BatchQueuesFull => 152,
+            ResultCode::InvalidGeojson => 160,
+            ResultCode::IndexFound => 200,
+            ResultCode::IndexNotFound => 201,
+            ResultCode::IndexOom => 202,
+            ResultCode::IndexNotReadable => 203,
+            ResultCode::IndexGeneric => 204,
+            ResultCode::IndexNameMaxLen => 205,
+            ResultCode::IndexMaxCount => 206,
+            ResultCode::QueryAborted => 210,
+            ResultCode::QueryQueueFull => 211,
+            ResultCode::QueryTimeout => 212,
+            ResultCode::QueryGeneric => 213,
+            ResultCode::QueryNetioErr => 214,
+            ResultCode::QueryDuplicate => 215,
+            ResultCode::Unknown(code) => code,
+        }
+    }
+}
+
 impl From<u8> for ResultCode {
     fn from(val: u8) -> ResultCode {
         ResultCode::from_u8(val)
@@ -478,9 +567,215 @@ impl fmt::Display for ResultCode {
     }
 }
 
+
+/// Client-side error codes, mirroring the Java client's negative `ResultCode`
+/// constants.
+///
+/// Server failures carry a [`ResultCode`] (non-negative wire
+/// value); failures generated on the client carry one of these, so downstream
+/// bindings can map every [`Error`](crate::errors::Error) to a number via
+/// [`Error::result_code`](crate::errors::Error::result_code) and to a typed
+/// code via
+/// [`Error::client_result_code`](crate::errors::Error::client_result_code).
+///
+/// Note: client-side *timeouts* use the server `TIMEOUT` (9) code, matching
+/// the Java client, and therefore do not appear here.
+#[cfg_attr(feature = "serialization", derive(Serialize))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ClientResultCode {
+    /// Transaction has already been aborted.
+    TxnAlreadyAborted,
+
+    /// Transaction has already been committed.
+    TxnAlreadyCommitted,
+
+    /// Transaction failed.
+    TxnFailed,
+
+    /// One or more keys failed in a batch.
+    BatchFailed,
+
+    /// No response received from server.
+    NoResponse,
+
+    /// Max errors limit reached (per-node circuit breaker).
+    MaxErrorRate,
+
+    /// Max retries limit reached.
+    MaxRetriesExceeded,
+
+    /// Client serialization error.
+    SerializeError,
+
+    /// Asynchronous delay queue is full. Reserved for Java compatibility;
+    /// not produced by this client.
+    AsyncQueueFull,
+
+    /// Server is not accepting requests (connection failure).
+    ServerNotAvailable,
+
+    /// Max. number of connections per node would be exceeded.
+    NoMoreConnections,
+
+    /// Query was terminated prematurely.
+    QueryTerminated,
+
+    /// Scan was terminated prematurely.
+    ScanTerminated,
+
+    /// Chosen node is not currently active.
+    InvalidNodeError,
+
+    /// Client parse error.
+    ParseError,
+
+    /// Generic client error.
+    ClientError,
+
+    /// Unknown client error code.
+    Unknown(i32),
+}
+
+impl ClientResultCode {
+    /// Convert a Java-compatible numeric client code into the enum.
+    pub(crate) const fn from_i32(n: i32) -> ClientResultCode {
+        match n {
+            -19 => ClientResultCode::TxnAlreadyAborted,
+            -18 => ClientResultCode::TxnAlreadyCommitted,
+            -17 => ClientResultCode::TxnFailed,
+            -16 => ClientResultCode::BatchFailed,
+            -15 => ClientResultCode::NoResponse,
+            -12 => ClientResultCode::MaxErrorRate,
+            -11 => ClientResultCode::MaxRetriesExceeded,
+            -10 => ClientResultCode::SerializeError,
+            -9 => ClientResultCode::AsyncQueueFull,
+            -8 => ClientResultCode::ServerNotAvailable,
+            -7 => ClientResultCode::NoMoreConnections,
+            -5 => ClientResultCode::QueryTerminated,
+            -4 => ClientResultCode::ScanTerminated,
+            -3 => ClientResultCode::InvalidNodeError,
+            -2 => ClientResultCode::ParseError,
+            -1 => ClientResultCode::ClientError,
+            code => ClientResultCode::Unknown(code),
+        }
+    }
+
+    /// Convert a client result code into a string.
+    pub fn into_string(self) -> String {
+        match self {
+            ClientResultCode::TxnAlreadyAborted => {
+                String::from("Transaction already aborted")
+            }
+            ClientResultCode::TxnAlreadyCommitted => {
+                String::from("Transaction already committed")
+            }
+            ClientResultCode::TxnFailed => String::from("Transaction failed"),
+            ClientResultCode::BatchFailed => {
+                String::from("One or more keys failed in a batch")
+            }
+            ClientResultCode::NoResponse => {
+                String::from("No response received from server")
+            }
+            ClientResultCode::MaxErrorRate => String::from("Max errors limit reached"),
+            ClientResultCode::MaxRetriesExceeded => String::from("Max retries exceeded"),
+            ClientResultCode::SerializeError => String::from("Serialize error"),
+            ClientResultCode::AsyncQueueFull => {
+                String::from("Async delay queue is full")
+            }
+            ClientResultCode::ServerNotAvailable => {
+                String::from("Server is not accepting requests")
+            }
+            ClientResultCode::NoMoreConnections => {
+                String::from("No more available connections")
+            }
+            ClientResultCode::QueryTerminated => String::from("Query was terminated"),
+            ClientResultCode::ScanTerminated => String::from("Scan was terminated"),
+            ClientResultCode::InvalidNodeError => String::from("Invalid node"),
+            ClientResultCode::ParseError => String::from("Parse error"),
+            ClientResultCode::ClientError => String::from("Client error"),
+            ClientResultCode::Unknown(code) => {
+                format!("Unknown client error code: {code}")
+            }
+        }
+    }
+}
+
+impl From<i32> for ClientResultCode {
+    fn from(val: i32) -> ClientResultCode {
+        ClientResultCode::from_i32(val)
+    }
+}
+
+impl From<ClientResultCode> for i32 {
+    /// Java-compatible numeric value (inverse of [`ClientResultCode::from_i32`]).
+    fn from(rc: ClientResultCode) -> i32 {
+        match rc {
+            ClientResultCode::TxnAlreadyAborted => -19,
+            ClientResultCode::TxnAlreadyCommitted => -18,
+            ClientResultCode::TxnFailed => -17,
+            ClientResultCode::BatchFailed => -16,
+            ClientResultCode::NoResponse => -15,
+            ClientResultCode::MaxErrorRate => -12,
+            ClientResultCode::MaxRetriesExceeded => -11,
+            ClientResultCode::SerializeError => -10,
+            ClientResultCode::AsyncQueueFull => -9,
+            ClientResultCode::ServerNotAvailable => -8,
+            ClientResultCode::NoMoreConnections => -7,
+            ClientResultCode::QueryTerminated => -5,
+            ClientResultCode::ScanTerminated => -4,
+            ClientResultCode::InvalidNodeError => -3,
+            ClientResultCode::ParseError => -2,
+            ClientResultCode::ClientError => -1,
+            ClientResultCode::Unknown(code) => code,
+        }
+    }
+}
+
+impl From<ClientResultCode> for String {
+    fn from(code: ClientResultCode) -> String {
+        code.into_string()
+    }
+}
+
+impl fmt::Display for ClientResultCode {
+    fn fmt(&self, f: &mut fmt::Formatter) -> StdResult<(), fmt::Error> {
+        write!(f, "{}", self.into_string())
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::ResultCode;
+    use super::{ClientResultCode, ResultCode};
+
+    #[test]
+    fn client_code_i32_round_trip() {
+        // Every known negative code maps back to itself; gaps and positives
+        // fall through to Unknown but still round-trip numerically.
+        for n in -25i32..=0 {
+            let rc = ClientResultCode::from(n);
+            assert_eq!(i32::from(rc), n, "round trip failed for {n}");
+        }
+    }
+
+    #[test]
+    fn client_code_into_string() {
+        let result: String = ClientResultCode::MaxRetriesExceeded.into();
+        assert_eq!("Max retries exceeded", result);
+        assert_eq!(
+            "Unknown client error code: -42",
+            ClientResultCode::Unknown(-42).to_string()
+        );
+        assert_eq!("Client error", format!("{}", ClientResultCode::ClientError));
+    }
+
+    #[test]
+    fn u8_round_trip() {
+        // Every wire value maps back to itself through the inverse impl.
+        for n in 0u8..=255 {
+            let rc = ResultCode::from(n);
+            assert_eq!(u8::from(rc), n, "round trip failed for {n}");
+        }
+    }
 
     #[test]
     fn from_result_code() {

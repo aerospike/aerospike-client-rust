@@ -40,10 +40,22 @@ impl BatchExecutor {
     fn node_for_key(
         &self,
         key: &Key,
+        has_write: bool,
         replica: crate::policy::Replica,
         read_mode_sc: crate::policy::ReadModeSC,
     ) -> Result<Arc<Node>> {
-        let mut partition = Partition::for_read(&self.cluster, key, replica, read_mode_sc);
+        // Java BatchNodeList parity: write records route via the
+        // write-side replica logic (master, or the sequence walk for
+        // Sequence/PreferRack — never rack-preferred, which could pick a
+        // replica), read records via the read-side logic including
+        // PreferRack and the SC read-mode overrides.
+        let mut partition = if has_write {
+            let mut partition = Partition::for_write(key);
+            partition.replica = replica;
+            partition
+        } else {
+            Partition::for_read(&self.cluster, key, replica, read_mode_sc)
+        };
         partition.get_node(&self.cluster)
     }
 
@@ -61,7 +73,7 @@ impl BatchExecutor {
             .await
             {
                 Ok(res) => res,
-                Err(_) => Err(Error::Timeout("Timeout".to_string())),
+                Err(_) => Err(Error::timeout("Timeout".to_string())),
             }
         } else {
             self.execute_batch_operate(policy, batch_ops).await
@@ -74,7 +86,10 @@ impl BatchExecutor {
         policy: &BatchPolicy,
         batch_ops: &[BatchOperation],
     ) -> Result<Vec<BatchRecord>> {
-        let batch_nodes = self.get_batch_operate_nodes(
+        let BatchSplit {
+            map: batch_nodes,
+            unroutable,
+        } = self.get_batch_operate_nodes(
             batch_ops,
             policy.replica,
             policy.base_policy.read_mode_sc,
@@ -104,29 +119,72 @@ impl BatchExecutor {
         }
 
         let mut all_results: Vec<(BatchOperation, usize)> = Vec::with_capacity(batch_ops.len());
+        // Rows that never left the client are results too, and they are
+        // already marked. They do not feed `first_err`: a key the cluster
+        // could not route is a per-key outcome, exactly like a server
+        // answering INVALID_NAMESPACE for it, and per-key outcomes do not
+        // fail the call.
+        all_results.extend(unroutable);
+        // First failure across all per-node groups. The batch keeps running so
+        // every per-key outcome is collected; on failure the full record set is
+        // surfaced via `ErrorKind::BatchFailed` (Java `BatchRecordArray`
+        // parity) instead of being dropped.
+        let mut first_err: Option<Error> = None;
 
         if !multi_jobs.is_empty() {
-            let ops = self
+            let cmds = self
                 .execute_batch_operate_jobs(multi_jobs, policy.concurrency)
                 .await?;
-            all_results.extend(ops.into_iter().flat_map(|cmd| cmd.batch_ops));
+            for mut cmd in cmds {
+                if let Some(e) = cmd.terminal_error.take() {
+                    first_err.get_or_insert(e);
+                }
+                all_results.extend(cmd.batch_ops);
+            }
         }
 
-        for (_node, mut op, idx) in single_groups {
-            // The single-op commands re-resolve the node via partition
-            // lookup; we keep the `node` from the per-node split only
-            // to gate the fast path. Re-resolving lets the command
-            // pick up partition migrations that happened between the
-            // BatchExecutor split and the single-op dispatch.
-            Self::execute_single_op(self.cluster.clone(), policy, &mut op).await?;
+        // The single-op commands re-resolve the node via partition
+        // lookup; we keep the `node` from the per-node split only
+        // to gate the fast path. Re-resolving lets the command
+        // pick up partition migrations that happened between the
+        // BatchExecutor split and the single-op dispatch.
+        //
+        // Singles honor the batch concurrency policy just like the
+        // multi-key groups: running N per-node singles sequentially would
+        // stack their latencies against the shared total_timeout budget.
+        let single_futures = single_groups.into_iter().map(|(_node, mut op, idx)| {
+            let cluster = self.cluster.clone();
+            async move {
+                let res = Self::execute_single_op(cluster, policy, &mut op).await;
+                (res, op, idx)
+            }
+        });
+        let single_results = match policy.concurrency {
+            Concurrency::Sequential => {
+                let mut results = Vec::new();
+                for fut in single_futures {
+                    results.push(fut.await);
+                }
+                results
+            }
+            Concurrency::Parallel => futures::future::join_all(single_futures).await,
+        };
+        for (res, op, idx) in single_results {
+            if let Err(e) = res {
+                first_err.get_or_insert(e);
+            }
             all_results.push((op, idx));
         }
 
         all_results.sort_by_key(|(_, i)| *i);
-        Ok(all_results
+        let records: Vec<BatchRecord> = all_results
             .into_iter()
             .map(|(b, _)| b.batch_record())
-            .collect())
+            .collect();
+        match first_err {
+            None => Ok(records),
+            Some(e) => Err(Error::batch_failed(records, e)),
+        }
     }
 
     /// Streaming variant of `execute_batch_operate`.
@@ -143,16 +201,22 @@ impl BatchExecutor {
     /// match results back to their `ops` slice.
     ///
     /// Whole-per-node-group failures (e.g. socket error after retries)
-    /// do not abort the stream — they simply omit the affected keys.
-    /// Per-key results (`KEY_NOT_FOUND`, `FILTERED_OUT`, etc.) ride on each
-    /// emitted `BatchRecord` just as they do for `batch`.
+    /// do not abort the stream — the group's records are still emitted,
+    /// carrying their per-key result codes and in-doubt marks (unanswered
+    /// keys have no result code). Only a client-side total-timeout
+    /// cancellation omits keys. Per-key results (`KEY_NOT_FOUND`,
+    /// `FILTERED_OUT`, etc.) ride on each emitted `BatchRecord` just as
+    /// they do for `batch`.
     #[allow(clippy::mutable_key_type)]
     pub async fn execute_stream(
         &self,
         policy: &BatchPolicy,
         batch_ops: Vec<BatchOperation>,
     ) -> Result<impl Stream<Item = (usize, BatchRecord)>> {
-        let batch_nodes = self.get_batch_operate_nodes(
+        let BatchSplit {
+            map: batch_nodes,
+            unroutable,
+        } = self.get_batch_operate_nodes(
             &batch_ops,
             policy.replica,
             policy.base_policy.read_mode_sc,
@@ -162,6 +226,12 @@ impl BatchExecutor {
         drop(batch_ops);
 
         let (tx, rx) = mpsc::unbounded::<(usize, BatchRecord)>();
+
+        // Unroutable keys are already decided, so emit them immediately
+        // rather than making the consumer wait on the nodes that can answer.
+        for (op, idx) in unroutable {
+            let _ = tx.unbounded_send((idx, op.batch_record()));
+        }
 
         for (node, ops) in batch_nodes {
             let cluster = self.cluster.clone();
@@ -193,18 +263,18 @@ impl BatchExecutor {
                 let cmd = BatchOperateCommand::new(policy, node, ops);
                 aerospike_rt::spawn(async move {
                     match cmd.execute(cluster).await {
+                        // Group-level failures come back as `Ok` with
+                        // `terminal_error` set, so per-key outcomes (and
+                        // in-doubt marks) are emitted either way.
                         Ok(done) => {
                             for (op, idx) in done.batch_ops {
                                 let _ = tx.unbounded_send((idx, op.batch_record()));
                             }
                         }
-                        // Group-level failure (e.g. socket error after
-                        // retries). The command's parse path may have
-                        // recorded per-key codes on some ops, but
-                        // `execute` consumes `cmd` so we don't have a
-                        // handle to those here. Drop silently — the
-                        // stream just yields fewer items than the
-                        // input had keys, per the documented contract.
+                        // Only a client-side total-timeout cancellation lands
+                        // here — the command future was dropped mid-flight, so
+                        // there are no records to emit. The stream just yields
+                        // fewer items than the input had keys.
                         Err(_) => {}
                     }
                 });
@@ -271,10 +341,10 @@ impl BatchExecutor {
                 // DeleteCommand reports missing-key via `cmd.existed`, not Result::Err —
                 // re-inject KEY_NOT_FOUND so batch sees it per-record.
                 match cmd.execute().await {
-                    Ok(()) if !cmd.existed => Err(Error::ServerError(
+                    Ok(()) if !cmd.existed => Err(Error::server_error(
                         ResultCode::KeyNotFoundError,
-                        false,
                         String::new(),
+                        None,
                     )),
                     Ok(()) => Ok(None),
                     Err(e) => Err(e),
@@ -306,16 +376,40 @@ impl BatchExecutor {
             }
         };
 
-        // Every ServerError from a single-key command is per-key; absorb onto the
-        // BatchRecord, only non-ServerError variants propagate.
+        // Every server error from a single-key command is per-key; absorb onto
+        // the BatchRecord, only other kinds propagate.
         match result {
             Ok(record) => {
                 batch_op.set_record(record);
             }
-            Err(Error::ServerError(rc, in_doubt, _)) => {
-                batch_op.set_result_code(rc, in_doubt);
+            Err(err) if matches!(err.kind(), crate::ErrorKind::Server { .. }) => {
+                let rc = err.server_result_code().expect("server error has rc");
+                batch_op.set_result_code(rc, err.in_doubt());
             }
-            Err(err) => return Err(err),
+            Err(err) if matches!(err.kind(), crate::ErrorKind::UdfBadResponse) => {
+                // A UDF execution failure is a per-key batch outcome. The
+                // single-key command surfaces it as ErrorKind::UdfBadResponse
+                // carrying the FAILURE reason; rebuild the row shape the
+                // multi-record wire path produces — result code
+                // UDF_BAD_RESPONSE plus a record with the FAILURE bin.
+                let reason = err.message().unwrap_or("UDF Error").to_string();
+                let mut bins = crate::IndexMap::new();
+                bins.insert("FAILURE".to_string(), crate::Value::from(reason));
+                let in_doubt = err.in_doubt();
+                batch_op.set_record(Some(crate::Record::new(None, bins, None, 0, 0)));
+                batch_op.set_result_code(ResultCode::UdfBadResponse, in_doubt);
+            }
+            Err(err) => {
+                // Mirrors Java's `BatchSingle.setInDoubt()` gated on
+                // `ae.getInDoubt()`: the single-command retry loop marked the
+                // error in-doubt iff this was a write that reached the wire.
+                // Propagate that onto the record and notify any transaction
+                // before the error bubbles up.
+                if err.in_doubt() {
+                    batch_op.set_in_doubt_on_no_response(parent.base_policy.txn.as_ref());
+                }
+                return Err(err);
+            }
         }
         Ok(())
     }
@@ -337,31 +431,94 @@ impl BatchExecutor {
             Concurrency::Parallel => futures::future::join_all(handles)
                 .await
                 .into_iter()
-                .map(|value| value.map_err(|e| Error::ClientError(e.to_string())))
+                .map(|value| value.map_err(|e| Error::client_error(e.to_string())))
                 .collect(),
             #[cfg(feature = "rt-tokio")]
             Concurrency::Parallel => futures::future::join_all(handles.map(aerospike_rt::spawn))
                 .await
                 .into_iter()
-                .map(|value| value.map_err(|e| Error::ClientError(e.to_string()))?)
+                .map(|value| value.map_err(|e| Error::client_error(e.to_string()))?)
                 .collect(),
         }
     }
 
+    /// Split the batch by owning node.
+    ///
+    /// Returns the per-node groups plus the rows whose key could not be routed
+    /// at all, each already carrying its own result code.
+    ///
+    /// Java `BatchNodeList.generate` parity: a key that cannot be assigned to a
+    /// node has the error written onto *its* record (`record.setError(...)`,
+    /// then `continue`) and the rest of the batch still runs. One key naming a
+    /// namespace this cluster does not have is that key's problem, not the
+    /// other ninety-nine's. The call fails outright only when no key could be
+    /// routed, because then there is no batch left to send — and the error
+    /// returned is the first routing failure, which is more specific than
+    /// "empty batch".
     fn get_batch_operate_nodes(
         &self,
         batch_ops: &[BatchOperation],
         replica: crate::policy::Replica,
         read_mode_sc: crate::policy::ReadModeSC,
-    ) -> Result<HashMap<Arc<Node>, Vec<(BatchOperation, usize)>>> {
+    ) -> Result<BatchSplit> {
         #![allow(clippy::type_complexity)]
-        let mut map = HashMap::new();
+        let mut map: HashMap<Arc<Node>, Vec<(BatchOperation, usize)>> = HashMap::new();
+        let mut unroutable: Vec<(BatchOperation, usize)> = Vec::new();
+        let mut first_err: Option<Error> = None;
+
         for (index, batch_op) in batch_ops.iter().enumerate() {
-            let node = self.node_for_key(&batch_op.key(), replica, read_mode_sc)?;
-            map.entry(node)
-                .or_insert_with(Vec::new)
-                .push((batch_op.clone(), index));
+            match self.node_for_key(&batch_op.key(), batch_op.has_write(), replica, read_mode_sc) {
+                Ok(node) => {
+                    map.entry(node)
+                        .or_insert_with(Vec::new)
+                        .push((batch_op.clone(), index));
+                }
+                Err(err) => {
+                    let mut op = batch_op.clone();
+                    // Never in-doubt: nothing was sent for this key.
+                    op.set_result_code(routing_result_code(&err), false);
+                    unroutable.push((op, index));
+                    first_err.get_or_insert(err);
+                }
+            }
         }
-        Ok(map)
+
+        if map.is_empty() {
+            if let Some(err) = first_err {
+                return Err(err);
+            }
+        }
+
+        Ok(BatchSplit { map, unroutable })
     }
+}
+
+/// The outcome of splitting a batch across nodes.
+struct BatchSplit {
+    /// Keys that resolved to a node, grouped by that node.
+    map: HashMap<Arc<Node>, Vec<(BatchOperation, usize)>>,
+    /// Keys that resolved to nothing, each already marked with its result code
+    /// and carrying its original input index.
+    unroutable: Vec<(BatchOperation, usize)>,
+}
+
+/// The per-key result code for a key the client could not route.
+///
+/// Java stores the raw exception code here, including its negative client-side
+/// codes; [`BatchRecord::result_code`](crate::BatchRecord) holds a
+/// server-space [`ResultCode`], so the client-side codes are mapped onto the
+/// server code that describes the same condition:
+///
+/// - an unknown namespace is `INVALID_NAMESPACE` on both sides, so it carries
+///   through unchanged;
+/// - anything else means the partition has no node the client can reach, which
+///   is what `PARTITION_UNAVAILABLE` says.
+fn routing_result_code(err: &Error) -> ResultCode {
+    err.server_result_code().unwrap_or_else(|| {
+        if matches!(err.kind(), crate::ErrorKind::InvalidNamespace) {
+            ResultCode::InvalidNamespace
+        } else {
+            ResultCode::PartitionUnavailable
+        }
+    })
 }

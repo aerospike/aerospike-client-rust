@@ -109,6 +109,12 @@ pub trait Policy {
     }
 
     /// Whether to use zlib compression on command buffers.
+    ///
+    /// Compression uses `BEST_SPEED`, and a request that doesn't shrink is
+    /// sent uncompressed (both matching the Java client). Unlike Java —
+    /// which only compresses write/operate/UDF/batch requests — this
+    /// client compresses *any* request over the threshold, including
+    /// reads/deletes with large filter expressions.
     fn use_compression(&self) -> bool;
 
     /// Minimum command-buffer size at which compression actually fires.
@@ -121,6 +127,27 @@ pub trait Policy {
 
     /// Read policy for SC (strong consistency) namespaces.
     fn read_mode_sc(&self) -> ReadModeSC;
+
+    /// Requested level of server error detail (0-3). See
+    /// [`BasePolicy::error_detail_verbosity`]. Default: 0 (disabled).
+    fn error_detail_verbosity(&self) -> u8 {
+        0
+    }
+}
+
+/// Next sleep interval for an exponential retry backoff: multiplies `current`
+/// by `multiplier` when it is `> 1.0`, otherwise leaves it unchanged. Mirrors
+/// the Go client's `SleepMultiplier` handling — the interval starts at the
+/// policy's `sleep_between_retries` and grows geometrically after each sleep.
+/// Growth is uncapped, matching Go; command retry loops are bounded by their
+/// deadline, executor loops by tracker completion.
+#[must_use]
+pub(crate) fn next_retry_interval(current: Duration, multiplier: f64) -> Duration {
+    if multiplier > 1.0 {
+        current.mul_f64(multiplier)
+    } else {
+        current
+    }
 }
 
 /// Policy-like object that encapsulates a base policy instance.
@@ -179,6 +206,10 @@ where
 
     fn sleep_multiplier(&self) -> f64 {
         self.base().sleep_multiplier()
+    }
+
+    fn error_detail_verbosity(&self) -> u8 {
+        self.base().error_detail_verbosity()
     }
 }
 
@@ -393,6 +424,27 @@ pub struct BasePolicy {
     /// in their default policy constructors so end-users get positional
     /// results by default; rust-core users pay nothing unless they ask.
     pub populate_positional_results: bool,
+
+    /// Requests extended server-supplied error detail on failure responses.
+    ///
+    /// - `0` — disabled (no error details).
+    /// - `1` — subcode only.
+    /// - `2` — subcode and message.
+    /// - `3` — subcode, message, and (on expression build-failure paths) a
+    ///   structured expression trace.
+    ///
+    /// When greater than zero and the server attaches a detail, it is surfaced
+    /// on the error (see [`ErrorKind::Server`](crate::ErrorKind::Server)) and via the
+    /// [`Error::server_error_detail`](crate::errors::Error::server_error_detail),
+    /// [`Error::sub_code`](crate::errors::Error::sub_code) and
+    /// [`Error::server_message`](crate::errors::Error::server_message)
+    /// accessors. See [`crate::ServerErrorDetail`].
+    ///
+    /// Requires Aerospike server version 8.1.3 or later; older servers ignore
+    /// the flag.
+    ///
+    /// Default: 0
+    pub error_detail_verbosity: u8,
 }
 
 impl Policy for BasePolicy {
@@ -458,5 +510,35 @@ impl Policy for BasePolicy {
 
     fn compression_threshold(&self) -> usize {
         self.compression_threshold
+    }
+
+    fn error_detail_verbosity(&self) -> u8 {
+        self.error_detail_verbosity
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::next_retry_interval;
+    use aerospike_rt::time::Duration;
+
+    #[test]
+    fn retry_interval_grows_geometrically() {
+        // 500ms → 1s → 2s for multiplier 2.0 (Go's SleepMultiplier semantics).
+        let mut interval = Duration::from_millis(500);
+        interval = next_retry_interval(interval, 2.0);
+        assert_eq!(interval, Duration::from_millis(1_000));
+        interval = next_retry_interval(interval, 2.0);
+        assert_eq!(interval, Duration::from_millis(2_000));
+    }
+
+    #[test]
+    fn retry_interval_constant_for_multiplier_at_or_below_one() {
+        let interval = Duration::from_millis(500);
+        // 1.0 (the default) keeps the interval constant …
+        assert_eq!(next_retry_interval(interval, 1.0), interval);
+        // … and a sub-1.0 multiplier must never shrink it.
+        assert_eq!(next_retry_interval(interval, 0.5), interval);
+        assert_eq!(next_retry_interval(interval, 0.0), interval);
     }
 }

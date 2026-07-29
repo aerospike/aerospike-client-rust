@@ -1,6 +1,4 @@
-#[macro_use]
-extern crate aerospike;
-extern crate tokio;
+use aerospike::{as_bin, as_key, as_val};
 
 use aerospike::operations;
 use aerospike::{BatchPolicy, Bins, Client, ClientPolicy, UDFLang};
@@ -14,7 +12,17 @@ use std::env;
 
 #[tokio::main]
 async fn main() {
-    let cpolicy = ClientPolicy::default();
+    run().await;
+}
+
+/// Example body. Standalone via `cargo run --example`, and also driven by
+/// the integration test suite (`tests/src/examples.rs`) so the examples
+/// stay working and compiling as the API evolves.
+pub async fn run() {
+    let mut cpolicy = ClientPolicy::default();
+    cpolicy.use_services_alternate = std::env::var("AEROSPIKE_USE_SERVICES_ALTERNATE")
+        .map(|v| v.eq_ignore_ascii_case("true") || v == "1")
+        .unwrap_or(false);
     let hosts = env::var("AEROSPIKE_HOSTS").unwrap_or(String::from("127.0.0.1:3100"));
     let client = Client::new(&cpolicy, &hosts)
         .await

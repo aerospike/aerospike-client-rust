@@ -79,6 +79,17 @@ pub(crate) struct ExpOperation {
     pub exp: Expression,
 }
 
+/// Equality supports batch-repeat detection. The encoder closure cannot be
+/// compared by content, so two operations are equal only when they share
+/// the same encoder `Arc` (i.e. one is a clone of the other).
+impl PartialEq for ExpOperation {
+    fn eq(&self, other: &Self) -> bool {
+        self.policy == other.policy
+            && Arc::ptr_eq(&self.encoder, &other.encoder)
+            && self.exp == other.exp
+    }
+}
+
 impl ExpOperation {
     // pub(crate) const fn particle_type(&self) -> ParticleType {
     //     ParticleType::BLOB
@@ -158,6 +169,11 @@ pub fn write_exp<E: ToExpWriteFlagBitmask>(bin: &str, exp: Expression, flags: E)
 }
 
 /// Creates operation that performs a read expression.
+///
+/// For a pre-serialized expression (Java's `ExpOperation.read(name, bytes,
+/// flags)` overload), wrap the packed bytes with
+/// [`expressions::from_packed_bytes`](crate::expressions::from_packed_bytes)
+/// or [`expressions::from_base64`](crate::expressions::from_base64).
 pub fn read_exp<E: ToExpReadFlagBitmask>(name: &str, exp: Expression, flags: E) -> Operation {
     let op = ExpOperation {
         encoder: Arc::new(pack_read_exp),

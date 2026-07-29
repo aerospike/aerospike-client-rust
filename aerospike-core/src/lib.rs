@@ -135,8 +135,6 @@ extern crate byteorder;
 #[macro_use]
 extern crate rhexdump;
 #[macro_use]
-extern crate thiserror;
-#[macro_use]
 extern crate log;
 extern crate pwhash;
 extern crate rand;
@@ -155,7 +153,7 @@ pub use client::Client;
 pub use cluster::version_parser::Version;
 pub use cluster::Node;
 pub use commands::particle_type::ParticleType;
-pub use errors::{Error, Result};
+pub use errors::{Error, ErrorKind, Result};
 pub use expressions::ael::{pack_ael_server_filter, SERVER_COMPILED_AEL_EXPRESSION_OP};
 pub use expressions::regex_flag::RegexFlag;
 pub use key::Key;
@@ -177,14 +175,18 @@ pub use query::{
     QueryWhereWire, RangeFilterValue, Recordset, Statement, UDFLang, FLAG_ENC_VARINT, FLAG_EXPLAIN,
     FLAG_HARD_HINT, FLAG_KNOWN, FLAG_REQUIRE_INDEX,
 };
+#[cfg(feature = "lua")]
+pub use query::{ResultSet, ResultStream};
 pub use record::Record;
-pub use result_code::ResultCode;
+pub use result_code::{ClientResultCode, ResultCode};
 pub use role::Role;
 pub use sampler::Sampler;
+pub use server_error::{ExpressionTrace, ServerErrorDetail};
 pub use task::{DropIndexTask, ExecuteTask, IndexTask, RegisterTask, Task, UdfRemoveTask};
 pub use txn::{AbortStatus, CommitErrorType, CommitStatus, Txn, TxnState};
 pub use user::User;
-pub use value::{FloatValue, Value};
+pub use indexmap::IndexMap;
+pub use value::{FloatValue, MapCollection, MapLike, Value};
 pub use xor_shift::XorShift;
 
 #[macro_use]
@@ -203,6 +205,8 @@ pub(crate) mod commands;
 pub mod config;
 mod common;
 pub mod expressions;
+#[cfg(feature = "lua")]
+pub mod lua;
 pub mod metrics;
 mod msgpack;
 mod net;
@@ -214,6 +218,7 @@ mod record;
 mod result_code;
 mod role;
 pub mod sampler;
+pub mod server_error;
 pub mod task;
 pub mod txn;
 pub(crate) mod txn_monitor;

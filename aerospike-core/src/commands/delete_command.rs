@@ -113,14 +113,19 @@ impl Command for DeleteCommand<'_> {
             conn.buffer.reset_offset();
         }
 
-        let version = if field_count > 0 {
-            conn.buffer.parse_fields_for_version(field_count)
+        let parsed = if field_count > 0 {
+            conn.buffer.parse_response_fields(field_count)
         } else {
-            None
+            crate::commands::buffer::ParsedFields::default()
         };
+        let version = parsed.version;
 
         if result_code != ResultCode::Ok && result_code != ResultCode::KeyNotFoundError {
-            return Err(Error::ServerError(result_code, false, conn.addr.clone()));
+            return Err(Error::server_error(
+                result_code,
+                conn.addr.clone(),
+                parsed.error_detail,
+            ));
         }
 
         self.existed = result_code == ResultCode::Ok;

@@ -17,7 +17,7 @@ use crate::cluster::node;
 use crate::query::PartitionStatus;
 use crate::Key;
 
-use aerospike_rt::Mutex;
+use parking_lot::Mutex;
 
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;
@@ -37,8 +37,21 @@ pub struct PartitionFilter {
     /// Digest of a Key to scan/query
     pub digest: Option<[u8; 20]>,
 
-    /// status of the partitions
-    pub partitions: Option<Vec<Arc<Mutex<PartitionStatus>>>>,
+    /// Status of each partition in `[begin, begin + count)`, indexed by
+    /// offset from `begin`.
+    ///
+    /// One heap allocation for the whole range, shared by `Arc`. The per-node
+    /// groupings refer to entries by index rather than holding an `Arc` each,
+    /// because a
+    /// full-partition scan otherwise allocated 4096 separate
+    /// `Arc<Mutex<PartitionStatus>>` blocks — about 819 KB and 4096
+    /// allocations per query, before a single record was read.
+    ///
+    /// The lock is a `parking_lot::Mutex`: every critical section is a few
+    /// field assignments with no `.await` inside, so an async mutex bought
+    /// nothing, and unlike `std::sync::Mutex` this one neither allocates on
+    /// first lock nor costs more than a byte per partition.
+    pub partitions: Option<Arc<Vec<Mutex<PartitionStatus>>>>,
 
     /// Is partition completely scanned/queried.
     pub done: AtomicBool,
@@ -103,15 +116,15 @@ impl PartitionFilter {
         self.done.load(Ordering::Relaxed)
     }
 
-    pub(crate) fn set_partitions(&mut self, partitions: Vec<Arc<Mutex<PartitionStatus>>>) {
+    pub(crate) fn set_partitions(&mut self, partitions: Arc<Vec<Mutex<PartitionStatus>>>) {
         self.partitions = Some(partitions);
     }
 
-    pub(crate) async fn reset_partition_status(&mut self) {
-        if let Some(ref mut partitions) = self.partitions {
+    pub(crate) fn reset_partition_status(&self) {
+        if let Some(ref partitions) = self.partitions {
             // Reset replica sequence and last node used.
-            for part in partitions.iter_mut() {
-                let mut part = part.lock().await;
+            for part in partitions.iter() {
+                let mut part = part.lock();
                 part.reset_sequence();
                 part.reset_node();
             }

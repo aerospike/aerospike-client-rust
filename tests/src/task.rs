@@ -14,7 +14,6 @@
 // the License.
 
 use crate::common;
-use aerospike::errors::Error;
 use aerospike::task::{Status, Task};
 use aerospike::*;
 use std::time::Duration;
@@ -56,7 +55,7 @@ async fn register_task_test() {
     let timeout = Duration::from_millis(1000);
     assert!(matches!(
         register_task.wait_till_complete(Some(timeout)).await,
-        Err(Error::Timeout(_))
+        Err(e) if matches!(e.kind(), aerospike::ErrorKind::Timeout)
     ));
 
     client.close().await.unwrap();

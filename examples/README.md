@@ -2,13 +2,36 @@
 
 This directory includes several Rust examples that demonstrate how to use the Aerospike Rust Client to interact with the Aerospike Database Server. Each example is a standalone binary with its own `main` function.
 
+Each async example exposes its body as `pub async fn run()` (with `main` delegating to it). The integration test suite includes the example sources directly and executes `run()` against a live server (`tests/src/examples.rs`, test names `example_*`), so the examples are exercised on every test run:
+
+```bash
+AEROSPIKE_HOSTS=localhost:3000 cargo test --features rt-tokio --test lib examples::
+```
+
+The `crud_sync` example is the exception — it requires the `sync` feature, which is mutually exclusive with the `async` feature the test suite is built with, so it runs standalone only.
+
 ## Available Examples
 
-* `batch_operations`
-* `crud` — async client
+* `batch_operations` — batch reads, writes, deletes and UDFs
+* `bit_operations` — bitwise operations on blob bins
+* `cdt_operations` — list/map (CDT) operations, including nested documents
+* `crud` — async client basics
 * `crud_sync` — sync (blocking) client; see [How to run sync example](#sync-example-crud_sync) below
-* `query`
-* `timeout_configuration`
+* `geo_query` — geospatial queries (geo2dsphere index, region/radius/contains)
+* `path_expression` — JSONPath-style CDT path expressions (server 8.1.1+)
+* `query` — secondary-index queries, pagination, expression filters
+* `query_aggregate` — stream UDF aggregation (map/reduce in Lua); requires the `lua` feature, see below
+* `record_operations` — single-record ops and write policies (add/append/TTL/generation/replace/send-key)
+* `scan` — full-set scans, paging, resume and parallel consumption
+* `server_info` — the info protocol (build, namespaces, statistics)
+* `timeout_configuration` — socket/total timeouts and recovery
+* `transaction` — multi-record transactions: commit and abort (server 8.0+, strong-consistency namespace)
+* `udf` — register a Lua UDF, execute per-record, and run background UDFs
+
+These cover the feature areas of the Java client's examples (including the
+stream-UDF aggregations `QueryAverage`/`QuerySum` via `query_aggregate`).
+Not ported: the Java GUI/console scaffolding. The Java `Async*` variants
+need no counterpart: the Rust client is async-native.
 
 ## Configuration
 
@@ -42,6 +65,18 @@ cargo run --example crud
 cargo run --example query
 cargo run --example timeout_configuration
 ```
+
+### Aggregation example (`query_aggregate`)
+
+Client-side stream UDF aggregation embeds a Lua interpreter, which is
+compiled in only when the `lua` feature is enabled:
+
+```bash
+cargo run --example query_aggregate --features lua
+```
+
+(The example test `example_query_aggregate` likewise only exists when the
+test suite is built with `--features lua`.)
 
 ### Sync example (`crud_sync`)
 

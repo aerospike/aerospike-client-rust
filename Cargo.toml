@@ -45,7 +45,11 @@ aerospike-macro = {path = "aerospike-macro", optional = true, version = "3.0.0-a
 [features]
 default = ["async", "serialization", "rt-tokio", "tls", "dynamic-config"]
 serialization = ["aerospike-core/serialization"]
-dynamic-config = ["aerospike-core/dynamic-config", "async"]
+# Weak refs: applies to whichever client (async core / sync wrapper) is enabled.
+dynamic-config = ["aerospike-core?/dynamic-config", "aerospike-sync?/dynamic-config"]
+# Client-side Lua (query_aggregate / stream UDF). Compiles a vendored Lua 5.4
+# interpreter; opt-in only. Weak refs like dynamic-config.
+lua = ["aerospike-core?/lua", "aerospike-sync?/lua"]
 async = ["aerospike-core"]
 sync = ["aerospike-sync"]
 rt-tokio = ["aerospike-core/rt-tokio", "aerospike-macro/rt-tokio"]
@@ -60,8 +64,8 @@ harness = false
 members = ["tools/benchmark", "aerospike-core", "aerospike-rt", "aerospike-sync", "aerospike-macro"]
 
 [dev-dependencies]
-log = "0.4.29"
-env_logger = "0.11.10"
+log = "0.4.33"
+env_logger = "0.11.11"
 hex = "0.4"
 bencher = "0.1"
 serde_json = "1.0"
@@ -70,14 +74,18 @@ lazy_static = "1.5"
 ripemd = "0.2"
 aerospike-macro = {path = "./aerospike-macro"}
 aerospike-rt = {path = "./aerospike-rt"}
-futures = { version = "0.3.32" }
-tokio = { version = "1.52.1", features = ["full"] }
+futures = { version = "0.3.33" }
+tokio = { version = "1.53.0", features = ["full"] }
 proptest = "1.11.0"
 tokio-rustls = {version = "0.26.4"}
-rustls = {version = "0.23.40"}
+rustls = {version = "0.23.42"}
 webpki-roots = "1"
 #console-subscriber = "0.1.5"
 
 [[example]]
 name = "crud_sync"
 required-features = ["sync", "rt-tokio"]
+
+[[example]]
+name = "query_aggregate"
+required-features = ["lua"]

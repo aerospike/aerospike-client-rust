@@ -13,7 +13,8 @@
 // License for the specific language governing permissions and limitations under
 // the License.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
+use indexmap::IndexMap;
 use std::fmt;
 use std::hash::{Hash, Hasher};
 use std::result::Result as StdResult;
@@ -89,6 +90,11 @@ pub struct Node {
     /// Per-node metrics. Shared with the connection pool so connection
     /// lifecycle events are recorded against the same sink.
     metrics: Arc<NodeMetrics>,
+    /// Cluster-wide count of connections currently being opened by background
+    /// fill tasks. Shared across every node of the cluster and checked against
+    /// `ClientPolicy::opening_connection_threshold` before spawning a fill —
+    /// mirrors the Go client's `Cluster.connectionThreshold`.
+    opening_connections: Arc<AtomicUsize>,
 }
 
 impl Drop for Node {
@@ -108,8 +114,11 @@ impl Node {
         client_policy: ClientPolicy,
         nv: Arc<NodeValidator>,
         metrics: Arc<NodeMetrics>,
+        opening_connections: Arc<AtomicUsize>,
+        buffer_pool: Option<Arc<crate::net::buffer_pool::TieredBufferPool>>,
     ) -> Self {
         Node {
+            opening_connections,
             client_policy: client_policy.clone(),
             name: nv.name.clone(),
             aliases: AtomicArc::from(nv.aliases.clone()),
@@ -125,6 +134,7 @@ impl Node {
                 nv.aliases[0].clone(),
                 client_policy.clone(),
                 Some(metrics.clone()),
+                buffer_pool,
             ),
             metrics,
             tend_connection: AsyncMutex::new(None),
@@ -134,7 +144,16 @@ impl Node {
             partition_generation: AtomicIsize::new(-1),
             peers_generation: AtomicIsize::new(-1),
             peers_count: AtomicUsize::new(0),
-            partition_changed: AtomicBool::new(false),
+            // `partition_changed` means "this node's parsed partition
+            // generation differs from the server's", which for a brand-new
+            // node is true by definition: `partition_generation` starts at
+            // -1, and every real generation is >= 0. Starting it `true` lets
+            // the tend cycle that *creates* the node also fetch its partition
+            // map, instead of leaving the work to the next cycle: the seeding
+            // cycle takes its node snapshot before seeding, so phase 1 — the
+            // only other place this flag is raised — never sees freshly
+            // seeded nodes, and phase 4 would otherwise find nothing to do.
+            partition_changed: AtomicBool::new(true),
             rebalance_changed: AtomicBool::new(false),
             refresh_count: AtomicUsize::new(0),
             reference_count: AtomicUsize::new(0),
@@ -308,7 +327,7 @@ impl Node {
     ///
     /// Only called when `peers.gen_changed` is true (i.e., when any node's
     /// peers generation changed during phase 1).
-    pub async fn refresh_peers(&self, peers: &mut Peers) -> Result<()> {
+    pub async fn refresh_peers(&self, peers: &Peers) -> Result<()> {
         // Don't refresh peers when node connection has already failed during this tend.
         if self.failures() > 0 || !self.is_active() {
             return Ok(());
@@ -330,7 +349,7 @@ impl Node {
         let peer_string = match info_map.get(peers_cmd) {
             None => {
                 self.refresh_failed();
-                return Err(Error::BadResponse("Missing peers list".to_string()));
+                return Err(Error::bad_response("Missing peers list".to_string()));
             }
             Some(s) if s.is_empty() => return Ok(()),
             Some(s) => s,
@@ -402,12 +421,12 @@ impl Node {
     /// pre-restart failure history.
     fn verify_peers_generation(
         &self,
-        info_map: &HashMap<String, String>,
+        info_map: &IndexMap<String, String>,
         peers: &Peers,
     ) -> Result<()> {
         let gen_str = info_map
             .get(PEERS_GENERATION)
-            .ok_or_else(|| Error::BadResponse("Missing peers-generation".to_string()))?;
+            .ok_or_else(|| Error::bad_response("Missing peers-generation".to_string()))?;
         let gen = gen_str.parse::<isize>()?;
 
         let stored = self.peers_generation.load(Ordering::Relaxed);
@@ -425,19 +444,19 @@ impl Node {
         Ok(())
     }
 
-    fn validate_node(&self, info_map: &HashMap<String, String>) -> Result<()> {
+    fn validate_node(&self, info_map: &IndexMap<String, String>) -> Result<()> {
         self.verify_node_name(info_map)?;
         self.verify_cluster_name(info_map)?;
         Ok(())
     }
 
-    fn verify_node_name(&self, info_map: &HashMap<String, String>) -> Result<()> {
+    fn verify_node_name(&self, info_map: &IndexMap<String, String>) -> Result<()> {
         match info_map.get("node") {
-            None => Err(Error::InvalidNode("Missing node name".to_string())),
+            None => Err(Error::invalid_node("Missing node name".to_string())),
             Some(info_name) if info_name == &self.name => Ok(()),
             Some(info_name) => {
                 self.inactivate();
-                Err(Error::InvalidNode(format!(
+                Err(Error::invalid_node(format!(
                     "Node name has changed: '{}' => '{}'",
                     self.name, info_name
                 )))
@@ -446,15 +465,15 @@ impl Node {
     }
 
     #[allow(clippy::option_if_let_else)]
-    fn verify_cluster_name(&self, info_map: &HashMap<String, String>) -> Result<()> {
+    fn verify_cluster_name(&self, info_map: &IndexMap<String, String>) -> Result<()> {
         match self.client_policy.cluster_name {
             None => Ok(()),
             Some(ref expected) => match info_map.get("cluster-name") {
-                None => Err(Error::InvalidNode("Missing cluster name".to_string())),
+                None => Err(Error::invalid_node("Missing cluster name".to_string())),
                 Some(info_name) if info_name == expected => Ok(()),
                 Some(info_name) => {
                     self.inactivate();
-                    Err(Error::InvalidNode(format!(
+                    Err(Error::invalid_node(format!(
                         "Cluster name mismatch: expected={expected},
                                                            got={info_name}"
                     )))
@@ -465,9 +484,9 @@ impl Node {
 
     /// Compares the server's partition-generation with the node's last known value.
     /// Sets `partition_changed` flag if they differ.
-    fn verify_partition_generation(&self, info_map: &HashMap<String, String>) -> Result<()> {
+    fn verify_partition_generation(&self, info_map: &IndexMap<String, String>) -> Result<()> {
         match info_map.get(PARTITION_GENERATION) {
-            None => Err(Error::BadResponse(
+            None => Err(Error::bad_response(
                 "Missing partition generation".to_string(),
             )),
             Some(gen_string) => {
@@ -483,9 +502,9 @@ impl Node {
     /// Compares the server's rebalance-generation with the node's last known
     /// value. Sets `rebalance_changed` flag if they differ. Only called when
     /// the cluster is rack-aware.
-    fn verify_rebalance_generation(&self, info_map: &HashMap<String, String>) -> Result<()> {
+    fn verify_rebalance_generation(&self, info_map: &IndexMap<String, String>) -> Result<()> {
         match info_map.get(REBALANCE_GENERATION) {
-            None => Err(Error::BadResponse(
+            None => Err(Error::bad_response(
                 "Missing rebalance-generation".to_string(),
             )),
             Some(gen_string) => {
@@ -498,10 +517,10 @@ impl Node {
         }
     }
 
-    pub fn update_partitions(&self, info_map: &HashMap<String, String>) -> Result<()> {
+    pub fn update_partitions(&self, info_map: &IndexMap<String, String>) -> Result<()> {
         match info_map.get(PARTITION_GENERATION) {
             None => {
-                return Err(Error::BadResponse(
+                return Err(Error::bad_response(
                     "Missing partition generation".to_string(),
                 ))
             }
@@ -518,7 +537,7 @@ impl Node {
         self.partition_generation.store(gen, Ordering::Relaxed);
     }
 
-    pub fn update_rebalance_generation(&self, info_map: &HashMap<String, String>) -> Result<()> {
+    pub fn update_rebalance_generation(&self, info_map: &IndexMap<String, String>) -> Result<()> {
         if let Some(gen_string) = info_map.get(REBALANCE_GENERATION) {
             let gen = gen_string.parse::<isize>()?;
             self.rebalance_generation.store(gen, Ordering::Relaxed);
@@ -527,11 +546,14 @@ impl Node {
         Ok(())
     }
 
-    pub fn is_in_rack(&self, namespace: &str, rack_ids: &HashSet<usize>) -> bool {
+    /// Returns true if this node hosts the given namespace on exactly the
+    /// given rack (Java `Node.hasRack`). Rack preference ordering is the
+    /// caller's concern — see `Partition::get_rack_node`.
+    pub fn has_rack(&self, namespace: &str, rack_id: usize) -> bool {
         self.rack_ids
             .load()
             .get(namespace)
-            .is_some_and(|r| rack_ids.contains(r))
+            .is_some_and(|r| *r == rack_id)
     }
 
     pub fn parse_rack(&self, buf: &str) -> Result<()> {
@@ -541,13 +563,13 @@ impl Node {
             .map(|entry| {
                 let (key, val) = entry
                     .split_once(':')
-                    .ok_or(Error::BadResponse("Invalid rack entry".into()))?;
+                    .ok_or(Error::bad_response("Invalid rack entry"))?;
                 let ns = key.trim();
                 // Aerospike server enforces 1..=31 for namespace names.
                 // Reject anything outside that to avoid populating the rack
                 // table with poisoned entries (mirrors Java's RackParser).
                 if ns.is_empty() || ns.len() >= 32 {
-                    return Err(Error::BadResponse(format!(
+                    return Err(Error::bad_response(format!(
                         "Invalid racks namespace `{ns}`"
                     )));
                 }
@@ -562,7 +584,7 @@ impl Node {
     // Get a connection to the node from the connection pool
     pub async fn get_connection(&self, hint: u8) -> Result<PooledConnection> {
         if !self.is_active() {
-            return Err(Error::InvalidNode(format!(
+            return Err(Error::invalid_node(format!(
                 "Cannot get a connection for node. The node `{self}` is inactive"
             )));
         }
@@ -571,9 +593,48 @@ impl Node {
             return Ok(conn);
         }
 
-        // Pool had no ready connection; we must open a new one.
+        // Pool had no ready connection. Hand the expensive open (TCP connect +
+        // TLS + login) to a detached background task and report
+        // `ConnectionPoolEmpty` so the caller's retry loop paces itself while
+        // the connection is prepared — the handshake never runs inside a
+        // command's latency. Mirrors the Go client's `makeConnectionForPool`.
         self.metrics.incr_connections_pool_empty();
-        self.connection_pool.make_conn(usize::from(hint)).await
+        self.spawn_background_conn_fill(hint);
+        Err(Error::pool_empty())
+    }
+
+    /// Spawns a detached task that opens one connection and parks it in the
+    /// pool. No-op when the cluster-wide
+    /// [`ClientPolicy::opening_connection_threshold`] is reached (another
+    /// in-flight open will refill the pool) or when every queue is already at
+    /// capacity (all slots hold live or in-flight connections — the retrying
+    /// caller will pick one up as it is returned).
+    fn spawn_background_conn_fill(&self, hint: u8) {
+        let threshold = self.client_policy.opening_connection_threshold;
+        let opening = self.opening_connections.clone();
+        if threshold > 0 && opening.fetch_add(1, Ordering::Relaxed) + 1 > threshold {
+            opening.fetch_sub(1, Ordering::Relaxed);
+            return;
+        }
+
+        let Some(queue) = self.connection_pool.reserve_queue(usize::from(hint)) else {
+            if threshold > 0 {
+                opening.fetch_sub(1, Ordering::Relaxed);
+            }
+            return;
+        };
+
+        aerospike_rt::spawn(async move {
+            // The slot was reserved above; settle it either way. `make_conn`
+            // records the attempt/success/failure connection metrics itself.
+            match queue.make_conn().await {
+                Ok(conn) => queue.put_back(conn),
+                Err(_) => queue.reduce_capacity(),
+            }
+            if threshold > 0 {
+                opening.fetch_sub(1, Ordering::Relaxed);
+            }
+        });
     }
 
     /// Returns the per-node metrics sink.
@@ -641,13 +702,32 @@ impl Node {
         self.inactivate();
     }
 
-    // Send info commands to this node
+    /// Send info commands to this node and return the parsed key/value
+    /// response. The map preserves the server's response order — one entry
+    /// per command, in request order. For an arbitrary-node request use
+    /// [`Client::info`](crate::Client::info).
     pub async fn info(
         &self,
         policy: &AdminPolicy,
         commands: &[&str],
-    ) -> Result<HashMap<String, String>> {
-        let mut conn = self.get_connection(0).await?;
+    ) -> Result<IndexMap<String, String>> {
+        // `get_connection` reports `ConnectionPoolEmpty` while a background
+        // task opens the connection; this method has no retry loop of its
+        // own, so poll briefly until the connection lands or the admin
+        // timeout elapses (mirrors the Go client's public `GetConnection`).
+        let deadline = aerospike_rt::time::Instant::now()
+            + std::time::Duration::from_millis(u64::from(policy.timeout()).max(1000));
+        let mut conn = loop {
+            match self.get_connection(0).await {
+                Ok(conn) => break conn,
+                Err(err)
+                    if err.is_pool_empty() && aerospike_rt::time::Instant::now() < deadline =>
+                {
+                    aerospike_rt::sleep(std::time::Duration::from_millis(5)).await;
+                }
+                Err(e) => return Err(e),
+            }
+        };
         let res = Message::info(policy, &mut conn, commands).await;
 
         if let Err(e) = res {
@@ -667,7 +747,7 @@ impl Node {
         &self,
         policy: &AdminPolicy,
         commands: &[&str],
-    ) -> Result<HashMap<String, String>> {
+    ) -> Result<IndexMap<String, String>> {
         let mut guard = self.tend_connection.lock().await;
         if guard.is_none() {
             // Open lazily. The first call after Node::new pays the
@@ -763,7 +843,7 @@ impl Node {
         if self.error_rate_within_limit() {
             Ok(())
         } else {
-            Err(Error::MaxErrorRate(self.address.clone()))
+            Err(Error::max_error_rate(self.address.clone()))
         }
     }
 
@@ -949,7 +1029,7 @@ impl Node {
 
             Ok(count)
         } else {
-            Err(Error::InvalidNode(format!(
+            Err(Error::invalid_node(format!(
                 "Cannot fill the connection pool to 'policy.min_conns_per_node'. The node `{self}` is inactive"
             )))
         }
@@ -981,7 +1061,6 @@ mod node_tests {
     use std::sync::Arc;
 
     use crate::cluster::node_validator::NodeValidator;
-    use crate::errors::Error;
     use crate::net::Host;
     use crate::policy::ClientPolicy;
     use crate::Version;
@@ -1002,7 +1081,7 @@ mod node_tests {
         let metrics = Arc::new(crate::metrics::NodeMetrics::new(
             crate::metrics::MetricsPolicy::default(),
         ));
-        Node::new(policy, nv, metrics)
+        Node::new(policy, nv, metrics, Arc::new(std::sync::atomic::AtomicUsize::new(0)), None)
     }
 
     /// One idle connection in the pool, using the test [`crate::net::Connection`] (no real socket).
@@ -1026,10 +1105,14 @@ mod node_tests {
         assert!(!node.is_active());
 
         let err = node.get_connection(0).await.unwrap_err();
-        match err {
-            Error::InvalidNode(msg) => assert!(msg.contains("inactive"), "unexpected: {}", msg),
-            other => panic!("expected InvalidNode, got {:?}", other),
-        }
+        assert!(
+            matches!(err.kind(), crate::ErrorKind::InvalidNode),
+            "expected InvalidNode, got {err:?}"
+        );
+        assert!(
+            err.to_string().contains("inactive"),
+            "unexpected: {err}"
+        );
         assert_eq!(
             node.connection_pool.num_conns(),
             before,
@@ -1089,8 +1172,8 @@ mod node_tests {
 
     #[aerospike_macro::test]
     async fn get_connection_miss_uses_hint_to_select_queue() {
-        // Fix 1: get_connection(hint) passed hardcoded 0 to make_conn on pool miss.
-        // Each hint must land on its own queue.
+        // A pool miss must report `ConnectionPoolEmpty` and hand the open to a
+        // background task, honoring the hint for queue selection.
         let policy = ClientPolicy {
             conn_pools_per_node: 4,
             max_conns_per_node: 8, // 2 per queue — room to observe distribution
@@ -1108,13 +1191,26 @@ mod node_tests {
         let metrics = Arc::new(crate::metrics::NodeMetrics::new(
             crate::metrics::MetricsPolicy::default(),
         ));
-        let node = Node::new(policy, nv, metrics);
+        let node = Node::new(policy, nv, metrics, Arc::new(std::sync::atomic::AtomicUsize::new(0)), None);
 
-        // Trigger 4 pool misses with distinct hints — each should land on its own queue.
-        let _c0 = node.get_connection(0).await.expect("hint=0");
-        let _c1 = node.get_connection(1).await.expect("hint=1");
-        let _c2 = node.get_connection(2).await.expect("hint=2");
-        let _c3 = node.get_connection(3).await.expect("hint=3");
+        // Trigger 4 pool misses with distinct hints — each reports pool-empty
+        // and spawns a background fill on its own queue.
+        for hint in 0..4u8 {
+            let err = node.get_connection(hint).await.unwrap_err();
+            assert!(
+                err.is_pool_empty(),
+                "pool miss must report ConnectionPoolEmpty, got {err:?}"
+            );
+        }
+
+        // Let the spawned fill tasks run (test connections are dummies, so
+        // they complete on the next scheduler passes).
+        for _ in 0..20 {
+            aerospike_rt::sleep(aerospike_rt::time::Duration::from_millis(1)).await;
+            if node.connection_pool.total_reserved() == 4 {
+                break;
+            }
+        }
 
         let queues = node.connection_pool.queues();
         for i in 0..4 {
@@ -1124,6 +1220,77 @@ mod node_tests {
                 "queue[{i}] must have exactly 1 reserved connection"
             );
         }
+    }
+
+    /// A pool miss spawns a background fill; a subsequent `get_connection`
+    /// (after the fill lands) succeeds from the pool — the retry pattern the
+    /// command loops rely on.
+    #[cfg(feature = "rt-tokio")]
+    #[tokio::test(flavor = "current_thread")]
+    async fn get_connection_retry_picks_up_background_fill() {
+        let node = test_node();
+
+        let err = node.get_connection(0).await.unwrap_err();
+        assert!(err.is_pool_empty());
+
+        // Let the spawned fill task run (dummy connection, completes fast).
+        for _ in 0..20 {
+            aerospike_rt::sleep(aerospike_rt::time::Duration::from_millis(1)).await;
+            if node.connection_pool.num_conns() == 1 {
+                break;
+            }
+        }
+
+        let conn = node
+            .get_connection(0)
+            .await
+            .expect("retry must pick up the background-filled connection");
+        drop(conn);
+    }
+
+    /// `opening_connection_threshold` caps concurrent background opens
+    /// cluster-wide: with a threshold of 1, a second miss while the first
+    /// open is still pending must not spawn another fill.
+    #[cfg(feature = "rt-tokio")]
+    #[tokio::test(flavor = "current_thread")]
+    async fn opening_connection_threshold_caps_background_fills() {
+        let policy = ClientPolicy {
+            opening_connection_threshold: 1,
+            ..ClientPolicy::default()
+        };
+        let nv = Arc::new(NodeValidator {
+            name: "test-node".to_string(),
+            aliases: vec![Host::new("127.0.0.1", 3000)],
+            address: "127.0.0.1:3000".to_string(),
+            client_policy: policy.clone(),
+            use_new_info: true,
+            version: Version::default(),
+            detect_load_balancer: false,
+        });
+        let metrics = Arc::new(crate::metrics::NodeMetrics::new(
+            crate::metrics::MetricsPolicy::default(),
+        ));
+        let node = Node::new(
+            policy,
+            nv,
+            metrics,
+            Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+            None,
+        );
+
+        // On a current-thread runtime no spawned task runs until we await, so
+        // both calls observe the first fill still "in flight".
+        let _ = node.get_connection(0).await.unwrap_err(); // spawns (1 <= threshold)
+        let _ = node.get_connection(0).await.unwrap_err(); // capped (2 > threshold)
+
+        for _ in 0..20 {
+            aerospike_rt::sleep(aerospike_rt::time::Duration::from_millis(1)).await;
+        }
+        assert_eq!(
+            node.connection_pool.total_reserved(),
+            1,
+            "only one background fill may run under threshold 1"
+        );
     }
 
     #[aerospike_macro::test]
@@ -1145,7 +1312,7 @@ mod node_tests {
         let metrics = Arc::new(crate::metrics::NodeMetrics::new(
             crate::metrics::MetricsPolicy::default(),
         ));
-        let node = Node::new(policy, nv, metrics);
+        let node = Node::new(policy, nv, metrics, Arc::new(std::sync::atomic::AtomicUsize::new(0)), None);
 
         let mut in_flight = Vec::new();
         for i in 0..5 {

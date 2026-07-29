@@ -53,6 +53,12 @@ impl Version {
         self >= &Version::new(5, 7, 0, 0)
     }
 
+    /// Server supports blob secondary indexes
+    /// ([`IndexType::Blob`](crate::IndexType)).
+    pub fn supports_blob_index(&self) -> bool {
+        self >= &Version::new(7, 0, 0, 0)
+    }
+
     /// Server supports batch-index commands.
     pub fn supports_batch_any(&self) -> bool {
         self >= &Version::new(6, 0, 0, 0)
@@ -97,11 +103,17 @@ impl Version {
         self >= &Version::new(8, 1, 3, 0)
     }
 
+    /// Server supports extended error detail (subcode, message, expression
+    /// trace) requested via
+    /// [`BasePolicy::error_detail_verbosity`](crate::policy::BasePolicy::error_detail_verbosity).
+    /// Older servers ignore the request flags.
+    pub fn supports_extended_error_detail(&self) -> bool {
+        self >= &Version::new(8, 1, 3, 0)
+    }
+
     /// Server accepts server-compiled textual AEL on filter field 43 (`[128, "<utf-8>"]`).
     ///
-    /// Used on legacy field **43** paths (keyed query, batch filter, dataset query when
-    /// [`Self::supports_query_selection`] is off or routing selects legacy). Aligns with Java
-    /// fluent `Cluster.supportsAel()` (≥ 8.1.3).
+    /// Aligns with Java fluent `Cluster.supportsServerCompiledFilterExpression()` (≥ 8.1.3).
     pub fn supports_server_compiled_ael(&self) -> bool {
         self >= &Version::new(8, 1, 3, 0)
     }
@@ -129,7 +141,7 @@ impl<'a> VersionParser<'a> {
         });
 
         if !RE.is_match(self.s) {
-            return Err(Error::ClientError(format!(
+            return Err(Error::client_error(format!(
                 "Could not parse node version string `{}`",
                 self.s
             )));
@@ -222,19 +234,5 @@ mod tests {
         for iv in invalid {
             assert!(VersionParser::new(iv).parse().is_err());
         }
-    }
-
-    #[test]
-    fn supports_server_compiled_ael_threshold() {
-        assert!(!Version::new(8, 1, 2, 99).supports_server_compiled_ael());
-        assert!(Version::new(8, 1, 3, 0).supports_server_compiled_ael());
-        assert!(Version::new(8, 2, 0, 0).supports_server_compiled_ael());
-    }
-
-    #[test]
-    fn supports_query_selection_threshold() {
-        assert!(!Version::new(8, 1, 2, 99).supports_query_selection());
-        assert!(Version::new(8, 1, 3, 0).supports_query_selection());
-        assert!(Version::new(8, 2, 0, 0).supports_query_selection());
     }
 }

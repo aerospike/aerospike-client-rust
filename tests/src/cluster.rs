@@ -20,10 +20,8 @@
 //! - peers / partition generation commit accessors
 //! - rack-ids parser (Java parity: `<= 0 || >= 32` chars rejected)
 
-use std::collections::HashSet;
-
 use aerospike::policy::AdminPolicy;
-use aerospike::{Client, Error};
+use aerospike::Client;
 
 use crate::common;
 
@@ -215,17 +213,12 @@ async fn rack_parse_valid_format() {
 
     node.parse_rack("ns_a:1;ns_b:2").unwrap();
 
-    let mut want_rack_1 = HashSet::new();
-    want_rack_1.insert(1usize);
-    let mut want_rack_2 = HashSet::new();
-    want_rack_2.insert(2usize);
-
-    assert!(node.is_in_rack("ns_a", &want_rack_1));
-    assert!(!node.is_in_rack("ns_a", &want_rack_2));
-    assert!(node.is_in_rack("ns_b", &want_rack_2));
-    assert!(!node.is_in_rack("ns_b", &want_rack_1));
+    assert!(node.has_rack("ns_a", 1));
+    assert!(!node.has_rack("ns_a", 2));
+    assert!(node.has_rack("ns_b", 2));
+    assert!(!node.has_rack("ns_b", 1));
     // Unknown namespace → false.
-    assert!(!node.is_in_rack("unknown", &want_rack_1));
+    assert!(!node.has_rack("unknown", 1));
 
     client.close().await.unwrap();
 }
@@ -241,9 +234,7 @@ async fn rack_parse_trailing_semicolon_is_ignored() {
 
     node.parse_rack("ns_a:1;").unwrap();
 
-    let mut want = HashSet::new();
-    want.insert(1usize);
-    assert!(node.is_in_rack("ns_a", &want));
+    assert!(node.has_rack("ns_a", 1));
 
     client.close().await.unwrap();
 }
@@ -257,7 +248,7 @@ async fn rack_parse_empty_namespace_rejected() {
 
     let err = node.parse_rack(":3").unwrap_err();
     assert!(
-        matches!(err, Error::BadResponse(_)),
+        matches!(err.kind(), aerospike::ErrorKind::BadResponse),
         "expected BadResponse, got: {err:?}"
     );
 
@@ -278,12 +269,12 @@ async fn rack_parse_namespace_length_boundary() {
     // 32 chars → rejected.
     let ns_32 = "a".repeat(32);
     let err = node.parse_rack(&format!("{ns_32}:1")).unwrap_err();
-    assert!(matches!(err, Error::BadResponse(_)));
+    assert!(matches!(err.kind(), aerospike::ErrorKind::BadResponse));
 
     // 64 chars → rejected.
     let ns_64 = "a".repeat(64);
     let err = node.parse_rack(&format!("{ns_64}:1")).unwrap_err();
-    assert!(matches!(err, Error::BadResponse(_)));
+    assert!(matches!(err.kind(), aerospike::ErrorKind::BadResponse));
 
     client.close().await.unwrap();
 }
@@ -296,7 +287,7 @@ async fn rack_parse_invalid_entry_rejected() {
     let node = nodes.first().unwrap();
 
     let err = node.parse_rack("ns_no_colon").unwrap_err();
-    assert!(matches!(err, Error::BadResponse(_)));
+    assert!(matches!(err.kind(), aerospike::ErrorKind::BadResponse));
 
     client.close().await.unwrap();
 }
@@ -310,17 +301,13 @@ async fn rack_parse_replace_table() {
     let node = nodes.first().unwrap();
 
     node.parse_rack("ns_a:1;ns_b:2").unwrap();
-    let mut want_1 = HashSet::new();
-    want_1.insert(1usize);
-    assert!(node.is_in_rack("ns_a", &want_1));
+    assert!(node.has_rack("ns_a", 1));
 
     // Second parse: only `ns_c` survives.
     node.parse_rack("ns_c:9").unwrap();
-    let mut want_9 = HashSet::new();
-    want_9.insert(9usize);
-    assert!(node.is_in_rack("ns_c", &want_9));
-    assert!(!node.is_in_rack("ns_a", &want_1));
-    assert!(!node.is_in_rack("ns_b", &want_1));
+    assert!(node.has_rack("ns_c", 9));
+    assert!(!node.has_rack("ns_a", 1));
+    assert!(!node.has_rack("ns_b", 1));
 
     client.close().await.unwrap();
 }
@@ -342,13 +329,30 @@ async fn cluster_has_at_least_one_node_after_seed() {
     );
     for node in &nodes {
         assert!(node.is_active(), "node {node} should be active after seed");
-        // Per #12: the seed flow now commits each parsed peer-generation,
-        // so a freshly-seeded node should have a non-`-1` generation
-        // (the server's reported value).
-        assert_ne!(
-            node.peers_generation(),
-            -1,
-            "seed node {node} should have a committed peers_generation"
+    }
+
+    // Per #12: the seed flow commits each peer-generation it parses. Only the
+    // nodes actually asked for a peers list have one — stabilization now
+    // finishes in the tend that seeds the cluster, and that tend asks the seed,
+    // not the peers it discovers through it. The peers get their own generation
+    // on the next tend; what has to hold here is that somebody reported, and
+    // that everybody who reported agrees with us about the cluster's size.
+    let reporters: Vec<_> = nodes
+        .iter()
+        .filter(|n| n.peers_generation() != -1)
+        .collect();
+    assert!(
+        !reporters.is_empty(),
+        "no node committed a peers_generation, so peer discovery never ran"
+    );
+    for node in reporters {
+        assert_eq!(
+            node.peers_count() + 1,
+            nodes.len(),
+            "node {node} reported {} peer(s), which disagrees with the {} node(s) \
+             in the cluster view",
+            node.peers_count(),
+            nodes.len()
         );
     }
 
@@ -405,4 +409,208 @@ async fn seed_only_cluster_pins_to_seed_addresses() {
     );
 
     client.close().await.unwrap();
+}
+
+// ---- client info facade ----------------------------------------------------
+
+#[aerospike_macro::test]
+async fn info_returns_entries_in_request_order() {
+    let client = fresh_client().await;
+    let policy = AdminPolicy::default();
+
+    // The IndexMap return preserves the server's response order: one
+    // entry per command, in request order.
+    let commands = ["edition", "build", "node", "version"];
+    let info = client.info(&policy, &commands).await.unwrap();
+    let keys: Vec<&str> = info.keys().map(String::as_str).collect();
+    assert_eq!(keys, commands, "info entries must follow request order");
+    assert!(info.values().all(|v| !v.is_empty()));
+
+    // Reversed request → reversed response order.
+    let reversed = ["version", "node", "build", "edition"];
+    let info = client.info(&policy, &reversed).await.unwrap();
+    let keys: Vec<&str> = info.keys().map(String::as_str).collect();
+    assert_eq!(keys, reversed);
+
+    // Node-targeted requests go through Node::info directly.
+    let nodes = client.cluster.nodes();
+    let node = nodes.first().expect("at least one node");
+    let info = node.info(&policy, &["node"]).await.unwrap();
+    assert_eq!(info.get("node").map(String::as_str), Some(node.name()));
+
+    client.close().await.unwrap();
+}
+
+// ---- init stabilization ----------------------------------------------------
+
+#[aerospike_macro::test]
+async fn partition_map_ready_when_new_returns() {
+    use aerospike::{as_bin, as_key, WritePolicy};
+
+    // `Client::new` must not return before the initial partition map is
+    // populated: node-count stability alone races the first partition
+    // fetch on multi-node clusters, and a write issued immediately after
+    // construction would die on "partition map empty" before the tend
+    // thread fills the map in.
+    let client = fresh_client().await;
+
+    assert!(
+        client.cluster.partition_map_ready(),
+        "Client::new returned a cluster that cannot route commands"
+    );
+    // The map must already cover the test namespace...
+    assert_eq!(
+        client
+            .cluster
+            .is_strong_consistency(common::namespace())
+            .is_some(),
+        true,
+        "partition map must be populated before Client::new returns"
+    );
+    // ...and every node must have parsed a partition map at least once.
+    for node in client.cluster.nodes() {
+        assert_ne!(
+            node.partition_generation(),
+            -1,
+            "node {node} returned from Client::new without partition data"
+        );
+    }
+
+    // An immediate write with NO retry budget must succeed — no transient
+    // "partition map empty" window is allowed to exist after new().
+    let mut wpolicy = WritePolicy::default();
+    wpolicy.base_policy.max_retries = 0;
+    let key = as_key!(common::namespace(), "stabilize", "first_write");
+    client
+        .put(&wpolicy, &key, &[as_bin!("a", 1)])
+        .await
+        .expect("first write immediately after Client::new must not race the partition map");
+
+    client.close().await.unwrap();
+}
+
+#[aerospike_macro::test]
+async fn partition_map_complete_when_new_returns() {
+    // Stronger than routability: on a healthy cluster every partition of every
+    // mapped namespace must already have a master when `Client::new` returns.
+    //
+    // This is the condition that lets stabilization finish in a single tend.
+    // It is also what proves the client is not missing a node, since a node's
+    // partitions are only ever claimed by that node itself — so if any node
+    // were still undiscovered, its partitions would show up here as unowned.
+    let client = fresh_client().await;
+
+    assert!(
+        client.cluster.partition_map_complete(),
+        "Client::new returned with an incomplete partition table: some \
+         partitions have no master, so some keys cannot be routed"
+    );
+
+    client.close().await.unwrap();
+}
+
+#[aerospike_macro::test]
+async fn stabilization_is_not_bounded_by_policy_timeout() {
+    // `ClientPolicy::timeout` bounds individual info commands, NOT initial
+    // stabilization. It used to bound both, so a cluster that took longer to
+    // converge than the (1 s default) timeout — a secured multi-node cluster
+    // needs a LOGIN handshake per node plus several tends — had its
+    // convergence truncated, and `Client::new` returned a client with an
+    // empty partition map that failed every command with "partition map
+    // empty".
+    //
+    // Pin the invariant with a timeout far below the time stabilization
+    // needs: whenever nodes are found at all, the cluster must be routable.
+    let mut policy = common::client_policy().clone();
+    policy.timeout = 10;
+    // Distinguish "info calls too tight to reach anything on a slow test
+    // cluster" (skip) from "reached the cluster but came back unroutable"
+    // (the regression) — the latter must fail rather than error out here.
+    policy.fail_if_not_connected = false;
+
+    let client = Client::new(&policy, &common::hosts().to_string())
+        .await
+        .expect("new() must not fail when fail_if_not_connected is disabled");
+
+    if client.nodes().is_empty() {
+        // A 10 ms info timeout was too tight for this cluster; the invariant
+        // under test needs a reachable cluster, so there is nothing to check.
+        client.close().await.unwrap();
+        return;
+    }
+
+    assert!(
+        client.cluster.partition_map_ready(),
+        "Client::new returned an unroutable cluster with policy.timeout=10ms — \
+         stabilization must be driven by cluster convergence, not by the \
+         per-info-call timeout"
+    );
+
+    client.close().await.unwrap();
+}
+
+// ---- rack-aware read routing ----------------------------------------------
+
+#[aerospike_macro::test]
+async fn prefer_rack_read_routing() {
+    use aerospike::policy::Replica;
+    use aerospike::{as_bin, as_key, as_val, Bins, ReadPolicy, WritePolicy};
+
+    // Ordered rack preference list: rack 7 (nowhere) is preferred over the
+    // server's actual rack. Whatever racks the server reports, a
+    // PreferRack read must route successfully — preferred-rack match or
+    // the different-rack/fallback tiers.
+    let mut policy = common::client_policy().clone();
+    policy.rack_ids = Some(vec![7, 0]);
+    let client = Client::new(&policy, &common::hosts().to_string())
+        .await
+        .expect("connect with rack_ids");
+
+    let namespace = common::namespace();
+    let set_name = common::rand_str(10);
+    let key = as_key!(namespace, &set_name, "rack_read");
+
+    client
+        .put(&WritePolicy::default(), &key, &[as_bin!("a", 1)])
+        .await
+        .unwrap();
+
+    let mut rpolicy = ReadPolicy::default();
+    rpolicy.replica = Replica::PreferRack;
+    let rec = client.get(&rpolicy, &key, Bins::All).await.unwrap();
+    assert_eq!(rec.bins.get("a"), Some(&as_val!(1)));
+
+    // Batch under PreferRack: reads route rack-preferred, writes must
+    // route via the write-side logic (never to a rack replica). Mixed
+    // batch with >1 key per node exercises the grouped (non-fast-path)
+    // node split.
+    use aerospike::{BatchOperation, BatchPolicy, BatchReadPolicy, BatchWritePolicy, Bins as B};
+    let mut bpolicy = BatchPolicy::default();
+    bpolicy.replica = Replica::PreferRack;
+    let wkey = as_key!(namespace, &set_name, "rack_batch_write");
+    let batch = vec![
+        BatchOperation::write(
+            &BatchWritePolicy::default(),
+            wkey.clone(),
+            vec![aerospike::operations::put(&as_bin!("b", 2))],
+        ),
+        BatchOperation::read(&BatchReadPolicy::default(), key.clone(), B::All),
+        BatchOperation::read(&BatchReadPolicy::default(), wkey.clone(), B::All),
+    ];
+    let results = client.batch(&bpolicy, &batch).await.unwrap();
+    assert_eq!(results.len(), 3);
+    let rec = client.get(&rpolicy, &wkey, Bins::All).await.unwrap();
+    assert_eq!(rec.bins.get("b"), Some(&as_val!(2)));
+
+    client.close().await.unwrap();
+}
+
+// ---- client version --------------------------------------------------------
+
+#[aerospike_macro::test]
+async fn client_version_reports_crate_version() {
+    let version = Client::client_version();
+    assert!(!version.is_empty());
+    // Semver-ish: starts with a digit and contains a dot.
+    assert!(version.as_bytes()[0].is_ascii_digit() && version.contains('.'));
 }

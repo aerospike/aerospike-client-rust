@@ -39,10 +39,16 @@ proptest_async::proptest! {
         let res = client.batch(&batch_policy, &as_ops).await;
 
         match res {
-            Err(Error::BatchError(_, ResultCode::FilteredOut, _, _)) => {}
-            Err(Error::BatchError(_, ResultCode::KeyBusy, _, _)) => {}
-            Err(Error::BatchError(_, ResultCode::BinTypeError, _, _)) => {}
-            Err(Error::BatchError(_, ResultCode::BinNameTooLong, _, _)) => {}
+            Err(e)
+                if matches!(
+                    e.server_result_code(),
+                    Some(
+                        ResultCode::FilteredOut
+                            | ResultCode::KeyBusy
+                            | ResultCode::BinTypeError
+                            | ResultCode::BinNameTooLong
+                    )
+                ) => {}
             Err(e) => panic!("ERR: {}", e),
             Ok(_) => (),
         }

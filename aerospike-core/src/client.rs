@@ -33,7 +33,7 @@ use crate::commands::{
     DeleteCommand, ExecuteUDFCommand, ExistsCommand, OperateCommand, QueryCommand,
     QueryExplainCommand, ReadCommand, ServerCommand, TouchCommand, WriteCommand,
 };
-use crate::errors::{Error, Result};
+use crate::errors::{Error, ErrorKind, Result};
 use crate::expressions::Expression;
 use crate::net::ToHosts;
 use crate::operations::cdt_context::{to_base64, CdtContext};
@@ -44,6 +44,8 @@ use crate::policy::{
 };
 use crate::query::plan::{QueryPlan, QueryWhereWire, FLAG_EXPLAIN, FLAG_HARD_HINT};
 use crate::query::{PartitionFilter, PartitionTracker};
+#[cfg(feature = "lua")]
+use crate::query::ResultSet;
 use crate::task::{DropIndexTask, ExecuteTask, IndexTask, RegisterTask, UdfRemoveTask};
 use crate::txn::{AbortStatus, CommitStatus, Txn, TxnState};
 use crate::txn_roll::TxnRoll;
@@ -123,11 +125,34 @@ impl Client {
     ///
     /// # Returns
     ///
-    /// `Ok(Client)` once at least one seed host connects and the cluster map is initialized.
+    /// `Ok(Client)` once the cluster is **routable**: a seed has connected,
+    /// peer discovery has settled, and every known node has contributed to
+    /// the partition table. The returned client can route its very first
+    /// command — there is no window in which a command fails with "partition
+    /// map empty".
+    ///
+    /// A healthy cluster reaches that state in a single tend cycle. Each tend
+    /// costs real network round-trips, plus a `LOGIN` handshake per node on a
+    /// security-enabled cluster, so construction takes as long as the cluster
+    /// takes to converge — a degraded one may need several tends. It is not
+    /// bounded by
+    /// [`timeout`](field@ClientPolicy::timeout), which bounds individual info
+    /// commands; see
+    /// [`fail_if_not_connected`](field@ClientPolicy::fail_if_not_connected)
+    /// to control failure instead.
     ///
     /// # Errors
     ///
-    /// * Returns an error if policy validation fails, no host can be reached, or cluster discovery fails.
+    /// * Policy validation fails.
+    /// * No seed host can be reached — the error names each seed and why it
+    ///   failed.
+    /// * Nodes are reachable but never produce a partition table, leaving the
+    ///   cluster connected yet unroutable.
+    ///
+    /// The last two are suppressed by setting
+    /// [`fail_if_not_connected`](field@ClientPolicy::fail_if_not_connected)
+    /// to `false`, which returns a client whose commands fail until the tend
+    /// loop converges.
     ///
     /// # Dynamic configuration
     ///
@@ -264,6 +289,12 @@ impl Client {
         self.cluster.is_connected()
     }
 
+    /// Returns this client library's version string (e.g. `"3.0.0-alpha.1"`).
+    #[must_use]
+    pub const fn client_version() -> &'static str {
+        env!("CARGO_PKG_VERSION")
+    }
+
     /// Returns a list of the names of the active server nodes in the cluster.
     ///
     /// # Examples
@@ -305,6 +336,37 @@ impl Client {
     pub fn get_node(&self, name: &str) -> Result<Arc<Node>> {
         self.cluster.get_node_by_name(name)
     }
+
+    /// Send info commands to a randomly selected cluster node and return
+    /// the parsed key/value response. The map preserves the server's
+    /// response order — one entry per command, in request order. The Rust
+    /// counterpart of Java's `Info.request(policy, node, commands...)`.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,edition2021
+    /// # use aerospike::*;
+    /// # #[tokio::main]
+    /// # async fn main() {
+    /// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap_or_else(|_| "127.0.0.1:3000".to_string());
+    /// # let policy = ClientPolicy::default();
+    /// # let client = Client::new(&policy, &hosts).await.unwrap();
+    /// let info = client
+    ///     .info(&policy::AdminPolicy::default(), &["build", "edition"])
+    ///     .await
+    ///     .unwrap();
+    /// println!("server build: {:?}", info.get("build"));
+    /// # }
+    /// ```
+    pub async fn info(
+        &self,
+        policy: &AdminPolicy,
+        commands: &[&str],
+    ) -> Result<crate::IndexMap<String, String>> {
+        let node = self.cluster.get_random_node()?;
+        node.info(policy, commands).await
+    }
+
 
     /// Returns a list of active server nodes in the cluster.
     ///
@@ -385,7 +447,8 @@ impl Client {
     ///
     /// # Errors
     ///
-    /// * [`Error::ServerError`](crate::errors::Error::ServerError) with [`ResultCode::KeyNotFoundError`] if the record does not exist.
+    /// * A server error with [`ResultCode::KeyNotFoundError`] (see
+    ///   [`Error::server_result_code`](crate::Error::server_result_code)) if the record does not exist.
     /// * Other errors for network, timeout, or server failures.
     ///
     /// # Panics
@@ -404,13 +467,13 @@ impl Client {
     ///
     /// # #[tokio::main]
     /// # async fn main() {
-    /// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap();
+    /// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap_or_else(|_| "127.0.0.1:3000".to_string());
     /// # let client = Client::new(&ClientPolicy::default(), &hosts).await.unwrap();
     /// let key = as_key!("test", "test", "mykey");
     /// match client.get(&ReadPolicy::default(), &key, ["a", "b"]).await {
     ///     Ok(record)
     ///         => println!("a={:?}", record.bins.get("a")),
-    ///     Err(Error::ServerError(ResultCode::KeyNotFoundError,..))
+    ///     Err(ref err) if err.server_result_code() == Some(ResultCode::KeyNotFoundError)
     ///         => println!("No such record: {}", key),
     ///     Err(err)
     ///         => println!("Error fetching record: {}", err),
@@ -425,7 +488,7 @@ impl Client {
     ///
     /// # #[tokio::main]
     /// # async fn main() {
-    /// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap();
+    /// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap_or_else(|_| "127.0.0.1:3000".to_string());
     /// # let client = Client::new(&ClientPolicy::default(), &hosts).await.unwrap();
     /// let key = as_key!("test", "test", "mykey");
     /// match client.get(&ReadPolicy::default(), &key, Bins::None).await {
@@ -435,7 +498,7 @@ impl Client {
     ///             Some(duration) => println!("ttl: {} secs", duration.as_secs()),
     ///         }
     ///     },
-    ///     Err(Error::ServerError(ResultCode::KeyNotFoundError,..))
+    ///     Err(ref err) if err.server_result_code() == Some(ResultCode::KeyNotFoundError)
     ///         => println!("No such record: {}", key),
     ///     Err(err)
     ///         => println!("Error fetching record: {}", err),
@@ -585,7 +648,7 @@ impl Client {
     ///
     /// # #[tokio::main]
     /// # async fn main() {
-    /// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap();
+    /// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap_or_else(|_| "127.0.0.1:3000".to_string());
     /// # let client = Client::new(&ClientPolicy::default(), &hosts).await.unwrap();
     /// let key = as_key!("test", "test", 1);
     /// let batch = vec![BatchOperation::read(&BatchReadPolicy::default(), key, Bins::All)];
@@ -652,7 +715,7 @@ impl Client {
     ///
     /// # #[tokio::main]
     /// # async fn main() {
-    /// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap();
+    /// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap_or_else(|_| "127.0.0.1:3000".to_string());
     /// # let client = Client::new(&ClientPolicy::default(), &hosts).await.unwrap();
     /// let key = as_key!("test", "test", "mykey");
     /// let bin = as_bin!("i", 42);
@@ -670,7 +733,7 @@ impl Client {
     ///
     /// # #[tokio::main]
     /// # async fn main() {
-    /// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap();
+    /// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap_or_else(|_| "127.0.0.1:3000".to_string());
     /// # let client = Client::new(&ClientPolicy::default(), &hosts).await.unwrap();
     /// let key = as_key!("test", "test", "mykey");
     /// let bin = as_bin!("i", 42);
@@ -730,7 +793,7 @@ impl Client {
     ///
     /// # #[tokio::main]
     /// # async fn main() {
-    /// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap();
+    /// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap_or_else(|_| "127.0.0.1:3000".to_string());
     /// # let client = Client::new(&ClientPolicy::default(), &hosts).await.unwrap();
     /// let key = as_key!("test", "test", "mykey");
     /// let bina = as_bin!("a", 1);
@@ -889,7 +952,7 @@ impl Client {
     ///
     /// # #[tokio::main]
     /// # async fn main() {
-    /// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap();
+    /// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap_or_else(|_| "127.0.0.1:3000".to_string());
     /// # let client = Client::new(&ClientPolicy::default(), &hosts).await.unwrap();
     /// let key = as_key!("test", "test", "mykey");
     /// match client.delete(&WritePolicy::default(), &key).await {
@@ -936,7 +999,7 @@ impl Client {
     ///
     /// # #[tokio::main]
     /// # async fn main() {
-    /// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap();
+    /// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap_or_else(|_| "127.0.0.1:3000".to_string());
     /// # let client = Client::new(&ClientPolicy::default(), &hosts).await.unwrap();
     /// let key = as_key!("test", "test", "mykey");
     /// let mut policy = WritePolicy::default();
@@ -1041,7 +1104,7 @@ impl Client {
     ///
     /// # #[tokio::main]
     /// # async fn main() {
-    /// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap();
+    /// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap_or_else(|_| "127.0.0.1:3000".to_string());
     /// # let client = Client::new(&ClientPolicy::default(), &hosts).await.unwrap();
     /// let key = as_key!("test", "test", "mykey");
     /// let bin = as_bin!("a", 42);
@@ -1062,10 +1125,10 @@ impl Client {
         ops: &[Operation],
     ) -> Result<Record> {
         if ops.is_empty() {
-            return Err(Error::ServerError(
+            return Err(Error::server_error(
                 ResultCode::ParameterError,
-                false,
-                "no operations defined".into(),
+                "no operations defined",
+                None,
             ));
         }
         let policy = self.cluster.resolve_write(policy);
@@ -1113,7 +1176,7 @@ impl Client {
     ///
     /// # #[tokio::main]
     /// # async fn main() {
-    /// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap();
+    /// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap_or_else(|_| "127.0.0.1:3000".to_string());
     /// # let client = Client::new(&ClientPolicy::default(), &hosts).await.unwrap();
     /// let code = r#"
     /// -- Validate value before writing.
@@ -1302,7 +1365,7 @@ impl Client {
     ///
     /// # Errors
     ///
-    /// * Returns an error if the UDF fails, the record/key is invalid, or on cluster/network failure. [`Error::UdfBadResponse`](crate::errors::Error::UdfBadResponse) if the UDF returns a failure or invalid response.
+    /// * Returns an error if the UDF fails, the record/key is invalid, or on cluster/network failure. [`ErrorKind::UdfBadResponse`](crate::ErrorKind::UdfBadResponse) if the UDF returns a failure or invalid response.
     ///
     /// # Panics
     /// Panics if the return is invalid
@@ -1363,11 +1426,11 @@ impl Client {
             if key.contains("SUCCESS") {
                 return Ok(Some(value.clone()));
             } else if key.contains("FAILURE") {
-                return Err(Error::UdfBadResponse(value.to_string()));
+                return Err(Error::udf_bad_response(value.to_string()));
             }
         }
 
-        Err(Error::UdfBadResponse("Invalid UDF return value".into()))
+        Err(Error::udf_bad_response("Invalid UDF return value"))
     }
 
     /// Execute a query on all server nodes and return a record iterator. The query executor puts
@@ -1446,6 +1509,7 @@ impl Client {
 
         let recordset = Arc::new(Recordset::new(
             policy.record_queue_size,
+            policy.max_records,
             usize::MAX, // will be reset later
             tracker.clone(),
         ));
@@ -1596,6 +1660,185 @@ impl Client {
         Ok(recordset)
     }
 
+    /// Execute a stream UDF aggregation query and return a [`ResultSet`]
+    /// with the aggregated values (requires the `lua` feature).
+    ///
+    /// The named UDF must be registered on the server (see
+    /// [`Client::register_udf`]) **and** its source must be available to
+    /// the client: aggregations split the UDF's stream operations between
+    /// server and client — each node runs the server-side portion
+    /// (`map`/`filter`/`aggregate`) and streams one partial result per
+    /// node back, and the client runs the remaining operations (from the
+    /// first `reduce` onward) in an embedded Lua 5.4 interpreter to
+    /// combine the partials into the final result.
+    ///
+    /// The client looks for `<package_name>.lua` in the directory set via
+    /// [`crate::lua::set_lua_path`] (default `"udf"`), unless the source
+    /// was registered in memory with [`crate::lua::register_package`].
+    ///
+    /// Retries are disabled for aggregation queries: a retried partition
+    /// could feed duplicate partial results into the aggregation.
+    ///
+    /// # Arguments
+    ///
+    /// * `policy` — Query policy ([`QueryPolicy::record_queue_size`] also sizes the result queue).
+    /// * `statement` — Namespace, set, bins, and filters ([`Statement`]).
+    /// * `package_name` — UDF package (module) name.
+    /// * `function_name` — Stream UDF function to invoke.
+    /// * `function_args` — Optional arguments passed to the UDF function.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// # use aerospike::*;
+    /// # use futures::StreamExt;
+    /// # async fn example(client: &Client) -> Result<()> {
+    /// aerospike::lua::set_lua_path("tests/udf");
+    ///
+    /// let stmt = Statement::new("test", "test", Bins::All);
+    /// let rs = client
+    ///     .query_aggregate(
+    ///         &QueryPolicy::default(),
+    ///         stmt,
+    ///         "sum_example",
+    ///         "sum_single_bin",
+    ///         Some(&[as_val!("score")]),
+    ///     )
+    ///     .await?;
+    /// let mut stream = rs.into_stream();
+    /// while let Some(value) = stream.next().await {
+    ///     println!("aggregation result: {:?}", value?);
+    /// }
+    /// # Ok(())
+    /// # }
+    /// ```
+    #[cfg(feature = "lua")]
+    pub async fn query_aggregate(
+        &self,
+        policy: &QueryPolicy,
+        mut statement: Statement,
+        package_name: &str,
+        function_name: &str,
+        function_args: Option<&[Value]>,
+    ) -> Result<Arc<ResultSet>> {
+        use futures::StreamExt;
+
+        statement.set_aggregate_function(package_name, function_name, function_args);
+        statement.validate()?;
+
+        // Disable retries: a retried partition would re-send partial
+        // results that were already fed into the aggregation.
+        let mut policy = self.cluster.resolve_query(policy).into_owned();
+        policy.base_policy.max_retries = 0;
+
+        let result_set = Arc::new(ResultSet::new(policy.record_queue_size));
+        let recordset = self
+            .query(&policy, PartitionFilter::all(), statement)
+            .await?;
+
+        // Server partials -> Lua input stream. Sized like the Java
+        // client's input queue.
+        let (input_tx, input_rx) = async_channel::bounded::<Value>(500);
+        // Lua output stream -> ResultSet pump.
+        let (output_tx, output_rx) = async_channel::bounded::<Value>(policy.record_queue_size.max(1));
+        // Completion/error signal from the Lua pipeline task.
+        let (done_tx, done_rx) = async_channel::bounded::<Result<()>>(1);
+
+        // The pipeline runs as an ordinary executor task: mlua's async API
+        // makes `stream.read`/`stream.write` await points, so no OS thread
+        // is tied up per aggregation.
+        let package = package_name.to_owned();
+        let function = function_name.to_owned();
+        let args: Vec<Value> = function_args.map(<[Value]>::to_vec).unwrap_or_default();
+        aerospike_rt::spawn(async move {
+            use futures::FutureExt;
+            // `output_tx` moves into the pipeline and is dropped when it
+            // completes, which ends the output pump below.
+            let result = std::panic::AssertUnwindSafe(crate::lua::run_aggregate_pipeline(
+                &package, &function, args, input_rx, output_tx,
+            ))
+            .catch_unwind()
+            .await
+            .unwrap_or_else(|_| {
+                Err(Error::client_error(
+                    "Lua aggregation task panicked".to_string(),
+                ))
+            });
+            let _ = done_tx.send(result).await;
+        });
+
+        // Pump 1: feed the per-record partial results from the server
+        // nodes into the Lua input stream. Dropping `input_tx` closes the
+        // input stream, which `stream_iterator` reads as end-of-stream.
+        let feed_rs = result_set.clone();
+        aerospike_rt::spawn(async move {
+            let mut records = recordset.into_stream();
+            while let Some(item) = records.next().await {
+                let partial = item.and_then(Self::extract_aggregate_value);
+                match partial {
+                    Ok(value) => {
+                        if input_tx.send(value).await.is_err() {
+                            // Lua side went away (error/panic); done_rx reports it.
+                            break;
+                        }
+                    }
+                    Err(err) => {
+                        let _ = feed_rs.push(Err(err)).await;
+                        break;
+                    }
+                }
+            }
+        });
+
+        // Pump 2: forward the Lua output values to the ResultSet, then
+        // surface any pipeline error and close the set.
+        let out_rs = result_set.clone();
+        aerospike_rt::spawn(async move {
+            while let Ok(value) = output_rx.recv().await {
+                if out_rs.push(Ok(value)).await.is_err() {
+                    break;
+                }
+            }
+            match done_rx.recv().await {
+                Ok(Err(err)) => {
+                    let _ = out_rs.push(Err(err)).await;
+                }
+                Ok(Ok(())) => {}
+                Err(_) => {
+                    let _ = out_rs
+                        .push(Err(Error::client_error(
+                            "Lua aggregation task terminated unexpectedly".to_string(),
+                        )))
+                        .await;
+                }
+            }
+            out_rs.close();
+        });
+
+        Ok(result_set)
+    }
+
+    /// Extract the aggregation partial result from a server record: a
+    /// single bin named `SUCCESS` carries the value; `FAILURE` carries a
+    /// server-side UDF error message.
+    #[cfg(feature = "lua")]
+    fn extract_aggregate_value(mut record: Record) -> Result<Value> {
+        if let Some(value) = record.bins.swap_remove("SUCCESS") {
+            return Ok(value);
+        }
+        if let Some(reason) = record.bins.swap_remove("FAILURE") {
+            return Err(Error::server_error(
+                ResultCode::QueryGeneric,
+                format!("aggregation UDF failed on the server: {reason}"),
+                None,
+            ));
+        }
+        Err(Error::bad_response(format!(
+            "aggregation record is missing the SUCCESS bin (bins: {:?})",
+            record.bins.keys().collect::<Vec<_>>()
+        )))
+    }
+
     /// Execute a query and apply operations to matching records on the server.
     /// This method sends the command to all nodes and returns an `ExecuteTask`
     /// that can be used to monitor the progress of the background job.
@@ -1625,10 +1868,10 @@ impl Client {
         operations: &[Operation],
     ) -> Result<ExecuteTask> {
         if operations.is_empty() {
-            return Err(Error::ServerError(
+            return Err(Error::server_error(
                 ResultCode::ParameterError,
-                false,
-                "no operations defined".into(),
+                "no operations defined",
+                None,
             ));
         }
         // Inject the ops into `statement.operations` so the unified
@@ -1640,7 +1883,7 @@ impl Client {
 
         let nodes = self.cluster.nodes();
         if nodes.is_empty() {
-            return Err(Error::Connection("No connections available".to_string()));
+            return Err(Error::connection("No connections available".to_string()));
         }
 
         let task_id: u64 = rand::random();
@@ -1709,7 +1952,7 @@ impl Client {
 
         let nodes = self.cluster.nodes();
         if nodes.is_empty() {
-            return Err(Error::Connection("No connections available".to_string()));
+            return Err(Error::connection("No connections available".to_string()));
         }
 
         let task_id: u64 = rand::random();
@@ -1761,7 +2004,7 @@ impl Client {
             .is_err()
             {
                 let _ = rs_closer
-                    .push(Err(Error::Timeout("Timeout".to_string())))
+                    .push(Err(Error::timeout("Timeout".to_string())))
                     .await;
             }
         } else {
@@ -1786,6 +2029,12 @@ impl Client {
         execute_where: Option<Vec<u8>>,
     ) {
         let namespace = statement.namespace.clone();
+        // Exponential backoff between whole-cluster retry rounds: the sleep
+        // interval starts at `sleep_between_retries` and grows by
+        // `sleep_multiplier` after each round, mirroring the Go client's
+        // scan/query executors.
+        let sleep_multiplier = policy.base_policy.sleep_multiplier();
+        let mut sleep_interval = policy.base_policy.sleep_between_retries();
         loop {
             let mut timed_out = false;
             {
@@ -1850,7 +2099,7 @@ impl Client {
                     drop(tracker_locked);
 
                     match futures::future::try_join_all(handles).await {
-                        Err(e) => err_recordset.err(Error::ClientError(e.to_string())).await,
+                        Err(e) => err_recordset.err(Error::client_error(e.to_string())).await,
                         #[cfg(feature = "rt-async-std")]
                         Ok(_) => (),
                         #[cfg(feature = "rt-tokio")]
@@ -1858,7 +2107,16 @@ impl Client {
                             for err in errs {
                                 match err {
                                     // Socket I/O errors now surface as Error::Connection (was Error::Io).
-                                    Err(Error::Timeout(_) | Error::Io(_) | Error::Connection(_)) => timed_out = true,
+                                    Err(e)
+                                        if matches!(
+                                            e.kind(),
+                                            ErrorKind::Timeout
+                                                | ErrorKind::Io(_)
+                                                | ErrorKind::Connection
+                                        ) =>
+                                    {
+                                        timed_out = true;
+                                    }
                                     Err(e) => {
                                         tracker.lock().await.partition_error().await;
                                         err_recordset.err(e).await;
@@ -1884,8 +2142,12 @@ impl Client {
                 _ => (),
             }
 
-            if let Some(sleep_between_retries) = policy.base_policy.sleep_between_retries() {
-                sleep(sleep_between_retries).await;
+            if let Some(interval) = sleep_interval {
+                sleep(interval).await;
+                sleep_interval = Some(crate::policy::next_retry_interval(
+                    interval,
+                    sleep_multiplier,
+                ));
             }
 
             recordset.reset_task_id();
@@ -2514,8 +2776,8 @@ impl Client {
             crate::AuthMode::Internal(u, _) | crate::AuthMode::External(u, _) if u == user => {
                 AdminCommand::change_password(policy, &cluster, user, password).await
             }
-            crate::AuthMode::PKI => Err(Error::ClientError(
-                "Can't change PKI user's password".into(),
+            crate::AuthMode::PKI => Err(Error::client_error(
+                "Can't change PKI user's password",
             )),
             _ => AdminCommand::set_password(policy, &cluster, user, password).await,
         }
@@ -2977,7 +3239,7 @@ impl Client {
         });
 
         if !RE.is_match(response) {
-            return Error::ServerError(ResultCode::ServerError, false, response.into());
+            return Error::server_error(ResultCode::ServerError, response, None);
         }
 
         // 'm' is a 'Match', and 'as_str()' returns the matching part of the haystack.
@@ -2994,7 +3256,7 @@ impl Client {
             })
             .unwrap();
 
-        Error::ServerError(parts.0, false, parts.1.into())
+        Error::server_error(parts.0, parts.1, None)
     }
 
     /// Commit a multi-record transaction (MRT). This will verify record versions,
@@ -3010,7 +3272,7 @@ impl Client {
     ///
     /// # Returns
     /// `CommitStatus` indicating the outcome of the commit operation on success,
-    /// or `Error::CommitFailed` with per-key records and an `in_doubt` flag on
+    /// or `ErrorKind::Commit` with per-key records and an `in_doubt` flag on
     /// failure.
     pub async fn commit(&self, txn: &Arc<Txn>) -> Result<CommitStatus> {
         self.commit_with_policies(
@@ -3043,10 +3305,10 @@ impl Client {
             }
             TxnState::Verified => tr.commit(roll_policy).await,
             TxnState::Committed => Ok(CommitStatus::AlreadyCommitted),
-            TxnState::Aborted => Err(Error::ServerError(
+            TxnState::Aborted => Err(Error::server_error(
                 ResultCode::MrtAborted,
-                false,
                 "Transaction already aborted".to_string(),
+                None,
             )),
         }
     }
@@ -3078,10 +3340,10 @@ impl Client {
 
         match txn.state() {
             TxnState::Open | TxnState::Verified => tr.abort(roll_policy).await,
-            TxnState::Committed => Err(Error::ServerError(
+            TxnState::Committed => Err(Error::server_error(
                 ResultCode::MrtCommitted,
-                false,
                 "Transaction already committed".to_string(),
+                None,
             )),
             TxnState::Aborted => Ok(AbortStatus::AlreadyAborted),
         }

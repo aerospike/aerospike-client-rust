@@ -92,7 +92,7 @@ end
 "#;
 
     let task = client
-        .register_udf(&apolicy, udf_body.as_bytes(), "test_udf.lua", UDFLang::Lua)
+        .register_udf(&apolicy, udf_body.as_bytes(), "batch_read_echo.lua", UDFLang::Lua)
         .await
         .unwrap();
     task.wait_till_complete(None).await.unwrap();
@@ -247,13 +247,13 @@ end
     let args3 = vec![as_val!(3)];
     let args4 = vec![as_val!(4)];
     let batch = vec![
-        BatchOperation::udf(&bpu, key1.clone(), "test_udf", "echo", Some(args1)),
-        BatchOperation::udf(&bpu, key2.clone(), "test_udf", "echo", Some(args2)),
-        BatchOperation::udf(&bpu, key3.clone(), "test_udf", "echo", Some(args3)),
+        BatchOperation::udf(&bpu, key1.clone(), "batch_read_echo", "echo", Some(args1)),
+        BatchOperation::udf(&bpu, key2.clone(), "batch_read_echo", "echo", Some(args2)),
+        BatchOperation::udf(&bpu, key3.clone(), "batch_read_echo", "echo", Some(args3)),
         BatchOperation::udf(
             &bpu,
             key4.clone(),
-            "test_udf",
+            "batch_read_echo",
             "echo_not_exists",
             Some(args4),
         ),
@@ -574,7 +574,7 @@ async fn batch_single_key_fast_path_delete() {
 // The property test `proptests::batches::batch_delete` clamps some policy fields on SC so the
 // fuzzer does not send illegal or inconsistent deletes. These tests document the real server
 // outcomes for fixed policies. On the fast path, `FailForbidden` / `GenerationError` bubble as
-// top-level `Err(Error::ServerError(..))` (see `BatchExecutor::execute_single_op`).
+// a per-key server error (see `BatchExecutor::execute_single_op`).
 
 #[aerospike_macro::test]
 async fn batch_sc_delete_non_durable_forbidden_when_record_exists() {
@@ -604,7 +604,7 @@ async fn batch_sc_delete_non_durable_forbidden_when_record_exists() {
         .batch(&bp, &[BatchOperation::delete(&bpd, key.clone())])
         .await;
     match res {
-        Err(Error::ServerError(ResultCode::FailForbidden, _, _)) => {}
+        Err(e) if e.server_result_code() == Some(ResultCode::FailForbidden) => {}
         other => panic!(
             "expected FailForbidden for non-durable delete on SC when record exists, got {:?}",
             other
@@ -652,7 +652,7 @@ async fn batch_sc_delete_generation_mismatch_errors() {
         .batch(&bp, &[BatchOperation::delete(&bpd, key.clone())])
         .await;
     match res {
-        Err(Error::ServerError(ResultCode::GenerationError, _, _)) => {}
+        Err(e) if e.server_result_code() == Some(ResultCode::GenerationError) => {}
         other => panic!(
             "expected GenerationError for ExpectGenEqual with wrong generation on SC, got {:?}",
             other
@@ -990,7 +990,364 @@ async fn batch_stream_mixed_ops_preserve_index_and_kind() {
     assert_eq!(after_write.bins.get("w"), Some(&Value::from(42_i64)));
 
     match client.get(&rp, &key_delete, Bins::All).await {
-        Err(Error::ServerError(ResultCode::KeyNotFoundError, _, _)) => {}
+        Err(e) if e.server_result_code() == Some(ResultCode::KeyNotFoundError) => {}
         other => panic!("delete didn't take effect; got: {:?}", other),
     }
+}
+
+// Identical writes/UDF records over a shared (cloned) op list encode with
+// the wire REPEAT flag after the first record. This proves the server
+// accepts the compressed encoding and applies the repeated header to every
+// digest: all records must succeed and all keys must hold the data.
+#[aerospike_macro::test]
+async fn batch_write_repeat_compression() {
+    let client = common::client().await;
+    let namespace = common::namespace();
+    let set_name = common::rand_str(10);
+    let bpolicy = BatchPolicy::default();
+    let wpolicy = BatchWritePolicy::default();
+
+    let ops = vec![
+        operations::put(&as_bin!("a", 7)),
+        lists::append(&lists::ListPolicy::default(), "l", as_val!(1)),
+    ];
+
+    let mut batch = Vec::new();
+    let mut keys = Vec::new();
+    for i in 0..8_i64 {
+        let key = as_key!(namespace, &set_name, i);
+        keys.push(key.clone());
+        // Cloned op list => every record after the first repeats.
+        batch.push(BatchOperation::write(&wpolicy, key, ops.clone()));
+    }
+
+    let results = client.batch(&bpolicy, &batch).await.unwrap();
+    assert_eq!(results.len(), 8);
+    for record in &results {
+        assert_eq!(
+            record.result_code,
+            Some(ResultCode::Ok),
+            "repeated batch write failed: {record:?}"
+        );
+    }
+
+    let rp = ReadPolicy::default();
+    for key in &keys {
+        let rec = client.get(&rp, key, Bins::All).await.unwrap();
+        assert_eq!(rec.bins.get("a"), Some(&Value::from(7_i64)));
+        assert_eq!(rec.bins.get("l"), Some(&as_list!(1)));
+    }
+
+    client.close().await.unwrap();
+}
+
+// ---- unroutable keys ------------------------------------------------------
+
+#[aerospike_macro::test]
+async fn batch_records_unroutable_key_without_failing_the_batch() {
+    // One key naming a namespace this cluster does not have used to abort the
+    // whole call: the splitter propagated the routing error with `?`, so
+    // ninety-nine good keys were discarded because of one bad one. Java's
+    // `BatchNodeList.generate` writes the error onto that key's record and
+    // keeps going, which is what this pins.
+    let client = common::client().await;
+    let namespace: &str = common::namespace();
+    let set_name = &common::rand_str(10);
+    let bpolicy = BatchPolicy::default();
+    let wpolicy = WritePolicy::default();
+    let bpr = BatchReadPolicy::default();
+
+    let good1 = as_key!(namespace, set_name, 1);
+    let good2 = as_key!(namespace, set_name, 2);
+    let bad = as_key!("no_such_namespace_here", set_name, 3);
+
+    let bin = as_bin!("a", 42);
+    client.put(&wpolicy, &good1, &[bin.clone()]).await.unwrap();
+    client.put(&wpolicy, &good2, &[bin.clone()]).await.unwrap();
+
+    // Bad key in the middle, so a fix that merely reorders would not pass.
+    let batch = vec![
+        BatchOperation::read(&bpr, good1.clone(), Bins::All),
+        BatchOperation::read(&bpr, bad.clone(), Bins::All),
+        BatchOperation::read(&bpr, good2.clone(), Bins::All),
+    ];
+
+    let records = client
+        .batch(&bpolicy, &batch)
+        .await
+        .expect("one unroutable key must not fail the whole batch");
+
+    // Input order is preserved, including the row that never left the client.
+    assert_eq!(records.len(), 3);
+    assert_eq!(records[0].key, good1);
+    assert_eq!(records[1].key, bad);
+    assert_eq!(records[2].key, good2);
+
+    // The reachable keys were read.
+    for i in [0, 2] {
+        assert_eq!(
+            records[i].result_code,
+            Some(ResultCode::Ok),
+            "good key at {i} should have succeeded: {:?}",
+            records[i]
+        );
+        assert_eq!(
+            records[i].record.as_ref().unwrap().bins.get("a"),
+            Some(&as_val!(42))
+        );
+    }
+
+    // The unroutable key carries its own error and no record.
+    assert_eq!(records[1].result_code, Some(ResultCode::InvalidNamespace));
+    assert!(records[1].record.is_none());
+    assert!(!records[1].in_doubt, "nothing was sent, so nothing is in doubt");
+
+    client.close().await.unwrap();
+}
+
+#[aerospike_macro::test]
+async fn batch_fails_when_no_key_can_be_routed() {
+    // The other half of the Java rule: with nothing routable there is no batch
+    // to send, so the call fails outright rather than returning rows that were
+    // never attempted.
+    let client = common::client().await;
+    let set_name = &common::rand_str(10);
+    let bpolicy = BatchPolicy::default();
+    let bpr = BatchReadPolicy::default();
+
+    let batch = vec![
+        BatchOperation::read(&bpr, as_key!("no_such_namespace_here", set_name, 1), Bins::All),
+        BatchOperation::read(&bpr, as_key!("also_missing", set_name, 2), Bins::All),
+    ];
+
+    let err = client
+        .batch(&bpolicy, &batch)
+        .await
+        .expect_err("a batch with no routable key must fail");
+    assert!(
+        matches!(err.kind(), ErrorKind::InvalidNamespace),
+        "expected the routing failure itself, got {err:?}"
+    );
+
+    client.close().await.unwrap();
+}
+
+#[aerospike_macro::test]
+async fn batch_write_to_unroutable_key_is_not_in_doubt() {
+    // A write that was never sent cannot have been applied, so it must not be
+    // marked in-doubt — that mark is what makes a later MRT commit degrade to
+    // an abort.
+    let client = common::client().await;
+    let namespace: &str = common::namespace();
+    let set_name = &common::rand_str(10);
+    let bpolicy = BatchPolicy::default();
+    let bpw = BatchWritePolicy::default();
+
+    let good = as_key!(namespace, set_name, 1);
+    let bad = as_key!("no_such_namespace_here", set_name, 2);
+    let bin = as_bin!("a", 7);
+    let wops = vec![operations::put(&bin)];
+
+    let batch = vec![
+        BatchOperation::write(&bpw, bad.clone(), wops.clone()),
+        BatchOperation::write(&bpw, good.clone(), wops.clone()),
+    ];
+
+    let records = client.batch(&bpolicy, &batch).await.expect("partial batch");
+    assert_eq!(records.len(), 2);
+
+    assert_eq!(records[0].result_code, Some(ResultCode::InvalidNamespace));
+    assert!(records[0].has_write());
+    assert!(!records[0].in_doubt);
+
+    assert_eq!(records[1].result_code, Some(ResultCode::Ok));
+    // The reachable write really landed.
+    let stored = client
+        .get(&ReadPolicy::default(), &good, Bins::All)
+        .await
+        .unwrap();
+    assert_eq!(stored.bins.get("a"), Some(&as_val!(7)));
+
+    client.close().await.unwrap();
+}
+
+#[aerospike_macro::test]
+async fn batch_stream_emits_unroutable_key_with_its_error() {
+    // The streaming splitter shares `get_batch_operate_nodes` with the
+    // buffered path, so it has to emit the unroutable row too — otherwise the
+    // stream silently yields fewer items than the caller had keys, and the
+    // index-to-key mapping the caller relies on has a hole in it.
+    use futures::stream::StreamExt;
+
+    let client = common::client().await;
+    let ns = common::namespace();
+    let set = &common::rand_str(10);
+    let wpolicy = WritePolicy::default();
+
+    let good = as_key!(ns, set, "stream_good");
+    let bad = as_key!("no_such_namespace_here", set, "stream_bad");
+    client
+        .put(&wpolicy, &good, &[as_bin!("x", 1_i64)])
+        .await
+        .unwrap();
+
+    let bp = BatchPolicy::default();
+    let bpr = BatchReadPolicy::default();
+    // Index 0 = unroutable, index 1 = reachable.
+    let ops = vec![
+        BatchOperation::read(&bpr, bad.clone(), Bins::All),
+        BatchOperation::read(&bpr, good.clone(), Bins::All),
+    ];
+
+    let mut stream = client.batch_stream(&bp, ops).await.unwrap();
+    let mut got: Vec<(usize, BatchRecord)> = Vec::new();
+    while let Some(item) = stream.next().await {
+        got.push(item);
+    }
+
+    // Every input key is accounted for, in whatever order they completed.
+    assert_eq!(got.len(), 2, "stream dropped a key: {got:?}");
+
+    let (_, unroutable) = got
+        .iter()
+        .find(|(idx, _)| *idx == 0)
+        .expect("index 0 in stream");
+    assert_eq!(unroutable.key, bad);
+    assert_eq!(unroutable.result_code, Some(ResultCode::InvalidNamespace));
+    assert!(unroutable.record.is_none());
+
+    let (_, reachable) = got
+        .iter()
+        .find(|(idx, _)| *idx == 1)
+        .expect("index 1 in stream");
+    assert_eq!(reachable.key, good);
+    assert_eq!(reachable.result_code, Some(ResultCode::Ok));
+    assert!(reachable.record.is_some());
+
+    client.close().await.unwrap();
+}
+
+// ---- per-row error detail -------------------------------------------------
+
+#[aerospike_macro::test]
+async fn batch_row_error_carries_server_subcode_and_message() {
+    // A failing row used to report only its result code: the parse path
+    // returned before reading the row body, which is where the server puts its
+    // explanation, and BatchRecord had nowhere to keep it. Single-key commands
+    // have always surfaced both.
+    use aerospike::operations::hll;
+
+    let client = common::client().await;
+    let namespace: &str = common::namespace();
+    let set_name = &common::rand_str(10);
+
+    let supported = match client.cluster.nodes().first() {
+        Some(node) => node.version().supports_extended_error_detail(),
+        None => false,
+    };
+    if !supported {
+        eprintln!("skipping: cluster predates extended error detail (8.1.3)");
+        client.close().await.unwrap();
+        return;
+    }
+
+    let mut bpolicy = BatchPolicy::default();
+    bpolicy.base_policy.error_detail_verbosity = 2;
+    let bpw = BatchWritePolicy::default();
+    let wpolicy = WritePolicy::default();
+
+    let good = as_key!(namespace, set_name, 1);
+    let bad = as_key!(namespace, set_name, 2);
+    client
+        .put(&wpolicy, &good, &[as_bin!("a", 1)])
+        .await
+        .unwrap();
+    // The failing row: an HLL op against a bin that holds no HLL.
+    client
+        .put(&wpolicy, &bad, &[as_bin!("other-bin", 1)])
+        .await
+        .unwrap();
+
+    let good_ops = vec![operations::put(&as_bin!("a", 2))];
+    let batch = vec![
+        BatchOperation::write(&bpw, good.clone(), good_ops),
+        BatchOperation::write(
+            &bpw,
+            bad.clone(),
+            vec![hll::refresh_count("no-hll-bin")],
+        ),
+    ];
+
+    let records = match client.batch(&bpolicy, &batch).await {
+        Ok(records) => records,
+        // A row error may surface as a batch-level failure carrying the rows.
+        Err(err) => match err.kind() {
+            ErrorKind::BatchFailed { records } => records.clone(),
+            other => panic!("unexpected batch failure {other:?}: {err}"),
+        },
+    };
+    assert_eq!(records.len(), 2);
+
+    // The healthy row is untouched and carries no detail.
+    assert_eq!(records[0].result_code, Some(ResultCode::Ok));
+    assert_eq!(records[0].sub_code(), 0);
+    assert!(records[0].server_message().is_none());
+
+    // The failing row now explains itself.
+    assert_eq!(records[1].result_code, Some(ResultCode::BinNotFound));
+    assert!(
+        records[1].sub_code() >= 1,
+        "expected a server subcode on the failing row, got {:?}",
+        records[1]
+    );
+    let message = records[1]
+        .server_message()
+        .expect("expected a server message on the failing row");
+    assert!(
+        message.to_lowercase().contains("count op"),
+        "unexpected server message: {message:?}"
+    );
+
+    client.close().await.unwrap();
+}
+
+#[aerospike_macro::test]
+async fn batch_row_error_detail_absent_at_verbosity_zero() {
+    // The default asks for nothing, so nothing should arrive — the result code
+    // still identifies the failure.
+    use aerospike::operations::hll;
+
+    let client = common::client().await;
+    let namespace: &str = common::namespace();
+    let set_name = &common::rand_str(10);
+
+    let bpolicy = BatchPolicy::default();
+    assert_eq!(bpolicy.base_policy.error_detail_verbosity, 0);
+    let bpw = BatchWritePolicy::default();
+    let key = as_key!(namespace, set_name, 1);
+    client
+        .put(&WritePolicy::default(), &key, &[as_bin!("other-bin", 1)])
+        .await
+        .unwrap();
+
+    let batch = vec![BatchOperation::write(
+        &bpw,
+        key.clone(),
+        vec![hll::refresh_count("no-hll-bin")],
+    )];
+
+    let records = match client.batch(&bpolicy, &batch).await {
+        Ok(records) => records,
+        Err(err) => match err.kind() {
+            ErrorKind::BatchFailed { records } => records.clone(),
+            other => panic!("unexpected batch failure {other:?}: {err}"),
+        },
+    };
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0].result_code, Some(ResultCode::BinNotFound));
+    assert_eq!(records[0].sub_code(), 0, "verbosity 0 must not carry detail");
+    assert!(records[0].server_message().is_none());
+    assert!(records[0].error_detail().is_none());
+
+    client.close().await.unwrap();
 }

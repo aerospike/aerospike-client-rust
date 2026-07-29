@@ -750,6 +750,51 @@ Notes:
 - Only the `file://` scheme is built in; register others with
   `aerospike::config::register_provider`.
 
+### Stream UDF aggregation (client-side Lua)
+
+Aggregation queries (`Client::query_aggregate`) run a stream UDF's
+map/reduce pipeline split across the cluster and the client: each server
+node executes the server-scope operations and returns one partial result,
+and the client combines the partials by running the remaining operations
+(from the first `reduce` onward) in an embedded Lua 5.4 interpreter. The
+interpreter is only compiled in when the `lua` cargo feature is enabled:
+
+```toml
+[dependencies]
+aerospike = { version = "<version>", features = ["rt-tokio", "lua"] }
+```
+
+The UDF must be registered on the server **and** its source must be
+available to the client — either as `<package>.lua` in the directory set
+via `aerospike::lua::set_lua_path` (default `"udf"`), or registered
+in-memory with `aerospike::lua::register_package`:
+
+```rust
+use aerospike::*;
+use futures::StreamExt;
+
+aerospike::lua::set_lua_path("udf/"); // where my_package.lua lives
+
+let stmt = Statement::new("test", "test", Bins::All);
+let rs = client
+    .query_aggregate(
+        &QueryPolicy::default(),
+        stmt,
+        "my_package",
+        "sum_single_bin",
+        Some(&[as_val!("score")]),
+    )
+    .await?;
+
+let mut stream = rs.into_stream();
+while let Some(value) = stream.next().await {
+    println!("aggregation result: {:?}", value?);
+}
+```
+
+See [`examples/query_aggregate.rs`](./examples/query_aggregate.rs) for a
+complete working example, including the Lua UDF source.
+
 ## Feedback wanted
 
 We need your help with:

@@ -25,12 +25,12 @@ mod batch;
 mod cdt_bitwise;
 mod cdt_list;
 mod cdt_map;
-mod cleanup;
 mod cluster;
 mod compression;
 mod connection_seed;
 #[cfg(feature = "dynamic-config")]
 mod dynamic_config;
+mod examples;
 mod exp;
 mod exp_bitwise;
 mod exp_hll;
@@ -44,9 +44,13 @@ mod kv;
 mod metrics;
 mod path_expressions;
 mod query;
+#[cfg(feature = "lua")]
+mod query_aggregate;
+mod value_order;
 mod scan;
 #[cfg(feature = "serialization")]
 mod serialization;
+mod server_error;
 mod string;
 mod task;
 mod truncate;

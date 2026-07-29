@@ -12,8 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::collections::hash_map::Entry::{Occupied, Vacant};
-use std::collections::HashMap;
+use indexmap::map::Entry::{Occupied, Vacant};
+use crate::IndexMap;
 use std::sync::Arc;
 
 use crate::cluster::partition::Partition;
@@ -83,7 +83,7 @@ impl<'a> ReadCommand<'a> {
         generation: u32,
         expiration: u32,
     ) -> Result<(Record, Option<u64>)> {
-        let mut bins: HashMap<String, Value> = HashMap::with_capacity(op_count);
+        let mut bins: IndexMap<String, Value> = IndexMap::with_capacity(op_count);
         // Populate `Record.results` when either the calling command forces
         // it (operate paths) OR the policy opts in (`populate_positional_results`).
         // Rust-core users default to off; PAC/PSDK opt in via policy.
@@ -214,7 +214,7 @@ impl Command for ReadCommand<'_> {
                 let (record, version) = if self.bins.is_none() {
                     let version = conn.buffer.parse_fields_for_version(field_count);
                     (
-                        Record::new(None, HashMap::new(), None, generation, expiration),
+                        Record::new(None, IndexMap::new(), None, generation, expiration),
                         version,
                     )
                 } else {
@@ -240,9 +240,19 @@ impl Command for ReadCommand<'_> {
                     .bins
                     .get("FAILURE")
                     .map_or_else(|| String::from("UDF Error"), ToString::to_string);
-                Err(Error::UdfBadResponse(reason))
+                Err(Error::udf_bad_response(reason))
             }
-            rc => Err(Error::ServerError(rc, false, conn.addr.clone())),
+            rc => {
+                // Walk the response fields on the error path too, so any
+                // extended server error detail is surfaced (the server may
+                // attach it to KEY_NOT_FOUND / FILTERED_OUT responses).
+                let error_detail = conn.buffer.parse_response_fields(field_count).error_detail;
+                Err(Error::server_error(
+                    rc,
+                    conn.addr.clone(),
+                    error_detail,
+                ))
+            }
         }
     }
 }

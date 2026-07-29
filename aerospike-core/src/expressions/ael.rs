@@ -13,11 +13,6 @@
 // License for the specific language governing permissions and limitations under
 // the License.
 
-//! Server-compiled textual AEL for filter field **43** (`[128, "<utf-8>"]`).
-//!
-//! Used on legacy paths when field **44** two-phase selection is not selected.
-//! Requires server ≥ 8.1.3 ([`crate::Version::supports_server_compiled_ael`]).
-
 use crate::commands::buffer::Buffer;
 use crate::msgpack::encoder::{pack_array_begin, pack_integer, pack_raw_string};
 use crate::Result;
@@ -51,7 +46,7 @@ pub fn pack_ael_server_filter(ael: &str) -> Result<Expression> {
     pack_raw_string(&mut opt, ael);
 
     buf.data_buffer.truncate(buf.data_offset);
-    Ok(from_packed_bytes(buf.data_buffer))
+    Ok(from_packed_bytes(std::mem::take(&mut buf.data_buffer)))
 }
 
 #[cfg(test)]

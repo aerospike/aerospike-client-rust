@@ -31,7 +31,18 @@ impl<'a> Parser<'a> {
 
     pub fn read_hosts(&self) -> Result<Vec<Host>> {
         static RE: LazyLock<Regex> = LazyLock::new(|| {
-            Regex::new(r"^(((\[(?P<ipv6>(\S+))\])|(?P<ipv4>((\d{1,3})(\.\d{1,3}){3}))|(?P<host>([\S--:]+)))(:(?P<tls>[\S--[\d:]][\S--:]*))?(:(?P<port>(\d{1,5})))?)$")
+            // The tail after the host is disambiguated positionally, trying
+            // the alternatives in order:
+            //   1. `:tls:port` — the port slot is occupied, so the tls name
+            //      may be ANY non-colon token, even purely numeric.
+            //   2. `:port`     — a purely numeric last token is a port.
+            //   3. `:tls`      — otherwise a last token that is not purely
+            //      numeric (optional digits, then at least one non-digit) is
+            //      a tls name. This permits digit-first TLS names such as
+            //      Aerospike Cloud's UUID-style hostnames (`6072bb5c-….internal`).
+            // (`tls`/`tls2` and `port`/`port2` are coalesced below — the
+            // regex crate does not allow duplicate group names.)
+            Regex::new(r"^((\[(?P<ipv6>\S+)\])|(?P<ipv4>(\d{1,3})(\.\d{1,3}){3})|(?P<host>[\S--:]+))((:(?P<tls>[\S--:]+):(?P<port>\d{1,5}))|(:(?P<port2>\d{1,5}))|(:(?P<tls2>\d*[\S--[\d:]][\S--:]*)))?$")
             .unwrap()
         });
 
@@ -40,7 +51,7 @@ impl<'a> Parser<'a> {
         let sne = self.s.split(',');
         for s in sne {
             if !RE.is_match(s) {
-                return Err(Error::ClientError(format!("Could not parse `{s}`")));
+                return Err(Error::client_error(format!("Could not parse `{s}`")));
             }
 
             // 'm' is a 'Match', and 'as_str()' returns the matching part of the haystack.
@@ -54,9 +65,13 @@ impl<'a> Parser<'a> {
                         _ => unreachable!(),
                     };
                     let host = host.as_str().into();
-                    let tls = caps.name("tls").map(|tls| tls.as_str().into());
+                    let tls = caps
+                        .name("tls")
+                        .or_else(|| caps.name("tls2"))
+                        .map(|tls| tls.as_str().into());
                     let port = caps
                         .name("port")
+                        .or_else(|| caps.name("port2"))
                         .map_or_else(|| format!("{}", self.default_port), |p| p.as_str().into());
                     (host, tls, port)
                 })
@@ -95,6 +110,22 @@ mod tests {
         assert_eq!(
             vec![Host::new_tls("foo", "bar", 1234)],
             Parser::new("foo:bar:1234", 3000).read_hosts().unwrap()
+        );
+        // In the three-part form the middle token is positionally the tls
+        // name, so even a purely numeric one is accepted.
+        assert_eq!(
+            vec![Host::new_tls("foo", "999", 1234)],
+            Parser::new("foo:999:1234", 3000).read_hosts().unwrap()
+        );
+        // Digit-first (but not purely numeric) tls name in the two-part form.
+        assert_eq!(
+            vec![Host::new_tls("foo", "6abc.example.com", 3000)],
+            Parser::new("foo:6abc.example.com", 3000).read_hosts().unwrap()
+        );
+        // A purely numeric LAST token is always a port.
+        assert_eq!(
+            vec![Host::new("foo", 999)],
+            Parser::new("foo:999", 3000).read_hosts().unwrap()
         );
         assert_eq!(
             vec![Host::new("foo", 1234), Host::new("bar", 1234)],

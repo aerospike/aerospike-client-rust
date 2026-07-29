@@ -278,7 +278,7 @@ impl Txn {
     /// Verify that the transaction state allows future commands.
     pub fn verify_command(&self) -> Result<()> {
         if *self.state.read().unwrap() != TxnState::Open {
-            return Err(Error::ClientError(
+            return Err(Error::client_error(
                 "Issuing commands to this transaction is forbidden because it has been ended by a commit or abort".to_string(),
             ));
         }
@@ -295,7 +295,7 @@ impl Txn {
                 Ok(())
             }
             Some(existing) if existing == ns => Ok(()),
-            Some(existing) => Err(Error::ClientError(format!(
+            Some(existing) => Err(Error::client_error(format!(
                 "Namespace must be the same for all commands in the Transaction. orig: {existing} new: {ns}"
             ))),
         }

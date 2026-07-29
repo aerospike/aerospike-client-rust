@@ -87,7 +87,7 @@ end
     let res = client
         .execute_udf(&wpolicy, &key, "test_udf1", "func_div", Some(&[as_val!(2)]))
         .await;
-    if let Ok(Some(Value::HashMap(values))) = res {
+    if let Ok(Some(Value::OrderedMap(values))) = res {
         assert_eq!(values.get(&as_val!("status")), Some(&as_val!("OK")));
         assert_eq!(values.get(&as_val!("res")), Some(&as_val!(5)));
     } else {
@@ -97,10 +97,14 @@ end
     let res = client
         .execute_udf(&wpolicy, &key, "test_udf1", "no_such_function", None)
         .await;
-    if let Err(Error::UdfBadResponse(response)) = res {
-        assert_eq!(response, "function not found".to_string());
-    } else {
-        panic!("UDF function did not return the expected error");
+    match res {
+        Err(e) if matches!(e.kind(), aerospike::ErrorKind::UdfBadResponse) => {
+            assert!(
+                e.to_string().contains("function not found"),
+                "unexpected UDF error: {e}"
+            );
+        }
+        other => panic!("UDF function did not return the expected error: {other:?}"),
     }
 
     client.close().await.unwrap();

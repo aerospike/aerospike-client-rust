@@ -13,27 +13,93 @@
 // License for the specific language governing permissions and limitations under
 // the License.
 
+use std::future::Future;
 use std::pin::Pin;
 use std::str;
 use std::sync::Arc;
-use std::task::{Context, Poll};
+#[cfg(feature = "rt-tokio")]
+use std::sync::LazyLock;
 use std::vec::Vec;
 
 use crate::expressions::Expression;
 use aerospike_core::errors::Result;
 use aerospike_core::operations::{CdtContext, Operation};
 use aerospike_core::query::PartitionFilter;
+use aerospike_core::txn::{AbortStatus, CommitStatus, Txn};
 use aerospike_core::DropIndexTask;
 use aerospike_core::UdfRemoveTask;
 use aerospike_core::{
     AdminPolicy, BatchOperation, BatchPolicy, BatchRecord, Bin, Bins, ClientPolicy,
     CollectionIndexType, ExecuteTask, IndexTask, IndexType, Key, Node, Privilege, QueryPolicy,
-    ReadPolicy, Record, Recordset, RegisterTask, Role, Statement, ToHosts, UDFLang, User, Value,
-    WritePolicy,
+    ReadPolicy, Record, Recordset, RegisterTask, Role, Statement, ToHosts, TxnRollPolicy,
+    TxnVerifyPolicy, UDFLang, User, Value, WritePolicy,
 };
-use futures::executor::block_on;
-use futures::task::noop_waker;
 use futures::Stream;
+
+#[cfg(feature = "rt-tokio")]
+static SYNC_RT: LazyLock<tokio::runtime::Runtime> = LazyLock::new(|| {
+    tokio::runtime::Builder::new_multi_thread()
+        // Every blocking call funnels through this runtime, and the
+        // client's background tasks (cluster tend, query workers) live
+        // here too — give it a few workers, but don't take over the host.
+        .worker_threads(
+            std::thread::available_parallelism()
+                .map(|n| n.get().min(4))
+                .unwrap_or(1),
+        )
+        .enable_all()
+        .thread_name("aerospike-sync-rt")
+        .build()
+        .expect("aerospike: failed to build sync runtime")
+});
+
+/// Drive a client future to completion from blocking code.
+///
+/// The future ALWAYS runs on the dedicated [`SYNC_RT`] runtime — never on
+/// a caller's ambient runtime. This matters beyond style: client calls
+/// spawn background tasks (cluster tend on connect, per-node query
+/// workers, …), and tasks spawned while a future runs bind to the runtime
+/// driving it. If that were a caller's runtime, those tasks would silently
+/// die when the caller's runtime shuts down, poisoning the shared client
+/// for everyone else.
+#[cfg(feature = "rt-tokio")]
+fn block_on<F>(f: F) -> F::Output
+where
+    F: Future + Send,
+    F::Output: Send,
+{
+    use tokio::runtime::{Handle, RuntimeFlavor};
+
+    match Handle::try_current() {
+        // Inside a multi-thread runtime: blocking this worker thread is
+        // permitted once marked with `block_in_place`; the future itself
+        // still runs on SYNC_RT.
+        Ok(h) if h.runtime_flavor() == RuntimeFlavor::MultiThread => {
+            tokio::task::block_in_place(|| SYNC_RT.block_on(f))
+        }
+        // Inside a current-thread runtime: this thread may not block at
+        // all (it IS the runtime), so hop to a scoped helper thread.
+        Ok(_) => std::thread::scope(|s| {
+            s.spawn(|| SYNC_RT.block_on(f))
+                .join()
+                .expect("aerospike sync bridge thread panicked")
+        }),
+        // Plain thread, no ambient runtime: block right here.
+        Err(_) => SYNC_RT.block_on(f),
+    }
+}
+
+/// Drive a client future to completion from blocking code.
+///
+/// Uses async-std's own `block_on` so the future runs on async-std's
+/// global executor — the same one `aerospike_rt::spawn` targets. A
+/// foreign executor (e.g. `futures::executor`) must not be used here: it
+/// cannot drive async-std's IO and timers, so waiting on them would
+/// deadlock or busy-spin.
+#[cfg(feature = "rt-async-std")]
+fn block_on<F: Future>(f: F) -> F::Output {
+    async_std::task::block_on(f)
+}
 
 /// Blocking iterator over the items emitted by
 /// [`Client::batch_stream`]. Each [`Iterator::next`] call returns the
@@ -41,10 +107,10 @@ use futures::Stream;
 /// produces one; iteration ends once every per-node task has
 /// finished and the underlying stream is closed.
 ///
-/// The iterator follows the same try-then-yield pattern used by
-/// [`Recordset`]: non-blocking poll of the underlying stream, and
-/// `std::thread::yield_now()` while the stream is still pending so
-/// the runtime's worker threads can keep producing.
+/// Each `next()` drives the underlying stream through the crate's
+/// [`block_on`] bridge: the calling thread parks with a real waker and
+/// is woken exactly when an item (or the end of the stream) arrives —
+/// no polling loop, no busy CPU while waiting.
 pub struct BatchStream {
     inner: Pin<Box<dyn Stream<Item = (usize, BatchRecord)> + Send>>,
 }
@@ -53,20 +119,8 @@ impl Iterator for BatchStream {
     type Item = (usize, BatchRecord);
 
     fn next(&mut self) -> Option<Self::Item> {
-        // A no-op waker is fine here: when `poll_next` returns
-        // `Pending`, the stream registers our waker as interested,
-        // but we never act on the wake — we just spin-yield until the
-        // next poll has data. The runtime's worker threads are doing
-        // the real work; we only need to release the OS thread.
-        let waker = noop_waker();
-        let mut cx = Context::from_waker(&waker);
-
-        loop {
-            match self.inner.as_mut().poll_next(&mut cx) {
-                Poll::Ready(item) => return item, // Some(item) or None (stream ended)
-                Poll::Pending => std::thread::yield_now(),
-            }
-        }
+        use futures::StreamExt;
+        block_on(self.inner.next())
     }
 }
 
@@ -120,14 +174,30 @@ impl Client {
     ///
     /// ```rust,edition2021
     /// use aerospike_sync::{Client, ClientPolicy};
-    /// # let rt = tokio::runtime::Runtime::new().unwrap();
-    /// # let _guard = rt.enter();
     ///
     /// let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap_or_else(|_| "127.0.0.1:3000".to_string());
     /// let client = Client::new(&ClientPolicy::default(), &hosts).unwrap();
     /// ```
     pub fn new(policy: &ClientPolicy, hosts: &(dyn ToHosts + Send + Sync)) -> Result<Self> {
         let client = block_on(aerospike_core::Client::new(policy, hosts))?;
+        Ok(Client {
+            async_client: client,
+        })
+    }
+
+    /// Initializes the client like [`new`](Self::new) and attaches a dynamic
+    /// configuration provider (e.g.
+    /// [`YamlFileProvider`](aerospike_core::config::YamlFileProvider)) whose
+    /// policy overrides are applied at runtime.
+    #[cfg(feature = "dynamic-config")]
+    pub fn new_with_config(
+        policy: &ClientPolicy,
+        hosts: &(dyn ToHosts + Send + Sync),
+        provider: Arc<dyn aerospike_core::config::ConfigProvider>,
+    ) -> Result<Self> {
+        let client = block_on(aerospike_core::Client::new_with_config(
+            policy, hosts, provider,
+        ))?;
         Ok(Client {
             async_client: client,
         })
@@ -144,6 +214,12 @@ impl Client {
         self.async_client.is_connected()
     }
 
+    /// Returns this client library's version string (e.g. `"3.0.0-alpha.1"`).
+    #[must_use]
+    pub const fn client_version() -> &'static str {
+        aerospike_core::Client::client_version()
+    }
+
     /// Returns a list of the names of the active server nodes in the cluster.
     pub fn node_names(&self) -> Vec<String> {
         self.async_client.node_names()
@@ -153,6 +229,18 @@ impl Client {
     pub fn get_node(&self, name: &str) -> Result<Arc<Node>> {
         self.async_client.get_node(name)
     }
+
+    /// Send info commands to a randomly selected cluster node and return
+    /// the parsed key/value response. The map preserves the server's
+    /// response order — one entry per command, in request order.
+    pub fn info(
+        &self,
+        policy: &AdminPolicy,
+        commands: &[&str],
+    ) -> Result<aerospike_core::IndexMap<String, String>> {
+        block_on(self.async_client.info(policy, commands))
+    }
+
 
     /// Returns a list of active server nodes in the cluster.
     pub fn nodes(&self) -> Vec<Arc<Node>> {
@@ -169,8 +257,6 @@ impl Client {
     ///
     /// ```rust,edition2021
     /// # use aerospike_sync::*;
-    /// # let rt = tokio::runtime::Runtime::new().unwrap();
-    /// # let _guard = rt.enter();
     ///
     /// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap_or_else(|_| "127.0.0.1:3000".to_string());
     /// # let client = Client::new(&ClientPolicy::default(), &hosts).unwrap();
@@ -178,7 +264,7 @@ impl Client {
     /// match client.get(&ReadPolicy::default(), &key, ["a", "b"]) {
     ///     Ok(record)
     ///         => println!("a={:?}", record.bins.get("a")),
-    ///     Err(Error::ServerError(ResultCode::KeyNotFoundError, _, _))
+    ///     Err(e) if e.server_result_code() == Some(ResultCode::KeyNotFoundError)
     ///         => println!("No such record: {}", key),
     ///     Err(err)
     ///         => println!("Error fetching record: {}", err),
@@ -189,8 +275,6 @@ impl Client {
     ///
     /// ```rust,edition2021
     /// # use aerospike_sync::*;
-    /// # let rt = tokio::runtime::Runtime::new().unwrap();
-    /// # let _guard = rt.enter();
     ///
     /// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap_or_else(|_| "127.0.0.1:3000".to_string());
     /// # let client = Client::new(&ClientPolicy::default(), &hosts).unwrap();
@@ -202,7 +286,7 @@ impl Client {
     ///             Some(duration) => println!("ttl: {} secs", duration.as_secs()),
     ///         }
     ///     },
-    ///     Err(Error::ServerError(ResultCode::KeyNotFoundError, _, _))
+    ///     Err(e) if e.server_result_code() == Some(ResultCode::KeyNotFoundError)
     ///         => println!("No such record: {}", key),
     ///     Err(err)
     ///         => println!("Error fetching record: {}", err),
@@ -230,8 +314,6 @@ impl Client {
     ///
     /// ```rust,edition2021
     /// # use aerospike_sync::*;
-    /// # let rt = tokio::runtime::Runtime::new().unwrap();
-    /// # let _guard = rt.enter();
     ///
     /// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap_or_else(|_| "127.0.0.1:3000".to_string());
     /// # let client = Client::new(&ClientPolicy::default(), &hosts).unwrap();
@@ -284,8 +366,6 @@ impl Client {
     ///
     /// ```rust,no_run
     /// # use aerospike_sync::*;
-    /// # let rt = tokio::runtime::Runtime::new().unwrap();
-    /// # let _guard = rt.enter();
     /// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap_or_else(|_| "127.0.0.1:3000".to_string());
     /// # let client = Client::new(&ClientPolicy::default(), &hosts).unwrap();
     /// let key = as_key!("test", "test", 1);
@@ -314,8 +394,6 @@ impl Client {
     ///
     /// ```rust,edition2021
     /// # use aerospike_sync::*;
-    /// # let rt = tokio::runtime::Runtime::new().unwrap();
-    /// # let _guard = rt.enter();
     ///
     /// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap_or_else(|_| "127.0.0.1:3000".to_string());
     /// # let client = Client::new(&ClientPolicy::default(), &hosts).unwrap();
@@ -331,8 +409,6 @@ impl Client {
     ///
     /// ```rust,edition2021
     /// # use aerospike_sync::*;
-    /// # let rt = tokio::runtime::Runtime::new().unwrap();
-    /// # let _guard = rt.enter();
     ///
     /// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap_or_else(|_| "127.0.0.1:3000".to_string());
     /// # let client = Client::new(&ClientPolicy::default(), &hosts).unwrap();
@@ -359,8 +435,6 @@ impl Client {
     ///
     /// ```rust,edition2021
     /// # use aerospike_sync::*;
-    /// # let rt = tokio::runtime::Runtime::new().unwrap();
-    /// # let _guard = rt.enter();
     ///
     /// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap_or_else(|_| "127.0.0.1:3000".to_string());
     /// # let client = Client::new(&ClientPolicy::default(), &hosts).unwrap();
@@ -405,8 +479,6 @@ impl Client {
     ///
     /// ```rust,edition2021
     /// # use aerospike_sync::*;
-    /// # let rt = tokio::runtime::Runtime::new().unwrap();
-    /// # let _guard = rt.enter();
     ///
     /// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap_or_else(|_| "127.0.0.1:3000".to_string());
     /// # let client = Client::new(&ClientPolicy::default(), &hosts).unwrap();
@@ -430,8 +502,6 @@ impl Client {
     ///
     /// ```rust,edition2021
     /// # use aerospike_sync::*;
-    /// # let rt = tokio::runtime::Runtime::new().unwrap();
-    /// # let _guard = rt.enter();
     ///
     /// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap_or_else(|_| "127.0.0.1:3000".to_string());
     /// # let client = Client::new(&ClientPolicy::default(), &hosts).unwrap();
@@ -465,8 +535,6 @@ impl Client {
     ///
     /// ```rust,edition2021
     /// # use aerospike_sync::*;
-    /// # let rt = tokio::runtime::Runtime::new().unwrap();
-    /// # let _guard = rt.enter();
     ///
     /// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap_or_else(|_| "127.0.0.1:3000".to_string());
     /// # let client = Client::new(&ClientPolicy::default(), &hosts).unwrap();
@@ -498,8 +566,6 @@ impl Client {
     ///
     /// ```rust,edition2021
     /// # use aerospike_sync::*;
-    /// # let rt = tokio::runtime::Runtime::new().unwrap();
-    /// # let _guard = rt.enter();
     ///
     /// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap_or_else(|_| "127.0.0.1:3000".to_string());
     /// # let client = Client::new(&ClientPolicy::default(), &hosts).unwrap();
@@ -596,8 +662,6 @@ impl Client {
     ///
     /// ```rust,edition2021
     /// # use aerospike_sync::*;
-    /// # let rt = tokio::runtime::Runtime::new().unwrap();
-    /// # let _guard = rt.enter();
     ///
     /// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap_or_else(|_| "127.0.0.1:3000".to_string());
     /// # let client = Client::new(&ClientPolicy::default(), &hosts).unwrap();
@@ -622,6 +686,33 @@ impl Client {
         statement: Statement,
     ) -> Result<Arc<Recordset>> {
         block_on(self.async_client.query(policy, partition_filter, statement))
+    }
+
+    /// Execute a stream UDF aggregation query and return a
+    /// [`aerospike_core::query::ResultSet`] with the aggregated values
+    /// (requires the `lua` feature).
+    ///
+    /// The client-side portion of the UDF runs in an embedded Lua
+    /// interpreter; the UDF source must be available locally — see
+    /// [`aerospike_core::lua::set_lua_path`] and
+    /// [`aerospike_core::lua::register_package`]. Iterate the returned set
+    /// with its blocking `Iterator` impl (`for value in rs.as_ref() { … }`).
+    #[cfg(feature = "lua")]
+    pub fn query_aggregate(
+        &self,
+        policy: &QueryPolicy,
+        statement: Statement,
+        package_name: &str,
+        function_name: &str,
+        function_args: Option<&[Value]>,
+    ) -> Result<Arc<aerospike_core::query::ResultSet>> {
+        block_on(self.async_client.query_aggregate(
+            policy,
+            statement,
+            package_name,
+            function_name,
+            function_args,
+        ))
     }
 
     /// Execute a query and apply operations to matching records on the server.
@@ -662,7 +753,7 @@ impl Client {
     /// Sets XDR filter for given datacenter name and namespace. The expression filter indicates
     /// which records XDR should ship to the datacenter.
     /// Pass nil as filter to remove the current filter on the server.
-    pub async fn set_xdr_filter(
+    pub fn set_xdr_filter(
         &self,
         policy: &AdminPolicy,
         datacenter: &str,
@@ -710,16 +801,13 @@ impl Client {
     ///
     /// ```rust,edition2021
     /// # use aerospike_sync::*;
-    /// # let rt = tokio::runtime::Runtime::new().unwrap();
-    /// # let _guard = rt.enter();
     ///
     /// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap_or_else(|_| "127.0.0.1:3000".to_string());
     /// # let client = Client::new(&ClientPolicy::default(), &hosts).unwrap();
-    /// // Returns a Future; use futures::executor::block_on or similar from sync code.
     /// let _ = client.create_index_on_bin(&AdminPolicy::default(), "foo", "bar", "baz",
     ///     "idx_foo_bar_baz", IndexType::Numeric, CollectionIndexType::Default, None);
     /// ```
-    pub async fn create_index_on_bin(
+    pub fn create_index_on_bin(
         &self,
         policy: &AdminPolicy,
         namespace: &str,
@@ -753,17 +841,14 @@ impl Client {
     /// ```rust,edition2021
     /// # use aerospike_sync::*;
     /// # use aerospike_sync::expressions::{Expression, eq, int_bin, int_val};
-    /// # let rt = tokio::runtime::Runtime::new().unwrap();
-    /// # let _guard = rt.enter();
     ///
     /// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap_or_else(|_| "127.0.0.1:3000".to_string());
     /// # let client = Client::new(&ClientPolicy::default(), &hosts).unwrap();
     /// let fe: Expression = eq(int_bin("a".to_string()), int_val(500));
-    /// // Returns a Future; use futures::executor::block_on or similar from sync code.
     /// let _ = client.create_index_using_expression(&AdminPolicy::default(), "foo", "bar",
     ///     "idx_foo_bar_baz", IndexType::Numeric, CollectionIndexType::Default, &fe);
     /// ```
-    pub async fn create_index_using_expression(
+    pub fn create_index_using_expression(
         &self,
         policy: &AdminPolicy,
         namespace: &str,
@@ -800,7 +885,7 @@ impl Client {
 
     /// Creates a new user with password and roles. Clear-text password will be hashed using bcrypt
     /// before sending to server.
-    pub async fn create_user(
+    pub fn create_user(
         &self,
         policy: &AdminPolicy,
         user: &str,
@@ -811,50 +896,35 @@ impl Client {
     }
 
     /// Removes a user from the cluster.
-    pub async fn drop_user(&self, policy: &AdminPolicy, user: &str) -> Result<()> {
+    pub fn drop_user(&self, policy: &AdminPolicy, user: &str) -> Result<()> {
         block_on(self.async_client.drop_user(policy, user))
     }
 
     /// Changes a user's password. Clear-text password will be hashed using bcrypt before sending to server.
-    pub async fn change_password(
-        &self,
-        policy: &AdminPolicy,
-        user: &str,
-        password: &str,
-    ) -> Result<()> {
+    pub fn change_password(&self, policy: &AdminPolicy, user: &str, password: &str) -> Result<()> {
         block_on(self.async_client.change_password(policy, user, password))
     }
 
     /// Adds roles to user's list of roles.
-    pub async fn grant_roles(
-        &self,
-        policy: &AdminPolicy,
-        user: &str,
-        roles: &[&str],
-    ) -> Result<()> {
+    pub fn grant_roles(&self, policy: &AdminPolicy, user: &str, roles: &[&str]) -> Result<()> {
         block_on(self.async_client.grant_roles(policy, user, roles))
     }
 
     /// Removes roles from user's list of roles.
-    pub async fn revoke_roles(
-        &self,
-        policy: &AdminPolicy,
-        user: &str,
-        roles: &[&str],
-    ) -> Result<()> {
+    pub fn revoke_roles(&self, policy: &AdminPolicy, user: &str, roles: &[&str]) -> Result<()> {
         block_on(self.async_client.revoke_roles(policy, user, roles))
     }
 
     // Retrieves users and their roles.
     // If None is passed for the user argument, all users will be returned.
-    pub async fn query_users(&self, policy: &AdminPolicy, user: Option<&str>) -> Result<Vec<User>> {
+    pub fn query_users(&self, policy: &AdminPolicy, user: Option<&str>) -> Result<Vec<User>> {
         block_on(self.async_client.query_users(policy, user))
     }
 
     /// Creates a user-defined role.
     /// Quotas require server security configuration "enable-quotas" to be set to true.
     /// Pass 0 for quota values for no limit.
-    pub async fn create_role(
+    pub fn create_role(
         &self,
         policy: &AdminPolicy,
         role_name: &str,
@@ -875,17 +945,17 @@ impl Client {
 
     /// Retrieves roles and their privileges.
     /// If None is passed for the role argument, all roles will be returned.
-    pub async fn query_roles(&self, policy: &AdminPolicy, role: Option<&str>) -> Result<Vec<Role>> {
+    pub fn query_roles(&self, policy: &AdminPolicy, role: Option<&str>) -> Result<Vec<Role>> {
         block_on(self.async_client.query_roles(policy, role))
     }
 
     /// Removes a user-defined role.
-    pub async fn drop_role(&self, policy: &AdminPolicy, role_name: &str) -> Result<()> {
+    pub fn drop_role(&self, policy: &AdminPolicy, role_name: &str) -> Result<()> {
         block_on(self.async_client.drop_role(policy, role_name))
     }
 
     /// Grants privileges to a user-defined role.
-    pub async fn grant_privileges(
+    pub fn grant_privileges(
         &self,
         policy: &AdminPolicy,
         role_name: &str,
@@ -898,7 +968,7 @@ impl Client {
     }
 
     /// Revokes privileges from a user-defined role.
-    pub async fn revoke_privileges(
+    pub fn revoke_privileges(
         &self,
         policy: &AdminPolicy,
         role_name: &str,
@@ -912,7 +982,7 @@ impl Client {
 
     /// Sets IP address allowlist for a role.
     /// If allowlist is nil or empty, it removes existing allowlist from role.
-    pub async fn set_allowlist(
+    pub fn set_allowlist(
         &self,
         policy: &AdminPolicy,
         role_name: &str,
@@ -928,7 +998,7 @@ impl Client {
     /// If a quota is zero, the limit is removed.
     /// Quotas require server security configuration "enable-quotas" to be set to true.
     /// Pass 0 for quota values for no limit.
-    pub async fn set_quotas(
+    pub fn set_quotas(
         &self,
         policy: &AdminPolicy,
         role_name: &str,
@@ -939,5 +1009,108 @@ impl Client {
             self.async_client
                 .set_quotas(policy, role_name, read_quota, write_quota),
         )
+    }
+
+    /// Creates a PKI user on the cluster: authentication is via client
+    /// certificate, so no password is stored for the user.
+    pub fn create_pki_user(&self, policy: &AdminPolicy, user: &str, roles: &[&str]) -> Result<()> {
+        block_on(self.async_client.create_pki_user(policy, user, roles))
+    }
+
+    /// Commit a multi-record transaction (MRT) with default verify/roll
+    /// policies. See [`aerospike_core::Client::commit`].
+    pub fn commit(&self, txn: &Arc<Txn>) -> Result<CommitStatus> {
+        block_on(self.async_client.commit(txn))
+    }
+
+    /// Commit a multi-record transaction with explicit verify and roll policies.
+    pub fn commit_with_policies(
+        &self,
+        verify_policy: &TxnVerifyPolicy,
+        roll_policy: &TxnRollPolicy,
+        txn: &Arc<Txn>,
+    ) -> Result<CommitStatus> {
+        block_on(
+            self.async_client
+                .commit_with_policies(verify_policy, roll_policy, txn),
+        )
+    }
+
+    /// Abort a multi-record transaction (MRT) with the default roll policy.
+    /// See [`aerospike_core::Client::abort`].
+    pub fn abort(&self, txn: &Arc<Txn>) -> Result<AbortStatus> {
+        block_on(self.async_client.abort(txn))
+    }
+
+    /// Abort a multi-record transaction with an explicit roll policy.
+    pub fn abort_with_policy(
+        &self,
+        roll_policy: &TxnRollPolicy,
+        txn: &Arc<Txn>,
+    ) -> Result<AbortStatus> {
+        block_on(self.async_client.abort_with_policy(roll_policy, txn))
+    }
+
+    /// Enable metrics collection with the given policy.
+    /// See [`aerospike_core::Client::enable_metrics`].
+    pub fn enable_metrics(&self, policy: aerospike_core::MetricsPolicy) {
+        self.async_client.enable_metrics(policy);
+    }
+
+    /// Disable metrics collection.
+    pub fn disable_metrics(&self) {
+        self.async_client.disable_metrics();
+    }
+
+    /// Whether metrics collection is currently enabled.
+    pub fn metrics_enabled(&self) -> bool {
+        self.async_client.metrics_enabled()
+    }
+
+    /// Snapshot of the cluster-wide metrics.
+    pub fn metrics(&self) -> aerospike_core::ClusterMetrics {
+        self.async_client.metrics()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Duration;
+
+    /// A BatchStream over a hand-built stream (no server, no items
+    /// needed): the empty stream must terminate immediately and stay
+    /// terminated.
+    #[test]
+    fn batch_stream_over_empty_stream_ends_immediately() {
+        let mut bs = BatchStream {
+            inner: Box::pin(futures::stream::iter(Vec::<(usize, BatchRecord)>::new())),
+        };
+        assert!(bs.next().is_none());
+        assert!(bs.next().is_none());
+    }
+
+    /// The parked-consumer edge case: `next()` must genuinely park (not
+    /// spin) and be woken when the producing side closes the channel.
+    /// Uses an async_channel receiver as the stream — the same channel
+    /// family the real batch executor uses.
+    #[test]
+    fn batch_stream_parked_next_wakes_when_producer_closes() {
+        let (tx, rx) = async_channel::bounded::<(usize, BatchRecord)>(4);
+        let mut bs = BatchStream { inner: Box::pin(rx) };
+
+        let (done_tx, done_rx) = std::sync::mpsc::channel();
+        let consumer = std::thread::spawn(move || {
+            let item = bs.next(); // parks: channel empty, still open
+            let _ = done_tx.send(item.is_none());
+        });
+
+        std::thread::sleep(Duration::from_millis(100));
+        drop(tx); // producer goes away -> channel closes -> stream ends
+        let ended_clean = done_rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("parked BatchStream::next was not woken by channel close");
+        assert!(ended_clean, "expected None once the producer closed");
+        consumer.join().unwrap();
     }
 }

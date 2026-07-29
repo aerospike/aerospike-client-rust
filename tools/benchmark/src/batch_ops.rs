@@ -1,4 +1,4 @@
-// Copyright 2015-2018 Aerospike, Inc.
+// Copyright 2015-2026 Aerospike, Inc.
 //
 // Portions may be licensed to Aerospike, Inc. under one or more contributor
 // license agreements.
@@ -13,23 +13,44 @@
 // License for the specific language governing permissions and limitations under
 // the License.
 
+use std::sync::Arc;
+
 use rand::rngs::StdRng;
 
 use aerospike::operations;
-use aerospike::{BatchOperation, BatchReadPolicy, Bin, Bins, Key};
+use aerospike::{BatchOperation, BatchReadPolicy, Bin, Bins, Key, Value};
 
 use crate::args::Args;
 
+/// Build batch-read operations for `keys`. When `namespaces` is non-empty
+/// the key namespaces round-robin over it (`--batch-namespaces`, Java
+/// parity).
 pub(crate) fn build_batch_read_ops(
     keys: &[Key],
     brpolicy: &BatchReadPolicy,
     bins: Bins,
+    namespaces: &[Arc<str>],
     out: &mut Vec<BatchOperation>,
 ) {
     out.clear();
     out.reserve(keys.len());
-    for k in keys {
-        out.push(BatchOperation::read(brpolicy, k.clone(), bins.clone()));
+    for (i, k) in keys.iter().enumerate() {
+        let key = if namespaces.is_empty() {
+            k.clone()
+        } else {
+            let ns = &namespaces[i % namespaces.len()];
+            rekey(k, ns)
+        };
+        out.push(BatchOperation::read(brpolicy, key, bins.clone()));
+    }
+}
+
+/// Rebuild a key in another namespace (same set and user key).
+fn rekey(key: &Key, namespace: &Arc<str>) -> Key {
+    match key.user_key.as_ref() {
+        Some(Value::Int(v)) => as_key!(namespace.as_ref(), key.set_name.as_str(), *v),
+        Some(Value::String(s)) => as_key!(namespace.as_ref(), key.set_name.as_str(), s.as_str()),
+        _ => key.clone(),
     }
 }
 

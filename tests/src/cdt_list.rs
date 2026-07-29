@@ -16,10 +16,12 @@
 use crate::common;
 
 use aerospike::operations;
+use aerospike::operations::cdt_context::ctx_map_key;
 use aerospike::operations::lists;
 use aerospike::operations::lists::{
     ListOrderType, ListPolicy, ListReturnType, ListSortFlags, ListWriteFlags,
 };
+use aerospike::operations::maps;
 use aerospike::{as_bin, as_key, as_list, as_val, as_values, Bins, ReadPolicy, Value, WritePolicy};
 
 #[aerospike_macro::test]
@@ -734,6 +736,32 @@ async fn cdt_list_create_persistent_top_level() {
     assert_eq!(
         *rec.bins.get("bin").unwrap(),
         Value::MultiResult(vec![as_val!(1), as_val!(2), as_val!(3), as_list!(1, 2, 3)])
+    );
+
+    // Nested create: the order flag is OR'd into the last ctx element
+    // (Java CDT.init wire format), so the ctx may address a not-yet-existing
+    // map key. Create an ordered list at bin.sub, append out of order, and
+    // verify the server keeps it sorted.
+    let key2 = as_key!(namespace, set_name, "create_nested");
+    common::delete_durably(&client, &wpolicy, &key2)
+        .await
+        .unwrap();
+
+    let mpolicy = aerospike::MapPolicy::default();
+    let op = maps::put(&mpolicy, "bin", as_val!("key1"), as_val!(1));
+    client.operate(&wpolicy, &key2, &[op]).await.unwrap();
+
+    let ctx = vec![ctx_map_key(as_val!("sub"))];
+    let ops = &vec![
+        lists::create("bin", ListOrderType::Ordered, false).context(ctx.clone()),
+        lists::append(&lpolicy, "bin", as_val!(3)).context(ctx.clone()),
+        lists::append(&lpolicy, "bin", as_val!(1)).context(ctx.clone()),
+        lists::get_range_from("bin", 0).context(ctx.clone()),
+    ];
+    let rec = client.operate(&wpolicy, &key2, ops).await.unwrap();
+    assert_eq!(
+        *rec.bins.get("bin").unwrap(),
+        Value::MultiResult(vec![as_val!(1), as_val!(2), as_list!(1, 3)])
     );
 
     client.close().await.unwrap();

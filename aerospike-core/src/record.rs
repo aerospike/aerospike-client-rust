@@ -16,9 +16,10 @@
 #[cfg(feature = "serialization")]
 use serde::Serialize;
 
-use std::collections::HashMap;
 use std::fmt;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+use crate::IndexMap;
 
 use crate::Key;
 use crate::Value;
@@ -35,8 +36,8 @@ pub struct Record {
     /// Record struct.
     pub key: Option<Key>,
 
-    /// Map of named record bins.
-    pub bins: HashMap<String, Value>,
+    /// Map of named record bins, in the order the server returned them.
+    pub bins: IndexMap<String, Value>,
 
     /// Positional op results in request order; `None` on non-operate paths.
     /// Nil-result ops carry `Value::Nil` so indices line up with the op list.
@@ -53,7 +54,7 @@ impl Record {
     /// Construct a new Record. For internal use only.
     pub(crate) const fn new(
         key: Option<Key>,
-        bins: HashMap<String, Value>,
+        bins: IndexMap<String, Value>,
         results: Option<Vec<Value>>,
         generation: u32,
         expiration: u32,
@@ -115,7 +116,7 @@ impl fmt::Display for Record {
 #[cfg(test)]
 mod tests {
     use super::{Record, CITRUSLEAF_EPOCH};
-    use std::collections::HashMap;
+    use crate::IndexMap;
     use std::time::{Duration, SystemTime};
 
     #[test]
@@ -125,7 +126,7 @@ mod tests {
             .duration_since(*CITRUSLEAF_EPOCH)
             .unwrap()
             .as_secs();
-        let record = Record::new(None, HashMap::new(), None, 0, secs_since_epoch as u32);
+        let record = Record::new(None, IndexMap::new(), None, 0, secs_since_epoch as u32);
         let ttl = record.time_to_live();
         assert!(ttl.is_some());
         assert!(1000 - ttl.unwrap().as_secs() <= 1);
@@ -133,13 +134,13 @@ mod tests {
 
     #[test]
     fn ttl_expiration_past() {
-        let record = Record::new(None, HashMap::new(), None, 0, 0x0d00_d21c);
+        let record = Record::new(None, IndexMap::new(), None, 0, 0x0d00_d21c);
         assert_eq!(record.time_to_live(), Some(Duration::new(1u64, 0)));
     }
 
     #[test]
     fn ttl_never_expires() {
-        let record = Record::new(None, HashMap::new(), None, 0, 0);
+        let record = Record::new(None, IndexMap::new(), None, 0, 0);
         assert_eq!(record.time_to_live(), None);
     }
 
@@ -152,9 +153,12 @@ mod tests {
             Value::Nil,
             Value::Int(2),
         ];
-        let record = Record::new(None, HashMap::new(), Some(results), 0, 0);
+        let record = Record::new(None, IndexMap::new(), Some(results), 0, 0);
         assert_eq!(record.operation_result(0), Some(&Value::Int(5)));
-        assert_eq!(record.operation_result(1), Some(&Value::String("ell".to_string())));
+        assert_eq!(
+            record.operation_result(1),
+            Some(&Value::String("ell".to_string()))
+        );
         assert_eq!(record.operation_result(2), Some(&Value::Nil));
         assert_eq!(record.operation_result(3), Some(&Value::Int(2)));
         assert_eq!(record.operation_result(4), None);
@@ -162,7 +166,7 @@ mod tests {
 
     #[test]
     fn operation_result_returns_none_when_not_populated() {
-        let record = Record::new(None, HashMap::new(), None, 0, 0);
+        let record = Record::new(None, IndexMap::new(), None, 0, 0);
         assert_eq!(record.operation_result(0), None);
     }
 }

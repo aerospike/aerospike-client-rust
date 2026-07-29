@@ -21,6 +21,7 @@ pub use self::connection_pool::PooledConnection;
 pub use self::host::Host;
 pub use self::host::ToHosts;
 
+pub mod buffer_pool;
 mod connection;
 mod connection_pool;
 pub mod host;

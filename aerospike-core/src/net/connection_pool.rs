@@ -42,6 +42,9 @@ struct SharedQueue {
     /// Per-node metrics sink. Connection-lifecycle counters are recorded here
     /// (no-op when metrics are disabled). `None` in unit tests.
     metrics: Option<Arc<NodeMetrics>>,
+    /// The owning cluster's tiered buffer pool; attached to every
+    /// connection this queue creates. `None` when pooling is disabled.
+    buffer_pool: Option<Arc<crate::net::buffer_pool::TieredBufferPool>>,
 }
 
 #[derive(Debug)]
@@ -54,6 +57,7 @@ impl Queue {
         host: Host,
         policy: ClientPolicy,
         metrics: Option<Arc<NodeMetrics>>,
+        buffer_pool: Option<Arc<crate::net::buffer_pool::TieredBufferPool>>,
     ) -> Self {
         let hashed_pass = policy.hashed_pass();
         let shared = SharedQueue {
@@ -65,6 +69,7 @@ impl Queue {
             hashed_pass,
             session: Mutex::new(None),
             metrics,
+            buffer_pool,
         };
         Queue(Arc::new(shared))
     }
@@ -134,8 +139,9 @@ impl Queue {
             metrics.incr_connections_attempt();
         }
 
+        // Bounds the whole establishment (TCP connect + TLS + auth).
         let result = aerospike_rt::timeout(
-            self.0.policy.timeout(),
+            self.0.policy.connect_timeout(),
             Connection::new_with_session(
                 &self.0.host,
                 &self.0.policy,
@@ -146,7 +152,10 @@ impl Queue {
         .await;
 
         match result {
-            Ok(Ok((conn, fresh_session))) => {
+            Ok(Ok((mut conn, fresh_session))) => {
+                if let Some(pool) = &self.0.buffer_pool {
+                    conn.attach_buffer_pool(pool.clone());
+                }
                 if let Some(s) = fresh_session {
                     let mut guard = self
                         .0
@@ -165,7 +174,7 @@ impl Queue {
                 if let Some(metrics) = self.metrics() {
                     metrics.incr_connections_failed(false);
                 }
-                Err(Error::Connection(
+                Err(Error::connection(
                     "Could not open network connection".to_string(),
                 ))
             }
@@ -174,7 +183,7 @@ impl Queue {
                 if let Some(metrics) = self.metrics() {
                     metrics.incr_connections_failed(true);
                 }
-                Err(Error::Connection(
+                Err(Error::connection(
                     "Could not open network connection".to_string(),
                 ))
             }
@@ -203,7 +212,7 @@ impl Queue {
                     continue;
                 }
                
-                // A server restart leaves the pool full of dead sockets 
+                // A server restart leaves the pool full of dead sockets
                 // that get handed out and fail on the first read
                 if !conn.is_alive() {
                     drop(conn);
@@ -213,7 +222,7 @@ impl Queue {
                 connection = conn;
                 break;
             }
-            return Err(Error::NoMoreConnections);
+            return Err(Error::no_more_connections());
         }
         Ok(PooledConnection {
             queue: self.clone(),
@@ -317,11 +326,22 @@ pub struct ConnectionPool {
 }
 
 impl ConnectionPool {
-    pub fn new(host: Host, policy: ClientPolicy, metrics: Option<Arc<NodeMetrics>>) -> Self {
+    pub fn new(
+        host: Host,
+        policy: ClientPolicy,
+        metrics: Option<Arc<NodeMetrics>>,
+        buffer_pool: Option<Arc<crate::net::buffer_pool::TieredBufferPool>>,
+    ) -> Self {
         let num_conns = policy.max_conns_per_node;
         let num_queues = policy.conn_pools_per_node;
-        let queues =
-            ConnectionPool::initialize_queues(num_conns, num_queues, host, policy, metrics);
+        let queues = ConnectionPool::initialize_queues(
+            num_conns,
+            num_queues,
+            host,
+            policy,
+            metrics,
+            buffer_pool,
+        );
         ConnectionPool { num_queues, queues }
     }
 
@@ -331,6 +351,7 @@ impl ConnectionPool {
         host: Host,
         policy: ClientPolicy,
         metrics: Option<Arc<NodeMetrics>>,
+        buffer_pool: Option<Arc<crate::net::buffer_pool::TieredBufferPool>>,
     ) -> Vec<Queue> {
         let num_queues = usize::from(num_queues);
         let max = num_conns / num_queues;
@@ -347,6 +368,7 @@ impl ConnectionPool {
                 host.clone(),
                 policy.clone(),
                 metrics.clone(),
+                buffer_pool.clone(),
             ));
         }
         queues
@@ -371,7 +393,8 @@ impl ConnectionPool {
                 if i >= self.queues.len() {
                     i = 0;
                 }
-                if matches!(connection, Err(Error::NoMoreConnections)) {
+                if matches!(&connection, Err(e) if matches!(e.kind(), crate::ErrorKind::NoMoreConnections))
+                {
                     attempts -= 1;
                     if attempts > 0 {
                         continue;
@@ -414,9 +437,30 @@ impl ConnectionPool {
             }
         }
 
-        Err(Error::ClientError(
-            "Could not make a connection for the connection pool".into(),
+        Err(Error::client_error(
+            "Could not make a connection for the connection pool",
         ))
+    }
+
+    /// Reserves a connection slot on the first queue (starting from `hint`)
+    /// that has capacity, returning a clone of that queue. The caller owns the
+    /// reserved slot: it must eventually `put_back` a connection or call
+    /// `reduce_capacity`. Returns `None` when every queue is at capacity
+    /// (pool exhausted — all slots hold live or in-flight connections).
+    pub fn reserve_queue(&self, hint: usize) -> Option<Queue> {
+        let num_queues = usize::from(self.num_queues);
+        let mut i = hint % num_queues;
+        for _ in 0..num_queues {
+            let queue = &self.queues[i % num_queues];
+            i += 1;
+            if i >= self.queues.len() {
+                i = 0;
+            }
+            if queue.reserve_capacity() {
+                return Some(queue.clone());
+            }
+        }
+        None
     }
 
     /// Closes the connection pool and clears all the internal queues from connection,
@@ -573,7 +617,7 @@ mod tests {
         let host = Host::new("some-url", 30000);
         let policy = ClientPolicy::default();
 
-        let q = Queue::with_capacity(3, host.clone(), policy.clone(), None);
+        let q = Queue::with_capacity(3, host.clone(), policy.clone(), None, None);
         assert_eq!(q.num_conns(), 0);
         assert_eq!(q.reserved(), 0);
         assert_eq!(q.get().is_err(), true);
@@ -637,7 +681,7 @@ mod tests {
         let host = Host::new("some-url", 30000);
         let policy = ClientPolicy::default();
 
-        let p = ConnectionPool::new(host.clone(), policy.clone(), None);
+        let p = ConnectionPool::new(host.clone(), policy.clone(), None, None);
         assert_eq!(p.num_conns(), 0);
         assert_eq!(p.get(0).is_err(), true);
 
@@ -673,7 +717,7 @@ mod tests {
             ..ClientPolicy::default()
         };
 
-        let p = ConnectionPool::new(host.clone(), policy.clone(), None);
+        let p = ConnectionPool::new(host.clone(), policy.clone(), None, None);
         assert_eq!(p.num_conns(), 0);
         assert_eq!(p.get(0).is_err(), true);
 
@@ -807,7 +851,7 @@ mod tests {
             ..ClientPolicy::default()
         };
 
-        let q = Queue::with_capacity(3, host.clone(), policy.clone(), None);
+        let q = Queue::with_capacity(3, host.clone(), policy.clone(), None, None);
         let c = Connection::new(&host, &policy, None)
             .await
             .expect("creating dummy connection failed");
@@ -832,7 +876,7 @@ mod tests {
         let host = Host::new("some-url", 30000);
         let policy = ClientPolicy::default();
 
-        let q = Queue::with_capacity(2, host.clone(), policy.clone(), None);
+        let q = Queue::with_capacity(2, host.clone(), policy.clone(), None, None);
 
         let c1 = Connection::new(&host, &policy, None)
             .await
@@ -880,7 +924,7 @@ mod tests {
         let host = Host::new("some-url", 30000);
         let policy = ClientPolicy::default();
 
-        let p = ConnectionPool::new(host.clone(), policy.clone(), None);
+        let p = ConnectionPool::new(host.clone(), policy.clone(), None, None);
         assert_eq!(p.total_reserved(), 0);
 
         // make_conn returns a PooledConnection; dropping it returns the
@@ -916,7 +960,7 @@ mod tests {
             max_conns_per_node: 8,
             ..ClientPolicy::default()
         };
-        let p = ConnectionPool::new(host.clone(), policy.clone(), None);
+        let p = ConnectionPool::new(host.clone(), policy.clone(), None, None);
 
         {
             let mut pconn = p.make_conn(0).await.expect("make_conn failed");
@@ -936,7 +980,7 @@ mod tests {
             max_conns_per_node: 8,
             ..ClientPolicy::default()
         };
-        let p = ConnectionPool::new(host.clone(), policy.clone(), None);
+        let p = ConnectionPool::new(host.clone(), policy.clone(), None, None);
 
         {
             let pconn = p.make_conn(0).await.expect("make_conn failed");
@@ -962,7 +1006,7 @@ mod tests {
         };
 
         // Non-Ready path: nothing accumulates.
-        let buggy = ConnectionPool::new(host.clone(), policy.clone(), None);
+        let buggy = ConnectionPool::new(host.clone(), policy.clone(), None, None);
         for i in 0..min {
             let mut pconn = buggy.make_conn(i).await.expect("make_conn failed");
             pconn.set_state(ConnectionState::Writing);
@@ -971,13 +1015,44 @@ mod tests {
         assert_eq!(buggy.num_conns(), 0);
 
         // Ready path: pool reaches min in one pass.
-        let fixed = ConnectionPool::new(host.clone(), policy.clone(), None);
+        let fixed = ConnectionPool::new(host.clone(), policy.clone(), None, None);
         for i in 0..min {
             let pconn = fixed.make_conn(i).await.expect("make_conn failed");
             drop(pconn);
         }
         assert_eq!(fixed.total_reserved(), min, "Ready loop reaches min");
         assert_eq!(fixed.num_conns(), min);
+    }
+
+    #[aerospike_macro::test]
+    async fn reserve_queue_wraps_and_reports_exhausted() {
+        let host = Host::new("some-url", 30000);
+        let policy = ClientPolicy {
+            conn_pools_per_node: 2,
+            max_conns_per_node: 2, // 1 slot per queue
+            ..ClientPolicy::default()
+        };
+        let p = ConnectionPool::new(host, policy, None, None);
+
+        // Starting from hint 1: takes queue 1's only slot.
+        let q1 = p.reserve_queue(1).expect("queue 1 has capacity");
+        assert_eq!(p.total_reserved(), 1);
+
+        // Queue 1 is now full — the next reserve from the same hint must
+        // wrap around to queue 0.
+        let q0 = p.reserve_queue(1).expect("must wrap to queue 0");
+        assert_eq!(p.total_reserved(), 2);
+
+        // Every slot is reserved: the pool is exhausted.
+        assert!(
+            p.reserve_queue(0).is_none(),
+            "exhausted pool must not hand out reservations"
+        );
+
+        // Releasing a slot makes it reservable again.
+        q0.reduce_capacity();
+        assert!(p.reserve_queue(0).is_some());
+        q1.reduce_capacity();
     }
 
     // Tests the Drop/Closed path — Netsocket::TestDummy bypasses TCP so the
@@ -989,7 +1064,7 @@ mod tests {
             max_conns_per_node: 3,
             ..ClientPolicy::default()
         };
-        let p = ConnectionPool::new(host.clone(), policy.clone(), None);
+        let p = ConnectionPool::new(host.clone(), policy.clone(), None, None);
 
         for round in 0..10 {
             let mut c = p.make_conn(0).await.expect("make_conn failed");

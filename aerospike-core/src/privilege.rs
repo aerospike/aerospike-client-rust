@@ -127,7 +127,7 @@ impl TryFrom<u8> for PrivilegeCode {
             15 => Ok(PrivilegeCode::MaskingAdmin),
             16 => Ok(PrivilegeCode::ReadMasked),
             17 => Ok(PrivilegeCode::WriteMasked),
-            _ => Err(Error::BadResponse(format!("invalid privilege code {pc}"))),
+            _ => Err(Error::bad_response(format!("invalid privilege code {pc}"))),
         }
     }
 }
@@ -189,7 +189,7 @@ impl TryFrom<&str> for PrivilegeCode {
             "masking-admin" => Ok(PrivilegeCode::MaskingAdmin),
             "read-masked" => Ok(PrivilegeCode::ReadMasked),
             "write-masked" => Ok(PrivilegeCode::WriteMasked),
-            _ => Err(Error::BadResponse(format!("invalid privilege code {pc}"))),
+            _ => Err(Error::bad_response(format!("invalid privilege code {pc}"))),
         }
     }
 }

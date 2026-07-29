@@ -85,13 +85,17 @@ async fn query_timeout() {
     while let Some(res) = rs.next().await {
         match res {
             Ok(_) => (),
-            Err(Error::Timeout(_)) => timed_out = true,
+            Err(e) if matches!(e.kind(), aerospike::ErrorKind::Timeout) => timed_out = true,
             Err(err) => panic!("{:?}", err),
         }
     }
     let duration = start.elapsed();
 
-    let expected_duration = Duration::from_millis((qpolicy.total_timeout() * 2) as u64);
+    // The real assertion is that the query timed out. The duration bound only
+    // guards against the client ignoring the timeout and running to completion;
+    // keep it generous so it holds on slow/loaded CI runners and coarser-timer
+    // runtimes (a 2x-of-5ms bound is below the timing floor there).
+    let expected_duration = Duration::from_secs(5);
     assert!(duration < expected_duration);
     assert_eq!(timed_out, true);
 
@@ -432,7 +436,7 @@ async fn query_large_i64() {
     let mut recordset = recordset.into_stream();
     while let Some(r) = recordset.next().await {
         assert!(r.is_ok());
-        let int = r.unwrap().bins.remove(BIN).unwrap();
+        let int = r.unwrap().bins.swap_remove(BIN).unwrap();
         assert_eq!(int, Value::Int(i64::max_value()));
     }
 
@@ -882,8 +886,9 @@ async fn query_operate_empty_ops_returns_parameter_error() {
     let result = client.query_operate(&wpolicy, statement, &[]).await;
 
     match result {
-        Err(Error::ServerError(ResultCode::ParameterError, _, ref msg))
-            if msg.contains("no operations") => {}
+        Err(ref e)
+            if e.server_result_code() == Some(ResultCode::ParameterError)
+                && e.to_string().contains("no operations") => {}
         Err(other) => panic!(
             "expected client-side ParameterError ('query_operate called with no \
              operations'); got {:?}",

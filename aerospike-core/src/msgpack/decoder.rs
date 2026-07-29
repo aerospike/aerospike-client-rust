@@ -13,7 +13,9 @@
 // License for the specific language governing permissions and limitations under
 // the License.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::BTreeMap;
+
+use indexmap::IndexMap;
 use std::vec::Vec;
 
 use crate::commands::buffer::Buffer;
@@ -41,7 +43,7 @@ pub fn unpack_value_list(buf: &mut Buffer) -> Result<Value> {
 
 pub fn unpack_value_map(buf: &mut Buffer) -> Result<Value> {
     if buf.data_buffer.is_empty() {
-        return Ok(Value::from(HashMap::with_capacity(0)));
+        return Ok(Value::OrderedMap(IndexMap::new()));
     }
 
     let ltype: u8 = buf.read_u8(None);
@@ -105,14 +107,17 @@ fn unpack_map(buf: &mut Buffer, mut count: usize) -> Result<Value> {
 
     match order {
         MapOrder::Unordered => {
-            let mut map: HashMap<Value, Value> = HashMap::with_capacity(count);
+            // Decode into an insertion-ordered map so the pair order the
+            // server returned is preserved for the caller (a HashMap
+            // would scramble it).
+            let mut map: IndexMap<Value, Value> = IndexMap::with_capacity(count);
             for _ in 0..count {
                 let key = unpack_value(buf)?;
                 let val = unpack_value(buf)?;
                 map.insert(key, val);
             }
 
-            Ok(Value::from(map))
+            Ok(Value::OrderedMap(map))
         }
         MapOrder::KeyOrdered => {
             let mut map: BTreeMap<Value, Value> = BTreeMap::new();
@@ -122,7 +127,7 @@ fn unpack_map(buf: &mut Buffer, mut count: usize) -> Result<Value> {
                 map.insert(key, val);
             }
 
-            Ok(Value::OrderedMap(map))
+            Ok(Value::SortedMap(map))
         }
         MapOrder::KeyValueOrdered => {
             let mut list: Vec<(Value, Value)> = Vec::with_capacity(count);
@@ -141,23 +146,24 @@ fn unpack_blob(buf: &mut Buffer, count: usize) -> Result<Value> {
     let vtype = buf.read_u8(None);
     let count = count - 1;
 
-    match ParticleType::from(vtype) {
-        ParticleType::STRING => {
+    match ParticleType::try_from_u8(vtype) {
+        Some(ParticleType::STRING) => {
             let val = buf.read_str(count)?;
             Ok(Value::String(val))
         }
 
-        ParticleType::BLOB => Ok(Value::Blob(buf.read_blob(count))),
-        ParticleType::HLL => Ok(Value::HLL(buf.read_blob(count))),
+        Some(ParticleType::BLOB) => Ok(Value::Blob(buf.read_blob(count))),
+        Some(ParticleType::HLL) => Ok(Value::HLL(buf.read_blob(count))),
 
-        ParticleType::GEOJSON => {
+        Some(ParticleType::GEOJSON) => {
             let val = buf.read_str(count)?;
             Ok(Value::GeoJSON(val))
         }
 
-        _ => Err(Error::BadResponse(format!(
-            "Error while unpacking BLOB. Type-header with code `{vtype}` not recognized."
-        ))),
+        // A type header the client cannot interpret (e.g. a legacy
+        // language-specific serialization nested in a list or map):
+        // surface the raw bytes tagged with their wire code — read-only.
+        _ => Ok(Value::Unknown(vtype, buf.read_blob(count))),
     }
 }
 
@@ -254,7 +260,7 @@ pub fn unpack_value(buf: &mut Buffer) -> Result<Value> {
             let value = i16::from(obj_type) - 0xe0 - 32;
             Ok(Value::from(value))
         }
-        _ => Err(Error::BadResponse(format!(
+        _ => Err(Error::bad_response(format!(
             "Error unpacking value of type '{obj_type:x}'"
         ))),
     }

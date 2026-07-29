@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::collections::HashMap;
+use crate::IndexMap;
 use std::io::Read;
 use std::sync::Arc;
 
@@ -23,7 +23,7 @@ use crate::cluster::{Cluster, Node};
 use crate::commands::buffer::{self, Buffer};
 use crate::commands::field_type::FieldType;
 use crate::commands::Command;
-use crate::errors::{Error, Result};
+use crate::errors::{Error, ErrorKind, Result};
 use crate::net::{BufferedConn, Connection};
 use crate::query::{NodePartitions, Recordset};
 use crate::value::bytes_to_particle;
@@ -76,10 +76,10 @@ impl StreamCommand {
                 }
                 ResultCode::PartitionUnavailable => (),
                 _ => {
-                    return Err(Error::ServerError(
+                    return Err(Error::server_error(
                         result_code,
-                        false,
                         conn.conn.addr.clone(),
+                        None,
                     ));
                 }
             }
@@ -115,7 +115,7 @@ impl StreamCommand {
             return Ok((None, None, true));
         }
 
-        let mut bins: HashMap<String, Value> = HashMap::with_capacity(op_count);
+        let mut bins: IndexMap<String, Value> = IndexMap::with_capacity(op_count);
 
         for _ in 0..op_count {
             conn.read_buffer(8).await?;
@@ -189,20 +189,29 @@ impl StreamCommand {
     ) -> Result<(Key, Option<u64>)> {
         Self::parse_key_and_version(conn, field_count)
             .await
-            .map(|(key, bval, _version)| (key, bval))
+            .map(|(key, bval, _version, _detail)| (key, bval))
     }
 
     /// Parse key fields from batch/stream response, also extracting record version if present.
+    #[allow(clippy::type_complexity)]
     pub async fn parse_key_and_version(
         conn: &mut BufferedConn<'_>,
         field_count: usize,
-    ) -> Result<(Key, Option<u64>, Option<u64>)> {
+    ) -> Result<(
+        Key,
+        Option<u64>,
+        Option<u64>,
+        Option<Box<crate::ServerErrorDetail>>,
+    )> {
         let mut digest: [u8; 20] = [0; 20];
         let mut namespace: String = String::new();
         let mut set_name: String = String::new();
         let mut orig_key: Option<Value> = None;
         let mut bval = None;
         let mut version = None;
+        // A failing row carries the server's explanation as a field; without
+        // capturing it here the unknown-field arm below would skip it.
+        let mut error_detail: Option<Box<crate::ServerErrorDetail>> = None;
 
         for _ in 0..field_count {
             conn.read_buffer(4).await?;
@@ -241,6 +250,15 @@ impl StreamCommand {
                     ));
                     buf.skip(data_size);
                 }
+                x if x == FieldType::ErrorMessage as u8 && data_size > 0 => {
+                    let buf = conn.buffer();
+                    let start = buf.data_offset();
+                    if let Some(slice) = buf.data_buffer.get(start..start + data_size) {
+                        error_detail =
+                            crate::server_error::parse_error_detail(slice).map(Box::new);
+                    }
+                    conn.buffer().skip(data_size);
+                }
                 _ => {
                     // Skip unknown field types
                     conn.buffer().skip(data_size);
@@ -257,6 +275,7 @@ impl StreamCommand {
             },
             bval,
             version,
+            error_detail,
         ))
     }
 }
@@ -267,9 +286,15 @@ impl Command for StreamCommand {
         Some(&self.cluster)
     }
 
-    async fn write_timeout(&mut self, _conn: &mut Connection) -> Result<()> {
-        // should be implemented downstream
-        unreachable!()
+    async fn write_timeout(&mut self, conn: &mut Connection) -> Result<()> {
+        // Fill the header timeout bytes (22..26) from the partition
+        // tracker, exactly like the query wrapper — previously this was
+        // `unreachable!()` on the assumption that only `QueryCommand`
+        // drives a `StreamCommand`; implementing it here keeps any direct
+        // driver from panicking and from sending a zero timeout.
+        let server_timeout = self.recordset.tracker.lock().await.server_timeout();
+        conn.buffer.write_timeout(server_timeout);
+        Ok(())
     }
 
     async fn write_buffer(&mut self, conn: &mut Connection) -> Result<()> {
@@ -338,7 +363,7 @@ impl Command for StreamCommand {
                 let mut proto_buf = [0u8; 8];
                 decoder
                     .read_exact(&mut proto_buf)
-                    .map_err(|e| Error::ClientError(format!("Stream decompression error: {e}")))?;
+                    .map_err(|e| Error::client_error(format!("Stream decompression error: {e}")))?;
                 let inner_proto = u64::from_be_bytes(proto_buf);
                 let inner_size = (inner_proto & 0x0000_FFFF_FFFF_FFFF) as usize;
 
@@ -352,7 +377,7 @@ impl Command for StreamCommand {
 
                     match self.parse_stream(&mut inner_conn, inner_size).await {
                         Ok(stat) => status = stat,
-                        Err(e @ Error::ServerError(_, _, _)) => {
+                        Err(e) if matches!(e.kind(), ErrorKind::Server { .. }) => {
                             inner_conn.drain(inner_conn.conn.deadline()).await?;
                             return Err(e);
                         }
@@ -368,7 +393,7 @@ impl Command for StreamCommand {
                     conn.set_limit_body(size)?;
                     match self.parse_stream(&mut conn, size).await {
                         Ok(stat) => status = stat,
-                        Err(e @ Error::ServerError(_, _, _)) => {
+                        Err(e) if matches!(e.kind(), ErrorKind::Server { .. }) => {
                             conn.drain(conn.conn.deadline()).await?;
                             return Err(e);
                         }

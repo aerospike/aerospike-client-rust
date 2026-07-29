@@ -135,6 +135,14 @@ async fn substr_from_and_range_and_negative() {
         .unwrap();
     assert_eq!(rec.bins.get(BIN).unwrap(), &Value::from("hello"));
 
+    // The second argument is the exclusive END index (half-open range), not a
+    // length: [2, 5) of "hello world" is "llo".
+    let rec = client
+        .operate(&wpolicy, &key, &[str_op::substr(BIN, 2, 5)])
+        .await
+        .unwrap();
+    assert_eq!(rec.bins.get(BIN).unwrap(), &Value::from("llo"));
+
     let rec = client
         .operate(&wpolicy, &key, &[str_op::substr_from(BIN, -5)])
         .await
@@ -755,6 +763,30 @@ async fn concat_single_and_list() {
 }
 
 #[aerospike_macro::test]
+async fn append_and_prepend() {
+    let client = common::client().await;
+    if !server_supports_string_operations(&client).await {
+        return;
+    }
+    let key = as_key!(common::namespace(), &common::rand_str(10), "appendprep");
+    let wpolicy = WritePolicy::default();
+    let policy = StringPolicy::default();
+
+    put(&client, &wpolicy, &key, "world").await;
+    client
+        .operate(&wpolicy, &key, &[str_op::append(&policy, BIN, "!")])
+        .await
+        .unwrap();
+    assert_eq!(get_string(&client, &key).await, "world!");
+
+    client
+        .operate(&wpolicy, &key, &[str_op::prepend(&policy, BIN, "hello ")])
+        .await
+        .unwrap();
+    assert_eq!(get_string(&client, &key).await, "hello world!");
+}
+
+#[aerospike_macro::test]
 async fn regex_replace_default_global_no_match() {
     let client = common::client().await;
     if !server_supports_string_operations(&client).await {
@@ -858,6 +890,80 @@ async fn reads_across_multiple_bins_in_one_operate() {
     assert_eq!(rec.bins.get("text").unwrap(), &Value::Int(15));
     assert_eq!(rec.bins.get("number_str").unwrap(), &Value::Int(12345));
     assert_eq!(rec.bins.get("upper_str").unwrap(), &Value::Bool(true));
+}
+
+#[aerospike_macro::test]
+async fn same_bin_pipeline_returns_one_result_slot_per_op() {
+    let client = common::client().await;
+    if !server_supports_string_operations(&client).await {
+        return;
+    }
+    let key = as_key!(common::namespace(), &common::rand_str(10), "slots");
+    let wpolicy = WritePolicy::default();
+    let policy = StringPolicy::default();
+    put(&client, &wpolicy, &key, "  hello world  ").await;
+
+    let rec = client
+        .operate(
+            &wpolicy,
+            &key,
+            &[
+                str_op::trim(&policy, BIN),
+                str_op::upper(&policy, BIN),
+                str_op::strlen(BIN),
+            ],
+        )
+        .await
+        .unwrap();
+
+    // CLIENT-5102: because the client auto-sets RESPOND_ALL_OPS for string
+    // ops, every op contributes exactly one result slot — the two modify
+    // ops emit nil and strlen emits its value at its submission index. The
+    // positional index<->op mapping is preserved.
+    let results = rec.results.as_ref().expect("positional results");
+    assert_eq!(results.len(), 3);
+    assert_eq!(results[0], Value::Nil); // trim (modify)
+    assert_eq!(results[1], Value::Nil); // upper (modify)
+    assert_eq!(results[2], Value::Int(11));
+    assert_eq!(get_string(&client, &key).await, "HELLO WORLD");
+}
+
+#[aerospike_macro::test]
+async fn modify_mixed_with_reads_preserves_positional_mapping() {
+    // The exact regression from CLIENT-5102: with the default policy
+    // (respond_per_each_op = false), a same-bin multi-op that mixes a modify
+    // op with reads must return one slot per submitted op. Without the fix
+    // the modify op's slot is dropped and every following read shifts down
+    // one position (e.g. [5, "H"] instead of [nil, 5, "H"]) — a silent
+    // mis-read with no error.
+    let client = common::client().await;
+    if !server_supports_string_operations(&client).await {
+        return;
+    }
+    let key = as_key!(common::namespace(), &common::rand_str(10), "posmap");
+    let wpolicy = WritePolicy::default();
+    let policy = StringPolicy::default();
+    put(&client, &wpolicy, &key, "hello").await;
+
+    let rec = client
+        .operate(
+            &wpolicy,
+            &key,
+            &[
+                str_op::upper(&policy, BIN), // index 0: modify -> nil slot
+                str_op::strlen(BIN),         // index 1: strlen -> 5
+                str_op::char_at(BIN, 0),     // index 2: char_at -> "H"
+            ],
+        )
+        .await
+        .unwrap();
+
+    let results = rec.results.as_ref().expect("positional results");
+    assert_eq!(results.len(), 3);
+    assert_eq!(results[0], Value::Nil);
+    assert_eq!(results[1], Value::Int(5));
+    assert_eq!(results[2], Value::from("H"));
+    assert_eq!(get_string(&client, &key).await, "HELLO");
 }
 
 #[aerospike_macro::test]

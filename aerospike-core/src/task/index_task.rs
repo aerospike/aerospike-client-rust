@@ -47,7 +47,7 @@ impl IndexTask {
 
     fn parse_response(response: &str) -> Result<Status> {
         if response.is_empty() {
-            return Err(Error::BadResponse(
+            return Err(Error::bad_response(
                 "sindex-stat failed: empty response".to_string(),
             ));
         }
@@ -57,7 +57,7 @@ impl IndexTask {
             None => {
                 // Check if it's an error response
                 if response.contains("FAIL") || response.contains("ERROR") {
-                    Err(Error::BadResponse(format!(
+                    Err(Error::bad_response(format!(
                         "sindex-stat failed: {response}"
                     )))
                 } else {
@@ -73,7 +73,7 @@ impl IndexTask {
                     .collect();
 
                 if pct_str.is_empty() {
-                    return Err(Error::BadResponse(format!(
+                    return Err(Error::bad_response(format!(
                         "sindex-stat failed: could not parse load_pct from response '{response}'"
                     )));
                 }
@@ -81,7 +81,7 @@ impl IndexTask {
                 match pct_str.parse::<usize>() {
                     Ok(pct) if pct >= 100 => Ok(Status::Complete),
                     Ok(_) => Ok(Status::InProgress),
-                    Err(_) => Err(Error::BadResponse(format!(
+                    Err(_) => Err(Error::bad_response(format!(
                         "sindex-stat failed: invalid load_pct value '{pct_str}'"
                     ))),
                 }
@@ -97,7 +97,7 @@ impl Task for IndexTask {
         let nodes = self.cluster.nodes();
 
         if nodes.is_empty() {
-            return Err(Error::Connection("No connected node".to_string()));
+            return Err(Error::connection("No connected node".to_string()));
         }
 
         let admin_policy = AdminPolicy { timeout: 3_000 };
@@ -107,7 +107,7 @@ impl Task for IndexTask {
 
             match response.get(&command) {
                 None => {
-                    return Err(Error::BadResponse(
+                    return Err(Error::bad_response(
                         "sindex-stat failed: missing response".to_string(),
                     ));
                 }

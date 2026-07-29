@@ -28,6 +28,8 @@ pub use self::plan::{
 pub(crate) use self::partition_tracker::PartitionTracker;
 pub use self::recordset::RecordStream;
 pub use self::recordset::Recordset;
+#[cfg(feature = "lua")]
+pub use self::result_set::{ResultSet, ResultStream};
 pub use self::statement::Statement;
 pub use self::udf::UDFLang;
 
@@ -40,5 +42,7 @@ mod partition_status;
 mod partition_tracker;
 pub mod plan;
 mod recordset;
+#[cfg(feature = "lua")]
+mod result_set;
 mod statement;
 mod udf;

@@ -16,7 +16,7 @@ use aerospike::{
     as_bin, as_blob, as_geo, as_key, as_list, as_map, as_val, Bins, ReadPolicy, Value, WritePolicy,
 };
 use aerospike::{
-    operations, Error, Expiration, GenerationPolicy, ReadTouchTTL, RecordExistsAction, ResultCode,
+    operations, Expiration, GenerationPolicy, Key, ReadTouchTTL, RecordExistsAction, ResultCode,
 };
 use aerospike_rt::sleep;
 use aerospike_rt::time::Duration;
@@ -191,6 +191,94 @@ async fn operate_multi_op_same_bin_returns_multi_result() {
     client.close().await.unwrap();
 }
 
+/// A silent write between two reads must still occupy its own result slot.
+#[aerospike_macro::test]
+async fn operate_mixed_read_write_keeps_results_aligned() {
+    // get/add/get on one bin came back with two results for three ops, so
+    // everything after the write was shifted a slot. Simple writes return
+    // nothing of their own; the command has to ask for a slot per op.
+    let client = common::client().await;
+    let namespace = common::namespace();
+    let set_name = &common::rand_str(10);
+    let key = as_key!(namespace, set_name, 1);
+    let wpolicy = WritePolicy::default();
+
+    client
+        .put(&wpolicy, &key, &[as_bin!("count", 10i64)])
+        .await
+        .unwrap();
+
+    let ops = &[
+        operations::get_bin("count"),
+        operations::add(&as_bin!("count", 5i64)),
+        operations::get_bin("count"),
+    ];
+    let rec = client.operate(&wpolicy, &key, ops).await.unwrap();
+
+    // One slot per op, in op order: read 10, the write (no value), read 15.
+    let results = rec.results.as_ref().expect("positional op results");
+    assert_eq!(
+        results.len(),
+        ops.len(),
+        "expected one result per op, got {results:?}"
+    );
+    assert_eq!(results[0], Value::from(10i64), "first read");
+    assert!(
+        results[1].is_nil(),
+        "the write occupies a slot with no value, got {:?}",
+        results[1]
+    );
+    assert_eq!(results[2], Value::from(15i64), "read after the add");
+
+    // The bin view still merges the two reads and skips the write's nil.
+    assert_eq!(
+        rec.bins.get("count"),
+        Some(&Value::MultiResult(vec![
+            Value::from(10i64),
+            Value::from(15i64)
+        ]))
+    );
+
+    client.close().await.unwrap();
+}
+
+/// The same shape through a mix of simple and CDT ops.
+#[aerospike_macro::test]
+async fn operate_simple_write_between_cdt_ops_keeps_results_aligned() {
+    use aerospike::operations::lists;
+
+    let client = common::client().await;
+    let namespace = common::namespace();
+    let set_name = &common::rand_str(10);
+    let key = as_key!(namespace, set_name, 1);
+    let wpolicy = WritePolicy::default();
+
+    client
+        .put(
+            &wpolicy,
+            &key,
+            &[as_bin!("count", 1i64), as_bin!("l", as_list!(1i64, 2i64))],
+        )
+        .await
+        .unwrap();
+
+    let lpolicy = lists::ListPolicy::default();
+    let ops = &[
+        lists::append(&lpolicy, "l", Value::from(3i64)),
+        operations::add(&as_bin!("count", 1i64)),
+        lists::size("l"),
+    ];
+    let rec = client.operate(&wpolicy, &key, ops).await.unwrap();
+
+    let results = rec.results.as_ref().expect("positional op results");
+    assert_eq!(results.len(), ops.len(), "one result per op: {results:?}");
+    assert_eq!(results[0], Value::from(3i64), "list size after append");
+    assert!(results[1].is_nil(), "the add occupies its own slot");
+    assert_eq!(results[2], Value::from(3i64), "list size read");
+
+    client.close().await.unwrap();
+}
+
 #[aerospike_macro::test]
 async fn operate_empty_ops_returns_parameter_error() {
     let client = common::client().await;
@@ -210,8 +298,9 @@ async fn operate_empty_ops_returns_parameter_error() {
     let result = client.operate(&wpolicy, &key, &[]).await;
 
     match result {
-        Err(Error::ServerError(ResultCode::ParameterError, _, ref msg))
-            if msg.contains("no operations") => {}
+        Err(ref e)
+            if e.server_result_code() == Some(ResultCode::ParameterError)
+                && e.to_string().contains("no operations") => {}
         Err(other) => panic!(
             "expected client-side ParameterError ('operate called with no \
              operations'); got {:?}",
@@ -289,7 +378,7 @@ async fn replace_only_fails_when_record_missing() {
     let bin = as_bin!("bin", "value");
 
     match client.put(&replace_only, &key, &[bin]).await {
-        Err(Error::ServerError(ResultCode::KeyNotFoundError, _, _)) => {}
+        Err(e) if e.server_result_code() == Some(ResultCode::KeyNotFoundError) => {}
         Err(other) => panic!("expected KeyNotFoundError, got: {:?}", other),
         Ok(_) => panic!("expected error, got Ok"),
     }
@@ -344,7 +433,7 @@ async fn generation_policy_expect_gen_equal() {
         .put(&gen_wrong, &key, &[as_bin!("genbin", "genvalue4")])
         .await
     {
-        Err(Error::ServerError(ResultCode::GenerationError, _, _)) => {}
+        Err(e) if e.server_result_code() == Some(ResultCode::GenerationError) => {}
         Err(other) => panic!("expected GenerationError, got: {:?}", other),
         Ok(_) => panic!("expected GenerationError, got Ok"),
     }
@@ -381,10 +470,59 @@ async fn create_only_fails_when_record_exists() {
         .put(&create_only, &key, &[as_bin!("bin", "second")])
         .await
     {
-        Err(Error::ServerError(ResultCode::KeyExistsError, _, _)) => {}
+        Err(e) if e.server_result_code() == Some(ResultCode::KeyExistsError) => {}
         Err(other) => panic!("expected KeyExistsError, got: {:?}", other),
         Ok(_) => panic!("expected KeyExistsError, got Ok"),
     }
+
+    client.close().await.unwrap();
+}
+
+#[aerospike_macro::test]
+async fn infinity_and_wildcard_are_rejected_not_fatal() {
+    // INF and wildcard exist only as bounds inside msgpack payloads (CDT
+    // arguments, expressions). Handing one to the client as an ordinary bin
+    // value used to abort the whole process from `Value::particle_type`;
+    // Java answers PARAMETER_ERROR. A client-side mistake in one command must
+    // not take down the caller.
+    let client = common::client().await;
+    let namespace: &str = common::namespace();
+    let set_name = &common::rand_str(10);
+    let wpolicy = WritePolicy::default();
+    let key = as_key!(namespace, set_name, "inf_wildcard");
+
+    for value in [Value::Infinity, Value::Wildcard] {
+        let bin = as_bin!("b", value.clone());
+        let err = client
+            .put(&wpolicy, &key, &[bin])
+            .await
+            .expect_err("storing INF/wildcard as a bin value must be an error");
+        assert_eq!(
+            err.result_code(),
+            i32::from(u8::from(ResultCode::ParameterError)),
+            "expected PARAMETER_ERROR for {value:?}, got {err:?}"
+        );
+    }
+
+    // Same for a record key built from one.
+    for value in [Value::Infinity, Value::Wildcard] {
+        let bad_key = Key::new(namespace, set_name.as_str(), value.clone());
+        assert!(
+            bad_key.is_err(),
+            "a key made from {value:?} must be rejected"
+        );
+    }
+
+    // The connection is still usable: the failures above were per-command.
+    client
+        .put(&wpolicy, &key, &[as_bin!("b", 1)])
+        .await
+        .expect("client still works after a rejected value");
+    let record = client
+        .get(&ReadPolicy::default(), &key, Bins::All)
+        .await
+        .unwrap();
+    assert_eq!(record.bins.get("b"), Some(&as_val!(1)));
 
     client.close().await.unwrap();
 }
