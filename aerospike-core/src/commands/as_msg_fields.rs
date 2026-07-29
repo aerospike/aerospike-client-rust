@@ -53,8 +53,8 @@ fn parse_msg_fields(
     for _ in 0..field_count {
         let field_header_size = FIELD_HEADER_SIZE as usize;
         if pos + field_header_size > buffer.len() {
-            return Err(Error::BadResponse(
-                "truncated message field header".into(),
+            return Err(Error::bad_response(
+                "truncated message field header",
             ));
         }
         let len = u32::from_be_bytes([
@@ -68,8 +68,8 @@ fn parse_msg_fields(
         pos += 1;
         let size = len.saturating_sub(1);
         if pos + size > buffer.len() {
-            return Err(Error::BadResponse(
-                "truncated message field body".into(),
+            return Err(Error::bad_response(
+                "truncated message field body",
             ));
         }
         let value = if size > 0 {

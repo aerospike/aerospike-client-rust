@@ -13,6 +13,7 @@
 // License for the specific language governing permissions and limitations under
 // the License.
 
+use crate::commands::QueryExplainCommand;
 use std::fmt::Write as FmtWrite;
 use std::path::Path;
 use std::str;
@@ -30,8 +31,8 @@ use crate::cluster::{Cluster, Node};
 use crate::commands::admin_command::AdminCommand;
 use crate::commands::buffer::Buffer;
 use crate::commands::{
-    DeleteCommand, ExecuteUDFCommand, ExistsCommand, OperateCommand, QueryCommand,
-    QueryExplainCommand, ReadCommand, ServerCommand, TouchCommand, WriteCommand,
+    DeleteCommand, ExecuteUDFCommand, ExistsCommand, OperateCommand, QueryCommand, ReadCommand,
+    ServerCommand, TouchCommand, WriteCommand,
 };
 use crate::errors::{Error, ErrorKind, Result};
 use crate::expressions::Expression;
@@ -1574,18 +1575,18 @@ impl Client {
         explain_where_flags: Option<u8>,
     ) -> Result<QueryPlan> {
         if namespace.is_empty() {
-            return Err(Error::InvalidArgument("Empty namespace".into()));
+            return Err(Error::invalid_argument("Empty namespace"));
         }
         if self.cluster.nodes().is_empty() {
-            return Err(Error::Connection("No connections available".into()));
+            return Err(Error::no_more_connections());
         }
 
         let flags = explain_where_flags.unwrap_or(FLAG_EXPLAIN);
         if flags & FLAG_HARD_HINT != 0
             && index_name_hint.map(str::is_empty).unwrap_or(true)
         {
-            return Err(Error::InvalidArgument(
-                "HARD_HINT requires a non-empty index name hint".into(),
+            return Err(Error::invalid_argument(
+                "HARD_HINT requires a non-empty index name hint",
             ));
         }
 
@@ -1619,9 +1620,18 @@ impl Client {
         mut statement: Statement,
         plan: QueryPlan,
     ) -> Result<Arc<Recordset>> {
-        if let Some(filter) = plan.filter_for_execute()? {
-            statement.filters = Some(vec![filter]);
+        if plan.is_filtered_out() {
+            return Err(Error::server_error(
+                ResultCode::FilteredOut,
+                String::new(),
+                None,
+            ));
         }
+
+        statement.filters = match plan.filter_for_execute()? {
+            Some(filter) => Some(vec![filter]),
+            None => None,
+        };
 
         let execute_where = Some(plan.into_execute_where_bytes());
         statement.validate()?;
@@ -1637,7 +1647,8 @@ impl Client {
 
         let recordset = Arc::new(Recordset::new(
             policy.record_queue_size,
-            usize::MAX,
+            policy.max_records,
+            usize::MAX, // will be reset later
             tracker.clone(),
         ));
 

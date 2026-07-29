@@ -47,9 +47,7 @@ impl QueryWhereWire {
     /// [`FLAG_EXPLAIN`]; may include [`FLAG_REQUIRE_INDEX`] / [`FLAG_HARD_HINT`]).
     pub fn for_explain_with_flags(flags: u8, ael: &str) -> Result<Vec<u8>> {
         if flags & FLAG_EXPLAIN == 0 {
-            return Err(Error::InvalidArgument(
-                "explain WHERE flags must include EXPLAIN".into(),
-            ));
+            return Err(Error::invalid_argument("explain WHERE flags must include EXPLAIN"));
         }
         Self::encode(flags, ael)
     }
@@ -62,9 +60,7 @@ impl QueryWhereWire {
     /// Validates AEL before field `44` encoding.
     pub fn require_ael(ael: &str) -> Result<()> {
         if ael.trim().is_empty() {
-            return Err(Error::InvalidArgument(
-                "WHERE AEL must not be null or blank".into(),
-            ));
+            return Err(Error::invalid_argument("WHERE AEL must not be null or blank"));
         }
         Ok(())
     }
@@ -72,7 +68,7 @@ impl QueryWhereWire {
     /// Returns the flags byte from a WHERE payload built by this module.
     pub fn flags(payload: &[u8]) -> Result<u8> {
         if payload.is_empty() {
-            return Err(Error::ClientError("missing WHERE payload".into()));
+            return Err(Error::client_error("missing WHERE payload"));
         }
         Ok(payload[0])
     }
@@ -87,11 +83,11 @@ impl QueryWhereWire {
     /// Returns the AEL source text from a WHERE payload built by this module.
     pub fn ael(payload: &[u8]) -> Result<String> {
         if payload.len() < 2 {
-            return Err(Error::ClientError("missing WHERE payload".into()));
+            return Err(Error::client_error("missing WHERE payload"));
         }
         std::str::from_utf8(&payload[1..])
             .map(str::to_owned)
-            .map_err(|e| Error::ClientError(format!("invalid WHERE AEL UTF-8: {e}")))
+            .map_err(|e| Error::client_error(format!("invalid WHERE AEL UTF-8: {e}")))
     }
 
     fn encode(flags: u8, ael: &str) -> Result<Vec<u8>> {
@@ -105,16 +101,34 @@ impl QueryWhereWire {
 
     fn validate_flags(flags: u8) -> Result<()> {
         if flags & !FLAG_KNOWN != 0 {
-            return Err(Error::InvalidArgument(format!(
+            return Err(Error::invalid_argument(format!(
                 "unknown WHERE flags 0x{flags:02x}"
             )));
         }
         if flags & FLAG_ENC_VARINT != 0 {
-            return Err(Error::InvalidArgument(
-                "varInt WHERE flags encoding is not supported".into(),
+            return Err(Error::invalid_argument(
+                "varInt WHERE flags encoding is not supported",
             ));
         }
         Ok(())
+    }
+
+    /// Formats Tier-D policy flags for debug logs.
+    pub(crate) fn format_policy_flags(flags: u8) -> String {
+        let policy_flags = flags & (FLAG_REQUIRE_INDEX | FLAG_HARD_HINT);
+        if policy_flags == 0 {
+            return "none".into();
+        }
+
+        let mut out = String::new();
+        if policy_flags & FLAG_REQUIRE_INDEX != 0 {
+            out.push_str("REQUIRE_INDEX|");
+        }
+        if policy_flags & FLAG_HARD_HINT != 0 {
+            out.push_str("HARD_HINT|");
+        }
+        out.pop();
+        out
     }
 }
 

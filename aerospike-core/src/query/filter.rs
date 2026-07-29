@@ -256,7 +256,7 @@ impl Filter {
         Filter {
             bin_name: String::new(),
             collection_index_type,
-            value_particle_type: ParticleType::INTEGER,
+            value_particle_type: ParticleType::INTEGER as u8,
             begin: Value::from(0_i64),
             end: Value::from(0_i64),
             index_name: Some(index_name.to_owned()),

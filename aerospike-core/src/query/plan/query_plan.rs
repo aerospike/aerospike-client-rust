@@ -55,10 +55,10 @@ impl QueryPlan {
         }
 
         if result_code != ResultCode::Ok {
-            return Err(Error::ServerError(
+            return Err(Error::server_error(
                 result_code,
-                false,
                 String::new(),
+                None,
             ));
         }
 
@@ -66,31 +66,44 @@ impl QueryPlan {
         let index_range_bytes = fields.field(FieldType::IndexRange).map(<[u8]>::to_vec);
         let index_type = Self::index_collection_type_from_fields(fields)?;
 
-        if index_name.is_some() && index_range_bytes.is_some() {
-            Ok(Self {
+        let has_index_name = index_name.is_some();
+        let has_index_range = index_range_bytes.is_some();
+
+        if has_index_name != has_index_range {
+            return Err(Error::bad_response(
+                "INDEX_NAME and INDEX_RANGE must both be present or both absent",
+            ));
+        }
+
+        if has_index_name {
+            let index_name = index_name.unwrap_or_default();
+            let index_range_bytes = index_range_bytes.unwrap_or_default();
+            if index_name.is_empty() || index_range_bytes.is_empty() {
+                return Err(Error::bad_response(
+                    "INDEX_NAME and INDEX_RANGE must be non-empty on SI explain",
+                ));
+            }
+            Self::validate_si_explain_range(&index_range_bytes)?;
+            return Ok(Self {
                 selection: QuerySelection::SecondaryIndex,
                 namespace: namespace.to_owned(),
                 set_name: set_name.map(str::to_owned),
                 explain_where_bytes,
-                index_name,
-                index_range_bytes,
+                index_name: Some(index_name),
+                index_range_bytes: Some(index_range_bytes),
                 index_type,
-            })
-        } else if index_name.is_none() && index_range_bytes.is_none() {
-            Ok(Self {
-                selection: QuerySelection::PrimaryIndex,
-                namespace: namespace.to_owned(),
-                set_name: set_name.map(str::to_owned),
-                explain_where_bytes,
-                index_name: None,
-                index_range_bytes: None,
-                index_type: CollectionIndexType::Default,
-            })
-        } else {
-            Err(Error::BadResponse(
-                "INDEX_NAME and INDEX_RANGE must both be present or both absent".into(),
-            ))
+            });
         }
+
+        Ok(Self {
+            selection: QuerySelection::PrimaryIndex,
+            namespace: namespace.to_owned(),
+            set_name: set_name.map(str::to_owned),
+            explain_where_bytes,
+            index_name: None,
+            index_range_bytes: None,
+            index_type: CollectionIndexType::Default,
+        })
     }
 
     pub fn selection(&self) -> QuerySelection {
@@ -167,6 +180,20 @@ impl QueryPlan {
         }
     }
 
+    fn validate_si_explain_range(range: &[u8]) -> Result<()> {
+        if range.len() < 2 || range[0] != 1 {
+            return Err(Error::bad_response(
+                "INDEX_RANGE must start with n_ranges=1",
+            ));
+        }
+
+        let bin_name_len = range[1] as usize;
+        if bin_name_len > 0 && range.len() < 2 + bin_name_len + 1 {
+            return Err(Error::bad_response("INDEX_RANGE truncated"));
+        }
+        Ok(())
+    }
+
     fn index_collection_type_from_fields(fields: &AsMsgFields) -> Result<CollectionIndexType> {
         let data = fields.field(FieldType::IndexType);
         let Some(data) = data else {
@@ -180,7 +207,7 @@ impl QueryPlan {
             1 => Ok(CollectionIndexType::List),
             2 => Ok(CollectionIndexType::MapKeys),
             3 => Ok(CollectionIndexType::MapValues),
-            ordinal => Err(Error::BadResponse(format!(
+            ordinal => Err(Error::bad_response(format!(
                 "Invalid INDEX_TYPE ordinal {ordinal}"
             ))),
         }
@@ -196,12 +223,12 @@ mod tests {
     const AEL: &str = "$.age > 30";
     const RANGE: &[u8] = &[1, 3, b'a', b'g', b'e'];
 
-    fn fields_of(entries: &[(FieldType, &[u8])]) -> AsMsgFields {
+    fn fields_of(entries: &[(u8, &[u8])]) -> AsMsgFields {
         let mut body = Vec::new();
         for (ftype, value) in entries {
             let len = 1 + value.len();
             body.extend_from_slice(&(len as u32).to_be_bytes());
-            body.push(*ftype as u8);
+            body.push(*ftype);
             body.extend_from_slice(value);
         }
         AsMsgFields::from_buffer(&body, 0, entries.len()).unwrap()
@@ -238,12 +265,12 @@ mod tests {
     fn secondary_index_plan_when_name_range_and_type_present() {
         let explain_where = QueryWhereWire::for_explain(AEL).unwrap();
         let fields = fields_of(&[
-            (FieldType::IndexName, b"age_idx"),
+            (FieldType::IndexName as u8, b"age_idx"),
             (
-                FieldType::IndexType,
+                FieldType::IndexType as u8,
                 &[CollectionIndexType::List as u8],
             ),
-            (FieldType::IndexRange, RANGE),
+            (FieldType::IndexRange as u8, RANGE),
         ]);
         let plan = QueryPlan::from_explain_response(
             ResultCode::Ok,

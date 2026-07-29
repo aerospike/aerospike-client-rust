@@ -21,6 +21,8 @@ use crate::commands::{Command, SingleCommand};
 use crate::errors::{Error, Result};
 use crate::net::Connection;
 use crate::policy::{Policy, QueryPolicy};
+use crate::query::plan::IndexRangeWire;
+use crate::query::QueryWhereWire;
 use crate::query::plan::QueryPlan;
 use crate::{ResultCode, XorShift};
 
@@ -60,7 +62,7 @@ impl<'a> QueryExplainCommand<'a> {
     pub(crate) async fn execute(mut self) -> Result<QueryPlan> {
         SingleCommand::execute(self.policy, &mut self).await?;
         self.plan
-            .ok_or_else(|| Error::ClientError("missing server query plan in response".into()))
+            .ok_or_else(|| Error::client_error("missing server query plan in response"))
     }
 }
 
@@ -109,7 +111,7 @@ impl Command for QueryExplainCommand<'_> {
     }
 
     fn can_retry(&mut self) -> bool {
-        self.cluster.nodes().len() > 1
+        true
     }
 
     fn can_recover_connection(&mut self) -> bool {
@@ -129,7 +131,7 @@ impl Command for QueryExplainCommand<'_> {
         let field_count = conn.buffer.read_u16(Some(26)) as usize;
 
         if result_code != ResultCode::Ok && result_code != ResultCode::FilteredOut {
-            return Err(Error::ServerError(result_code, false, conn.addr.clone()));
+            return Err(Error::server_error(result_code, conn.addr.clone(), None));
         }
 
         let header_size = buffer::MSG_TOTAL_HEADER_SIZE as usize;
@@ -160,6 +162,15 @@ impl Command for QueryExplainCommand<'_> {
             &fields,
         )?);
 
+        if let Some(ref plan) = self.plan {
+            log_query_plan(
+                &conn.addr,
+                plan,
+                self.index_name_hint.as_deref(),
+                &self.explain_where_bytes,
+            );
+        }
+
         // Single-message response fully consumed; do not call empty_socket (it
         // re-reads the buffer as a proto header and mis-parses field TLV bytes).
         conn.buffer.data_buffer.clear();
@@ -168,4 +179,49 @@ impl Command for QueryExplainCommand<'_> {
     }
 
     fn prepare_retry(&mut self, _is_client_timeout: bool) {}
+}
+
+fn log_query_plan(
+    node: &str,
+    plan: &QueryPlan,
+    index_name_hint: Option<&str>,
+    explain_where_bytes: &[u8],
+) {
+    let index_hint = index_name_hint.unwrap_or("none");
+    let where_flags = QueryWhereWire::flags(explain_where_bytes)
+        .map(QueryWhereWire::format_policy_flags)
+        .unwrap_or_else(|_| "unknown".into());
+    let ael = plan.ael().unwrap_or_else(|_| "<invalid>".into());
+    let set = plan.set_name().unwrap_or("");
+
+    if plan.is_secondary_index() {
+        let range = IndexRangeWire::describe_probe_range(plan.index_range_bytes().as_deref())
+            .unwrap_or_else(|| "invalid".into());
+        log::debug!(
+            target: "query",
+            "query-plan: node={node} ns={} set={set} selected sindex={} {range} indexType={:?} \
+             ael={ael} indexHint={index_hint} whereFlags={where_flags}",
+            plan.namespace(),
+            plan.index_name().unwrap_or(""),
+            plan.index_type(),
+        );
+        return;
+    }
+
+    log::debug!(
+        target: "query",
+        "query-plan: node={node} ns={} set={set} selection={:?} ael={ael} indexHint={index_hint} \
+         whereFlags={where_flags}",
+        plan.namespace(),
+        plan.selection(),
+    );
+}
+
+#[cfg(test)]
+mod logging_tests {
+    #[test]
+    fn rust_log_query_target_respects_filter() {
+        let _ = env_logger::try_init();
+        log::debug!(target: "query", "query-plan: logging filter probe");
+    }
 }
