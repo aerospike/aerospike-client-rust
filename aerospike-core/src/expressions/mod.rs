@@ -1065,6 +1065,27 @@ pub const fn xor(exps: Vec<Expression>) -> Expression {
     }
 }
 
+/// Creates an "exclusive" operator: true when exactly one of the
+/// expressions is true (the Java client's `Exp.exclusive`; alias of
+/// [`xor`] — both compile to the same server opcode).
+/// ```
+/// // exactly one of a == 0, b == 0
+/// use aerospike::expressions::{exclusive, eq, int_bin, int_val};
+/// exclusive(vec![eq(int_bin("a".to_string()), int_val(0)), eq(int_bin("b".to_string()), int_val(0))]);
+/// ```
+pub const fn exclusive(exps: Vec<Expression>) -> Expression {
+    Expression {
+        cmd: Some(ExpOp::Xor),
+        val: None,
+        bin: None,
+        flags: None,
+        module: None,
+        exps: Some(exps),
+        arguments: None,
+        bytes: None,
+    }
+}
+
 /// Creates equal (==) expression.
 /// ```
 /// // a == 11
