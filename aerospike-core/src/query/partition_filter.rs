@@ -116,27 +116,6 @@ impl PartitionFilter {
         self.done.load(Ordering::Relaxed)
     }
 
-    /// Snapshot of per-partition scan/query cursor state.
-    ///
-    /// Returns `None` before the first paginated scan/query on this filter
-    /// initializes partition state.
-    pub fn partition_statuses(&self) -> Option<Vec<PartitionStatus>> {
-        self.partitions
-            .as_ref()
-            .map(|parts| parts.iter().map(|part| part.lock().clone()).collect())
-    }
-
-    /// Replace or clear per-partition scan/query cursor state.
-    ///
-    /// Use this to round-trip partition cursor state without depending on
-    /// internal lock types. `None` clears state as on a freshly constructed
-    /// filter.
-    pub fn set_partition_statuses(&mut self, statuses: Option<Vec<PartitionStatus>>) {
-        self.partitions = statuses.map(|statuses| {
-            Arc::new(statuses.into_iter().map(Mutex::new).collect())
-        });
-    }
-
     pub(crate) fn set_partitions(&mut self, partitions: Arc<Vec<Mutex<PartitionStatus>>>) {
         self.partitions = Some(partitions);
     }
@@ -150,47 +129,6 @@ impl PartitionFilter {
                 part.reset_node();
             }
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn partition_statuses_round_trip() {
-        let mut filter = PartitionFilter::by_range(3, 2);
-        assert!(filter.partition_statuses().is_none());
-
-        filter.set_partition_statuses(Some(vec![
-            PartitionStatus {
-                bval: Some(7),
-                id: 3,
-                retry: false,
-                digest: None,
-                node: None,
-                sequence: Some(42),
-            },
-            PartitionStatus {
-                bval: None,
-                id: 4,
-                retry: true,
-                digest: Some([1u8; 20]),
-                node: None,
-                sequence: None,
-            },
-        ]));
-
-        let got = filter.partition_statuses().expect("statuses");
-        assert_eq!(got.len(), 2);
-        assert_eq!(got[0].id, 3);
-        assert_eq!(got[0].bval, Some(7));
-        assert_eq!(got[0].sequence, Some(42));
-        assert_eq!(got[1].id, 4);
-        assert_eq!(got[1].digest, Some([1u8; 20]));
-
-        filter.set_partition_statuses(None);
-        assert!(filter.partition_statuses().is_none());
     }
 }
 

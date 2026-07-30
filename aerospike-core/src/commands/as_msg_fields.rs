@@ -18,7 +18,11 @@ use crate::commands::buffer::FIELD_HEADER_SIZE;
 use crate::commands::field_type::FieldType;
 use crate::errors::{Error, Result};
 
-/// Parsed AS_MSG field TLVs from a message body slice.
+/// Parses AS_MSG response field TLVs (length, type, value) into a map keyed by field type.
+///
+/// This is wire-format parsing only; callers interpret fields via [`FieldType`]. Today the sole
+/// caller is query explain (`query_explain_command`), which reads `INDEX_NAME`, `INDEX_RANGE`, and
+/// related fields before building a `QueryPlan`.
 pub struct AsMsgFields {
     fields: HashMap<u8, Vec<u8>>,
 }

@@ -24,7 +24,7 @@ use crate::policy::{Policy, QueryPolicy};
 use crate::query::plan::IndexRangeWire;
 use crate::query::QueryWhereWire;
 use crate::query::plan::QueryPlan;
-use crate::{ResultCode, XorShift};
+use crate::ResultCode;
 
 /// Internal phase-1 of server-led query selection (field `44` WHERE + EXPLAIN).
 pub(crate) struct QueryExplainCommand<'a> {
@@ -54,7 +54,7 @@ impl<'a> QueryExplainCommand<'a> {
             set_name,
             explain_where_bytes,
             index_name_hint,
-            task_id: XorShift::new().next_u64(),
+            task_id: rand::random(),
             plan: None,
         }
     }

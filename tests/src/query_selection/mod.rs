@@ -17,13 +17,13 @@
 //! Ported from Java fluent `QuerySelectionIntegrationTest`,
 //! `QuerySelectionHintFlagsTest`, and `QuerySelectionExplainScopeTest`.
 //!
-//! Requires Aerospike Server >= 8.1.3; tests self-skip when
-//! [`Client::supports_query_selection`] is false.
+//! Requires Aerospike Server >= 8.1.3; tests self-skip when the connected
+//! node's [`Version::supports_query_selection`] is false.
 //!
 //! Debug query-plan logs (matching Java `Loggers.QUERY`):
 //! `RUST_LOG=query=debug cargo test --test lib query_selection -- --nocapture`
 //! (or `RUST_LOG=debug` for all targets). Tests self-skip without explain when
-//! [`Client::supports_query_selection`] is false — look for `Skipping:` on stderr.
+//! [`Version::supports_query_selection`] is false — look for `Skipping:` on stderr.
 
 mod hints;
 mod scope;
@@ -53,7 +53,11 @@ pub(crate) struct QuerySelectionFixture {
 }
 
 pub(crate) async fn supports_query_selection(client: &Client) -> bool {
-    let ok = client.supports_query_selection();
+    let ok = client
+        .cluster
+        .get_random_node()
+        .map(|node| node.version().supports_query_selection())
+        .unwrap_or(false);
     if !ok {
         eprintln!("Skipping: server does not support query selection (requires >= 8.1.3)");
     }

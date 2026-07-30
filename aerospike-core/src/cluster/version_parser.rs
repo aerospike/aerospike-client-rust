@@ -119,8 +119,6 @@ impl Version {
     }
 
     /// Server supports two-phase server query selection (field **44** WHERE explain → execute).
-    ///
-    /// Aligns with Java fluent `Cluster.supportsQuerySelection()` (≥ 8.1.3).
     pub fn supports_query_selection(&self) -> bool {
         self >= &Version::new(8, 1, 3, 0)
     }
