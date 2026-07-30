@@ -87,6 +87,11 @@ pub struct WritePolicy {
     /// Default: false
     #[cfg_attr(feature = "dynamic-config", config(skip))]
     pub on_locking_only: bool,
+
+    /// Operate in XDR mode. Some external connectors may need to emulate an XDR
+    /// client. If enabled, an XDR bit is set for writes in the wire protocol.
+    /// Default: false
+    pub xdr: bool,
 }
 
 impl WritePolicy {
@@ -124,6 +129,7 @@ impl Default for WritePolicy {
             durable_delete: false,
             records_per_second: 0,
             on_locking_only: false,
+            xdr: false,
         }
     }
 }

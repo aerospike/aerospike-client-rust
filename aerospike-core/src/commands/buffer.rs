@@ -90,6 +90,9 @@ pub const INFO1_SHORT_QUERY: u8 = 1 << 2;
 // Batch read or exists.
 pub const INFO1_BATCH: u8 = 1 << 3;
 
+// Operation is being performed by XDR.
+pub const INFO1_XDR: u8 = 1 << 4;
+
 // Do not read the bins
 pub const INFO1_NOBINDATA: u8 = 1 << 5;
 
@@ -2004,6 +2007,10 @@ impl Buffer {
             txn_attr |= INFO4_MRT_ON_LOCKING_ONLY;
         }
         txn_attr |= error_verbosity_bits(policy.base_policy.error_detail_verbosity);
+
+        if policy.xdr {
+            read_attr |= INFO1_XDR;
+        }
 
         // Read-mode and response-compression flags only apply to commands
         // with a read part (operate containing a write). Pure writes leave

@@ -221,6 +221,7 @@ pub fn write_policy(
                 respond_per_each_op,
                 durable_delete,
                 on_locking_only: false,
+                xdr: false,
                 records_per_second,
             },
         )
@@ -265,6 +266,7 @@ pub fn write_policy_without_replace(
                 respond_per_each_op,
                 durable_delete,
                 on_locking_only: false,
+                xdr: false,
                 records_per_second,
             },
         )
