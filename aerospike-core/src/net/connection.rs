@@ -689,35 +689,6 @@ impl Connection {
             .is_some_and(|idle_dl| Instant::now() >= idle_dl)
     }
 
-    /// Non-blocking 1-byte peek for pool checkout. Alive if the kernel
-    /// returns `WouldBlock` (socket open, no pending data), anything else
-    /// means the peer closed, sent stray bytes, or the socket is broken.
-    pub(crate) fn is_alive(&self) -> bool {
-        match self.conn {
-            Netsocket::Tcp(ref s) => {
-                #[cfg(feature = "rt-tokio")]
-                {
-                    let mut probe = [0u8; 1];
-                    match s.try_read(&mut probe) {
-                        Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => true,
-                        _ => false,
-                    }
-                }
-                #[cfg(feature = "rt-async-std")]
-                {
-                    // async-std's `TcpStream` exposes no non-blocking probe;
-                    // conservatively treat as alive.
-                    let _ = s;
-                    true
-                }
-            }
-            #[cfg(feature = "tls")]
-            Netsocket::Tls(_) => true,
-            #[cfg(test)]
-            _ => true,
-        }
-    }
-
     fn refresh(&mut self) {
         self.idle_deadline = None;
         self.deadline = None;
@@ -1464,54 +1435,6 @@ mod tests_eof_loopback {
         addr
     }
 
-    /// Spawn a peer that pushes some bytes at the client without being
-    /// asked — exercises the "stray bytes pending" branch of the probe.
-    async fn spawn_chatty_peer() -> SocketAddr {
-        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let addr = listener.local_addr().unwrap();
-        aerospike_rt::spawn(async move {
-            if let Ok((mut sock, _)) = listener.accept().await {
-                use tokio::io::AsyncWriteExt;
-                let _ = sock.write_all(b"unsolicited").await;
-                aerospike_rt::sleep(std::time::Duration::from_secs(60)).await;
-            }
-        });
-        addr
-    }
-
-    // ─── Bug 2: liveness probe ────────────────────────────────────────────
-
-    #[tokio::test(flavor = "current_thread")]
-    async fn is_alive_returns_true_for_idle_socket() {
-        let addr = spawn_idle_peer().await;
-        let stream = TcpStream::connect(addr).await.unwrap();
-        aerospike_rt::sleep(std::time::Duration::from_millis(20)).await;
-        let conn = conn_from_stream(stream);
-        assert!(conn.is_alive(), "idle live socket must probe alive");
-    }
-
-    #[tokio::test(flavor = "current_thread")]
-    async fn is_alive_returns_false_after_peer_fin() {
-        let addr = spawn_fin_peer().await;
-        let stream = TcpStream::connect(addr).await.unwrap();
-        // Give the peer's shutdown a moment to arrive at our kernel.
-        aerospike_rt::sleep(std::time::Duration::from_millis(50)).await;
-        let conn = conn_from_stream(stream);
-        assert!(!conn.is_alive(), "FIN'd socket must probe dead");
-    }
-
-    #[tokio::test(flavor = "current_thread")]
-    async fn is_alive_returns_false_when_stray_bytes_pending() {
-        let addr = spawn_chatty_peer().await;
-        let stream = TcpStream::connect(addr).await.unwrap();
-        aerospike_rt::sleep(std::time::Duration::from_millis(50)).await;
-        let conn = conn_from_stream(stream);
-        assert!(
-            !conn.is_alive(),
-            "socket with unread bytes (protocol desync) must probe dead"
-        );
-    }
-
     // ─── Bug 1: socket I/O errors classified as Error::Connection ─────────
 
     #[tokio::test(flavor = "current_thread")]
@@ -1571,36 +1494,11 @@ mod tests_eof_loopback {
         );
     }
 
-    // ─── Bug 2 end-to-end: Queue::get evicts dead, returns live ───────────
+    // ─── Queue::get returns parked live connections ───────────────────────
     //
     // Lives here (rather than in connection_pool.rs) because the
     // `conn_from_stream` helper needs access to `Connection`'s private
     // fields, which are only visible from within `connection.rs`.
-
-    #[tokio::test(flavor = "current_thread")]
-    async fn queue_get_evicts_peer_finned_socket() {
-        use crate::net::connection_pool::Queue;
-        use crate::net::Host;
-        use crate::policy::ClientPolicy;
-
-        let host = Host::new("127.0.0.1", 0);
-        let policy = ClientPolicy::default();
-        let q = Queue::with_capacity(1, host, policy, None, None);
-
-        let addr = spawn_fin_peer().await;
-        let stream = TcpStream::connect(addr).await.unwrap();
-        aerospike_rt::sleep(std::time::Duration::from_millis(50)).await;
-
-        let conn = conn_from_stream(stream);
-        assert!(q.reserve_capacity());
-        q.put_back(conn);
-
-        let result = q.get();
-        assert!(
-            result.is_err(),
-            "Queue::get() must not return a peer-FIN'd socket"
-        );
-    }
 
     #[tokio::test(flavor = "current_thread")]
     async fn queue_get_returns_live_socket() {
