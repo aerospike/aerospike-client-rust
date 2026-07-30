@@ -132,7 +132,8 @@ impl QueryPlan {
     ///
     /// Clears the explain flag in place and returns the payload buffer.
     pub fn into_execute_where_bytes(mut self) -> Vec<u8> {
-        QueryWhereWire::clear_explain_in_place(&mut self.explain_where_bytes);
+        QueryWhereWire::clear_explain_in_place(&mut self.explain_where_bytes)
+            .expect("explain WHERE payload built by QueryWhereWire");
         self.explain_where_bytes
     }
 
