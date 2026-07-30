@@ -478,6 +478,22 @@ impl ClientPolicy {
             }
         }
 
+        // PKI authentication identifies the user by the client TLS
+        // certificate, so it cannot work at all without a TLS config.
+        if matches!(self.auth_mode, AuthMode::PKI) {
+            #[cfg(feature = "tls")]
+            let tls_enabled = self.tls_config.is_some();
+            #[cfg(not(feature = "tls"))]
+            let tls_enabled = false;
+
+            if !tls_enabled {
+                return Err(Error::client_error(
+                    "TLS is required for AuthMode::PKI: the server identifies the user \
+                     by the client TLS certificate",
+                ));
+            }
+        }
+
         if self.use_buffer_pool {
             if !self.buffer_pool_min_size.is_power_of_two()
                 || !self.buffer_pool_max_size.is_power_of_two()
@@ -701,6 +717,40 @@ mod tests {
             ..ClientPolicy::default()
         };
         assert!(policy.validate().is_ok());
+    }
+
+    #[test]
+    fn pki_auth_requires_tls() {
+        // PKI identifies the user by the client TLS certificate, so a
+        // policy without a TLS config must be rejected at validation time.
+        // Without the `tls` feature there is no way to supply a config, so
+        // this branch rejects PKI unconditionally (same shape as the
+        // External guard above).
+        let policy = ClientPolicy {
+            auth_mode: AuthMode::PKI,
+            ..ClientPolicy::default()
+        };
+        let err = policy.validate().unwrap_err();
+        assert!(
+            err.to_string().contains("TLS is required"),
+            "unexpected error: {err}"
+        );
+
+        // With a TLS config present, PKI passes validation.
+        #[cfg(feature = "tls")]
+        {
+            use tokio_rustls::rustls::RootCertStore;
+
+            let tls_config = ClientConfig::builder()
+                .with_root_certificates(RootCertStore::empty())
+                .with_no_client_auth();
+            let policy = ClientPolicy {
+                auth_mode: AuthMode::PKI,
+                tls_config: Some(tls_config),
+                ..ClientPolicy::default()
+            };
+            assert!(policy.validate().is_ok());
+        }
     }
 
     #[test]
