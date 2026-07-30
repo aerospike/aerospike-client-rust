@@ -686,12 +686,12 @@ async fn to_string_converts_integer_bin_via_expression() {
         .await
         .unwrap();
 
-    let rec = eval(
-        &client,
-        &key,
+    let ops = &[read_exp(
+        VAR,
         str_exp::to_string(aerospike::expressions::int_bin("n".into())),
-    )
-    .await;
+        ExpReadFlags::Default,
+    )];
+    let rec = client.operate(&wpolicy, &key, ops).await.unwrap();
     assert_eq!(rec.bins.get(VAR).unwrap(), &Value::from("42"));
 }
 

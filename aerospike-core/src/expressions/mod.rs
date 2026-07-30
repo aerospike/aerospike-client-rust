@@ -119,6 +119,7 @@ pub(crate) enum ExpOp {
     Key = 80,
     Bin = 81,
     BinType = 82,
+    ToString = 99,
     ResultRemove = 100,
     MapKeys = 101,
     MapValues = 102,

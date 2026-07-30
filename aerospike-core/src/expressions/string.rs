@@ -44,7 +44,6 @@ use crate::Value;
 
 // CALL module ids on the server.
 const MODULE: i64 = 3; // CALL_STRING
-const MODULE_REPR: i64 = 4; // CALL_REPR (toString)
 
 // Read sub-op ids.
 const STRLEN: i64 = 0;
@@ -109,7 +108,9 @@ pub fn substr(start: Expression, src: Expression) -> Expression {
 }
 
 /// Expression that returns the substring of `src` in the half-open codepoint
-/// range `[start, end)`. Negative indexes count from the end.
+/// range `[start, end)` — `start` inclusive, `end` exclusive. Negative
+/// indexes count from the end. If, after negative-index normalization,
+/// `start >= end`, the result is the empty string.
 pub fn substr_range(start: Expression, end: Expression, src: Expression) -> Expression {
     add_read(
         src,
@@ -373,19 +374,6 @@ pub fn prepend(policy: &StringPolicy, value: Expression, src: Expression) -> Exp
     )
 }
 
-/// Expression that removes codepoints from `src` starting at codepoint
-/// `start` through the end, returning the resulting string.
-pub fn snip_from(policy: &StringPolicy, start: Expression, src: Expression) -> Expression {
-    add_modify(
-        src,
-        vec![
-            sub(SNIP),
-            ExpressionArgument::FilterExpression(start),
-            ExpressionArgument::Value(Value::Int(policy_flags(policy))),
-        ],
-    )
-}
-
 /// Expression that removes the half-open codepoint range `[start, end)` from
 /// `src` and returns the resulting string.
 pub fn snip(
@@ -600,19 +588,18 @@ pub fn regex_replace(
 /// may be any expression yielding an integer, float, string, or blob value.
 /// Returns an error for any other source type.
 ///
-/// Unlike the other builders in this module, `to_string` does not accept a
-/// source-specific sub-op — it uses the dedicated `CALL_REPR` module
-/// (server-side opcode 4). The payload carries a single-element list `[0]`
-/// to satisfy the server's parser, which rejects an empty CALL payload.
+/// Unlike the other builders in this module, `to_string` is not a CALL
+/// sub-op — it is the dedicated unary `TO_STRING` expression (opcode 99),
+/// packed as `[99, src]` like the `to_int`/`to_float` conversions.
 pub fn to_string(src: Expression) -> Expression {
     Expression {
-        cmd: Some(ExpOp::Call),
+        cmd: Some(ExpOp::ToString),
         val: None,
-        bin: Some(Box::new(src)),
-        flags: Some(MODULE_REPR),
-        module: Some(ExpType::STRING),
-        exps: None,
-        arguments: Some(vec![ExpressionArgument::Value(Value::Int(0))]),
+        bin: None,
+        flags: None,
+        module: None,
+        exps: Some(vec![src]),
+        arguments: None,
         bytes: None,
     }
 }

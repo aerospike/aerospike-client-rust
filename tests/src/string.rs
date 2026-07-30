@@ -1208,22 +1208,67 @@ async fn to_string_from_integer_double_string_blob_and_bin_type_error() {
 }
 
 // ============================================================
-// NO_FAIL flag — missing-bin path
+// Missing-bin path
+//
+// Behavior keys off the op, not the NO_FAIL flag. The additive create-ops
+// {insert, overwrite, concat, append, prepend, pad_start, pad_end, repeat}
+// create a missing bin from an empty string; transform/subtractive ops are
+// a silent no-op (success, bin not created). There is no BIN_NOT_FOUND
+// path. NO_FAIL does not govern this path — it only suppresses an in-op
+// execution failure.
 // ============================================================
 
+async fn put_other_bin_only(
+    client: &aerospike::Client,
+    wpolicy: &WritePolicy,
+    key: &aerospike::Key,
+) {
+    let _ = common::delete_durably(client, wpolicy, key).await;
+    client
+        .put(wpolicy, key, &[as_bin!("other", "untouched")])
+        .await
+        .unwrap();
+}
+
 #[aerospike_macro::test]
-async fn modify_on_missing_bin_with_no_fail_is_noop() {
+async fn modify_on_missing_bin_is_noop() {
+    // A non-create modify op (upper) on a missing bin is a silent no-op
+    // (success, bin not created) regardless of NO_FAIL — there is no
+    // BIN_NOT_FOUND path. Record exists but the target bin does not.
+    let client = common::client().await;
+    if !server_supports_string_operations(&client).await {
+        return;
+    }
+    let key = as_key!(common::namespace(), &common::rand_str(10), "noop");
+    let wpolicy = WritePolicy::default();
+    let policy = StringPolicy::default();
+    put_other_bin_only(&client, &wpolicy, &key).await;
+
+    client
+        .operate(&wpolicy, &key, &[str_op::upper(&policy, BIN)])
+        .await
+        .unwrap();
+
+    // BIN must not have been created; the existing bin must be intact.
+    let rec = client
+        .get(&ReadPolicy::default(), &key, Bins::All)
+        .await
+        .unwrap();
+    assert!(rec.bins.get(BIN).is_none());
+    assert_eq!(rec.bins.get("other").unwrap(), &Value::from("untouched"));
+}
+
+#[aerospike_macro::test]
+async fn no_fail_does_not_change_missing_bin_noop() {
+    // The missing-bin no-op for non-create ops is flag-independent; NO_FAIL
+    // neither creates the bin nor raises an error.
     let client = common::client().await;
     if !server_supports_string_operations(&client).await {
         return;
     }
     let key = as_key!(common::namespace(), &common::rand_str(10), "nofail");
     let wpolicy = WritePolicy::default();
-    let _ = common::delete_durably(&client, &wpolicy, &key).await;
-    client
-        .put(&wpolicy, &key, &[as_bin!("other", "untouched")])
-        .await
-        .unwrap();
+    put_other_bin_only(&client, &wpolicy, &key).await;
 
     let no_fail = StringPolicy::new(StringWriteFlags::NO_FAIL);
     client
@@ -1239,28 +1284,279 @@ async fn modify_on_missing_bin_with_no_fail_is_noop() {
     assert_eq!(rec.bins.get("other").unwrap(), &Value::from("untouched"));
 }
 
+// All eight additive ops create a missing bin from empty in server 8.1.3.
+// Transform/subtractive ops still no-op.
+
 #[aerospike_macro::test]
-async fn modify_on_missing_bin_without_no_fail_raises_error() {
+async fn insert_on_missing_bin_creates_the_bin_from_empty() {
     let client = common::client().await;
     if !server_supports_string_operations(&client).await {
         return;
     }
-    let key = as_key!(common::namespace(), &common::rand_str(10), "fail");
+    let key = as_key!(common::namespace(), &common::rand_str(10), "cr-ins");
     let wpolicy = WritePolicy::default();
     let policy = StringPolicy::default();
-    let _ = common::delete_durably(&client, &wpolicy, &key).await;
+    put_other_bin_only(&client, &wpolicy, &key).await;
+
     client
-        .put(&wpolicy, &key, &[as_bin!("other", "untouched")])
+        .operate(&wpolicy, &key, &[str_op::insert(&policy, BIN, 0, "hi")])
+        .await
+        .unwrap();
+    assert_eq!(get_string(&client, &key).await, "hi");
+}
+
+#[aerospike_macro::test]
+async fn concat_on_missing_bin_creates_the_bin_from_empty() {
+    let client = common::client().await;
+    if !server_supports_string_operations(&client).await {
+        return;
+    }
+    let key = as_key!(common::namespace(), &common::rand_str(10), "cr-cat");
+    let wpolicy = WritePolicy::default();
+    let policy = StringPolicy::default();
+    put_other_bin_only(&client, &wpolicy, &key).await;
+
+    client
+        .operate(&wpolicy, &key, &[str_op::concat(&policy, BIN, "hi")])
+        .await
+        .unwrap();
+    assert_eq!(get_string(&client, &key).await, "hi");
+}
+
+#[aerospike_macro::test]
+async fn append_on_missing_bin_creates_the_bin_from_empty() {
+    // Create-ops bootstrap an empty string and create a missing bin.
+    // NO_FAIL is irrelevant — the op always succeeds.
+    let client = common::client().await;
+    if !server_supports_string_operations(&client).await {
+        return;
+    }
+    let key = as_key!(common::namespace(), &common::rand_str(10), "cr-app");
+    let wpolicy = WritePolicy::default();
+    let policy = StringPolicy::default();
+    put_other_bin_only(&client, &wpolicy, &key).await;
+
+    client
+        .operate(&wpolicy, &key, &[str_op::append(&policy, BIN, "x")])
         .await
         .unwrap();
 
-    let err = client
-        .operate(&wpolicy, &key, &[str_op::upper(&policy, BIN)])
+    let rec = client
+        .get(&ReadPolicy::default(), &key, Bins::All)
         .await
-        .expect_err("operate on missing bin should fail without NO_FAIL");
-    let msg = format!("{}", err);
-    assert!(
-        msg.contains("BinNotFound") || msg.contains("BIN_NOT_FOUND"),
-        "unexpected error: {msg}"
+        .unwrap();
+    assert_eq!(rec.bins.get(BIN).unwrap(), &Value::from("x"));
+    assert_eq!(rec.bins.get("other").unwrap(), &Value::from("untouched"));
+}
+
+#[aerospike_macro::test]
+async fn prepend_on_missing_bin_creates_the_bin_from_empty() {
+    let client = common::client().await;
+    if !server_supports_string_operations(&client).await {
+        return;
+    }
+    let key = as_key!(common::namespace(), &common::rand_str(10), "cr-pre");
+    let wpolicy = WritePolicy::default();
+    let policy = StringPolicy::default();
+    put_other_bin_only(&client, &wpolicy, &key).await;
+
+    client
+        .operate(&wpolicy, &key, &[str_op::prepend(&policy, BIN, "hi")])
+        .await
+        .unwrap();
+    assert_eq!(get_string(&client, &key).await, "hi");
+}
+
+#[aerospike_macro::test]
+async fn overwrite_on_missing_bin_creates_the_bin_from_empty() {
+    let client = common::client().await;
+    if !server_supports_string_operations(&client).await {
+        return;
+    }
+    let key = as_key!(common::namespace(), &common::rand_str(10), "cr-ovr");
+    let wpolicy = WritePolicy::default();
+    let policy = StringPolicy::default();
+    put_other_bin_only(&client, &wpolicy, &key).await;
+
+    client
+        .operate(&wpolicy, &key, &[str_op::overwrite(&policy, BIN, 0, "hi")])
+        .await
+        .unwrap();
+    assert_eq!(get_string(&client, &key).await, "hi");
+}
+
+#[aerospike_macro::test]
+async fn pad_start_on_missing_bin_creates_the_bin_from_empty() {
+    let client = common::client().await;
+    if !server_supports_string_operations(&client).await {
+        return;
+    }
+    let key = as_key!(common::namespace(), &common::rand_str(10), "cr-pds");
+    let wpolicy = WritePolicy::default();
+    let policy = StringPolicy::default();
+    put_other_bin_only(&client, &wpolicy, &key).await;
+
+    client
+        .operate(&wpolicy, &key, &[str_op::pad_start(&policy, BIN, 5, "x")])
+        .await
+        .unwrap();
+    assert_eq!(get_string(&client, &key).await, "xxxxx");
+}
+
+#[aerospike_macro::test]
+async fn pad_end_on_missing_bin_creates_the_bin_from_empty() {
+    let client = common::client().await;
+    if !server_supports_string_operations(&client).await {
+        return;
+    }
+    let key = as_key!(common::namespace(), &common::rand_str(10), "cr-pde");
+    let wpolicy = WritePolicy::default();
+    let policy = StringPolicy::default();
+    put_other_bin_only(&client, &wpolicy, &key).await;
+
+    client
+        .operate(&wpolicy, &key, &[str_op::pad_end(&policy, BIN, 5, "x")])
+        .await
+        .unwrap();
+    assert_eq!(get_string(&client, &key).await, "xxxxx");
+}
+
+#[aerospike_macro::test]
+async fn repeat_on_missing_bin_creates_an_empty_bin() {
+    // repeat(n) on empty = "" — the bin is created holding an empty string.
+    let client = common::client().await;
+    if !server_supports_string_operations(&client).await {
+        return;
+    }
+    let key = as_key!(common::namespace(), &common::rand_str(10), "cr-rep");
+    let wpolicy = WritePolicy::default();
+    let policy = StringPolicy::default();
+    put_other_bin_only(&client, &wpolicy, &key).await;
+
+    client
+        .operate(&wpolicy, &key, &[str_op::repeat(&policy, BIN, 3)])
+        .await
+        .unwrap();
+    assert_eq!(get_string(&client, &key).await, "");
+}
+
+// ============================================================
+// Prepare / parameter errors
+//
+// These exercise the server's prepare-phase validation (find occurrence
+// != 0, empty/negative pad arguments, repeat count >= 0, regex_replace
+// pattern compile). All surface as PARAMETER_ERROR.
+// ============================================================
+
+async fn assert_param_error(
+    client: &aerospike::Client,
+    wpolicy: &WritePolicy,
+    key: &aerospike::Key,
+    op: aerospike::operations::Operation,
+) {
+    let err = client
+        .operate(wpolicy, key, &[op])
+        .await
+        .expect_err("operation should fail with PARAMETER_ERROR");
+    assert_eq!(
+        err.server_result_code(),
+        Some(aerospike::ResultCode::ParameterError),
+        "unexpected error: {err}"
     );
+}
+
+#[aerospike_macro::test]
+async fn find_with_zero_occurrence_raises_parameter() {
+    let client = common::client().await;
+    if !server_supports_string_operations(&client).await {
+        return;
+    }
+    let key = as_key!(common::namespace(), &common::rand_str(10), "pe-find");
+    let wpolicy = WritePolicy::default();
+    put(&client, &wpolicy, &key, "hello").await;
+
+    // 0 is reserved as "no occurrence"; the server's find prepare rejects it.
+    assert_param_error(&client, &wpolicy, &key, str_op::find_nth(BIN, "x", 0)).await;
+}
+
+#[aerospike_macro::test]
+async fn pad_with_empty_pad_string_raises_parameter() {
+    let client = common::client().await;
+    if !server_supports_string_operations(&client).await {
+        return;
+    }
+    let key = as_key!(common::namespace(), &common::rand_str(10), "pe-pad");
+    let wpolicy = WritePolicy::default();
+    let policy = StringPolicy::default();
+    put(&client, &wpolicy, &key, "hello").await;
+
+    assert_param_error(
+        &client,
+        &wpolicy,
+        &key,
+        str_op::pad_start(&policy, BIN, 10, ""),
+    )
+    .await;
+    assert_param_error(
+        &client,
+        &wpolicy,
+        &key,
+        str_op::pad_end(&policy, BIN, 10, ""),
+    )
+    .await;
+}
+
+#[aerospike_macro::test]
+async fn pad_start_with_negative_target_raises_parameter() {
+    let client = common::client().await;
+    if !server_supports_string_operations(&client).await {
+        return;
+    }
+    let key = as_key!(common::namespace(), &common::rand_str(10), "pe-neg");
+    let wpolicy = WritePolicy::default();
+    let policy = StringPolicy::default();
+    put(&client, &wpolicy, &key, "hello").await;
+
+    assert_param_error(
+        &client,
+        &wpolicy,
+        &key,
+        str_op::pad_start(&policy, BIN, -1, "*"),
+    )
+    .await;
+}
+
+#[aerospike_macro::test]
+async fn repeat_with_negative_count_raises_parameter() {
+    let client = common::client().await;
+    if !server_supports_string_operations(&client).await {
+        return;
+    }
+    let key = as_key!(common::namespace(), &common::rand_str(10), "pe-rep");
+    let wpolicy = WritePolicy::default();
+    let policy = StringPolicy::default();
+    put(&client, &wpolicy, &key, "hello").await;
+
+    assert_param_error(&client, &wpolicy, &key, str_op::repeat(&policy, BIN, -1)).await;
+}
+
+#[aerospike_macro::test]
+async fn regex_replace_with_invalid_pattern_raises_parameter() {
+    let client = common::client().await;
+    if !server_supports_string_operations(&client).await {
+        return;
+    }
+    let key = as_key!(common::namespace(), &common::rand_str(10), "pe-rxr");
+    let wpolicy = WritePolicy::default();
+    let policy = StringPolicy::default();
+    put(&client, &wpolicy, &key, "hello").await;
+
+    // Unclosed character class — the pattern compile fails inside the op.
+    assert_param_error(
+        &client,
+        &wpolicy,
+        &key,
+        str_op::regex_replace(&policy, BIN, "[unclosed", "NUM", StringRegexFlags::DEFAULT),
+    )
+    .await;
 }
