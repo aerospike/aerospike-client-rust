@@ -70,12 +70,10 @@ impl QueryDirection<'_> {
         }
     }
 
-    /// Foreground-only field today. Background queries don't carry a
-    /// `records_per_second` knob in the current `WritePolicy` shape.
     const fn records_per_second(&self) -> u32 {
         match self {
             QueryDirection::Foreground(p) => p.records_per_second,
-            QueryDirection::Background(_) => 0,
+            QueryDirection::Background(p) => p.records_per_second,
         }
     }
 }
@@ -1234,12 +1232,7 @@ impl Buffer {
 
         let no_filter: Option<Expression> = None;
         for (idx, (op, _)) in batch_ops.iter().enumerate() {
-            if let BatchOperation::TxnRoll {
-                br,
-                txn,
-                roll_attr,
-            } = op
-            {
+            if let BatchOperation::TxnRoll { br, txn, roll_attr } = op {
                 let key = &br.key;
                 let ver = txn.get_read_version(key);
                 self.write_u32(idx as u32);
@@ -1794,9 +1787,7 @@ impl Buffer {
 
     fn estimate_operation_size_for_bin_name(&mut self, bin_name: &str) -> Result<()> {
         if bin_name.len() > 15 {
-            return Err(Error::invalid_argument(
-                "Bin name is longer than 15 bytes",
-            ));
+            return Err(Error::invalid_argument("Bin name is longer than 15 bytes"));
         }
         self.data_offset += bin_name.len() + OPERATION_HEADER_SIZE as usize;
         Ok(())
@@ -3167,16 +3158,16 @@ mod tests {
         let header = MSG_TOTAL_HEADER_SIZE as usize;
         // Target UNCOMPRESSED message sizes (header + payload).
         let targets = [
-            header,                          // minimal message, far below threshold
-            DEFAULT_COMPRESS_THRESHOLD,      // exactly at threshold: stays plain
-            DEFAULT_COMPRESS_THRESHOLD + 1,  // first compressible size
+            header,                         // minimal message, far below threshold
+            DEFAULT_COMPRESS_THRESHOLD,     // exactly at threshold: stays plain
+            DEFAULT_COMPRESS_THRESHOLD + 1, // first compressible size
             512,
-            STEP - 1,                        // just under one encoder chunk
-            STEP,                            // exactly one chunk
-            STEP + 1,                        // chunk + 1 trailing byte
+            STEP - 1, // just under one encoder chunk
+            STEP,     // exactly one chunk
+            STEP + 1, // chunk + 1 trailing byte
             2 * STEP,
-            3 * STEP + 7,                    // several chunks + remainder
-            1024 * 1024 + 13,                // > 1MiB
+            3 * STEP + 7,     // several chunks + remainder
+            1024 * 1024 + 13, // > 1MiB
         ];
 
         for target in targets {
@@ -3189,7 +3180,10 @@ mod tests {
                 // compress. (Just-over-threshold messages may legally take
                 // the no-shrink fallback: zlib framing + the 16-byte
                 // compressed header can exceed a ~130-byte message.)
-                assert!(compressed, "size {target}: compressible payload must shrink");
+                assert!(
+                    compressed,
+                    "size {target}: compressible payload must shrink"
+                );
             }
         }
     }
@@ -3401,7 +3395,10 @@ mod tests {
         assert_eq!(INFO4_ERROR_VERBOSITY_SHIFT, 5);
         assert_eq!(INFO4_ERROR_VERBOSITY_MASK, 0x60);
         // Mask must cover exactly two bits at the shift position.
-        assert_eq!(0x03u8 << INFO4_ERROR_VERBOSITY_SHIFT, INFO4_ERROR_VERBOSITY_MASK);
+        assert_eq!(
+            0x03u8 << INFO4_ERROR_VERBOSITY_SHIFT,
+            INFO4_ERROR_VERBOSITY_MASK
+        );
     }
 
     #[test]

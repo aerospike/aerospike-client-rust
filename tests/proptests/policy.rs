@@ -196,6 +196,7 @@ pub fn write_policy(
         any::<bool>(),
         any::<bool>(),
         any::<bool>(),
+        any::<u32>(),
     )
         .prop_map(
             |(
@@ -208,6 +209,7 @@ pub fn write_policy(
                 send_key,
                 respond_per_each_op,
                 durable_delete,
+                records_per_second,
             )| WritePolicy {
                 base_policy,
                 record_exists_action,
@@ -219,6 +221,7 @@ pub fn write_policy(
                 respond_per_each_op,
                 durable_delete,
                 on_locking_only: false,
+                records_per_second,
             },
         )
 }
@@ -237,6 +240,7 @@ pub fn write_policy_without_replace(
         any::<bool>(),
         any::<bool>(),
         any::<bool>(),
+        any::<u32>(),
     )
         .prop_map(
             |(
@@ -249,6 +253,7 @@ pub fn write_policy_without_replace(
                 send_key,
                 respond_per_each_op,
                 durable_delete,
+                records_per_second,
             )| WritePolicy {
                 base_policy,
                 record_exists_action,
@@ -260,6 +265,7 @@ pub fn write_policy_without_replace(
                 respond_per_each_op,
                 durable_delete,
                 on_locking_only: false,
+                records_per_second,
             },
         )
 }

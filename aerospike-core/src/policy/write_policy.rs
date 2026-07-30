@@ -14,9 +14,9 @@
 // the License.
 
 use crate::expressions::Expression;
-use crate::policy::{BasePolicy, PolicyLike};
 #[cfg(feature = "dynamic-config")]
 use crate::policy::BasePolicyConfig;
+use crate::policy::{BasePolicy, PolicyLike};
 use crate::{CommitLevel, Expiration, GenerationPolicy, RecordExistsAction};
 
 /// `WritePolicy` encapsulates parameters for all write operations.
@@ -75,6 +75,13 @@ pub struct WritePolicy {
     /// Enterprise Edition 3.10+ only.
     pub durable_delete: bool,
 
+    /// Limit the number of records processed per second on background
+    /// query executions (`Client::query_operate` /
+    /// `Client::query_execute_udf`). 0 (the default) means no limit.
+    /// Ignored by every other command type.
+    #[cfg_attr(feature = "dynamic-config", config(skip))]
+    pub records_per_second: u32,
+
     /// If true, the MRT monitor record will only be written if the record is locked.
     /// This is used internally by the transaction system.
     /// Default: false
@@ -115,6 +122,7 @@ impl Default for WritePolicy {
             send_key: false,
             respond_per_each_op: false,
             durable_delete: false,
+            records_per_second: 0,
             on_locking_only: false,
         }
     }
