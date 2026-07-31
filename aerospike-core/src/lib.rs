@@ -170,8 +170,8 @@ pub use policy::{
 };
 pub use privilege::{Privilege, PrivilegeCode};
 pub use query::{
-    CollectionIndexType, EqFilterValue, IndexType, PartitionFilter, RangeFilterValue, Recordset,
-    Statement, UDFLang,
+    CollectionIndexType, EqFilterValue, IndexType, Order, OrderBy, OrderByFlags, OrderByType,
+    PartitionFilter, RangeFilterValue, Recordset, Statement, UDFLang,
 };
 #[cfg(feature = "lua")]
 pub use query::{ResultSet, ResultStream};

@@ -71,4 +71,16 @@ pub enum FieldType {
     /// expression trace). Present on failure responses only when
     /// error-detail verbosity was requested. Requires server 8.1.3+.
     ErrorMessage = 45,
+    /// Top-K order-by clause: msgpack 4-element array
+    /// `[bin_name, type: uint, direction: uint, flags: uint]`. Written by
+    /// `commands/buffer.rs::set_query`, but gated behind
+    /// `Version::supports_query_top_k()`, which always evaluates to `false`
+    /// against a real server until a real minimum version is assigned (this
+    /// feature is unreleased as of this writing) — see
+    /// [`crate::query::order_by`].
+    OrderBy = 46,
+    /// Top-K limit (`k`): plain big-endian `uint32_t`, `k` in `[1, 1000]`.
+    /// Written alongside [`FieldType::OrderBy`] under the same
+    /// capability gate.
+    TopK = 47,
 }

@@ -472,6 +472,26 @@ impl PartitionTracker {
         }
     }
 
+    /// Marks every partition in the tracked range for retry, regardless of
+    /// per-node/per-partition state. Used by the Top-K query path
+    /// (`Client::execute_top_k_query`), which forces a full whole-job retry
+    /// on any node error instead of the normal partial, per-partition
+    /// resume: Top-K is single-shot and the server rejects non-zero resume
+    /// cursors outright, so every retried partition must be requested
+    /// fresh — never mid-partition — and any already-buffered per-node
+    /// Top-K results from this attempt must be discarded rather than
+    /// merged with results from a differently-scoped retry.
+    pub(crate) async fn mark_all_for_retry(&self) {
+        if let Some(pf) = &self.partition_filter {
+            let pf = pf.lock().await;
+            if let Some(partitions) = pf.partitions.as_ref() {
+                for part in partitions.iter() {
+                    part.lock().retry = true;
+                }
+            }
+        }
+    }
+
     pub(crate) async fn partition_error(&self) {
         // Mark all partitions for retry on fatal errors.
         if let Some(ref pf) = self.partition_filter {
