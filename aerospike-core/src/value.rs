@@ -1411,29 +1411,29 @@ impl Serialize for Value {
                 }
                 map.end()
             }
-            Value::Vector(v) => match v {
-                Vector::Float16(d) => {
+            Value::Vector(v) => match v.data() {
+                crate::vector::VectorData::Float16(d) => {
                     let mut seq = serializer.serialize_seq(Some(d.len()))?;
                     for e in d {
                         seq.serialize_element(e)?;
                     }
                     seq.end()
                 }
-                Vector::Int32(d) => {
+                crate::vector::VectorData::Int32(d) => {
                     let mut seq = serializer.serialize_seq(Some(d.len()))?;
                     for e in d {
                         seq.serialize_element(e)?;
                     }
                     seq.end()
                 }
-                Vector::Float32(d) => {
+                crate::vector::VectorData::Float32(d) => {
                     let mut seq = serializer.serialize_seq(Some(d.len()))?;
                     for e in d {
                         seq.serialize_element(e)?;
                     }
                     seq.end()
                 }
-                Vector::Float64(d) => {
+                crate::vector::VectorData::Float64(d) => {
                     let mut seq = serializer.serialize_seq(Some(d.len()))?;
                     for e in d {
                         seq.serialize_element(e)?;
@@ -1803,7 +1803,7 @@ mod tests {
     fn vector_value_round_trips_through_particle() {
         use crate::Vector;
 
-        let value = Value::Vector(Vector::Float32(vec![0.5, -1.5, 2.0]));
+        let value = Value::Vector(Vector::float32(vec![0.5, -1.5, 2.0]));
         assert_eq!(value.particle_type().unwrap(), ParticleType::VECTOR as u8);
 
         let size = value.estimate_size().unwrap();
@@ -1826,7 +1826,7 @@ mod tests {
 
         let list = Value::List(vec![
             Value::from(1),
-            Value::Vector(Vector::Int32(vec![1, 2, 3])),
+            Value::Vector(Vector::int32(vec![1, 2, 3])),
         ]);
 
         let size = encoder::pack_value(&mut None, &list).unwrap();
@@ -1838,6 +1838,82 @@ mod tests {
         buf.data_offset = 0;
         let decoded = decoder::unpack_value_list(&mut buf).unwrap();
         assert_eq!(decoded, list);
+    }
+
+    // A vector nested as a map value round-trips through the msgpack path.
+    #[test]
+    fn vector_round_trips_as_map_value() {
+        use crate::msgpack::{decoder, encoder};
+        use crate::Vector;
+
+        let mut map = HashMap::new();
+        map.insert(
+            Value::from("k"),
+            Value::Vector(Vector::float32(vec![1.5, -2.5])),
+        );
+        let value = Value::HashMap(map);
+
+        let size = encoder::pack_value(&mut None, &value).unwrap();
+        let mut buf = Buffer::new(usize::MAX);
+        buf.resize_buffer(size).unwrap();
+        buf.data_offset = 0;
+        encoder::pack_value(&mut Some(&mut buf), &value).unwrap();
+
+        buf.data_offset = 0;
+        let decoded = decoder::unpack_value_map(&mut buf).unwrap();
+        assert_eq!(decoded, value);
+    }
+
+    // A vector buried in a list-of-map round-trips (deep CDT nesting).
+    #[test]
+    fn vector_round_trips_deeply_nested() {
+        use crate::msgpack::{decoder, encoder};
+        use crate::Vector;
+
+        let mut inner = HashMap::new();
+        inner.insert(
+            Value::from("v"),
+            Value::Vector(Vector::float64(vec![1.5, -2.5, 3.0])),
+        );
+        let list = Value::List(vec![Value::from(1), Value::HashMap(inner)]);
+
+        let size = encoder::pack_value(&mut None, &list).unwrap();
+        let mut buf = Buffer::new(usize::MAX);
+        buf.resize_buffer(size).unwrap();
+        buf.data_offset = 0;
+        encoder::pack_value(&mut Some(&mut buf), &list).unwrap();
+
+        buf.data_offset = 0;
+        let decoded = decoder::unpack_value_list(&mut buf).unwrap();
+        assert_eq!(decoded, list);
+    }
+
+    // Value wrapping: estimate_size mirrors the vector wire size, and `as_bin!`
+    // produces a Value::Vector bin.
+    #[test]
+    fn vector_value_size_and_bin_wrapping() {
+        use crate::Vector;
+
+        let v = Vector::float32(vec![1.0, 2.0, 3.0]);
+        let value = Value::Vector(v.clone());
+        assert_eq!(value.estimate_size().unwrap(), v.wire_size());
+
+        let bin = crate::as_bin!("embedding", v.clone());
+        assert_eq!(bin.name, "embedding");
+        assert_eq!(bin.value, Value::Vector(v));
+    }
+
+    // A vector may not be used as a record key (parity with Java's
+    // VectorValue.validateKeyType): both the digest path and Key::new reject it.
+    #[test]
+    fn vector_cannot_be_used_as_key() {
+        use crate::Vector;
+
+        let value = Value::Vector(Vector::int32(vec![1, 2, 3]));
+
+        let mut hasher = Ripemd160::new();
+        assert!(value.write_key_bytes(&mut hasher).is_err());
+        assert!(crate::Key::new("ns", "set", value).is_err());
     }
 
     // Unknown values are read-only: every send path rejects them.

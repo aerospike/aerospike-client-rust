@@ -50,7 +50,7 @@ use crate::Value;
 /// use aerospike::{Vector, VectorDistanceMetric};
 ///
 /// // Builds, but cannot be sent to the server yet (see "Work in progress").
-/// let query = Vector::Float32(vec![0.12, 0.98, -0.34]);
+/// let query = Vector::float32(vec![0.12, 0.98, -0.34]);
 /// let _wip = gt(
 ///     distance(VectorDistanceMetric::Cosine, &query, vector_bin("embedding".to_string())),
 ///     float_val(0.8),
@@ -77,7 +77,7 @@ mod tests {
     // so a vector distance expression can never be sent.
     #[test]
     fn distance_cannot_be_sent_yet() {
-        let query = Vector::Float32(vec![1.0]);
+        let query = Vector::float32(vec![1.0]);
         let exp = distance(
             VectorDistanceMetric::Cosine,
             &query,
@@ -98,7 +98,7 @@ mod tests {
     // array[4] = [VECTOR_DIST(52), metric, query blob, bin].
     #[test]
     fn distance_provisional_wire_bytes() {
-        let query = Vector::Float32(vec![1.0]);
+        let query = Vector::float32(vec![1.0]);
         let exp = distance(
             VectorDistanceMetric::Cosine,
             &query,
