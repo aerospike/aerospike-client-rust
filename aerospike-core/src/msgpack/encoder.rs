@@ -22,6 +22,7 @@ use crate::operations::cdt::{CdtArgument, CdtOperation};
 use crate::operations::cdt_context::CdtContext;
 use crate::operations::maps::MapOrder;
 use crate::value::{FloatValue, Value};
+use crate::vector::Vector;
 use crate::{Error, Result};
 
 pub fn pack_value(buf: &mut Option<&mut Buffer>, val: &Value) -> Result<usize> {
@@ -36,6 +37,7 @@ pub fn pack_value(buf: &mut Option<&mut Buffer>, val: &Value) -> Result<usize> {
         },
         Value::Blob(ref val) => pack_blob(buf, val),
         Value::HLL(ref val) => pack_hll(buf, val),
+        Value::Vector(ref val) => pack_vector(buf, val),
         Value::List(ref val) => pack_array(buf, val)?,
         Value::HashMap(ref val) => pack_map(buf, val)?,
         Value::OrderedMap(ref val) => pack_index_map(buf, val)?,
@@ -509,6 +511,20 @@ pub fn pack_hll(buf: &mut Option<&mut Buffer>, value: &[u8]) -> usize {
     if let Some(ref mut buf) = *buf {
         buf.write_u8(ParticleType::HLL as u8);
         buf.write_bytes(value);
+    }
+
+    size
+}
+
+/// Pack a vector nested in a CDT or expression: a msgpack byte string tagged
+/// with the `VECTOR` particle type (like [`pack_hll`]), payload = its wire form.
+pub fn pack_vector(buf: &mut Option<&mut Buffer>, value: &Vector) -> usize {
+    let mut size = value.wire_size() + 1;
+
+    size += pack_string_begin(buf, size);
+    if let Some(ref mut buf) = *buf {
+        buf.write_u8(ParticleType::VECTOR as u8);
+        value.write_to(buf);
     }
 
     size

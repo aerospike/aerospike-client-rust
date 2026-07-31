@@ -23,6 +23,7 @@ use crate::commands::ParticleType;
 use crate::errors::{Error, Result};
 use crate::operations::MapOrder;
 use crate::value::Value;
+use crate::vector::Vector;
 
 pub fn unpack_value_list(buf: &mut Buffer) -> Result<Value> {
     if buf.data_buffer.is_empty() {
@@ -154,6 +155,7 @@ fn unpack_blob(buf: &mut Buffer, count: usize) -> Result<Value> {
 
         Some(ParticleType::BLOB) => Ok(Value::Blob(buf.read_blob(count))),
         Some(ParticleType::HLL) => Ok(Value::HLL(buf.read_blob(count))),
+        Some(ParticleType::VECTOR) => Ok(Value::Vector(Vector::from_bytes(buf, count)?)),
 
         Some(ParticleType::GEOJSON) => {
             let val = buf.read_str(count)?;
