@@ -185,6 +185,7 @@ pub use txn::{AbortStatus, CommitErrorType, CommitStatus, Txn, TxnState};
 pub use user::User;
 pub use indexmap::IndexMap;
 pub use value::{FloatValue, MapCollection, MapLike, Value};
+pub use vector::{Vector, VectorDistanceMetric, VectorElementType};
 pub use xor_shift::XorShift;
 
 #[macro_use]
@@ -222,6 +223,7 @@ pub mod txn;
 pub(crate) mod txn_monitor;
 pub(crate) mod txn_roll;
 mod user;
+mod vector;
 pub mod xor_shift;
 
 #[cfg(test)]

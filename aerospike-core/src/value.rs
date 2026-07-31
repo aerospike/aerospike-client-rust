@@ -33,6 +33,7 @@ use crate::commands::buffer::Buffer;
 use crate::commands::ParticleType;
 use crate::errors::{Error, Result};
 use crate::msgpack::{decoder, encoder};
+use crate::vector::Vector;
 
 #[cfg(feature = "serialization")]
 use serde::ser::{SerializeMap, SerializeSeq};
@@ -277,6 +278,10 @@ pub enum Value {
     /// HLL value
     HLL(Vec<u8>),
 
+    /// A dense numeric vector for vector similarity search. Encoded with the
+    /// `VECTOR` particle type; see [`Vector`](crate::Vector).
+    Vector(Vector),
+
     /// Infinity Value
     Infinity,
 
@@ -342,6 +347,7 @@ impl PartialEq for Value {
                 a == b
             }
             (Value::KeyValueList(a), Value::KeyValueList(b)) => a == b,
+            (Value::Vector(a), Value::Vector(b)) => a == b,
             (Value::Unknown(t1, b1), Value::Unknown(t2, b2)) => t1 == t2 && b1 == b2,
             (Value::HashMap(a), b) => entries_eq(a.len(), a.iter(), b),
             (Value::OrderedMap(a), b) => entries_eq(a.len(), a.iter(), b),
@@ -369,6 +375,7 @@ impl Hash for Value {
             Value::GeoJSON(_) => panic!("GeoJson cannot be used as map keys."),
             Value::Blob(ref val) => val.hash(state),
             Value::HLL(_) => panic!("HLL cannot be used as map keys."),
+            Value::Vector(_) => panic!("Vectors cannot be used as map keys."),
             Value::MultiResult(_) => panic!("MultiValues cannot be used as map keys."),
             Value::List(_) => panic!("Lists cannot be used as map keys."),
             Value::HashMap(_) => panic!("HashMaps cannot be used as map keys."),
@@ -417,6 +424,7 @@ impl Value {
             | Value::KeyValueList(_) => ParticleType::MAP as u8,
             Value::GeoJSON(_) => ParticleType::GEOJSON as u8,
             Value::HLL(_) => ParticleType::HLL as u8,
+            Value::Vector(_) => ParticleType::VECTOR as u8,
             Value::Unknown(code, _) => code,
             Value::Infinity => {
                 return Err(Error::invalid_argument(
@@ -456,6 +464,7 @@ impl Value {
             Value::KeyValueList(_) => "key-value list".to_string(),
             Value::GeoJSON(_) => "geo-json".to_string(),
             Value::HLL(_) => "hll".to_string(),
+            Value::Vector(_) => "vector".to_string(),
             Value::Infinity => "INF".to_string(),
             Value::Wildcard => "wildcard".to_string(),
             Value::Unknown(code, _) => {
@@ -478,6 +487,7 @@ impl Value {
             Value::OrderedMap(ref val) => format!("{val:?}"),
             Value::SortedMap(ref val) => format!("{val:?}"),
             Value::KeyValueList(ref val) => format!("{val:?}"),
+            Value::Vector(ref val) => val.to_string(),
             Value::Infinity => "INF".into(),
             Value::Wildcard => "*".into(),
             Value::Unknown(code, ref bytes) => {
@@ -511,6 +521,7 @@ impl Value {
             }
             Value::GeoJSON(ref s) => 1 + 2 + s.len(), // flags + ncells + jsonstr
             Value::HLL(ref h) => h.len(),
+            Value::Vector(ref v) => v.wire_size(),
             Value::Nil | Value::Infinity | Value::Wildcard => 0,
             Value::Unknown(code, _) => {
                 return Err(Error::invalid_argument(format!(
@@ -546,6 +557,7 @@ impl Value {
                 ));
             }
             Value::GeoJSON(ref val) => buf.write_geo(val),
+            Value::Vector(ref val) => val.write_to(buf),
             Value::Infinity => encoder::pack_infinity(&mut Some(buf)),
             Value::Wildcard => encoder::pack_wildcard(&mut Some(buf)),
             Value::Unknown(code, _) => {
@@ -610,6 +622,7 @@ impl Value {
             Value::MultiResult(_) => 12,
             Value::KeyValueList(_) => 13,
             Value::Unknown(..) => 14,
+            Value::Vector(_) => 15,
         }
     }
 }
@@ -664,6 +677,7 @@ impl Ord for Value {
                     (Value::List(a_val), Value::List(b_val))
                     | (Value::MultiResult(a_val), Value::MultiResult(b_val)) => a_val.cmp(b_val),
                     (Value::KeyValueList(a_val), Value::KeyValueList(b_val)) => a_val.cmp(b_val),
+                    (Value::Vector(a_val), Value::Vector(b_val)) => a_val.cmp(b_val),
                     // Numeric float ordering (total order over f64), like
                     // the server — NOT raw bit order, which would sort
                     // every negative float above the positives.
@@ -729,6 +743,12 @@ impl From<Vec<u8>> for Value {
 impl From<Vec<Value>> for Value {
     fn from(val: Vec<Value>) -> Value {
         Value::List(val)
+    }
+}
+
+impl From<Vector> for Value {
+    fn from(val: Vector) -> Value {
+        Value::Vector(val)
     }
 }
 
@@ -1064,6 +1084,20 @@ impl TryFrom<Value> for Vec<(Value, Value)> {
     }
 }
 
+impl TryFrom<Value> for Vector {
+    type Error = String;
+    fn try_from(val: Value) -> std::result::Result<Self, Self::Error> {
+        match val {
+            Value::Vector(v) => Ok(v),
+            _ => Err(format!(
+                "Invalid type conversion from Value::{} to {}",
+                val.type_label(),
+                std::any::type_name::<Self>()
+            )),
+        }
+    }
+}
+
 impl TryFrom<Value> for f64 {
     type Error = String;
     fn try_from(val: Value) -> std::result::Result<Self, Self::Error> {
@@ -1130,6 +1164,7 @@ pub fn bytes_to_particle(ptype: u8, buf: &mut Buffer, len: usize) -> Result<Valu
             Ok(val)
         }
         ParticleType::HLL => Ok(Value::HLL(buf.read_blob(len))),
+        ParticleType::VECTOR => Ok(Value::Vector(Vector::from_bytes(buf, len)?)),
         ParticleType::BOOL => Ok(Value::Bool(buf.read_bool(len))),
         // Retired server types the client does not interpret: same
         // treatment as unrecognized codes above.
@@ -1376,6 +1411,36 @@ impl Serialize for Value {
                 }
                 map.end()
             }
+            Value::Vector(v) => match v {
+                Vector::Float16(d) => {
+                    let mut seq = serializer.serialize_seq(Some(d.len()))?;
+                    for e in d {
+                        seq.serialize_element(e)?;
+                    }
+                    seq.end()
+                }
+                Vector::Int32(d) => {
+                    let mut seq = serializer.serialize_seq(Some(d.len()))?;
+                    for e in d {
+                        seq.serialize_element(e)?;
+                    }
+                    seq.end()
+                }
+                Vector::Float32(d) => {
+                    let mut seq = serializer.serialize_seq(Some(d.len()))?;
+                    for e in d {
+                        seq.serialize_element(e)?;
+                    }
+                    seq.end()
+                }
+                Vector::Float64(d) => {
+                    let mut seq = serializer.serialize_seq(Some(d.len()))?;
+                    for e in d {
+                        seq.serialize_element(e)?;
+                    }
+                    seq.end()
+                }
+            },
             Value::Infinity => panic!("Infinity cannot be serialized"),
             Value::Wildcard => panic!("Wildcard cannot be serialized"),
             Value::MultiResult(_) => panic!("MultiValue cannot be serialized"),
@@ -1731,6 +1796,48 @@ mod tests {
             assert_eq!(particle_code, code);
             assert_eq!(bytes, payload);
         }
+    }
+
+    // Full write -> read cycle through the bin particle path used by put/get.
+    #[test]
+    fn vector_value_round_trips_through_particle() {
+        use crate::Vector;
+
+        let value = Value::Vector(Vector::Float32(vec![0.5, -1.5, 2.0]));
+        assert_eq!(value.particle_type().unwrap(), ParticleType::VECTOR as u8);
+
+        let size = value.estimate_size().unwrap();
+        let mut buf = Buffer::new(usize::MAX);
+        buf.resize_buffer(size).unwrap();
+        buf.data_offset = 0;
+        let written = value.write_to(&mut buf).unwrap();
+        assert_eq!(written, size);
+
+        buf.data_offset = 0;
+        let decoded = bytes_to_particle(ParticleType::VECTOR as u8, &mut buf, size).unwrap();
+        assert_eq!(decoded, value);
+    }
+
+    // A vector nested in a list round-trips through the msgpack (CDT) path.
+    #[test]
+    fn vector_round_trips_nested_in_list() {
+        use crate::msgpack::{decoder, encoder};
+        use crate::Vector;
+
+        let list = Value::List(vec![
+            Value::from(1),
+            Value::Vector(Vector::Int32(vec![1, 2, 3])),
+        ]);
+
+        let size = encoder::pack_value(&mut None, &list).unwrap();
+        let mut buf = Buffer::new(usize::MAX);
+        buf.resize_buffer(size).unwrap();
+        buf.data_offset = 0;
+        encoder::pack_value(&mut Some(&mut buf), &list).unwrap();
+
+        buf.data_offset = 0;
+        let decoded = decoder::unpack_value_list(&mut buf).unwrap();
+        assert_eq!(decoded, list);
     }
 
     // Unknown values are read-only: every send path rejects them.
