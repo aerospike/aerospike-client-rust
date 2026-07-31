@@ -757,7 +757,7 @@ pub fn hll_bin(name: String) -> Expression {
 /// use aerospike::{Vector, VectorDistanceMetric};
 ///
 /// // Cosine similarity between bin "v" and a query vector > 0.8
-/// let query = Vector::Float32(vec![0.1, 0.2, 0.3]);
+/// let query = Vector::float32(vec![0.1, 0.2, 0.3]);
 /// gt(distance(VectorDistanceMetric::Cosine, &query, vector_bin("v".to_string())), float_val(0.8));
 /// ```
 pub fn vector_bin(name: String) -> Expression {
