@@ -493,8 +493,8 @@ mod tests {
     use super::*;
     use crate::commands::buffer::Buffer;
 
-    /// Write `vector` into a fresh buffer sized to (at least) `capacity` and
-    /// reset the offset to the start, ready to read back.
+    /// Write `vector` into a fresh buffer of exactly `capacity` bytes and reset
+    /// the offset to the start, ready to read back.
     fn encode(vector: &Vector, capacity: usize) -> Buffer {
         let mut buf = Buffer::new(usize::MAX);
         buf.resize_buffer(capacity).unwrap();
