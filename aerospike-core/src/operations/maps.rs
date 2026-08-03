@@ -217,7 +217,18 @@ pub enum MapReturnType {
 
 #[derive(Debug, Clone, Copy)]
 /// Inverts the returned values in CDT Map operations.
-pub struct InvertedMapReturn(MapReturnType);
+///
+/// The field is public because this type exists to be constructed by a caller:
+/// every map operation that takes a return type accepts either a plain
+/// [`MapReturnType`] or one of these, and a private field would leave a caller
+/// outside this crate unable to build one at all.
+///
+/// ```
+/// use aerospike::operations::maps::{InvertedMapReturn, MapReturnType};
+///
+/// let inverted = InvertedMapReturn(MapReturnType::KeyValue);
+/// ```
+pub struct InvertedMapReturn(pub MapReturnType);
 
 /// Something that can be resolved into a set of [`MapReturnType`]. Either a single
 /// [`MapReturnType`], or [`InvertedMapReturn`].

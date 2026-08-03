@@ -176,7 +176,10 @@ pub use query::{
 };
 #[cfg(feature = "lua")]
 pub use query::{ResultSet, ResultStream};
-pub use record::Record;
+// `CITRUSLEAF_EPOCH` comes along because it is the unit `Record::new`'s
+// `expiration` argument is counted from, and a caller building a record cannot
+// state one without it.
+pub use record::{Record, CITRUSLEAF_EPOCH};
 pub use result_code::{ClientResultCode, ResultCode};
 pub use role::Role;
 pub use sampler::Sampler;
