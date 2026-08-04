@@ -66,7 +66,6 @@ use crate::{ClientResultCode, ResultCode};
 #[cfg(feature = "rt-tokio")]
 use aerospike_rt::task;
 
-
 /// The specific failure carried by an [`Error`].
 ///
 /// The "subclass" half of the Java `AerospikeException` hierarchy; metadata
@@ -342,7 +341,11 @@ impl Error {
     /// Per-node circuit breaker tripped for `node`.
     #[must_use]
     pub fn max_error_rate(node: impl Into<String>) -> Error {
-        let mut e = Error::new(ErrorKind::MaxErrorRate, ClientResultCode::MaxErrorRate.into(), None);
+        let mut e = Error::new(
+            ErrorKind::MaxErrorRate,
+            ClientResultCode::MaxErrorRate.into(),
+            None,
+        );
         e.0.node = Some(node.into());
         e
     }
@@ -447,7 +450,11 @@ impl Error {
     /// Untyped client-side error.
     #[must_use]
     pub fn client_error(msg: impl Into<String>) -> Error {
-        Error::new(ErrorKind::Client, ClientResultCode::ClientError.into(), Some(msg.into()))
+        Error::new(
+            ErrorKind::Client,
+            ClientResultCode::ClientError.into(),
+            Some(msg.into()),
+        )
     }
 }
 
@@ -461,12 +468,32 @@ macro_rules! impl_from {
     };
 }
 
-impl_from!(::base64::DecodeError, Base64, ClientResultCode::ParseError.into());
-impl_from!(::std::str::Utf8Error, InvalidUtf8, ClientResultCode::ParseError.into());
+impl_from!(
+    ::base64::DecodeError,
+    Base64,
+    ClientResultCode::ParseError.into()
+);
+impl_from!(
+    ::std::str::Utf8Error,
+    InvalidUtf8,
+    ClientResultCode::ParseError.into()
+);
 impl_from!(::std::io::Error, Io, ClientResultCode::ClientError.into());
-impl_from!(::std::net::AddrParseError, ParseAddr, ClientResultCode::ParseError.into());
-impl_from!(::std::num::ParseIntError, ParseInt, ClientResultCode::ParseError.into());
-impl_from!(::pwhash::error::Error, PwHash, ClientResultCode::SerializeError.into());
+impl_from!(
+    ::std::net::AddrParseError,
+    ParseAddr,
+    ClientResultCode::ParseError.into()
+);
+impl_from!(
+    ::std::num::ParseIntError,
+    ParseInt,
+    ClientResultCode::ParseError.into()
+);
+impl_from!(
+    ::pwhash::error::Error,
+    PwHash,
+    ClientResultCode::SerializeError.into()
+);
 #[cfg(feature = "rt-tokio")]
 impl_from!(task::JoinError, Async, ClientResultCode::ClientError.into());
 
@@ -501,10 +528,7 @@ impl Error {
         if self.0.result_code < 0 {
             Some(ClientResultCode::from(self.0.result_code))
         } else {
-            self.0
-                .source
-                .as_ref()
-                .and_then(|s| s.client_result_code())
+            self.0.source.as_ref().and_then(|s| s.client_result_code())
         }
     }
 
@@ -598,9 +622,9 @@ impl Error {
             ErrorKind::Io(e) => format!("Error during an I/O operation: {e}"),
             ErrorKind::ParseAddr(e) => format!("Error parsing an IP or socket address: {e}"),
             ErrorKind::ParseInt(e) => format!("Error parsing an integer: {e}"),
-            ErrorKind::PwHash(e) => format!(
-                "Error returned while hashing a password for user authentication: {e}"
-            ),
+            ErrorKind::PwHash(e) => {
+                format!("Error returned while hashing a password for user authentication: {e}")
+            }
             #[cfg(feature = "rt-tokio")]
             ErrorKind::Async(e) => format!("Async runtime error: {e}"),
             // Java `getBaseMessage` contract: the explicit message, else the
@@ -621,11 +645,7 @@ impl Error {
     pub fn server_result_code(&self) -> Option<ResultCode> {
         match &self.0.kind {
             ErrorKind::Server { rc, .. } | ErrorKind::BatchRow { rc, .. } => Some(*rc),
-            _ => self
-                .0
-                .source
-                .as_ref()
-                .and_then(|s| s.server_result_code()),
+            _ => self.0.source.as_ref().and_then(|s| s.server_result_code()),
         }
     }
 
@@ -643,11 +663,7 @@ impl Error {
             | ErrorKind::BatchRow {
                 detail: Some(d), ..
             } => Some(d),
-            _ => self
-                .0
-                .source
-                .as_ref()
-                .and_then(|s| s.server_error_detail()),
+            _ => self.0.source.as_ref().and_then(|s| s.server_error_detail()),
         }
     }
 
@@ -683,6 +699,19 @@ impl Error {
     #[must_use]
     pub fn in_doubt(&self) -> bool {
         self.0.in_doubt || self.0.source.as_ref().is_some_and(|s| s.in_doubt())
+    }
+
+    /// Whether this error or any cause in its chain is a client-side
+    /// timeout ([`ErrorKind::Timeout`]). Server-reported timeouts are
+    /// `ErrorKind::Server` with [`ResultCode::Timeout`] and are not
+    /// matched here.
+    pub fn is_client_timeout(&self) -> bool {
+        matches!(self.0.kind, ErrorKind::Timeout)
+            || self
+                .0
+                .source
+                .as_ref()
+                .is_some_and(|s| s.is_client_timeout())
     }
 
     /// Whether the connection this error was produced on may be returned to
@@ -793,8 +822,7 @@ impl Error {
         }
         let eligible = match &self.0.kind {
             ErrorKind::Server { rc, .. } | ErrorKind::BatchRow { rc, .. } => {
-                commands_sent > 1
-                    || (commands_sent == 1 && matches!(rc, ResultCode::Timeout))
+                commands_sent > 1 || (commands_sent == 1 && matches!(rc, ResultCode::Timeout))
             }
             // Client-side timeouts / connection failures on a write command
             // where at least one command reached the wire are always
@@ -901,11 +929,26 @@ mod tests {
     fn result_codes_are_java_compatible() {
         assert_eq!(detailed().result_code(), 4); // PARAMETER_ERROR
         assert_eq!(Error::timeout("t").result_code(), 9); // TIMEOUT
-        assert_eq!(Error::max_retries_exceeded("t").result_code(), i32::from(ClientResultCode::MaxRetriesExceeded));
-        assert_eq!(Error::connection("c").result_code(), i32::from(ClientResultCode::ServerNotAvailable));
-        assert_eq!(Error::invalid_node("n").result_code(), i32::from(ClientResultCode::InvalidNodeError));
-        assert_eq!(Error::client_error("x").result_code(), i32::from(ClientResultCode::ClientError));
-        assert_eq!(Error::batch_failed(vec![], Error::timeout("t")).result_code(), i32::from(ClientResultCode::BatchFailed));
+        assert_eq!(
+            Error::max_retries_exceeded("t").result_code(),
+            i32::from(ClientResultCode::MaxRetriesExceeded)
+        );
+        assert_eq!(
+            Error::connection("c").result_code(),
+            i32::from(ClientResultCode::ServerNotAvailable)
+        );
+        assert_eq!(
+            Error::invalid_node("n").result_code(),
+            i32::from(ClientResultCode::InvalidNodeError)
+        );
+        assert_eq!(
+            Error::client_error("x").result_code(),
+            i32::from(ClientResultCode::ClientError)
+        );
+        assert_eq!(
+            Error::batch_failed(vec![], Error::timeout("t")).result_code(),
+            i32::from(ClientResultCode::BatchFailed)
+        );
     }
 
     #[test]
@@ -928,11 +971,8 @@ mod tests {
         assert_eq!(Error::timeout("t").client_result_code(), None);
         // Drills through the cause chain: a server error wrapping a client
         // parse failure still surfaces the client code.
-        let wrapped = Error::bad_response("junk").wrap(Error::server_error(
-            ResultCode::Ok,
-            "n",
-            None,
-        ));
+        let wrapped =
+            Error::bad_response("junk").wrap(Error::server_error(ResultCode::Ok, "n", None));
         assert_eq!(
             wrapped.client_result_code(),
             Some(ClientResultCode::ParseError)
@@ -950,7 +990,10 @@ mod tests {
         assert_eq!(s, "No more available connections");
         // base_message falls back to the code's string when no explicit
         // message was attached (Java getBaseMessage contract).
-        assert_eq!(Error::no_more_connections().base_message(), "Too many connections");
+        assert_eq!(
+            Error::no_more_connections().base_message(),
+            "Too many connections"
+        );
         assert_eq!(
             Error::max_error_rate("n").base_message(),
             "Max error rate exceeded for node n; backing off"
@@ -999,7 +1042,10 @@ mod tests {
     fn accessors_drill_through_cause_chain() {
         let wrapped = detailed().chain_error("retry context");
         assert_eq!(wrapped.sub_code(), sub_code::PARAM_TTL_INVALID);
-        assert_eq!(wrapped.server_result_code(), Some(ResultCode::ParameterError));
+        assert_eq!(
+            wrapped.server_result_code(),
+            Some(ResultCode::ParameterError)
+        );
         assert!(wrapped.server_error_detail().is_some());
         assert_eq!(wrapped.node(), Some("node")); // node drills too
     }
@@ -1041,8 +1087,8 @@ mod tests {
 
     #[test]
     fn naked_client_timeout_write_is_in_doubt() {
-        let err = Error::timeout("Timeout reading from the network connection")
-            .set_in_doubt(true, 1);
+        let err =
+            Error::timeout("Timeout reading from the network connection").set_in_doubt(true, 1);
         assert!(err.in_doubt());
         assert!(err.to_string().contains("In Doubt: true"), "{err}");
     }
@@ -1063,13 +1109,18 @@ mod tests {
         let exit_err = Error::max_retries_exceeded("Timeout after 2 tries");
         let tail = last_err.wrap(exit_err);
 
-        let out = tail
-            .set_in_doubt(true, 1)
-            .with_retry_context(2, Some("BB9051616AC4202: 172.22.22.5:3000"), vec![]);
+        let out = tail.set_in_doubt(true, 1).with_retry_context(
+            2,
+            Some("BB9051616AC4202: 172.22.22.5:3000"),
+            vec![],
+        );
 
         assert!(out.in_doubt(), "retry-exhaustion write must be in-doubt");
         assert!(out.to_string().contains("In Doubt: true"), "{out}");
-        assert_eq!(out.result_code(), i32::from(ClientResultCode::MaxRetriesExceeded));
+        assert_eq!(
+            out.result_code(),
+            i32::from(ClientResultCode::MaxRetriesExceeded)
+        );
         assert_eq!(out.iteration(), Some(2));
     }
 
@@ -1083,8 +1134,8 @@ mod tests {
 
     #[test]
     fn reads_are_never_in_doubt() {
-        let err = Error::timeout("Timeout reading from the network connection")
-            .set_in_doubt(false, 1);
+        let err =
+            Error::timeout("Timeout reading from the network connection").set_in_doubt(false, 1);
         assert!(!err.in_doubt());
         assert!(!err.to_string().contains("In Doubt"), "{err}");
     }
@@ -1130,8 +1181,11 @@ mod tests {
         assert!(!Error::server_error(ResultCode::QueryAborted, "n", None).keep_connection());
         assert!(Error::timeout("t").keep_connection());
         assert!(!Error::connection("c").keep_connection());
-        assert!(!Error::from(std::io::Error::new(std::io::ErrorKind::UnexpectedEof, "eof"))
-            .keep_connection());
+        assert!(!Error::from(std::io::Error::new(
+            std::io::ErrorKind::UnexpectedEof,
+            "eof"
+        ))
+        .keep_connection());
     }
 
     // ---- batch partial results (Java BatchRecordArray parity) ----

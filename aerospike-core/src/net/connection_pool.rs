@@ -211,14 +211,6 @@ impl Queue {
                     self.reduce_capacity();
                     continue;
                 }
-               
-                // A server restart leaves the pool full of dead sockets
-                // that get handed out and fail on the first read
-                if !conn.is_alive() {
-                    drop(conn);
-                    self.reduce_capacity();
-                    continue;
-                }
                 connection = conn;
                 break;
             }

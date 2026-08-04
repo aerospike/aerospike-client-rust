@@ -73,7 +73,25 @@ impl BatchExecutor {
             .await
             {
                 Ok(res) => res,
-                Err(_) => Err(Error::timeout("Timeout".to_string())),
+                Err(_) => {
+                    // The batch deadline elapsed with commands possibly on the
+                    // wire: surface a per-row TIMEOUT outcome and mark write
+                    // rows in-doubt (Java `BatchRecordArray` timeout parity)
+                    // instead of dropping the record set.
+                    let mut any_write = false;
+                    let records: Vec<BatchRecord> = batch_ops
+                        .iter()
+                        .map(|op| {
+                            let mut row = op.batch_record();
+                            row.result_code = Some(ResultCode::Timeout);
+                            row.in_doubt = row.has_write();
+                            any_write |= row.has_write();
+                            row
+                        })
+                        .collect();
+                    let source = Error::timeout("Timeout".to_string()).set_in_doubt(any_write, 1);
+                    Err(Error::batch_failed(records, source))
+                }
             }
         } else {
             self.execute_batch_operate(policy, batch_ops).await
@@ -137,6 +155,28 @@ impl BatchExecutor {
                 .await?;
             for mut cmd in cmds {
                 if let Some(e) = cmd.terminal_error.take() {
+                    // Mark this node's unanswered rows with the failure
+                    // (Java parity): a client timeout stamps TIMEOUT and
+                    // makes writes in-doubt — they may have been applied;
+                    // other terminal errors stamp their server code when
+                    // one exists. Rows answered before the failure keep
+                    // their real results.
+                    let rc = if e.is_client_timeout() {
+                        Some(ResultCode::Timeout)
+                    } else {
+                        e.server_result_code()
+                    };
+                    let in_doubt = e.in_doubt() || e.is_client_timeout();
+                    for (op, _) in &mut cmd.batch_ops {
+                        if op.record_mut().result_code.is_none() {
+                            if in_doubt {
+                                op.set_in_doubt_on_no_response(policy.base_policy.txn.as_ref());
+                            }
+                            if let Some(rc) = rc {
+                                op.set_result_code(rc, in_doubt);
+                            }
+                        }
+                    }
                     first_err.get_or_insert(e);
                 }
                 all_results.extend(cmd.batch_ops);

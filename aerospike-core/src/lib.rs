@@ -156,6 +156,7 @@ pub use commands::particle_type::ParticleType;
 pub use errors::{Error, ErrorKind, Result};
 pub use expressions::regex_flag::RegexFlag;
 pub use key::Key;
+pub use mapping::RecordMapper;
 pub use metrics::{
     ClusterMetrics, CommandType, HistogramType, Labels, MetricsPolicy, NodeMetricsSnapshot,
 };
@@ -206,6 +207,7 @@ mod common;
 pub mod expressions;
 #[cfg(feature = "lua")]
 pub mod lua;
+pub mod mapping;
 pub mod metrics;
 mod msgpack;
 mod net;

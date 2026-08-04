@@ -2047,7 +2047,11 @@ impl Cluster {
     pub(crate) fn update_password(&self, user: &str, password: &str) -> Result<()> {
         let auth_mode = { &self.client_policy.load().auth_mode };
         match auth_mode {
-            crate::AuthMode::Internal(u, _) | crate::AuthMode::External(u, _) if u == user => {
+            crate::AuthMode::Internal(u, _)
+            | crate::AuthMode::External(u, _)
+            | crate::AuthMode::ExternalInsecure(u, _)
+                if u == user =>
+            {
                 self.hashed_pass
                     .store(Arc::new(Some(AdminCommand::hash_password(password)?)));
             }

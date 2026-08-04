@@ -423,7 +423,8 @@ impl AdminCommand {
                 AdminCommand::write_field_str(conn, USER, user);
                 AdminCommand::write_field_bytes(conn, CREDENTIAL, hashed_pass.unwrap().as_bytes());
             }
-            AuthMode::External(ref user, ref password) => {
+            AuthMode::External(ref user, ref password)
+            | AuthMode::ExternalInsecure(ref user, ref password) => {
                 AdminCommand::write_header(conn, LOGIN, 3);
                 AdminCommand::write_field_str(conn, USER, user);
                 AdminCommand::write_field_bytes(conn, CREDENTIAL, hashed_pass.unwrap().as_bytes());
@@ -541,7 +542,9 @@ impl AdminCommand {
         conn.buffer.resize_buffer(1024)?;
         conn.buffer.reset_offset();
         match auth_mode {
-            AuthMode::Internal(ref user, _) | AuthMode::External(ref user, _) => {
+            AuthMode::Internal(ref user, _)
+            | AuthMode::External(ref user, _)
+            | AuthMode::ExternalInsecure(ref user, _) => {
                 AdminCommand::write_header(conn, AUTHENTICATE, 2);
                 AdminCommand::write_field_str(conn, USER, user);
                 AdminCommand::write_field_bytes(conn, SESSION_TOKEN, token);
@@ -652,7 +655,9 @@ impl AdminCommand {
         AdminCommand::write_header(&mut conn, CHANGE_PASSWORD, 3);
         AdminCommand::write_field_str(&mut conn, USER, user);
         match cluster.client_policy().auth_mode {
-            AuthMode::Internal(_, ref password) | AuthMode::External(_, ref password) => {
+            AuthMode::Internal(_, ref password)
+            | AuthMode::External(_, ref password)
+            | AuthMode::ExternalInsecure(_, ref password) => {
                 AdminCommand::write_field_str(
                     &mut conn,
                     OLD_PASSWORD,

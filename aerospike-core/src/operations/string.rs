@@ -117,8 +117,12 @@ pub struct StringWriteFlags(pub i64);
 impl StringWriteFlags {
     /// Allow create or update.
     pub const DEFAULT: StringWriteFlags = StringWriteFlags(0);
-    /// Suppress the error if the operation cannot be applied (e.g. missing bin).
+    /// Do not raise an error if the operation cannot be applied to the bin.
     /// The bin is left unchanged and a nil result is returned for that op.
+    /// Note that a missing bin is not an error path: additive ops (insert,
+    /// overwrite, concat, append, prepend, pad, repeat) create the bin from
+    /// an empty string, and the other modify ops are a silent no-op — with
+    /// or without this flag.
     pub const NO_FAIL: StringWriteFlags = StringWriteFlags(4);
 }
 
@@ -256,8 +260,9 @@ pub fn substr_from(bin: &str, start: i64) -> Operation {
 }
 
 /// `substr` operation that reads codepoints in the half-open range
-/// `[start, end)`. Negative indexes count from the end. `end` is clamped to
-/// the string length.
+/// `[start, end)` — `start` inclusive, `end` exclusive. Negative indexes
+/// count from the end. If, after negative-index normalization,
+/// `start >= end`, the result is the empty string.
 pub fn substr(bin: &str, start: i64, end: i64) -> Operation {
     read_op(STR_OP_SUBSTR, bin, vec![Value::Int(start), Value::Int(end)])
 }
@@ -470,16 +475,6 @@ pub fn prepend(policy: &StringPolicy, bin: &str, value: &str) -> Operation {
         STR_OP_PREPEND,
         bin,
         vec![Value::from(value), Value::Int(policy.flags)],
-    )
-}
-
-/// `snip` operation that removes codepoints starting at codepoint `start`
-/// through the end of the string.
-pub fn snip_from(policy: &StringPolicy, bin: &str, start: i64) -> Operation {
-    modify_op(
-        STR_OP_SNIP,
-        bin,
-        vec![Value::Int(start), Value::Int(policy.flags)],
     )
 }
 

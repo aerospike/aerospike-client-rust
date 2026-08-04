@@ -2943,7 +2943,11 @@ impl Client {
         let cluster = self.cluster.clone();
         let auth_mode = self.cluster.client_policy().auth_mode;
         match auth_mode {
-            crate::AuthMode::Internal(u, _) | crate::AuthMode::External(u, _) if u == user => {
+            crate::AuthMode::Internal(u, _)
+            | crate::AuthMode::External(u, _)
+            | crate::AuthMode::ExternalInsecure(u, _)
+                if u == user =>
+            {
                 AdminCommand::change_password(policy, &cluster, user, password).await
             }
             crate::AuthMode::PKI => Err(Error::client_error(
