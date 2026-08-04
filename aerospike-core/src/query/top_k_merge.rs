@@ -136,9 +136,9 @@ impl TopKMerger {
 
     /// Merge every node's already-bounded result buffer into the final
     /// global Top-K: concatenate, dedup by digest (generation-first, then
-    /// rank — per the server's `cf_topk` contract; see §3.2 of the
-    /// implementation plan for why this differs from Java's rank-only rule),
-    /// sort best-first, and truncate to `limit`.
+    /// rank — per the server's `cf_topk` contract; this differs from the
+    /// Java client's rank-only dedup rule), sort best-first, and truncate
+    /// to `limit`.
     pub(crate) fn merge(&self, per_node_results: Vec<Vec<Record>>) -> Vec<Record> {
         let mut by_digest: HashMap<[u8; 20], Record> = HashMap::new();
 
@@ -373,9 +373,9 @@ mod tests {
         }
     }
 
-    // Concurrency-adjacent regression test (see §3.0/§9 of the implementation
-    // plan for why Java's suite doesn't cover this): simulate multiple
-    // "node tasks" independently observing the *same* digest at different
+    // Concurrency-adjacent regression test (the Java client's own test
+    // suite doesn't cover this): simulate multiple "node tasks"
+    // independently observing the *same* digest at different
     // generations/values, arriving in every possible order, and assert the
     // outcome is always the correct, order-independent generation-first pick
     // -- not just "doesn't panic under load".

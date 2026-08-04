@@ -2281,7 +2281,7 @@ impl Client {
         }
     }
 
-    /// `order_by`/`top_k` (Top-K) are foreground-only (§1, §7): background
+    /// `order_by`/`top_k` (Top-K) are foreground-only: background
     /// jobs (`query_operate`, `query_execute_udf`) don't produce a result
     /// stream for the client to merge into, so there's nothing for
     /// `TopKMerger` to do. Called by both background entry points before
@@ -2298,7 +2298,7 @@ impl Client {
         Ok(())
     }
 
-    /// Merges every node's already-bounded Top-K buffer (§6.2's
+    /// Merges every node's already-bounded Top-K buffer (via
     /// `TopKMerger`) into the final global Top-K and pushes the result into
     /// `recordset` as a single batch. Split out from
     /// [`Self::execute_top_k_query`] so the merge-and-push step itself is
@@ -3634,8 +3634,8 @@ mod top_k_execution_tests {
 
     #[test]
     fn order_by_without_top_k_merges_unbounded() {
-        // `top_k` is optional (§8 Phase 0); without it the merge still
-        // sorts but doesn't truncate.
+        // `top_k` is optional; without it the merge still sorts but
+        // doesn't truncate.
         let rs = empty_recordset();
         let mut stmt = Statement::new("ns", "set", Bins::All);
         stmt.set_order_by("score", OrderByType::Integer, Order::Asc);
