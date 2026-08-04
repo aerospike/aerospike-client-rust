@@ -2340,19 +2340,6 @@ impl Buffer {
         Ok(s.to_owned())
     }
 
-    pub(crate) fn read_str_until(&mut self, sep: u8, max_len: usize) -> Result<String> {
-        let mut len = 0;
-        for i in 0..max_len {
-            len += 1;
-            if self.data_buffer[self.data_offset + i] == sep {
-                break;
-            }
-        }
-
-        let s = str::from_utf8(&self.data_buffer[self.data_offset..self.data_offset + len])?;
-        self.data_offset += len;
-        Ok(s.to_owned())
-    }
 
     // pub(crate) fn read_bytes(&mut self, pos: usize, count: usize) -> &[u8] {
     //     &self.data_buffer[pos..pos + count]
