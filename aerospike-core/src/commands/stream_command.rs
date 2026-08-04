@@ -37,6 +37,14 @@ pub struct StreamCommand {
     cluster: Arc<Cluster>,
     pub(crate) recordset: Arc<Recordset>,
     pub(crate) node_partitions: Arc<Mutex<NodePartitions>>,
+    /// Set only for Top-K (`ORDER BY <bin> LIMIT k`) queries: when present,
+    /// parsed records are appended here instead of being streamed straight
+    /// into `recordset`. Each node's own already-bounded (`<= k`), sorted
+    /// result is buffered independently and handed back to the caller once
+    /// this node's command completes, so it can be merged with every other
+    /// node's buffer after the whole job finishes (see
+    /// `Client::execute_top_k_query` and `query::top_k_merge::TopKMerger`).
+    pub(crate) top_k_buffer: Option<Arc<Mutex<Vec<Record>>>>,
 }
 
 impl Drop for StreamCommand {
@@ -53,6 +61,7 @@ impl StreamCommand {
         node_partitions: Arc<Mutex<NodePartitions>>,
         is_scan: bool,
         cluster: Arc<Cluster>,
+        top_k_buffer: Option<Arc<Mutex<Vec<Record>>>>,
     ) -> Self {
         StreamCommand {
             is_scan,
@@ -60,6 +69,7 @@ impl StreamCommand {
             cluster,
             recordset,
             node_partitions,
+            top_k_buffer,
         }
     }
 
@@ -160,13 +170,26 @@ impl StreamCommand {
                     if !tracker.allow_record(&mut node_partitions) {
                         continue 'outer;
                     }
-                    let key = &rec.key.clone().unwrap();
-                    self.recordset.push(Ok(rec)).await?;
 
-                    if self.is_scan {
-                        tracker.set_digest(&mut node_partitions, key).await?;
+                    if let Some(buffer) = &self.top_k_buffer {
+                        // Top-K: accumulate into this node's own buffer
+                        // instead of streaming straight to the consumer,
+                        // and deliberately skip `set_digest`/`set_last`.
+                        // Those record a mid-partition resume cursor, but
+                        // Top-K is single-shot and the server rejects
+                        // non-zero resume cursors outright — a retried
+                        // partition must always be requested fresh.
+                        node_partitions.record_count += 1;
+                        buffer.lock().await.push(rec);
                     } else {
-                        tracker.set_last(&mut node_partitions, key, bval).await?;
+                        let key = &rec.key.clone().unwrap();
+                        self.recordset.push(Ok(rec)).await?;
+
+                        if self.is_scan {
+                            tracker.set_digest(&mut node_partitions, key).await?;
+                        } else {
+                            tracker.set_last(&mut node_partitions, key, bval).await?;
+                        }
                     }
                     drop(tracker);
                     drop(node_partitions);

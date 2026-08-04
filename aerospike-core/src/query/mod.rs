@@ -19,6 +19,7 @@
 pub use self::filter::{EqFilterValue, Filter, RangeFilterValue};
 pub use self::index_types::{CollectionIndexType, IndexType};
 pub(crate) use self::node_partitions::NodePartitions;
+pub use self::order_by::{Order, OrderBy, OrderByFlags, OrderByType};
 pub use self::partition_filter::PartitionFilter;
 pub use self::partition_status::PartitionStatus;
 pub(crate) use self::partition_tracker::PartitionTracker;
@@ -27,12 +28,15 @@ pub use self::recordset::Recordset;
 #[cfg(feature = "lua")]
 pub use self::result_set::{ResultSet, ResultStream};
 pub use self::statement::Statement;
+pub(crate) use self::top_k_merge::TopKMerger;
 pub use self::udf::UDFLang;
 
 /// Query filter definitions and filter value traits.
 pub mod filter;
 mod index_types;
 mod node_partitions;
+/// Types for `ORDER BY <bin> LIMIT k` ("Top-K") queries.
+pub mod order_by;
 mod partition_filter;
 mod partition_status;
 mod partition_tracker;
@@ -40,4 +44,5 @@ mod recordset;
 #[cfg(feature = "lua")]
 mod result_set;
 mod statement;
+mod top_k_merge;
 mod udf;

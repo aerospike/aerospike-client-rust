@@ -1056,6 +1056,27 @@ impl fmt::Display for Node {
     }
 }
 
+/// Builds a minimal, connection-less `Node` pinned to `version`, for unit
+/// tests elsewhere in the crate that need to exercise version-gated
+/// wire-encode paths (e.g. `commands::buffer::tests`) without a live server.
+#[cfg(test)]
+pub(crate) fn test_node_with_version(version: crate::Version) -> Node {
+    let policy = ClientPolicy::default();
+    let nv = Arc::new(NodeValidator {
+        name: "test-node".to_string(),
+        aliases: vec![Host::new("127.0.0.1", 3000)],
+        address: "127.0.0.1:3000".to_string(),
+        client_policy: policy.clone(),
+        use_new_info: true,
+        version,
+        detect_load_balancer: false,
+    });
+    let metrics = Arc::new(crate::metrics::NodeMetrics::new(
+        crate::metrics::MetricsPolicy::default(),
+    ));
+    Node::new(policy, nv, metrics, Arc::new(AtomicUsize::new(0)), None)
+}
+
 #[cfg(test)]
 mod node_tests {
     use std::sync::Arc;
@@ -1065,23 +1086,10 @@ mod node_tests {
     use crate::policy::ClientPolicy;
     use crate::Version;
 
-    use super::Node;
+    use super::{test_node_with_version, Node};
 
     fn test_node() -> Node {
-        let policy = ClientPolicy::default();
-        let nv = Arc::new(NodeValidator {
-            name: "test-node".to_string(),
-            aliases: vec![Host::new("127.0.0.1", 3000)],
-            address: "127.0.0.1:3000".to_string(),
-            client_policy: policy.clone(),
-            use_new_info: true,
-            version: Version::default(),
-            detect_load_balancer: false,
-        });
-        let metrics = Arc::new(crate::metrics::NodeMetrics::new(
-            crate::metrics::MetricsPolicy::default(),
-        ));
-        Node::new(policy, nv, metrics, Arc::new(std::sync::atomic::AtomicUsize::new(0)), None)
+        test_node_with_version(Version::default())
     }
 
     /// One idle connection in the pool, using the test [`crate::net::Connection`] (no real socket).

@@ -42,7 +42,7 @@ use crate::policy::{
     AdminPolicy, BatchPolicy, ClientPolicy, QueryPolicy, ReadPolicy, TxnRollPolicy,
     TxnVerifyPolicy, WritePolicy,
 };
-use crate::query::{PartitionFilter, PartitionTracker};
+use crate::query::{NodePartitions, PartitionFilter, PartitionTracker};
 #[cfg(feature = "lua")]
 use crate::query::ResultSet;
 use crate::task::{DropIndexTask, ExecuteTask, IndexTask, RegisterTask, UdfRemoveTask};
@@ -1516,15 +1516,33 @@ impl Client {
         let t_recordset = recordset.clone();
         let defer_recordset = recordset.clone();
         let cluster = self.cluster.clone();
+        // Top-K (`ORDER BY <bin> LIMIT k`) statements go through a
+        // dedicated executor: each node buffers its own already-bounded
+        // result instead of streaming record-by-record, and the client
+        // merges every node's buffer into the final global Top-K once the
+        // whole job completes (see `execute_top_k_query` and
+        // `query::top_k_merge::TopKMerger`).
+        let is_top_k = statement.order_by.is_some();
         aerospike_rt::spawn(async move {
-            Self::execute_query_timeout(
-                cluster,
-                &t_policy,
-                tracker.clone(),
-                statement.clone(),
-                t_recordset,
-            )
-            .await;
+            if is_top_k {
+                Self::execute_top_k_query_timeout(
+                    cluster,
+                    &t_policy,
+                    tracker.clone(),
+                    statement.clone(),
+                    t_recordset,
+                )
+                .await;
+            } else {
+                Self::execute_query_timeout(
+                    cluster,
+                    &t_policy,
+                    tracker.clone(),
+                    statement.clone(),
+                    t_recordset,
+                )
+                .await;
+            }
             defer_recordset.close();
         });
 
@@ -1751,6 +1769,7 @@ impl Client {
         // public API for backwards compatibility.
         statement.operations = Some(operations.to_vec());
         statement.validate()?;
+        Self::reject_top_k_on_background_query(&statement)?;
 
         let nodes = self.cluster.nodes();
         if nodes.is_empty() {
@@ -1818,6 +1837,7 @@ impl Client {
         function_name: &str,
         args: Option<&[Value]>,
     ) -> Result<ExecuteTask> {
+        Self::reject_top_k_on_background_query(&statement)?;
         statement.set_aggregate_function(package_name, function_name, args);
         statement.validate()?;
 
@@ -1937,6 +1957,7 @@ impl Client {
                                 recordset.clone(),
                                 node_partition,
                                 cluster,
+                                None,
                             )
                             .await
                             .execute()
@@ -2004,6 +2025,302 @@ impl Client {
             }
 
             recordset.reset_task_id();
+        }
+    }
+
+    async fn execute_top_k_query_timeout(
+        cluster: Arc<Cluster>,
+        policy: &QueryPolicy,
+        tracker: Arc<Mutex<PartitionTracker>>,
+        statement: Arc<Statement>,
+        recordset: Arc<Recordset>,
+    ) {
+        if policy.total_timeout() > 0 {
+            let rs_closer = recordset.clone();
+            if aerospike_rt::timeout(
+                Duration::from_millis(u64::from(policy.total_timeout())),
+                Self::execute_top_k_query(cluster, policy, tracker, statement, recordset),
+            )
+            .await
+            .is_err()
+            {
+                let _ = rs_closer
+                    .push(Err(Error::timeout("Timeout".to_string())))
+                    .await;
+            }
+        } else {
+            Self::execute_top_k_query(cluster, policy, tracker, statement, recordset).await;
+        }
+    }
+
+    /// Dedicated executor for Top-K (`ORDER BY <bin> LIMIT k`) statements.
+    ///
+    /// Structurally this mirrors [`Self::execute_query`]'s round-based retry
+    /// loop (partitions are (re)assigned to nodes, one command is spawned
+    /// per node, the loop repeats until [`PartitionTracker::is_complete`]
+    /// says the job is done), but with the streaming behavior replaced by
+    /// per-node buffering + a final client-side merge:
+    ///
+    /// * Each node command is given its own `Arc<Mutex<Vec<Record>>>`
+    ///   (`StreamCommand::top_k_buffer`); on success that buffer (already
+    ///   bounded to `<= k` and sorted server-side) is folded into
+    ///   `all_node_results`, which accumulates across retry rounds.
+    /// * Top-K is single-shot — the server rejects non-zero resume cursors
+    ///   outright — so a node command failure can't be resumed
+    ///   partition-by-partition like a normal query/scan can. Any node
+    ///   error therefore forces a **whole-job retry**: every partition is
+    ///   marked for retry (`PartitionTracker::mark_all_for_retry`) and
+    ///   every buffer gathered so far (this round's and any earlier
+    ///   round's) is discarded, so the eventual merge never mixes results
+    ///   from two differently-scoped attempts.
+    /// * A client-side capability error (`ErrorKind::InvalidArgument` —
+    ///   e.g. `set_query` rejecting the statement because the node doesn't
+    ///   support Top-K yet) is treated as fatal rather than transient:
+    ///   retrying can't fix it, so it's surfaced to the caller immediately
+    ///   instead of being retried until `max_retries`/timeout.
+    /// * Once a round completes with no node errors and
+    ///   `PartitionTracker::is_complete` reports the job done, every
+    ///   accumulated per-node buffer is handed to
+    ///   [`crate::query::top_k_merge::TopKMerger`] and the merged,
+    ///   deduped, truncated result is pushed into `recordset` as a single
+    ///   batch before the stream is closed.
+    async fn execute_top_k_query(
+        cluster: Arc<Cluster>,
+        policy: &QueryPolicy,
+        tracker: Arc<Mutex<PartitionTracker>>,
+        statement: Arc<Statement>,
+        recordset: Arc<Recordset>,
+    ) {
+        let namespace = statement.namespace.clone();
+        let sleep_multiplier = policy.base_policy.sleep_multiplier();
+        let mut sleep_interval = policy.base_policy.sleep_between_retries();
+
+        // Accumulates every node's already-bounded, sorted Top-K buffer
+        // across retry rounds. Cleared whenever a round has any error,
+        // since Top-K can't resume partially (see doc comment above).
+        let mut all_node_results: Vec<Vec<Record>> = Vec::new();
+
+        loop {
+            let mut timed_out = false;
+            let mut round_had_error = false;
+            let mut fatal_error: Option<Error> = None;
+            let node_list: Vec<Arc<Mutex<NodePartitions>>>;
+            {
+                let mut tracker_locked = tracker.lock().await;
+                match tracker_locked
+                    .assign_partitions_to_nodes(cluster.clone(), &namespace)
+                    .await
+                {
+                    Ok(()) => (),
+                    Err(e) => {
+                        recordset.err(e).await;
+                        tracker_locked.partition_error().await;
+                        return;
+                    }
+                }
+
+                node_list = tracker_locked.node_partitions_list().to_vec();
+                recordset.set_instances(node_list.len() + 1); // +1 is for the async executor
+
+                if recordset.is_active() {
+                    let semaphore = Arc::new(Semaphore::new(if policy.max_concurrent_nodes == 0 {
+                        MAX_PERMITS
+                    } else {
+                        policy.max_concurrent_nodes
+                    }));
+
+                    let mut handles = Vec::with_capacity(node_list.len());
+                    for node_partition in &node_list {
+                        let semaphore = semaphore.clone();
+                        let recordset = recordset.clone();
+                        let policy = policy.clone();
+                        let node_partition = node_partition.clone();
+                        let statement = statement.clone();
+                        let cluster = cluster.clone();
+                        let handle = aerospike_rt::spawn(async move {
+                            let permit = semaphore.acquire().await;
+                            let buffer: Arc<Mutex<Vec<Record>>> = Arc::new(Mutex::new(Vec::new()));
+                            let result = QueryCommand::new(
+                                &policy,
+                                statement,
+                                recordset.clone(),
+                                node_partition,
+                                cluster,
+                                Some(buffer.clone()),
+                            )
+                            .await
+                            .execute()
+                            .await;
+
+                            drop(permit);
+                            match result {
+                                Ok(()) => Ok(std::mem::take(&mut *buffer.lock().await)),
+                                Err(e) => Err(e),
+                            }
+                        });
+                        handles.push(handle);
+                    }
+
+                    drop(tracker_locked);
+
+                    // `JoinHandle<T>`'s `Future::Output` differs by runtime:
+                    // tokio wraps it as `Result<T, JoinError>` (so a single
+                    // node's `Result<Vec<Record>>` surfaces inside the `Ok`
+                    // arm below and is inspected one by one), while
+                    // async-std's is `T` directly (so `try_join_all` itself
+                    // treats each node's `Result<Vec<Record>>` as its own
+                    // `TryFuture` output and short-circuits on the first
+                    // per-node error). Both arms apply the same three
+                    // outcomes — fatal capability error, timeout-ish
+                    // transient error, or generic transient error — just at
+                    // different match depths.
+                    #[cfg(feature = "rt-tokio")]
+                    match futures::future::try_join_all(handles).await {
+                        Err(e) => {
+                            warn!("Top-K query node task join error: {e}");
+                            round_had_error = true;
+                        }
+                        Ok(results) => {
+                            for r in results {
+                                match r {
+                                    Ok(buf) => all_node_results.push(buf),
+                                    Err(e) if matches!(e.kind(), ErrorKind::InvalidArgument) => {
+                                        fatal_error = Some(e);
+                                    }
+                                    Err(e)
+                                        if matches!(
+                                            e.kind(),
+                                            ErrorKind::Timeout
+                                                | ErrorKind::Io(_)
+                                                | ErrorKind::Connection
+                                        ) =>
+                                    {
+                                        timed_out = true;
+                                        round_had_error = true;
+                                    }
+                                    Err(_) => round_had_error = true,
+                                }
+                            }
+                        }
+                    }
+                    #[cfg(feature = "rt-async-std")]
+                    match futures::future::try_join_all(handles).await {
+                        Err(e) if matches!(e.kind(), ErrorKind::InvalidArgument) => {
+                            fatal_error = Some(e);
+                        }
+                        Err(e)
+                            if matches!(
+                                e.kind(),
+                                ErrorKind::Timeout | ErrorKind::Io(_) | ErrorKind::Connection
+                            ) =>
+                        {
+                            timed_out = true;
+                            round_had_error = true;
+                        }
+                        Err(e) => {
+                            warn!("Top-K query node task error: {e}");
+                            round_had_error = true;
+                        }
+                        Ok(results) => {
+                            all_node_results.extend(results);
+                        }
+                    }
+                } else {
+                    drop(tracker_locked);
+                }
+            }
+
+            if let Some(e) = fatal_error {
+                recordset.err(e).await;
+                return;
+            }
+
+            if round_had_error {
+                tracker.lock().await.mark_all_for_retry().await;
+                all_node_results.clear();
+                // Guarantee `is_complete` below sees this round as
+                // incomplete (rather than relying solely on `timed_out`,
+                // which isn't set for every error kind).
+                if let Some(np) = node_list.first() {
+                    np.lock().await.parts_unavailable += 1;
+                }
+            }
+
+            let mut tracker_locked = tracker.lock().await;
+            let done = tracker_locked.is_complete(policy, timed_out).await;
+            match (done, recordset.is_active()) {
+                (Ok(true), true) if !round_had_error => {
+                    drop(tracker_locked);
+                    Self::merge_and_push_top_k_results(
+                        &statement,
+                        std::mem::take(&mut all_node_results),
+                        &recordset,
+                    )
+                    .await;
+                    return;
+                }
+                (Ok(true), _) | (Ok(_), false) => return,
+                (Err(e), _) => {
+                    tracker_locked.partition_error().await;
+                    recordset.err(e).await;
+                    return;
+                }
+                _ => (),
+            }
+            drop(tracker_locked);
+
+            if let Some(interval) = sleep_interval {
+                sleep(interval).await;
+                sleep_interval = Some(crate::policy::next_retry_interval(
+                    interval,
+                    sleep_multiplier,
+                ));
+            }
+
+            recordset.reset_task_id();
+        }
+    }
+
+    /// `order_by`/`top_k` (Top-K) are foreground-only: background
+    /// jobs (`query_operate`, `query_execute_udf`) don't produce a result
+    /// stream for the client to merge into, so there's nothing for
+    /// `TopKMerger` to do. Called by both background entry points before
+    /// they build/send their `ServerCommand`; `Client::query`'s foreground
+    /// path never needs this (it's the one path Top-K is valid on).
+    fn reject_top_k_on_background_query(statement: &Statement) -> Result<()> {
+        if statement.order_by.is_some() || statement.top_k.is_some() {
+            return Err(Error::invalid_argument(
+                "orderBy/topK is only valid on foreground (SELECT-style) queries; background \
+                 (UPDATE-style) queries do not produce a result stream"
+                    .to_string(),
+            ));
+        }
+        Ok(())
+    }
+
+    /// Merges every node's already-bounded Top-K buffer (via
+    /// `TopKMerger`) into the final global Top-K and pushes the result into
+    /// `recordset` as a single batch. Split out from
+    /// [`Self::execute_top_k_query`] so the merge-and-push step itself is
+    /// unit-testable with synthetic per-node buffers and a real
+    /// (channel-based) `Recordset`, without needing a live server or the
+    /// surrounding retry loop.
+    async fn merge_and_push_top_k_results(
+        statement: &Statement,
+        all_node_results: Vec<Vec<Record>>,
+        recordset: &Recordset,
+    ) {
+        let Some(order_by) = statement.order_by.clone() else {
+            // Should be unreachable: only called from `execute_top_k_query`,
+            // which only ever runs for statements with `order_by` set.
+            return;
+        };
+        let limit = statement.top_k.map_or(usize::MAX, |k| k as usize);
+        let merger = crate::query::TopKMerger::new(order_by, limit);
+        for record in merger.merge(all_node_results) {
+            if recordset.push(Ok(record)).await.is_err() {
+                break;
+            }
         }
     }
 
@@ -3200,5 +3517,208 @@ impl Client {
             )),
             TxnState::Aborted => Ok(AbortStatus::AlreadyAborted),
         }
+    }
+}
+
+#[cfg(test)]
+mod top_k_execution_tests {
+    //! Unit/mock-level tests for the Top-K per-node-buffering + final-merge
+    //! wiring that don't require a live server: feed synthetic per-node buffers
+    //! through `Client::merge_and_push_top_k_results` and assert the
+    //! `Recordset` observes the correctly merged/deduped/truncated/ordered
+    //! result, then closes.
+    use super::Client;
+    use crate::query::{Order, OrderByFlags, OrderByType, PartitionFilter, PartitionTracker, Recordset};
+    use crate::{Bins, IndexMap, Key, Record, Result, Statement, Value};
+    use aerospike_rt::Mutex;
+    use futures::executor::block_on;
+    use futures::StreamExt;
+    use std::sync::Arc;
+
+    fn top_k_statement(bin: &str, direction: Order, k: u32) -> Statement {
+        let mut stmt = Statement::new("ns", "set", Bins::All);
+        stmt.set_order_by(bin, OrderByType::Integer, direction);
+        stmt.set_top_k(k);
+        stmt
+    }
+
+    fn record(digest_byte: u8, generation: u32, score: i64) -> Record {
+        let mut bins = IndexMap::new();
+        bins.insert("score".to_string(), Value::Int(score));
+        Record::new(
+            Some(Key {
+                namespace: "ns".to_string(),
+                set_name: "set".to_string(),
+                user_key: None,
+                digest: [digest_byte; 20],
+            }),
+            bins,
+            None,
+            generation,
+            0,
+        )
+    }
+
+    fn empty_recordset() -> Arc<Recordset> {
+        let tracker = block_on(PartitionTracker::new(
+            &crate::policy::QueryPolicy::default(),
+            Arc::new(Mutex::new(PartitionFilter::all())),
+            Vec::new(),
+        ))
+        .expect("tracker");
+        Arc::new(Recordset::new(8, 0, 1, Arc::new(Mutex::new(tracker))))
+    }
+
+    /// Closes `rs` (mirroring what `execute_top_k_query`'s caller does once
+    /// the whole job finishes) and drains every buffered record.
+    fn close_and_drain(rs: &Arc<Recordset>) -> Vec<Result<Record>> {
+        rs.close();
+        let mut stream = rs.clone().into_stream();
+        block_on(async {
+            let mut out = Vec::new();
+            while let Some(item) = stream.next().await {
+                out.push(item);
+            }
+            out
+        })
+    }
+
+    #[test]
+    fn merges_and_pushes_bounded_ordered_results_then_leaves_stream_open() {
+        // `merge_and_push_top_k_results` only pushes; closing the
+        // `Recordset` is `execute_top_k_query`'s (and its caller's)
+        // responsibility, exactly like the non-Top-K path.
+        let rs = empty_recordset();
+        let stmt = top_k_statement("score", Order::Desc, 2);
+
+        // Three "nodes'" worth of already-bounded, per-node-sorted buffers.
+        let per_node = vec![
+            vec![record(1, 1, 5), record(2, 1, 1)],
+            vec![record(3, 1, 9)],
+            vec![record(4, 1, 3)],
+        ];
+
+        block_on(Client::merge_and_push_top_k_results(&stmt, per_node, &rs));
+
+        let scores: Vec<i64> = close_and_drain(&rs)
+            .into_iter()
+            .map(|r| match r.unwrap().bins["score"] {
+                Value::Int(i) => i,
+                _ => panic!("expected int"),
+            })
+            .collect();
+
+        // Best-first (DESC), truncated to k = 2.
+        assert_eq!(scores, vec![9, 5]);
+    }
+
+    #[test]
+    fn dedups_by_digest_generation_first_across_node_buffers() {
+        let rs = empty_recordset();
+        let stmt = top_k_statement("score", Order::Desc, 10);
+
+        let stale_but_better = record(1, 1, 9);
+        let fresh_but_worse = record(1, 2, 1);
+
+        block_on(Client::merge_and_push_top_k_results(
+            &stmt,
+            vec![vec![stale_but_better], vec![fresh_but_worse]],
+            &rs,
+        ));
+
+        let results = close_and_drain(&rs);
+        assert_eq!(results.len(), 1, "duplicate digest must be deduped across node buffers");
+        let rec = results[0].as_ref().unwrap();
+        assert_eq!(rec.generation, 2, "generation-first dedup must keep the newer read");
+    }
+
+    #[test]
+    fn order_by_without_top_k_merges_unbounded() {
+        // `top_k` is optional; without it the merge still sorts but
+        // doesn't truncate.
+        let rs = empty_recordset();
+        let mut stmt = Statement::new("ns", "set", Bins::All);
+        stmt.set_order_by("score", OrderByType::Integer, Order::Asc);
+
+        let per_node = vec![vec![record(1, 1, 3), record(2, 1, 1), record(3, 1, 2)]];
+        block_on(Client::merge_and_push_top_k_results(&stmt, per_node, &rs));
+
+        let scores: Vec<i64> = close_and_drain(&rs)
+            .into_iter()
+            .map(|r| match r.unwrap().bins["score"] {
+                Value::Int(i) => i,
+                _ => panic!("expected int"),
+            })
+            .collect();
+        assert_eq!(scores, vec![1, 2, 3]);
+    }
+
+    #[test]
+    fn empty_node_results_push_nothing() {
+        let rs = empty_recordset();
+        let stmt = top_k_statement("score", Order::Desc, 5);
+        block_on(Client::merge_and_push_top_k_results(&stmt, Vec::new(), &rs));
+        assert!(close_and_drain(&rs).is_empty());
+    }
+
+    #[test]
+    fn case_insensitive_string_order_by_merges_correctly() {
+        let rs = empty_recordset();
+        let mut stmt = Statement::new("ns", "set", Bins::All);
+        stmt.set_order_by_with_flags(
+            "name",
+            OrderByType::String,
+            Order::Asc,
+            OrderByFlags::CaseInsensitive,
+        );
+
+        let mut upper = record(1, 1, 0);
+        upper.bins.insert("name".to_string(), Value::String("Banana".to_string()));
+        let mut lower = record(2, 1, 0);
+        lower.bins.insert("name".to_string(), Value::String("apple".to_string()));
+
+        block_on(Client::merge_and_push_top_k_results(
+            &stmt,
+            vec![vec![upper], vec![lower]],
+            &rs,
+        ));
+
+        let names: Vec<String> = close_and_drain(&rs)
+            .into_iter()
+            .map(|r| match r.unwrap().bins["name"].clone() {
+                Value::String(s) => s,
+                _ => panic!("expected string"),
+            })
+            .collect();
+        assert_eq!(names, vec!["apple".to_string(), "Banana".to_string()]);
+    }
+
+    #[test]
+    fn background_query_guard_rejects_order_by() {
+        let stmt = top_k_statement("score", Order::Desc, 5);
+        let err = Client::reject_top_k_on_background_query(&stmt).unwrap_err();
+        assert!(err.to_string().contains("foreground"));
+    }
+
+    #[test]
+    fn background_query_guard_allows_plain_statement() {
+        let stmt = Statement::new("ns", "set", Bins::All);
+        assert!(Client::reject_top_k_on_background_query(&stmt).is_ok());
+    }
+
+    #[test]
+    fn merge_uses_order_by_clone_not_the_original_reference() {
+        // Regression for a borrow/lifetime mistake: `merge_and_push_top_k_results`
+        // takes `&Statement`, not an owned one, so the statement must still be
+        // usable by the caller afterward (e.g. across retry rounds).
+        let rs = empty_recordset();
+        let stmt = top_k_statement("score", Order::Desc, 1);
+        block_on(Client::merge_and_push_top_k_results(
+            &stmt,
+            vec![vec![record(1, 1, 1)]],
+            &rs,
+        ));
+        // `stmt` is still valid to read here.
+        assert_eq!(stmt.top_k, Some(1));
     }
 }

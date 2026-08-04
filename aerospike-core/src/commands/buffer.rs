@@ -1512,6 +1512,29 @@ impl Buffer {
             field_count += 4;
         }
 
+        // ---------- estimation: order_by / top_k (Top-K queries) ----------
+        if statement.order_by.is_some() && !node.version().supports_query_top_k() {
+            return Err(Error::invalid_argument(
+                "orderBy/topK requires a server version that supports Top-K queries \
+                 (not yet released)",
+            ));
+        }
+
+        let mut order_by_size = 0;
+        if let Some(ref order_by) = statement.order_by {
+            order_by_size += encoder::pack_array_begin(&mut None, 4);
+            order_by_size += encoder::pack_raw_string(&mut None, &order_by.bin_name);
+            order_by_size += encoder::pack_integer(&mut None, order_by.order_type as i64);
+            order_by_size += encoder::pack_integer(&mut None, order_by.direction as i64);
+            order_by_size += encoder::pack_integer(&mut None, order_by.flags.to_wire_bits() as i64);
+            self.data_offset += order_by_size + FIELD_HEADER_SIZE as usize;
+            field_count += 1;
+        }
+        if statement.top_k.is_some() {
+            self.data_offset += 4 + FIELD_HEADER_SIZE as usize;
+            field_count += 1;
+        }
+
         // ---------- estimation: policy filter expression ----------
         let filter_exp_size = self.estimate_filter_size(direction.filter_expression())?;
         if filter_exp_size > 0 {
@@ -1675,6 +1698,18 @@ impl Buffer {
             } else {
                 self.write_args(None, FieldType::UdfArgList)?;
             }
+        }
+
+        if let Some(ref order_by) = statement.order_by {
+            self.write_field_header(order_by_size, FieldType::OrderBy);
+            encoder::pack_array_begin(&mut Some(self), 4);
+            encoder::pack_raw_string(&mut Some(self), &order_by.bin_name);
+            encoder::pack_integer(&mut Some(self), order_by.order_type as i64);
+            encoder::pack_integer(&mut Some(self), order_by.direction as i64);
+            encoder::pack_integer(&mut Some(self), order_by.flags.to_wire_bits() as i64);
+        }
+        if let Some(k) = statement.top_k {
+            self.write_field_u32(k, FieldType::TopK);
         }
 
         if let Some(filter_exp) = direction.filter_expression() {
@@ -3604,5 +3639,108 @@ mod tests {
         let (read_attr, write_attr) = operate_attrs(&[scalar::get(), str_op::strlen("b")]);
         assert_ne!(read_attr & INFO1_GET_ALL, 0);
         assert_eq!(write_attr & INFO2_RESPOND_ALL_OPS, 0);
+    }
+
+    /// Scans the wire fields written after the message header, returning
+    /// `(FieldType as u8, payload bytes)` pairs in wire order. Only valid
+    /// for buffers with no trailing operations (e.g. `Bins::All`, which
+    /// emits zero ops), since fields and ops share no length-prefixed
+    /// framing that would let this stop at the field/op boundary otherwise.
+    fn read_wire_fields(buf: &Buffer) -> Vec<(u8, Vec<u8>)> {
+        let mut fields = Vec::new();
+        let mut offset = buf.compress_offset + MSG_TOTAL_HEADER_SIZE as usize;
+        while offset < buf.data_buffer.len() {
+            let size = NetworkEndian::read_u32(&buf.data_buffer[offset..offset + 4]) as usize;
+            let ftype = buf.data_buffer[offset + 4];
+            let payload = buf.data_buffer[offset + 5..offset + 4 + size].to_vec();
+            fields.push((ftype, payload));
+            offset += 4 + size;
+        }
+        fields
+    }
+
+    #[test]
+    fn order_by_and_top_k_are_rejected_without_capability_support() {
+        use crate::query::{Order, OrderByType};
+        use crate::{Bins, QueryPolicy, Statement};
+
+        let mut buf = Buffer::new(4096);
+        let node = crate::cluster::node::test_node_with_version(crate::Version::default());
+        let mut stmt = Statement::new("test", "test", Bins::All);
+        stmt.set_order_by("score", OrderByType::Integer, Order::Desc);
+        stmt.set_top_k(5);
+
+        let err = buf
+            .set_query(
+                QueryDirection::Foreground(&QueryPolicy::default()),
+                &stmt,
+                1,
+                &node,
+                None,
+            )
+            .unwrap_err();
+        assert!(
+            err.to_string().contains("Top-K"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn order_by_and_top_k_encode_to_the_documented_wire_format() {
+        use crate::query::order_by::{Order, OrderByFlags, OrderByType};
+        use crate::{Bins, QueryPolicy, Statement};
+
+        let mut buf = Buffer::new(4096);
+        // Sentinel version above `supports_query_top_k()`'s placeholder
+        // threshold — see that function's docs for why this is safe.
+        let node = crate::cluster::node::test_node_with_version(crate::Version::new(
+            u64::MAX,
+            0,
+            0,
+            0,
+        ));
+        let mut stmt = Statement::new("test", "test", Bins::All);
+        stmt.set_order_by_with_flags(
+            "score",
+            OrderByType::Integer,
+            Order::Desc,
+            OrderByFlags::CaseInsensitive,
+        );
+        stmt.set_top_k(5);
+
+        buf.set_query(
+            QueryDirection::Foreground(&QueryPolicy::default()),
+            &stmt,
+            1,
+            &node,
+            None,
+        )
+        .unwrap();
+
+        let fields = read_wire_fields(&buf);
+
+        let order_by_payload = fields
+            .iter()
+            .find(|(ftype, _)| *ftype == FieldType::OrderBy as u8)
+            .map(|(_, payload)| payload.clone())
+            .expect("OrderBy field must be present");
+
+        // msgpack 4-element fixarray, then a plain (untagged) fixstr
+        // "score", then three fixints (type=Integer=0, direction=Desc=1,
+        // flags=CaseInsensitive=1).
+        let mut expected = vec![0x94]; // fixarray, len 4
+        expected.push(0xa5); // fixstr, len 5
+        expected.extend_from_slice(b"score");
+        expected.push(0); // OrderByType::Integer
+        expected.push(1); // Order::Desc
+        expected.push(1); // OrderByFlags::CaseInsensitive wire bit
+        assert_eq!(order_by_payload, expected);
+
+        let top_k_payload = fields
+            .iter()
+            .find(|(ftype, _)| *ftype == FieldType::TopK as u8)
+            .map(|(_, payload)| payload.clone())
+            .expect("TopK field must be present");
+        assert_eq!(top_k_payload, 5u32.to_be_bytes().to_vec());
     }
 }

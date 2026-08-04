@@ -21,7 +21,7 @@ use crate::errors::Result;
 use crate::net::Connection;
 use crate::policy::QueryPolicy;
 use crate::query::NodePartitions;
-use crate::{Recordset, Statement};
+use crate::{Record, Recordset, Statement};
 
 use aerospike_rt::Mutex;
 
@@ -38,6 +38,7 @@ impl<'a> QueryCommand<'a> {
         recordset: Arc<Recordset>,
         node_partitions: Arc<Mutex<NodePartitions>>,
         cluster: Arc<Cluster>,
+        top_k_buffer: Option<Arc<Mutex<Vec<Record>>>>,
     ) -> Self {
         let node = {
             let node_partitions = node_partitions.lock().await;
@@ -45,7 +46,14 @@ impl<'a> QueryCommand<'a> {
         };
 
         QueryCommand {
-            stream_command: StreamCommand::new(node, recordset, node_partitions, false, cluster),
+            stream_command: StreamCommand::new(
+                node,
+                recordset,
+                node_partitions,
+                false,
+                cluster,
+                top_k_buffer,
+            ),
             policy,
             statement,
         }
