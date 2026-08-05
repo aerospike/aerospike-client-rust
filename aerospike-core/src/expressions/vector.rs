@@ -15,48 +15,101 @@
 
 //! Vector Aerospike filter expressions.
 //!
-//! # Work in progress — not usable yet
-//!
-//! The vector distance expression is **incomplete**. Its server wire contract
-//! is not finalized (the query-vector envelope and the distance-metric
-//! semantics are still in flux upstream — see the `vector-exp-envelope` and
-//! `vector-exp-metric-semantics` TODOs). [`distance`] can be *constructed*, but
-//! attaching it to a command and evaluating it returns an error at pack time
-//! rather than sending a provisional payload the server may reject or
-//! misinterpret. Do not depend on this API until it is finalized.
+//! TODO(vector-exp-envelope, vector-exp-metric-semantics): the query-vector
+//! envelope and each metric's semantics ([`l2_squared_distance`],
+//! [`dot_product`], [`cosine_similarity`]) are named for their decided
+//! target behavior, but this has not been double-checked against current
+//! server code (the available `aerospike-server` checkout may be outdated),
+//! and there are no integration tests against a real server yet. Verify and
+//! add integration tests before relying on this in production.
 
 use crate::expressions::{ExpOp, Expression};
 use crate::vector::{Vector, VectorDistanceMetric};
 use crate::Value;
 
-/// Creates an expression that returns the distance between a stored vector bin
-/// and `query` as a 64-bit float, using the given metric.
+/// Creates an expression that returns the squared L2 (squared Euclidean)
+/// distance between a stored vector bin and `query` as a 64-bit float.
+/// Smaller is closer.
 ///
 /// The query vector's element type and dimension count must match the stored
 /// vector; otherwise the expression evaluates to unknown. `bin` is typically
 /// [`vector_bin`](crate::expressions::vector_bin).
 ///
-/// # Work in progress
+/// See the [module docs](self): the wire contract is not yet double-checked
+/// against current server code.
 ///
-/// **This is not usable yet.** The server wire contract is not finalized, so a
-/// constructed expression cannot be sent: packing it (which happens when it is
-/// attached to a command) returns an
-/// [`Error`](crate::Error). It exists only so callers can compile against the
-/// eventual API. See the [module docs](self) for details.
+/// ```
+/// use aerospike::expressions::{lt, float_val, vector_bin};
+/// use aerospike::expressions::vector::l2_squared_distance;
+/// use aerospike::Vector;
+///
+/// let query = Vector::float32(vec![0.12, 0.98, -0.34]);
+/// let _exp = lt(
+///     l2_squared_distance(&query, vector_bin("embedding".to_string())),
+///     float_val(0.1),
+/// );
+/// ```
+pub fn l2_squared_distance(query: &Vector, bin: Expression) -> Expression {
+    build_distance(VectorDistanceMetric::L2Squared, query, bin)
+}
+
+/// Creates an expression that returns the dot product between a stored
+/// vector bin and `query` as a 64-bit float. Larger is more similar.
+///
+/// The query vector's element type and dimension count must match the stored
+/// vector; otherwise the expression evaluates to unknown. `bin` is typically
+/// [`vector_bin`](crate::expressions::vector_bin).
+///
+/// See the [module docs](self): the wire contract is not yet double-checked
+/// against current server code.
 ///
 /// ```
 /// use aerospike::expressions::{gt, float_val, vector_bin};
-/// use aerospike::expressions::vector::distance;
-/// use aerospike::{Vector, VectorDistanceMetric};
+/// use aerospike::expressions::vector::dot_product;
+/// use aerospike::Vector;
 ///
-/// // Builds, but cannot be sent to the server yet (see "Work in progress").
 /// let query = Vector::float32(vec![0.12, 0.98, -0.34]);
-/// let _wip = gt(
-///     distance(VectorDistanceMetric::Cosine, &query, vector_bin("embedding".to_string())),
+/// let _exp = gt(
+///     dot_product(&query, vector_bin("embedding".to_string())),
 ///     float_val(0.8),
 /// );
 /// ```
-pub fn distance(metric: VectorDistanceMetric, query: &Vector, bin: Expression) -> Expression {
+pub fn dot_product(query: &Vector, bin: Expression) -> Expression {
+    build_distance(VectorDistanceMetric::DotProduct, query, bin)
+}
+
+/// Creates an expression that returns the cosine similarity between a stored
+/// vector bin and `query` as a 64-bit float. Larger is more similar.
+///
+/// The query vector's element type and dimension count must match the stored
+/// vector; otherwise the expression evaluates to unknown. `bin` is typically
+/// [`vector_bin`](crate::expressions::vector_bin).
+///
+/// See the [module docs](self): the wire contract is not yet double-checked
+/// against current server code.
+///
+/// ```
+/// use aerospike::expressions::{gt, float_val, vector_bin};
+/// use aerospike::expressions::vector::cosine_similarity;
+/// use aerospike::Vector;
+///
+/// let query = Vector::float32(vec![0.12, 0.98, -0.34]);
+/// let _exp = gt(
+///     cosine_similarity(&query, vector_bin("embedding".to_string())),
+///     float_val(0.8),
+/// );
+/// ```
+pub fn cosine_similarity(query: &Vector, bin: Expression) -> Expression {
+    build_distance(VectorDistanceMetric::Cosine, query, bin)
+}
+
+/// Shared builder behind [`l2_squared_distance`], [`dot_product`], and
+/// [`cosine_similarity`]. Kept private: the metric is a compile-time choice
+/// of *which named function* to call, not a runtime parameter callers should
+/// pick from a bare [`VectorDistanceMetric`] — that keeps the public API
+/// aligned with the PRD-specified per-metric builder shape (mirroring Java's
+/// planned `VectorExp.cosineSimilarity`/`dotProduct`/`l2SquaredDistance`).
+fn build_distance(metric: VectorDistanceMetric, query: &Vector, bin: Expression) -> Expression {
     Expression::new(
         Some(ExpOp::VectorDist),
         Some(Value::Blob(query.element_bytes())),
@@ -73,37 +126,28 @@ mod tests {
     use crate::commands::buffer::Buffer;
     use crate::expressions::vector_bin;
 
-    // WIP guard: size estimation (the first thing a real command does) errors,
-    // so a vector distance expression can never be sent.
+    // All three vector distance builders can now be packed/sent. This does not
+    // confirm the server accepts or correctly interprets the payload -- see
+    // the module-level TODO about double-checking against current server code
+    // and adding integration tests.
     #[test]
-    fn distance_cannot_be_sent_yet() {
+    fn distance_builders_can_be_packed() {
         let query = Vector::float32(vec![1.0]);
-        let exp = distance(
-            VectorDistanceMetric::Cosine,
-            &query,
-            vector_bin("v".to_string()),
-        );
-
-        let err = exp.size().expect_err("vector distance expr must not pack yet");
-        assert!(
-            err.to_string().contains("work in progress"),
-            "error should flag the WIP status: {err}"
-        );
+        for exp in [
+            l2_squared_distance(&query, vector_bin("v".to_string())),
+            dot_product(&query, vector_bin("v".to_string())),
+            cosine_similarity(&query, vector_bin("v".to_string())),
+        ] {
+            exp.size().expect("vector distance expr should pack");
+        }
     }
 
-    // Pins the provisional wire form so it stays correct until finalized. The
-    // encoding runs and writes into the buffer, then packing returns the WIP
-    // error; here we inspect the bytes it wrote and confirm it still errors.
-    // Matches Java's VectorExp.distance / Exp.VectorDist:
-    // array[4] = [VECTOR_DIST(52), metric, query blob, bin].
+    // Pins the wire form. Matches the server's `EXP_VECTOR_DIST` (opcode 52)
+    // layout: array[4] = [VECTOR_DIST(52), metric, query blob, bin].
     #[test]
-    fn distance_provisional_wire_bytes() {
+    fn cosine_similarity_wire_bytes() {
         let query = Vector::float32(vec![1.0]);
-        let exp = distance(
-            VectorDistanceMetric::Cosine,
-            &query,
-            vector_bin("v".to_string()),
-        );
+        let exp = cosine_similarity(&query, vector_bin("v".to_string()));
 
         let expected = [
             0x94, // array(4)
@@ -116,8 +160,8 @@ mod tests {
         let mut buf = Buffer::new(usize::MAX);
         buf.resize_buffer(expected.len()).unwrap();
         buf.data_offset = 0;
-        // Encoding writes the provisional bytes, then reports the WIP error.
-        assert!(exp.pack(&mut Some(&mut buf)).is_err());
+        exp.pack(&mut Some(&mut buf))
+            .expect("vector distance expr should pack");
         assert_eq!(&buf.data_buffer[..expected.len()], &expected);
     }
 }

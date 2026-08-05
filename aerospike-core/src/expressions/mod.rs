@@ -366,34 +366,17 @@ impl Expression {
                 size += pack_raw_string(buf, &self.val.clone().unwrap().to_string());
             }
             ExpOp::VectorDist => {
-                // WORK IN PROGRESS — provisional encoding, intentionally not sendable.
+                // TODO(vector-exp-envelope, vector-exp-metric-semantics): double-check
+                // this layout and each metric's actual server-side behavior against
+                // current server code, and add integration tests against a real
+                // server, before relying on this in production.
                 //
-                // We build the full (provisional) layout below so it stays
-                // compiled and byte-tested, then refuse to return it: the server
-                // wire contract (query-vector envelope and metric semantics) is
-                // not finalized, so sending it could hit a payload a future
-                // server rejects or misinterprets. Because the error is returned
-                // from the size-estimation pass too, real commands abort before
-                // writing anything.
-                //
-                // To finalize: fold `wip` into `size` like the other arms and
-                // delete the trailing `return Err(...)`.
-                //
-                // Provisional layout: array[4] = [VECTOR_DIST, metric, query BLOB, bin]
-                let mut wip = 0;
-                wip += pack_array_begin(buf, 4);
-                wip += pack_integer(buf, cmd as i64);
-                wip += pack_integer(buf, self.flags.unwrap());
-                wip += pack_value(buf, self.val.as_ref().unwrap())?;
-                wip += self.bin.clone().unwrap().pack(buf)?;
-                let _ = wip;
-
-                return Err(Error::invalid_argument(
-                    "Vector distance expressions are a work in progress and cannot be \
-                     sent to the server yet: the wire contract (query-vector envelope \
-                     and metric semantics) is not finalized. Track the \
-                     vector-exp-envelope / vector-exp-metric-semantics TODOs.",
-                ));
+                // Layout: array[4] = [VECTOR_DIST, metric, query BLOB, bin]
+                size += pack_array_begin(buf, 4);
+                size += pack_integer(buf, cmd as i64);
+                size += pack_integer(buf, self.flags.unwrap());
+                size += pack_value(buf, self.val.as_ref().unwrap())?;
+                size += self.bin.clone().unwrap().pack(buf)?;
             }
             ExpOp::BinType | ExpOp::Var => {
                 // BinType/Var encoder
@@ -742,23 +725,22 @@ pub fn hll_bin(name: String) -> Expression {
     )
 }
 
-/// Creates a vector bin expression, for use with
-/// [`expressions::vector::distance`](crate::expressions::vector::distance).
+/// Creates a vector bin expression, for use with the vector distance
+/// expressions in [`expressions::vector`](crate::expressions::vector) (e.g.
+/// [`expressions::vector::cosine_similarity`](crate::expressions::vector::cosine_similarity)).
 /// A vector bin is read as a blob at the expression level.
 ///
-/// # Work in progress
-///
-/// Only meaningful together with the vector distance expression, which is not
-/// finalized and cannot be sent to the server yet. See
-/// [`expressions::vector`](crate::expressions::vector).
+/// Only meaningful together with a vector distance expression. See
+/// [`expressions::vector`](crate::expressions::vector) — the wire contract
+/// there is not yet double-checked against current server code.
 /// ```
 /// use aerospike::expressions::{gt, float_val, vector_bin};
-/// use aerospike::expressions::vector::distance;
-/// use aerospike::{Vector, VectorDistanceMetric};
+/// use aerospike::expressions::vector::cosine_similarity;
+/// use aerospike::Vector;
 ///
 /// // Cosine similarity between bin "v" and a query vector > 0.8
 /// let query = Vector::float32(vec![0.1, 0.2, 0.3]);
-/// gt(distance(VectorDistanceMetric::Cosine, &query, vector_bin("v".to_string())), float_val(0.8));
+/// gt(cosine_similarity(&query, vector_bin("v".to_string())), float_val(0.8));
 /// ```
 pub fn vector_bin(name: String) -> Expression {
     Expression::new(
