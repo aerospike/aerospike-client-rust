@@ -101,8 +101,11 @@ impl fmt::Display for VectorElementType {
     }
 }
 
-/// Distance metric for a vector distance expression
-/// ([`expressions::vector::distance`](crate::expressions::vector::distance)).
+/// Distance metric for a vector distance expression. Selected implicitly by
+/// which of [`expressions::vector::l2_squared_distance`](crate::expressions::vector::l2_squared_distance),
+/// [`expressions::vector::dot_product`](crate::expressions::vector::dot_product), or
+/// [`expressions::vector::cosine_similarity`](crate::expressions::vector::cosine_similarity)
+/// is called.
 ///
 /// The discriminant is the wire code.
 ///
@@ -111,14 +114,17 @@ impl fmt::Display for VectorElementType {
 /// The distance expression this feeds is not finalized and cannot be sent to
 /// the server yet; this enum is provisional.
 ///
-// TODO(vector-exp-metric-semantics): metric semantics are not finalized
-// upstream. A pending server contract may redefine these as L2-squared and
-// cosine *distance* (1 - similarity), flipping the "nearest" sort direction for
-// cosine. Revisit once that lands.
+// TODO(vector-exp-metric-semantics): these variants document the decided
+// target semantics (`Cosine` = cosine similarity, not `1 - similarity`
+// distance; `L2Squared` = squared L2, not plain Euclidean). The available
+// `aerospike-server` checkout used to check this against may be outdated —
+// re-verify each variant's actual server-side behavior against current
+// server code once available, before lifting the WIP send-guard in
+// `expressions/mod.rs`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum VectorDistanceMetric {
-    /// Euclidean (L2) distance; smaller is closer.
-    Euclidean = 0,
+    /// L2 squared (squared Euclidean) distance; smaller is closer.
+    L2Squared = 0,
     /// Dot product; larger is more similar.
     DotProduct = 1,
     /// Cosine similarity; larger is closer.
@@ -548,7 +554,7 @@ mod tests {
 
     #[test]
     fn distance_metric_codes() {
-        assert_eq!(VectorDistanceMetric::Euclidean.code(), 0);
+        assert_eq!(VectorDistanceMetric::L2Squared.code(), 0);
         assert_eq!(VectorDistanceMetric::DotProduct.code(), 1);
         assert_eq!(VectorDistanceMetric::Cosine.code(), 2);
     }

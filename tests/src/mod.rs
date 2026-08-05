@@ -56,6 +56,7 @@ mod task;
 mod truncate;
 mod txn;
 mod udf;
+mod vector;
 
 pub(crate) async fn count_results(rs: Arc<Recordset>) -> usize {
     let mut count = 0;
