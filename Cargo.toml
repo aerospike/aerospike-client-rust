@@ -61,7 +61,7 @@ name = "client_server"
 harness = false
 
 [workspace]
-members = ["tools/benchmark", "aerospike-core", "aerospike-rt", "aerospike-sync", "aerospike-macro"]
+members = ["tools/benchmark", "aerospike-core", "aerospike-rt", "aerospike-sync", "aerospike-macro", "aerospike-udf-sdk-wasm", "aerospike-udf-sdk-native"]
 
 [dev-dependencies]
 log = "0.4.33"

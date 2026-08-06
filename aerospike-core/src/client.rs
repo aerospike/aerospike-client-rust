@@ -1146,7 +1146,9 @@ impl Client {
     /// the UDF package with a single, random cluster node; from there a copy will get distributed
     /// to all other cluster nodes automatically.
     ///
-    /// Lua is the only supported scripting language for UDFs at the moment.
+    /// The language is given at registration and recorded by the server against the file name, so
+    /// nothing needs to name it again when the function is called. See [`UDFLang`] for what is
+    /// supported.
     ///
     /// # Arguments
     ///
@@ -1240,7 +1242,9 @@ impl Client {
     /// the UDF package with a single, random cluster node; from there a copy will get distributed
     /// to all other cluster nodes automatically.
     ///
-    /// Lua is the only supported scripting language for UDFs at the moment.
+    /// The language is given at registration and recorded by the server against the file name, so
+    /// nothing needs to name it again when the function is called. See [`UDFLang`] for what is
+    /// supported.
     ///
     /// # Arguments
     ///

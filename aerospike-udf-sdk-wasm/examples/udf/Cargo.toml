@@ -1,0 +1,27 @@
+[package]
+name = "aerospike-udf-example"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+aerospike-udf-sdk-wasm = { path = "../.." }
+
+[profile.release]
+# Small and fast: a UDF module is loaded once and called constantly, and with AoT the size of the wasm
+# affects how long wamrc takes rather than how fast the code runs.
+opt-level = 3
+lto = true
+panic = "abort"
+strip = true
+
+# Its own workspace root, deliberately.
+#
+# These crates live inside the server tree, which may itself sit inside another cargo workspace - the
+# client repo checks the server out under _temp/. Without this, cargo refuses to build them there ("add the
+# package to workspace.members") while the same crates build fine from a checkout elsewhere. Declaring the
+# root here makes where the tree is checked out stop mattering.
+[workspace]

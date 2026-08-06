@@ -1,0 +1,33 @@
+[package]
+name = "aerospike-udf-example-summary"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "A native Aerospike UDF module: one-pass summary statistics over a numeric bin"
+
+[lib]
+crate-type = ["cdylib", "lib"]
+
+# **No dependencies, and that is the point.**
+#
+# The other two examples pull in a query engine and a SIMD library and pay 2.2 MB and 0.5 MB for it. Everything here -
+# moments, a relative-error quantile sketch, Space-Saving, HyperLogLog - is a few hundred lines of arithmetic, so a
+# plugin that computes twelve statistics over a billion records has exactly one dependency: the SDK.
+[dependencies]
+aerospike-udf-sdk-native = { path = "../.." }
+
+[dev-dependencies]
+aerospike-udf-sdk-native = { path = "../..", features = ["client"] }
+aerospike-core = { path = "../../../aerospike-core", default-features = false, features = [
+	"rt-tokio",
+] }
+futures = "0.3.33"
+tokio = { version = "1.53.0", features = ["full"] }
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+panic = "unwind"
+
+[workspace]

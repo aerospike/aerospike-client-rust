@@ -1,0 +1,30 @@
+[package]
+name = "aerospike-udf-example-timeseries"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "A native Aerospike UDF module: a round-robin time series in a blob bin"
+
+[lib]
+crate-type = ["cdylib", "lib"]
+
+# **No dependencies but the SDK**, like the summary example. A ring buffer, a fixed-layout header and some slot
+# arithmetic is all this is; there is nothing here worth a crate.
+[dependencies]
+aerospike-udf-sdk-native = { path = "../.." }
+
+[dev-dependencies]
+aerospike-udf-sdk-native = { path = "../..", features = ["client"] }
+aerospike-core = { path = "../../../aerospike-core", default-features = false, features = [
+	"rt-tokio",
+] }
+futures = "0.3.33"
+tokio = { version = "1.53.0", features = ["full"] }
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+panic = "unwind"
+
+[workspace]

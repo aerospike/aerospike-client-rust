@@ -1,0 +1,42 @@
+[package]
+name = "aerospike-udf-sdk-native"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+keywords.workspace = true
+categories.workspace = true
+homepage.workspace = true
+repository.workspace = true
+documentation.workspace = true
+readme = "README.md"
+description = "Write Aerospike user-defined functions in Rust, compiled to a native server plugin"
+
+[lib]
+crate-type = ["lib"]
+
+# No dependencies by default, and none wanted.
+#
+# The whole SDK is a safe layer over one C ABI, so there is nothing to pull in - not even a proc-macro crate:
+# `udfs!`, `module!` and `partial!` are `macro_rules!`, which keeps builds fast and means a plugin's dependency
+# tree is whatever the plugin itself needs and nothing else. A UDF that runs inside the database should not drag
+# a hundred crates into the database's address space.
+#
+# `client` is the exception, and it is off by default for exactly that reason: combining partials means handling
+# `aerospike::Value`, which means the client library. A plugin's cdylib never enables it; the *client* linking
+# the same crate does.
+[features]
+default = []
+client = ["dep:aerospike-core"]
+
+
+# The client half's tests only compile with the feature on:
+#
+#   cargo test -p aerospike-udf-sdk-native --features client
+#
+# which the Makefile's target does. A dev-dependency on this crate with the feature enabled would look like it
+# solved that and would not: it builds a *second* copy, and the `#[cfg(test)]` tests still run in the first.
+[dependencies]
+aerospike-core = { path = "../aerospike-core", optional = true, default-features = false, features = [
+	"rt-tokio",
+] }

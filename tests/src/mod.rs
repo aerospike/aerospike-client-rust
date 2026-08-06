@@ -56,6 +56,10 @@ mod task;
 mod truncate;
 mod txn;
 mod udf;
+mod udf_agg_bench;
+mod udf_native;
+mod udf_native_bench;
+mod udf_wasm;
 
 pub(crate) async fn count_results(rs: Arc<Recordset>) -> usize {
     let mut count = 0;

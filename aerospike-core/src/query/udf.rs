@@ -16,26 +16,46 @@
 use std::fmt;
 
 /// User-defined function (UDF) language
-#[derive(Debug)]
+///
+/// The language is chosen when the function is **registered**, not when it is called: the server
+/// records it against the file name and looks it up on every apply. So [`Client::execute_udf`] takes
+/// no language, and a registered file cannot change language without being re-registered.
+///
+/// [`Client::execute_udf`]: crate::Client::execute_udf
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UDFLang {
     /// Lua embedded programming language.
     Lua,
+
+    /// WebAssembly, compiled and run by the server.
+    ///
+    /// The registered content is a **binary `.wasm` module**, not source text — so the bytes passed
+    /// to [`Client::register_udf`] are the compiled module, and a file registered this way is named
+    /// `*.wasm`.
+    ///
+    /// [`Client::register_udf`]: crate::Client::register_udf
+    Wasm,
+}
+
+impl UDFLang {
+    /// The name the server knows this language by, as sent in `udf-put`.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            UDFLang::Lua => "LUA",
+            UDFLang::Wasm => "WASM",
+        }
+    }
 }
 
 impl fmt::Display for UDFLang {
     fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
-        let s = match *self {
-            UDFLang::Lua => "LUA",
-        };
-
-        write!(f, "{s}")
+        write!(f, "{}", self.as_str())
     }
 }
 
 impl<'a> From<UDFLang> for &'a str {
     fn from(val: UDFLang) -> &'a str {
-        match val {
-            UDFLang::Lua => "LUA",
-        }
+        val.as_str()
     }
 }

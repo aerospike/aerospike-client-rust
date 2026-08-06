@@ -1,0 +1,40 @@
+[package]
+name = "aerospike-udf-example-native"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "An example native Aerospike UDF module"
+
+[lib]
+# **Two crate types, and that is the whole client story.**
+#
+# `cdylib` is the file the server dlopen's. `lib` is the same source linked into a *client*, so that combining
+# this plugin's partials runs this plugin's own `merge` and `finalize` rather than a reimplementation of them.
+# One source, compiled twice, which is what "the client uses the exact same code" means concretely.
+crate-type = ["cdylib", "lib"]
+
+[dependencies]
+aerospike-udf-sdk-native = { path = "../.." }
+
+[dev-dependencies]
+# The client half, for the tests below the aggregations and for tests/against_a_server.rs. Only the `lib` build
+# ever sees these - a plugin's `cdylib` still pulls in nothing but the SDK.
+aerospike-udf-sdk-native = { path = "../..", features = ["client"] }
+aerospike-core = { path = "../../../aerospike-core", default-features = false, features = [
+	"rt-tokio",
+] }
+futures = "0.3.33"
+tokio = { version = "1.53.0", features = ["full"] }
+
+[profile.release]
+# This runs inside the database, on transaction threads. Nothing about a debug build belongs there.
+opt-level = 3
+lto = true
+codegen-units = 1
+# **Not `panic = "abort"`.** A panic in a plugin is caught at the entry point and turned into a UDF error;
+# aborting would take the whole server down with it, which is exactly the outcome the catch exists to avoid.
+panic = "unwind"
+
+# Its own workspace: a cdylib built against the SDK, not a member of the client workspace, so `cargo test` at
+# the repository root does not try to build a shared library it has no use for.
+[workspace]

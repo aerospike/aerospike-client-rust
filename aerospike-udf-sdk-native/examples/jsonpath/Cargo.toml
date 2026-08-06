@@ -1,0 +1,52 @@
+[package]
+name = "aerospike-udf-example-jsonpath"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "A native Aerospike UDF module that queries records with JSONPath"
+
+[lib]
+# `cdylib` is what the server dlopen's; `lib` is the same source linked into a client, so that combining this
+# plugin's partials runs this plugin's own code. See the stats example for why that matters.
+crate-type = ["cdylib", "lib"]
+
+[dependencies]
+aerospike-udf-sdk-native = { path = "../.." }
+
+# **The one example in this repository that carries a real dependency tree, deliberately.**
+#
+# It is here because `jsonpath-rust` is the only JSONPath crate that is generic over the value it queries: its
+# `Queryable` trait is the extension point that lets a record be queried *in place* instead of being converted
+# to `serde_json::Value` first. Every other crate is welded to serde_json (`serde_json_path`, `jsonpath_lib`,
+# `jsonpath-plus`) or works on JSON text rather than a value tree (`rsonpath`).
+#
+# The cost is real and an operator should know it before loading this: serde_json, regex, pest and thiserror come
+# with it, there are no feature flags to trim them, and `regex` alone is over a megabyte of code that is resident
+# in `asd` for the life of the process. That is the trade for RFC 9535 including regex filters.
+jsonpath-rust = "1.0"
+
+# Declared rather than leaned on transitively. `jsonpath-rust` already depends on it unconditionally, so this adds
+# nothing to the build — but this crate uses it *directly*, to parse a string bin that holds an embedded JSON
+# document, and a direct use belongs in the manifest.
+serde_json = "1.0"
+
+[dev-dependencies]
+aerospike-udf-sdk-native = { path = "../..", features = ["client"] }
+aerospike-core = { path = "../../../aerospike-core", default-features = false, features = [
+	"rt-tokio",
+] }
+futures = "0.3.33"
+tokio = { version = "1.53.0", features = ["full"] }
+
+[profile.release]
+# This runs inside the database, on transaction threads.
+opt-level = 3
+lto = true
+codegen-units = 1
+# **Not `panic = "abort"`.** A panic is caught at the entry point and becomes a UDF error; aborting would take
+# the server down with it. That matters more here than in the dependency-free example, because a query engine
+# has more places to panic than a hand-written accumulator does.
+panic = "unwind"
+
+# Its own workspace: a cdylib for a server, not a member of the client workspace.
+[workspace]

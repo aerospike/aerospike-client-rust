@@ -1,4 +1,4 @@
-/target
+target/
 /Cargo.lock
 *.todo
 aerospike-rust-client.sublime-project

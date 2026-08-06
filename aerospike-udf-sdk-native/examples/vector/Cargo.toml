@@ -1,0 +1,67 @@
+[package]
+name = "aerospike-udf-example-vector"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "A native Aerospike UDF module: vector distances, exact top-k, and bounded ordering"
+
+[lib]
+crate-type = ["cdylib", "lib"]
+
+[dependencies]
+aerospike-udf-sdk-native = { path = "../.." }
+
+# The one dependency — and every argument I made for it has now been measured and found wrong.
+#
+# 1. The original claim was that vector search would be the first case where the UDF, not the record pipeline,
+#    dominates: ~300 ns scalar against ~75 ns with SIMD. Measured, SIMD bought **1.2x**, because LLVM
+#    autovectorises the obvious loop rather well.
+# 2. Then a borrowed blob particle turned out to be *never* 4-byte aligned, so it cannot be cast to `&[f32]` and
+#    cannot reach this crate's API at all. The packed-vector path — what this example is about — stopped using
+#    simsimd entirely, leaving it list bins, f16/bf16 and i8.
+# 3. Then a hand-written NEON kernel measured **3.5x faster than simsimd** on the same cosine. Not because the
+#    build lost its SIMD backends (`uses_neon()` is true, dispatch resolves once, the kernel is real NEON) but
+#    because `simsimd_cos_f32_neon` uses **one accumulator per sum** and is latency-bound on its FMA chain. At
+#    0.286 ns/element, flat from 64 to 4096 dimensions, against this example's 0.082.
+#
+# So the honest position: **this dependency is not earning its place for f32/f64/i32**, and a pure-Rust kernel is
+# both faster and lighter. What it still earns is **f16/bf16** — half-precision needs `target_feature = "fp16"`,
+# which is not baseline aarch64, so it needs runtime detection, and simsimd already has it
+# (`simsimd_uses_neon_f16`/`_bf16`). Reimplementing that to save a dependency would be the bad trade.
+#
+# Costs about 120 KB resident and a C compiler at build time. See src/vec.rs and the `simsimd_gap` benchmark.
+#
+# **NumKong 7.7.1, from a local checkout, patched.** SimSIMD was renamed to NumKong upstream - the GitHub repo
+# 301-redirects - and the `simsimd` crate is frozen at 6.5.x. The move is not a version bump: `SpatialSimilarity` split
+# into `Angular`/`Dot`/`Euclidean`, `cos` became `angular`, and the associated `Output` type now varies by element type.
+#
+# It is a path dependency because the checkout carries a local patch. NumKong's f32 NEON kernels were *slower* than
+# SimSIMD 6.5's - one FMA accumulator per sum, and only two elements per iteration, because they switched to f64
+# accumulation for numerical stability. Four independent accumulators and full 128-bit loads, matching what
+# `nk_dot_f32_neon` in the same tree already did, made angular 2.7x faster and sqeuclidean 4.0x. The patch is in
+# `_temp/NumKong/include/numkong/{spatial,dot}/neon.h`; the reasoning and the numbers are in README.md and src/vec.rs.
+#
+# **Worth knowing before assuming this helps a query**: the packed-blob path never calls the vendor library at all,
+# because a borrowed particle is never aligned and the API takes `&[f32]`. The patch shows up in the in-memory floor
+# (aligned data), not in the server row. See the benchmark table in README.md.
+#
+# **Build note for gcc 11 (the dev VM).** NumKong's probe reports NEON dot-product support and then compiles the
+# dispatch translation units with plain `-march=armv8-a`, so gcc 11 refuses to inline `vdotq_s32` - "target specific
+# option mismatch". Build with `NK_TARGET_NEONSDOT=0` there. clang on macOS is unaffected.
+numkong = { path = "../../../_temp/NumKong" }
+
+[dev-dependencies]
+aerospike-udf-sdk-native = { path = "../..", features = ["client"] }
+aerospike-core = { path = "../../../aerospike-core", default-features = false, features = [
+	"rt-tokio",
+] }
+futures = "0.3.33"
+tokio = { version = "1.53.0", features = ["full"] }
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+panic = "unwind"
+
+[workspace]
