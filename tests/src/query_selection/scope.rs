@@ -193,7 +193,7 @@ async fn query_selection_scope_mapkeys_exists_primary_index_fallback() {
     assert_eq!(plan.selection(), QuerySelection::PrimaryIndex);
     assert!(plan.index_name().is_none());
     assert!(plan.index_range_bytes().is_none());
-    assert!(!plan.explain_where_bytes().is_empty());
+    assert!(!plan.ael().unwrap().is_empty());
 
     client.close().await.unwrap();
 }

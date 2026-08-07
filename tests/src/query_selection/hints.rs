@@ -22,7 +22,7 @@ use crate::common;
 use aerospike::query::QuerySelection;
 use aerospike::{
     as_bin, as_key, AdminPolicy, Client, CollectionIndexType, IndexType, QueryPolicy,
-    QueryWhereWire, ResultCode, Task, WritePolicy, FLAG_EXPLAIN, FLAG_HARD_HINT, FLAG_REQUIRE_INDEX,
+    ResultCode, Task, WritePolicy, FLAG_EXPLAIN, FLAG_HARD_HINT, FLAG_REQUIRE_INDEX,
 };
 
 struct HintFixture {
@@ -142,10 +142,7 @@ async fn query_selection_hint_require_index_with_soft_hint() {
     assert_eq!(plan.selection(), QuerySelection::SecondaryIndex);
     assert_eq!(plan.index_name(), Some(fixture.age_index_name.as_str()));
     assert!(plan.index_range_bytes().is_some());
-    assert_eq!(
-        QueryWhereWire::flags(plan.explain_where_bytes()).unwrap(),
-        FLAG_EXPLAIN | FLAG_REQUIRE_INDEX
-    );
+    assert_eq!(plan.ael().unwrap(), "$.age == 25");
 
     client.close().await.unwrap();
 }
@@ -170,10 +167,7 @@ async fn query_selection_hint_hard_hint_matching_index() {
 
     assert_eq!(plan.selection(), QuerySelection::SecondaryIndex);
     assert_eq!(plan.index_name(), Some(fixture.age_index_name.as_str()));
-    assert_eq!(
-        QueryWhereWire::flags(plan.explain_where_bytes()).unwrap(),
-        FLAG_EXPLAIN | FLAG_HARD_HINT
-    );
+    assert_eq!(plan.ael().unwrap(), "$.age == 25");
 
     client.close().await.unwrap();
 }
@@ -197,10 +191,7 @@ async fn query_selection_hint_require_index_and_hard_hint() {
     .await;
 
     assert_eq!(plan.index_name(), Some(fixture.age_index_name.as_str()));
-    assert_eq!(
-        QueryWhereWire::flags(plan.explain_where_bytes()).unwrap(),
-        FLAG_EXPLAIN | FLAG_REQUIRE_INDEX | FLAG_HARD_HINT
-    );
+    assert_eq!(plan.ael().unwrap(), "$.age == 25");
 
     client.close().await.unwrap();
 }

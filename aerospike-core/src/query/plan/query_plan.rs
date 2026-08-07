@@ -35,7 +35,7 @@ pub struct QueryPlan {
 
 impl QueryPlan {
     /// Builds a plan from an explain `result_code` and parsed response fields.
-    pub fn from_explain_response(
+    pub(crate) fn from_explain_response(
         result_code: ResultCode,
         namespace: &str,
         set_name: Option<&str>,
@@ -124,14 +124,14 @@ impl QueryPlan {
     }
 
     /// Field `44` body sent on explain (`EXPLAIN` flag set).
-    pub fn explain_where_bytes(&self) -> &[u8] {
+    pub(crate) fn explain_where_bytes(&self) -> &[u8] {
         &self.explain_where_bytes
     }
 
     /// Field `44` body for execute (`EXPLAIN` flag cleared).
     ///
     /// Clears the explain flag in place and returns the payload buffer.
-    pub fn into_execute_where_bytes(mut self) -> Vec<u8> {
+    pub(crate) fn into_execute_where_bytes(mut self) -> Vec<u8> {
         QueryWhereWire::clear_explain_in_place(&mut self.explain_where_bytes)
             .expect("explain WHERE payload built by QueryWhereWire");
         self.explain_where_bytes

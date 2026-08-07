@@ -170,10 +170,7 @@ impl Command for QueryExplainCommand<'_> {
                 &self.explain_where_bytes,
             );
         }
-
-        // Single-message response fully consumed; do not call empty_socket (it
-        // re-reads the buffer as a proto header and mis-parses field TLV bytes).
-        conn.buffer.data_buffer.clear();
+        
         conn.buffer.reset_offset();
         Ok(())
     }

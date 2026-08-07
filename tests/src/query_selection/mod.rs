@@ -36,8 +36,8 @@ use crate::common;
 
 use aerospike::query::{PartitionFilter, QueryPlan, QuerySelection, Statement};
 use aerospike::{
-    as_bin, as_key, AdminPolicy, Bins, Client, CollectionIndexType, IndexType, QueryPolicy, Recordset,
-    Task, Value, WritePolicy,
+    as_bin, as_key, AdminPolicy, Bins, Client, ClientPolicy, CollectionIndexType, IndexType,
+    QueryPolicy, ReadPolicy, Recordset, Task, Value, WritePolicy,
 };
 
 pub(crate) const DATASET_SIZE: i64 = 50;
@@ -219,7 +219,7 @@ async fn query_selection_explain_selects_secondary_index_for_age_range() {
     assert_eq!(plan.set_name(), Some(fixture.set_name.as_str()));
     assert_eq!(plan.index_name(), Some(fixture.age_index_name.as_str()));
     assert!(plan.index_range_bytes().is_some());
-    assert!(!plan.explain_where_bytes().is_empty());
+    assert!(!plan.ael().unwrap().is_empty());
 
     client.close().await.unwrap();
 }
@@ -242,7 +242,7 @@ async fn query_selection_explain_selects_primary_index_for_non_indexed_predicate
     assert_eq!(plan.set_name(), Some(fixture.set_name.as_str()));
     assert!(plan.index_name().is_none());
     assert!(plan.index_range_bytes().is_none());
-    assert!(!plan.explain_where_bytes().is_empty());
+    assert!(!plan.ael().unwrap().is_empty());
 
     client.close().await.unwrap();
 }
@@ -262,7 +262,7 @@ async fn query_selection_explain_contradiction_predicate_filtered_out() {
     assert!(plan.is_filtered_out());
     assert!(plan.index_name().is_none());
     assert!(plan.index_range_bytes().is_none());
-    assert!(!plan.explain_where_bytes().is_empty());
+    assert!(!plan.ael().unwrap().is_empty());
 
     client.close().await.unwrap();
 }
@@ -418,7 +418,7 @@ async fn query_selection_explain_bytes_stable_across_repeated_probes() {
     assert_eq!(first.index_name(), Some(fixture.age_index_name.as_str()));
     assert_eq!(first.selection(), second.selection());
     assert_eq!(first.index_name(), second.index_name());
-    assert_eq!(first.explain_where_bytes(), second.explain_where_bytes());
+    assert_eq!(first.ael().unwrap(), second.ael().unwrap());
     assert_eq!(first.index_range_bytes(), second.index_range_bytes());
 
     client.close().await.unwrap();
@@ -561,6 +561,79 @@ async fn query_selection_explain_for_index_hint_on_wrong_existing_index() {
         collect_int_bin(rs, AGE_BIN).await,
         vec![14, 15, 16, 17, 18]
     );
+
+    client.close().await.unwrap();
+}
+
+/// Stress pooled-connection reuse: one connection, many explain → execute → get cycles.
+///
+/// Guards against stale bytes in the send buffer after explain parse (no post-parse
+/// `data_buffer.clear()`); a bad buffer would corrupt the next command on this connection.
+const POOL_REUSE_STRESS_ITERATIONS: usize = 300;
+
+async fn single_connection_client() -> Client {
+    let mut policy = ClientPolicy::default();
+    policy.min_conns_per_node = 1;
+    policy.max_conns_per_node = 1;
+    Client::new(&policy, &common::hosts())
+        .await
+        .expect("single-connection client failed to connect")
+}
+
+#[aerospike_macro::test]
+async fn query_selection_pooled_connection_reuse_stress() {
+    let probe = common::client().await;
+    if !supports_query_selection(&probe).await {
+        probe.close().await.unwrap();
+        return;
+    }
+    probe.close().await.unwrap();
+
+    let client = single_connection_client().await;
+    let fixture = prepare_fixture(&client).await;
+    let namespace = common::namespace();
+    let ael = "$.age >= 14 and $.age <= 18";
+    let bins = Bins::from([AGE_BIN]);
+    let probe_key = as_key!(namespace, &fixture.set_name, 25_i64);
+    let read_policy = ReadPolicy::default();
+
+    for i in 0..POOL_REUSE_STRESS_ITERATIONS {
+        let mut query_policy = QueryPolicy::default();
+        if i % 50 == 0 {
+            query_policy.base_policy.use_compression = true;
+            query_policy.base_policy.compression_threshold = 0;
+        }
+
+        let plan = client
+            .query_explain(
+                &query_policy,
+                namespace,
+                Some(&fixture.set_name),
+                ael,
+                None,
+                None,
+            )
+            .await
+            .unwrap_or_else(|e| panic!("explain failed on iteration {i}: {e}"));
+        assert_eq!(plan.selection(), QuerySelection::SecondaryIndex);
+
+        let rs = execute_plan(&client, &fixture.set_name, plan, bins.clone()).await;
+        assert_eq!(
+            count_records(rs).await,
+            5,
+            "execute record count mismatch on iteration {i}"
+        );
+
+        let record = client
+            .get(&read_policy, &probe_key, Bins::from([AGE_BIN]))
+            .await
+            .unwrap_or_else(|e| panic!("get failed on iteration {i}: {e}"));
+        assert_eq!(
+            record.bins.get(AGE_BIN),
+            Some(&Value::from(25_i64)),
+            "get bin mismatch on iteration {i}"
+        );
+    }
 
     client.close().await.unwrap();
 }
