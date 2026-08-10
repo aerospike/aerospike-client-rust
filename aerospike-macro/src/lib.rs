@@ -21,7 +21,11 @@ pub fn test(_attr: TokenStream, input: TokenStream) -> TokenStream {
             #[test]
             #(#attrs)*
             fn #name() #ret {
-                let _ = env_logger::try_init();
+                let _ = env_logger::Builder::from_env(
+                    env_logger::Env::default().default_filter_or("error"),
+                )
+                .is_test(true)
+                .try_init();
 
                 // ::aerospike_rt::tokio::runtime::Runtime::new().unwrap().block_on( async {#body} )
                 // Use a shared runtime for the tests and the client:
@@ -33,7 +37,11 @@ pub fn test(_attr: TokenStream, input: TokenStream) -> TokenStream {
             #[test]
             #(#attrs)*
             fn #name() #ret {
-                let _ = env_logger::try_init();
+                let _ = env_logger::Builder::from_env(
+                    env_logger::Env::default().default_filter_or("error"),
+                )
+                .is_test(true)
+                .try_init();
 
                 // Runtime is already shared for async_std
                 ::aerospike_rt::async_std::task::block_on( async {#body} )

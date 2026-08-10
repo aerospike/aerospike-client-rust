@@ -204,6 +204,10 @@ pub struct Filter {
     /// Optional expression identifying which expression-based secondary index to use.
     /// Serialized as `FieldType::IndexExpression` (24) on the wire.
     pub(crate) expression: Option<Expression>,
+
+    /// Opaque `INDEX_RANGE` body from a server query plan (execute shape).
+    /// When set, [`Self::write`] emits these bytes directly (includes `n_ranges`).
+    pub(crate) wire_range_bytes: Option<Vec<u8>>,
 }
 
 /// Particle type of a filter bound.
@@ -237,7 +241,33 @@ impl Filter {
             index_name: None,
             context: None,
             expression: None,
+            wire_range_bytes: None,
         }
+    }
+
+    /// Replay opaque `INDEX_RANGE` field body on execute (field `22`).
+    ///
+    /// Bytes must already be in execute shape (`bin_name_len = 0` when paired with field `21`).
+    pub fn from_wire_range(
+        index_name: &str,
+        range_bytes: Vec<u8>,
+        collection_index_type: CollectionIndexType,
+    ) -> Self {
+        Filter {
+            bin_name: String::new(),
+            collection_index_type,
+            value_particle_type: ParticleType::INTEGER as u8,
+            begin: Value::from(0_i64),
+            end: Value::from(0_i64),
+            index_name: Some(index_name.to_owned()),
+            context: None,
+            expression: None,
+            wire_range_bytes: Some(range_bytes),
+        }
+    }
+
+    pub(crate) const fn has_wire_range(&self) -> bool {
+        self.wire_range_bytes.is_some()
     }
 
     /// Creates a new filter instance that targets a specific secondary index by name.
@@ -257,6 +287,7 @@ impl Filter {
             index_name: Some(index_name.to_owned()),
             context: None,
             expression: None,
+            wire_range_bytes: None,
         }
     }
 
@@ -628,12 +659,27 @@ impl Filter {
     }
 
     pub(crate) fn estimate_size(&self) -> Result<usize> {
+        if let Some(ref bytes) = self.wire_range_bytes {
+            return Ok(bytes.len());
+        }
         // bin name size(1) + particle type size(1)
         //     + begin particle size(4) + end particle size(4) = 10
         Ok(self.bin_name.len() + self.begin.estimate_size()? + self.end.estimate_size()? + 10)
     }
+    
+    pub(crate) fn index_range_field_body_size(&self) -> Result<usize> {
+        if self.has_wire_range() {
+            self.estimate_size()
+        } else {
+            self.estimate_size().map(|size| size + 1)
+        }
+    }
 
     pub(crate) fn write(&self, buffer: &mut Buffer) -> Result<()> {
+        if let Some(ref bytes) = self.wire_range_bytes {
+            buffer.write_bytes(bytes);
+            return Ok(());
+        }
         buffer.write_u8(self.bin_name.len() as u8);
         buffer.write_str(&self.bin_name);
         buffer.write_u8(self.value_particle_type);
@@ -644,6 +690,15 @@ impl Filter {
         buffer.write_u32(self.end.estimate_size()? as u32);
         self.end.write_to(buffer)?;
         Ok(())
+    }
+    
+    pub(crate) fn write_index_range_field(&self, buffer: &mut Buffer) -> Result<()> {
+        if self.has_wire_range() {
+            self.write(buffer)
+        } else {
+            buffer.write_u8(1);
+            self.write(buffer)
+        }
     }
 }
 
@@ -1076,6 +1131,22 @@ mod tests {
         let f = Filter::range("bin1", 0_i64, 100_i64).context(vec![ctx_list_index(0)]);
         assert!(f.context.is_some());
         assert_eq!(f.bin_name, "bin1");
+    }
+
+    #[test]
+    fn index_range_field_body_size_adds_n_ranges_prefix_for_bin_filters() {
+        let filter = Filter::range("age", 0_i64, 100_i64);
+        assert_eq!(
+            filter.index_range_field_body_size().unwrap(),
+            filter.estimate_size().unwrap() + 1
+        );
+    }
+
+    #[test]
+    fn index_range_field_body_size_uses_wire_bytes_as_is() {
+        let wire = vec![1, 0, 1, 9, 10, 11];
+        let filter = Filter::from_wire_range("idx", wire.clone(), CollectionIndexType::Default);
+        assert_eq!(filter.index_range_field_body_size().unwrap(), wire.len());
     }
 
     // ====================================================================

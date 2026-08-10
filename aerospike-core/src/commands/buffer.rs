@@ -1427,6 +1427,7 @@ impl Buffer {
         task_id: u64,
         node: &Node,
         node_partitions: Option<&NodePartitions>,
+        execute_where: Option<&[u8]>,
     ) -> Result<()> {
         let filter = statement.filters.as_ref().map(|filters| &filters[0]);
         let is_background = direction.is_background();
@@ -1470,7 +1471,7 @@ impl Buffer {
                 field_count += 1;
             }
 
-            filter_size = 1 + filter.estimate_size()?;
+            filter_size = filter.index_range_field_body_size()?;
             self.data_offset += filter_size + FIELD_HEADER_SIZE as usize;
             field_count += 1;
 
@@ -1508,9 +1509,17 @@ impl Buffer {
             field_count += 4;
         }
 
-        // ---------- estimation: policy filter expression ----------
-        let filter_exp_size = self.estimate_filter_size(direction.filter_expression())?;
+        // ---------- estimation: policy filter expression or plan-driven WHERE ----------
+        let filter_exp_size = if execute_where.is_some() {
+            0
+        } else {
+            self.estimate_filter_size(direction.filter_expression())?
+        };
         if filter_exp_size > 0 {
+            field_count += 1;
+        }
+        if let Some(where_bytes) = execute_where {
+            self.data_offset += where_bytes.len() + FIELD_HEADER_SIZE as usize;
             field_count += 1;
         }
 
@@ -1635,8 +1644,7 @@ impl Buffer {
             }
 
             self.write_field_header(filter_size, FieldType::IndexRange);
-            self.write_u8(1);
-            filter.write(self)?;
+            filter.write_index_range_field(self)?;
 
             if let Some(ref ctx) = filter.context {
                 let ctx_size = encoder::pack_ctx_for_index(&mut None, ctx)?;
@@ -1673,7 +1681,9 @@ impl Buffer {
             }
         }
 
-        if let Some(filter_exp) = direction.filter_expression() {
+        if let Some(where_bytes) = execute_where {
+            self.write_field_bytes(where_bytes, FieldType::Where);
+        } else if let Some(filter_exp) = direction.filter_expression() {
             self.write_filter_expression(filter_exp, filter_exp_size);
         }
 
@@ -1718,6 +1728,72 @@ impl Buffer {
                 self.write_operation_for_bin_name(bin_name, OperationType::Read);
             }
         }
+
+        self.end();
+        Ok(())
+    }
+
+    /// Build a query explain request buffer.
+    pub(crate) fn set_query_explain(
+        &mut self,
+        base_policy: &BasePolicy,
+        namespace: &str,
+        set_name: Option<&str>,
+        where_bytes: &[u8],
+        index_name_hint: Option<&str>,
+        task_id: u64,
+        socket_timeout: u32,
+    ) -> Result<()> {
+        self.begin();
+        
+        let set_name = set_name.filter(|s| !s.is_empty());
+        let index_name_hint = index_name_hint.filter(|s| !s.is_empty());
+
+        let mut field_count: u16 = 0;
+
+        self.data_offset += namespace.len() + FIELD_HEADER_SIZE as usize;
+        field_count += 1;
+
+        if let Some(set) = set_name {
+            self.data_offset += set.len() + FIELD_HEADER_SIZE as usize;
+            field_count += 1;
+        }
+
+        self.data_offset += 4 + FIELD_HEADER_SIZE as usize;
+        field_count += 1;
+
+        self.data_offset += 8 + FIELD_HEADER_SIZE as usize;
+        field_count += 1;
+
+        if let Some(hint) = index_name_hint {
+            self.data_offset += hint.len() + FIELD_HEADER_SIZE as usize;
+            field_count += 1;
+        }
+
+        self.data_offset += where_bytes.len() + FIELD_HEADER_SIZE as usize;
+        field_count += 1;
+
+        self.size_buffer()?;
+
+        self.write_header_read(base_policy, INFO1_READ, 0, 0, field_count, 0);
+
+        self.write_field_string(namespace, FieldType::Namespace);
+
+        if let Some(set) = set_name {
+            self.write_field_string(set, FieldType::Table);
+        }
+
+        self.write_field_header(4, FieldType::SocketTimeout);
+        self.write_u32(socket_timeout);
+
+        self.write_field_header(8, FieldType::QueryId);
+        self.write_u64(task_id);
+
+        if let Some(hint) = index_name_hint {
+            self.write_field_string(hint, FieldType::IndexName);
+        }
+
+        self.write_field_bytes(where_bytes, FieldType::Where);
 
         self.end();
         Ok(())

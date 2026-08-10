@@ -30,7 +30,7 @@ pub const SERVER_COMPILED_AEL_EXPRESSION_OP: i64 = 128;
 ///
 /// # Errors
 ///
-/// Returns [`crate::Error::InvalidArgument`] if the buffer size would exceed internal limits.
+/// Returns [`crate::Error::invalid_argument`] if the buffer size would exceed internal limits.
 pub fn pack_ael_server_filter(ael: &str) -> Result<Expression> {
     let mut size = 0;
     size += pack_array_begin(&mut None, 2);
