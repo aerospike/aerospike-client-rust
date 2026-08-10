@@ -154,6 +154,7 @@ pub use cluster::version_parser::Version;
 pub use cluster::Node;
 pub use commands::particle_type::ParticleType;
 pub use errors::{Error, ErrorKind, Result};
+pub use expressions::ael::{pack_ael_server_filter, SERVER_COMPILED_AEL_EXPRESSION_OP};
 pub use expressions::regex_flag::RegexFlag;
 pub use key::Key;
 pub use mapping::RecordMapper;
@@ -171,8 +172,9 @@ pub use policy::{
 };
 pub use privilege::{Privilege, PrivilegeCode};
 pub use query::{
-    CollectionIndexType, EqFilterValue, IndexType, PartitionFilter, RangeFilterValue, Recordset,
-    Statement, UDFLang,
+    CollectionIndexType, EqFilterValue, IndexType, PartitionFilter, QueryPlan, QuerySelection,
+    QueryWhereWire, RangeFilterValue, Recordset, Statement, UDFLang, FLAG_ENC_VARINT, FLAG_EXPLAIN,
+    FLAG_HARD_HINT, FLAG_KNOWN, FLAG_REQUIRE_INDEX,
 };
 #[cfg(feature = "lua")]
 pub use query::{ResultSet, ResultStream};

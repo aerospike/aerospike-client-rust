@@ -44,6 +44,7 @@ mod kv;
 mod metrics;
 mod path_expressions;
 mod query;
+mod query_selection;
 #[cfg(feature = "lua")]
 mod query_aggregate;
 mod value_order;
