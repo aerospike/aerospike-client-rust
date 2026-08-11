@@ -98,7 +98,7 @@ pub async fn run() {
     for _ in 0..4 {
         let mut stream = rs.clone().into_stream();
         let counter = counter.clone();
-        workers.push(tokio::spawn(async move {
+        workers.push(aerospike_rt::spawn(async move {
             while let Some(item) = stream.next().await {
                 if item.is_ok() {
                     counter.fetch_add(1, Ordering::Relaxed);
@@ -107,7 +107,7 @@ pub async fn run() {
         }));
     }
     for w in workers {
-        w.await.unwrap();
+        w.await;
     }
     println!(
         "parallel scan: {} records via 4 workers",
