@@ -151,7 +151,7 @@ async fn parallel_query(client: &Client, namespace: &str, set_name: &str) {
     for _ in 0..NUM_WORKERS {
         let rs_clone = rs.clone();
         let count = count.clone();
-        handles.push(tokio::spawn(async move {
+        handles.push(aerospike_rt::spawn(async move {
             let mut rs_stream = rs_clone.into_stream();
             while let Some(record) = rs_stream.next().await {
                 if record.is_ok() {
@@ -213,7 +213,7 @@ async fn rate_limited_query(client: &Client, namespace: &str, _set_name: &str) {
         range_end, expected_count
     );
 
-    let start_time = tokio::time::Instant::now();
+    let start_time = aerospike_rt::time::Instant::now();
     let rs = client
         .query(&policy, PartitionFilter::all(), stmt)
         .await
@@ -221,7 +221,7 @@ async fn rate_limited_query(client: &Client, namespace: &str, _set_name: &str) {
 
     let mut count = 0;
     let mut rs = rs.into_stream();
-    let mut last_log = tokio::time::Instant::now();
+    let mut last_log = aerospike_rt::time::Instant::now();
     let mut batch_count = 0;
 
     while let Some(res) = rs.next().await {
@@ -240,14 +240,14 @@ async fn rate_limited_query(client: &Client, namespace: &str, _set_name: &str) {
                         count,
                         start_time.elapsed()
                     );
-                    last_log = tokio::time::Instant::now();
+                    last_log = aerospike_rt::time::Instant::now();
                 }
             }
             Err(err) => panic!("Query error: {:?}", err),
         }
     }
 
-    let duration = tokio::time::Instant::now() - start_time;
+    let duration = start_time.elapsed();
     println!("\nResults:");
     println!("  Records returned: {}", count);
     println!("  Duration: {:?} ({}ms)", duration, duration.as_millis());
