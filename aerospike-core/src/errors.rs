@@ -555,6 +555,26 @@ impl Error {
         &self.0.sub_errors
     }
 
+    /// The failure that caused this one, as a typed [`Error`].
+    ///
+    /// [`std::error::Error::source`] also exposes the chain, but as
+    /// `&dyn Error`, so reading the cause's [`kind`](Self::kind) or
+    /// [`result_code`](Self::result_code) through it needs a downcast. This is
+    /// the same link, typed: an aggregate
+    /// [`ErrorKind::BatchFailed`](ErrorKind::BatchFailed) reports the
+    /// `BATCH_FAILED` code (Java `AerospikeException.BatchRecordArray` parity)
+    /// and this reaches the underlying timeout or server failure without
+    /// parsing the message.
+    ///
+    /// Only the direct cause; walk it repeatedly for the whole chain. Returns
+    /// `None` for causes that are not this crate's errors (an `io::Error`
+    /// wrapped by [`ErrorKind::Io`], for instance) — those are reachable via
+    /// `source`.
+    #[must_use]
+    pub fn cause(&self) -> Option<&Error> {
+        self.0.source.as_deref()
+    }
+
     /// The message without the metadata decoration that [`fmt::Display`]
     /// adds (Java: `getBaseMessage`).
     #[must_use]
@@ -1209,5 +1229,44 @@ mod tests {
         }
         // Cause chain reachable via std::error::Error.
         assert!(std::error::Error::source(&err).is_some());
+    }
+
+    #[test]
+    fn cause_reaches_the_underlying_failure_typed() {
+        // What a batch failure looks like: BATCH_FAILED on top (Java
+        // BatchRecordArray parity), the real cause one link down.
+        let inner = Error::timeout("Timeout reading from the network connection");
+        let middle = Error::max_retries_exceeded("Timeout after 1 tries").chain_cause(Some(inner));
+        let err = Error::batch_failed(vec![], middle.set_in_doubt(true, 1));
+
+        assert_eq!(err.result_code(), i32::from(ClientResultCode::BatchFailed));
+        assert!(err.in_doubt(), "in-doubt is inherited from the cause");
+
+        // The timeout is reachable without parsing the message.
+        let timeout_code = i32::from(u8::from(ResultCode::Timeout));
+        let mut link = err.cause();
+        let mut codes = Vec::new();
+        while let Some(e) = link {
+            codes.push(e.result_code());
+            link = e.cause();
+        }
+        assert_eq!(
+            codes,
+            vec![
+                i32::from(ClientResultCode::MaxRetriesExceeded),
+                timeout_code
+            ]
+        );
+
+        // A leaf error has no cause.
+        assert!(Error::timeout("t").cause().is_none());
+    }
+
+    #[test]
+    fn batch_read_timeout_is_not_in_doubt() {
+        // is_write == false: nothing could have been applied.
+        let err = Error::timeout("Timeout").set_in_doubt(false, 3);
+        assert!(!err.in_doubt());
+        assert!(!Error::batch_failed(vec![], err).in_doubt());
     }
 }

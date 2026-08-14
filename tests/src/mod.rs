@@ -22,6 +22,7 @@ use aerospike_core::Recordset;
 mod admin;
 mod backoff;
 mod batch;
+mod batch_in_doubt;
 mod cdt_bitwise;
 mod cdt_list;
 mod cdt_map;

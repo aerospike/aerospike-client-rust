@@ -102,9 +102,15 @@ impl BatchOperateCommand {
         // background task opens a connection (not part of the retry budget).
         let mut pool_empty_waits: usize = 0;
 
+        // Whether this batch carries any write. Drives both the metrics command
+        // type and the in-doubt rule for a terminal failure (only writes can be
+        // in doubt). The op set does not change across retries, so it is
+        // computed once.
+        let is_write = self.batch_ops.iter().any(|op| op.0.has_write());
+
         // Metrics: a batch containing any write op is a BatchWrite, otherwise
         // a BatchRead. `trans_start` measures the overall command latency.
-        let cmd_type = if self.batch_ops.iter().any(|op| op.0.has_write()) {
+        let cmd_type = if is_write {
             crate::metrics::CommandType::BatchWrite
         } else {
             crate::metrics::CommandType::BatchRead
@@ -145,8 +151,7 @@ impl BatchOperateCommand {
                 {
                     Ok(res) => res,
                     Err(err) => {
-                        self.set_in_doubt(commands_sent);
-                        self.terminal_error = Some(err);
+                        self.set_terminal_error(err, is_write, commands_sent);
                         return Ok(self);
                     }
                 }
@@ -191,8 +196,7 @@ impl BatchOperateCommand {
                     }
                 }
                 if let Some(err) = hard_err {
-                    self.set_in_doubt(commands_sent);
-                    self.terminal_error = Some(err);
+                    self.set_terminal_error(err, is_write, commands_sent);
                     return Ok(self);
                 }
 
@@ -234,8 +238,7 @@ impl BatchOperateCommand {
                         }
                         Ok(None) => (),
                         Err(err) => {
-                            self.set_in_doubt(commands_sent);
-                            self.terminal_error = Some(err);
+                            self.set_terminal_error(err, is_write, commands_sent);
                             return Ok(self);
                         }
                     }
@@ -304,16 +307,17 @@ impl BatchOperateCommand {
                     self.node.metrics().incr_transaction_error();
                 }
                 cluster.incr_max_retries_exceeded();
-                self.set_in_doubt(commands_sent);
                 let u32_iters = if iterations > u32::MAX as usize {
                     u32::MAX
                 } else {
                     iterations as u32
                 };
-                self.terminal_error = Some(
+                self.set_terminal_error(
                     Error::max_retries_exceeded(format!("Timeout after {iterations} tries"))
                         .chain_cause(last_err)
                         .with_retry_context(u32_iters, Some(&node_addr), Vec::new()),
+                    is_write,
+                    commands_sent,
                 );
                 return Ok(self);
             }
@@ -331,16 +335,17 @@ impl BatchOperateCommand {
                         self.node.metrics().incr_transaction_error();
                     }
                     cluster.incr_total_timeout_exceeded();
-                    self.set_in_doubt(commands_sent);
                     let u32_iters = if iterations > u32::MAX as usize {
                         u32::MAX
                     } else {
                         iterations as u32
                     };
-                    self.terminal_error = Some(
+                    self.set_terminal_error(
                         Error::timeout(format!("Command timed out after {iterations} tries"))
                             .chain_cause(last_err)
                             .with_retry_context(u32_iters, Some(&node_addr), Vec::new()),
+                        is_write,
+                        commands_sent,
                     );
                     return Ok(self);
                 }
@@ -348,12 +353,30 @@ impl BatchOperateCommand {
         }
     }
 
+    /// Records the failure that ends this command, marking both the per-row
+    /// outcomes **and the error itself** in-doubt.
+    ///
+    /// The error mark is what [`SingleCommand::execute_command`]'s `finalize`
+    /// does for single-key commands: a write that reached the wire and never
+    /// answered may have been applied, so the error has to say so. Without it
+    /// the rows were marked and the error was not, so
+    /// [`Error::in_doubt`](crate::Error::in_doubt) on the aggregate
+    /// [`ErrorKind::BatchFailed`](crate::ErrorKind::BatchFailed) — which
+    /// inherits the cause's mark — reported `false` for an in-doubt batch write.
+    fn set_terminal_error(&mut self, err: Error, is_write: bool, commands_sent: u32) {
+        self.mark_rows_in_doubt(commands_sent);
+        self.terminal_error = Some(err.set_in_doubt(is_write, commands_sent));
+    }
+
     /// After a command-level failure with at least one attempt on the wire,
     /// mark every record that never received a response: an unanswered write
     /// may have been applied by the server, so it becomes in-doubt and an
     /// attached transaction is notified. Reads are unaffected. Mirrors
     /// Java's `Batch.inDoubt()` walk over `BatchRecord.hasWrite`.
-    fn set_in_doubt(&mut self, commands_sent: u32) {
+    ///
+    /// Marks *rows*; the command's own error is marked by
+    /// [`set_terminal_error`](Self::set_terminal_error).
+    fn mark_rows_in_doubt(&mut self, commands_sent: u32) {
         if commands_sent == 0 {
             return;
         }
