@@ -13,6 +13,12 @@
 // License for the specific language governing permissions and limitations under
 // the License.
 
+// The timeout arms below match `Err(_)` because `io_with_timeout!` yields `()`
+// as its timeout error under rt-tokio and `Elapsed` under rt-async-std; naming
+// the unit explicitly, as `clippy::ignored_unit_patterns` asks, would not
+// compile for the async-std runtime.
+#![allow(clippy::ignored_unit_patterns)]
+
 #[cfg(feature = "tls")]
 use std::convert::TryFrom;
 #[cfg(feature = "tls")]
@@ -106,6 +112,47 @@ pub struct Connection {
 
     pub(crate) state: ConnectionState,
     can_recover_connection: bool,
+
+    /// Reusable per-IO timer, reset before each read/write and raced against the
+    /// IO future.
+    ///
+    /// `aerospike_rt::timeout` builds a fresh `Sleep` for every operation, which
+    /// allocates and then registers and removes an entry in tokio's timer wheel
+    /// — a per-slot lock that every connection on the runtime contends for. One
+    /// timer per connection, reset in place, does the same job without touching
+    /// the wheel's structure on the hot path.
+    #[cfg(feature = "rt-tokio")]
+    pub(crate) sleep: std::pin::Pin<Box<aerospike_rt::tokio::time::Sleep>>,
+}
+
+/// Races an IO future against the connection's timeout.
+///
+/// `$holder` owns the `sleep` field: `self` inside [`Connection`], `self.conn`
+/// inside [`BufferedConn`]. Yields `Ok(io_result)` or `Err(())` on timeout, so
+/// it substitutes for `aerospike_rt::timeout(..).await` at every call site.
+///
+/// `biased` polls the IO first: when data is already available the timer is not
+/// polled at all, and a completed read never loses a race to an expired timer.
+macro_rules! io_with_timeout {
+    ($holder:expr, $timeout:expr, $io:expr) => {{
+        #[cfg(feature = "rt-tokio")]
+        {
+            $holder
+                .sleep
+                .as_mut()
+                .reset(aerospike_rt::tokio::time::Instant::now() + $timeout);
+            let sleep = $holder.sleep.as_mut();
+            aerospike_rt::tokio::select! {
+                biased;
+                r = $io => Ok::<_, ()>(r),
+                _ = sleep => Err(()),
+            }
+        }
+        #[cfg(feature = "rt-async-std")]
+        {
+            aerospike_rt::timeout($timeout, $io).await
+        }
+    }};
 }
 
 impl Connection {
@@ -176,6 +223,10 @@ impl Connection {
             idle_deadline: idle_timeout.map(|timeout| Instant::now() + timeout),
             state: ConnectionState::Ready,
             can_recover_connection: false,
+            // Far-future deadline; every IO resets it before use, so it never
+            // fires first on its own.
+            #[cfg(feature = "rt-tokio")]
+            sleep: Box::pin(aerospike_rt::tokio::time::sleep(Duration::from_secs(3600))),
         };
         conn.authenticate(&policy.auth_mode, hashed_pass).await?;
         conn.refresh();
@@ -215,6 +266,10 @@ impl Connection {
             idle_deadline: idle_timeout.map(|timeout| Instant::now() + timeout),
             state: ConnectionState::Ready,
             can_recover_connection: false,
+            // Far-future deadline; every IO resets it before use, so it never
+            // fires first on its own.
+            #[cfg(feature = "rt-tokio")]
+            sleep: Box::pin(aerospike_rt::tokio::time::sleep(Duration::from_secs(3600))),
         };
         conn.refresh();
         Ok(conn)
@@ -247,11 +302,11 @@ impl Connection {
         let timeout = self.deadline();
         let res = match self.conn {
             Netsocket::Tcp(ref mut conn) => {
-                aerospike_rt::timeout(timeout, conn.write_all(&self.buffer.data_buffer)).await
+                io_with_timeout!(self, timeout, conn.write_all(&self.buffer.data_buffer))
             }
             #[cfg(feature = "tls")]
             Netsocket::Tls(ref mut conn) => {
-                aerospike_rt::timeout(timeout, conn.write_all(&self.buffer.data_buffer)).await
+                io_with_timeout!(self, timeout, conn.write_all(&self.buffer.data_buffer))
             }
             #[cfg(test)]
             _ => unreachable!(),
@@ -374,31 +429,20 @@ impl Connection {
         let timeout = self.deadline();
         let read_result = match self.conn {
             Netsocket::Tcp(ref mut conn) => {
-                #[cfg(feature = "rt-tokio")]
-                {
-                    aerospike_rt::timeout(
-                        timeout,
-                        conn.read_exact(&mut self.buffer.data_buffer[pos..]),
-                    )
-                    .await
-                }
-                #[cfg(feature = "rt-async-std")]
-                {
-                    aerospike_rt::timeout(
-                        timeout,
-                        conn.read_exact(&mut self.buffer.data_buffer[pos..]),
-                    )
-                    .await
-                }
+                io_with_timeout!(
+                    self,
+                    timeout,
+                    conn.read_exact(&mut self.buffer.data_buffer[pos..])
+                )
             }
 
             #[cfg(feature = "tls")]
             Netsocket::Tls(ref mut conn) => {
-                aerospike_rt::timeout(
+                io_with_timeout!(
+                    self,
                     timeout,
-                    conn.read_exact(&mut self.buffer.data_buffer[pos..]),
+                    conn.read_exact(&mut self.buffer.data_buffer[pos..])
                 )
-                .await
             }
             #[cfg(test)]
             _ => unreachable!(),
@@ -426,11 +470,11 @@ impl Connection {
         let timeout = self.deadline();
         let res = match self.conn {
             Netsocket::Tcp(ref mut conn) => {
-                aerospike_rt::timeout(timeout, conn.write_all(buf)).await
+                io_with_timeout!(self, timeout, conn.write_all(buf))
             }
             #[cfg(feature = "tls")]
             Netsocket::Tls(ref mut conn) => {
-                aerospike_rt::timeout(timeout, conn.write_all(buf)).await
+                io_with_timeout!(self, timeout, conn.write_all(buf))
             }
             #[cfg(test)]
             _ => unreachable!(),
@@ -441,10 +485,12 @@ impl Connection {
             Ok(Err(e)) => {
                 return Err(Error::Connection(format!("write: {e}")));
             }
-            Err(e) => {
-                return Err(Error::Timeout(format!(
-                    "Timeout writing to the network connection: {e}"
-                )));
+            // The timer carries no detail worth printing, and the two runtimes
+            // report it as different types.
+            Err(_) => {
+                return Err(Error::Timeout(
+                    "Timeout writing to the network connection".to_string(),
+                ));
             }
         }
 
@@ -459,11 +505,11 @@ impl Connection {
         let timeout = self.deadline();
         let res = match self.conn {
             Netsocket::Tcp(ref mut conn) => {
-                aerospike_rt::timeout(timeout, conn.read_exact(buf)).await
+                io_with_timeout!(self, timeout, conn.read_exact(buf))
             }
             #[cfg(feature = "tls")]
             Netsocket::Tls(ref mut conn) => {
-                aerospike_rt::timeout(timeout, conn.read_exact(buf)).await
+                io_with_timeout!(self, timeout, conn.read_exact(buf))
             }
             #[cfg(test)]
             _ => unreachable!(),
@@ -684,12 +730,12 @@ impl<'a> BufferedConn<'a> {
         let deadline = self.conn.deadline();
         let read_result = match self.conn.conn {
             Netsocket::Tcp(ref mut conn) => {
-                aerospike_rt::timeout(deadline, conn.read_exact(&mut self.cache)).await
+                io_with_timeout!(self.conn, deadline, conn.read_exact(&mut self.cache))
             }
 
             #[cfg(feature = "tls")]
             Netsocket::Tls(ref mut conn) => {
-                aerospike_rt::timeout(deadline, conn.read_exact(&mut self.cache)).await
+                io_with_timeout!(self.conn, deadline, conn.read_exact(&mut self.cache))
             }
             #[cfg(test)]
             _ => unreachable!(),
@@ -1057,6 +1103,10 @@ mod tests_eof_loopback {
             idle_deadline: None,
             state: ConnectionState::Ready,
             can_recover_connection: false,
+            // Far-future deadline; every IO resets it before use, so it never
+            // fires first on its own.
+            #[cfg(feature = "rt-tokio")]
+            sleep: Box::pin(aerospike_rt::tokio::time::sleep(Duration::from_secs(3600))),
         };
         conn.refresh();
         conn
@@ -1104,6 +1154,82 @@ mod tests_eof_loopback {
             }
         });
         addr
+    }
+
+    // ─── Reusable per-IO timer ────────────────────────────────────────────
+
+    /// A read against a peer that never answers must still time out. The timer
+    /// now lives on the connection and is reset per IO rather than built per
+    /// call, so this is the check that resetting actually arms it.
+    #[tokio::test(flavor = "current_thread")]
+    async fn read_times_out_against_a_silent_peer() {
+        let addr = spawn_idle_peer().await;
+        let stream = TcpStream::connect(addr).await.unwrap();
+        let mut conn = conn_from_stream(stream);
+        conn.set_socket_timeout(None, 60);
+
+        let mut buf = [0_u8; 8];
+        let err = conn
+            .read_all(&mut buf)
+            .await
+            .expect_err("a silent peer must produce a timeout");
+        assert!(
+            matches!(err, Error::Timeout(_)),
+            "expected Timeout, got: {0:?}",
+            err
+        );
+    }
+
+    /// The timer is reused, so it must re-arm: an expired one has to be reset
+    /// for the *next* IO instead of firing immediately. Without a working
+    /// reset, the read after a timeout would fail even though data is waiting.
+    #[tokio::test(flavor = "current_thread")]
+    async fn timer_rearms_after_an_earlier_timeout() {
+        // Peer stays quiet long enough for the first read to expire, then
+        // sends exactly what the second read wants.
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        aerospike_rt::spawn(async move {
+            if let Ok((mut sock, _)) = listener.accept().await {
+                use tokio::io::AsyncWriteExt;
+                aerospike_rt::sleep(std::time::Duration::from_millis(200)).await;
+                let _ = sock.write_all(b"abcd").await;
+                aerospike_rt::sleep(std::time::Duration::from_secs(60)).await;
+            }
+        });
+
+        let stream = TcpStream::connect(addr).await.unwrap();
+        let mut conn = conn_from_stream(stream);
+
+        conn.set_socket_timeout(None, 50);
+        let mut buf = [0_u8; 4];
+        assert!(
+            conn.read_all(&mut buf).await.is_err(),
+            "first read must time out while the peer is quiet"
+        );
+
+        // Same connection, same timer: a generous timeout must now succeed.
+        conn.set_socket_timeout(None, 5_000);
+        conn.read_all(&mut buf)
+            .await
+            .expect("second read must succeed on the reused timer");
+        assert_eq!(&buf, b"abcd");
+    }
+
+    /// A write on a live socket must not be cut short by a leftover timer
+    /// state, and the connection must remain usable afterwards.
+    #[tokio::test(flavor = "current_thread")]
+    async fn repeated_writes_reuse_the_timer() {
+        let addr = spawn_idle_peer().await;
+        let stream = TcpStream::connect(addr).await.unwrap();
+        let mut conn = conn_from_stream(stream);
+        conn.set_socket_timeout(None, 5_000);
+
+        for round in 0..5 {
+            conn.write_all(b"ping")
+                .await
+                .unwrap_or_else(|e| panic!("round {0} write failed: {1:?}", round, e));
+        }
     }
 
     // ─── Bug 2: liveness probe ────────────────────────────────────────────
