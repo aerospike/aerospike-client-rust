@@ -13,8 +13,11 @@
 // License for the specific language governing permissions and limitations under
 // the License.
 
+use std::future::Future;
 use std::str;
 use std::sync::Arc;
+#[cfg(feature = "rt-tokio")]
+use std::sync::LazyLock;
 use std::vec::Vec;
 
 use crate::expressions::Expression;
@@ -29,7 +32,70 @@ use aerospike_core::{
     ReadPolicy, Record, Recordset, RegisterTask, Role, Statement, ToHosts, UDFLang, User, Value,
     WritePolicy,
 };
-use futures::executor::block_on;
+
+/// The runtime every blocking call drives its future on.
+///
+/// It also hosts the client's background tasks: tasks spawned while a future
+/// runs bind to the runtime driving that future, so cluster tend and the
+/// per-node query workers live here. That is deliberate — if they bound to a
+/// caller's runtime instead, they would die when that runtime shut down and
+/// poison the client for every other caller.
+#[cfg(feature = "rt-tokio")]
+static SYNC_RT: LazyLock<aerospike_rt::runtime::Runtime> = LazyLock::new(|| {
+    aerospike_rt::runtime::Builder::new_multi_thread()
+        // A few workers are plenty for one client's IO, and this must not take
+        // over a host whose main workload is elsewhere.
+        .worker_threads(
+            std::thread::available_parallelism()
+                .map(|n| n.get().min(4))
+                .unwrap_or(1),
+        )
+        .enable_all()
+        .thread_name("aerospike-sync-rt")
+        .build()
+        .expect("aerospike: failed to build sync runtime")
+});
+
+/// Drive a client future to completion from blocking code.
+///
+/// The future always runs on [`SYNC_RT`], never on a caller's ambient runtime.
+/// `futures::executor::block_on`, which this replaced, polls on the calling
+/// thread and drives no reactor at all: without a tokio runtime in scope the
+/// client's `spawn` calls panic, and with one merely entered its IO and timers
+/// are never driven, so the call hangs.
+#[cfg(feature = "rt-tokio")]
+fn block_on<F>(f: F) -> F::Output
+where
+    F: Future + Send,
+    F::Output: Send,
+{
+    if aerospike_rt::runtime::Handle::try_current().is_ok() {
+        // A tokio runtime is in scope on this thread, so blocking here is not
+        // allowed: a current-thread runtime would deadlock, and
+        // `block_in_place` is legal only on a multi-thread *worker* thread —
+        // which a `Handle` cannot attest to, since `Runtime::enter()` on a
+        // plain thread hands out one too and `block_in_place` panics there.
+        // Waiting on a scoped thread is correct from every context, at the
+        // cost of one thread per call made from async code.
+        std::thread::scope(|s| {
+            s.spawn(|| SYNC_RT.block_on(f))
+                .join()
+                .expect("aerospike: sync bridge thread panicked")
+        })
+    } else {
+        SYNC_RT.block_on(f)
+    }
+}
+
+/// Drive a client future to completion from blocking code.
+///
+/// Uses async-std's own `block_on`, so the future runs on the global executor
+/// that `aerospike_rt::spawn` also targets. A foreign executor cannot drive
+/// async-std's IO and timers, so waiting on them would hang.
+#[cfg(feature = "rt-async-std")]
+fn block_on<F: Future>(f: F) -> F::Output {
+    aerospike_rt::task::block_on(f)
+}
 
 /// Instantiate a Client instance to access an Aerospike database cluster and perform database
 /// operations.

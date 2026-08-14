@@ -19,11 +19,19 @@ publish = true
 [dependencies]
 aerospike-core = {path = "../aerospike-core", version = "2.1.0", features = ["sync"]}
 futures = { version = "0.3.32" }
+# The blocking wrappers drive client futures on the runtime the rt-* feature
+# selects: a dedicated tokio runtime, or async-std's global executor. Never a
+# third-party executor — a foreign `block_on` cannot drive the selected
+# runtime's IO and timers, so a blocking call would hang.
+aerospike-rt = { path = "../aerospike-rt", version = "2.1.0" }
 
 [features]
-rt-tokio = ["aerospike-core/rt-tokio"]
-rt-async-std = ["aerospike-core/rt-async-std"]
+rt-tokio = ["aerospike-core/rt-tokio", "aerospike-rt/rt-tokio"]
+rt-async-std = ["aerospike-core/rt-async-std", "aerospike-rt/rt-async-std"]
 
 [dev-dependencies]
-aerospike = {path = "../"}
-tokio = { version = "1", features = ["rt-multi-thread"] } # for doc tests
+# Do NOT dev-depend on the `aerospike` facade here: its default features pull
+# in rt-tokio, and resolver-v1 feature unification then enables both runtimes
+# on aerospike-rt, so every rt-async-std build of this crate fails to compile.
+# Nothing in this crate used it.
+tokio = { version = "1", features = ["rt-multi-thread"] } # doc tests and the runtime-context tests
