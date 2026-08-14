@@ -1727,4 +1727,30 @@ mod tests {
         let re_encoded = decoded.base64().unwrap();
         assert_eq!(b64, re_encoded);
     }
+
+    #[test]
+    fn string_pack_roundtrip() {
+        // 31 'b's plus the particle-type byte is 32 payload bytes: the first
+        // length that needs str8 rather than a fixstr.
+        let literal = "b".repeat(31);
+
+        let expr = eq(string_bin("a".to_string()), string_val(literal.clone()));
+        let b64 = expr.base64().unwrap();
+        let decoded = from_base64(&b64).unwrap();
+        let decoded_b64 = decoded.base64().unwrap();
+        let bytes = decoded.bytes.unwrap();
+
+        assert!(
+            bytes.windows(3).any(|w| w == [0xd9, 0x20, 0x03]),
+            "expected str8 prefix 0xd9 0x20 then STRING 0x03; got: {:02x?}",
+            bytes
+        );
+        assert!(
+            !bytes.windows(4).any(|w| w == [0xda, 0x00, 0x20, 0x03]),
+            "must not use str16 0xda 0x00 0x20 for length 32; got: {:02x?}",
+            bytes
+        );
+
+        assert_eq!(b64, decoded_b64);
+    }
 }
