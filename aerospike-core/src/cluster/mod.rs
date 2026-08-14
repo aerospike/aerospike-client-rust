@@ -1259,6 +1259,9 @@ impl Cluster {
     /// Enables metrics collection, (re)shaping every node's histograms to the
     /// given policy.
     pub fn enable_metrics(&self, policy: MetricsPolicy) {
+        // A unit change invalidates every latency sample already accumulated,
+        // here as well as in the nodes' live histograms.
+        let unit_changed = self.metrics_policy().latency_unit != policy.latency_unit;
         self.metrics_policy.store(Arc::new(policy.clone()));
         self.metrics_enabled.store(true, Ordering::Relaxed);
 
@@ -1268,6 +1271,10 @@ impl Cluster {
             for snapshot in metrics.values_mut() {
                 let mut reshaped = NodeMetricsSnapshot::new(policy.clone());
                 reshaped.aggregate(snapshot);
+                if unit_changed {
+                    // Counters and byte sizes carry over; times do not.
+                    reshaped.reset_time_histograms();
+                }
                 *snapshot = reshaped;
             }
         }

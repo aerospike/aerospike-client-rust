@@ -21,7 +21,8 @@ use std::collections::HashMap;
 use aerospike::query::PartitionFilter;
 use aerospike::{
     as_bin, as_key, operations, BatchOperation, BatchPolicy, BatchReadPolicy, BatchWritePolicy,
-    Bins, Client, CommandType, MetricsPolicy, QueryPolicy, ReadPolicy, Statement, WritePolicy,
+    Bins, Client, CommandType, LatencyUnit, MetricsPolicy, QueryPolicy, ReadPolicy, Statement,
+    WritePolicy,
 };
 use aerospike_rt::sleep;
 use aerospike_rt::time::Duration;
@@ -125,6 +126,89 @@ async fn metrics_single_key_command_histograms() {
         // A recorded latency implies non-zero sum bookkeeping is consistent.
         assert!(h.sum() >= 0.0);
     }
+    client.close().await.unwrap();
+}
+
+// A local command usually takes well under a millisecond, so the two units see
+// the same work very differently: microseconds resolve it, milliseconds round it
+// to 0. This is the observable point of `MetricsPolicy::latency_unit`.
+#[aerospike_macro::test]
+async fn metrics_latency_unit_changes_resolution() {
+    let namespace = common::namespace();
+
+    // Microseconds (the default): sub-millisecond latency is measurable, so the
+    // recorded maximum is in the hundreds-or-more range rather than 0.
+    let client = common::client().await;
+    client.enable_metrics(MetricsPolicy::micros());
+    let set_name = common::rand_str(10);
+    exercise_single_key(&client, namespace, &set_name).await;
+
+    let agg = client.metrics().cluster_aggregated;
+    assert_eq!(agg.latency_unit, LatencyUnit::Microseconds);
+    let us = agg.command_histogram(CommandType::Put).unwrap();
+    assert!(us.count() >= 1, "expected a Put sample");
+    assert!(
+        us.max() > 0,
+        "a Put took {}µs - microsecond metrics should not round a real command to 0",
+        us.max()
+    );
+    client.close().await.unwrap();
+
+    // Milliseconds: the same work, coarser buckets. The unit travels with the
+    // snapshot so a consumer can tell the two apart.
+    let client = common::client().await;
+    client.enable_metrics(MetricsPolicy::millis());
+    let set_name = common::rand_str(10);
+    exercise_single_key(&client, namespace, &set_name).await;
+
+    let agg = client.metrics().cluster_aggregated;
+    assert_eq!(agg.latency_unit, LatencyUnit::Milliseconds);
+    let ms = agg.command_histogram(CommandType::Put).unwrap();
+    assert!(ms.count() >= 1, "expected a Put sample");
+    assert!(
+        ms.max() < us.max(),
+        "millisecond max ({}) should be far below the microsecond max ({})",
+        ms.max(),
+        us.max()
+    );
+    assert_eq!(
+        ms.buckets().len(),
+        7,
+        "the millis preset keeps the Java-parity 7 columns"
+    );
+    client.close().await.unwrap();
+}
+
+// Switching unit while collecting must not blend the two resolutions in one
+// histogram: the samples recorded before the switch are dropped.
+#[aerospike_macro::test]
+async fn metrics_unit_switch_discards_earlier_samples() {
+    let client = common::client().await;
+    let namespace = common::namespace();
+
+    client.enable_metrics(MetricsPolicy::micros());
+    let set_name = common::rand_str(10);
+    exercise_single_key(&client, namespace, &set_name).await;
+    assert!(
+        client
+            .metrics()
+            .cluster_aggregated
+            .command_histogram(CommandType::Put)
+            .unwrap()
+            .count()
+            >= 1
+    );
+
+    // Re-enable with the other unit; the accumulated microsecond samples go.
+    client.enable_metrics(MetricsPolicy::millis());
+    let agg = client.metrics().cluster_aggregated;
+    assert_eq!(agg.latency_unit, LatencyUnit::Milliseconds);
+    assert_eq!(
+        agg.command_histogram(CommandType::Put).unwrap().count(),
+        0,
+        "microsecond samples must not survive a switch to milliseconds"
+    );
+
     client.close().await.unwrap();
 }
 

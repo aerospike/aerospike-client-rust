@@ -116,10 +116,9 @@ impl<'a> SingleCommand<'a> {
         let cmd_namespace: Option<String> = cmd.namespace().map(str::to_owned);
         let trans_start = Instant::now();
         let mut last_node: Option<Arc<Node>> = None;
-        // Latency metrics are recorded in milliseconds (matching the Java
-        // client's histogram units); sub-millisecond phases record 0 and land
-        // in the first bucket.
-        let millis_since = |start: Instant| start.elapsed().as_millis() as u64;
+        // Elapsed times go to the recorders as `Duration`; the resolution they
+        // are bucketed in is the metrics policy's `latency_unit`, applied inside
+        // `NodeMetrics` so no call site has to know it.
 
         // set timeout outside the loop
         let deadline = policy.deadline();
@@ -290,7 +289,7 @@ impl<'a> SingleCommand<'a> {
             if metrics_on {
                 if let Some(ns) = cmd_namespace.as_deref() {
                     node.metrics()
-                        .record_connection_aq(ns, cmd_type, millis_since(aq_start));
+                        .record_connection_aq(ns, cmd_type, aq_start.elapsed());
                 }
             }
 
@@ -340,12 +339,8 @@ impl<'a> SingleCommand<'a> {
             commands_sent += 1;
             if metrics_on {
                 if let Some(ns) = cmd_namespace.as_deref() {
-                    node.metrics().record_write(
-                        ns,
-                        cmd_type,
-                        bytes_sent,
-                        millis_since(write_start),
-                    );
+                    node.metrics()
+                        .record_write(ns, cmd_type, bytes_sent, write_start.elapsed());
                 }
             }
 
@@ -405,12 +400,12 @@ impl<'a> SingleCommand<'a> {
                     node.metrics().record_parse(
                         ns,
                         cmd_type,
-                        millis_since(parse_start),
+                        parse_start.elapsed(),
                         conn.bytes_read() as u64,
                     );
                 }
                 node.metrics()
-                    .record_command(cmd_type, millis_since(trans_start));
+                    .record_command(cmd_type, trans_start.elapsed());
             }
 
             // allow the connection to be put back in the connection pool

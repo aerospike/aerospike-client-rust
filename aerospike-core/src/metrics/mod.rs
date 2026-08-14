@@ -26,6 +26,22 @@
 //! disabled.
 //!
 //! Metrics are controlled only through the explicit [`crate::Client`] methods.
+//!
+//! # Time resolution
+//!
+//! Every elapsed time — command latency, connection-acquire time, parse time —
+//! is bucketed in the [`MetricsPolicy::latency_unit`] resolution. The default is
+//! [`LatencyUnit::Microseconds`] with 24 columns
+//! ([`MetricsPolicy::micros`], Go-client parity); [`MetricsPolicy::millis`]
+//! selects milliseconds with 7 columns (Java-client parity). Unit and column
+//! count belong together — 7 columns of microseconds top out at `>=64µs`.
+//!
+//! The unit is reported by every snapshot ([`NodeMetricsSnapshot::latency_unit`],
+//! serialized as `latency-unit`), because bucket counts cannot be read without
+//! it. Changing it while collecting discards the samples already recorded, which
+//! were measured in the other unit — exactly as a `latency_columns` change does.
+//! With the `dynamic-config` feature all three are `dynamic.metrics` keys
+//! (`latency_unit`, `latency_columns`, `latency_base`).
 
 pub mod cluster;
 pub mod histogram;
@@ -37,6 +53,9 @@ pub use histogram::{HistogramType, SyncHistogram};
 pub use node_metrics::{
     CommandMetric, CommandType, NodeMetrics, NodeMetricsSnapshot, COMMAND_TYPE_COUNT,
 };
-pub use policy::{Labels, MetricsPolicy};
 #[cfg(feature = "dynamic-config")]
 pub(crate) use policy::MetricsPolicyConfig;
+pub use policy::{
+    Labels, LatencyUnit, MetricsPolicy, DEFAULT_LATENCY_BASE, DEFAULT_LATENCY_COLUMNS,
+    MILLIS_LATENCY_COLUMNS,
+};

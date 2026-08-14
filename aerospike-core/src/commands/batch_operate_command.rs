@@ -278,8 +278,9 @@ impl BatchOperateCommand {
                 // command has completed successfully. Record per-command-type
                 // latency and the final per-record result codes, then exit.
                 if sampled.unwrap_or(false) {
-                    let millis = trans_start.elapsed().as_millis() as u64;
-                    self.node.metrics().record_command(cmd_type, millis);
+                    self.node
+                        .metrics()
+                        .record_command(cmd_type, trans_start.elapsed());
                     for (op, _) in &self.batch_ops {
                         if let Some(rc) = op.batch_record().result_code {
                             self.node.metrics().record_result_code(
@@ -416,9 +417,10 @@ impl BatchOperateCommand {
         }
         let metrics_on = sampled.unwrap_or(false);
         if metrics_on {
-            let millis = aq_start.elapsed().as_millis() as u64;
+            let aq_elapsed = aq_start.elapsed();
             for ns in &namespaces {
-                node.metrics().record_connection_aq(ns, cmd_type, millis);
+                node.metrics()
+                    .record_connection_aq(ns, cmd_type, aq_elapsed);
             }
         }
 
@@ -464,10 +466,10 @@ impl BatchOperateCommand {
         }
         *commands_sent += 1;
         if metrics_on {
-            let millis = write_start.elapsed().as_millis() as u64;
+            let write_elapsed = write_start.elapsed();
             for ns in &namespaces {
                 node.metrics()
-                    .record_write(ns, cmd_type, bytes_sent, millis);
+                    .record_write(ns, cmd_type, bytes_sent, write_elapsed);
             }
         }
 
@@ -481,10 +483,11 @@ impl BatchOperateCommand {
         )
         .await;
         if metrics_on && parse_outcome.is_ok() {
-            let millis = parse_start.elapsed().as_millis() as u64;
+            let parse_elapsed = parse_start.elapsed();
             let received = conn.bytes_read() as u64;
             for ns in &namespaces {
-                node.metrics().record_parse(ns, cmd_type, millis, received);
+                node.metrics()
+                    .record_parse(ns, cmd_type, parse_elapsed, received);
             }
         }
         if let Err(err) = parse_outcome {

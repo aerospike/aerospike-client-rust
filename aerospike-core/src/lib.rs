@@ -158,7 +158,8 @@ pub use expressions::regex_flag::RegexFlag;
 pub use key::Key;
 pub use mapping::RecordMapper;
 pub use metrics::{
-    ClusterMetrics, CommandType, HistogramType, Labels, MetricsPolicy, NodeMetricsSnapshot,
+    ClusterMetrics, CommandType, HistogramType, Labels, LatencyUnit, MetricsPolicy,
+    NodeMetricsSnapshot,
 };
 pub use net::Host;
 pub use net::ToHosts;
