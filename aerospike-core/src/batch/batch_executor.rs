@@ -140,7 +140,7 @@ impl BatchExecutor {
         let mut first_err: Option<Error> = None;
 
         for (index, batch_op) in batch_ops.iter().enumerate() {
-            match self.node_for_key(&batch_op.key(), replica) {
+            match self.node_for_key(batch_op.key(), replica) {
                 Ok(node) => {
                     map.entry(node).or_default().push((batch_op.clone(), index));
                 }

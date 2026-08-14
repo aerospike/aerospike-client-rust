@@ -450,8 +450,8 @@ impl BatchOperation {
         let Some(prev) = prev else { return false };
 
         // Same namespace and set: a repeat omits both fields.
-        if self.key_ref().namespace != prev.key_ref().namespace
-            || self.key_ref().set_name != prev.key_ref().set_name
+        if self.key().namespace != prev.key().namespace
+            || self.key().set_name != prev.key().set_name
         {
             return false;
         }
@@ -504,23 +504,20 @@ impl BatchOperation {
         }
     }
 
-    /// Borrow this record's key. [`Self::key`] clones it, which the encoder
-    /// cannot afford to do per record.
-    pub(crate) const fn key_ref(&self) -> &Key {
+    /// Borrow this record's key.
+    ///
+    /// Borrowed rather than cloned because every caller is per-record on a hot
+    /// path — the batch encoder's size and write passes, the executor's routing
+    /// split, the retry loop's re-split — and none of them needs ownership. A
+    /// `Key` clone allocates its namespace and set `String`s, so returning one
+    /// here cost a 1000-key batch thousands of allocations before a byte went
+    /// out.
+    pub(crate) const fn key(&self) -> &Key {
         match self {
             Self::Read { br, .. }
             | Self::Write { br, .. }
             | Self::Delete { br, .. }
             | Self::UDF { br, .. } => &br.key,
-        }
-    }
-
-    pub(crate) fn key(&self) -> Key {
-        match self {
-            Self::Read { br, .. }
-            | Self::Write { br, .. }
-            | Self::Delete { br, .. }
-            | Self::UDF { br, .. } => br.key.clone(),
         }
     }
 

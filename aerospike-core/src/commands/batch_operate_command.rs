@@ -120,8 +120,7 @@ impl BatchOperateCommand {
                 // replica.
                 let mut nodes: Vec<Arc<Node>> = Vec::with_capacity(self.batch_ops.len());
                 for ((op, _), previous) in self.batch_ops.iter().zip(&last_tried) {
-                    let key = op.key();
-                    let partition = Partition::new_by_key(&key);
+                    let partition = Partition::new_by_key(op.key());
                     nodes.push(cluster.get_node(
                         &partition,
                         self.policy.replica,

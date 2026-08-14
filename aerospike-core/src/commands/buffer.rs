@@ -532,7 +532,7 @@ impl Buffer {
                 self.data_offset += 1;
             } else {
                 // Must write full header and namespace/set/bin names.
-                let key = &batch_op.key();
+                let key = batch_op.key();
                 self.data_offset += 12; // header(4) + ttl(4) + fiel_count(2) + op_count(2) = 12
                 self.data_offset += key.namespace.len() + FIELD_HEADER_SIZE as usize;
                 self.data_offset += key.set_name.len() + FIELD_HEADER_SIZE as usize;
@@ -559,7 +559,7 @@ impl Buffer {
         let mut attr = BatchAttr::default();
         prev = None;
         for (idx, (batch_op, _)) in batch_ops.iter().enumerate() {
-            let key = &batch_op.key();
+            let key = batch_op.key();
             self.write_u32(idx as u32);
             self.write_bytes(&key.digest);
             if batch_op.match_header(prev) {
