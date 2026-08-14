@@ -18,7 +18,10 @@
 //! methods directly. The final test exercises the integration with the
 //! single-command pipeline.
 
-use aerospike::{as_bin, as_key, Client, Error, WritePolicy};
+use aerospike::policy::Replica;
+use aerospike::{
+    as_bin, as_key, BatchOperation, BatchPolicy, BatchReadPolicy, Bins, Client, Error, WritePolicy,
+};
 
 use crate::common;
 
@@ -213,4 +216,68 @@ async fn pipeline_returns_max_error_rate_when_breaker_open() {
     );
 
     client.close().await.unwrap();
+}
+
+/// Trip the breaker on every node so each batch attempt fails immediately
+/// without opening a socket, then read the attempt count straight out of the
+/// retry loop's own "Timeout after N tries" message.
+async fn batch_attempts_with_breaker_open(max_retries: usize) -> String {
+    let client = breaker_client(1).await;
+    for node in client.cluster.nodes() {
+        for _ in 0..16 {
+            node.incr_error_rate();
+        }
+    }
+
+    let mut bpolicy = BatchPolicy::default();
+    bpolicy.base_policy.max_retries = max_retries;
+    // No sleeping, and a deadline far enough out that the retry budget — not
+    // the clock — has to be what ends the loop.
+    bpolicy.base_policy.sleep_between_retries = 0;
+    bpolicy.base_policy.total_timeout = 10_000;
+    bpolicy.replica = Replica::Sequence;
+
+    let ops = vec![
+        BatchOperation::read(
+            &BatchReadPolicy::default(),
+            as_key!(common::namespace(), "batch_retry_budget", 1_i64),
+            Bins::All,
+        ),
+        BatchOperation::read(
+            &BatchReadPolicy::default(),
+            as_key!(common::namespace(), "batch_retry_budget", 2_i64),
+            Bins::All,
+        ),
+    ];
+
+    let err = client
+        .batch(&bpolicy, &ops)
+        .await
+        .expect_err("batch should fail with the breaker open");
+    client.close().await.unwrap();
+    format!("{err}")
+}
+
+#[aerospike_macro::test]
+async fn batch_retry_budget_is_max_retries_plus_one() {
+    // Java, and v2's own single-command path, allow max_retries + 1 attempts.
+    // The batch loop allowed max_retries + 2.
+    let display = batch_attempts_with_breaker_open(2).await;
+    assert!(
+        display.contains("after 3 tries"),
+        "expected exactly 3 attempts for max_retries = 2, got: {0}",
+        display
+    );
+}
+
+#[aerospike_macro::test]
+async fn batch_max_retries_zero_makes_a_single_attempt() {
+    // `max_retries = 0` means "do not retry". The old condition skipped the
+    // budget check entirely for zero, so the batch retried until the deadline.
+    let display = batch_attempts_with_breaker_open(0).await;
+    assert!(
+        display.contains("after 1 tries"),
+        "expected a single attempt for max_retries = 0, got: {0}",
+        display
+    );
 }

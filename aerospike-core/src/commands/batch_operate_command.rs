@@ -30,6 +30,13 @@ use crate::{value, Record, ResultCode, Value};
 use aerospike_rt::sleep;
 use aerospike_rt::time::Duration;
 
+/// A batch split into contiguous per-node slices: the reordered `(op, index)`
+/// pairs, plus one `(node, range)` for every command that has to be sent.
+type NodeGroups = (
+    Vec<(BatchOperation, usize)>,
+    Vec<(Arc<Node>, std::ops::Range<usize>)>,
+);
+
 #[derive(Clone)]
 pub struct BatchOperateCommand {
     policy: BatchPolicy,
@@ -76,10 +83,23 @@ impl BatchOperateCommand {
         // set timeout outside the loop
         let deadline = self.policy.deadline();
 
+        // A retry goes back to the originally selected node only when the
+        // replica policy pins routing to the master: Java's
+        // `BatchCommand.prepareRetry` returns true for MASTER/MASTER_PROLES/
+        // RANDOM, and of those v2 has only `Master`. Sequence and PreferRack
+        // must advance the replica instead.
+        let same_node_retry = matches!(self.policy.replica, Replica::Master);
+        // The node each key was last tried on. v2 routes by "the replica after
+        // `last_tried`" rather than by an explicit sequence index, so advancing
+        // the sequence means remembering where every key has just been. All
+        // keys start on the node the executor picked for this command.
+        let mut last_tried: Vec<Arc<Node>> = vec![self.node.clone(); self.batch_ops.len()];
+
         // Execute command until successful, timed out or maximum iterations have been reached.
         loop {
-            let error = if iterations & 1 == 0 || matches!(self.policy.replica, Replica::Master) {
-                // For even iterations, we request all keys from the same node for efficiency.
+            let error = if iterations == 0 || same_node_retry {
+                // First attempt, and every retry under `Replica::Master`: the
+                // whole group goes to the originally selected node.
                 Self::request_group(
                     &mut self.batch_ops,
                     &self.policy,
@@ -88,22 +108,45 @@ impl BatchOperateCommand {
                 )
                 .await?
             } else {
-                // However, for odd iterations try the second choice for each. Instead of re-sharding the batch (as the second choice may not correspond to the first), just try each by itself.
-                let mut group_err = None;
-                for individual_op in self.batch_ops.chunks_mut(1) {
-                    let key = individual_op[0].0.key();
-                    // Find somewhere else to try.
+                // Sequence/PreferRack retry (Java `BatchCommand.retryBatch`):
+                // advancing the replica re-maps every key, so re-split the
+                // batch into per-node groups and send one command per node.
+                //
+                // The previous scheme instead alternated: even attempts went
+                // back to the node that had just failed, and odd attempts sent
+                // **one wire command per key** — a 1000-key batch became 1000
+                // round trips — always to the replica after the *original*
+                // node, so a third attempt never advanced past the second
+                // replica.
+                let mut nodes: Vec<Arc<Node>> = Vec::with_capacity(self.batch_ops.len());
+                for ((op, _), previous) in self.batch_ops.iter().zip(&last_tried) {
+                    let key = op.key();
                     let partition = Partition::new_by_key(&key);
-                    let node = cluster.get_node(
+                    nodes.push(cluster.get_node(
                         &partition,
                         self.policy.replica,
-                        Some(self.node.clone()),
-                    )?;
+                        Some(previous.clone()),
+                    )?);
+                }
+
+                let (regrouped, ranges) =
+                    Self::group_by_node(self.batch_ops.drain(..).collect(), nodes);
+                self.batch_ops = regrouped;
+                last_tried = ranges
+                    .iter()
+                    .flat_map(|(node, range)| range.clone().map(move |_| node.clone()))
+                    .collect();
+
+                // Run every group this round even if one fails — Java's
+                // sub-batches are independent — and keep the first retriable
+                // error to drive the next iteration.
+                let mut group_err: Option<Error> = None;
+                for (node, range) in ranges {
                     if let Some(e) =
-                        Self::request_group(individual_op, &self.policy, deadline, node).await?
+                        Self::request_group(&mut self.batch_ops[range], &self.policy, deadline, node)
+                            .await?
                     {
-                        group_err = Some(e);
-                        break;
+                        group_err.get_or_insert(e);
                     }
                 }
                 group_err
@@ -119,8 +162,12 @@ impl BatchOperateCommand {
 
             iterations += 1;
 
-            // too many retries
-            if self.policy.max_retries() > 0 && iterations > self.policy.max_retries() + 1 {
+            // Retry budget exhausted: `max_retries + 1` attempts in total, as
+            // in Java and in v2's own single-command path. The old condition
+            // allowed `max_retries + 2` attempts, and treated
+            // `max_retries == 0` — which means "do not retry" — as unbounded
+            // retries until the deadline expired.
+            if iterations > self.policy.max_retries() {
                 return Err(Self::wrap_last_error(
                     last_err,
                     Error::Timeout(format!("Timeout after {iterations} tries")),
@@ -142,6 +189,33 @@ impl BatchOperateCommand {
                 }
             }
         }
+    }
+
+    /// Reorder `pairs` so that every node's keys sit contiguously, and return
+    /// the per-node ranges over the reordered vector.
+    ///
+    /// `nodes[i]` is where `pairs[i]` must go. One batch command covers one
+    /// contiguous slice, so the keys have to be moved next to their peers
+    /// before they can be sent as a group; sorting by node name is what
+    /// achieves that, and it also keeps the grouping deterministic. Each pair
+    /// carries its original index, so the executor can still restore the
+    /// caller's order afterwards.
+    fn group_by_node(pairs: Vec<(BatchOperation, usize)>, nodes: Vec<Arc<Node>>) -> NodeGroups {
+        let mut routed: Vec<(Arc<Node>, (BatchOperation, usize))> =
+            nodes.into_iter().zip(pairs).collect();
+        routed.sort_by(|a, b| a.0.name().cmp(b.0.name()));
+
+        let mut regrouped: Vec<(BatchOperation, usize)> = Vec::with_capacity(routed.len());
+        let mut ranges: Vec<(Arc<Node>, std::ops::Range<usize>)> = Vec::new();
+        for (node, pair) in routed {
+            let pos = regrouped.len();
+            match ranges.last_mut() {
+                Some((last, range)) if Arc::ptr_eq(last, &node) => range.end = pos + 1,
+                _ => ranges.push((node, pos..pos + 1)),
+            }
+            regrouped.push(pair);
+        }
+        (regrouped, ranges)
     }
 
     fn wrap_last_error(last_err: Option<Error>, timeout_err: Error) -> Error {
@@ -404,5 +478,113 @@ impl BatchOperateCommand {
 
         conn.reset_state();
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::cluster::node_validator::NodeValidator;
+    use crate::net::Host;
+    use crate::policy::ClientPolicy;
+    use crate::{BatchReadPolicy, Bins, Key, Version};
+
+    fn node(name: &str) -> Arc<Node> {
+        let policy = ClientPolicy::default();
+        let nv = Arc::new(NodeValidator {
+            name: name.to_string(),
+            aliases: vec![Host::new("127.0.0.1", 3000)],
+            services: vec![],
+            address: "127.0.0.1:3000".to_string(),
+            client_policy: policy.clone(),
+            use_new_info: true,
+            version: Version::default(),
+        });
+        Arc::new(Node::new(policy, nv))
+    }
+
+    /// `index` doubles as the key, so a regrouped pair can be traced back to
+    /// the node it was routed to.
+    fn pair(index: usize) -> (BatchOperation, usize) {
+        let key = Key::new("test", "test", Value::from(index as i64)).unwrap();
+        (
+            BatchOperation::read(&BatchReadPolicy::default(), key, Bins::All),
+            index,
+        )
+    }
+
+    /// The single-node case, and the one the old code got most expensive: every
+    /// key shares a node, so the retry must be *one* batch command. The
+    /// previous per-key retry sent as many commands as there were keys.
+    #[test]
+    fn group_by_node_sends_one_group_when_every_key_shares_a_node() {
+        let only = node("A");
+        let pairs: Vec<_> = (0..5).map(pair).collect();
+        let nodes = vec![only.clone(); 5];
+
+        let (regrouped, ranges) = BatchOperateCommand::group_by_node(pairs, nodes);
+
+        assert_eq!(ranges.len(), 1, "expected a single batch command");
+        assert!(Arc::ptr_eq(&ranges[0].0, &only));
+        assert_eq!(ranges[0].1, 0..5);
+        let indices: Vec<usize> = regrouped.iter().map(|(_, i)| *i).collect();
+        assert_eq!(indices, vec![0, 1, 2, 3, 4]);
+    }
+
+    /// Keys interleaved across two nodes must come back gathered into one
+    /// contiguous range per node, because a batch command can only cover a
+    /// slice.
+    #[test]
+    fn group_by_node_makes_each_nodes_keys_contiguous() {
+        let a = node("A");
+        let b = node("B");
+        let pairs: Vec<_> = (0..4).map(pair).collect();
+        // Interleaved on purpose: 0 -> B, 1 -> A, 2 -> B, 3 -> A.
+        let nodes = vec![b.clone(), a.clone(), b.clone(), a.clone()];
+
+        let (regrouped, ranges) = BatchOperateCommand::group_by_node(pairs, nodes);
+
+        assert_eq!(ranges.len(), 2, "one group per node");
+        // Sorted by node name, so A's keys come first.
+        assert!(Arc::ptr_eq(&ranges[0].0, &a));
+        assert_eq!(ranges[0].1, 0..2);
+        assert!(Arc::ptr_eq(&ranges[1].0, &b));
+        assert_eq!(ranges[1].1, 2..4);
+
+        // Nothing lost, and every key sits in its own node's range.
+        let indices: Vec<usize> = regrouped.iter().map(|(_, i)| *i).collect();
+        assert_eq!(indices, vec![1, 3, 0, 2]);
+    }
+
+    /// The ranges must tile the whole vector: a gap or an overlap would drop or
+    /// double-send keys.
+    #[test]
+    fn group_by_node_ranges_tile_every_pair_exactly_once() {
+        let (a, b, c) = (node("A"), node("B"), node("C"));
+        let pairs: Vec<_> = (0..6).map(pair).collect();
+        let nodes = vec![c.clone(), a.clone(), c.clone(), b, a, c];
+
+        let (regrouped, ranges) = BatchOperateCommand::group_by_node(pairs, nodes);
+
+        let mut covered = 0;
+        let mut next_start = 0;
+        for (_, range) in &ranges {
+            assert_eq!(range.start, next_start, "ranges must be contiguous");
+            covered += range.len();
+            next_start = range.end;
+        }
+        assert_eq!(covered, regrouped.len());
+        assert_eq!(next_start, regrouped.len());
+
+        let mut indices: Vec<usize> = regrouped.iter().map(|(_, i)| *i).collect();
+        indices.sort_unstable();
+        assert_eq!(indices, vec![0, 1, 2, 3, 4, 5]);
+    }
+
+    #[test]
+    fn group_by_node_handles_an_empty_batch() {
+        let (regrouped, ranges) = BatchOperateCommand::group_by_node(Vec::new(), Vec::new());
+        assert!(regrouped.is_empty());
+        assert!(ranges.is_empty());
     }
 }
