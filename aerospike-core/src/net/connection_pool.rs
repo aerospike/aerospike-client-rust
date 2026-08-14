@@ -69,9 +69,9 @@ impl Queue {
         false
     }
 
-    /// Decreases the reserved value by one, opening up capacity for more connections.
-    #[cfg(test)]
-    fn reserved(&self) -> usize {
+    /// Slots currently claimed in this queue: idle connections plus the ones
+    /// handed out and still in flight.
+    pub(crate) fn reserved(&self) -> usize {
         let reserved = self.0.reserved.lock().unwrap_or_else(|e| e.into_inner());
         *reserved
     }
@@ -265,6 +265,13 @@ impl ConnectionPool {
                         });
                     }
                     Err(e) => {
+                        // The slot was reserved before connecting; releasing it
+                        // is what keeps a failed connect from burning capacity
+                        // for good. Without this, `max_conns_per_node` failures
+                        // — a node that is down, or a rejected login — leave
+                        // every queue permanently "full", so the node can never
+                        // serve another command even after the server returns.
+                        queue.reduce_capacity();
                         return Err(e);
                     }
                 }
@@ -288,13 +295,32 @@ impl ConnectionPool {
         }
     }
 
-    /// Returns sum total of connections inside all the internal queues.
+    /// Returns sum total of *idle* connections sitting in the internal queues.
+    ///
+    /// Test-only since `fill_min_conns` moved to [`Self::total_reserved`]:
+    /// nothing in the client should size the pool by its idle count.
+    #[cfg(test)]
     pub fn num_conns(&self) -> usize {
         let mut sum = 0;
         for q in &self.queues {
             sum += q.num_conns();
         }
         sum
+    }
+
+    /// Every slot the pool has claimed: idle connections plus those handed out
+    /// and still in flight. Unlike [`Self::num_conns`], this does not shrink
+    /// while connections are busy, which is what makes it the right measure of
+    /// "how big is this pool" for `min_conns_per_node`.
+    pub fn total_reserved(&self) -> usize {
+        self.queues.iter().map(Queue::reserved).sum()
+    }
+
+    /// The internal queues, for tests that assert how connections are
+    /// distributed across them.
+    #[cfg(test)]
+    pub(crate) fn queues(&self) -> &[Queue] {
+        &self.queues
     }
 
     /// If a connection was dropped in a state that was not [`ConnectionState::Ready`],
@@ -363,7 +389,7 @@ impl DerefMut for PooledConnection {
 mod tests {
     use crate::net::{Connection, ConnectionState};
 
-    use super::{ClientPolicy, ConnectionPool, Host, Queue};
+    use super::{ClientPolicy, ConnectionPool, Error, Host, Queue};
 
     macro_rules! put_back_with_reserve {
         ($queue:ident, $conn:ident) => {{
@@ -678,6 +704,49 @@ mod tests {
 
         assert_eq!(p.queues[0].reserved(), 1, "Ready drop must keep the slot");
         assert_eq!(p.num_conns(), 1, "Ready conn must be in the queue");
+    }
+
+    /// A connect that fails must hand its reserved slot back, or the queue
+    /// counts a connection that does not exist — forever.
+    #[aerospike_macro::test]
+    async fn make_conn_failure_frees_the_reserved_slot() {
+        use crate::net::connection::FAIL_NEXT_CONNECT;
+
+        let host = Host::new("some-url", 30000);
+        let policy = ClientPolicy {
+            max_conns_per_node: 2,
+            conn_pools_per_node: 1,
+            ..ClientPolicy::default()
+        };
+        let p = ConnectionPool::new(host.clone(), policy.clone());
+
+        // More rounds than the pool has capacity: with the slots leaking, the
+        // pool is exhausted after `max_conns_per_node` failures and never
+        // recovers.
+        for round in 0..5 {
+            FAIL_NEXT_CONNECT.with(|f| f.set(true));
+            let err = p
+                .make_conn(0)
+                .await
+                .expect_err("connect was forced to fail");
+            assert!(
+                matches!(err, Error::Connection(_)),
+                "round {0}: unexpected error: {1}",
+                round,
+                err
+            );
+            assert_eq!(
+                p.total_reserved(),
+                0,
+                "round {round}: a failed connect must free its slot"
+            );
+        }
+
+        // And the pool still works.
+        let _c = p
+            .make_conn(0)
+            .await
+            .expect("pool must still have capacity after failed connects");
     }
 
     /// fill_min_conns fixpoint: non-Ready path leaves reserved at 0 (churn);

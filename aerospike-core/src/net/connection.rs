@@ -73,6 +73,19 @@ pub enum Netsocket {
     TestDummy,
 }
 
+#[cfg(test)]
+thread_local! {
+    /// Makes the next [`Connection::new`] fail once, then resets itself.
+    ///
+    /// The test double never fails, so error paths that only run when
+    /// connecting fails — notably the reservation bookkeeping in
+    /// [`crate::net::connection_pool::ConnectionPool::make_conn`] — would
+    /// otherwise be unreachable in unit tests. `Connection::new` is awaited
+    /// inline by its callers, so it runs on the thread that set this.
+    pub(crate) static FAIL_NEXT_CONNECT: std::cell::Cell<bool> =
+        const { std::cell::Cell::new(false) };
+}
+
 #[derive(Debug)]
 #[allow(clippy::struct_field_names)]
 pub struct Connection {
@@ -175,6 +188,12 @@ impl Connection {
         policy: &ClientPolicy,
         _hashed_pass: Option<&String>,
     ) -> Result<Self> {
+        if FAIL_NEXT_CONNECT.with(std::cell::Cell::take) {
+            return Err(crate::Error::Connection(
+                "forced connection failure (test)".to_string(),
+            ));
+        }
+
         let addr = host.address();
         let stream = Netsocket::TestDummy;
 

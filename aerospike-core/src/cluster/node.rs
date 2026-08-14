@@ -311,7 +311,10 @@ impl Node {
             return Ok(conn);
         }
 
-        self.connection_pool.make_conn(0).await
+        // Honour the caller's hint on a pool miss too. Passing 0 sent every
+        // miss to queue 0, which had to fill up before any other queue was
+        // touched — the opposite of what `conn_pools_per_node` is for.
+        self.connection_pool.make_conn(usize::from(hint)).await
     }
 
     // Put a connection to the node back in the connection pool
@@ -492,7 +495,19 @@ impl Node {
 
             let client_policy = self.client_policy();
             if client_policy.min_conns_per_node > 0 {
-                let to_fill = client_policy.min_conns_per_node - self.connection_pool.num_conns();
+                // Measure the pool by every slot it holds, not by the idle ones
+                // alone: `num_conns()` does not see in-flight connections, so a
+                // busy pool looked empty and this kept opening more.
+                //
+                // The subtraction has to saturate, too. Once the pool has grown
+                // past `min` — normal after any burst of load — `min -
+                // num_conns()` underflowed: a panic in debug builds, and in
+                // release a `to_fill` near `usize::MAX`, which refilled the
+                // pool all the way to `max_conns_per_node` on every tend. That
+                // is the churn this policy was supposed to prevent.
+                let to_fill = client_policy
+                    .min_conns_per_node
+                    .saturating_sub(self.connection_pool.total_reserved());
                 for _ in 0..to_fill {
                     self.connection_pool.make_conn(count).await?;
                     count += 1;
@@ -603,6 +618,119 @@ mod node_tests {
             node.connection_pool.num_conns(),
             0,
             "inactive node must not return connections to the pool"
+        );
+    }
+
+    /// A node with several internal queues: a pool miss must open its
+    /// connection on the queue the caller asked for, not always on queue 0.
+    #[aerospike_macro::test]
+    async fn get_connection_miss_uses_hint_to_select_queue() {
+        let policy = ClientPolicy {
+            conn_pools_per_node: 4,
+            max_conns_per_node: 8, // 2 per queue — room to observe distribution
+            ..ClientPolicy::default()
+        };
+        let nv = Arc::new(NodeValidator {
+            name: "test-node".to_string(),
+            aliases: vec![Host::new("127.0.0.1", 3000)],
+            services: vec![],
+            address: "127.0.0.1:3000".to_string(),
+            client_policy: policy.clone(),
+            use_new_info: true,
+            version: Version::default(),
+        });
+        let node = Node::new(policy, nv);
+
+        // Four misses with distinct hints; each should land on its own queue.
+        let _c0 = node.get_connection(0).await.expect("hint=0");
+        let _c1 = node.get_connection(1).await.expect("hint=1");
+        let _c2 = node.get_connection(2).await.expect("hint=2");
+        let _c3 = node.get_connection(3).await.expect("hint=3");
+
+        for (i, queue) in node.connection_pool.queues().iter().enumerate() {
+            assert_eq!(
+                queue.reserved(),
+                1,
+                "queue[{i}] must hold exactly one connection"
+            );
+        }
+    }
+
+    /// A pool that has grown past `min_conns_per_node` must simply have nothing
+    /// to fill. The old `min - num_conns()` subtraction underflowed here.
+    #[aerospike_macro::test]
+    async fn fill_min_conns_does_nothing_once_the_pool_is_above_min() {
+        let policy = ClientPolicy {
+            min_conns_per_node: 2,
+            max_conns_per_node: 16,
+            conn_pools_per_node: 1,
+            ..ClientPolicy::default()
+        };
+        let nv = Arc::new(NodeValidator {
+            name: "test-node".to_string(),
+            aliases: vec![Host::new("127.0.0.1", 3000)],
+            services: vec![],
+            address: "127.0.0.1:3000".to_string(),
+            client_policy: policy.clone(),
+            use_new_info: true,
+            version: Version::default(),
+        });
+        let node = Node::new(policy, nv);
+
+        // Grow the pool well past `min`, as a burst of load would.
+        for i in 0..6 {
+            drop(
+                node.connection_pool
+                    .make_conn(i)
+                    .await
+                    .expect("make_conn failed"),
+            );
+        }
+        assert_eq!(node.connection_pool.total_reserved(), 6);
+
+        let created = node.fill_min_conns().await.expect("fill_min_conns failed");
+        assert_eq!(created, 0, "nothing to fill when the pool is above min");
+        assert_eq!(
+            node.connection_pool.total_reserved(),
+            6,
+            "fill_min_conns must not grow a pool that is already above min"
+        );
+    }
+
+    /// In-flight connections count towards `min_conns_per_node`: they are real
+    /// connections, just busy. Counting only the idle ones made a loaded pool
+    /// look empty, so every tend opened more.
+    #[aerospike_macro::test]
+    async fn fill_min_conns_counts_in_flight_connections() {
+        let policy = ClientPolicy {
+            min_conns_per_node: 2,
+            max_conns_per_node: 16,
+            conn_pools_per_node: 1,
+            ..ClientPolicy::default()
+        };
+        let nv = Arc::new(NodeValidator {
+            name: "test-node".to_string(),
+            aliases: vec![Host::new("127.0.0.1", 3000)],
+            services: vec![],
+            address: "127.0.0.1:3000".to_string(),
+            client_policy: policy.clone(),
+            use_new_info: true,
+            version: Version::default(),
+        });
+        let node = Node::new(policy, nv);
+
+        // Hold both connections, so the queue itself is empty.
+        let _held = [
+            node.connection_pool.make_conn(0).await.expect("conn 1"),
+            node.connection_pool.make_conn(0).await.expect("conn 2"),
+        ];
+        assert_eq!(node.connection_pool.num_conns(), 0, "both are in flight");
+        assert_eq!(node.connection_pool.total_reserved(), 2);
+
+        let created = node.fill_min_conns().await.expect("fill_min_conns failed");
+        assert_eq!(
+            created, 0,
+            "min is already met by the in-flight connections"
         );
     }
 
