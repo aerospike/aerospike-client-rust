@@ -209,3 +209,49 @@ async fn operate_empty_ops_returns_parameter_error() {
 
     client.close().await.unwrap();
 }
+
+#[aerospike_macro::test]
+async fn infinity_and_wildcard_are_rejected_not_fatal() {
+    // INF and wildcard exist only as bounds inside msgpack payloads (CDT
+    // arguments, expressions). Handing one to the client as an ordinary bin
+    // value used to abort the whole process from `Value::particle_type`'s
+    // `unreachable!()`; Java answers PARAMETER_ERROR. A client-side mistake in
+    // one command must not take down the caller.
+    let client = common::client().await;
+    let namespace: &str = common::namespace();
+    let set_name = &common::rand_str(10);
+    let wpolicy = WritePolicy::default();
+    let key = as_key!(namespace, set_name, "inf_wildcard");
+
+    for value in [Value::Infinity, Value::Wildcard] {
+        let bin = as_bin!("b", value.clone());
+        let err = client
+            .put(&wpolicy, &key, &[bin])
+            .await
+            .expect_err("storing INF/wildcard as a bin value must be an error");
+        assert!(
+            matches!(err, Error::InvalidArgument(_)),
+            "expected InvalidArgument for {:?}, got {:?}",
+            value,
+            err
+        );
+    }
+
+    // Same for a record key built from one: the digest needs a particle type.
+    for value in [Value::Infinity, Value::Wildcard] {
+        let bad_key = aerospike::Key::new(namespace, set_name.as_str(), value.clone());
+        assert!(
+            bad_key.is_err(),
+            "a key made from {:?} must be rejected",
+            value
+        );
+    }
+
+    // The client is still usable afterwards.
+    client
+        .put(&wpolicy, &key, &[as_bin!("b", 1)])
+        .await
+        .expect("an ordinary write still works after the rejection");
+
+    client.close().await.unwrap();
+}

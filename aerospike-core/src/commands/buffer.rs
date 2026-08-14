@@ -1741,7 +1741,7 @@ impl Buffer {
 
     fn write_field_value(&mut self, value: &Value, ftype: FieldType) -> Result<()> {
         self.write_field_header(value.estimate_size()? + 1, ftype);
-        self.write_u8(value.particle_type() as u8);
+        self.write_u8(value.particle_type()? as u8);
         value.write_to(self)?;
         Ok(())
     }
@@ -1763,7 +1763,7 @@ impl Buffer {
 
         self.write_i32((name_length + value_length + 4) as i32);
         self.write_u8(op_type as u8);
-        self.write_u8(bin.value.particle_type() as u8);
+        self.write_u8(bin.value.particle_type()? as u8);
         self.write_u8(0);
         self.write_u8(name_length as u8);
         self.write_str(&bin.name);

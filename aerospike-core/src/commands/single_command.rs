@@ -176,9 +176,19 @@ impl<'a> SingleCommand<'a> {
             conn.set_socket_timeout(deadline, policy.socket_timeout());
             conn.set_timeout_delay(cmd.can_recover_connection(), policy.timeout_delay());
 
-            cmd.prepare_buffer(&mut conn)
-                .await
-                .map_err(|e| e.chain_error("Failed to prepare send buffer"))?;
+            cmd.prepare_buffer(&mut conn).await.map_err(|e| {
+                // An argument the client refuses to encode is the caller's
+                // mistake, not a buffer problem: surface it as-is so the caller
+                // sees `InvalidArgument` and its message, the way Java throws
+                // PARAMETER_ERROR straight out of the command. Anything else
+                // (I/O, sizing) gets the buffer context, which is where it is
+                // useful.
+                if matches!(e, Error::InvalidArgument(_)) {
+                    e
+                } else {
+                    e.chain_error("Failed to prepare send buffer")
+                }
+            })?;
             cmd.write_timeout(&mut conn)
                 .await
                 .map_err(|e| e.chain_error("Failed to set timeout for send buffer"))?;

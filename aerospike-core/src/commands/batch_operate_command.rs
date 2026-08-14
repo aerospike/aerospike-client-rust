@@ -176,7 +176,18 @@ impl BatchOperateCommand {
 
         conn.buffer
             .set_batch_operate(policy, batch_ops)
-            .map_err(|_| Error::ClientError("Failed to prepare send buffer".into()))?;
+            .map_err(|e| {
+                // Same as the single-key path: keep a caller's argument error
+                // instead of replacing it with a generic client error. This
+                // previously discarded the cause entirely, so a value the client
+                // cannot encode surfaced as a bare "Failed to prepare send
+                // buffer" with nothing to explain it.
+                if matches!(e, Error::InvalidArgument(_)) {
+                    e
+                } else {
+                    e.chain_error("Failed to prepare send buffer")
+                }
+            })?;
 
         conn.buffer.write_timeout(policy.server_timeout());
 

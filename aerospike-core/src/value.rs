@@ -239,8 +239,24 @@ impl Value {
 
     /// Return the particle type for the value used in the wire protocol.
     /// For internal use only.
-    pub fn particle_type(&self) -> ParticleType {
-        match *self {
+    /// # Errors
+    ///
+    /// [`Infinity`](Value::Infinity) and [`Wildcard`](Value::Wildcard) have no
+    /// particle type: they exist only inside msgpack payloads, as CDT and
+    /// expression bounds, where the encoder writes them directly and never asks
+    /// for a particle code. Reaching here means one was handed to the client as
+    /// an ordinary bin value or record key, which is a caller mistake — Java
+    /// reports the same case as `PARAMETER_ERROR` from `Value.getType()`.
+    ///
+    /// This used to be `unreachable!()`, so either value killed the process.
+    /// The panic is the return path here: there is no `ParticleType` that
+    /// safely means "has no particle type", and a placeholder would trade a
+    /// loud abort for a silent buffer-size mismatch, since `estimate_size`
+    /// reports 0 for these while `write_to` packs real bytes. Failing in
+    /// `particle_type`, which every particle path calls before `write_to`, is
+    /// what keeps that unreachable.
+    pub fn particle_type(&self) -> Result<ParticleType> {
+        let ptype = match *self {
             Value::Nil => ParticleType::NULL,
             Value::Int(_) => ParticleType::INTEGER,
             Value::Float(_) => ParticleType::FLOAT,
@@ -251,7 +267,47 @@ impl Value {
             Value::HashMap(_) | Value::OrderedMap(_) | Value::KeyValueList(_) => ParticleType::MAP,
             Value::GeoJSON(_) => ParticleType::GEOJSON,
             Value::HLL(_) => ParticleType::HLL,
-            Value::Infinity | Value::Wildcard => unreachable!(),
+            Value::Infinity => {
+                return Err(Error::InvalidArgument(
+                    "Invalid particle type: INF. Infinity is only valid inside a \
+                     collection or expression bound, not as a bin value or key."
+                        .to_string(),
+                ))
+            }
+            Value::Wildcard => {
+                return Err(Error::InvalidArgument(
+                    "Invalid particle type: wildcard. A wildcard is only valid inside \
+                     a collection or expression bound, not as a bin value or key."
+                        .to_string(),
+                ))
+            }
+        };
+
+        Ok(ptype)
+    }
+
+    /// Short label naming this value's type, for diagnostics.
+    ///
+    /// Unlike [`particle_type`](Self::particle_type) this never fails, so error
+    /// messages about an unexpected value can name it even when the value is one
+    /// that has no particle type at all.
+    pub(crate) const fn type_label(&self) -> &'static str {
+        match *self {
+            Value::Nil => "nil",
+            Value::Bool(_) => "bool",
+            Value::Int(_) => "int",
+            Value::Float(_) => "float",
+            Value::String(_) => "string",
+            Value::Blob(_) => "blob",
+            Value::List(_) => "list",
+            Value::MultiResult(_) => "multi-result",
+            Value::HashMap(_) => "map",
+            Value::OrderedMap(_) => "ordered map",
+            Value::KeyValueList(_) => "key-value list",
+            Value::GeoJSON(_) => "geo-json",
+            Value::HLL(_) => "hll",
+            Value::Infinity => "INF",
+            Value::Wildcard => "wildcard",
         }
     }
 
@@ -667,7 +723,7 @@ impl TryFrom<Value> for String {
             Value::String(v) | Value::GeoJSON(v) => Ok(v),
             _ => Err(format!(
                 "Invalid type conversion from Value::{} to {}",
-                val.particle_type(),
+                val.type_label(),
                 std::any::type_name::<Self>()
             )),
         }
@@ -681,7 +737,7 @@ impl TryFrom<Value> for Vec<u8> {
             Value::Blob(v) | Value::HLL(v) => Ok(v),
             _ => Err(format!(
                 "Invalid type conversion from Value::{} to {}",
-                val.particle_type(),
+                val.type_label(),
                 std::any::type_name::<Self>()
             )),
         }
@@ -695,7 +751,7 @@ impl TryFrom<Value> for Vec<Value> {
             Value::List(v) | Value::MultiResult(v) => Ok(v),
             _ => Err(format!(
                 "Invalid type conversion from Value::{} to {}",
-                val.particle_type(),
+                val.type_label(),
                 std::any::type_name::<Self>()
             )),
         }
@@ -710,7 +766,7 @@ impl TryFrom<Value> for HashMap<Value, Value> {
             Value::HashMap(v) => Ok(v),
             _ => Err(format!(
                 "Invalid type conversion from Value::{} to {}",
-                val.particle_type(),
+                val.type_label(),
                 std::any::type_name::<Self>()
             )),
         }
@@ -724,7 +780,7 @@ impl TryFrom<Value> for BTreeMap<Value, Value> {
             Value::OrderedMap(v) => Ok(v),
             _ => Err(format!(
                 "Invalid type conversion from Value::{} to {}",
-                val.particle_type(),
+                val.type_label(),
                 std::any::type_name::<Self>()
             )),
         }
@@ -738,7 +794,7 @@ impl TryFrom<Value> for Vec<(Value, Value)> {
             Value::KeyValueList(v) => Ok(v),
             _ => Err(format!(
                 "Invalid type conversion from Value::{} to {}",
-                val.particle_type(),
+                val.type_label(),
                 std::any::type_name::<Self>()
             )),
         }
@@ -752,7 +808,7 @@ impl TryFrom<Value> for f64 {
             Value::Float(v) => Ok(f64::from(v)),
             _ => Err(format!(
                 "Invalid type conversion from Value::{} to {}",
-                val.particle_type(),
+                val.type_label(),
                 std::any::type_name::<Self>()
             )),
         }
@@ -1045,8 +1101,10 @@ impl<K: Eq + Hash, V> MapLike<K, V> for HashMap<K, V> {
 #[cfg(test)]
 mod tests {
     use super::Value;
+    use crate::commands::ParticleType;
+    use crate::errors::Error;
     use std::collections::{BTreeMap, HashMap};
-    use std::convert::TryInto;
+    use std::convert::{TryFrom, TryInto};
 
     #[test]
     fn try_into() {
@@ -1111,5 +1169,62 @@ mod tests {
         let json = serde_json::to_string(&val);
         // We only check for the len of the String because HashMap serialization does not keep the key order. Comparing like the list above is not possible.
         assert_eq!(json.unwrap().len(), 48, "Map Serialization failed");
+    }
+
+    #[test]
+    fn particle_type_rejects_infinity_and_wildcard() {
+        // These have no particle type: they are msgpack-only bounds. Asking for
+        // one used to abort the process through `unreachable!()`.
+        for value in [Value::Infinity, Value::Wildcard] {
+            let err = value
+                .particle_type()
+                .expect_err("INF/wildcard have no particle type");
+            assert!(
+                matches!(err, Error::InvalidArgument(_)),
+                "expected InvalidArgument for {:?}, got {:?}",
+                value,
+                err
+            );
+        }
+    }
+
+    #[test]
+    fn particle_type_still_answers_for_every_storable_value() {
+        // The guard must not have swallowed the ordinary cases.
+        for (value, want) in [
+            (Value::Nil, ParticleType::NULL),
+            (Value::Bool(true), ParticleType::BOOL),
+            (Value::Int(1), ParticleType::INTEGER),
+            (Value::from(1.5_f64), ParticleType::FLOAT),
+            (Value::from("s"), ParticleType::STRING),
+            (Value::Blob(vec![1]), ParticleType::BLOB),
+            (Value::List(vec![Value::Int(1)]), ParticleType::LIST),
+            (Value::HLL(vec![1]), ParticleType::HLL),
+            (Value::GeoJSON("{}".to_string()), ParticleType::GEOJSON),
+        ] {
+            assert_eq!(
+                value.particle_type().unwrap() as u8,
+                want as u8,
+                "wrong particle type for {:?}",
+                value
+            );
+        }
+
+        let map: Value = as_map!("a" => 1);
+        assert_eq!(map.particle_type().unwrap() as u8, ParticleType::MAP as u8);
+    }
+
+    #[test]
+    fn type_label_names_every_variant_including_the_typeless_ones() {
+        // Used by the TryFrom error messages, which must be able to name a value
+        // that has no particle type at all.
+        assert_eq!(Value::Infinity.type_label(), "INF");
+        assert_eq!(Value::Wildcard.type_label(), "wildcard");
+        assert_eq!(Value::Int(1).type_label(), "int");
+        assert_eq!(Value::Nil.type_label(), "nil");
+
+        // And the messages themselves still render.
+        let err = String::try_from(Value::Infinity).expect_err("INF is not a string");
+        assert!(err.contains("INF"), "unhelpful message: {}", err);
     }
 }
