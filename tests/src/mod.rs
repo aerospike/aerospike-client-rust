@@ -26,6 +26,7 @@ mod cdt_bitwise;
 mod cdt_list;
 mod cdt_map;
 mod cleanup;
+mod cluster;
 mod connection_seed;
 mod exp;
 mod exp_bitwise;

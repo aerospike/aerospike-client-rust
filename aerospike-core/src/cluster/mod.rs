@@ -141,6 +141,16 @@ impl PartitionForNamespace {
     }
 }
 
+/// `true` once the initial tend loop has something routable to hand back: the
+/// partition map is populated **and** every node has parsed partition data at
+/// least once (`partition_generation != -1`).
+///
+/// A node's partitions arrive a tend cycle after it joins, so a settled node
+/// count alone can still mean an empty — or partially filled — map.
+fn partitions_ready(nodes: &[Arc<Node>], partitions: &PartitionTable) -> bool {
+    !partitions.is_empty() && nodes.iter().all(|n| n.partition_generation() != -1)
+}
+
 // Cluster encapsulates the aerospike cluster nodes and manages
 // them.
 #[derive(Debug)]
@@ -363,7 +373,26 @@ impl Cluster {
                 let old_count = count;
                 count = cluster.nodes().len() as isize;
                 if count == old_count {
-                    break;
+                    if count == 0 {
+                        // No reachable nodes: nothing further to wait for —
+                        // `fail_if_not_connected` decides what happens next.
+                        break;
+                    }
+                    // Node-count stability alone is not enough: on a
+                    // multi-node cluster the nodes materialize in the seed
+                    // pass but their partition maps land one tend later, so
+                    // breaking here would let commands race the first
+                    // partition fetch and die on "partition map empty"
+                    // before the tend thread fills it in. Java's tend parses
+                    // partitions synchronously for fresh nodes, so its
+                    // count-only check is safe; ours must wait until every
+                    // node has parsed a partition map at least once.
+                    //
+                    // The deadline above stays the upper bound if the map
+                    // never populates.
+                    if partitions_ready(&cluster.nodes(), &cluster.partition_map.load()) {
+                        break;
+                    }
                 }
 
                 aerospike_rt::sleep(sleep_between_tend).await;
@@ -786,4 +815,31 @@ impl Cluster {
         self.tend_channel.lock().await.close_channel();
         Ok(())
     }
+}
+
+#[cfg(test)]
+mod cluster_tests {
+    use super::{partitions_ready, PartitionForNamespace, PartitionTable};
+
+    fn routable_map() -> PartitionTable {
+        let mut map = PartitionTable::new();
+        map.insert("test".to_string(), PartitionForNamespace::default());
+        map
+    }
+
+    #[test]
+    fn not_ready_while_partition_map_empty() {
+        // The join-then-fetch gap: the node count has settled but the map the
+        // first operation routes against is not there yet.
+        assert!(!partitions_ready(&[], &PartitionTable::new()));
+    }
+
+    #[test]
+    fn ready_once_the_map_covers_a_namespace() {
+        assert!(partitions_ready(&[], &routable_map()));
+    }
+
+    // The `partition_generation != -1` half needs real `Node`s, which need a
+    // `NodeValidator` and therefore a server; it is covered by
+    // `tests/src/cluster.rs::partition_map_ready_when_new_returns`.
 }
