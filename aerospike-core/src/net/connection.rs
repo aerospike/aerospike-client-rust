@@ -64,6 +64,17 @@ pub enum ConnectionState {
     ReadingStreamBody(usize),
 }
 
+/// Result of a pool-checkout liveness peek.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Liveness {
+    /// Socket open with nothing pending.
+    Alive,
+    /// Socket open, but bytes are waiting that nobody asked for.
+    PendingBytes,
+    /// Peer closed the connection, or the socket is broken.
+    Closed,
+}
+
 /// Underlying socket type for a connection (TCP or TLS).
 #[derive(Debug)]
 #[cfg_attr(test, allow(dead_code))]
@@ -535,30 +546,65 @@ impl Connection {
             .is_some_and(|idle_dl| Instant::now() >= idle_dl)
     }
 
-    /// Non-blocking 1-byte peek for pool checkout. Alive if the kernel
-    /// returns `WouldBlock` (socket open, no pending data), anything else
-    /// means the peer closed, sent stray bytes, or the socket is broken.
+    /// What a one-byte peek says about a socket.
+    fn peek_liveness(sock: &socket2::SockRef<'_>) -> Liveness {
+        // MSG_PEEK, so nothing is consumed: a byte seen here is still there for
+        // the command that follows. Both runtimes keep the fd non-blocking, so
+        // this never waits.
+        let mut probe = [std::mem::MaybeUninit::<u8>::uninit(); 1];
+        match sock.peek(&mut probe) {
+            // Nothing to read on an open socket: the healthy idle case.
+            Err(ref e)
+                if matches!(
+                    e.kind(),
+                    std::io::ErrorKind::WouldBlock | std::io::ErrorKind::Interrupted
+                ) =>
+            {
+                Liveness::Alive
+            }
+            // A peer that sent FIN reads as end-of-stream; an RST, EBADF or
+            // anything else is equally unusable.
+            Ok(0) | Err(_) => Liveness::Closed,
+            Ok(_) => Liveness::PendingBytes,
+        }
+    }
+
+    /// Non-blocking one-byte peek for pool checkout, so a socket the peer closed
+    /// while it sat in the pool is discarded instead of handed to a command that
+    /// would fail on its first read.
+    ///
+    /// This is the *only* mechanism that sheds dead pooled sockets — it is
+    /// deliberately independent of `idle_timeout`, because a socket can die long
+    /// before its idle deadline (a server restart kills sockets that were in use
+    /// a millisecond earlier).
     pub(crate) fn is_alive(&self) -> bool {
         match self.conn {
             Netsocket::Tcp(ref s) => {
-                #[cfg(feature = "rt-tokio")]
-                {
-                    let mut probe = [0u8; 1];
-                    match s.try_read(&mut probe) {
-                        Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => true,
-                        _ => false,
-                    }
-                }
-                #[cfg(feature = "rt-async-std")]
-                {
-                    // async-std's `TcpStream` exposes no non-blocking probe;
-                    // conservatively treat as alive.
-                    let _ = s;
-                    true
-                }
+                // Unsolicited bytes on a plain connection mean the stream is out
+                // of step with the protocol, which is not recoverable here.
+                !matches!(
+                    Self::peek_liveness(&socket2::SockRef::from(s)),
+                    Liveness::Closed | Liveness::PendingBytes
+                )
             }
             #[cfg(feature = "tls")]
-            Netsocket::Tls(_) => true,
+            Netsocket::Tls(ref s) => {
+                // Peek the TCP socket underneath the TLS session.
+                //
+                // Pending bytes are treated as ALIVE here, unlike the plain
+                // arm: post-handshake TLS control records (a TLS 1.3
+                // NewSessionTicket, a KeyUpdate) legitimately arrive while a
+                // connection sits idle in the pool, and they are not
+                // application data. Calling those dead would evict a healthy
+                // connection, reconnect, receive a fresh ticket and evict
+                // again — churn caused by the probe itself. Only a closed or
+                // broken socket is fatal.
+                let (tcp, _session) = s.get_ref();
+                !matches!(
+                    Self::peek_liveness(&socket2::SockRef::from(tcp)),
+                    Liveness::Closed
+                )
+            }
             #[cfg(test)]
             _ => true,
         }
@@ -1077,6 +1123,131 @@ impl<'a> ConnectionRecovery<'a> {
 
         assert!(self.conn.bytes_read == total_size);
         Ok(last_record)
+    }
+}
+
+/// The pool-checkout liveness probe, on whichever runtime is compiled.
+///
+/// The larger `tests_eof_loopback` module below is tokio-only; these cases are
+/// runtime-agnostic on purpose, because the async-std arm of [`Connection::is_alive`]
+/// had no coverage at all while it was a hardcoded `true`.
+#[cfg(test)]
+mod liveness_probe_tests {
+    use super::*;
+    use aerospike_rt::net::{TcpListener, TcpStream};
+
+    /// Half-close the accepted socket, so the client side sees FIN.
+    async fn spawn_finning_peer() -> String {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap().to_string();
+        aerospike_rt::spawn(async move {
+            if let Ok((mut sock, _)) = listener.accept().await {
+                #[cfg(feature = "rt-tokio")]
+                {
+                    use aerospike_rt::io::AsyncWriteExt;
+                    let _ = sock.shutdown().await;
+                }
+                #[cfg(feature = "rt-async-std")]
+                {
+                    let _ = sock.shutdown(aerospike_rt::async_std::net::Shutdown::Both);
+                }
+                drop(sock);
+            }
+        });
+        addr
+    }
+
+    /// Accept and hold the socket open, saying nothing.
+    async fn spawn_quiet_peer() -> String {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap().to_string();
+        aerospike_rt::spawn(async move {
+            if let Ok((sock, _)) = listener.accept().await {
+                aerospike_rt::sleep(Duration::from_secs(30)).await;
+                drop(sock);
+            }
+        });
+        addr
+    }
+
+    /// Build a `Connection` around a real socket, bypassing the handshake.
+    fn conn_over(stream: TcpStream) -> Connection {
+        let mut conn = Connection {
+            addr: "127.0.0.1:0".into(),
+            buffer: Buffer::new(0),
+            bytes_read: 0,
+            conn: Netsocket::Tcp(stream),
+            socket_timeout: 5_000,
+            timeout_delay: 0,
+            deadline: None,
+            idle_timeout: None,
+            idle_deadline: None,
+            state: ConnectionState::Ready,
+            can_recover_connection: false,
+            #[cfg(feature = "rt-tokio")]
+            sleep: Box::pin(aerospike_rt::tokio::time::sleep(Duration::from_secs(3600))),
+        };
+        conn.refresh();
+        conn
+    }
+
+    #[aerospike_macro::test]
+    async fn probe_says_alive_for_an_open_idle_socket() {
+        let addr = spawn_quiet_peer().await;
+        let stream = TcpStream::connect(&*addr).await.unwrap();
+        aerospike_rt::sleep(Duration::from_millis(20)).await;
+        assert!(
+            conn_over(stream).is_alive(),
+            "an open socket with nothing pending must probe alive"
+        );
+    }
+
+    #[aerospike_macro::test]
+    async fn probe_says_dead_after_peer_fin() {
+        let addr = spawn_finning_peer().await;
+        let stream = TcpStream::connect(&*addr).await.unwrap();
+        // Let the FIN land in our kernel before probing.
+        aerospike_rt::sleep(Duration::from_millis(50)).await;
+        assert!(
+            !conn_over(stream).is_alive(),
+            "a socket the peer closed must probe dead"
+        );
+    }
+
+    /// The peek must not consume: probing twice has to give the same answer, and
+    /// a command that follows still sees the pending byte.
+    #[aerospike_macro::test]
+    async fn probe_does_not_consume_pending_bytes() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap().to_string();
+        aerospike_rt::spawn(async move {
+            if let Ok((mut sock, _)) = listener.accept().await {
+                #[cfg(feature = "rt-tokio")]
+                {
+                    use aerospike_rt::io::AsyncWriteExt;
+                    let _ = sock.write_all(b"XY").await;
+                }
+                #[cfg(feature = "rt-async-std")]
+                {
+                    use futures::AsyncWriteExt;
+                    let _ = sock.write_all(b"XY").await;
+                }
+                aerospike_rt::sleep(Duration::from_secs(30)).await;
+            }
+        });
+
+        let stream = TcpStream::connect(&*addr).await.unwrap();
+        aerospike_rt::sleep(Duration::from_millis(50)).await;
+        let mut conn = conn_over(stream);
+
+        // Unsolicited bytes on a plain connection: not usable, twice over.
+        assert!(!conn.is_alive());
+        assert!(!conn.is_alive(), "the verdict must be stable, not consumed");
+
+        // And the bytes are still on the socket for whoever reads next.
+        let mut buf = [0_u8; 2];
+        conn.read_all(&mut buf).await.expect("bytes still readable");
+        assert_eq!(&buf, b"XY", "MSG_PEEK must leave the data in place");
     }
 }
 
