@@ -50,14 +50,28 @@ impl Drop for Recordset {
 }
 
 impl Recordset {
+    /// `rec_queue_size` bounds the buffer between the per-node reader tasks and
+    /// the consumer. `max_records`, when the caller set one, caps it: the channel
+    /// preallocates its whole slot array at `size_of::<Result<Record>>()` — 248
+    /// bytes — plus a stamp per slot, so the default 1024-slot queue is a ~262 KB
+    /// allocation rather than merely a bound, and a query that can return at most
+    /// ten records has no use for it. Zero means "no limit" and leaves the queue
+    /// at full size.
     pub(crate) fn new(
         rec_queue_size: usize,
+        max_records: u64,
         nodes: usize,
         tracker: Arc<Mutex<PartitionTracker>>,
     ) -> Self {
         let task_id = rand::random::<u64>();
 
-        let (tx, rx) = async_channel::bounded(rec_queue_size);
+        let capacity = if max_records > 0 {
+            rec_queue_size.min(max_records as usize)
+        } else {
+            rec_queue_size
+        };
+        // `bounded(0)` panics, and a policy may legitimately ask for either zero.
+        let (tx, rx) = async_channel::bounded(capacity.max(1));
         Recordset {
             instances: AtomicUsize::new(nodes),
             rx,
@@ -213,11 +227,64 @@ mod tests {
             Vec::new(),
         ))
         .expect("tracker");
-        Arc::new(Recordset::new(queue_size, 1, Arc::new(Mutex::new(tracker))))
+        Arc::new(Recordset::new(
+            queue_size,
+            0,
+            1,
+            Arc::new(Mutex::new(tracker)),
+        ))
+    }
+
+    /// A recordset built with an explicit `max_records`, for the queue-sizing
+    /// tests.
+    fn recordset_with_max(queue_size: usize, max_records: u64) -> Arc<Recordset> {
+        let tracker = block_on(PartitionTracker::new(
+            &QueryPolicy::default(),
+            Arc::new(Mutex::new(PartitionFilter::all())),
+            Vec::new(),
+        ))
+        .expect("tracker");
+        Arc::new(Recordset::new(
+            queue_size,
+            max_records,
+            1,
+            Arc::new(Mutex::new(tracker)),
+        ))
     }
 
     fn record() -> Record {
         Record::new(None, HashMap::new(), 0, 0)
+    }
+
+    /// `bounded` allocates its slot array up front, so a query that cannot
+    /// return more than `max_records` rows must not pay for a full-size queue.
+    #[test]
+    fn queue_is_capped_by_max_records() {
+        let rs = recordset_with_max(1024, 10);
+        assert_eq!(rs.rx.capacity(), Some(10));
+    }
+
+    /// `max_records` above the queue size changes nothing: the queue is a
+    /// buffer, not a result limit.
+    #[test]
+    fn queue_keeps_its_size_when_max_records_is_larger() {
+        let rs = recordset_with_max(64, 10_000);
+        assert_eq!(rs.rx.capacity(), Some(64));
+    }
+
+    /// Zero means "no limit" — the default for an unbounded query.
+    #[test]
+    fn queue_keeps_its_size_when_max_records_is_zero() {
+        let rs = recordset_with_max(64, 0);
+        assert_eq!(rs.rx.capacity(), Some(64));
+    }
+
+    /// Either zero must not reach `bounded`, which panics on a zero capacity.
+    #[test]
+    fn queue_never_degenerates_to_zero() {
+        assert_eq!(recordset_with_max(0, 0).rx.capacity(), Some(1));
+        assert_eq!(recordset_with_max(1024, 0).rx.capacity(), Some(1024));
+        assert_eq!(recordset_with_max(0, 10).rx.capacity(), Some(1));
     }
 
     #[cfg(feature = "sync")]
