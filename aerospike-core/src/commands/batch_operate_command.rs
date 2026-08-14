@@ -247,12 +247,19 @@ impl BatchOperateCommand {
                     batch_op.0.set_record(batch_record.record);
                     batch_op.0.set_result_code(batch_record.result_code, false);
                 }
-                Err(Error::BatchLastError(batch_index, rc, in_doubt, ref msg)) => {
+                Err(Error::BatchLastError(batch_index, rc, in_doubt, ..)) => {
+                    // A per-key server error that happens to arrive on the LAST
+                    // record of the response. It is the same kind of per-key
+                    // outcome as the `BatchError` arm below — the only
+                    // difference is where it landed in the stream — so stamp
+                    // the row and finish the group instead of failing the whole
+                    // call and discarding every other row (Java records the
+                    // code on the BatchRecord and returns the record set).
                     let batch_op = batch_ops
                         .get_mut(batch_index as usize)
                         .expect("Invalid batch index");
                     batch_op.0.set_result_code(rc, in_doubt);
-                    return Err(Error::BatchError(batch_index, rc, in_doubt, msg.clone()));
+                    return Ok(false);
                 }
                 Err(Error::BatchError(batch_index, rc, in_doubt, ..)) => {
                     let batch_op = batch_ops

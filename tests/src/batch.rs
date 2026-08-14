@@ -397,3 +397,142 @@ async fn batch_operate_read_touch_ttl() {
     assert!(Some(ResultCode::KeyNotFoundError) == recs[0].result_code);
     assert!(Some(ResultCode::KeyNotFoundError) == recs[1].result_code);
 }
+
+// A key the cluster cannot route is a per-key outcome, not a reason to throw
+// away every other key's result. The splitter used to propagate the routing
+// failure with `?`, so one key naming a namespace the cluster does not have
+// discarded the whole batch before anything was sent.
+#[aerospike_macro::test]
+async fn batch_with_one_unroutable_key_still_returns_the_other_rows() {
+    let client = common::client().await;
+    let namespace = common::namespace();
+    let set_name = common::rand_str(10);
+    let wpolicy = WritePolicy::default();
+    let bpr = BatchReadPolicy::default();
+
+    let good1 = as_key!(namespace, &set_name, "routable-1");
+    let good2 = as_key!(namespace, &set_name, "routable-2");
+    for key in [&good1, &good2] {
+        client
+            .put(&wpolicy, key, &[as_bin!("a", 1)])
+            .await
+            .unwrap();
+    }
+    // No such namespace, so the client cannot route this one.
+    let bad = as_key!("no_such_namespace", &set_name, "unroutable");
+
+    let ops = vec![
+        BatchOperation::read(&bpr, good1, Bins::All),
+        BatchOperation::read(&bpr, bad, Bins::All),
+        BatchOperation::read(&bpr, good2, Bins::All),
+    ];
+
+    let records = client
+        .batch(&BatchPolicy::default(), &ops)
+        .await
+        .expect("one unroutable key must not fail the whole batch");
+
+    assert_eq!(records.len(), 3, "every key must come back, in order");
+    assert!(
+        records[0].record.is_some(),
+        "the first routable key must still have its record"
+    );
+    assert!(
+        records[2].record.is_some(),
+        "the last routable key must still have its record"
+    );
+    assert_eq!(
+        records[1].result_code,
+        Some(ResultCode::PartitionUnavailable),
+        "the unroutable key carries its own error"
+    );
+    assert!(records[1].record.is_none());
+    assert!(!records[1].in_doubt, "nothing was sent, so nothing is in doubt");
+
+    client.close().await.unwrap();
+}
+
+// A batch where NO key can be routed still fails: there is nothing to report
+// per key, and the routing error is more useful than an empty record set.
+#[aerospike_macro::test]
+async fn batch_with_no_routable_key_fails() {
+    let client = common::client().await;
+    let set_name = common::rand_str(10);
+    let bpr = BatchReadPolicy::default();
+
+    let ops = vec![BatchOperation::read(
+        &bpr,
+        as_key!("no_such_namespace", &set_name, "unroutable"),
+        Bins::All,
+    )];
+
+    let err = client
+        .batch(&BatchPolicy::default(), &ops)
+        .await
+        .expect_err("a wholly unroutable batch must fail");
+    assert!(
+        matches!(err, Error::InvalidNode(_)),
+        "expected the routing error, got {:?}",
+        err
+    );
+
+    client.close().await.unwrap();
+}
+
+// A per-key server error is a per-key outcome wherever it lands in the response.
+// The arm that handles it on the LAST record used to stamp the row and then fail
+// the call anyway, discarding every row it had just filled in.
+#[aerospike_macro::test]
+async fn batch_per_key_error_on_the_last_record_does_not_fail_the_call() {
+    let client = common::client().await;
+    let namespace = common::namespace();
+    let set_name = common::rand_str(10);
+    let wpolicy = WritePolicy::default();
+
+    let key = as_key!(namespace, &set_name, "already-there");
+    client
+        .put(&wpolicy, &key, &[as_bin!("a", 1)])
+        .await
+        .unwrap();
+
+    // CreateOnly against an existing record: the server answers KEY_EXISTS_ERROR
+    // for this key. With respond_all_keys = false the error STOPS the response,
+    // so that record is flagged as the last one - which is the arm that used to
+    // fail the whole call. (With respond_all_keys = true the server keeps going
+    // and the error arrives as an ordinary per-key record, which was always
+    // absorbed correctly.)
+    let mut bpw = BatchWritePolicy::default();
+    bpw.record_exists_action = RecordExistsAction::CreateOnly;
+    let other = as_key!(namespace, &set_name, "also-there");
+    client
+        .put(&wpolicy, &other, &[as_bin!("a", 1)])
+        .await
+        .unwrap();
+    let ops = vec![
+        BatchOperation::write(&bpw, key.clone(), vec![operations::put(&as_bin!("a", 2))]),
+        BatchOperation::write(&bpw, other, vec![operations::put(&as_bin!("a", 2))]),
+    ];
+
+    let mut bpolicy = BatchPolicy::default();
+    bpolicy.respond_all_keys = false;
+    let records = client
+        .batch(&bpolicy, &ops)
+        .await
+        .expect("a per-key error must not fail the batch call");
+
+    assert_eq!(records.len(), 2);
+    assert_eq!(
+        records[0].result_code,
+        Some(ResultCode::KeyExistsError),
+        "the row carries the server's per-key code"
+    );
+
+    // The record is untouched.
+    let rec = client
+        .get(&ReadPolicy::default(), &key, Bins::All)
+        .await
+        .unwrap();
+    assert_eq!(*rec.bins.get("a").unwrap(), Value::from(1));
+
+    client.close().await.unwrap();
+}
