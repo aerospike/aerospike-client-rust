@@ -2191,6 +2191,58 @@ mod tests {
         );
     }
 
+    // Records whose per-record header repeats the previous one go on the wire as
+    // the REPEAT flag instead of a full header. Both batches below encode the
+    // same eight keys with the same op payload — only the *values* differ, so
+    // every per-record cost is identical and the whole size delta is the repeat
+    // saving. While `match_header` was stubbed to `false`, the two were equal.
+    #[test]
+    fn identical_batch_writes_encode_as_repeats() {
+        use crate::batch::{BatchOperation, BatchWritePolicy};
+        use crate::operations;
+
+        fn encode(values: &[i64]) -> usize {
+            let wpolicy = BatchWritePolicy::default();
+            let ops: Vec<(BatchOperation, usize)> = values
+                .iter()
+                .enumerate()
+                .map(|(i, v)| {
+                    let key = Key::new("ns", "set", Value::from(i as i64)).unwrap();
+                    let bin = crate::Bin::new("a".to_string(), Value::from(*v));
+                    (
+                        BatchOperation::write(&wpolicy, key, vec![operations::put(&bin)]),
+                        i,
+                    )
+                })
+                .collect();
+
+            let mut buf = Buffer::new(0);
+            buf.set_batch_operate(&BatchPolicy::default(), &ops).unwrap();
+            // `end()` rewinds `data_offset`, so the command's size is the buffer
+            // `size_buffer()` sized for it.
+            buf.data_buffer.len()
+        }
+
+        let repeated = encode(&[1, 1, 1, 1, 1, 1, 1, 1]);
+        let distinct = encode(&[1, 2, 3, 4, 5, 6, 7, 8]);
+        assert!(
+            repeated < distinct,
+            "identical records must compress: repeated={0} distinct={1}",
+            repeated,
+            distinct
+        );
+
+        // Seven of the eight records repeat. Each saves its full header — the
+        // 12-byte record header, the namespace and set fields with their 5-byte
+        // headers, and the bin payload — and pays one byte instead.
+        let saved_per_record = (distinct - repeated) / 7;
+        assert!(
+            saved_per_record >= 30,
+            "expected ~31+ bytes saved per repeated record, got {0}",
+            saved_per_record
+        );
+    }
+
     // An f32 bin is stored as the 8-byte double particle, like every other
     // float; this used to panic in `From<FloatValue> for f64`.
     #[test]

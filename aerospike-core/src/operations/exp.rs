@@ -79,6 +79,16 @@ pub(crate) struct ExpOperation {
     pub exp: Expression,
 }
 
+/// Equality exists to support batch REPEAT detection; see [`CdtOperation`]'s impl
+/// for why the encoder is compared by `Arc` identity.
+impl PartialEq for ExpOperation {
+    fn eq(&self, other: &Self) -> bool {
+        self.policy == other.policy
+            && Arc::ptr_eq(&self.encoder, &other.encoder)
+            && self.exp == other.exp
+    }
+}
+
 impl ExpOperation {
     // pub(crate) const fn particle_type(&self) -> ParticleType {
     //     ParticleType::BLOB

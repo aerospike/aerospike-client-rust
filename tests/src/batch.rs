@@ -536,3 +536,66 @@ async fn batch_per_key_error_on_the_last_record_does_not_fail_the_call() {
 
     client.close().await.unwrap();
 }
+
+// Identical writes over a shared (cloned) op list encode with the wire REPEAT
+// flag after the first record. The unit tests prove the encoder emits it; this
+// proves the *server* accepts the compressed form and applies the repeated
+// header to every digest — all records must succeed and every key must hold the
+// data. A silent mis-parse here would corrupt data, so this is the test that
+// makes the optimization safe to ship.
+#[aerospike_macro::test]
+async fn batch_write_repeat_compression() {
+    let client = common::client().await;
+    let namespace = common::namespace();
+    let set_name = common::rand_str(10);
+    let bpolicy = BatchPolicy::default();
+    let wpolicy = BatchWritePolicy::default();
+
+    let ops = vec![
+        operations::put(&as_bin!("a", 7)),
+        lists::append(&lists::ListPolicy::default(), "l", as_val!(1)),
+    ];
+
+    let mut batch = Vec::new();
+    let mut keys = Vec::new();
+    for i in 0..8_i64 {
+        let key = as_key!(namespace, &set_name, i);
+        keys.push(key.clone());
+        // A cloned op list shares its encoder Arcs, so every record after the
+        // first repeats.
+        batch.push(BatchOperation::write(&wpolicy, key, ops.clone()));
+    }
+
+    let results = client.batch(&bpolicy, &batch).await.unwrap();
+    assert_eq!(results.len(), 8);
+    for record in &results {
+        assert_eq!(
+            record.result_code,
+            Some(ResultCode::Ok),
+            "repeated batch write failed: {0:?}",
+            record
+        );
+    }
+
+    let rp = ReadPolicy::default();
+    for key in &keys {
+        let rec = client.get(&rp, key, Bins::All).await.unwrap();
+        assert_eq!(rec.bins.get("a"), Some(&Value::from(7_i64)));
+        assert_eq!(rec.bins.get("l"), Some(&as_list!(1)));
+    }
+
+    // Reads repeat too: same policy, same bins, distinct keys.
+    let reads: Vec<BatchOperation> = keys
+        .iter()
+        .map(|key| BatchOperation::read(&BatchReadPolicy::default(), key.clone(), Bins::All))
+        .collect();
+    let results = client.batch(&bpolicy, &reads).await.unwrap();
+    assert_eq!(results.len(), 8);
+    for record in &results {
+        assert_eq!(record.result_code, Some(ResultCode::Ok));
+        let bins = &record.record.as_ref().expect("record").bins;
+        assert_eq!(bins.get("a"), Some(&Value::from(7_i64)));
+    }
+
+    client.close().await.unwrap();
+}
