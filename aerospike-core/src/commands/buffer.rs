@@ -490,7 +490,14 @@ impl Buffer {
     }
 
     pub(crate) const fn get_batch_flags(policy: &BatchPolicy) -> u8 {
-        let mut flags: u8 = if policy.allow_inline { 1 } else { 0 };
+        // 0x8 instructs the server to return the key-specific error code when an
+        // error stops the batch response (Java CLIENT-1720); set
+        // unconditionally, like the Java client.
+        let mut flags: u8 = 0x8;
+
+        if policy.allow_inline {
+            flags |= 0x1;
+        }
 
         if policy.allow_inline_ssd {
             flags |= 0x2;
@@ -747,7 +754,12 @@ impl Buffer {
         }
         self.size_buffer()?;
 
-        self.write_header(&policy.base_policy, 0, INFO2_WRITE, field_count, 0);
+        // A UDF execute is a write, so it needs the write header: the base-policy
+        // header zeroes bytes 11..26, which drops record_exists_action,
+        // generation, commit_level and durable_delete, and puts `read_touch_ttl`
+        // in the TTL slot instead of the policy's `expiration` (Java
+        // `ExecuteCommand` uses writeHeaderWrite).
+        self.write_header_with_policy(policy, 0, INFO2_WRITE, field_count, 0);
         self.write_key(key, policy.send_key)?;
 
         if let Some(filter) = policy.filter_expression() {
@@ -2110,5 +2122,90 @@ impl Buffer {
     pub(crate) fn dump_buffer(&self) {
         rhexdump!(&self.data_buffer);
         println!();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::policy::{BatchPolicy, GenerationPolicy, RecordExistsAction, WritePolicy};
+    use crate::{Key, Value};
+
+    // 0x8 asks the server for the key-specific error code when an error stops a
+    // batch response (Java CLIENT-1720). Java sets it unconditionally; without
+    // it the batch reports a generic failure for the whole response.
+    #[test]
+    fn batch_flags_always_request_key_specific_errors() {
+        let mut policy = BatchPolicy {
+            allow_inline: false,
+            allow_inline_ssd: false,
+            respond_all_keys: false,
+            ..BatchPolicy::default()
+        };
+        assert_eq!(Buffer::get_batch_flags(&policy), 0x8);
+
+        policy.allow_inline = true;
+        assert_eq!(Buffer::get_batch_flags(&policy), 0x8 | 0x1);
+
+        policy.allow_inline_ssd = true;
+        policy.respond_all_keys = true;
+        assert_eq!(Buffer::get_batch_flags(&policy), 0x8 | 0x4 | 0x2 | 0x1);
+    }
+
+    // A UDF execute is a write and must use the write header: the base-policy
+    // header zeroes bytes 11..26 (dropping record_exists_action, generation,
+    // commit_level, durable_delete) and writes `read_touch_ttl` where the
+    // policy's `expiration` belongs.
+    #[test]
+    fn udf_execute_uses_the_write_header() {
+        let mut policy = WritePolicy::default();
+        policy.expiration = crate::policy::Expiration::Seconds(1234);
+        policy.durable_delete = true;
+        policy.record_exists_action = RecordExistsAction::UpdateOnly;
+        policy.generation_policy = GenerationPolicy::ExpectGenEqual;
+        policy.generation = 7;
+
+        let key = Key::new("ns", "set", Value::from(1)).unwrap();
+        let mut buf = Buffer::new(0);
+        buf.set_udf(&policy, &key, "pkg", "fun", None).unwrap();
+
+        assert_eq!(
+            buf.data_buffer[10] & (INFO2_WRITE | INFO2_DURABLE_DELETE | INFO2_GENERATION),
+            INFO2_WRITE | INFO2_DURABLE_DELETE | INFO2_GENERATION,
+            "info2 must carry the write policy's flags"
+        );
+        assert_eq!(
+            buf.data_buffer[11] & INFO3_UPDATE_ONLY,
+            INFO3_UPDATE_ONLY,
+            "info3 must carry record_exists_action"
+        );
+        assert_eq!(
+            NetworkEndian::read_u32(&buf.data_buffer[14..18]),
+            7,
+            "generation must be sent"
+        );
+        assert_eq!(
+            NetworkEndian::read_u32(&buf.data_buffer[18..22]),
+            1234,
+            "the TTL slot must carry the policy's expiration, not read_touch_ttl"
+        );
+    }
+
+    // An f32 bin is stored as the 8-byte double particle, like every other
+    // float; this used to panic in `From<FloatValue> for f64`.
+    #[test]
+    fn f32_bin_writes_the_double_particle() {
+        let value = Value::from(1.5_f32);
+        let mut buf = Buffer::new(0);
+        buf.resize_buffer(value.estimate_size().unwrap()).unwrap();
+        buf.data_offset = 0;
+        value.write_to(&mut buf).unwrap();
+
+        assert_eq!(buf.data_buffer.len(), 8, "floats are 8-byte particles");
+        assert_eq!(
+            buf.data_buffer[0..8],
+            1.5_f64.to_be_bytes(),
+            "f32 must widen losslessly to the double particle"
+        );
     }
 }
