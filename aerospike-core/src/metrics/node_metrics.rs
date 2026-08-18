@@ -247,7 +247,10 @@ macro_rules! command_histograms {
 /// Live, concurrently-updated per-node statistics.
 #[derive(Debug)]
 pub struct NodeMetrics {
-    policy: MetricsPolicy,
+    /// The policy currently shaping this node's histograms. Behind a lock so
+    /// [`NodeMetrics::reshape`] (which takes `&self`) can replace it; read only
+    /// off the hot path (lazy detailed-metric creation and snapshot drains).
+    policy: RwLock<MetricsPolicy>,
     /// Live sampler, stored lock-free as a `(range, threshold)` pair and
     /// refreshed by [`NodeMetrics::reshape`] whenever the policy changes (e.g.
     /// `enable_metrics`) so a node created before metrics were enabled still
@@ -260,9 +263,9 @@ pub struct NodeMetrics {
     sampler_range: AtomicU64,
     sampler_threshold: AtomicU64,
     /// Resolution every elapsed time is recorded in, encoded by
-    /// [`LatencyUnit::to_code`]. Stored atomically for the same reason the
-    /// sampler is: [`NodeMetrics::reshape`] takes `&self` and so cannot update
-    /// `policy`, and the recorders read this on the command hot path.
+    /// [`LatencyUnit::to_code`]. Stored atomically because the recorders read
+    /// it on the command hot path, where taking the `policy` lock is not
+    /// acceptable.
     latency_unit: AtomicU8,
     /// Whether collection is currently enabled. Gates the connection-lifecycle
     /// counters that are recorded outside the command hot-path.
@@ -292,7 +295,7 @@ impl NodeMetrics {
         let Sampler { range, threshold } = policy.sampler;
         let unit = policy.latency_unit;
         NodeMetrics {
-            policy,
+            policy: RwLock::new(policy),
             sampler_range: AtomicU64::new(range),
             sampler_threshold: AtomicU64::new(threshold),
             latency_unit: AtomicU8::new(unit.to_code()),
@@ -587,7 +590,7 @@ impl NodeMetrics {
             .entry(namespace.to_string())
             .or_insert_with(empty_metric_slots);
         if slots[idx].is_none() {
-            slots[idx] = Some(CommandMetric::new(&self.policy));
+            slots[idx] = Some(CommandMetric::new(&self.policy.read().unwrap()));
         }
         f(slots[idx].as_ref().unwrap());
     }
@@ -600,6 +603,11 @@ impl NodeMetrics {
     /// buckets would make the counts, min, max and sum meaningless. Size
     /// histograms (bytes sent/received) are not times and are left alone.
     pub fn reshape(&self, policy: &MetricsPolicy) {
+        // Store the applied policy first: anything created lazily from here on
+        // (detailed metrics, drain snapshots) must take the new shape, or the
+        // shape-checked histogram merges silently drop its samples.
+        *self.policy.write().unwrap() = policy.clone();
+
         // Pick up the (possibly new) sampler from the applied policy.
         let Sampler { range, threshold } = policy.sampler;
         self.sampler_threshold.store(threshold, Ordering::Relaxed);
@@ -639,9 +647,9 @@ impl NodeMetrics {
     /// the live values.
     #[must_use]
     pub fn get_and_reset(&self) -> NodeMetricsSnapshot {
-        let mut snapshot = NodeMetricsSnapshot::new(self.policy.clone());
-        // `self.policy` is the policy this node was built with; `reshape` takes
-        // `&self` and cannot update it, so the live unit is the atomic one.
+        let mut snapshot = NodeMetricsSnapshot::new(self.policy.read().unwrap().clone());
+        // The recorders read the unit from the atomic, so stamp the snapshot
+        // from the same source they used.
         snapshot.latency_unit = self.latency_unit();
         snapshot.counters = self.counters.snapshot_and_reset();
 
@@ -1266,6 +1274,65 @@ mod tests {
         // ...byte counts untouched by the unit.
         assert_eq!(cm.bytes_sent.max(), 64);
         assert_eq!(cm.bytes_received.max(), 128);
+    }
+
+    #[test]
+    fn reshape_shapes_lazily_created_detail_and_drain_snapshots() {
+        let metrics = NodeMetrics::new(MetricsPolicy::micros());
+        metrics.set_enabled(true);
+        metrics.reshape(&MetricsPolicy::millis());
+
+        // Detail created after the reshape must take the applied 7-column
+        // shape, not the construction-time 24-column one.
+        metrics.record_write("ns", CommandType::Put, 64, Duration::from_millis(5));
+        let snapshot = metrics.get_and_reset();
+        let cm = snapshot.detailed_metric("ns", CommandType::Put).unwrap();
+        assert_eq!(cm.latency.buckets().len(), crate::metrics::MILLIS_LATENCY_COLUMNS);
+        assert_eq!(cm.latency.count(), 1);
+        assert_eq!(snapshot.latency_unit, LatencyUnit::Milliseconds);
+
+        // The shape-checked histogram merge would silently drop mismatched
+        // samples, so aggregating into a base built from the applied policy
+        // must retain them.
+        let mut agg = NodeMetricsSnapshot::new(MetricsPolicy::millis());
+        agg.aggregate(&snapshot);
+        let agg_cm = agg.detailed_metric("ns", CommandType::Put).unwrap();
+        assert_eq!(agg_cm.latency.count(), 1);
+        assert_eq!(agg_cm.bytes_sent.count(), 1);
+    }
+
+    // Minimal repro for CLIENT-5242. Builds a node with the default micros()
+    // shape (24 latency columns), then enables metrics with the millis() preset
+    // (7 columns) -- exactly what `client.enable_metrics(MetricsPolicy::millis())`
+    // does to every node (Cluster::enable_metrics -> NodeMetrics::reshape). One
+    // write is recorded, then rolled into a cluster aggregate built from the
+    // applied millis() policy.
+    //
+    // With the reshape defect the detail created lazily after the reshape keeps
+    // the stale 24-column shape, and the shape-checked histogram merge silently
+    // drops it:
+    //   without fix -> agg latency count == 0   (this assertion fails)
+    //   with fix    -> agg latency count == 1
+    #[test]
+    fn client_5242_repro_millis_preset_zeroes_cluster_aggregate() {
+        let node = NodeMetrics::new(MetricsPolicy::micros()); // 24-column build
+        node.set_enabled(true);
+        node.reshape(&MetricsPolicy::millis()); // enable_metrics(millis()) does this
+
+        node.record_write("test", CommandType::Put, 64, Duration::from_millis(5));
+
+        let per_node = node.get_and_reset();
+        let mut cluster_agg = NodeMetricsSnapshot::new(MetricsPolicy::millis());
+        cluster_agg.aggregate(&per_node);
+
+        let cm = cluster_agg
+            .detailed_metric("test", CommandType::Put)
+            .expect("detail slot for test/Put");
+        assert_eq!(
+            cm.latency.count(),
+            1,
+            "detailed latency was dropped by the shape-mismatched merge (CLIENT-5242)"
+        );
     }
 
     #[test]
