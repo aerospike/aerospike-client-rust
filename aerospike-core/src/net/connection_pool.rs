@@ -211,6 +211,19 @@ impl Queue {
                     self.reduce_capacity();
                     continue;
                 }
+
+                // A server restart leaves the pool full of sockets the peer has
+                // already closed. Handing one to a command makes it fail on its
+                // first read (`early eof`) and burn a retry, so discard it here
+                // and take the next one.
+                if !conn.is_alive() {
+                    if let Some(metrics) = self.metrics() {
+                        metrics.incr_connections_closed();
+                    }
+                    drop(conn);
+                    self.reduce_capacity();
+                    continue;
+                }
                 connection = conn;
                 break;
             }

@@ -41,6 +41,10 @@ regex = "1"
 tokio-rustls = { version = "0.26.4", optional = true }
 rustls = { version = "0.23.42", optional = true }
 async-channel = "2.5.0"
+# Borrowed, non-owning socket handle for the connection pool liveness probe:
+# one implementation covering tokio, async-std and the TLS inner stream, with no
+# unsafe and no fd ownership. Already in the tree via tokio.
+socket2 = "0.6"
 hazarc = "0.2.0"
 indexmap = "2"
 # `async` so stream reads/writes are await points on the client executor
