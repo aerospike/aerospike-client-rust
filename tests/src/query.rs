@@ -66,6 +66,42 @@ async fn create_test_set(client: &Client, no_records: usize) -> String {
 }
 
 #[aerospike_macro::test]
+async fn query_top_k_uses_server_order_by_wire_format() {
+    let client = common::client().await;
+    let namespace = common::namespace();
+    let set_name = common::rand_str(10);
+    let write_policy = WritePolicy::default();
+
+    for (key_value, score) in [(1, 20), (2, 10), (3, 40), (4, 30)] {
+        let key = as_key!(namespace, &set_name, key_value);
+        client
+            .put(&write_policy, &key, &[as_bin!("score", score)])
+            .await
+            .unwrap();
+    }
+
+    let mut statement = Statement::new(namespace, &set_name, Bins::from(["score"]));
+    statement.set_order_by("score", OrderByType::Integer, Order::Asc);
+    statement.set_top_k(3);
+
+    let recordset = client
+        .query(&QueryPolicy::default(), PartitionFilter::all(), statement)
+        .await
+        .unwrap();
+    let scores = recordset
+        .into_stream()
+        .map(|result| match result.unwrap().bins["score"] {
+            Value::Int(score) => score,
+            ref value => panic!("expected integer score, got {value:?}"),
+        })
+        .collect::<Vec<_>>()
+        .await;
+
+    assert_eq!(scores, vec![10, 20, 30]);
+    client.close().await.unwrap();
+}
+
+#[aerospike_macro::test]
 async fn query_timeout() {
     let client = common::client().await;
     let namespace = common::namespace();

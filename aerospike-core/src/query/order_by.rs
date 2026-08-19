@@ -17,18 +17,6 @@
 //!
 //! See `Statement::set_order_by`/`Statement::set_top_k` for the client API.
 //!
-//! # Work in progress
-//!
-//! This client implements Top-K's client-side surface (types, validation,
-//! wire encode, and the per-node merge engine), but the wire encode is
-//! capability-gated behind `Version::supports_query_top_k()`, which always
-//! evaluates to `false` against a real server for now — this feature has no
-//! assigned minimum server version yet. `Statement::set_order_by`/`set_top_k`
-//! can be built and validated today; sending a query with either set fails
-//! fast with a client-side error until that capability gate is updated,
-//! rather than silently sending unrecognized fields to a server that
-//! doesn't understand them.
-
 /// Scalar comparator type for a Top-K order-by key.
 ///
 /// Aerospike has no schema, so the type of the order-by bin must be declared
@@ -38,13 +26,13 @@
 #[repr(u8)]
 pub enum OrderByType {
     /// 64-bit signed integer order key.
-    Integer = 0,
+    Integer = 1,
     /// 64-bit float order key.
-    Double = 1,
+    Double = 2,
     /// String order key.
-    String = 2,
+    String = 3,
     /// Raw bytes order key, compared lexicographically.
-    Bytes = 3,
+    Bytes = 4,
 }
 
 /// Sort direction for a Top-K query. Values mirror the server's

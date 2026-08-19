@@ -13,25 +13,16 @@
 // License for the specific language governing permissions and limitations under
 // the License.
 
-//! Integration tests for vector distance expressions
-//! (`expressions::vector::{l2_squared_distance, dot_product, cosine_similarity}`).
+//! VECTOR particle integration tests.
 //!
-//! These are `#[ignore]`d because the required server-side feature
-//! (`EXP_VECTOR_DIST`, vector bin type) is not released yet. Run manually
-//! against a server that has it, e.g.:
-//! `cargo test -p tests --features rt-tokio vector -- --ignored`.
-//!
-//! TODO(vector-exp-envelope, vector-exp-metric-semantics): once run against a
-//! real server, double-check that these pass and that each metric's *value*
-//! (not just sort order) matches the decided semantics -- especially
-//! `l2_squared_distance`, which is not known to match server behavior yet.
+//! WIP vector-distance tests require `EXP_VECTOR_DIST` and are ignored.
 
 use crate::common;
 
-use aerospike::expressions::vector::{cosine_similarity, dot_product, l2_squared_distance};
+use aerospike::expressions::vector::{cosine_similarity, dot_product, euclidean_squared_distance};
 use aerospike::expressions::vector_bin;
 use aerospike::operations::exp::{read_exp, ExpReadFlags};
-use aerospike::{as_bin, as_key, Vector, WritePolicy};
+use aerospike::{as_bin, as_key, Bins, Value, Vector, WritePolicy};
 
 async fn write_query_vector(client: &aerospike::Client, key: &aerospike::Key, v: &Vector) {
     let wpolicy = WritePolicy::default();
@@ -47,12 +38,77 @@ fn float_bin(rec: &aerospike::Record, name: &str) -> f64 {
     }
 }
 
-// Distance-to-self is 0 for L2 (squared or not -- both are 0 for identical
-// vectors), so this assertion holds regardless of the open
-// vector-exp-metric-semantics question.
 #[aerospike_macro::test]
-#[ignore = "requires a server build with EXP_VECTOR_DIST / vector bin support (unreleased)"]
-async fn l2_squared_distance_to_self_is_zero() {
+async fn vectors_round_trip_through_server() {
+    let client = common::client().await;
+    let namespace = common::namespace();
+    let set_name = common::rand_str(10);
+    let key = as_key!(namespace, &set_name, "round-trip");
+    let write_policy = WritePolicy::default();
+    // Non-finite element values are valid vector data. Invalid dimensions and
+    // reserved values are rejected by the typed constructors.
+    let expected = vec![
+        ("f16", Vector::float16(vec![0x3c00, 0x4000])),
+        ("i32", Vector::int32(vec![-1, 0, 1])),
+        ("f32", Vector::float32(vec![0.5, -1.5, 2.0])),
+        ("f64", Vector::float64(vec![0.25, -0.5, 1.0])),
+        (
+            "f32-special",
+            Vector::float32(vec![f32::NAN, f32::INFINITY, f32::NEG_INFINITY]),
+        ),
+        (
+            "f64-special",
+            Vector::float64(vec![f64::NAN, f64::INFINITY, f64::NEG_INFINITY]),
+        ),
+        ("f16-special", Vector::float16(vec![0x7c00, 0xfc00, 0x7e00])),
+    ];
+
+    common::delete_durably(&client, &write_policy, &key).await.unwrap();
+    let bins = expected
+        .iter()
+        .map(|(name, vector)| as_bin!(*name, vector.clone()))
+        .collect::<Vec<_>>();
+    client.put(&write_policy, &key, &bins).await.unwrap();
+
+    let record = client.get(&Default::default(), &key, Bins::All).await.unwrap();
+    for (name, vector) in expected {
+        assert_eq!(
+            record.bins.get(name),
+            Some(&Value::Vector(vector)),
+            "vector bin {name} should round-trip through the server"
+        );
+    }
+
+    client.close().await.unwrap();
+}
+
+#[aerospike_macro::test]
+async fn vector_bin_can_be_absent_without_being_an_empty_vector() {
+    let client = common::client().await;
+    let namespace = common::namespace();
+    let set_name = common::rand_str(10);
+    let key = as_key!(namespace, &set_name, "missing-vector");
+    let write_policy = WritePolicy::default();
+
+    common::delete_durably(&client, &write_policy, &key).await.unwrap();
+    client
+        .put(&write_policy, &key, &[as_bin!("scalar", 42)])
+        .await
+        .unwrap();
+
+    let record = client.get(&Default::default(), &key, Bins::All).await.unwrap();
+    assert!(
+        !record.bins.contains_key("vector"),
+        "an absent vector bin must not be materialized as an empty vector"
+    );
+    assert_eq!(record.bins.get("scalar"), Some(&Value::Int(42)));
+
+    client.close().await.unwrap();
+}
+
+#[aerospike_macro::test]
+#[ignore = "requires a server build with EXP_VECTOR_DIST"]
+async fn euclidean_squared_distance_to_self_is_zero() {
     let client = common::client().await;
     let namespace = common::namespace();
     let set_name = common::rand_str(10);
@@ -63,7 +119,7 @@ async fn l2_squared_distance_to_self_is_zero() {
 
     let ops = vec![read_exp(
         "dist",
-        l2_squared_distance(&v, vector_bin("embedding".to_string())),
+        euclidean_squared_distance(&v, vector_bin("embedding".to_string())),
         ExpReadFlags::Default,
     )];
     let rec = client
@@ -80,7 +136,7 @@ async fn l2_squared_distance_to_self_is_zero() {
 }
 
 #[aerospike_macro::test]
-#[ignore = "requires a server build with EXP_VECTOR_DIST / vector bin support (unreleased)"]
+#[ignore = "requires a server build with EXP_VECTOR_DIST"]
 async fn dot_product_matches_sum_of_squares_for_self() {
     let client = common::client().await;
     let namespace = common::namespace();
@@ -111,7 +167,7 @@ async fn dot_product_matches_sum_of_squares_for_self() {
 }
 
 #[aerospike_macro::test]
-#[ignore = "requires a server build with EXP_VECTOR_DIST / vector bin support (unreleased)"]
+#[ignore = "requires a server build with EXP_VECTOR_DIST"]
 async fn cosine_similarity_to_self_is_one() {
     let client = common::client().await;
     let namespace = common::namespace();
@@ -139,10 +195,32 @@ async fn cosine_similarity_to_self_is_one() {
     client.close().await.unwrap();
 }
 
-// TODO(vector-exp-metric-semantics): the tests above only use identity-vector
-// cases (distance/similarity to self), because those results (0, sum of
-// squares, 1) hold no matter how the open squared-vs-unsquared-L2 question is
-// resolved. A test that actually distinguishes the two -- e.g. stored
-// [0.0, 0.0] vs. query [3.0, 4.0], where squared L2 is 25.0 and plain
-// Euclidean is 5.0 -- still needs to be written and have its expected value
-// filled in once that's confirmed against real server behavior.
+#[aerospike_macro::test]
+#[ignore = "requires a server build with EXP_VECTOR_DIST"]
+async fn euclidean_squared_distance_is_sum_of_squared_differences() {
+    let client = common::client().await;
+    let namespace = common::namespace();
+    let set_name = common::rand_str(10);
+    let key = as_key!(namespace, &set_name, "v4");
+    let stored = Vector::float32(vec![0.0, 0.0]);
+    let query = Vector::float32(vec![3.0, 4.0]);
+    write_query_vector(&client, &key, &stored).await;
+
+    let ops = vec![read_exp(
+        "dist",
+        euclidean_squared_distance(&query, vector_bin("embedding".to_string())),
+        ExpReadFlags::Default,
+    )];
+    let rec = client
+        .operate(&WritePolicy::default(), &key, &ops)
+        .await
+        .unwrap();
+
+    // Squared L2: 3^2 + 4^2 = 25.
+    assert!(
+        (float_bin(&rec, "dist") - 25.0).abs() < 1e-6,
+        "squared Euclidean distance between [0, 0] and [3, 4] should be 25"
+    );
+
+    client.close().await.unwrap();
+}

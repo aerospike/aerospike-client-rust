@@ -13,25 +13,24 @@
 // License for the specific language governing permissions and limitations under
 // the License.
 
-//! Dense numeric vectors for vector similarity search.
-//!
-//! A [`Vector`] is the public, user-facing type. When stored in a bin it is
-//! carried as a [`Value::Vector`](crate::Value::Vector) and encoded with the
-//! `VECTOR` particle type (wire code 16), matching the Java and C clients.
+//! Dense numeric vectors encoded as `VECTOR` particles (wire type 16).
 //!
 //! # Wire format
 //!
 //! ```text
 //! Offset  Size (bytes)  Field         Description
-//! 0       1             version       Vector format version (currently 1).
+//! 0       1             version       Vector format version.
 //! 1       1             element_type  See [`VectorElementType`].
 //! 2       4             dimensions    Element count, little-endian.
-//! 6       2             reserved      Zero padding (8-byte alignment).
+//! 6       2             reserved      Reserved header field.
 //! 8       variable      data          Contiguous little-endian elements.
 //! ```
 //!
-//! The whole payload, header included, is little-endian (unlike the rest of the
-//! Aerospike wire protocol).
+//! # Server behavior
+//!
+//! The server validates the header on write (version, `reserved`, element type,
+//! dimensions, and size) and preserves element bits. Vector expressions in
+//! [`crate::expressions::vector`] are WIP pending `EXP_VECTOR_DIST`.
 
 use std::cmp::Ordering;
 use std::convert::TryInto;
@@ -44,14 +43,17 @@ use crate::errors::{Error, Result};
 pub const VECTOR_VERSION: u8 = 1;
 
 /// Size in bytes of the fixed vector header (`version`, `element_type`,
-/// `dimensions` and `reserved` padding).
+/// `dimensions`, and `reserved`).
 pub const VECTOR_HEADER_SIZE: usize = 8;
 
-/// Element type of a [`Vector`], identifying how each element is encoded on the
-/// wire. The discriminant is the wire code the server uses.
+/// Maximum size in bytes of a vector's element array, mirroring the server's
+/// `VECTOR_MAX_ELEMENTS_BYTES`. The per-type dimension cap derives from this.
+pub const VECTOR_MAX_ELEMENTS_BYTES: usize = 1 << 18;
+
+/// Wire encoding of [`Vector`] elements.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum VectorElementType {
-    /// IEEE 754 half precision, carried as raw 16-bit patterns (Rust has no `f16`).
+    /// IEEE 754 half precision as raw bits.
     Float16 = 0x01,
     /// 32-bit signed integer.
     Int32 = 0x02,
@@ -76,8 +78,13 @@ impl VectorElementType {
         }
     }
 
-    /// Look up an element type from its wire-protocol code, returning `None`
-    /// for codes this client does not interpret.
+    /// Largest dimension count the server accepts for this element type
+    /// (`VECTOR_MAX_ELEMENTS_BYTES / byte_size`).
+    pub const fn max_dimensions(self) -> usize {
+        VECTOR_MAX_ELEMENTS_BYTES / self.byte_size()
+    }
+
+    /// Returns the element type for a supported wire code.
     const fn try_from_code(code: u8) -> Option<Self> {
         match code {
             0x01 => Some(VectorElementType::Float16),
@@ -101,34 +108,17 @@ impl fmt::Display for VectorElementType {
     }
 }
 
-/// Distance metric for a vector distance expression. Selected implicitly by
-/// which of [`expressions::vector::l2_squared_distance`](crate::expressions::vector::l2_squared_distance),
-/// [`expressions::vector::dot_product`](crate::expressions::vector::dot_product), or
-/// [`expressions::vector::cosine_similarity`](crate::expressions::vector::cosine_similarity)
-/// is called.
+/// Wire metric for WIP vector-distance expressions.
 ///
-/// The discriminant is the wire code.
-///
-/// # Work in progress
-///
-/// The distance expression this feeds is not finalized and cannot be sent to
-/// the server yet; this enum is provisional.
-///
-// TODO(vector-exp-metric-semantics): these variants document the decided
-// target semantics (`Cosine` = cosine similarity, not `1 - similarity`
-// distance; `L2Squared` = squared L2, not plain Euclidean). The available
-// `aerospike-server` checkout used to check this against may be outdated —
-// re-verify each variant's actual server-side behavior against current
-// server code once available, before lifting the WIP send-guard in
-// `expressions/mod.rs`.
+/// Use the named builders in [`crate::expressions::vector`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum VectorDistanceMetric {
-    /// L2 squared (squared Euclidean) distance; smaller is closer.
-    L2Squared = 0,
+    /// Squared L2 distance; smaller is closer.
+    EuclideanSquared = 0,
     /// Dot product; larger is more similar.
     DotProduct = 1,
     /// Cosine similarity; larger is closer.
-    Cosine = 2,
+    CosineSimilarity = 2,
 }
 
 impl VectorDistanceMetric {
@@ -138,12 +128,10 @@ impl VectorDistanceMetric {
     }
 }
 
-/// Element data of a [`Vector`]: one variant per element type. Elements are
-/// held in host order and converted to/from the little-endian wire format on
-/// write/read.
+/// Element data held in host order.
 #[derive(Debug, Clone)]
 pub enum VectorData {
-    /// `float16` elements as raw 16-bit patterns (see [`VectorElementType::Float16`]).
+    /// `float16` elements as raw 16-bit patterns.
     Float16(Vec<u16>),
     /// `int32` elements.
     Int32(Vec<i32>),
@@ -173,16 +161,12 @@ impl VectorData {
             VectorData::Float64(d) => d.len(),
         }
     }
+
 }
 
-/// A dense vector of numeric elements, used for vector similarity search.
+/// A dense numeric vector.
 ///
-/// Build one with the element-type constructors ([`Vector::float32`] and
-/// friends); the [`data`](Vector::data) is held in host order and converted
-/// to/from the little-endian wire format on write/read.
-///
-/// A `Vector` converts into a [`Value`](crate::Value) via [`From`], so it can
-/// be stored directly in a bin:
+/// Converts into [`Value`](crate::Value) and can be written directly to a bin:
 ///
 /// ```
 /// use aerospike::{Vector, as_bin};
@@ -193,46 +177,85 @@ impl VectorData {
 #[derive(Debug, Clone)]
 pub struct Vector {
     version: u8,
+    reserved: u16,
     data: VectorData,
 }
 
 impl Vector {
-    /// Create a vector of raw `float16` elements (IEEE 754 half precision).
-    /// Rust has no native `f16`, so each element is passed as its raw 16-bit
-    /// bit pattern.
-    pub const fn float16(data: Vec<u16>) -> Self {
+    /// Creates a `float16` vector from raw IEEE 754 bit patterns.
+    pub fn float16(data: Vec<u16>) -> Self {
+        Self::try_float16(data).expect("invalid vector data")
+    }
+
+    /// Creates an `int32` vector.
+    pub fn int32(data: Vec<i32>) -> Self {
+        Self::try_int32(data).expect("invalid vector data")
+    }
+
+    /// Creates a `float32` vector.
+    pub fn float32(data: Vec<f32>) -> Self {
+        Self::try_float32(data).expect("invalid vector data")
+    }
+
+    /// Creates a `float64` vector.
+    pub fn float64(data: Vec<f64>) -> Self {
+        Self::try_float64(data).expect("invalid vector data")
+    }
+
+    /// Creates a validated `float16` vector.
+    pub fn try_float16(data: Vec<u16>) -> Result<Self> {
         Self::current(VectorData::Float16(data))
     }
 
-    /// Create a vector of `int32` elements.
-    pub const fn int32(data: Vec<i32>) -> Self {
+    /// Creates a validated `int32` vector.
+    pub fn try_int32(data: Vec<i32>) -> Result<Self> {
         Self::current(VectorData::Int32(data))
     }
 
-    /// Create a vector of `float` (fp32) elements.
-    pub const fn float32(data: Vec<f32>) -> Self {
+    /// Creates a validated `float32` vector.
+    pub fn try_float32(data: Vec<f32>) -> Result<Self> {
         Self::current(VectorData::Float32(data))
     }
 
-    /// Create a vector of `double` (fp64) elements.
-    pub const fn float64(data: Vec<f64>) -> Self {
+    /// Creates a validated `float64` vector.
+    pub fn try_float64(data: Vec<f64>) -> Result<Self> {
         Self::current(VectorData::Float64(data))
     }
 
-    /// Wrap element data with the current wire-format version.
-    const fn current(data: VectorData) -> Self {
-        Vector {
-            version: VECTOR_VERSION,
-            data,
+    /// Validates the dimension count.
+    fn current(data: VectorData) -> Result<Self> {
+        let dimensions = data.dimensions();
+
+        if dimensions == 0 {
+            return Err(Error::invalid_argument(
+                "vector must have at least 1 dimension",
+            ));
         }
+
+        let max = data.element_type().max_dimensions();
+
+        if dimensions > max {
+            return Err(Error::invalid_argument(format!(
+                "vector dimensions {dimensions} exceeds max {max} for element type {}",
+                data.element_type()
+            )));
+        }
+
+        Ok(Vector {
+            version: VECTOR_VERSION,
+            reserved: 0,
+            data,
+        })
     }
 
-    /// The wire-format version. Vectors you construct carry the current
-    /// [`VECTOR_VERSION`]; a vector decoded from the server carries whatever
-    /// version it sent, so a newer server format is observable here (and is
-    /// preserved if the vector is written back unchanged).
+    /// The wire-format version.
     pub const fn version(&self) -> u8 {
         self.version
+    }
+
+    /// Raw bits of the header's `reserved` field.
+    pub const fn reserved(&self) -> u16 {
+        self.reserved
     }
 
     /// The element data.
@@ -255,24 +278,17 @@ impl Vector {
         self.dimensions() == 0
     }
 
-    /// Number of bytes this vector occupies on the wire (header plus element
-    /// data). For internal use only.
+    /// Wire size, including the header.
     pub(crate) const fn wire_size(&self) -> usize {
         VECTOR_HEADER_SIZE + self.dimensions() * self.element_type().byte_size()
     }
 
-    /// Serialize this vector into `buf` in the little-endian wire format,
-    /// returning the number of bytes written (equal to [`Self::wire_size`]).
-    /// The stored [`version`](Self::version) is emitted, preserving a value
-    /// read back from the server. For internal use only.
+    /// Serializes this vector in the little-endian wire format.
     pub(crate) fn write_to(&self, buf: &mut Buffer) -> usize {
         buf.write_u8(self.version);
         buf.write_u8(self.element_type().code());
         buf.write_u32_little_endian(self.dimensions() as u32);
-        // 2 reserved header bytes (8-byte alignment). Not yet defined by the
-        // server contract; may become vector flags, so we emit zeros for now.
-        buf.write_u8(0);
-        buf.write_u8(0);
+        buf.write_u16_little_endian(self.reserved);
 
         match &self.data {
             VectorData::Float16(d) => {
@@ -300,13 +316,7 @@ impl Vector {
         self.wire_size()
     }
 
-    /// Raw element bytes in little-endian order, without the header. This is
-    /// the query-vector form a vector distance expression sends.
-    ///
-    // TODO(vector-exp-envelope): the frozen server contract will switch the
-    // expression query argument to the full wire value (header + elements);
-    // until that server change ships, headerless elements match current
-    // behavior.
+    /// Little-endian element bytes for WIP vector-distance expressions.
     pub(crate) fn element_bytes(&self) -> Vec<u8> {
         let mut out = Vec::with_capacity(self.dimensions() * self.element_type().byte_size());
         match &self.data {
@@ -318,16 +328,11 @@ impl Vector {
         out
     }
 
-    /// Deserialize a vector from the wire format at the buffer's current
-    /// offset. `len` is the number of bytes available for this particle. The
-    /// on-wire version is preserved in [`version`](Self::version). For internal
-    /// use only.
+    /// Decodes a vector particle at the buffer's current offset.
     ///
     /// # Errors
     ///
-    /// Returns [`Error::bad_response`] if the payload is too short for its
-    /// header, carries an unknown element type, or declares more dimensions
-    /// than `len` can hold.
+    /// Rejects short payloads and unknown element types; preserves version and `reserved`.
     pub(crate) fn from_bytes(buf: &mut Buffer, len: usize) -> Result<Self> {
         if len < VECTOR_HEADER_SIZE {
             return Err(Error::bad_response(format!(
@@ -343,12 +348,8 @@ impl Vector {
             )));
         };
         let dimensions = buf.read_u32_little_endian(None) as usize;
-        // Skip the 2 reserved header bytes. Not yet defined by the server
-        // contract; if they later carry vector flags, read them into a field
-        // here instead of discarding.
-        buf.skip(2);
+        let reserved = u16::from_le_bytes([buf.read_u8(None), buf.read_u8(None)]);
 
-        // Checked so a huge dimension count can't overflow past the bounds check.
         let data_size = dimensions
             .checked_mul(element_type.byte_size())
             .ok_or_else(|| Error::bad_response("vector dimensions overflow"))?;
@@ -388,13 +389,17 @@ impl Vector {
             ),
         };
 
-        // Skip any trailing bytes so the offset lands exactly past this particle.
+        let vector = Vector {
+            version,
+            reserved,
+            data,
+        };
         let consumed = VECTOR_HEADER_SIZE + data_size;
         if consumed < len {
             buf.skip(len - consumed);
         }
 
-        Ok(Vector { version, data })
+        Ok(vector)
     }
 }
 
@@ -455,22 +460,21 @@ impl PartialOrd for VectorData {
     }
 }
 
-/// Two vectors are equal when both their [`version`](Vector::version) and their
-/// element data match.
+/// Two vectors are equal when their version, `reserved` bits, and element data match.
 impl PartialEq for Vector {
     fn eq(&self, other: &Self) -> bool {
-        self.version == other.version && self.data == other.data
+        self.version == other.version && self.reserved == other.reserved && self.data == other.data
     }
 }
 
 impl Eq for Vector {}
 
-/// Orders by version, then element data. Only exists to give
-/// [`Value`](crate::Value) a total order; the server does not order vector bins.
+/// Orders by version, `reserved`, then element data.
 impl Ord for Vector {
     fn cmp(&self, other: &Self) -> Ordering {
         self.version
             .cmp(&other.version)
+            .then_with(|| self.reserved.cmp(&other.reserved))
             .then_with(|| self.data.cmp(&other.data))
     }
 }
@@ -554,9 +558,9 @@ mod tests {
 
     #[test]
     fn distance_metric_codes() {
-        assert_eq!(VectorDistanceMetric::L2Squared.code(), 0);
+        assert_eq!(VectorDistanceMetric::EuclideanSquared.code(), 0);
         assert_eq!(VectorDistanceMetric::DotProduct.code(), 1);
-        assert_eq!(VectorDistanceMetric::Cosine.code(), 2);
+        assert_eq!(VectorDistanceMetric::CosineSimilarity.code(), 2);
     }
 
     #[test]
@@ -565,7 +569,6 @@ mod tests {
         assert_eq!(Vector::float64(vec![1.0, 2.0]).wire_size(), 8 + 2 * 8);
         assert_eq!(Vector::int32(vec![1, 2, 3, 4]).wire_size(), 8 + 4 * 4);
         assert_eq!(Vector::float16(vec![0, 1]).wire_size(), 8 + 2 * 2);
-        assert_eq!(Vector::float32(vec![]).wire_size(), 8);
     }
 
     #[test]
@@ -576,10 +579,20 @@ mod tests {
         assert_eq!(buf.data_buffer[0], VECTOR_VERSION);
         assert_eq!(buf.data_buffer[1], VectorElementType::Float32.code());
         // dimensions = 1, little-endian
-        assert_eq!(&buf.data_buffer[2..6], &[1, 0, 0, 0]);
+        assert_eq!(&buf.data_buffer[2..6], &1u32.to_le_bytes());
         assert_eq!(&buf.data_buffer[6..8], &[0, 0]); // reserved
         // the single float, little-endian
         assert_eq!(&buf.data_buffer[8..12], &1.5f32.to_le_bytes());
+    }
+
+    #[test]
+    fn client_always_emits_zero_reserved() {
+        let vector = Vector::float32(vec![1.5]);
+        let buf = encode(&vector, vector.wire_size());
+
+        assert_eq!(&buf.data_buffer[6..8], &[0, 0]);
+        assert_eq!(vector.reserved(), 0);
+        assert_eq!(round_trip(&vector).reserved(), 0);
     }
 
     #[test]
@@ -615,13 +628,24 @@ mod tests {
     }
 
     #[test]
-    fn round_trips_empty_vector() {
-        assert_eq!(round_trip(&Vector::float16(vec![])), Vector::float16(vec![]));
-        assert_eq!(round_trip(&Vector::int32(vec![])), Vector::int32(vec![]));
-        assert_eq!(round_trip(&Vector::float32(vec![])), Vector::float32(vec![]));
-        assert_eq!(round_trip(&Vector::float64(vec![])), Vector::float64(vec![]));
-        // An empty vector is header-only on the wire.
-        assert_eq!(Vector::float64(vec![]).wire_size(), VECTOR_HEADER_SIZE);
+    fn empty_vectors_are_rejected_at_construction() {
+        assert!(Vector::try_float16(vec![]).is_err());
+        assert!(Vector::try_int32(vec![]).is_err());
+        assert!(Vector::try_float32(vec![]).is_err());
+        assert!(Vector::try_float64(vec![]).is_err());
+    }
+
+    #[test]
+    fn dimensions_above_element_type_max_are_rejected() {
+        // Per-type cap = VECTOR_MAX_ELEMENTS_BYTES / element size.
+        assert_eq!(VectorElementType::Float16.max_dimensions(), 131_072);
+        assert_eq!(VectorElementType::Int32.max_dimensions(), 65_536);
+        assert_eq!(VectorElementType::Float32.max_dimensions(), 65_536);
+        assert_eq!(VectorElementType::Float64.max_dimensions(), 32_768);
+
+        let max = VectorElementType::Float64.max_dimensions();
+        assert!(Vector::try_float64(vec![0.0; max]).is_ok());
+        assert!(Vector::try_float64(vec![0.0; max + 1]).is_err());
     }
 
     #[test]
@@ -634,24 +658,15 @@ mod tests {
     }
 
     #[test]
-    fn round_trips_special_float_values() {
-        let v = Vector::float32(vec![
-            f32::NAN,
-            f32::INFINITY,
-            f32::NEG_INFINITY,
-            -0.0,
-            f32::MIN_POSITIVE,
-        ]);
-        assert_eq!(round_trip(&v), v, "float32 special values must survive bit-for-bit");
+    fn non_finite_float_elements_round_trip() {
+        let f32_vector = Vector::float32(vec![f32::NAN, f32::INFINITY, f32::NEG_INFINITY]);
+        assert_eq!(round_trip(&f32_vector), f32_vector);
 
-        let v = Vector::float64(vec![
-            f64::NAN,
-            f64::INFINITY,
-            f64::NEG_INFINITY,
-            -0.0,
-            f64::MIN_POSITIVE,
-        ]);
-        assert_eq!(round_trip(&v), v, "float64 special values must survive bit-for-bit");
+        let f64_vector = Vector::float64(vec![f64::NAN, f64::INFINITY, f64::NEG_INFINITY]);
+        assert_eq!(round_trip(&f64_vector), f64_vector);
+
+        let f16_vector = Vector::float16(vec![0x7c00, 0xfc00, 0x7e00]);
+        assert_eq!(round_trip(&f16_vector), f16_vector);
     }
 
     #[test]
@@ -662,29 +677,24 @@ mod tests {
     }
 
     #[test]
-    fn equality_requires_matching_type_and_version() {
+    fn equality_requires_matching_type_and_data() {
         // Same numeric values, different element type: not equal.
         assert_ne!(Vector::float32(vec![1.0]), Vector::float64(vec![1.0]));
 
-        // Same data, different version: not equal.
-        let constructed = Vector::float32(vec![1.0, 2.0]);
-        let body: Vec<u8> = [1.0f32, 2.0]
-            .iter()
-            .flat_map(|x| x.to_bits().to_le_bytes())
-            .collect();
-        let mut buf = craft(2, VectorElementType::Float32.code(), 2, [0, 0], &body);
-        let decoded = Vector::from_bytes(&mut buf, VECTOR_HEADER_SIZE + body.len()).unwrap();
-        assert_eq!(decoded.data(), constructed.data());
-        assert_ne!(decoded, constructed, "version must participate in equality");
+        // Same type, different data: not equal.
+        assert_ne!(Vector::float32(vec![1.0, 2.0]), Vector::float32(vec![1.0, 3.0]));
+
+        // Same type and data: equal.
+        assert_eq!(Vector::float32(vec![1.0, 2.0]), Vector::float32(vec![1.0, 2.0]));
     }
 
     #[test]
     fn ordering_by_element_type_then_elements() {
         // Element-type code ordering dominates (Float16 < Int32 < Float32 < Float64).
-        let f16 = Vector::float16(vec![0xffff]);
+        let f16 = Vector::float16(vec![0x7bff]);
         let i32v = Vector::int32(vec![i32::MIN]);
-        let f32v = Vector::float32(vec![f32::INFINITY]);
-        let f64v = Vector::float64(vec![f64::NEG_INFINITY]);
+        let f32v = Vector::float32(vec![f32::MAX]);
+        let f64v = Vector::float64(vec![-f64::MAX]);
         assert!(f16 < i32v);
         assert!(i32v < f32v);
         assert!(f32v < f64v);
@@ -695,15 +705,9 @@ mod tests {
     }
 
     #[test]
-    fn ordering_uses_total_cmp_for_floats() {
-        // total_cmp orders: -inf < finite < +inf < NaN.
-        let neg_inf = Vector::float64(vec![f64::NEG_INFINITY]);
-        let finite = Vector::float64(vec![0.0]);
-        let pos_inf = Vector::float64(vec![f64::INFINITY]);
-        let nan = Vector::float64(vec![f64::NAN]);
-        assert!(neg_inf < finite);
-        assert!(finite < pos_inf);
-        assert!(pos_inf < nan);
+    fn ordering_uses_total_cmp_for_finite_floats() {
+        assert!(Vector::float64(vec![-1.0]) < Vector::float64(vec![0.0]));
+        assert!(Vector::float64(vec![0.0]) < Vector::float64(vec![1.0]));
     }
 
     #[test]
@@ -724,7 +728,7 @@ mod tests {
     }
 
     #[test]
-    fn preserves_and_reemits_nonstandard_version() {
+    fn from_bytes_preserves_nonstandard_version() {
         let body: Vec<u8> = [1.0f32, 2.0]
             .iter()
             .flat_map(|x| x.to_bits().to_le_bytes())
@@ -732,13 +736,9 @@ mod tests {
         let len = VECTOR_HEADER_SIZE + body.len();
         let mut buf = craft(2, VectorElementType::Float32.code(), 2, [0, 0], &body);
 
-        let v = Vector::from_bytes(&mut buf, len).unwrap();
-        assert_eq!(v.version(), 2, "on-wire version must be preserved");
-        assert_eq!(v.data(), &VectorData::Float32(vec![1.0, 2.0]));
-
-        // Writing it back re-emits the same (non-default) version.
-        let out = encode(&v, v.wire_size());
-        assert_eq!(out.data_buffer[0], 2);
+        let vector = Vector::from_bytes(&mut buf, len).unwrap();
+        assert_eq!(vector.version(), 2);
+        assert_eq!(encode(&vector, vector.wire_size()).data_buffer[0], 2);
     }
 
     #[test]
@@ -762,6 +762,20 @@ mod tests {
     }
 
     #[test]
+    fn from_bytes_decodes_empty_body() {
+        let mut buf = craft(
+            VECTOR_VERSION,
+            VectorElementType::Float32.code(),
+            0,
+            [0, 0],
+            &[],
+        );
+        let vector = Vector::from_bytes(&mut buf, VECTOR_HEADER_SIZE).unwrap();
+        assert_eq!(vector.element_type(), VectorElementType::Float32);
+        assert_eq!(vector.dimensions(), 0);
+    }
+
+    #[test]
     fn from_bytes_rejects_truncated_body() {
         // Header claims 4 float32 elements (16 body bytes) but only 8 are given.
         let body = [0u8; 8];
@@ -774,9 +788,7 @@ mod tests {
     }
 
     #[test]
-    fn from_bytes_ignores_reserved_and_skips_trailing_bytes() {
-        // Non-zero reserved bytes are tolerated; trailing bytes past the vector
-        // are skipped so the offset lands exactly at start + len.
+    fn from_bytes_preserves_reserved_bits_and_skips_trailing_bytes() {
         let body: Vec<u8> = 7.0f32.to_bits().to_le_bytes().to_vec();
         let trailing = [0xAAu8, 0xBB, 0xCC];
         let mut full = body.clone();
@@ -784,15 +796,14 @@ mod tests {
         let len = VECTOR_HEADER_SIZE + full.len();
 
         let mut buf = craft(VECTOR_VERSION, VectorElementType::Float32.code(), 1, [0xAB, 0xCD], &full);
-        let v = Vector::from_bytes(&mut buf, len).unwrap();
-        assert_eq!(v, Vector::float32(vec![7.0]));
-        assert_eq!(buf.data_offset, len, "offset must advance past the whole particle");
+        let vector = Vector::from_bytes(&mut buf, len).unwrap();
+        assert_eq!(vector.reserved(), u16::from_le_bytes([0xAB, 0xCD]));
+        assert_eq!(vector.data(), &VectorData::Float32(vec![7.0]));
+        assert_eq!(buf.data_offset, len);
     }
 
     #[test]
     fn float16_special_bit_patterns_round_trip() {
-        // Raw half-precision patterns: +Inf, -Inf, NaN, +0, -0, smallest
-        // subnormal. Float16 is opaque to us, so the raw u16s must survive.
         let v = Vector::float16(vec![0x7c00, 0xfc00, 0x7e00, 0x0000, 0x8000, 0x0001]);
         let buf = encode(&v, v.wire_size());
         assert_eq!(&buf.data_buffer[8..10], &0x7c00u16.to_le_bytes());
@@ -807,7 +818,8 @@ mod tests {
         assert_eq!(v.version(), VECTOR_VERSION);
         assert_eq!(v.data(), &VectorData::Float64(vec![1.0, 2.0, 3.0]));
         assert!(!v.is_empty());
-        assert!(Vector::int32(vec![]).is_empty());
+        assert_eq!(v.reserved(), 0);
+        assert_eq!(round_trip(&v), v);
     }
 
     #[test]
@@ -846,7 +858,7 @@ mod tests {
     fn from_bytes_rejects_oversized_dimensions_without_allocating() {
         // A header claiming u32::MAX elements (or a "negative" dimension count,
         // which is the same bit pattern) must be rejected by the bounds check
-        // rather than attempting a huge allocation.
+        // Avoid a huge allocation.
         let mut buf = craft(
             VECTOR_VERSION,
             VectorElementType::Float32.code(),

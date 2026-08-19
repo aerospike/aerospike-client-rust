@@ -13,102 +13,37 @@
 // License for the specific language governing permissions and limitations under
 // the License.
 
-//! Vector Aerospike filter expressions.
+//! WIP vector-distance filter expressions.
 //!
-//! TODO(vector-exp-envelope, vector-exp-metric-semantics): the query-vector
-//! envelope and each metric's semantics ([`l2_squared_distance`],
-//! [`dot_product`], [`cosine_similarity`]) are named for their decided
-//! target behavior, but this has not been double-checked against current
-//! server code (the available `aerospike-server` checkout may be outdated),
-//! and there are no integration tests against a real server yet. Verify and
-//! add integration tests before relying on this in production.
+//! Requires `EXP_VECTOR_DIST`. Query payloads contain raw little-endian
+//! elements, excluding the vector header.
 
 use crate::expressions::{ExpOp, Expression};
 use crate::vector::{Vector, VectorDistanceMetric};
 use crate::Value;
 
-/// Creates an expression that returns the squared L2 (squared Euclidean)
-/// distance between a stored vector bin and `query` as a 64-bit float.
-/// Smaller is closer.
+/// Creates a squared-Euclidean-distance expression (not square-rooted). Smaller is closer.
 ///
-/// The query vector's element type and dimension count must match the stored
-/// vector; otherwise the expression evaluates to unknown. `bin` is typically
-/// [`vector_bin`](crate::expressions::vector_bin).
-///
-/// See the [module docs](self): the wire contract is not yet double-checked
-/// against current server code.
-///
-/// ```
-/// use aerospike::expressions::{lt, float_val, vector_bin};
-/// use aerospike::expressions::vector::l2_squared_distance;
-/// use aerospike::Vector;
-///
-/// let query = Vector::float32(vec![0.12, 0.98, -0.34]);
-/// let _exp = lt(
-///     l2_squared_distance(&query, vector_bin("embedding".to_string())),
-///     float_val(0.1),
-/// );
-/// ```
-pub fn l2_squared_distance(query: &Vector, bin: Expression) -> Expression {
-    build_distance(VectorDistanceMetric::L2Squared, query, bin)
+/// WIP: requires `EXP_VECTOR_DIST`; query type and dimensions must match `bin`.
+pub fn euclidean_squared_distance(query: &Vector, bin: Expression) -> Expression {
+    build_distance(VectorDistanceMetric::EuclideanSquared, query, bin)
 }
 
-/// Creates an expression that returns the dot product between a stored
-/// vector bin and `query` as a 64-bit float. Larger is more similar.
+/// Creates a dot-product expression. Larger is more similar.
 ///
-/// The query vector's element type and dimension count must match the stored
-/// vector; otherwise the expression evaluates to unknown. `bin` is typically
-/// [`vector_bin`](crate::expressions::vector_bin).
-///
-/// See the [module docs](self): the wire contract is not yet double-checked
-/// against current server code.
-///
-/// ```
-/// use aerospike::expressions::{gt, float_val, vector_bin};
-/// use aerospike::expressions::vector::dot_product;
-/// use aerospike::Vector;
-///
-/// let query = Vector::float32(vec![0.12, 0.98, -0.34]);
-/// let _exp = gt(
-///     dot_product(&query, vector_bin("embedding".to_string())),
-///     float_val(0.8),
-/// );
-/// ```
+/// WIP: requires `EXP_VECTOR_DIST`; query type and dimensions must match `bin`.
 pub fn dot_product(query: &Vector, bin: Expression) -> Expression {
     build_distance(VectorDistanceMetric::DotProduct, query, bin)
 }
 
-/// Creates an expression that returns the cosine similarity between a stored
-/// vector bin and `query` as a 64-bit float. Larger is more similar.
+/// Creates a cosine-similarity expression. Larger is more similar.
 ///
-/// The query vector's element type and dimension count must match the stored
-/// vector; otherwise the expression evaluates to unknown. `bin` is typically
-/// [`vector_bin`](crate::expressions::vector_bin).
-///
-/// See the [module docs](self): the wire contract is not yet double-checked
-/// against current server code.
-///
-/// ```
-/// use aerospike::expressions::{gt, float_val, vector_bin};
-/// use aerospike::expressions::vector::cosine_similarity;
-/// use aerospike::Vector;
-///
-/// let query = Vector::float32(vec![0.12, 0.98, -0.34]);
-/// let _exp = gt(
-///     cosine_similarity(&query, vector_bin("embedding".to_string())),
-///     float_val(0.8),
-/// );
-/// ```
+/// WIP: requires `EXP_VECTOR_DIST`; query type and dimensions must match `bin`.
 pub fn cosine_similarity(query: &Vector, bin: Expression) -> Expression {
-    build_distance(VectorDistanceMetric::Cosine, query, bin)
+    build_distance(VectorDistanceMetric::CosineSimilarity, query, bin)
 }
 
-/// Shared builder behind [`l2_squared_distance`], [`dot_product`], and
-/// [`cosine_similarity`]. Kept private: the metric is a compile-time choice
-/// of *which named function* to call, not a runtime parameter callers should
-/// pick from a bare [`VectorDistanceMetric`] — that keeps the public API
-/// aligned with the PRD-specified per-metric builder shape (mirroring Java's
-/// planned `VectorExp.cosineSimilarity`/`dotProduct`/`l2SquaredDistance`).
+/// Builds the shared vector-distance expression form.
 fn build_distance(metric: VectorDistanceMetric, query: &Vector, bin: Expression) -> Expression {
     Expression::new(
         Some(ExpOp::VectorDist),
@@ -126,15 +61,11 @@ mod tests {
     use crate::commands::buffer::Buffer;
     use crate::expressions::vector_bin;
 
-    // All three vector distance builders can now be packed/sent. This does not
-    // confirm the server accepts or correctly interprets the payload -- see
-    // the module-level TODO about double-checking against current server code
-    // and adding integration tests.
     #[test]
     fn distance_builders_can_be_packed() {
         let query = Vector::float32(vec![1.0]);
         for exp in [
-            l2_squared_distance(&query, vector_bin("v".to_string())),
+            euclidean_squared_distance(&query, vector_bin("v".to_string())),
             dot_product(&query, vector_bin("v".to_string())),
             cosine_similarity(&query, vector_bin("v".to_string())),
         ] {
@@ -142,8 +73,7 @@ mod tests {
         }
     }
 
-    // Pins the wire form. Matches the server's `EXP_VECTOR_DIST` (opcode 52)
-    // layout: array[4] = [VECTOR_DIST(52), metric, query blob, bin].
+    // WIP wire form: [VECTOR_DIST, metric, query blob, bin].
     #[test]
     fn cosine_similarity_wire_bytes() {
         let query = Vector::float32(vec![1.0]);
@@ -152,7 +82,7 @@ mod tests {
         let expected = [
             0x94, // array(4)
             0x34, // VECTOR_DIST (52)
-            0x02, // metric = Cosine (2)
+            0x02, // metric = CosineSimilarity (2)
             0xa5, 0x04, 0x00, 0x00, 0x80, 0x3f, // BLOB of 1.0f32, little-endian
             0x93, 0x51, 0x06, 0xa1, 0x76, // bin "v": [Bin(81), BLOB type(6), "v"]
         ];
