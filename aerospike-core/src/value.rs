@@ -278,8 +278,7 @@ pub enum Value {
     /// HLL value
     HLL(Vec<u8>),
 
-    /// A dense numeric vector for vector similarity search. Encoded with the
-    /// `VECTOR` particle type; see [`Vector`](crate::Vector).
+    /// A `VECTOR` particle; see [`Vector`](crate::Vector).
     Vector(Vector),
 
     /// Infinity Value
@@ -1798,7 +1797,7 @@ mod tests {
         }
     }
 
-    // Full write -> read cycle through the bin particle path used by put/get.
+    // Bin-particle serde.
     #[test]
     fn vector_value_round_trips_through_particle() {
         use crate::Vector;
@@ -1816,6 +1815,180 @@ mod tests {
         buf.data_offset = 0;
         let decoded = bytes_to_particle(ParticleType::VECTOR as u8, &mut buf, size).unwrap();
         assert_eq!(decoded, value);
+    }
+
+    // Bin-particle serde with exact-size verification.
+    fn particle_round_trip(value: &Value) -> Value {
+        let size = value.estimate_size().unwrap();
+        let mut buf = Buffer::new(usize::MAX);
+        buf.resize_buffer(size).unwrap();
+        buf.data_offset = 0;
+        let written = value.write_to(&mut buf).unwrap();
+        assert_eq!(written, size, "write_to must write exactly estimate_size bytes");
+
+        buf.data_offset = 0;
+        bytes_to_particle(ParticleType::VECTOR as u8, &mut buf, size).unwrap()
+    }
+
+    // Nested CDT serde.
+    fn cdt_list_round_trip(value: Value) -> Value {
+        use crate::msgpack::{decoder, encoder};
+
+        let list = Value::List(vec![value]);
+        let size = encoder::pack_value(&mut None, &list).unwrap();
+        let mut buf = Buffer::new(usize::MAX);
+        buf.resize_buffer(size).unwrap();
+        buf.data_offset = 0;
+        let written = encoder::pack_value(&mut Some(&mut buf), &list).unwrap();
+        assert_eq!(written, size, "pack_value must write exactly its estimated size");
+
+        buf.data_offset = 0;
+        let Value::List(mut decoded) = decoder::unpack_value_list(&mut buf).unwrap() else {
+            panic!("expected a list");
+        };
+        decoded.pop().unwrap()
+    }
+
+    // All element types.
+    #[test]
+    fn vector_particle_round_trips_every_element_type() {
+        use crate::Vector;
+
+        let vectors = [
+            Value::Vector(Vector::float16(vec![0x3c00, 0x4000, 0xbc00])),
+            Value::Vector(Vector::int32(vec![-5, 0, 7, i32::MIN, i32::MAX])),
+            Value::Vector(Vector::float32(vec![0.1, -2.5, 3.14159])),
+            Value::Vector(Vector::float64(vec![0.1, -2.5, f64::MAX])),
+        ];
+
+        for value in vectors {
+            assert_eq!(particle_round_trip(&value), value, "particle round trip: {value}");
+            assert_eq!(cdt_list_round_trip(value.clone()), value, "cdt round trip: {value}");
+        }
+    }
+
+    // A single-element vector has just the header plus one element.
+    #[test]
+    fn single_element_vector_round_trips_through_both_serde_paths() {
+        use crate::Vector;
+
+        let value = Value::Vector(Vector::float32(vec![1.5]));
+        assert_eq!(
+            value.estimate_size().unwrap(),
+            crate::vector::VECTOR_HEADER_SIZE + 4
+        );
+
+        assert_eq!(particle_round_trip(&value), value);
+        assert_eq!(cdt_list_round_trip(value.clone()), value);
+
+        assert_ne!(
+            particle_round_trip(&value),
+            Value::Vector(Vector::int32(vec![1]))
+        );
+    }
+
+    // The header's reserved bits (always zero) survive both serde paths.
+    #[test]
+    fn vector_reserved_bits_round_trip_through_both_serde_paths() {
+        use crate::Vector;
+
+        let value = Value::Vector(Vector::float32(vec![1.0, 2.0]));
+
+        assert_eq!(particle_round_trip(&value), value);
+        assert_eq!(cdt_list_round_trip(value.clone()), value);
+        if let Value::Vector(v) = particle_round_trip(&value) {
+            assert_eq!(v.reserved(), 0);
+        }
+    }
+
+    // The server preserves non-finite element bits.
+    #[test]
+    fn non_finite_vector_elements_round_trip_through_both_serde_paths() {
+        use crate::Vector;
+
+        for value in [
+            Value::Vector(Vector::float32(vec![f32::NAN, f32::INFINITY, f32::NEG_INFINITY, -0.0])),
+            Value::Vector(Vector::float64(vec![f64::NAN, f64::INFINITY, f64::NEG_INFINITY, -0.0])),
+            Value::Vector(Vector::float16(vec![0x7c00, 0xfc00, 0x7e00])),
+        ] {
+            assert_eq!(particle_round_trip(&value), value, "particle: {value}");
+            assert_eq!(cdt_list_round_trip(value.clone()), value, "cdt: {value}");
+        }
+    }
+
+    // Guards against particle truncation.
+    #[test]
+    fn large_vector_round_trips_through_particle() {
+        use crate::Vector;
+
+        let data: Vec<f32> = (0..4096).map(|i| i as f32 * 0.5).collect();
+        let value = Value::Vector(Vector::float32(data));
+        assert_eq!(particle_round_trip(&value), value);
+    }
+
+    // Vectors nested in maps round-trip.
+    #[test]
+    fn vector_round_trips_nested_in_map() {
+        use crate::msgpack::{decoder, encoder};
+        use crate::Vector;
+
+        let mut map = HashMap::new();
+        map.insert(Value::from("one"), Value::Vector(Vector::float64(vec![1.5])));
+        map.insert(Value::from("full"), Value::Vector(Vector::int32(vec![7, 8])));
+        let value = Value::HashMap(map);
+
+        let size = encoder::pack_value(&mut None, &value).unwrap();
+        let mut buf = Buffer::new(usize::MAX);
+        buf.resize_buffer(size).unwrap();
+        buf.data_offset = 0;
+        encoder::pack_value(&mut Some(&mut buf), &value).unwrap();
+
+        buf.data_offset = 0;
+        let decoded = decoder::unpack_value_map(&mut buf).unwrap();
+        assert_eq!(decoded, value);
+    }
+
+    // Forces the msgpack length header past 16 bits; estimate/write must agree.
+    #[test]
+    fn large_nested_vector_crosses_16bit_length_boundary() {
+        use crate::msgpack::{decoder, encoder};
+        use crate::Vector;
+
+        let data: Vec<f64> = (0..16_384).map(|i| f64::from(i) * 0.25).collect();
+        let vector = Vector::float64(data);
+        assert!(
+            vector.wire_size() > 65_535,
+            "vector must exceed the 16-bit msgpack length boundary"
+        );
+        let value = Value::List(vec![Value::Vector(vector)]);
+
+        let size = encoder::pack_value(&mut None, &value).unwrap();
+        let mut buf = Buffer::new(usize::MAX);
+        buf.resize_buffer(size).unwrap();
+        buf.data_offset = 0;
+        let written = encoder::pack_value(&mut Some(&mut buf), &value).unwrap();
+        assert_eq!(written, size, "estimate and write passes must agree");
+
+        buf.data_offset = 0;
+        let decoded = decoder::unpack_value_list(&mut buf).unwrap();
+        assert_eq!(decoded, value);
+    }
+
+    // Rejects truncated vector bodies.
+    #[test]
+    fn vector_particle_decoder_rejects_truncated_body() {
+        use crate::Vector;
+
+        let value = Value::Vector(Vector::float32(vec![1.0, 2.0, 3.0, 4.0]));
+        let size = value.estimate_size().unwrap();
+        let mut buf = Buffer::new(usize::MAX);
+        buf.resize_buffer(size).unwrap();
+        buf.data_offset = 0;
+        value.write_to(&mut buf).unwrap();
+
+        buf.data_offset = 0;
+        let truncated = crate::vector::VECTOR_HEADER_SIZE + 2 * 4;
+        assert!(bytes_to_particle(ParticleType::VECTOR as u8, &mut buf, truncated).is_err());
     }
 
     // A vector nested in a list round-trips through the msgpack (CDT) path.

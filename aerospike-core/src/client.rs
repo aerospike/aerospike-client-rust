@@ -366,7 +366,6 @@ impl Client {
         node.info(policy, commands).await
     }
 
-
     /// Returns a list of active server nodes in the cluster.
     ///
     /// # Examples
@@ -3725,4 +3724,5 @@ mod top_k_execution_tests {
         // `stmt` is still valid to read here.
         assert_eq!(stmt.top_k, Some(1));
     }
+
 }

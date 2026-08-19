@@ -1511,18 +1511,14 @@ impl Buffer {
         // ---------- estimation: order_by / top_k (Top-K queries) ----------
         if statement.order_by.is_some() && !node.version().supports_query_top_k() {
             return Err(Error::invalid_argument(
-                "orderBy/topK requires a server version that supports Top-K queries \
-                 (not yet released)",
+                "orderBy/topK requires Aerospike Server 8.1.3 or later",
             ));
         }
 
         let mut order_by_size = 0;
         if let Some(ref order_by) = statement.order_by {
-            order_by_size += encoder::pack_array_begin(&mut None, 4);
-            order_by_size += encoder::pack_raw_string(&mut None, &order_by.bin_name);
-            order_by_size += encoder::pack_integer(&mut None, order_by.order_type as i64);
-            order_by_size += encoder::pack_integer(&mut None, order_by.direction as i64);
-            order_by_size += encoder::pack_integer(&mut None, order_by.flags.to_wire_bits() as i64);
+            // Server layout: type, direction, flags, bin-name length, name.
+            order_by_size = 4 + order_by.bin_name.len();
             self.data_offset += order_by_size + FIELD_HEADER_SIZE as usize;
             field_count += 1;
         }
@@ -1698,11 +1694,11 @@ impl Buffer {
 
         if let Some(ref order_by) = statement.order_by {
             self.write_field_header(order_by_size, FieldType::OrderBy);
-            encoder::pack_array_begin(&mut Some(self), 4);
-            encoder::pack_raw_string(&mut Some(self), &order_by.bin_name);
-            encoder::pack_integer(&mut Some(self), order_by.order_type as i64);
-            encoder::pack_integer(&mut Some(self), order_by.direction as i64);
-            encoder::pack_integer(&mut Some(self), order_by.flags.to_wire_bits() as i64);
+            self.write_u8(order_by.order_type as u8);
+            self.write_u8(order_by.direction as u8);
+            self.write_u8(order_by.flags.to_wire_bits() as u8);
+            self.write_u8(order_by.bin_name.len() as u8);
+            self.write_bytes(order_by.bin_name.as_bytes());
         }
         if let Some(k) = statement.top_k {
             self.write_field_u32(k, FieldType::TopK);
@@ -3684,7 +3680,7 @@ mod tests {
             )
             .unwrap_err();
         assert!(
-            err.to_string().contains("Top-K"),
+            err.to_string().contains("8.1.3"),
             "unexpected error: {err}"
         );
     }
@@ -3695,18 +3691,12 @@ mod tests {
         use crate::{Bins, QueryPolicy, Statement};
 
         let mut buf = Buffer::new(4096);
-        // Sentinel version above `supports_query_top_k()`'s placeholder
-        // threshold — see that function's docs for why this is safe.
-        let node = crate::cluster::node::test_node_with_version(crate::Version::new(
-            u64::MAX,
-            0,
-            0,
-            0,
-        ));
+        let node =
+            crate::cluster::node::test_node_with_version(crate::Version::new(8, 1, 3, 0));
         let mut stmt = Statement::new("test", "test", Bins::All);
         stmt.set_order_by_with_flags(
             "score",
-            OrderByType::Integer,
+            OrderByType::String,
             Order::Desc,
             OrderByFlags::CaseInsensitive,
         );
@@ -3729,16 +3719,20 @@ mod tests {
             .map(|(_, payload)| payload.clone())
             .expect("OrderBy field must be present");
 
-        // msgpack 4-element fixarray, then a plain (untagged) fixstr
-        // "score", then three fixints (type=Integer=0, direction=Desc=1,
-        // flags=CaseInsensitive=1).
-        let mut expected = vec![0x94]; // fixarray, len 4
-        expected.push(0xa5); // fixstr, len 5
-        expected.extend_from_slice(b"score");
-        expected.push(0); // OrderByType::Integer
-        expected.push(1); // Order::Desc
-        expected.push(1); // OrderByFlags::CaseInsensitive wire bit
-        assert_eq!(order_by_payload, expected);
+        assert_eq!(
+            order_by_payload,
+            vec![
+                OrderByType::String as u8,
+                Order::Desc as u8,
+                OrderByFlags::CaseInsensitive.to_wire_bits() as u8,
+                5,
+                b's',
+                b'c',
+                b'o',
+                b'r',
+                b'e',
+            ]
+        );
 
         let top_k_payload = fields
             .iter()

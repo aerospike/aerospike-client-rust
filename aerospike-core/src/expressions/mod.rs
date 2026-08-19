@@ -106,6 +106,8 @@ pub(crate) enum ExpOp {
     IntRscan = 41,
     Min = 50,
     Max = 51,
+    // WIP: opcode/layout are unverified until a server build exposes
+    // EXP_VECTOR_DIST.
     VectorDist = 52,
     DigestModulo = 64,
     DeviceSize = 65,
@@ -367,11 +369,6 @@ impl Expression {
                 size += pack_raw_string(buf, &self.val.clone().unwrap().to_string());
             }
             ExpOp::VectorDist => {
-                // TODO(vector-exp-envelope, vector-exp-metric-semantics): double-check
-                // this layout and each metric's actual server-side behavior against
-                // current server code, and add integration tests against a real
-                // server, before relying on this in production.
-                //
                 // Layout: array[4] = [VECTOR_DIST, metric, query BLOB, bin]
                 size += pack_array_begin(buf, 4);
                 size += pack_integer(buf, cmd as i64);
@@ -726,23 +723,9 @@ pub fn hll_bin(name: String) -> Expression {
     )
 }
 
-/// Creates a vector bin expression, for use with the vector distance
-/// expressions in [`expressions::vector`](crate::expressions::vector) (e.g.
-/// [`expressions::vector::cosine_similarity`](crate::expressions::vector::cosine_similarity)).
-/// A vector bin is read as a blob at the expression level.
+/// Creates a vector-bin expression for WIP vector-distance expressions.
 ///
-/// Only meaningful together with a vector distance expression. See
-/// [`expressions::vector`](crate::expressions::vector) — the wire contract
-/// there is not yet double-checked against current server code.
-/// ```
-/// use aerospike::expressions::{gt, float_val, vector_bin};
-/// use aerospike::expressions::vector::cosine_similarity;
-/// use aerospike::Vector;
-///
-/// // Cosine similarity between bin "v" and a query vector > 0.8
-/// let query = Vector::float32(vec![0.1, 0.2, 0.3]);
-/// gt(cosine_similarity(&query, vector_bin("v".to_string())), float_val(0.8));
-/// ```
+/// Encoded as a blob; requires `EXP_VECTOR_DIST`.
 pub fn vector_bin(name: String) -> Expression {
     Expression::new(
         Some(ExpOp::Bin),

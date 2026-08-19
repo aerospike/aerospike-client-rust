@@ -65,12 +65,7 @@ pub struct Statement {
     /// reads as well.
     pub operations: Option<Vec<Operation>>,
 
-    /// Top-K order-by clause. Set via `set_order_by`/`set_order_by_with_flags`.
-    ///
-    /// # Work in progress
-    ///
-    /// This client validates and models Top-K statements, but does not yet
-    /// send them over the wire — see [`crate::query::order_by`].
+    /// Top-K order-by clause. Requires server 8.1.3 or later.
     pub order_by: Option<OrderBy>,
 
     /// Top-K limit (`k`), in `[1, 1000]`. Must be preceded by `set_order_by`.

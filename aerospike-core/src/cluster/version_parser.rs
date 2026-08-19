@@ -121,15 +121,8 @@ impl Version {
     /// Server supports `ORDER BY <bin> LIMIT k` ("Top-K") queries
     /// (`FieldType::OrderBy` / `FieldType::TopK` on the wire).
     ///
-    /// This feature has no assigned minimum server version yet (still
-    /// unreleased). The threshold below (`u64::MAX` major) is a deliberate
-    /// placeholder no real server can ever report, so this safely evaluates
-    /// to `false` for every real cluster while still letting unit tests
-    /// exercise the gated wire-encode path in
-    /// `commands/buffer.rs::set_query` by constructing a `Version` above it.
-    /// Replace with the real minimum version once one is assigned.
     pub fn supports_query_top_k(&self) -> bool {
-        self >= &Version::new(u64::MAX, 0, 0, 0)
+        self >= &Version::new(8, 1, 3, 0)
     }
 }
 

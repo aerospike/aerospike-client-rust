@@ -516,8 +516,7 @@ pub fn pack_hll(buf: &mut Option<&mut Buffer>, value: &[u8]) -> usize {
     size
 }
 
-/// Pack a vector nested in a CDT or expression: a msgpack byte string tagged
-/// with the `VECTOR` particle type (like [`pack_hll`]), payload = its wire form.
+/// Packs a nested vector as a `VECTOR`-tagged msgpack byte string.
 pub fn pack_vector(buf: &mut Option<&mut Buffer>, value: &Vector) -> usize {
     let mut size = value.wire_size() + 1;
 
