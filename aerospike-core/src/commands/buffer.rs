@@ -638,7 +638,14 @@ impl Buffer {
             prev = Some(batch_op);
         }
 
-        let field_size = self.data_offset - MSG_TOTAL_HEADER_SIZE as usize - 4;
+        // Measured from the field's own header, not from the end of the
+        // message header. The two are the same only when nothing is written
+        // between them — and a filter expression is written between them, so
+        // the old form overstated the size by exactly the filter's length.
+        //
+        // The size an `as_msg_field` declares covers its type byte and its
+        // value, which is everything after the four size bytes: hence the -4.
+        let field_size = self.data_offset - field_size_offset - 4;
         NetworkEndian::write_u32(
             &mut self.data_buffer[field_size_offset..field_size_offset + 4],
             field_size as u32,
@@ -2259,5 +2266,83 @@ mod tests {
             1.5_f64.to_be_bytes(),
             "f32 must widen losslessly to the double particle"
         );
+    }
+
+    /// Every `as_msg_field` declares a size that matches what follows it.
+    ///
+    /// A server walks fields by following each header to the next, so an
+    /// overstated size on any field but the last silently swallows the ones
+    /// after it — and on the last it runs off the end of the message. The C
+    /// server never notices the last one, which is why this went unseen: the
+    /// batch-index field is written last, and its size was computed from the
+    /// end of the *message header* rather than from the field's own offset.
+    /// Anything written in between — a filter expression — made it overstate
+    /// by exactly that much.
+    #[test]
+    fn a_batch_with_a_filter_declares_the_right_field_size() {
+        use crate::expressions as exp;
+        use crate::{BatchOperation, BatchReadPolicy, Bins};
+
+        let key = Key::new("test", "demo", Value::from(1)).unwrap();
+        let ops = vec![(
+            BatchOperation::read(&BatchReadPolicy::default(), key, Bins::All),
+            0usize,
+        )];
+
+        for filter in [
+            None,
+            Some(exp::ge(exp::int_bin("n".to_string()), exp::int_val(0))),
+        ] {
+            let described = if filter.is_some() {
+                "with a filter expression"
+            } else {
+                "without one"
+            };
+            let policy = BatchPolicy {
+                filter_expression: filter,
+                ..BatchPolicy::default()
+            };
+
+            let mut buf = Buffer::new(0);
+            buf.set_batch_operate(&policy, &ops).expect("encodes");
+
+            // `end()` rewinds `data_offset` to the proto header it just wrote,
+            // so the message runs from there for as far as that header says.
+            let proto = NetworkEndian::read_u64(&buf.data_buffer[..8]);
+            let msg_len = (proto & 0x0000_ffff_ffff_ffff) as usize;
+            let msg = &buf.data_buffer[8..8 + msg_len];
+
+            // Walk the fields the way a server does: each header says how far
+            // to the next one.
+            let n_fields = NetworkEndian::read_u16(&msg[18..20]) as usize;
+            let mut at = MSG_TOTAL_HEADER_SIZE as usize - 8;
+
+            for i in 0..n_fields {
+                assert!(
+                    at + 4 <= msg.len(),
+                    "field {i} header runs past the message, {described}"
+                );
+                let sz = NetworkEndian::read_u32(&msg[at..at + 4]) as usize;
+                assert!(
+                    sz >= 1,
+                    "field {i} declares no room for its own type byte, {described}"
+                );
+                at += 4 + sz;
+                assert!(
+                    at <= msg.len(),
+                    "field {i} declares {sz} bytes but only {} remain, {described}",
+                    msg.len().saturating_sub(at - sz),
+                );
+            }
+
+            // And the walk lands exactly on the end of the fields, which is
+            // where the operations would start. Overstating leaves it past the
+            // end; understating leaves it short.
+            assert_eq!(
+                at,
+                msg.len(),
+                "walking the fields did not land on the end of the message, {described}"
+            );
+        }
     }
 }
