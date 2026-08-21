@@ -1,0 +1,772 @@
+<title>Two Engines Inside asd</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans+Condensed:wght@500;600;700&family=IBM+Plex+Serif:ital,wght@0,400;0,500;1,400&display=swap">
+
+<style>
+:root {
+  --paper:   #F2F4F7;
+  --surface: #FFFFFF;
+  --ink:     #101821;
+  --muted:   #5A6472;
+  --rule:    #D3DAE3;
+  --wasm:    #0F766E;
+  --native:  #B3222B;
+  --ops:     #4B5563;
+  --wasm-wash:   rgba(15,118,110,.08);
+  --native-wash: rgba(179,34,43,.07);
+  --shadow: 0 1px 2px rgba(16,24,33,.06), 0 8px 24px rgba(16,24,33,.06);
+  --sans: "IBM Plex Sans Condensed", "Helvetica Neue", Arial, sans-serif;
+  --serif: "IBM Plex Serif", Georgia, "Times New Roman", serif;
+  --mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --paper:   #0B121A;
+    --surface: #131C26;
+    --ink:     #E6EAF0;
+    --muted:   #8D9AAA;
+    --rule:    #24303D;
+    --wasm:    #2DD4BF;
+    --native:  #F1666F;
+    --ops:     #9CA3AF;
+    --wasm-wash:   rgba(45,212,191,.10);
+    --native-wash: rgba(241,102,111,.10);
+    --shadow: 0 1px 2px rgba(0,0,0,.4), 0 10px 30px rgba(0,0,0,.35);
+  }
+}
+:root[data-theme="dark"] {
+  --paper:   #0B121A;
+  --surface: #131C26;
+  --ink:     #E6EAF0;
+  --muted:   #8D9AAA;
+  --rule:    #24303D;
+  --wasm:    #2DD4BF;
+  --native:  #F1666F;
+  --ops:     #9CA3AF;
+  --wasm-wash:   rgba(45,212,191,.10);
+  --native-wash: rgba(241,102,111,.10);
+  --shadow: 0 1px 2px rgba(0,0,0,.4), 0 10px 30px rgba(0,0,0,.35);
+}
+
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--serif);
+  font-size: 17px;
+  line-height: 1.55;
+  -webkit-font-smoothing: antialiased;
+}
+
+.deck { position: relative; }
+.slide {
+  display: none;
+  min-height: 100vh;
+  padding: clamp(28px, 5vh, 64px) clamp(20px, 6vw, 96px) 104px;
+  flex-direction: column;
+  gap: clamp(14px, 2.2vh, 26px);
+}
+.slide[data-active="true"] { display: flex; }
+
+.eyebrow {
+  font-family: var(--mono);
+  font-size: 11.5px;
+  font-weight: 600;
+  letter-spacing: .16em;
+  text-transform: uppercase;
+  color: var(--muted);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.eyebrow::before {
+  content: "";
+  width: 26px; height: 3px; border-radius: 2px;
+  background: var(--track);
+}
+.slide[data-track="wasm"]   { --track: var(--wasm); }
+.slide[data-track="native"] { --track: var(--native); }
+.slide[data-track="shared"] { --track: var(--ink); }
+.slide[data-track="ops"]    { --track: var(--ops); }
+
+h1, h2 { font-family: var(--sans); font-weight: 700; text-wrap: balance; margin: 0; letter-spacing: -.01em; }
+h1 { font-size: clamp(38px, 6.4vw, 82px); line-height: 1.02; }
+h2 { font-size: clamp(26px, 3.5vw, 44px); line-height: 1.08; }
+h3 {
+  font-family: var(--mono); font-size: 12px; font-weight: 600;
+  letter-spacing: .1em; text-transform: uppercase; color: var(--muted);
+  margin: 0 0 8px;
+}
+p { margin: 0; max-width: 68ch; }
+.lede { font-size: clamp(18px, 1.5vw, 21px); color: var(--ink); }
+em.q { font-style: italic; color: var(--muted); }
+strong { font-weight: 600; }
+code, .mono { font-family: var(--mono); font-size: .88em; }
+code {
+  background: var(--wasm-wash); padding: .12em .38em; border-radius: 4px;
+  color: var(--ink);
+}
+.slide[data-track="native"] code { background: var(--native-wash); }
+
+.cols { display: grid; gap: clamp(16px, 2vw, 30px); grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); align-items: start; }
+.card {
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-radius: 10px;
+  padding: 18px 20px;
+  box-shadow: var(--shadow);
+  display: flex; flex-direction: column; gap: 8px;
+}
+.card.accent { border-left: 3px solid var(--track); }
+
+ul { margin: 0; padding-left: 1.15em; display: flex; flex-direction: column; gap: 9px; max-width: 70ch; }
+li::marker { color: var(--track); }
+
+.tablewrap { overflow-x: auto; border: 1px solid var(--rule); border-radius: 10px; background: var(--surface); box-shadow: var(--shadow); }
+table { border-collapse: collapse; width: 100%; font-family: var(--mono); font-size: 14px; font-variant-numeric: tabular-nums; }
+caption { caption-side: bottom; text-align: left; padding: 10px 14px; font-family: var(--serif); font-size: 14px; color: var(--muted); }
+th, td { padding: 9px 14px; text-align: right; border-bottom: 1px solid var(--rule); white-space: nowrap; }
+th:first-child, td:first-child { text-align: left; }
+thead th { font-weight: 600; font-size: 11.5px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+tbody tr:last-child td { border-bottom: none; }
+tr.win td { background: var(--track); background: color-mix(in srgb, var(--track) 9%, transparent); font-weight: 600; }
+td.hi { color: var(--track); font-weight: 600; }
+
+.stats { display: grid; gap: 14px; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); }
+.stat { border-top: 3px solid var(--track); padding-top: 10px; display: flex; flex-direction: column; gap: 2px; }
+.stat b { font-family: var(--sans); font-size: clamp(26px, 3vw, 38px); font-weight: 700; line-height: 1; letter-spacing: -.02em; }
+.stat span { font-family: var(--mono); font-size: 11.5px; color: var(--muted); letter-spacing: .04em; }
+
+pre {
+  margin: 0; padding: 14px 16px; overflow-x: auto;
+  background: var(--surface); border: 1px solid var(--rule); border-left: 3px solid var(--track);
+  border-radius: 8px; font-family: var(--mono); font-size: 13px; line-height: 1.5; color: var(--ink);
+}
+.warn { color: var(--native); font-weight: 600; }
+.good { color: var(--wasm); font-weight: 600; }
+
+.title-slide { justify-content: center; }
+.title-meta { font-family: var(--mono); font-size: 13px; color: var(--muted); display: flex; flex-wrap: wrap; gap: 8px 22px; }
+.split { display: grid; gap: 22px; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); }
+.engine { border-radius: 10px; padding: 18px 20px; border: 1px solid var(--rule); background: var(--surface); box-shadow: var(--shadow); }
+.engine.w { border-top: 4px solid var(--wasm); }
+.engine.n { border-top: 4px solid var(--native); }
+.engine h4 { font-family: var(--sans); font-size: 21px; margin: 0 0 6px; font-weight: 700; }
+.engine .k { font-family: var(--mono); font-size: 12px; color: var(--muted); }
+
+.code-grid { display: grid; gap: 12px 16px; grid-template-columns: 1fr 1fr; align-items: start; }
+.code-grid pre { font-size: 11.5px; line-height: 1.45; padding: 12px 13px; }
+.qh {
+  font-family: var(--mono); font-size: 11px; font-weight: 600; letter-spacing: .1em;
+  text-transform: uppercase; color: var(--muted); margin: 0 0 6px;
+  display: flex; justify-content: space-between; gap: 10px;
+}
+.qh b { color: var(--track); font-weight: 600; letter-spacing: .04em; }
+@media (max-width: 900px) { .code-grid { grid-template-columns: 1fr; } }
+
+nav {
+  position: fixed; inset: auto 0 0 0; height: 64px;
+  display: flex; align-items: center; gap: 16px;
+  padding: 0 clamp(16px, 4vw, 40px);
+  background: color-mix(in srgb, var(--paper) 88%, transparent);
+  backdrop-filter: blur(8px);
+  border-top: 1px solid var(--rule);
+}
+.rail { display: flex; gap: 4px; flex: 1; }
+.rail button {
+  flex: 1; height: 5px; border: none; padding: 0; border-radius: 3px;
+  background: var(--rule); cursor: pointer; transition: transform .15s ease;
+}
+.rail button[data-t="wasm"]   { background: color-mix(in srgb, var(--wasm) 38%, var(--rule)); }
+.rail button[data-t="native"] { background: color-mix(in srgb, var(--native) 38%, var(--rule)); }
+.rail button[aria-current="true"] { height: 9px; margin-top: -2px; }
+.rail button[aria-current="true"][data-t="wasm"]   { background: var(--wasm); }
+.rail button[aria-current="true"][data-t="native"] { background: var(--native); }
+.rail button[aria-current="true"][data-t="shared"],
+.rail button[aria-current="true"][data-t="ops"]    { background: var(--ink); }
+.rail button:focus-visible, .arrows button:focus-visible { outline: 2px solid var(--ink); outline-offset: 3px; }
+.counter { font-family: var(--mono); font-size: 12.5px; color: var(--muted); min-width: 62px; text-align: right; }
+.arrows { display: flex; gap: 6px; }
+.arrows button {
+  font-family: var(--mono); font-size: 15px; line-height: 1;
+  width: 34px; height: 30px; border-radius: 6px; cursor: pointer;
+  border: 1px solid var(--rule); background: var(--surface); color: var(--ink);
+}
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+
+<div class="deck" id="deck">
+
+  <section class="slide title-slide" data-track="shared" data-active="true">
+    <div class="eyebrow">Aerospike server &middot; branch <span class="mono">wasm</span></div>
+    <h1>Two Engines<br>Inside <span class="mono" style="font-size:.82em">asd</span></h1>
+    <p class="lede">Aerospike had one UDF language. It now has three: <strong>Lua</strong>, <strong>WASM</strong> compiled ahead of time,
+      and <strong>native</strong> shared objects loaded from the config file. Every number in this deck was measured, in the
+      same run, against Lua as the reference.</p>
+    <div class="title-meta">
+      <span>mod-wamr &middot; mod-native</span>
+      <span>aerospike-udf-sdk-wasm &middot; aerospike-udf-sdk-native</span>
+      <span>45&times; Lua on compute</span>
+      <span>1.24&times; on aggregation</span>
+    </div>
+  </section>
+
+  <section class="slide" data-track="shared">
+    <div class="eyebrow">Why it was tractable</div>
+    <h2>The server already had a language abstraction</h2>
+    <p class="lede">WASM and native are additive. <code>as_module_hooks</code> &mdash; destroy, update, validate,
+      apply_record, apply_stream &mdash; already existed, and <code>mod_lua</code> was simply one implementation of it.</p>
+    <div class="cols">
+      <div class="card accent">
+        <h3>The dispatch fact that shaped everything</h3>
+        <p><code>udf_def.type</code> is the <em class="q">operation</em> (<code>AS_UDF_OP_KVS</code>), not the language.
+          The language never crosses the wire at apply time, so dispatch is by the language recorded against the file
+          name at registration &mdash; <code>udf_cask_get_lang()</code>.</p>
+      </div>
+      <div class="card accent">
+        <h3>One choke point, not three ternaries</h3>
+        <p><code>udf_cask_module_for_file()</code> resolves language&rarr;module once; <code>udf.c</code> and
+          <code>aggr.c</code> call it. Adding the third language made dispatch <strong>simpler</strong> than the
+          two-language version it replaced.</p>
+      </div>
+    </div>
+  </section>
+
+  <section class="slide" data-track="wasm">
+    <div class="eyebrow">WASM &middot; engine selection</div>
+    <h2>Two engines were built, and one was deleted</h2>
+    <p class="lede">wasmtime (Rust, via a C shim, then pure Rust) and WAMR (pure C). They were measured side by side
+      on the same workload, and the loser was removed rather than kept as an option.</p>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>&nbsp;</th><th>Lua</th><th>wasmtime JIT</th><th>wamr interp</th><th>wamr LLVM JIT</th><th>wamr AoT</th></tr></thead>
+        <tbody>
+          <tr><td>200,000 multiply-adds</td><td>3380 &micro;s</td><td>293 &micro;s</td><td>1922 &micro;s</td><td>149 &micro;s</td><td class="hi">74 &micro;s</td></tr>
+          <tr><td>versus Lua</td><td>1&times;</td><td>11&times;</td><td>1.8&times;</td><td>23&times;</td><td class="hi">45&times;</td></tr>
+          <tr><td>runtime linked into asd</td><td>&mdash;</td><td>~100 MB archive</td><td>686 KB</td><td>2 MB + libLLVM</td><td class="hi">830 KB</td></tr>
+        </tbody>
+        <caption>WAMR wins on both axes at once: fastest tier and smallest footprint. <code>modules/mod-wasm</code> was
+          deleted along with the <code>engine</code> selector &mdash; WASM dispatch is now unconditional.</caption>
+      </table>
+    </div>
+  </section>
+
+  <section class="slide" data-track="wasm">
+    <div class="eyebrow">WASM &middot; tiers</div>
+    <h2>Tier facts that decide a deployment</h2>
+    <div class="cols">
+      <div class="card accent">
+        <h3>AoT dominates</h3>
+        <p>The LLVM JIT puts <code>libLLVM</code> inside <code>asd</code> and still runs 2&times; slower than AoT.
+          AoT needs <code>wamrc</code> only to <em class="q">produce</em> files; <code>asd</code> links no LLVM at all.</p>
+      </div>
+      <div class="card accent">
+        <h3>Fast JIT is x86-64 only</h3>
+        <p><code>fast-jit/cg/</code> has exactly one code generator. The CMake now hard-fails instead of quietly
+          building an interpreter that would later be benchmarked as a JIT.</p>
+      </div>
+      <div class="card accent">
+        <h3>The interpreter is the silent fallback</h3>
+        <p>It is only <strong>1.8&times; Lua</strong>, and it is where you land whenever <code>wamrc</code> is missing or
+          an <code>.aot</code> is stale. Hence the <code>wamr: executing in &lt;mode&gt; mode</code> log line &mdash;
+          operationally necessary, not decoration.</p>
+      </div>
+    </div>
+  </section>
+
+  <section class="slide" data-track="wasm">
+    <div class="eyebrow">WASM &middot; the ABI decision</div>
+    <h2>No msgpack anywhere</h2>
+    <p class="lede">Typed natives return scalars in registers; collections cross as <strong>handles</strong> into a
+      per-call <code>as_val*</code> table. The guest therefore needs no allocator at all.</p>
+    <div class="stats">
+      <div class="stat"><b>3.5 KB</b><span>guest module, handle ABI</span></div>
+      <div class="stat"><b>42.8 KB</b><span>guest module, msgpack ABI</span></div>
+      <div class="stat"><b>0.67 &micro;s</b><span>host boundary, per call</span></div>
+      <div class="stat"><b>976 &micro;s</b><span>cold start, was 27 ms</span></div>
+    </div>
+    <div class="card accent">
+      <h3>Where the per-call cost actually lives</h3>
+      <p>Roughly 8 &micro;s over Lua, dominated by <strong>instantiation (~4 &micro;s)</strong> and the guest's
+        <strong>first allocation (~5 &micro;s)</strong> &mdash; not the host boundary. That is why removing the C shim was a
+        clarity refactor that changed nothing measurable, exactly as predicted beforehand.</p>
+    </div>
+  </section>
+
+  <section class="slide" data-track="wasm">
+    <div class="eyebrow">WASM &middot; collections</div>
+    <h2>Every case that looked slow was an API forcing too many calls</h2>
+    <p class="lede">Cost is <em class="q">per call</em>, so the fix is always fewer crossings, never a different engine.</p>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>100k-record map/reduce</th><th>total</th><th>per record</th><th>verdict</th></tr></thead>
+        <tbody>
+          <tr><td>Lua (reference)</td><td>99.0 ms</td><td>1.0 &micro;s</td><td>&mdash;</td></tr>
+          <tr><td>wamr AoT, as first written</td><td>146.2 ms</td><td>1.5 &micro;s</td><td class="warn">1.48&times; slower than Lua</td></tr>
+          <tr class="win"><td>wamr AoT, with by-key + bulk access</td><td>102.7&ndash;106.1 ms</td><td>1.0 &micro;s</td><td>level with Lua</td></tr>
+        </tbody>
+        <caption>The regression was a map handle <code>cf_malloc</code>-materialised <em class="q">per record</em> plus
+          key-scanning with an import call each. <code>map_get_*</code> (key built as a <strong>stack</strong>
+          <code>as_string</code> &mdash; a heap one reinstates the malloc) and <code>list_ints</code> took 15 calls per
+          record down to 2.</caption>
+      </table>
+    </div>
+    <p>On flat lists the ABI simply wins: at 10,000 elements <strong>1.1&times; faster than Lua</strong> and
+      <strong>1.38&times; faster than wasmtime</strong>. Below n&asymp;100 everything sits under the ~80 &micro;s
+      round-trip noise &mdash; sweep to 10k or measure nothing.</p>
+  </section>
+
+  <section class="slide" data-track="wasm">
+    <div class="eyebrow">WASM &middot; stream UDFs</div>
+    <h2>Aggregation was hardcoded to Lua</h2>
+    <p class="lede"><code>aggr.c</code> pointed at <code>&amp;mod_lua</code>: record UDFs dispatched by language,
+      aggregation did not. WASM aggregation is <strong>one instance per stream</strong>, because a guest otherwise gets
+      a fresh instance per call and accumulators need somewhere to live.</p>
+    <div class="cols">
+      <div class="card accent">
+        <h3>The bug a small test could not find</h3>
+        <p>A record read from the istream is <strong>owned by the stream</strong> &mdash; <code>istream_read</code> closes the
+          previous one, so destroying it in the module is a double free. A 50-record test passed with that bug in place.
+          It took <strong>100,000 records</strong> to fault.</p>
+      </div>
+      <div class="card accent">
+        <h3>Handles borrow from a released record</h3>
+        <p>They must be released between records, or 1000 records overflow a 256-slot table:
+          <code>mod_wamr_ctx_next_record</code>.</p>
+      </div>
+      <div class="card accent">
+        <h3>Reached by query(), not query_aggregate()</h3>
+        <p><code>query_aggregate</code> runs its final reduce in <strong>client-side Lua</strong>, which WASM cannot join.
+          WASM returns one partial per node and the caller combines.</p>
+      </div>
+    </div>
+  </section>
+
+  <section class="slide" data-track="native">
+    <div class="eyebrow">Native &middot; the security boundary</div>
+    <h2>Registration is config-only, and that is the point</h2>
+    <p class="lede">A native module runs in the server's address space with its privileges. Installing one is an
+      operator's act, never a client's &mdash; so it is declared in <code>aerospike.conf</code> and nowhere else.</p>
+    <pre>mod-native {
+    module summary {
+        path /home/khosrow/sdk-native/examples/summary/target/release/libaerospike_udf_example_summary.so
+    }
+}</pre>
+    <div class="cols">
+      <div class="card accent">
+        <h3>Three independent refusals</h3>
+        <p><code>udf-type=NATIVE</code> is absent from <code>is_valid_udf_type</code>; <code>udf-put</code> refuses a
+          Lua/WASM name whose base name collides with a configured module (silently losing the dispatch would be worse
+          than an error); <code>validate</code> refuses unconditionally as a second lock.</p>
+      </div>
+      <div class="card accent">
+        <h3>dlopen flags are a correctness question</h3>
+        <p><code>RTLD_NOW | RTLD_LOCAL</code>, never <code>dlclose</code>, and <strong>never
+          <code>RTLD_DEEPBIND</code></strong> &mdash; the server uses jemalloc, and DEEPBIND would bind the plugin to a
+          different <code>malloc</code>, making every cross-boundary pointer a cross-allocator free.</p>
+      </div>
+    </div>
+  </section>
+
+  <section class="slide" data-track="native">
+    <div class="eyebrow">Native &middot; aggregation design</div>
+    <h2>Four shapes, one trait</h2>
+    <div class="cols">
+      <div class="card accent">
+        <h3>The trait</h3>
+        <p><code>Fold</code>, <code>Emit</code>, <code>heap_used()</code> (so an operator ceiling applies as well as the
+          plugin's own limit), <code>merge</code>, <code>finalize</code> once on merged data.</p>
+      </div>
+      <div class="card accent">
+        <h3>The shapes</h3>
+        <p>Filter, chunked collect, reduce. The rule: <strong>emit output values or partials, never both</strong> &mdash;
+          they share one stream and a client cannot tell a mixture apart.</p>
+      </div>
+      <div class="card accent">
+        <h3>Where it hooks</h3>
+        <p><code>query_job.c:203</code> already calls the slice function once per thread with a buf_builder in hand, so
+          the accumulator is per <em class="q">thread</em>: no mutex, no response-path change.</p>
+      </div>
+    </div>
+    <p><code>out.record(rec)</code> is genuinely allocation-free &mdash; the server already has the record.
+      <code>out.value(v)</code> is not, because building <code>v</code> allocates server-side. The second is never
+      described as free.</p>
+  </section>
+
+  <section class="slide" data-track="native">
+    <div class="eyebrow">Native &middot; the same two functions, twice</div>
+    <h2>C writes the type checking; Rust has already done it</h2>
+    <p>The Rust example is deliberately the <em class="q">same functions</em> as the server tree's C example, so the
+      two compare line for line. Per record they cost the same &mdash; <strong>one host call</strong> &mdash; and that is the
+      point: the difference is entirely in what you have to write.</p>
+    <div class="code-grid">
+      <div>
+        <p class="qh"><span>Record UDF &mdash; C</span><b>46 lines</b></p>
+        <pre>static int32_t
+increment(as_native_ctx* ctx, as_native_rec* rec,
+    const as_native_value* args, uint32_t n_args,
+    as_native_value* result)
+{
+    int64_t by = 1;
+
+    if (n_args == 1) {
+        if (args[0].type != AS_NATIVE_TYPE_INT) {
+            fail(ctx, "argument must be an integer");
+            return AS_NATIVE_TYPE_MISMATCH;
+        }
+        by = args[0].u.i;
+    }
+
+    int64_t n = 0;
+    int32_t rv = H-&gt;rec_get_int(rec, NAME("n"), &amp;n);
+
+    if (rv == AS_NATIVE_TYPE_MISMATCH) {
+        fail(ctx, "bin 'n' is not an integer");
+        return rv;
+    }
+
+    bool existed = H-&gt;rec_exists(rec);
+    n += by;
+
+    if ((rv = H-&gt;rec_set_int(ctx, rec, NAME("n"), n))
+            != AS_NATIVE_OK) {
+        fail(ctx, "could not set bin 'n'");
+        return rv;
+    }
+
+    rv = existed ? H-&gt;rec_update(ctx, rec)
+                 : H-&gt;rec_create(ctx, rec);
+    if (rv != AS_NATIVE_OK) {
+        fail(ctx, "could not commit");
+        return rv;
+    }
+
+    result-&gt;type = AS_NATIVE_TYPE_INT;
+    result-&gt;u.i = n;
+
+    return AS_NATIVE_OK;
+}</pre>
+      </div>
+      <div>
+        <p class="qh"><span>Record UDF &mdash; Rust</span><b>5 lines</b></p>
+        <pre>udfs! {
+    /// Add `by` to bin "n"; `by` defaults to 1.
+    fn increment(rec: &amp;Record, by: Option&lt;i64&gt;)
+        -&gt; Result&lt;i64&gt;
+    {
+        let next = rec.get_int("n")?.unwrap_or(0)
+            + by.unwrap_or(1);
+
+        rec.set_int("n", next)?;
+        rec.write()?;          // read, modify, stage, COMMIT
+
+        Ok(next)
+    }
+}</pre>
+        <p class="qh" style="margin-top:14px"><span>Aggregation &mdash; Rust</span><b>one impl block</b></p>
+        <pre>impl Aggregation for Sum {
+    const NAME: &amp;'static CStr = c"sum";
+
+    fn configure(&amp;mut self, args: Args&lt;'_&gt;) -&gt; Result&lt;()&gt; {
+        self.bin = args.get(0).as_str()
+            .ok_or_else(|| Error::msg("bin name"))?
+            .to_string();
+        Ok(())
+    }
+
+    fn accumulate(&amp;mut self, rec: &amp;Record, _out: &amp;Emit)
+        -&gt; Result&lt;Fold&gt;
+    {
+        // one host call per record, nothing else
+        if let Some(v) = rec.get_int(&amp;self.bin)? {
+            self.total += v;
+        }
+        Ok(Fold::Continue)     // never full: nothing grows
+    }
+
+    fn merge(&amp;mut self, other: &amp;Self) {
+        self.total += other.total;
+    }
+
+    fn finalize&lt;'c&gt;(&amp;mut self, _ctx: &amp;'c Ctx)
+        -&gt; Result&lt;Value&lt;'c&gt;&gt;
+    {
+        Ok(Value::int(self.total))
+    }
+}</pre>
+      </div>
+      <div style="grid-column: 1">
+        <p class="qh"><span>Aggregation &mdash; C</span><b>six functions + state struct</b></p>
+        <pre>typedef struct sum_state_s {
+    int64_t  sum;
+    char     bin[16];
+    uint32_t bin_len;
+} sum_state;          // POD: allocates nothing, ever
+
+static int32_t
+sum_accumulate(as_native_ctx* ctx, void* state,
+    const as_native_rec* rec, as_native_emit* out)
+{
+    sum_state* s = (sum_state*)state;
+    int64_t v;
+
+    // one host call per record, nothing else
+    if (H-&gt;rec_get_int(rec, s-&gt;bin, s-&gt;bin_len, &amp;v)
+            == AS_NATIVE_OK) {
+        s-&gt;sum += v;
+    }
+
+    return AS_NATIVE_OK;   // never full
+}
+
+static int32_t
+sum_merge(as_native_ctx* ctx, void* dst, const void* src)
+{
+    ((sum_state*)dst)-&gt;sum +=
+        ((const sum_state*)src)-&gt;sum;
+    return AS_NATIVE_OK;
+}
+// + sum_init, sum_to_partial, sum_from_partial, sum_finalize</pre>
+      </div>
+    </div>
+    <p><code>udfs!</code> checks arity and types <strong>before the body is entered</strong>, so the four <code>fail()</code>
+      branches in the C version have no Rust counterpart to get wrong. Both land within 3% on the benchmark
+      &mdash; 33 ms against 34 ms &mdash; so this is ergonomics, not performance.</p>
+  </section>
+
+  <section class="slide" data-track="native">
+    <div class="eyebrow">Native &middot; measured</div>
+    <h2>3&times; on aggregation &mdash; and it is two effects, not one</h2>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>count + sum of one int bin</th><th>ms</th><th>records/sec</th><th>vs native</th><th>partials</th></tr></thead>
+        <tbody>
+          <tr><td>Lua</td><td>94</td><td>2,120,000</td><td>2.8&times;</td><td>4096</td></tr>
+          <tr><td>WASM (AoT)</td><td>97</td><td>2,052,000</td><td>2.9&times;</td><td>4096</td></tr>
+          <tr class="win"><td>native (C)</td><td>33</td><td>5,971,000</td><td>1.0&times;</td><td>4</td></tr>
+          <tr class="win"><td>native (Rust)</td><td>34</td><td>5,956,000</td><td>1.0&times;</td><td>4</td></tr>
+        </tbody>
+        <caption>C and Rust land within 3% of each other &mdash; the SDK costs nothing.</caption>
+      </table>
+    </div>
+    <div class="cols">
+      <div class="card accent">
+        <h3>The decomposition the table cannot show</h3>
+        <p>Running the same native aggregation against itself, dumping at Lua's rate or not at all: <strong>4 partials in
+          31 ms against 4168 partials in 48 ms</strong>. So ~1.5&times; is shipping 4 partials instead of 4168 and
+          ~2&times; is the engine. They multiply; neither alone is the headline.</p>
+      </div>
+      <div class="card accent">
+        <h3>Scale check</h3>
+        <p>End to end, <strong>39.6 ms native against 48.9 ms Lua</strong> is 1.24&ndash;1.31&times;. Smaller than "one
+          indirect call per record" suggests &mdash; and that <em class="q">is</em> the finding. A plain scan of the same
+          rows costs <strong>313 ms</strong>, six times the whole aggregation.</p>
+      </div>
+    </div>
+  </section>
+
+  <section class="slide" data-track="native">
+    <div class="eyebrow">Native &middot; vector search</div>
+    <h2>The gap is not a constant &mdash; 1.2&times; on a sum, 23&times; on vector search</h2>
+    <p class="lede">The same module was written twice: <code>examples/vector/</code> as a Rust plugin, and
+      <code>examples/vector/lua/vector.lua</code> in Lua. Same metrics, same score inversion for <code>dot</code>, same
+      digest tiebreak, same bounded structure, same rejection before a digest is read. A test that is <strong>not</strong>
+      <code>#[ignore]</code>d requires both to return the same digests in the same order before anything is timed.</p>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>exact top-10 over 50,000 &times; 768-dim</th><th>ms</th><th>ns/record</th><th>on the wire</th><th>vs the plugin</th></tr></thead>
+        <tbody>
+          <tr><td>Rust, same kernel and heap, in memory, no database</td><td>7.8</td><td>155</td><td>&mdash;</td><td>0.5&times;</td></tr>
+          <tr class="win"><td>Rust native UDF, in the server</td><td>17</td><td>336</td><td>40 hits</td><td>1.0&times;</td></tr>
+          <tr><td>Lua UDF, one <code>string.unpack</code> per vector</td><td>394</td><td>7,873</td><td>38,891 hits</td><td class="hi">23.4&times;</td></tr>
+          <tr><td>Lua UDF, one <code>string.unpack</code> per element</td><td>614</td><td>12,280</td><td>38,891 hits</td><td>36.6&times;</td></tr>
+          <tr><td>Lua UDF, vectors stored as a list of numbers &dagger;</td><td>874</td><td>17,480</td><td>38,891 hits</td><td>48.6&times;</td></tr>
+          <tr><td>Rust client, fetch all 146 MB and sort locally</td><td>125</td><td>2,500</td><td>50,000 vectors</td><td>7.4&times;</td></tr>
+        </tbody>
+        <caption>Cosine, k=10, best of three, one dev VM (8 cores) &mdash; every row on the same records on the same day.
+          &dagger; from the run that also stored a list copy of each vector.</caption>
+      </table>
+    </div>
+    <div class="stats">
+      <div class="stat"><b>3.2 &micro;s</b><span>OF LUA'S 7.9 IS DECODING FLOATS</span></div>
+      <div class="stat"><b>7.8&times;</b><span>ENGINE ALONE, NO DECODE (ORDERBY)</span></div>
+      <div class="stat"><b>1.6&times;</b><span>PENALTY FOR PER-ELEMENT DECODE</span></div>
+    </div>
+    <div class="cols">
+      <div class="card accent">
+        <h3>Most of the gap is one missing accessor</h3>
+        <p>Lua's <code>bytes</code> has integer getters and <strong>no float getter</strong>, so a packed vector must be
+          copied out as a Lua string and decoded by <code>string.unpack</code>: <strong>+3,240&nbsp;ns of 7,873</strong>,
+          with no native counterpart at all &mdash; the plugin measures the particle where it lies. Strip the decode and
+          <code>orderby</code> puts the engine itself at <strong>7.8&times;</strong> (199 against 1,557&nbsp;ns), which is
+          the honest figure for a Lua call, a closure and a table state.</p>
+      </div>
+      <div class="card accent">
+        <h3>And the obvious fix is measured to be worse</h3>
+        <p>Adding <code>bytes.get_float_le(b,&nbsp;i)</code> is exactly the <code>topk_scan</code> row: one call per element
+          instead of one per vector, and it is <strong>1.6&times; slower</strong> than building a 768-code format string.
+          A per-element accessor would make the natural implementation slower than the workaround it replaces. What would
+          pay is a <em class="q">bulk</em> decode, or a distance primitive.</p>
+      </div>
+      <div class="card accent">
+        <h3>At this size the engine decides the architecture</h3>
+        <p>Server-side Lua (394&nbsp;ms) is <strong>3&times; slower than shipping all 146&nbsp;MB to the client</strong> and
+          sorting in Rust (125&nbsp;ms); the plugin is 7&times; faster than that. Same query, same data, opposite
+          conclusion about where to compute. Read it as the client's best case &mdash; a local bridge and a fast laptop
+          &mdash; which only sharpens the point.</p>
+      </div>
+    </div>
+  </section>
+
+  <section class="slide" data-track="shared">
+    <div class="eyebrow">Traps</div>
+    <h2>What actually cost the time</h2>
+    <ul>
+      <li><code>cf_malloc</code> is a <strong>macro</strong> under <code>-DENHANCED_ALLOC</code>, so no such symbol exists to
+        call from another language &mdash; and a module built without that define compiles fine standalone, failing only
+        when <code>asd</code> links.</li>
+      <li><strong>A hook must return 0 and put the failure on the <code>as_result</code>.</strong> A non-zero return makes
+        <code>udf.c</code> overwrite the message using <em class="q">mod-lua's</em> error map, so a missing wasm module
+        reported "Mod-Lua user path not found".</li>
+      <li><code>cargo:rerun-if-changed</code> on a <strong>directory</strong> does not fire for edits to files inside it.
+        The first perturbation experiment rebuilt nothing and looked like success.</li>
+      <li>Deleting <code>.d</code> files does <strong>not</strong> force recompilation &mdash; it removes dependency tracking.
+        Stale objects kept an old <code>cfg.h</code> layout and <code>n_namespaces</code> read at the wrong offset
+        ("too many namespaces"). Delete <code>target/&lt;plat&gt;/obj</code> instead.</li>
+      <li>Link order is single-pass: <code>libmod_wasm_rs.a</code> must precede
+        <code>libaerospike-common.a</code>, because no server object references <code>as_buffer_init</code>.</li>
+    </ul>
+  </section>
+
+  <section class="slide" data-track="shared">
+    <div class="eyebrow">Client side</div>
+    <h2>Guest SDKs, and tests that call the thing</h2>
+    <div class="split">
+      <div class="engine w">
+        <h4>aerospike-udf-sdk-wasm</h4>
+        <div class="k">guest ABI is a compiled contract</div>
+        <p>The checked-in fixture <code>tests/fixtures/wasm/udf_test.wasm</code> is a binary: import signatures and status
+          codes cannot change as a "refactor". Its source now lives in-repo, so rebuilding it no longer crosses
+          repositories. <code>stream!</code> exports <code>&lt;fn&gt;_record</code> + <code>&lt;fn&gt;_end</code>.</p>
+      </div>
+      <div class="engine n">
+        <h4>aerospike-udf-sdk-native</h4>
+        <div class="k">five example plugins</div>
+        <p><code>#[udf]</code> with typed params, lifetimes and <code>catch_unwind</code>; examples for
+          <code>plugin</code>, <code>jsonpath</code>, <code>summary</code>, <code>vector</code> and
+          <code>timeseries</code>, each with its own against-a-server suite.</p>
+      </div>
+    </div>
+    <p>Registration is probed <strong>by calling the UDF</strong>, not by registering it: validation only loads a module
+      and does not resolve imports, so a module the server cannot actually run registers perfectly happily and fails at
+      first use. <code>tests/src/udf_wasm.rs</code> (681 lines) and <code>tests/src/udf_agg_bench.rs</code> (653) hold that line.</p>
+  </section>
+
+  <section class="slide" data-track="ops">
+    <div class="eyebrow">Deploying it &middot; 2026-08-19</div>
+    <h2>Standing the SDK server up on the Linux VM</h2>
+    <div class="cols">
+      <div class="card accent">
+        <h3>Why it would not start</h3>
+        <p><code>mod-native</code> <strong>aborts startup when any configured module is missing</strong> &mdash; correct,
+          given config-only registration, but one unbuilt <code>.so</code> presents as a broken server.
+          <code>make example</code> in <code>modules/mod-native</code> fixed it.</p>
+      </div>
+      <div class="card accent">
+        <h3>Why WASM was quietly slow</h3>
+        <p>1510 cache files compiled by a different WAMR failed with <em class="q">unknown binary version</em> &mdash;
+          <strong>755 silent interpreter fallbacks</strong>, i.e. 1.8&times; Lua where 45&times; was expected.</p>
+      </div>
+      <div class="card accent">
+        <h3>wamrc needs LLVM 16+</h3>
+        <p>Not 15, as the Makefile default still says: <code>undefined reference to LLVMGetVersion</code>. Ubuntu 22.04
+          has no llvm-16+ in its repos.</p>
+      </div>
+    </div>
+    <pre># arm64 mac, arm64 VM: build natively in a jammy container (glibc 2.35 matches),
+# then bundle the one library beside the binary so the VM needs no LLVM at all.
+podman run --rm -v .../aerospike-server:/src ubuntu:22.04 bash -c '
+  /tmp/llvm.sh 18 &amp;&amp; apt-get install -y llvm-18-dev
+  cd /src/modules/mod-wamr &amp;&amp; make wamrc LLVM_DIR=/usr/lib/llvm-18/lib/cmake/llvm
+  cp -fL /usr/lib/aarch64-linux-gnu/libLLVM-18.so.1 target/Linux-aarch64/bin/libLLVM-18.so.18.1
+  patchelf --set-rpath "\$ORIGIN" target/Linux-aarch64/bin/wamrc'</pre>
+    <p><span class="good">Result:</span> <code>wamrc 2.4.3</code> runs on the VM, AoT-compiles a module in ~460 ms,
+      <strong>zero interpreter fallbacks</strong>, six native modules loaded, and from the Mac
+      <strong>10/10</strong> wasm tests plus <strong>6/6</strong> native summary tests pass.</p>
+  </section>
+
+  <section class="slide" data-track="shared">
+    <div class="eyebrow">Deliberately not done</div>
+    <h2>The edges, stated in the code</h2>
+    <div class="cols">
+      <div class="card accent">
+        <h3>Per-node partials</h3>
+        <p>Today it is a handful per node &mdash; one per query thread. Going to one needs job-finish emission, and
+          <code>aggr_query_job_finish</code> closes the client connection first: a mutex on a job-level accumulator plus
+          a response-path change, to turn four partials into one. Not worth it.</p>
+      </div>
+      <div class="card accent">
+        <h3>No in-server C baseline</h3>
+        <p>It would need a function compiled into <code>asd</code>, and per-call resolution is too coarse to measure what
+          it would tell us.</p>
+      </div>
+      <div class="card accent">
+        <h3>No deadline for aggregation</h3>
+        <p><code>aggr.c</code> passes no timer &mdash; and <code>mod_lua</code> has exactly the same gap, so this is a
+          pre-existing property rather than something WASM introduced.</p>
+      </div>
+    </div>
+    <p class="lede">Every claim here is reproducible: <code>WASM_UDF_DESIGN.md</code>,
+      <code>WAMR_EVALUATION.md</code>, <code>WASM_SHIM_REMOVAL.md</code>, <code>NATIVE_UDF_DESIGN.md</code>.</p>
+  </section>
+
+</div>
+
+<nav>
+  <div class="arrows">
+    <button id="prev" aria-label="Previous slide">&larr;</button>
+    <button id="next" aria-label="Next slide">&rarr;</button>
+  </div>
+  <div class="rail" id="rail"></div>
+  <div class="counter" id="counter"></div>
+</nav>
+
+<script>
+(function () {
+  var slides = Array.prototype.slice.call(document.querySelectorAll('.slide'));
+  var rail = document.getElementById('rail');
+  var counter = document.getElementById('counter');
+  var i = 0;
+
+  slides.forEach(function (s, n) {
+    var b = document.createElement('button');
+    b.setAttribute('data-t', s.getAttribute('data-track'));
+    b.setAttribute('aria-label', 'Slide ' + (n + 1));
+    b.addEventListener('click', function () { go(n); });
+    rail.appendChild(b);
+  });
+  var dots = Array.prototype.slice.call(rail.children);
+
+  function go(n) {
+    i = Math.max(0, Math.min(slides.length - 1, n));
+    slides.forEach(function (s, k) { s.setAttribute('data-active', k === i ? 'true' : 'false'); });
+    dots.forEach(function (d, k) {
+      if (k === i) { d.setAttribute('aria-current', 'true'); } else { d.removeAttribute('aria-current'); }
+    });
+    counter.textContent = String(i + 1).padStart(2, '0') + ' / ' + slides.length;
+    window.scrollTo(0, 0);
+  }
+
+  document.getElementById('prev').addEventListener('click', function () { go(i - 1); });
+  document.getElementById('next').addEventListener('click', function () { go(i + 1); });
+  document.addEventListener('keydown', function (e) {
+    if (e.key === 'ArrowRight' || e.key === 'PageDown' || e.key === ' ') { go(i + 1); e.preventDefault(); }
+    else if (e.key === 'ArrowLeft' || e.key === 'PageUp') { go(i - 1); e.preventDefault(); }
+    else if (e.key === 'Home') { go(0); }
+    else if (e.key === 'End') { go(slides.length - 1); }
+  });
+  go(0);
+})();
+</script>

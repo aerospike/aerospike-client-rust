@@ -150,10 +150,8 @@ impl Connection {
         &mut self,
         pool: std::sync::Arc<crate::net::buffer_pool::TieredBufferPool>,
     ) {
-        self.buffer = crate::commands::buffer::Buffer::with_pool(
-            self.buffer.reclaim_threshold,
-            pool,
-        );
+        self.buffer =
+            crate::commands::buffer::Buffer::with_pool(self.buffer.reclaim_threshold, pool);
     }
 
     #[cfg(feature = "tls")]
@@ -210,8 +208,7 @@ impl Connection {
     ) -> Result<(Self, Option<crate::commands::admin_command::SessionInfo>)> {
         let addr = host.address();
         let stream =
-            aerospike_rt::timeout(policy.connect_timeout(), TcpStream::connect(addr.clone()))
-                .await;
+            aerospike_rt::timeout(policy.connect_timeout(), TcpStream::connect(addr.clone())).await;
         if stream.is_err() {
             return Err(Error::connection(
                 "Could not open network connection".to_string(),
@@ -1526,4 +1523,3 @@ mod tests_eof_loopback {
         );
     }
 }
-

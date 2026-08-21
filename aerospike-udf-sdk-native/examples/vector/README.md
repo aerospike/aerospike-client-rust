@@ -144,6 +144,106 @@ oracle; not because it was ever the fast path it was chosen to be.
 
 Cost on the record: ~120 KB resident, and a C compiler at build time rather than anything at run time.
 
+## The same thing in Lua
+
+`lua/vector.lua` is this module's job in the other engine — the same metrics, the same score inversion, the same
+digest tiebreak, the same bounded structure, the same cheap rejection. `tests/lua_vs_native.rs` runs both against
+the same records in the same server in the same process, and it **checks that they agree before it times anything**:
+same digests, same order, same distances to within 1e-6, for `cosine`, `sqeuclidean` and `euclidean`, plus
+`orderby` and all three record functions. That test is not `#[ignore]`d. A speed comparison against an
+implementation that quietly returns different records would be worthless, and "decode 768 floats by hand in Lua" is
+an excellent way to produce one.
+
+50,000 records of 768 dimensions, k=10, cosine, best of three, and every row reproduced within 2% across five
+runs:
+
+| engine | ms | records/sec | partials | hits on the wire | |
+|---|---|---|---|---|---|
+| native | **18** | 2,747,000 | 4 | 40 | — |
+| Lua, `string.unpack` per vector | 386 | 129,500 | 4,096 | 38,888 | **21.2×** |
+| Lua, `string.unpack` per element | 609 | 82,100 | 4,096 | 38,888 | 33.5× |
+| Lua, vectors stored as a list of numbers | 879 | 56,900 | 4,096 | 38,888 | 48.3× |
+
+**21×, not 100×.** Lua does this job correctly and at a rate a lot of workloads would accept. The interesting part
+is not the ratio, it is which part of the work produces it — so the probes run in both engines:
+
+| stage | native ns | Lua ns | |
+|---|---|---|---|
+| the query and the record pipeline | 105 | 884 | 8.4× |
+| + read the vector bin | 322 *(+217)* | 1,233 *(+350)* | 3.8× |
+| + decode 768 floats | n/a | 4,311 *(+3,078)* | — |
+| + measure the distance | 358 *(+36)* | 7,133 *(+2,822)* | 19.9× |
+| + the bounded top-k (the whole query) | 364 *(+6)* | 7,722 *(+589)* | 21.2× |
+
+Four things fall out of that table.
+
+**The decode is the single largest cost, and it exists only because the engine has no way to hand a float across.**
+`bytes` has integer getters and no float getter, so a packed vector has to become a Lua string
+(`bytes.get_string`: one `cf_calloc` and one `memcpy` a record — the +350 row) and then be decoded by
+`string.unpack`. That decode is 3,078 ns of the 7,722, and nothing on the native side corresponds to it at all: it
+borrows the particle where it lies.
+
+**A per-element float getter would not fix it.** The obvious ask — `bytes.get_float_le(b, i)` — is priced by the
+`topk_scan` row, which is exactly that shape: one call per element instead of one per vector. It is **1.6× slower**
+than building a 768-code format string and unpacking the whole thing in one call. What would actually help is a
+*bulk* decode, or a distance primitive; a per-element accessor would make the natural Lua implementation slower
+than the workaround it was meant to replace.
+
+**The arithmetic itself is 2.8 µs against 36 ns.** Same operation, same f32 values widened to f64, same answer to
+1e-6 — the whole difference is that one is a Lua loop over a table and the other is a resolved function pointer
+over borrowed bytes.
+
+**Lua also pays setup 4,096 times.** A native aggregation's `configure` runs once per query thread; a Lua stream
+function runs once per *stream*, and the server runs one stream per partition slice. `probe_configure` is
+`probe_count` plus exactly that setup, and the difference is **150–300 ns a record** across runs — 4,096 identical
+re-unpackings of the same query vector, something like 10–15 ms of the 386. It is a difference of two noisy
+measurements, so read it as an order of magnitude and not as a figure.
+
+### The wire, and what it is not
+
+The partial counts confirm the claim made in `src/lib.rs`: a Lua stream aggregation has no `finalize`, so what
+leaves the server is one partial per slice — **4,096 partials carrying 38,888 hits to answer a top-10**, against 4
+partials and 40 hits. (38,888 rather than 40,960 because slices holding fewer than 10 records ship fewer.)
+
+**But that is not why Lua is slower here.** `probe_dist` ships two counters per partial and no hits at all, and it
+still costs 7,133 ns a record; the bounded array plus shipping and merging 38,888 hits is the +589 row. The wire
+volume matters at k=100, or across a hundred nodes, and it is a real structural difference — it is just not this
+benchmark's 21×.
+
+### The engine on its own, with no decoding in it
+
+`orderby` reads one numeric bin and does one comparison, so nothing in it is about vectors:
+
+| engine | ms | ns/record | |
+|---|---|---|---|
+| native | 10 | 207 | — |
+| Lua | 71 | 1,422 | **6.9×** |
+
+That ratio — 6.3× to 7.7× over five runs — is the honest figure for "what the engine costs": a Lua call, a
+closure, a table state and a bin read against a function pointer and a borrowed value. Everything above it in the
+top-k comparison is the float decode.
+
+### One record at a time
+
+200 sequential `vec_distance` calls, which is the case where nothing amortises:
+
+| call | µs |
+|---|---|
+| native | 90 |
+| Lua | 174 |
+| a plain read, no UDF | 69 |
+
+Read this one as a bound rather than a measurement: the round trip is most of it. What it does show is that a record
+UDF has no query thread to amortise setup over, so Lua unpacks the 768-element query on *every call*.
+
+### A client bug this turned up
+
+The loader in `tests/lua_vs_native.rs` sets a 1-second socket timeout and 10 retries, and there is a comment saying
+why: with the default 30-second socket timeout, a few of the *first* concurrent writes against a cold connection
+pool never see a reply, burn the whole deadline and fail the load — reproducibly, at 64 concurrent writes, while the
+same burst against a warm pool finishes 2,000 records in 54 ms. Retries ride over it. It is a client-side problem,
+unrelated to either UDF engine, and it is written down here because it cost an hour of looking in the wrong place.
+
 ## The vendor kernel: SimSIMD, then NumKong, then a patch
 
 **SimSIMD was renamed to NumKong upstream** — the GitHub repo 301-redirects, and the `simsimd` crate is frozen at
@@ -365,6 +465,8 @@ Both were found by the `k=100` row of this benchmark coming back empty.
 | `src/tests.rs` | the heap, the inversion, ties, NaN |
 | `tests/against_a_server.rs` | exactness against a locally computed top-k, all four metrics |
 | `tests/bench.rs` | the table above |
+| `lua/vector.lua` | the same module in Lua, for the comparison |
+| `tests/lua_vs_native.rs` | that the two agree, and what each costs |
 
 ## The surface
 
