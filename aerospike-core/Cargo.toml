@@ -86,6 +86,3 @@ aerospike-macro = {path = "../aerospike-macro"}
 lazy_static = "1.5"
 tokio = { version = "1.53.0", features = ["full"] }
 webpki-roots = "1"
-# Self-signed certs for the TLS loopback tests in `net::connection`.
-# Pinned: 0.14.8+ raises its MSRV above this crate's rust-version.
-rcgen = { version = "=0.14.7", default-features = false, features = ["aws_lc_rs"] }

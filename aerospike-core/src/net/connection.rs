@@ -1836,7 +1836,8 @@ mod tests_eof_loopback {
 mod tls_flush_tests {
     use super::*;
     use aerospike_rt::net::{TcpListener, TcpStream};
-    use rustls::pki_types::{PrivateKeyDer, PrivatePkcs8KeyDer};
+    use rustls::pki_types::pem::PemObject;
+    use rustls::pki_types::{CertificateDer, PrivateKeyDer};
     use rustls::{RootCertStore, ServerConfig};
     use std::net::SocketAddr;
     use tokio::sync::oneshot;
@@ -1851,12 +1852,42 @@ mod tls_flush_tests {
     /// How long the peer waits for bytes that may never come.
     const READ_STALL: Duration = Duration::from_secs(5);
 
-    /// Self-signed `localhost` certificate, plus a root store that trusts it.
+    /// Self-signed `localhost` certificate for the loopback peer below, with a
+    /// P-256 key, valid until 2126. Baked in rather than generated at test time:
+    /// a certificate generator would be a build-time dependency whose own MSRV
+    /// can drift past this crate's `rust-version`, breaking CI with no change
+    /// on our side. These are test fixtures — this key secures nothing, is
+    /// never presented off this machine, and exists only so two sockets in one
+    /// process can complete a handshake. If regenerated, it must carry
+    /// `basicConstraints=critical,CA:FALSE` -- webpki rejects a CA certificate
+    /// presented as an end entity (`CaUsedAsEndEntity`).
+    const TEST_CERT_PEM: &[u8] = b"\
+-----BEGIN CERTIFICATE-----
+MIIBkjCCATigAwIBAgIUBd8CSag9UwVN+CmSCt1fHb95AXowCgYIKoZIzj0EAwIw
+FDESMBAGA1UEAwwJbG9jYWxob3N0MCAXDTI2MDgyMTAxMDcyOFoYDzIxMjYwNzI4
+MDEwNzI4WjAUMRIwEAYDVQQDDAlsb2NhbGhvc3QwWTATBgcqhkjOPQIBBggqhkjO
+PQMBBwNCAARaDG4MJdt4ujwjndx1baO6lEZF2JIggiXBCqFUdjj6IPPzkDZtMO1f
+U3lfoCm6z5EGqRhWg8An6dxdhFCdc2AZo2YwZDAdBgNVHQ4EFgQUkmu2kSnGV8kL
+9Fd/i3OqX64gxlowHwYDVR0jBBgwFoAUkmu2kSnGV8kL9Fd/i3OqX64gxlowFAYD
+VR0RBA0wC4IJbG9jYWxob3N0MAwGA1UdEwEB/wQCMAAwCgYIKoZIzj0EAwIDSAAw
+RQIgD7tXhh5Ldb6hp8VcfcmI8MZQf5TrJSJO2SEXAVOzcmECIQCfDq3M7/QhO7f/
++5kpUI6o5q5Lp53WCGOvmKjvMmEfKg==
+-----END CERTIFICATE-----
+";
+
+    /// Private key for [`TEST_CERT_PEM`]. Test fixture only; see the note there.
+    const TEST_KEY_PEM: &[u8] = b"\
+-----BEGIN PRIVATE KEY-----
+MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgZcTGiz3ft6sc5Q+L
+rHUGuKRhKz67vcrzXrqQFgLuGO+hRANCAARaDG4MJdt4ujwjndx1baO6lEZF2JIg
+giXBCqFUdjj6IPPzkDZtMO1fU3lfoCm6z5EGqRhWg8An6dxdhFCdc2AZ
+-----END PRIVATE KEY-----
+";
+
+    /// Server config for the loopback peer, plus a root store that trusts it.
     fn self_signed() -> (ServerConfig, RootCertStore) {
-        let key = rcgen::generate_simple_self_signed(vec!["localhost".to_string()]).unwrap();
-        let cert = key.cert.der().clone();
-        let signing_key =
-            PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(key.signing_key.serialize_der()));
+        let cert = CertificateDer::from_pem_slice(TEST_CERT_PEM).expect("test certificate");
+        let signing_key = PrivateKeyDer::from_pem_slice(TEST_KEY_PEM).expect("test key");
 
         let server = ServerConfig::builder()
             .with_no_client_auth()
