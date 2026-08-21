@@ -370,13 +370,24 @@ impl Connection {
     pub async fn flush(&mut self) -> Result<()> {
         self.state = ConnectionState::Writing;
         let timeout = self.deadline();
+        let buf = &self.buffer.data_buffer;
         let res = match self.conn {
             Netsocket::Tcp(ref mut conn) => {
-                io_with_timeout!(self, timeout, conn.write_all(&self.buffer.data_buffer))
+                io_with_timeout!(self, timeout, conn.write_all(buf))
             }
             #[cfg(feature = "tls")]
             Netsocket::Tls(ref mut conn) => {
-                io_with_timeout!(self, timeout, conn.write_all(&self.buffer.data_buffer))
+                // `write_all` alone is not enough on a TLS stream: when the
+                // socket is not writable, tokio-rustls accepts the plaintext
+                // into the session's outgoing buffer and reports success with
+                // ciphertext still unsent. Nothing on the read path drives
+                // those bytes out, so the command would wait for a reply to a
+                // request the server never fully received. See the note on
+                // `tokio_rustls::client::TlsStream::poll_write`.
+                io_with_timeout!(self, timeout, async {
+                    conn.write_all(buf).await?;
+                    conn.flush().await
+                })
             }
             #[cfg(test)]
             _ => unreachable!(),
@@ -641,7 +652,11 @@ impl Connection {
             }
             #[cfg(feature = "tls")]
             Netsocket::Tls(ref mut conn) => {
-                io_with_timeout!(self, timeout, conn.write_all(buf))
+                // See `flush`: a TLS write is only on the wire once flushed.
+                io_with_timeout!(self, timeout, async {
+                    conn.write_all(buf).await?;
+                    conn.flush().await
+                })
             }
             #[cfg(test)]
             _ => unreachable!(),
@@ -1809,3 +1824,215 @@ mod tests_eof_loopback {
     }
 }
 
+/// A TLS write only reaches the peer once the session's outgoing buffer has
+/// been drained to the socket. `tokio-rustls` reports `write_all` as complete
+/// while ciphertext is still held inside the session — its `poll_write` says so
+/// outright: *"it does not guarantee the final data to be sent. To be cautious,
+/// you must manually call `flush`"* — and nothing on the read path pushes those
+/// bytes out. Without an explicit flush, a large request therefore stalls until
+/// the socket timeout fires, while the server sits waiting for a request it
+/// never fully received.
+#[cfg(all(test, feature = "tls", feature = "rt-tokio"))]
+mod tls_flush_tests {
+    use super::*;
+    use aerospike_rt::net::{TcpListener, TcpStream};
+    use rustls::pki_types::{PrivateKeyDer, PrivatePkcs8KeyDer};
+    use rustls::{RootCertStore, ServerConfig};
+    use std::net::SocketAddr;
+    use tokio::sync::oneshot;
+    use tokio_rustls::TlsAcceptor;
+
+    /// Comfortably past any socket buffer plus rustls' 64 KiB outgoing buffer,
+    /// so the write is certain to meet a non-writable socket.
+    const PAYLOAD: usize = 1024 * 1024;
+    /// Small socket buffers keep the pipe saturated whatever the platform's
+    /// autotuning would otherwise do.
+    const SOCK_BUF: usize = 16 * 1024;
+    /// How long the peer waits for bytes that may never come.
+    const READ_STALL: Duration = Duration::from_secs(5);
+
+    /// Self-signed `localhost` certificate, plus a root store that trusts it.
+    fn self_signed() -> (ServerConfig, RootCertStore) {
+        let key = rcgen::generate_simple_self_signed(vec!["localhost".to_string()]).unwrap();
+        let cert = key.cert.der().clone();
+        let signing_key =
+            PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(key.signing_key.serialize_der()));
+
+        let server = ServerConfig::builder()
+            .with_no_client_auth()
+            .with_single_cert(vec![cert.clone()], signing_key)
+            .unwrap();
+
+        let mut roots = RootCertStore::empty();
+        roots.add(cert).unwrap();
+        (server, roots)
+    }
+
+    /// A minimal but valid `AS_MSG` reply: proto version 2, message type 3 and
+    /// a 22-byte remaining header — exactly what `read_header` validates.
+    fn reply_header() -> Vec<u8> {
+        let proto = u64::from(buffer::MSG_REMAINING_HEADER_SIZE) | (2_u64 << 56) | (3_u64 << 48);
+        let mut msg = proto.to_be_bytes().to_vec();
+        msg.resize(usize::from(buffer::MSG_TOTAL_HEADER_SIZE), 0);
+        msg[8] = buffer::MSG_REMAINING_HEADER_SIZE;
+        msg
+    }
+
+    /// A peer that completes the handshake and then drains the stream
+    /// deliberately slowly, so the client's socket stays full for the whole
+    /// write and the last `poll_write` is certain to leave ciphertext behind.
+    /// Reports how many plaintext bytes it managed to read; a stalled read is
+    /// reported as a short count rather than hanging the test.
+    fn spawn_slow_reader(listener: TcpListener, acceptor: TlsAcceptor) -> oneshot::Receiver<usize> {
+        let (tx, rx) = oneshot::channel();
+        aerospike_rt::spawn(async move {
+            let Ok((sock, _)) = listener.accept().await else {
+                return;
+            };
+            let _ = socket2::SockRef::from(&sock).set_recv_buffer_size(SOCK_BUF);
+            let Ok(mut tls) = acceptor.accept(sock).await else {
+                return;
+            };
+
+            let mut got = 0;
+            let mut chunk = vec![0_u8; 16 * 1024];
+            while got < PAYLOAD {
+                // Pace the drain: a peer that keeps up would let the kernel
+                // swallow the tail and hide the missing flush.
+                aerospike_rt::sleep(Duration::from_millis(2)).await;
+                // Anything but fresh bytes — a stall, EOF, an error — means the
+                // rest of the request is never arriving.
+                match aerospike_rt::timeout(READ_STALL, tls.read(&mut chunk)).await {
+                    Ok(Ok(n)) if n > 0 => got += n,
+                    _ => break,
+                }
+            }
+
+            // Only a request that arrived in full earns a reply. That is the
+            // whole point: a client that stranded its tail is left waiting for
+            // a response no server would ever send.
+            if got == PAYLOAD {
+                let _ = tls.write_all(&reply_header()).await;
+                let _ = tls.flush().await;
+            }
+            let _ = tx.send(got);
+            // Hold the socket open so a close cannot race the reply.
+            aerospike_rt::sleep(READ_STALL).await;
+        });
+        rx
+    }
+
+    /// A `Connection` over a real TLS stream to a slow-reading peer.
+    async fn tls_pair() -> (Connection, oneshot::Receiver<usize>) {
+        let (server_config, roots) = self_signed();
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let _ = socket2::SockRef::from(&listener).set_recv_buffer_size(SOCK_BUF);
+        let addr: SocketAddr = listener.local_addr().unwrap();
+        let reader = spawn_slow_reader(listener, TlsAcceptor::from(Arc::new(server_config)));
+
+        let stream = TcpStream::connect(addr).await.unwrap();
+        let _ = socket2::SockRef::from(&stream).set_send_buffer_size(SOCK_BUF);
+
+        let config = rustls::ClientConfig::builder()
+            .with_root_certificates(roots)
+            .with_no_client_auth();
+        let tls = TlsConnector::from(Arc::new(config))
+            .connect(ServerName::try_from("localhost").unwrap(), stream)
+            .await
+            .unwrap();
+
+        let mut conn = Connection {
+            addr: addr.to_string(),
+            buffer: Buffer::new(0),
+            bytes_read: 0,
+            conn: Netsocket::Tls(tls),
+            socket_timeout: 30_000,
+            timeout_delay: 0,
+            deadline: None,
+            idle_timeout: None,
+            idle_deadline: None,
+            state: ConnectionState::Ready,
+            can_recover_connection: false,
+            response_decompressed: false,
+            compressed_stream_body: false,
+            rnd: XorShift::new(),
+            sleep: Box::pin(aerospike_rt::tokio::time::sleep(Duration::from_secs(3600))),
+        };
+        conn.refresh();
+        (conn, reader)
+    }
+
+    /// The invariant the flush exists for: nothing the peer still needs may be
+    /// left inside the session once the write call has returned.
+    fn assert_session_drained(conn: &Connection) {
+        let Netsocket::Tls(ref tls) = conn.conn else {
+            unreachable!("test builds a TLS connection")
+        };
+        assert!(
+            !tls.get_ref().1.wants_write(),
+            "the write returned with ciphertext still buffered in the TLS \
+             session: the request is not on the wire, and since the read path \
+             never drives a write, the command stalls until the socket timeout"
+        );
+    }
+
+    async fn assert_peer_got_everything(reader: oneshot::Receiver<usize>) {
+        let got = reader.await.expect("the peer task must report a count");
+        assert_eq!(
+            got, PAYLOAD,
+            "peer received {got} of {PAYLOAD} bytes; the tail never left the client"
+        );
+    }
+
+    /// `Connection::flush` — the path every command's request takes.
+    #[tokio::test(flavor = "current_thread")]
+    async fn flush_puts_the_whole_request_on_the_wire() {
+        let (mut conn, reader) = tls_pair().await;
+        conn.buffer.data_buffer = vec![0xAB; PAYLOAD];
+
+        conn.flush().await.expect("flush must succeed");
+
+        assert_session_drained(&conn);
+        assert_peer_got_everything(reader).await;
+    }
+
+    /// `Connection::write_all` — the path info commands take.
+    #[tokio::test(flavor = "current_thread")]
+    async fn write_all_puts_the_whole_request_on_the_wire() {
+        let (mut conn, reader) = tls_pair().await;
+        let payload = vec![0xCD; PAYLOAD];
+
+        conn.write_all(&payload).await.expect("write must succeed");
+
+        assert_session_drained(&conn);
+        assert_peer_got_everything(reader).await;
+    }
+
+    /// The whole round trip, as a command experiences it: request out, response
+    /// header back. Without the flush the peer is still waiting for the tail of
+    /// a request the client already called sent, so nothing ever answers and
+    /// the command dies on the read deadline — the socket timeout reported from
+    /// the field.
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_flushed_request_earns_a_reply_instead_of_a_socket_timeout() {
+        let (mut conn, _reader) = tls_pair().await;
+        conn.buffer.data_buffer = vec![0xAB; PAYLOAD];
+
+        conn.flush().await.expect("flush must succeed");
+
+        // Tight read deadline: the peer only needs to drain what is already in
+        // flight before it answers, so a request that did leave the client is
+        // answered well inside this, and one that did not fails promptly.
+        conn.set_socket_timeout(None, 2_000);
+        let size = conn.read_header().await.unwrap_or_else(|err| {
+            panic!("no reply to a request the client reported as sent: {err}")
+        });
+
+        assert_eq!(
+            size,
+            usize::from(buffer::MSG_TOTAL_HEADER_SIZE),
+            "a full response header must have been read"
+        );
+    }
+}
