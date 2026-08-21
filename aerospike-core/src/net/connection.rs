@@ -311,13 +311,21 @@ impl Connection {
     pub async fn flush(&mut self) -> Result<()> {
         self.state = ConnectionState::Writing;
         let timeout = self.deadline();
+
+        let data = &self.buffer.data_buffer;
         let res = match self.conn {
             Netsocket::Tcp(ref mut conn) => {
-                io_with_timeout!(self, timeout, conn.write_all(&self.buffer.data_buffer))
+                io_with_timeout!(self, timeout, async {
+                    conn.write_all(data).await?;
+                    conn.flush().await
+                })
             }
             #[cfg(feature = "tls")]
             Netsocket::Tls(ref mut conn) => {
-                io_with_timeout!(self, timeout, conn.write_all(&self.buffer.data_buffer))
+                io_with_timeout!(self, timeout, async {
+                    conn.write_all(data).await?;
+                    conn.flush().await
+                })
             }
             #[cfg(test)]
             _ => unreachable!(),
