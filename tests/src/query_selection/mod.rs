@@ -25,6 +25,7 @@
 //! (or `RUST_LOG=debug` for all targets). Tests self-skip without explain when
 //! [`Version::supports_query_selection`] is false — look for `Skipping:` on stderr.
 
+mod error_detail;
 mod hints;
 mod scope;
 
