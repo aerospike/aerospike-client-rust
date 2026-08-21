@@ -51,8 +51,26 @@ pub struct Record {
 }
 
 impl Record {
-    /// Construct a new Record. For internal use only.
-    pub(crate) const fn new(
+    /// Construct a record.
+    ///
+    /// The client builds these while parsing a reply, and so does anything that
+    /// forwards records on — a proxy, a cache, a test double. Every field but
+    /// `expiration` is public, so this is the only way to set that one.
+    ///
+    /// `expiration` is the server's own encoding: **seconds since the Citrusleaf
+    /// epoch** (2010-01-01 UTC, [`CITRUSLEAF_EPOCH`]) at which the record expires,
+    /// with `0` meaning it never does. It is not a TTL, and it is not a Unix
+    /// timestamp; [`Record::time_to_live`] converts it to the remaining duration.
+    ///
+    /// ```
+    /// use aerospike::{IndexMap, Record};
+    ///
+    /// // A record that never expires.
+    /// let record = Record::new(None, IndexMap::new(), None, 1, 0);
+    /// assert_eq!(record.time_to_live(), None);
+    /// ```
+    #[must_use]
+    pub const fn new(
         key: Option<Key>,
         bins: IndexMap<String, Value>,
         results: Option<Vec<Value>>,

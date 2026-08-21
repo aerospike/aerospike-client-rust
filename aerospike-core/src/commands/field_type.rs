@@ -71,6 +71,8 @@ pub enum FieldType {
     /// expression trace). Present on failure responses only when
     /// error-detail verbosity was requested. Requires server 8.1.3+.
     ErrorMessage = 45,
+    /// String AEL WHERE clause for query explain/execute.
+    Where = 44,
     /// Top-K order-by clause: `type`, direction, flags, one-byte bin-name
     /// length, and bin name. Requires server 8.1.3 or later.
     OrderBy = 46,

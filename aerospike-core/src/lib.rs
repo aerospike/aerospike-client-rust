@@ -154,11 +154,13 @@ pub use cluster::version_parser::Version;
 pub use cluster::Node;
 pub use commands::particle_type::ParticleType;
 pub use errors::{Error, ErrorKind, Result};
+pub use expressions::ael::{pack_ael_server_filter, SERVER_COMPILED_AEL_EXPRESSION_OP};
 pub use expressions::regex_flag::RegexFlag;
 pub use key::Key;
 pub use mapping::RecordMapper;
 pub use metrics::{
-    ClusterMetrics, CommandType, HistogramType, Labels, MetricsPolicy, NodeMetricsSnapshot,
+    ClusterMetrics, CommandType, HistogramType, Labels, LatencyUnit, MetricsPolicy,
+    NodeMetricsSnapshot,
 };
 pub use net::Host;
 pub use net::ToHosts;
@@ -172,11 +174,16 @@ pub use policy::{
 pub use privilege::{Privilege, PrivilegeCode};
 pub use query::{
     CollectionIndexType, EqFilterValue, IndexType, Order, OrderBy, OrderByFlags, OrderByType,
-    PartitionFilter, RangeFilterValue, Recordset, Statement, UDFLang,
+    PartitionFilter, QueryPlan, QuerySelection, QueryWhereWire, RangeFilterValue, Recordset,
+    Statement, UDFLang, FLAG_ENC_VARINT, FLAG_EXPLAIN, FLAG_HARD_HINT, FLAG_KNOWN,
+    FLAG_REQUIRE_INDEX,
 };
 #[cfg(feature = "lua")]
 pub use query::{ResultSet, ResultStream};
-pub use record::Record;
+// `CITRUSLEAF_EPOCH` comes along because it is the unit `Record::new`'s
+// `expiration` argument is counted from, and a caller building a record cannot
+// state one without it.
+pub use record::{Record, CITRUSLEAF_EPOCH};
 pub use result_code::{ClientResultCode, ResultCode};
 pub use role::Role;
 pub use sampler::Sampler;

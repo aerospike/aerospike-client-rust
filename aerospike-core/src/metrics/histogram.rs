@@ -200,6 +200,15 @@ impl SyncHistogram {
         self.inner.lock().unwrap().reshape(htype, base, columns);
     }
 
+    /// Discards everything recorded so far, keeping the layout.
+    ///
+    /// Used when the recorded values stop being comparable with the ones
+    /// already in the buckets — a [`LatencyUnit`](crate::metrics::LatencyUnit)
+    /// change reshapes nothing but makes every existing sample meaningless.
+    pub(crate) fn reset(&self) {
+        self.inner.lock().unwrap().reset();
+    }
+
     /// Number of values recorded.
     #[must_use]
     pub fn count(&self) -> u64 {

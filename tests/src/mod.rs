@@ -22,6 +22,7 @@ use aerospike_core::Recordset;
 mod admin;
 mod backoff;
 mod batch;
+mod batch_in_doubt;
 mod cdt_bitwise;
 mod cdt_list;
 mod cdt_map;
@@ -44,6 +45,7 @@ mod kv;
 mod metrics;
 mod path_expressions;
 mod query;
+mod query_selection;
 #[cfg(feature = "lua")]
 mod query_aggregate;
 mod value_order;

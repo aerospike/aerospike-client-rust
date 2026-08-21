@@ -151,7 +151,12 @@ pub struct MetricsConfig {
     /// empty map is treated the same as no labels.
     pub labels: Option<std::collections::HashMap<String, String>>,
 
-    /// Metrics-policy field overrides (latency histogram shape).
+    /// Metrics-policy field overrides: the latency histogram's shape
+    /// (`latency_columns`, `latency_base`) and its time unit (`latency_unit`,
+    /// `us` / `ms`).
+    ///
+    /// Applying any of the three discards the samples already collected — the
+    /// old ones cannot share buckets with the new shape or unit.
     #[serde(flatten)]
     pub policy: MetricsPolicyConfig,
 }
@@ -200,6 +205,7 @@ dynamic:
     enable: true
     latency_columns: 9
     latency_base: 3
+    latency_unit: ms
 "#;
 
     fn document() -> ConfigDocument {
@@ -270,6 +276,57 @@ dynamic:
         assert_eq!(cp.application_id.as_deref(), Some("billing"));
         // config_interval is a startup field — untouched by the dynamic merge.
         assert_eq!(cp.config_interval, ClientPolicy::default().config_interval);
+    }
+
+    #[test]
+    fn metrics_latency_unit_parses_as_us_or_ms() {
+        use crate::metrics::{LatencyUnit, MetricsPolicy};
+
+        // The SAMPLE asks for milliseconds; it merges onto the policy like the
+        // other two histogram keys.
+        let mut mp = MetricsPolicy::micros();
+        document()
+            .dynamic
+            .unwrap()
+            .metrics
+            .unwrap()
+            .policy
+            .merge_into(&mut mp);
+        assert_eq!(mp.latency_unit, LatencyUnit::Milliseconds);
+
+        // `us` is the other spelling.
+        let doc: ConfigDocument =
+            serde_yml::from_str("dynamic:\n  metrics:\n    latency_unit: us\n").unwrap();
+        let mut mp = MetricsPolicy::millis();
+        doc.dynamic
+            .unwrap()
+            .metrics
+            .unwrap()
+            .policy
+            .merge_into(&mut mp);
+        assert_eq!(mp.latency_unit, LatencyUnit::Microseconds);
+        // The column count is a separate key: overriding only the unit leaves it
+        // at whatever the policy had, which is why the presets exist.
+        assert_eq!(mp.latency_columns, MetricsPolicy::millis().latency_columns);
+
+        // Absent key leaves the policy's unit alone.
+        let doc: ConfigDocument =
+            serde_yml::from_str("dynamic:\n  metrics:\n    latency_columns: 9\n").unwrap();
+        let mut mp = MetricsPolicy::micros();
+        doc.dynamic
+            .unwrap()
+            .metrics
+            .unwrap()
+            .policy
+            .merge_into(&mut mp);
+        assert_eq!(mp.latency_unit, LatencyUnit::Microseconds);
+        assert_eq!(mp.latency_columns, 9);
+
+        // A bad value is a config error, not a silent fallback.
+        assert!(serde_yml::from_str::<ConfigDocument>(
+            "dynamic:\n  metrics:\n    latency_unit: nanos\n"
+        )
+        .is_err());
     }
 
     #[test]

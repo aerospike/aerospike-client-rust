@@ -1123,8 +1123,7 @@ impl Buffer {
             ver_prev = ver;
         }
 
-        let field_size =
-            self.data_offset - self.compress_offset - MSG_TOTAL_HEADER_SIZE as usize - 4;
+        let field_size = self.data_offset - field_size_offset - 4;
         NetworkEndian::write_u32(
             &mut self.data_buffer[field_size_offset..field_size_offset + 4],
             field_size as u32,
@@ -1188,8 +1187,7 @@ impl Buffer {
             }
         }
 
-        let field_size =
-            self.data_offset - self.compress_offset - MSG_TOTAL_HEADER_SIZE as usize - 4;
+        let field_size = self.data_offset - field_size_offset - 4;
         NetworkEndian::write_u32(
             &mut self.data_buffer[field_size_offset..field_size_offset + 4],
             field_size as u32,
@@ -1250,8 +1248,7 @@ impl Buffer {
             }
         }
 
-        let field_size =
-            self.data_offset - self.compress_offset - MSG_TOTAL_HEADER_SIZE as usize - 4;
+        let field_size = self.data_offset - field_size_offset - 4;
         NetworkEndian::write_u32(
             &mut self.data_buffer[field_size_offset..field_size_offset + 4],
             field_size as u32,
@@ -1427,6 +1424,7 @@ impl Buffer {
         task_id: u64,
         node: &Node,
         node_partitions: Option<&NodePartitions>,
+        execute_where: Option<&[u8]>,
     ) -> Result<()> {
         let filter = statement.filters.as_ref().map(|filters| &filters[0]);
         let is_background = direction.is_background();
@@ -1470,7 +1468,7 @@ impl Buffer {
                 field_count += 1;
             }
 
-            filter_size = 1 + filter.estimate_size()?;
+            filter_size = filter.index_range_field_body_size()?;
             self.data_offset += filter_size + FIELD_HEADER_SIZE as usize;
             field_count += 1;
 
@@ -1527,9 +1525,17 @@ impl Buffer {
             field_count += 1;
         }
 
-        // ---------- estimation: policy filter expression ----------
-        let filter_exp_size = self.estimate_filter_size(direction.filter_expression())?;
+        // ---------- estimation: policy filter expression or plan-driven WHERE ----------
+        let filter_exp_size = if execute_where.is_some() {
+            0
+        } else {
+            self.estimate_filter_size(direction.filter_expression())?
+        };
         if filter_exp_size > 0 {
+            field_count += 1;
+        }
+        if let Some(where_bytes) = execute_where {
+            self.data_offset += where_bytes.len() + FIELD_HEADER_SIZE as usize;
             field_count += 1;
         }
 
@@ -1654,8 +1660,7 @@ impl Buffer {
             }
 
             self.write_field_header(filter_size, FieldType::IndexRange);
-            self.write_u8(1);
-            filter.write(self)?;
+            filter.write_index_range_field(self)?;
 
             if let Some(ref ctx) = filter.context {
                 let ctx_size = encoder::pack_ctx_for_index(&mut None, ctx)?;
@@ -1704,7 +1709,9 @@ impl Buffer {
             self.write_field_u32(k, FieldType::TopK);
         }
 
-        if let Some(filter_exp) = direction.filter_expression() {
+        if let Some(where_bytes) = execute_where {
+            self.write_field_bytes(where_bytes, FieldType::Where);
+        } else if let Some(filter_exp) = direction.filter_expression() {
             self.write_filter_expression(filter_exp, filter_exp_size);
         }
 
@@ -1749,6 +1756,72 @@ impl Buffer {
                 self.write_operation_for_bin_name(bin_name, OperationType::Read);
             }
         }
+
+        self.end();
+        Ok(())
+    }
+
+    /// Build a query explain request buffer.
+    pub(crate) fn set_query_explain(
+        &mut self,
+        base_policy: &BasePolicy,
+        namespace: &str,
+        set_name: Option<&str>,
+        where_bytes: &[u8],
+        index_name_hint: Option<&str>,
+        task_id: u64,
+        socket_timeout: u32,
+    ) -> Result<()> {
+        self.begin();
+
+        let set_name = set_name.filter(|s| !s.is_empty());
+        let index_name_hint = index_name_hint.filter(|s| !s.is_empty());
+
+        let mut field_count: u16 = 0;
+
+        self.data_offset += namespace.len() + FIELD_HEADER_SIZE as usize;
+        field_count += 1;
+
+        if let Some(set) = set_name {
+            self.data_offset += set.len() + FIELD_HEADER_SIZE as usize;
+            field_count += 1;
+        }
+
+        self.data_offset += 4 + FIELD_HEADER_SIZE as usize;
+        field_count += 1;
+
+        self.data_offset += 8 + FIELD_HEADER_SIZE as usize;
+        field_count += 1;
+
+        if let Some(hint) = index_name_hint {
+            self.data_offset += hint.len() + FIELD_HEADER_SIZE as usize;
+            field_count += 1;
+        }
+
+        self.data_offset += where_bytes.len() + FIELD_HEADER_SIZE as usize;
+        field_count += 1;
+
+        self.size_buffer()?;
+
+        self.write_header_read(base_policy, INFO1_READ, 0, 0, field_count, 0);
+
+        self.write_field_string(namespace, FieldType::Namespace);
+
+        if let Some(set) = set_name {
+            self.write_field_string(set, FieldType::Table);
+        }
+
+        self.write_field_header(4, FieldType::SocketTimeout);
+        self.write_u32(socket_timeout);
+
+        self.write_field_header(8, FieldType::QueryId);
+        self.write_u64(task_id);
+
+        if let Some(hint) = index_name_hint {
+            self.write_field_string(hint, FieldType::IndexName);
+        }
+
+        self.write_field_bytes(where_bytes, FieldType::Where);
 
         self.end();
         Ok(())
@@ -2366,20 +2439,6 @@ impl Buffer {
     }
 
     pub(crate) fn read_str(&mut self, len: usize) -> Result<String> {
-        let s = str::from_utf8(&self.data_buffer[self.data_offset..self.data_offset + len])?;
-        self.data_offset += len;
-        Ok(s.to_owned())
-    }
-
-    pub(crate) fn read_str_until(&mut self, sep: u8, max_len: usize) -> Result<String> {
-        let mut len = 0;
-        for i in 0..max_len {
-            len += 1;
-            if self.data_buffer[self.data_offset + i] == sep {
-                break;
-            }
-        }
-
         let s = str::from_utf8(&self.data_buffer[self.data_offset..self.data_offset + len])?;
         self.data_offset += len;
         Ok(s.to_owned())
@@ -3677,6 +3736,7 @@ mod tests {
                 1,
                 &node,
                 None,
+                None,
             )
             .unwrap_err();
         assert!(
@@ -3707,6 +3767,7 @@ mod tests {
             &stmt,
             1,
             &node,
+            None,
             None,
         )
         .unwrap();
@@ -3740,5 +3801,83 @@ mod tests {
             .map(|(_, payload)| payload.clone())
             .expect("TopK field must be present");
         assert_eq!(top_k_payload, 5u32.to_be_bytes().to_vec());
+    }
+
+    /// Every `as_msg_field` declares a size that matches what follows it.
+    ///
+    /// A server walks fields by following each header to the next, so an
+    /// overstated size on any field but the last silently swallows the ones
+    /// after it — and on the last it runs off the end of the message. The C
+    /// server never notices the last one, which is why this went unseen: the
+    /// batch-index field is written last, and its size was computed from the
+    /// end of the *message header* rather than from the field's own offset.
+    /// Anything written in between — a filter expression — made it overstate
+    /// by exactly that much.
+    #[test]
+    fn a_batch_with_a_filter_declares_the_right_field_size() {
+        use crate::expressions as exp;
+
+        let key = crate::Key::new("test", "demo", crate::Value::from(1)).unwrap();
+        let ops = vec![(
+            BatchOperation::read(&crate::BatchReadPolicy::default(), key, crate::Bins::All),
+            0usize,
+        )];
+
+        for filter in [
+            None,
+            Some(exp::ge(exp::int_bin("n".to_string()), exp::int_val(0))),
+        ] {
+            let described = if filter.is_some() {
+                "with a filter expression"
+            } else {
+                "without one"
+            };
+            let policy = BatchPolicy {
+                filter_expression: filter,
+                ..Default::default()
+            };
+
+            let mut buf = Buffer::with_pool(64 * 1024, test_pool());
+            buf.set_batch_operate(&policy, &ops).expect("encodes");
+
+            // `end()` rewinds `data_offset` to the proto header it just wrote,
+            // so the message runs from there for as far as that header says.
+            let base = buf.compress_offset;
+            let proto = NetworkEndian::read_u64(&buf.data_buffer[base..base + 8]);
+            let msg_len = (proto & 0x0000_ffff_ffff_ffff) as usize;
+            let msg = &buf.data_buffer[base + 8..base + 8 + msg_len];
+
+            // Walk the fields the way a server does: each header says how far
+            // to the next one.
+            let n_fields = NetworkEndian::read_u16(&msg[18..20]) as usize;
+            let mut at = MSG_TOTAL_HEADER_SIZE as usize - 8;
+
+            for i in 0..n_fields {
+                assert!(
+                    at + 4 <= msg.len(),
+                    "field {i} header runs past the message, {described}"
+                );
+                let sz = NetworkEndian::read_u32(&msg[at..at + 4]) as usize;
+                assert!(
+                    sz >= 1,
+                    "field {i} declares no room for its own type byte, {described}"
+                );
+                at += 4 + sz;
+                assert!(
+                    at <= msg.len(),
+                    "field {i} declares {sz} bytes but only {} remain, {described}",
+                    msg.len().saturating_sub(at - sz),
+                );
+            }
+
+            // And the walk lands exactly on the end of the fields, which is
+            // where the operations would start. Overstating leaves it past the
+            // end; understating leaves it short.
+            assert_eq!(
+                at,
+                msg.len(),
+                "walking the fields did not land on the end of the message, {described}"
+            );
+        }
     }
 }

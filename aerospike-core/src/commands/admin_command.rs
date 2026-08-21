@@ -380,16 +380,23 @@ impl AdminCommand {
         Ok(privileges)
     }
 
+    /// The comma-separated allowlist field, `length` bytes long.
+    ///
+    /// Reads the whole field once and splits it, rather than scanning for separators through the
+    /// buffer. The previous version called `Buffer::read_str_until(b',', max)` passing `max` as an
+    /// *absolute offset* while that helper took a *count*, so it scanned twice as far as the field
+    /// and ran off the end of the reply — a panic on a short buffer, and a UTF-8 error on a long one.
+    /// The helper had no other caller and has been removed.
+    ///
+    /// An empty element is skipped, which is what makes a stray comma harmless rather than an
+    /// address of `""`.
     pub(crate) fn parse_allowlist(conn: &mut Connection, length: usize) -> Result<Vec<String>> {
-        let mut list = vec![];
-        let max = conn.buffer.data_offset() + length;
-
-        while conn.buffer.data_offset() < max {
-            let item = conn.buffer.read_str_until(b',', max)?;
-            list.push(item);
-        }
-
-        Ok(list)
+        let field = conn.buffer.read_str(length)?;
+        Ok(field
+            .split(',')
+            .filter(|address| !address.is_empty())
+            .map(str::to_owned)
+            .collect())
     }
 
     pub(crate) fn parse_info(conn: &mut Connection) -> Vec<u32> {
@@ -795,9 +802,16 @@ impl AdminCommand {
 
         conn.buffer.resize_buffer(1024)?;
         conn.buffer.reset_offset();
-        AdminCommand::write_header(&mut conn, SET_ALLOWLIST, 2);
+
+        // An empty allowlist means *clear it*, and the way to say that is to send the role alone —
+        // one field, not two with an empty second. Sending an empty allowlist field made the server
+        // answer `InvalidAllowlist` (73), so a role's allowlist could be set and never removed.
+        let field_count = if allowlist.is_empty() { 1 } else { 2 };
+        AdminCommand::write_header(&mut conn, SET_ALLOWLIST, field_count);
         AdminCommand::write_field_str(&mut conn, ROLE, role_name);
-        AdminCommand::write_allowlist(&mut conn, allowlist);
+        if !allowlist.is_empty() {
+            AdminCommand::write_allowlist(&mut conn, allowlist);
+        }
 
         AdminCommand::execute(policy, conn).await
     }
@@ -1015,25 +1029,25 @@ impl AdminCommand {
         Ok(())
     }
 
+    /// The allowlist as one comma-separated field.
+    ///
+    /// Two bugs lived here, and they cancelled each other's *length* so nothing looked wrong on the
+    /// wire — the server simply dropped the allowlist and reported an empty one back:
+    ///
+    /// - The field was tagged `SET_ALLOWLIST`, which is a **command** code. As a field id 14 means
+    ///   `READ_QUOTA`, so the addresses arrived where a quota was expected.
+    /// - `comma` was left `true` by the size loop, so the write loop emitted a **leading** comma —
+    ///   which the seeded `size = 1` then accounted for, hiding the mistake.
     fn write_allowlist(conn: &mut Connection, allowlist: &[&str]) {
-        let mut size = 1; // privileges.len()
-        let mut comma = false;
-        for address in allowlist {
-            if comma {
-                size += 1;
-            } else {
-                comma = true;
-            }
-            size += address.len();
-        }
+        // The commas are the separators, so there is one fewer of them than there are addresses.
+        let size: usize = allowlist.iter().map(|address| address.len()).sum::<usize>()
+            + allowlist.len().saturating_sub(1);
 
-        AdminCommand::write_field_header(conn, SET_ALLOWLIST, size);
+        AdminCommand::write_field_header(conn, WHITELIST, size);
 
-        for address in allowlist {
-            if comma {
+        for (index, address) in allowlist.iter().enumerate() {
+            if index > 0 {
                 conn.buffer.write_u8(b',');
-            } else {
-                comma = true;
             }
             conn.buffer.write_str(address);
         }

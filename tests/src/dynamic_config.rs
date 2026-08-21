@@ -79,6 +79,69 @@ async fn dynamic_config_applies_and_reloads() {
     let _ = std::fs::remove_file(&path);
 }
 
+/// `dynamic.metrics.latency_unit` picks the resolution of the latency
+/// histograms, and a later reload can switch it - which discards the samples
+/// collected in the previous unit, since they cannot share buckets.
+#[aerospike_macro::test]
+async fn dynamic_metrics_latency_unit_applies_and_switches() {
+    use aerospike::{CommandType, LatencyUnit};
+
+    let unit_yaml = |unit: &str| {
+        format!(
+            "version: \"1.0.0\"\n\
+             static:\n  client:\n    config_interval: 1\n\
+             dynamic:\n  metrics:\n    enable: true\n    latency_unit: {unit}\n"
+        )
+    };
+
+    let path = temp_config_path("latency-unit");
+    std::fs::write(&path, unit_yaml("ms")).expect("write initial config");
+
+    let provider = Arc::new(YamlFileProvider::new(path.clone()));
+    let client = Client::new_with_config(common::client_policy(), &common::hosts(), provider)
+        .await
+        .expect("client with dynamic config");
+
+    // The initial load enabled metrics with the file's unit.
+    assert!(client.metrics_enabled());
+    let namespace = common::namespace();
+    let set_name = common::rand_str(10);
+    let key = aerospike::as_key!(namespace, &set_name, "latency-unit");
+    let bins = [aerospike::as_bin!("bin", "value")];
+    client
+        .put(&aerospike::WritePolicy::default(), &key, &bins)
+        .await
+        .expect("put");
+
+    let agg = client.metrics().cluster_aggregated;
+    assert_eq!(agg.latency_unit, LatencyUnit::Milliseconds);
+    assert!(
+        agg.command_histogram(CommandType::Put).unwrap().count() >= 1,
+        "expected a Put sample in the millisecond histogram"
+    );
+
+    // Switch the unit in the file. Sleep first so the mtime is strictly greater
+    // (the provider skips reloads when it is unchanged).
+    sleep(Duration::from_millis(1100)).await;
+    std::fs::write(&path, unit_yaml("us")).expect("rewrite config");
+    sleep(Duration::from_millis(2500)).await;
+
+    let agg = client.metrics().cluster_aggregated;
+    assert_eq!(
+        agg.latency_unit,
+        LatencyUnit::Microseconds,
+        "the watcher should have applied the new unit"
+    );
+    assert_eq!(
+        agg.command_histogram(CommandType::Put).unwrap().count(),
+        0,
+        "millisecond samples must not survive the switch to microseconds"
+    );
+
+    client.close().await.unwrap();
+    let _ = std::fs::remove_file(&path);
+}
+
 /// A client built with a dynamic read/write override still performs operations
 /// correctly — the overrides layer onto the per-call policies transparently.
 #[aerospike_macro::test]

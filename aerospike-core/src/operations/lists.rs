@@ -133,7 +133,18 @@ pub enum ListReturnType {
 
 #[derive(Debug, Clone, Copy)]
 /// Inverts the returned values in CDT List operations.
-pub struct InvertedListReturn(ListReturnType);
+///
+/// The field is public because this type exists to be constructed by a caller:
+/// every list operation that takes a return type accepts either a plain
+/// [`ListReturnType`] or one of these, and a private field would leave a caller
+/// outside this crate unable to build one at all.
+///
+/// ```
+/// use aerospike::operations::lists::{InvertedListReturn, ListReturnType};
+///
+/// let inverted = InvertedListReturn(ListReturnType::Values);
+/// ```
+pub struct InvertedListReturn(pub ListReturnType);
 
 /// Something that can be resolved into a set of `ListReturnType`. Either a single `ListReturnType`, or InvertedListReturn(ListReturnType).
 pub trait ToListReturnTypeBitmask {

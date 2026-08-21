@@ -51,7 +51,29 @@ pub struct BatchRecord {
 }
 
 impl BatchRecord {
-    pub(crate) const fn new(key: Key, has_write: bool) -> Self {
+    /// An empty row for `key`, before the server has answered for it.
+    ///
+    /// `has_write` says whether the command this row belongs to writes, and it is
+    /// not cosmetic: only a write row can ever be
+    /// [`in_doubt`](Self::in_doubt), and [`has_write`](Self::has_write) is what
+    /// enforces that.
+    ///
+    /// [`record`](Self::record), [`result_code`](Self::result_code) and
+    /// [`in_doubt`](Self::in_doubt) are public, so a caller filling in a row it
+    /// obtained elsewhere — a proxy, a cache, a test double — assigns them
+    /// directly; [`set_error_detail`](Self::set_error_detail) is the route to the
+    /// extended detail behind [`server_message`](Self::server_message).
+    ///
+    /// ```
+    /// use aerospike::{BatchRecord, Key, ResultCode, Value};
+    ///
+    /// let mut row = BatchRecord::new(Key::new("test", "demo", Value::Int(1))?, false);
+    /// row.result_code = Some(ResultCode::KeyNotFoundError);
+    /// assert!(row.record.is_none());
+    /// # Ok::<(), aerospike::Error>(())
+    /// ```
+    #[must_use]
+    pub const fn new(key: Key, has_write: bool) -> Self {
         BatchRecord {
             key,
             record: None,
@@ -79,7 +101,12 @@ impl BatchRecord {
     }
 
     /// Attach the server's extended error detail for this row.
-    pub(crate) fn set_error_detail(&mut self, detail: Option<Box<crate::ServerErrorDetail>>) {
+    ///
+    /// A `None` argument leaves whatever is already there rather than clearing it.
+    /// That is deliberate and is why this is a method rather than a public field:
+    /// the reply is parsed in more than one pass, and a later pass with nothing to
+    /// add must not erase what an earlier one attached.
+    pub fn set_error_detail(&mut self, detail: Option<Box<crate::ServerErrorDetail>>) {
         if detail.is_some() {
             self.error_detail = detail;
         }

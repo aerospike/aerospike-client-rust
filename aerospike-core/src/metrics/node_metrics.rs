@@ -20,11 +20,12 @@
 //! the cluster-wide view.
 
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicU8, Ordering};
 use std::sync::{Mutex, RwLock};
+use std::time::Duration;
 
 use super::histogram::SyncHistogram;
-use super::policy::MetricsPolicy;
+use super::policy::{LatencyUnit, MetricsPolicy};
 use crate::sampler::Sampler;
 use crate::xor_shift::XorShift;
 use crate::ResultCode;
@@ -246,7 +247,10 @@ macro_rules! command_histograms {
 /// Live, concurrently-updated per-node statistics.
 #[derive(Debug)]
 pub struct NodeMetrics {
-    policy: MetricsPolicy,
+    /// The policy currently shaping this node's histograms. Behind a lock so
+    /// [`NodeMetrics::reshape`] (which takes `&self`) can replace it; read only
+    /// off the hot path (lazy detailed-metric creation and snapshot drains).
+    policy: RwLock<MetricsPolicy>,
     /// Live sampler, stored lock-free as a `(range, threshold)` pair and
     /// refreshed by [`NodeMetrics::reshape`] whenever the policy changes (e.g.
     /// `enable_metrics`) so a node created before metrics were enabled still
@@ -258,6 +262,11 @@ pub struct NodeMetrics {
     /// policy changes.
     sampler_range: AtomicU64,
     sampler_threshold: AtomicU64,
+    /// Resolution every elapsed time is recorded in, encoded by
+    /// [`LatencyUnit::to_code`]. Stored atomically because the recorders read
+    /// it on the command hot path, where taking the `policy` lock is not
+    /// acceptable.
+    latency_unit: AtomicU8,
     /// Whether collection is currently enabled. Gates the connection-lifecycle
     /// counters that are recorded outside the command hot-path.
     enabled: AtomicBool,
@@ -284,10 +293,12 @@ impl NodeMetrics {
             ));
         }
         let Sampler { range, threshold } = policy.sampler;
+        let unit = policy.latency_unit;
         NodeMetrics {
-            policy,
+            policy: RwLock::new(policy),
             sampler_range: AtomicU64::new(range),
             sampler_threshold: AtomicU64::new(threshold),
+            latency_unit: AtomicU8::new(unit.to_code()),
             enabled: AtomicBool::new(false),
             counters: LiveCounters::default(),
             command_metrics,
@@ -462,41 +473,64 @@ impl NodeMetrics {
         }
     }
 
-    /// Records the elapsed time (milliseconds, matching the Java client's
-    /// histogram units) of a completed command against its per-command-type
-    /// histogram.
-    pub fn record_command(&self, ct: CommandType, millis: u64) {
+    /// Resolution elapsed times are currently recorded in.
+    ///
+    /// Reflects the last policy applied by [`NodeMetrics::reshape`], not the one
+    /// this node was constructed with.
+    #[must_use]
+    pub fn latency_unit(&self) -> LatencyUnit {
+        LatencyUnit::from_code(self.latency_unit.load(Ordering::Relaxed))
+    }
+
+    /// Converts an elapsed duration into a histogram value in the configured
+    /// unit. Every time-valued recorder goes through here.
+    fn ticks(&self, elapsed: Duration) -> u64 {
+        self.latency_unit().value(elapsed)
+    }
+
+    /// Records the elapsed time of a completed command against its
+    /// per-command-type histogram, in the policy's
+    /// [`LatencyUnit`](crate::metrics::LatencyUnit).
+    pub fn record_command(&self, ct: CommandType, elapsed: Duration) {
         if let Some(h) = &self.command_metrics[ct.index()] {
-            h.add(millis);
+            h.add(self.ticks(elapsed));
         }
     }
 
-    /// Records connection-acquire time (milliseconds) for the detailed
-    /// per-namespace metrics.
-    pub fn record_connection_aq(&self, namespace: &str, ct: CommandType, millis: u64) {
-        self.with_command_metric(namespace, ct, |cm| cm.connection_aq.add(millis));
+    /// Records connection-acquire time for the detailed per-namespace metrics.
+    pub fn record_connection_aq(&self, namespace: &str, ct: CommandType, elapsed: Duration) {
+        let ticks = self.ticks(elapsed);
+        self.with_command_metric(namespace, ct, |cm| cm.connection_aq.add(ticks));
     }
 
-    /// Records write latency (milliseconds) and bytes-sent for the detailed
-    /// metrics.
-    pub fn record_write(&self, namespace: &str, ct: CommandType, bytes_sent: u64, latency: u64) {
+    /// Records write latency and bytes-sent for the detailed metrics. Only the
+    /// latency is unit-converted; the byte count is a size, not a time.
+    pub fn record_write(
+        &self,
+        namespace: &str,
+        ct: CommandType,
+        bytes_sent: u64,
+        latency: Duration,
+    ) {
+        let ticks = self.ticks(latency);
         self.with_command_metric(namespace, ct, |cm| {
             cm.bytes_sent.add(bytes_sent);
-            cm.latency.add(latency);
+            cm.latency.add(ticks);
         });
     }
 
-    /// Records parse time (milliseconds) and bytes-received for the detailed
-    /// metrics.
+    /// Records parse time and bytes-received for the detailed metrics. Only the
+    /// parse time is unit-converted.
     pub fn record_parse(
         &self,
         namespace: &str,
         ct: CommandType,
-        parsing: u64,
+        parsing: Duration,
         bytes_received: u64,
     ) {
+        let ticks = self.ticks(parsing);
         self.with_command_metric(namespace, ct, |cm| {
-            cm.parsing.add(parsing);
+            cm.parsing.add(ticks);
             cm.bytes_received.add(bytes_received);
         });
     }
@@ -556,31 +590,54 @@ impl NodeMetrics {
             .entry(namespace.to_string())
             .or_insert_with(empty_metric_slots);
         if slots[idx].is_none() {
-            slots[idx] = Some(CommandMetric::new(&self.policy));
+            slots[idx] = Some(CommandMetric::new(&self.policy.read().unwrap()));
         }
         f(slots[idx].as_ref().unwrap());
     }
 
     /// Re-applies a (possibly changed) policy, resetting histograms whose shape
     /// changed.
+    ///
+    /// A [`LatencyUnit`] change resets the **time** histograms even though their
+    /// shape is untouched: microsecond and millisecond samples in one set of
+    /// buckets would make the counts, min, max and sum meaningless. Size
+    /// histograms (bytes sent/received) are not times and are left alone.
     pub fn reshape(&self, policy: &MetricsPolicy) {
+        // Store the applied policy first: anything created lazily from here on
+        // (detailed metrics, drain snapshots) must take the new shape, or the
+        // shape-checked histogram merges silently drop its samples.
+        *self.policy.write().unwrap() = policy.clone();
+
         // Pick up the (possibly new) sampler from the applied policy.
         let Sampler { range, threshold } = policy.sampler;
         self.sampler_threshold.store(threshold, Ordering::Relaxed);
         self.sampler_range.store(range, Ordering::Relaxed);
-        for h in self.command_metrics.iter().flatten() {
+
+        let unit_changed = self.latency_unit() != policy.latency_unit;
+        if unit_changed {
+            self.latency_unit
+                .store(policy.latency_unit.to_code(), Ordering::Relaxed);
+        }
+
+        // Reshapes to the new layout, then discards values that were recorded
+        // in the previous unit (a no-op reshape keeps them).
+        let apply = |h: &SyncHistogram, is_time: bool| {
             h.reshape(policy.histogram_type, policy.base(), policy.latency_columns);
+            if unit_changed && is_time {
+                h.reset();
+            }
+        };
+
+        for h in self.command_metrics.iter().flatten() {
+            apply(h, true);
         }
         for slots in self.detailed_metrics.read().unwrap().values() {
             for cm in slots.iter().flatten() {
-                for h in [
-                    &cm.connection_aq,
-                    &cm.latency,
-                    &cm.parsing,
-                    &cm.bytes_sent,
-                    &cm.bytes_received,
-                ] {
-                    h.reshape(policy.histogram_type, policy.base(), policy.latency_columns);
+                for h in [&cm.connection_aq, &cm.latency, &cm.parsing] {
+                    apply(h, true);
+                }
+                for h in [&cm.bytes_sent, &cm.bytes_received] {
+                    apply(h, false);
                 }
             }
         }
@@ -590,7 +647,10 @@ impl NodeMetrics {
     /// the live values.
     #[must_use]
     pub fn get_and_reset(&self) -> NodeMetricsSnapshot {
-        let mut snapshot = NodeMetricsSnapshot::new(self.policy.clone());
+        let mut snapshot = NodeMetricsSnapshot::new(self.policy.read().unwrap().clone());
+        // The recorders read the unit from the atomic, so stamp the snapshot
+        // from the same source they used.
+        snapshot.latency_unit = self.latency_unit();
         snapshot.counters = self.counters.snapshot_and_reset();
 
         for (name, ct) in command_histograms!() {
@@ -644,6 +704,14 @@ impl NodeMetrics {
 pub struct NodeMetricsSnapshot {
     #[cfg_attr(feature = "serialization", serde(skip))]
     policy: MetricsPolicy,
+
+    /// Unit of every time value in this snapshot's histograms, exported as
+    /// `latency-unit: "us" | "ms"`.
+    ///
+    /// Bucket counts cannot be interpreted without it, so it travels with the
+    /// data rather than being something the consumer has to know.
+    #[cfg_attr(feature = "serialization", serde(rename = "latency-unit"))]
+    pub latency_unit: LatencyUnit,
 
     #[cfg_attr(
         feature = "serialization",
@@ -702,6 +770,7 @@ impl NodeMetricsSnapshot {
         let mk =
             || SyncHistogram::new(policy.histogram_type, policy.base(), policy.latency_columns);
         NodeMetricsSnapshot {
+            latency_unit: policy.latency_unit,
             labels: Labels::new(),
             counters: Counters::default(),
             get_metrics: mk(),
@@ -818,6 +887,25 @@ impl NodeMetricsSnapshot {
     #[must_use]
     pub fn open_connections(&self) -> u64 {
         self.counters.connections_open
+    }
+
+    /// Discards every *time* histogram, keeping counters, result codes and the
+    /// size histograms.
+    ///
+    /// Used when the [`LatencyUnit`] changes: the retained samples were measured
+    /// in the old unit and cannot share buckets with the new one. The node-level
+    /// twin of this is [`NodeMetrics::reshape`].
+    pub(crate) fn reset_time_histograms(&mut self) {
+        for (_, h) in self.command_histograms() {
+            h.reset();
+        }
+        for slots in self.detailed_metrics.values() {
+            for cm in slots.iter().flatten() {
+                cm.connection_aq.reset();
+                cm.latency.reset();
+                cm.parsing.reset();
+            }
+        }
     }
 
     /// Merges another snapshot into this one.
@@ -965,9 +1053,9 @@ mod tests {
     #[test]
     fn record_command_targets_right_histogram() {
         let metrics = NodeMetrics::new(MetricsPolicy::default());
-        metrics.record_command(CommandType::Put, 100);
-        metrics.record_command(CommandType::Put, 200);
-        metrics.record_command(CommandType::Get, 50);
+        metrics.record_command(CommandType::Put, Duration::from_millis(100));
+        metrics.record_command(CommandType::Put, Duration::from_millis(200));
+        metrics.record_command(CommandType::Get, Duration::from_millis(50));
         let snap = metrics.get_and_reset();
         assert_eq!(snap.put_metrics.count(), 2);
         assert_eq!(snap.get_metrics.count(), 1);
@@ -1032,8 +1120,8 @@ mod tests {
     #[test]
     fn detailed_and_result_codes_roundtrip() {
         let metrics = NodeMetrics::new(MetricsPolicy::default());
-        metrics.record_write("test", CommandType::Put, 128, 250);
-        metrics.record_parse("test", CommandType::Put, 30, 64);
+        metrics.record_write("test", CommandType::Put, 128, Duration::from_millis(250));
+        metrics.record_parse("test", CommandType::Put, Duration::from_millis(30), 64);
         metrics.record_result_code("test", CommandType::Put, ResultCode::KeyNotFoundError);
         metrics.record_result_code("test", CommandType::Put, ResultCode::KeyNotFoundError);
 
@@ -1110,13 +1198,13 @@ mod tests {
         metrics.set_enabled(true);
 
         // Two namespaces, two command types, repeated result codes.
-        metrics.record_write("ns1", CommandType::Put, 100, 200);
-        metrics.record_parse("ns1", CommandType::Put, 10, 50);
+        metrics.record_write("ns1", CommandType::Put, 100, Duration::from_millis(200));
+        metrics.record_parse("ns1", CommandType::Put, Duration::from_millis(10), 50);
         metrics.record_result_code("ns1", CommandType::Put, ResultCode::Ok);
         metrics.record_result_code("ns2", CommandType::Get, ResultCode::KeyNotFoundError);
         let a = metrics.get_and_reset();
 
-        metrics.record_write("ns1", CommandType::Put, 300, 400);
+        metrics.record_write("ns1", CommandType::Put, 300, Duration::from_millis(400));
         metrics.record_result_code("ns1", CommandType::Put, ResultCode::Ok);
         let b = metrics.get_and_reset();
 
@@ -1152,10 +1240,183 @@ mod tests {
     }
 
     #[test]
+    fn recorders_bucket_in_the_policy_unit() {
+        // 1500µs is 1ms: bucket 10 of a µs log2 histogram (2^10 = 1024), and
+        // bucket 0 of a ms one.
+        let elapsed = Duration::from_micros(1_500);
+
+        let us = NodeMetrics::new(MetricsPolicy::micros());
+        us.record_command(CommandType::Get, elapsed);
+        let snap = us.get_and_reset();
+        assert_eq!(snap.get_metrics.max(), 1_500);
+        assert_eq!(snap.get_metrics.buckets()[10], 1);
+
+        let ms = NodeMetrics::new(MetricsPolicy::millis());
+        ms.record_command(CommandType::Get, elapsed);
+        let snap = ms.get_and_reset();
+        assert_eq!(snap.get_metrics.max(), 1);
+        assert_eq!(snap.get_metrics.buckets()[0], 1);
+    }
+
+    #[test]
+    fn detailed_recorders_convert_times_but_not_sizes() {
+        let metrics = NodeMetrics::new(MetricsPolicy::micros());
+        metrics.record_write("ns", CommandType::Put, 64, Duration::from_millis(2));
+        metrics.record_parse("ns", CommandType::Put, Duration::from_millis(3), 128);
+        metrics.record_connection_aq("ns", CommandType::Put, Duration::from_micros(7));
+
+        let snap = metrics.get_and_reset();
+        let cm = snap.detailed_metric("ns", CommandType::Put).unwrap();
+        // Times in microseconds...
+        assert_eq!(cm.latency.max(), 2_000);
+        assert_eq!(cm.parsing.max(), 3_000);
+        assert_eq!(cm.connection_aq.max(), 7);
+        // ...byte counts untouched by the unit.
+        assert_eq!(cm.bytes_sent.max(), 64);
+        assert_eq!(cm.bytes_received.max(), 128);
+    }
+
+    #[test]
+    fn reshape_shapes_lazily_created_detail_and_drain_snapshots() {
+        let metrics = NodeMetrics::new(MetricsPolicy::micros());
+        metrics.set_enabled(true);
+        metrics.reshape(&MetricsPolicy::millis());
+
+        // Detail created after the reshape must take the applied 7-column
+        // shape, not the construction-time 24-column one.
+        metrics.record_write("ns", CommandType::Put, 64, Duration::from_millis(5));
+        let snapshot = metrics.get_and_reset();
+        let cm = snapshot.detailed_metric("ns", CommandType::Put).unwrap();
+        assert_eq!(cm.latency.buckets().len(), crate::metrics::MILLIS_LATENCY_COLUMNS);
+        assert_eq!(cm.latency.count(), 1);
+        assert_eq!(snapshot.latency_unit, LatencyUnit::Milliseconds);
+
+        // The shape-checked histogram merge would silently drop mismatched
+        // samples, so aggregating into a base built from the applied policy
+        // must retain them.
+        let mut agg = NodeMetricsSnapshot::new(MetricsPolicy::millis());
+        agg.aggregate(&snapshot);
+        let agg_cm = agg.detailed_metric("ns", CommandType::Put).unwrap();
+        assert_eq!(agg_cm.latency.count(), 1);
+        assert_eq!(agg_cm.bytes_sent.count(), 1);
+    }
+
+    // Minimal repro for CLIENT-5242. Builds a node with the default micros()
+    // shape (24 latency columns), then enables metrics with the millis() preset
+    // (7 columns) -- exactly what `client.enable_metrics(MetricsPolicy::millis())`
+    // does to every node (Cluster::enable_metrics -> NodeMetrics::reshape). One
+    // write is recorded, then rolled into a cluster aggregate built from the
+    // applied millis() policy.
+    //
+    // With the reshape defect the detail created lazily after the reshape keeps
+    // the stale 24-column shape, and the shape-checked histogram merge silently
+    // drops it:
+    //   without fix -> agg latency count == 0   (this assertion fails)
+    //   with fix    -> agg latency count == 1
+    #[test]
+    fn client_5242_repro_millis_preset_zeroes_cluster_aggregate() {
+        let node = NodeMetrics::new(MetricsPolicy::micros()); // 24-column build
+        node.set_enabled(true);
+        node.reshape(&MetricsPolicy::millis()); // enable_metrics(millis()) does this
+
+        node.record_write("test", CommandType::Put, 64, Duration::from_millis(5));
+
+        let per_node = node.get_and_reset();
+        let mut cluster_agg = NodeMetricsSnapshot::new(MetricsPolicy::millis());
+        cluster_agg.aggregate(&per_node);
+
+        let cm = cluster_agg
+            .detailed_metric("test", CommandType::Put)
+            .expect("detail slot for test/Put");
+        assert_eq!(
+            cm.latency.count(),
+            1,
+            "detailed latency was dropped by the shape-mismatched merge (CLIENT-5242)"
+        );
+    }
+
+    #[test]
+    fn reshape_to_a_new_unit_discards_stale_times_but_keeps_sizes() {
+        let metrics = NodeMetrics::new(MetricsPolicy::micros());
+        metrics.set_enabled(true);
+        metrics.record_command(CommandType::Get, Duration::from_millis(5));
+        metrics.record_write("ns", CommandType::Put, 64, Duration::from_millis(5));
+        metrics.record_parse("ns", CommandType::Put, Duration::from_millis(5), 128);
+
+        // Same shape, different unit: microsecond samples cannot share buckets
+        // with millisecond ones.
+        let mut ms = MetricsPolicy::millis();
+        ms.latency_columns = MetricsPolicy::micros().latency_columns;
+        metrics.reshape(&ms);
+        assert_eq!(metrics.latency_unit(), LatencyUnit::Milliseconds);
+
+        let snap = metrics.get_and_reset();
+        assert_eq!(snap.get_metrics.count(), 0, "stale times must be discarded");
+        let cm = snap.detailed_metric("ns", CommandType::Put).unwrap();
+        assert_eq!(cm.latency.count(), 0);
+        assert_eq!(cm.parsing.count(), 0);
+        assert_eq!(cm.connection_aq.count(), 0);
+        // Sizes are not times: they survive.
+        assert_eq!(cm.bytes_sent.count(), 1);
+        assert_eq!(cm.bytes_received.count(), 1);
+        // And the snapshot reports the unit it was actually recorded in.
+        assert_eq!(snap.latency_unit, LatencyUnit::Milliseconds);
+    }
+
+    #[test]
+    fn reshape_without_a_unit_change_keeps_samples() {
+        let metrics = NodeMetrics::new(MetricsPolicy::micros());
+        metrics.record_command(CommandType::Get, Duration::from_micros(4));
+        // Same policy: nothing to reset.
+        metrics.reshape(&MetricsPolicy::micros());
+        assert_eq!(metrics.get_and_reset().get_metrics.count(), 1);
+    }
+
+    #[test]
+    fn snapshot_reset_time_histograms_keeps_counters_and_sizes() {
+        // What `Cluster::enable_metrics` does to the retained per-host snapshots
+        // when the unit changes.
+        let metrics = NodeMetrics::new(MetricsPolicy::micros());
+        metrics.set_enabled(true);
+        metrics.incr_connections_attempt();
+        metrics.record_command(CommandType::Get, Duration::from_millis(1));
+        metrics.record_write("ns", CommandType::Put, 64, Duration::from_millis(1));
+        metrics.record_result_code("ns", CommandType::Put, ResultCode::Ok);
+
+        let mut snap = metrics.get_and_reset();
+        snap.reset_time_histograms();
+
+        assert_eq!(snap.get_metrics.count(), 0);
+        let cm = snap.detailed_metric("ns", CommandType::Put).unwrap();
+        assert_eq!(cm.latency.count(), 0);
+        // Not times: kept.
+        assert_eq!(cm.bytes_sent.count(), 1);
+        assert_eq!(snap.counters.connections_attempts, 1);
+        assert_eq!(
+            snap.result_code_count("ns", CommandType::Put, ResultCode::Ok),
+            1
+        );
+    }
+
+    #[test]
+    fn snapshot_reports_the_unit_it_was_recorded_in() {
+        let metrics = NodeMetrics::new(MetricsPolicy::millis());
+        assert_eq!(metrics.latency_unit(), LatencyUnit::Milliseconds);
+        assert_eq!(
+            metrics.get_and_reset().latency_unit,
+            LatencyUnit::Milliseconds
+        );
+        assert_eq!(
+            NodeMetricsSnapshot::new(MetricsPolicy::micros()).latency_unit,
+            LatencyUnit::Microseconds
+        );
+    }
+
+    #[test]
     fn reshape_changes_histogram_layout() {
         let metrics = NodeMetrics::new(MetricsPolicy::default());
         metrics.set_enabled(true);
-        metrics.record_command(CommandType::Get, 10);
+        metrics.record_command(CommandType::Get, Duration::from_millis(10));
         // Switch to a linear histogram with a different column count.
         let mut new_policy = MetricsPolicy::default();
         new_policy.histogram_type = crate::metrics::HistogramType::Linear;
@@ -1178,8 +1439,8 @@ mod tests {
             .connections_open
             .store(4, Ordering::Relaxed);
         metrics.counters.tends_total.fetch_add(2, Ordering::Relaxed);
-        metrics.record_command(CommandType::Put, 123);
-        metrics.record_write("test", CommandType::Put, 64, 90);
+        metrics.record_command(CommandType::Put, Duration::from_millis(123));
+        metrics.record_write("test", CommandType::Put, 64, Duration::from_millis(90));
         metrics.record_result_code("test", CommandType::Put, ResultCode::KeyNotFoundError);
 
         let snap = metrics.get_and_reset();
