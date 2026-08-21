@@ -14,7 +14,7 @@
 
 //! Tier D hint-flag integration tests (field `44` EXPLAIN flags).
 
-use super::{explain_plan, supports_query_selection, AGE_BIN, COUNTRY_BIN, SCORE_BIN};
+use super::{explain_plan, supports_query_selection, AGE_BIN, BOGUS_INDEX_NAME, COUNTRY_BIN, SCORE_BIN};
 use crate::common;
 
 use aerospike::query::QuerySelection;
@@ -22,6 +22,7 @@ use aerospike::{
     as_bin, as_key, AdminPolicy, Client, CollectionIndexType, IndexType, Task, WritePolicy,
     FLAG_EXPLAIN, FLAG_HARD_HINT, FLAG_REQUIRE_INDEX,
 };
+use aerospike_core::{QueryPolicy, ResultCode};
 
 struct HintFixture {
     set_name: String,
@@ -73,6 +74,50 @@ async fn prepare_hint_fixture(client: &Client) -> HintFixture {
         age_index_name,
         score_index_name,
     }
+}
+
+async fn explain_hint_raw(
+    client: &Client,
+    set_name: &str,
+    ael: &str,
+    index_name_hint: Option<&str>,
+    explain_where_flags: Option<u8>,
+) -> aerospike::Result<aerospike::QueryPlan> {
+    let namespace = common::namespace();
+    client
+        .query_explain(
+            &QueryPolicy::default(),
+            namespace,
+            Some(set_name),
+            ael,
+            index_name_hint,
+            explain_where_flags,
+        )
+        .await
+}
+
+/// `REQUIRE_INDEX` on a PI-eligible WHERE rejects explain.
+#[aerospike_macro::test]
+async fn query_selection_hint_require_index_on_primary_fails() {
+    let client = common::client().await;
+    if !supports_query_selection(&client).await {
+        return;
+    }
+
+    let fixture = prepare_hint_fixture(&client).await;
+    let err = explain_hint_raw(
+        &client,
+        &fixture.set_name,
+        "$.country == 'US'",
+        None,
+        Some(FLAG_EXPLAIN | FLAG_REQUIRE_INDEX),
+    )
+    .await
+    .unwrap_err();
+
+    assert_eq!(err.server_result_code(), Some(ResultCode::IndexNotFound));
+
+    client.close().await.unwrap();
 }
 
 /// `REQUIRE_INDEX` + soft `forIndex` still selects the matching secondary index.
@@ -146,6 +191,48 @@ async fn query_selection_hint_require_index_and_hard_hint() {
 
     assert_eq!(plan.index_name(), Some(fixture.age_index_name.as_str()));
     assert_eq!(plan.ael().unwrap(), "$.age == 25");
+
+    client.close().await.unwrap();
+}
+
+/// `HARD_HINT` with wrong index name fails explain.
+#[aerospike_macro::test]
+async fn query_selection_hint_hard_hint_wrong_index_fails() {
+    let client = common::client().await;
+    if !supports_query_selection(&client).await {
+        return;
+    }
+
+    let fixture = prepare_hint_fixture(&client).await;
+    let err = explain_hint_raw(
+        &client,
+        &fixture.set_name,
+        "$.age == 25",
+        Some(BOGUS_INDEX_NAME),
+        Some(FLAG_EXPLAIN | FLAG_HARD_HINT),
+    )
+    .await
+    .unwrap_err();
+
+    assert_eq!(err.server_result_code(), Some(ResultCode::IndexNotFound));
+
+    client.close().await.unwrap();
+}
+
+/// Syntactically invalid AEL fails explain with `PARAMETER`.
+#[aerospike_macro::test]
+async fn query_selection_hint_bad_ael_fails_parameter() {
+    let client = common::client().await;
+    if !supports_query_selection(&client).await {
+        return;
+    }
+
+    let fixture = prepare_hint_fixture(&client).await;
+    let err = explain_hint_raw(&client, &fixture.set_name, "$.age > 30 and", None, None)
+        .await
+        .unwrap_err();
+
+    assert_eq!(err.server_result_code(), Some(ResultCode::ParameterError));
 
     client.close().await.unwrap();
 }
