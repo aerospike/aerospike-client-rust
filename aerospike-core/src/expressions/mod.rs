@@ -1880,6 +1880,21 @@ pub const fn unknown() -> Expression {
 mod tests {
     use super::*;
 
+    // A plain `vector_bin` read is wire-identical to `blob_bin`: both are a
+    // BLOB-typed bin read (ExpOp::Bin + ExpType::BLOB). The client therefore
+    // sends an ordinary, well-formed bin-read expression when reading a vector
+    // bin. Any node crash on such a read is a server-side defect, not a
+    // malformed client payload. (Server bug: `rt_bin_translate` in
+    // as/src/exp/exp_rt.c has no AS_PARTICLE_TYPE_VECTOR case and falls through
+    // to `cf_crash`, unlike `rt_value_translate`, which safely yields UNK.)
+    #[test]
+    fn vector_bin_packs_identically_to_blob_bin() {
+        assert_eq!(
+            vector_bin("embedding".to_string()).base64().unwrap(),
+            blob_bin("embedding".to_string()).base64().unwrap(),
+        );
+    }
+
     // The generic `bin(name, type)` accessor packs identically to the
     // corresponding typed accessor (Java Exp.bin parity).
     #[test]
