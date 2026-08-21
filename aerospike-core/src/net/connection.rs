@@ -161,10 +161,8 @@ impl Connection {
         &mut self,
         pool: std::sync::Arc<crate::net::buffer_pool::TieredBufferPool>,
     ) {
-        self.buffer = crate::commands::buffer::Buffer::with_pool(
-            self.buffer.reclaim_threshold,
-            pool,
-        );
+        self.buffer =
+            crate::commands::buffer::Buffer::with_pool(self.buffer.reclaim_threshold, pool);
     }
 
     #[cfg(feature = "tls")]
@@ -221,8 +219,7 @@ impl Connection {
     ) -> Result<(Self, Option<crate::commands::admin_command::SessionInfo>)> {
         let addr = host.address();
         let stream =
-            aerospike_rt::timeout(policy.connect_timeout(), TcpStream::connect(addr.clone()))
-                .await;
+            aerospike_rt::timeout(policy.connect_timeout(), TcpStream::connect(addr.clone())).await;
         if stream.is_err() {
             return Err(Error::connection(
                 "Could not open network connection".to_string(),
@@ -373,7 +370,10 @@ impl Connection {
         let buf = &self.buffer.data_buffer;
         let res = match self.conn {
             Netsocket::Tcp(ref mut conn) => {
-                io_with_timeout!(self, timeout, conn.write_all(buf))
+                io_with_timeout!(self, timeout, async {
+                    conn.write_all(buf).await?;
+                    conn.flush().await
+                })
             }
             #[cfg(feature = "tls")]
             Netsocket::Tls(ref mut conn) => {
@@ -1794,7 +1794,11 @@ mod tests_eof_loopback {
             result.is_err(),
             "Queue::get() must evict a peer-FIN'd socket, not hand it out"
         );
-        assert_eq!(q.num_conns(), 0, "the dead socket must be gone from the queue");
+        assert_eq!(
+            q.num_conns(),
+            0,
+            "the dead socket must be gone from the queue"
+        );
     }
 
     #[tokio::test(flavor = "current_thread")]
