@@ -18,7 +18,9 @@ use std::collections::HashMap;
 
 use futures::stream::StreamExt;
 
-use super::{count_records, execute_ael, explain_plan, supports_query_selection, AGE_BIN, COUNTRY_BIN};
+use super::{
+    count_records, execute_ael, explain_plan, supports_query_selection, AGE_BIN, COUNTRY_BIN,
+};
 use crate::common;
 
 use aerospike::query::QuerySelection;
@@ -44,6 +46,7 @@ fn map_contains_str_key(map_value: &Value, key: &str) -> bool {
 struct ScopeFixture {
     set_name: String,
     blob_index_name: String,
+    map_index_name: String,
     blob_hex: String,
 }
 
@@ -131,6 +134,7 @@ async fn prepare_scope_fixture(client: &Client) -> ScopeFixture {
     ScopeFixture {
         set_name,
         blob_index_name,
+        map_index_name,
         blob_hex,
     }
 }
@@ -178,9 +182,10 @@ async fn query_selection_scope_blob_execute_returns_matching_row() {
     client.close().await.unwrap();
 }
 
-/// MAPKEYS + CDT `.exists()` → primary index fallback on explain.
+/// MAPKEYS + CDT `.exists()` → the MAPKEYS collection index on explain. The key
+/// selector carries a probe value, so the index can answer the predicate.
 #[aerospike_macro::test]
-async fn query_selection_scope_mapkeys_exists_primary_index_fallback() {
+async fn query_selection_scope_mapkeys_exists_selects_map_keys_index() {
     let client = common::client().await;
     if !supports_query_selection(&client).await {
         return;
@@ -190,9 +195,9 @@ async fn query_selection_scope_mapkeys_exists_primary_index_fallback() {
     let ael = format!("$.{MAP_BIN}.{MAP_KEY}.exists() == true");
     let plan = explain_plan(&client, &fixture.set_name, &ael, None, None).await;
 
-    assert_eq!(plan.selection(), QuerySelection::PrimaryIndex);
-    assert!(plan.index_name().is_none());
-    assert!(plan.index_range_bytes().is_none());
+    assert_eq!(plan.selection(), QuerySelection::SecondaryIndex);
+    assert_eq!(plan.index_name(), Some(fixture.map_index_name.as_str()));
+    assert!(plan.index_range_bytes().is_some());
     assert!(!plan.ael().unwrap().is_empty());
 
     client.close().await.unwrap();

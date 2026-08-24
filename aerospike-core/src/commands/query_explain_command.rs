@@ -15,15 +15,16 @@
 use std::sync::Arc;
 
 use crate::cluster::{Cluster, Node};
-use crate::commands::buffer;
 use crate::commands::as_msg_fields::AsMsgFields;
+use crate::commands::buffer;
+use crate::commands::field_type::FieldType;
 use crate::commands::{Command, SingleCommand};
 use crate::errors::{Error, Result};
 use crate::net::Connection;
 use crate::policy::{Policy, QueryPolicy};
 use crate::query::plan::IndexRangeWire;
-use crate::query::QueryWhereWire;
 use crate::query::plan::QueryPlan;
+use crate::query::QueryWhereWire;
 use crate::ResultCode;
 
 /// Internal phase-1 of server-led query selection (field `44` WHERE + EXPLAIN).
@@ -130,10 +131,6 @@ impl Command for QueryExplainCommand<'_> {
         let result_code = ResultCode::from(conn.buffer.read_u8(Some(13)));
         let field_count = conn.buffer.read_u16(Some(26)) as usize;
 
-        if result_code != ResultCode::Ok && result_code != ResultCode::FilteredOut {
-            return Err(Error::server_error(result_code, conn.addr.clone(), None));
-        }
-
         let header_size = buffer::MSG_TOTAL_HEADER_SIZE as usize;
         let body_size = ((sz & 0xFFFF_FFFF_FFFF) as usize).saturating_sub(header_length);
         let message_end = header_size + body_size;
@@ -153,6 +150,14 @@ impl Command for QueryExplainCommand<'_> {
         } else {
             AsMsgFields::from_buffer(&[], 0, 0)?
         };
+
+        if result_code != ResultCode::Ok && result_code != ResultCode::FilteredOut {
+            return Err(Error::server_error(
+                result_code,
+                conn.addr.clone(),
+                error_detail_from_fields(&fields),
+            ));
+        }
 
         self.plan = Some(QueryPlan::from_explain_response(
             result_code,
@@ -176,6 +181,13 @@ impl Command for QueryExplainCommand<'_> {
     }
 
     fn prepare_retry(&mut self, _is_client_timeout: bool) {}
+}
+
+fn error_detail_from_fields(fields: &AsMsgFields) -> Option<Box<crate::ServerErrorDetail>> {
+    fields
+        .field(FieldType::ErrorMessage)
+        .and_then(crate::server_error::parse_error_detail)
+        .map(Box::new)
 }
 
 fn log_query_plan(
@@ -216,9 +228,23 @@ fn log_query_plan(
 
 #[cfg(test)]
 mod logging_tests {
+    use super::{error_detail_from_fields, AsMsgFields, FieldType};
+
     #[test]
     fn rust_log_query_target_respects_filter() {
         let _ = env_logger::try_init();
         log::debug!(target: "query", "query-plan: logging filter probe");
+    }
+
+    #[test]
+    fn explain_error_fields_preserve_extended_detail() {
+        let detail = [0x81, 0x01, 0x07];
+        let mut field = ((detail.len() + 1) as u32).to_be_bytes().to_vec();
+        field.push(FieldType::ErrorMessage as u8);
+        field.extend_from_slice(&detail);
+        let fields = AsMsgFields::from_buffer(&field, 0, 1).unwrap();
+
+        let parsed = error_detail_from_fields(&fields).expect("error detail");
+        assert_eq!(parsed.sub_code, 7);
     }
 }
