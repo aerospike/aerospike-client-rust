@@ -103,6 +103,22 @@ pub struct Node {
     opening_connections: Arc<AtomicUsize>,
 }
 
+/// Await a spawned probe task. A panicked task degrades to a failed probe
+/// (`None`) on both runtimes, so the tend task survives.
+async fn await_spawned_task<T>(handle: aerospike_rt::task::JoinHandle<Option<T>>) -> Option<T> {
+    use futures::FutureExt;
+    std::panic::AssertUnwindSafe(async move {
+        #[cfg(feature = "rt-tokio")]
+        return handle.await.unwrap_or(None); // JoinError → None, no panic involved
+        #[cfg(feature = "rt-async-std")]
+        return handle.await; // task panic re-raises here → caught below
+    })
+    .catch_unwind()
+    .await
+    .ok() // Err(payload) = a panic was caught → None
+    .flatten()
+}
+
 impl Drop for Node {
     fn drop(&mut self) {
         debug!("Node closed {self}");
@@ -922,10 +938,10 @@ impl Node {
     /// calls `conn.refresh()` internally), so the probed connection goes
     /// back into the pool as fresh.
     ///
-    /// **Non-blocking**: uses `try_lock` on each queue so a contended pool
-    /// is skipped for this tend iteration — tend retries next time. Probes
-    /// run concurrently via `join_all` so total wall-clock is bounded by
-    /// the single slowest probe, not `N × per-probe latency`.
+    /// Queues are swept round-robin, one verdict per queue per turn, so the
+    /// retire budget is spent evenly across queues instead of draining them
+    /// in order. All keep-alive probes complete before this function returns,
+    /// so the pool is settled and the returned count is final.
     ///
     /// Returns the number of connections processed (reaped + refreshed).
     pub async fn reap_and_refresh_idle_connections(&self) -> usize {
@@ -951,50 +967,50 @@ impl Node {
             timeout: policy.timeout.min(2000),
         };
 
-        // Decide first: walk each queue's tail and collect verdicts. At most
-        // one connection leaves a queue per step, so callers never find the
-        // pool drained by maintenance.
-        let mut to_probe: Vec<(Queue, Connection)> = Vec::new();
+        // One verdict per queue per turn. Every turn either pops a connection
+        // (finite) or retires the queue from the rotation — bounded, no spinning.
+        let mut probe_handles = Vec::new();
         let mut total_processed = 0usize;
-        for queue in self.connection_pool.queues() {
-            loop {
-                match queue.inspect_tail(droppable > 0, expiry_horizon) {
-                    // Contended or settled: everything deeper is fresher.
-                    None | Some(TailVerdict::Settled) => break,
-                    Some(TailVerdict::Retire(conn)) => {
-                        drop(conn);
-                        queue.reduce_capacity();
-                        droppable = droppable.saturating_sub(1);
-                        self.metrics.incr_connections_idle_dropped();
-                        self.metrics.incr_connections_closed();
-                        total_processed += 1;
-                    }
-                    Some(TailVerdict::KeepAlive(conn)) => {
-                        to_probe.push((queue.clone(), conn));
-                    }
+        let mut active: std::collections::VecDeque<&Queue> =
+            self.connection_pool.queues().iter().collect();
+        while let Some(queue) = active.pop_front() {
+            match queue.inspect_tail(droppable > 0, expiry_horizon) {
+                Some(TailVerdict::Retire(conn)) => {
+                    drop(conn);
+                    queue.reduce_capacity();
+                    droppable = droppable.saturating_sub(1);
+                    self.metrics.incr_connections_idle_dropped();
+                    self.metrics.incr_connections_closed();
+                    total_processed += 1;
+                    active.push_back(queue);
                 }
+                Some(TailVerdict::KeepAlive(conn)) => {
+                    // Probe runs concurrently from here; pool mutation waits below.
+                    // The queue stays outside the task so its slot can be freed
+                    // even if the task dies.
+                    let pp = probe_policy;
+                    let handle = aerospike_rt::spawn(async move {
+                        let mut conn = conn;
+                        match Message::info(&pp, &mut conn, &["node"]).await {
+                            Ok(_) => Some(conn),
+                            Err(_) => None,
+                        }
+                    });
+                    probe_handles.push((queue.clone(), handle));
+                    active.push_back(queue);
+                }
+                // Contended or settled: everything deeper is fresher.
+                None | Some(TailVerdict::Settled) => {}
             }
         }
 
-        if to_probe.is_empty() {
-            return total_processed;
-        }
-
-        // Act: probe the keepers concurrently, so wall-clock is one round-trip
-        // rather than one per connection. A successful probe refreshes the
-        // connection (the response read stamps it), and `put_back` re-pools it
-        // as the freshest; a failure means the socket is dead — free its slot.
-        let probes = to_probe.into_iter().map(|(queue, mut conn)| {
-            let pp = probe_policy;
-            async move {
-                match Message::info(&pp, &mut conn, &["node"]).await {
-                    Ok(_) => (queue, Some(conn)),
-                    Err(_) => (queue, None),
-                }
-            }
-        });
-        for (queue, result) in futures::future::join_all(probes).await {
-            match result {
+        // Each handle is paired with the queue its connection came from, and
+        // the task returns the connection itself on success. The probes have
+        // been running since spawn, so awaiting them in order costs only the
+        // slowest one. A healed connection re-pools into its own queue, and a
+        // failed one frees that queue's reserved slot.
+        for (queue, handle) in probe_handles {
+            match await_spawned_task(handle).await {
                 Some(conn) => queue.put_back(conn),
                 None => {
                     queue.reduce_capacity();
@@ -1628,5 +1644,47 @@ mod pool_health_tests {
             1,
             "7 of 8 must retire across the four queues, stopping at the floor"
         );
+    }
+
+    /// The retire budget is spent round-robin, one connection per queue per
+    /// turn — the old queue-by-queue sweep left (0, 0, 2, 2) here.
+    #[aerospike_macro::test]
+    async fn retire_budget_spreads_across_queues_fairly() {
+        let (addr, _dead) = spawn_fake_node(false).await;
+        let policy = ClientPolicy {
+            idle_timeout: 300,
+            min_conns_per_node: 4,
+            tend_interval: 250,
+            conn_pools_per_node: 4,
+            timeout: 5_000,
+            ..ClientPolicy::default()
+        };
+        let node = node_against(addr, policy.clone());
+        for qi in 0..4 {
+            let queue = &node.connection_pool.queues()[qi];
+            for _ in 0..2 {
+                let stream = aerospike_rt::net::TcpStream::connect(addr)
+                    .await
+                    .expect("connect");
+                let conn = crate::net::Connection::test_from_tcp_stream(stream, &policy);
+                assert!(queue.reserve_capacity());
+                queue.put_back(conn);
+            }
+        }
+        assert_eq!(node.connection_pool.total_reserved(), 8);
+        aerospike_rt::sleep(std::time::Duration::from_millis(600)).await;
+
+        // Budget = 8 - 4 = 4: one retirement per queue, then the floor
+        // survivors (one per queue) are probed and re-pooled.
+        node.reap_and_refresh_idle_connections().await;
+
+        for qi in 0..4 {
+            assert_eq!(
+                node.connection_pool.queues()[qi].reserved_count(),
+                1,
+                "queue {qi} must keep exactly one conn: retirement is spread \
+                 one-per-queue, not drained queue-by-queue"
+            );
+        }
     }
 }
