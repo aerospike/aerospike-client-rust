@@ -109,7 +109,8 @@ async fn await_spawned_task<T>(handle: aerospike_rt::task::JoinHandle<Option<T>>
     use futures::FutureExt;
     std::panic::AssertUnwindSafe(async move {
         #[cfg(feature = "rt-tokio")]
-        return handle.await.unwrap_or(None); // JoinError → None, no panic involved
+        return handle.await.ok().flatten(); 
+
         #[cfg(feature = "rt-async-std")]
         return handle.await; // task panic re-raises here → caught below
     })
