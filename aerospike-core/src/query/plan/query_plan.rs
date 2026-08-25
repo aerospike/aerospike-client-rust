@@ -222,7 +222,7 @@ mod tests {
     use crate::query::plan::{FLAG_EXPLAIN, FLAG_HARD_HINT, FLAG_REQUIRE_INDEX};
 
     const AEL: &str = "$.age > 30";
-    const RANGE: &[u8] = &[1, 3, b'a', b'g', b'e'];
+    const RANGE: &[u8] = &[1, 3, b'a', b'g', b'e', 1, 9, 10, 11];
 
     fn fields_of(entries: &[(u8, &[u8])]) -> AsMsgFields {
         let mut body = Vec::new();
