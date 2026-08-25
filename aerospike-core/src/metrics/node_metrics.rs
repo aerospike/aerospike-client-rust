@@ -24,7 +24,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, AtomicU8, Ordering};
 use std::sync::{Mutex, RwLock};
 use std::time::Duration;
 
-use super::histogram::SyncHistogram;
+use super::histogram::{HistogramType, SyncHistogram};
 use super::policy::{LatencyUnit, MetricsPolicy};
 use crate::sampler::Sampler;
 use crate::xor_shift::XorShift;
@@ -139,8 +139,9 @@ pub struct CommandMetric {
 
 impl CommandMetric {
     fn new(policy: &MetricsPolicy) -> Self {
-        let mk =
-            || SyncHistogram::new(policy.histogram_type, policy.base(), policy.latency_columns);
+        let mk = || {
+            SyncHistogram::new(HistogramType::Logarithmic, policy.base(), policy.latency_columns)
+        };
         CommandMetric {
             connection_aq: mk(),
             latency: mk(),
@@ -270,6 +271,9 @@ pub struct NodeMetrics {
     /// Whether collection is currently enabled. Gates the connection-lifecycle
     /// counters that are recorded outside the command hot-path.
     enabled: AtomicBool,
+    /// Whether operational (per-command) metrics are recorded. Copied from
+    /// the policy so the hot path does not take the policy lock.
+    operational_enabled: AtomicBool,
     /// Atomic scalar counters.
     pub(crate) counters: LiveCounters,
     /// Per-command-type latency histograms, indexed by [`CommandType::index`].
@@ -287,19 +291,21 @@ impl NodeMetrics {
             std::array::from_fn(|_| None);
         for (_, ct) in command_histograms!() {
             command_metrics[ct.index()] = Some(SyncHistogram::new(
-                policy.histogram_type,
+                HistogramType::Logarithmic,
                 policy.base(),
                 policy.latency_columns,
             ));
         }
         let Sampler { range, threshold } = policy.sampler;
         let unit = policy.latency_unit;
+        let operational_enabled = policy.operational_enabled;
         NodeMetrics {
             policy: RwLock::new(policy),
             sampler_range: AtomicU64::new(range),
             sampler_threshold: AtomicU64::new(threshold),
             latency_unit: AtomicU8::new(unit.to_code()),
             enabled: AtomicBool::new(false),
+            operational_enabled: AtomicBool::new(operational_enabled),
             counters: LiveCounters::default(),
             command_metrics,
             detailed_metrics: RwLock::new(HashMap::new()),
@@ -319,11 +325,11 @@ impl NodeMetrics {
     }
 
     /// Returns whether the next command should be recorded: collection must be
-    /// enabled **and** the configured sampler must select it (drawing from
-    /// `rand`, typically the serving connection's generator). A `threshold` of
-    /// 0 ([`Sampler::never`]) records nothing.
+    /// enabled, operational metrics must be on, **and** the configured sampler
+    /// must select it (drawing from `rand`). A `threshold` of 0
+    /// ([`Sampler::never`]) records nothing.
     pub fn should_sample(&self, rand: &mut XorShift) -> bool {
-        if !self.is_enabled() {
+        if !self.is_enabled() || !self.operational_enabled.load(Ordering::Relaxed) {
             return false;
         }
         let range = self.sampler_range.load(Ordering::Relaxed);
@@ -612,6 +618,8 @@ impl NodeMetrics {
         let Sampler { range, threshold } = policy.sampler;
         self.sampler_threshold.store(threshold, Ordering::Relaxed);
         self.sampler_range.store(range, Ordering::Relaxed);
+        self.operational_enabled
+            .store(policy.operational_enabled, Ordering::Relaxed);
 
         let unit_changed = self.latency_unit() != policy.latency_unit;
         if unit_changed {
@@ -622,7 +630,7 @@ impl NodeMetrics {
         // Reshapes to the new layout, then discards values that were recorded
         // in the previous unit (a no-op reshape keeps them).
         let apply = |h: &SyncHistogram, is_time: bool| {
-            h.reshape(policy.histogram_type, policy.base(), policy.latency_columns);
+            h.reshape(HistogramType::Logarithmic, policy.base(), policy.latency_columns);
             if unit_changed && is_time {
                 h.reset();
             }
@@ -767,8 +775,9 @@ impl NodeMetricsSnapshot {
     /// Creates an empty snapshot shaped by `policy`.
     #[must_use]
     pub fn new(policy: MetricsPolicy) -> Self {
-        let mk =
-            || SyncHistogram::new(policy.histogram_type, policy.base(), policy.latency_columns);
+        let mk = || {
+            SyncHistogram::new(HistogramType::Logarithmic, policy.base(), policy.latency_columns)
+        };
         NodeMetricsSnapshot {
             latency_unit: policy.latency_unit,
             labels: Labels::new(),
@@ -1069,26 +1078,39 @@ mod tests {
     fn should_sample_respects_enabled_and_sampler() {
         use crate::sampler::Sampler;
         let mut rng = XorShift::with_seed(1, 2);
+        let operational = || MetricsPolicy {
+            operational_enabled: true,
+            ..MetricsPolicy::default()
+        };
 
-        // Default policy samples always, but collection is off by default.
-        let m = NodeMetrics::new(MetricsPolicy::default());
+        // Operational on and the sampler accepts, but nothing is recorded
+        // until collection itself is enabled.
+        let m = NodeMetrics::new(operational());
         assert!(!m.should_sample(&mut rng), "disabled must never sample");
         m.set_enabled(true);
         assert!(m.should_sample(&mut rng), "enabled + Always must sample");
 
         // `Sampler::never()` records nothing even while enabled.
-        let policy = MetricsPolicy {
+        let m2 = NodeMetrics::new(MetricsPolicy {
             sampler: Sampler::never(),
-            ..MetricsPolicy::default()
-        };
-        let m2 = NodeMetrics::new(policy);
+            ..operational()
+        });
         m2.set_enabled(true);
         assert!(!m2.should_sample(&mut rng), "never() must not sample");
+
+        // Operational off (the default): the sampler would accept, but
+        // command metrics stay off.
+        let m3 = NodeMetrics::new(MetricsPolicy::default());
+        m3.set_enabled(true);
+        assert!(
+            !m3.should_sample(&mut rng),
+            "operational_enabled=false must not sample"
+        );
 
         // A reshape to a sampling policy is picked up live (lock-free).
         m2.reshape(&MetricsPolicy {
             sampler: Sampler::all(),
-            ..MetricsPolicy::default()
+            ..operational()
         });
         assert!(
             m2.should_sample(&mut rng),
@@ -1241,15 +1263,16 @@ mod tests {
 
     #[test]
     fn recorders_bucket_in_the_policy_unit() {
-        // 1500µs is 1ms: bucket 10 of a µs log2 histogram (2^10 = 1024), and
-        // bucket 0 of a ms one.
+        // 1500µs is 1ms: range-layout bucket 11 of a µs histogram
+        // (limit sequence 1,2,4,...,1024,2048 — 1500 fits in >1024), and
+        // bucket 0 of a ms one (v=1).
         let elapsed = Duration::from_micros(1_500);
 
         let us = NodeMetrics::new(MetricsPolicy::micros());
         us.record_command(CommandType::Get, elapsed);
         let snap = us.get_and_reset();
         assert_eq!(snap.get_metrics.max(), 1_500);
-        assert_eq!(snap.get_metrics.buckets()[10], 1);
+        assert_eq!(snap.get_metrics.buckets()[11], 1);
 
         let ms = NodeMetrics::new(MetricsPolicy::millis());
         ms.record_command(CommandType::Get, elapsed);
@@ -1287,7 +1310,10 @@ mod tests {
         metrics.record_write("ns", CommandType::Put, 64, Duration::from_millis(5));
         let snapshot = metrics.get_and_reset();
         let cm = snapshot.detailed_metric("ns", CommandType::Put).unwrap();
-        assert_eq!(cm.latency.buckets().len(), crate::metrics::MILLIS_LATENCY_COLUMNS);
+        assert_eq!(
+            cm.latency.buckets().len(),
+            crate::metrics::MILLIS_LATENCY_COLUMNS
+        );
         assert_eq!(cm.latency.count(), 1);
         assert_eq!(snapshot.latency_unit, LatencyUnit::Milliseconds);
 
@@ -1417,16 +1443,17 @@ mod tests {
         let metrics = NodeMetrics::new(MetricsPolicy::default());
         metrics.set_enabled(true);
         metrics.record_command(CommandType::Get, Duration::from_millis(10));
-        // Switch to a linear histogram with a different column count.
-        let mut new_policy = MetricsPolicy::default();
-        new_policy.histogram_type = crate::metrics::HistogramType::Linear;
-        new_policy.latency_columns = 7;
-        new_policy.latency_base = 5;
+        // Switch to a wider layout with a different multiplier.
+        let mut new_policy = MetricsPolicy {
+            latency_columns: 5,
+            ..MetricsPolicy::default()
+        };
+        new_policy.set_latency_shift(3);
         metrics.reshape(&new_policy);
         // Reshape resets the histogram and changes its bucket count.
         let snap = metrics.get_and_reset();
         assert_eq!(snap.get_metrics.count(), 0);
-        assert_eq!(snap.get_metrics.buckets().len(), 7);
+        assert_eq!(snap.get_metrics.buckets().len(), 5);
     }
 
     #[cfg(feature = "serialization")]

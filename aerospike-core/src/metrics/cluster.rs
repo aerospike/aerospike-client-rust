@@ -54,6 +54,10 @@ pub struct ClusterMetrics {
     /// Number of commands that exceeded their total timeout.
     #[cfg_attr(feature = "serialization", serde(rename = "exceeded-total-timeout"))]
     pub exceeded_total_timeout: u64,
+
+    /// Feature/API usage counters. Empty unless `usage_enabled` was set on
+    /// the metrics policy.
+    pub usage: HashMap<String, u64>,
 }
 
 #[cfg(all(test, feature = "serialization"))]
@@ -77,6 +81,7 @@ mod tests {
             open_connections: 2,
             exceeded_max_retries: 0,
             exceeded_total_timeout: 0,
+            usage: HashMap::new(),
         };
 
         let v = serde_json::to_value(&metrics).unwrap();
@@ -88,6 +93,8 @@ mod tests {
         assert_eq!(v["open-connections"], 2);
         assert_eq!(v["exceeded-max-retries"], 0);
         assert_eq!(v["exceeded-total-timeout"], 0);
+        assert!(v.get("usage").is_some());
+        assert_eq!(v["usage"], serde_json::json!({}));
         // The per-node entry carries the open-connections gauge.
         assert_eq!(v["127.0.0.1:3000"]["open-connections"], 2);
     }

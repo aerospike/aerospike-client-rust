@@ -48,6 +48,21 @@ async fn exercise_single_key(client: &Client, namespace: &str, set_name: &str) {
     let _ = client.delete(&wpolicy, &key).await.unwrap();
 }
 
+// Operational metrics are off in the shipped default, so every test that
+// expects per-command latency has to opt in explicitly.
+fn operational_millis() -> MetricsPolicy {
+    let mut policy = MetricsPolicy::millis();
+    policy.operational_enabled = true;
+    policy
+}
+
+// Microsecond counterpart of `operational_millis`.
+fn operational_micros() -> MetricsPolicy {
+    let mut policy = MetricsPolicy::micros();
+    policy.operational_enabled = true;
+    policy
+}
+
 #[aerospike_macro::test]
 async fn metrics_disabled_by_default() {
     let client = common::client().await;
@@ -87,7 +102,7 @@ async fn metrics_enable_disable_toggle() {
 #[aerospike_macro::test]
 async fn metrics_single_key_command_histograms() {
     let client = common::client().await;
-    client.enable_metrics(MetricsPolicy::default());
+    client.enable_metrics(operational_millis());
 
     let namespace = common::namespace();
     let set_name = common::rand_str(10);
@@ -136,10 +151,10 @@ async fn metrics_single_key_command_histograms() {
 async fn metrics_latency_unit_changes_resolution() {
     let namespace = common::namespace();
 
-    // Microseconds (the default): sub-millisecond latency is measurable, so the
+    // Microseconds: sub-millisecond latency is measurable, so the
     // recorded maximum is in the hundreds-or-more range rather than 0.
     let client = common::client().await;
-    client.enable_metrics(MetricsPolicy::micros());
+    client.enable_metrics(operational_micros());
     let set_name = common::rand_str(10);
     exercise_single_key(&client, namespace, &set_name).await;
 
@@ -157,7 +172,7 @@ async fn metrics_latency_unit_changes_resolution() {
     // Milliseconds: the same work, coarser buckets. The unit travels with the
     // snapshot so a consumer can tell the two apart.
     let client = common::client().await;
-    client.enable_metrics(MetricsPolicy::millis());
+    client.enable_metrics(operational_millis());
     let set_name = common::rand_str(10);
     exercise_single_key(&client, namespace, &set_name).await;
 
@@ -186,7 +201,7 @@ async fn metrics_unit_switch_discards_earlier_samples() {
     let client = common::client().await;
     let namespace = common::namespace();
 
-    client.enable_metrics(MetricsPolicy::micros());
+    client.enable_metrics(operational_micros());
     let set_name = common::rand_str(10);
     exercise_single_key(&client, namespace, &set_name).await;
     assert!(
@@ -200,7 +215,7 @@ async fn metrics_unit_switch_discards_earlier_samples() {
     );
 
     // Re-enable with the other unit; the accumulated microsecond samples go.
-    client.enable_metrics(MetricsPolicy::millis());
+    client.enable_metrics(operational_millis());
     let agg = client.metrics().cluster_aggregated;
     assert_eq!(agg.latency_unit, LatencyUnit::Milliseconds);
     assert_eq!(
@@ -215,7 +230,7 @@ async fn metrics_unit_switch_discards_earlier_samples() {
 #[aerospike_macro::test]
 async fn metrics_detailed_and_result_codes() {
     let client = common::client().await;
-    client.enable_metrics(MetricsPolicy::default());
+    client.enable_metrics(operational_millis());
 
     let namespace = common::namespace();
     let set_name = common::rand_str(10);
@@ -326,7 +341,7 @@ async fn metrics_labels_include_reserved_and_custom() {
 #[aerospike_macro::test]
 async fn metrics_batch_histograms() {
     let client = common::client().await;
-    client.enable_metrics(MetricsPolicy::default());
+    client.enable_metrics(operational_millis());
 
     let namespace = common::namespace();
     let set_name = common::rand_str(10);
@@ -410,6 +425,8 @@ async fn metrics_json_serialization_layout() {
     assert!(v.get("open-connections").is_some());
     assert!(v.get("exceeded-max-retries").is_some());
     assert!(v.get("exceeded-total-timeout").is_some());
+    assert!(v.get("usage").is_some());
+    assert_eq!(v["usage"], serde_json::json!({}));
 
     let agg = &v["cluster-aggregated-metrics"];
     // Stable counter and histogram field names.
@@ -424,7 +441,7 @@ async fn metrics_json_serialization_layout() {
 #[aerospike_macro::test]
 async fn metrics_scan_histogram_records_filterless_query() {
     let client = common::client().await;
-    client.enable_metrics(MetricsPolicy::default());
+    client.enable_metrics(operational_millis());
 
     let namespace = common::namespace();
     let set_name = common::rand_str(10);
@@ -469,10 +486,8 @@ async fn metrics_never_sampler_records_no_commands() {
 
     // Metrics enabled, but `Sampler::never()` means no command is ever
     // recorded even though collection is "on".
-    let policy = MetricsPolicy {
-        sampler: aerospike::Sampler::never(),
-        ..MetricsPolicy::default()
-    };
+    let mut policy = operational_millis();
+    policy.sampler = aerospike::Sampler::never();
     client.enable_metrics(policy);
     assert!(client.metrics_enabled());
 
@@ -498,6 +513,35 @@ async fn metrics_never_sampler_records_no_commands() {
     }
     // No detailed per-namespace metrics either.
     assert!(agg.detailed_metric(namespace, CommandType::Put).is_none());
+    client.close().await.unwrap();
+}
+
+#[aerospike_macro::test]
+async fn metrics_one_latency_sample_per_successful_call() {
+    let client = common::client().await;
+    client.enable_metrics(operational_millis());
+
+    let namespace = common::namespace();
+    let set_name = common::rand_str(10);
+    let key = as_key!(namespace, &set_name, "one-sample");
+    let mut wpolicy = WritePolicy::default();
+    // A generous retry budget must not multiply samples on a single success.
+    wpolicy.base_policy.max_retries = 5;
+    client
+        .put(&wpolicy, &key, &[as_bin!("bin", "value")])
+        .await
+        .unwrap();
+
+    let count = client
+        .metrics()
+        .cluster_aggregated
+        .command_histogram(CommandType::Put)
+        .unwrap()
+        .count();
+    assert_eq!(
+        count, 1,
+        "one user call records one latency sample (not per retry slot)"
+    );
     client.close().await.unwrap();
 }
 
@@ -532,15 +576,196 @@ async fn min_conns_no_churn_across_tends() {
     sleep(Duration::from_secs(6)).await;
 
     let metrics = client.metrics();
-    let idle_dropped = metrics
-        .cluster_aggregated
-        .counters
-        .connections_idle_dropped;
+    let idle_dropped = metrics.cluster_aggregated.counters.connections_idle_dropped;
     assert_eq!(
         idle_dropped, 0,
         "min connections were reaped and recreated across tends (churn); \
          connections-idle-dropped={idle_dropped}"
     );
 
+    client.close().await.unwrap();
+}
+
+#[aerospike_macro::test]
+async fn metrics_operational_disabled_records_no_latency() {
+    let client = common::client().await;
+    client.enable_metrics(MetricsPolicy::default());
+
+    let namespace = common::namespace();
+    let set_name = common::rand_str(10);
+    exercise_single_key(&client, namespace, &set_name).await;
+
+    let agg = client.metrics().cluster_aggregated;
+    for ct in [CommandType::Put, CommandType::Get, CommandType::Delete] {
+        assert_eq!(
+            agg.command_histogram(ct).unwrap().count(),
+            0,
+            "operational_enabled=false must not record latency for {ct:?}"
+        );
+    }
+    client.close().await.unwrap();
+}
+
+#[aerospike_macro::test]
+async fn metrics_usage_counters() {
+    let client = common::client().await;
+
+    // Default policy leaves usage off: the hook is a no-op.
+    client.enable_metrics(MetricsPolicy::default());
+    client.record_usage("feature.api");
+    assert!(
+        client.metrics().usage.is_empty(),
+        "usage_enabled=false must not record"
+    );
+
+    // Usage on, operational off: counters still increment (independent flags).
+    let mut usage_only = MetricsPolicy::default();
+    usage_only.usage_enabled = true;
+    client.enable_metrics(usage_only);
+    client.record_usage("feature.api");
+    client.record_usage("feature.api");
+    client.record_usage("feature.shape.batch");
+    let usage = client.metrics().usage;
+    assert_eq!(usage.get("feature.api").copied(), Some(2));
+    assert_eq!(usage.get("feature.shape.batch").copied(), Some(1));
+
+    client.disable_metrics();
+    assert!(
+        client.metrics().usage.is_empty(),
+        "disabled metrics hide usage counters"
+    );
+    client.close().await.unwrap();
+}
+
+// Marker-bin sleep UDF for the retry tests below: the first execution on a
+// missing record busy-waits, then creates the record; any later execution
+// returns immediately. This turns "fail attempt 1, succeed attempt 2" into a
+// deterministic sequence: the client's socket timer abandons the first
+// attempt mid-sleep, the server still completes it and writes the marker,
+// and the retry (scheduled after the server is done) finds the marker.
+const SLEEP_ONCE_UDF: &str = r#"
+function sleep_once(rec, ms)
+    if aerospike:exists(rec) then
+        return 0
+    end
+    local clock = os.clock
+    local t0 = clock()
+    while (clock() - t0) * 1000 < ms do end
+    rec['done'] = 1
+    aerospike:create(rec)
+    return 1
+end
+"#;
+
+async fn register_sleep_once_udf(client: &Client) {
+    use aerospike::Task;
+    let task = client
+        .register_udf(
+            &aerospike::AdminPolicy::default(),
+            SLEEP_ONCE_UDF.as_bytes(),
+            "metrics_sleep_once.lua",
+            aerospike::UDFLang::Lua,
+        )
+        .await
+        .unwrap();
+    task.wait_till_complete(None).await.unwrap();
+}
+
+// Write policy for a deterministic retried-then-successful UDF call.
+// total_timeout must stay 0: a nonzero total makes the client send
+// min(socket, total) as the server-side deadline, and the server's own abort
+// would beat the client's socket timer. sleep_between_retries outlasts the
+// server-side sleep so the retry starts after the marker record exists and
+// is itself fast.
+fn retried_udf_policy() -> WritePolicy {
+    let mut wpolicy = WritePolicy::default();
+    wpolicy.base_policy.socket_timeout = 200;
+    wpolicy.base_policy.total_timeout = 0;
+    wpolicy.base_policy.max_retries = 1;
+    wpolicy.base_policy.sleep_between_retries = 600;
+    wpolicy
+}
+
+#[aerospike_macro::test]
+async fn metrics_retries_inflate_recorded_latency() {
+    let client = common::client().await;
+    register_sleep_once_udf(&client).await;
+    client.enable_metrics(operational_millis());
+
+    let namespace = common::namespace();
+    let set_name = common::rand_str(10);
+    let key = as_key!(namespace, &set_name, "retry-inflates");
+
+    // Attempt 1 abandons at ~200ms (server sleeps 400ms, completes, writes
+    // the marker); the retry fires at ~800ms and returns in a few ms.
+    let res = client
+        .execute_udf(
+            &retried_udf_policy(),
+            &key,
+            "metrics_sleep_once",
+            "sleep_once",
+            Some(&[aerospike::as_val!(400)]),
+        )
+        .await;
+    res.unwrap();
+
+    let snapshot = client.metrics();
+    let hist = snapshot
+        .cluster_aggregated
+        .command_histogram(CommandType::Udf)
+        .unwrap();
+    // One user call = one sample, even though two attempts ran.
+    assert_eq!(hist.count(), 1, "retried call must record a single sample");
+    // The sample spans the whole call (attempt 1 + backoff + attempt 2),
+    // not just the successful attempt: the retry's own latency is a few
+    // milliseconds, while the call took >= socket_timeout + backoff.
+    assert!(
+        hist.max() >= 700,
+        "latency sample must span retries: recorded {}ms, expected >= 700ms",
+        hist.max()
+    );
+    // With the millisecond range layout (7 columns, shift 1) that lands in
+    // the last bucket (>32ms); a timer restarted per attempt would land in
+    // the first ones.
+    assert_eq!(hist.buckets().last().copied(), Some(1));
+    client.close().await.unwrap();
+}
+
+#[aerospike_macro::test]
+async fn metrics_sampler_decision_survives_retries() {
+    // The complementary half of the retry contract: the per-call sample
+    // decision is made once at API entry and never re-rolled on retries.
+    // With Sampler::never a retried-then-successful call must record
+    // nothing — a per-attempt re-roll could only be observed through a
+    // probabilistic sampler, but a decision flipping to "sampled" mid-call
+    // would record a partial latency, which the inflation test's whole-call
+    // assertion also guards against.
+    let client = common::client().await;
+    register_sleep_once_udf(&client).await;
+    let mut policy = operational_millis();
+    policy.sampler = aerospike::Sampler::never();
+    client.enable_metrics(policy);
+
+    let namespace = common::namespace();
+    let set_name = common::rand_str(10);
+    let key = as_key!(namespace, &set_name, "never-sampled-retry");
+
+    client
+        .execute_udf(
+            &retried_udf_policy(),
+            &key,
+            "metrics_sleep_once",
+            "sleep_once",
+            Some(&[aerospike::as_val!(400)]),
+        )
+        .await
+        .unwrap();
+
+    let snapshot = client.metrics();
+    let no_samples = snapshot
+        .cluster_aggregated
+        .command_histogram(CommandType::Udf)
+        .map_or(true, |h| h.count() == 0);
+    assert!(no_samples, "Sampler::never must hold across retries");
     client.close().await.unwrap();
 }

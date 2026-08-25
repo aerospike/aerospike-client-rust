@@ -15,9 +15,9 @@
 //! Probability sampling for the metrics subsystem.
 //!
 //! A [`Sampler`] is a small `Copy` value (no trait, no dynamic dispatch) that
-//! decides, per command, whether the command is recorded. It samples when a
-//! value drawn from a [`XorShift`] generator falls under `threshold` within
-//! `range`:
+//! decides, per user API call, whether operational metrics are recorded. It
+//! samples when a value drawn from a [`XorShift`] generator falls under
+//! `threshold` within `range`:
 //!
 //! - `range == threshold` → **always** sample.
 //! - `threshold == 0`     → **never** sample (nothing is recorded).
@@ -27,6 +27,7 @@
 //! [`Sampler::all`], so enabling metrics records every command.
 
 use crate::xor_shift::XorShift;
+use std::cell::RefCell;
 
 /// A probability sampler.
 ///
@@ -95,6 +96,15 @@ impl Sampler {
         }
         rand.next_u64() % self.range < self.threshold
     }
+}
+
+/// Draw from a thread-local generator so the sample decision can be made at
+/// command entry, before a connection (and its rng) exists.
+pub(crate) fn with_thread_rng<R>(f: impl FnOnce(&mut XorShift) -> R) -> R {
+    thread_local! {
+        static RNG: RefCell<XorShift> = RefCell::new(XorShift::new());
+    }
+    RNG.with(|cell| f(&mut cell.borrow_mut()))
 }
 
 #[cfg(test)]

@@ -17,7 +17,6 @@
 use std::collections::HashMap;
 use std::time::Duration;
 
-use super::histogram::HistogramType;
 use crate::sampler::Sampler;
 
 #[cfg(feature = "dynamic-config")]
@@ -66,9 +65,9 @@ impl Labels {
 /// command latency, connection-acquire time and parse time. Size histograms
 /// (bytes sent/received) are unaffected.
 ///
-/// It is also the axis on which the Aerospike clients differ: the Go client
-/// records microseconds with 24 columns, the Java client milliseconds with 7.
-/// Pick one with [`MetricsPolicy::micros`] or [`MetricsPolicy::millis`].
+/// The v3 default is milliseconds (7 columns). [`MetricsPolicy::micros`]
+/// selects microseconds with 24 columns when sub-millisecond resolution
+/// matters.
 ///
 /// Serialized in metrics snapshots, and read from config files, as `"us"` /
 /// `"ms"`.
@@ -76,20 +75,20 @@ impl Labels {
 #[cfg_attr(feature = "serialization", derive(Serialize))]
 #[cfg_attr(feature = "dynamic-config", derive(Deserialize))]
 pub enum LatencyUnit {
-    /// Microseconds. The default. With the default base 2 and 24 columns the
-    /// logarithmic buckets are `<1µs <2µs <4µs ... >=8.4s`.
+    /// Microseconds. With 24 columns and shift 1 the range-layout buckets are
+    /// `<=1µs >1µs >2µs ... >=2^22 µs`.
     #[cfg_attr(
         any(feature = "serialization", feature = "dynamic-config"),
-        serde(rename = "us")
+        serde(rename = "us", alias = "microseconds")
+    )]
+    Microseconds,
+    /// Milliseconds. The default. With 7 columns and shift 1 the buckets are
+    /// `<=1ms >1ms >2ms >4ms >8ms >16ms >32ms`.
+    #[cfg_attr(
+        any(feature = "serialization", feature = "dynamic-config"),
+        serde(rename = "ms", alias = "milliseconds")
     )]
     #[default]
-    Microseconds,
-    /// Milliseconds. With 7 columns and base 2 the buckets are
-    /// `<1ms <2ms <4ms <8ms <16ms <32ms >=32ms`, matching the Java client.
-    #[cfg_attr(
-        any(feature = "serialization", feature = "dynamic-config"),
-        serde(rename = "ms")
-    )]
     Milliseconds,
 }
 
@@ -127,7 +126,7 @@ impl LatencyUnit {
         }
     }
 
-    /// Decodes [`Self::to_code`]. Any unknown code reads as the default.
+    /// Decodes [`Self::to_code`]. Unknown codes read as microseconds (code 0).
     #[must_use]
     pub(crate) const fn from_code(code: u8) -> Self {
         match code {
@@ -143,108 +142,153 @@ impl std::fmt::Display for LatencyUnit {
     }
 }
 
-/// Default number of latency histogram columns (elapsed-time range buckets),
-/// paired with the default [`LatencyUnit::Microseconds`] — Go-client parity.
-pub const DEFAULT_LATENCY_COLUMNS: usize = 24;
-/// Latency columns that pair with [`LatencyUnit::Milliseconds`] — Java-client
-/// parity. Used by [`MetricsPolicy::millis`].
-pub const MILLIS_LATENCY_COLUMNS: usize = 7;
-/// Default histogram base.
+/// Latency columns that pair with [`LatencyUnit::Microseconds`].
+///
+/// A deliberate deviation from the spec's `latency_columns: 7` default,
+/// which is sized for milliseconds: 7 microsecond columns top out at
+/// `>32µs` and put nearly every sample in the last bucket. 24 columns at
+/// shift 1 span `<=1µs` through `>4.2s`, covering the microsecond range up
+/// to where the millisecond layout's ceiling lands (and matching the
+/// original 24-column microsecond histograms this client shipped with).
+pub const MICROS_LATENCY_COLUMNS: usize = 24;
+/// Default number of latency histogram columns — millisecond range layout.
+pub const DEFAULT_LATENCY_COLUMNS: usize = 7;
+/// Latency columns that pair with [`LatencyUnit::Milliseconds`].
+pub const MILLIS_LATENCY_COLUMNS: usize = DEFAULT_LATENCY_COLUMNS;
+/// Default histogram multiplier (`2^DEFAULT_LATENCY_SHIFT`).
 pub const DEFAULT_LATENCY_BASE: usize = 2;
+/// Default range-layout shift. Boundaries after the first multiply by
+/// `2^latency_shift`. `1` means no skipped powers of two.
+pub const DEFAULT_LATENCY_SHIFT: usize = 1;
 
 /// Specifies client periodic metrics configuration.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "dynamic-config", derive(aerospike_macro::Config))]
 pub struct MetricsPolicy {
-    /// Histogram bucket layout. Default: [`HistogramType::Logarithmic`].
-    #[cfg_attr(feature = "dynamic-config", config(skip))]
-    pub histogram_type: HistogramType,
-
     /// Resolution in which elapsed times are measured and bucketed.
     ///
-    /// Set in code — usually via [`MetricsPolicy::micros`] /
-    /// [`MetricsPolicy::millis`], which also pick the matching column count — or
-    /// through the config file's `dynamic.metrics.latency_unit` key (`us` /
-    /// `ms`), alongside `latency_columns` and `latency_base`.
+    /// Set in code — usually via [`MetricsPolicy::millis`] /
+    /// [`MetricsPolicy::micros`], which also pick the matching column count — or
+    /// through the config file (`dynamic.metrics.extended.operational.latency_unit`
+    /// or the flat `dynamic.metrics.latency_unit` alias). YAML accepts `ms` /
+    /// `us` and `milliseconds` / `microseconds`.
     ///
     /// Changing it discards the latency samples collected so far: they were
     /// measured in the other unit and cannot share buckets with the new one.
     /// That is the same thing a `latency_columns` change does.
     ///
-    /// Default: [`LatencyUnit::Microseconds`].
+    /// Default: [`LatencyUnit::Milliseconds`].
     pub latency_unit: LatencyUnit,
 
     /// Number of elapsed-time range buckets in latency histograms. Bucket
     /// units are whatever [`latency_unit`](Self::latency_unit) says, so the two
     /// have to be chosen together: 7 columns of microseconds tops out at
-    /// `>=64µs` and puts nearly everything in the last bucket. The
+    /// `>32µs` and puts nearly everything in the last bucket. The
     /// [`micros`](Self::micros) and [`millis`](Self::millis) presets pair them
     /// correctly.
     ///
-    /// Default: 24, matching the Go client's microsecond histograms
-    /// (`<1µs ... >=8.4s`).
+    /// Default: 7.
     pub latency_columns: usize,
 
-    /// Histogram base.
+    /// Range-layout shift: each boundary after the first two (`<=1`, `>1`)
+    /// multiplies by `2^latency_shift`. Default 1 (no skipped powers).
     ///
-    /// For logarithmic histograms the buckets are
-    /// `<base^1 <base^2 ... >=base^(columns-1)`; for linear histograms they are
-    /// `<base <base*2 ... >=base*(columns-1)`.
+    /// Crate-private so the pair below can never desync: set it through
+    /// [`set_latency_shift`](Self::set_latency_shift) (which derives the
+    /// multiplier) and read it through [`latency_shift`](Self::latency_shift).
     ///
-    /// Default: 2 — equivalent to the Java client's `latencyShift = 1`
-    /// (`base = 2^shift`). In dynamic-config files this is the `latency_base`
-    /// key (a direct multiplier), matching the Aerospike Go client.
-    pub latency_base: usize,
+    /// Canonical YAML key: `dynamic.metrics.extended.operational.latency_shift`.
+    /// The flat `dynamic.metrics.latency_shift` and legacy `latency_base`
+    /// aliases are still accepted.
+    #[cfg_attr(feature = "dynamic-config", config(skip))]
+    pub(crate) latency_shift: usize,
+
+    /// Histogram multiplier, normally `2^latency_shift`. Stored (rather than
+    /// always derived) only because the legacy `latency_base` config key is a
+    /// direct multiplier that may not be a power of two; every public
+    /// mutation path keeps it equal to `1 << latency_shift`.
+    ///
+    /// Default: 2.
+    pub(crate) latency_base: usize,
+
+    /// When `true`, enabling metrics records per-command operational data
+    /// (latency, bytes, errors). When `false` — the default — only Tier 0
+    /// lifecycle counters update. Independent of
+    /// [`usage_enabled`](Self::usage_enabled).
+    ///
+    /// Off by default so that enabling metrics does not silently add
+    /// per-command timing to the hot path; opt in here or through
+    /// `extended.operational.enabled`.
+    #[cfg_attr(feature = "dynamic-config", config(skip))]
+    pub operational_enabled: bool,
+
+    /// When `true`, [`crate::Client::record_usage`] increments feature
+    /// counters. Default `false`. Independent of
+    /// [`operational_enabled`](Self::operational_enabled); both require
+    /// metrics to be enabled on the cluster.
+    #[cfg_attr(feature = "dynamic-config", config(skip))]
+    pub usage_enabled: bool,
 
     /// User-provided labels appended to metrics on export.
     #[cfg_attr(feature = "dynamic-config", config(skip))]
     pub labels: Labels,
 
-    /// Decides, per command, whether it is sampled while metrics are enabled.
+    /// Decides, per user API call (not per retry), whether operational
+    /// metrics are recorded while metrics are enabled and
+    /// [`operational_enabled`](Self::operational_enabled) is true.
     ///
-    /// A [`Sampler`] whose `range == threshold` records every command; a
+    /// A [`Sampler`] whose `range == threshold` records every call; a
     /// `threshold` of `0` ([`Sampler::never`]) records nothing; otherwise it
-    /// records a `threshold / range` fraction. Defaults to [`Sampler::all`],
-    /// so enabling metrics records every command unless a sampler is set.
+    /// records a `threshold / range` fraction. Defaults to [`Sampler::all`].
+    ///
+    /// YAML: `dynamic.metrics.extended.operational.sampler` (`range`, `threshold`).
     #[cfg_attr(feature = "dynamic-config", config(skip))]
     pub sampler: Sampler,
+
+    /// When `true`, operational TLS/auth handshake counters are recorded.
+    /// Ignored while [`operational_enabled`](Self::operational_enabled) is
+    /// false. Default `false`.
+    #[cfg_attr(feature = "dynamic-config", config(skip))]
+    pub tls_metrics_enabled: bool,
 }
 
 impl Default for MetricsPolicy {
-    /// The [`micros`](MetricsPolicy::micros) preset.
+    /// The [`millis`](MetricsPolicy::millis) preset.
     fn default() -> Self {
-        MetricsPolicy::micros()
+        MetricsPolicy::millis()
     }
 }
 
 impl MetricsPolicy {
-    /// Microsecond-resolution latency histograms with 24 columns — Go-client
-    /// parity, and the default.
+    /// Millisecond-resolution latency histograms with 7 columns — the v3
+    /// default, matching the Java-client / `asadm` range layout.
     ///
-    /// Buckets: `<1µs <2µs <4µs ... >=8.4s`.
-    #[must_use]
-    pub fn micros() -> Self {
-        MetricsPolicy {
-            histogram_type: HistogramType::Logarithmic,
-            latency_unit: LatencyUnit::Microseconds,
-            latency_columns: DEFAULT_LATENCY_COLUMNS,
-            latency_base: DEFAULT_LATENCY_BASE,
-            labels: Labels::new(),
-            sampler: Sampler::all(),
-        }
-    }
-
-    /// Millisecond-resolution latency histograms with 7 columns — Java-client
-    /// parity, and what this client recorded before the unit was configurable.
-    ///
-    /// Buckets: `<1ms <2ms <4ms <8ms <16ms <32ms >=32ms`. Sub-millisecond
+    /// Buckets: `<=1ms >1ms >2ms >4ms >8ms >16ms >32ms`. Sub-millisecond
     /// phases record `0` and land in the first bucket.
     #[must_use]
     pub fn millis() -> Self {
         MetricsPolicy {
             latency_unit: LatencyUnit::Milliseconds,
             latency_columns: MILLIS_LATENCY_COLUMNS,
-            ..MetricsPolicy::micros()
+            latency_shift: DEFAULT_LATENCY_SHIFT,
+            latency_base: DEFAULT_LATENCY_BASE,
+            operational_enabled: false,
+            usage_enabled: false,
+            labels: Labels::new(),
+            sampler: Sampler::all(),
+            tls_metrics_enabled: false,
+        }
+    }
+
+    /// Microsecond-resolution latency histograms with 24 columns.
+    ///
+    /// Buckets: `<=1µs >1µs >2µs ...` with shift 1.
+    #[must_use]
+    pub fn micros() -> Self {
+        MetricsPolicy {
+            latency_unit: LatencyUnit::Microseconds,
+            latency_columns: MICROS_LATENCY_COLUMNS,
+            ..MetricsPolicy::millis()
         }
     }
 
@@ -257,10 +301,33 @@ impl MetricsPolicy {
         }
     }
 
-    /// Histogram base as a `u64` (the type histograms are built with).
+    /// Sets the range-layout shift and derives the histogram multiplier
+    /// (`2^shift`). The only public mutation path for the pair, so the two
+    /// can never disagree. `shift` is clamped to `1..=63`.
+    pub fn set_latency_shift(&mut self, shift: usize) {
+        let shift = shift.clamp(1, 63);
+        self.latency_shift = shift;
+        self.latency_base = 1 << shift;
+    }
+
+    /// Range-layout shift: each histogram boundary after the first two
+    /// multiplies by `2^latency_shift`.
+    #[must_use]
+    pub fn latency_shift(&self) -> usize {
+        self.latency_shift
+    }
+
+    /// Histogram multiplier (`2^latency_shift`, or a direct legacy value
+    /// when the config file used the pre-shift `latency_base` key).
+    #[must_use]
+    pub fn latency_base(&self) -> usize {
+        self.latency_base
+    }
+
+    /// Histogram multiplier as a `u64` (the type histograms are built with).
     #[must_use]
     pub(crate) fn base(&self) -> u64 {
-        self.latency_base as u64
+        self.latency_base.max(1) as u64
     }
 }
 
@@ -269,27 +336,44 @@ mod tests {
     use super::*;
 
     #[test]
-    fn default_policy_is_the_micros_preset() {
-        // Pinned to the Go client (metrics_policy.go): microseconds,
-        // LatencyColumns=24, base 2.
+    fn default_policy_is_the_millis_preset() {
         let p = MetricsPolicy::default();
-        assert_eq!(p, MetricsPolicy::micros());
-        assert_eq!(p.latency_unit, LatencyUnit::Microseconds);
-        assert_eq!(p.histogram_type, HistogramType::Logarithmic);
-        assert_eq!(p.latency_columns, 24);
+        assert_eq!(p, MetricsPolicy::millis());
+        assert_eq!(p.latency_unit, LatencyUnit::Milliseconds);
+        assert_eq!(p.latency_columns, 7);
+        assert_eq!(p.latency_shift, 1);
         assert_eq!(p.latency_base, 2);
+        assert!(!p.operational_enabled);
+        assert!(!p.usage_enabled);
+        assert!(!p.tls_metrics_enabled);
         assert!(p.labels.entries().is_empty());
     }
 
     #[test]
     fn millis_preset_matches_java_defaults() {
-        // Pinned to _temp/aerospike-client-java MetricsPolicy: latencyColumns=7,
-        // latencyShift=1 (== base 2), bucket units milliseconds.
         let p = MetricsPolicy::millis();
         assert_eq!(p.latency_unit, LatencyUnit::Milliseconds);
         assert_eq!(p.latency_columns, 7);
+        assert_eq!(p.latency_shift, 1);
         assert_eq!(p.latency_base, 2);
-        assert_eq!(p.histogram_type, HistogramType::Logarithmic);
+    }
+
+    #[test]
+    fn micros_preset_keeps_24_columns() {
+        let p = MetricsPolicy::micros();
+        assert_eq!(p.latency_unit, LatencyUnit::Microseconds);
+        assert_eq!(p.latency_columns, MICROS_LATENCY_COLUMNS);
+        assert_eq!(p.latency_shift, 1);
+        assert_eq!(p.latency_base, 2);
+    }
+
+    #[test]
+    fn set_latency_shift_updates_base() {
+        let mut p = MetricsPolicy::default();
+        p.set_latency_shift(3);
+        assert_eq!(p.latency_shift, 3);
+        assert_eq!(p.latency_base, 8);
+        assert_eq!(p.base(), 8);
     }
 
     #[test]
@@ -324,8 +408,9 @@ mod tests {
         for unit in [LatencyUnit::Microseconds, LatencyUnit::Milliseconds] {
             assert_eq!(LatencyUnit::from_code(unit.to_code()), unit);
         }
-        // Unknown codes decode as the default rather than panicking.
-        assert_eq!(LatencyUnit::from_code(200), LatencyUnit::default());
+        // Unknown codes decode as microseconds (wire code 0), not as the
+        // enum's Default (milliseconds).
+        assert_eq!(LatencyUnit::from_code(200), LatencyUnit::Microseconds);
     }
 
     #[test]
@@ -357,6 +442,14 @@ mod tests {
         );
         assert_eq!(
             serde_yml::from_str::<LatencyUnit>("ms").unwrap(),
+            LatencyUnit::Milliseconds
+        );
+        assert_eq!(
+            serde_yml::from_str::<LatencyUnit>("microseconds").unwrap(),
+            LatencyUnit::Microseconds
+        );
+        assert_eq!(
+            serde_yml::from_str::<LatencyUnit>("milliseconds").unwrap(),
             LatencyUnit::Milliseconds
         );
         // Anything else is a config error, not a silent default.

@@ -405,6 +405,16 @@ impl Client {
         self.cluster.metrics_enabled()
     }
 
+    /// Increments a feature/API usage counter when metrics are enabled and
+    /// the policy has `usage_enabled`. No-op otherwise.
+    ///
+    /// Call this at the public API boundary (point/batch/query, filters, …).
+    /// Identifiers should be stable strings such as `feature.api` or
+    /// `feature.shape.batch`.
+    pub fn record_usage(&self, feature: &str) {
+        self.cluster.record_usage(feature);
+    }
+
     /// Returns a snapshot of the cluster's collected statistics: per-node
     /// metrics keyed by host, a cluster-aggregated view (carrying the node
     /// labels), and the total node / open-connection counts.
@@ -429,6 +439,7 @@ impl Client {
             open_connections,
             exceeded_max_retries: self.cluster.max_retries_exceeded_count(),
             exceeded_total_timeout: self.cluster.total_timeout_exceeded_count(),
+            usage: self.cluster.usage_snapshot(),
         }
     }
 

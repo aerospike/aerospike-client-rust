@@ -100,6 +100,9 @@ pub struct Connection {
     idle_timeout: Option<Duration>,
     idle_deadline: Option<Instant>,
 
+    /// Per-connection RNG. Metrics sampling now uses a thread-local generator
+    /// at command entry; this remains for other connection-local random uses.
+    #[allow(dead_code)]
     rnd: XorShift,
 
     // connection object
@@ -336,8 +339,8 @@ impl Connection {
         Ok(conn)
     }
 
-    /// Returns the connection's per-connection random generator, used by the
-    /// metrics sampler to decide whether to record a command.
+    /// Returns the connection's per-connection random generator.
+    #[allow(dead_code)]
     pub(crate) const fn rng(&mut self) -> &mut XorShift {
         &mut self.rnd
     }

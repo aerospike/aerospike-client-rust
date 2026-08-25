@@ -139,7 +139,7 @@ pub struct BatchReadSectionConfig {
 
 /// The `dynamic.metrics` section. Carries the `enable` toggle (which is not a
 /// [`MetricsPolicy`](crate::metrics::MetricsPolicy) field) alongside the
-/// macro-generated policy overrides.
+/// macro-generated policy overrides and the nested `extended` groups.
 #[derive(Debug, Default, Clone, Deserialize)]
 pub struct MetricsConfig {
     /// Turn metrics collection on/off. `None` leaves the current state unchanged.
@@ -151,14 +151,149 @@ pub struct MetricsConfig {
     /// empty map is treated the same as no labels.
     pub labels: Option<std::collections::HashMap<String, String>>,
 
+    /// Nested `extended.operational` / `extended.usage` groups. Absent means
+    /// the flat keys below are the whole metrics configuration.
+    pub extended: Option<MetricsExtendedConfig>,
+
+    /// Range-layout shift at the `metrics` root. The nested
+    /// `extended.operational.latency_shift` wins when both are present.
+    pub latency_shift: Option<usize>,
+
     /// Metrics-policy field overrides: the latency histogram's shape
     /// (`latency_columns`, `latency_base`) and its time unit (`latency_unit`,
     /// `us` / `ms`).
     ///
     /// Applying any of the three discards the samples already collected — the
-    /// old ones cannot share buckets with the new shape or unit.
+    /// old ones cannot share buckets with the new shape or unit. Keys under
+    /// `extended.operational` overlay these when both are present.
     #[serde(flatten)]
     pub policy: MetricsPolicyConfig,
+}
+
+/// `dynamic.metrics.extended` — independent operational and usage groups, each
+/// with its own `enabled` flag cascading from `metrics.enable`.
+#[derive(Debug, Default, Clone, Deserialize)]
+pub struct MetricsExtendedConfig {
+    /// Operator metrics: latency, errors, bytes, command path.
+    pub operational: Option<OperationalMetricsConfig>,
+    /// Feature/API usage counters. Independent of `operational`.
+    pub usage: Option<UsageMetricsConfig>,
+}
+
+/// `dynamic.metrics.extended.operational`.
+#[derive(Debug, Default, Clone, Deserialize)]
+pub struct OperationalMetricsConfig {
+    /// Record operational metrics. Omitted means `false`: an `enabled` flag
+    /// that has to be spelled out is what makes the cascade predictable.
+    pub enabled: Option<bool>,
+    /// Elapsed-time unit before bucketing (`ms` / `us`).
+    pub latency_unit: Option<crate::metrics::LatencyUnit>,
+    /// Number of range-layout buckets.
+    pub latency_columns: Option<usize>,
+    /// Range-layout shift; the histogram multiplier is `2^latency_shift`.
+    pub latency_shift: Option<usize>,
+    /// Record-time sampler (`range`, `threshold`).
+    pub sampler: Option<SamplerConfig>,
+    /// Connection-path operational sub-flags.
+    pub connection: Option<OperationalConnectionConfig>,
+}
+
+/// `extended.operational.sampler`.
+#[derive(Debug, Default, Clone, Deserialize)]
+pub struct SamplerConfig {
+    /// Denominator of the sampling fraction.
+    pub range: Option<u64>,
+    /// Numerator of the sampling fraction.
+    pub threshold: Option<u64>,
+}
+
+/// `extended.operational.connection`.
+#[derive(Debug, Default, Clone, Deserialize)]
+pub struct OperationalConnectionConfig {
+    /// TLS/auth handshake counters.
+    pub tls_metrics: Option<TlsMetricsConfig>,
+}
+
+/// `extended.operational.connection.tls_metrics`.
+#[derive(Debug, Default, Clone, Deserialize)]
+pub struct TlsMetricsConfig {
+    /// Record TLS/auth handshake counters. Ignored while operational is off.
+    pub enabled: Option<bool>,
+}
+
+/// `dynamic.metrics.extended.usage`.
+#[derive(Debug, Default, Clone, Deserialize)]
+pub struct UsageMetricsConfig {
+    /// Record feature/API usage counters. Omitted means `false`.
+    pub enabled: Option<bool>,
+}
+
+impl MetricsConfig {
+    /// Folds this section onto a metrics policy: the flat keys first, then the
+    /// nested `extended` groups, which win where both name the same field.
+    pub(crate) fn apply_to(&self, policy: &mut crate::metrics::MetricsPolicy) {
+        self.policy.clone().merge_into(policy);
+
+        let nested_shift = self
+            .extended
+            .as_ref()
+            .and_then(|e| e.operational.as_ref())
+            .and_then(|o| o.latency_shift);
+        // `latency_base` is a legacy multiplier that predates the schema's
+        // `latency_shift`. When only the base arrives, derive the shift so the
+        // policy cannot report one multiplier while bucketing with another.
+        if nested_shift.is_none() && self.latency_shift.is_none() {
+            if let Some(base) = self.policy.latency_base {
+                if base > 0 && base.is_power_of_two() {
+                    policy.latency_shift = base.trailing_zeros() as usize;
+                }
+            }
+        }
+        if let Some(shift) = self.latency_shift {
+            policy.set_latency_shift(shift);
+        }
+
+        let Some(extended) = &self.extended else {
+            return;
+        };
+
+        // An `extended` block present at all means the groups below it decide
+        // what is recorded; a missing group reads as off, not as "unchanged".
+        match &extended.operational {
+            Some(op) => {
+                policy.operational_enabled = op.enabled.unwrap_or(false);
+                if let Some(unit) = op.latency_unit {
+                    policy.latency_unit = unit;
+                }
+                if let Some(cols) = op.latency_columns {
+                    policy.latency_columns = cols;
+                }
+                if let Some(shift) = op.latency_shift {
+                    policy.set_latency_shift(shift);
+                }
+                if let Some(sampler) = &op.sampler {
+                    let range = sampler.range.unwrap_or(policy.sampler.range);
+                    let threshold = sampler.threshold.unwrap_or(policy.sampler.threshold);
+                    policy.sampler = crate::sampler::Sampler::new(range, threshold);
+                }
+                if let Some(tls) = op
+                    .connection
+                    .as_ref()
+                    .and_then(|c| c.tls_metrics.as_ref())
+                    .and_then(|t| t.enabled)
+                {
+                    policy.tls_metrics_enabled = tls;
+                }
+            }
+            None => policy.operational_enabled = false,
+        }
+
+        policy.usage_enabled = extended
+            .usage
+            .as_ref()
+            .and_then(|u| u.enabled)
+            .unwrap_or(false);
+    }
 }
 
 #[cfg(test)]
@@ -170,6 +305,7 @@ mod tests {
         BatchPolicy, ClientPolicy, QueryDuration, QueryPolicy, ReadModeAP, ReadModeSC, ReadPolicy,
         Replica, TxnRollPolicy, TxnVerifyPolicy, WritePolicy,
     };
+    use crate::sampler::Sampler;
 
     /// Parses a single YAML scalar into a config type `T`.
     fn parse<T: for<'de> serde::Deserialize<'de> + 'static>(
@@ -624,6 +760,107 @@ labels:
         let mut mp = MetricsPolicy::default();
         cfg.merge_into(&mut mp);
         assert_eq!(mp.latency_base, 8);
+    }
+
+    #[test]
+    fn metrics_flat_latency_shift_sets_base() {
+        // `latency_shift` at the `metrics` root is the schema's documented key.
+        let metrics: MetricsConfig = parse("latency_shift: 3\n").unwrap();
+        let mut mp = MetricsPolicy::default();
+        metrics.apply_to(&mut mp);
+        assert_eq!(mp.latency_shift, 3);
+        assert_eq!(mp.latency_base, 8);
+    }
+
+    #[test]
+    fn metrics_legacy_latency_base_syncs_shift() {
+        let metrics: MetricsConfig = parse("latency_base: 8\n").unwrap();
+        let mut mp = MetricsPolicy::default();
+        metrics.apply_to(&mut mp);
+        assert_eq!(mp.latency_base, 8);
+        assert_eq!(mp.latency_shift, 3);
+    }
+
+    #[test]
+    fn metrics_flat_latency_shift_beats_legacy_base() {
+        let metrics: MetricsConfig = parse("latency_base: 32\nlatency_shift: 2\n").unwrap();
+        let mut mp = MetricsPolicy::default();
+        metrics.apply_to(&mut mp);
+        assert_eq!(mp.latency_shift, 2);
+        assert_eq!(mp.latency_base, 4);
+    }
+
+    #[test]
+    fn metrics_nested_extended_overlays_flat_keys() {
+        let yaml = "\
+enable: true
+latency_columns: 9
+latency_unit: us
+latency_shift: 5
+extended:
+  operational:
+    enabled: true
+    latency_unit: ms
+    latency_columns: 5
+    latency_shift: 3
+    sampler:
+      range: 10
+      threshold: 3
+    connection:
+      tls_metrics:
+        enabled: true
+  usage:
+    enabled: true
+";
+        let metrics: MetricsConfig = parse(yaml).unwrap();
+        assert_eq!(metrics.enable, Some(true));
+        let mut mp = MetricsPolicy::default();
+        metrics.apply_to(&mut mp);
+        assert!(mp.operational_enabled);
+        assert!(mp.usage_enabled);
+        assert_eq!(mp.latency_unit, crate::metrics::LatencyUnit::Milliseconds);
+        assert_eq!(mp.latency_columns, 5);
+        assert_eq!(mp.latency_shift, 3);
+        assert_eq!(mp.latency_base, 8);
+        assert_eq!(mp.sampler, Sampler::new(10, 3));
+        assert!(mp.tls_metrics_enabled);
+    }
+
+    #[test]
+    fn metrics_extended_without_enabled_defaults_operational_off() {
+        let yaml = "\
+enable: true
+extended:
+  operational:
+    latency_shift: 3
+  usage:
+    enabled: true
+";
+        let metrics: MetricsConfig = parse(yaml).unwrap();
+        let mut mp = MetricsPolicy {
+            operational_enabled: true,
+            ..MetricsPolicy::default()
+        };
+        metrics.apply_to(&mut mp);
+        assert!(!mp.operational_enabled);
+        assert!(mp.usage_enabled);
+        assert_eq!(mp.latency_shift, 3);
+        assert_eq!(mp.latency_base, 8);
+    }
+
+    #[test]
+    fn metrics_without_extended_block_leaves_enablement_alone() {
+        // No `extended` block: a config file written before the groups existed
+        // tunes the histogram without silencing an operational policy.
+        let metrics: MetricsConfig = parse("enable: true\nlatency_columns: 9\n").unwrap();
+        let mut mp = MetricsPolicy {
+            operational_enabled: true,
+            ..MetricsPolicy::default()
+        };
+        metrics.apply_to(&mut mp);
+        assert!(mp.operational_enabled);
+        assert!(!mp.usage_enabled);
+        assert_eq!(mp.latency_columns, 9);
     }
 
     // ---- Per-record batch sub-sections (mirror the batch_*_policy config tests) ----

@@ -116,10 +116,10 @@ impl BatchOperateCommand {
             crate::metrics::CommandType::BatchRead
         };
         let trans_start = Instant::now();
-        // The per-command sample decision (enabled AND sampler-selected). Made
-        // once, the first time a connection is acquired, then reused for the
-        // whole command so all of its metrics are recorded together or not.
-        let mut sampled: Option<bool> = None;
+        // One sample decision per node sub-batch command, reused across retries.
+        let mut sampled = Some(crate::sampler::with_thread_rng(|rng| {
+            cluster.should_record_operational(rng)
+        }));
 
         // Replica sequence offsets, advanced on every scheduled retry (Java
         // BatchCommand.prepareRetry). AP and SC namespaces track separate
@@ -406,8 +406,8 @@ impl BatchOperateCommand {
 
         // Metrics: detailed per-namespace metrics are attributed to every
         // distinct namespace in this request group. Build the namespace set
-        // when collection is enabled; the per-command sample decision is made
-        // below once a connection (and its rng) is available.
+        // when collection is enabled. The sample decision was made at command
+        // entry and is reused here (filled in only if the caller passed None).
         let namespaces: Vec<String> = if node.metrics().is_enabled() {
             let mut v: Vec<String> = batch_ops
                 .iter()
@@ -432,11 +432,12 @@ impl BatchOperateCommand {
                 return Ok(Some(err));
             }
         };
-        // Decide once per command whether to record metrics: collection
-        // enabled AND the policy's sampler selects it (drawing from this
-        // connection's rng). Reused across retries/per-op groups.
+        // Reuse the call-entry sample decision. The Option exists so a
+        // connection-time fallback can still fill it if the caller passed None.
         if sampled.is_none() {
-            *sampled = Some(node.metrics().should_sample(conn.rng()));
+            *sampled = Some(crate::sampler::with_thread_rng(|rng| {
+                node.metrics().should_sample(rng)
+            }));
         }
         let metrics_on = sampled.unwrap_or(false);
         if metrics_on {
