@@ -119,6 +119,11 @@ impl<'a> SingleCommand<'a> {
         // Elapsed times go to the recorders as `Duration`; the resolution they
         // are bucketed in is the metrics policy's `latency_unit`, applied inside
         // `NodeMetrics` so no call site has to know it.
+        // Sample once per user call (not per retry / wire attempt).
+        let metrics_on = cmd
+            .cluster()
+            .map(|c| crate::sampler::with_thread_rng(|rng| c.should_record_operational(rng)))
+            .unwrap_or(false);
 
         // set timeout outside the loop
         let deadline = policy.deadline();
@@ -257,8 +262,7 @@ impl<'a> SingleCommand<'a> {
             let mut conn = match node.get_connection(cmd.hint()).await {
                 Ok(conn) => conn,
                 Err(err)
-                    if err.is_pool_empty()
-                        && pool_empty_waits < commands::POOL_EMPTY_MAX_WAITS =>
+                    if err.is_pool_empty() && pool_empty_waits < commands::POOL_EMPTY_MAX_WAITS =>
                 {
                     // A background task is opening a connection. This is a
                     // pacing wait, not a failure: it consumes neither the
@@ -283,9 +287,7 @@ impl<'a> SingleCommand<'a> {
                     continue;
                 }
             };
-            // Decide once per attempt whether to record metrics for this
-            // command: collection enabled AND the policy's sampler selects it.
-            let metrics_on = node.metrics().should_sample(conn.rng());
+            // Sample decision was taken once before the retry loop.
             if metrics_on {
                 if let Some(ns) = cmd_namespace.as_deref() {
                     node.metrics()

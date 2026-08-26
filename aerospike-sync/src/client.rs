@@ -241,7 +241,6 @@ impl Client {
         block_on(self.async_client.info(policy, commands))
     }
 
-
     /// Returns a list of active server nodes in the cluster.
     pub fn nodes(&self) -> Vec<Arc<Node>> {
         self.async_client.nodes()
@@ -1071,6 +1070,12 @@ impl Client {
     pub fn metrics(&self) -> aerospike_core::ClusterMetrics {
         self.async_client.metrics()
     }
+
+    /// Increment a feature/API usage counter.
+    /// See [`aerospike_core::Client::record_usage`].
+    pub fn record_usage(&self, feature: &str) {
+        self.async_client.record_usage(feature);
+    }
 }
 
 #[cfg(test)]
@@ -1097,7 +1102,9 @@ mod tests {
     #[test]
     fn batch_stream_parked_next_wakes_when_producer_closes() {
         let (tx, rx) = async_channel::bounded::<(usize, BatchRecord)>(4);
-        let mut bs = BatchStream { inner: Box::pin(rx) };
+        let mut bs = BatchStream {
+            inner: Box::pin(rx),
+        };
 
         let (done_tx, done_rx) = std::sync::mpsc::channel();
         let consumer = std::thread::spawn(move || {

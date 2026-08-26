@@ -86,11 +86,14 @@ async fn dynamic_config_applies_and_reloads() {
 async fn dynamic_metrics_latency_unit_applies_and_switches() {
     use aerospike::{CommandType, LatencyUnit};
 
+    // The flat `latency_unit` alias survives alongside the nested block, which
+    // only has to switch operational recording on for samples to appear.
     let unit_yaml = |unit: &str| {
         format!(
             "version: \"1.0.0\"\n\
              static:\n  client:\n    config_interval: 1\n\
-             dynamic:\n  metrics:\n    enable: true\n    latency_unit: {unit}\n"
+             dynamic:\n  metrics:\n    enable: true\n    latency_unit: {unit}\n\
+             \x20   extended:\n      operational:\n        enabled: true\n"
         )
     };
 
@@ -142,6 +145,79 @@ async fn dynamic_metrics_latency_unit_applies_and_switches() {
     let _ = std::fs::remove_file(&path);
 }
 
+/// Nested `extended.operational` / `extended.usage` is the v3 config shape.
+/// Operational off: metrics stay enabled (Tier 0) but command latency is not
+/// recorded. Operational on: histogram samples accumulate.
+#[aerospike_macro::test]
+async fn dynamic_metrics_nested_extended_groups() {
+    use aerospike::{CommandType, LatencyUnit};
+
+    let yaml = |operational: bool, usage: bool, unit: &str, shift: usize| {
+        format!(
+            "version: \"1.0.0\"\n\
+             static:\n  client:\n    config_interval: 1\n\
+             dynamic:\n  metrics:\n    enable: true\n    extended:\n\
+             \x20     operational:\n        enabled: {operational}\n        latency_unit: {unit}\n        latency_shift: {shift}\n\
+             \x20     usage:\n        enabled: {usage}\n"
+        )
+    };
+
+    let path = temp_config_path("extended-groups");
+    std::fs::write(&path, yaml(false, true, "milliseconds", 1)).expect("write initial config");
+
+    let provider = Arc::new(YamlFileProvider::new(path.clone()));
+    let client = Client::new_with_config(common::client_policy(), &common::hosts(), provider)
+        .await
+        .expect("client with dynamic config");
+
+    assert!(client.metrics_enabled());
+    let namespace = common::namespace();
+    let set_name = common::rand_str(10);
+    let key = aerospike::as_key!(namespace, &set_name, "extended-groups");
+    let bins = [aerospike::as_bin!("bin", "value")];
+    client
+        .put(&aerospike::WritePolicy::default(), &key, &bins)
+        .await
+        .expect("put");
+
+    assert_eq!(
+        client
+            .metrics()
+            .cluster_aggregated
+            .command_histogram(CommandType::Put)
+            .unwrap()
+            .count(),
+        0,
+        "operational.enabled=false must not record latency"
+    );
+    client.record_usage("feature.api");
+    assert_eq!(client.metrics().usage.get("feature.api").copied(), Some(1));
+
+    sleep(Duration::from_millis(1100)).await;
+    std::fs::write(&path, yaml(true, false, "microseconds", 3)).expect("rewrite config");
+    sleep(Duration::from_millis(2500)).await;
+
+    client
+        .put(&aerospike::WritePolicy::default(), &key, &bins)
+        .await
+        .expect("put after operational on");
+    let metrics = client.metrics();
+    let agg = &metrics.cluster_aggregated;
+    assert_eq!(agg.latency_unit, LatencyUnit::Microseconds);
+    assert!(
+        agg.command_histogram(CommandType::Put).unwrap().count() >= 1,
+        "operational.enabled=true must record latency"
+    );
+    client.record_usage("feature.api");
+    assert!(
+        client.metrics().usage.is_empty(),
+        "usage.enabled=false must not record"
+    );
+
+    client.close().await.unwrap();
+    let _ = std::fs::remove_file(&path);
+}
+
 /// A client built with a dynamic read/write override still performs operations
 /// correctly — the overrides layer onto the per-call policies transparently.
 #[aerospike_macro::test]
@@ -168,7 +244,11 @@ async fn dynamic_config_overrides_do_not_break_operations() {
         .await
         .expect("put with dynamic write override");
     let record = client
-        .get(&aerospike::ReadPolicy::default(), &key, aerospike::Bins::All)
+        .get(
+            &aerospike::ReadPolicy::default(),
+            &key,
+            aerospike::Bins::All,
+        )
         .await
         .expect("get with dynamic read override");
     assert_eq!(record.bins.get("bin").unwrap().to_string(), "value");
@@ -238,7 +318,10 @@ async fn dynamic_config_batch_sub_policies_apply() {
     assert_eq!(read_results.len(), 3);
     for br in &read_results {
         assert_eq!(
-            br.record.as_ref().and_then(|r| r.bins.get("v")).map(ToString::to_string),
+            br.record
+                .as_ref()
+                .and_then(|r| r.bins.get("v"))
+                .map(ToString::to_string),
             Some("1".to_string())
         );
     }

@@ -25,13 +25,42 @@ use serde::ser::SerializeStruct;
 use serde::{Serialize, Serializer};
 
 /// Bucket layout of a histogram (`Linear` = 0, `Logarithmic` = 1).
+///
+/// Crate-internal: latency histograms are always the [`Logarithmic`] range
+/// layout (the same shape as `asadm` / `asloglatency`). `Linear` is retained
+/// for the bucketing code path only and is not reachable from the policy,
+/// the config file, or the public API.
+///
+/// [`Logarithmic`]: HistogramType::Logarithmic
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum HistogramType {
+pub(crate) enum HistogramType {
     /// Buckets are `<base <base*2 <base*3 ... >=base*(columns-1)`.
     Linear,
-    /// Buckets are `<base^1 <base^2 <base^3 ... >=base^(columns-1)`.
+    /// Logarithmic range layout: `<= 1`, `> 1`, then each subsequent boundary
+    /// multiplied by `base` (`2^latency_shift`). Matches the Java client /
+    /// `asadm` histogram, not `floor(log_base(v))`.
     #[default]
     Logarithmic,
+}
+
+/// Index of the range-layout bucket that holds `v`.
+///
+/// `base` is the per-step multiplier (`2^latency_shift`). The first two
+/// buckets are always `<= 1` and `> 1`; later limits grow by `base` each
+/// step. Overflow lands in the last column.
+#[must_use]
+pub(crate) fn range_bucket_index(v: u64, base: u64, columns: usize) -> usize {
+    let columns = columns.max(1);
+    let base = base.max(1);
+    let last = columns - 1;
+    let mut limit = 1u64;
+    for i in 0..last {
+        if v <= limit {
+            return i;
+        }
+        limit = limit.saturating_mul(base);
+    }
+    last
 }
 
 /// Inner, non-synchronized histogram state.
@@ -101,24 +130,13 @@ impl HistogramInner {
         self.sum += v as f64;
         self.count += 1;
 
-        let mut slot: i64 = 0;
-        if v > 0 {
-            slot = match self.htype {
+        let idx = match self.htype {
+            HistogramType::Linear => {
                 // Integer division == floor for non-negative operands.
-                HistogramType::Linear => (v / self.base) as i64,
-                HistogramType::Logarithmic => {
-                    ((v as f64).ln() / (self.base as f64).ln()).floor() as i64
-                }
-            };
-        }
-
-        let len = self.buckets.len();
-        let idx = if slot < 0 {
-            0
-        } else if slot as usize >= len {
-            len - 1
-        } else {
-            slot as usize
+                let slot = if v == 0 { 0 } else { (v / self.base) as usize };
+                slot.min(self.buckets.len() - 1)
+            }
+            HistogramType::Logarithmic => range_bucket_index(v, self.base, self.buckets.len()),
         };
         self.buckets[idx] += 1;
     }
@@ -157,7 +175,7 @@ pub struct SyncHistogram {
 impl SyncHistogram {
     /// Creates a new, empty histogram with the given layout.
     #[must_use]
-    pub fn new(htype: HistogramType, base: u64, columns: usize) -> Self {
+    pub(crate) fn new(htype: HistogramType, base: u64, columns: usize) -> Self {
         SyncHistogram {
             inner: Mutex::new(HistogramInner::new(htype, base, columns)),
         }
@@ -281,17 +299,54 @@ mod tests {
     use super::*;
 
     #[test]
-    fn logarithmic_bucketing() {
-        // base=8, columns=5 => <8 <64 <512 <4096 >=4096
-        let h = SyncHistogram::new(HistogramType::Logarithmic, 8, 5);
-        for v in [1u64, 7, 8, 63, 64, 511, 512, 4095, 4096, 100_000] {
+    fn range_layout_default_shift1_columns7() {
+        // Spec default: <=1, >1, >2, >4, >8, >16, >32 (multiplier 2).
+        let h = SyncHistogram::new(HistogramType::Logarithmic, 2, 7);
+        for v in [0u64, 1] {
             h.add(v);
         }
-        // 1,7 -> bucket 0; 8,63 -> 1; 64,511 -> 2; 512,4095 -> 3; 4096,100000 -> 4
-        assert_eq!(h.buckets(), vec![2, 2, 2, 2, 2]);
-        assert_eq!(h.count(), 10);
-        assert_eq!(h.min(), 1);
-        assert_eq!(h.max(), 100_000);
+        h.add(2);
+        for v in [3u64, 4] {
+            h.add(v);
+        }
+        for v in [5u64, 8] {
+            h.add(v);
+        }
+        for v in [9u64, 16] {
+            h.add(v);
+        }
+        for v in [17u64, 32] {
+            h.add(v);
+        }
+        for v in [33u64, 1_000] {
+            h.add(v);
+        }
+        assert_eq!(h.buckets(), vec![2, 1, 2, 2, 2, 2, 2]);
+        assert_eq!(range_bucket_index(1, 2, 7), 0);
+        assert_eq!(range_bucket_index(2, 2, 7), 1);
+        assert_eq!(range_bucket_index(3, 2, 7), 2);
+        assert_eq!(range_bucket_index(32, 2, 7), 5);
+        assert_eq!(range_bucket_index(33, 2, 7), 6);
+    }
+
+    #[test]
+    fn range_layout_shift3_columns5() {
+        // Spec: <=1, >1 (<=8), >8 (<=64), >64 (<=512), >512. multiplier = 8.
+        let h = SyncHistogram::new(HistogramType::Logarithmic, 8, 5);
+        h.add(1); // 0
+        h.add(7); // 1
+        h.add(8); // 1
+        h.add(9); // 2
+        h.add(64); // 2
+        h.add(65); // 3
+        h.add(512); // 3
+        h.add(513); // 4
+        assert_eq!(h.buckets(), vec![1, 2, 2, 2, 1]);
+        assert_eq!(range_bucket_index(1, 8, 5), 0);
+        assert_eq!(range_bucket_index(8, 8, 5), 1);
+        assert_eq!(range_bucket_index(64, 8, 5), 2);
+        assert_eq!(range_bucket_index(512, 8, 5), 3);
+        assert_eq!(range_bucket_index(513, 8, 5), 4);
     }
 
     #[test]

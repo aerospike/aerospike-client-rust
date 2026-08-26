@@ -44,6 +44,7 @@ use crate::net::Host;
 use crate::policy::{
     BatchPolicy, ClientPolicy, QueryPolicy, ReadPolicy, TxnRollPolicy, TxnVerifyPolicy, WritePolicy,
 };
+use crate::xor_shift::XorShift;
 use crate::AdminPolicy;
 use aerospike_rt::Mutex;
 use futures::channel::mpsc;
@@ -124,6 +125,8 @@ pub struct Cluster {
     // the cluster-aggregated metrics.
     max_retries_exceeded_count: AtomicU64,
     total_timeout_exceeded_count: AtomicU64,
+    // Feature/API usage counters. Gated by `MetricsPolicy::usage_enabled`.
+    usage: std::sync::Mutex<HashMap<String, u64>>,
 
     // Cluster-wide count of connections currently being opened by background
     // fill tasks; shared into every node and checked against
@@ -198,6 +201,7 @@ impl Cluster {
             metrics: std::sync::Mutex::new(HashMap::new()),
             max_retries_exceeded_count: AtomicU64::new(0),
             total_timeout_exceeded_count: AtomicU64::new(0),
+            usage: std::sync::Mutex::new(HashMap::new()),
             opening_connections: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
 
             #[cfg(feature = "dynamic-config")]
@@ -1293,6 +1297,42 @@ impl Cluster {
         }
     }
 
+    /// Whether this user API call should record operational metrics.
+    ///
+    /// Decided once per call (the caller must not re-roll on retries). Requires
+    /// metrics enabled, `operational_enabled` on the policy, and the sampler.
+    pub(crate) fn should_record_operational(&self, rng: &mut XorShift) -> bool {
+        if !self.metrics_enabled() {
+            return false;
+        }
+        let policy = self.metrics_policy();
+        policy.operational_enabled && policy.sampler.should_sample(rng)
+    }
+
+    /// Increments a feature/API usage counter when metrics and usage
+    /// collection are both enabled. `feature` is a stable identifier such as
+    /// `feature.api` or `feature.shape.batch`.
+    pub fn record_usage(&self, feature: &str) {
+        if !self.metrics_enabled() {
+            return;
+        }
+        if !self.metrics_policy().usage_enabled {
+            return;
+        }
+        let mut map = self.usage.lock().unwrap();
+        *map.entry(feature.to_string()).or_insert(0) += 1;
+    }
+
+    /// Snapshot of usage counters. Empty when usage collection is off or
+    /// nothing has been recorded.
+    #[must_use]
+    pub fn usage_snapshot(&self) -> HashMap<String, u64> {
+        if !self.metrics_enabled() || !self.metrics_policy().usage_enabled {
+            return HashMap::new();
+        }
+        self.usage.lock().unwrap().clone()
+    }
+
     // ---- Dynamic configuration ----
 
     /// Overlays the cluster's current dynamic `read`-section config (if any) onto a
@@ -1569,14 +1609,14 @@ impl Cluster {
     }
 
     /// Applies the `dynamic.metrics` section: toggles collection via the existing
-    /// metrics API and folds any latency-histogram overrides into the policy.
+    /// metrics API and folds histogram / extended-group overrides into the policy.
     #[cfg(feature = "dynamic-config")]
     fn apply_metrics_config(&self, metrics: &crate::config::MetricsConfig) {
         // Builds the next metrics policy from the current one, folding in the
         // latency-histogram overrides and any custom labels.
         let next_policy = || {
             let mut policy = (*self.metrics_policy()).clone();
-            metrics.policy.clone().merge_into(&mut policy);
+            metrics.apply_to(&mut policy);
             if let Some(labels) = &metrics.labels {
                 // The cross-client schema models labels as a single flat map;
                 // `Labels` holds a list of entries (empty maps are dropped).
