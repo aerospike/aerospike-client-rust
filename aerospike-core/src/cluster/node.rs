@@ -34,7 +34,7 @@ use crate::cluster::CLIENT_VERSION;
 use crate::commands::Message;
 use crate::errors::{Error, Result};
 use crate::metrics::NodeMetrics;
-use crate::net::{Connection, ConnectionPool, Host, PooledConnection, Queue, TailVerdict};
+use crate::net::{Connection, ConnectionPool, Host, PooledConnection, TailVerdict};
 use crate::policy::{AdminPolicy, ClientPolicy};
 use crate::Version;
 
@@ -968,13 +968,21 @@ impl Node {
             timeout: policy.timeout.min(2000),
         };
 
-        // One verdict per queue per turn. Every turn either pops a connection
-        // (finite) or retires the queue from the rotation — bounded, no spinning.
+        // Cycle through queues one verdict at a time so the retire budget is spread
+        // evenly instead of draining queues in order. A full lap of quiet verdicts
+        // (fresh, empty, or contended) ends the sweep. With no queues, cycle() is empty.
+        //
+        // Probed connections are put back only after this loop. Putting one back here
+        // could make it immediately eligible again—especially when
+        // idle_timeout <= tend_interval + KEEPALIVE_MARGIN—and cause an infinite sweep.
+        // `take` is the safety bound: capacity-bounded pops should terminate normally;
+        // it only protects against an accidental non-terminating sweep.
         let mut probe_handles = Vec::new();
         let mut total_processed = 0usize;
-        let mut active: std::collections::VecDeque<&Queue> =
-            self.connection_pool.queues().iter().collect();
-        while let Some(queue) = active.pop_front() {
+        let queues = self.connection_pool.queues();
+        let max_probe_attempts = queues.len() * (policy.max_conns_per_node + 1);
+        let mut queues_without_work = 0;
+        for queue in queues.iter().cycle().take(max_probe_attempts) {
             match queue.inspect_tail(droppable > 0, expiry_horizon) {
                 Some(TailVerdict::Retire(conn)) => {
                     drop(conn);
@@ -983,7 +991,7 @@ impl Node {
                     self.metrics.incr_connections_idle_dropped();
                     self.metrics.incr_connections_closed();
                     total_processed += 1;
-                    active.push_back(queue);
+                    queues_without_work = 0;
                 }
                 Some(TailVerdict::KeepAlive(conn)) => {
                     // Probe runs concurrently from here; pool mutation waits below.
@@ -998,10 +1006,16 @@ impl Node {
                         }
                     });
                     probe_handles.push((queue.clone(), handle));
-                    active.push_back(queue);
+                    queues_without_work = 0;
                 }
-                // Contended or settled: everything deeper is fresher.
-                None | Some(TailVerdict::Settled) => {}
+                // Settled (front is fresh, so everything behind it is fresher) or
+                // contended (leave it for traffic and re-check it on the next lap).
+                None | Some(TailVerdict::Settled) => {
+                    queues_without_work += 1;
+                    if queues_without_work == queues.len() {
+                        break;
+                    }
+                }
             }
         }
 
