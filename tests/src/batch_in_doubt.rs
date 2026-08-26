@@ -31,13 +31,15 @@ use aerospike::{
     Bins, Client, ErrorKind, Key, ResultCode, Task, UDFLang, Value, WritePolicy,
 };
 
-// A UDF that occupies the server for `secs` before writing. `os.clock()` is CPU
-// time and `os.time()` has one-second granularity, so this spins on wall clock
-// via `os.time()` and needs `secs >= 1` to be reliable.
+// A UDF that occupies the server for at least `secs` before writing. `os.clock()`
+// is CPU time, so this spins on wall clock via `os.time()`, which ticks in whole
+// seconds. Stopping once the clock *reaches* `stop` would end at the next second
+// boundary and wait anywhere from 0 to `secs` seconds, so the spin runs until the
+// clock moves past it.
 const WAIT_UDF: &str = r#"
 function wait_and_update(rec, secs)
   local stop = os.time() + secs
-  while os.time() < stop do end
+  while os.time() <= stop do end
   if aerospike:exists(rec) then
     rec['bin'] = 1
     aerospike:update(rec)
