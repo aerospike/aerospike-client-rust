@@ -44,8 +44,9 @@
 //! With the `dynamic-config` feature the histogram keys live under
 //! `dynamic.metrics.extended.operational` (`latency_unit`, `latency_columns`,
 //! `latency_shift`, `sampler`) with a `usage` sibling. Flat `latency_unit` /
-//! `latency_columns` / `latency_base` / `latency_shift` aliases at the
-//! `dynamic.metrics` root remain valid.
+//! `latency_columns` / `latency_shift` aliases at the `dynamic.metrics` root
+//! remain valid, as does the pre-shift `latency_base` multiplier, which is
+//! resolved to the equivalent shift.
 
 pub mod cluster;
 pub mod histogram;

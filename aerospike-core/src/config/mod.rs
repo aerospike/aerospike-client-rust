@@ -159,11 +159,17 @@ pub struct MetricsConfig {
     /// `extended.operational.latency_shift` wins when both are present.
     pub latency_shift: Option<usize>,
 
-    /// Metrics-policy field overrides: the latency histogram's shape
-    /// (`latency_columns`, `latency_base`) and its time unit (`latency_unit`,
-    /// `us` / `ms`).
+    /// Legacy pre-shift key: a direct histogram multiplier rather than an
+    /// exponent. Still accepted, and mapped onto the shift model — powers of
+    /// two convert exactly, anything else is unsupported by the range layout
+    /// and falls back to the default shift. Either `latency_shift` key wins
+    /// when present.
+    pub latency_base: Option<usize>,
+
+    /// Metrics-policy field overrides: the latency histogram's column count
+    /// (`latency_columns`) and its time unit (`latency_unit`, `us` / `ms`).
     ///
-    /// Applying any of the three discards the samples already collected — the
+    /// Applying either discards the samples already collected — the
     /// old ones cannot share buckets with the new shape or unit. Keys under
     /// `extended.operational` overlay these when both are present.
     #[serde(flatten)]
@@ -240,12 +246,20 @@ impl MetricsConfig {
             .and_then(|e| e.operational.as_ref())
             .and_then(|o| o.latency_shift);
         // `latency_base` is a legacy multiplier that predates the schema's
-        // `latency_shift`. When only the base arrives, derive the shift so the
-        // policy cannot report one multiplier while bucketing with another.
+        // `latency_shift`. The range layout only steps by powers of two, so a
+        // base that is not one cannot be honored; take the default rather than
+        // bucket by a multiplier the policy would then misreport.
         if nested_shift.is_none() && self.latency_shift.is_none() {
-            if let Some(base) = self.policy.latency_base {
-                if base > 0 && base.is_power_of_two() {
-                    policy.latency_shift = base.trailing_zeros() as usize;
+            if let Some(base) = self.latency_base {
+                if base.is_power_of_two() {
+                    policy.set_latency_shift(base.trailing_zeros() as usize);
+                } else {
+                    let default_shift = crate::metrics::DEFAULT_LATENCY_SHIFT;
+                    log::error!(
+                        "Unsupported metrics latency_base {base}: the histogram layout steps by \
+                         powers of two. Using the default latency_shift ({default_shift})."
+                    );
+                    policy.set_latency_shift(default_shift);
                 }
             }
         }
@@ -472,7 +486,10 @@ dynamic:
         let mut mp = crate::metrics::MetricsPolicy::default();
         metrics.policy.merge_into(&mut mp);
         assert_eq!(mp.latency_columns, 9);
-        assert_eq!(mp.latency_base, 3);
+        // The legacy multiplier key is captured on the section itself, and is
+        // resolved to a shift by `apply_to` rather than by the policy merge.
+        assert_eq!(metrics.latency_base, Some(3));
+        assert_eq!(mp.latency_base(), 2);
         // The SAMPLE has no labels key, so labels stays absent.
         assert!(metrics.enable.is_some());
         assert!(metrics.labels.is_none());
@@ -743,23 +760,13 @@ labels:
     }
 
     #[test]
-    fn metrics_partial_merge_preserves_latency_base() {
+    fn metrics_partial_merge_leaves_the_histogram_shape_alone() {
         let default = MetricsPolicy::default();
         let cfg: MetricsPolicyConfig = parse("latency_columns: 9\n").unwrap();
         let mut mp = MetricsPolicy::default();
         cfg.merge_into(&mut mp);
         assert_eq!(mp.latency_columns, 9); // overridden
-        assert_eq!(mp.latency_base, default.latency_base); // kept
-    }
-
-    #[test]
-    fn metrics_latency_base_overrides_directly() {
-        // `latency_base` is a direct multiplier (matching the Go client), not a
-        // power-of-two exponent — the YAML value lands verbatim on the policy.
-        let cfg: MetricsPolicyConfig = parse("latency_base: 8\n").unwrap();
-        let mut mp = MetricsPolicy::default();
-        cfg.merge_into(&mut mp);
-        assert_eq!(mp.latency_base, 8);
+        assert_eq!(mp.latency_base(), default.latency_base()); // kept
     }
 
     #[test]
@@ -769,7 +776,7 @@ labels:
         let mut mp = MetricsPolicy::default();
         metrics.apply_to(&mut mp);
         assert_eq!(mp.latency_shift, 3);
-        assert_eq!(mp.latency_base, 8);
+        assert_eq!(mp.latency_base(), 8);
     }
 
     #[test]
@@ -777,8 +784,33 @@ labels:
         let metrics: MetricsConfig = parse("latency_base: 8\n").unwrap();
         let mut mp = MetricsPolicy::default();
         metrics.apply_to(&mut mp);
-        assert_eq!(mp.latency_base, 8);
+        assert_eq!(mp.latency_base(), 8);
         assert_eq!(mp.latency_shift, 3);
+    }
+
+    #[test]
+    fn metrics_legacy_base_outside_the_layout_takes_the_default() {
+        // The range layout steps by powers of two, so a multiplier of 3 cannot
+        // be expressed as a shift; bucketing by it anyway would leave the
+        // policy describing a layout it does not use.
+        let metrics: MetricsConfig = parse("latency_base: 3\n").unwrap();
+        let mut mp = MetricsPolicy::default();
+        metrics.apply_to(&mut mp);
+        assert_eq!(mp.latency_shift, 1);
+        assert_eq!(mp.latency_base(), 2);
+    }
+
+    #[test]
+    fn metrics_legacy_degenerate_base_takes_the_default() {
+        // A multiplier of 1 leaves every boundary at 1, and 0 is not a
+        // multiplier at all.
+        for yaml in ["latency_base: 1\n", "latency_base: 0\n"] {
+            let metrics: MetricsConfig = parse(yaml).unwrap();
+            let mut mp = MetricsPolicy::default();
+            metrics.apply_to(&mut mp);
+            assert_eq!(mp.latency_shift, 1, "{yaml}");
+            assert_eq!(mp.latency_base(), 2, "{yaml}");
+        }
     }
 
     #[test]
@@ -787,7 +819,7 @@ labels:
         let mut mp = MetricsPolicy::default();
         metrics.apply_to(&mut mp);
         assert_eq!(mp.latency_shift, 2);
-        assert_eq!(mp.latency_base, 4);
+        assert_eq!(mp.latency_base(), 4);
     }
 
     #[test]
@@ -821,7 +853,7 @@ extended:
         assert_eq!(mp.latency_unit, crate::metrics::LatencyUnit::Milliseconds);
         assert_eq!(mp.latency_columns, 5);
         assert_eq!(mp.latency_shift, 3);
-        assert_eq!(mp.latency_base, 8);
+        assert_eq!(mp.latency_base(), 8);
         assert_eq!(mp.sampler, Sampler::new(10, 3));
         assert!(mp.tls_metrics_enabled);
     }
@@ -845,7 +877,7 @@ extended:
         assert!(!mp.operational_enabled);
         assert!(mp.usage_enabled);
         assert_eq!(mp.latency_shift, 3);
-        assert_eq!(mp.latency_base, 8);
+        assert_eq!(mp.latency_base(), 8);
     }
 
     #[test]

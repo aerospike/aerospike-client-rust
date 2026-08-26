@@ -193,23 +193,17 @@ pub struct MetricsPolicy {
     /// Range-layout shift: each boundary after the first two (`<=1`, `>1`)
     /// multiplies by `2^latency_shift`. Default 1 (no skipped powers).
     ///
-    /// Crate-private so the pair below can never desync: set it through
-    /// [`set_latency_shift`](Self::set_latency_shift) (which derives the
-    /// multiplier) and read it through [`latency_shift`](Self::latency_shift).
+    /// The shift is the only stored parameter of the range layout — the
+    /// multiplier is always computed as `1 << latency_shift`, so the two can
+    /// never disagree. Set it through
+    /// [`set_latency_shift`](Self::set_latency_shift) and read it through
+    /// [`latency_shift`](Self::latency_shift).
     ///
     /// Canonical YAML key: `dynamic.metrics.extended.operational.latency_shift`.
     /// The flat `dynamic.metrics.latency_shift` and legacy `latency_base`
     /// aliases are still accepted.
     #[cfg_attr(feature = "dynamic-config", config(skip))]
     pub(crate) latency_shift: usize,
-
-    /// Histogram multiplier, normally `2^latency_shift`. Stored (rather than
-    /// always derived) only because the legacy `latency_base` config key is a
-    /// direct multiplier that may not be a power of two; every public
-    /// mutation path keeps it equal to `1 << latency_shift`.
-    ///
-    /// Default: 2.
-    pub(crate) latency_base: usize,
 
     /// When `true`, enabling metrics records per-command operational data
     /// (latency, bytes, errors). When `false` — the default — only Tier 0
@@ -271,7 +265,6 @@ impl MetricsPolicy {
             latency_unit: LatencyUnit::Milliseconds,
             latency_columns: MILLIS_LATENCY_COLUMNS,
             latency_shift: DEFAULT_LATENCY_SHIFT,
-            latency_base: DEFAULT_LATENCY_BASE,
             operational_enabled: false,
             usage_enabled: false,
             labels: Labels::new(),
@@ -301,13 +294,12 @@ impl MetricsPolicy {
         }
     }
 
-    /// Sets the range-layout shift and derives the histogram multiplier
-    /// (`2^shift`). The only public mutation path for the pair, so the two
-    /// can never disagree. `shift` is clamped to `1..=63`.
+    /// Sets the range-layout shift, which the histogram multiplier
+    /// (`2^shift`) is computed from. `shift` is clamped to `1..=63`; a shift
+    /// of `0` would give every boundary the same limit and leave all but the
+    /// first and last columns unreachable.
     pub fn set_latency_shift(&mut self, shift: usize) {
-        let shift = shift.clamp(1, 63);
-        self.latency_shift = shift;
-        self.latency_base = 1 << shift;
+        self.latency_shift = shift.clamp(1, 63);
     }
 
     /// Range-layout shift: each histogram boundary after the first two
@@ -317,17 +309,19 @@ impl MetricsPolicy {
         self.latency_shift
     }
 
-    /// Histogram multiplier (`2^latency_shift`, or a direct legacy value
-    /// when the config file used the pre-shift `latency_base` key).
+    /// Histogram multiplier, always `2^latency_shift`.
     #[must_use]
     pub fn latency_base(&self) -> usize {
-        self.latency_base
+        1usize
+            .checked_shl(self.latency_shift as u32)
+            .unwrap_or(usize::MAX)
     }
 
     /// Histogram multiplier as a `u64` (the type histograms are built with).
     #[must_use]
     pub(crate) fn base(&self) -> u64 {
-        self.latency_base.max(1) as u64
+        1u64.checked_shl(self.latency_shift as u32)
+            .unwrap_or(u64::MAX)
     }
 }
 
@@ -342,7 +336,7 @@ mod tests {
         assert_eq!(p.latency_unit, LatencyUnit::Milliseconds);
         assert_eq!(p.latency_columns, 7);
         assert_eq!(p.latency_shift, 1);
-        assert_eq!(p.latency_base, 2);
+        assert_eq!(p.latency_base(), 2);
         assert!(!p.operational_enabled);
         assert!(!p.usage_enabled);
         assert!(!p.tls_metrics_enabled);
@@ -355,7 +349,7 @@ mod tests {
         assert_eq!(p.latency_unit, LatencyUnit::Milliseconds);
         assert_eq!(p.latency_columns, 7);
         assert_eq!(p.latency_shift, 1);
-        assert_eq!(p.latency_base, 2);
+        assert_eq!(p.latency_base(), 2);
     }
 
     #[test]
@@ -364,16 +358,29 @@ mod tests {
         assert_eq!(p.latency_unit, LatencyUnit::Microseconds);
         assert_eq!(p.latency_columns, MICROS_LATENCY_COLUMNS);
         assert_eq!(p.latency_shift, 1);
-        assert_eq!(p.latency_base, 2);
+        assert_eq!(p.latency_base(), 2);
     }
 
     #[test]
-    fn set_latency_shift_updates_base() {
+    fn set_latency_shift_drives_the_multiplier() {
         let mut p = MetricsPolicy::default();
         p.set_latency_shift(3);
         assert_eq!(p.latency_shift, 3);
-        assert_eq!(p.latency_base, 8);
+        assert_eq!(p.latency_base(), 8);
         assert_eq!(p.base(), 8);
+    }
+
+    #[test]
+    fn set_latency_shift_clamps_away_the_degenerate_layout() {
+        // Shift 0 would leave every boundary at 1, so only the first and last
+        // columns could ever be reached.
+        let mut p = MetricsPolicy::default();
+        p.set_latency_shift(0);
+        assert_eq!(p.latency_shift, 1);
+        assert_eq!(p.latency_base(), 2);
+
+        p.set_latency_shift(usize::MAX);
+        assert_eq!(p.latency_shift, 63);
     }
 
     #[test]
