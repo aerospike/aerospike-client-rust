@@ -218,6 +218,52 @@ async fn pipeline_returns_max_error_rate_when_breaker_open() {
     client.close().await.unwrap();
 }
 
+/// A retry whose sleep would end past the command deadline must not sleep at
+/// all. The command has already lost, so the sleep only delays the answer and
+/// costs the caller the real cause: the deadline path reports a bare timeout,
+/// discarding the error that actually stopped the command.
+#[aerospike_macro::test]
+async fn retry_does_not_sleep_past_the_deadline() {
+    let client = breaker_client(1).await;
+
+    for node in client.cluster.nodes() {
+        for _ in 0..16 {
+            node.incr_error_rate();
+        }
+    }
+
+    // Every attempt fails immediately on the breaker, and the retry sleep is
+    // far longer than the deadline it would overrun.
+    let mut wp = WritePolicy::default();
+    wp.base_policy.max_retries = 5;
+    wp.base_policy.total_timeout = 200;
+    wp.base_policy.socket_timeout = 200;
+    wp.base_policy.sleep_between_retries = 5_000;
+
+    let key = as_key!(common::namespace(), "breaker_test", 2_i64);
+    let bin = as_bin!("a", 1);
+
+    let start = std::time::Instant::now();
+    let err = client
+        .put(&wp, &key, &[bin])
+        .await
+        .expect_err("put should fail with the breaker open");
+    let elapsed = start.elapsed();
+
+    assert!(
+        elapsed < std::time::Duration::from_millis(2_000),
+        "returned after {:?}; the retry sleep was not skipped",
+        elapsed
+    );
+    assert!(
+        format!("{err}").contains("Max error rate exceeded"),
+        "expected MaxErrorRate, got: {}",
+        err
+    );
+
+    client.close().await.unwrap();
+}
+
 /// Trip the breaker on every node so each batch attempt fails immediately
 /// without opening a socket, then read the attempt count straight out of the
 /// retry loop's own "Timeout after N tries" message.
