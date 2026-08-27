@@ -19,6 +19,7 @@ use std::sync::Arc;
 use crate::errors::{Error, Result};
 use crate::net::{Connection, ConnectionState, Host};
 use crate::policy::ClientPolicy;
+use aerospike_rt::time::Instant;
 use std::collections::VecDeque;
 use std::sync::Mutex;
 
@@ -90,9 +91,19 @@ impl Queue {
 
     /// Creates a new connection based on the queue's `ClientPolicy`.
     /// It does not check for the capacity of the queue.
-    pub async fn make_conn(&self) -> Result<Connection> {
+    ///
+    /// The connect is bounded by the caller's `deadline` when it has one:
+    /// `ClientPolicy::timeout()` defaults to 30s, which dwarfs a typical
+    /// `total_timeout`, so without this bound a command with a 100ms budget
+    /// could sit inside the connect for the full 30s.
+    pub async fn make_conn(&self, deadline: Option<Instant>) -> Result<Connection> {
+        let mut connect_timeout = self.0.policy.timeout();
+        if let Some(deadline) = deadline {
+            connect_timeout =
+                connect_timeout.min(deadline.saturating_duration_since(Instant::now()));
+        }
         let conn = aerospike_rt::timeout(
-            self.0.policy.timeout(),
+            connect_timeout,
             Connection::new(&self.0.host, &self.0.policy, self.0.hashed_pass.as_ref()),
         )
         .await;
@@ -246,7 +257,11 @@ impl ConnectionPool {
 
     /// If there is a pool with capacity to hold more connections, create a connection
     /// for that queue and return it to the user.
-    pub async fn make_conn(&self, hint: usize) -> Result<PooledConnection> {
+    pub async fn make_conn(
+        &self,
+        hint: usize,
+        deadline: Option<Instant>,
+    ) -> Result<PooledConnection> {
         let num_queues = usize::from(self.num_queues);
         let mut attempts = self.num_queues;
         let mut i = hint % num_queues;
@@ -257,7 +272,7 @@ impl ConnectionPool {
                 i = 0;
             }
             if queue.reserve_capacity() {
-                match queue.make_conn().await {
+                match queue.make_conn(deadline).await {
                     Ok(conn) => {
                         return Ok(PooledConnection {
                             queue: queue.clone(),
@@ -282,6 +297,16 @@ impl ConnectionPool {
             }
         }
 
+        // Every queue is at its cap with all connections in flight: a
+        // transient shortage that clears as soon as another task returns a
+        // connection. Surface it as `NoMoreConnections` so the command retry
+        // loops can recognize it and wait for one instead of failing
+        // outright. A pool that can never hold a connection
+        // (`max_conns_per_node == 0`) keeps the old opaque error — a wait on
+        // it would never end.
+        if self.queues.iter().any(|q| q.0.capacity > 0) {
+            return Err(Error::NoMoreConnections);
+        }
         Err(Error::ClientError(
             "Could not make a connection for the connection pool".into(),
         ))
@@ -427,7 +452,7 @@ mod tests {
         ($pool:ident, $hint:tt) => {{
             match $pool.get($hint) {
                 Ok(c) => Ok(c),
-                Err(_) => $pool.make_conn($hint).await,
+                Err(_) => $pool.make_conn($hint, None).await,
             }
         }};
     }
@@ -513,7 +538,7 @@ mod tests {
         assert_eq!(get_or_make!(p, 0).is_err(), false);
         assert_eq!(p.num_conns(), 1);
 
-        assert_eq!(p.make_conn(0).await.is_err(), false);
+        assert_eq!(p.make_conn(0, None).await.is_err(), false);
         assert_eq!(p.num_conns(), 2);
 
         assert_eq!(p.get(0).is_err(), false);
@@ -557,7 +582,7 @@ mod tests {
         assert_eq!(p.queues[1].reserved(), 0);
         assert_eq!(p.queues[1].num_conns(), 0);
 
-        assert_eq!(p.make_conn(1).await.is_err(), false);
+        assert_eq!(p.make_conn(1, None).await.is_err(), false);
         assert_eq!(p.num_conns(), 2);
         assert_eq!(p.queues[0].reserved(), 1);
         assert_eq!(p.queues[0].num_conns(), 1);
@@ -594,21 +619,21 @@ mod tests {
 
         // test for capacity planning
 
-        assert_eq!(p.make_conn(1).await.is_err(), false);
+        assert_eq!(p.make_conn(1, None).await.is_err(), false);
         assert_eq!(p.num_conns(), 1);
         assert_eq!(p.queues[0].reserved(), 0);
         assert_eq!(p.queues[0].num_conns(), 0);
         assert_eq!(p.queues[1].reserved(), 1);
         assert_eq!(p.queues[1].num_conns(), 1);
 
-        assert_eq!(p.make_conn(1).await.is_err(), false);
+        assert_eq!(p.make_conn(1, None).await.is_err(), false);
         assert_eq!(p.num_conns(), 2);
         assert_eq!(p.queues[0].reserved(), 1);
         assert_eq!(p.queues[0].num_conns(), 1);
         assert_eq!(p.queues[1].reserved(), 1);
         assert_eq!(p.queues[1].num_conns(), 1);
 
-        assert_eq!(p.make_conn(1).await.is_err(), false);
+        assert_eq!(p.make_conn(1, None).await.is_err(), false);
         assert_eq!(p.num_conns(), 3);
         assert_eq!(p.queues[0].reserved(), 2);
         assert_eq!(p.queues[0].num_conns(), 2);
@@ -616,7 +641,7 @@ mod tests {
         assert_eq!(p.queues[1].num_conns(), 1);
 
         // can't make more, all queues are full
-        assert_eq!(p.make_conn(1).await.is_err(), true);
+        assert_eq!(p.make_conn(1, None).await.is_err(), true);
         assert_eq!(p.num_conns(), 3);
         assert_eq!(p.queues[0].reserved(), 2);
         assert_eq!(p.queues[0].num_conns(), 2);
@@ -626,7 +651,7 @@ mod tests {
         // can't make more, all queues are full
         let mut c = p.get(0).unwrap();
         // we are at capacity, no more connections can be created
-        assert_eq!(p.make_conn(1).await.is_err(), true);
+        assert_eq!(p.make_conn(1, None).await.is_err(), true);
         // but there is one connection in flight
         assert_eq!(p.num_conns(), 2);
         assert_eq!(p.queues[0].reserved(), 2);
@@ -646,7 +671,7 @@ mod tests {
         // can't make more, all queues are full
         let mut c = p.get(1).unwrap();
         // we are at capacity, no more connections can be created
-        assert_eq!(p.make_conn(1).await.is_err(), true);
+        assert_eq!(p.make_conn(1, None).await.is_err(), true);
         // but there is one connection in flight
         assert_eq!(p.num_conns(), 2);
         assert_eq!(p.queues[0].reserved(), 2);
@@ -677,7 +702,7 @@ mod tests {
         let p = ConnectionPool::new(host.clone(), policy.clone());
 
         {
-            let mut pconn = p.make_conn(0).await.expect("make_conn failed");
+            let mut pconn = p.make_conn(0, None).await.expect("make_conn failed");
             assert_eq!(p.queues[0].reserved(), 1);
             pconn.set_state(ConnectionState::Writing);
         }
@@ -697,7 +722,7 @@ mod tests {
         let p = ConnectionPool::new(host.clone(), policy.clone());
 
         {
-            let pconn = p.make_conn(0).await.expect("make_conn failed");
+            let pconn = p.make_conn(0, None).await.expect("make_conn failed");
             assert_eq!(p.queues[0].reserved(), 1);
             drop(pconn);
         }
@@ -726,7 +751,7 @@ mod tests {
         for round in 0..5 {
             FAIL_NEXT_CONNECT.with(|f| f.set(true));
             let err = p
-                .make_conn(0)
+                .make_conn(0, None)
                 .await
                 .expect_err("connect was forced to fail");
             assert!(
@@ -744,7 +769,7 @@ mod tests {
 
         // And the pool still works.
         let _c = p
-            .make_conn(0)
+            .make_conn(0, None)
             .await
             .expect("pool must still have capacity after failed connects");
     }
@@ -765,7 +790,7 @@ mod tests {
         // Non-Ready path: nothing accumulates.
         let buggy = ConnectionPool::new(host.clone(), policy.clone());
         for i in 0..min {
-            let mut pconn = buggy.make_conn(i).await.expect("make_conn failed");
+            let mut pconn = buggy.make_conn(i, None).await.expect("make_conn failed");
             pconn.set_state(ConnectionState::Writing);
         }
         let buggy_total = buggy.queues.iter().map(|q| q.reserved()).sum::<usize>();
@@ -775,11 +800,73 @@ mod tests {
         // Ready path: pool reaches min in one pass.
         let fixed = ConnectionPool::new(host.clone(), policy.clone());
         for i in 0..min {
-            let pconn = fixed.make_conn(i).await.expect("make_conn failed");
+            let pconn = fixed.make_conn(i, None).await.expect("make_conn failed");
             drop(pconn);
         }
         let fixed_total = fixed.queues.iter().map(|q| q.reserved()).sum::<usize>();
         assert_eq!(fixed_total, min, "Ready loop reaches min");
         assert_eq!(fixed.num_conns(), min);
+    }
+
+    /// A saturated pool — every allowed connection exists and is in flight —
+    /// must fail with an error the retry loops can match as pool-empty, and
+    /// the shortage must clear when a borrower returns its connection.
+    #[aerospike_macro::test]
+    async fn exhausted_pool_returns_matchable_pool_empty_error() {
+        let host = Host::new("some-url", 30000);
+        let policy = ClientPolicy {
+            max_conns_per_node: 2,
+            conn_pools_per_node: 1,
+            ..ClientPolicy::default()
+        };
+        let p = ConnectionPool::new(host.clone(), policy.clone());
+
+        let held_a = p.make_conn(0, None).await.expect("first borrow");
+        let held_b = p.make_conn(0, None).await.expect("second borrow");
+        assert_eq!(p.total_reserved(), 2);
+
+        let err = p.make_conn(0, None).await.expect_err("pool is at capacity");
+        assert!(
+            err.is_pool_empty(),
+            "exhaustion must be matchable as pool-empty, got: {:?}", err
+        );
+        assert!(p.get(0).is_err(), "no idle connection to hand out");
+        assert_eq!(
+            p.total_reserved(),
+            2,
+            "a failed acquisition must not change the accounting"
+        );
+
+        // The common way the shortage clears: a borrower returns a healthy
+        // connection (`put_back` via Drop), NOT a destroyed one.
+        drop(held_a);
+        let reused = p.get(0).expect("returned connection must satisfy a waiter");
+        drop(reused);
+        drop(held_b);
+        assert_eq!(
+            p.total_reserved(),
+            2,
+            "reserved unchanged across a saturate/release cycle"
+        );
+    }
+
+    /// `max_conns_per_node == 0` builds a pool that can never satisfy a
+    /// borrow. It must keep failing fast with a non-pool-empty error — a
+    /// paced wait on it would never end.
+    #[aerospike_macro::test]
+    async fn zero_capacity_pool_is_not_pool_empty() {
+        let host = Host::new("some-url", 30000);
+        let policy = ClientPolicy {
+            max_conns_per_node: 0,
+            conn_pools_per_node: 1,
+            ..ClientPolicy::default()
+        };
+        let p = ConnectionPool::new(host.clone(), policy.clone());
+
+        let err = p.make_conn(0, None).await.expect_err("no capacity at all");
+        assert!(
+            !err.is_pool_empty(),
+            "a permanently empty pool must not look waitable, got: {:?}", err
+        );
     }
 }
