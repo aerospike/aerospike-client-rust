@@ -131,6 +131,12 @@ impl<'a> SingleCommand<'a> {
                 }
 
                 if let Some(sleep_between_retries) = policy.sleep_between_retries() {
+                    if let Some(deadline) = deadline {
+                        if Instant::now() + sleep_between_retries > deadline {
+                            // We will timeout anyway after sleep. break immediately.
+                            break;
+                        }
+                    }
                     sleep(sleep_between_retries).await;
                 }
             }
