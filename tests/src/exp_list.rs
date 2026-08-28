@@ -4,6 +4,8 @@ use crate::src::count_results;
 
 use aerospike::expressions::lists::*;
 use aerospike::expressions::*;
+use aerospike::operations::cdt_context::ctx_map_key;
+use aerospike::operations::exp::{read_exp, ExpReadFlags};
 use aerospike::operations::lists::{ListPolicy, ListReturnType};
 use aerospike::query::PartitionFilter;
 use aerospike::*;
@@ -602,4 +604,146 @@ async fn test_filter(client: &Client, filter: Expression, set_name: &str) -> Arc
     let statement = Statement::new(namespace, set_name, Bins::All);
     let pf = PartitionFilter::all();
     client.query(&qpolicy, pf, statement).await.unwrap()
+}
+
+// ============================================================
+// string_list_join as an expression — CDT list read op 28
+// ============================================================
+
+/// Same gate as the operation form: it arrived with the string operations.
+async fn server_supports_list_join(client: &Client) -> bool {
+    let supported = match client.cluster.get_random_node() {
+        Ok(node) => node.version().supports_string_operations(),
+        Err(_) => false,
+    };
+
+    if !supported {
+        eprintln!("Skipping: server does not support string_list_join (requires >= 8.1.3)");
+    }
+
+    supported
+}
+
+/// Evaluate an expression against one record and hand back what it produced.
+async fn eval(client: &Client, key: &Key, exp: Expression) -> Value {
+    let ops = vec![read_exp("v", exp, ExpReadFlags::Default)];
+    let rec = client
+        .operate(&WritePolicy::default(), key, &ops)
+        .await
+        .unwrap();
+
+    rec.bins.get("v").unwrap().clone()
+}
+
+#[aerospike_macro::test]
+async fn expression_list_join() {
+    let client = common::client().await;
+    if !server_supports_list_join(&client).await {
+        return;
+    }
+
+    let namespace = common::namespace();
+    let set_name = common::rand_str(10);
+    let wpolicy = WritePolicy::default();
+    let key = as_key!(namespace, &set_name, "join");
+    common::delete_durably(&client, &wpolicy, &key)
+        .await
+        .unwrap();
+    client
+        .put(
+            &wpolicy,
+            &key,
+            &[as_bin!("sbin", as_list!("one", "two", "three"))],
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(
+        eval(
+            &client,
+            &key,
+            join_by_separator(
+                string_val("|".to_string()),
+                list_bin("sbin".to_string()),
+                &[],
+            ),
+        )
+        .await,
+        as_val!("one|two|three"),
+        "JOIN BY SEPARATOR Test Failed"
+    );
+
+    assert_eq!(
+        eval(&client, &key, join(list_bin("sbin".to_string()), &[])).await,
+        as_val!("onetwothree"),
+        "JOIN Test Failed"
+    );
+
+    // A list nested in a map, reached through a context.
+    let map = as_map!("k" => as_list!("a", "b"));
+    client
+        .put(&wpolicy, &key, &[as_bin!("mbin", map)])
+        .await
+        .unwrap();
+
+    assert_eq!(
+        eval(
+            &client,
+            &key,
+            join_by_separator(
+                string_val("-".to_string()),
+                map_bin("mbin".to_string()),
+                &[ctx_map_key(as_val!("k"))],
+            ),
+        )
+        .await,
+        as_val!("a-b"),
+        "JOIN UNDER CTX Test Failed"
+    );
+
+    client.close().await.unwrap();
+}
+
+/// The join is usable where any read expression is: as a query filter.
+#[aerospike_macro::test]
+async fn expression_list_join_as_a_filter() {
+    let client = common::client().await;
+    if !server_supports_list_join(&client).await {
+        return;
+    }
+
+    let namespace = common::namespace();
+    let set_name = common::rand_str(10);
+    let wpolicy = WritePolicy::default();
+
+    for (i, items) in [as_list!("one", "two", "three"), as_list!("four", "five")]
+        .into_iter()
+        .enumerate()
+    {
+        let key = as_key!(namespace, &set_name, i as i64);
+        common::delete_durably(&client, &wpolicy, &key)
+            .await
+            .unwrap();
+        client
+            .put(&wpolicy, &key, &[as_bin!("sbin", items)])
+            .await
+            .unwrap();
+    }
+
+    let rs = test_filter(
+        &client,
+        eq(
+            join_by_separator(
+                string_val(",".to_string()),
+                list_bin("sbin".to_string()),
+                &[],
+            ),
+            string_val("one,two,three".to_string()),
+        ),
+        &set_name,
+    )
+    .await;
+    assert_eq!(count_results(rs).await, 1, "JOIN AS FILTER Test Failed");
+
+    client.close().await.unwrap();
 }

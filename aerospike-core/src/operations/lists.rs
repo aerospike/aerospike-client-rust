@@ -75,6 +75,7 @@ pub(crate) enum CdtListOpType {
     GetByValueInterval = 25,
     GetByRankRange = 26,
     GetByValueRelRankRange = 27,
+    StringJoin = 28,
     RemoveByIndex = 32,
     RemoveByRank = 34,
     RemoveByValue = 35,
@@ -1047,6 +1048,51 @@ pub fn get_range_from(bin: &str, index: i64) -> Operation {
         op: CdtListOpType::GetRange as u8,
         encoder: Arc::new(pack_cdt_op),
         args: vec![CdtArgument::Int(index)],
+    };
+    Operation {
+        op: OperationType::CdtRead,
+        ctx: DEFAULT_CTX,
+        bin: OperationBin::Name(bin.into()),
+        data: OperationData::CdtListOp(cdt_op),
+    }
+}
+
+/// Creates a list join operation.
+///
+/// Server concatenates the string items of the list bin and returns the result.
+/// The list must hold only strings; anything else is a `PARAMETER_ERROR`.
+///
+/// This is the inverse of [`operations::string::split`](crate::operations::string::split)
+/// with no separator. Requires Aerospike Server version 8.1.3 or later.
+pub fn join(bin: &str) -> Operation {
+    let cdt_op = CdtOperation {
+        op: CdtListOpType::StringJoin as u8,
+        encoder: Arc::new(pack_cdt_op),
+        args: vec![],
+    };
+    Operation {
+        op: OperationType::CdtRead,
+        ctx: DEFAULT_CTX,
+        bin: OperationBin::Name(bin.into()),
+        data: OperationData::CdtListOp(cdt_op),
+    }
+}
+
+/// Creates a list join operation with a separator between consecutive items.
+///
+/// Server concatenates the string items of the list bin, inserting `separator`
+/// between them, and returns the result. The list must hold only strings;
+/// anything else is a `PARAMETER_ERROR`. An empty list joins to an empty
+/// string.
+///
+/// This is the inverse of
+/// [`operations::string::split_by_separator`](crate::operations::string::split_by_separator).
+/// Requires Aerospike Server version 8.1.3 or later.
+pub fn join_by_separator(bin: &str, separator: &str) -> Operation {
+    let cdt_op = CdtOperation {
+        op: CdtListOpType::StringJoin as u8,
+        encoder: Arc::new(pack_cdt_op),
+        args: vec![CdtArgument::Value(Value::from(separator))],
     };
     Operation {
         op: OperationType::CdtRead,

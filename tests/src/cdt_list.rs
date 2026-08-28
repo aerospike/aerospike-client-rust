@@ -22,7 +22,10 @@ use aerospike::operations::lists::{
     ListOrderType, ListPolicy, ListReturnType, ListSortFlags, ListWriteFlags,
 };
 use aerospike::operations::maps;
-use aerospike::{as_bin, as_key, as_list, as_val, as_values, Bins, ReadPolicy, Value, WritePolicy};
+use aerospike::{
+    as_bin, as_key, as_list, as_map, as_val, as_values, Bins, ReadPolicy, ResultCode, Value,
+    WritePolicy,
+};
 
 #[aerospike_macro::test]
 fn cdt_list() {
@@ -763,6 +766,190 @@ async fn cdt_list_create_persistent_top_level() {
         *rec.bins.get("bin").unwrap(),
         Value::MultiResult(vec![as_val!(1), as_val!(2), as_list!(1, 3)])
     );
+
+    client.close().await.unwrap();
+}
+
+// ============================================================
+// string_list_join — CDT list read op 28
+// ============================================================
+
+/// Whether the server implements `string_list_join`. It arrived with the string
+/// operations, so it carries the same version gate.
+async fn server_supports_list_join(client: &aerospike::Client) -> bool {
+    let supported = match client.cluster.get_random_node() {
+        Ok(node) => node.version().supports_string_operations(),
+        Err(_) => false,
+    };
+
+    if !supported {
+        eprintln!("Skipping: server does not support string_list_join (requires >= 8.1.3)");
+    }
+
+    supported
+}
+
+#[aerospike_macro::test]
+async fn list_join_with_and_without_separator() {
+    let client = common::client().await;
+    if !server_supports_list_join(&client).await {
+        return;
+    }
+    let namespace = common::namespace();
+    let set_name = &common::rand_str(10);
+    let wpolicy = WritePolicy::default();
+    let key = as_key!(namespace, set_name, "join");
+    let _ = common::delete_durably(&client, &wpolicy, &key).await;
+
+    client
+        .put(
+            &wpolicy,
+            &key,
+            &[as_bin!("bin", as_list!("one", "two", "three"))],
+        )
+        .await
+        .unwrap();
+
+    let rec = client
+        .operate(&wpolicy, &key, &[lists::join_by_separator("bin", ",")])
+        .await
+        .unwrap();
+    assert_eq!(rec.bins.get("bin").unwrap(), &as_val!("one,two,three"));
+
+    // No separator at all: the items are concatenated.
+    let rec = client
+        .operate(&wpolicy, &key, &[lists::join("bin")])
+        .await
+        .unwrap();
+    assert_eq!(rec.bins.get("bin").unwrap(), &as_val!("onetwothree"));
+
+    client.close().await.unwrap();
+}
+
+#[aerospike_macro::test]
+async fn list_join_of_empty_list_is_empty_string() {
+    let client = common::client().await;
+    if !server_supports_list_join(&client).await {
+        return;
+    }
+    let namespace = common::namespace();
+    let set_name = &common::rand_str(10);
+    let wpolicy = WritePolicy::default();
+    let key = as_key!(namespace, set_name, "join-empty");
+    let _ = common::delete_durably(&client, &wpolicy, &key).await;
+
+    let empty: Vec<Value> = vec![];
+    client
+        .put(&wpolicy, &key, &[as_bin!("bin", Value::List(empty))])
+        .await
+        .unwrap();
+
+    let rec = client
+        .operate(&wpolicy, &key, &[lists::join_by_separator("bin", ",")])
+        .await
+        .unwrap();
+    assert_eq!(rec.bins.get("bin").unwrap(), &as_val!(""));
+
+    client.close().await.unwrap();
+}
+
+#[aerospike_macro::test]
+async fn list_join_of_list_nested_in_map() {
+    let client = common::client().await;
+    if !server_supports_list_join(&client).await {
+        return;
+    }
+    let namespace = common::namespace();
+    let set_name = &common::rand_str(10);
+    let wpolicy = WritePolicy::default();
+    let key = as_key!(namespace, set_name, "join-nested");
+    let _ = common::delete_durably(&client, &wpolicy, &key).await;
+
+    let map = as_map!("k" => as_list!("a", "b"));
+    client
+        .put(&wpolicy, &key, &[as_bin!("bin", map)])
+        .await
+        .unwrap();
+
+    let op = lists::join_by_separator("bin", "-").context(vec![ctx_map_key(as_val!("k"))]);
+    let rec = client.operate(&wpolicy, &key, &[op]).await.unwrap();
+    assert_eq!(rec.bins.get("bin").unwrap(), &as_val!("a-b"));
+
+    client.close().await.unwrap();
+}
+
+/// Only strings can be joined. The list is left alone and the op fails, rather
+/// than the server rendering the numbers for us.
+#[aerospike_macro::test]
+async fn list_join_of_non_string_items_is_a_parameter_error() {
+    let client = common::client().await;
+    if !server_supports_list_join(&client).await {
+        return;
+    }
+    let namespace = common::namespace();
+    let set_name = &common::rand_str(10);
+    let wpolicy = WritePolicy::default();
+    let key = as_key!(namespace, set_name, "join-nonstring");
+    let _ = common::delete_durably(&client, &wpolicy, &key).await;
+
+    client
+        .put(&wpolicy, &key, &[as_bin!("bin", as_list!(1, 2, 3))])
+        .await
+        .unwrap();
+
+    let err = client
+        .operate(&wpolicy, &key, &[lists::join_by_separator("bin", ",")])
+        .await
+        .expect_err("joining a list of integers must fail");
+    assert_eq!(
+        err.server_result_code(),
+        Some(ResultCode::ParameterError),
+        "unexpected error: {err}"
+    );
+
+    client.close().await.unwrap();
+}
+
+/// `join` is the inverse of the string `split`: the round trip is the identity.
+#[aerospike_macro::test]
+async fn list_join_round_trips_with_string_split() {
+    let client = common::client().await;
+    if !server_supports_list_join(&client).await {
+        return;
+    }
+    let namespace = common::namespace();
+    let set_name = &common::rand_str(10);
+    let wpolicy = WritePolicy::default();
+    let key = as_key!(namespace, set_name, "join-roundtrip");
+    let _ = common::delete_durably(&client, &wpolicy, &key).await;
+
+    let items = as_list!("one", "two", "three");
+    client
+        .put(&wpolicy, &key, &[as_bin!("bin", items.clone())])
+        .await
+        .unwrap();
+
+    let rec = client
+        .operate(&wpolicy, &key, &[lists::join_by_separator("bin", ",")])
+        .await
+        .unwrap();
+    let joined = rec.bins.get("bin").unwrap().clone();
+    assert_eq!(joined, as_val!("one,two,three"));
+
+    client
+        .put(&wpolicy, &key, &[as_bin!("bin", joined)])
+        .await
+        .unwrap();
+
+    let rec = client
+        .operate(
+            &wpolicy,
+            &key,
+            &[aerospike::operations::string::split_by_separator("bin", ",")],
+        )
+        .await
+        .unwrap();
+    assert_eq!(rec.bins.get("bin").unwrap(), &items);
 
     client.close().await.unwrap();
 }
