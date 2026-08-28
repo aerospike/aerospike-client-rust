@@ -1098,6 +1098,73 @@ async fn modify_on_string_nested_in_map() {
     assert_eq!(rec.bins.get(BIN).unwrap(), &Value::HashMap(expected));
 }
 
+// A modify op under CTX carrying non-default write flags. The nested
+// CONTEXT_EVAL envelope exists to make this trailing element unambiguous: in
+// the older flat shape it sat at the outer level, where it was
+// indistinguishable from an optional operand of the op.
+#[aerospike_macro::test]
+async fn modify_with_write_flags_on_string_nested_in_list() {
+    let client = common::client().await;
+    if !server_supports_string_operations(&client).await {
+        return;
+    }
+    let key = as_key!(common::namespace(), &common::rand_str(10), "ctx-mod-flags-list");
+    let wpolicy = WritePolicy::default();
+    let policy = StringPolicy::new(StringWriteFlags::NO_FAIL);
+    let _ = common::delete_durably(&client, &wpolicy, &key).await;
+    let list = as_list!("alpha", "beta", "gamma");
+    client
+        .put(&wpolicy, &key, &[as_bin!(BIN, list)])
+        .await
+        .unwrap();
+
+    let op = str_op::append(&policy, BIN, "!").context(vec![ctx_list_index(1)]);
+    client.operate(&wpolicy, &key, &[op]).await.unwrap();
+
+    let rec = client
+        .get(&ReadPolicy::default(), &key, Bins::All)
+        .await
+        .unwrap();
+    assert_eq!(
+        rec.bins.get(BIN).unwrap(),
+        &Value::List(vec![
+            Value::from("alpha"),
+            Value::from("beta!"),
+            Value::from("gamma"),
+        ])
+    );
+}
+
+#[aerospike_macro::test]
+async fn modify_with_write_flags_on_string_nested_in_map() {
+    let client = common::client().await;
+    if !server_supports_string_operations(&client).await {
+        return;
+    }
+    let key = as_key!(common::namespace(), &common::rand_str(10), "ctx-mod-flags-map");
+    let wpolicy = WritePolicy::default();
+    let policy = StringPolicy::new(StringWriteFlags::NO_FAIL);
+    let _ = common::delete_durably(&client, &wpolicy, &key).await;
+    let map = as_map!("a" => "hello world", "b" => "foo");
+    client
+        .put(&wpolicy, &key, &[as_bin!(BIN, map)])
+        .await
+        .unwrap();
+
+    // Three arguments plus the flags, so the inner array carries four elements.
+    let op = str_op::pad_end(&policy, BIN, 13, ".").context(vec![ctx_map_key(Value::from("a"))]);
+    client.operate(&wpolicy, &key, &[op]).await.unwrap();
+
+    let rec = client
+        .get(&ReadPolicy::default(), &key, Bins::All)
+        .await
+        .unwrap();
+    let mut expected = HashMap::new();
+    expected.insert(Value::from("a"), Value::from("hello world.."));
+    expected.insert(Value::from("b"), Value::from("foo"));
+    assert_eq!(rec.bins.get(BIN).unwrap(), &Value::HashMap(expected));
+}
+
 #[aerospike_macro::test]
 async fn modify_on_string_deeply_nested_list_in_map() {
     let client = common::client().await;
