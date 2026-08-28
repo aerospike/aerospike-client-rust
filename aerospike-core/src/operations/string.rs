@@ -196,9 +196,14 @@ fn modify_op(sub_op: u8, bin: &str, args: Vec<Value>) -> Operation {
 // Build the msgpack payload for a string op. The layout matches the server's
 // particle_string.c `string_state_init`:
 //   - No CTX:   [SUBOP, args...]
-//   - With CTX: [0xFF, [ctx_id_1, ctx_value_1, ...], SUBOP, args...]
-// SUBOP and args sit at the outer level alongside the 0xFF sentinel — there is
-// no nested array around them (this is different from list/map/bitwise ops).
+//   - With CTX: [0xFF, [ctx_id_1, ctx_value_1, ...], [SUBOP, args...]]
+// The CTX form is the same CONTEXT_EVAL envelope the list/map/bitwise ops use:
+// a fixed outer count of three, with the op nested. Nesting makes the inner
+// op's arity self-describing, which is what keeps the trailing policy-flags
+// argument of a modify op unambiguous — flat, an element the server did not
+// expect was simply consumed as those flags instead of being rejected. The
+// server enforces the count: `string_state_init` fails a CTX op whose outer
+// element count is not 3.
 fn pack_string_op(
     buf: &mut Option<&mut Buffer>,
     sub_op: u8,
@@ -206,18 +211,13 @@ fn pack_string_op(
     ctx: &[CdtContext],
 ) -> Result<usize> {
     let mut size: usize = 0;
-    let has_ctx = !ctx.is_empty();
-    let inner_count = 1 + args.len();
-    let outer_count = if has_ctx {
-        2 + inner_count
-    } else {
-        inner_count
-    };
 
-    size += pack_array_begin(buf, outer_count);
-
-    if has_ctx {
+    if !ctx.is_empty() {
+        size += pack_array_begin(buf, 3);
         size += pack_integer(buf, 0xff);
+
+        // Each context contributes two elements, its id and its value, so the
+        // list count is twice the number of contexts.
         size += pack_array_begin(buf, ctx.len() * 2);
         for c in ctx {
             if c.id == 0 {
@@ -233,6 +233,7 @@ fn pack_string_op(
         }
     }
 
+    size += pack_array_begin(buf, 1 + args.len());
     size += pack_integer(buf, i64::from(sub_op));
     for a in args {
         size += pack_value(buf, a)?;
@@ -651,5 +652,177 @@ pub fn to_string(bin: &str) -> Operation {
         ctx: DEFAULT_CTX,
         bin: OperationBin::Name(bin.into()),
         data: OperationData::None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::operations::cdt_context::{ctx_list_index, ctx_map_key};
+
+    // Wire-shape assertions for the string-op CONTEXT_EVAL envelope,
+    // `[0xFF, ctx_list, [SUBOP, args...]]`. They pack the payload rather than
+    // talking to a server, so a regression to the older flat shape — where
+    // SUBOP and args sat at the outer level — fails here instead of surfacing
+    // as a PARAMETER_ERROR at runtime.
+
+    // Packs an operation's payload both in estimate mode (no buffer) and write
+    // mode, asserts the two sizes agree, and returns the written bytes. The
+    // agreement is the invariant that makes the buffer sizing safe: the same
+    // function fills a buffer measured by its own earlier pass.
+    fn payload(op: &Operation) -> Vec<u8> {
+        let OperationData::StringOp(ref string_op) = op.data else {
+            panic!("expected a StringOp payload");
+        };
+
+        let estimated = string_op.estimate_size(&op.ctx).unwrap();
+        let mut buffer = Buffer::new(usize::MAX);
+        buffer.resize_buffer(estimated).unwrap();
+        buffer.data_offset = 0;
+        let written = string_op.write_to(&mut buffer, &op.ctx).unwrap();
+
+        assert_eq!(estimated, written, "size pass and write pass disagree");
+        assert_eq!(
+            buffer.data_buffer.len(),
+            estimated,
+            "buffer holds a different number of bytes than the size pass returned"
+        );
+
+        buffer.data_buffer[..written].to_vec()
+    }
+
+    // A read op with no arguments: the inner array holds only the sub-op.
+    #[test]
+    fn read_op_with_ctx_nests_the_inner_op() {
+        assert_eq!(
+            payload(&strlen("b").context(vec![ctx_list_index(2)])),
+            vec![
+                0x93, // array(3): CONTEXT_EVAL envelope
+                0xcc, 0xff, // CONTEXT_EVAL sentinel
+                0x92, // array(2): one ctx pair
+                0x10, // ListIndex
+                0x02, // index 2
+                0x91, // array(1): the nested op
+                0x00, // STR_OP_STRLEN
+            ]
+        );
+    }
+
+    #[test]
+    fn read_op_with_args_and_map_key_ctx() {
+        assert_eq!(
+            payload(&starts_with("b", "Wor").context(vec![ctx_map_key(Value::from("b"))])),
+            vec![
+                0x93, // array(3)
+                0xcc, 0xff, // CONTEXT_EVAL sentinel
+                0x92, // array(2): one ctx pair
+                0x22, // MapKey
+                0xa2, 0x03, 0x62, // "b" as an Aerospike string
+                0x92, // array(2): sub-op + one arg
+                0x05, // STR_OP_STARTS_WITH
+                0xa4, 0x03, 0x57, 0x6f, 0x72, // "Wor"
+            ]
+        );
+    }
+
+    // A modify op always carries its policy flags as a trailing argument.
+    #[test]
+    fn modify_op_with_ctx_nests_the_flags_with_the_op() {
+        assert_eq!(
+            payload(&upper(&StringPolicy::default(), "b").context(vec![ctx_list_index(1)])),
+            vec![
+                0x93, // array(3)
+                0xcc, 0xff, // CONTEXT_EVAL sentinel
+                0x92, // array(2): one ctx pair
+                0x10, // ListIndex
+                0x01, // index 1
+                0x92, // array(2): sub-op + flags
+                0x38, // STR_OP_UPPER
+                0x00, // StringWriteFlags::DEFAULT
+            ]
+        );
+    }
+
+    // The case the nesting exists to make safe: flat, this trailing element was
+    // indistinguishable from an optional operand of the op.
+    #[test]
+    fn modify_op_with_non_default_trailing_flags() {
+        let policy = StringPolicy::new(StringWriteFlags::NO_FAIL);
+
+        assert_eq!(
+            payload(&append(&policy, "b", "!").context(vec![ctx_list_index(1)])),
+            vec![
+                0x93, // array(3)
+                0xcc, 0xff, // CONTEXT_EVAL sentinel
+                0x92, // array(2): one ctx pair
+                0x10, // ListIndex
+                0x01, // index 1
+                0x93, // array(3): sub-op + value + flags
+                0x43, // STR_OP_APPEND
+                0xa2, 0x03, 0x21, // "!"
+                0x04, // StringWriteFlags::NO_FAIL
+            ]
+        );
+    }
+
+    // Two contexts, so the ctx list holds four elements — the count the server
+    // reads is twice the number of contexts, not the number of contexts.
+    #[test]
+    fn nested_ctx_path_counts_two_elements_per_context() {
+        assert_eq!(
+            payload(
+                &upper(&StringPolicy::default(), "b")
+                    .context(vec![ctx_map_key(Value::from("items")), ctx_list_index(1)])
+            ),
+            vec![
+                0x93, // array(3)
+                0xcc, 0xff, // CONTEXT_EVAL sentinel
+                0x94, // array(4): two ctx pairs
+                0x22, // MapKey
+                0xa6, 0x03, 0x69, 0x74, 0x65, 0x6d, 0x73, // "items"
+                0x10, // ListIndex
+                0x01, // index 1
+                0x92, // array(2): sub-op + flags
+                0x38, // STR_OP_UPPER
+                0x00, // StringWriteFlags::DEFAULT
+            ]
+        );
+    }
+
+    // Without a context there is no envelope and no nesting: the payload is
+    // the op itself. This shape did not change, and must not.
+    #[test]
+    fn without_ctx_the_payload_is_the_bare_op() {
+        assert_eq!(payload(&strlen("b")), vec![0x91, 0x00]);
+    }
+
+    #[test]
+    fn without_ctx_trailing_flags_stay_in_the_only_array() {
+        let policy = StringPolicy::new(StringWriteFlags::NO_FAIL);
+
+        assert_eq!(
+            payload(&append(&policy, "b", "!")),
+            vec![
+                0x93, // array(3): sub-op + value + flags
+                0x43, // STR_OP_APPEND
+                0xa2, 0x03, 0x21, // "!"
+                0x04, // StringWriteFlags::NO_FAIL
+            ]
+        );
+    }
+
+    // Every shape the two passes have to agree on, including the multi-arg
+    // modify ops where the size pass has the most to get wrong.
+    #[test]
+    fn size_estimate_matches_write_for_every_shape() {
+        let policy = StringPolicy::new(StringWriteFlags::NO_FAIL);
+        let deep = vec![ctx_map_key(Value::from("items")), ctx_list_index(1)];
+
+        // `payload` asserts the agreement; this exercises it across shapes.
+        payload(&strlen("b"));
+        payload(&append(&policy, "b", "!"));
+        payload(&strlen("b").context(vec![ctx_list_index(2)]));
+        payload(&append(&policy, "b", "!").context(vec![ctx_list_index(2)]));
+        payload(&pad_end(&policy, "b", 10, ".").context(deep));
     }
 }
