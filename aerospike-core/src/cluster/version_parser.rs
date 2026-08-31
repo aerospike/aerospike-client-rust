@@ -111,7 +111,7 @@ impl Version {
         self >= &Version::new(8, 1, 3, 0)
     }
 
-    /// Server accepts server-compiled textual AEL on filter field 43 (`[128, "<utf-8>"]`).
+    /// Server accepts server-compiled textual AEL on filter field 43 (`[128, <utf-8 bin>]`).
     ///
     /// Aligns with Java fluent `Cluster.supportsServerCompiledFilterExpression()` (≥ 8.1.3).
     pub fn supports_server_compiled_ael(&self) -> bool {

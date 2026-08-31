@@ -154,7 +154,7 @@ pub use cluster::version_parser::Version;
 pub use cluster::Node;
 pub use commands::particle_type::ParticleType;
 pub use errors::{Error, ErrorKind, Result};
-pub use expressions::ael::{pack_ael_server_filter, SERVER_COMPILED_AEL_EXPRESSION_OP};
+pub use expressions::ael::{from_ael, pack_ael_server_filter, SERVER_COMPILED_AEL_EXPRESSION_OP};
 pub use expressions::regex_flag::RegexFlag;
 pub use key::Key;
 pub use mapping::RecordMapper;
