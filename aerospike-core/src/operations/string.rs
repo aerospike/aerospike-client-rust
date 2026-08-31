@@ -665,11 +665,13 @@ pub fn repeat(policy: &StringPolicy, bin: &str, count: i64) -> Operation {
 /// `replacement`. Pass [`StringRegexFlags::GLOBAL`] to replace every match.
 /// Flag values may be combined with bitwise OR.
 ///
-/// The server's `regex_replace` op table does not accept policy write flags,
-/// so `policy` is accepted only for API symmetry with the other modify ops
-/// and is ignored.
+/// **Both flag arguments are positional, and the regex flags come first.**
+///
+/// This op accepts [`StringWriteFlags::UPDATE_ONLY`] and
+/// [`StringWriteFlags::NO_FAIL`]; it is not create-capable, so
+/// [`StringWriteFlags::CREATE_ONLY`] is refused with `PARAMETER_ERROR`.
 pub fn regex_replace(
-    _policy: &StringPolicy,
+    policy: &StringPolicy,
     bin: &str,
     pattern: &str,
     replacement: &str,
@@ -681,6 +683,7 @@ pub fn regex_replace(
         vec![
             Value::List(vec![Value::from(pattern), Value::from(replacement)]),
             Value::Int(regex_flags.0),
+            Value::Int(policy.flags),
         ],
     )
 }
@@ -911,6 +914,52 @@ mod tests {
                 0x0b, // end 11
                 0x00, // StringWriteFlags::DEFAULT
             ]
+        );
+    }
+
+    // `regex_replace` carries two flag arguments, and their order is a protocol
+    // contract: the server parses [patterns, regex_flags, write_flags] by
+    // position, and several bits collide between the two flag sets (NO_FAIL and
+    // DOTALL are both 1 << 2). The payload therefore always has four elements —
+    // it had three before the write-flags slot existed server-side.
+    #[test]
+    fn regex_replace_packs_regex_flags_then_write_flags() {
+        let policy = StringPolicy::new(StringWriteFlags::NO_FAIL);
+
+        assert_eq!(
+            payload(&regex_replace(
+                &policy,
+                "b",
+                "a",
+                "x",
+                StringRegexFlags::GLOBAL
+            )),
+            vec![
+                0x94, // array(4): sub-op + patterns + regex flags + write flags
+                0x42, // STR_OP_REGEX_REPLACE
+                0x92, // array(2): the pattern/replacement pair
+                0xa2, 0x03, 0x61, // "a"
+                0xa2, 0x03, 0x78, // "x"
+                0x10, // StringRegexFlags::GLOBAL
+                0x04, // StringWriteFlags::NO_FAIL
+            ]
+        );
+    }
+
+    /// The default policy still occupies the slot: a three-element payload would
+    /// leave the server reading the *regex* flags as write flags on any client
+    /// that later omitted them.
+    #[test]
+    fn regex_replace_packs_a_zero_write_flags_slot_by_default() {
+        assert_eq!(
+            payload(&regex_replace(
+                &StringPolicy::default(),
+                "b",
+                "a",
+                "x",
+                StringRegexFlags::DEFAULT
+            )),
+            vec![0x94, 0x42, 0x92, 0xa2, 0x03, 0x61, 0xa2, 0x03, 0x78, 0x00, 0x00]
         );
     }
 

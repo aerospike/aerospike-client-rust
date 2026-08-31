@@ -1078,3 +1078,55 @@ async fn is_numeric_typed_float_requires_a_fractional_digit_via_expression() {
         }
     }
 }
+
+/// The expression form carries the write flags in the same slot: a modify
+/// expression with `NO_FAIL` evaluates to the unmodified source instead of
+/// failing the whole operation.
+#[aerospike_macro::test]
+async fn regex_replace_no_fail_via_expression() {
+    let client = common::client().await;
+    if !server_supports_string_operations(&client).await {
+        return;
+    }
+    let key = as_key!(common::namespace(), &common::rand_str(10), "exp_rx_nofail");
+    let wpolicy = WritePolicy::default();
+    put_str(&client, &wpolicy, &key, "hello world").await;
+
+    // Without NO_FAIL the expression cannot be evaluated at all.
+    let ops = &[read_exp(
+        VAR,
+        str_exp::regex_replace(
+            &StringPolicy::default(),
+            string_bin(BIN.into()),
+            string_val("(".to_string()),
+            string_val("x".to_string()),
+            StringRegexFlags::DEFAULT,
+        ),
+        ExpReadFlags::Default,
+    )];
+    let err = client
+        .operate(&wpolicy, &key, ops)
+        .await
+        .expect_err("an uncompilable pattern must fail");
+    assert_eq!(
+        err.server_result_code(),
+        Some(ResultCode::OpNotApplicable),
+        "unexpected error: {err}"
+    );
+
+    // With NO_FAIL it evaluates to the source string.
+    let no_fail = StringPolicy::new(StringWriteFlags::NO_FAIL);
+    let rec = eval(
+        &client,
+        &key,
+        str_exp::regex_replace(
+            &no_fail,
+            string_bin(BIN.into()),
+            string_val("(".to_string()),
+            string_val("x".to_string()),
+            StringRegexFlags::DEFAULT,
+        ),
+    )
+    .await;
+    assert_eq!(rec.bins.get(VAR).unwrap(), &Value::from("hello world"));
+}
