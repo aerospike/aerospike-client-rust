@@ -408,6 +408,79 @@ async fn expression_bitwise() {
     client.close().await.unwrap();
 }
 
+// ============================================================
+// bit_b64_encode as an expression — BITS read op 55
+// ============================================================
+
+/// Same gate as the string operations: op 55 arrived with them.
+async fn server_supports_b64_encode(client: &Client) -> bool {
+    let supported = match client.cluster.get_random_node() {
+        Ok(node) => node.version().supports_string_operations(),
+        Err(_) => false,
+    };
+
+    if !supported {
+        eprintln!("Skipping: server does not support bit_b64_encode (requires >= 8.1.3)");
+    }
+
+    supported
+}
+
+/// Every record in the set holds the same two bytes, `[0x01, 0x42]`, so the
+/// encodings below are the whole bin, its second byte, and its first byte.
+#[aerospike_macro::test]
+async fn expression_bitwise_b64_encode() {
+    let client = common::client().await;
+    if !server_supports_b64_encode(&client).await {
+        return;
+    }
+
+    let set_name = create_test_set(&client, EXPECTED).await;
+
+    for (label, filter, expected) in [
+        (
+            "whole bin",
+            eq(
+                b64_encode(blob_bin("bin".to_string())),
+                string_val("AUI=".to_string()),
+            ),
+            EXPECTED,
+        ),
+        (
+            "byte range",
+            eq(
+                b64_encode_range(int_val(1), int_val(1), false, blob_bin("bin".to_string())),
+                string_val("Qg==".to_string()),
+            ),
+            EXPECTED,
+        ),
+        (
+            "inverted size stops short of the end",
+            eq(
+                b64_encode_range(int_val(0), int_val(1), true, blob_bin("bin".to_string())),
+                string_val("AQ==".to_string()),
+            ),
+            EXPECTED,
+        ),
+        // The control: the filter really is comparing the encoding, so the
+        // wrong text matches nothing.
+        (
+            "a different encoding matches nothing",
+            eq(
+                b64_encode(blob_bin("bin".to_string())),
+                string_val("Qg==".to_string()),
+            ),
+            0,
+        ),
+    ] {
+        let rs = test_filter(&client, filter, &set_name).await;
+
+        assert_eq!(count_results(rs).await, expected, "{label}");
+    }
+
+    client.close().await.unwrap();
+}
+
 async fn test_filter(client: &Client, filter: Expression, set_name: &str) -> Arc<Recordset> {
     let namespace = common::namespace();
 

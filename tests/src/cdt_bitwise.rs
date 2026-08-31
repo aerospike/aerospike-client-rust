@@ -17,7 +17,7 @@ use crate::common;
 
 use aerospike::operations::bitwise;
 use aerospike::operations::bitwise::{BitPolicy, BitwiseOverflowActions};
-use aerospike::{as_key, Value, WritePolicy};
+use aerospike::{as_bin, as_key, ResultCode, Value, WritePolicy};
 
 #[aerospike_macro::test]
 async fn cdt_bitwise() {
@@ -187,4 +187,145 @@ async fn cdt_bitwise() {
     let rec = client.operate(&wpolicy, &key, ops).await.unwrap();
     assert_eq!(*rec.bins.get("bin").unwrap(), Value::Int(7));
     client.close().await.unwrap();
+}
+
+// ============================================================
+// bit_b64_encode — BITS read op 55
+// ============================================================
+
+/// Same gate as the string operations: op 55 arrived with them.
+async fn server_supports_b64_encode(client: &aerospike::Client) -> bool {
+    let supported = match client.cluster.get_random_node() {
+        Ok(node) => node.version().supports_string_operations(),
+        Err(_) => false,
+    };
+
+    if !supported {
+        eprintln!("Skipping: server does not support bit_b64_encode (requires >= 8.1.3)");
+    }
+
+    supported
+}
+
+/// The base64 expectations are written out rather than computed, so each one
+/// pins the exact text the server must return for a known byte range.
+#[aerospike_macro::test]
+async fn bitwise_b64_encode() {
+    let client = common::client().await;
+    if !server_supports_b64_encode(&client).await {
+        return;
+    }
+    let namespace = common::namespace();
+    let set_name = &common::rand_str(10);
+    let wpolicy = WritePolicy::default();
+    let key = as_key!(namespace, set_name, "b64");
+
+    // [0x01, 0x42, 0x03, 0x04, 0x05]
+    let blob = Value::Blob(vec![0b00000001, 0b01000010, 0b00000011, 0b00000100, 0b00000101]);
+
+    for (label, op, expected) in [
+        // The whole bin.
+        ("whole bin", bitwise::b64_encode("bin"), "AUIDBAU="),
+        // A byte range: bytes 1..3.
+        (
+            "byte range",
+            bitwise::b64_encode_range("bin", 1, 2, false),
+            "QgM=",
+        ),
+        // A negative offset counts back from the end: bytes 3..5.
+        (
+            "negative offset",
+            bitwise::b64_encode_range("bin", -2, 2, false),
+            "BAU=",
+        ),
+        // An inverted size of zero encodes through to the end: bytes 2..5.
+        (
+            "inverted size of zero",
+            bitwise::b64_encode_range("bin", 2, 0, true),
+            "AwQF",
+        ),
+        // A non-zero inverted size stops short of the end: bytes 0..4.
+        (
+            "non-zero inverted size",
+            bitwise::b64_encode_range("bin", 0, 1, true),
+            "AUIDBA==",
+        ),
+        // An empty range is an empty string, not an error.
+        (
+            "empty range",
+            bitwise::b64_encode_range("bin", 0, 0, false),
+            "",
+        ),
+    ] {
+        let _ = common::delete_durably(&client, &wpolicy, &key).await;
+        client
+            .put(&wpolicy, &key, &[as_bin!("bin", blob.clone())])
+            .await
+            .unwrap();
+
+        let rec = client.operate(&wpolicy, &key, &[op]).await.unwrap();
+
+        assert_eq!(
+            rec.bins.get("bin").unwrap(),
+            &Value::from(expected),
+            "{label}"
+        );
+    }
+}
+
+#[aerospike_macro::test]
+async fn bitwise_b64_encode_past_the_end_is_not_applicable() {
+    let client = common::client().await;
+    if !server_supports_b64_encode(&client).await {
+        return;
+    }
+    let namespace = common::namespace();
+    let set_name = &common::rand_str(10);
+    let wpolicy = WritePolicy::default();
+    let key = as_key!(namespace, set_name, "b64-past-end");
+    let _ = common::delete_durably(&client, &wpolicy, &key).await;
+
+    let blob = Value::Blob(vec![0b00000001, 0b01000010, 0b00000011, 0b00000100, 0b00000101]);
+    client
+        .put(&wpolicy, &key, &[as_bin!("bin", blob)])
+        .await
+        .unwrap();
+
+    let err = client
+        .operate(&wpolicy, &key, &[bitwise::b64_encode_range("bin", 6, 1, false)])
+        .await
+        .expect_err("a range past the end of the bitmap must fail");
+    assert_eq!(
+        err.server_result_code(),
+        Some(ResultCode::OpNotApplicable),
+        "unexpected error: {err}"
+    );
+}
+
+#[aerospike_macro::test]
+async fn bitwise_b64_encode_on_a_non_blob_bin_is_a_type_error() {
+    let client = common::client().await;
+    if !server_supports_b64_encode(&client).await {
+        return;
+    }
+    let namespace = common::namespace();
+    let set_name = &common::rand_str(10);
+    let wpolicy = WritePolicy::default();
+    let key = as_key!(namespace, set_name, "b64-nonblob");
+    let _ = common::delete_durably(&client, &wpolicy, &key).await;
+
+    client
+        .put(&wpolicy, &key, &[as_bin!("bin", "hello")])
+        .await
+        .unwrap();
+
+    let err = client
+        .operate(&wpolicy, &key, &[bitwise::b64_encode("bin")])
+        .await
+        .expect_err("a bit op on a string bin must fail");
+    assert_eq!(
+        err.server_result_code(),
+        Some(ResultCode::BinTypeError),
+        "unexpected error: {err}"
+    );
 }
