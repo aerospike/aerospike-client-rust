@@ -1038,3 +1038,43 @@ async fn snip_from_via_expression_ignores_a_non_default_policy() {
     .await;
     assert_eq!(rec.bins.get(VAR).unwrap(), &Value::from("hello"));
 }
+
+/// The expression form of the same rule: `Float` needs a `.` followed by a
+/// digit, and `Any` inherits that (see the operation-level test).
+#[aerospike_macro::test]
+async fn is_numeric_typed_float_requires_a_fractional_digit_via_expression() {
+    let client = common::client().await;
+    if !server_supports_string_operations(&client).await {
+        return;
+    }
+    let key = as_key!(common::namespace(), &common::rand_str(10), "exp_num_typed");
+    let wpolicy = WritePolicy::default();
+
+    for (value, float, int, any) in [
+        ("3.14", true, false, true),
+        ("5", false, true, true),
+        ("5.", false, false, false),
+        ("1e5", false, false, false),
+    ] {
+        put_str(&client, &wpolicy, &key, value).await;
+
+        for (numeric_type, expected) in [
+            (StringNumericType::Float, float),
+            (StringNumericType::Int, int),
+            (StringNumericType::Any, any),
+        ] {
+            let rec = eval(
+                &client,
+                &key,
+                str_exp::is_numeric_typed(string_bin(BIN.into()), numeric_type),
+            )
+            .await;
+
+            assert_eq!(
+                rec.bins.get(VAR).unwrap(),
+                &Value::Bool(expected),
+                "is_numeric_typed({value:?}, {numeric_type:?})"
+            );
+        }
+    }
+}

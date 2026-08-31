@@ -75,11 +75,18 @@ const STR_OP_PREPEND: u8 = 68;
 /// `is_numeric` sub-op to restrict validation to integers or floats.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StringNumericType {
-    /// Match either an integer or a floating-point number.
+    /// Match either an integer or a floating-point number — the union of
+    /// [`Int`](StringNumericType::Int) and [`Float`](StringNumericType::Float),
+    /// so it inherits `Float`'s fractional-digit requirement: `"1e5"` is a
+    /// valid `double` to `strtod` but matches neither branch, and is therefore
+    /// **not** numeric under `Any`.
     Any = 0,
-    /// Match only integers.
+    /// Match only integers, i.e. what fits an `i64`.
     Int = 1,
-    /// Match only floating-point numbers.
+    /// Match only floating-point numbers. **Stricter than "parses as a
+    /// float":** the string must contain a `.` followed by at least one digit,
+    /// so `"5"` and `"5."` are both false here while `"5"` is true under
+    /// [`Int`](StringNumericType::Int).
     Float = 2,
 }
 
