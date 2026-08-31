@@ -511,6 +511,20 @@ pub fn prepend(policy: &StringPolicy, bin: &str, value: &str) -> Operation {
     )
 }
 
+/// `snip` operation that removes codepoints starting at codepoint `start`
+/// through the end of the string, truncating the bin. `snip_from("hello world", 5)`
+/// leaves `"hello"`.
+///
+/// **This form carries no write flags, and cannot.** The server reads the snip
+/// arguments by position — `start`, `end`, then flags — so a two-argument
+/// payload of `[start, flags]` would land the flags in the `end` slot and
+/// silently snip the empty range `[start, 0)`. `policy` is accepted for
+/// signature parity with the other modify builders and is ignored; use [`snip`]
+/// when the write flags have to be honored.
+pub fn snip_from(_policy: &StringPolicy, bin: &str, start: i64) -> Operation {
+    modify_op(STR_OP_SNIP, bin, vec![Value::Int(start)])
+}
+
 /// `snip` operation that removes the half-open codepoint range
 /// `[start, end)` from the bin.
 pub fn snip(policy: &StringPolicy, bin: &str, start: i64, end: i64) -> Operation {
@@ -839,6 +853,50 @@ mod tests {
                 0x43, // STR_OP_APPEND
                 0xa2, 0x03, 0x21, // "!"
                 0x04, // StringWriteFlags::NO_FAIL
+            ]
+        );
+    }
+
+    // The `snip` argument list is positional: start at slot 0, end at slot 1,
+    // flags at slot 2. So the one-argument form has to pack *exactly* two
+    // elements — a trailing flags element would land in the `end` slot and
+    // silently snip the empty range [start, 0) instead of truncating. This is
+    // why the one-argument builder ignores its policy, and the payload count is
+    // the only place that decision is visible.
+    #[test]
+    fn snip_from_packs_no_flags_element() {
+        assert_eq!(
+            payload(&snip_from(&StringPolicy::default(), "b", 5)),
+            vec![
+                0x92, // array(2): sub-op + start, and nothing else
+                0x35, // STR_OP_SNIP
+                0x05, // start 5
+            ]
+        );
+    }
+
+    #[test]
+    fn snip_from_ignores_a_non_default_policy() {
+        let policy = StringPolicy::new(StringWriteFlags::NO_FAIL);
+
+        assert_eq!(
+            payload(&snip_from(&policy, "b", 5)),
+            vec![0x92, 0x35, 0x05],
+            "a non-default policy must not add a third element"
+        );
+    }
+
+    // The two-argument form is unaffected: start, end, then flags.
+    #[test]
+    fn snip_still_packs_start_end_and_flags() {
+        assert_eq!(
+            payload(&snip(&StringPolicy::default(), "b", 5, 11)),
+            vec![
+                0x94, // array(4)
+                0x35, // STR_OP_SNIP
+                0x05, // start 5
+                0x0b, // end 11
+                0x00, // StringWriteFlags::DEFAULT
             ]
         );
     }

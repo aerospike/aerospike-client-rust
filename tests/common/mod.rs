@@ -178,8 +178,19 @@ pub fn client_policy() -> &'static ClientPolicy {
     &*GLOBAL_CLIENT_POLICY
 }
 
-static SUITE_INDEX_CLEANUP: OnceCell<()> = OnceCell::const_new();
 static INDEX_OPS: OnceCell<Mutex<()>> = OnceCell::const_new();
+
+/// The suite's one namespace cleanup, run before any test writes anything.
+///
+/// **Deliberately a `std::sync::Once` and not a `tokio::sync::OnceCell`.** The
+/// cell's `get_or_init` documents that a cancelled or panicking initializer
+/// hands the job to another waiter — so a test that died while the truncate was
+/// in flight could have a *second* truncate fire later, in the middle of the
+/// run, deleting sets that other tests had already loaded. That is not
+/// hypothetical: it turned the suite intermittently red, in a different test
+/// each time. `Once` cannot do it: other threads block until the closure
+/// returns, and a panic poisons the gate rather than re-running it.
+static SUITE_CLEANUP: std::sync::Once = std::sync::Once::new();
 
 async fn index_ops() -> &'static Mutex<()> {
     INDEX_OPS.get_or_init(|| async { Mutex::new(()) }).await
@@ -249,17 +260,63 @@ pub async fn cleanup(client: &Client, namespace: &str) {
     }
 }
 
-async fn ensure_suite_index_cleanup(client: &Client) {
-    SUITE_INDEX_CLEANUP
-        .get_or_init(|| async {
-            if *AEROSPIKE_CLEANUP {
-                cleanup(client, namespace()).await;
-            }
-        })
-        .await;
+/// Drop every index and truncate the namespace exactly once per test binary,
+/// blocking every caller until it has finished. No-op unless
+/// `AEROSPIKE_CLEANUP` is set.
+///
+/// Blocking rather than `async` on purpose: the point is that no test proceeds
+/// to write while the truncate is in flight, and an `await` in a cancellable
+/// future cannot promise that (see [`SUITE_CLEANUP`]). Called from every entry
+/// point that hands out a client, so a test cannot reach the server ahead of it.
+pub fn ensure_clean_namespace() {
+    SUITE_CLEANUP.call_once(|| {
+        if !*AEROSPIKE_CLEANUP {
+            return;
+        }
+
+        // On its own thread: this runs inside a test's runtime, and driving
+        // another runtime from a runtime thread panics.
+        std::thread::scope(|scope| {
+            scope
+                .spawn(block_on_cleanup)
+                .join()
+                .expect("suite cleanup panicked");
+        });
+    });
+}
+
+#[cfg(all(feature = "rt-tokio", not(feature = "rt-async-std")))]
+fn block_on_cleanup() {
+    RUNTIME.block_on(cleanup_the_namespace());
+}
+
+#[cfg(feature = "rt-async-std")]
+fn block_on_cleanup() {
+    futures::executor::block_on(cleanup_the_namespace());
+}
+
+/// A client of its own, because the caller's client belongs to the caller's
+/// runtime and its futures cannot be driven from this one.
+async fn cleanup_the_namespace() {
+    let client = Client::new(&GLOBAL_CLIENT_POLICY, &*AEROSPIKE_HOSTS)
+        .await
+        .unwrap_or_else(|e| {
+            panic!(
+                "AEROSPIKE_CLEANUP is set but the namespace could not be cleaned: \
+                 could not connect to AEROSPIKE_HOSTS={}: {}",
+                hosts(),
+                e
+            )
+        });
+
+    cleanup(&client, namespace()).await;
+
+    let _ = client.close().await;
 }
 
 pub async fn client() -> Client {
+    ensure_clean_namespace();
+
     let client = Client::new(&GLOBAL_CLIENT_POLICY, &*AEROSPIKE_HOSTS)
         .await
         .unwrap_or_else(|e| {
@@ -271,12 +328,14 @@ pub async fn client() -> Client {
                 e
             );
         });
-    ensure_suite_index_cleanup(&client).await;
     client
 }
 
 pub async fn singleton_client() -> &'static Client {
+    ensure_clean_namespace();
+
     static SHARED_CLIENT: OnceCell<Client> = OnceCell::const_new();
+
     SHARED_CLIENT
         .get_or_init(|| async {
             // std::panic::set_hook(Box::new(|info| {

@@ -91,7 +91,7 @@ async fn substr_variants_via_expression() {
     let rec = eval(
         &client,
         &key,
-        str_exp::substr(int_val(6), string_bin(BIN.into())),
+        str_exp::substr(string_bin(BIN.into()), int_val(6)),
     )
     .await;
     assert_eq!(rec.bins.get(VAR).unwrap(), &Value::from("world"));
@@ -99,7 +99,7 @@ async fn substr_variants_via_expression() {
     let rec = eval(
         &client,
         &key,
-        str_exp::substr_range(int_val(0), int_val(5), string_bin(BIN.into())),
+        str_exp::substr_range(string_bin(BIN.into()), int_val(0), int_val(5)),
     )
     .await;
     assert_eq!(rec.bins.get(VAR).unwrap(), &Value::from("hello"));
@@ -109,7 +109,7 @@ async fn substr_variants_via_expression() {
     let rec = eval(
         &client,
         &key,
-        str_exp::substr_range(int_val(2), int_val(5), string_bin(BIN.into())),
+        str_exp::substr_range(string_bin(BIN.into()), int_val(2), int_val(5)),
     )
     .await;
     assert_eq!(rec.bins.get(VAR).unwrap(), &Value::from("llo"));
@@ -126,7 +126,7 @@ async fn char_at_via_expression() {
     let rec = eval(
         &client,
         &key,
-        str_exp::char_at(int_val(5), string_bin(BIN.into())),
+        str_exp::char_at(string_bin(BIN.into()), int_val(5)),
     )
     .await;
     assert_eq!(rec.bins.get(VAR).unwrap(), &Value::from("1"));
@@ -145,7 +145,7 @@ async fn find_first_and_nth_via_expression() {
     let rec = eval(
         &client,
         &key,
-        str_exp::find(string_val("world".into()), string_bin(BIN.into())),
+        str_exp::find(string_bin(BIN.into()), string_val("world".into())),
     )
     .await;
     assert_eq!(rec.bins.get(VAR).unwrap(), &Value::Int(6));
@@ -154,7 +154,7 @@ async fn find_first_and_nth_via_expression() {
     let rec = eval(
         &client,
         &key,
-        str_exp::find_nth(string_val("ab".into()), int_val(2), string_bin(BIN.into())),
+        str_exp::find_nth(string_bin(BIN.into()), string_val("ab".into()), int_val(2)),
     )
     .await;
     assert_eq!(rec.bins.get(VAR).unwrap(), &Value::Int(2));
@@ -172,7 +172,7 @@ async fn contains_starts_ends_with_via_expression() {
     let rec = eval(
         &client,
         &key,
-        str_exp::contains(string_val("Hello".into()), string_bin(BIN.into())),
+        str_exp::contains(string_bin(BIN.into()), string_val("Hello".into())),
     )
     .await;
     assert_eq!(rec.bins.get(VAR).unwrap(), &Value::Bool(true));
@@ -180,7 +180,7 @@ async fn contains_starts_ends_with_via_expression() {
     let rec = eval(
         &client,
         &key,
-        str_exp::starts_with(string_val("Hello".into()), string_bin(BIN.into())),
+        str_exp::starts_with(string_bin(BIN.into()), string_val("Hello".into())),
     )
     .await;
     assert_eq!(rec.bins.get(VAR).unwrap(), &Value::Bool(true));
@@ -188,7 +188,7 @@ async fn contains_starts_ends_with_via_expression() {
     let rec = eval(
         &client,
         &key,
-        str_exp::ends_with(string_val("World".into()), string_bin(BIN.into())),
+        str_exp::ends_with(string_bin(BIN.into()), string_val("World".into())),
     )
     .await;
     assert_eq!(rec.bins.get(VAR).unwrap(), &Value::Bool(true));
@@ -247,7 +247,7 @@ async fn is_numeric_default_and_typed_via_expression() {
     let rec = eval(
         &client,
         &key,
-        str_exp::is_numeric_typed(StringNumericType::Int, string_bin(BIN.into())),
+        str_exp::is_numeric_typed(string_bin(BIN.into()), StringNumericType::Int),
     )
     .await;
     assert_eq!(rec.bins.get(VAR).unwrap(), &Value::Bool(true));
@@ -257,7 +257,7 @@ async fn is_numeric_default_and_typed_via_expression() {
     let rec = eval(
         &client,
         &key,
-        str_exp::is_numeric_typed(StringNumericType::Int, string_bin(BIN.into())),
+        str_exp::is_numeric_typed(string_bin(BIN.into()), StringNumericType::Int),
     )
     .await;
     assert_eq!(rec.bins.get(VAR).unwrap(), &Value::Bool(false));
@@ -315,7 +315,7 @@ async fn split_via_expression() {
     let rec = eval(
         &client,
         &key,
-        str_exp::split_by_separator(string_val(",".into()), string_bin(BIN.into())),
+        str_exp::split_by_separator(string_bin(BIN.into()), string_val(",".into())),
     )
     .await;
     assert_eq!(
@@ -341,7 +341,7 @@ async fn regex_compare_default_and_case_insensitive_via_expression() {
     let rec = eval(
         &client,
         &key,
-        str_exp::regex_compare(string_val("[0-9]+".into()), string_bin(BIN.into())),
+        str_exp::regex_compare(string_bin(BIN.into()), string_val("[0-9]+".into())),
     )
     .await;
     assert_eq!(rec.bins.get(VAR).unwrap(), &Value::Bool(true));
@@ -351,9 +351,9 @@ async fn regex_compare_default_and_case_insensitive_via_expression() {
         &client,
         &key,
         str_exp::regex_compare_with_flags(
+            string_bin(BIN.into()),
             string_val("hello".into()),
             StringRegexFlags::CASE_INSENSITIVE,
-            string_bin(BIN.into()),
         ),
     )
     .await;
@@ -414,9 +414,9 @@ async fn insert_and_overwrite_via_expression() {
         &key,
         str_exp::insert(
             &policy,
+            string_bin(BIN.into()),
             int_val(5),
             string_val(" beautiful".into()),
-            string_bin(BIN.into()),
         ),
     )
     .await;
@@ -430,9 +430,9 @@ async fn insert_and_overwrite_via_expression() {
         &key,
         str_exp::overwrite(
             &policy,
+            string_bin(BIN.into()),
             int_val(6),
             string_val("earth".into()),
-            string_bin(BIN.into()),
         ),
     )
     .await;
@@ -457,7 +457,7 @@ async fn concat_list_via_expression() {
     let rec = eval(
         &client,
         &key,
-        str_exp::concat(&policy, parts, string_bin(BIN.into())),
+        str_exp::concat(&policy, string_bin(BIN.into()), parts),
     )
     .await;
     assert_eq!(rec.bins.get(VAR).unwrap(), &Value::from("hello big world"));
@@ -476,7 +476,7 @@ async fn append_and_prepend_via_expression() {
     let rec = eval(
         &client,
         &key,
-        str_exp::append(&policy, string_val("!".into()), string_bin(BIN.into())),
+        str_exp::append(&policy, string_bin(BIN.into()), string_val("!".into())),
     )
     .await;
     assert_eq!(rec.bins.get(VAR).unwrap(), &Value::from("world!"));
@@ -484,7 +484,7 @@ async fn append_and_prepend_via_expression() {
     let rec = eval(
         &client,
         &key,
-        str_exp::prepend(&policy, string_val("hello ".into()), string_bin(BIN.into())),
+        str_exp::prepend(&policy, string_bin(BIN.into()), string_val("hello ".into())),
     )
     .await;
     assert_eq!(rec.bins.get(VAR).unwrap(), &Value::from("hello world"));
@@ -509,7 +509,7 @@ async fn snip_range_via_expression() {
     let rec = eval(
         &client,
         &key,
-        str_exp::snip(&policy, int_val(5), int_val(15), string_bin(BIN.into())),
+        str_exp::snip(&policy, string_bin(BIN.into()), int_val(5), int_val(15)),
     )
     .await;
     assert_eq!(rec.bins.get(VAR).unwrap(), &Value::from("hello world"));
@@ -531,9 +531,9 @@ async fn replace_first_and_all_via_expression() {
         &key,
         str_exp::replace(
             &policy,
+            string_bin(BIN.into()),
             string_val("world".into()),
             string_val("earth".into()),
-            string_bin(BIN.into()),
         ),
     )
     .await;
@@ -548,9 +548,9 @@ async fn replace_first_and_all_via_expression() {
         &key,
         str_exp::replace_all(
             &policy,
+            string_bin(BIN.into()),
             string_val("a".into()),
             string_val("x".into()),
-            string_bin(BIN.into()),
         ),
     )
     .await;
@@ -573,10 +573,10 @@ async fn regex_replace_default_and_global_via_expression() {
         &key,
         str_exp::regex_replace(
             &policy,
+            string_bin(BIN.into()),
             string_val("[0-9]+".into()),
             string_val("NUM".into()),
             StringRegexFlags::DEFAULT,
-            string_bin(BIN.into()),
         ),
     )
     .await;
@@ -587,10 +587,10 @@ async fn regex_replace_default_and_global_via_expression() {
         &key,
         str_exp::regex_replace(
             &policy,
+            string_bin(BIN.into()),
             string_val("[0-9]+".into()),
             string_val("NUM".into()),
             StringRegexFlags::GLOBAL,
-            string_bin(BIN.into()),
         ),
     )
     .await;
@@ -622,9 +622,9 @@ async fn trim_pad_repeat_via_expression() {
         &key,
         str_exp::pad_start(
             &policy,
+            string_bin(BIN.into()),
             int_val(10),
             string_val("*".into()),
-            string_bin(BIN.into()),
         ),
     )
     .await;
@@ -635,9 +635,9 @@ async fn trim_pad_repeat_via_expression() {
         &key,
         str_exp::pad_end(
             &policy,
+            string_bin(BIN.into()),
             int_val(10),
             string_val(".".into()),
-            string_bin(BIN.into()),
         ),
     )
     .await;
@@ -647,7 +647,7 @@ async fn trim_pad_repeat_via_expression() {
     let rec = eval(
         &client,
         &key,
-        str_exp::repeat(&policy, int_val(3), string_bin(BIN.into())),
+        str_exp::repeat(&policy, string_bin(BIN.into()), int_val(3)),
     )
     .await;
     assert_eq!(rec.bins.get(VAR).unwrap(), &Value::from("ababab"));
@@ -734,8 +734,8 @@ async fn starts_with_filter_gates_get() {
     // Matching filter — the record passes through.
     let mut rpolicy = ReadPolicy::default();
     rpolicy.base_policy.filter_expression = Some(str_exp::starts_with(
-        string_val("hello".into()),
         string_bin(BIN.into()),
+        string_val("hello".into()),
     ));
     let rec = client.get(&rpolicy, &key, Bins::All).await.unwrap();
     assert_eq!(rec.bins.get(BIN).unwrap(), &Value::from("hello world"));
@@ -743,8 +743,8 @@ async fn starts_with_filter_gates_get() {
     // Non-matching filter — get fails with FILTERED_OUT.
     let mut rpolicy2 = ReadPolicy::default();
     rpolicy2.base_policy.filter_expression = Some(str_exp::starts_with(
-        string_val("world".into()),
         string_bin(BIN.into()),
+        string_val("world".into()),
     ));
     let err = client
         .get(&rpolicy2, &key, Bins::All)
@@ -850,8 +850,8 @@ async fn create_only_with_no_fail_evaluates_to_the_source_string() {
         &key,
         str_exp::append(
             &policy,
-            string_val(" there".to_string()),
             string_bin(BIN.to_string()),
+            string_val(" there".to_string()),
         ),
     )
     .await;
@@ -876,9 +876,9 @@ async fn no_fail_suppressing_a_prepare_failure_evaluates_to_the_source() {
         &key,
         str_exp::pad_start(
             &policy,
+            string_bin(BIN.to_string()),
             int_val(10),
             string_val(String::new()),
-            string_bin(BIN.to_string()),
         ),
     )
     .await;
@@ -901,8 +901,8 @@ async fn update_only_applies_to_an_existing_source() {
         &key,
         str_exp::append(
             &policy,
-            string_val(" there".to_string()),
             string_bin(BIN.to_string()),
+            string_val(" there".to_string()),
         ),
     )
     .await;
@@ -924,8 +924,8 @@ async fn create_only_on_an_existing_source_fails() {
         VAR,
         str_exp::append(
             &policy,
-            string_val(" there".to_string()),
             string_bin(BIN.to_string()),
+            string_val(" there".to_string()),
         ),
         ExpReadFlags::Default,
     )];
@@ -958,8 +958,8 @@ async fn create_only_with_update_only_fails_in_an_expression() {
         VAR,
         str_exp::append(
             &policy,
-            string_val(" there".to_string()),
             string_bin(BIN.to_string()),
+            string_val(" there".to_string()),
         ),
         ExpReadFlags::Default,
     )];
@@ -975,4 +975,66 @@ async fn create_only_with_update_only_fails_in_an_expression() {
         Some(ResultCode::OpNotApplicable),
         "unexpected error: {err}"
     );
+}
+
+// ============================================================
+// snip_from — the one-argument snip
+// ============================================================
+
+#[aerospike_macro::test]
+async fn snip_from_via_expression() {
+    let client = common::client().await;
+    if !server_supports_string_operations(&client).await {
+        return;
+    }
+    let key = as_key!(common::namespace(), &common::rand_str(10), "exp_snip_from");
+    let wpolicy = WritePolicy::default();
+    let policy = StringPolicy::default();
+    put_str(&client, &wpolicy, &key, "hello world").await;
+
+    let rec = eval(
+        &client,
+        &key,
+        str_exp::snip_from(&policy, string_bin(BIN.into()), int_val(5)),
+    )
+    .await;
+    assert_eq!(rec.bins.get(VAR).unwrap(), &Value::from("hello"));
+
+    // A modify expression evaluates to the new string and leaves the bin alone.
+    let rec = client
+        .get(&ReadPolicy::default(), &key, Bins::All)
+        .await
+        .unwrap();
+    assert_eq!(rec.bins.get(BIN).unwrap(), &Value::from("hello world"));
+
+    // Negative start counts from the end.
+    let rec = eval(
+        &client,
+        &key,
+        str_exp::snip_from(&policy, string_bin(BIN.into()), int_val(-5)),
+    )
+    .await;
+    assert_eq!(rec.bins.get(VAR).unwrap(), &Value::from("hello "));
+}
+
+/// Same reasoning as the operation-level test: a leaked flags element would be
+/// read as `end`, and the expression would evaluate to the untouched source.
+#[aerospike_macro::test]
+async fn snip_from_via_expression_ignores_a_non_default_policy() {
+    let client = common::client().await;
+    if !server_supports_string_operations(&client).await {
+        return;
+    }
+    let key = as_key!(common::namespace(), &common::rand_str(10), "exp_snip_flags");
+    let wpolicy = WritePolicy::default();
+    let policy = StringPolicy::new(StringWriteFlags::NO_FAIL);
+    put_str(&client, &wpolicy, &key, "hello world").await;
+
+    let rec = eval(
+        &client,
+        &key,
+        str_exp::snip_from(&policy, string_bin(BIN.into()), int_val(5)),
+    )
+    .await;
+    assert_eq!(rec.bins.get(VAR).unwrap(), &Value::from("hello"));
 }
