@@ -95,6 +95,13 @@ pub fn from_bins<T: DeserializeOwned>(bins: &IndexMap<String, Value>) -> Result<
 
 // ===== error shim ===========================================================
 
+/// The error type for the serde bridge in this module — [`to_value`],
+/// [`from_value`], [`to_bins`] and [`from_bins`].
+///
+/// Serde builds its own diagnostics through `ser::Error` / `de::Error`, so this
+/// is a plain carrier for the message it hands over. Nothing here corresponds to
+/// a server result code: a value that cannot be represented as a
+/// [`Value`](crate::Value) fails before any command is sent.
 #[derive(Debug)]
 pub struct SerdeError(String);
 

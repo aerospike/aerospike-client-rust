@@ -915,8 +915,8 @@ impl Client {
         block_on(self.async_client.revoke_roles(policy, user, roles))
     }
 
-    // Retrieves users and their roles.
-    // If None is passed for the user argument, all users will be returned.
+    /// Retrieves users and their roles.
+    /// If None is passed for the user argument, all users will be returned.
     pub fn query_users(&self, policy: &AdminPolicy, user: Option<&str>) -> Result<Vec<User>> {
         block_on(self.async_client.query_users(policy, user))
     }

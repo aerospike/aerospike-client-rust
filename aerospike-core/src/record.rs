@@ -24,7 +24,13 @@ use crate::IndexMap;
 use crate::Key;
 use crate::Value;
 
-// Fri Jan  1 00:00:00 UTC 2010
+/// The Aerospike epoch: Friday 1 January 2010, 00:00:00 UTC.
+///
+/// Record void-times cross the wire as a `u32` count of seconds since this
+/// instant rather than since the Unix epoch, which is what keeps expirations
+/// beyond 2106 representable. [`Record::time_to_live`] converts against it, and
+/// it is public so callers doing their own void-time arithmetic agree with the
+/// server on the origin.
 pub static CITRUSLEAF_EPOCH: std::sync::LazyLock<SystemTime> =
     std::sync::LazyLock::new(|| UNIX_EPOCH + Duration::new(1_262_304_000, 0));
 
