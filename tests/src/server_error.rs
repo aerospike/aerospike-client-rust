@@ -23,9 +23,12 @@
 //! server builds emit globally-unique values). These tests therefore assert
 //! what the client contract guarantees — the correct result code, that a
 //! subcode/message is surfaced when the server sends one, and that the parsed
-//! subcode agrees with the `(subcode=N)` the server embedded in the message —
-//! rather than pinning exact subcode integers. The exact msgpack decoding is
-//! pinned by the unit tests in `aerospike_core::server_error`.
+//! subcode is surfaced through `Error::sub_code` — rather than pinning exact
+//! subcode integers. The message itself is the server's, verbatim: the client no
+//! longer folds a `(subcode=N)` tag into it, so the subcode is only ever read
+//! from `sub_code()` (and rendered beside the result code by `Display`). The
+//! exact msgpack decoding is pinned by the unit tests in
+//! `aerospike_core::server_error`.
 
 use crate::common;
 
@@ -70,28 +73,31 @@ fn bad_exp() -> Expression {
     eq(int_val(5), float_val(6.0))
 }
 
-// Extract the integer following "subcode=" in a server message, if any.
-fn message_subcode(msg: &str) -> Option<u32> {
-    let start = msg.find("subcode=")? + "subcode=".len();
-    let digits: String = msg[start..].chars().take_while(char::is_ascii_digit).collect();
-    digits.parse().ok()
-}
-
 // ---- assertion helpers ----
 
-// The server attached a subcode (verbosity >= 1). Assert the result code, that a
-// subcode is present, and — crucially for validating our parser — that the
-// parsed subcode agrees with the `subcode=N` the server embedded in the message.
+// The server attached a subcode (verbosity >= 1). Assert the result code, that
+// the subcode is surfaced, and that the message — which is the server's own text,
+// with no client-added subcode tag — carries the expected substrings.
 fn assert_subcode_present(err: &Error, rc: ResultCode, substrings: &[&str]) {
     assert_eq!(err.server_result_code(), Some(rc), "result code: {err}");
     let detail = err.server_error_detail().expect("expected error detail");
     assert!(detail.sub_code >= 1, "expected a dispatched subcode: {err}");
-    let msg = err.server_message().expect("expected a server message");
-    assert_eq!(
-        message_subcode(msg),
-        Some(err.sub_code()),
-        "parsed subcode must match the message's subcode tag: {msg}"
+    assert_eq!(err.sub_code(), detail.sub_code, "accessor must agree: {err}");
+
+    // The subcode belongs beside the result code in the rendered error, never
+    // folded into the server's message.
+    let rendered = err.to_string();
+    assert!(
+        rendered.contains(&format!(", SubCode: {}", detail.sub_code)),
+        "the subcode should be rendered beside the result code: {rendered}"
     );
+    assert!(
+        !detail.message.contains("subcode="),
+        "the server message must stay verbatim: {:?}",
+        detail.message
+    );
+
+    let msg = err.server_message().expect("expected a server message");
     let lower = msg.to_lowercase();
     for s in substrings {
         assert!(lower.contains(&s.to_lowercase()), "message {msg:?} should contain {s:?}");
@@ -104,9 +110,10 @@ fn assert_subcode_present(err: &Error, rc: ResultCode, substrings: &[&str]) {
 fn assert_result(err: &Error, rc: ResultCode, substrings: &[&str]) {
     assert_eq!(err.server_result_code(), Some(rc), "result code: {err}");
     if let Some(msg) = err.server_message() {
-        if let Some(n) = message_subcode(msg) {
-            assert_eq!(err.sub_code(), n, "parsed subcode must match message: {msg}");
-        }
+        assert!(
+            !msg.contains("subcode="),
+            "the server message must stay verbatim: {msg:?}"
+        );
         let lower = msg.to_lowercase();
         for s in substrings {
             assert!(lower.contains(&s.to_lowercase()), "message {msg:?} should contain {s:?}");
@@ -174,8 +181,8 @@ async fn verbosity_subcode_only_surfaces_a_subcode() {
     assert_eq!(err.server_result_code(), Some(ResultCode::BinNotFound));
     assert!(err.sub_code() >= 1, "verbosity 1 must surface a subcode: {err}");
     assert!(
-        err.server_message().unwrap_or("").contains("subcode="),
-        "message should carry a subcode tag: {err}"
+        err.to_string().contains(", SubCode: "),
+        "the subcode should be rendered beside the result code: {err}"
     );
 }
 
@@ -192,7 +199,9 @@ async fn verbosity_subcode_and_message_surfaces_both() {
         .operate(&wpolicy_verbosity(2), &key, &[hll::refresh_count("no-hll-bin")])
         .await
         .expect_err("HLL refresh on missing bin should fail");
-    assert_subcode_present(&err, ResultCode::BinNotFound, &["count op", "(subcode="]);
+    // The subcode is not in the message any more, so only the server's own text
+    // is matched here; `assert_subcode_present` checks the subcode itself.
+    assert_subcode_present(&err, ResultCode::BinNotFound, &["count op"]);
 }
 
 // ============================================================

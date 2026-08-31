@@ -865,11 +865,19 @@ impl Error {
 
 impl fmt::Display for Error {
     /// Uniform, Java-style format:
-    /// `Error <code>[, iter=N][, In Doubt: true][, node=X]: <base message>`
+    /// `Error <code>[, SubCode: N][, iter=N][, In Doubt: true][, node=X]: <base message>`
     /// followed by one indented line per sub-error and the cause chain.
+    ///
+    /// The subcode is rendered here, beside the result code, rather than folded
+    /// into the server's message — the `(result code, subcode)` pair is the
+    /// dispatch key, and it must be reachable through
+    /// [`Error::sub_code`] rather than only by parsing this string.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let i = &*self.0;
         write!(f, "Error {}", i.result_code)?;
+        if self.sub_code() != crate::server_error::sub_code::NONE {
+            write!(f, ", SubCode: {}", self.sub_code())?;
+        }
         if let Some(it) = i.iteration {
             write!(f, ", iter={it}")?;
         }
@@ -937,7 +945,7 @@ mod tests {
             "node",
             Some(Box::new(ServerErrorDetail {
                 sub_code: sub_code::PARAM_TTL_INVALID,
-                message: "ttl too long (subcode=1)".into(),
+                message: "ttl too long".into(),
                 exp_trace: None,
             })),
         )
@@ -1054,7 +1062,7 @@ mod tests {
         let err = detailed();
         assert_eq!(err.server_result_code(), Some(ResultCode::ParameterError));
         assert_eq!(err.sub_code(), sub_code::PARAM_TTL_INVALID);
-        assert_eq!(err.server_message(), Some("ttl too long (subcode=1)"));
+        assert_eq!(err.server_message(), Some("ttl too long"));
         assert!(err.server_error_detail().is_some());
     }
 
@@ -1081,7 +1089,9 @@ mod tests {
     #[test]
     fn display_includes_detail() {
         let s = detailed().to_string();
-        assert!(s.contains("Detail: ttl too long (subcode=1)"), "{s}");
+        assert!(s.contains("Detail: ttl too long"), "{s}");
+        // The subcode rides beside the result code, not inside the message.
+        assert!(s.contains(", SubCode: 1"), "{s}");
     }
 
     #[test]
@@ -1183,13 +1193,13 @@ mod tests {
             "node",
             Some(Box::new(ServerErrorDetail {
                 sub_code: 3,
-                message: "timed out (subcode=3)".into(),
+                message: "timed out".into(),
                 exp_trace: None,
             })),
         )
         .set_in_doubt(true, 2);
         assert_eq!(err.sub_code(), 3);
-        assert_eq!(err.server_message(), Some("timed out (subcode=3)"));
+        assert_eq!(err.server_message(), Some("timed out"));
     }
 
     // ---- keep_connection / predicates ----
