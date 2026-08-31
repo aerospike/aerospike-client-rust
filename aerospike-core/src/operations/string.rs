@@ -117,12 +117,44 @@ pub struct StringWriteFlags(pub i64);
 impl StringWriteFlags {
     /// Allow create or update.
     pub const DEFAULT: StringWriteFlags = StringWriteFlags(0);
-    /// Do not raise an error if the operation cannot be applied to the bin.
-    /// The bin is left unchanged and a nil result is returned for that op.
-    /// Note that a missing bin is not an error path: additive ops (insert,
-    /// overwrite, concat, append, prepend, pad, repeat) create the bin from
-    /// an empty string, and the other modify ops are a silent no-op — with
-    /// or without this flag.
+
+    /// Apply the operation only if the bin does not already exist. A live bin
+    /// fails with `BIN_EXISTS_ERROR`.
+    ///
+    /// Only the additive operations that can create a bin from an empty string
+    /// accept this flag: [`insert`], [`overwrite`], [`concat`], [`concat_list`],
+    /// [`append`], [`prepend`], [`pad_start`], [`pad_end`] and [`repeat`], plus
+    /// their expression equivalents. Every other string modify operation
+    /// rejects it with `PARAMETER_ERROR`.
+    ///
+    /// It is also invalid combined with [`UPDATE_ONLY`](StringWriteFlags::UPDATE_ONLY),
+    /// and invalid on an operation carrying a [`CdtContext`]: both are
+    /// `PARAMETER_ERROR`. The server resolves all three of these while parsing
+    /// arguments, so [`NO_FAIL`](StringWriteFlags::NO_FAIL) does not suppress
+    /// them.
+    pub const CREATE_ONLY: StringWriteFlags = StringWriteFlags(1);
+
+    /// Apply the operation only to an existing bin, disabling bin creation. An
+    /// absent bin is a no-op rather than a create. Valid on every string modify
+    /// operation. Cannot be combined with
+    /// [`CREATE_ONLY`](StringWriteFlags::CREATE_ONLY).
+    pub const UPDATE_ONLY: StringWriteFlags = StringWriteFlags(2);
+
+    /// Suppress the failure if the operation cannot be applied, leaving the bin
+    /// unchanged. The bin — and the value a modify expression evaluates to —
+    /// keeps the unmodified source string.
+    ///
+    /// It covers argument and size validation, the operation itself, and a
+    /// [`CREATE_ONLY`](StringWriteFlags::CREATE_ONLY) conflict on a live bin. It
+    /// does not cover a malformed argument list, a non-string bin, invalid UTF-8
+    /// in either the source or the result, or the
+    /// [`CREATE_ONLY`](StringWriteFlags::CREATE_ONLY) validations described
+    /// above.
+    ///
+    /// An absent bin is not a failure and does not depend on this flag: the
+    /// create-capable operations listed under
+    /// [`CREATE_ONLY`](StringWriteFlags::CREATE_ONLY) create it, every other
+    /// operation is a no-op.
     pub const NO_FAIL: StringWriteFlags = StringWriteFlags(4);
 }
 
