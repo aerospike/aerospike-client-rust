@@ -168,6 +168,12 @@ pub mod sub_code {
     /// Source blob/string is not valid UTF-8 for an `OPNOT_APPLICABLE` path.
     pub const OPNOT_STRING_UTF8_INVALID: u32 = 11;
 
+    // 12 is reserved server-side for a regex-limit subcode still in review.
+
+    /// The string is not valid base64 — a length that is not a multiple of 4, a
+    /// character outside the alphabet, or misplaced `=` padding.
+    pub const OPNOT_STRING_B64_INVALID: u32 = 13;
+
     // -------------------------------------------------------
     // Pairs with ResultCode::FilteredOut (27)
     // -------------------------------------------------------
@@ -192,6 +198,14 @@ pub const EXP_TRACE_PHASE_BUILD: u32 = 1;
 /// Expression evaluation failed (reserved for a future server branch).
 pub const EXP_TRACE_PHASE_EVAL: u32 = 2;
 
+/// Eval-phase outcome: evaluation faulted.
+pub const EXP_TRACE_OUTCOME_FAULT: u32 = 1;
+/// Eval-phase outcome: the expression evaluated cleanly to FALSE, so the record
+/// simply did not match. This is the case [`ExpressionTrace::operands`] explains.
+pub const EXP_TRACE_OUTCOME_FALSE: u32 = 2;
+/// Eval-phase outcome: a referenced bin or map key was absent.
+pub const EXP_TRACE_OUTCOME_ABSENT: u32 = 3;
+
 /// The msgpack source language (the implied default when the lang key is absent).
 pub const EXP_TRACE_LANG_MSGPACK: u32 = 1;
 /// The AEL DSL source language (reserved for a future server branch).
@@ -214,9 +228,11 @@ const TRACE_KEY_OP: u32 = 3;
 const TRACE_KEY_DEPTH: u32 = 4;
 const TRACE_KEY_PATH: u32 = 5;
 const TRACE_KEY_SNIPPET: u32 = 6;
+const TRACE_KEY_OUTCOME: u32 = 7;
 const TRACE_KEY_LANG: u32 = 8;
 const TRACE_KEY_AEL_OFFSET: u32 = 9;
 const TRACE_KEY_AEL_SPAN: u32 = 10;
+const TRACE_KEY_OPERANDS: u32 = 13;
 
 /// A structured expression build/eval trace surfaced at error-detail verbosity 3.
 ///
@@ -272,6 +288,23 @@ pub struct ExpressionTrace {
     /// budget).
     pub snippet: Option<String>,
 
+    /// Why the record was not matched, on an eval-phase trace:
+    /// [`EXP_TRACE_OUTCOME_FAULT`], [`EXP_TRACE_OUTCOME_FALSE`] or
+    /// [`EXP_TRACE_OUTCOME_ABSENT`]. `None` when absent — the build phase never
+    /// emits it.
+    pub outcome: Option<u32>,
+
+    /// The decisive comparison's operand values as `[lhs, rhs]` — e.g.
+    /// `["15", "18"]` — or `None` when absent.
+    ///
+    /// Emitted only for an [`EXP_TRACE_OUTCOME_FALSE`] trace whose decisive op is
+    /// a comparison, and it is the first tier the server drops when its trace
+    /// budget is tight, so a FALSE outcome does not guarantee it. The strings are
+    /// rendered server-side and capped at 48 bytes: numbers always fit,
+    /// non-scalars arrive as a placeholder (`"<blob>"`, `"<collection>"`), and
+    /// only a long string bin is silently clipped.
+    pub operands: Option<Vec<String>>,
+
     /// Source language: [`EXP_TRACE_LANG_MSGPACK`] or [`EXP_TRACE_LANG_AEL`].
     /// An absent lang key means msgpack (the default), so this reads as
     /// `None` only before parsing; the parser fills [`EXP_TRACE_LANG_MSGPACK`]
@@ -306,6 +339,12 @@ impl fmt::Display for ExpressionTrace {
         if let Some(snippet) = &self.snippet {
             write!(f, ", snippet={snippet}")?;
         }
+        if let Some(outcome) = self.outcome {
+            write!(f, ", outcome={outcome}")?;
+        }
+        if let Some(operands) = &self.operands {
+            write!(f, ", operands=[{}]", operands.join(", "))?;
+        }
         if let Some(lang) = self.lang {
             if lang != EXP_TRACE_LANG_MSGPACK {
                 write!(f, ", lang={lang}")?;
@@ -338,9 +377,13 @@ pub struct ServerErrorDetail {
     /// are NOT globally unique. Dispatch on the (result code, subcode) pair.
     pub sub_code: u32,
 
-    /// The formatted server-supplied error detail (human-readable message
-    /// and/or subcode tag). Empty when the server sent a subcode without a
-    /// message at verbosity 1.
+    /// The server-supplied error message, **verbatim**. Empty when the server
+    /// sent a subcode or a trace without a message.
+    ///
+    /// The subcode is deliberately not folded in here: it is
+    /// [`sub_code`](Self::sub_code), and `Error`'s `Display` renders it beside
+    /// the result code, so dispatching on `(result code, subcode)` never
+    /// requires parsing this string.
     pub message: String,
 
     /// The server-supplied expression build trace, or `None` when absent.
@@ -565,21 +608,18 @@ pub(crate) fn parse_error_detail(buf: &[u8]) -> Option<ServerErrorDetail> {
         }
     }
 
-    // The server only serializes subcodes >= 1 (NONE = 0 is never sent), and
-    // pre-formats the display message the same way the Go client does.
-    let formatted = match (&message, sub_code) {
-        (Some(m), Some(sc)) => format!("{m} (subcode={sc})"),
-        (None, Some(sc)) => format!("error subcode={sc}"),
-        (Some(m), None) => m.clone(),
-        (None, None) => {
-            exp_trace.as_ref()?;
-            String::new()
-        }
-    };
+    // The server's message is kept **verbatim**: the subcode is not folded into
+    // it. The `(result code, subcode)` pair is the dispatch key, and a caller
+    // must not have to parse a display string to recover it — so the subcode is
+    // rendered beside the result code by `Error`'s `Display` instead. The server
+    // only serializes subcodes >= 1 (NONE = 0 is never sent).
+    if message.is_none() && sub_code.is_none() {
+        exp_trace.as_ref()?;
+    }
 
     Some(ServerErrorDetail {
         sub_code: sub_code.map_or(sub_code::NONE, |v| v as u32),
-        message: formatted,
+        message: message.unwrap_or_default(),
         exp_trace,
     })
 }
@@ -612,6 +652,8 @@ fn parse_exp_trace(mut cur: Cursor) -> Option<ExpressionTrace> {
             TRACE_KEY_DEPTH => set_u32(&mut t.depth, cur.uint()),
             TRACE_KEY_PATH => set_opt(&mut t.path, cur.str_array()),
             TRACE_KEY_SNIPPET => set_opt(&mut t.snippet, cur.str()),
+            TRACE_KEY_OUTCOME => set_u32(&mut t.outcome, cur.uint()),
+            TRACE_KEY_OPERANDS => set_opt(&mut t.operands, cur.str_array()),
             TRACE_KEY_LANG => set_u32(&mut t.lang, cur.uint()),
             TRACE_KEY_AEL_OFFSET => set_u32(&mut t.ael_offset, cur.uint()),
             TRACE_KEY_AEL_SPAN => set_u32(&mut t.ael_span, cur.uint()),
@@ -745,7 +787,7 @@ mod tests {
             pair(&int_key(2), &fixstr("cannot append")),
         ]);
         let d = parse_error_detail(&detail).unwrap();
-        assert_eq!(d.message, "cannot append (subcode=99)");
+        assert_eq!(d.message, "cannot append");
         assert_eq!(d.sub_code, 99);
     }
 
@@ -753,7 +795,7 @@ mod tests {
     fn parses_fixmap_with_subcode_only() {
         let detail = fixmap(&[pair(&int_key(1), &fixint(42))]);
         let d = parse_error_detail(&detail).unwrap();
-        assert_eq!(d.message, "error subcode=42");
+        assert_eq!(d.message, "", "a subcode without a message leaves it empty");
         assert_eq!(d.sub_code, 42);
     }
 
@@ -772,7 +814,7 @@ mod tests {
             pair(&int_key(1), &fixint(7)),
         ]);
         let d = parse_error_detail(&detail).unwrap();
-        assert_eq!(d.message, "swap (subcode=7)");
+        assert_eq!(d.message, "swap");
         assert_eq!(d.sub_code, 7);
     }
 
@@ -784,7 +826,7 @@ mod tests {
             pair(&int_key(2), &str8(multibyte)),
         ]);
         let d = parse_error_detail(&detail).unwrap();
-        assert_eq!(d.message, format!("{multibyte} (subcode=1)"));
+        assert_eq!(d.message, format!("{multibyte}"));
     }
 
     // ============================================================
@@ -801,7 +843,7 @@ mod tests {
             payload.extend([0xCC, 100 + i, 0xC0]);
         }
         let d = parse_error_detail(&payload).unwrap();
-        assert_eq!(d.message, "boom (subcode=7)");
+        assert_eq!(d.message, "boom");
     }
 
     #[test]
@@ -810,7 +852,7 @@ mod tests {
         payload.extend(pair(&int_key(1), &fixint(9)));
         payload.extend(pair(&int_key(2), &fixstr("m32")));
         let d = parse_error_detail(&payload).unwrap();
-        assert_eq!(d.message, "m32 (subcode=9)");
+        assert_eq!(d.message, "m32");
     }
 
     #[test]
@@ -821,7 +863,7 @@ mod tests {
         payload.extend(int_key(2));
         payload.extend(str32(&big));
         let d = parse_error_detail(&payload).unwrap();
-        assert_eq!(d.message, format!("{big} (subcode=5)"));
+        assert_eq!(d.message, format!("{big}"));
     }
 
     #[test]
@@ -831,7 +873,7 @@ mod tests {
             pair(&int_key(2), &fixstr("fx")),
         ]);
         let d = parse_error_detail(&detail).unwrap();
-        assert_eq!(d.message, "fx (subcode=127)");
+        assert_eq!(d.message, "fx");
     }
 
     #[test]
@@ -841,7 +883,7 @@ mod tests {
             pair(&int_key(2), &fixstr("u8")),
         ]);
         let d = parse_error_detail(&detail).unwrap();
-        assert_eq!(d.message, "u8 (subcode=200)");
+        assert_eq!(d.message, "u8");
         assert_eq!(d.sub_code, 200);
     }
 
@@ -852,7 +894,7 @@ mod tests {
             pair(&int_key(2), &fixstr("hi")),
         ]);
         let d = parse_error_detail(&detail).unwrap();
-        assert_eq!(d.message, "hi (subcode=1100)");
+        assert_eq!(d.message, "hi");
     }
 
     #[test]
@@ -862,7 +904,7 @@ mod tests {
             pair(&int_key(2), &fixstr("x")),
         ]);
         let d = parse_error_detail(&detail).unwrap();
-        assert_eq!(d.message, "x (subcode=70000)");
+        assert_eq!(d.message, "x");
     }
 
     #[test]
@@ -873,7 +915,7 @@ mod tests {
             pair(&int_key(2), &fixstr("u64")),
         ]);
         let d = parse_error_detail(&detail).unwrap();
-        assert!(d.message.starts_with("u64 (subcode="));
+        assert_eq!(d.message, "u64");
         assert_eq!(u64::from(d.sub_code), value as u32 as u64);
     }
 
@@ -882,7 +924,7 @@ mod tests {
         let msg = "string8";
         let detail = fixmap(&[pair(&int_key(1), &fixint(3)), pair(&int_key(2), &str8(msg))]);
         let d = parse_error_detail(&detail).unwrap();
-        assert_eq!(d.message, format!("{msg} (subcode=3)"));
+        assert_eq!(d.message, format!("{msg}"));
     }
 
     #[test]
@@ -893,7 +935,7 @@ mod tests {
             pair(&int_key(2), &str16(msg)),
         ]);
         let d = parse_error_detail(&detail).unwrap();
-        assert_eq!(d.message, format!("{msg} (subcode=4)"));
+        assert_eq!(d.message, format!("{msg}"));
     }
 
     // ============================================================
@@ -928,7 +970,7 @@ mod tests {
             pair(&int_key(2), &fixstr("z")),
         ]);
         let d = parse_error_detail(&payload).unwrap();
-        assert_eq!(d.message, "z (subcode=7)");
+        assert_eq!(d.message, "z");
     }
 
     #[test]
@@ -945,7 +987,7 @@ mod tests {
         let buf = [0x82, 0x01, 0x04, 0x02, 0xD9, 0x20, b'x'];
         let d = parse_error_detail(&buf).unwrap();
         assert_eq!(d.sub_code, 4);
-        assert_eq!(d.message, "error subcode=4");
+        assert_eq!(d.message, "", "a subcode without a message leaves it empty");
     }
 
     // ============================================================
@@ -1080,6 +1122,67 @@ mod tests {
         assert_eq!(t.ael_span, Some(6));
     }
 
+    /// The eval-phase pair: `outcome` says *why* a record was not matched, and
+    /// for a clean FALSE `operands` carries the decisive comparison's two sides.
+    /// Both were skipped by this parser before the server started sending them.
+    #[test]
+    fn exposes_eval_outcome_and_operands_when_present() {
+        let operands = fixarray(&[fixstr("15"), fixstr("18")]);
+        let trace = fixmap(&[
+            pair(&int_key(1), &fixint(EXP_TRACE_PHASE_EVAL as u8)),
+            pair(&int_key(3), &fixstr("cmp_gt")),
+            pair(&int_key(7), &fixint(EXP_TRACE_OUTCOME_FALSE as u8)),
+            pair(&int_key(13), &operands),
+        ]);
+        let detail = fixmap(&[pair(&int_key(3), &trace)]);
+        let t = parse_error_detail(&detail).unwrap().exp_trace.unwrap();
+
+        assert_eq!(t.phase, Some(EXP_TRACE_PHASE_EVAL));
+        assert_eq!(t.outcome, Some(EXP_TRACE_OUTCOME_FALSE));
+        assert_eq!(
+            t.operands,
+            Some(vec!["15".to_string(), "18".to_string()]),
+            "the decisive comparison's [lhs, rhs]"
+        );
+
+        // Both appear in the rendered trace, since that is what makes a
+        // non-matching filter explainable at a glance.
+        let rendered = t.to_string();
+        assert!(rendered.contains("outcome=2"), "{rendered}");
+        assert!(rendered.contains("operands=[15, 18]"), "{rendered}");
+    }
+
+    /// Absent is the common case: a build-phase trace never carries either, and
+    /// the server drops `operands` first when its trace budget is tight — so a
+    /// FALSE outcome does not guarantee them.
+    #[test]
+    fn eval_fields_are_none_when_the_server_omits_them() {
+        let trace = fixmap(&[
+            pair(&int_key(1), &fixint(EXP_TRACE_PHASE_BUILD as u8)),
+            pair(&int_key(7), &fixint(EXP_TRACE_OUTCOME_FALSE as u8)),
+        ]);
+        let detail = fixmap(&[pair(&int_key(3), &trace)]);
+        let t = parse_error_detail(&detail).unwrap().exp_trace.unwrap();
+
+        assert_eq!(t.outcome, Some(EXP_TRACE_OUTCOME_FALSE));
+        assert_eq!(t.operands, None, "operands are dropped first under budget");
+    }
+
+    /// The server sends the message alone; the subcode is a separate key and
+    /// must not appear in the text.
+    #[test]
+    fn the_message_is_kept_verbatim_beside_its_subcode() {
+        let detail = fixmap(&[
+            pair(&int_key(1), &fixint(13)),
+            pair(&int_key(2), &fixstr("string is not valid base64")),
+        ]);
+        let d = parse_error_detail(&detail).unwrap();
+
+        assert_eq!(d.sub_code, sub_code::OPNOT_STRING_B64_INVALID);
+        assert_eq!(d.message, "string is not valid base64");
+        assert_eq!(d.to_string(), "string is not valid base64");
+    }
+
     #[test]
     fn leaves_exp_trace_none_for_a_plain_subcode_message_response() {
         let detail = fixmap(&[
@@ -1087,7 +1190,7 @@ mod tests {
             pair(&int_key(2), &fixstr("plain")),
         ]);
         let d = parse_error_detail(&detail).unwrap();
-        assert_eq!(d.message, "plain (subcode=4)");
+        assert_eq!(d.message, "plain");
         assert!(d.exp_trace.is_none()); // no key 3 => no expression trace
     }
 
@@ -1148,21 +1251,19 @@ mod tests {
     fn detail_and_trace_display() {
         let d = ServerErrorDetail {
             sub_code: 2,
-            message: "boom (subcode=2)".into(),
+            message: "boom".into(),
             exp_trace: Some(ExpressionTrace {
                 phase: Some(EXP_TRACE_PHASE_BUILD),
                 byte_offset: Some(7),
                 op: Some("add".into()),
                 depth: Some(1),
                 path: Some(vec!["and".into(), "add".into()]),
-                snippet: None,
                 lang: Some(EXP_TRACE_LANG_MSGPACK),
-                ael_offset: None,
-                ael_span: None,
+                ..ExpressionTrace::default()
             }),
         };
         let s = d.to_string();
-        assert!(s.starts_with("boom (subcode=2), ExpressionTrace[phase=1"));
+        assert!(s.starts_with("boom, ExpressionTrace[phase=1"), "{s}");
         assert!(s.contains("path=[and add]"));
         assert!(!s.contains("lang=")); // msgpack default elided
     }

@@ -3593,7 +3593,7 @@ mod tests {
             encode_field(FieldType::ErrorMessage as u8, &detail),
         ]);
         let d = parsed.error_detail.expect("detail parsed");
-        assert_eq!(d.message, "ok (subcode=1)");
+        assert_eq!(d.message, "ok");
     }
 
     #[test]
