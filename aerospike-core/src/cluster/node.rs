@@ -125,7 +125,7 @@ impl Node {
             address: nv.address.clone(),
 
             host: nv.aliases[0].clone(),
-            rebalance_generation: AtomicIsize::new(if client_policy.rack_ids.is_some() {
+            rebalance_generation: AtomicIsize::new(if client_policy.rack_aware() {
                 -1
             } else {
                 0
@@ -248,7 +248,7 @@ impl Node {
             return Ok(());
         }
 
-        let rack_aware = self.client_policy.rack_ids.is_some();
+        let rack_aware = self.client_policy.rack_aware();
 
         self.responded.store(false, Ordering::Relaxed);
 
@@ -404,7 +404,7 @@ impl Node {
         self.peers_generation.store(-1, Ordering::Relaxed);
         self.partition_generation.store(-1, Ordering::Relaxed);
 
-        if self.client_policy.rack_ids.is_some() {
+        if self.client_policy.rack_aware() {
             self.rebalance_generation.store(-1, Ordering::Relaxed);
         }
 

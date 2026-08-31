@@ -614,3 +614,76 @@ async fn client_version_reports_crate_version() {
     // Semver-ish: starts with a digit and contains a dot.
     assert!(version.as_bytes()[0].is_ascii_digit() && version.contains('.'));
 }
+
+// ---- rack awareness switch ------------------------------------------------
+
+/// `ClientPolicy.rack_ids` is both the rack-awareness switch and the preference
+/// list, so `Some([])` used to mean "on, with nothing to prefer": it passed
+/// validation, enabled rack-aware tend work, and then failed every
+/// `Replica::PreferRack` read — the node-selection loop ran zero times, no
+/// fallback was recorded, and the retry loop reported the configuration error as
+/// a client timeout.
+///
+/// It is now refused where the message can name the field, before a connection
+/// is attempted.
+#[aerospike_macro::test]
+async fn empty_rack_ids_is_refused_at_construction() {
+    let mut policy = common::client_policy().clone();
+    policy.rack_ids = Some(Vec::new());
+
+    let err = Client::new(&policy, &common::hosts())
+        .await
+        .err()
+        .expect("Some([]) must not build a client");
+
+    assert!(
+        err.to_string().contains("rack_ids"),
+        "the error must name the field: {err}"
+    );
+    assert_eq!(
+        err.result_code(),
+        i32::from(u8::from(aerospike::ResultCode::ParameterError)),
+        "expected an invalid-argument error, got: {err}"
+    );
+}
+
+/// The controls: neither way of *not* asking for an empty list is affected, and
+/// a `PreferRack` read still works with a real rack id — the single-node dev
+/// cluster answers on its default rack, and a non-matching id reaches the same
+/// node through the fallback path.
+#[aerospike_macro::test]
+async fn prefer_rack_reads_work_with_a_non_empty_rack_list() {
+    use aerospike::policy::Replica;
+    use aerospike::{as_bin, as_key, Bins, ReadPolicy, WritePolicy};
+
+    let key = as_key!(common::namespace(), &common::rand_str(10), "rack-list");
+    let seed = common::client().await;
+    seed.put(&WritePolicy::default(), &key, &[as_bin!("a", 1i64)])
+        .await
+        .unwrap();
+    seed.close().await.unwrap();
+
+    for rack_ids in [vec![0], vec![999]] {
+        let mut policy = common::client_policy().clone();
+        policy.rack_ids = Some(rack_ids.clone());
+
+        let client = Client::new(&policy, &common::hosts())
+            .await
+            .unwrap_or_else(|e| panic!("rack_ids={rack_ids:?} should build a client: {e}"));
+
+        let mut rpolicy = ReadPolicy::default();
+        rpolicy.replica = Replica::PreferRack;
+
+        // A rack that matches reads from the preferred node; one that does not
+        // reaches an active node through fallback. Both are reads, not
+        // timeouts, which is what the empty list could not manage.
+        let rec = client
+            .get(&rpolicy, &key, Bins::All)
+            .await
+            .unwrap_or_else(|e| panic!("PreferRack read with rack_ids={rack_ids:?} failed: {e}"));
+        assert_eq!(rec.bins.get("a").unwrap(), &aerospike::Value::Int(1));
+
+        client.close().await.unwrap();
+    }
+}
+
