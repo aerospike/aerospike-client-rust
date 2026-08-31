@@ -1,8 +1,91 @@
 # Changelog
 
+## [3.0.0-alpha.2]
+
+* **New Features**
+  * [CLIENT-4201] Dynamic configuration from YAML, with live reload. On by default.
+  * [CLIENT-4851][CLIENT-5032][CLIENT-5164] String operations, including `append` and `prepend`.
+  * [CLIENT-5120] `query_aggregate` for Lua stream aggregations (`lua` feature).
+  * [CLIENT-5119] Error system reworked for Java parity: `ErrorKind`, `result_code()`, `ClientResultCode`.
+  * [CLIENT-5115][CLIENT-5174] Detailed server errors, with subcodes on batch records.
+  * [CLIENT-5398] Error detail completed against the server contract: `ExpressionTrace` gains `outcome` and
+    `operands` (wire keys 7 and 13), the `OPNOT_STRING_B64_INVALID` subcode, and the server message is
+    now kept **verbatim** — the subcode is rendered beside the result code by `Display` instead of being
+    folded into the message.
+  * [CLIENT-5125] Tiered buffer pool.
+  * [CLIENT-5202] Liveness check before a connection leaves the pool.
+  * [CLIENT-5114] Connections opened outside the command life cycle.
+  * [CLIENT-5079] Concurrent tend.
+  * [CLIENT-4751] `ClientPolicy::connect_timeout` and `login_timeout`.
+  * [CLIENT-4973] Positional `Record::results` for op-ordered access.
+  * [CLIENT-5176] Blob secondary index type.
+  * [CLIENT-5340] `lists::join` / `join_by_separator` and their expression forms (CDT list read op 28).
+  * [CLIENT-5391] `StringWriteFlags::CREATE_ONLY` and `UPDATE_ONLY`.
+  * [CLIENT-5392] `string::snip_from` and its expression form, restored without the flags element.
+  * [CLIENT-5349] `bitwise::b64_encode` / `b64_encode_range` and their expression forms (BITS read op 55).
+  * [CLIENT-5395] `expressions::from_ael(text)`: AEL source text as a standalone filter expression.
+  * [CLIENT-5243] `string::regex_replace` and its expression form now send the write flags (`NO_FAIL`,
+    `UPDATE_ONLY`) alongside the regex flags; needs the server-side slot from SERVER-1365.
+  * [CLIENT-5128] `Value::Unknown` for uninterpreted particle types.
+  * [CLIENT-4878][CLIENT-5011] AEL expression parsing and two-phase index selection.
+  * [CLIENT-5228] Error detail on the query plan: the parser message and expression trace at explain,
+    under `error_detail_verbosity`.
+  * [CLIENT-5242] Configurable metrics resolution; microseconds by default.
+  * [CLIENT-5121] `asbench` parity with the Java benchmark app.
+  * Object mapping: `RecordMapper` derive, `ToValue`/`FromValue`, serde to `Value`.
+  * `Client::info()`, `Expressions::exclusive`, `AuthMode::ExternalInsecure`, `WritePolicy::xdr`.
+  * `WritePolicy::records_per_second` throttles background queries.
+
+* **Improvements**
+  * [CLIENT-5392] **Breaking:** string expression builders take `src` first, then the operands.
+  * [CLIENT-5393] Document that the `is_numeric` FLOAT filter needs a fractional digit, and cover it.
+  * [CLIENT-5394] Document canonical-equivalence matching on `starts_with`/`ends_with`; reference tests
+    for canonical `find`/`contains`/`replace` and the modify result-size cap.
+  * [CLIENT-4990] One reusable timer per connection, removing timer-wheel contention.
+  * [CLIENT-5129][CLIENT-5131] Batch REPEAT for write/UDF rows, and compression parity.
+  * [CLIENT-5130] Rack-aware routing improvements, plus `client_version()`.
+  * [CLIENT-5126] `Record::bins` keeps the server's return order.
+  * [CLIENT-4624][CLIENT-2185][CLIENT-2089] Ordered and sorted map variants.
+  * [CLIENT-5118] Admin commands pace on an empty connection pool instead of failing.
+  * `Client::new` returns on cluster convergence; `close()` stops tend at once.
+  * [CLIENT-5081] `ClientPolicy` and `MetricsPolicy` defaults aligned with the Java client.
+  * [CLIENT-5265] `Concurrency::Sequential` no longer claims to be the default, which it is not.
+  * Fewer per-query allocations in scan and query partition tracking.
+  * TLS is required for External and PKI auth modes.
+  * Wider field visibility, so other crates can build on the core.
+  * [CLIENT-4979] CI workflows, [CLIENT-3858] more examples, `AEROSPIKE_CLEANUP` for tests.
+
+* **Bug Fixes**
+  * [CLIENT-4966] Connection churn with `min_conn_per_node` > 0.
+  * [CLIENT-4989] Socket I/O errors are Connection errors, so commands retry.
+  * [CLIENT-5268] TLS writes are flushed, not left in the session buffer.
+  * [CLIENT-5033] Sync client hangs.
+  * [CLIENT-5132][CLIENT-5172] Batch retries, and one bad namespace failing a whole batch.
+  * [CLIENT-5251][CLIENT-4884] In-doubt on batch terminal errors and on client Timeout/Connection errors.
+  * [CLIENT-5266] Wrong batch index field size when a filter is set.
+  * [CLIENT-5329] Nest the inner op in the string CTX wire shape.
+  * [CLIENT-4881] Per-record result codes on `BatchRecord` instead of failing the batch.
+  * [CLIENT-4865] Duplicate query bin projections returned a list.
+  * [CLIENT-5175] Every `operate` op gets its own result slot.
+  * [CLIENT-5173] `PARAMETER_ERROR` for INF and wildcard values instead of aborting.
+  * [CLIENT-5195] `ClientPolicy.rack_ids: Some(vec![])` enabled rack awareness with no rack to prefer, so
+    every `Replica::PreferRack` read failed node selection and was reported as a client timeout. Rejected at
+    validation now, and an empty list reaching node selection degrades to "not configured".
+  * [CLIENT-5147] Wait for a populated partition map before declaring the cluster stable.
+  * [CLIENT-5059] `tls_name` parsing.
+  * [CLIENT-5005] Bogus final metrics report at shutdown.
+  * MessagePack `str8` encoding, and other wire divergences from the Java client.
+  * `sleep_multiplier` was ignored by scan and query.
+  * Role allowlists in admin commands.
+
 ## [3.0.0-alpha.1]
 
 * **New Features**
+  * [CLIENT-3779] Distributed ACID transactions (multi-record transactions): `Txn`, `commit`, `abort`,
+    and the per-command `txn` policy field.
+  * [CLIENT-3780] Strong Consistency mode support: `ReadModeSC`, `SCMode`, and linearizable reads.
+  * [CLIENT-3815] CDT path expressions: `select_by_path` / `modify_by_path`, expression-filtered
+    contexts, and the loop-variable expressions they need.
   * [CLIENT-4857] Allow setting `custom-client-id` in `the user-agent-id`.
   * [CLIENT-4858] Expose `SCMode`.
   * [CLIENT-4821] Support `batch_stream` API.
