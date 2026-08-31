@@ -22,7 +22,9 @@ use crate::common;
 use aerospike::operations::cdt_context::{ctx_list_index, ctx_map_key};
 use aerospike::operations::string as str_op;
 use aerospike::operations::string::{StringPolicy, StringRegexFlags, StringWriteFlags};
-use aerospike::{as_bin, as_key, as_list, as_map, as_val, Bins, ReadPolicy, Value, WritePolicy};
+use aerospike::{
+    as_bin, as_key, as_list, as_map, as_val, Bins, ReadPolicy, ResultCode, Value, WritePolicy,
+};
 
 async fn server_supports_string_operations(client: &aerospike::Client) -> bool {
     let supported = match client.cluster.get_random_node() {
@@ -1626,4 +1628,296 @@ async fn regex_replace_with_invalid_pattern_raises_parameter() {
         str_op::regex_replace(&policy, BIN, "[unclosed", "NUM", StringRegexFlags::DEFAULT),
     )
     .await;
+}
+
+// ============================================================
+// Write flags — CREATE_ONLY and UPDATE_ONLY
+// ============================================================
+
+#[aerospike_macro::test]
+async fn create_only_creates_a_missing_bin() {
+    let client = common::client().await;
+    if !server_supports_string_operations(&client).await {
+        return;
+    }
+    let key = as_key!(common::namespace(), &common::rand_str(10), "co-create");
+    let wpolicy = WritePolicy::default();
+    let policy = StringPolicy::new(StringWriteFlags::CREATE_ONLY);
+    put_other_bin_only(&client, &wpolicy, &key).await;
+
+    client
+        .operate(&wpolicy, &key, &[str_op::append(&policy, BIN, "hi")])
+        .await
+        .unwrap();
+
+    assert_eq!(get_string(&client, &key).await, "hi");
+}
+
+#[aerospike_macro::test]
+async fn create_only_on_a_live_bin_raises_bin_exists() {
+    let client = common::client().await;
+    if !server_supports_string_operations(&client).await {
+        return;
+    }
+    let key = as_key!(common::namespace(), &common::rand_str(10), "co-live");
+    let wpolicy = WritePolicy::default();
+    let policy = StringPolicy::new(StringWriteFlags::CREATE_ONLY);
+    put(&client, &wpolicy, &key, "hello").await;
+
+    let err = client
+        .operate(&wpolicy, &key, &[str_op::append(&policy, BIN, " there")])
+        .await
+        .expect_err("CREATE_ONLY on a live bin must fail");
+    assert_eq!(
+        err.server_result_code(),
+        Some(ResultCode::BinExistsError),
+        "unexpected error: {err}"
+    );
+
+    assert_eq!(get_string(&client, &key).await, "hello");
+}
+
+#[aerospike_macro::test]
+async fn create_only_with_no_fail_on_a_live_bin_is_a_silent_noop() {
+    let client = common::client().await;
+    if !server_supports_string_operations(&client).await {
+        return;
+    }
+    let key = as_key!(common::namespace(), &common::rand_str(10), "co-nofail");
+    let wpolicy = WritePolicy::default();
+    let policy =
+        StringPolicy::new(StringWriteFlags::CREATE_ONLY | StringWriteFlags::NO_FAIL);
+    put(&client, &wpolicy, &key, "hello").await;
+
+    client
+        .operate(&wpolicy, &key, &[str_op::append(&policy, BIN, " there")])
+        .await
+        .unwrap();
+
+    assert_eq!(get_string(&client, &key).await, "hello");
+}
+
+/// Only the eight create-capable server ops accept CREATE_ONLY; the per-op
+/// `bad_flags` mask rejects it everywhere else.
+#[aerospike_macro::test]
+async fn create_only_on_a_non_create_op_raises_parameter_error() {
+    let client = common::client().await;
+    if !server_supports_string_operations(&client).await {
+        return;
+    }
+    let key = as_key!(common::namespace(), &common::rand_str(10), "co-noncreate");
+    let wpolicy = WritePolicy::default();
+    let policy = StringPolicy::new(StringWriteFlags::CREATE_ONLY);
+    put(&client, &wpolicy, &key, "hello").await;
+
+    let err = client
+        .operate(&wpolicy, &key, &[str_op::upper(&policy, BIN)])
+        .await
+        .expect_err("CREATE_ONLY on upper must fail");
+    assert_eq!(
+        err.server_result_code(),
+        Some(ResultCode::ParameterError),
+        "unexpected error: {err}"
+    );
+
+    assert_eq!(get_string(&client, &key).await, "hello");
+}
+
+/// The flag validations run while the server parses arguments, upstream of
+/// everything NO_FAIL covers — so NO_FAIL cannot mask them.
+#[aerospike_macro::test]
+async fn no_fail_does_not_mask_the_create_only_rejection() {
+    let client = common::client().await;
+    if !server_supports_string_operations(&client).await {
+        return;
+    }
+    let key = as_key!(common::namespace(), &common::rand_str(10), "co-nofail-mask");
+    let wpolicy = WritePolicy::default();
+    let policy =
+        StringPolicy::new(StringWriteFlags::CREATE_ONLY | StringWriteFlags::NO_FAIL);
+    put(&client, &wpolicy, &key, "hello").await;
+
+    let err = client
+        .operate(&wpolicy, &key, &[str_op::upper(&policy, BIN)])
+        .await
+        .expect_err("NO_FAIL must not suppress the flag rejection");
+    assert_eq!(
+        err.server_result_code(),
+        Some(ResultCode::ParameterError),
+        "unexpected error: {err}"
+    );
+
+    assert_eq!(get_string(&client, &key).await, "hello");
+}
+
+#[aerospike_macro::test]
+async fn update_only_on_a_missing_bin_is_a_noop() {
+    let client = common::client().await;
+    if !server_supports_string_operations(&client).await {
+        return;
+    }
+    let key = as_key!(common::namespace(), &common::rand_str(10), "uo-missing");
+    let wpolicy = WritePolicy::default();
+    let policy = StringPolicy::new(StringWriteFlags::UPDATE_ONLY);
+    put_other_bin_only(&client, &wpolicy, &key).await;
+
+    client
+        .operate(&wpolicy, &key, &[str_op::append(&policy, BIN, "hi")])
+        .await
+        .unwrap();
+
+    // The additive op would have created the bin without this flag.
+    let rec = client
+        .get(&ReadPolicy::default(), &key, Bins::All)
+        .await
+        .unwrap();
+    assert!(rec.bins.get(BIN).is_none());
+    assert_eq!(rec.bins.get("other").unwrap(), &Value::from("untouched"));
+}
+
+#[aerospike_macro::test]
+async fn update_only_on_a_live_bin_applies() {
+    let client = common::client().await;
+    if !server_supports_string_operations(&client).await {
+        return;
+    }
+    let key = as_key!(common::namespace(), &common::rand_str(10), "uo-live");
+    let wpolicy = WritePolicy::default();
+    let policy = StringPolicy::new(StringWriteFlags::UPDATE_ONLY);
+    put(&client, &wpolicy, &key, "hello").await;
+
+    client
+        .operate(&wpolicy, &key, &[str_op::append(&policy, BIN, " there")])
+        .await
+        .unwrap();
+
+    assert_eq!(get_string(&client, &key).await, "hello there");
+}
+
+/// UPDATE_ONLY is valid on every modify op, unlike CREATE_ONLY.
+#[aerospike_macro::test]
+async fn update_only_is_accepted_by_a_non_create_op() {
+    let client = common::client().await;
+    if !server_supports_string_operations(&client).await {
+        return;
+    }
+    let key = as_key!(common::namespace(), &common::rand_str(10), "uo-noncreate");
+    let wpolicy = WritePolicy::default();
+    let policy = StringPolicy::new(StringWriteFlags::UPDATE_ONLY);
+    put(&client, &wpolicy, &key, "hello").await;
+
+    client
+        .operate(&wpolicy, &key, &[str_op::upper(&policy, BIN)])
+        .await
+        .unwrap();
+
+    assert_eq!(get_string(&client, &key).await, "HELLO");
+}
+
+#[aerospike_macro::test]
+async fn create_only_with_update_only_raises_parameter_error() {
+    let client = common::client().await;
+    if !server_supports_string_operations(&client).await {
+        return;
+    }
+    let key = as_key!(common::namespace(), &common::rand_str(10), "co-uo");
+    let wpolicy = WritePolicy::default();
+    let policy =
+        StringPolicy::new(StringWriteFlags::CREATE_ONLY | StringWriteFlags::UPDATE_ONLY);
+    put(&client, &wpolicy, &key, "hello").await;
+
+    let err = client
+        .operate(&wpolicy, &key, &[str_op::append(&policy, BIN, " there")])
+        .await
+        .expect_err("CREATE_ONLY and UPDATE_ONLY are mutually exclusive");
+    assert_eq!(
+        err.server_result_code(),
+        Some(ResultCode::ParameterError),
+        "unexpected error: {err}"
+    );
+
+    assert_eq!(get_string(&client, &key).await, "hello");
+}
+
+#[aerospike_macro::test]
+async fn create_only_with_no_fail_still_raises_the_mutual_exclusion_error() {
+    let client = common::client().await;
+    if !server_supports_string_operations(&client).await {
+        return;
+    }
+    let key = as_key!(common::namespace(), &common::rand_str(10), "co-uo-nofail");
+    let wpolicy = WritePolicy::default();
+    let policy = StringPolicy::new(
+        StringWriteFlags::CREATE_ONLY | StringWriteFlags::UPDATE_ONLY | StringWriteFlags::NO_FAIL,
+    );
+    put(&client, &wpolicy, &key, "hello").await;
+
+    let err = client
+        .operate(&wpolicy, &key, &[str_op::append(&policy, BIN, " there")])
+        .await
+        .expect_err("NO_FAIL must not suppress the mutual-exclusion error");
+    assert_eq!(
+        err.server_result_code(),
+        Some(ResultCode::ParameterError),
+        "unexpected error: {err}"
+    );
+}
+
+/// CREATE_ONLY is refused on a context path: there is no bin to create when the
+/// target is a leaf inside a collection.
+///
+/// The Go client carries this test with a note that it cannot discriminate,
+/// because its flat CTX envelope failed with `PARAMETER_ERROR` whatever the
+/// policy said. This client nests the envelope (CLIENT-5308), so the control
+/// below is the point of the test: the identical operation *without*
+/// CREATE_ONLY succeeds, which is what makes the failure attributable to the
+/// flag.
+#[aerospike_macro::test]
+async fn create_only_on_a_ctx_path_raises_parameter_error() {
+    let client = common::client().await;
+    if !server_supports_string_operations(&client).await {
+        return;
+    }
+    let key = as_key!(common::namespace(), &common::rand_str(10), "co-ctx");
+    let wpolicy = WritePolicy::default();
+    let _ = common::delete_durably(&client, &wpolicy, &key).await;
+    client
+        .put(&wpolicy, &key, &[as_bin!("lbin", as_list!("hello"))])
+        .await
+        .unwrap();
+
+    let create_only = StringPolicy::new(StringWriteFlags::CREATE_ONLY);
+    let err = client
+        .operate(
+            &wpolicy,
+            &key,
+            &[str_op::append(&create_only, "lbin", "hi").context(vec![ctx_list_index(0)])],
+        )
+        .await
+        .expect_err("CREATE_ONLY under a context must fail");
+    assert_eq!(
+        err.server_result_code(),
+        Some(ResultCode::ParameterError),
+        "unexpected error: {err}"
+    );
+
+    // The control: same op, same path, no CREATE_ONLY.
+    let default = StringPolicy::default();
+    client
+        .operate(
+            &wpolicy,
+            &key,
+            &[str_op::append(&default, "lbin", "hi").context(vec![ctx_list_index(0)])],
+        )
+        .await
+        .expect("the same op without CREATE_ONLY must succeed");
+
+    let rec = client
+        .get(&ReadPolicy::default(), &key, Bins::All)
+        .await
+        .unwrap();
+    assert_eq!(
+        rec.bins.get("lbin").unwrap(),
+        &Value::List(vec![Value::from("hellohi")])
+    );
 }

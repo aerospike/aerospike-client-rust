@@ -26,9 +26,12 @@ use aerospike::expressions::{
 use aerospike::operations::exp::{read_exp, ExpReadFlags};
 use aerospike::operations::lists::ListReturnType;
 use aerospike::operations::maps::MapReturnType;
-use aerospike::operations::string::{StringNumericType, StringPolicy, StringRegexFlags};
+use aerospike::operations::string::{
+    StringNumericType, StringPolicy, StringRegexFlags, StringWriteFlags,
+};
 use aerospike::{
-    as_bin, as_key, as_list, as_map, as_val, Bins, Key, ReadPolicy, Record, Value, WritePolicy,
+    as_bin, as_key, as_list, as_map, as_val, Bins, Key, ReadPolicy, Record, ResultCode, Value,
+    WritePolicy,
 };
 
 const BIN: &str = "sbin";
@@ -824,4 +827,152 @@ async fn equality_comparison_with_string_expression() {
     let expr = eq(str_exp::strlen(string_bin(BIN.into())), int_val(11));
     let rec = eval(&client, &key, expr).await;
     assert_eq!(rec.bins.get(VAR).unwrap(), &Value::Bool(true));
+}
+
+// ============================================================
+// Write flags — CREATE_ONLY and UPDATE_ONLY
+// ============================================================
+
+/// A suppressed modify restores the original particle, so the expression
+/// evaluates to the *source* string rather than to nil.
+#[aerospike_macro::test]
+async fn create_only_with_no_fail_evaluates_to_the_source_string() {
+    let client = common::client().await;
+    if !server_supports_string_operations(&client).await {
+        return;
+    }
+    let key = as_key!(common::namespace(), &common::rand_str(10), "exp_co_nofail");
+    put_str(&client, &WritePolicy::default(), &key, "hello").await;
+
+    let policy = StringPolicy::new(StringWriteFlags::CREATE_ONLY | StringWriteFlags::NO_FAIL);
+    let rec = eval(
+        &client,
+        &key,
+        str_exp::append(
+            &policy,
+            string_val(" there".to_string()),
+            string_bin(BIN.to_string()),
+        ),
+    )
+    .await;
+
+    assert_eq!(rec.bins.get(VAR).unwrap(), &Value::from("hello"));
+}
+
+/// The same shape for a failure NO_FAIL *does* cover: an empty pad string is a
+/// prepare-time failure, and the expression falls back to the source.
+#[aerospike_macro::test]
+async fn no_fail_suppressing_a_prepare_failure_evaluates_to_the_source() {
+    let client = common::client().await;
+    if !server_supports_string_operations(&client).await {
+        return;
+    }
+    let key = as_key!(common::namespace(), &common::rand_str(10), "exp_nofail_prep");
+    put_str(&client, &WritePolicy::default(), &key, "hello").await;
+
+    let policy = StringPolicy::new(StringWriteFlags::NO_FAIL);
+    let rec = eval(
+        &client,
+        &key,
+        str_exp::pad_start(
+            &policy,
+            int_val(10),
+            string_val(String::new()),
+            string_bin(BIN.to_string()),
+        ),
+    )
+    .await;
+
+    assert_eq!(rec.bins.get(VAR).unwrap(), &Value::from("hello"));
+}
+
+#[aerospike_macro::test]
+async fn update_only_applies_to_an_existing_source() {
+    let client = common::client().await;
+    if !server_supports_string_operations(&client).await {
+        return;
+    }
+    let key = as_key!(common::namespace(), &common::rand_str(10), "exp_uo");
+    put_str(&client, &WritePolicy::default(), &key, "hello").await;
+
+    let policy = StringPolicy::new(StringWriteFlags::UPDATE_ONLY);
+    let rec = eval(
+        &client,
+        &key,
+        str_exp::append(
+            &policy,
+            string_val(" there".to_string()),
+            string_bin(BIN.to_string()),
+        ),
+    )
+    .await;
+
+    assert_eq!(rec.bins.get(VAR).unwrap(), &Value::from("hello there"));
+}
+
+#[aerospike_macro::test]
+async fn create_only_on_an_existing_source_fails() {
+    let client = common::client().await;
+    if !server_supports_string_operations(&client).await {
+        return;
+    }
+    let key = as_key!(common::namespace(), &common::rand_str(10), "exp_co_live");
+    put_str(&client, &WritePolicy::default(), &key, "hello").await;
+
+    let policy = StringPolicy::new(StringWriteFlags::CREATE_ONLY);
+    let ops = &[read_exp(
+        VAR,
+        str_exp::append(
+            &policy,
+            string_val(" there".to_string()),
+            string_bin(BIN.to_string()),
+        ),
+        ExpReadFlags::Default,
+    )];
+
+    // The operation path reports `BIN_EXISTS_ERROR` here; the expression VM
+    // collapses a failed sub-expression into `OP_NOT_APPLICABLE`, so that is
+    // what a caller sees. (The Go client asserts only that it fails.)
+    let err = client
+        .operate(&WritePolicy::default(), &key, ops)
+        .await
+        .expect_err("CREATE_ONLY on an existing source must fail");
+    assert_eq!(
+        err.server_result_code(),
+        Some(ResultCode::OpNotApplicable),
+        "unexpected error: {err}"
+    );
+}
+
+#[aerospike_macro::test]
+async fn create_only_with_update_only_fails_in_an_expression() {
+    let client = common::client().await;
+    if !server_supports_string_operations(&client).await {
+        return;
+    }
+    let key = as_key!(common::namespace(), &common::rand_str(10), "exp_co_uo");
+    put_str(&client, &WritePolicy::default(), &key, "hello").await;
+
+    let policy = StringPolicy::new(StringWriteFlags::CREATE_ONLY | StringWriteFlags::UPDATE_ONLY);
+    let ops = &[read_exp(
+        VAR,
+        str_exp::append(
+            &policy,
+            string_val(" there".to_string()),
+            string_bin(BIN.to_string()),
+        ),
+        ExpReadFlags::Default,
+    )];
+
+    // Same collapse as above: the operation path reports `PARAMETER_ERROR` for
+    // this, an expression reports `OP_NOT_APPLICABLE`.
+    let err = client
+        .operate(&WritePolicy::default(), &key, ops)
+        .await
+        .expect_err("CREATE_ONLY and UPDATE_ONLY are mutually exclusive");
+    assert_eq!(
+        err.server_result_code(),
+        Some(ResultCode::OpNotApplicable),
+        "unexpected error: {err}"
+    );
 }
