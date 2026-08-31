@@ -21,7 +21,9 @@ use crate::common;
 
 use aerospike::operations::cdt_context::{ctx_list_index, ctx_map_key};
 use aerospike::operations::string as str_op;
-use aerospike::operations::string::{StringPolicy, StringRegexFlags, StringWriteFlags};
+use aerospike::operations::string::{
+    StringNumericType, StringPolicy, StringRegexFlags, StringWriteFlags,
+};
 use aerospike::{
     as_bin, as_key, as_list, as_map, as_val, Bins, ReadPolicy, ResultCode, Value, WritePolicy,
 };
@@ -2000,4 +2002,53 @@ async fn snip_from_with_a_non_default_policy_still_truncates() {
         .unwrap();
 
     assert_eq!(get_string(&client, &key).await, "hello");
+}
+
+/// `is_numeric` with a [`StringNumericType::Float`] filter is `is_valid_double
+/// && has_decimal_fraction` on the server, not just "parses as a float". These
+/// four inputs pin each half of that, including the case that surprises: a
+/// valid `double` with no fractional digit is numeric under *neither* `Float`
+/// nor `Any`.
+#[aerospike_macro::test]
+async fn is_numeric_typed_float_requires_a_fractional_digit() {
+    let client = common::client().await;
+    if !server_supports_string_operations(&client).await {
+        return;
+    }
+    let key = as_key!(common::namespace(), &common::rand_str(10), "num-typed");
+    let wpolicy = WritePolicy::default();
+
+    for (value, float, int, any) in [
+        ("3.14", true, false, true),
+        // An integer: not float-class, but numeric under Any via the int branch.
+        ("5", false, true, true),
+        // A '.' with no digit after it is not a fractional part.
+        ("5.", false, false, false),
+        // `strtod` accepts this; the server still refuses it, both as Float and
+        // as Any, because it has no '.' followed by a digit.
+        ("1e5", false, false, false),
+    ] {
+        put(&client, &wpolicy, &key, value).await;
+
+        for (numeric_type, expected) in [
+            (StringNumericType::Float, float),
+            (StringNumericType::Int, int),
+            (StringNumericType::Any, any),
+        ] {
+            let rec = client
+                .operate(
+                    &wpolicy,
+                    &key,
+                    &[str_op::is_numeric_typed(BIN, numeric_type)],
+                )
+                .await
+                .unwrap();
+
+            assert_eq!(
+                rec.bins.get(BIN).unwrap(),
+                &Value::Bool(expected),
+                "is_numeric_typed({value:?}, {numeric_type:?})"
+            );
+        }
+    }
 }
