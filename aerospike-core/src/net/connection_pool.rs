@@ -19,7 +19,9 @@ use std::sync::Arc;
 use crate::commands::admin_command::SessionInfo;
 use crate::errors::{Error, Result};
 use crate::metrics::NodeMetrics;
+use crate::net::connection::IdleStatus;
 use crate::net::{Connection, ConnectionState, Host};
+use aerospike_rt::time::Instant;
 use crate::policy::ClientPolicy;
 use std::collections::VecDeque;
 use std::sync::Mutex;
@@ -199,19 +201,12 @@ impl Queue {
                 .connections
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
-            if let Some(conn) = connections.pop_front() {
+            // LIFO: the most recently returned connection is the freshest and
+            // the most likely to be healthy. Retirement of idle connections is
+            // tend's job exclusively (it holds the min-conns budget); checkout
+            // checks health only.
+            if let Some(conn) = connections.pop_back() {
                 drop(connections);
-                if conn.is_idle() {
-                    // let the connection drop and close
-                    if let Some(metrics) = self.metrics() {
-                        metrics.incr_connections_idle_dropped();
-                        metrics.incr_connections_closed();
-                    }
-                    drop(conn);
-                    self.reduce_capacity();
-                    continue;
-                }
-
                 // A server restart leaves the pool full of sockets the peer has
                 // already closed. Handing one to a command makes it fail on its
                 // first read (`early eof`) and burn a retry, so discard it here
@@ -291,31 +286,52 @@ impl Queue {
             .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
-    /// Pull every currently-idle connection out of the queue without
-    /// blocking — uses `try_lock` so a contended pool returns `None`
-    /// and the caller can skip this iteration.
+    /// Inspect the oldest pooled connection and, when it needs attention,
+    /// take it out with the verdict. `may_retire` = the caller's global
+    /// budget still allows closing a connection without breaching
+    /// `min_conns_per_node`. `expiry_horizon` = a deadline inside it counts
+    /// as expiring. `None` = queue contended by a live caller; skip it
+    /// this tend.
     ///
-    /// Ownership of the returned connections transfers to the caller: they
-    /// must either put survivors back with [`put_back`] or drop + call
-    /// [`reduce_capacity`] for each one that goes away. Non-idle connections
-    /// stay in the queue.
-    pub fn try_extract_idle(&self) -> Option<Vec<Connection>> {
+    /// The pool is LIFO (`get` and `put_back` both work the back), so the
+    /// front is always the least recently used connection: once it is
+    /// `Fresh`, everything behind it is fresher.
+    pub(crate) fn inspect_tail(
+        &self,
+        may_retire: bool,
+        expiry_horizon: std::time::Duration,
+    ) -> Option<TailVerdict> {
         let mut connections = self.0.connections.try_lock().ok()?;
-        if connections.is_empty() {
-            return Some(Vec::new());
-        }
-        let mut idle = Vec::new();
-        let mut kept = VecDeque::with_capacity(connections.len());
-        for conn in connections.drain(..) {
-            if conn.is_idle() {
-                idle.push(conn);
-            } else {
-                kept.push_back(conn);
+        let Some(oldest) = connections.front() else {
+            return Some(TailVerdict::Settled);
+        };
+        let verdict = match oldest.idle_status(Instant::now(), expiry_horizon) {
+            // Surplus retires when its own clock runs out.
+            IdleStatus::Expired if may_retire => {
+                TailVerdict::Retire(connections.pop_front().unwrap())
             }
-        }
-        *connections = kept;
-        Some(idle)
+            // Floor-protected and expired (a missed pass) or about to expire:
+            // heal it. Never reached while retiring is still allowed, so a
+            // probe can never renew a clock the pool is waiting on.
+            IdleStatus::Expired | IdleStatus::ExpiringSoon if !may_retire => {
+                TailVerdict::KeepAlive(connections.pop_front().unwrap())
+            }
+            // Fresh — or expiring surplus, which is left to age out.
+            _ => TailVerdict::Settled,
+        };
+        Some(verdict)
     }
+}
+
+/// Tend's decision about a queue's oldest connection.
+#[derive(Debug)]
+pub(crate) enum TailVerdict {
+    /// The tail needs no attention; everything behind it is fresher.
+    Settled,
+    /// Expired surplus, taken out of the queue: close it.
+    Retire(Connection),
+    /// Expired or expiring but floor-protected, taken out: probe and re-pool.
+    KeepAlive(Connection),
 }
 
 impl Clone for Queue {
@@ -849,7 +865,7 @@ mod tests {
     }
 
     #[aerospike_macro::test]
-    async fn get_idle_reduces_reserved() {
+    async fn get_hands_out_expired_connection_retirement_is_tends_job() {
         let host = Host::new("some-url", 30000);
         let policy = ClientPolicy {
             idle_timeout: 1,
@@ -861,19 +877,18 @@ mod tests {
             .await
             .expect("creating dummy connection failed");
         put_back_with_reserve!(q, c);
-        assert_eq!(q.reserved(), 1);
-        assert_eq!(q.num_conns(), 1);
 
         aerospike_rt::sleep(aerospike_rt::time::Duration::from_millis(5)).await;
 
+        // The connection is past its idle deadline but healthy. Checkout must
+        // hand it out anyway: an expired connection works fine, and retiring
+        // it here would bypass the min-conns budget that only tend holds.
         let result = q.get();
-        assert!(result.is_err(), "idle connection should have been skipped");
-        assert_eq!(
-            q.reserved(),
-            0,
-            "reserved must be decremented when an idle connection is dropped"
+        assert!(
+            result.is_ok(),
+            "checkout must not retire expired-but-healthy connections"
         );
-        assert_eq!(q.num_conns(), 0);
+        assert_eq!(q.reserved(), 1, "the connection is loaned out, not closed");
     }
 
     #[aerospike_macro::test]

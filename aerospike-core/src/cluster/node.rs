@@ -14,6 +14,7 @@
 // the License.
 
 use std::collections::HashMap;
+use std::time::Duration;
 use indexmap::IndexMap;
 use std::fmt;
 use std::hash::{Hash, Hasher};
@@ -33,7 +34,7 @@ use crate::cluster::CLIENT_VERSION;
 use crate::commands::Message;
 use crate::errors::{Error, Result};
 use crate::metrics::NodeMetrics;
-use crate::net::{Connection, ConnectionPool, Host, PooledConnection};
+use crate::net::{Connection, ConnectionPool, Host, PooledConnection, TailVerdict};
 use crate::policy::{AdminPolicy, ClientPolicy};
 use crate::Version;
 
@@ -41,6 +42,11 @@ pub const PARTITIONS: usize = 4096;
 pub const PARTITION_GENERATION: &str = "partition-generation";
 pub const PEERS_GENERATION: &str = "peers-generation";
 pub const REBALANCE_GENERATION: &str = "rebalance-generation";
+
+/// Safety margin added to the keep-alive look-ahead: a floor connection is
+/// healed once its idle deadline is within `tend_interval + this`, so a late
+/// or skipped tend pass cannot let it expire in the pool.
+const KEEPALIVE_MARGIN: Duration = Duration::from_secs(1);
 
 /// The node instance holding connections and node settings.
 /// Exposed for usage in the sync client interface.
@@ -95,6 +101,23 @@ pub struct Node {
     /// `ClientPolicy::opening_connection_threshold` before spawning a fill —
     /// mirrors the Go client's `Cluster.connectionThreshold`.
     opening_connections: Arc<AtomicUsize>,
+}
+
+/// Await a spawned probe task. A panicked task degrades to a failed probe
+/// (`None`) on both runtimes, so the tend task survives.
+async fn await_spawned_task<T>(handle: aerospike_rt::task::JoinHandle<Option<T>>) -> Option<T> {
+    use futures::FutureExt;
+    std::panic::AssertUnwindSafe(async move {
+        #[cfg(feature = "rt-tokio")]
+        return handle.await.ok().flatten(); 
+
+        #[cfg(feature = "rt-async-std")]
+        return handle.await; // task panic re-raises here → caught below
+    })
+    .catch_unwind()
+    .await
+    .ok() // Err(payload) = a panic was caught → None
+    .flatten()
 }
 
 impl Drop for Node {
@@ -916,91 +939,100 @@ impl Node {
     /// calls `conn.refresh()` internally), so the probed connection goes
     /// back into the pool as fresh.
     ///
-    /// **Non-blocking**: uses `try_lock` on each queue so a contended pool
-    /// is skipped for this tend iteration — tend retries next time. Probes
-    /// run concurrently via `join_all` so total wall-clock is bounded by
-    /// the single slowest probe, not `N × per-probe latency`.
+    /// Queues are swept round-robin, one verdict per queue per turn, so the
+    /// retire budget is spent evenly across queues instead of draining them
+    /// in order. All keep-alive probes complete before this function returns,
+    /// so the pool is settled and the returned count is final.
     ///
     /// Returns the number of connections processed (reaped + refreshed).
     pub async fn reap_and_refresh_idle_connections(&self) -> usize {
         let policy = &self.client_policy;
-        let num_queues = policy.conn_pools_per_node as usize;
-        if num_queues == 0 {
+        if policy.conn_pools_per_node == 0 {
             return 0;
         }
 
-        // How many idle connections we may reap this pass without taking the
-        // node below `min_conns_per_node`. This is a GLOBAL budget shared across
-        // the internal queues, matching `fill_min_conns` (which also compares
-        // the whole pool against `min`).
+        // Global budget shared across queues: how many may be closed without
+        // taking the node below `min_conns_per_node`.
         let mut droppable = self
             .connection_pool
             .total_reserved()
             .saturating_sub(policy.min_conns_per_node);
+
+        // A floor connection whose idle deadline falls inside this horizon
+        // would expire before tend can look again — heal it now.
+        let expiry_horizon =
+            std::time::Duration::from_millis(u64::from(policy.tend_interval)) + KEEPALIVE_MARGIN;
 
         let probe_policy = AdminPolicy {
             // Tight timeout — this is a keep-alive probe, not a command.
             timeout: policy.timeout.min(2000),
         };
 
+        // Cycle through queues one verdict at a time so the retire budget is spread
+        // evenly instead of draining queues in order. A full lap of quiet verdicts
+        // (fresh, empty, or contended) ends the sweep. With no queues, cycle() is empty.
+        //
+        // Probed connections are put back only after this loop. Putting one back here
+        // could make it immediately eligible again—especially when
+        // idle_timeout <= tend_interval + KEEPALIVE_MARGIN—and cause an infinite sweep.
+        // `take` is the safety bound: capacity-bounded pops should terminate normally;
+        // it only protects against an accidental non-terminating sweep.
+        let mut probe_handles = Vec::new();
         let mut total_processed = 0usize;
-        for queue in self.connection_pool.queues() {
-            let Some(idle) = queue.try_extract_idle() else {
-                // Queue is contended by a live caller — skip this tend.
-                continue;
-            };
-            if idle.is_empty() {
-                continue;
-            }
-
-            // Reap only the surplus (up to the remaining global budget); keep
-            // the rest alive via a probe so the pool stays at/above `min`.
-            let to_drop = droppable.min(idle.len());
-            droppable -= to_drop;
-
-            let mut idle_iter = idle.into_iter();
-            for conn in idle_iter.by_ref().take(to_drop) {
-                drop(conn);
-                queue.reduce_capacity();
-                self.metrics.incr_connections_idle_dropped();
-                self.metrics.incr_connections_closed();
-                total_processed += 1;
-            }
-            let keepers: Vec<Connection> = idle_iter.collect();
-
-            if keepers.is_empty() {
-                continue;
-            }
-
-            // Probe keepers concurrently. Successful probe → surviving conn
-            // goes straight back in the queue (its idle deadline was reset
-            // as a side effect of reading the info response). Failed probe
-            // → the connection is dead; free its slot.
-            let probes = keepers.into_iter().map(|mut conn| {
-                let pp = probe_policy;
-                async move {
-                    match Message::info(&pp, &mut conn, &["node"]).await {
-                        Ok(_) => Some(conn),
-                        Err(_) => None,
-                    }
-                }
-            });
-            let results = futures::future::join_all(probes).await;
-
-            for result in results {
-                if let Some(conn) = result {
-                    // `put_back` uses a blocking `lock()` but only
-                    // briefly (push one element) — no async I/O is
-                    // held under it. Keeps the API simple and the
-                    // probed conns go back in order.
-                    queue.put_back(conn);
-                    total_processed += 1;
-                } else {
+        let queues = self.connection_pool.queues();
+        let max_probe_attempts = queues.len() * (policy.max_conns_per_node + 1);
+        let mut queues_without_work = 0;
+        for queue in queues.iter().cycle().take(max_probe_attempts) {
+            match queue.inspect_tail(droppable > 0, expiry_horizon) {
+                Some(TailVerdict::Retire(conn)) => {
+                    drop(conn);
                     queue.reduce_capacity();
+                    droppable = droppable.saturating_sub(1);
+                    self.metrics.incr_connections_idle_dropped();
                     self.metrics.incr_connections_closed();
                     total_processed += 1;
+                    queues_without_work = 0;
+                }
+                Some(TailVerdict::KeepAlive(conn)) => {
+                    // Probe runs concurrently from here; pool mutation waits below.
+                    // The queue stays outside the task so its slot can be freed
+                    // even if the task dies.
+                    let pp = probe_policy;
+                    let handle = aerospike_rt::spawn(async move {
+                        let mut conn = conn;
+                        match Message::info(&pp, &mut conn, &["node"]).await {
+                            Ok(_) => Some(conn),
+                            Err(_) => None,
+                        }
+                    });
+                    probe_handles.push((queue.clone(), handle));
+                    queues_without_work = 0;
+                }
+                // Settled (front is fresh, so everything behind it is fresher) or
+                // contended (leave it for traffic and re-check it on the next lap).
+                None | Some(TailVerdict::Settled) => {
+                    queues_without_work += 1;
+                    if queues_without_work == queues.len() {
+                        break;
+                    }
                 }
             }
+        }
+
+        // Each handle is paired with the queue its connection came from, and
+        // the task returns the connection itself on success. The probes have
+        // been running since spawn, so awaiting them in order costs only the
+        // slowest one. A healed connection re-pools into its own queue, and a
+        // failed one frees that queue's reserved slot.
+        for (queue, handle) in probe_handles {
+            match await_spawned_task(handle).await {
+                Some(conn) => queue.put_back(conn),
+                None => {
+                    queue.reduce_capacity();
+                    self.metrics.incr_connections_closed();
+                }
+            }
+            total_processed += 1;
         }
 
         total_processed
@@ -1338,5 +1370,336 @@ mod node_tests {
         assert_eq!(node.connection_pool.total_reserved(), 5);
 
         drop(in_flight);
+    }
+}
+
+/// LIFO pool-health tests. A loopback fake node stands in for `asd`: dead
+/// mode FINs every accepted socket, live mode answers info probes. Each test
+/// drives one or more reaper passes directly — the same method tend calls.
+#[cfg(all(test, feature = "rt-tokio"))]
+mod pool_health_tests {
+    use std::net::SocketAddr;
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+    use std::sync::Arc;
+
+    use aerospike_rt::net::TcpListener;
+
+    use crate::cluster::node_validator::NodeValidator;
+    use crate::net::Host;
+    use crate::policy::ClientPolicy;
+    use crate::Version;
+
+    use super::Node;
+
+    /// Fake node; the flag toggles dead (FIN on accept) vs live (answers info).
+    async fn spawn_fake_node(dead: bool) -> (SocketAddr, Arc<AtomicBool>) {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let dead_flag = Arc::new(AtomicBool::new(dead));
+        let flag = dead_flag.clone();
+        aerospike_rt::spawn(async move {
+            use tokio::io::{AsyncReadExt, AsyncWriteExt};
+            loop {
+                let Ok((mut sock, _)) = listener.accept().await else {
+                    break;
+                };
+                if flag.load(Ordering::SeqCst) {
+                    let _ = sock.shutdown().await;
+                    drop(sock);
+                } else {
+                    aerospike_rt::spawn(async move {
+                        loop {
+                            // Info framing: 8-byte header + payload.
+                            let mut header = [0u8; 8];
+                            if sock.read_exact(&mut header).await.is_err() {
+                                return;
+                            }
+                            let mut len8 = [0u8; 8];
+                            len8[2..8].copy_from_slice(&header[2..8]);
+                            let len = u64::from_be_bytes(len8) as usize;
+                            let mut payload = vec![0u8; len];
+                            if sock.read_exact(&mut payload).await.is_err() {
+                                return;
+                            }
+                            let body: &[u8] = b"node\tFAKEPEER\n";
+                            let mut resp = Vec::with_capacity(8 + body.len());
+                            resp.push(2);
+                            resp.push(1);
+                            resp.extend_from_slice(&(body.len() as u64).to_be_bytes()[2..8]);
+                            resp.extend_from_slice(body);
+                            if sock.write_all(&resp).await.is_err() {
+                                return;
+                            }
+                        }
+                    });
+                }
+            }
+        });
+        (addr, dead_flag)
+    }
+
+    fn node_against(addr: SocketAddr, policy: ClientPolicy) -> Node {
+        let nv = Arc::new(NodeValidator {
+            name: "fake-node".to_string(),
+            aliases: vec![Host::new(&addr.ip().to_string(), addr.port())],
+            address: addr.to_string(),
+            client_policy: policy.clone(),
+            use_new_info: true,
+            version: Version::default(),
+            detect_load_balancer: false,
+        });
+        let metrics = Arc::new(crate::metrics::NodeMetrics::new(
+            crate::metrics::MetricsPolicy::default(),
+        ));
+        Node::new(policy, nv, metrics, Arc::new(AtomicUsize::new(0)), None)
+    }
+
+    /// Park `n` real TCP conns (make_conn's test shim has no socket).
+    async fn park_conns(node: &Node, addr: SocketAddr, policy: &ClientPolicy, n: usize) {
+        let queue = &node.connection_pool.queues()[0];
+        for _ in 0..n {
+            let stream = aerospike_rt::net::TcpStream::connect(addr)
+                .await
+                .expect("connect to fake node");
+            let conn = crate::net::Connection::test_from_tcp_stream(stream, policy);
+            assert!(queue.reserve_capacity());
+            queue.put_back(conn);
+        }
+        // Let the peer's accept/FIN land.
+        aerospike_rt::sleep(std::time::Duration::from_millis(50)).await;
+        assert_eq!(node.connection_pool.num_conns(), n);
+    }
+
+    fn test_policy(idle_timeout: u32, min_conns: usize) -> ClientPolicy {
+        ClientPolicy {
+            idle_timeout,
+            min_conns_per_node: min_conns,
+            tend_interval: 250,
+            // Generous, so a probe cannot time out on a loaded machine.
+            timeout: 5_000,
+            ..ClientPolicy::default()
+        }
+    }
+
+    // ─── LIFO ordering ────────────────────────────────────────────────────
+
+    /// Checkout returns the most recently returned connection; a reused
+    /// connection stays on top while the rest of the pool ages untouched.
+    #[aerospike_macro::test]
+    async fn checkout_is_lifo() {
+        let (addr, _dead) = spawn_fake_node(false).await;
+        let policy = test_policy(0, 0);
+        let node = node_against(addr, policy.clone());
+        park_conns(&node, addr, &policy, 3).await;
+
+        let queue = &node.connection_pool.queues()[0];
+        let first = queue.get().expect("conn");
+        drop(first); // returns to the top
+        let again = queue.get().expect("conn");
+        // With three parked conns and LIFO order, num_conns dropped by one and
+        // the same top slot cycles; the two older conns were never touched.
+        assert_eq!(node.connection_pool.num_conns(), 2);
+        drop(again);
+    }
+
+    // ─── retention: surplus retires, floor survives ───────────────────────
+
+    /// The regression gate: surplus retires across repeated tends even while
+    /// tend keeps running. Under FIFO+probe designs the maintenance itself
+    /// kept renewing the surplus deadlines and the pool never shrank.
+    #[aerospike_macro::test]
+    async fn surplus_retires_across_repeated_tends() {
+        let (addr, _dead) = spawn_fake_node(false).await;
+        let policy = test_policy(600, 1); // retire after 600ms, keep 1 warm
+        let node = node_against(addr, policy.clone());
+        park_conns(&node, addr, &policy, 4).await;
+
+        for _ in 0..4 {
+            aerospike_rt::sleep(std::time::Duration::from_millis(300)).await;
+            node.reap_and_refresh_idle_connections().await;
+        }
+
+        assert_eq!(
+            node.connection_pool.total_reserved(),
+            1,
+            "surplus must retire down to min_conns_per_node across repeated tends"
+        );
+    }
+
+    /// A connection short of its idle deadline is left alone — no drop, no
+    /// probe. Touching it would renew the deadline and keep surplus alive.
+    #[aerospike_macro::test]
+    async fn unexpired_conns_are_left_alone() {
+        let (addr, _dead) = spawn_fake_node(false).await;
+        let policy = test_policy(60_000, 0); // one minute: nothing expires here
+        let node = node_against(addr, policy.clone());
+        park_conns(&node, addr, &policy, 2).await;
+
+        let processed = node.reap_and_refresh_idle_connections().await;
+        assert_eq!(processed, 0, "nothing is expired, so tend must touch nothing");
+        assert_eq!(node.connection_pool.num_conns(), 2);
+    }
+
+    /// A floor connection past its deadline (e.g. after a missed pass) is
+    /// healed — probed and re-pooled — not stranded or dropped.
+    #[aerospike_macro::test]
+    async fn expired_floor_conn_is_healed() {
+        let (addr, _dead) = spawn_fake_node(false).await;
+        let policy = test_policy(300, 1); // floor of 1
+        let node = node_against(addr, policy.clone());
+        park_conns(&node, addr, &policy, 1).await;
+
+        aerospike_rt::sleep(std::time::Duration::from_millis(400)).await; // expired
+
+        let processed = node.reap_and_refresh_idle_connections().await;
+        assert_eq!(processed, 1, "the floor conn must be probed");
+        assert_eq!(
+            node.connection_pool.num_conns(),
+            1,
+            "a live floor conn survives its probe and returns to the pool"
+        );
+        // And checkout can use it immediately (no expired-discard at checkout).
+        assert!(node.connection_pool.queues()[0].get().is_ok());
+    }
+
+    /// A dead floor connection fails its probe and is evicted, freeing the
+    /// slot for fill_min_conns to replace.
+    #[aerospike_macro::test]
+    async fn dead_floor_conn_is_evicted_by_probe() {
+        let (addr, _dead) = spawn_fake_node(true).await; // peer FINs everything
+        let policy = test_policy(300, 1);
+        let node = node_against(addr, policy.clone());
+        park_conns(&node, addr, &policy, 1).await;
+
+        aerospike_rt::sleep(std::time::Duration::from_millis(400)).await;
+
+        node.reap_and_refresh_idle_connections().await;
+        assert_eq!(
+            node.connection_pool.total_reserved(),
+            0,
+            "a dead floor conn must be evicted so the fill can replace it"
+        );
+    }
+
+    /// idle_timeout = 0: no deadline exists, so tend must touch nothing —
+    /// no drops, no probes. Dead sockets are the checkout peek's job.
+    #[aerospike_macro::test]
+    async fn idle_timeout_zero_tend_is_noop() {
+        let (addr, _dead) = spawn_fake_node(true).await; // even with DEAD conns
+        let policy = test_policy(0, 0);
+        let node = node_against(addr, policy.clone());
+        park_conns(&node, addr, &policy, 3).await;
+
+        aerospike_rt::sleep(std::time::Duration::from_millis(400)).await;
+
+        let processed = node.reap_and_refresh_idle_connections().await;
+        assert_eq!(processed, 0, "no deadline armed: tend has nothing to do");
+        assert_eq!(node.connection_pool.num_conns(), 3);
+    }
+
+    /// One pass over a fully-expired pool retires exactly the surplus and
+    /// keep-alives exactly the floor — the probe batch is bounded by
+    /// `min_conns_per_node`, and the loop terminates with the queue drained.
+    #[aerospike_macro::test]
+    async fn keepalive_batch_is_bounded_by_the_floor() {
+        let (addr, _dead) = spawn_fake_node(false).await;
+        let policy = test_policy(300, 2); // floor of 2
+        let node = node_against(addr, policy.clone());
+        park_conns(&node, addr, &policy, 5).await;
+
+        aerospike_rt::sleep(std::time::Duration::from_millis(400)).await; // all expired
+
+        let processed = node.reap_and_refresh_idle_connections().await;
+
+        assert_eq!(processed, 5, "3 retired + 2 probed: every conn accounted for");
+        assert_eq!(
+            node.connection_pool.total_reserved(),
+            2,
+            "exactly the floor survives: surplus retired, keepers healed"
+        );
+        assert_eq!(
+            node.connection_pool.num_conns(),
+            2,
+            "both floor conns are back in the pool after their probes"
+        );
+    }
+
+    /// The retire budget is global across queues: the pool settles at the
+    /// floor and the budget cannot underflow.
+    #[aerospike_macro::test]
+    async fn retire_budget_is_shared_across_queues() {
+        let (addr, _dead) = spawn_fake_node(false).await;
+        let policy = ClientPolicy {
+            idle_timeout: 300,
+            min_conns_per_node: 1,
+            tend_interval: 250,
+            conn_pools_per_node: 4,
+            timeout: 5_000,
+            ..ClientPolicy::default()
+        };
+        let node = node_against(addr, policy.clone());
+        for qi in 0..4 {
+            let queue = &node.connection_pool.queues()[qi];
+            for _ in 0..2 {
+                let stream = aerospike_rt::net::TcpStream::connect(addr)
+                    .await
+                    .expect("connect");
+                let conn = crate::net::Connection::test_from_tcp_stream(stream, &policy);
+                assert!(queue.reserve_capacity());
+                queue.put_back(conn);
+            }
+        }
+        assert_eq!(node.connection_pool.total_reserved(), 8);
+        aerospike_rt::sleep(std::time::Duration::from_millis(600)).await;
+
+        node.reap_and_refresh_idle_connections().await;
+
+        assert_eq!(
+            node.connection_pool.total_reserved(),
+            1,
+            "7 of 8 must retire across the four queues, stopping at the floor"
+        );
+    }
+
+    /// The retire budget is spent round-robin, one connection per queue per
+    /// turn — the old queue-by-queue sweep left (0, 0, 2, 2) here.
+    #[aerospike_macro::test]
+    async fn retire_budget_spreads_across_queues_fairly() {
+        let (addr, _dead) = spawn_fake_node(false).await;
+        let policy = ClientPolicy {
+            idle_timeout: 300,
+            min_conns_per_node: 4,
+            tend_interval: 250,
+            conn_pools_per_node: 4,
+            timeout: 5_000,
+            ..ClientPolicy::default()
+        };
+        let node = node_against(addr, policy.clone());
+        for qi in 0..4 {
+            let queue = &node.connection_pool.queues()[qi];
+            for _ in 0..2 {
+                let stream = aerospike_rt::net::TcpStream::connect(addr)
+                    .await
+                    .expect("connect");
+                let conn = crate::net::Connection::test_from_tcp_stream(stream, &policy);
+                assert!(queue.reserve_capacity());
+                queue.put_back(conn);
+            }
+        }
+        assert_eq!(node.connection_pool.total_reserved(), 8);
+        aerospike_rt::sleep(std::time::Duration::from_millis(600)).await;
+
+        // Budget = 8 - 4 = 4: one retirement per queue, then the floor
+        // survivors (one per queue) are probed and re-pooled.
+        node.reap_and_refresh_idle_connections().await;
+
+        for qi in 0..4 {
+            assert_eq!(
+                node.connection_pool.queues()[qi].reserved_count(),
+                1,
+                "queue {qi} must keep exactly one conn: retirement is spread \
+                 one-per-queue, not drained queue-by-queue"
+            );
+        }
     }
 }
