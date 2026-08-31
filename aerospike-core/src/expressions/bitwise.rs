@@ -20,6 +20,7 @@ use crate::Value;
 
 const MODULE: i64 = 1;
 const INT_FLAGS_SIGNED: i64 = 1;
+const B64_FLAGS_INVERT_SIZE: i64 = 1;
 
 pub(crate) enum BitExpOp {
     Resize = 0,
@@ -40,6 +41,7 @@ pub(crate) enum BitExpOp {
     LScan = 52,
     RScan = 53,
     GetInt = 54,
+    B64Encode = 55,
 }
 
 /// Creates expression that resizes byte[] to byteSize according to resizeFlags
@@ -581,6 +583,60 @@ pub fn get_int(
         args.push(ExpressionArgument::Value(Value::from(INT_FLAGS_SIGNED)));
     }
     add_read(bin, ExpType::INT, args)
+}
+
+/// Creates an expression that returns the base64 text of the whole blob `bin`.
+///
+/// ```
+/// // The blob bin "a" is [0b00000001, 0b01000010]
+/// use aerospike::expressions::{blob_bin, eq, string_val};
+/// use aerospike::expressions::bitwise::b64_encode;
+/// eq(b64_encode(blob_bin("a".to_string())), string_val("AUI=".to_string()));
+/// ```
+///
+/// Requires Aerospike Server version 8.1.3 or later.
+pub fn b64_encode(bin: Expression) -> Expression {
+    let args = vec![ExpressionArgument::Value(Value::from(
+        BitExpOp::B64Encode as i64,
+    ))];
+
+    add_read(bin, ExpType::STRING, args)
+}
+
+/// Creates an expression that returns the base64 text of a byte range of `bin`.
+///
+/// The range starts at `byte_offset` and runs for `byte_size`. When
+/// `invert_size` is true, `byte_size` counts back from the end of the bitmap, so
+/// an inverted `byte_size` of 0 encodes through to the end.
+///
+/// ```
+/// // The first byte of blob bin "a" is 0b00000001
+/// use aerospike::expressions::{blob_bin, eq, int_val, string_val};
+/// use aerospike::expressions::bitwise::b64_encode_range;
+/// eq(
+///   b64_encode_range(int_val(0), int_val(1), false, blob_bin("a".to_string())),
+///   string_val("AQ==".to_string()));
+/// ```
+///
+/// Requires Aerospike Server version 8.1.3 or later.
+pub fn b64_encode_range(
+    byte_offset: Expression,
+    byte_size: Expression,
+    invert_size: bool,
+    bin: Expression,
+) -> Expression {
+    let mut args = vec![
+        ExpressionArgument::Value(Value::from(BitExpOp::B64Encode as i64)),
+        ExpressionArgument::FilterExpression(byte_offset),
+        ExpressionArgument::FilterExpression(byte_size),
+    ];
+    if invert_size {
+        args.push(ExpressionArgument::Value(Value::from(
+            B64_FLAGS_INVERT_SIZE,
+        )));
+    }
+
+    add_read(bin, ExpType::STRING, args)
 }
 
 pub(crate) fn add_write(bin: Expression, arguments: Vec<ExpressionArgument>) -> Expression {
