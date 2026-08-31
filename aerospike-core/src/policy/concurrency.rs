@@ -20,7 +20,6 @@
 pub enum Concurrency {
     /// Issue commands sequentially. This mode has a performance advantage for small to
     /// medium sized batch sizes because requests can be issued in the main transaction thread.
-    /// This is the default.
     Sequential,
 
     /// Issue all commands in parallel threads. This mode has a performance advantage for
