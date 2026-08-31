@@ -1921,3 +1921,83 @@ async fn create_only_on_a_ctx_path_raises_parameter_error() {
         &Value::List(vec![Value::from("hellohi")])
     );
 }
+
+// ============================================================
+// snip_from — the one-argument snip
+// ============================================================
+
+#[aerospike_macro::test]
+async fn snip_from_truncates_to_the_end() {
+    let client = common::client().await;
+    if !server_supports_string_operations(&client).await {
+        return;
+    }
+    let key = as_key!(common::namespace(), &common::rand_str(10), "snip-from");
+    let wpolicy = WritePolicy::default();
+    let policy = StringPolicy::default();
+
+    for (start, expected) in [
+        (5i64, "hello"),
+        // Everything from 0 onward: the string empties.
+        (0, ""),
+        // Negative counts from the end.
+        (-5, "hello "),
+        // Past the end: nothing to remove.
+        (99, "hello world"),
+    ] {
+        put(&client, &wpolicy, &key, "hello world").await;
+        client
+            .operate(&wpolicy, &key, &[str_op::snip_from(&policy, BIN, start)])
+            .await
+            .unwrap();
+
+        assert_eq!(
+            get_string(&client, &key).await,
+            expected,
+            "snip_from({start})"
+        );
+    }
+}
+
+/// Codepoints, not bytes: the accented characters are two bytes each.
+#[aerospike_macro::test]
+async fn snip_from_addresses_codepoints() {
+    let client = common::client().await;
+    if !server_supports_string_operations(&client).await {
+        return;
+    }
+    let key = as_key!(common::namespace(), &common::rand_str(10), "snip-from-cp");
+    let wpolicy = WritePolicy::default();
+    let policy = StringPolicy::default();
+    put(&client, &wpolicy, &key, "héllo wörld").await;
+
+    client
+        .operate(&wpolicy, &key, &[str_op::snip_from(&policy, BIN, 5)])
+        .await
+        .unwrap();
+
+    assert_eq!(get_string(&client, &key).await, "héllo");
+}
+
+/// The reason the one-argument form drops the flags element: were the flags
+/// packed, the server would read them as `end` and snip the empty range
+/// `[5, 0)`, leaving the string untouched. A non-default policy is the case
+/// where that would show, since `DEFAULT` is zero either way.
+#[aerospike_macro::test]
+async fn snip_from_with_a_non_default_policy_still_truncates() {
+    let client = common::client().await;
+    if !server_supports_string_operations(&client).await {
+        return;
+    }
+    let key = as_key!(common::namespace(), &common::rand_str(10), "snip-from-flags");
+    let wpolicy = WritePolicy::default();
+    let policy = StringPolicy::new(StringWriteFlags::NO_FAIL);
+    put(&client, &wpolicy, &key, "hello world").await;
+
+    client
+        .operate(&wpolicy, &key, &[str_op::snip_from(&policy, BIN, 5)])
+        .await
+        .unwrap();
+
+    assert_eq!(get_string(&client, &key).await, "hello");
+}
