@@ -2266,3 +2266,133 @@ async fn modify_past_the_result_size_cap_raises_parameter_error() {
         assert_eq!(get_string(&client, &key).await, "hello", "{label}");
     }
 }
+
+// ============================================================
+// regex_replace write flags
+//
+// The op takes two positional flag arguments — regex flags, then write flags.
+// Until the server's op table grew the second slot the client could not send
+// them at all, so these are the first behaviours that distinguish a policy from
+// no policy on this op.
+// ============================================================
+
+/// An unbalanced group is a pattern ICU cannot compile. The compile happens in
+/// the *modify* stage, which is what `NO_FAIL` covers — so the same call is an
+/// error or a silent no-op depending only on the flag.
+#[aerospike_macro::test]
+async fn regex_replace_no_fail_suppresses_an_invalid_pattern() {
+    let client = common::client().await;
+    if !server_supports_string_operations(&client).await {
+        return;
+    }
+    let key = as_key!(common::namespace(), &common::rand_str(10), "rx-nofail");
+    let wpolicy = WritePolicy::default();
+
+    // Without NO_FAIL: the failure surfaces.
+    put(&client, &wpolicy, &key, "hello world").await;
+    let err = client
+        .operate(
+            &wpolicy,
+            &key,
+            &[str_op::regex_replace(
+                &StringPolicy::default(),
+                BIN,
+                "(",
+                "x",
+                StringRegexFlags::DEFAULT,
+            )],
+        )
+        .await
+        .expect_err("an uncompilable pattern must fail");
+    assert_eq!(
+        err.server_result_code(),
+        Some(ResultCode::ParameterError),
+        "unexpected error: {err}"
+    );
+    assert_eq!(get_string(&client, &key).await, "hello world");
+
+    // With NO_FAIL: the same call succeeds and leaves the bin alone.
+    let no_fail = StringPolicy::new(StringWriteFlags::NO_FAIL);
+    client
+        .operate(
+            &wpolicy,
+            &key,
+            &[str_op::regex_replace(
+                &no_fail,
+                BIN,
+                "(",
+                "x",
+                StringRegexFlags::DEFAULT,
+            )],
+        )
+        .await
+        .expect("NO_FAIL must suppress the failure");
+    assert_eq!(get_string(&client, &key).await, "hello world");
+}
+
+/// `regex_replace` is not create-capable, so the server's per-op flag mask
+/// refuses `CREATE_ONLY`. That refusal is only observable because the write
+/// flags now reach the server at all.
+#[aerospike_macro::test]
+async fn regex_replace_refuses_create_only() {
+    let client = common::client().await;
+    if !server_supports_string_operations(&client).await {
+        return;
+    }
+    let key = as_key!(common::namespace(), &common::rand_str(10), "rx-createonly");
+    let wpolicy = WritePolicy::default();
+    put(&client, &wpolicy, &key, "hello world").await;
+
+    let create_only = StringPolicy::new(StringWriteFlags::CREATE_ONLY);
+    let err = client
+        .operate(
+            &wpolicy,
+            &key,
+            &[str_op::regex_replace(
+                &create_only,
+                BIN,
+                "world",
+                "earth",
+                StringRegexFlags::DEFAULT,
+            )],
+        )
+        .await
+        .expect_err("CREATE_ONLY is not valid for regex_replace");
+    assert_eq!(
+        err.server_result_code(),
+        Some(ResultCode::ParameterError),
+        "unexpected error: {err}"
+    );
+    assert_eq!(get_string(&client, &key).await, "hello world");
+}
+
+/// `UPDATE_ONLY` is accepted, and a plain replace still works with a policy
+/// attached — the regression control for the new argument.
+#[aerospike_macro::test]
+async fn regex_replace_with_update_only_still_replaces() {
+    let client = common::client().await;
+    if !server_supports_string_operations(&client).await {
+        return;
+    }
+    let key = as_key!(common::namespace(), &common::rand_str(10), "rx-updateonly");
+    let wpolicy = WritePolicy::default();
+    put(&client, &wpolicy, &key, "a1b2c3").await;
+
+    let update_only = StringPolicy::new(StringWriteFlags::UPDATE_ONLY);
+    client
+        .operate(
+            &wpolicy,
+            &key,
+            &[str_op::regex_replace(
+                &update_only,
+                BIN,
+                "[0-9]",
+                "#",
+                StringRegexFlags::GLOBAL,
+            )],
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(get_string(&client, &key).await, "a#b#c#");
+}

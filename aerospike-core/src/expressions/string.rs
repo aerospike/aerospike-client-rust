@@ -590,11 +590,11 @@ pub fn repeat(policy: &StringPolicy, src: Expression, count: Expression) -> Expr
 /// with `replacement` and returns the resulting string. Pass
 /// [`StringRegexFlags::GLOBAL`] to replace every match.
 ///
-/// The `policy` parameter is kept for API symmetry with the other modify
-/// builders and is ignored — the server's `regex_replace` op table does not
-/// accept policy write flags.
+/// **Both flag arguments are positional, and the regex flags come first** — see
+/// [`crate::operations::string::regex_replace`] for why that matters and which
+/// write flags this op accepts.
 pub fn regex_replace(
-    _policy: &StringPolicy,
+    policy: &StringPolicy,
     src: Expression,
     pattern: Expression,
     replacement: Expression,
@@ -606,6 +606,7 @@ pub fn regex_replace(
             sub(REGEX_REPLACE),
             ExpressionArgument::QuotedExpressions(vec![pattern, replacement]),
             ExpressionArgument::Value(Value::Int(regex_flags.0)),
+            ExpressionArgument::Value(Value::Int(policy_flags(policy))),
         ],
     )
 }
