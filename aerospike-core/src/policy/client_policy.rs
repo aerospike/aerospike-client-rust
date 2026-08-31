@@ -362,6 +362,10 @@ pub struct ClientPolicy {
     ///
     /// Replica.PreferRack and server rack configuration must
     /// also be set to enable this functionality.
+    ///
+    /// This one field carries both the switch and the preference list, so
+    /// `None` is how rack awareness is turned off. **`Some(vec![])` is
+    /// rejected** by validation.
     pub rack_ids: Option<Vec<usize>>,
 
     /// Application id is used to identify an application so that client operations can be correlated
@@ -454,6 +458,19 @@ impl ClientPolicy {
             return Err(Error::client_error("minimum number of connections specified in the ClientPolicy is bigger than total connection pool size"));
         }
 
+        // `rack_ids` is both the rack-awareness switch and the preference
+        // list. An empty list turns the feature on with nothing to prefer: the
+        // node-selection loop runs zero times, so no candidate and no fallback
+        // is ever recorded, and every `Replica::PreferRack` read fails node
+        // selection and is retried to exhaustion — surfacing as a client
+        // timeout that says nothing about the misconfiguration. Refuse it here,
+        // where the message can name the field.
+        if self.rack_ids.as_ref().is_some_and(Vec::is_empty) {
+            return Err(Error::invalid_argument(
+                "ClientPolicy.rack_ids is Some([]): rack awareness is enabled with no preferred                  rack. Use None to disable rack awareness, or list at least one rack id",
+            ));
+        }
+
         if self.tend_interval < TEND_INTERVAL_MIN_MS {
             return Err(Error::client_error(format!(
                 "Invalid tend_interval: {}. min: {}",
@@ -519,6 +536,18 @@ impl ClientPolicy {
         }
 
         Ok(())
+    }
+
+    /// Whether rack awareness is in effect: configured *and* carrying at least
+    /// one rack id.
+    ///
+    /// [`validate`](Self::validate) rejects `Some([])` at construction, but a
+    /// dynamic-config reload can still merge an empty list into a live policy,
+    /// and that path cannot return an error. Everything that acts on rack
+    /// awareness goes through this predicate so an empty list degrades to
+    /// "disabled" instead of breaking node selection.
+    pub(crate) fn rack_aware(&self) -> bool {
+        self.rack_ids.as_ref().is_some_and(|ids| !ids.is_empty())
     }
 
     pub(crate) fn application_id(&self) -> &str {
@@ -696,6 +725,57 @@ mod tests {
         };
         assert_eq!(policy.login_timeout(), Duration::from_millis(700));
         assert_eq!(policy.connect_timeout(), Duration::from_millis(1_500));
+    }
+
+    #[test]
+    fn an_empty_rack_id_list_is_rejected() {
+        // `Some([])` used to pass validation, enable rack-aware tend work, and
+        // then fail every PreferRack read as a client timeout.
+        let policy = ClientPolicy {
+            rack_ids: Some(Vec::new()),
+            ..ClientPolicy::default()
+        };
+        let err = policy.validate().unwrap_err();
+
+        assert!(
+            err.to_string().contains("rack_ids"),
+            "the error must name the field: {err}"
+        );
+        assert_eq!(
+            err.result_code(),
+            i32::from(u8::from(crate::ResultCode::ParameterError)),
+            "a bad policy value is an invalid argument: {err}"
+        );
+
+        // Both ways of not asking for an empty preference list stay valid.
+        assert!(ClientPolicy {
+            rack_ids: None,
+            ..ClientPolicy::default()
+        }
+        .validate()
+        .is_ok());
+        assert!(ClientPolicy {
+            rack_ids: Some(vec![0]),
+            ..ClientPolicy::default()
+        }
+        .validate()
+        .is_ok());
+    }
+
+    #[test]
+    fn rack_awareness_needs_a_rack_to_prefer() {
+        // The predicate every rack-aware code path consults. An empty list is
+        // unreachable through `Client::new`, but a dynamic-config reload can
+        // still produce one, and that path cannot fail.
+        let with = |rack_ids| ClientPolicy {
+            rack_ids,
+            ..ClientPolicy::default()
+        };
+
+        assert!(!with(None).rack_aware());
+        assert!(!with(Some(Vec::new())).rack_aware());
+        assert!(with(Some(vec![0])).rack_aware());
+        assert!(with(Some(vec![2, 7])).rack_aware());
     }
 
     #[test]
