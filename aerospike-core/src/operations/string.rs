@@ -338,12 +338,18 @@ pub fn contains(bin: &str, needle: &str) -> Operation {
 
 /// `startsWith` operation. Returns true if the bin begins with `prefix`,
 /// false otherwise.
+///
+/// Matching is Unicode canonical, not byte-exact: a prefix stored in a
+/// different normalization form than the bin still matches.
 pub fn starts_with(bin: &str, prefix: &str) -> Operation {
     read_op(STR_OP_STARTS_WITH, bin, vec![Value::from(prefix)])
 }
 
 /// `endsWith` operation. Returns true if the bin ends with `suffix`,
 /// false otherwise.
+///
+/// Matching is Unicode canonical, not byte-exact: a suffix stored in a
+/// different normalization form than the bin still matches.
 pub fn ends_with(bin: &str, suffix: &str) -> Operation {
     read_op(STR_OP_ENDS_WITH, bin, vec![Value::from(suffix)])
 }

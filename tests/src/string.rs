@@ -2052,3 +2052,217 @@ async fn is_numeric_typed_float_requires_a_fractional_digit() {
         }
     }
 }
+
+// ============================================================
+// Unicode canonical equivalence
+//
+// The literals are `\u{...}` escapes on purpose. Any tool that normalizes
+// source files would collapse a literal NFD sequence to NFC and leave every
+// assertion below comparing a string with itself.
+// ============================================================
+
+/// "café" composed — U+00E9.
+const NFC: &str = "caf\u{e9}";
+/// "café" decomposed — 'e' + U+0301 combining acute.
+const NFD: &str = "cafe\u{301}";
+
+/// `find` / `contains` take a binary `memmem` path only when both operands are
+/// ASCII or both are NFC, and otherwise route through an ICU `UStringSearch`
+/// whose collator has full normalization enabled — so the two forms of "café"
+/// are equal to the server.
+///
+/// **`#[ignore]`d because the server does not honour this for a needle that
+/// spans the whole bin.** A length precheck rejects the 5-codepoint NFD needle
+/// against the 4-codepoint NFC bin before the canonical search runs, so this
+/// fails on 8.1.3.0 exactly as the Java and Go reference tests do. It is kept,
+/// runnable with `--ignored`, rather than deleted: the mid-string case below
+/// passes, so dropping this one would hide a guarantee that is not actually met.
+#[aerospike_macro::test]
+#[ignore]
+async fn find_and_contains_match_across_normalization_forms() {
+    let client = common::client().await;
+    if !server_supports_string_operations(&client).await {
+        return;
+    }
+    let key = as_key!(common::namespace(), &common::rand_str(10), "canon-whole");
+    let wpolicy = WritePolicy::default();
+    put(&client, &wpolicy, &key, NFC).await;
+
+    // Both NFC — the binary fast path.
+    let rec = client
+        .operate(&wpolicy, &key, &[str_op::find(BIN, NFC)])
+        .await
+        .unwrap();
+    assert_eq!(rec.bins.get(BIN).unwrap(), &Value::Int(0));
+
+    let rec = client
+        .operate(&wpolicy, &key, &[str_op::contains(BIN, NFC)])
+        .await
+        .unwrap();
+    assert_eq!(rec.bins.get(BIN).unwrap(), &Value::Bool(true));
+
+    // Forms differ, so the canonical path should run and still match.
+    let rec = client
+        .operate(&wpolicy, &key, &[str_op::find(BIN, NFD)])
+        .await
+        .unwrap();
+    assert_eq!(rec.bins.get(BIN).unwrap(), &Value::Int(0));
+
+    let rec = client
+        .operate(&wpolicy, &key, &[str_op::contains(BIN, NFD)])
+        .await
+        .unwrap();
+    assert_eq!(rec.bins.get(BIN).unwrap(), &Value::Bool(true));
+}
+
+/// The same guarantee where the needle does not span the whole bin, which is the
+/// shape the server does honour — which is what isolates the length precheck as
+/// the cause of the failure above.
+#[aerospike_macro::test]
+async fn find_and_contains_match_across_normalization_forms_mid_string() {
+    let client = common::client().await;
+    if !server_supports_string_operations(&client).await {
+        return;
+    }
+    let key = as_key!(common::namespace(), &common::rand_str(10), "canon-mid");
+    let wpolicy = WritePolicy::default();
+
+    for (haystack, needle) in [
+        (format!("x{NFC}y"), NFD),
+        (format!("x{NFD}y"), NFC),
+    ] {
+        put(&client, &wpolicy, &key, &haystack).await;
+
+        let rec = client
+            .operate(&wpolicy, &key, &[str_op::find(BIN, needle)])
+            .await
+            .unwrap();
+        assert_eq!(rec.bins.get(BIN).unwrap(), &Value::Int(1), "find");
+
+        let rec = client
+            .operate(&wpolicy, &key, &[str_op::contains(BIN, needle)])
+            .await
+            .unwrap();
+        assert_eq!(rec.bins.get(BIN).unwrap(), &Value::Bool(true), "contains");
+    }
+}
+
+/// `replace` carries the same canonical-equivalence guarantee: its ICU path
+/// runs whenever the forms differ.
+#[aerospike_macro::test]
+async fn replace_matches_across_normalization_forms() {
+    let client = common::client().await;
+    if !server_supports_string_operations(&client).await {
+        return;
+    }
+    let key = as_key!(common::namespace(), &common::rand_str(10), "canon-replace");
+    let wpolicy = WritePolicy::default();
+    let policy = StringPolicy::default();
+
+    // Composed haystack with a decomposed needle, then the other way round.
+    for (stored, needle) in [(NFC, NFD), (NFD, NFC)] {
+        put(&client, &wpolicy, &key, &format!("{stored} au lait")).await;
+
+        client
+            .operate(
+                &wpolicy,
+                &key,
+                &[str_op::replace(&policy, BIN, needle, "tea")],
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(get_string(&client, &key).await, "tea au lait");
+    }
+}
+
+/// Prefix and suffix matching are canonical too, so an affix in either form
+/// matches a bin stored in the other.
+#[aerospike_macro::test]
+async fn starts_with_and_ends_with_match_across_normalization_forms() {
+    let client = common::client().await;
+    if !server_supports_string_operations(&client).await {
+        return;
+    }
+    let key = as_key!(common::namespace(), &common::rand_str(10), "canon-affix");
+    let wpolicy = WritePolicy::default();
+
+    for (stored, prefix) in [(NFC, NFD), (NFD, NFC)] {
+        put(&client, &wpolicy, &key, &format!("{stored} au lait")).await;
+
+        let rec = client
+            .operate(&wpolicy, &key, &[str_op::starts_with(BIN, prefix)])
+            .await
+            .unwrap();
+        assert_eq!(rec.bins.get(BIN).unwrap(), &Value::Bool(true), "starts_with");
+    }
+
+    for (stored, suffix) in [(NFC, NFD), (NFD, NFC)] {
+        put(&client, &wpolicy, &key, &format!("au lait {stored}")).await;
+
+        let rec = client
+            .operate(&wpolicy, &key, &[str_op::ends_with(BIN, suffix)])
+            .await
+            .unwrap();
+        assert_eq!(rec.bins.get(BIN).unwrap(), &Value::Bool(true), "ends_with");
+    }
+}
+
+// ============================================================
+// Result-size cap
+//
+// Modify ops bound their estimated result at prepare time, against the
+// server's `STRING_REPLACE_ALL_MAX`. Exceeding the bound is a
+// `PARAMETER_ERROR` with nothing written, which is a different failure from
+// the `RECORD_TOO_BIG` the same ops raise for a result that clears the cap but
+// outgrows the namespace's record limit. Asserting the code *equals*
+// `ParameterError` covers both halves at once.
+// ============================================================
+
+/// The server's ceiling on a modify op's estimated result size.
+const RESULT_SIZE_CAP: i64 = 8 * 1024 * 1024;
+
+#[aerospike_macro::test]
+async fn modify_past_the_result_size_cap_raises_parameter_error() {
+    let client = common::client().await;
+    if !server_supports_string_operations(&client).await {
+        return;
+    }
+    let key = as_key!(common::namespace(), &common::rand_str(10), "cap");
+    let wpolicy = WritePolicy::default();
+    let policy = StringPolicy::default();
+    put(&client, &wpolicy, &key, "hello").await;
+
+    // One 8 MiB argument, built once and reused by the concat case.
+    let oversized = "x".repeat(RESULT_SIZE_CAP as usize);
+
+    for (label, op) in [
+        // Estimated as old_size * count.
+        ("repeat", str_op::repeat(&policy, BIN, RESULT_SIZE_CAP)),
+        // Estimated as target_length * 4 — worst-case UTF-8 expansion.
+        (
+            "pad_start",
+            str_op::pad_start(&policy, BIN, RESULT_SIZE_CAP / 4 + 1, "*"),
+        ),
+        (
+            "pad_end",
+            str_op::pad_end(&policy, BIN, RESULT_SIZE_CAP / 4 + 1, "*"),
+        ),
+        // Estimated as old_size + the argument, so only the argument can carry
+        // the result past the cap.
+        ("concat", str_op::concat(&policy, BIN, &oversized)),
+    ] {
+        let Err(err) = client.operate(&wpolicy, &key, &[op]).await else {
+            panic!("{label} past the cap must fail");
+        };
+
+        assert_eq!(
+            err.server_result_code(),
+            Some(ResultCode::ParameterError),
+            "{label}: unexpected error: {err}"
+        );
+
+        // Refused at prepare time, so the bin is untouched.
+        assert_eq!(get_string(&client, &key).await, "hello", "{label}");
+    }
+}

@@ -174,6 +174,9 @@ pub fn contains(src: Expression, needle: Expression) -> Expression {
 }
 
 /// Expression that tests whether `src` begins with `prefix`.
+///
+/// Matching is Unicode canonical, not byte-exact: a prefix in a different
+/// normalization form than the source still matches.
 pub fn starts_with(src: Expression, prefix: Expression) -> Expression {
     add_read(
         src,
@@ -186,6 +189,9 @@ pub fn starts_with(src: Expression, prefix: Expression) -> Expression {
 }
 
 /// Expression that tests whether `src` ends with `suffix`.
+///
+/// Matching is Unicode canonical, not byte-exact: a suffix in a different
+/// normalization form than the source still matches.
 pub fn ends_with(src: Expression, suffix: Expression) -> Expression {
     add_read(
         src,
