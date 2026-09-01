@@ -101,15 +101,6 @@ jobs:
         with:
           tool: cargo-llvm-cov
 
-      # Coverage denominator is aerospike-core only (see CLIENT-5292): the root
-      # `aerospike` crate is an 11-line re-export facade, and reporting against it
-      # instead of aerospike-core silently produces an empty/near-empty report.
-      # aerospike-core's own inline unit tests and the integration/proptest suite
-      # (run via the `aerospike` package) are collected separately, then merged
-      # into one report scoped to aerospike-core.
-      #
-      # Doc tests are intentionally excluded from this number for now (undecided,
-      # tracked on the ticket) even though they run and must pass in the `test` job.
       - name: Coverage - aerospike-core unit tests
         env:
           PROPTEST_MAX_SHRINK_ITERS: 0
@@ -127,13 +118,10 @@ jobs:
             --no-default-features --features serialization,async,rt-tokio \
             --ignore-run-fail --no-report -- --test-threads=1
 
-      # THRESHOLD is deliberately set above the real ~79% baseline (recorded on
-      # CLIENT-5292) right now, to confirm this gate actually fails when it
-      # should. Dial back to the real working floor (75%, raising to 80% once
-      # confirmed) once that's verified.
+      # 75% is the starting point to keep infra adoption moving -- nothing less.
       - name: Coverage report (aerospike-core)
         run: |
-          THRESHOLD=90
+          THRESHOLD=75
           cargo llvm-cov report -p aerospike-core
           PCT=$(cargo llvm-cov report -p aerospike-core --json --summary-only | jq -r '.data[0].totals.lines.percent')
           PCT_FMT=$(printf '%.2f' "$PCT")
