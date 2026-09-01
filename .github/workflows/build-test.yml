@@ -70,8 +70,33 @@ jobs:
           sed -i 's/features = \["async"\]/features = ["async", "rt-tokio"]/' aerospike-core/Cargo.toml
           cargo test --doc -p aerospike-core --features rt-tokio,serialization
 
+  aerospike-core-coverage:
+    name: aerospike-core-coverage
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@20cf305ff2072d973412fa9b1e3a4f227bda3c76 # v2.14.0
+        with:
+          egress-policy: audit
+
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+
+      - name: Install Rust 1.87 (MSRV)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.87
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: aerospike-core-coverage
+
+      - name: Set up Aerospike Database
+        uses: reugn/github-action-aerospike@2065a9209cfd5ef88a3e07f3e7929e321d1e0067 # v1.1.0
+
       - name: Install cargo-llvm-cov
-        if: matrix.runtime == 'rt-tokio'
         uses: taiki-e/install-action@1ed6d7be6168f6c9046541087ff549b6bc581fdf # v2.87.2
         with:
           tool: cargo-llvm-cov
@@ -84,9 +109,8 @@ jobs:
       # into one report scoped to aerospike-core.
       #
       # Doc tests are intentionally excluded from this number for now (undecided,
-      # tracked on the ticket) even though they run and must pass above.
+      # tracked on the ticket) even though they run and must pass in the `test` job.
       - name: Coverage - aerospike-core unit tests
-        if: matrix.runtime == 'rt-tokio'
         env:
           PROPTEST_MAX_SHRINK_ITERS: 0
         run: |
@@ -96,7 +120,6 @@ jobs:
             --ignore-run-fail --no-report
 
       - name: Coverage - aerospike integration and property tests
-        if: matrix.runtime == 'rt-tokio'
         env:
           PROPTEST_MAX_SHRINK_ITERS: 0
         run: |
@@ -108,5 +131,4 @@ jobs:
       # is ~79% (recorded on CLIENT-5292). 75% leaves headroom to catch a real
       # regression without blocking on day one; raise to 80% once confirmed.
       - name: Coverage report (aerospike-core)
-        if: matrix.runtime == 'rt-tokio'
         run: cargo llvm-cov report -p aerospike-core --fail-under-lines 75
