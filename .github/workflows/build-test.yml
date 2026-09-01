@@ -127,8 +127,20 @@ jobs:
             --no-default-features --features serialization,async,rt-tokio \
             --ignore-run-fail --no-report -- --test-threads=1
 
-      # Soft floor while coverage tooling beds in: current aerospike-core baseline
-      # is ~79% (recorded on CLIENT-5292). 75% leaves headroom to catch a real
-      # regression without blocking on day one; raise to 80% once confirmed.
+      # THRESHOLD is deliberately set above the real ~79% baseline (recorded on
+      # CLIENT-5292) right now, to confirm this gate actually fails when it
+      # should. Dial back to the real working floor (75%, raising to 80% once
+      # confirmed) once that's verified.
       - name: Coverage report (aerospike-core)
-        run: cargo llvm-cov report -p aerospike-core --fail-under-lines 75
+        run: |
+          THRESHOLD=90
+          cargo llvm-cov report -p aerospike-core
+          PCT=$(cargo llvm-cov report -p aerospike-core --json --summary-only | jq -r '.data[0].totals.lines.percent')
+          PCT_FMT=$(printf '%.2f' "$PCT")
+          if awk -v p="$PCT" -v t="$THRESHOLD" 'BEGIN{exit !(p >= t)}'; then
+            echo "PASS: aerospike-core line coverage is ${PCT_FMT}%, threshold is ${THRESHOLD}% -- coverage meets the threshold."
+            exit 0
+          else
+            echo "FAIL: aerospike-core line coverage is ${PCT_FMT}%, threshold is ${THRESHOLD}% -- coverage is below the threshold."
+            exit 1
+          fi
