@@ -74,6 +74,10 @@ jobs:
     name: aerospike-core-coverage
     runs-on: ubuntu-22.04
 
+    env:
+      # 75% is the starting point to keep infra adoption moving -- nothing less.
+      COVERAGE_THRESHOLD: 75
+
     steps:
       - name: Harden the runner (Audit all outbound calls)
         uses: step-security/harden-runner@20cf305ff2072d973412fa9b1e3a4f227bda3c76 # v2.14.0
@@ -118,16 +122,14 @@ jobs:
             --no-default-features --features serialization,async,rt-tokio \
             --ignore-run-fail --no-report -- --test-threads=1
 
-      # 75% is the starting point to keep infra adoption moving -- nothing less.
       - name: Coverage report (aerospike-core)
         run: |
-          THRESHOLD=75
           cargo llvm-cov report -p aerospike-core
           PCT=$(cargo llvm-cov report -p aerospike-core --json --summary-only | jq -r '.data[0].totals.lines.percent')
           PCT_FMT=$(printf '%.2f' "$PCT")
-          if awk -v p="$PCT" -v t="$THRESHOLD" 'BEGIN{exit !(p >= t)}'; then
-            echo "PASS: aerospike-core line coverage is ${PCT_FMT}%, threshold is ${THRESHOLD}% -- coverage meets the threshold."
+          if awk -v p="$PCT" -v t="$COVERAGE_THRESHOLD" 'BEGIN{exit !(p >= t)}'; then
+            echo "PASS: aerospike-core line coverage is ${PCT_FMT}%, threshold is ${COVERAGE_THRESHOLD}% -- coverage meets the threshold."
           else
-            echo "FAIL: aerospike-core line coverage is ${PCT_FMT}%, threshold is ${THRESHOLD}% -- coverage is below the threshold."
+            echo "FAIL: aerospike-core line coverage is ${PCT_FMT}%, threshold is ${COVERAGE_THRESHOLD}% -- coverage is below the threshold."
           fi
-          cargo llvm-cov report -p aerospike-core --fail-under-lines "$THRESHOLD"
+          cargo llvm-cov report -p aerospike-core --fail-under-lines "$COVERAGE_THRESHOLD"
