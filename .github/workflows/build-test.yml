@@ -69,3 +69,68 @@ jobs:
           # aerospike-core doc examples use `use aerospike::…`; enable rt-tokio on the path dev-dep.
           sed -i 's/features = \["async"\]/features = ["async", "rt-tokio"]/' aerospike-core/Cargo.toml
           cargo test --doc -p aerospike-core --features rt-tokio,serialization
+
+  aerospike-core-coverage:
+    name: aerospike-core-coverage
+    runs-on: ubuntu-22.04
+
+    env:
+      # Lowered from 75% pending a follow-up ticket to add Enterprise Edition
+      # server testing (transactions, strong consistency) 
+      COVERAGE_THRESHOLD: 60
+
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@20cf305ff2072d973412fa9b1e3a4f227bda3c76 # v2.14.0
+        with:
+          egress-policy: audit
+
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+
+      - name: Install Rust 1.87 (MSRV)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.87
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: aerospike-core-coverage
+
+      - name: Set up Aerospike Database
+        uses: reugn/github-action-aerospike@2065a9209cfd5ef88a3e07f3e7929e321d1e0067 # v1.1.0
+
+      - name: Install cargo-llvm-cov
+        uses: taiki-e/install-action@1ed6d7be6168f6c9046541087ff549b6bc581fdf # v2.87.2
+        with:
+          tool: cargo-llvm-cov
+
+      - name: Coverage - aerospike-core unit tests
+        env:
+          PROPTEST_MAX_SHRINK_ITERS: 0
+        run: |
+          cargo llvm-cov clean --workspace
+          cargo llvm-cov -p aerospike-core \
+            --no-default-features --features serialization,rt-tokio \
+            --ignore-run-fail --no-report
+
+      - name: Coverage - aerospike integration and property tests
+        env:
+          PROPTEST_MAX_SHRINK_ITERS: 0
+        run: |
+          cargo llvm-cov -p aerospike \
+            --no-default-features --features serialization,async,rt-tokio \
+            --ignore-run-fail --no-report -- --test-threads=1
+
+      - name: Coverage report (aerospike-core)
+        run: |
+          cargo llvm-cov report -p aerospike-core
+          PCT=$(cargo llvm-cov report -p aerospike-core --json --summary-only | jq -r '.data[0].totals.lines.percent')
+          PCT_FMT=$(printf '%.2f' "$PCT")
+          if awk -v p="$PCT" -v t="$COVERAGE_THRESHOLD" 'BEGIN{exit !(p >= t)}'; then
+            echo "PASS: aerospike-core line coverage is ${PCT_FMT}%, threshold is ${COVERAGE_THRESHOLD}% -- coverage meets the threshold."
+          else
+            echo "FAIL: aerospike-core line coverage is ${PCT_FMT}%, threshold is ${COVERAGE_THRESHOLD}% -- coverage is below the threshold."
+          fi
+          cargo llvm-cov report -p aerospike-core --fail-under-lines "$COVERAGE_THRESHOLD"
