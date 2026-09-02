@@ -53,6 +53,7 @@ indexmap = "2"
 mlua = { version = "0.12", features = ["lua54", "vendored", "async", "send"], optional = true }
 
 [features]
+default = ["rt-tokio"] # TEMP: revert before commit/PR
 serialization = ["serde", "indexmap/serde"]
 # Dynamic configuration: read policy overrides from a pluggable source (YAML
 # file out of the box) and apply them at runtime. Pulls serde for deserialization,

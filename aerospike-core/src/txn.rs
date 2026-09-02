@@ -376,3 +376,51 @@ pub(crate) fn get_txn_monitor_key(txn: &Txn) -> Option<Key> {
             .expect("Failed to create transaction monitor key")
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn set_namespace_rejects_a_different_namespace_once_set() {
+        let txn = Txn::new();
+
+        // First call establishes the namespace for the whole transaction.
+        txn.set_namespace("test").unwrap();
+
+        // The same namespace again is fine -- every command re-checks it.
+        txn.set_namespace("test").unwrap();
+
+        // A different namespace must be rejected: every command in a single
+        // transaction has to target the same namespace.
+        let msg = txn.set_namespace("other").unwrap_err().base_message();
+        assert_eq!(
+            msg,
+            "Namespace must be the same for all commands in the Transaction. orig: test new: other"
+        );
+    }
+
+    #[test]
+    fn verify_command_rejects_once_transaction_is_no_longer_open() {
+        let txn = Txn::new();
+
+        // Open transactions accept commands freely.
+        txn.verify_command().unwrap();
+
+        txn.set_state(TxnState::Committed);
+
+        let msg = txn.verify_command().unwrap_err().base_message();
+        assert_eq!(
+            msg,
+            "Issuing commands to this transaction is forbidden because it has been ended by a commit or abort"
+        );
+
+        // prepare_read composes verify_command + set_namespace, so it must
+        // fail the same way once the transaction is closed.
+        let msg = txn.prepare_read("test").unwrap_err().base_message();
+        assert_eq!(
+            msg,
+            "Issuing commands to this transaction is forbidden because it has been ended by a commit or abort"
+        );
+    }
+}
