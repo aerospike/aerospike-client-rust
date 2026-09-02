@@ -127,8 +127,7 @@ jobs:
           PCT_FMT=$(printf '%.2f' "$PCT")
           if awk -v p="$PCT" -v t="$THRESHOLD" 'BEGIN{exit !(p >= t)}'; then
             echo "PASS: aerospike-core line coverage is ${PCT_FMT}%, threshold is ${THRESHOLD}% -- coverage meets the threshold."
-            exit 0
           else
             echo "FAIL: aerospike-core line coverage is ${PCT_FMT}%, threshold is ${THRESHOLD}% -- coverage is below the threshold."
-            exit 1
           fi
+          cargo llvm-cov report -p aerospike-core --fail-under-lines "$THRESHOLD"
