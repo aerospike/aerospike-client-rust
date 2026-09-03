@@ -206,6 +206,47 @@ impl Connection {
         Ok(Netsocket::Tcp(stream))
     }
 
+    /// Turns off Nagle for a freshly opened socket.
+    ///
+    /// Nagle withholds a small segment while earlier small data is still
+    /// unacked, which deadlocks against the peer's delayed ACK: the server
+    /// holds its ACK waiting to piggyback a response it cannot produce until
+    /// the request arrives in full. Linux breaks the tie only when its
+    /// delayed-ACK timer expires — `TCP_DELACK_MIN`, 40ms.
+    ///
+    /// Every other Aerospike client disables it: Java `setTcpNoDelay(true)`,
+    /// C `setsockopt(TCP_NODELAY)` in `as_socket_create_fd`, C# `NoDelay`, Go
+    /// via its stdlib. The C client re-enables Nagle *only* for fire-and-forget
+    /// pipeline sockets (`as_pipe.c`), so off is the protocol's intended
+    /// setting for request/response traffic rather than a tuning knob.
+    ///
+    /// Measured cost of leaving it on, on Linux with a 1448-byte MSS:
+    ///
+    /// | path | Nagle on | `TCP_NODELAY` |
+    /// |------|----------|---------------|
+    /// | TLS connection setup | **41.4ms p50, 130/130 stalled** | 0.25ms |
+    /// | plain request, 64B–33KB | 0.05ms, 0 stalled | 0.05ms |
+    ///
+    /// TLS setup stalls because rustls writes `change_cipher_spec` (6 bytes)
+    /// and `Finished` (74 bytes) as two consecutive socket writes with no read
+    /// between them — traced as `W1460 R1803 W6 W74` by
+    /// `examples/tls_write_shape.rs`. The 6-byte segment goes out, then Nagle
+    /// pins the 74-byte one behind it, and the peer has nothing to answer yet,
+    /// so both sides wait out the delayed-ACK timer. Every new TLS connection
+    /// pays it: client init, pool growth, and reconnect storms after a
+    /// failover, which is the worst moment to add 41ms per socket.
+    ///
+    /// Plain-TCP commands are already safe and stay that way — a request goes
+    /// out as one contiguous `write_all` (see [`flush`](Self::flush)), and
+    /// Linux's Minshall variant of Nagle lets a trailing partial segment
+    /// follow full-size ones. Replay both halves with `tools/nagle_probe.py`.
+    ///
+    /// Best-effort. A platform that refuses the option still yields a usable
+    /// connection, so the error is dropped rather than failing the connect.
+    fn disable_nagle(stream: &TcpStream) {
+        let _ = stream.set_nodelay(true);
+    }
+
     #[cfg(not(test))]
     pub async fn new(
         host: &Host,
@@ -238,6 +279,9 @@ impl Connection {
         }
 
         let stream = stream.unwrap()?;
+
+        Self::disable_nagle(&stream);
+
         let stream = Self::get_netsocket(stream, host, policy).await?;
 
         let idle_timeout = if policy.idle_timeout > 0 {
@@ -1617,6 +1661,35 @@ mod liveness_probe_tests {
             }
         });
         addr
+    }
+
+    /// Nagle must be off on every socket the client opens, matching every other
+    /// Aerospike client. Asserted through the real getsockopt rather than by
+    /// trusting the setter, so a platform that silently ignores the option
+    /// fails here instead of in production.
+    ///
+    /// This covers [`Connection::disable_nagle`], not its call site: under
+    /// `cfg(test)` `Connection::new` returns a `Netsocket::TestDummy` and never
+    /// opens a socket, so the real connect path is unreachable from a unit
+    /// test.
+    #[aerospike_macro::test]
+    async fn sockets_are_opened_with_nagle_disabled() {
+        let addr = spawn_quiet_peer().await;
+        let stream = TcpStream::connect(&*addr).await.unwrap();
+
+        assert!(
+            !socket2::SockRef::from(&stream).tcp_nodelay().unwrap(),
+            "a fresh socket is expected to start with Nagle on; if the platform \
+             default changed, this test no longer proves anything"
+        );
+
+        Connection::disable_nagle(&stream);
+
+        assert!(
+            socket2::SockRef::from(&stream).tcp_nodelay().unwrap(),
+            "TCP_NODELAY must be set: Nagle deadlocks against the peer's \
+             delayed ACK for 40ms on any request written as more than one write"
+        );
     }
 
     /// Build a `Connection` around a real socket, bypassing the handshake.
