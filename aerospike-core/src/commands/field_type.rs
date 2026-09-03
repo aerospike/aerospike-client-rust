@@ -73,10 +73,11 @@ pub enum FieldType {
     ErrorMessage = 45,
     /// String AEL WHERE clause for query explain/execute.
     Where = 44,
-    /// Top-K order-by clause: `type`, direction, flags, one-byte bin-name
-    /// length, and bin name. Requires server 8.1.3 or later.
+    /// Reserved server Top-K order-by clause: `type`, direction, flags,
+    /// one-byte bin-name length, and bin name.
+    #[allow(dead_code)]
     OrderBy = 46,
-    /// Top-K limit (`k`): plain big-endian `uint32_t`, `k` in `[1, 1000]`.
-    /// Written alongside [`FieldType::OrderBy`].
+    /// Reserved server Top-K limit (`k`): plain big-endian `uint32_t`.
+    #[allow(dead_code)]
     TopK = 47,
 }

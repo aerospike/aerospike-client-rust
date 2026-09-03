@@ -13,37 +13,21 @@
 // License for the specific language governing permissions and limitations under
 // the License.
 
-//! Internal Top-K merge engine.
-//!
-//! Each node hands this merger its own already-bounded (`<= k`) result
-//! buffer, accumulated by `Client::execute_top_k_query`
-//! (`aerospike-core/src/client.rs`) via `StreamCommand::top_k_buffer`;
-//! `TopKMerger::merge` combines those buffers into the final global Top-K:
-//! comparator-sort, dedup by digest (generation-first, then rank), truncate
-//! to `limit`.
-//!
-//! No shared mutable state is mutated concurrently here — each node's buffer
-//! is produced independently, and `merge` runs once, sequentially, after
-//! every node's buffer is available (once the whole job completes with no
-//! errors — see `Client::execute_top_k_query`'s doc comment for the
-//! whole-job-retry rationale).
+//! Internal bounded Top-K reducer.
 
 use std::cmp::Ordering;
-use std::collections::HashMap;
+use std::collections::{BinaryHeap, HashMap};
 
 use crate::query::order_by::{Order, OrderBy, OrderByFlags, OrderByType};
 use crate::Record;
 use crate::Value;
 
-/// The extracted, comparable form of a record's order-by bin value. `Nil`
-/// represents a missing bin or a bin whose value doesn't match `OrderByType`
-/// (design doc contract: NIL sorts after every non-NIL value, in both
-/// directions).
+/// Comparable form of a record's order-by value.
 #[derive(Debug, Clone, PartialEq)]
 enum RankValue {
     Integer(i64),
     Double(f64),
-    String(String),
+    String(Vec<u8>),
     Bytes(Vec<u8>),
     Nil,
 }
@@ -59,9 +43,14 @@ impl RankValue {
             (OrderByType::Double, Value::Float(f)) => RankValue::Double(f64::from(f)),
             (OrderByType::String, Value::String(s)) => {
                 if order_by.flags == OrderByFlags::CaseInsensitive {
-                    RankValue::String(s.to_lowercase())
+                    RankValue::String(
+                        s.as_bytes()
+                            .iter()
+                            .map(|byte| byte.to_ascii_lowercase())
+                            .collect(),
+                    )
                 } else {
-                    RankValue::String(s.clone())
+                    RankValue::String(s.as_bytes().to_vec())
                 }
             }
             (OrderByType::Bytes, Value::Blob(b)) => RankValue::Bytes(b.clone()),
@@ -71,29 +60,25 @@ impl RankValue {
         }
     }
 
-    /// Ordering ignoring `Nil`/`Nil` and `Nil`/non-`Nil` cases, which the
-    /// caller (`rank_cmp`) handles first so this only needs to compare two
-    /// same-variant, non-`Nil` values.
+    /// Compares two non-NIL values.
     fn cmp_non_nil(&self, other: &Self) -> Ordering {
         match (self, other) {
             (RankValue::Integer(a), RankValue::Integer(b)) => a.cmp(b),
-            (RankValue::Double(a), RankValue::Double(b)) => a.total_cmp(b),
+            // Place all NaNs after finite and infinite values.
+            (RankValue::Double(a), RankValue::Double(b)) => match (a.is_nan(), b.is_nan()) {
+                (true, true) => Ordering::Equal,
+                (true, false) => Ordering::Greater,
+                (false, true) => Ordering::Less,
+                (false, false) => a.total_cmp(b),
+            },
             (RankValue::String(a), RankValue::String(b)) => a.cmp(b),
             (RankValue::Bytes(a), RankValue::Bytes(b)) => a.cmp(b),
-            // Unreachable in practice: `extract` always produces a `RankValue`
-            // variant matching `order_by.order_type`, so two `RankValue`s
-            // derived from the same `OrderBy` are always the same variant.
             _ => Ordering::Equal,
         }
     }
 }
 
-/// Compares two candidates' rank, per the design doc / server `cf_topk`
-/// contract: NIL sorts after every non-NIL value in *both* directions; ties
-/// (including NIL/NIL) are equal here and broken by digest ascending by the
-/// caller. Returns an ordering where `Less` means "ranks better" (i.e. this
-/// is the ordering a min-heap-of-the-worst or a `sort_by` would use to put
-/// the best candidates first).
+/// Compares two ranks. `Less` means the first rank is better.
 fn rank_cmp(a: &RankValue, b: &RankValue, direction: Order) -> Ordering {
     match (a, b) {
         (RankValue::Nil, RankValue::Nil) => Ordering::Equal,
@@ -109,14 +94,154 @@ fn rank_cmp(a: &RankValue, b: &RankValue, direction: Order) -> Ordering {
     }
 }
 
-/// Digest tie-break: ascending, per the design doc / server contract.
-fn digest_cmp(a: &Record, b: &Record) -> Ordering {
-    let da = a.key.as_ref().map(|k| k.digest);
-    let db = b.key.as_ref().map(|k| k.digest);
-    da.cmp(&db)
+/// Bounded Top-K accumulator.
+pub(crate) struct TopKAccumulator {
+    order_by: OrderBy,
+    limit: usize,
+    by_digest: HashMap<[u8; 20], Candidate>,
+    /// The heap's greatest element is the next record to evict.
+    worst_first: BinaryHeap<HeapKey>,
 }
 
-/// Merges per-node Top-K result buffers into the final global Top-K.
+impl TopKAccumulator {
+    pub(crate) fn new(order_by: OrderBy, limit: usize) -> Self {
+        TopKAccumulator {
+            order_by,
+            limit,
+            by_digest: HashMap::new(),
+            worst_first: BinaryHeap::new(),
+        }
+    }
+
+    /// Offers one query response record, retaining only the best `k` rows.
+    pub(crate) fn accept(&mut self, record: Record) {
+        let digest = record
+            .key
+            .as_ref()
+            .map(|key| key.digest)
+            .unwrap_or_else(|| fallback_key(&record));
+        let candidate = Candidate::new(record, &self.order_by);
+
+        if let Some(existing) = self.by_digest.get(&digest) {
+            if !should_replace(existing, &candidate, self.order_by.direction) {
+                return;
+            }
+            self.by_digest.insert(digest, candidate);
+            self.rebuild_heap();
+            return;
+        }
+
+        self.worst_first.push(HeapKey::new(
+            candidate.rank.clone(),
+            digest,
+            self.order_by.direction,
+        ));
+        self.by_digest.insert(digest, candidate);
+
+        if self.by_digest.len() > self.limit {
+            let worst = self
+                .worst_first
+                .pop()
+                .expect("Top-K heap is non-empty when its map exceeds its limit");
+            self.by_digest.remove(&worst.digest);
+        }
+    }
+
+    /// Returns retained records in best-first order.
+    pub(crate) fn into_results(mut self) -> Vec<Record> {
+        self.take_results()
+    }
+
+    /// Drains retained records in best-first order.
+    pub(crate) fn take_results(&mut self) -> Vec<Record> {
+        let direction = self.order_by.direction;
+        self.worst_first.clear();
+        let mut entries: Vec<(RankValue, [u8; 20], Record)> = std::mem::take(&mut self.by_digest)
+            .into_iter()
+            .map(|(digest, candidate)| (candidate.rank, digest, candidate.record))
+            .collect();
+        entries.sort_by(|a, b| rank_cmp(&a.0, &b.0, direction).then_with(|| a.1.cmp(&b.1)));
+        entries.into_iter().map(|(_, _, record)| record).collect()
+    }
+
+    fn rebuild_heap(&mut self) {
+        let direction = self.order_by.direction;
+        self.worst_first = self
+            .by_digest
+            .iter()
+            .map(|(digest, candidate)| HeapKey::new(candidate.rank.clone(), *digest, direction))
+            .collect();
+    }
+}
+
+/// A retained record and its pre-extracted order key.
+struct Candidate {
+    record: Record,
+    rank: RankValue,
+}
+
+impl Candidate {
+    fn new(record: Record, order_by: &OrderBy) -> Self {
+        Candidate {
+            rank: RankValue::extract(&record, order_by),
+            record,
+        }
+    }
+}
+
+/// Heap element used to select the next record to evict.
+struct HeapKey {
+    rank: RankValue,
+    digest: [u8; 20],
+    direction: Order,
+}
+
+impl HeapKey {
+    const fn new(rank: RankValue, digest: [u8; 20], direction: Order) -> Self {
+        HeapKey {
+            rank,
+            digest,
+            direction,
+        }
+    }
+
+    /// Compares candidates in best-first order.
+    fn best_cmp(&self, other: &Self) -> Ordering {
+        rank_cmp(&self.rank, &other.rank, self.direction)
+            .then_with(|| self.digest.cmp(&other.digest))
+    }
+}
+
+impl PartialEq for HeapKey {
+    fn eq(&self, other: &Self) -> bool {
+        self.best_cmp(other) == Ordering::Equal
+    }
+}
+
+impl Eq for HeapKey {}
+
+impl PartialOrd for HeapKey {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for HeapKey {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.best_cmp(other)
+    }
+}
+
+/// Keeps the higher generation, then the better-ranked record.
+fn should_replace(existing: &Candidate, candidate: &Candidate, direction: Order) -> bool {
+    match candidate.record.generation.cmp(&existing.record.generation) {
+        Ordering::Greater => true,
+        Ordering::Less => false,
+        Ordering::Equal => rank_cmp(&candidate.rank, &existing.rank, direction) == Ordering::Less,
+    }
+}
+
+/// Merges per-node Top-K accumulators into a final bounded global Top-K.
 pub(crate) struct TopKMerger {
     order_by: OrderBy,
     limit: usize,
@@ -127,58 +252,12 @@ impl TopKMerger {
         TopKMerger { order_by, limit }
     }
 
-    /// Full best-first comparator: rank, then digest ascending on ties.
-    fn compare(&self, a: &Record, b: &Record) -> Ordering {
-        let ra = RankValue::extract(a, &self.order_by);
-        let rb = RankValue::extract(b, &self.order_by);
-        rank_cmp(&ra, &rb, self.order_by.direction).then_with(|| digest_cmp(a, b))
-    }
-
-    /// Merge every node's already-bounded result buffer into the final
-    /// global Top-K: concatenate, dedup by digest (generation-first, then
-    /// rank — per the server's `cf_topk` contract; this differs from the
-    /// Java client's rank-only dedup rule), sort best-first, and truncate
-    /// to `limit`.
     pub(crate) fn merge(&self, per_node_results: Vec<Vec<Record>>) -> Vec<Record> {
-        let mut by_digest: HashMap<[u8; 20], Record> = HashMap::new();
-
+        let mut accumulator = TopKAccumulator::new(self.order_by.clone(), self.limit);
         for record in per_node_results.into_iter().flatten() {
-            let Some(digest) = record.key.as_ref().map(|k| k.digest) else {
-                // No digest to dedup on (shouldn't happen on a real query
-                // stream, where every record carries its key) — keep it,
-                // keyed by a value that can never collide with a real digest
-                // dedup entry, so it still participates in the final sort.
-                by_digest.insert(fallback_key(&record), record);
-                continue;
-            };
-
-            match by_digest.get(&digest) {
-                None => {
-                    by_digest.insert(digest, record);
-                }
-                Some(existing) => {
-                    if self.should_replace(existing, &record) {
-                        by_digest.insert(digest, record);
-                    }
-                }
-            }
+            accumulator.accept(record);
         }
-
-        let mut merged: Vec<Record> = by_digest.into_values().collect();
-        merged.sort_by(|a, b| self.compare(a, b));
-        merged.truncate(self.limit);
-        merged
-    }
-
-    /// Generation-first, then rank: the server's authoritative dedup rule
-    /// (`cf_topk.h`: "Duplicate digests keep the highest generation, then
-    /// the better-ranked entry ... if generations tie").
-    fn should_replace(&self, existing: &Record, candidate: &Record) -> bool {
-        match candidate.generation.cmp(&existing.generation) {
-            Ordering::Greater => true,
-            Ordering::Less => false,
-            Ordering::Equal => self.compare(candidate, existing) == Ordering::Less,
-        }
+        accumulator.into_results()
     }
 }
 
@@ -247,7 +326,11 @@ mod tests {
 
             let merged = merger.merge(vec![vec![with_value.clone(), missing_bin, wrong_type]]);
             assert_eq!(merged.len(), 3);
-            assert_eq!(merged[0].key.as_ref().unwrap().digest, with_value.key.unwrap().digest, "non-NIL must sort before NIL for direction {direction:?}");
+            assert_eq!(
+                merged[0].key.as_ref().unwrap().digest,
+                with_value.key.unwrap().digest,
+                "non-NIL must sort before NIL for direction {direction:?}"
+            );
         }
     }
 
@@ -259,7 +342,10 @@ mod tests {
         let mid = record(3, 1, Some(("score", Value::Int(5))));
 
         let merged = merger.merge(vec![vec![low, high.clone(), mid]]);
-        assert_eq!(merged[0].key.as_ref().unwrap().digest, high.key.unwrap().digest);
+        assert_eq!(
+            merged[0].key.as_ref().unwrap().digest,
+            high.key.unwrap().digest
+        );
         assert_eq!(merged[0].bins["score"], Value::Int(9));
         assert_eq!(merged[2].bins["score"], Value::Int(1));
     }
@@ -271,7 +357,10 @@ mod tests {
         let high = record(2, 1, Some(("score", Value::Int(9))));
 
         let merged = merger.merge(vec![vec![high, low.clone()]]);
-        assert_eq!(merged[0].key.as_ref().unwrap().digest, low.key.unwrap().digest);
+        assert_eq!(
+            merged[0].key.as_ref().unwrap().digest,
+            low.key.unwrap().digest
+        );
     }
 
     #[test]
@@ -281,7 +370,10 @@ mod tests {
         let b = record(1, 1, Some(("score", Value::Int(5))));
 
         let merged = merger.merge(vec![vec![a, b.clone()]]);
-        assert_eq!(merged[0].key.as_ref().unwrap().digest, b.key.unwrap().digest);
+        assert_eq!(
+            merged[0].key.as_ref().unwrap().digest,
+            b.key.unwrap().digest
+        );
     }
 
     #[test]
@@ -323,7 +415,54 @@ mod tests {
         let lower = record(2, 1, Some(("name", Value::String("apple".into()))));
 
         let merged = merger.merge(vec![vec![upper, lower.clone()]]);
-        assert_eq!(merged[0].key.as_ref().unwrap().digest, lower.key.unwrap().digest);
+        assert_eq!(
+            merged[0].key.as_ref().unwrap().digest,
+            lower.key.unwrap().digest
+        );
+    }
+
+    #[test]
+    fn case_insensitive_string_comparison_folds_ascii_only() {
+        let order_by = OrderBy {
+            bin_name: "name".to_string(),
+            order_type: OrderByType::String,
+            direction: Order::Asc,
+            flags: OrderByFlags::CaseInsensitive,
+        };
+        let merger = TopKMerger::new(order_by, 10);
+        // UTF-8 bytes C3 84 (Ä) sort before C3 A4 (ä). Unicode case folding
+        // would make them compare equal and incorrectly use digest instead.
+        let upper = record(9, 1, Some(("name", Value::String("Ä".into()))));
+        let lower = record(1, 1, Some(("name", Value::String("ä".into()))));
+
+        let merged = merger.merge(vec![vec![lower, upper.clone()]]);
+        assert_eq!(
+            merged[0].key.as_ref().unwrap().digest,
+            upper.key.unwrap().digest
+        );
+    }
+
+    #[test]
+    fn nan_sorts_after_every_finite_double() {
+        let order_by = OrderBy {
+            bin_name: "score".to_string(),
+            order_type: OrderByType::Double,
+            direction: Order::Asc,
+            flags: OrderByFlags::None,
+        };
+        let merger = TopKMerger::new(order_by, 10);
+        let finite = record(1, 1, Some(("score", Value::from(5.0))));
+        let negative_nan = record(
+            2,
+            1,
+            Some(("score", Value::from(f64::from_bits(0xfff8_0000_0000_0000)))),
+        );
+
+        let merged = merger.merge(vec![vec![negative_nan, finite.clone()]]);
+        assert_eq!(
+            merged[0].key.as_ref().unwrap().digest,
+            finite.key.unwrap().digest
+        );
     }
 
     #[test]
@@ -339,7 +478,10 @@ mod tests {
         let b = record(2, 1, Some(("b", Value::Blob(vec![1, 0, 0]))));
 
         let merged = merger.merge(vec![vec![a, b.clone()]]);
-        assert_eq!(merged[0].key.as_ref().unwrap().digest, b.key.unwrap().digest);
+        assert_eq!(
+            merged[0].key.as_ref().unwrap().digest,
+            b.key.unwrap().digest
+        );
     }
 
     #[test]
@@ -373,12 +515,8 @@ mod tests {
         }
     }
 
-    // Concurrency-adjacent regression test (the Java client's own test
-    // suite doesn't cover this): simulate multiple "node tasks"
-    // independently observing the *same* digest at different
-    // generations/values, arriving in every possible order, and assert the
-    // outcome is always the correct, order-independent generation-first pick
-    // -- not just "doesn't panic under load".
+    // Simulate multiple node tasks observing the same digest at different
+    // generations and values, arriving in every possible order.
     #[test]
     fn dedup_is_order_independent_for_racing_duplicate_digests() {
         let merger = TopKMerger::new(order_by(Order::Desc), 10);
@@ -395,7 +533,10 @@ mod tests {
             let buffers: Vec<Vec<Record>> = perm.into_iter().map(|r| vec![r]).collect();
             let merged = merger.merge(buffers);
             assert_eq!(merged.len(), 1);
-            assert_eq!(merged[0].generation, 3, "must always keep the highest generation regardless of arrival order");
+            assert_eq!(
+                merged[0].generation, 3,
+                "must always keep the highest generation regardless of arrival order"
+            );
             assert_eq!(merged[0].bins["score"], Value::Int(1));
         }
     }

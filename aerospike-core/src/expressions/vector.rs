@@ -13,43 +13,48 @@
 // License for the specific language governing permissions and limitations under
 // the License.
 
-//! WIP vector-distance filter expressions.
+//! Vector-distance filter expressions.
 //!
-//! Requires `EXP_VECTOR_DIST`. Query payloads contain raw little-endian
-//! elements, excluding the vector header.
+//! Query vectors use the complete little-endian VECTOR wire value.
+//! Incomparable vector operands evaluate as unknown. For an expression read,
+//! use [`ExpReadFlags::EvalNoFail`](crate::operations::exp::ExpReadFlags::EvalNoFail)
+//! to receive that as an absent result instead of `OpNotApplicable`.
 
 use crate::expressions::{ExpOp, Expression};
-use crate::vector::{Vector, VectorDistanceMetric};
+use crate::vector::Vector;
 use crate::Value;
 
 /// Creates a squared-Euclidean-distance expression (not square-rooted). Smaller is closer.
 ///
-/// WIP: requires `EXP_VECTOR_DIST`; query type and dimensions must match `bin`.
+/// If the bin is not a VECTOR or its element type or dimensions differ from
+/// `query`, the server evaluates the expression as unknown.
 pub fn euclidean_squared_distance(query: &Vector, bin: Expression) -> Expression {
-    build_distance(VectorDistanceMetric::EuclideanSquared, query, bin)
+    build_distance(ExpOp::VectorEuclideanDistance, query, bin)
 }
 
 /// Creates a dot-product expression. Larger is more similar.
 ///
-/// WIP: requires `EXP_VECTOR_DIST`; query type and dimensions must match `bin`.
+/// If the bin is not a VECTOR or its element type or dimensions differ from
+/// `query`, the server evaluates the expression as unknown.
 pub fn dot_product(query: &Vector, bin: Expression) -> Expression {
-    build_distance(VectorDistanceMetric::DotProduct, query, bin)
+    build_distance(ExpOp::VectorDotProduct, query, bin)
 }
 
 /// Creates a cosine-similarity expression. Larger is more similar.
 ///
-/// WIP: requires `EXP_VECTOR_DIST`; query type and dimensions must match `bin`.
+/// If the bin is not a VECTOR or its element type or dimensions differ from
+/// `query`, the server evaluates the expression as unknown.
 pub fn cosine_similarity(query: &Vector, bin: Expression) -> Expression {
-    build_distance(VectorDistanceMetric::CosineSimilarity, query, bin)
+    build_distance(ExpOp::VectorCosineSimilarity, query, bin)
 }
 
-/// Builds the shared vector-distance expression form.
-fn build_distance(metric: VectorDistanceMetric, query: &Vector, bin: Expression) -> Expression {
+/// Builds the three-element vector-distance expression form.
+fn build_distance(opcode: ExpOp, query: &Vector, bin: Expression) -> Expression {
     Expression::new(
-        Some(ExpOp::VectorDist),
-        Some(Value::Blob(query.element_bytes())),
+        Some(opcode),
+        Some(Value::Blob(query.wire_bytes())),
         Some(bin),
-        Some(metric.code()),
+        None,
         None,
         None,
     )
@@ -73,25 +78,31 @@ mod tests {
         }
     }
 
-    // WIP wire form: [VECTOR_DIST, metric, query blob, bin].
     #[test]
-    fn cosine_similarity_wire_bytes() {
+    fn distance_builders_use_distinct_opcodes_and_full_vector_literals() {
         let query = Vector::float32(vec![1.0]);
-        let exp = cosine_similarity(&query, vector_bin("v".to_string()));
+        for (exp, opcode) in [
+            (
+                euclidean_squared_distance(&query, vector_bin("v".to_string())),
+                0x34,
+            ),
+            (dot_product(&query, vector_bin("v".to_string())), 0x35),
+            (cosine_similarity(&query, vector_bin("v".to_string())), 0x36),
+        ] {
+            let expected = [
+                0x93, // array(3)
+                opcode, 0x93, 0x51, 0x0a, 0xa1, 0x76, // vector bin "v"
+                0xad, 0x04, // BLOB particle, 12-byte complete VECTOR wire value
+                0x01, 0x03, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, // VECTOR header
+                0x00, 0x00, 0x80, 0x3f, // float32 1.0, little-endian
+            ];
 
-        let expected = [
-            0x94, // array(4)
-            0x34, // VECTOR_DIST (52)
-            0x02, // metric = CosineSimilarity (2)
-            0xa5, 0x04, 0x00, 0x00, 0x80, 0x3f, // BLOB of 1.0f32, little-endian
-            0x93, 0x51, 0x06, 0xa1, 0x76, // bin "v": [Bin(81), BLOB type(6), "v"]
-        ];
-
-        let mut buf = Buffer::new(usize::MAX);
-        buf.resize_buffer(expected.len()).unwrap();
-        buf.data_offset = 0;
-        exp.pack(&mut Some(&mut buf))
-            .expect("vector distance expr should pack");
-        assert_eq!(&buf.data_buffer[..expected.len()], &expected);
+            let mut buf = Buffer::new(usize::MAX);
+            buf.resize_buffer(expected.len()).unwrap();
+            buf.data_offset = 0;
+            exp.pack(&mut Some(&mut buf))
+                .expect("vector distance expr should pack");
+            assert_eq!(&buf.data_buffer[..expected.len()], &expected);
+        }
     }
 }

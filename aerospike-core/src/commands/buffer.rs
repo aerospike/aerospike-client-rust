@@ -1506,25 +1506,6 @@ impl Buffer {
             field_count += 4;
         }
 
-        // ---------- estimation: order_by / top_k (Top-K queries) ----------
-        if statement.order_by.is_some() && !node.version().supports_query_top_k() {
-            return Err(Error::invalid_argument(
-                "orderBy/topK requires Aerospike Server 8.1.3 or later",
-            ));
-        }
-
-        let mut order_by_size = 0;
-        if let Some(ref order_by) = statement.order_by {
-            // Server layout: type, direction, flags, bin-name length, name.
-            order_by_size = 4 + order_by.bin_name.len();
-            self.data_offset += order_by_size + FIELD_HEADER_SIZE as usize;
-            field_count += 1;
-        }
-        if statement.top_k.is_some() {
-            self.data_offset += 4 + FIELD_HEADER_SIZE as usize;
-            field_count += 1;
-        }
-
         // ---------- estimation: policy filter expression or plan-driven WHERE ----------
         let filter_exp_size = if execute_where.is_some() {
             0
@@ -1695,18 +1676,6 @@ impl Buffer {
             } else {
                 self.write_args(None, FieldType::UdfArgList)?;
             }
-        }
-
-        if let Some(ref order_by) = statement.order_by {
-            self.write_field_header(order_by_size, FieldType::OrderBy);
-            self.write_u8(order_by.order_type as u8);
-            self.write_u8(order_by.direction as u8);
-            self.write_u8(order_by.flags.to_wire_bits() as u8);
-            self.write_u8(order_by.bin_name.len() as u8);
-            self.write_bytes(order_by.bin_name.as_bytes());
-        }
-        if let Some(k) = statement.top_k {
-            self.write_field_u32(k, FieldType::TopK);
         }
 
         if let Some(where_bytes) = execute_where {
@@ -3745,7 +3714,7 @@ mod tests {
     }
 
     #[test]
-    fn order_by_and_top_k_are_rejected_without_capability_support() {
+    fn order_by_and_top_k_are_client_side_and_need_no_server_capability() {
         use crate::query::{Order, OrderByType};
         use crate::{Bins, QueryPolicy, Statement};
 
@@ -3755,30 +3724,24 @@ mod tests {
         stmt.set_order_by("score", OrderByType::Integer, Order::Desc);
         stmt.set_top_k(5);
 
-        let err = buf
-            .set_query(
-                QueryDirection::Foreground(&QueryPolicy::default()),
-                &stmt,
-                1,
-                &node,
-                None,
-                None,
-            )
-            .unwrap_err();
-        assert!(
-            err.to_string().contains("8.1.3"),
-            "unexpected error: {err}"
-        );
+        buf.set_query(
+            QueryDirection::Foreground(&QueryPolicy::default()),
+            &stmt,
+            1,
+            &node,
+            None,
+            None,
+        )
+        .unwrap();
     }
 
     #[test]
-    fn order_by_and_top_k_encode_to_the_documented_wire_format() {
+    fn order_by_and_top_k_do_not_add_server_wire_fields() {
         use crate::query::order_by::{Order, OrderByFlags, OrderByType};
         use crate::{Bins, QueryPolicy, Statement};
 
         let mut buf = Buffer::new(4096);
-        let node =
-            crate::cluster::node::test_node_with_version(crate::Version::new(8, 1, 3, 0));
+        let node = crate::cluster::node::test_node_with_version(crate::Version::default());
         let mut stmt = Statement::new("test", "test", Bins::All);
         stmt.set_order_by_with_flags(
             "score",
@@ -3800,33 +3763,18 @@ mod tests {
 
         let fields = read_wire_fields(&buf);
 
-        let order_by_payload = fields
-            .iter()
-            .find(|(ftype, _)| *ftype == FieldType::OrderBy as u8)
-            .map(|(_, payload)| payload.clone())
-            .expect("OrderBy field must be present");
-
-        assert_eq!(
-            order_by_payload,
-            vec![
-                OrderByType::String as u8,
-                Order::Desc as u8,
-                OrderByFlags::CaseInsensitive.to_wire_bits() as u8,
-                5,
-                b's',
-                b'c',
-                b'o',
-                b'r',
-                b'e',
-            ]
+        assert!(
+            fields
+                .iter()
+                .all(|(field_type, _)| *field_type != FieldType::OrderBy as u8),
+            "Top-K must be reduced client-side, without an ORDER_BY wire field"
         );
-
-        let top_k_payload = fields
-            .iter()
-            .find(|(ftype, _)| *ftype == FieldType::TopK as u8)
-            .map(|(_, payload)| payload.clone())
-            .expect("TopK field must be present");
-        assert_eq!(top_k_payload, 5u32.to_be_bytes().to_vec());
+        assert!(
+            fields
+                .iter()
+                .all(|(field_type, _)| *field_type != FieldType::TopK as u8),
+            "Top-K must be reduced client-side, without a TOP_K wire field"
+        );
     }
 
     /// Every `as_msg_field` declares a size that matches what follows it.

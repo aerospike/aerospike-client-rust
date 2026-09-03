@@ -13,20 +13,21 @@
 // License for the specific language governing permissions and limitations under
 // the License.
 
-//! VECTOR particle integration tests.
-//!
-//! WIP vector-distance tests require `EXP_VECTOR_DIST` and are ignored.
+//! VECTOR particle and vector-distance expression integration tests.
 
 use crate::common;
 
 use std::collections::HashMap;
 
+use futures::stream::StreamExt;
+
 use aerospike::expressions::vector::{cosine_similarity, dot_product, euclidean_squared_distance};
 use aerospike::expressions::{bin_exists, vector_bin};
 use aerospike::operations::exp::{read_exp, ExpReadFlags};
+use aerospike::query::{Order, OrderByType, PartitionFilter};
 use aerospike::{
-    as_bin, as_key, BatchOperation, BatchPolicy, BatchReadPolicy, Bins, ReadPolicy, Value, Vector,
-    VectorElementType, WritePolicy,
+    as_bin, as_key, BatchOperation, BatchPolicy, BatchReadPolicy, Bins, QueryPolicy, ReadPolicy,
+    Statement, Value, Vector, VectorElementType, WritePolicy,
 };
 
 async fn write_query_vector(client: &aerospike::Client, key: &aerospike::Key, v: &Vector) {
@@ -68,14 +69,19 @@ async fn vectors_round_trip_through_server() {
         ("f16-special", Vector::float16(vec![0x7c00, 0xfc00, 0x7e00])),
     ];
 
-    common::delete_durably(&client, &write_policy, &key).await.unwrap();
+    common::delete_durably(&client, &write_policy, &key)
+        .await
+        .unwrap();
     let bins = expected
         .iter()
         .map(|(name, vector)| as_bin!(*name, vector.clone()))
         .collect::<Vec<_>>();
     client.put(&write_policy, &key, &bins).await.unwrap();
 
-    let record = client.get(&Default::default(), &key, Bins::All).await.unwrap();
+    let record = client
+        .get(&Default::default(), &key, Bins::All)
+        .await
+        .unwrap();
     for (name, vector) in expected {
         assert_eq!(
             record.bins.get(name),
@@ -95,13 +101,18 @@ async fn vector_bin_can_be_absent_without_being_an_empty_vector() {
     let key = as_key!(namespace, &set_name, "missing-vector");
     let write_policy = WritePolicy::default();
 
-    common::delete_durably(&client, &write_policy, &key).await.unwrap();
+    common::delete_durably(&client, &write_policy, &key)
+        .await
+        .unwrap();
     client
         .put(&write_policy, &key, &[as_bin!("scalar", 42)])
         .await
         .unwrap();
 
-    let record = client.get(&Default::default(), &key, Bins::All).await.unwrap();
+    let record = client
+        .get(&Default::default(), &key, Bins::All)
+        .await
+        .unwrap();
     assert!(
         !record.bins.contains_key("vector"),
         "an absent vector bin must not be materialized as an empty vector"
@@ -121,7 +132,9 @@ async fn multiple_vector_and_scalar_bins_in_one_record() {
     let key = as_key!(namespace, &set_name, "multi-bin");
     let write_policy = WritePolicy::default();
 
-    common::delete_durably(&client, &write_policy, &key).await.unwrap();
+    common::delete_durably(&client, &write_policy, &key)
+        .await
+        .unwrap();
 
     let f32v = Vector::float32(vec![1.0, 2.0, 3.0]);
     let f64v = Vector::float64(vec![-1.5, 0.0, 2.5, 9.0]);
@@ -135,7 +148,10 @@ async fn multiple_vector_and_scalar_bins_in_one_record() {
     ];
     client.put(&write_policy, &key, &bins).await.unwrap();
 
-    let record = client.get(&Default::default(), &key, Bins::All).await.unwrap();
+    let record = client
+        .get(&Default::default(), &key, Bins::All)
+        .await
+        .unwrap();
     assert_eq!(record.bins.get("v_f32"), Some(&Value::Vector(f32v)));
     assert_eq!(record.bins.get("v_f64"), Some(&Value::Vector(f64v)));
     assert_eq!(record.bins.get("v_i32"), Some(&Value::Vector(i32v)));
@@ -158,7 +174,9 @@ async fn overwriting_a_vector_bin_replaces_element_type_and_dimensions() {
     let key = as_key!(namespace, &set_name, "overwrite");
     let write_policy = WritePolicy::default();
 
-    common::delete_durably(&client, &write_policy, &key).await.unwrap();
+    common::delete_durably(&client, &write_policy, &key)
+        .await
+        .unwrap();
 
     let first = Vector::float32(vec![1.0, 2.0, 3.0, 4.0]);
     client
@@ -168,11 +186,18 @@ async fn overwriting_a_vector_bin_replaces_element_type_and_dimensions() {
 
     let replacement = Vector::int32(vec![9, -9]);
     client
-        .put(&write_policy, &key, &[as_bin!("embedding", replacement.clone())])
+        .put(
+            &write_policy,
+            &key,
+            &[as_bin!("embedding", replacement.clone())],
+        )
         .await
         .unwrap();
 
-    let record = client.get(&Default::default(), &key, Bins::All).await.unwrap();
+    let record = client
+        .get(&Default::default(), &key, Bins::All)
+        .await
+        .unwrap();
     assert_eq!(
         record.bins.get("embedding"),
         Some(&Value::Vector(replacement)),
@@ -192,7 +217,9 @@ async fn a_vector_bin_can_be_replaced_by_a_scalar_and_back() {
     let key = as_key!(namespace, &set_name, "type-churn");
     let write_policy = WritePolicy::default();
 
-    common::delete_durably(&client, &write_policy, &key).await.unwrap();
+    common::delete_durably(&client, &write_policy, &key)
+        .await
+        .unwrap();
 
     let v = Vector::float32(vec![0.1, 0.2]);
     client
@@ -204,7 +231,10 @@ async fn a_vector_bin_can_be_replaced_by_a_scalar_and_back() {
         .put(&write_policy, &key, &[as_bin!("b", 123)])
         .await
         .unwrap();
-    let record = client.get(&Default::default(), &key, Bins::All).await.unwrap();
+    let record = client
+        .get(&Default::default(), &key, Bins::All)
+        .await
+        .unwrap();
     assert_eq!(record.bins.get("b"), Some(&Value::Int(123)));
 
     let v2 = Vector::float64(vec![9.0, 8.0, 7.0]);
@@ -212,7 +242,10 @@ async fn a_vector_bin_can_be_replaced_by_a_scalar_and_back() {
         .put(&write_policy, &key, &[as_bin!("b", v2.clone())])
         .await
         .unwrap();
-    let record = client.get(&Default::default(), &key, Bins::All).await.unwrap();
+    let record = client
+        .get(&Default::default(), &key, Bins::All)
+        .await
+        .unwrap();
     assert_eq!(record.bins.get("b"), Some(&Value::Vector(v2)));
 
     client.close().await.unwrap();
@@ -227,7 +260,9 @@ async fn reading_selected_bins_returns_only_the_requested_vector() {
     let key = as_key!(namespace, &set_name, "select");
     let write_policy = WritePolicy::default();
 
-    common::delete_durably(&client, &write_policy, &key).await.unwrap();
+    common::delete_durably(&client, &write_policy, &key)
+        .await
+        .unwrap();
 
     let wanted = Vector::float32(vec![1.0, 2.0]);
     let bins = vec![
@@ -258,7 +293,9 @@ async fn single_dimension_vector_round_trips_through_server() {
     let key = as_key!(namespace, &set_name, "one-dim");
     let write_policy = WritePolicy::default();
 
-    common::delete_durably(&client, &write_policy, &key).await.unwrap();
+    common::delete_durably(&client, &write_policy, &key)
+        .await
+        .unwrap();
 
     let v = Vector::float32(vec![42.5]);
     client
@@ -266,7 +303,10 @@ async fn single_dimension_vector_round_trips_through_server() {
         .await
         .unwrap();
 
-    let record = client.get(&Default::default(), &key, Bins::All).await.unwrap();
+    let record = client
+        .get(&Default::default(), &key, Bins::All)
+        .await
+        .unwrap();
     assert_eq!(record.bins.get("embedding"), Some(&Value::Vector(v)));
 
     client.close().await.unwrap();
@@ -283,7 +323,9 @@ async fn element_type_is_preserved_distinctly_through_the_server() {
     let key = as_key!(namespace, &set_name, "types");
     let write_policy = WritePolicy::default();
 
-    common::delete_durably(&client, &write_policy, &key).await.unwrap();
+    common::delete_durably(&client, &write_policy, &key)
+        .await
+        .unwrap();
 
     // All four encode the value "one".
     let f16 = Vector::float16(vec![0x3c00]); // 1.0 in IEEE-754 binary16
@@ -298,7 +340,10 @@ async fn element_type_is_preserved_distinctly_through_the_server() {
     ];
     client.put(&write_policy, &key, &bins).await.unwrap();
 
-    let record = client.get(&Default::default(), &key, Bins::All).await.unwrap();
+    let record = client
+        .get(&Default::default(), &key, Bins::All)
+        .await
+        .unwrap();
 
     let element_type = |name: &str| match record.bins.get(name) {
         Some(Value::Vector(v)) => v.element_type(),
@@ -328,7 +373,9 @@ async fn signed_zero_and_non_finite_survive_the_server_bit_exact() {
     let key = as_key!(namespace, &set_name, "bits");
     let write_policy = WritePolicy::default();
 
-    common::delete_durably(&client, &write_policy, &key).await.unwrap();
+    common::delete_durably(&client, &write_policy, &key)
+        .await
+        .unwrap();
 
     let f32v = Vector::float32(vec![-0.0, 0.0, f32::NAN, f32::INFINITY, f32::NEG_INFINITY]);
     let f64v = Vector::float64(vec![-0.0, 0.0, f64::NAN, f64::INFINITY, f64::NEG_INFINITY]);
@@ -346,7 +393,10 @@ async fn signed_zero_and_non_finite_survive_the_server_bit_exact() {
         .await
         .unwrap();
 
-    let record = client.get(&Default::default(), &key, Bins::All).await.unwrap();
+    let record = client
+        .get(&Default::default(), &key, Bins::All)
+        .await
+        .unwrap();
     assert_eq!(record.bins.get("f32"), Some(&Value::Vector(f32v)));
     assert_eq!(record.bins.get("f64"), Some(&Value::Vector(f64v)));
     assert_eq!(record.bins.get("f16"), Some(&Value::Vector(f16v)));
@@ -369,7 +419,9 @@ async fn int32_vector_preserves_full_signed_range() {
     let key = as_key!(namespace, &set_name, "i32-range");
     let write_policy = WritePolicy::default();
 
-    common::delete_durably(&client, &write_policy, &key).await.unwrap();
+    common::delete_durably(&client, &write_policy, &key)
+        .await
+        .unwrap();
 
     let v = Vector::int32(vec![i32::MIN, -1, 0, 1, i32::MAX]);
     client
@@ -377,7 +429,10 @@ async fn int32_vector_preserves_full_signed_range() {
         .await
         .unwrap();
 
-    let record = client.get(&Default::default(), &key, Bins::All).await.unwrap();
+    let record = client
+        .get(&Default::default(), &key, Bins::All)
+        .await
+        .unwrap();
     assert_eq!(record.bins.get("embedding"), Some(&Value::Vector(v)));
 
     client.close().await.unwrap();
@@ -393,7 +448,9 @@ async fn large_vector_crossing_16bit_length_boundary_round_trips() {
     let key = as_key!(namespace, &set_name, "large");
     let write_policy = WritePolicy::default();
 
-    common::delete_durably(&client, &write_policy, &key).await.unwrap();
+    common::delete_durably(&client, &write_policy, &key)
+        .await
+        .unwrap();
 
     // 9000 f64 elements => 8 + 9000*8 = 72008 bytes, well past 65_535.
     let data: Vec<f64> = (0..9000).map(|i| i as f64 * 0.5).collect();
@@ -403,7 +460,10 @@ async fn large_vector_crossing_16bit_length_boundary_round_trips() {
         .await
         .unwrap();
 
-    let record = client.get(&Default::default(), &key, Bins::All).await.unwrap();
+    let record = client
+        .get(&Default::default(), &key, Bins::All)
+        .await
+        .unwrap();
     assert_eq!(record.bins.get("embedding"), Some(&Value::Vector(v)));
 
     client.close().await.unwrap();
@@ -421,7 +481,9 @@ async fn vector_nested_in_a_list_bin_round_trips_through_server() {
     let key = as_key!(namespace, &set_name, "list-nest");
     let write_policy = WritePolicy::default();
 
-    common::delete_durably(&client, &write_policy, &key).await.unwrap();
+    common::delete_durably(&client, &write_policy, &key)
+        .await
+        .unwrap();
 
     let list = Value::List(vec![
         Value::Int(1),
@@ -434,7 +496,10 @@ async fn vector_nested_in_a_list_bin_round_trips_through_server() {
         .await
         .unwrap();
 
-    let record = client.get(&Default::default(), &key, Bins::All).await.unwrap();
+    let record = client
+        .get(&Default::default(), &key, Bins::All)
+        .await
+        .unwrap();
     assert_eq!(record.bins.get("items"), Some(&list));
 
     client.close().await.unwrap();
@@ -449,7 +514,9 @@ async fn vector_nested_in_a_map_bin_round_trips_through_server() {
     let key = as_key!(namespace, &set_name, "map-nest");
     let write_policy = WritePolicy::default();
 
-    common::delete_durably(&client, &write_policy, &key).await.unwrap();
+    common::delete_durably(&client, &write_policy, &key)
+        .await
+        .unwrap();
 
     let mut map = HashMap::new();
     map.insert(
@@ -463,7 +530,10 @@ async fn vector_nested_in_a_map_bin_round_trips_through_server() {
         .await
         .unwrap();
 
-    let record = client.get(&Default::default(), &key, Bins::All).await.unwrap();
+    let record = client
+        .get(&Default::default(), &key, Bins::All)
+        .await
+        .unwrap();
     // Value equality treats HashMap/OrderedMap with matching entries as equal,
     // so this holds regardless of how the server returns the map.
     assert_eq!(record.bins.get("by_key"), Some(&map_value));
@@ -484,8 +554,12 @@ async fn batch_read_returns_records_with_vector_bins() {
     let v1 = Vector::float32(vec![1.0, 2.0, 3.0]);
     let v2 = Vector::int32(vec![10, 20]);
 
-    common::delete_durably(&client, &write_policy, &key1).await.unwrap();
-    common::delete_durably(&client, &write_policy, &key2).await.unwrap();
+    common::delete_durably(&client, &write_policy, &key1)
+        .await
+        .unwrap();
+    common::delete_durably(&client, &write_policy, &key2)
+        .await
+        .unwrap();
     client
         .put(&write_policy, &key1, &[as_bin!("embedding", v1.clone())])
         .await
@@ -519,62 +593,9 @@ async fn batch_read_returns_records_with_vector_bins() {
     client.close().await.unwrap();
 }
 
-// Reading a vector bin back through the expression engine (a plain
-// BLOB-typed bin read, wire-identical to `blob_bin`) currently DOWNS the
-// node. Root cause is server-side, in `rt_bin_translate`
-// (aerospike-server/as/src/exp/exp_rt.c): its particle-type switch has no
-// `AS_PARTICLE_TYPE_VECTOR` arm and falls through to `cf_crash(AS_EXP,
-// "unexpected")`. Every expression that loads a vector bin routes through
-// `rt_load_bin` -> `rt_bin_translate`, so a filter, `bin_exists`, `bin_type`,
-// or read expression over a vector bin all abort asd. The sibling
-// `rt_value_translate` was hardened for exactly this case (its default arm
-// yields AS_EXP_UNK "rather than crash on a wire-reachable operand"); the fix
-// is to give VECTOR the same treatment as BLOB in `rt_bin_translate`.
-//
-// This is ignored so it never runs against an unpatched node (executing it
-// crashes the server). It doubles as a ready repro and a regression guard for
-// once the server handles the VECTOR particle on the read path.
+// A filter expression can safely inspect a VECTOR bin's presence.
 #[aerospike_macro::test]
-#[ignore = "server bug: reading a vector bin via an expression crashes asd (rt_bin_translate cf_crash on AS_PARTICLE_TYPE_VECTOR)"]
-async fn reading_a_vector_bin_via_expression_read_must_not_crash_the_server() {
-    let client = common::client().await;
-    let namespace = common::namespace();
-    let set_name = common::rand_str(10);
-    let key = as_key!(namespace, &set_name, "vector-exp-read");
-
-    let v = Vector::float32(vec![0.5, -1.5, 2.0]);
-    write_query_vector(&client, &key, &v).await;
-
-    // A plain read of the vector bin through the expression engine. This is the
-    // exact operation that downs the node on current builds.
-    let ops = vec![read_exp(
-        "out",
-        vector_bin("embedding".to_string()),
-        ExpReadFlags::Default,
-    )];
-    let rec = client
-        .operate(&WritePolicy::default(), &key, &ops)
-        .await
-        .expect("reading a vector bin via an expression must not error or crash the node");
-
-    // On a fixed server the bin comes back; the exact returned Value type may
-    // need tightening once the server settles the read-path representation.
-    assert!(
-        rec.bins.contains_key("out"),
-        "expression read of a vector bin should return the bin"
-    );
-
-    client.close().await.unwrap();
-}
-
-// Same server defect from a different entry point: a *filter* expression that
-// references a vector bin also routes through `rt_load_bin` ->
-// `rt_bin_translate` and crashes the node. Gated for the same reason as the
-// read above; a fixed server should simply apply the filter (here it matches,
-// so the record is returned).
-#[aerospike_macro::test]
-#[ignore = "server bug: a filter expression over a vector bin crashes asd (rt_bin_translate cf_crash on AS_PARTICLE_TYPE_VECTOR)"]
-async fn filter_expression_referencing_a_vector_bin_must_not_crash_the_server() {
+async fn filter_expression_referencing_a_vector_bin_matches_the_record() {
     let client = common::client().await;
     let namespace = common::namespace();
     let set_name = common::rand_str(10);
@@ -583,23 +604,19 @@ async fn filter_expression_referencing_a_vector_bin_must_not_crash_the_server() 
     let v = Vector::float32(vec![0.5, -1.5, 2.0]);
     write_query_vector(&client, &key, &v).await;
 
-    // `bin_exists` compiles to `bin_type(...) != NULL`, which the server
-    // evaluates via `exp_eval_bin_type` -> `rt_load_bin` -> `rt_bin_translate`
-    // -> cf_crash for a vector bin. Any predicate touching the bin does this.
     let mut read_policy = ReadPolicy::default();
     read_policy.base_policy.filter_expression = Some(bin_exists("embedding".to_string()));
 
     let record = client
         .get(&read_policy, &key, Bins::All)
         .await
-        .expect("a filter over a vector bin must not crash the node");
+        .expect("a filter over a vector bin must succeed");
     assert_eq!(record.bins.get("embedding"), Some(&Value::Vector(v)));
 
     client.close().await.unwrap();
 }
 
 #[aerospike_macro::test]
-#[ignore = "requires a server build with EXP_VECTOR_DIST"]
 async fn euclidean_squared_distance_to_self_is_zero() {
     let client = common::client().await;
     let namespace = common::namespace();
@@ -628,7 +645,6 @@ async fn euclidean_squared_distance_to_self_is_zero() {
 }
 
 #[aerospike_macro::test]
-#[ignore = "requires a server build with EXP_VECTOR_DIST"]
 async fn dot_product_matches_sum_of_squares_for_self() {
     let client = common::client().await;
     let namespace = common::namespace();
@@ -659,7 +675,6 @@ async fn dot_product_matches_sum_of_squares_for_self() {
 }
 
 #[aerospike_macro::test]
-#[ignore = "requires a server build with EXP_VECTOR_DIST"]
 async fn cosine_similarity_to_self_is_one() {
     let client = common::client().await;
     let namespace = common::namespace();
@@ -688,7 +703,6 @@ async fn cosine_similarity_to_self_is_one() {
 }
 
 #[aerospike_macro::test]
-#[ignore = "requires a server build with EXP_VECTOR_DIST"]
 async fn euclidean_squared_distance_is_sum_of_squared_differences() {
     let client = common::client().await;
     let namespace = common::namespace();
@@ -714,5 +728,107 @@ async fn euclidean_squared_distance_is_sum_of_squared_differences() {
         "squared Euclidean distance between [0, 0] and [3, 4] should be 25"
     );
 
+    client.close().await.unwrap();
+}
+
+#[aerospike_macro::test]
+async fn vector_distance_is_unknown_for_incomparable_values() {
+    let client = common::client().await;
+    let namespace = common::namespace();
+    let set_name = common::rand_str(10);
+    let query = Vector::float32(vec![1.0, 2.0]);
+    let write_policy = WritePolicy::default();
+
+    for (name, value) in [
+        ("scalar", Value::Int(1)),
+        ("wrong-type", Value::Vector(Vector::int32(vec![1, 2]))),
+        (
+            "wrong-dims",
+            Value::Vector(Vector::float32(vec![1.0, 2.0, 3.0])),
+        ),
+    ] {
+        let key = as_key!(namespace, &set_name, name);
+        common::delete_durably(&client, &write_policy, &key)
+            .await
+            .unwrap();
+        client
+            .put(&write_policy, &key, &[as_bin!("embedding", value)])
+            .await
+            .unwrap();
+
+        let rec = client
+            .operate(
+                &write_policy,
+                &key,
+                &[read_exp(
+                    "dist",
+                    euclidean_squared_distance(&query, vector_bin("embedding".into())),
+                    ExpReadFlags::EvalNoFail,
+                )],
+            )
+            .await
+            .unwrap();
+        assert!(
+            matches!(rec.bins.get("dist"), None | Some(Value::Nil)),
+            "{name}: incomparable vectors must produce an unknown expression result, got {:?}",
+            rec.bins.get("dist")
+        );
+    }
+
+    client.close().await.unwrap();
+}
+
+#[aerospike_macro::test]
+async fn vector_distance_projection_supports_top_k_nearest_query() {
+    let client = common::client().await;
+    let namespace = common::namespace();
+    let set_name = common::rand_str(10);
+    let write_policy = WritePolicy::default();
+
+    for id in 0..6_i64 {
+        let key = as_key!(namespace, &set_name, id);
+        client
+            .put(
+                &write_policy,
+                &key,
+                &[
+                    as_bin!("id", id),
+                    as_bin!("embedding", Vector::float32(vec![id as f32, 0.0])),
+                ],
+            )
+            .await
+            .unwrap();
+    }
+
+    let query = Vector::float32(vec![0.0, 0.0]);
+    let mut statement = Statement::new(namespace, &set_name, Bins::All);
+    statement.set_operations(vec![
+        aerospike::operations::get_bin("id"),
+        read_exp(
+            "dist",
+            euclidean_squared_distance(&query, vector_bin("embedding".into())),
+            ExpReadFlags::Default,
+        ),
+    ]);
+    statement.set_order_by("dist", OrderByType::Double, Order::Asc);
+    statement.set_top_k(3);
+
+    let recordset = client
+        .query(&QueryPolicy::default(), PartitionFilter::all(), statement)
+        .await
+        .unwrap();
+    let results = recordset
+        .into_stream()
+        .map(|result| {
+            let record = result.expect("Top-K query record");
+            (
+                record.bins["id"].clone().try_into().unwrap(),
+                float_bin(&record, "dist"),
+            )
+        })
+        .collect::<Vec<(i64, f64)>>()
+        .await;
+
+    assert_eq!(results, vec![(0, 0.0), (1, 1.0), (2, 4.0)]);
     client.close().await.unwrap();
 }

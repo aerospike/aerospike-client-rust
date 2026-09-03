@@ -25,7 +25,7 @@ use crate::commands::field_type::FieldType;
 use crate::commands::Command;
 use crate::errors::{Error, ErrorKind, Result};
 use crate::net::{BufferedConn, Connection};
-use crate::query::{NodePartitions, Recordset};
+use crate::query::{NodePartitions, Recordset, TopKAccumulator};
 use crate::value::bytes_to_particle;
 use crate::{Key, Record, ResultCode, Value};
 
@@ -37,14 +37,10 @@ pub struct StreamCommand {
     cluster: Arc<Cluster>,
     pub(crate) recordset: Arc<Recordset>,
     pub(crate) node_partitions: Arc<Mutex<NodePartitions>>,
-    /// Set only for Top-K (`ORDER BY <bin> LIMIT k`) queries: when present,
-    /// parsed records are appended here instead of being streamed straight
-    /// into `recordset`. Each node's own already-bounded (`<= k`), sorted
-    /// result is buffered independently and handed back to the caller once
-    /// this node's command completes, so it can be merged with every other
-    /// node's buffer after the whole job finishes (see
-    /// `Client::execute_top_k_query` and `query::top_k_merge::TopKMerger`).
-    pub(crate) top_k_buffer: Option<Arc<Mutex<Vec<Record>>>>,
+    /// Set only for Top-K (`ORDER BY <bin> LIMIT k`) queries: parsed records
+    /// are reduced in this bounded client-side accumulator instead of being
+    /// streamed directly into `recordset`.
+    pub(crate) top_k_buffer: Option<Arc<Mutex<TopKAccumulator>>>,
 }
 
 impl Drop for StreamCommand {
@@ -61,7 +57,7 @@ impl StreamCommand {
         node_partitions: Arc<Mutex<NodePartitions>>,
         is_scan: bool,
         cluster: Arc<Cluster>,
-        top_k_buffer: Option<Arc<Mutex<Vec<Record>>>>,
+        top_k_buffer: Option<Arc<Mutex<TopKAccumulator>>>,
     ) -> Self {
         StreamCommand {
             is_scan,
@@ -172,15 +168,13 @@ impl StreamCommand {
                     }
 
                     if let Some(buffer) = &self.top_k_buffer {
-                        // Top-K: accumulate into this node's own buffer
-                        // instead of streaming straight to the consumer,
-                        // and deliberately skip `set_digest`/`set_last`.
-                        // Those record a mid-partition resume cursor, but
-                        // Top-K is single-shot and the server rejects
-                        // non-zero resume cursors outright — a retried
-                        // partition must always be requested fresh.
+                        // Top-K: reduce into the node's bounded client-side
+                        // accumulator instead of streaming directly to the
+                        // consumer. Resume cursors are deliberately skipped:
+                        // a retry restarts the complete reduction so results
+                        // from differently scoped attempts never mix.
                         node_partitions.record_count += 1;
-                        buffer.lock().await.push(rec);
+                        buffer.lock().await.accept(rec);
                     } else {
                         let key = &rec.key.clone().unwrap();
                         self.recordset.push(Ok(rec)).await?;
@@ -277,8 +271,7 @@ impl StreamCommand {
                     let buf = conn.buffer();
                     let start = buf.data_offset();
                     if let Some(slice) = buf.data_buffer.get(start..start + data_size) {
-                        error_detail =
-                            crate::server_error::parse_error_detail(slice).map(Box::new);
+                        error_detail = crate::server_error::parse_error_detail(slice).map(Box::new);
                     }
                     conn.buffer().skip(data_size);
                 }

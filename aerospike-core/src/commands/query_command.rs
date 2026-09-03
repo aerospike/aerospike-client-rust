@@ -20,8 +20,8 @@ use crate::commands::{Command, SingleCommand, StreamCommand};
 use crate::errors::Result;
 use crate::net::Connection;
 use crate::policy::QueryPolicy;
-use crate::query::NodePartitions;
-use crate::{Record, Recordset, Statement};
+use crate::query::{NodePartitions, TopKAccumulator};
+use crate::{Recordset, Statement};
 
 use aerospike_rt::Mutex;
 
@@ -39,7 +39,7 @@ impl<'a> QueryCommand<'a> {
         recordset: Arc<Recordset>,
         node_partitions: Arc<Mutex<NodePartitions>>,
         cluster: Arc<Cluster>,
-        top_k_buffer: Option<Arc<Mutex<Vec<Record>>>>,
+        top_k_buffer: Option<Arc<Mutex<TopKAccumulator>>>,
         execute_where: Option<Arc<[u8]>>,
     ) -> Self {
         let node = {
@@ -84,18 +84,15 @@ impl Command for QueryCommand<'_> {
     async fn prepare_buffer(&mut self, conn: &mut Connection) -> Result<()> {
         let node_partitions = self.stream_command.node_partitions.lock().await;
         let node = node_partitions.node.clone();
-        let execute_where = self
-            .execute_where
-            .as_deref();
-        conn.buffer
-            .set_query(
-                QueryDirection::Foreground(self.policy),
-                &self.statement,
-                self.stream_command.recordset.task_id(),
-                &node,
-                Some(&node_partitions),
-                execute_where,
-            )
+        let execute_where = self.execute_where.as_deref();
+        conn.buffer.set_query(
+            QueryDirection::Foreground(self.policy),
+            &self.statement,
+            self.stream_command.recordset.task_id(),
+            &node,
+            Some(&node_partitions),
+            execute_where,
+        )
     }
 
     fn get_node(&mut self) -> Result<Arc<Node>> {

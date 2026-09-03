@@ -66,7 +66,7 @@ async fn create_test_set(client: &Client, no_records: usize) -> String {
 }
 
 #[aerospike_macro::test]
-async fn query_top_k_uses_server_order_by_wire_format() {
+async fn query_top_k_uses_client_side_reduction() {
     let client = common::client().await;
     let namespace = common::namespace();
     let set_name = common::rand_str(10);
