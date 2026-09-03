@@ -88,7 +88,7 @@ required-features = ["sync", "rt-tokio"]
 
 # Diagnostic: counts the socket writes rustls emits per request, and traces the
 # handshake syscall order. Evidence for the TCP_NODELAY decision in
-# `Connection::disable_nagle`; see `tools/nagle_probe.py` for the latency half.
+# `Connection::set_nodelay`; see `tools/nagle_probe.py` for the latency half.
 [[example]]
 name = "tls_write_shape"
 required-features = ["rt-tokio", "tls"]

@@ -206,7 +206,7 @@ impl Connection {
         Ok(Netsocket::Tcp(stream))
     }
 
-    /// Turns off Nagle for a freshly opened socket.
+    /// Sets `TCP_NODELAY` on a freshly opened socket (disables Nagle).
     ///
     /// Nagle withholds a small segment while earlier small data is still
     /// unacked, which deadlocks against the peer's delayed ACK: the server
@@ -214,13 +214,13 @@ impl Connection {
     /// the request arrives in full. Linux breaks the tie only when its
     /// delayed-ACK timer expires — `TCP_DELACK_MIN`, 40ms.
     ///
-    /// Every other Aerospike client disables it: Java `setTcpNoDelay(true)`,
+    /// Every other Aerospike client sets it: Java `setTcpNoDelay(true)`,
     /// C `setsockopt(TCP_NODELAY)` in `as_socket_create_fd`, C# `NoDelay`, Go
-    /// via its stdlib. The C client re-enables Nagle *only* for fire-and-forget
-    /// pipeline sockets (`as_pipe.c`), so off is the protocol's intended
+    /// via its stdlib. The C client clears it *only* for fire-and-forget
+    /// pipeline sockets (`as_pipe.c`), so on is the protocol's intended
     /// setting for request/response traffic rather than a tuning knob.
     ///
-    /// Measured cost of leaving it on, on Linux with a 1448-byte MSS:
+    /// Measured cost of leaving it unset, on Linux with a 1448-byte MSS:
     ///
     /// | path | Nagle on | `TCP_NODELAY` |
     /// |------|----------|---------------|
@@ -243,7 +243,7 @@ impl Connection {
     ///
     /// Best-effort. A platform that refuses the option still yields a usable
     /// connection, so the error is dropped rather than failing the connect.
-    fn disable_nagle(stream: &TcpStream) {
+    fn set_nodelay(stream: &TcpStream) {
         let _ = stream.set_nodelay(true);
     }
 
@@ -280,7 +280,7 @@ impl Connection {
 
         let stream = stream.unwrap()?;
 
-        Self::disable_nagle(&stream);
+        Self::set_nodelay(&stream);
 
         let stream = Self::get_netsocket(stream, host, policy).await?;
 
@@ -1663,27 +1663,27 @@ mod liveness_probe_tests {
         addr
     }
 
-    /// Nagle must be off on every socket the client opens, matching every other
-    /// Aerospike client. Asserted through the real getsockopt rather than by
-    /// trusting the setter, so a platform that silently ignores the option
-    /// fails here instead of in production.
+    /// `TCP_NODELAY` must be set on every socket the client opens, matching
+    /// every other Aerospike client. Asserted through the real getsockopt
+    /// rather than by trusting the setter, so a platform that silently ignores
+    /// the option fails here instead of in production.
     ///
-    /// This covers [`Connection::disable_nagle`], not its call site: under
+    /// This covers [`Connection::set_nodelay`], not its call site: under
     /// `cfg(test)` `Connection::new` returns a `Netsocket::TestDummy` and never
     /// opens a socket, so the real connect path is unreachable from a unit
     /// test.
     #[aerospike_macro::test]
-    async fn sockets_are_opened_with_nagle_disabled() {
+    async fn sockets_are_opened_with_tcp_nodelay() {
         let addr = spawn_quiet_peer().await;
         let stream = TcpStream::connect(&*addr).await.unwrap();
 
         assert!(
             !socket2::SockRef::from(&stream).tcp_nodelay().unwrap(),
-            "a fresh socket is expected to start with Nagle on; if the platform \
-             default changed, this test no longer proves anything"
+            "a fresh socket is expected to start with TCP_NODELAY unset; if the \
+             platform default changed, this test no longer proves anything"
         );
 
-        Connection::disable_nagle(&stream);
+        Connection::set_nodelay(&stream);
 
         assert!(
             socket2::SockRef::from(&stream).tcp_nodelay().unwrap(),
