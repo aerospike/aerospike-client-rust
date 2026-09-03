@@ -142,6 +142,11 @@ impl StreamCommand {
     }
 
     async fn parse_stream(&self, conn: &mut BufferedConn<'_>, size: usize) -> Result<bool> {
+        // Held for the whole stream: the per-node state has no other writer.
+        // The *tracker* is a different matter — every node's stream shares
+        // it, so it is taken per record below and never held across a wait.
+        let mut node_partitions = self.node_partitions.lock().await;
+
         'outer: while !conn.exhausted() {
             // Read header.
             if let Err(err) = conn
@@ -156,20 +161,33 @@ impl StreamCommand {
             match res {
                 Ok((Some(rec), bval, _)) => {
                     let tracker = self.recordset.tracker.lock().await;
-                    let mut node_partitions = self.node_partitions.lock().await;
-                    if !tracker.allow_record(&mut node_partitions) {
+                    let allowed = tracker.allow_record(&mut node_partitions);
+                    // Dropped before the push: a full record queue blocks
+                    // there, and holding the shared tracker across that wait
+                    // stalls every other node's stream behind this one.
+                    // `allow_record` gates on its own atomic, so it does not
+                    // need to be atomic with the progress commit below.
+                    drop(tracker);
+                    if !allowed {
                         continue 'outer;
                     }
-                    let key = &rec.key.clone().unwrap();
+
+                    // The key is cloned to outlive the record because progress
+                    // is committed only *after* the push succeeds. A failed
+                    // push means the consumer never saw this record, so its
+                    // partition cursor must not advance past it — otherwise a
+                    // later resume from `partition_filter()` skips a record
+                    // that was never delivered. Re-fetching a record beats
+                    // losing one.
+                    let key = rec.key.clone().unwrap();
                     self.recordset.push(Ok(rec)).await?;
 
+                    let tracker = self.recordset.tracker.lock().await;
                     if self.is_scan {
-                        tracker.set_digest(&mut node_partitions, key).await?;
+                        tracker.set_digest(&mut node_partitions, &key).await?;
                     } else {
-                        tracker.set_last(&mut node_partitions, key, bval).await?;
+                        tracker.set_last(&mut node_partitions, &key, bval).await?;
                     }
-                    drop(tracker);
-                    drop(node_partitions);
                 }
                 Ok((None, _, false)) => return Ok(false),
                 Ok((None, _, true)) => {} // handle partition done

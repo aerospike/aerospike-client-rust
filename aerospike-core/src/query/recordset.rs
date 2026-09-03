@@ -25,7 +25,7 @@ use crate::query::{PartitionFilter, PartitionTracker};
 use crate::Record;
 
 /// A stream over incoming records for a [`Recordset`] that can be iterated over either synchronously or asynchronously.
-pub struct RecordStream(Arc<Recordset>);
+pub struct RecordStream(Arc<Recordset>, std::pin::Pin<Box<Receiver<Result<Record>>>>);
 
 /// Virtual collection of records retrieved through queries and scans.
 ///
@@ -147,8 +147,9 @@ impl Recordset {
 
     /// Converts a reference to a [`Recordset`] into a [`RecordStream`] that can be used
     /// to iterate over records.
-    pub const fn into_stream(self: Arc<Self>) -> RecordStream {
-        RecordStream(self)
+    pub fn into_stream(self: Arc<Self>) -> RecordStream {
+        let rx = Box::pin(self.rx.clone());
+        RecordStream(self, rx)
     }
 }
 
@@ -168,25 +169,15 @@ impl Iterator for &Recordset {
 impl futures::Stream for RecordStream {
     type Item = Result<Record>;
 
+    /// Delegates to the channel's own stream, which parks the task and is
+    /// woken by the sender. The previous `try_recv` + self-wake loop was a
+    /// busy-poll: an empty moment re-polled the task immediately, burning
+    /// the very CPU the producer needed to fill the channel.
     fn poll_next(
         self: std::pin::Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
     ) -> std::task::Poll<Option<Self::Item>> {
-        match self.0.rx.try_recv() {
-            Ok(r) => std::task::Poll::Ready(Some(r)),
-            // Channel closed and drained: the stream has ended. (`close()`
-            // closes the channel; `is_empty()` alone would spin forever on
-            // the `Closed` error.)
-            Err(e) if e.is_closed() => std::task::Poll::Ready(None),
-            Err(e) => {
-                if !self.0.is_active() && e.is_empty() {
-                    std::task::Poll::Ready(None)
-                } else {
-                    cx.waker().wake_by_ref();
-                    std::task::Poll::Pending
-                }
-            }
-        }
+        self.get_mut().1.as_mut().poll_next(cx)
     }
 }
 

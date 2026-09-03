@@ -909,7 +909,7 @@ impl<'a> BufferedConn<'a> {
     pub fn new(conn: &'a mut Connection) -> Self {
         BufferedConn {
             conn,
-            cache: Vec::with_capacity(4 * 1024),
+            cache: Vec::with_capacity(64 * 1024),
             limit: 0,
             pos: 0,
             bytes_read: 0,
@@ -929,7 +929,7 @@ impl<'a> BufferedConn<'a> {
     ) -> Self {
         BufferedConn {
             conn,
-            cache: Vec::with_capacity(4 * 1024),
+            cache: Vec::with_capacity(64 * 1024),
             limit: 0,
             pos: 0,
             bytes_read: 0,
@@ -1016,6 +1016,10 @@ impl<'a> BufferedConn<'a> {
 
         let size = min(self.cache.capacity(), self.limit);
         self.resize_cache(size)?;
+        // The socket read is the moment the connection is used — refreshing
+        // per parsed piece instead of per read costs a timestamp every few
+        // bytes of a large stream.
+        self.conn.refresh();
 
         let deadline = self.conn.deadline();
         let read_result = match self.conn.conn {
@@ -1184,7 +1188,6 @@ impl<'a> BufferedConn<'a> {
         self.bytes_read += size;
 
         self.conn.buffer.reset_offset();
-        self.conn.refresh();
 
         Ok(size)
     }
