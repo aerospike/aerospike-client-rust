@@ -77,8 +77,10 @@ pub mod sub_code {
     pub const PARAM_STRING_OP_PARAMS_INVALID: u32 = 6;
     /// String op code or modifier/read class mismatch on the wire path.
     pub const PARAM_STRING_OP_INVALID: u32 = 7;
-    /// String context-eval path malformed.
-    pub const PARAM_STRING_CTX_NOT_APPLICABLE: u32 = 8;
+    /// String CONTEXT_EVAL envelope malformed — wrong outer element count, a
+    /// missing context list, or a context the op cannot apply.
+    pub const PARAM_STRING_CTX_MALFORMED: u32 = 8;
+
     /// String modify/read index or code-point range out of bounds.
     pub const PARAM_STRING_INDEX_OUT_OF_BOUNDS: u32 = 9;
     /// String regex pattern invalid (compile / ICU failure).

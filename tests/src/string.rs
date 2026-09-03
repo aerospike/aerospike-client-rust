@@ -2396,3 +2396,4 @@ async fn regex_replace_with_update_only_still_replaces() {
 
     assert_eq!(get_string(&client, &key).await, "a#b#c#");
 }
+
