@@ -24,7 +24,7 @@ use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use regex::Regex;
 use std::sync::LazyLock;
 
-use aerospike_rt::{sleep, Mutex};
+use aerospike_rt::sleep;
 
 use crate::batch::{BatchExecutor, BatchOperation};
 use crate::cluster::{Cluster, Node};
@@ -44,7 +44,7 @@ use crate::policy::{
     TxnVerifyPolicy, WritePolicy,
 };
 use crate::query::plan::{QueryPlan, QueryWhereWire, FLAG_EXPLAIN, FLAG_HARD_HINT};
-use crate::query::{PartitionFilter, PartitionTracker};
+use crate::query::{CallbackCtx, PartitionFilter, PartitionTracker, QueryHandle, QuerySink};
 #[cfg(feature = "lua")]
 use crate::query::ResultSet;
 use crate::task::{DropIndexTask, ExecuteTask, IndexTask, RegisterTask, UdfRemoveTask};
@@ -1448,6 +1448,22 @@ impl Client {
     ///
     /// `Ok(Arc<Recordset>)` — a shared record set. Consume with [`Recordset::into_stream`] and iterate the stream for records. The recordset is closed when the stream is dropped or exhausted.
     ///
+    /// # Delivery guarantee
+    ///
+    /// **At-least-once, loss-free.** Records flow through a bounded buffer
+    /// between the node streams and the consumer, and the resume cursor
+    /// advances only for records the consumer has actually taken out — so
+    /// closing the recordset early and resuming from
+    /// [`Recordset::partition_filter`] re-fetches anything undelivered,
+    /// never skips it. Duplicates are possible in two narrow cases: a retry
+    /// round re-fetching a range that still had buffered copies in flight,
+    /// and a resume re-fetching records that one of several concurrent
+    /// consumers delivered ahead of a sibling's gap; both are bounded by
+    /// the in-flight window. For exactly-once delivery use
+    /// [`query_foreach`](Self::query_foreach), which trades the buffer (and
+    /// its slow-consumer isolation) for callback delivery with an atomic
+    /// cursor commit.
+    ///
     /// # Errors
     ///
     /// * Returns an error if the statement is invalid (e.g. [`Statement::validate`] fails) or initial partition assignment fails.
@@ -1504,34 +1520,80 @@ impl Client {
         let policy = policy.as_ref();
         let nodes: Vec<Arc<Node>> = self.cluster.nodes();
         let t_policy = policy.clone();
-        let tracker = Arc::new(Mutex::new(
-            PartitionTracker::new(&t_policy, Arc::new(Mutex::new(partition_filter)), nodes).await?,
-        ));
+        let tracker = PartitionTracker::new(&t_policy, partition_filter, &nodes)?;
 
         let recordset = Arc::new(Recordset::new(
             policy.record_queue_size,
             policy.max_records,
             usize::MAX, // will be reset later
-            tracker.clone(),
+            tracker.shared(),
         ));
 
-        let t_recordset = recordset.clone();
-        let defer_recordset = recordset.clone();
+        let sink = QuerySink::Channel(recordset.clone());
+        let defer_sink = sink.clone();
         let cluster = self.cluster.clone();
         aerospike_rt::spawn(async move {
-            Self::execute_query_timeout(
-                cluster,
-                &t_policy,
-                tracker.clone(),
-                statement.clone(),
-                t_recordset,
-                None,
-            )
-            .await;
-            defer_recordset.close();
+            Self::execute_query_timeout(cluster, &t_policy, tracker, statement.clone(), sink, None)
+                .await;
+            defer_sink.close();
         });
 
         Ok(recordset)
+    }
+
+    /// Execute a scan or query, delivering records through `callback` — the
+    /// C client's `aerospike_query_foreach` shape — instead of a
+    /// [`Recordset`] stream.
+    ///
+    /// The callback is invoked **inline on the node streams, concurrently
+    /// from up to one task per node**, with each record (or stream error) as
+    /// a `Result<Record>`; returning `false` aborts the query. There is no
+    /// channel and no buffering: the resume cursor is committed the moment an
+    /// invocation returns, so delivery is **exactly-once** — a cancelled
+    /// query resumed from [`QueryHandle::partition_filter`] neither loses nor
+    /// repeats a record. (The stream API, [`query`](Self::query), is
+    /// at-least-once: loss-free, with bounded duplicates possible on retries
+    /// and multi-consumer resumes.) Keep the callback brief and non-blocking;
+    /// it runs on runtime worker threads, a slow callback backpressures the
+    /// server directly, and invocations run concurrently — one at a time per
+    /// node, in parallel across nodes.
+    ///
+    /// The returned [`QueryHandle`] can [`wait`](QueryHandle::wait) for
+    /// completion or [`cancel`](QueryHandle::cancel); dropping it detaches,
+    /// leaving the query running.
+    pub async fn query_foreach<F>(
+        &self,
+        policy: &QueryPolicy,
+        partition_filter: PartitionFilter,
+        statement: Statement,
+        callback: F,
+    ) -> Result<QueryHandle>
+    where
+        F: Fn(Result<Record>) -> bool + Send + Sync + 'static,
+    {
+        statement.validate()?;
+        let statement = Arc::new(statement);
+
+        let policy = self.cluster.resolve_query(policy);
+        let policy = policy.as_ref();
+        let nodes: Vec<Arc<Node>> = self.cluster.nodes();
+        let t_policy = policy.clone();
+        let tracker = PartitionTracker::new(&t_policy, partition_filter, &nodes)?;
+
+        let ctx = Arc::new(CallbackCtx::new(Box::new(callback), tracker.shared()));
+        let sink = QuerySink::Callback(Arc::clone(&ctx));
+        let defer_sink = sink.clone();
+        let cluster = self.cluster.clone();
+        let task = aerospike_rt::spawn(async move {
+            Self::execute_query_timeout(cluster, &t_policy, tracker, statement.clone(), sink, None)
+                .await;
+            defer_sink.close();
+        });
+
+        Ok(QueryHandle {
+            ctx,
+            task: Some(task),
+        })
     }
 
     /// Phase 1 of internal server-led query selection (field `44` WHERE explain).
@@ -1621,31 +1683,29 @@ impl Client {
         let policy = policy.as_ref();
         let nodes: Vec<Arc<Node>> = self.cluster.nodes();
         let t_policy = policy.clone();
-        let tracker = Arc::new(Mutex::new(
-            PartitionTracker::new(&t_policy, Arc::new(Mutex::new(partition_filter)), nodes).await?,
-        ));
+        let tracker = PartitionTracker::new(&t_policy, partition_filter, &nodes)?;
 
         let recordset = Arc::new(Recordset::new(
             policy.record_queue_size,
             policy.max_records,
             usize::MAX, // will be reset later
-            tracker.clone(),
+            tracker.shared(),
         ));
 
-        let t_recordset = recordset.clone();
-        let defer_recordset = recordset.clone();
+        let sink = QuerySink::Channel(recordset.clone());
+        let defer_sink = sink.clone();
         let cluster = self.cluster.clone();
         aerospike_rt::spawn(async move {
             Self::execute_query_timeout(
                 cluster,
                 &t_policy,
-                tracker.clone(),
+                tracker,
                 statement.clone(),
-                t_recordset,
+                sink,
                 execute_where,
             )
             .await;
-            defer_recordset.close();
+            defer_sink.close();
         });
 
         Ok(recordset)
@@ -1973,13 +2033,13 @@ impl Client {
     async fn execute_query_timeout(
         cluster: Arc<Cluster>,
         policy: &QueryPolicy,
-        tracker: Arc<Mutex<PartitionTracker>>,
+        tracker: PartitionTracker,
         statement: Arc<Statement>,
-        recordset: Arc<Recordset>,
+        sink: QuerySink,
         execute_where: Option<Arc<[u8]>>,
     ) {
         if policy.total_timeout() > 0 {
-            let rs_closer = recordset.clone();
+            let timed_sink = sink.clone();
             if aerospike_rt::timeout(
                 Duration::from_millis(u64::from(policy.total_timeout())),
                 Self::execute_query(
@@ -1987,36 +2047,28 @@ impl Client {
                     policy,
                     tracker,
                     statement,
-                    recordset,
+                    sink,
                     execute_where.clone(),
                 ),
             )
             .await
             .is_err()
             {
-                let _ = rs_closer
-                    .push(Err(Error::timeout("Timeout".to_string())))
+                timed_sink
+                    .fatal(Error::timeout("Timeout".to_string()))
                     .await;
             }
         } else {
-            Self::execute_query(
-                cluster,
-                policy,
-                tracker,
-                statement,
-                recordset,
-                execute_where,
-            )
-            .await;
+            Self::execute_query(cluster, policy, tracker, statement, sink, execute_where).await;
         }
     }
 
     async fn execute_query(
         cluster: Arc<Cluster>,
         policy: &QueryPolicy,
-        tracker: Arc<Mutex<PartitionTracker>>,
+        mut tracker: PartitionTracker,
         statement: Arc<Statement>,
-        recordset: Arc<Recordset>,
+        sink: QuerySink,
         execute_where: Option<Arc<[u8]>>,
     ) {
         let namespace = statement.namespace.clone();
@@ -2028,28 +2080,25 @@ impl Client {
         let mut sleep_interval = policy.base_policy.sleep_between_retries();
         loop {
             let mut timed_out = false;
+            let mut faulted = false;
             {
-                let mut tracker_locked = tracker.lock().await;
-                match tracker_locked
-                    .assign_partitions_to_nodes(cluster.clone(), &namespace)
-                    .await
-                {
-                    Ok(()) => (),
-                    Err(e) => {
-                        recordset.err(e).await;
-                        tracker_locked.partition_error().await;
-                        return;
-                    }
+                if let Err(e) = tracker.assign_partitions_to_nodes(&cluster, &namespace) {
+                    sink.fatal(e).await;
+                    tracker.partition_error();
+                    return;
                 }
 
-                let list = tracker_locked.node_partitions_list();
+                // Taken by value: each set is *moved* into its node's task and
+                // comes back in the join value, so the compiler — not the
+                // protocol's word — guarantees one writer at a time.
+                let list = tracker.take_node_partitions();
                 let mut handles = Vec::with_capacity(list.len());
-                recordset.set_instances(list.len() + 1); // +1 is for the async executor
+                sink.set_instances(list.len() + 1); // +1 is for the async executor
 
                 // used for join errors
-                let err_recordset = recordset.clone();
+                let err_sink = sink.clone();
 
-                if recordset.is_active() {
+                if sink.is_active() {
                     let semaphore = Arc::new(Semaphore::new(if policy.max_concurrent_nodes == 0 {
                         MAX_PERMITS
                     } else {
@@ -2058,9 +2107,8 @@ impl Client {
 
                     for node_partition in list {
                         let semaphore = semaphore.clone();
-                        let recordset = recordset.clone();
+                        let sink = sink.clone();
                         let policy = policy.clone();
-                        let node_partition = node_partition.clone();
                         let statement = statement.clone();
                         let cluster = cluster.clone();
                         let execute_where = execute_where.clone();
@@ -2072,62 +2120,83 @@ impl Client {
                             let mut cmd = QueryCommand::new(
                                 &policy,
                                 statement,
-                                recordset.clone(),
+                                sink,
                                 node_partition,
                                 cluster,
                                 execute_where,
-                            )
-                            .await;
+                            );
                             let result = cmd.execute().await;
 
                             drop(permit);
-                            result
+                            // Handed back on every path, error included, so a
+                            // failed node still reports what it read and which
+                            // of its partitions need retrying.
+                            (result, cmd.into_node_partitions())
                         });
 
                         handles.push(handle);
                     }
 
-                    drop(tracker_locked);
-
-                    match futures::future::try_join_all(handles).await {
-                        Err(e) => err_recordset.err(Error::client_error(e.to_string())).await,
-                        #[cfg(feature = "rt-async-std")]
-                        Ok(_) => (),
+                    let mut returned = Vec::with_capacity(handles.len());
+                    for outcome in futures::future::join_all(handles).await {
+                        // Unwrap the runtime's join wrapper: tokio reports a
+                        // panicked or cancelled task here, async-std propagates
+                        // the panic instead.
                         #[cfg(feature = "rt-tokio")]
-                        Ok(errs) => {
-                            for err in errs {
-                                match err {
-                                    // Socket I/O errors now surface as Error::Connection (was Error::Io).
-                                    Err(e)
-                                        if matches!(
-                                            e.kind(),
-                                            ErrorKind::Timeout
-                                                | ErrorKind::Io(_)
-                                                | ErrorKind::Connection
-                                        ) =>
-                                    {
-                                        timed_out = true;
-                                    }
-                                    Err(e) => {
-                                        tracker.lock().await.partition_error().await;
-                                        err_recordset.err(e).await;
-                                    }
-                                    Ok(()) => (),
-                                }
+                        let outcome = match outcome {
+                            Ok(outcome) => outcome,
+                            Err(e) => {
+                                // The task died holding its partition set;
+                                // there is nothing to hand back.
+                                err_sink.err(Error::client_error(e.to_string())).await;
+                                continue;
                             }
+                        };
+
+                        let (result, node_partition) = outcome;
+                        returned.push(node_partition);
+                        match result {
+                            // Socket I/O errors now surface as Error::Connection (was Error::Io).
+                            Err(e)
+                                if matches!(
+                                    e.kind(),
+                                    ErrorKind::Timeout | ErrorKind::Io(_) | ErrorKind::Connection
+                                ) =>
+                            {
+                                timed_out = true;
+                            }
+                            // A cancelled or aborted stream: its partitions
+                            // still hold undelivered records, so the round
+                            // must not be treated as cleanly complete — the
+                            // cursor's `done` flag is a promise that a resume
+                            // has nothing left to fetch.
+                            Err(e) if matches!(e.kind(), ErrorKind::StreamTerminated) => {
+                                faulted = true;
+                                tracker.partition_error();
+                                err_sink.err(e).await;
+                            }
+                            // A genuine error (a server rejection, say) ends
+                            // the query as before: deterministic failures are
+                            // not retried.
+                            Err(e) => {
+                                tracker.partition_error();
+                                err_sink.err(e).await;
+                            }
+                            Ok(()) => (),
                         }
                     }
+                    tracker.restore_node_partitions(returned);
+                } else {
+                    tracker.restore_node_partitions(list);
                 }
             };
 
-            let mut tracker = tracker.lock().await;
-            let done = tracker.is_complete(policy, timed_out).await;
-            match (done, recordset.is_active()) {
+            let done = tracker.is_complete(policy, timed_out, faulted);
+            match (done, sink.is_active()) {
                 (Ok(true), _) | (Ok(_), false) => return,
                 (Err(e), _) => {
-                    tracker.partition_error().await;
-                    recordset.err(e).await;
-                    drop(tracker);
+                    tracker.partition_error();
+                    sink.fatal(e).await;
                     return;
                 }
                 _ => (),
@@ -2141,7 +2210,7 @@ impl Client {
                 ));
             }
 
-            recordset.reset_task_id();
+            sink.reset_task_id();
         }
     }
 

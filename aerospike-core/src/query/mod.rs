@@ -25,7 +25,10 @@ pub use self::plan::{
     QueryPlan, QuerySelection, QueryWhereWire, FLAG_ENC_VARINT, FLAG_EXPLAIN, FLAG_HARD_HINT,
     FLAG_KNOWN, FLAG_REQUIRE_INDEX,
 };
-pub(crate) use self::partition_tracker::PartitionTracker;
+pub(crate) use self::partition_tracker::{PartitionTracker, TrackerShared};
+pub(crate) use self::recordset::{StreamEntry, RECORD_BATCH};
+pub use self::sink::QueryHandle;
+pub(crate) use self::sink::{CallbackCtx, QuerySink};
 pub use self::recordset::RecordStream;
 pub use self::recordset::Recordset;
 #[cfg(feature = "lua")]
@@ -42,6 +45,7 @@ mod partition_status;
 mod partition_tracker;
 pub mod plan;
 mod recordset;
+mod sink;
 #[cfg(feature = "lua")]
 mod result_set;
 mod statement;

@@ -173,9 +173,9 @@ pub use policy::{
 };
 pub use privilege::{Privilege, PrivilegeCode};
 pub use query::{
-    CollectionIndexType, EqFilterValue, IndexType, PartitionFilter, QueryPlan, QuerySelection,
-    QueryWhereWire, RangeFilterValue, Recordset, Statement, UDFLang, FLAG_ENC_VARINT, FLAG_EXPLAIN,
-    FLAG_HARD_HINT, FLAG_KNOWN, FLAG_REQUIRE_INDEX,
+    CollectionIndexType, EqFilterValue, IndexType, PartitionFilter, QueryHandle, QueryPlan,
+    QuerySelection, QueryWhereWire, RangeFilterValue, Recordset, Statement, UDFLang,
+    FLAG_ENC_VARINT, FLAG_EXPLAIN, FLAG_HARD_HINT, FLAG_KNOWN, FLAG_REQUIRE_INDEX,
 };
 #[cfg(feature = "lua")]
 pub use query::{ResultSet, ResultStream};

@@ -34,6 +34,21 @@ pub struct PartitionStatus {
 
     /// Partition map's corresponding sequence.
     pub sequence: Option<u64>,
+
+    /// Round marker for the delivery watermark below. Bumped when the
+    /// partition is assigned for a (re)query round, so entries a consumer
+    /// drains from an earlier round can no longer move the cursor.
+    pub(crate) epoch: u32,
+    /// Records of this partition handed to the record channel this round,
+    /// in digest order — the stamp source.
+    pub(crate) delivered: u32,
+    /// Longest contiguous prefix of `delivered` the consumers have taken
+    /// out. Only this prefix's tail digest is a safe resume point.
+    pub(crate) consumed: u32,
+    /// Consumed-out-of-order stamps waiting for the gap below them to close:
+    /// `(seq, digest, bval)`, sorted by `seq`. Empty whenever a single
+    /// consumer drains the stream in order.
+    pub(crate) pending: Vec<(u32, [u8; 20], Option<u64>)>,
 }
 
 impl PartitionStatus {
@@ -46,7 +61,21 @@ impl PartitionStatus {
 
             node: None,
             sequence: None,
+
+            epoch: 0,
+            delivered: 0,
+            consumed: 0,
+            pending: Vec::new(),
         }
+    }
+
+    /// Opens a new delivery round: entries stamped in earlier rounds become
+    /// stale and stop moving the cursor.
+    pub(crate) fn begin_delivery_round(&mut self) {
+        self.epoch = self.epoch.wrapping_add(1);
+        self.delivered = 0;
+        self.consumed = 0;
+        self.pending.clear();
     }
 
     pub(crate) const fn set_digest(&mut self, digest: Option<[u8; 20]>) {

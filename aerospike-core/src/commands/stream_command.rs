@@ -16,7 +16,6 @@ use crate::IndexMap;
 use std::io::Read;
 use std::sync::Arc;
 
-use aerospike_rt::Mutex;
 use flate2::read::ZlibDecoder;
 
 use crate::cluster::{Cluster, Node};
@@ -25,46 +24,67 @@ use crate::commands::field_type::FieldType;
 use crate::commands::Command;
 use crate::errors::{Error, ErrorKind, Result};
 use crate::net::{BufferedConn, Connection};
-use crate::query::{NodePartitions, Recordset};
+use crate::query::{NodePartitions, QuerySink, Recordset, StreamEntry, RECORD_BATCH};
 use crate::value::bytes_to_particle;
 use crate::{Key, Record, ResultCode, Value};
 
 pub struct StreamCommand {
-    is_scan: bool,
     node: Arc<Node>,
     /// The owning cluster, surfaced via [`Command::cluster`] so the retry loop
     /// can record cluster-wide `exceeded-*` counters for scans/queries.
     cluster: Arc<Cluster>,
-    pub(crate) recordset: Arc<Recordset>,
-    pub(crate) node_partitions: Arc<Mutex<NodePartitions>>,
+    pub(crate) sink: QuerySink,
+    /// This node's share of the query, owned outright for the life of the
+    /// command. The executor moves it in and takes it back from the join
+    /// value, so the single-writer story is checked by the compiler rather
+    /// than promised by the protocol.
+    node_partitions: NodePartitions,
+    /// Announces this stream's end to the sink when the command goes away,
+    /// however it goes away. A guard field rather than `impl Drop` on the
+    /// command itself, which would forbid moving `node_partitions` back out
+    /// at the end.
+    _end: EndSignal,
 }
 
-impl Drop for StreamCommand {
+/// Signals end-of-stream to the sink on drop.
+struct EndSignal(QuerySink);
+
+impl Drop for EndSignal {
     fn drop(&mut self) {
-        // signal_end
-        self.recordset.signal_end();
+        self.0.signal_end();
     }
 }
 
 impl StreamCommand {
-    pub const fn new(
+    pub fn new(
         node: Arc<Node>,
-        recordset: Arc<Recordset>,
-        node_partitions: Arc<Mutex<NodePartitions>>,
-        is_scan: bool,
+        sink: QuerySink,
+        node_partitions: NodePartitions,
         cluster: Arc<Cluster>,
     ) -> Self {
         StreamCommand {
-            is_scan,
             node,
             cluster,
-            recordset,
+            _end: EndSignal(sink.clone()),
+            sink,
             node_partitions,
         }
     }
 
+    /// This node's partition set, for the request buffer.
+    pub(crate) const fn node_partitions(&self) -> &NodePartitions {
+        &self.node_partitions
+    }
+
+    /// Hands the partition set back to the executor once the command is done,
+    /// so completion and retry planning can read what this node did. Consumes
+    /// the command; the end-of-stream signal fires here.
+    pub(crate) fn into_node_partitions(self) -> NodePartitions {
+        self.node_partitions
+    }
+
     async fn parse_record(
-        &self,
+        &mut self,
         conn: &mut BufferedConn<'_>,
         _size: usize,
     ) -> Result<(Option<Record>, Option<u64>, bool)> {
@@ -104,13 +124,9 @@ impl StreamCommand {
         if info3 & buffer::INFO3_PARTITION_DONE != 0 {
             // return Ok((None, true));
             if result_code != ResultCode::Ok {
-                let tracker = self.recordset.tracker.lock().await;
-                let mut node_partitions = self.node_partitions.lock().await;
-                tracker
-                    .partition_unavailable(&mut node_partitions, generation as u16)
-                    .await;
-                drop(tracker);
-                drop(node_partitions);
+                self.sink
+                    .tracker()
+                    .partition_unavailable(&mut self.node_partitions, generation as u16);
             }
             return Ok((None, None, true));
         }
@@ -141,11 +157,36 @@ impl StreamCommand {
         Ok((Some(record), bval, true))
     }
 
-    async fn parse_stream(&self, conn: &mut BufferedConn<'_>, size: usize) -> Result<bool> {
-        // Held for the whole stream: the per-node state has no other writer.
-        // The *tracker* is a different matter — every node's stream shares
-        // it, so it is taken per record below and never held across a wait.
-        let mut node_partitions = self.node_partitions.lock().await;
+    /// Hands the accumulated batch to the consumer and counts it against
+    /// this node's round.
+    ///
+    /// Only the *count* is recorded here — it drives the executor's
+    /// max-records budget and page-done planning, which reason about what the
+    /// server sent this round. The resume *cursor* is deliberately not
+    /// touched: it is committed at the consumer edge, record by record, as
+    /// the user takes them out — so a stream closed with records still
+    /// buffered resumes from the last record the user saw, not the last one
+    /// parsed. A failed push counts nothing: those records are re-fetched by
+    /// the next round.
+    async fn flush_batch(
+        recordset: &Recordset,
+        node_partitions: &mut NodePartitions,
+        batch: &mut Vec<StreamEntry>,
+    ) -> Result<()> {
+        if batch.is_empty() {
+            return Ok(());
+        }
+        let count = batch.len() as u64;
+        recordset.push_batch(std::mem::take(batch)).await?;
+        node_partitions.record_count += count;
+        Ok(())
+    }
+
+    async fn parse_stream(&mut self, conn: &mut BufferedConn<'_>, size: usize) -> Result<bool> {
+        // One channel send per RECORD_BATCH records, not per record: the
+        // queue-slot handoff and consumer wakeup were the hot path's largest
+        // single cost.
+        let mut batch: Vec<StreamEntry> = Vec::with_capacity(RECORD_BATCH);
 
         'outer: while !conn.exhausted() {
             // Read header.
@@ -160,44 +201,72 @@ impl StreamCommand {
             let res = self.parse_record(conn, size).await;
             match res {
                 Ok((Some(rec), bval, _)) => {
-                    let tracker = self.recordset.tracker.lock().await;
-                    let allowed = tracker.allow_record(&mut node_partitions);
-                    // Dropped before the push: a full record queue blocks
-                    // there, and holding the shared tracker across that wait
-                    // stalls every other node's stream behind this one.
-                    // `allow_record` gates on its own atomic, so it does not
-                    // need to be atomic with the progress commit below.
-                    drop(tracker);
-                    if !allowed {
+                    // No lock on this path: the tracker's record-facing state
+                    // is atomics, and the partition set has a single writer —
+                    // this command.
+                    if !self
+                        .sink
+                        .tracker()
+                        .allow_record(&mut self.node_partitions)
+                    {
                         continue 'outer;
                     }
 
-                    // The key is cloned to outlive the record because progress
-                    // is committed only *after* the push succeeds. A failed
-                    // push means the consumer never saw this record, so its
-                    // partition cursor must not advance past it — otherwise a
-                    // later resume from `partition_filter()` skips a record
-                    // that was never delivered. Re-fetching a record beats
-                    // losing one.
-                    let key = rec.key.clone().unwrap();
-                    self.recordset.push(Ok(rec)).await?;
-
-                    let tracker = self.recordset.tracker.lock().await;
-                    if self.is_scan {
-                        tracker.set_digest(&mut node_partitions, &key).await?;
-                    } else {
-                        tracker.set_last(&mut node_partitions, &key, bval).await?;
+                    match &self.sink {
+                        QuerySink::Channel(rs) => {
+                            // Stamp after the allow gate: rejected records
+                            // are neither delivered nor sequenced.
+                            let key = rec.key.as_ref().unwrap();
+                            let stamp = rs.tracker.stamp_delivery(key.partition_id());
+                            batch.push(StreamEntry {
+                                result: Ok(rec),
+                                bval,
+                                stamp,
+                            });
+                            if batch.len() >= RECORD_BATCH {
+                                Self::flush_batch(rs, &mut self.node_partitions, &mut batch)
+                                    .await?;
+                            }
+                        }
+                        QuerySink::Callback(ctx) => {
+                            // Inline, C-style: the callback runs here on the
+                            // node task and the cursor commits the moment it
+                            // returns — delivery and commit are atomic, which
+                            // is what makes this mode exactly-once, cancel and
+                            // resume included.
+                            let key = rec.key.as_ref().unwrap();
+                            let (pid, digest) = (key.partition_id(), key.digest);
+                            let keep_going = (ctx.callback)(Ok(rec));
+                            ctx.tracker.commit_direct(pid, digest, bval);
+                            self.node_partitions.record_count += 1;
+                            if !keep_going {
+                                self.sink.close();
+                            }
+                            if !self.sink.is_active() {
+                                return Err(Error::stream_terminated(None));
+                            }
+                        }
                     }
                 }
-                Ok((None, _, false)) => return Ok(false),
+                Ok((None, _, false)) => {
+                    if let QuerySink::Channel(rs) = &self.sink {
+                        Self::flush_batch(rs, &mut self.node_partitions, &mut batch).await?;
+                    }
+                    return Ok(false);
+                }
                 Ok((None, _, true)) => {} // handle partition done
                 Err(err) => {
+                    // Not flushed: the un-pushed tail is dropped with its
+                    // progress uncommitted, so a retry round re-fetches it.
                     // let _ = self.recordset.push(Err(err)).await;
                     return Err(err);
                 }
             }
         }
 
+        if let QuerySink::Channel(rs) = &self.sink {
+            Self::flush_batch(rs, &mut self.node_partitions, &mut batch).await?;
+        }
         Ok(true)
     }
 
@@ -310,7 +379,7 @@ impl Command for StreamCommand {
         // `unreachable!()` on the assumption that only `QueryCommand`
         // drives a `StreamCommand`; implementing it here keeps any direct
         // driver from panicking and from sending a zero timeout.
-        let server_timeout = self.recordset.tracker.lock().await.server_timeout();
+        let server_timeout = self.sink.tracker().server_timeout();
         conn.buffer.write_timeout(server_timeout);
         Ok(())
     }

@@ -261,6 +261,175 @@ async fn query_single_consumer_with_cursor() {
     client.close().await.unwrap();
 }
 
+/// The callback API delivers every record exactly once and `wait()` observes
+/// completion: no channel, no buffering, commit-as-invoked.
+#[aerospike_macro::test]
+async fn query_foreach_delivers_all_exactly_once() {
+    let client = common::singleton_client().await;
+    let namespace = common::namespace();
+    let set_name = create_test_set(&client, EXPECTED).await;
+
+    let count = Arc::new(AtomicUsize::new(0));
+    let seen = Arc::new(std::sync::Mutex::new(std::collections::HashSet::new()));
+    let (c, s) = (count.clone(), seen.clone());
+
+    let stmt = Statement::new(namespace, &set_name, Bins::All);
+    let mut handle = client
+        .query_foreach(&QueryPolicy::default(), PartitionFilter::all(), stmt, move |res| {
+            let rec = res.unwrap();
+            s.lock().unwrap().insert(rec.key.as_ref().unwrap().digest);
+            c.fetch_add(1, Ordering::Relaxed);
+            true
+        })
+        .await
+        .unwrap();
+
+    handle.wait().await.unwrap();
+    // Exactly-once is unconditional for the callback API: delivery and
+    // cursor-commit are atomic on the node task.
+    assert_eq!(count.load(Ordering::Relaxed), EXPECTED);
+    assert_eq!(seen.lock().unwrap().len(), EXPECTED);
+}
+
+/// Aborting from inside the callback (returning `false`), then resuming from
+/// the handle's cursor, is exactly-once end to end: the cursor points at the
+/// last invoked record, so nothing is lost and nothing is re-delivered.
+#[aerospike_macro::test]
+async fn query_foreach_abort_and_resume_exactly_once() {
+    let client = common::singleton_client().await;
+    let namespace = common::namespace();
+    let set_name = create_test_set(&client, EXPECTED).await;
+
+    let count = Arc::new(AtomicUsize::new(0));
+    let seen = Arc::new(std::sync::Mutex::new(std::collections::HashSet::new()));
+
+    let mut pf = PartitionFilter::all();
+    let mut rounds = 0usize;
+    loop {
+        rounds += 1;
+        assert!(rounds <= 50, "resume loop did not converge");
+
+        let (c, s) = (count.clone(), seen.clone());
+        let stmt = Statement::new(namespace, &set_name, Bins::All);
+        let mut handle = client
+            .query_foreach(&QueryPolicy::default(), pf, stmt, move |res| {
+                let rec = res.unwrap();
+                s.lock().unwrap().insert(rec.key.as_ref().unwrap().digest);
+                // Abort after every 100th record of this attempt.
+                c.fetch_add(1, Ordering::Relaxed) % 100 != 99
+            })
+            .await
+            .unwrap();
+        handle.wait().await.unwrap();
+
+        pf = handle.partition_filter().await.unwrap();
+        if pf.done() {
+            break;
+        }
+    }
+
+    assert_eq!(seen.lock().unwrap().len(), EXPECTED, "records lost across abort/resume");
+    assert_eq!(count.load(Ordering::Relaxed), EXPECTED, "duplicate deliveries");
+}
+
+/// External cancellation through the handle, then resume: same exactly-once
+/// contract as the in-callback abort.
+#[aerospike_macro::test]
+async fn query_foreach_cancel_and_resume_exactly_once() {
+    let client = common::singleton_client().await;
+    let namespace = common::namespace();
+    let set_name = create_test_set(&client, EXPECTED).await;
+
+    let count = Arc::new(AtomicUsize::new(0));
+    let seen = Arc::new(std::sync::Mutex::new(std::collections::HashSet::new()));
+
+    // First pass: cancel from outside as soon as some records arrived.
+    let (c, s) = (count.clone(), seen.clone());
+    let stmt = Statement::new(namespace, &set_name, Bins::All);
+    let mut handle = client
+        .query_foreach(&QueryPolicy::default(), PartitionFilter::all(), stmt, move |res| {
+            let rec = res.unwrap();
+            s.lock().unwrap().insert(rec.key.as_ref().unwrap().digest);
+            c.fetch_add(1, Ordering::Relaxed);
+            true
+        })
+        .await
+        .unwrap();
+    while count.load(Ordering::Relaxed) == 0 && handle.is_active() {
+        aerospike_rt::sleep(Duration::from_millis(1)).await;
+    }
+    handle.cancel();
+    assert!(!handle.is_active());
+    handle.wait().await.unwrap();
+    let mut pf = handle.partition_filter().await.unwrap();
+
+    // Resume to completion.
+    let mut rounds = 0usize;
+    while !pf.done() {
+        rounds += 1;
+        assert!(rounds <= 50, "resume loop did not converge");
+        let (c, s) = (count.clone(), seen.clone());
+        let stmt = Statement::new(namespace, &set_name, Bins::All);
+        let mut handle = client
+            .query_foreach(&QueryPolicy::default(), pf, stmt, move |res| {
+                let rec = res.unwrap();
+                s.lock().unwrap().insert(rec.key.as_ref().unwrap().digest);
+                c.fetch_add(1, Ordering::Relaxed);
+                true
+            })
+            .await
+            .unwrap();
+        handle.wait().await.unwrap();
+        pf = handle.partition_filter().await.unwrap();
+    }
+
+    assert_eq!(seen.lock().unwrap().len(), EXPECTED, "records lost across cancel/resume");
+    assert_eq!(count.load(Ordering::Relaxed), EXPECTED, "duplicate deliveries");
+}
+
+/// The secondary-index flavour of the mid-stream-cancel no-loss contract:
+/// an si-query resume needs the bval alongside the digest, and both must
+/// reflect the last record the consumer *took*, not the last one fetched.
+#[aerospike_macro::test]
+async fn query_si_cancel_midway_resumes_without_loss() {
+    let client = common::client().await;
+    let namespace = common::namespace();
+    let set_name = create_test_set(&client, EXPECTED).await;
+
+    let mut qpolicy = QueryPolicy::default();
+    qpolicy.max_records = 200;
+
+    let mut pf = PartitionFilter::all();
+    let mut seen = std::collections::HashSet::new();
+    let mut rounds = 0usize;
+    while !pf.done() {
+        rounds += 1;
+        assert!(rounds <= 100, "resume loop did not converge");
+
+        let mut stmt = Statement::new(namespace, &set_name, Bins::Some(vec!["bin".into()]));
+        stmt.add_filter(Filter::range("bin", 0, EXPECTED as i64));
+        let rs = client.query(&qpolicy, pf, stmt).await.unwrap();
+        let mut stream = rs.clone().into_stream();
+        let mut got = 0usize;
+        while got < 100 {
+            match stream.next().await {
+                Some(Ok(rec)) => {
+                    seen.insert(rec.key.as_ref().unwrap().digest);
+                    got += 1;
+                }
+                Some(Err(err)) => panic!("{err:?}"),
+                None => break,
+            }
+        }
+        drop(stream);
+        rs.close();
+        pf = rs.partition_filter().await.unwrap();
+    }
+
+    assert_eq!(seen.len(), EXPECTED, "records lost across si cancel/resume");
+    client.close().await.unwrap();
+}
+
 #[aerospike_macro::test]
 async fn query_single_consumer_rps() {
     let client = common::client().await;
